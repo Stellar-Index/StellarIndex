@@ -36,11 +36,14 @@ service-account*.json
 *.jks
 *.keystore
 # Defence-in-depth glob for ansible-style secrets files
-# (F-1207, audit-2026-05-12): the inventory-path-scoped rules below
-# already cover the canonical path, but a stray *.secrets.yml outside
-# configs/ansible/inventory/ would not be caught without this.
+# (F-1207, audit-2026-05-12): catches stray *.secrets.yml anywhere.
 *.secrets.yml
 *.secrets.yaml
+# EXCEPTION (2026-07-03): the vault-ENCRYPTED region secrets are
+# tracked (AES256; password out-of-band as an Actions secret + the
+# operator's ~/.ansible file) — the ansible-drift workflow needs them.
+# gitleaks in CI backstops an unencrypted file ever landing.
+!/configs/ansible/inventory/*.secrets.yml
 
 # Local runtime state
 /bucket-data/
@@ -59,7 +62,7 @@ service-account*.json
 
 # Ansible vault-encrypted secrets — safe in theory but conservative:
 # never commit until we have a team-wide vault key management plan.
-/configs/ansible/inventory/*.secrets.yml
+# (vault-encrypted *.secrets.yml are tracked — see note below)
 /configs/ansible/inventory/*.secrets.yaml
 /configs/ansible/vault-password.txt
 
@@ -67,7 +70,11 @@ service-account*.json
 # pubkeys, etc. — operationally sensitive even if not strictly
 # secret. Operators copy r*.example.yml → r*.yml locally; the .yml
 # stays local-only. The .example template is the public reference.
-/configs/ansible/inventory/r*.yml
+# Real inventories + the ENCRYPTED vault are tracked (2026-07-03: the
+# ansible-drift workflow needs them; r1.yml holds no secrets — those
+# live vault-encrypted in r1.secrets.yml, password out-of-band).
+# Never commit an UNENCRYPTED secrets file — gitleaks (CI) backstops.
+/configs/ansible/inventory/*.plaintext*
 !/configs/ansible/inventory/r*.example.yml
 
 # Docs build output

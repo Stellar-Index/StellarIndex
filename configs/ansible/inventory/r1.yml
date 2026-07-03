@@ -1,0 +1,167 @@
+---
+# Inventory for R1 (Hetzner FSN1 — Falkenstein, Germany).
+# Copy to r1.yml and fill in the Xs.
+#
+# Secrets (DB password, etc.) live in r1.secrets.yml (ansible-vault).
+#
+# ─── Deriving r2.yml / r3.yml from this template ─────────────────────
+# Per ADR-0016 (per-region storage strategies), r2 and r3 differ
+# from r1 in concrete ways. When provisioning either region, copy
+# this file and override at minimum:
+#
+#   r2 (US-East-1, AWS, no local archive mirror):
+#     region_id:                        "r2"
+#     region_name:                      "US-East-1"
+#     run_minio:                        true   (galexie-live only)
+#     minio_buckets:                    ["galexie-live", "backups"]
+#     galexie_archive_endpoint:         "https://s3.us-east-1.amazonaws.com"
+#     galexie_archive_bucket:           "aws-public-blockchain"
+#     galexie_archive_prefix:           "v1.1/stellar/ledgers/pubnet/"
+#     ratesengine_live_seam_ledger:     <r2-specific seam>
+#     zfs_data_devices:                 []   (EBS gp3, no ZFS)
+#     run_stellar_core:                 false
+#
+#   r3 (Singapore, Vultr, Object Storage for archive):
+#     region_id:                        "r3"
+#     region_name:                      "Singapore"
+#     run_minio:                        true   (galexie-live only)
+#     minio_buckets:                    ["galexie-live", "backups"]
+#     galexie_archive_endpoint:         "https://sgp1.vultrobjects.com"
+#     galexie_archive_bucket:           "ratesengine-galexie-archive"
+#     ratesengine_live_seam_ledger:     <r3-specific seam>
+#     zfs_data_pool_type:               "mirror"   (only 2 NVMes on Vultr SG SKU)
+#     zfs_data_devices:                 [/dev/nvme0n1, /dev/nvme1n1]
+#     run_stellar_core:                 false
+#
+# r2 and r3 inherit the same indexer source list, postgres tuning,
+# stellar quorum, and observability config as r1 — those values are
+# region-invariant by design (closed-bucket API contract per
+# ADR-0015 means all three regions must produce byte-equivalent
+# aggregate output from the same input data).
+
+all:
+  vars:
+
+    # SDF reserve accounts + balances come from the archival-node role
+    # defaults (network-wide truth, not host config). Override here only
+    # to test a different set.
+    ssh_permit_root_login: "prohibit-password"
+    # Binary provenance pins (2026-07-03): sha256 of the binaries LIVE on
+    # r1 (versions match the pinned releases). On a version bump, update
+    # from the upstream published checksums, not from a running host.
+    minio_release_sha256: "c27873d791b56d33518de11f12c5bfae4be88ebac00e12c6dd0027b08123fd80"
+    mc_release_sha256: "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891"
+    pgbackrest_exporter_release_sha256: "e73a862a900ef08d697a64b6644abb078453370e8e02db75a24d8b496ea33e6d"  # upstream v0.23.0 linux-x86_64 TARBALL sha (not the binary)
+    # ───── Region identity ─────────────────────────────────────────
+    region_id:           "r1"
+    region_name:         "Hetzner-r1"
+    # Operational state (2026-07-03): live backfill floor = the cctp-era
+    # genesis; a render at the default 0 would rewind it.
+    stellarindex_backfill_from_ledger: 62403000         # = `name` in ratesengine.toml [region]; matches live r1
+    home_domain:         "ratesengine.net"
+
+    # ───── Stellar network ─────────────────────────────────────────
+    stellar_network:     "pubnet"            # pubnet | testnet | futurenet
+    catchup_mode:        "CATCHUP_RECENT"    # RECENT | COMPLETE
+    is_validator:        false                # true = SCP voter (Phase B+)
+    node_is_validator:   "{{ is_validator }}"
+
+    # ───── Rates Engine ingest ─────────────────────────────────────
+    # backfill_from_ledger is PER-REGION (each region has its own
+    # galexie seam — ADR-0016). Role default is 0; r1's live value
+    # is below. Re-check at rebuild time — it's a point-in-time
+    # floor for the historical backfill, not a fixed constant.
+    # enabled_sources / aggregator / oracle config are region-
+    # invariant and live in the role defaults.
+    ratesengine_backfill_from_ledger: 62403000
+
+    # ───── Storage layout ──────────────────────────────────────────
+    # Typical post-installimage layout:
+    #   * nvme0n1 + nvme1n1: OS-mirror drives. installimage created
+    #     partitions 1-3 (ESP/swap/root) and left the rest free. The
+    #     role carves a p4 on each spanning all free space.
+    #   * nvme2n1 + nvme3n1: completely untouched, used as whole-drive
+    #     ZFS vdevs.
+    # Result: ZFS raidz2 across 4 vdevs of roughly equal size.
+    #
+    # Replace serial numbers with the actual values from
+    # `ls /dev/disk/by-id/ | grep nvme-SAMSUNG` on the target box.
+    # ⚠ EMPTY ON PURPOSE (2026-07-03 drift audit): r1 is built — its ZFS
+    # part4s already exist on the OS-mirror drives. This list previously
+    # said [/dev/nvme0n1, /dev/nvme1n1], but nvme names are NOT stable
+    # across boots: on the live host the OS mirror is nvme1n1+nvme3n1 and
+    # /dev/nvme0n1 is a WHOLE-DISK ZFS DATA POOL MEMBER — the carve task's
+    # creates-guard (no p4 on a whole-disk member) would have run sgdisk
+    # against it. Only populate on a FRESH build, with by-id paths, after
+    # the 03-zfs safety assertion passes.
+    zfs_os_drives_needing_data_partition: []
+    zfs_data_devices:
+      # OS-mirror drives — partition 4 created by the role at apply time
+      - /dev/disk/by-id/nvme-SAMSUNG_MZQL27T6HBLA-00A07_S6CKNN0Y717048-part4
+      - /dev/disk/by-id/nvme-SAMSUNG_MZQL27T6HBLA-00A07_S6CKNN0Y717042-part4
+      # Whole drives — pristine, untouched by installimage
+      - /dev/disk/by-id/nvme-SAMSUNG_MZQL27T6HBLA-00A07_S6CKNN0Y716944
+      - /dev/disk/by-id/nvme-SAMSUNG_MZQL27T6HBLA-00A07_S6CKNN0Y718947
+    zfs_data_pool_type:  "raidz2"             # raidz2 | mirror | stripe
+    zfs_data_pool_name:  "data"
+
+    # ───── Roles colocated on this host ────────────────────────────
+    # stellar-core + stellar-rpc were REMOVED from r1 on 2026-04-23
+    # — galexie carries its own embedded captive-core, the indexer
+    # reads MinIO directly, and the public API is /v1/*, not /rpc.
+    # The role's stellar-rpc task + templates were deleted on
+    # 2026-05-22 (no longer in our architecture); see
+    # docs/operations/r1-deployment-state.md §"Architecture after
+    # 2026-04-23 trim". run_stellar_core flips to true only when
+    # validating Phase-3 validator work.
+    run_postgres:        true
+    run_stellar_core:    false
+    run_galexie:         true
+    run_minio:           true                 # local single-node MinIO
+    run_observability:   true
+
+    # ───── Galexie export target ───────────────────────────────────
+    # Use the local MinIO endpoint by default. For a remote target,
+    # override the S3 endpoint and bucket settings below.
+    galexie_s3_endpoint:  "http://127.0.0.1:9000"
+    galexie_s3_bucket:    "galexie-live"
+    galexie_s3_region:    "{{ region_id }}"
+
+    # ───── Observability targets ───────────────────────────────────
+    prometheus_scrape_allow_cidrs:
+      - "10.0.0.0/8"
+      - "172.16.0.0/12"
+      - "127.0.0.1/32"
+    loki_push_url:       "https://loki.ratesengine.net/loki/api/v1/push"
+
+    # ───── SSH hardening ───────────────────────────────────────────
+    # The LIVE authorized_keys set (2026-07-03 drift audit — this was a
+    # placeholder; an apply would have replaced root's keys with it and
+    # locked out both the operator and the deploy workflow). Key 1 =
+    # @ash's laptop; key 2 = the GitHub Actions deploy key (deploy.yml).
+    admin_ssh_keys:
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPknEhtWeiFH7MRebS0X2A2JdHbmyixmpD0YaJChG/jQ Ashs-MacBook-Pro.local-04-04-2024"
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKv511X6TOXxqPw8Dk3LqTZDrViBNkOgsgCUf4UysJdE github-actions-deploy@r1-20260506"
+    allowed_ssh_cidrs:
+      - "0.0.0.0/0"                            # tighten to VPN/jump host later
+
+    # ───── Firewall ────────────────────────────────────────────────
+    # r1 is a single box: Postgres / MinIO / node_exporter are
+    # consumed only over loopback (Prometheus scrapes 127.0.0.1).
+    # The role default opens 5432/9000/9100 to internal_cidrs
+    # (RFC1918) for a multi-host layout; r1 keeps them loopback-only
+    # — matches the live nftables ruleset. Re-add ports here if a
+    # private-network peer (e.g. an off-box Prometheus) is added.
+    internal_allow_ports: []
+
+  children:
+    archival_nodes:
+      hosts:
+        r1-01.ratesengine.net:
+          ansible_host:         "136.243.90.96"      # Hetzner-assigned IP
+          ansible_user:         "root"
+          ansible_port:         22
+          ansible_ssh_private_key_file: "~/.ssh/id_ed25519"
+
+          # Host-specific overrides go here; most values inherit
+          # from the group-level vars above.
