@@ -54,6 +54,19 @@ export function ProtocolsIndex({
   title?: string;
   description?: string;
 } = {}) {
+  // S-015: several AMM protocols have no factory-seeded contract
+  // roster yet (only blend is seeded; the ADR-0035 gates are pending
+  // team answers) — their cards read "CONTRACTS 0" as if broken. The
+  // per-source stats the /dexes page already uses carry the observed
+  // active-pool count; fall back to that with an honest label.
+  const { data: sourceStats } = useQuery<{ name?: string; markets_count_24h?: number }[]>({
+    queryKey: ['/v1/sources', 'stats', 'protocol-cards'],
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async () =>
+      (await apiGet<{ data: { name?: string; markets_count_24h?: number }[] }>('/v1/sources', { include: 'stats' })).data ?? [],
+  });
+  const poolsBySource = new Map((sourceStats ?? []).map((s) => [s.name ?? '', s.markets_count_24h ?? 0]));
   const [filter, setFilter] = useState<string>(lockedCategory ?? '');
 
   const { data, isError } = useQuery<ProtocolCard[]>({
@@ -164,14 +177,14 @@ export function ProtocolsIndex({
         data-source={asExample('/v1/protocols').url}
       >
         {visible.map((c) => (
-          <ProtocolCardView key={c.name} card={c} />
+          <ProtocolCardView key={c.name} card={c} poolsBySource={poolsBySource} />
         ))}
       </div>
     </Container>
   );
 }
 
-function ProtocolCardView({ card }: { card: ProtocolCard }) {
+function ProtocolCardView({ card, poolsBySource }: { card: ProtocolCard; poolsBySource: Map<string, number> }) {
   const label = protocolMeta(card.name)?.label ?? card.name;
   return (
     <Link
@@ -197,10 +210,20 @@ function ProtocolCardView({ card }: { card: ProtocolCard }) {
         <dl className="flex gap-6 text-xs">
           <div>
             <dt className="text-[10px] font-medium uppercase tracking-wider text-ink-faint">
-              Contracts
+              {card.contract_count > 0
+                ? 'Contracts'
+                : (poolsBySource.get(card.name) ?? 0) > 0
+                  ? 'Active pools · 24h'
+                  : 'Contracts'}
             </dt>
             <dd className="mt-0.5 font-mono tnum text-ink-body">
-              {formatCompact(card.contract_count)}
+              {card.contract_count > 0
+                ? formatCompact(card.contract_count)
+                : (poolsBySource.get(card.name) ?? 0) > 0
+                  ? formatCompact(poolsBySource.get(card.name) ?? 0)
+                  : card.name === 'sdex'
+                    ? 'n/a — order book'
+                    : '—'}
             </dd>
           </div>
           <div>
