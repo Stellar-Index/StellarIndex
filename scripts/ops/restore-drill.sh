@@ -122,12 +122,21 @@ shared_buffers = 2GB
 effective_cache_size = 4GB
 maintenance_work_mem = 256MB
 work_mem = 16MB
-max_connections = 20
-max_locks_per_transaction = 4096
 max_parallel_workers = 2
 timescaledb.max_background_workers = 2
 hot_standby = on
 CONF
+
+# Fourth drill failure mode (2026-07-03): with hot_standby=on, WAL
+# replay ENFORCES that connection/worker GUCs are >= the primary's
+# values ("recovery aborted because of insufficient parameter
+# settings") — these must MIRROR the live primary, not be downsized.
+# Read them live so a future primary retune can't re-break the drill.
+sudo -u postgres psql -d stellarindex -tA -F' = ' -c \
+  "SELECT name, setting FROM pg_settings WHERE name IN
+   ('max_connections','max_worker_processes','max_wal_senders',
+    'max_prepared_transactions','max_locks_per_transaction')" \
+  | sudo -u postgres tee -a "$DATA_DIR/postgresql.auto.conf" >/dev/null
 if sudo -u postgres "$PG_BIN/pg_ctl" -D "$DATA_DIR" -w -t "$PG_START_TIMEOUT" start; then
   check "pg_start" 1 "scratch instance up on :$DRILL_PG_PORT (recovery complete)"
 else
