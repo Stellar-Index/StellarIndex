@@ -165,7 +165,9 @@ const STATIC_PAGES: Result[] = [
     hint: 'create your account',
     href: '/signup',
   },
-  { type: 'page', label: 'Account', hint: 'manage API keys', href: '/account' },
+  // S-019: /account never existed as a route (only a CF redirect
+  // rescued it in production; it 404'd everywhere else).
+  { type: 'page', label: 'Account', hint: 'manage API keys', href: '/dashboard' },
   {
     type: 'page',
     label: 'Pricing',
