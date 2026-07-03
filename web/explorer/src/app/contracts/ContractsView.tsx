@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
+import { useSACWrappers } from '@/api/hooks';
 import { formatCompact } from '@/lib/format';
 import { Container, PageHeader } from '@/components/ui';
 import { formatTimestamp } from '../explorer-shared';
@@ -24,6 +25,7 @@ type DirectoryResp = NonNullable<
  * interaction map).
  */
 export function ContractsView() {
+  const { data: sacMap } = useSACWrappers();
   const { data, isLoading, isError, error } = useQuery<DirectoryResp>({
     queryKey: ['/v1/contracts', 30],
     staleTime: 60_000,
@@ -85,6 +87,22 @@ export function ContractsView() {
                       >
                         {(c.contract_id ?? '').slice(0, 8)}…{(c.contract_id ?? '').slice(-6)}
                       </Link>
+                      {/* CON-2: 2 of the top 3 rows are SACs resolvable
+                          from the operator wrapper map already cached
+                          sitewide — name them instead of bare hashes. */}
+                      {(() => {
+                        const wrapped =
+                          c.contract_id === 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA'
+                            ? 'native'
+                            : sacMap?.[c.contract_id ?? ''];
+                        if (!wrapped) return null;
+                        const code = wrapped === 'native' ? 'XLM' : wrapped.split(/[:-]/)[0];
+                        return (
+                          <span className="ml-2 rounded-sm bg-surface-muted px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-ink-muted">
+                            {code} SAC
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="px-4 py-3">
                       {c.protocol ? (

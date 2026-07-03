@@ -524,6 +524,7 @@ type InteractionsResp = NonNullable<
  * current behaviour.
  */
 function InteractionsPanel({ id }: { id: string }) {
+  const { data: sacMap } = useSACWrappers();
   const { data, isLoading, isError } = useQuery<InteractionsResp>({
     queryKey: ['/v1/contracts/{id}/interactions', id],
     enabled: CONTRACT_RE.test(id),
@@ -584,6 +585,19 @@ function InteractionsPanel({ id }: { id: string }) {
                   >
                     {(e.contract_id ?? '').slice(0, 8)}…{(e.contract_id ?? '').slice(-6)}
                   </Link>
+                  {(() => {
+                    const wrapped =
+                      e.contract_id === 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA'
+                        ? 'native'
+                        : sacMap?.[e.contract_id ?? ''];
+                    if (!wrapped) return null;
+                    const code = wrapped === 'native' ? 'XLM' : wrapped.split(/[:-]/)[0];
+                    return (
+                      <span className="ml-2 rounded-sm bg-surface-muted px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-ink-muted">
+                        {code} SAC
+                      </span>
+                    );
+                  })()}
                 </td>
                 <td className="px-4 py-3">
                   {e.protocol ? (
