@@ -465,7 +465,8 @@ jobs:
           # The encrypted vault itself is NOT in the (public) repo —
           # 2026-07-03 exposure response. Materialize it from the
           # Actions secret.
-          echo "${{ secrets.ANSIBLE_VAULT_FILE_B64 }}" | base64 -d > configs/ansible/inventory/r1.secrets.yml
+          # NB: this step runs with working-directory: configs/ansible
+          echo "${{ secrets.ANSIBLE_VAULT_FILE_B64 }}" | base64 -d > inventory/r1.secrets.yml
           ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/archival-node.yml
           ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/monitoring.yml
       - name: ansible-lint (production profile, warnings tolerated)
