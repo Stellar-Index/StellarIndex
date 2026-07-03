@@ -10,7 +10,7 @@ DNS + the `api.stellarindex.io` proxy:
 
 | Surface | Project | Domain |
 |---|---|---|
-| Explorer (incl. in-site `/account`) | `stellarindex-showcase` | `stellarindex.io`, `www.stellarindex.io` |
+| Explorer (incl. in-site `/account`) | `stellarindex-explorer` | `stellarindex.io`, `www.stellarindex.io` |
 | Status page | `stellarindex-status` | `status.stellarindex.io` |
 | API docs | `stellarindex-docs` | `docs.stellarindex.io` |
 | Dashboard redirect (retired) | `stellarindex-app` | `app.stellarindex.io` → `301 /account` |
@@ -167,7 +167,7 @@ and `/account` shows the signed-out shell. To turn login on:
   direct-upload, so this is the primary path (not a fallback):
   ```sh
   cd web/explorer && pnpm build && \
-    wrangler pages deploy out --project-name stellarindex-showcase
+    wrangler pages deploy out --project-name stellarindex-explorer
   # docs is a static dir, no build:
   wrangler pages deploy docs/reference/api --project-name stellarindex-docs
   ```
