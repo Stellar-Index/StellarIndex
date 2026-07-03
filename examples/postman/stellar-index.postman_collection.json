@@ -2453,6 +2453,15 @@
                 {
                   "disabled": false,
                   "description": {
+                    "content": "Aggregation window in seconds (board #43; proposal: the current-price window is query-selectable). Default 60 = the closed 1-minute bucket (ADR-0015 semantics, unchanged). 300/3600/86400 serve the aggregator's continuously-published rolling VWAP for that window; a window the aggregator has not published for the pair is a 404, never a silent substitution. Sub-minute rolling windows: /v1/price/tip. (This can only be one of 60,300,3600,86400)",
+                    "type": "text/plain"
+                  },
+                  "key": "window",
+                  "value": "60"
+                },
+                {
+                  "disabled": false,
+                  "description": {
                     "content": "(Required) Canonical asset identifier — matches the `asset_id` on\nresponse bodies. Query-parameter form is the shorter `asset`\nper the handler implementations (/v1/price, /v1/oracle/latest).\nStrict canonical form only — `XLM` / `USDC` are rejected;\nuse `native` for XLM and the full `<code>-<G…>` strkey for\ncredit assets.\n",
                     "type": "text/plain"
                   },
@@ -2496,6 +2505,15 @@
                     {
                       "disabled": false,
                       "description": {
+                        "content": "Aggregation window in seconds (board #43; proposal: the current-price window is query-selectable). Default 60 = the closed 1-minute bucket (ADR-0015 semantics, unchanged). 300/3600/86400 serve the aggregator's continuously-published rolling VWAP for that window; a window the aggregator has not published for the pair is a 404, never a silent substitution. Sub-minute rolling windows: /v1/price/tip. (This can only be one of 60,300,3600,86400)",
+                        "type": "text/plain"
+                      },
+                      "key": "window",
+                      "value": "60"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
                         "content": "(Required) Canonical asset identifier — matches the `asset_id` on\nresponse bodies. Query-parameter form is the shorter `asset`\nper the handler implementations (/v1/price, /v1/oracle/latest).\nStrict canonical form only — `XLM` / `USDC` are rejected;\nuse `native` for XLM and the full `<code>-<G…>` strkey for\ncredit assets.\n",
                         "type": "text/plain"
                       },
@@ -2531,7 +2549,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"price\": \"<string>\",\n    \"price_type\": \"twap\",\n    \"observed_at\": \"<dateTime>\",\n    \"window_seconds\": \"<integer>\",\n    \"change_24h_pct\": \"<string>\",\n    \"confidence\": \"<float>\",\n    \"confidence_factors\": {\n      \"z_score\": \"<float>\",\n      \"source_count\": \"<float>\",\n      \"diversity\": \"<float>\",\n      \"liquidity\": \"<float>\",\n      \"cross_oracle\": \"<float>\",\n      \"baseline_quality\": \"<float>\"\n    }\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"price\": \"<string>\",\n    \"price_type\": \"vwap\",\n    \"observed_at\": \"<dateTime>\",\n    \"window_seconds\": \"<integer>\",\n    \"change_24h_pct\": \"<string>\",\n    \"confidence\": \"<float>\",\n    \"confidence_factors\": {\n      \"z_score\": \"<float>\",\n      \"source_count\": \"<float>\",\n      \"diversity\": \"<float>\",\n      \"liquidity\": \"<float>\",\n      \"cross_oracle\": \"<float>\",\n      \"baseline_quality\": \"<float>\"\n    }\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -2546,6 +2564,15 @@
                     "{{baseUrl}}"
                   ],
                   "query": [
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Aggregation window in seconds (board #43; proposal: the current-price window is query-selectable). Default 60 = the closed 1-minute bucket (ADR-0015 semantics, unchanged). 300/3600/86400 serve the aggregator's continuously-published rolling VWAP for that window; a window the aggregator has not published for the pair is a 404, never a silent substitution. Sub-minute rolling windows: /v1/price/tip. (This can only be one of 60,300,3600,86400)",
+                        "type": "text/plain"
+                      },
+                      "key": "window",
+                      "value": "60"
+                    },
                     {
                       "disabled": false,
                       "description": {
@@ -2602,6 +2629,15 @@
                     {
                       "disabled": false,
                       "description": {
+                        "content": "Aggregation window in seconds (board #43; proposal: the current-price window is query-selectable). Default 60 = the closed 1-minute bucket (ADR-0015 semantics, unchanged). 300/3600/86400 serve the aggregator's continuously-published rolling VWAP for that window; a window the aggregator has not published for the pair is a 404, never a silent substitution. Sub-minute rolling windows: /v1/price/tip. (This can only be one of 60,300,3600,86400)",
+                        "type": "text/plain"
+                      },
+                      "key": "window",
+                      "value": "60"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
                         "content": "(Required) Canonical asset identifier — matches the `asset_id` on\nresponse bodies. Query-parameter form is the shorter `asset`\nper the handler implementations (/v1/price, /v1/oracle/latest).\nStrict canonical form only — `XLM` / `USDC` are rejected;\nuse `native` for XLM and the full `<code>-<G…>` strkey for\ncredit assets.\n",
                         "type": "text/plain"
                       },
@@ -2652,6 +2688,15 @@
                     "{{baseUrl}}"
                   ],
                   "query": [
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Aggregation window in seconds (board #43; proposal: the current-price window is query-selectable). Default 60 = the closed 1-minute bucket (ADR-0015 semantics, unchanged). 300/3600/86400 serve the aggregator's continuously-published rolling VWAP for that window; a window the aggregator has not published for the pair is a 404, never a silent substitution. Sub-minute rolling windows: /v1/price/tip. (This can only be one of 60,300,3600,86400)",
+                        "type": "text/plain"
+                      },
+                      "key": "window",
+                      "value": "60"
+                    },
                     {
                       "disabled": false,
                       "description": {
@@ -2744,6 +2789,15 @@
                     {
                       "disabled": false,
                       "description": {
+                        "content": "Aggregation window in seconds (board #43; proposal: the current-price window is query-selectable). Default 60 = the closed 1-minute bucket (ADR-0015 semantics, unchanged). 300/3600/86400 serve the aggregator's continuously-published rolling VWAP for that window; a window the aggregator has not published for the pair is a 404, never a silent substitution. Sub-minute rolling windows: /v1/price/tip. (This can only be one of 60,300,3600,86400)",
+                        "type": "text/plain"
+                      },
+                      "key": "window",
+                      "value": "60"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
                         "content": "(Required) Canonical asset identifier — matches the `asset_id` on\nresponse bodies. Query-parameter form is the shorter `asset`\nper the handler implementations (/v1/price, /v1/oracle/latest).\nStrict canonical form only — `XLM` / `USDC` are rejected;\nuse `native` for XLM and the full `<code>-<G…>` strkey for\ncredit assets.\n",
                         "type": "text/plain"
                       },
@@ -2794,6 +2848,15 @@
                     "{{baseUrl}}"
                   ],
                   "query": [
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Aggregation window in seconds (board #43; proposal: the current-price window is query-selectable). Default 60 = the closed 1-minute bucket (ADR-0015 semantics, unchanged). 300/3600/86400 serve the aggregator's continuously-published rolling VWAP for that window; a window the aggregator has not published for the pair is a 404, never a silent substitution. Sub-minute rolling windows: /v1/price/tip. (This can only be one of 60,300,3600,86400)",
+                        "type": "text/plain"
+                      },
+                      "key": "window",
+                      "value": "60"
+                    },
                     {
                       "disabled": false,
                       "description": {
@@ -2963,7 +3026,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"price\": \"<string>\",\n    \"price_type\": \"twap\",\n    \"observed_at\": \"<dateTime>\",\n    \"window_seconds\": \"<integer>\",\n    \"change_24h_pct\": \"<string>\",\n    \"confidence\": \"<float>\",\n    \"confidence_factors\": {\n      \"z_score\": \"<float>\",\n      \"source_count\": \"<float>\",\n      \"diversity\": \"<float>\",\n      \"liquidity\": \"<float>\",\n      \"cross_oracle\": \"<float>\",\n      \"baseline_quality\": \"<float>\"\n    }\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"price\": \"<string>\",\n    \"price_type\": \"vwap\",\n    \"observed_at\": \"<dateTime>\",\n    \"window_seconds\": \"<integer>\",\n    \"change_24h_pct\": \"<string>\",\n    \"confidence\": \"<float>\",\n    \"confidence_factors\": {\n      \"z_score\": \"<float>\",\n      \"source_count\": \"<float>\",\n      \"diversity\": \"<float>\",\n      \"liquidity\": \"<float>\",\n      \"cross_oracle\": \"<float>\",\n      \"baseline_quality\": \"<float>\"\n    }\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -3980,7 +4043,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"vwap\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"last_trade\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"peg\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"vwap\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -4074,7 +4137,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"vwap\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"last_trade\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"peg\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"vwap\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -5886,7 +5949,7 @@
                         "type": "text/plain"
                       },
                       "key": "granularity",
-                      "value": "1h"
+                      "value": "4h"
                     }
                   ],
                   "variable": []
@@ -5939,7 +6002,7 @@
                             "type": "text/plain"
                           },
                           "key": "granularity",
-                          "value": "1h"
+                          "value": "4h"
                         }
                       ],
                       "variable": []
@@ -6029,7 +6092,7 @@
                     "type": "text/plain"
                   },
                   "key": "granularity",
-                  "value": "1h"
+                  "value": "4h"
                 },
                 {
                   "disabled": false,
@@ -6099,7 +6162,7 @@
                         "type": "text/plain"
                       },
                       "key": "granularity",
-                      "value": "1h"
+                      "value": "4h"
                     },
                     {
                       "disabled": false,
@@ -6130,7 +6193,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"timeframe\": \"1mo\",\n    \"granularity\": \"4h\",\n    \"price_type\": \"market_cap\",\n    \"points\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      }\n    ],\n    \"truncated\": \"<boolean>\",\n    \"data_starts_at\": \"<dateTime>\",\n    \"requested_from\": \"<dateTime>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"timeframe\": \"1mo\",\n    \"granularity\": \"1w\",\n    \"price_type\": \"market_cap\",\n    \"points\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"p\": \"<string>\",\n        \"v_usd\": \"<string>\"\n      }\n    ],\n    \"truncated\": \"<boolean>\",\n    \"data_starts_at\": \"<dateTime>\",\n    \"requested_from\": \"<dateTime>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -6179,7 +6242,7 @@
                         "type": "text/plain"
                       },
                       "key": "granularity",
-                      "value": "1h"
+                      "value": "4h"
                     },
                     {
                       "disabled": false,
@@ -6259,7 +6322,7 @@
                         "type": "text/plain"
                       },
                       "key": "granularity",
-                      "value": "1h"
+                      "value": "4h"
                     },
                     {
                       "disabled": false,
@@ -6361,11 +6424,11 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Bar width for multi-bar series mode. Omit for the\nsingle-bar response over `[from, to)`. Invalid intervals\nreturn 400 `errors/invalid-interval`.\n (This can only be one of 1m,5m,15m,30m,1h,4h,1d,1w)",
+                    "content": "Bar width for multi-bar series mode. Omit for the\nsingle-bar response over `[from, to)`. Invalid intervals\nreturn 400 `errors/invalid-interval`.\n (This can only be one of 1m,5m,15m,30m,1h,4h,1d,1w,1mo)",
                     "type": "text/plain"
                   },
                   "key": "interval",
-                  "value": "1m"
+                  "value": "1d"
                 },
                 {
                   "disabled": false,
@@ -6449,11 +6512,11 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Bar width for multi-bar series mode. Omit for the\nsingle-bar response over `[from, to)`. Invalid intervals\nreturn 400 `errors/invalid-interval`.\n (This can only be one of 1m,5m,15m,30m,1h,4h,1d,1w)",
+                        "content": "Bar width for multi-bar series mode. Omit for the\nsingle-bar response over `[from, to)`. Invalid intervals\nreturn 400 `errors/invalid-interval`.\n (This can only be one of 1m,5m,15m,30m,1h,4h,1d,1w,1mo)",
                         "type": "text/plain"
                       },
                       "key": "interval",
-                      "value": "1m"
+                      "value": "1d"
                     },
                     {
                       "disabled": false,
@@ -6547,11 +6610,11 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Bar width for multi-bar series mode. Omit for the\nsingle-bar response over `[from, to)`. Invalid intervals\nreturn 400 `errors/invalid-interval`.\n (This can only be one of 1m,5m,15m,30m,1h,4h,1d,1w)",
+                        "content": "Bar width for multi-bar series mode. Omit for the\nsingle-bar response over `[from, to)`. Invalid intervals\nreturn 400 `errors/invalid-interval`.\n (This can only be one of 1m,5m,15m,30m,1h,4h,1d,1w,1mo)",
                         "type": "text/plain"
                       },
                       "key": "interval",
-                      "value": "1m"
+                      "value": "1d"
                     },
                     {
                       "disabled": false,
@@ -6645,11 +6708,11 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Bar width for multi-bar series mode. Omit for the\nsingle-bar response over `[from, to)`. Invalid intervals\nreturn 400 `errors/invalid-interval`.\n (This can only be one of 1m,5m,15m,30m,1h,4h,1d,1w)",
+                        "content": "Bar width for multi-bar series mode. Omit for the\nsingle-bar response over `[from, to)`. Invalid intervals\nreturn 400 `errors/invalid-interval`.\n (This can only be one of 1m,5m,15m,30m,1h,4h,1d,1w,1mo)",
                         "type": "text/plain"
                       },
                       "key": "interval",
-                      "value": "1m"
+                      "value": "1d"
                     },
                     {
                       "disabled": false,
@@ -6743,11 +6806,11 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Bar width for multi-bar series mode. Omit for the\nsingle-bar response over `[from, to)`. Invalid intervals\nreturn 400 `errors/invalid-interval`.\n (This can only be one of 1m,5m,15m,30m,1h,4h,1d,1w)",
+                        "content": "Bar width for multi-bar series mode. Omit for the\nsingle-bar response over `[from, to)`. Invalid intervals\nreturn 400 `errors/invalid-interval`.\n (This can only be one of 1m,5m,15m,30m,1h,4h,1d,1w,1mo)",
                         "type": "text/plain"
                       },
                       "key": "interval",
-                      "value": "1m"
+                      "value": "1d"
                     },
                     {
                       "disabled": false,
@@ -6877,11 +6940,11 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Bar width for multi-bar series mode. Omit for the\nsingle-bar response over `[from, to)`. Invalid intervals\nreturn 400 `errors/invalid-interval`.\n (This can only be one of 1m,5m,15m,30m,1h,4h,1d,1w)",
+                        "content": "Bar width for multi-bar series mode. Omit for the\nsingle-bar response over `[from, to)`. Invalid intervals\nreturn 400 `errors/invalid-interval`.\n (This can only be one of 1m,5m,15m,30m,1h,4h,1d,1w,1mo)",
                         "type": "text/plain"
                       },
                       "key": "interval",
-                      "value": "1m"
+                      "value": "1d"
                     },
                     {
                       "disabled": false,
@@ -6975,11 +7038,11 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Bar width for multi-bar series mode. Omit for the\nsingle-bar response over `[from, to)`. Invalid intervals\nreturn 400 `errors/invalid-interval`.\n (This can only be one of 1m,5m,15m,30m,1h,4h,1d,1w)",
+                        "content": "Bar width for multi-bar series mode. Omit for the\nsingle-bar response over `[from, to)`. Invalid intervals\nreturn 400 `errors/invalid-interval`.\n (This can only be one of 1m,5m,15m,30m,1h,4h,1d,1w,1mo)",
                         "type": "text/plain"
                       },
                       "key": "interval",
-                      "value": "1m"
+                      "value": "1d"
                     },
                     {
                       "disabled": false,
@@ -9798,7 +9861,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"firing_count\": \"<integer>\",\n    \"reason_tally\": [\n      {\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"events\": [\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"frozen_at\": \"<dateTime>\",\n        \"frozen_at_ledger\": \"<long>\",\n        \"reason\": \"divergence\",\n        \"frozen_value\": \"<string>\",\n        \"recovered_at\": \"<dateTime>\",\n        \"recovered_at_ledger\": \"<long>\",\n        \"firing\": \"<boolean>\",\n        \"detail\": {}\n      },\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"frozen_at\": \"<dateTime>\",\n        \"frozen_at_ledger\": \"<long>\",\n        \"reason\": \"divergence\",\n        \"frozen_value\": \"<string>\",\n        \"recovered_at\": \"<dateTime>\",\n        \"recovered_at_ledger\": \"<long>\",\n        \"firing\": \"<boolean>\",\n        \"detail\": {}\n      }\n    ]\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"firing_count\": \"<integer>\",\n    \"reason_tally\": [\n      {\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"reason\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"events\": [\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"frozen_at\": \"<dateTime>\",\n        \"frozen_at_ledger\": \"<long>\",\n        \"reason\": \"divergence\",\n        \"frozen_value\": \"<string>\",\n        \"recovered_at\": \"<dateTime>\",\n        \"recovered_at_ledger\": \"<long>\",\n        \"firing\": \"<boolean>\",\n        \"detail\": {}\n      },\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"frozen_at\": \"<dateTime>\",\n        \"frozen_at_ledger\": \"<long>\",\n        \"reason\": \"manual\",\n        \"frozen_value\": \"<string>\",\n        \"recovered_at\": \"<dateTime>\",\n        \"recovered_at_ledger\": \"<long>\",\n        \"firing\": \"<boolean>\",\n        \"detail\": {}\n      }\n    ]\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -9991,7 +10054,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"observations\": [\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"reference\": \"chainlink\",\n        \"observed_at\": \"<dateTime>\",\n        \"observed_at_ledger\": \"<long>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"delta_pct\": \"<string>\",\n        \"status\": \"firing\"\n      },\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"reference\": \"band\",\n        \"observed_at\": \"<dateTime>\",\n        \"observed_at_ledger\": \"<long>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"delta_pct\": \"<string>\",\n        \"status\": \"firing\"\n      }\n    ]\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"observations\": [\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"reference\": \"reflector-fx\",\n        \"observed_at\": \"<dateTime>\",\n        \"observed_at_ledger\": \"<long>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"delta_pct\": \"<string>\",\n        \"status\": \"firing\"\n      },\n      {\n        \"asset_id\": \"<string>\",\n        \"quote_id\": \"<string>\",\n        \"reference\": \"reflector-dex\",\n        \"observed_at\": \"<dateTime>\",\n        \"observed_at_ledger\": \"<long>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"delta_pct\": \"<string>\",\n        \"status\": \"clear\"\n      }\n    ]\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -11401,7 +11464,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"g_strkey\": \"<string>\",\n    \"home_domain\": \"<string>\",\n    \"org_name\": \"<string>\",\n    \"scam_reason\": \"<string>\",\n    \"org_verified\": \"<boolean>\",\n    \"auth_required\": \"<boolean>\",\n    \"auth_revocable\": \"<boolean>\",\n    \"auth_immutable\": \"<boolean>\",\n    \"auth_clawback\": \"<boolean>\",\n    \"sep1_resolved_at\": \"<dateTime>\",\n    \"sep1_payload\": {\n      \"key_0\": 2300.4689789377153,\n      \"key_1\": true,\n      \"key_2\": false\n    },\n    \"creation_ledger\": \"<integer>\",\n    \"assets\": [\n      {\n        \"asset_id\": \"<string>\",\n        \"code\": \"<string>\",\n        \"slug\": \"<string>\",\n        \"first_seen_ledger\": \"<integer>\",\n        \"last_seen_ledger\": \"<integer>\",\n        \"observation_count\": \"<long>\"\n      },\n      {\n        \"asset_id\": \"<string>\",\n        \"code\": \"<string>\",\n        \"slug\": \"<string>\",\n        \"first_seen_ledger\": \"<integer>\",\n        \"last_seen_ledger\": \"<integer>\",\n        \"observation_count\": \"<long>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"g_strkey\": \"<string>\",\n    \"home_domain\": \"<string>\",\n    \"org_name\": \"<string>\",\n    \"scam_reason\": \"<string>\",\n    \"org_verified\": \"<boolean>\",\n    \"auth_required\": \"<boolean>\",\n    \"auth_revocable\": \"<boolean>\",\n    \"auth_immutable\": \"<boolean>\",\n    \"auth_clawback\": \"<boolean>\",\n    \"sep1_resolved_at\": \"<dateTime>\",\n    \"sep1_payload\": {\n      \"key_0\": true,\n      \"key_1\": \"string\",\n      \"key_2\": \"string\"\n    },\n    \"creation_ledger\": \"<integer>\",\n    \"assets\": [\n      {\n        \"asset_id\": \"<string>\",\n        \"code\": \"<string>\",\n        \"slug\": \"<string>\",\n        \"first_seen_ledger\": \"<integer>\",\n        \"last_seen_ledger\": \"<integer>\",\n        \"observation_count\": \"<long>\"\n      },\n      {\n        \"asset_id\": \"<string>\",\n        \"code\": \"<string>\",\n        \"slug\": \"<string>\",\n        \"first_seen_ledger\": \"<integer>\",\n        \"last_seen_ledger\": \"<integer>\",\n        \"observation_count\": \"<long>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -11834,7 +11897,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"contract_id\": \"<string>\",\n    \"count\": \"<integer>\",\n    \"limit\": \"<integer>\",\n    \"transfers\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"event_kind\": \"set_authorized\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"from\": \"<string>\",\n        \"to\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"live_until_ledger\": \"<integer>\",\n        \"authorized\": \"<boolean>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"event_kind\": \"approve\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"from\": \"<string>\",\n        \"to\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"live_until_ledger\": \"<integer>\",\n        \"authorized\": \"<boolean>\"\n      }\n    ],\n    \"from\": \"<string>\",\n    \"to\": \"<string>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"contract_id\": \"<string>\",\n    \"count\": \"<integer>\",\n    \"limit\": \"<integer>\",\n    \"transfers\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"event_kind\": \"set_admin\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"from\": \"<string>\",\n        \"to\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"live_until_ledger\": \"<integer>\",\n        \"authorized\": \"<boolean>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"event_kind\": \"set_authorized\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"from\": \"<string>\",\n        \"to\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"live_until_ledger\": \"<integer>\",\n        \"authorized\": \"<boolean>\"\n      }\n    ],\n    \"from\": \"<string>\",\n    \"to\": \"<string>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -13401,7 +13464,7 @@
                       "variable": [
                         {
                           "type": "any",
-                          "value": "source",
+                          "value": "pair",
                           "key": "entity_type",
                           "disabled": false,
                           "description": {
@@ -13453,7 +13516,7 @@
                                 "type": "text/plain"
                               },
                               "type": "any",
-                              "value": "source",
+                              "value": "pair",
                               "key": "entity_type"
                             },
                             {
@@ -13485,7 +13548,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"entity_type\": \"<string>\",\n    \"entity_id\": \"<string>\",\n    \"refreshed_at\": \"<dateTime>\",\n    \"current_value\": \"<number>\",\n    \"h1_value\": \"<number>\",\n    \"h1_delta_pct\": \"<number>\",\n    \"h24_value\": \"<number>\",\n    \"h24_delta_pct\": \"<number>\",\n    \"d7_value\": \"<number>\",\n    \"d7_delta_pct\": \"<number>\",\n    \"d30_value\": \"<number>\",\n    \"d30_delta_pct\": \"<number>\",\n    \"ath_value\": \"<number>\",\n    \"ath_at\": \"<dateTime>\",\n    \"atl_value\": \"<number>\",\n    \"atl_at\": \"<dateTime>\",\n    \"streak_direction\": \"flat\",\n    \"streak_days\": \"<integer>\",\n    \"acceleration\": \"flat\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"entity_type\": \"<string>\",\n    \"entity_id\": \"<string>\",\n    \"refreshed_at\": \"<dateTime>\",\n    \"current_value\": \"<number>\",\n    \"h1_value\": \"<number>\",\n    \"h1_delta_pct\": \"<number>\",\n    \"h24_value\": \"<number>\",\n    \"h24_delta_pct\": \"<number>\",\n    \"d7_value\": \"<number>\",\n    \"d7_delta_pct\": \"<number>\",\n    \"d30_value\": \"<number>\",\n    \"d30_delta_pct\": \"<number>\",\n    \"ath_value\": \"<number>\",\n    \"ath_at\": \"<dateTime>\",\n    \"atl_value\": \"<number>\",\n    \"atl_at\": \"<dateTime>\",\n    \"streak_direction\": \"down\",\n    \"streak_days\": \"<integer>\",\n    \"acceleration\": \"increasing\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -13510,7 +13573,7 @@
                                 "type": "text/plain"
                               },
                               "type": "any",
-                              "value": "source",
+                              "value": "pair",
                               "key": "entity_type"
                             },
                             {
@@ -13567,7 +13630,7 @@
                                 "type": "text/plain"
                               },
                               "type": "any",
-                              "value": "source",
+                              "value": "pair",
                               "key": "entity_type"
                             },
                             {
@@ -13624,7 +13687,7 @@
                                 "type": "text/plain"
                               },
                               "type": "any",
-                              "value": "source",
+                              "value": "pair",
                               "key": "entity_type"
                             },
                             {
@@ -13717,7 +13780,7 @@
                                 "type": "text/plain"
                               },
                               "type": "any",
-                              "value": "source",
+                              "value": "pair",
                               "key": "entity_type"
                             },
                             {
@@ -13774,7 +13837,7 @@
                                 "type": "text/plain"
                               },
                               "type": "any",
-                              "value": "source",
+                              "value": "pair",
                               "key": "entity_type"
                             },
                             {
@@ -14483,7 +14546,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"incidents\": [\n      {\n        \"slug\": \"<string>\",\n        \"title\": \"<string>\",\n        \"severity\": \"SEV-2\",\n        \"status\": \"investigating\",\n        \"started_at\": \"<dateTime>\",\n        \"body_markdown\": \"<string>\",\n        \"resolved_at\": \"<dateTime>\",\n        \"affected_components\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"postmortem\": \"<string>\"\n      },\n      {\n        \"slug\": \"<string>\",\n        \"title\": \"<string>\",\n        \"severity\": \"SEV-2\",\n        \"status\": \"resolved\",\n        \"started_at\": \"<dateTime>\",\n        \"body_markdown\": \"<string>\",\n        \"resolved_at\": \"<dateTime>\",\n        \"affected_components\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"postmortem\": \"<string>\"\n      }\n    ],\n    \"count\": \"<integer>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"incidents\": [\n      {\n        \"slug\": \"<string>\",\n        \"title\": \"<string>\",\n        \"severity\": \"SEV-1\",\n        \"status\": \"identified\",\n        \"started_at\": \"<dateTime>\",\n        \"body_markdown\": \"<string>\",\n        \"resolved_at\": \"<dateTime>\",\n        \"affected_components\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"postmortem\": \"<string>\"\n      },\n      {\n        \"slug\": \"<string>\",\n        \"title\": \"<string>\",\n        \"severity\": \"SEV-2\",\n        \"status\": \"resolved\",\n        \"started_at\": \"<dateTime>\",\n        \"body_markdown\": \"<string>\",\n        \"resolved_at\": \"<dateTime>\",\n        \"affected_components\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"postmortem\": \"<string>\"\n      }\n    ],\n    \"count\": \"<integer>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -14776,7 +14839,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"protocols\": [\n      {\n        \"name\": \"<string>\",\n        \"category\": \"oracle\",\n        \"description\": \"<string>\",\n        \"genesis_ledger\": \"<long>\",\n        \"factories\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"contract_count\": \"<integer>\",\n        \"events_24h\": \"<long>\",\n        \"completeness\": {\n          \"complete\": \"<boolean>\",\n          \"watermark_ledger\": \"<long>\"\n        }\n      },\n      {\n        \"name\": \"<string>\",\n        \"category\": \"oracle\",\n        \"description\": \"<string>\",\n        \"genesis_ledger\": \"<long>\",\n        \"factories\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"contract_count\": \"<integer>\",\n        \"events_24h\": \"<long>\",\n        \"completeness\": {\n          \"complete\": \"<boolean>\",\n          \"watermark_ledger\": \"<long>\"\n        }\n      }\n    ],\n    \"total_protocols\": \"<integer>\"\n  }\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"protocols\": [\n      {\n        \"name\": \"<string>\",\n        \"category\": \"oracle\",\n        \"description\": \"<string>\",\n        \"genesis_ledger\": \"<long>\",\n        \"factories\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"contract_count\": \"<integer>\",\n        \"events_24h\": \"<long>\",\n        \"completeness\": {\n          \"complete\": \"<boolean>\",\n          \"watermark_ledger\": \"<long>\"\n        }\n      },\n      {\n        \"name\": \"<string>\",\n        \"category\": \"dex\",\n        \"description\": \"<string>\",\n        \"genesis_ledger\": \"<long>\",\n        \"factories\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"contract_count\": \"<integer>\",\n        \"events_24h\": \"<long>\",\n        \"completeness\": {\n          \"complete\": \"<boolean>\",\n          \"watermark_ledger\": \"<long>\"\n        }\n      }\n    ],\n    \"total_protocols\": \"<integer>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             }
@@ -14873,7 +14936,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"category\": \"amm\",\n    \"contract_count\": \"<integer>\",\n    \"contracts\": [\n      {\n        \"contract_id\": \"<string>\",\n        \"factory_id\": \"<string>\",\n        \"first_ledger\": \"<long>\",\n        \"token0\": \"<string>\",\n        \"token1\": \"<string>\",\n        \"kind\": \"factory\",\n        \"events\": \"<long>\",\n        \"last_seen\": \"<dateTime>\"\n      },\n      {\n        \"contract_id\": \"<string>\",\n        \"factory_id\": \"<string>\",\n        \"first_ledger\": \"<long>\",\n        \"token0\": \"<string>\",\n        \"token1\": \"<string>\",\n        \"kind\": \"instance\",\n        \"events\": \"<long>\",\n        \"last_seen\": \"<dateTime>\"\n      }\n    ],\n    \"description\": \"<string>\",\n    \"event_kinds\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"events_24h\": \"<long>\",\n    \"factories\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"genesis_ledger\": \"<long>\",\n    \"name\": \"<string>\",\n    \"completeness\": {\n      \"complete\": \"<boolean>\",\n      \"watermark_ledger\": \"<long>\"\n    },\n    \"bespoke\": {\n      \"key_0\": 1173.2027377001941,\n      \"key_1\": 4602.3671654984355,\n      \"key_2\": 4099\n    },\n    \"verification_page\": \"<string>\",\n    \"activity_window_days\": \"<integer>\",\n    \"events_total\": \"<long>\",\n    \"event_breakdown\": [\n      {\n        \"event_type\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"event_type\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"activity_series\": [\n      {\n        \"date\": \"<string>\",\n        \"events\": \"<long>\"\n      },\n      {\n        \"date\": \"<string>\",\n        \"events\": \"<long>\"\n      }\n    ]\n  }\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"data\": {\n    \"category\": \"amm\",\n    \"contract_count\": \"<integer>\",\n    \"contracts\": [\n      {\n        \"contract_id\": \"<string>\",\n        \"factory_id\": \"<string>\",\n        \"first_ledger\": \"<long>\",\n        \"token0\": \"<string>\",\n        \"token1\": \"<string>\",\n        \"kind\": \"instance\",\n        \"events\": \"<long>\",\n        \"last_seen\": \"<dateTime>\"\n      },\n      {\n        \"contract_id\": \"<string>\",\n        \"factory_id\": \"<string>\",\n        \"first_ledger\": \"<long>\",\n        \"token0\": \"<string>\",\n        \"token1\": \"<string>\",\n        \"kind\": \"instance\",\n        \"events\": \"<long>\",\n        \"last_seen\": \"<dateTime>\"\n      }\n    ],\n    \"description\": \"<string>\",\n    \"event_kinds\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"events_24h\": \"<long>\",\n    \"factories\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"genesis_ledger\": \"<long>\",\n    \"name\": \"<string>\",\n    \"completeness\": {\n      \"complete\": \"<boolean>\",\n      \"watermark_ledger\": \"<long>\"\n    },\n    \"bespoke\": {\n      \"key_0\": 214.99033784493804\n    },\n    \"verification_page\": \"<string>\",\n    \"activity_window_days\": \"<integer>\",\n    \"events_total\": \"<long>\",\n    \"event_breakdown\": [\n      {\n        \"event_type\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"event_type\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ],\n    \"activity_series\": [\n      {\n        \"date\": \"<string>\",\n        \"events\": \"<long>\"\n      },\n      {\n        \"date\": \"<string>\",\n        \"events\": \"<long>\"\n      }\n    ]\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -15627,7 +15690,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"version\": \"<string>\",\n    \"aggregation\": {\n      \"price_method\": \"vwap\",\n      \"outlier_filter\": {\n        \"default_sigma\": \"<number>\",\n        \"endpoint\": \"<string>\",\n        \"note\": \"<string>\"\n      },\n      \"stablecoin_fiat_proxy\": [\n        {\n          \"asset_id\": \"<string>\",\n          \"pegs_to\": \"<string>\"\n        },\n        {\n          \"asset_id\": \"<string>\",\n          \"pegs_to\": \"<string>\"\n        }\n      ],\n      \"closed_bucket_window_seconds\": \"<integer>\"\n    },\n    \"source_classes\": [\n      {\n        \"name\": \"lending\",\n        \"contributes_to_vwap\": \"<boolean>\",\n        \"description\": \"<string>\"\n      },\n      {\n        \"name\": \"aggregator\",\n        \"contributes_to_vwap\": \"<boolean>\",\n        \"description\": \"<string>\"\n      }\n    ],\n    \"sources\": [\n      {\n        \"name\": \"<string>\",\n        \"class\": \"router\",\n        \"include_in_vwap\": \"<boolean>\",\n        \"paid\": \"<boolean>\",\n        \"backfill_available\": \"<boolean>\",\n        \"backfill_safe\": \"<boolean>\",\n        \"default_weight\": \"<integer>\",\n        \"on_chain\": \"<boolean>\",\n        \"subclass\": \"cex\",\n        \"trade_count_24h\": \"<integer>\",\n        \"volume_24h_usd\": \"<string>\",\n        \"markets_count_24h\": \"<integer>\",\n        \"volume_history_24h\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\"\n          }\n        ],\n        \"volume_history_7d\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\"\n          }\n        ]\n      },\n      {\n        \"name\": \"<string>\",\n        \"class\": \"exchange\",\n        \"include_in_vwap\": \"<boolean>\",\n        \"paid\": \"<boolean>\",\n        \"backfill_available\": \"<boolean>\",\n        \"backfill_safe\": \"<boolean>\",\n        \"default_weight\": \"<integer>\",\n        \"on_chain\": \"<boolean>\",\n        \"subclass\": \"cex\",\n        \"trade_count_24h\": \"<integer>\",\n        \"volume_24h_usd\": \"<string>\",\n        \"markets_count_24h\": \"<integer>\",\n        \"volume_history_24h\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\"\n          }\n        ],\n        \"volume_history_7d\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\"\n          }\n        ]\n      }\n    ],\n    \"references\": [\n      {\n        \"id\": \"<string>\",\n        \"title\": \"<string>\",\n        \"url\": \"<string>\"\n      },\n      {\n        \"id\": \"<string>\",\n        \"title\": \"<string>\",\n        \"url\": \"<string>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"version\": \"<string>\",\n    \"aggregation\": {\n      \"price_method\": \"vwap\",\n      \"outlier_filter\": {\n        \"default_sigma\": \"<number>\",\n        \"endpoint\": \"<string>\",\n        \"note\": \"<string>\"\n      },\n      \"stablecoin_fiat_proxy\": [\n        {\n          \"asset_id\": \"<string>\",\n          \"pegs_to\": \"<string>\"\n        },\n        {\n          \"asset_id\": \"<string>\",\n          \"pegs_to\": \"<string>\"\n        }\n      ],\n      \"closed_bucket_window_seconds\": \"<integer>\"\n    },\n    \"source_classes\": [\n      {\n        \"name\": \"aggregator\",\n        \"contributes_to_vwap\": \"<boolean>\",\n        \"description\": \"<string>\"\n      },\n      {\n        \"name\": \"aggregator\",\n        \"contributes_to_vwap\": \"<boolean>\",\n        \"description\": \"<string>\"\n      }\n    ],\n    \"sources\": [\n      {\n        \"name\": \"<string>\",\n        \"class\": \"lending\",\n        \"include_in_vwap\": \"<boolean>\",\n        \"paid\": \"<boolean>\",\n        \"backfill_available\": \"<boolean>\",\n        \"backfill_safe\": \"<boolean>\",\n        \"default_weight\": \"<integer>\",\n        \"on_chain\": \"<boolean>\",\n        \"subclass\": \"cex\",\n        \"trade_count_24h\": \"<integer>\",\n        \"volume_24h_usd\": \"<string>\",\n        \"markets_count_24h\": \"<integer>\",\n        \"volume_history_24h\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\"\n          }\n        ],\n        \"volume_history_7d\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\"\n          }\n        ]\n      },\n      {\n        \"name\": \"<string>\",\n        \"class\": \"exchange\",\n        \"include_in_vwap\": \"<boolean>\",\n        \"paid\": \"<boolean>\",\n        \"backfill_available\": \"<boolean>\",\n        \"backfill_safe\": \"<boolean>\",\n        \"default_weight\": \"<integer>\",\n        \"on_chain\": \"<boolean>\",\n        \"subclass\": \"dex\",\n        \"trade_count_24h\": \"<integer>\",\n        \"volume_24h_usd\": \"<string>\",\n        \"markets_count_24h\": \"<integer>\",\n        \"volume_history_24h\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\"\n          }\n        ],\n        \"volume_history_7d\": [\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\"\n          },\n          {\n            \"hour\": \"<dateTime>\",\n            \"volume_usd\": \"<string>\"\n          }\n        ]\n      }\n    ],\n    \"references\": [\n      {\n        \"id\": \"<string>\",\n        \"title\": \"<string>\",\n        \"url\": \"<string>\"\n      },\n      {\n        \"id\": \"<string>\",\n        \"title\": \"<string>\",\n        \"url\": \"<string>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -15700,7 +15763,7 @@
                     "type": "text/plain"
                   },
                   "key": "class",
-                  "value": "router"
+                  "value": "lending"
                 },
                 {
                   "disabled": false,
@@ -15743,7 +15806,7 @@
                         "type": "text/plain"
                       },
                       "key": "class",
-                      "value": "router"
+                      "value": "lending"
                     },
                     {
                       "disabled": false,
@@ -15774,7 +15837,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"name\": \"<string>\",\n      \"class\": \"authority_sanity\",\n      \"include_in_vwap\": \"<boolean>\",\n      \"paid\": \"<boolean>\",\n      \"backfill_available\": \"<boolean>\",\n      \"backfill_safe\": \"<boolean>\",\n      \"default_weight\": \"<integer>\",\n      \"on_chain\": \"<boolean>\",\n      \"subclass\": \"fx\",\n      \"trade_count_24h\": \"<integer>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"markets_count_24h\": \"<integer>\",\n      \"volume_history_24h\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\"\n        }\n      ],\n      \"volume_history_7d\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\"\n        }\n      ]\n    },\n    {\n      \"name\": \"<string>\",\n      \"class\": \"bridge\",\n      \"include_in_vwap\": \"<boolean>\",\n      \"paid\": \"<boolean>\",\n      \"backfill_available\": \"<boolean>\",\n      \"backfill_safe\": \"<boolean>\",\n      \"default_weight\": \"<integer>\",\n      \"on_chain\": \"<boolean>\",\n      \"subclass\": \"fx\",\n      \"trade_count_24h\": \"<integer>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"markets_count_24h\": \"<integer>\",\n      \"volume_history_24h\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\"\n        }\n      ],\n      \"volume_history_7d\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\"\n        }\n      ]\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"name\": \"<string>\",\n      \"class\": \"exchange\",\n      \"include_in_vwap\": \"<boolean>\",\n      \"paid\": \"<boolean>\",\n      \"backfill_available\": \"<boolean>\",\n      \"backfill_safe\": \"<boolean>\",\n      \"default_weight\": \"<integer>\",\n      \"on_chain\": \"<boolean>\",\n      \"subclass\": \"dex\",\n      \"trade_count_24h\": \"<integer>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"markets_count_24h\": \"<integer>\",\n      \"volume_history_24h\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\"\n        }\n      ],\n      \"volume_history_7d\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\"\n        }\n      ]\n    },\n    {\n      \"name\": \"<string>\",\n      \"class\": \"authority_sanity\",\n      \"include_in_vwap\": \"<boolean>\",\n      \"paid\": \"<boolean>\",\n      \"backfill_available\": \"<boolean>\",\n      \"backfill_safe\": \"<boolean>\",\n      \"default_weight\": \"<integer>\",\n      \"on_chain\": \"<boolean>\",\n      \"subclass\": \"fx\",\n      \"trade_count_24h\": \"<integer>\",\n      \"volume_24h_usd\": \"<string>\",\n      \"markets_count_24h\": \"<integer>\",\n      \"volume_history_24h\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\"\n        }\n      ],\n      \"volume_history_7d\": [\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\"\n        },\n        {\n          \"hour\": \"<dateTime>\",\n          \"volume_usd\": \"<string>\"\n        }\n      ]\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -15796,7 +15859,7 @@
                         "type": "text/plain"
                       },
                       "key": "class",
-                      "value": "router"
+                      "value": "lending"
                     },
                     {
                       "disabled": false,
@@ -15849,7 +15912,7 @@
                         "type": "text/plain"
                       },
                       "key": "class",
-                      "value": "router"
+                      "value": "lending"
                     },
                     {
                       "disabled": false,
@@ -15938,7 +16001,7 @@
                         "type": "text/plain"
                       },
                       "key": "class",
-                      "value": "router"
+                      "value": "lending"
                     },
                     {
                       "disabled": false,
@@ -16044,7 +16107,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"key_0\": \"<string>\",\n    \"key_1\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"key_0\": \"<string>\",\n    \"key_1\": \"<string>\",\n    \"key_2\": \"<string>\",\n    \"key_3\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },

@@ -311,20 +311,9 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawQuote := r.URL.Query().Get("quote")
-	var quote canonical.Asset
-	if rawQuote == "" {
-		quote = defaultPriceQuote
-	} else {
-		var err error
-		quote, err = canonical.ParseAsset(rawQuote)
-		if err != nil {
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/invalid-quote",
-				"Invalid quote identifier", http.StatusBadRequest,
-				err.Error())
-			return
-		}
+	quote, ok := parsePriceQuoteParam(w, r)
+	if !ok {
+		return
 	}
 
 	if asset.Equal(quote) {
@@ -332,6 +321,17 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 			"https://api.stellarindex.io/errors/identity-price",
 			"Asset and quote are the same", http.StatusBadRequest,
 			"price of an asset in itself is always 1; parameters must differ")
+		return
+	}
+
+	// Optional aggregation-window selection (board #43; proposal:
+	// "the window length … can be modified through query"). The
+	// default 60 keeps the existing closed-1m-bucket behavior; the
+	// other values serve the aggregator's continuously-published
+	// rolling VWAP for that window from the vwap:<pair>:<window>
+	// cache. Sub-minute rolling windows are /v1/price/tip's job.
+	if rawWindow := r.URL.Query().Get("window"); rawWindow != "" && rawWindow != "60" {
+		s.handlePriceWindowed(w, r, asset, quote, rawWindow)
 		return
 	}
 
@@ -1349,4 +1349,88 @@ func leftPad(s string, n int, c byte) string {
 	}
 	copy(buf[n:], s)
 	return string(buf)
+}
+
+// priceWindows are the non-default aggregation windows /v1/price
+// accepts via ?window=. Each matches a window the aggregator
+// continuously publishes to the VWAP cache (verified against the
+// live key set); values outside this set 400 with the list.
+var priceWindows = map[string]time.Duration{
+	"300":   5 * time.Minute,
+	"3600":  time.Hour,
+	"86400": 24 * time.Hour,
+}
+
+// handlePriceWindowed serves /v1/price?window=<300|3600|86400> from
+// the per-window VWAP cache. No fallback chain: a missing key is an
+// honest 404 — the caller asked for a SPECIFIC window, and
+// substituting a different one would misrepresent the methodology
+// (price_type/window_seconds are load-bearing per the proposal's
+// explicit-labeling principle).
+func (s *Server) handlePriceWindowed(w http.ResponseWriter, r *http.Request, asset, quote canonical.Asset, rawWindow string) {
+	window, ok := priceWindows[rawWindow]
+	if !ok {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-window",
+			"Invalid window", http.StatusBadRequest,
+			"window must be one of: 60 (default, closed 1m bucket), 300, 3600, 86400 seconds; for sub-minute rolling windows use /v1/price/tip")
+		return
+	}
+	if s.triangulated == nil {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/price-unavailable",
+			"Windowed price serving not configured", http.StatusServiceUnavailable,
+			"this deployment has no VWAP cache wired")
+		return
+	}
+	for _, a := range assetAliases(asset) {
+		for _, q := range assetAliases(quote) {
+			if a.Equal(q) {
+				continue
+			}
+			value, triangulated, found, err := s.triangulated.LookupTriangulatedVWAP(r.Context(), a, q, window)
+			if err != nil || !found {
+				continue
+			}
+			snap := PriceSnapshot{
+				AssetID:       asset.String(),
+				Quote:         quote.String(),
+				Price:         value,
+				PriceType:     "vwap",
+				ObservedAt:    time.Now().UTC(), // F-1305 semantics: cache TTL is window-bound + tick-refreshed
+				WindowSeconds: int(window / time.Second),
+			}
+			flags := Flags{Triangulated: triangulated, Frozen: s.lookupFrozen(r, asset, quote)}
+			if s.divergence != nil {
+				if firing, checked, derr := s.divergence.DivergenceFiringFor(r.Context(), asset); derr == nil {
+					flags.DivergenceWarning = firing
+					flags.DivergenceChecked = checked
+				}
+			}
+			writeJSON(w, snap, flags)
+			return
+		}
+	}
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/price-not-found",
+		"No price for pair at this window", http.StatusNotFound,
+		"the aggregator has not published a "+rawWindow+"s VWAP for "+asset.String()+" / "+quote.String())
+}
+
+// parsePriceQuoteParam parses the optional ?quote= (default
+// fiat:USD). ok=false means a 400 problem+json was written.
+func parsePriceQuoteParam(w http.ResponseWriter, r *http.Request) (canonical.Asset, bool) {
+	rawQuote := r.URL.Query().Get("quote")
+	if rawQuote == "" {
+		return defaultPriceQuote, true
+	}
+	quote, err := canonical.ParseAsset(rawQuote)
+	if err != nil {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-quote",
+			"Invalid quote identifier", http.StatusBadRequest,
+			err.Error())
+		return canonical.Asset{}, false
+	}
+	return quote, true
 }
