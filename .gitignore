@@ -39,11 +39,11 @@ service-account*.json
 # (F-1207, audit-2026-05-12): catches stray *.secrets.yml anywhere.
 *.secrets.yml
 *.secrets.yaml
-# EXCEPTION (2026-07-03): the vault-ENCRYPTED region secrets are
-# tracked (AES256; password out-of-band as an Actions secret + the
-# operator's ~/.ansible file) — the ansible-drift workflow needs them.
-# gitleaks in CI backstops an unencrypted file ever landing.
-!/configs/ansible/inventory/*.secrets.yml
+# The vault is NOT tracked (2026-07-03 exposure response: the repo is
+# PUBLIC; an encrypted vault in a public repo is an offline-bruteforce
+# target). Workflows materialize it from the ANSIBLE_VAULT_FILE_B64
+# Actions secret; operators keep a local copy. r1.yml (no secrets)
+# stays tracked.
 
 # Local runtime state
 /bucket-data/
