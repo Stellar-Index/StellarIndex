@@ -503,7 +503,7 @@ function TransactionsPanel({
   }
   return (
     <Panel
-      title={`Sourced transactions (${transactions.length})`}
+      title={`Transactions — sourced + incoming (${transactions.length})`}
       source={source}
       bodyClassName="-mx-4"
     >
@@ -533,6 +533,17 @@ function TransactionsPanel({
                   >
                     {(t.hash ?? '').slice(0, 10)}…{(t.hash ?? '').slice(-6)}
                   </Link>
+                  {/* ACC-2: the API serves scope:"all" (sourced +
+                      participant); without a direction marker a viewer
+                      can't tell who initiated. */}
+                  {t.source_account && t.source_account !== id && (
+                    <span
+                      title={`Initiated by ${t.source_account} — this account participates`}
+                      className="ml-2 rounded-sm bg-surface-muted px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-ink-muted"
+                    >
+                      in
+                    </span>
+                  )}
                 </Td>
                 <Td>
                   <Link
@@ -630,7 +641,7 @@ function OperationsPanel({
   }
   return (
     <Panel
-      title={`Sourced operations (${operations.length})`}
+      title={`Operations — sourced + incoming (${operations.length})`}
       source={source}
       bodyClassName="space-y-3"
     >
