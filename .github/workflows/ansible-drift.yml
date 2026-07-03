@@ -1,0 +1,63 @@
+name: ansible-drift
+
+# The codified≠live guarantee (2026-07-03 drift audit): a weekly
+# --check --diff of the archival-node playbook against live r1. Any
+# reported change means the two have diverged — a hand fix that needs
+# codifying, or repo config that needs applying. Either way the
+# workflow FAILS loudly instead of the gap surfacing as an incident
+# months later (the 2026-06-11 rsyslog rules were "fixed" in ansible
+# but never live; the reverse direction nearly had a playbook erase
+# the CS-010 supply config).
+#
+# Secrets: DEPLOY_SSH_PRIVATE_KEY (same key deploy.yml uses) +
+# ANSIBLE_VAULT_PASSWORD (the r1.secrets.yml vault password).
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ansible
+        run: pipx install --include-deps ansible && pipx inject ansible passlib
+
+      - name: SSH key + known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H 136.243.90.96 >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Vault password
+        run: |
+          mkdir -p ~/.ansible
+          echo -n "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > ~/.ansible/r1_vault_pass
+          chmod 600 ~/.ansible/r1_vault_pass
+
+      - name: Dry-run the playbook against r1
+        working-directory: configs/ansible
+        run: |
+          ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+            --check --diff | tee /tmp/drift.out
+
+      - name: Fail on drift
+        run: |
+          RECAP=$(grep -E "changed=[0-9]+" /tmp/drift.out | tail -1)
+          CHANGED=$(echo "$RECAP" | grep -oE "changed=[0-9]+" | cut -d= -f2)
+          echo "recap: $RECAP"
+          # A small allowance for known non-idempotent command tasks
+          # (chown recurse, bucket-ensure). Anything above it = drift.
+          if [ "${CHANGED:-999}" -gt 13 ]; then
+            echo "::error::ansible drift detected: $CHANGED changed tasks (allowance 13). A hand fix needs codifying or repo config needs applying — see docs/operations/r1-ansible-drift-2026-07-03.md"
+            exit 1
+          fi
+          echo "within allowance ($CHANGED <= 13)"

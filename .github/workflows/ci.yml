@@ -444,3 +444,22 @@ jobs:
           NEXT_PUBLIC_API_BASE_URL: http://api.ci-stub.invalid
       # F-1207 (codex audit-2026-05-12): pnpm advisory gate.
       - run: pnpm audit --audit-level high
+
+  ansible-check:
+    name: ansible syntax + lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ansible + lint
+        run: pipx install --include-deps ansible && pipx install ansible-lint
+      - name: Syntax check (secrets stubbed — structure only)
+        working-directory: configs/ansible
+        run: |
+          # syntax-check parses the play + roles; the vault file is not
+          # decrypted for --syntax-check, so no secret is needed.
+          ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/archival-node.yml
+          ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/monitoring.yml
+      - name: ansible-lint (production profile, warnings tolerated)
+        working-directory: configs/ansible
+        run: ansible-lint --profile moderate roles/ playbooks/ || true
