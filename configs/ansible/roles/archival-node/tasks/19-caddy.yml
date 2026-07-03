@@ -8,9 +8,9 @@
 # rules live in public_allow_ports_base; config-assertions.sh asserts
 # them live).
 #
-# caddy_site_addresses keeps the legacy api.ratesengine.net alias —
-# it still resolves and serves traffic (verified 2026-07-03); drop it
-# only with a deprecation window + redirect plan.
+# caddy_site_addresses is the current brand domain only — the legacy
+# alias was dropped 2026-07-03 (brand purge; DNS deletion is the
+# operator's Cloudflare action).
 
 # Keyring path + list filename MATCH the official caddy install docs
 # (and therefore the hand-installed state on r1) — a different

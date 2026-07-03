@@ -79,9 +79,9 @@ curl -fsSL -X POST https://api.stellarindex.io/v1/signup \
 ```json
 {
   "data": {
-    "plaintext": "rek_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "plaintext": "sip_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "key_id": "kid_…",
-    "key_prefix": "rek_xxxxxxxx",
+    "key_prefix": "sip_xxxxxxxx",
     "tier": "apikey",
     "rate_limit_per_min": 1000,
     "email_verification_sent": false
@@ -95,7 +95,7 @@ request via `X-API-Key` (or `Authorization: Bearer <key>`):
 
 ```sh
 curl -fsSL https://api.stellarindex.io/v1/account/me \
-     -H "X-API-Key: rek_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+     -H "X-API-Key: sip_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 ```
 
 > If the deployment runs with email-ownership verification enabled
@@ -171,7 +171,7 @@ import "github.com/StellarIndex/stellar-index/pkg/client"
 
 c := client.New(client.Options{
     BaseURL: "https://api.stellarindex.io",
-    APIKey:  "rek_xxxxxxxx...", // optional; anonymous tier works without
+    APIKey:  "sip_xxxxxxxx...", // optional; anonymous tier works without
 })
 env, err := c.Price(ctx, client.PriceQuery{
     Asset: "native",

@@ -81,7 +81,7 @@ type Subject struct {
 	Label string
 
 	// KeyPrefix — first 12 chars of the plaintext key (e.g.
-	// `sip_4f9c1d8b`; legacy pre-rebrand keys read `rek_…`).
+	// `sip_4f9c1d8b`).
 	// Set on records minted after the key-prefix
 	// feature shipped; empty on legacy records and on anonymous
 	// subjects. Customers see this in dashboard listings to

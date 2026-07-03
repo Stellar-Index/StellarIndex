@@ -212,7 +212,7 @@ func TestHandleCreate_QuotaEnforced(t *testing.T) {
 	for i := 0; i < MaxKeysPerAccount; i++ {
 		store.byID[uuid.New().String()] = platform.APIKey{
 			ID: uuid.New().String(), AccountID: sc.Account.ID,
-			Name: "seed", KeyPrefix: "rek_seedseed",
+			Name: "seed", KeyPrefix: "sip_seedseed",
 		}
 	}
 	req := sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{Name: "one-too-many"}, sc)

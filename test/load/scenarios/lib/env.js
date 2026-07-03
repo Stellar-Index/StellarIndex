@@ -23,8 +23,6 @@ export const apiKey = ENV.STELLARINDEX_LOAD_API_KEY || '';
 // documented staging target (api.staging.stellarindex.io).
 const PROD_HOSTS = [
   'api.stellarindex.io',
-  'api.ratesengine.net',
-  'api.ratesengine.io',
   'rates.stellar.org',
 ];
 

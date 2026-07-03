@@ -229,7 +229,7 @@ echo "  Customer surfaces"
 # integrator-readable methodology slice (R-023). Pin both the
 # success path and the price_method=vwap invariant — flipping it
 # to "twap" or removing the field would silently break every
-# integrator's "verify the rates engine still uses VWAP" check.
+# integrator's "verify the pricing engine still uses VWAP" check.
 check "methodology"        "/v1/methodology" -- '.data.aggregation.price_method == "vwap"'
 echo
 

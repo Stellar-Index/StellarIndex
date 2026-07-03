@@ -144,6 +144,6 @@ func renderAssetDetailEnvelope(detail AssetDetail, flags Flags) ([]byte, error) 
 // well within the allowed staleness envelope.
 func writeCachedAssetDetail(w http.ResponseWriter, entry *assetDetailEntry) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Ratesengine-Cache", "HIT")
+	w.Header().Set("X-Stellarindex-Cache", "HIT")
 	_, _ = w.Write(entry.body)
 }

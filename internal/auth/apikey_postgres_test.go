@@ -30,7 +30,7 @@ func TestPostgresValidator_HappyPath_PostgresHit(t *testing.T) {
 		t.Fatalf("constructor: %v", err)
 	}
 
-	plaintext := "rek_postgres_test_001"
+	plaintext := "sip_postgres_test_001"
 	acct := seedActiveAccount(accounts, "acme")
 	seedKey(keys, plaintext, acct.ID, platform.APIKeyTierAPIKey, 1500)
 
@@ -56,7 +56,7 @@ func TestPostgresValidator_RevokedKey_Unauthorized(t *testing.T) {
 		Accounts: accounts,
 	})
 
-	plaintext := "rek_revoked"
+	plaintext := "sip_revoked"
 	acct := seedActiveAccount(accounts, "x")
 	rec := seedKey(keys, plaintext, acct.ID, platform.APIKeyTierAPIKey, 1000)
 	rec.RevokedAt = time.Now()
@@ -76,7 +76,7 @@ func TestPostgresValidator_ExpiredKey_TokenExpired(t *testing.T) {
 		Accounts: accounts,
 		Now:      func() time.Time { return time.Now() },
 	})
-	plaintext := "rek_expired"
+	plaintext := "sip_expired"
 	acct := seedActiveAccount(accounts, "expired")
 	rec := seedKey(keys, plaintext, acct.ID, platform.APIKeyTierAPIKey, 100)
 	rec.ExpiresAt = time.Now().Add(-1 * time.Minute)
@@ -95,7 +95,7 @@ func TestPostgresValidator_SuspendedAccount_Unauthorized(t *testing.T) {
 		Keys:     keys,
 		Accounts: accounts,
 	})
-	plaintext := "rek_suspended_acct"
+	plaintext := "sip_suspended_acct"
 	acct := seedActiveAccount(accounts, "s")
 	acct.Status = platform.AccountSuspended
 	accounts.byID[acct.ID] = acct
@@ -113,7 +113,7 @@ func TestPostgresValidator_AbsentKey_Unauthorized(t *testing.T) {
 		Keys:     keys,
 		Accounts: accounts,
 	})
-	_, err := v.Lookup(context.Background(), "rek_nonexistent")
+	_, err := v.Lookup(context.Background(), "sip_nonexistent")
 	if !errors.Is(err, auth.ErrUnauthorized) {
 		t.Errorf("expected ErrUnauthorized, got %v", err)
 	}
@@ -128,7 +128,7 @@ func TestPostgresValidator_CacheReadThrough(t *testing.T) {
 		CacheTTL: 5 * time.Minute,
 	})
 
-	plaintext := "rek_cache_test"
+	plaintext := "sip_cache_test"
 	acct := seedActiveAccount(accounts, "cached")
 	seedKey(keys, plaintext, acct.ID, platform.APIKeyTierAPIKey, 2000)
 
@@ -155,7 +155,7 @@ func TestPostgresValidator_Invalidate(t *testing.T) {
 	v, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{
 		Keys: keys, Accounts: accounts, Cache: rdb,
 	})
-	plaintext := "rek_invalidate"
+	plaintext := "sip_invalidate"
 	acct := seedActiveAccount(accounts, "invalid")
 	seedKey(keys, plaintext, acct.ID, platform.APIKeyTierAPIKey, 1000)
 
@@ -185,7 +185,7 @@ func TestPostgresValidator_CacheRoundTripsPolicy(t *testing.T) {
 		Cache:    rdb,
 		CacheTTL: 5 * time.Minute,
 	})
-	plaintext := "rek_policy_roundtrip"
+	plaintext := "sip_policy_roundtrip"
 	acct := seedActiveAccount(accounts, "policy")
 	seedKeyWithPolicy(keys, plaintext, acct.ID, platform.APIKeyTierAPIKey,
 		[]string{"10.0.0.0/8", "192.168.1.0/24"},

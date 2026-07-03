@@ -185,7 +185,7 @@ CREATE TABLE api_keys (
     name                text NOT NULL,              -- "Production scraper"
     description         text,
     key_hash            bytea NOT NULL UNIQUE,      -- sha256(plaintext)
-    key_prefix          text NOT NULL,              -- "rek_4f9c1d8b" - first 12 chars - shown in UI for identification
+    key_prefix          text NOT NULL,              -- "sip_4f9c1d8b" - first 12 chars - shown in UI for identification
     tier                text NOT NULL,              -- inherits account.tier at create time; pinnable
     rate_limit_per_min  int NOT NULL,
     monthly_quota       int,                        -- null = inherits plan default
@@ -266,7 +266,7 @@ the JSON response. Dashboard then displays a single "Copy"
 button next to it. After the user navigates away, the plaintext
 is gone forever (we only store `key_hash`).
 
-`key_prefix` (first 12 chars, e.g. `rek_4f9c1d8b`) is shown
+`key_prefix` (first 12 chars, e.g. `sip_4f9c1d8b`) is shown
 permanently so users can identify keys by prefix in their own
 secret managers.
 
@@ -793,9 +793,9 @@ before this spec ships:
    permission check. Decision: v1 single, design v2 migration
    path now (account_id + role moves to a `memberships` table).
 
-2. **Key-format compatibility.** Existing `rek_…` keys stay
+2. **Key-format compatibility.** Existing `sip_…` keys stay
    valid forever. New format extensions (e.g. environment
-   prefix `rek_live_…` / `rek_test_…`) apply only to newly-minted
+   prefix `sip_live_…` / `sip_test_…`) apply only to newly-minted
    keys.
 
 3. **Free-tier abuse vector.** Current anonymous tier is

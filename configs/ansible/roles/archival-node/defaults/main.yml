@@ -584,14 +584,15 @@ stellarindex_reserve_balances_stroops:
   "GANII5Y2LABEBK74NWNKS4NREX2T52YTBGQDRDKVBFRIIF5VE4ORYOVY": "52873404079631"
   "GBEZOC5U4TVH7ZY5N3FLYHTCZSI6VFGTULG7PBITLF5ZEBPJXFT46YZM": "2588858475135952"
 
-# Caddy public edge. The legacy alias still serves traffic (2026-07-03);
-# see 19-caddy.yml before removing it.
+# Caddy public edge. The legacy-domain alias was REMOVED by decision on
+# 2026-07-03 (brand purge): the old domain's DNS is being deleted, so
+# clients on it get a hard cutover, not a deprecation window.
 run_caddy: true
-caddy_site_addresses: "api.ratesengine.net, api.stellarindex.io"
+caddy_site_addresses: "api.stellarindex.io"
 
 # Alias: 09-minio.yml consumes the unprefixed name; the canonical
 # secret lives in the vault as vault_stellarindex_reader_secret_key
-# (2026-07-03 drift audit — pre-rebrand it was ratesengine_reader_*).
+# (2026-07-03 drift audit; renamed from the pre-rebrand var name).
 stellarindex_reader_secret_key: "{{ vault_stellarindex_reader_secret_key }}"
 
 # mc (MinIO client) pinned version — was a bare "<required>" comment;

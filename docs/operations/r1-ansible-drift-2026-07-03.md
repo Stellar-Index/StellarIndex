@@ -44,7 +44,7 @@ whole time (auto.conf RESET; the file is single-source now).
 | 2 | Redis `maxmemory 1gb` (2026-06-16 sweep) | Debian-packaged redis, hand-edited conf; the redis-sentinel role is the future HA shape and does NOT manage it | ✅ 2026-07-03: archival-node lineinfile task |
 | 3 | nftables nft-drop log tweak (`5/second … level info`, 2026-06-30) + `10-nft-drop.conf` rsyslog + logrotate pair | Hand observability addition | ✅ 2026-07-03: template matches live (5/s level info) + rsyslog/logrotate pair in 15-log-discipline |
 | 4 | nftables `11625 accept` (F-1201, future validator) | Hand rule; template gates it on `run_stellar_core`, which is `false` in r1.yml | ✅ resolved by decision: the rule dropped at apply (nothing listens; run_stellar_core flips it back for Phase 3) |
-| 5 | Caddy (public TLS edge) | Entirely hand-managed; live still binds legacy `api.ratesengine.net` alias that `configs/caddy/Caddyfile.api` dropped | ✅ 2026-07-03: 19-caddy.yml (official repo form, Caddyfile.j2 with the legacy alias, caddy validate) |
+| 5 | Caddy (public TLS edge) | Entirely hand-managed; live still bound a legacy-domain alias the repo Caddyfile had dropped | ✅ 2026-07-03: 19-caddy.yml (official repo form, Caddyfile.j2, caddy validate); legacy-domain alias removed same day in the brand purge |
 | 6 | systemd units (`stellarindex-*.service`) | Live = root-user shape; repo `deploy/systemd/` = non-root future shape (task #30) | ✅ 2026-07-03: the staged apply EXECUTED the non-root migration — all three services run as `stellarindex` |
 | 7 | sshd | Live = stock Ubuntu (root-with-key); template needs `ssh_permit_root_login` | ✅ 2026-07-03: pinned `"prohibit-password"` in r1.yml (deploy workflow + agents SSH as root) |
 

@@ -88,11 +88,11 @@ Verified live 2026-06-13:
 
 - **Reference**: OpenAPI-generated reference (`docs/reference/api`).
 - **Self-service onboarding**: `docs/getting-started.md` leads with the
-  ≤1-min path — `POST /v1/signup` (email → usable `rek_…` key, no Stellar
+  ≤1-min path — `POST /v1/signup` (email → usable `sip_…` key, no Stellar
   wallet needed), then the SEP-10 account-bound path as the advanced
   option.
 - **E2E walkthrough (verified 2026-06-13 on r1):** `POST /v1/signup`
-  (`{email,label}`) → `200` with a fresh `rek_…` key (`tier: apikey`,
+  (`{email,label}`) → `200` with a fresh `sip_…` key (`tier: apikey`,
   `rate_limit_per_min: 1000`); the key immediately authenticated
   `GET /v1/account/me` → `200`, on both `X-API-Key` and
   `Authorization: Bearer`.

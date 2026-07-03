@@ -208,7 +208,7 @@ func TestAccountKeysCreate_Happy(t *testing.T) {
 			Label:     "ci-bot-2",
 			CreatedAt: time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC),
 		},
-		plain: "rek_freshly_minted",
+		plain: "sip_freshly_minted",
 	}
 	ts := newAccountTestServer(t, auth.Subject{
 		Identifier:      "owner-42",
@@ -231,7 +231,7 @@ func TestAccountKeysCreate_Happy(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
 		t.Fatal(err)
 	}
-	if env.Data.Plaintext != "rek_freshly_minted" {
+	if env.Data.Plaintext != "sip_freshly_minted" {
 		t.Errorf("plaintext not echoed: %q", env.Data.Plaintext)
 	}
 	if env.Data.KeyID != "kid_new" {
@@ -392,7 +392,7 @@ func TestAccountKeysCreate_StoreFailure(t *testing.T) {
 	}
 	body := make([]byte, 1024)
 	n, _ := resp.Body.Read(body)
-	if strings.Contains(string(body[:n]), "rek_") {
+	if strings.Contains(string(body[:n]), "sip_") {
 		t.Error("response body should not contain plaintext-shaped strings on failure")
 	}
 }
