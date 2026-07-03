@@ -45,13 +45,27 @@ export function MarketsTable() {
     ...(assetParam ? { asset: assetParam } : {}),
   });
   const [filter, setFilter] = useState('');
+  // AM-05: the volume sort puts pure CEX reference pairs (crypto:*/
+  // fiat:*) first — a visitor asking "what trades on Stellar" got
+  // Binance's tape. A pair is on-Stellar when either side is a
+  // Stellar-network asset (native, classic CODE-G…/CODE:G…, or a
+  // C-address); crypto:/fiat:-prefixed forms are off-chain reference
+  // feeds. Default view: Stellar.
+  const [venue, setVenue] = useState<'stellar' | 'reference' | 'all'>('stellar');
 
   const sorted = useMemo(() => {
-    const rows = data?.markets ?? [];
+    let rows = data?.markets ?? [];
+    const isStellarAsset = (a: string) =>
+      a === 'native' || /^C[A-Z2-7]{55}$/.test(a) || /[:-]G[A-Z2-7]{55}$/.test(a) || /^\d+$/.test(a);
+    const isStellarPair = (m: { base?: string; quote?: string }) =>
+      isStellarAsset(m.base ?? '') || isStellarAsset(m.quote ?? '');
+    if (!assetParam && venue !== 'all') {
+      rows = rows.filter((m) => (venue === 'stellar' ? isStellarPair(m) : !isStellarPair(m)));
+    }
     const q = filter.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((m) => `${m.base ?? ''} ${m.quote ?? ''}`.toLowerCase().includes(q));
-  }, [data, filter]);
+  }, [data, filter, venue, assetParam]);
 
   function setOrder(next: 'volume_24h_usd_desc' | 'pair') {
     const sp = new URLSearchParams(params.toString());
@@ -107,11 +121,34 @@ export function MarketsTable() {
 
   return (
     <Panel
-      title={`${data.markets.length} active markets`}
-      hint="Pairs that traded in the last 14 days, ordered by 24h USD volume"
+      title={`${sorted.length} ${venue === 'stellar' ? 'Stellar markets' : venue === 'reference' ? 'reference feeds' : 'markets'} (top ${data.markets.length} by volume)`}
+      hint="Pairs that traded in the last 14 days, ordered by 24h USD volume. Reference feeds are off-chain CEX pairs used for pricing context."
       source={asExample('/v1/markets', { limit: 100, order_by: orderBy, include: 'sparkline' })}
       bodyClassName="-mx-4"
     >
+      {!assetParam && (
+        <div className="mx-4 mb-3 flex gap-1">
+          {(
+            [
+              ['stellar', 'On Stellar'],
+              ['reference', 'Reference feeds'],
+              ['all', 'All'],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setVenue(key)}
+              className={`rounded-md px-2.5 py-1 text-xs ${
+                venue === key
+                  ? 'bg-brand-600 text-white'
+                  : 'border border-line text-ink-body hover:border-brand-500'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
       {assetParam && (
         <div className="mx-4 mb-3 flex flex-wrap items-center gap-2 rounded-card border border-brand-200 bg-brand-50 px-3 py-2 text-xs">
           <span className="text-ink-body">
