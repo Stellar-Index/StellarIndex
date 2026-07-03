@@ -16,6 +16,12 @@
 #   - The systemd unit handler restarts only on unit-file change.
 
 - name: Cross-compile stellarindex-* binaries (localhost)
+  # 2026-07-03 drift audit: binary builds/installs moved to the
+  # deploy.yml GitHub workflow (release-artifact + SHA256SUMS + staged
+  # install + auto-rollback) — the config playbook manages CONFIG.
+  # Flip manage_stellarindex_binaries only for a from-scratch bootstrap
+  # where no release exists yet.
+  when: manage_stellarindex_binaries | default(false) | bool
   # F-1314 (codex audit-2026-05-13): `sla-probe` added to the
   # bootstrap build/install list. The Healthchecks stellarindex-
   # sla-probe.{service,timer} units invoke
@@ -50,6 +56,12 @@
   changed_when: true   # rebuild every apply; copy step decides if r1 changed
 
 - name: Install stellarindex binaries on r1
+  # 2026-07-03 drift audit: binary builds/installs moved to the
+  # deploy.yml GitHub workflow (release-artifact + SHA256SUMS + staged
+  # install + auto-rollback) — the config playbook manages CONFIG.
+  # Flip manage_stellarindex_binaries only for a from-scratch bootstrap
+  # where no release exists yet.
+  when: manage_stellarindex_binaries | default(false) | bool
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../../../bin/stellarindex-{{ item }}"
     dest: "/usr/local/bin/stellarindex-{{ item }}"

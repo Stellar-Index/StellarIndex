@@ -58,12 +58,28 @@
 # because /root is 0700 → exec → EACCES. A leftover symlink from
 # an earlier apply would still point there, so we nuke whatever's
 # at the dest before the copy lands a real file.
+- name: Stat the installed galexie and the go-install artifact
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /usr/local/bin/galexie
+    - /root/go/bin/stellar-galexie
+  register: galexie_paths
+
 - name: Remove any stale /usr/local/bin/galexie link
+  # ONLY when it actually IS a symlink (2026-07-03 drift audit: state:
+  # absent removes real files too — unconditional, this deleted the
+  # REAL binary right before a copy whose source only exists after a
+  # fresh `go install`, leaving the host with no galexie at all).
+  when: galexie_paths.results[0].stat.islnk | default(false)
   ansible.builtin.file:
     path: /usr/local/bin/galexie
     state: absent
 
 - name: Install galexie binary into /usr/local/bin
+  # Skipped when there is no fresh go-install artifact — on a built
+  # host at the pinned version the binary is already in place.
+  when: galexie_paths.results[1].stat.exists
   # Upstream calls the binary stellar-galexie; we rename so systemd
   # units can reference /usr/local/bin/galexie consistently. `copy`
   # is content-hash idempotent — runs every time but only actually

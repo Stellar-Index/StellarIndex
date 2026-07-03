@@ -46,6 +46,9 @@
   tags: [caddy]
 
 - name: Enable caddy
+  # check-mode tolerance: the package install above cannot happen in
+  # --check, so the unit does not exist yet; a real apply installs first.
+  ignore_errors: "{{ ansible_check_mode }}"
   ansible.builtin.systemd:
     name: caddy
     enabled: true

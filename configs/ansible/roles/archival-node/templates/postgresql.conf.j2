@@ -52,8 +52,8 @@ checkpoint_completion_target = 0.9
 # SYSTEM overrides). 2GB/512MB is comfortable for the ingest +
 # CAGG-refresh write profile; a from-scratch rebuild inherits the
 # running values directly rather than the larger 8GB/2GB defaults.
-max_wal_size              = 2GB
-min_wal_size              = 512MB
+max_wal_size              = 8GB   # 2026-07-03: matched to live r1 (hand-tuned for ingest checkpoint spacing)
+min_wal_size              = 2GB
 
 # ─── Planner ────────────────────────────────────────────────────────
 random_page_cost          = 1.1     # NVMe

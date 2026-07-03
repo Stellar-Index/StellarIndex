@@ -168,22 +168,36 @@
     create_home: false
     state: present
 
+- name: Check installed pgbackrest_exporter version
+  ansible.builtin.command: /usr/local/bin/pgbackrest_exporter --version
+  register: pge_current
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
 - name: Download pgbackrest_exporter release tarball
+  # Skipped when the installed version already matches — the download
+  # previously ran unconditionally (2026-07-03 drift audit), and the
+  # URL pattern matched the 0.18-era naming; >=0.23 uses
+  # name-version-os-arch with x86_64.
+  when: pgbackrest_exporter_version not in ((pge_current.stdout | default('')) + (pge_current.stderr | default('')))
   ansible.builtin.get_url:
-    url: "https://github.com/woblerr/pgbackrest_exporter/releases/download/v{{ pgbackrest_exporter_version }}/pgbackrest_exporter_{{ pgbackrest_exporter_version }}_linux_amd64.tar.gz"
+    url: "https://github.com/woblerr/pgbackrest_exporter/releases/download/v{{ pgbackrest_exporter_version }}/pgbackrest_exporter-{{ pgbackrest_exporter_version }}-linux-x86_64.tar.gz"
     dest: "/tmp/pgbackrest_exporter-{{ pgbackrest_exporter_version }}.tgz"
     checksum: "sha256:{{ pgbackrest_exporter_release_sha256 }}"
     mode: "0644"
 
 - name: Extract pgbackrest_exporter tarball
+  when: pgbackrest_exporter_version not in ((pge_current.stdout | default('')) + (pge_current.stderr | default('')))
   ansible.builtin.unarchive:
     src: "/tmp/pgbackrest_exporter-{{ pgbackrest_exporter_version }}.tgz"
     dest: /tmp/
     remote_src: true
 
 - name: Install pgbackrest_exporter binary
+  when: pgbackrest_exporter_version not in ((pge_current.stdout | default('')) + (pge_current.stderr | default('')))
   ansible.builtin.copy:
-    src: "/tmp/pgbackrest_exporter_{{ pgbackrest_exporter_version }}_linux_amd64/pgbackrest_exporter"
+    src: "/tmp/pgbackrest_exporter-{{ pgbackrest_exporter_version }}-linux-x86_64/pgbackrest_exporter"
     dest: /usr/local/bin/pgbackrest_exporter
     owner: root
     group: root

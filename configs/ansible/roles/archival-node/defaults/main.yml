@@ -200,7 +200,10 @@ stellarindex_enabled_sources:
   - "redstone"
   - "band"
   - "blend"
+  - "blend_backstop"
   - "sdex"
+  - "cctp"
+  - "rozo"
 
 # Earliest ledger to backfill from on a fresh install (no persisted
 # cursor yet). 0 = refuse to start without a cursor — operator must
@@ -524,7 +527,7 @@ core_exporter_port:      9473
 # F-1291/F-1293). Bump `pgbackrest_exporter_version` here when the
 # operator wants a newer release; re-paste the matching SHA into
 # r1.secrets.yml / non-secret inventory.
-pgbackrest_exporter_version: "0.18.0"
+pgbackrest_exporter_version: "0.23.0"  # 2026-07-03: matched to the version live on r1 (0.18.0 predated it AND its release URL 404s upstream)
 # pgbackrest_exporter_release_sha256: <required; set in inventory>
 
 # ───── SSH hardening ─────────────────────────────────────────────────
@@ -585,3 +588,12 @@ stellarindex_reserve_balances_stroops:
 # see 19-caddy.yml before removing it.
 run_caddy: true
 caddy_site_addresses: "api.ratesengine.net, api.stellarindex.io"
+
+# Alias: 09-minio.yml consumes the unprefixed name; the canonical
+# secret lives in the vault as vault_stellarindex_reader_secret_key
+# (2026-07-03 drift audit — pre-rebrand it was ratesengine_reader_*).
+stellarindex_reader_secret_key: "{{ vault_stellarindex_reader_secret_key }}"
+
+# mc (MinIO client) pinned version — was a bare "<required>" comment;
+# pinned 2026-07-03 to the version already on r1.
+mc_version: "RELEASE.2025-08-13T08-35-41Z"

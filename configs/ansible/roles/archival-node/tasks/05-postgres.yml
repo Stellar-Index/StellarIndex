@@ -65,6 +65,7 @@
   become_user: postgres
 
 - name: Create stellar-core database
+  when: run_stellar_core | bool
   community.postgresql.postgresql_db:
     name: "{{ postgres_db_core }}"
     owner: "{{ postgres_user_core }}"
@@ -75,9 +76,20 @@
     state: present
   become_user: postgres
 
-- name: Enable pg_stat_statements extension
+- name: Enable pg_stat_statements extension (core DB)
+  when: run_stellar_core | bool  # 2026-07-03: core trimmed from r1; its DB does not exist
   community.postgresql.postgresql_ext:
     login_db: "{{ postgres_db_core }}"
+    name: "pg_stat_statements"
+    state: present
+  become_user: postgres
+
+# pg_stat_statements on the APPLICATION db — this is the one operators
+# actually query for slow-statement forensics (the core-db copy above
+# predates the 2026-04-23 core trim and is skipped on r1).
+- name: Enable pg_stat_statements extension (stellarindex DB)
+  community.postgresql.postgresql_ext:
+    login_db: "{{ postgres_db_stellarindex }}"
     name: "pg_stat_statements"
     state: present
   become_user: postgres

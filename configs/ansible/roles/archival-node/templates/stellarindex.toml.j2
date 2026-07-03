@@ -43,9 +43,22 @@ s3_cold_secret_key_env  = "{{ stellarindex_s3_cold_secret_key_env | default('') 
 s3_access_key_env  = "STELLARINDEX_S3_ACCESS_KEY"
 s3_secret_key_env  = "STELLARINDEX_S3_SECRET_KEY"
 
+# ClickHouse raw lake (ADR-0034) + dual-sink durability (ADR-0041,
+# defaults TRUE since v0.7.0). The template predated the pivot — a
+# render without these silently degraded the indexer to Postgres-only
+# (2026-07-03 drift audit).
+clickhouse_addr             = "{{ stellarindex_clickhouse_addr | default('127.0.0.1:9300') }}"
+clickhouse_live_sink        = {{ stellarindex_clickhouse_live_sink | default(true) | to_json }}
+clickhouse_projector_source = {{ stellarindex_clickhouse_projector_source | default(true) | to_json }}
+
 [ingestion]
 enabled_sources       = {{ stellarindex_enabled_sources | to_json }}
 backfill_from_ledger  = {{ stellarindex_backfill_from_ledger | int }}
+
+[ingestion.projector]
+# ADR-0031/0032 one-writer projector — enabled everywhere since rc.97.
+enabled            = true
+persist_per_source = true
 
 [oracle.reflector]
 dex_contract = "CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M"
@@ -129,6 +142,11 @@ usd_pegged_classic_assets = [
 [api]
 listen_addr = "127.0.0.1:3000"
 allowed_origins = ["https://stellarindex.io", "https://api.stellarindex.io", "https://status.stellarindex.io", "https://docs.stellarindex.io", "https://dashboard.stellarindex.io", "https://www.stellarindex.io"]
+allow_credentials = true
+# AC7 onboarding fix (2026-06-13): verification-gated signup stays OFF
+# until a verified-sender domain is set up end-to-end.
+signup_require_email_verification = false
+
 auth_mode = "apikey_optional"
 trusted_proxy_cidrs = ["127.0.0.1/32"]
 prometheus_url = "http://localhost:9090"
@@ -152,6 +170,13 @@ key_rate_limit_per_min = 6000
 # internal/currency/data/seed.yaml. Next aggregator restart
 # starts populating market_cap_usd / fdv_usd / circulating_supply
 # / total_supply / max_supply for these.
+[api.dashboard]
+base_url           = "{{ stellarindex_dashboard_base_url | default('https://stellarindex.io') }}"
+email_from         = "{{ stellarindex_dashboard_email_from | default('Stellar Index <hello@stellarindex.io>') }}"
+resend_api_key_env = "STELLARINDEX_RESEND_API_KEY"
+cookie_secure      = true
+cookie_domain      = "{{ stellarindex_dashboard_cookie_domain | default('.stellarindex.io') }}"
+
 [supply]
 # aggregator_refresh_enabled starts the supply-refresh goroutine
 # path (2026-05-14). It emits the success metric even when no rows
@@ -236,7 +261,9 @@ sdf_reserve_accounts = {{ stellarindex_sdf_reserve_accounts | default([]) | to_j
 # not contribute to VWAP. Pair format mirrors canonical.Pair.String().
 [divergence.chainlink]
 enabled = true
-rpc_url = "https://eth.llamarpc.com"
+# vault_chainlink_rpc_url carries the keyed Alchemy endpoint; the
+# llamarpc fallback is Cloudflare-challenged since 2026-06 (rc.138 fix).
+rpc_url = "{{ vault_chainlink_rpc_url | default('https://eth.llamarpc.com') }}"
 
 [divergence.chainlink.feeds]
 

@@ -40,6 +40,9 @@
       mode     = aggressive
 
 - name: Enable + start fail2ban
+  # check-mode tolerance: the package install above cannot happen in
+  # --check, so the unit does not exist yet; a real apply installs first.
+  ignore_errors: "{{ ansible_check_mode }}"
   ansible.builtin.systemd:
     name: fail2ban
     state: started
