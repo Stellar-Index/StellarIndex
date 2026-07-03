@@ -16,6 +16,12 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Navigation tells the truth** (site audit S-001/S-017/S-019): "DEX /
+  AMM" now lands on /dexes (the per-protocol venue + pools view that
+  already existed) instead of the verification index; the rail's
+  single-protocol "Soroswap Router" entry becomes "Verification" (the whole
+  15-protocol index); the search palette's "Account" entry points at
+  /dashboard instead of a route that never existed.
 - **Impersonated identities no longer render on flagged issuers** (site
   audit S-010): the "LOBSTR — SCAM" row was actually a stellar.expert-listed
   counterfeiter whose on-chain home_domain impersonates lobstr.co — our

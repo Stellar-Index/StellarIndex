@@ -72,12 +72,18 @@ const NAV: NavGroup[] = [
   {
     title: 'Protocols',
     items: [
-      { href: '/protocols', label: 'DEX / AMM', icon: ArrowLeftRight },
+      // S-001: the label promises a venue view — /dexes IS that view
+      // (per-protocol 24h activity + every pool). /protocols (the
+      // verification index) keeps its own entry below.
+      { href: '/dexes', label: 'DEX / AMM', icon: ArrowLeftRight },
       { href: '/lending', label: 'Lending', icon: Landmark },
       { href: '/aggregators', label: 'Aggregators', icon: Share2 },
       { href: '/bridges', label: 'Bridges', icon: Network },
       { href: '/oracles', label: 'Oracles', icon: Radio },
-      { href: '/protocols/soroswap-router', label: 'Soroswap Router', icon: Boxes },
+      // S-017: a single protocol's verification page was promoted to
+      // the top-level rail; the whole verification INDEX (all 15
+      // protocols incl. soroswap-router) is the right rail item.
+      { href: '/protocols', label: 'Verification', icon: Boxes },
     ],
   },
   {
