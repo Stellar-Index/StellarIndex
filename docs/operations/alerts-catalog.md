@@ -70,6 +70,7 @@ signal lands.
 | `stellarindex_timescale_replica_lag` | `pg_replication_lag_seconds` on sync replica | > 5 s for > 2 min | P2 | [replica-lag](runbooks/replica-lag.md) |
 | `stellarindex_timescale_disk_full` | `(node_filesystem_avail_bytes / node_filesystem_size_bytes) * 100` on DB vol | < 10 % | **P1** | [db-disk-full](runbooks/db-disk-full.md) |
 | `stellarindex_timescale_disk_warning` | same | < 20 % | P2 | [db-disk-full](runbooks/db-disk-full.md) |
+| `stellarindex_node_root_disk_filling_fast` | predict_linear 10m trend on root avail reaching 0 within 30 min (AND avail < 50%) — the log-flood early warning (the 2026-06-11 class fills root in ~5 min, faster than the static page can be acted on) | trend < 0 for 2m | **P1** | [node-root-disk-filling-fast](runbooks/node-root-disk-filling-fast.md) |
 | `stellarindex_node_root_disk_full` | same expr on `mountpoint="/"` (distinct from DB vol — root FS holds /var/log + /tmp + /var/cache) | < 10 % | **P1** | [node-root-disk-full](runbooks/node-root-disk-full.md) |
 | `stellarindex_node_root_disk_warning` | same | < 20 % | P2 | [node-root-disk-warning](runbooks/node-root-disk-warning.md) |
 | (no active alert — surfaced via API log) | `forex: fx_quotes persist failed` log line — runtime symptom of an unapplied schema migration | repeating every ~5 min | P3 | [fx-history-missing](runbooks/fx-history-missing.md) |
