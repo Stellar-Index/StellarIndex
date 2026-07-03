@@ -16,6 +16,14 @@ against.
 ## [Unreleased]
 
 ### Added
+- **OpenAPI 200 examples for every GET operation**: all 70 JSON GET
+  operations in `openapi/stellar-index.v1.yaml` now carry a media-level
+  `example` under their 200 response (previously 7 of 96 operations had
+  one). Examples are trimmed live responses from api.stellarindex.io;
+  auth-gated surfaces (`/account/*`, `/dashboard/*`, `/signup/verify`,
+  `/auth/sep10/challenge`) carry small hand-crafted examples matching
+  their schemas. Rendered reference, Postman collection, and explorer
+  types regenerated.
 - **Contract event rows decode their payload** (S-016 tail): the events
   table showed fifty bare "transfer" rows — /v1/contracts/{id} rows now
   carry `topics` (human-readable renderings of topics[1:] — addresses as
