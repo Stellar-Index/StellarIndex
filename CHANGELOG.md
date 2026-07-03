@@ -26,6 +26,12 @@ against.
   staged migration and the pruned static path supported until cutover.
 
 ### Fixed
+- **SAC contract pages answer "what is this?"** (site audit S-016/S-014):
+  the contract header names the wrapped asset with a link to its asset page
+  (fed by the new event-derived SAC identification), the code-history panel
+  no longer promises a backfill will produce bytecode for a SAC, and pool
+  tables render colon-form classic assets (USDC:GA5Z…) with the same
+  code + issuer-org treatment as dash-form rows instead of a raw string.
 - **Three site-audit P0/P1 fixes in one pass** (S-006/S-009/crawl):
   (a) contract pages now identify uncaptured-instance SACs from their
   CAP-67 event topics with a spoof-proof derivation cross-check — ~55k

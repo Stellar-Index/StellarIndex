@@ -94,7 +94,14 @@ export function AssetLabel({
       </span>
     );
   }
-  // Classic credit asset: <CODE>-<G-issuer>.
+  // Classic credit asset: <CODE>-<G-issuer>. Pool/trade rows from the
+  // lake serve the colon form (<CODE>:<G-issuer>) — normalise it here
+  // so both spellings get the same code + issuer-org rendering
+  // (site-audit S-014: colon-form rows fell through to the raw
+  // truncated-string fallback next to fully-resolved dash-form rows).
+  if (/^[A-Za-z0-9]{1,12}:G[A-Z2-7]{55}$/.test(canonical)) {
+    canonical = canonical.replace(':', '-');
+  }
   const dashIx = canonical.indexOf('-');
   if (dashIx === -1) {
     // Unstructured fallback — anything longer than a sensible asset
