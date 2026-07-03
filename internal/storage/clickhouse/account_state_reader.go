@@ -283,6 +283,48 @@ func (r *ExplorerReader) AccountsByWealth(ctx context.Context, assets []string, 
 	return out, rows.Err()
 }
 
+// AccountsUnspendable reports which of the given accounts are locked
+// burn addresses: master weight 0 AND all operation thresholds 0 — no
+// key can ever sign, so the balance is provably unspendable (Pass-B
+// ACC-1: the SDF burn address ranked as the "richest account", $11.3B
+// of dead XLM presented as wealth). Decoded from the current account
+// entry XDR; accounts with signers are NOT flagged (signers can still
+// spend when thresholds are 0 — threshold 0 means any weight passes),
+// so the check requires an empty signer list too.
+func (r *ExplorerReader) AccountsUnspendable(ctx context.Context, accountIDs []string) (map[string]bool, error) {
+	if len(accountIDs) == 0 {
+		return nil, nil
+	}
+	const q = `SELECT account_id, entry_xdr FROM stellar.ledger_entries_current FINAL
+		WHERE entry_type = 'account' AND account_id IN (?) AND change_type != 'removed'`
+	rows, err := r.conn.Query(ctx, q, accountIDs)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: accounts unspendable: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[string]bool)
+	for rows.Next() {
+		var id, entryB64 string
+		if err := rows.Scan(&id, &entryB64); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan unspendable: %w", err)
+		}
+		var entry xdr.LedgerEntry
+		if xdr.SafeUnmarshalBase64(entryB64, &entry) != nil {
+			continue
+		}
+		acc, ok := entry.Data.GetAccount()
+		if !ok {
+			continue
+		}
+		th := acc.Thresholds
+		if th.MasterKeyWeight() == 0 && th.ThresholdLow() == 0 &&
+			th.ThresholdMedium() == 0 && th.ThresholdHigh() == 0 && len(acc.Signers) == 0 {
+			out[id] = true
+		}
+	}
+	return out, rows.Err()
+}
+
 // signerAddress renders a SignerKey strkey without panicking on an unknown
 // discriminant (degrades to "").
 func signerAddress(k xdr.SignerKey) string {

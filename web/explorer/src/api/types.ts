@@ -6672,6 +6672,8 @@ export interface paths {
                                     account_id?: string;
                                     /** @description Total holdings value in USD (decimal string). */
                                     usd_value?: string;
+                                    /** @description Provably unspendable burn address — master weight 0 */
+                                    locked?: boolean;
                                 }[];
                             };
                         };

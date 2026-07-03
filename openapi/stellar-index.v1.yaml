@@ -4330,6 +4330,7 @@ paths:
                           properties:
                             account_id: { type: string }
                             usd_value: { type: string, description: Total holdings value in USD (decimal string). }
+                            locked: { type: boolean, description: Provably unspendable burn address — master weight 0, all thresholds 0, no signers. The balance is real; no key can move it. }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /accounts/{g_strkey}:

@@ -135,6 +135,10 @@ func (s *stubExplorerReader) SACAssetFromEvents(_ context.Context, _ string) (st
 	return "", false, nil
 }
 
+func (s *stubExplorerReader) AccountsUnspendable(_ context.Context, _ []string) (map[string]bool, error) {
+	return nil, nil
+}
+
 func (s *stubExplorerReader) AccountsByWealth(_ context.Context, _ []string, _ []float64, _ int) ([]clickhouse.AccountWealth, error) {
 	return s.wealth, s.err
 }
