@@ -763,9 +763,9 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
               }
               chart={<ChartPanel assetID={coin.asset_id} />}
               markets={<MarketsTabPanel assetID={coin.asset_id} />}
-              history={<HistoryTabPanel assetID={coin.asset_id} />}
+              history={<HistoryTabPanel assetID={coin.asset_id} decimals={detail?.decimals ?? 7} />}
               supply={<SupplyTabPanel assetID={coin.asset_id} />}
-              holders={<HoldersTabPanel assetID={coin.asset_id} />}
+              holders={<HoldersTabPanel assetID={coin.asset_id} decimals={detail?.decimals ?? 7} />}
               liquidity={
                 <LiquidityTabPanel assetID={coin.asset_id} code={coin.code} />
               }
