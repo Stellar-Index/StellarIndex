@@ -150,7 +150,14 @@ export function IssuersTable() {
                         title={row.scam_reason}
                         className="rounded-sm bg-down-subtle px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-down"
                       >
-                        SCAM
+                        {/* S-010: the flag categories differ materially —
+                            a deprecated legacy issuer of a real org is not
+                            a scam. Derive the label from the reason. */}
+                        {/^deprecated/i.test(row.scam_reason)
+                          ? 'DEPRECATED'
+                          : /scam|counterfeit|fraud/i.test(row.scam_reason)
+                            ? 'SCAM'
+                            : 'UNSAFE'}
                       </span>
                     )}
                   </div>
