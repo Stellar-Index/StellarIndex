@@ -159,6 +159,18 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 	out := make([]IssuerListEntry, len(rows))
 	for i, r := range rows {
 		homeDomain, orgName := enrichIssuer(r.GStrkey, r.HomeDomain, r.OrgName)
+		reason := scamReason(r.GStrkey)
+		// Identity suppression (site-audit S-010): a flagged,
+		// UNVERIFIED issuer's org_name/home_domain are self-declared
+		// on-chain values — for counterfeiters that is the
+		// impersonation itself (a "SCAM Counterfeiter" declaring
+		// lobstr.co rendered as "LOBSTR — SCAM", indicting the
+		// victim brand). Serving the stolen identity as if it were
+		// the row's name is disinformation; the G-key + reason are
+		// the honest identity for these rows.
+		if reason != "" && !r.OrgVerified {
+			homeDomain, orgName = "", ""
+		}
 		out[i] = IssuerListEntry{
 			GStrkey:               r.GStrkey,
 			HomeDomain:            homeDomain,
@@ -166,7 +178,7 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 			OrgVerified:           r.OrgVerified,
 			AssetCount:            r.AssetCount,
 			TotalObservationCount: r.TotalObservationCount,
-			ScamReason:            scamReason(r.GStrkey),
+			ScamReason:            reason,
 		}
 	}
 	writeJSON(w, out, Flags{})
@@ -242,12 +254,18 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	homeDomain, orgName := enrichIssuer(row.GStrkey, row.HomeDomain, row.OrgName)
+	detailReason := scamReason(row.GStrkey)
+	// Same identity suppression as the list (S-010): a flagged,
+	// unverified issuer's self-declared identity is the impersonation.
+	if detailReason != "" && !row.OrgVerified {
+		homeDomain, orgName = "", ""
+	}
 	out := Issuer{
 		GStrkey:        row.GStrkey,
 		HomeDomain:     homeDomain,
 		OrgName:        orgName,
 		OrgVerified:    row.OrgVerified,
-		ScamReason:     scamReason(row.GStrkey),
+		ScamReason:     detailReason,
 		AuthRequired:   row.AuthRequired,
 		AuthRevocable:  row.AuthRevocable,
 		AuthImmutable:  row.AuthImmutable,

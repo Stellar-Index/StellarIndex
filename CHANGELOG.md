@@ -16,6 +16,14 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Impersonated identities no longer render on flagged issuers** (site
+  audit S-010): the "LOBSTR — SCAM" row was actually a stellar.expert-listed
+  counterfeiter whose on-chain home_domain impersonates lobstr.co — our
+  pipeline was serving the stolen identity as the row's name, indicting the
+  victim brand. Flagged, UNVERIFIED issuers now serve no self-declared
+  org_name/home_domain (the G-key + reason are the honest identity); the
+  explorer badge is category-aware (SCAM / DEPRECATED / UNSAFE), so a real
+  org's deprecated legacy issuer no longer wears a red SCAM tag.
 - **ClickHouse snapshot rows were being merge-destroyed** (site audit,
   P0-data): checkpoint state-snapshot rows all carried the same
   (tx_hash="", op_index=-1, change_index=0) tail of the ReplacingMergeTree
