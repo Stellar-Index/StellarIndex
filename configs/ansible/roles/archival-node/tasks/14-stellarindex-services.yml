@@ -214,6 +214,31 @@
 # service fired by a systemd timer. R1 is the integrity leader; R2/R3
 # run verify-archive on a slower cadence (separate units, TBD).
 
+- name: archive-completeness override drop-in (root user, no legacy env)
+  # Replaces a hand-written pre-rebrand override that still loaded
+  # /etc/default/ratesengine — dead legacy credentials whose values
+  # loaded AFTER the unit's real env file (later EnvironmentFile wins).
+  # Site-audit follow-up 2026-07-03; the legacy file is removed below.
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/archive-completeness.service.d/override.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Service]
+      User=root
+      Group=root
+  notify: daemon-reload
+
+- name: Remove the legacy ratesengine env file
+  # Pre-rebrand credentials (old DB, deleted MinIO reader) that
+  # survived the 2026-07-03 brand purge because a systemd drop-in
+  # still referenced the path. Nothing references it after the
+  # override above.
+  ansible.builtin.file:
+    path: /etc/default/ratesengine
+    state: absent
+
 - name: Install compute-archive-to.sh helper
   # archive-completeness.service's ExecStartPre derives ARCHIVE_TO
   # from the indexer cursor. Without it ARCHIVE_TO stays 0 and the
