@@ -30,6 +30,22 @@ import (
 // Once a payload is written, /v1/issuers list responses surface
 // `org_name` from `sep1_payload->>'OrgName'`.
 //
+// sep1DomainOverrides maps issuers whose ON-CHAIN home_domain no
+// longer serves a stellar.toml to the domain that DOES. Curated the
+// same way the API's knownIssuers map is (hand-vetted, reviewed in
+// PR): the on-chain value is authoritative for identity, but the
+// TOML's physical location can rot independently — Circle's
+// circle.com/.well-known/stellar.toml 404s (redirect chain to
+// www.circle.com then "Invalid .well-known request", verified
+// 2026-07-03) while the legacy Centre consortium domain still serves
+// the full document, incl. the USDC image + org metadata wallets
+// need (board #47).
+var sep1DomainOverrides = map[string]string{
+	// USDC / EURC issuers — Circle (Centre) toml.
+	"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN": "centre.io",
+	"GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2": "centre.io",
+}
+
 //nolint:gocognit // linear refresh loop; per-issuer fetch + marshal + write reads better inline.
 func sep1RefreshCmd(args []string) error {
 	fs := flag.NewFlagSet("sep1-refresh", flag.ContinueOnError)
@@ -89,7 +105,7 @@ func sep1RefreshCmd(args []string) error {
 			fmt.Printf("\nAborted at %d/%d (deadline): %v\n", ok+failed, len(candidates), err)
 			break
 		}
-		sep, err := resolver.Resolve(ctx, c.HomeDomain)
+		sep, err := resolver.Resolve(ctx, sep1FetchDomain(c.GStrkey, c.HomeDomain))
 		if err != nil {
 			fmt.Printf("FAIL  %s  %s  %v\n", c.GStrkey, c.HomeDomain, err)
 			// Bump sep1_resolved_at so this (usually dead) domain moves to
@@ -179,4 +195,14 @@ func marshalSep1Payload(sep *metadata.SEP1, orgVerified bool) ([]byte, error) {
 		"Currencies":    currencies,
 		"FetchedAt":     sep.FetchedAt.UTC().Format(time.RFC3339),
 	})
+}
+
+// sep1FetchDomain returns the domain to fetch an issuer's TOML from:
+// the curated override when one exists, else the on-chain
+// home_domain. Split out for the funlen budget + direct testing.
+func sep1FetchDomain(gStrkey, homeDomain string) string {
+	if override, ok := sep1DomainOverrides[gStrkey]; ok {
+		return override
+	}
+	return homeDomain
 }

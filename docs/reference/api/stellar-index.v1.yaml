@@ -5612,6 +5612,12 @@ components:
         slug:             { type: string, description: "URL slug (lowercase, e.g. \"usdc\")." }
         name:             { type: string, description: "Human-readable currency name." }
         verified_issuer:  { type: string, description: "Short attribution string (e.g. \"Circle (centre.io)\"). Empty when the catalogue entry didn't include a verified_issuer_label." }
+        image:
+          type: string
+          nullable: true
+          description: >-
+            Asset logo URL from the issuer's SEP-1 TOML (https-only,
+            sanitized). Wallets bulk-load logos from this listing.
         coingecko_id:     { type: string, description: "CoinGecko slug for this currency (when known)." }
         coinmarketcap_id: { type: string, description: "CoinMarketCap integer ID for this currency (when known)." }
         market_cap_usd:   { type: string, description: "Decimal string (2 fractional digits). Computed for fiat rows only: M2 × current FX rate. Crypto/stablecoin rows leave this empty (their per-Stellar-asset F2 fields on /v1/assets/{asset_id} are the canonical source)." }

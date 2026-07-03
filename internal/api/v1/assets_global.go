@@ -335,12 +335,17 @@ func (s *Server) handleGlobalAsset(w http.ResponseWriter, r *http.Request, vc *c
 //  2. Description is omitted to keep payloads small — the detail
 //     page already surfaces it.
 type VerifiedCurrencyListItem struct {
-	Ticker            string `json:"ticker"`
-	Slug              string `json:"slug"`
-	Name              string `json:"name"`
-	Class             string `json:"class"`
-	VerifiedIssuer    string `json:"verified_issuer,omitempty"`
-	CoinGeckoID       string `json:"coingecko_id,omitempty"`
+	Ticker         string `json:"ticker"`
+	Slug           string `json:"slug"`
+	Name           string `json:"name"`
+	Class          string `json:"class"`
+	VerifiedIssuer string `json:"verified_issuer,omitempty"`
+	CoinGeckoID    string `json:"coingecko_id,omitempty"`
+	// Image is the asset's logo URL from the issuer's SEP-1 TOML
+	// (sanitized; https only). Wallets bulk-load logos from this
+	// listing (board #47). Empty when the issuer's TOML is missing
+	// or carries no image for the matched currency.
+	Image             string `json:"image,omitempty"`
 	CMCID             string `json:"coinmarketcap_id,omitempty"`
 	CirculatingSupply string `json:"circulating_supply,omitempty"`
 	SupplyDecimals    int    `json:"supply_decimals,omitempty"`
@@ -371,7 +376,40 @@ func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
 	entries := s.verifiedCurrencies.Browseable()
 	out := projectVerifiedCurrencyList(entries)
 	s.attachFiatMarketCaps(r.Context(), entries, out)
+	s.attachVerifiedImages(r.Context(), entries, out)
 	writeJSON(w, out, Flags{})
+}
+
+// attachVerifiedImages fills each verified row's Image from the
+// issuer's cached SEP-1 currency entry (board #47 — wallets bulk-load
+// logos from this listing). Bounded by the catalogue size (~50 rows);
+// reads only the sep1_payload cache (no live HTTPS), best-effort per
+// row. The same isSafeImageURL gate as the detail overlay applies.
+func (s *Server) attachVerifiedImages(ctx context.Context, entries []*currency.VerifiedCurrency, out []VerifiedCurrencyListItem) {
+	if s.sep1Cache == nil {
+		return
+	}
+	for i, vc := range entries {
+		se := vc.StellarEntry()
+		if se == nil || se.Issuer == "" || se.Code == "" {
+			continue
+		}
+		asset, err := canonical.NewClassicAsset(se.Code, se.Issuer)
+		if err != nil {
+			continue
+		}
+		sep, err := s.sep1Cache.GetIssuerSep1Cached(ctx, se.Issuer)
+		if err != nil || sep == nil {
+			continue
+		}
+		match := findMatchingCachedCurrency(sep, asset)
+		if match == nil {
+			continue
+		}
+		if v := strings.TrimSpace(match.Image); isSafeImageURL(v) {
+			out[i].Image = v
+		}
+	}
 }
 
 // projectVerifiedCurrencyList projects each catalogue entry into

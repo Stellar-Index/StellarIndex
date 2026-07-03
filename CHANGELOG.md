@@ -16,6 +16,15 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Asset logos for wallets** (board #47): `/v1/assets/verified` rows now
+  carry `image` (the issuer's SEP-1 logo URL, https-only + sanitized — the
+  bulk surface for wallet icon loading; per-asset detail already served it).
+  Root-caused the biggest asset's missing metadata en route: Circle's
+  on-chain home_domain (circle.com) 404s its stellar.toml — a curated
+  domain-override map (same hand-vetted pattern as knownIssuers) redirects
+  the FETCH to the still-serving centre.io while the on-chain value stays
+  authoritative for identity; the bidirectional org-verification still
+  holds because centre.io's TOML lists the issuer back.
 - **Point-in-time price: `GET /v1/price/at?asset=&ts=`** (board #46, the
   wallet-builder accommodation the RFP audit recommended): the closed
   1-minute VWAP bucket at-or-before a historical instant — the
