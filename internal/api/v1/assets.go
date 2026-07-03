@@ -1935,11 +1935,21 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		if entry == nil || entry.AssetID == "" {
 			return
 		}
-		row, err := s.coins.GetCoinByAssetID(statsCtx, entry.AssetID)
-		if err != nil {
+		// ListCoinsExt, not GetCoinByAssetID: only the listing query
+		// computes the windowed change columns (the per-asset reader's
+		// row carries nil changes — live-debugged 2026-07-03 when the
+		// deployed enrichment merged nothing). Q= is an exact-enough
+		// filter here: the canonical asset_id substring-matches only
+		// its own row.
+		rows, err := s.coins.ListCoinsExt(statsCtx, timescale.ListCoinsOptions{
+			Limit: 1,
+			Q:     entry.AssetID,
+			Order: timescale.CoinsOrderVolume24hUSDDesc,
+		})
+		if err != nil || len(rows) == 0 || rows[0].AssetID != entry.AssetID {
 			return
 		}
-		twin := assetDetailFromCoinRow(row)
+		twin := assetDetailFromCoinRow(rows[0])
 		if page[i].Change1hPct == nil {
 			page[i].Change1hPct = twin.Change1hPct
 		}
