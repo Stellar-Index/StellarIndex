@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"hash/crc32"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -31,16 +32,27 @@ func SnapshotEntryRow(post *xdr.LedgerEntry, closeTime time.Time) (LedgerEntryCh
 	}
 	owner, asset := ownerAndAsset(key)
 	return LedgerEntryChangeRow{
-		LedgerSeq:  uint32(post.LastModifiedLedgerSeq), //nolint:gosec // ledger seq fits uint32
-		CloseTime:  closeTime,
-		OpIndex:    -1,
-		ChangeType: "state",
-		EntryType:  entryTypeName(post.Data.Type),
-		KeyXDR:     keyB64,
-		EntryXDR:   entryB64,
-		AccountID:  owner,
-		Asset:      asset,
-		Balance:    entryBalance(*post),
+		LedgerSeq: uint32(post.LastModifiedLedgerSeq), //nolint:gosec // ledger seq fits uint32
+		CloseTime: closeTime,
+		OpIndex:   -1,
+		// ChangeIndex MUST be per-key unique within a ledger_seq: the
+		// table is ReplacingMergeTree ORDER BY (ledger_seq, tx_hash,
+		// op_index, change_index), and snapshot rows all share
+		// tx_hash="" + op_index=-1. With ChangeIndex=0 every snapshot
+		// entry modified in the same ledger collapsed to ONE arbitrary
+		// survivor at merge time — the 2026-07-03 site audit measured
+		// >55% of the 48M-entry Phase-C snapshot already destroyed
+		// (blast radius: account-state, trustline, supply, and wasm
+		// readers). crc32(key) is deterministic, so re-runs stay
+		// idempotent per key instead of duplicating.
+		ChangeIndex: crc32.ChecksumIEEE([]byte(keyB64)),
+		ChangeType:  "state",
+		EntryType:   entryTypeName(post.Data.Type),
+		KeyXDR:      keyB64,
+		EntryXDR:    entryB64,
+		AccountID:   owner,
+		Asset:       asset,
+		Balance:     entryBalance(*post),
 	}, true
 }
 

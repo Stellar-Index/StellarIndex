@@ -130,9 +130,13 @@ func (r *ExplorerReader) contractWasmHash(ctx context.Context, cid xdr.Hash) (xd
 	if err != nil {
 		return xdr.Hash{}, false, err
 	}
-	const q = `SELECT entry_xdr FROM stellar.ledger_entry_changes
+	// ledger_entries_current, not the changes log: the current-state MV
+	// folds every insert (immune to the snapshot-row merge-loss defect,
+	// site-audit 2026-07-03) and (entry_type, key_xdr) is a PK-prefix
+	// lookup instead of a bloom-filtered scan.
+	const q = `SELECT entry_xdr FROM stellar.ledger_entries_current FINAL
 		WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
-		ORDER BY ledger_seq DESC, ingested_at DESC`
+		ORDER BY ledger_seq DESC`
 	rows, err := r.conn.Query(ctx, q, keys)
 	if err != nil {
 		return xdr.Hash{}, false, fmt.Errorf("clickhouse: contract_data scan: %w", err)
@@ -321,9 +325,11 @@ func (r *ExplorerReader) SACClassicAssetName(ctx context.Context, contractID str
 	if err != nil {
 		return "", false, err
 	}
-	const q = `SELECT entry_xdr FROM stellar.ledger_entry_changes
+	// Same table choice rationale as contractWasmHash (merge-loss immune,
+	// PK-prefix lookup).
+	const q = `SELECT entry_xdr FROM stellar.ledger_entries_current FINAL
 		WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
-		ORDER BY ledger_seq DESC, ingested_at DESC LIMIT 1`
+		ORDER BY ledger_seq DESC LIMIT 1`
 	rows, err := r.conn.Query(ctx, q, keys)
 	if err != nil {
 		return "", false, fmt.Errorf("clickhouse: SAC instance scan: %w", err)
