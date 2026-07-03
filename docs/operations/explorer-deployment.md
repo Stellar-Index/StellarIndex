@@ -84,7 +84,7 @@ sufficient, Git-driven deploys.
 ### What you get
 
 - Every PR gets a preview deployment at
-  `<pr-hash>.stellarindex-showcase.pages.dev` — useful for
+  `<pr-hash>.stellarindex-explorer.pages.dev` — useful for
   reviewing UI changes before merge.
 - Production deploys on every push to `main` after the existing
   CI gates pass (the `web/explorer` job in `.github/workflows/`
@@ -145,7 +145,7 @@ gh workflow run showcase-deploy.yml --ref my-branch \
 ```
 
 One-time setup: add two repo secrets (`CLOUDFLARE_API_TOKEN` with
-`Pages:Edit` scoped to the `stellarindex-showcase` project, and
+`Pages:Edit` scoped to the `stellarindex-explorer` project, and
 `CLOUDFLARE_ACCOUNT_ID`).
 
 The workflow intentionally doesn't fire on push — that path is

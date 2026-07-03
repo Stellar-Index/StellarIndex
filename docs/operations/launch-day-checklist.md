@@ -168,7 +168,7 @@ Order matters. Don't skip.
    `generateStaticParams` fetch picks up the live coin
    directory:
    ```sh
-   # CF Pages: dashboard → Workers & Pages → stellarindex-showcase
+   # CF Pages: dashboard → Workers & Pages → stellarindex-explorer
    #          → Deployments → Retry deployment
    #
    # Or push an empty commit:
