@@ -1,8 +1,9 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { Breadcrumbs } from '@/components/ui';
@@ -42,14 +43,19 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
   const id = (idProp ?? params.get('id') ?? '').trim();
   const looksValid = ACCOUNT_RE.test(id);
 
+  // ACC-3: both activity endpoints serve next_cursor; the tables were
+  // hard-capped at one page. Same keyset pattern as the contract page.
+  const [txCursor, setTxCursor] = useState('');
+  const [opsCursor, setOpsCursor] = useState('');
   const txQ = useQuery<AccountTransactionsResp>({
-    queryKey: ['/v1/accounts/{id}/transactions', id],
+    queryKey: ['/v1/accounts/{id}/transactions', id, txCursor],
     enabled: id.length > 0 && looksValid,
     retry: false,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const env = await apiGet<Envelope<AccountTransactionsResp>>(
         `/v1/accounts/${encodeURIComponent(id)}/transactions`,
-        { limit: PAGE_SIZE },
+        { limit: PAGE_SIZE, ...(txCursor ? { cursor: txCursor } : {}) },
       );
       return env.data;
     },
@@ -57,13 +63,14 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
   });
 
   const opsQ = useQuery<AccountOperationsResp>({
-    queryKey: ['/v1/accounts/{id}/operations', id],
+    queryKey: ['/v1/accounts/{id}/operations', id, opsCursor],
     enabled: id.length > 0 && looksValid,
     retry: false,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const env = await apiGet<Envelope<AccountOperationsResp>>(
         `/v1/accounts/${encodeURIComponent(id)}/operations`,
-        { limit: PAGE_SIZE },
+        { limit: PAGE_SIZE, ...(opsCursor ? { cursor: opsCursor } : {}) },
       );
       return env.data;
     },
@@ -169,6 +176,8 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
         isError={txQ.isError}
         error={txQ.error}
         data={txQ.data}
+        onOlder={txQ.data?.next_cursor ? () => setTxCursor(txQ.data?.next_cursor ?? '') : undefined}
+        onNewest={txCursor ? () => setTxCursor('') : undefined}
       />
       <OperationsPanel
         id={id}
@@ -176,6 +185,8 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
         isError={opsQ.isError}
         error={opsQ.error}
         data={opsQ.data}
+        onOlder={opsQ.data?.next_cursor ? () => setOpsCursor(opsQ.data?.next_cursor ?? '') : undefined}
+        onNewest={opsCursor ? () => setOpsCursor('') : undefined}
       />
     </Shell>
   );
@@ -329,12 +340,22 @@ function AccountStatePanel({
       </Panel>
     );
   }
-  if (isError || !state || !state.exists) {
+  if (isError) {
+    // X-1: an error must never render as a confident "nothing exists"
+    // claim — the state lookup can time out under load.
+    return (
+      <Panel title="State" source={source} bodyClassName="text-sm text-ink-muted">
+        The account-state lookup failed — reload to retry. Activity below is
+        unaffected.
+      </Panel>
+    );
+  }
+  if (!state || !state.exists) {
     return (
       <Panel title="State" source={source} bodyClassName="text-sm text-ink-muted">
         No live account state in the captured ledger window yet — the account
-        wasn’t touched since entry-change capture began (resolves once the
-        Phase-C backfill lands). Sourced activity still shows below.
+        wasn’t touched since entry-change capture began. Sourced activity
+        still shows below.
       </Panel>
     );
   }
@@ -450,17 +471,39 @@ function Shell({
   );
 }
 
+function ActivityPager({ onOlder, onNewest }: { onOlder?: () => void; onNewest?: () => void }) {
+  if (!onOlder && !onNewest) return null;
+  return (
+    <div className="flex items-center gap-2 px-4 pt-3 text-xs">
+      {onNewest && (
+        <button onClick={onNewest} className="rounded-md border border-line px-2.5 py-1 text-ink-body hover:border-brand-500">
+          ← Newest
+        </button>
+      )}
+      {onOlder && (
+        <button onClick={onOlder} className="ml-auto rounded-md border border-line px-2.5 py-1 text-ink-body hover:border-brand-500">
+          Load older →
+        </button>
+      )}
+    </div>
+  );
+}
+
 function TransactionsPanel({
   id,
   isLoading,
   isError,
   error,
   data,
+  onOlder,
+  onNewest,
 }: {
   id: string;
   isLoading: boolean;
   isError: boolean;
   error: unknown;
+  onOlder?: () => void;
+  onNewest?: () => void;
   data: AccountTransactionsResp | undefined;
 }) {
   const source = asExample(`/v1/accounts/${id}/transactions`, {
@@ -584,6 +627,7 @@ function TransactionsPanel({
           </tbody>
         </table>
       </div>
+      <ActivityPager onOlder={onOlder} onNewest={onNewest} />
     </Panel>
   );
 }
@@ -594,11 +638,15 @@ function OperationsPanel({
   isError,
   error,
   data,
+  onOlder,
+  onNewest,
 }: {
   id: string;
   isLoading: boolean;
   isError: boolean;
   error: unknown;
+  onOlder?: () => void;
+  onNewest?: () => void;
   data: AccountOperationsResp | undefined;
 }) {
   const source = asExample(`/v1/accounts/${id}/operations`, {
@@ -648,6 +696,7 @@ function OperationsPanel({
       {operations.map((op: TxOperation, i: number) => (
         <OperationCard key={`${op.tx_hash ?? ''}-${op.op_index}-${i}`} op={op} />
       ))}
+      <ActivityPager onOlder={onOlder} onNewest={onNewest} />
     </Panel>
   );
 }
