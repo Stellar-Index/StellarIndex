@@ -352,7 +352,7 @@ export default async function PairPage({ params }: { params: Params }) {
         >
           <div className="flex flex-wrap items-baseline gap-4">
             <span className="font-mono text-3xl tabular-nums">
-              {priceNum != null ? formatPriceCompact(priceNum) : '—'}
+              {priceNum != null ? formatQuoteAmount(priceNum, quote) : '—'}
             </span>
             {change24h != null && Number.isFinite(change24h) && (
               <ChangeBadge pct={change24h} window="24h" />
@@ -402,9 +402,12 @@ export default async function PairPage({ params }: { params: Params }) {
             <Stat label="High" value={ohlc.high} />
             <Stat label="Low" value={ohlc.low} />
             <Stat label="Close" value={ohlc.close} />
+            {/* AM-01: quote_volume is a 7-decimal scaled integer in
+                QUOTE-asset units — the old /1e8 understated it 10× and
+                the $ prefix mislabeled non-USD quotes. */}
             <Stat
-              label="Quote vol"
-              value={formatUsd(Number(ohlc.quote_volume) / 1e8)}
+              label={`Quote vol (${shortAsset(quote)})`}
+              value={formatQuoteAmount(Number(ohlc.quote_volume) / 1e7, quote)}
             />
             <Stat
               label="Trades"
@@ -467,11 +470,13 @@ export default async function PairPage({ params }: { params: Params }) {
                     <td className="px-3 py-2 text-right tabular-nums">
                       {t.price}
                     </td>
+                    {/* AM-02: amounts arrive as 7-decimal scaled
+                        integers; render in asset units. */}
                     <td className="px-3 py-2 text-right tabular-nums text-ink-muted">
-                      {t.base_amount ?? '—'}
+                      {t.base_amount ? (Number(t.base_amount) / 1e7).toLocaleString(undefined, { maximumFractionDigits: 4 }) : '—'}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-ink-muted">
-                      {t.quote_amount ?? '—'}
+                      {t.quote_amount ? (Number(t.quote_amount) / 1e7).toLocaleString(undefined, { maximumFractionDigits: 4 }) : '—'}
                     </td>
                   </tr>
                 ))}
@@ -684,11 +689,18 @@ function ChangeBadge({ pct, window }: { pct: number; window: string }) {
 }
 
 
-function formatPriceCompact(n: number): string {
-  if (n >= 1) return `$${n.toFixed(n >= 100 ? 2 : 4)}`;
-  if (n >= 0.001) return `$${n.toFixed(6)}`;
-  if (n > 0) return `$${n.toExponential(3)}`;
-  return '—';
+// AM-06 (site audit): prices on this page are quote-per-base — a "$"
+// prefix is only honest when the quote is USD or USD-pegged. Other
+// quotes (native, AQUA, EURC…) get the quote code as a suffix.
+function isUsdQuote(quote: string): boolean {
+  return quote === 'fiat:USD' || /^USDC[:-]/.test(quote) || /^USDT[:-]/.test(quote);
+}
+
+function formatQuoteAmount(n: number, quote: string): string {
+  const num =
+    n >= 1 ? n.toFixed(n >= 100 ? 2 : 4) : n >= 0.001 ? n.toFixed(6) : n > 0 ? n.toExponential(3) : '—';
+  if (num === '—') return num;
+  return isUsdQuote(quote) ? `$${num}` : `${num} ${shortAsset(quote)}`;
 }
 
 function formatUsd(n: number): string {
