@@ -15,6 +15,14 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **ADR-0044 (Proposed): explorer rendering moves to edge SSR** — the
+  2026-07-03 site audit traced three production failure classes (the
+  silent 20k-file deploy freeze, bake-time poisoned pages, between-deploy
+  staleness) to rendering at build time; OpenNext on Cloudflare Workers
+  with per-route-family edge caching replaces static export, with a
+  staged migration and the pruned static path supported until cutover.
+
 ### Fixed
 - **Three site-audit P0/P1 fixes in one pass** (S-006/S-009/crawl):
   (a) contract pages now identify uncaptured-instance SACs from their
