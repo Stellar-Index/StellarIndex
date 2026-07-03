@@ -165,17 +165,39 @@ func (a *ohlcBucketAcc) add(b *OHLCSeriesBar) {
 	}
 }
 
+// combinedOutlierBandRatio bounds how far a combined bar's high/low
+// may sit from the bar's own volume-weighted price. The USD-peg
+// expansion folds thin SDEX stablecoin books into the fiat series, and
+// a single fat-finger print there (site audit S-012: one 1.00-USDC-
+// per-XLM fill, 5.6× market, inside a 3,177-trade hour) otherwise
+// becomes the served high for the flagship pair. 3× vs the bar's VWAP
+// never clips a plausible intra-bucket move (largest observed XLM/USD
+// 1h range is well under 2×) while removing dust-print wicks. Applies
+// ONLY to the synthetic combined series — direct venue series serve
+// their true extremes untouched.
+var combinedOutlierBandRatio = big.NewRat(3, 1)
+
 func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
 	open, closeP := new(big.Rat), new(big.Rat)
 	if a.baseVol.Sign() > 0 {
 		open.Quo(a.openNum, a.baseVol)
 		closeP.Quo(a.closeNum, a.baseVol)
 	}
+	high, low := a.high, a.low
+	if a.baseVol.Sign() > 0 && a.quoteVol.Sign() > 0 {
+		vwap := new(big.Rat).Quo(a.quoteVol, a.baseVol)
+		if ceil := new(big.Rat).Mul(vwap, combinedOutlierBandRatio); high.Cmp(ceil) > 0 {
+			high = ceil
+		}
+		if floor := new(big.Rat).Quo(vwap, combinedOutlierBandRatio); low.Cmp(floor) < 0 {
+			low = floor
+		}
+	}
 	return OHLCSeriesBar{
 		T:      t,
 		O:      ratToDecimal(open, ohlcPriceDigits),
-		H:      ratToDecimal(a.high, ohlcPriceDigits),
-		L:      ratToDecimal(a.low, ohlcPriceDigits),
+		H:      ratToDecimal(high, ohlcPriceDigits),
+		L:      ratToDecimal(low, ohlcPriceDigits),
 		C:      ratToDecimal(closeP, ohlcPriceDigits),
 		VBase:  ratToDecimal(a.baseVol, 0),
 		VQuote: ratToDecimal(a.quoteVol, ohlcPriceDigits),
