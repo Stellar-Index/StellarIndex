@@ -1141,6 +1141,13 @@ func (s *Server) serveCatalogueUnifiedPage(w http.ResponseWriter, r *http.Reques
 	// catalogue rows (XLM, USDC, …) carry price_usd instead of null
 	// (audit 2026-06-19 item 4).
 	s.fillCataloguePricesForPage(r.Context(), page)
+	// AM-10 twin-stats merge — THIS is the function that serves the
+	// unified page 1; the first three attempts landed in
+	// writeCataloguePage (the class-filtered path) because both share
+	// a byte-identical price-fill line and the edits anchored on the
+	// first occurrence. Keep both call sites.
+	s.fillCatalogueStatsForPage(r.Context(), page)
+	s.attachSparkline7dIfRequested(r, page)
 	env := Envelope{Data: page, Flags: Flags{}}
 	if end < len(rows) {
 		env.Pagination = &Pagination{Next: "catalogue:" + strconv.Itoa(end)}
@@ -1946,24 +1953,36 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		// matches nothing — the v0.7.4 attempt still merged nothing
 		// live. Issuer is exact; pick the exact asset id from the
 		// issuer's (typically 1-row) result.
-		dashIx := strings.Index(entry.AssetID, "-")
-		if dashIx < 0 {
-			return // native / non-classic — no classic_assets twin
-		}
-		rows, err := s.coins.ListCoinsExt(statsCtx, timescale.ListCoinsOptions{
-			Limit:  50,
-			Issuer: entry.AssetID[dashIx+1:],
-			Order:  timescale.CoinsOrderVolume24hUSDDesc,
-		})
-		if err != nil {
-			return
-		}
-		for j := range rows {
-			if rows[j].AssetID == entry.AssetID {
-				mergeTwinStats(&page[i], assetDetailFromCoinRow(rows[j]))
+		var twinRow *timescale.CoinRow
+		if entry.AssetID == "native" {
+			row, err := s.coins.GetNativeCoinRow(statsCtx)
+			if err == nil {
+				twinRow = &row
+			}
+		} else if dashIx := strings.Index(entry.AssetID, "-"); dashIx >= 0 {
+			rows, err := s.coins.ListCoinsExt(statsCtx, timescale.ListCoinsOptions{
+				Limit:  50,
+				Issuer: entry.AssetID[dashIx+1:],
+				Order:  timescale.CoinsOrderVolume24hUSDDesc,
+			})
+			if err != nil {
 				return
 			}
+			for j := range rows {
+				if rows[j].AssetID == entry.AssetID {
+					twinRow = &rows[j]
+					break
+				}
+			}
 		}
+		if twinRow == nil {
+			return
+		}
+		twin := []AssetDetail{assetDetailFromCoinRow(*twinRow)}
+		// Same supply-derived market-cap fill the classic phase gets —
+		// the raw listing row carries no mcap.
+		s.fillMarketCapsFromSupply(statsCtx, twin)
+		mergeTwinStats(&page[i], twin[0])
 	})
 }
 

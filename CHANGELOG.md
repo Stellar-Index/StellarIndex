@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Catalogue analytics actually ship** (the v0.7.4/v0.7.5 fix landed in
+  the wrong function): two code paths share a byte-identical price-fill
+  line and the twin-stats merge anchored on the first — writeCataloguePage
+  (class-filtered) instead of serveCatalogueUnifiedPage (the page the
+  explorer serves). Root-caused by running the API locally against the
+  production database. The unified page now merges twin stats AND honours
+  include=sparkline7d; native XLM enriches via its dedicated row reader;
+  merged twins get the same supply-derived market-cap fill as classic rows.
+  Verified against production data pre-release: XLM $6.9B mcap, real 24h
+  changes across the catalogue.
+
 ## [v0.7.5] — 2026-07-03
 
 ### Fixed
