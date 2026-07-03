@@ -4338,6 +4338,7 @@ paths:
                     type: object
                     properties:
                       contract_id: { type: string }
+                      protocol: { type: string, description: Registry protocol this contract belongs to (blend, soroswap, …) when attribution is known; absent otherwise. }
                       events: { type: array, items: { $ref: "#/components/schemas/ContractEvent" } }
                       next_cursor: { type: string, description: Opaque cursor for the next (older) page; absent on the last page. }
         "400": { $ref: "#/components/responses/BadRequest" }

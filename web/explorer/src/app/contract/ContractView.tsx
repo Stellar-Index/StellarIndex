@@ -179,6 +179,17 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
         bodyClassName="space-y-3"
       >
         <SacIdentity id={data.contract_id || id} />
+        {data.protocol && (
+          <div>
+            <Link
+              href={`/protocols/${encodeURIComponent(data.protocol)}`}
+              className="inline-flex items-center rounded-sm bg-brand-100 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-brand-800 hover:bg-brand-200"
+              title={`Registered ${data.protocol} contract — protocol verification page`}
+            >
+              {data.protocol}
+            </Link>
+          </div>
+        )}
         <div>
           <div className="text-[11px] uppercase tracking-wider text-ink-muted">
             Contract ID

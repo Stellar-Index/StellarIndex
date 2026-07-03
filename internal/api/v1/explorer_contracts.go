@@ -25,7 +25,12 @@ type ContractEventView struct {
 // so a contract that emits many events in one ledger never loses rows across a
 // page boundary. Echo it back as ?cursor=. Set only when a full page returned.
 type ContractDetailView struct {
-	ContractID string              `json:"contract_id"`
+	ContractID string `json:"contract_id"`
+	// Protocol names the registry protocol this contract belongs to
+	// (blend, soroswap, …) when attribution is known (Pass-B CON-3:
+	// a Blend pool page couldn't say it was Blend while the server
+	// held the map).
+	Protocol   string              `json:"protocol,omitempty"`
 	Events     []ContractEventView `json:"events"`
 	NextCursor string              `json:"next_cursor,omitempty"`
 }
@@ -64,6 +69,7 @@ func (s *Server) handleContractDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := ContractDetailView{ContractID: cid, Events: make([]ContractEventView, len(rows))}
+	out.Protocol = s.contractAttribution(r.Context())[cid]
 	for i, e := range rows {
 		out.Events[i] = contractEventView(e)
 	}

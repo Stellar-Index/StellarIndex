@@ -6673,6 +6673,8 @@ export interface paths {
                         "application/json": {
                             data?: {
                                 contract_id?: string;
+                                /** @description Registry protocol this contract belongs to (blend */
+                                protocol?: string;
                                 events?: components["schemas"]["ContractEvent"][];
                                 /** @description Opaque cursor for the next (older) page; absent on the last page. */
                                 next_cursor?: string;
