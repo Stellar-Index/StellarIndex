@@ -43,6 +43,14 @@ func display(v xdr.ScVal, depth int) string {
 		return "…"
 	}
 	switch v.Type {
+	default:
+		return displayScalar(v)
+	}
+}
+
+// displayScalar renders the non-container ScVal types.
+func displayScalar(v xdr.ScVal) string {
+	switch v.Type {
 	case xdr.ScValTypeScvBool:
 		return fmt.Sprintf("%t", v.MustB())
 	case xdr.ScValTypeScvVoid:
