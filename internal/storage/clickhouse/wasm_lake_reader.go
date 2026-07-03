@@ -382,3 +382,40 @@ func sacNameFromInstanceEntry(b64 string) (string, bool) {
 	}
 	return "", false
 }
+
+// SACAssetFromEvents infers which classic asset a contract's SAC
+// events belong to, from the trailing sep0011_asset String topic that
+// CAP-67 unified events carry ("CODE:GISSUER" or "native"). Used as
+// the LAST fallback for SAC identification when the contract instance
+// was never captured (deployed pre-lake + TTL-evicted before any
+// checkpoint — structurally invisible to snapshots; ~55k such
+// contracts measured in the 2026-07-03 site audit). The caller MUST
+// cross-check by re-deriving the SAC address from the returned asset
+// — the topic is attacker-influenceable on non-SAC contracts, the
+// derivation is not.
+func (r *ExplorerReader) SACAssetFromEvents(ctx context.Context, contractID string) (string, bool, error) {
+	const q = `SELECT topics_xdr[length(topics_xdr)] FROM stellar.contract_events
+		WHERE contract_id = ? AND length(topics_xdr) >= 3
+		ORDER BY ledger_seq DESC LIMIT 1`
+	rows, err := r.conn.Query(ctx, q, contractID)
+	if err != nil {
+		return "", false, fmt.Errorf("clickhouse: SACAssetFromEvents: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		return "", false, rows.Err()
+	}
+	var b64 string
+	if err := rows.Scan(&b64); err != nil {
+		return "", false, err
+	}
+	var sv xdr.ScVal
+	if xdr.SafeUnmarshalBase64(b64, &sv) != nil {
+		return "", false, rows.Err()
+	}
+	str, ok := sv.GetStr()
+	if !ok {
+		return "", false, rows.Err()
+	}
+	return string(str), true, rows.Err()
+}

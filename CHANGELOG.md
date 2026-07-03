@@ -16,6 +16,17 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Three site-audit P0/P1 fixes in one pass** (S-006/S-009/crawl):
+  (a) contract pages now identify uncaptured-instance SACs from their
+  CAP-67 event topics with a spoof-proof derivation cross-check — ~55k
+  contracts (e.g. the upvoteICE SAC) stop rendering an unexplained void
+  and instead say which asset's SAC they are; (b) the API's
+  trailing-slash 308 now runs INSIDE the CORS middleware — it previously
+  carried no Access-Control-Allow-Origin, so browsers killed the
+  redirect and every trailing-slash API URL was as dead as the 404 the
+  redirect exists to prevent; (c) market-pair pages no longer canonical
+  to double-encoded 404 URLs (the route param arrives pre-encoded;
+  ~500 pages were telling crawlers their real URL was a dead page).
 - **The /assets listing serves the real universe** (site audit
   S-002/S-011): page 1 of the unified listing now fills from the ~191K
   classic long tail when the curated catalogue is shorter than the limit
