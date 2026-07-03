@@ -1395,7 +1395,9 @@ function VerifiedCurrencyView({
         )}
       </header>
 
-      {chartAssetID && (
+      {/* AM-29: the USD page charted USD/USD — a flat line at 1.
+          Skip the chart when the asset IS the quote. */}
+      {chartAssetID && chartAssetID !== 'fiat:USD' && (
         <ChartPanel assetID={chartAssetID} />
       )}
 
