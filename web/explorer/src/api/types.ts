@@ -48,6 +48,23 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "status": "ok",
+                         *         "uptime": "8m53s",
+                         *         "status_root": "/v1/status"
+                         *       },
+                         *       "as_of": "2026-07-03T22:37:12.743923086Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["HealthResponse"];
                     };
                 };
@@ -117,6 +134,33 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "status": "ok",
+                         *         "uptime": "8m54s",
+                         *         "checks": [
+                         *           {
+                         *             "name": "postgres",
+                         *             "ok": true
+                         *           },
+                         *           {
+                         *             "name": "redis",
+                         *             "ok": true
+                         *           }
+                         *         ],
+                         *         "status_root": "/v1/status"
+                         *       },
+                         *       "as_of": "2026-07-03T22:37:13.880270909Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["ReadyEnvelope"];
                     };
                 };
@@ -177,6 +221,25 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "build_date": "2026-07-03T22:24:02Z",
+                         *         "commit": "3d26b9d2b1bf72dc3caec9db9dceff59ca24f6b7",
+                         *         "dirty": "false",
+                         *         "go_version": "go1.25.11",
+                         *         "version": "v0.7.6"
+                         *       },
+                         *       "as_of": "2026-07-03T22:37:15.007238387Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["VersionResponse"];
                     };
                 };
@@ -381,6 +444,57 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "asset_id": "xlm",
+                         *           "type": "global",
+                         *           "code": "XLM",
+                         *           "decimals": 0,
+                         *           "class": "crypto",
+                         *           "sep1_status": "not_applicable",
+                         *           "name": "Stellar Lumens",
+                         *           "circulating_supply": "339918360790041352",
+                         *           "market_cap_usd": "6937310086.48",
+                         *           "volume_24h_usd": "2601049.43451797",
+                         *           "change_24h_pct": "3.63",
+                         *           "price_usd": "0.20401200646499857404",
+                         *           "change_1h_pct": "0.01",
+                         *           "change_7d_pct": "15.70",
+                         *           "slug": "xlm"
+                         *         },
+                         *         {
+                         *           "asset_id": "usdc",
+                         *           "type": "global",
+                         *           "code": "USDC",
+                         *           "decimals": 0,
+                         *           "class": "stablecoin",
+                         *           "sep1_status": "not_applicable",
+                         *           "name": "USD Coin",
+                         *           "circulating_supply": "2728642106735257",
+                         *           "market_cap_usd": "273375235.46",
+                         *           "volume_24h_usd": "2292696.89850489",
+                         *           "change_24h_pct": "0.33",
+                         *           "price_usd": "0.99989000000000",
+                         *           "change_1h_pct": "0.17",
+                         *           "change_7d_pct": "0.18",
+                         *           "slug": "usdc"
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-03T22:37:16.207112941Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       },
+                         *       "pagination": {
+                         *         "next": "catalogue:2"
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["AssetListEnvelope"];
                     };
                 };
@@ -458,6 +572,48 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "asset_id": "chinese-yuan",
+                         *           "type": "global",
+                         *           "code": "CNY",
+                         *           "decimals": 0,
+                         *           "class": "fiat",
+                         *           "sep1_status": "not_applicable",
+                         *           "name": "Chinese Yuan",
+                         *           "circulating_supply": "302000000000000",
+                         *           "market_cap_usd": "44486344754441.27",
+                         *           "slug": "chinese-yuan"
+                         *         },
+                         *         {
+                         *           "asset_id": "us-dollar",
+                         *           "type": "global",
+                         *           "code": "USD",
+                         *           "decimals": 0,
+                         *           "class": "fiat",
+                         *           "sep1_status": "not_applicable",
+                         *           "name": "US Dollar",
+                         *           "circulating_supply": "21700000000000",
+                         *           "market_cap_usd": "21700000000000.00",
+                         *           "price_usd": "1.00000000000000",
+                         *           "slug": "us-dollar"
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-03T22:37:17.396303097Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       },
+                         *       "pagination": {
+                         *         "next": "2"
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["AssetListEnvelope"];
                     };
                 };
@@ -509,6 +665,34 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "ticker": "USD",
+                         *         "slug": "us-dollar",
+                         *         "name": "US Dollar",
+                         *         "description": "Official currency of the United States. Reserve currency for most international trade and…",
+                         *         "class": "fiat",
+                         *         "coingecko_id": "usd",
+                         *         "price_usd": "1.00000000000000",
+                         *         "price_authority": "vwap_native",
+                         *         "price_sources": [
+                         *           "identity"
+                         *         ],
+                         *         "price_as_of": "2026-07-03T22:37:18.534338873Z",
+                         *         "circulating_supply": "21700000000000",
+                         *         "market_cap_usd": "21700000000000.00"
+                         *       },
+                         *       "as_of": "2026-07-03T22:37:18.534353688Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["GlobalAssetEnvelope"];
                     };
                 };
@@ -562,6 +746,29 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "ticker": "XLM",
+                         *           "slug": "xlm",
+                         *           "name": "Stellar Lumens",
+                         *           "class": "crypto",
+                         *           "verified_issuer": "Stellar Development Foundation",
+                         *           "coingecko_id": "stellar",
+                         *           "coinmarketcap_id": "512"
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-03T22:37:19.6906857Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["VerifiedCurrencyListEnvelope"];
                     };
                 };
@@ -630,6 +837,61 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *         "type": "classic",
+                         *         "code": "USDC",
+                         *         "issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *         "home_domain": "centre.io",
+                         *         "decimals": 7,
+                         *         "sep1_status": "verified",
+                         *         "name": "USD Coin",
+                         *         "org_name": "Centre Consortium LLC",
+                         *         "circulating_supply": "2757874444178474",
+                         *         "total_supply": "2757874444178474",
+                         *         "market_cap_usd": "275787444.42",
+                         *         "volume_24h_usd": "2293068.58731944",
+                         *         "price_usd": "1.0002795935",
+                         *         "change_1h_pct": "-0.09",
+                         *         "change_7d_pct": "-0.14",
+                         *         "top_markets": [
+                         *           {
+                         *             "counterparty": "native",
+                         *             "side": "quote",
+                         *             "volume_24h_usd": "1184662.45607940",
+                         *             "trade_count_24h": 44334
+                         *           }
+                         *         ],
+                         *         "price_history_24h": [
+                         *           {
+                         *             "t": "2026-07-02T23:00:00Z",
+                         *             "p": "1.0018115222"
+                         *           }
+                         *         ],
+                         *         "price_history_7d": [
+                         *           {
+                         *             "t": "2026-06-27T00:00:00Z",
+                         *             "p": "1.0007031277"
+                         *           }
+                         *         ],
+                         *         "markets_count": 1236,
+                         *         "trade_count_24h": 286977,
+                         *         "slug": "USDC",
+                         *         "first_seen_ledger": 34180766,
+                         *         "last_seen_ledger": 63316034
+                         *       },
+                         *       "as_of": "2026-07-03T22:36:28.712467097Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["AssetEnvelope"] | components["schemas"]["GlobalAssetEnvelope"];
                     };
                 };
@@ -689,6 +951,29 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *         "home_domain": "centre.io",
+                         *         "sep1_status": "verified",
+                         *         "name": "USD Coin",
+                         *         "description": "USDC is a fully collateralized US Dollar stablecoin, based on the open source fiat stablec…",
+                         *         "image": "https://www.centre.io/images/usdc/usdc-icon-86074d9d49.png",
+                         *         "org_name": "Centre Consortium LLC",
+                         *         "anchor_asset": "USD",
+                         *         "anchor_asset_type": "fiat"
+                         *       },
+                         *       "as_of": "2026-07-03T22:37:22.027894731Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["AssetMetadataEnvelope"];
                     };
                 };
@@ -749,6 +1034,24 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "asset_id": "native",
+                         *         "total_supply": "1054439020873472865",
+                         *         "flow_count": 0,
+                         *         "source": "ledger_total_coins"
+                         *       },
+                         *       "as_of": "2026-07-03T22:40:11.747021406Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["AssetSupplyEnvelope"];
                     };
                 };
@@ -808,6 +1111,32 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *         "holder_count": 615912,
+                         *         "holders": [
+                         *           {
+                         *             "account_id": "GDWL5I6SENNVRK7PS7U3CRXIQTWHLFPSBXCGA3TWKTK7AQ7XO6FBXDFG",
+                         *             "balance": "353017552538442"
+                         *           },
+                         *           {
+                         *             "account_id": "GC5LF63GRVIT5ZXXCXLPI3RX2YXKJQFZVBSAO6AUELN3YIMSWPD6Z6FH",
+                         *             "balance": "282865538219201"
+                         *           }
+                         *         ]
+                         *       },
+                         *       "as_of": "2026-07-03T22:37:30.738401847Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: {
                                 asset?: string;
@@ -1028,6 +1357,30 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "asset_id": "native",
+                         *         "quote": "fiat:USD",
+                         *         "price": "0.2042667348",
+                         *         "price_type": "vwap",
+                         *         "observed_at": "2026-07-03T22:37:33.044745387Z",
+                         *         "window_seconds": 30
+                         *       },
+                         *       "as_of": "2026-07-03T22:37:33.045908618Z",
+                         *       "sources": [
+                         *         "coinbase",
+                         *         "bitstamp"
+                         *       ],
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["PriceEnvelope"];
                     };
                 };
@@ -1175,6 +1528,40 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "asset_id": "crypto:XLM",
+                         *           "quote": "fiat:USD",
+                         *           "price": "0.20401200646499857404",
+                         *           "price_type": "vwap",
+                         *           "observed_at": "2026-07-03T22:36:00Z",
+                         *           "window_seconds": 60,
+                         *           "change_24h_pct": "+3.62"
+                         *         },
+                         *         {
+                         *           "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *           "quote": "fiat:USD",
+                         *           "price": "1.000000000000",
+                         *           "price_type": "peg",
+                         *           "observed_at": "2026-07-03T22:37:34.197270411Z"
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-03T22:37:34.248518093Z",
+                         *       "sources": [
+                         *         "bitstamp",
+                         *         "coinbase"
+                         *       ],
+                         *       "flags": {
+                         *         "stale": true,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": true,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["PriceBatchEnvelope"];
                     };
                 };
@@ -1299,6 +1686,36 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "source": "sdex",
+                         *           "ledger": 63316220,
+                         *           "tx_hash": "825ede3a206341add5b365d22023de7843b098f710b014de56aa99d29fe7e27b",
+                         *           "op_index": 1025,
+                         *           "ts": "2026-07-03T22:42:17Z",
+                         *           "base_asset": "native",
+                         *           "quote_asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *           "base_amount": "55653",
+                         *           "quote_amount": "11363",
+                         *           "price": "0.2041758755"
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-03T22:42:26.862812578Z",
+                         *       "sources": [
+                         *         "sdex"
+                         *       ],
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false,
+                         *         "single_source": true
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["EnvelopeMeta"] & {
                             data: components["schemas"]["TradeRow"][];
                         };
@@ -1562,6 +1979,35 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "source": "sdex",
+                         *           "ledger": 63302110,
+                         *           "tx_hash": "a34dfaf2c7a1c1ec8d4f36e9fb693ffc8462285bd9018e97109ae8d039425d3c",
+                         *           "op_index": 9216,
+                         *           "ts": "2026-07-03T00:00:17Z",
+                         *           "base_asset": "native",
+                         *           "quote_asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *           "base_amount": "4331",
+                         *           "quote_amount": "863",
+                         *           "price": "0.1992611406"
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-03T22:42:25.518134702Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       },
+                         *       "pagination": {
+                         *         "next": "MTc4MzAzNjgyMzAwMDAwMDAwMDo2MzMwMjExMTpzZGV4OjM3NzE2OTY1OTE4YjgxNzI2NzVhYzVhMTBkOGIxMzA4MT…"
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["TradeHistoryEnvelope"];
                     };
                 };
@@ -1635,6 +2081,31 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "asset_id": "native",
+                         *         "quote": "fiat:USD",
+                         *         "price_type": "vwap",
+                         *         "granularity": "1d",
+                         *         "points": [
+                         *           {
+                         *             "t": "2021-02-02T00:00:00Z",
+                         *             "p": "0.32955352120071295890",
+                         *             "v_usd": "0"
+                         *           }
+                         *         ]
+                         *       },
+                         *       "as_of": "2026-07-03T22:37:38.237691998Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": true,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["HistoryEnvelope"];
                     };
                 };
@@ -1746,6 +2217,38 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "asset_id": "native",
+                         *         "quote": "fiat:USD",
+                         *         "timeframe": "24h",
+                         *         "granularity": "1h",
+                         *         "price_type": "vwap",
+                         *         "points": [
+                         *           {
+                         *             "t": "2026-07-02T23:00:00Z",
+                         *             "p": "0.19854703598674192431",
+                         *             "v_usd": "41358.47144920"
+                         *           },
+                         *           {
+                         *             "t": "2026-07-03T00:00:00Z",
+                         *             "p": "0.19768864227725027668",
+                         *             "v_usd": "29205.97729980"
+                         *           }
+                         *         ],
+                         *         "truncated": false
+                         *       },
+                         *       "as_of": "2026-07-03T22:37:39.460980449Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": true,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["ChartEnvelope"];
                     };
                 };
@@ -1868,6 +2371,47 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "base": "native",
+                         *         "quote": "fiat:USD",
+                         *         "interval": "1h",
+                         *         "from": "2026-07-03T20:00:00Z",
+                         *         "to": "2026-07-03T22:00:00Z",
+                         *         "intervals": [
+                         *           {
+                         *             "t": "2026-07-03T20:00:00Z",
+                         *             "o": "0.2038114923",
+                         *             "h": "0.2500000000",
+                         *             "l": "0.2034919999",
+                         *             "c": "0.2055899576",
+                         *             "v_base": "1751598864823776",
+                         *             "v_quote": "359971028467214.0000042405",
+                         *             "n": 11667
+                         *           },
+                         *           {
+                         *             "t": "2026-07-03T21:00:00Z",
+                         *             "o": "0.2056073590",
+                         *             "h": "0.2062000000",
+                         *             "l": "0.2033449999",
+                         *             "c": "0.2055593613",
+                         *             "v_base": "844461854722825",
+                         *             "v_quote": "173117716771324.0000032245",
+                         *             "n": 8497
+                         *           }
+                         *         ]
+                         *       },
+                         *       "as_of": "2026-07-03T22:37:40.607101334Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": true,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["OHLCEnvelope"] | components["schemas"]["OHLCSeriesEnvelope"];
                     };
                 };
@@ -1964,6 +2508,28 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "from": "2026-07-03T21:37:30Z",
+                         *         "to": "2026-07-03T22:37:30Z",
+                         *         "price": "0.2045966459",
+                         *         "base_volume": "1385735379056",
+                         *         "quote_volume": "283516810732",
+                         *         "trade_count": 2483,
+                         *         "outliers_filtered": 0,
+                         *         "truncated": false
+                         *       },
+                         *       "as_of": "2026-07-03T22:37:41.757287184Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": true,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["VWAPEnvelope"];
                     };
                 };
@@ -2062,6 +2628,25 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "from": "2026-07-03T21:37:30Z",
+                         *         "to": "2026-07-03T22:37:30Z",
+                         *         "price": "0.2044317708",
+                         *         "trade_count": 2483,
+                         *         "truncated": false
+                         *       },
+                         *       "as_of": "2026-07-03T22:37:42.906364691Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": true,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["TWAPEnvelope"];
                     };
                 };
@@ -2282,6 +2867,41 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "source": "sdex",
+                         *           "base": "native",
+                         *           "quote": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *           "last_trade_at": "2026-07-03T21:59:52Z",
+                         *           "trade_count_24h": 74870,
+                         *           "volume_24h_usd": "2151631.29284562791192465110403660600000000000000000",
+                         *           "last_price": "0.20545386626821068360"
+                         *         },
+                         *         {
+                         *           "source": "aquarius",
+                         *           "base": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                         *           "quote": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+                         *           "last_trade_at": "2026-07-03T21:59:52Z",
+                         *           "trade_count_24h": 7831,
+                         *           "volume_24h_usd": "1725605.79428767372866451771634747600000000000000000",
+                         *           "last_price": "4.8693065623459794"
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-03T22:37:46.044283568Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       },
+                         *       "pagination": {
+                         *         "next": "1725605.79428767372866451771634747600000000000000000:aquarius|CCW67TSZV3SSS2HXMBQ5JFGCKJNX…"
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["EnvelopeMeta"] & {
                             data: components["schemas"]["PoolRow"][];
                         };
@@ -2338,6 +2958,31 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "protocol": "blend",
+                         *           "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                         *           "auctions_24h": 29,
+                         *           "auctions_total": 7430,
+                         *           "unique_users_30d": 10946,
+                         *           "last_seen": "2026-07-03T22:37:27Z",
+                         *           "net_supplied_30d": "575363575586841",
+                         *           "net_borrowed_30d": "67357854119677",
+                         *           "utilization_30d_pct": 11.71
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-03T22:37:47.445630311Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: {
                                 protocol?: string;
@@ -2417,6 +3062,46 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                         *         "tvl_usd": "189548299.92",
+                         *         "reserves": [
+                         *           {
+                         *             "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                         *             "decimals": 7,
+                         *             "supplied": "589262319356640",
+                         *             "borrowed": "442359640330233",
+                         *             "supplied_usd": "58926231.94",
+                         *             "borrowed_usd": "44235964.03",
+                         *             "utilization_pct": 75.07,
+                         *             "borrow_apr": 0.1091,
+                         *             "supply_apr": 0.0819
+                         *           },
+                         *           {
+                         *             "asset": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+                         *             "decimals": 7,
+                         *             "supplied": "6218654435342527",
+                         *             "borrowed": "12271342548905",
+                         *             "supplied_usd": "126950771.43",
+                         *             "borrowed_usd": "250513.42",
+                         *             "utilization_pct": 0.2,
+                         *             "borrow_apr": 0.001,
+                         *             "supply_apr": 0
+                         *           }
+                         *         ]
+                         *       },
+                         *       "as_of": "2026-07-03T22:38:00.032774886Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: {
                                 pool?: string;
@@ -2502,6 +3187,53 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "event_id": "bb8839de-2f7f-4bbe-8e61-8f01d20d0bfa",
+                         *           "detected_at": "2026-07-03T22:32:57Z",
+                         *           "detected_at_ledger": 63316124,
+                         *           "kind": "arbitrage",
+                         *           "tx_hashes": [
+                         *             "5e0e2d198f2b61dfcf2ce7ccb102f9238f68deea627b2a978f5f8cc9c166bc14"
+                         *           ],
+                         *           "accounts": [
+                         *             "GC6V7MSQ65LUM24ROBJZ4NROWTOSI3JUXOE2T7SNRHOYGK2OZMTNV7H7"
+                         *           ],
+                         *           "detail": {
+                         *             "legs": [
+                         *               {
+                         *                 "base": "SCOP-GC6OYQJIZF3HFXCYPFCBXYXNGIBQ4TNSFUBUXQJOZWIP6F3YZK4QH3VQ",
+                         *                 "quote": "native",
+                         *                 "source": "sdex",
+                         *                 "op_index": 0,
+                         *                 "base_amount": "33238825",
+                         *                 "quote_amount": "413237"
+                         *               }
+                         *             ],
+                         *             "note": "Atomic cyclic trade by one taker in a single transaction — an arbitrage signature. Detecti…",
+                         *             "assets": [
+                         *               "SCOP-GC6OYQJIZF3HFXCYPFCBXYXNGIBQ4TNSFUBUXQJOZWIP6F3YZK4QH3VQ"
+                         *             ],
+                         *             "sources": [
+                         *               "sdex"
+                         *             ],
+                         *             "notional_usd": "0.05"
+                         *           },
+                         *           "profit_usd": null
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-03T22:38:01.17207501Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: {
                                 /** Format: uuid */
@@ -2577,6 +3309,23 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "firing_count": 0,
+                         *         "reason_tally": [],
+                         *         "events": []
+                         *       },
+                         *       "as_of": "2026-07-03T22:38:02.319192694Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: {
                                 firing_count?: number;
@@ -2661,6 +3410,44 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "observations": [
+                         *           {
+                         *             "asset_id": "crypto:BTC",
+                         *             "quote_id": "fiat:USD",
+                         *             "reference": "chainlink",
+                         *             "observed_at": "2026-07-03T22:37:08.896016Z",
+                         *             "observed_at_ledger": 0,
+                         *             "our_price": "62543.07358731602",
+                         *             "ref_price": "62608.75585288",
+                         *             "delta_pct": "-0.10490907329051442",
+                         *             "status": "clear"
+                         *           },
+                         *           {
+                         *             "asset_id": "crypto:ETH",
+                         *             "quote_id": "fiat:USD",
+                         *             "reference": "coingecko",
+                         *             "observed_at": "2026-07-03T22:37:08.90697Z",
+                         *             "observed_at_ledger": 0,
+                         *             "our_price": "1757.84660921192",
+                         *             "ref_price": "1756.21",
+                         *             "delta_pct": "0.09318983560735354",
+                         *             "status": "clear"
+                         *           }
+                         *         ]
+                         *       },
+                         *       "as_of": "2026-07-03T22:38:03.478937272Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: {
                                 observations?: {
@@ -2722,6 +3509,31 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "source": "band",
+                         *           "contract_id": "CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3NFBGG5M",
+                         *           "asset": "crypto:USDC",
+                         *           "quote": "fiat:USD",
+                         *           "ts": "2026-07-03T22:06:18Z",
+                         *           "price": "0.999879000",
+                         *           "price_raw": "999879000",
+                         *           "decimals": 9,
+                         *           "observer": "GCNTSKF3QBZJHS5JTD72TI35QP2PLMCKFMFNPXJI2YCQXYBUJLRHFCZX"
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-03T22:38:05.023074622Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["OracleLatestEnvelope"];
                     };
                 };
@@ -2828,6 +3640,41 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "base": "crypto:BTC",
+                         *           "quote": "crypto:USDT",
+                         *           "last_trade_at": "2026-07-03T22:36:00Z",
+                         *           "bucket_close_at": "2026-07-03T00:00:00Z",
+                         *           "trade_count_24h": 667311,
+                         *           "volume_24h_usd": "845925256.01203780",
+                         *           "last_price": "61977.170000000000"
+                         *         },
+                         *         {
+                         *           "base": "crypto:BTC",
+                         *           "quote": "fiat:USD",
+                         *           "last_trade_at": "2026-07-03T22:36:00Z",
+                         *           "bucket_close_at": "2026-07-03T00:00:00Z",
+                         *           "trade_count_24h": 636711,
+                         *           "volume_24h_usd": "500463722.75372090",
+                         *           "last_price": "61901.333333333333"
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-03T22:38:06.818142585Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       },
+                         *       "pagination": {
+                         *         "next": "500463722.75372090:crypto:BTC|fiat:USD"
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["MarketsEnvelope"];
                     };
                 };
@@ -2896,6 +3743,24 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "base": "native",
+                         *         "quote": "fiat:USD",
+                         *         "window_secs": 86400,
+                         *         "sources": []
+                         *       },
+                         *       "as_of": "2026-07-03T22:38:07.960705714Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["EnvelopeMeta"] & {
                             data?: {
                                 base?: string;
@@ -2964,6 +3829,36 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "g_strkey": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *           "home_domain": "circle.com",
+                         *           "org_name": "Centre Consortium LLC",
+                         *           "org_verified": true,
+                         *           "asset_count": 1,
+                         *           "total_observation_count": 41639649
+                         *         },
+                         *         {
+                         *           "g_strkey": "GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55",
+                         *           "home_domain": "ultracapital.xyz",
+                         *           "org_name": "Ultra Capital LLC",
+                         *           "org_verified": true,
+                         *           "asset_count": 1,
+                         *           "total_observation_count": 32433641
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-03T22:38:09.267785261Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["EnvelopeMeta"] & {
                             data: {
                                 g_strkey: string;
@@ -3048,6 +3943,59 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "g_strkey": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *         "home_domain": "circle.com",
+                         *         "org_name": "Centre Consortium LLC",
+                         *         "org_verified": true,
+                         *         "auth_required": false,
+                         *         "auth_revocable": true,
+                         *         "auth_immutable": false,
+                         *         "auth_clawback": false,
+                         *         "sep1_resolved_at": "2026-07-03T14:56:36Z",
+                         *         "sep1_payload": {
+                         *           "OrgName": "Centre Consortium LLC",
+                         *           "Currencies": [
+                         *             {
+                         *               "Code": "USDC",
+                         *               "Name": "USD Coin",
+                         *               "Issuer": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *               "AnchorAsset": "USD",
+                         *               "Description": "USDC is a fully collateralized US Dollar stablecoin, based on the open source fiat stablec…",
+                         *               "AnchorAssetType": "fiat"
+                         *             }
+                         *           ],
+                         *           "OrgVerified": true,
+                         *           "Documentation": {
+                         *             "ORG_DBA": "Centre Consortium",
+                         *             "ORG_URL": "https://www.centre.io",
+                         *             "ORG_NAME": "Centre Consortium LLC"
+                         *           }
+                         *         },
+                         *         "creation_ledger": 34180766,
+                         *         "assets": [
+                         *           {
+                         *             "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *             "code": "USDC",
+                         *             "slug": "USDC",
+                         *             "first_seen_ledger": 34180766,
+                         *             "last_seen_ledger": 63316034,
+                         *             "observation_count": 41639649
+                         *           }
+                         *         ]
+                         *       },
+                         *       "as_of": "2026-07-03T22:38:13.056025402Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["EnvelopeMeta"] & {
                             data: {
                                 g_strkey: string;
@@ -3163,6 +4111,47 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "contract_id": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                         *         "count": 2,
+                         *         "limit": 2,
+                         *         "transfers": [
+                         *           {
+                         *             "ledger": 62757524,
+                         *             "ledger_close_time": "2026-05-27T09:41:47Z",
+                         *             "tx_hash": "f35ce4e2b091debd5992cf3490a8701400e5655b033c425569eb2abbe19cb791",
+                         *             "op_index": 1,
+                         *             "event_index": 0,
+                         *             "event_kind": "transfer",
+                         *             "from": "GBK6ITJCG4QPOAJFFWMKEICDAMWFSEACFO654R4E2LDH77XYS76DPYXR",
+                         *             "to": "GCAQSQVXUJZPDND4EUWQYRCJ64IGQ3REQK2CVSXHUQQ26GCTEMIGJDSC",
+                         *             "amount": "40700000"
+                         *           },
+                         *           {
+                         *             "ledger": 62757524,
+                         *             "ledger_close_time": "2026-05-27T09:41:47Z",
+                         *             "tx_hash": "6517426650acea35cf0cd7f2ba420a4c7ec9619adffefce86c3ef015df618688",
+                         *             "op_index": 1,
+                         *             "event_index": 0,
+                         *             "event_kind": "transfer",
+                         *             "from": "GAUA7XL5K54CC2DDGP77FJ2YBHRJLT36CPZDXWPM6MP7MANOGG77PNJU",
+                         *             "to": "GCAQSQVXUJZPDND4EUWQYRCJ64IGQ3REQK2CVSXHUQQ26GCTEMIGJDSC",
+                         *             "amount": "3600000"
+                         *           }
+                         *         ]
+                         *       },
+                         *       "as_of": "2026-07-03T22:38:15.931276977Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["EnvelopeMeta"] & {
                             data: {
                                 contract_id: string;
@@ -3276,6 +4265,39 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "entity_type": "coin",
+                         *         "entity_id": "crypto:XLM",
+                         *         "refreshed_at": "2026-07-03T22:38:00Z",
+                         *         "current_value": 0.2041764538697883,
+                         *         "h1_value": 0.20380247911865504,
+                         *         "h1_delta_pct": 0.1834986270778068,
+                         *         "h24_value": 0.19673099518995452,
+                         *         "h24_delta_pct": 3.784588530467602,
+                         *         "d7_value": 0.17768054591385554,
+                         *         "d7_delta_pct": 14.912104090888326,
+                         *         "d30_value": 0.21078647159614772,
+                         *         "d30_delta_pct": -3.13588328335594,
+                         *         "ath_value": 0.29758550057923283,
+                         *         "ath_at": "2026-05-30T03:52:00Z",
+                         *         "atl_value": 0.13999047864054645,
+                         *         "atl_at": "2026-05-23T08:41:00Z",
+                         *         "streak_direction": "up",
+                         *         "streak_days": 5,
+                         *         "acceleration": "decreasing"
+                         *       },
+                         *       "as_of": "2026-07-03T22:40:39.873451257Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["EnvelopeMeta"] & {
                             data: {
                                 entity_type?: string;
@@ -3401,6 +4423,27 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "source": "backfill",
+                         *           "sub_source": "11474999-15299997:sdex",
+                         *           "last_ledger": 15299997,
+                         *           "last_updated": "2026-05-14T18:19:34Z",
+                         *           "lag_seconds": 4335523
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-03T22:38:18.218056301Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["EnvelopeMeta"] & {
                             data: {
                                 source: string;
@@ -3487,6 +4530,80 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "region": {
+                         *           "name": "r1",
+                         *           "deployment": "production"
+                         *         },
+                         *         "version": {
+                         *           "version": "v0.7.6",
+                         *           "build_date": "2026-07-03T22:24:02Z",
+                         *           "commit": "3d26b9d2b1bf72dc3caec9db9dceff59ca24f6b7"
+                         *         },
+                         *         "ledger": {
+                         *           "latest_ledger": 63316172,
+                         *           "lag_seconds": 0,
+                         *           "volume_24h_usd": "2904068272.78168669",
+                         *           "markets_count_24h": 27488,
+                         *           "assets_indexed": 191015
+                         *         },
+                         *         "backfill": [
+                         *           {
+                         *             "decoder": "aquarius",
+                         *             "ranges_total": 1,
+                         *             "ranges_complete": 1,
+                         *             "newest_ledger": 62637704
+                         *           }
+                         *         ],
+                         *         "backfill_coverage": [
+                         *           {
+                         *             "source": "aquarius",
+                         *             "applies": true,
+                         *             "coverage_pct": 1,
+                         *             "completeness_pct": 1,
+                         *             "completeness_complete": true
+                         *           }
+                         *         ],
+                         *         "backfill_coverage_as_of": "2026-07-03T22:38:12Z",
+                         *         "cagg_coverage": {
+                         *           "earliest_bucket": "2015-11-18T03:00:00Z",
+                         *           "latest_bucket": "2026-07-03T21:00:00Z",
+                         *           "bucket_count": 175011581
+                         *         },
+                         *         "fx_backfill": {
+                         *           "earliest_quote": "2001-05-11",
+                         *           "latest_quote": "2026-07-03",
+                         *           "total_quotes": 244477,
+                         *           "currencies_count": 132
+                         *         },
+                         *         "supply": {
+                         *           "classic_assets_with_supply": 9,
+                         *           "sep41_assets_with_supply": 0,
+                         *           "last_snapshot_at": "2026-07-03T22:38:02Z",
+                         *           "latest_ledger": 63316175
+                         *         },
+                         *         "sources": [
+                         *           {
+                         *             "name": "aquarius",
+                         *             "class": "exchange",
+                         *             "include_in_vwap": true,
+                         *             "trade_count_24h": 12946,
+                         *             "volume_24h_usd": "2100883.02"
+                         *           }
+                         *         ]
+                         *       },
+                         *       "as_of": "2026-07-03T22:38:19.403102451Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["EnvelopeMeta"] & {
                             /** @description Operator diagnostics — the documented properties are the stable core; the handler also serves per-source coverage fields (density_pct, gap_free_pct, covered_ledgers, coverage_snapshot_at, entries_24h) and ADR-0033 completeness fields that evolve with the pipeline (board #33; x-stability: experimental per ADR-0042). */
                             data: {
@@ -3835,6 +4952,37 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "sources": [
+                         *           {
+                         *             "source": "aquarius",
+                         *             "complete": true,
+                         *             "substrate_ok": true,
+                         *             "recognition_ok": true,
+                         *             "projection_ok": true,
+                         *             "genesis_ledger": 52728375,
+                         *             "watermark_ledger": 63305532,
+                         *             "tip_ledger": 63305532,
+                         *             "coverage_pct": 1,
+                         *             "detail": "complete: substrate + recognition + projection verified to tip",
+                         *             "computed_at": "2026-07-03T05:30:21.937134Z"
+                         *           }
+                         *         ],
+                         *         "complete_sources": 14,
+                         *         "total_sources": 15
+                         *       },
+                         *       "as_of": "2026-07-03T22:38:20.564931481Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["EnvelopeMeta"] & {
                             data?: {
                                 sources: {
@@ -3921,6 +5069,36 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "protocols": [
+                         *           {
+                         *             "name": "sdex",
+                         *             "category": "dex",
+                         *             "description": "Stellar's protocol-native central-limit order book, traded via classic manage-offer and pa…",
+                         *             "genesis_ledger": 2,
+                         *             "factories": [],
+                         *             "contract_count": 0,
+                         *             "events_24h": 1692662,
+                         *             "completeness": {
+                         *               "complete": false,
+                         *               "watermark_ledger": 63305532
+                         *             }
+                         *           }
+                         *         ],
+                         *         "total_protocols": 15
+                         *       },
+                         *       "as_of": "2026-07-03T22:38:22.870546219Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["EnvelopeMeta"] & {
                             data?: {
                                 protocols: components["schemas"]["ProtocolRow"][];
@@ -3977,6 +5155,61 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "name": "blend",
+                         *         "category": "lending",
+                         *         "description": "Blend — isolated lending pools on Soroban, deployed from the Blend pool factories.",
+                         *         "genesis_ledger": 51499546,
+                         *         "factories": [
+                         *           "CCZD6ESMOGMPWH2KRO4O7RGTAPGTUPFWFQBELQSS7ZUK63V3TZWETGAG"
+                         *         ],
+                         *         "contract_count": 27,
+                         *         "events_24h": 3211,
+                         *         "completeness": {
+                         *           "complete": true,
+                         *           "watermark_ledger": 63305532
+                         *         },
+                         *         "contracts": [
+                         *           {
+                         *             "contract_id": "CDVQVKOY2YSXS2IC7KN6MNASSHPAO7UN2UR2ON4OI2SKMFJNVAMDX6DP",
+                         *             "factory_id": "CCZD6ESMOGMPWH2KRO4O7RGTAPGTUPFWFQBELQSS7ZUK63V3TZWETGAG",
+                         *             "first_ledger": 51499915,
+                         *             "kind": "instance",
+                         *             "events": 569,
+                         *             "last_seen": "2026-07-03T21:40:33Z"
+                         *           }
+                         *         ],
+                         *         "event_kinds": [
+                         *           "blend.position"
+                         *         ],
+                         *         "verification_page": "docs/protocols/blend.md",
+                         *         "event_breakdown": [
+                         *           {
+                         *             "event_type": "untyped",
+                         *             "count": 332561
+                         *           }
+                         *         ],
+                         *         "activity_series": [
+                         *           {
+                         *             "date": "2026-03-22",
+                         *             "events": 2449
+                         *           }
+                         *         ],
+                         *         "activity_window_days": 90,
+                         *         "events_total": 332561
+                         *       },
+                         *       "as_of": "2026-07-03T22:38:49.052946129Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["EnvelopeMeta"] & {
                             data?: components["schemas"]["ProtocolRow"] & {
                                 /**
@@ -4116,6 +5349,23 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "latest_ledger": 63316183,
+                         *         "ingested_at": "2026-07-03T22:38:47.833071Z",
+                         *         "lag_seconds": 2
+                         *       },
+                         *       "as_of": "2026-07-03T22:38:50.194761237Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["EnvelopeMeta"] & {
                             data: {
                                 /**
@@ -4353,6 +5603,37 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "window_days": 7,
+                         *         "buckets": [
+                         *           {
+                         *             "day": "2026-06-25",
+                         *             "ledgers": 3331,
+                         *             "txs": 1068712,
+                         *             "ops": 2398506,
+                         *             "events": 1713900
+                         *           },
+                         *           {
+                         *             "day": "2026-06-26",
+                         *             "ledgers": 14791,
+                         *             "txs": 5232968,
+                         *             "ops": 11025463,
+                         *             "events": 7512422
+                         *           }
+                         *         ]
+                         *       },
+                         *       "as_of": "2026-07-03T22:38:51.364370254Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: {
                                 window_days?: number;
@@ -4423,6 +5704,62 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "version": "1.0",
+                         *         "aggregation": {
+                         *           "price_method": "vwap",
+                         *           "outlier_filter": {
+                         *             "endpoint": "/v1/ohlc",
+                         *             "default_sigma": 4,
+                         *             "note": "OHLC's High/Low have no statistical robustness; a single dust trade can pin them. The defa…"
+                         *           },
+                         *           "stablecoin_fiat_proxy": [
+                         *             {
+                         *               "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *               "pegs_to": "fiat:USD"
+                         *             }
+                         *           ],
+                         *           "closed_bucket_window_seconds": 30
+                         *         },
+                         *         "source_classes": [
+                         *           {
+                         *             "name": "exchange",
+                         *             "contributes_to_vwap": true,
+                         *             "description": "Real trading venues — DEXes (Soroswap, Phoenix, Aquarius, Comet, sdex), CEXes (Coinbase, B…"
+                         *           }
+                         *         ],
+                         *         "sources": [
+                         *           {
+                         *             "name": "aquarius",
+                         *             "class": "exchange",
+                         *             "subclass": "dex",
+                         *             "default_weight": 100,
+                         *             "include_in_vwap": true,
+                         *             "paid": false,
+                         *             "backfill_available": true,
+                         *             "backfill_safe": true
+                         *           }
+                         *         ],
+                         *         "references": [
+                         *           {
+                         *             "id": "ADR-0007",
+                         *             "title": "Aggregation policy + cache-key contract",
+                         *             "url": "/research/adr/0007"
+                         *           }
+                         *         ]
+                         *       },
+                         *       "as_of": "2026-07-03T22:38:52.512609229Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["MethodologyEnvelope"];
                     };
                 };
@@ -4485,6 +5822,31 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "name": "aquarius",
+                         *           "class": "exchange",
+                         *           "subclass": "dex",
+                         *           "include_in_vwap": true,
+                         *           "paid": false,
+                         *           "backfill_available": true,
+                         *           "backfill_safe": true,
+                         *           "default_weight": 100,
+                         *           "on_chain": true
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-03T22:38:53.6445723Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["SourcesEnvelope"];
                     };
                 };
@@ -4539,6 +5901,23 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "CA4L5XQ7FY7BTJAAD6VPW6JPSJ3M2A62BBULXH7XYHLHAOFFY6SBT2Z4": "PSY:GCH3HFAY25TU2CPUEMF7OT7PGHUMXQITQQOOKZV6VRETY7SCEPARAEGO",
+                         *         "CA57LR6W4XP7HTGJ3HZEXH7SVTMBPUBEUN5UI3WGB5HFKDMEECRJMXBZ": "SILICA:GBDJWO2QRXHSOBQOPSZAK6B4COVPK5NMQI62XHC4L7YNYOSYCDLCVENZ",
+                         *         "CA6FH7RO5YF7VZ3XDX4736S2YHIGCQBYGNWB7P23AM5OCQTBPDPIKEIP": "FADA:GCX3Y4MNI7ZQBQEZQMAXRFVODVFB2PRQS4LTUHP5B34MEYQQTW5LQFLR"
+                         *       },
+                         *       "as_of": "2026-07-03T22:38:54.77946276Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             /** @description SAC C-strkey → "CODE-ISSUER" or "native". */
                             data?: {
@@ -4601,6 +5980,29 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "base": "native",
+                         *           "quote": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *           "last_trade_at": "2026-07-03T22:41:49Z",
+                         *           "bucket_close_at": "2026-07-03T00:00:00Z",
+                         *           "trade_count_24h": 44295,
+                         *           "volume_24h_usd": "1184171.27591630",
+                         *           "last_price": "0.20425991362387122104"
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-03T22:41:58.295925025Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["PairsEnvelope"];
                     };
                 };
@@ -4664,6 +6066,27 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "asset": "crypto:XLM",
+                         *         "price": "0.20425919235975054096",
+                         *         "timestamp": "2026-07-03T22:38:00Z"
+                         *       },
+                         *       "as_of": "2026-07-03T22:38:57.085626393Z",
+                         *       "sources": [
+                         *         "bitstamp",
+                         *         "coinbase"
+                         *       ],
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["OraclePriceEnvelope"];
                     };
                 };
@@ -4718,6 +6141,30 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "asset": "crypto:XLM",
+                         *           "price": "0.20425919235975054096",
+                         *           "timestamp": "2026-07-03T22:38:00Z"
+                         *         },
+                         *         {
+                         *           "asset": "crypto:XLM",
+                         *           "price": "0.20417645386978830788",
+                         *           "timestamp": "2026-07-03T22:37:00Z"
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-03T22:38:58.304524994Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["OraclePricesEnvelope"];
                     };
                 };
@@ -4772,6 +6219,26 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "asset": "native",
+                         *         "price": "0.20416863139584866478",
+                         *         "timestamp": "2026-07-03T22:38:00Z"
+                         *       },
+                         *       "as_of": "2026-07-03T22:38:59.458170934Z",
+                         *       "sources": [
+                         *         "sdex"
+                         *       ],
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["OraclePriceEnvelope"];
                     };
                 };
@@ -4913,6 +6380,32 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "date": "2026-07-01",
+                         *           "requests": 18234,
+                         *           "errors": 12,
+                         *           "throttled": 0
+                         *         },
+                         *         {
+                         *           "date": "2026-07-02",
+                         *           "requests": 20117,
+                         *           "errors": 3,
+                         *           "throttled": 41
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-03T09:00:00Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["UsageEnvelope"];
                     };
                 };
@@ -4963,6 +6456,28 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "key_id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
+                         *           "label": "production",
+                         *           "key_prefix": "sip_1a2b3c4d",
+                         *           "tier": "apikey",
+                         *           "rate_limit_per_min": 300,
+                         *           "created_at": "2026-06-12T08:30:00Z"
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-03T09:00:00Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["EnvelopeMeta"] & {
                             data?: components["schemas"]["Account"][];
                         };
@@ -5385,6 +6900,23 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "verified": true,
+                         *         "key_id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
+                         *         "detail": "email verified; API key activated"
+                         *       },
+                         *       "as_of": "2026-07-03T09:00:00Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["EnvelopeMeta"] & {
                             data?: {
                                 verified: boolean;
@@ -5460,6 +6992,24 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "keys": [
+                         *         {
+                         *           "id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
+                         *           "name": "production",
+                         *           "description": "main backend key",
+                         *           "key_prefix": "sip_1a2b3c4d",
+                         *           "tier": "apikey",
+                         *           "rate_limit_per_min": 300,
+                         *           "monthly_quota": 1000000,
+                         *           "usage_alert_threshold_pct": 80,
+                         *           "last_used_at": "2026-07-03T08:59:41Z",
+                         *           "created_at": "2026-06-12T08:30:00Z"
+                         *         }
+                         *       ]
+                         *     }
+                         */
                         "application/json": {
                             keys: components["schemas"]["DashboardKey"][];
                         };
@@ -5641,6 +7191,24 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "webhooks": [
+                         *         {
+                         *           "id": "0b6a3f2e-9c1d-4e7a-8f5b-6d2c4a1e9b0f",
+                         *           "name": "ops-alerts",
+                         *           "url": "https://ops.example.com/hooks/stellarindex",
+                         *           "events": [
+                         *             "incident.sev1",
+                         *             "incident.resolved"
+                         *           ],
+                         *           "enabled": true,
+                         *           "created_at": "2026-06-20T10:00:00Z",
+                         *           "updated_at": "2026-06-20T10:00:00Z"
+                         *         }
+                         *       ]
+                         *     }
+                         */
                         "application/json": {
                             webhooks: components["schemas"]["DashboardWebhook"][];
                         };
@@ -5852,6 +7420,22 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "deliveries": [
+                         *         {
+                         *           "id": "5c8e1f0a-2b4d-4a6c-9e3f-7d1b0c5a8e2f",
+                         *           "event_type": "incident.sev1",
+                         *           "attempt_count": 1,
+                         *           "next_attempt_at": null,
+                         *           "delivered_at": "2026-07-01T14:03:22Z",
+                         *           "last_error": null,
+                         *           "last_response_status": 200,
+                         *           "created_at": "2026-07-01T14:03:21Z"
+                         *         }
+                         *       ]
+                         *     }
+                         */
                         "application/json": {
                             deliveries: components["schemas"]["WebhookDeliveryDTO"][];
                         };
@@ -6181,6 +7765,24 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "transaction": "AAAAAgAAAADg3G3hclysZlFitS+s5zWyiiJD5B0STWy5LXCj6i5yxQAAAMgAAAAAAAAAAA…",
+                         *         "network_passphrase": "Public Global Stellar Network ; September 2015",
+                         *         "issued_at": "2026-07-03T09:00:00Z",
+                         *         "valid_until": "2026-07-03T09:15:00Z"
+                         *       },
+                         *       "as_of": "2026-07-03T09:00:00Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["EnvelopeMeta"] & {
                             data: components["schemas"]["SEP10Challenge"];
                         };
@@ -6301,6 +7903,51 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "ledgers": [
+                         *           {
+                         *             "sequence": 63316166,
+                         *             "close_time": "2026-07-03T22:37:01Z",
+                         *             "hash": "734ef513eec0746fb133bc0a759adb98ffae7fa6e36e286954531a5416b437cb",
+                         *             "prev_hash": "58aee267a054f990b426f932b5c518151f789da48e76153d9722769b4d7a8b08",
+                         *             "protocol_version": 26,
+                         *             "tx_count": 299,
+                         *             "op_count": 1079,
+                         *             "soroban_event_count": 1105,
+                         *             "total_coins": "1054439020873472865",
+                         *             "fee_pool": "100768724524038",
+                         *             "base_fee": 100,
+                         *             "base_reserve": 5000000
+                         *           },
+                         *           {
+                         *             "sequence": 63316165,
+                         *             "close_time": "2026-07-03T22:36:56Z",
+                         *             "hash": "58aee267a054f990b426f932b5c518151f789da48e76153d9722769b4d7a8b08",
+                         *             "prev_hash": "ada19f6cb122d0b74b98b7dc53ef7be4e5463c86a1af14185c0ae741704986cb",
+                         *             "protocol_version": 26,
+                         *             "tx_count": 277,
+                         *             "op_count": 767,
+                         *             "soroban_event_count": 708,
+                         *             "total_coins": "1054439020873472865",
+                         *             "fee_pool": "100768720236504",
+                         *             "base_fee": 100,
+                         *             "base_reserve": 5000000
+                         *           }
+                         *         ],
+                         *         "next_before": 63316165
+                         *       },
+                         *       "as_of": "2026-07-03T22:37:10.384389772Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: {
                                 ledgers?: components["schemas"]["Ledger"][];
@@ -6354,6 +8001,32 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "sequence": 63316166,
+                         *         "close_time": "2026-07-03T22:37:01Z",
+                         *         "hash": "734ef513eec0746fb133bc0a759adb98ffae7fa6e36e286954531a5416b437cb",
+                         *         "prev_hash": "58aee267a054f990b426f932b5c518151f789da48e76153d9722769b4d7a8b08",
+                         *         "protocol_version": 26,
+                         *         "tx_count": 299,
+                         *         "op_count": 1079,
+                         *         "soroban_event_count": 1105,
+                         *         "total_coins": "1054439020873472865",
+                         *         "fee_pool": "100768724524038",
+                         *         "base_fee": 100,
+                         *         "base_reserve": 5000000
+                         *       },
+                         *       "as_of": "2026-07-03T22:39:59.693177604Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: components["schemas"]["Ledger"];
                         };
@@ -6414,6 +8087,36 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "ledger": 63316166,
+                         *         "transactions": [
+                         *           {
+                         *             "hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
+                         *             "ledger": 63316166,
+                         *             "close_time": "2026-07-03T22:37:01Z",
+                         *             "index": 0,
+                         *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
+                         *             "fee_charged": 600,
+                         *             "max_fee": 120000,
+                         *             "operation_count": 6,
+                         *             "successful": false,
+                         *             "result_code": -1,
+                         *             "memo_type": "none"
+                         *           }
+                         *         ]
+                         *       },
+                         *       "as_of": "2026-07-03T22:39:58.530334586Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: {
                                 ledger?: number;
@@ -6463,6 +8166,48 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
+                         *         "ledger": 63316166,
+                         *         "close_time": "2026-07-03T22:37:01Z",
+                         *         "index": 0,
+                         *         "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
+                         *         "fee_charged": 600,
+                         *         "max_fee": 120000,
+                         *         "operation_count": 6,
+                         *         "successful": false,
+                         *         "result_code": -1,
+                         *         "memo_type": "none",
+                         *         "operations": [
+                         *           {
+                         *             "ledger": 63316166,
+                         *             "close_time": "2026-07-03T22:37:01Z",
+                         *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
+                         *             "tx_index": 0,
+                         *             "op_index": 0,
+                         *             "type": "payment",
+                         *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
+                         *             "fields": {
+                         *               "amount": "26000000000000",
+                         *               "asset": "XLM26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
+                         *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
+                         *             },
+                         *             "result_code": 0
+                         *           }
+                         *         ]
+                         *       },
+                         *       "as_of": "2026-07-03T22:40:09.331893286Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: components["schemas"]["TxDetail"];
                         };
@@ -6534,6 +8279,51 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "ledger": 63316166,
+                         *         "operations": [
+                         *           {
+                         *             "ledger": 63316166,
+                         *             "close_time": "2026-07-03T22:37:01Z",
+                         *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
+                         *             "tx_index": 0,
+                         *             "op_index": 0,
+                         *             "type": "payment",
+                         *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
+                         *             "fields": {
+                         *               "amount": "26000000000000",
+                         *               "asset": "XLM26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
+                         *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
+                         *             }
+                         *           },
+                         *           {
+                         *             "ledger": 63316166,
+                         *             "close_time": "2026-07-03T22:37:01Z",
+                         *             "tx_hash": "5b0ae3dc05f628f53292ab19702a42f083193fd8059ed9dd093fd2796ac8745a",
+                         *             "tx_index": 0,
+                         *             "op_index": 1,
+                         *             "type": "payment",
+                         *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
+                         *             "fields": {
+                         *               "amount": "2600000000000",
+                         *               "asset": "XRP26-GD3CO7CGKHQKJ6LFGCXBOXHF5CJNVJ346AHQWA4RLVTVPCDYGCGWWCOL",
+                         *               "destination": "GDKRYQ4K45I6MYOQ3256TOAVCHD7AZIW4O2GEF6VACE6I2ZDX7XA6RJV"
+                         *             }
+                         *           }
+                         *         ]
+                         *       },
+                         *       "as_of": "2026-07-03T22:40:10.560512468Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: {
                                 /** @description The ledger (ledger-scoped mode); 0 in directory mode. */
@@ -6598,6 +8388,36 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "window_days": 30,
+                         *         "since_ledger": 62797785,
+                         *         "contracts": [
+                         *           {
+                         *             "contract_id": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+                         *             "events": 84013660,
+                         *             "last_ledger": 63316185,
+                         *             "last_seen": "2026-07-03T22:38:55Z"
+                         *           },
+                         *           {
+                         *             "contract_id": "CB23WRDQWGSP6YPMY4UV5C4OW5CBTXKYN3XEATG7KJEZCXMJBYEHOUOV",
+                         *             "events": 31700010,
+                         *             "last_ledger": 63316185,
+                         *             "last_seen": "2026-07-03T22:38:55Z"
+                         *           }
+                         *         ]
+                         *       },
+                         *       "as_of": "2026-07-03T22:39:07.271202524Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: {
                                 window_days?: number;
@@ -6670,6 +8490,42 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "contract_id": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                         *         "events": [
+                         *           {
+                         *             "ledger": 63316186,
+                         *             "close_time": "2026-07-03T22:39:01Z",
+                         *             "tx_hash": "f867993250a0cc767084ea5312de03786deaa3c8e0671b27e6724381696e4cf0",
+                         *             "op_index": 0,
+                         *             "event_index": 0,
+                         *             "event_type": "contract",
+                         *             "topic_0": "transfer"
+                         *           },
+                         *           {
+                         *             "ledger": 63316186,
+                         *             "close_time": "2026-07-03T22:39:01Z",
+                         *             "tx_hash": "0982c7836389f9f876704cdac95fdaacd223482b0360c2b6a4039b3a4c0ea805",
+                         *             "op_index": 0,
+                         *             "event_index": 0,
+                         *             "event_type": "contract",
+                         *             "topic_0": "transfer"
+                         *           }
+                         *         ],
+                         *         "next_cursor": "63316186.0.0"
+                         *       },
+                         *       "as_of": "2026-07-03T22:39:09.248840367Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: {
                                 contract_id?: string;
@@ -6744,6 +8600,47 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "contract_id": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                         *         "wasm_hash": "a41fc53d6753b6c04eb15b021c55052366a4c8e0e21bc72700f461264ec1350e",
+                         *         "size_bytes": 57328,
+                         *         "exports": [
+                         *           {
+                         *             "name": "__constructor",
+                         *             "params": [
+                         *               "i64",
+                         *               "i64"
+                         *             ],
+                         *             "results": [
+                         *               "i64"
+                         *             ]
+                         *           },
+                         *           {
+                         *             "name": "propose_admin",
+                         *             "params": [
+                         *               "i64"
+                         *             ],
+                         *             "results": [
+                         *               "i64"
+                         *             ]
+                         *           }
+                         *         ],
+                         *         "wat": "(module\n  (type (;0;) (func (param i64 i64) (result i64)))\n  (type (;1;) (func (param i64)…",
+                         *         "decompiled": "export memory memory(initial: 17, max: 0);\n\nglobal g_a:int = 1048576;\nexport global data_e…",
+                         *         "source_note": "wasm resolved from the certified ClickHouse lake (contract instance → wasm hash → contract…"
+                         *       },
+                         *       "as_of": "2026-07-03T22:40:51.773640137Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: {
                                 /** @description C-strkey contract id (echoed). */
@@ -6825,6 +8722,33 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "contract_id": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                         *         "window_days": 90,
+                         *         "since_ledger": 61760987,
+                         *         "interactions": [
+                         *           {
+                         *             "contract_id": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+                         *             "shared_txs": 49067
+                         *           },
+                         *           {
+                         *             "contract_id": "CARIFTQ64I7RUTN6VAD5CAXJGU5EQRTI6KBZPWD65CO33IQPHTHBSVNS",
+                         *             "shared_txs": 16207
+                         *           }
+                         *         ]
+                         *       },
+                         *       "as_of": "2026-07-03T22:39:12.058161999Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: {
                                 contract_id?: string;
@@ -6888,6 +8812,22 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "contract_id": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                         *         "versions": []
+                         *       },
+                         *       "as_of": "2026-07-03T22:39:13.312316848Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: {
                                 contract_id?: string;
@@ -6952,6 +8892,32 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "priced_assets": 11,
+                         *         "accounts": [
+                         *           {
+                         *             "account_id": "GALAXYVOIDAOPZTDLHILAJQKCVVFMD4IKLXLSZV5YHO7VY74IWZILUTO",
+                         *             "usd_value": "11319540791.76",
+                         *             "locked": true
+                         *           },
+                         *           {
+                         *             "account_id": "GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4",
+                         *             "usd_value": "838665433.46"
+                         *           }
+                         *         ]
+                         *       },
+                         *       "as_of": "2026-07-03T22:39:22.213002912Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: {
                                 /** @description Number of assets that contributed a price. */
@@ -7016,6 +8982,62 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "account_id": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *         "exists": true,
+                         *         "balance": "235182317613",
+                         *         "seq_num": "144373126631784461",
+                         *         "num_subentries": 6,
+                         *         "flags": 2,
+                         *         "home_domain": "circle.com",
+                         *         "thresholds": {
+                         *           "master": 0,
+                         *           "low": 2,
+                         *           "med": 2,
+                         *           "high": 2
+                         *         },
+                         *         "signers": [
+                         *           {
+                         *             "key": "GAUKFO2NIYEFO773KJZKLPSPYNQ6M7INPEAIQIJCIH7EEVP2KSVQWGH4",
+                         *             "weight": 1
+                         *           },
+                         *           {
+                         *             "key": "GAXFRO4MH6FSBJMNECVZJ6R3ZXANI7CFCMVN47IDNRQDHII3J5HTOZGB",
+                         *             "weight": 1
+                         *           }
+                         *         ],
+                         *         "trustlines": [
+                         *           {
+                         *             "asset": "USDCAllow-GDIEKKIQWMIZ4LD3RP3ABPN7X5KEAEWYMR634BRHB7EULIMEVREWLF3G",
+                         *             "balance": "77129744523269078",
+                         *             "limit": "9223372036854775807",
+                         *             "flags": 1
+                         *           }
+                         *         ],
+                         *         "offers": [
+                         *           {
+                         *             "offer_id": 426903336,
+                         *             "selling": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *             "buying": "USDCAllow-GDIEKKIQWMIZ4LD3RP3ABPN7X5KEAEWYMR634BRHB7EULIMEVREWLF3G",
+                         *             "amount": "9146242292331506729",
+                         *             "price_n": 1,
+                         *             "price_d": 1
+                         *           }
+                         *         ],
+                         *         "last_modified_ledger": 63314771
+                         *       },
+                         *       "as_of": "2026-07-03T22:39:25.722776013Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: {
                                 account_id?: string;
@@ -7113,6 +9135,39 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *         "transactions": [
+                         *           {
+                         *             "hash": "be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36",
+                         *             "ledger": 63315192,
+                         *             "close_time": "2026-07-03T21:02:29Z",
+                         *             "index": 7,
+                         *             "source_account": "GDSQAEHJLE2ZZMQZ47YWLP3O2HVPYQ4QCFWTHUKMKF6RIX2ZJJDDMK4N",
+                         *             "fee_charged": 200,
+                         *             "max_fee": 13935,
+                         *             "operation_count": 1,
+                         *             "successful": true,
+                         *             "result_code": 1,
+                         *             "memo_type": "text",
+                         *             "memo": "internal"
+                         *           }
+                         *         ],
+                         *         "next_cursor": "63315192.7",
+                         *         "scope": "all"
+                         *       },
+                         *       "as_of": "2026-07-03T22:39:31.01258567Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: components["schemas"]["AccountTransactions"];
                         };
@@ -7171,6 +9226,39 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *         "operations": [
+                         *           {
+                         *             "ledger": 63315192,
+                         *             "close_time": "2026-07-03T21:02:29Z",
+                         *             "tx_hash": "be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36",
+                         *             "tx_index": 7,
+                         *             "op_index": 0,
+                         *             "type": "payment",
+                         *             "source_account": "GDSQAEHJLE2ZZMQZ47YWLP3O2HVPYQ4QCFWTHUKMKF6RIX2ZJJDDMK4N",
+                         *             "fields": {
+                         *               "amount": "1000000000000",
+                         *               "asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *               "destination": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+                         *             }
+                         *           }
+                         *         ],
+                         *         "next_cursor": "63315192.7.0",
+                         *         "scope": "all"
+                         *       },
+                         *       "as_of": "2026-07-03T22:39:45.671725025Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: components["schemas"]["AccountOperations"];
                         };
@@ -7218,6 +9306,25 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "query": "63316166",
+                         *         "kind": "ledger",
+                         *         "canonical": "63316166",
+                         *         "href": "/v1/ledgers/63316166",
+                         *         "supported": true
+                         *       },
+                         *       "as_of": "2026-07-03T22:41:59.42624588Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": {
                             data?: {
                                 query?: string;
@@ -9021,6 +11128,26 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "asset_id": "native",
+                     *         "quote": "fiat:USD",
+                     *         "price": "0.18883137679433320865",
+                     *         "price_type": "vwap",
+                     *         "observed_at": "2026-07-01T00:00:00Z",
+                     *         "window_seconds": 60
+                     *       },
+                     *       "as_of": "2026-07-03T22:37:31.922227287Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["PriceEnvelope"];
                 };
             };
