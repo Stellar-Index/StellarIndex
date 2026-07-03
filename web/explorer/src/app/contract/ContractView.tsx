@@ -40,6 +40,34 @@ const PAGE_SIZE = 50;
  * (ledger, op_index, event_index) keyset — a ledger-only cursor would
  * drop the rest of a ledger that a busy contract straddles across a page.
  */
+/**
+ * useContractWasm — single wasm fetch shared by the header (SAC
+ * identity), WasmPanel, and CodeHistoryPanel (S-016: the three used
+ * to disagree — the wasm panel said "SAC, no bytecode" while the
+ * code-history panel promised a backfill would fill it in).
+ * sacAsset is parsed from the API's contract-is-sac problem detail
+ * ("…the Stellar Asset Contract for <asset> — …"), which the API
+ * only emits after a spoof-proof derivation cross-check.
+ */
+function useContractWasm(id: string) {
+  const query = useQuery<ContractWasmResp>({
+    queryKey: ['/v1/contracts/{id}/wasm', id],
+    enabled: CONTRACT_RE.test(id),
+    retry: false,
+    staleTime: 3_600_000, // content-addressed wasm is immutable
+    queryFn: async () => {
+      const env = await apiGet<Envelope<ContractWasmResp>>(
+        `/v1/contracts/${encodeURIComponent(id)}/wasm`,
+      );
+      return env.data;
+    },
+  });
+  const msg = query.error instanceof Error ? query.error.message : '';
+  const isSac = msg.includes('Stellar Asset Contract');
+  const sacAsset = /Stellar Asset Contract for (\S+)/.exec(msg)?.[1] ?? null;
+  return { ...query, isSac, sacAsset };
+}
+
 export function ContractView({ id: idProp }: { id?: string } = {}) {
   // Path route /contracts/[id] passes `id` as a prop; legacy /contract?id= reads
   // it from the query string (kept for redirect compatibility). Prop wins.
@@ -149,6 +177,7 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
         source={asExample(`/v1/contracts/${id}`)}
         bodyClassName="space-y-3"
       >
+        <SacIdentity id={data.contract_id || id} />
         <div>
           <div className="text-[11px] uppercase tracking-wider text-ink-muted">
             Contract ID
@@ -227,6 +256,43 @@ function formatBytes(n: number): string {
 }
 
 /**
+ * SacIdentity — the "what IS this contract" answer for SACs (S-016 /
+ * site audit): name the wrapped asset, tag it, link its asset page.
+ * Renders nothing for regular wasm contracts. Reads the same cached
+ * query WasmPanel uses, so it costs no extra request.
+ */
+function SacIdentity({ id }: { id: string }) {
+  const { isSac, sacAsset } = useContractWasm(id);
+  if (!isSac) return null;
+  const code = sacAsset ? sacAsset.split(/[:-]/)[0] : null;
+  return (
+    <div className="rounded-md bg-surface-sunken px-3 py-2.5 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-sm bg-brand-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-brand-700">
+          Stellar Asset Contract
+        </span>
+        {sacAsset && (
+          <Link
+            href={`/assets/${encodeURIComponent(sacAsset)}`}
+            className="font-medium text-brand-600 hover:underline"
+          >
+            {code} — asset detail →
+          </Link>
+        )}
+      </div>
+      <p className="mt-1.5 text-xs leading-relaxed text-ink-body">
+        This address is the built-in token contract for the classic asset{' '}
+        {sacAsset ? <span className="font-mono">{sacAsset}</span> : 'it wraps'}
+        {' '}— Soroban&apos;s host-implemented interface to the same balances
+        classic operations use. It runs no user-uploaded code, so there is no
+        WASM to audit; trust derives from the asset&apos;s issuer, not from
+        bytecode.
+      </p>
+    </div>
+  );
+}
+
+/**
  * WasmPanel — the contract's on-chain code, read on demand from the certified
  * lake. Exports always render; WAT + decompiled pseudocode are collapsible and
  * only shown when the server produced them (wabt present). A clean 404 (the
@@ -234,18 +300,7 @@ function formatBytes(n: number): string {
  * to a short, non-alarming note rather than an error card.
  */
 function WasmPanel({ id }: { id: string }) {
-  const { data, isLoading, isError, error } = useQuery<ContractWasmResp>({
-    queryKey: ['/v1/contracts/{id}/wasm', id],
-    enabled: CONTRACT_RE.test(id),
-    retry: false,
-    staleTime: 3_600_000, // content-addressed wasm is immutable
-    queryFn: async () => {
-      const env = await apiGet<Envelope<ContractWasmResp>>(
-        `/v1/contracts/${encodeURIComponent(id)}/wasm`,
-      );
-      return env.data;
-    },
-  });
+  const { data, isLoading, isError, error, isSac: hookSac, sacAsset } = useContractWasm(id);
 
   const source = asExample(`/v1/contracts/${id}/wasm`);
 
@@ -259,12 +314,13 @@ function WasmPanel({ id }: { id: string }) {
 
   if (isError || !data) {
     const msg = error instanceof Error ? error.message : '';
-    const isSac = msg.includes('Stellar Asset Contract');
+    const isSac = hookSac;
     const notCaptured = !isSac && msg.includes('404');
     let body: string;
     if (isSac) {
-      body =
-        'This is a Stellar Asset Contract — the built-in SAC host logic behind a classic asset (e.g. XLM or USDC). It runs no user-uploaded WASM module, so there’s no bytecode to show.';
+      body = sacAsset
+        ? `This is the Stellar Asset Contract for ${sacAsset} — built-in host logic, not a user-uploaded WASM module, so there’s no bytecode to show.`
+        : 'This is a Stellar Asset Contract — the built-in SAC host logic behind a classic asset (e.g. XLM or USDC). It runs no user-uploaded WASM module, so there’s no bytecode to show.';
     } else if (notCaptured) {
       body =
         'This contract’s on-chain WASM isn’t in the captured ledger window yet — its deploy-time code/instance entry predates live capture. It resolves automatically once a Phase-C backfill lands.';
@@ -374,6 +430,10 @@ type CodeHistoryResp = NonNullable<
 >;
 
 function CodeHistoryPanel({ id }: { id: string }) {
+  // S-016: for a SAC there is no code and never will be — the old
+  // empty-state copy ("fills in with the Phase-C backfill") directly
+  // contradicted the SAC banner two panels up. Skip the panel.
+  const { isSac } = useContractWasm(id);
   const { data, isLoading, isError } = useQuery<CodeHistoryResp>({
     queryKey: ['/v1/contracts/{id}/code-history', id],
     enabled: CONTRACT_RE.test(id),
@@ -386,6 +446,8 @@ function CodeHistoryPanel({ id }: { id: string }) {
       return env.data;
     },
   });
+
+  if (isSac) return null;
 
   const source = asExample(`/v1/contracts/${id}/code-history`);
   const versions = data?.versions ?? [];
