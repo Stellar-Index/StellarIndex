@@ -58,7 +58,28 @@ fi
 
 CANONICAL="examples/postman/stellar-index.postman_collection.json"
 
-jq 'walk(if type == "object" then (del(.id) | del(._postman_id)) else . end)' "$TMP" \
+# Post-process (single jq pass, all deterministic):
+#   1. Strip the converter's random ids (see above).
+#   2. Replace the converter's collection-level `noauth` with bearer
+#      auth bound to a {{bearerToken}} collection variable. The
+#      OpenAPI global security is `[{}, APIKeyAuth]` (anonymous
+#      allowed), which the converter renders as noauth — shipping
+#      the collection un-authable. Requests inherit collection auth
+#      in Postman, so binding it here means "paste your key into the
+#      bearerToken variable" is the only setup step; anonymous use
+#      still works because the server accepts keyless requests on
+#      public endpoints (empty token → empty header value).
+jq 'walk(if type == "object" then (del(.id) | del(._postman_id)) else . end)
+    | .auth = {
+        type: "bearer",
+        bearer: [{ key: "token", value: "{{bearerToken}}", type: "string" }]
+      }
+    | .variable += [{
+        key: "bearerToken",
+        value: "",
+        type: "string",
+        description: "Stellar Index API key (sip_…). Create one at https://stellarindex.io/dashboard/keys or via POST /v1/signup. Leave empty for anonymous access (lower rate limit; /v1/account/* requires a key)."
+      }]' "$TMP" \
   > "$CANONICAL"
 rm -f "$TMP"
 

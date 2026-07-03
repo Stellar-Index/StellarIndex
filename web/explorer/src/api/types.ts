@@ -153,7 +153,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Build metadata. */
+        /**
+         * Build metadata.
+         * @description Reports what binary is serving: human-readable git-describe
+         *     `version`, `build_date`, full VCS `commit` SHA, `dirty`
+         *     (whether the build tree had uncommitted changes — production
+         *     builds should always be `false`), and the runtime
+         *     `go_version`. Intended for fleet-wide "what's running"
+         *     checks over the API instead of shelling into hosts.
+         */
         get: {
             parameters: {
                 query?: never;
@@ -172,6 +180,8 @@ export interface paths {
                         "application/json": components["schemas"]["VersionResponse"];
                     };
                 };
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
             };
         };
         put?: never;
@@ -317,6 +327,11 @@ export interface paths {
                     include?: string;
                     /** @description Case-insensitive substring filter over code / asset id / slug / name, applied server-side across BOTH phases of the unified listing (catalogue + the ~191K classic long tail). */
                     q?: string;
+                    /**
+                     * @description Maximum rows per page (1-500, default 100). Values above
+                     *     the cap return 400 rather than being silently clamped.
+                     *     Page onward with `cursor` where the endpoint supports it.
+                     */
                     limit?: components["parameters"]["Limit"];
                     /**
                      * @description Opaque pagination token echoed from a prior response's
@@ -418,6 +433,11 @@ export interface paths {
                      *     means "start from the beginning".
                      */
                     cursor?: components["parameters"]["Cursor"];
+                    /**
+                     * @description Maximum rows per page (1-500, default 100). Values above
+                     *     the cap return 400 rather than being silently clamped.
+                     *     Page onward with `cursor` where the endpoint supports it.
+                     */
                     limit?: components["parameters"]["Limit"];
                     /**
                      * @description Optional class filter within the external set: `fiat` or
@@ -632,7 +652,18 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Extended metadata (SEP-1 CURRENCIES block). */
+        /**
+         * Extended metadata (SEP-1 CURRENCIES block).
+         * @description The asset's SEP-1 `[[CURRENCIES]]` slice on its own —
+         *     same overlay-resolution path as `/v1/assets/{asset_id}`
+         *     but returning ONLY the metadata fields, for clients that
+         *     refresh metadata without re-fetching the pricing core.
+         *     `sep1_status` reports resolver state (`verified` /
+         *     `not_fetched` / `unreachable` / `no_match` /
+         *     `not_applicable`) — resolver failures surface there, not
+         *     as an HTTP error. 404 only when the asset isn't indexed
+         *     at all.
+         */
         get: {
             parameters: {
                 query?: never;
@@ -752,6 +783,7 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
+                    /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
                     limit?: number;
                 };
                 header?: never;
@@ -1103,7 +1135,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Current prices for up to 100 assets. */
+        /**
+         * Current prices for up to 100 assets.
+         * @description Latest price for each id in `asset_ids` (comma-separated,
+         *     max 100; duplicates de-duplicated server-side). Assets with
+         *     no observation are OMITTED from the response rather than
+         *     failing the batch — a caller asking for 5 assets and
+         *     getting 3 rows knows exactly which 2 lack data. The
+         *     envelope's `flags.stale` is the OR over per-row staleness.
+         *     Above 100 ids, use the POST form (up to 1000 in the body).
+         */
         get: {
             parameters: {
                 query: {
@@ -1137,10 +1178,22 @@ export interface paths {
                         "application/json": components["schemas"]["PriceBatchEnvelope"];
                     };
                 };
+                400: components["responses"]["BadRequest"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
             };
         };
         put?: never;
-        /** Current prices for up to 1000 assets. */
+        /**
+         * Current prices for up to 1000 assets.
+         * @description Body-parameter form of `GET /price/batch` for large
+         *     watchlists — up to 1000 canonical asset ids in a JSON
+         *     array (URLs would blow past query-string limits well
+         *     before that). Same semantics as the GET form: missing
+         *     observations are omitted, not errored; `flags.stale` is
+         *     the OR over returned rows.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -1167,6 +1220,10 @@ export interface paths {
                         "application/json": components["schemas"]["PriceBatchEnvelope"];
                     };
                 };
+                400: components["responses"]["BadRequest"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
             };
         };
         delete?: never;
@@ -1465,7 +1522,19 @@ export interface paths {
                      * @example fiat:USD
                      */
                     quote: components["parameters"]["QuoteRequired"];
+                    /**
+                     * @description Window start (inclusive), RFC 3339 UTC — e.g.
+                     *     `2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.
+                     *     When omitted the endpoint applies its own default lookback
+                     *     from `to` (documented per endpoint). Must be before `to`
+                     *     or the request 400s.
+                     */
                     from?: components["parameters"]["From"];
+                    /**
+                     * @description Window end (exclusive), RFC 3339 UTC. Defaults to now.
+                     *     Windows are half-open `[from, to)` — a trade exactly at
+                     *     `to` is excluded.
+                     */
                     to?: components["parameters"]["To"];
                     limit?: number;
                     /**
@@ -1546,6 +1615,12 @@ export interface paths {
                      * @example fiat:USD
                      */
                     quote?: components["parameters"]["Quote"];
+                    /**
+                     * @description Bucket width for the returned series (`1m` = 1 minute …
+                     *     `1mo` = 1 month). When omitted the server picks a sensible
+                     *     width for the requested timeframe (e.g. `1m` for `1h`,
+                     *     `1h` for `1w`) so the series stays a few hundred points.
+                     */
                     granularity?: components["parameters"]["Granularity"];
                 };
                 header?: never;
@@ -1563,6 +1638,10 @@ export interface paths {
                         "application/json": components["schemas"]["HistoryEnvelope"];
                     };
                 };
+                400: components["responses"]["BadRequest"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
             };
         };
         put?: never;
@@ -1627,7 +1706,19 @@ export interface paths {
                      * @example fiat:USD
                      */
                     quote?: components["parameters"]["Quote"];
+                    /**
+                     * @description Rolling lookback window anchored at now — `24h` means
+                     *     "the last 24 hours", `all` means "since first observation".
+                     *     Shorthand alternative to explicit `from`/`to` bounds on the
+                     *     chart/series surfaces. Default `24h`.
+                     */
                     timeframe?: components["parameters"]["Timeframe"];
+                    /**
+                     * @description Bucket width for the returned series (`1m` = 1 minute …
+                     *     `1mo` = 1 month). When omitted the server picks a sensible
+                     *     width for the requested timeframe (e.g. `1m` for `1h`,
+                     *     `1h` for `1w`) so the series stays a few hundred points.
+                     */
                     granularity?: components["parameters"]["Granularity"];
                     /**
                      * @description Series type. `vwap` (default) returns the price series.
@@ -1731,7 +1822,19 @@ export interface paths {
                      * @example fiat:USD
                      */
                     quote: components["parameters"]["QuoteRequired"];
+                    /**
+                     * @description Window start (inclusive), RFC 3339 UTC — e.g.
+                     *     `2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.
+                     *     When omitted the endpoint applies its own default lookback
+                     *     from `to` (documented per endpoint). Must be before `to`
+                     *     or the request 400s.
+                     */
                     from?: components["parameters"]["From"];
+                    /**
+                     * @description Window end (exclusive), RFC 3339 UTC. Defaults to now.
+                     *     Windows are half-open `[from, to)` — a trade exactly at
+                     *     `to` is excluded.
+                     */
                     to?: components["parameters"]["To"];
                     /**
                      * @description Bar width for multi-bar series mode. Omit for the
@@ -1832,7 +1935,19 @@ export interface paths {
                      * @example fiat:USD
                      */
                     quote: components["parameters"]["QuoteRequired"];
+                    /**
+                     * @description Window start (inclusive), RFC 3339 UTC — e.g.
+                     *     `2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.
+                     *     When omitted the endpoint applies its own default lookback
+                     *     from `to` (documented per endpoint). Must be before `to`
+                     *     or the request 400s.
+                     */
                     from?: components["parameters"]["From"];
+                    /**
+                     * @description Window end (exclusive), RFC 3339 UTC. Defaults to now.
+                     *     Windows are half-open `[from, to)` — a trade exactly at
+                     *     `to` is excluded.
+                     */
                     to?: components["parameters"]["To"];
                     /** @description Drop trades > N σ from window mean. 0 disables (default). */
                     outlier_sigma?: number;
@@ -1920,7 +2035,19 @@ export interface paths {
                      * @example fiat:USD
                      */
                     quote: components["parameters"]["QuoteRequired"];
+                    /**
+                     * @description Window start (inclusive), RFC 3339 UTC — e.g.
+                     *     `2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.
+                     *     When omitted the endpoint applies its own default lookback
+                     *     from `to` (documented per endpoint). Must be before `to`
+                     *     or the request 400s.
+                     */
                     from?: components["parameters"]["From"];
+                    /**
+                     * @description Window end (exclusive), RFC 3339 UTC. Defaults to now.
+                     *     Windows are half-open `[from, to)` — a trade exactly at
+                     *     `to` is excluded.
+                     */
                     to?: components["parameters"]["To"];
                 };
                 header?: never;
@@ -2112,6 +2239,7 @@ export interface paths {
                      *     means "start from the beginning".
                      */
                     cursor?: components["parameters"]["Cursor"];
+                    /** @description Maximum rows per page (1-500, default 100). */
                     limit?: number;
                     order_by?: "volume_24h_usd_desc" | "pair";
                     /**
@@ -2159,6 +2287,10 @@ export interface paths {
                         };
                     };
                 };
+                400: components["responses"]["BadRequest"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
             };
         };
         put?: never;
@@ -2228,6 +2360,10 @@ export interface paths {
                         };
                     };
                 };
+                400: components["responses"]["BadRequest"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
             };
         };
         put?: never;
@@ -2351,6 +2487,7 @@ export interface paths {
                 query?: {
                     /** @description Filter to one pattern (e.g. arbitrage). */
                     kind?: "arbitrage" | "sandwich" | "oracle_deviation" | "liquidation_cascade" | "wash_trade";
+                    /** @description Maximum events to return (1-500, default 50). */
                     limit?: number;
                 };
                 header?: never;
@@ -2423,7 +2560,9 @@ export interface paths {
                 query?: {
                     /** @description true → only currently-firing events. */
                     firing?: boolean;
+                    /** @description Trailing lookback in days for the freeze-event list and the per-reason tally (1-365, default 30). */
                     window_days?: number;
+                    /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
                     limit?: number;
                 };
                 header?: never;
@@ -2505,7 +2644,9 @@ export interface paths {
                 query?: {
                     /** @description true → only rows whose latest status is firing. */
                     firing?: boolean;
+                    /** @description Trailing lookback in days for divergence rows (1-365, default 7). */
                     window_days?: number;
+                    /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
                     limit?: number;
                 };
                 header?: never;
@@ -2584,6 +2725,9 @@ export interface paths {
                         "application/json": components["schemas"]["OracleLatestEnvelope"];
                     };
                 };
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
             };
         };
         put?: never;
@@ -2630,6 +2774,7 @@ export interface paths {
                      *     means "start from the beginning".
                      */
                     cursor?: components["parameters"]["Cursor"];
+                    /** @description Maximum rows per page (1-500, default 100). */
                     limit?: number;
                     /**
                      * @description Sort order. `volume_24h_usd_desc` (default) orders by
@@ -2884,7 +3029,13 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
-                    /** @example GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN */
+                    /**
+                     * @description Issuer account id — 56-character G-strkey (SEP-23),
+                     *     e.g. `GA5Z…KZVN`. Malformed strkeys return 400;
+                     *     well-formed accounts that have never issued an
+                     *     observed asset return 404.
+                     * @example GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                     */
                     g_strkey: string;
                 };
                 cookie?: never;
@@ -2983,12 +3134,23 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
+                    /**
+                     * @description Filter to events where this G/C-strkey was the
+                     *     sender (transfer.from, approve.from).
+                     */
                     from?: string;
+                    /**
+                     * @description Filter to events where this G/C-strkey was the
+                     *     recipient (transfer.to, approve.spender,
+                     *     set_admin.new_admin, set_authorized.id).
+                     */
                     to?: string;
+                    /** @description Maximum audit-trail rows to return (1-500, default 100). */
                     limit?: number;
                 };
                 header?: never;
                 path: {
+                    /** @description SEP-41 token contract C-strkey. */
                     contract_id: string;
                 };
                 cookie?: never;
@@ -3074,7 +3236,14 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
-                    /** @example source */
+                    /**
+                     * @description Which entity family the delta strip is computed over:
+                     *     `coin` (an asset's price/volume deltas), `protocol`
+                     *     (per-protocol activity), `pair` (a trading pair), or
+                     *     `source` (an ingest source). Determines how `{id}` is
+                     *     interpreted — see the `id` parameter.
+                     * @example source
+                     */
                     entity_type: "coin" | "protocol" | "pair" | "source";
                     /**
                      * @description Canonical id for the entity. Form depends on
@@ -3619,6 +3788,8 @@ export interface paths {
                         "application/atom+xml": string;
                     };
                 };
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
             };
         };
         put?: never;
@@ -3758,6 +3929,8 @@ export interface paths {
                         };
                     };
                 };
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
             };
         };
         put?: never;
@@ -4165,6 +4338,7 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
+                    /** @description Number of trailing days in the per-day series (1-365, default 30). */
                     window_days?: number;
                 };
                 header?: never;
@@ -4391,7 +4565,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Direct markets for a pair. */
+        /**
+         * Direct markets for a pair.
+         * @description Single-pair activity lookup — the point-query sibling of
+         *     the pageable `/v1/markets` scan (same storage, same row
+         *     shape). Returns a ZERO-OR-ONE-element array: the pair's
+         *     activity summary when any trade has been observed,
+         *     otherwise an empty array. A missing pair is deliberately
+         *     NOT a 404, so clients can distinguish "no such pair" from
+         *     a malformed request without branching on status code.
+         */
         get: {
             parameters: {
                 query: {
@@ -4421,6 +4604,10 @@ export interface paths {
                         "application/json": components["schemas"]["PairsEnvelope"];
                     };
                 };
+                400: components["responses"]["BadRequest"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
             };
         };
         put?: never;
@@ -4438,7 +4625,19 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** SEP-40 lastprice-equivalent passthrough. */
+        /**
+         * SEP-40 lastprice-equivalent passthrough.
+         * @description HTTP mirror of the SEP-40 oracle contract call
+         *     `lastprice(asset) -> Option<PriceData>` — for integrators
+         *     that already speak Reflector's on-chain interface and want
+         *     the identical shape over REST. The response is
+         *     deliberately minimal (`price`, `timestamp`); the richer
+         *     source/confidence view lives on `/v1/oracle/latest` and
+         *     `/v1/price`. Quote is fixed at USD, matching the on-chain
+         *     contract's fixed-quote semantic — for other quotes use
+         *     `/v1/price?asset=&quote=` or `/v1/oracle/x_last_price`.
+         *     404 when no observation exists for the asset.
+         */
         get: {
             parameters: {
                 query: {
@@ -4468,6 +4667,11 @@ export interface paths {
                         "application/json": components["schemas"]["OraclePriceEnvelope"];
                     };
                 };
+                400: components["responses"]["BadRequest"];
+                404: components["responses"]["NotFound"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
             };
         };
         put?: never;
@@ -4485,7 +4689,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** SEP-40 prices-equivalent passthrough (N historical). */
+        /**
+         * SEP-40 prices-equivalent passthrough (N historical).
+         * @description HTTP mirror of the SEP-40 oracle contract call
+         *     `prices(asset, records) -> Option<Vec<PriceData>>` — "the
+         *     last N price records". Returns up to `records` most-recent
+         *     CLOSED 1-minute VWAP snapshots for the asset/USD pair,
+         *     newest first; the in-progress bucket is excluded
+         *     (ADR-0015). 200 with an empty array when the asset has no
+         *     closed buckets yet.
+         */
         get: {
             parameters: {
                 query: {
@@ -4508,6 +4721,10 @@ export interface paths {
                         "application/json": components["schemas"]["OraclePricesEnvelope"];
                     };
                 };
+                400: components["responses"]["BadRequest"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
             };
         };
         put?: never;
@@ -4525,7 +4742,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** SEP-40 x_last_price-equivalent (cross-pair). */
+        /**
+         * SEP-40 x_last_price-equivalent (cross-pair).
+         * @description HTTP mirror of the SEP-40 oracle contract call
+         *     `x_last_price(base, quote)` — last observed price of
+         *     `base` denominated in `quote`. The response's `asset`
+         *     field carries the canonical base identifier so existing
+         *     SEP-40 `lastprice` parsing paths can be reused; the quote
+         *     is implicit from the request. 404 when no observation
+         *     exists for the pair.
+         */
         get: {
             parameters: {
                 query: {
@@ -4549,6 +4775,11 @@ export interface paths {
                         "application/json": components["schemas"]["OraclePriceEnvelope"];
                     };
                 };
+                400: components["responses"]["BadRequest"];
+                404: components["responses"]["NotFound"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
             };
         };
         put?: never;
@@ -4566,7 +4797,17 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** API-key holder info + quota status. */
+        /**
+         * API-key holder info + quota status.
+         * @description Who am I? Returns the authenticated caller's identity.
+         *     API-key / SEP-10 callers get the top-level `key_*` fields
+         *     (key id, label, tier, per-minute rate limit); dashboard
+         *     session callers get the nested `user` / `account` objects
+         *     instead. When both credentials ride one request the
+         *     session wins — it identifies a person, a key only
+         *     identifies a credential. Anonymous callers get 401: /me
+         *     is meaningless without a credential.
+         */
         get: {
             parameters: {
                 query?: never;
@@ -4603,6 +4844,9 @@ export interface paths {
                         "application/json": components["schemas"]["AccountEnvelope"];
                     };
                 };
+                401: components["responses"]["Unauthorized"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
             };
         };
         put?: never;
@@ -4642,7 +4886,19 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
+                    /**
+                     * @description Window start (inclusive), RFC 3339 UTC — e.g.
+                     *     `2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.
+                     *     When omitted the endpoint applies its own default lookback
+                     *     from `to` (documented per endpoint). Must be before `to`
+                     *     or the request 400s.
+                     */
                     from?: components["parameters"]["From"];
+                    /**
+                     * @description Window end (exclusive), RFC 3339 UTC. Defaults to now.
+                     *     Windows are half-open `[from, to)` — a trade exactly at
+                     *     `to` is excluded.
+                     */
                     to?: components["parameters"]["To"];
                 };
                 header?: never;
@@ -4660,6 +4916,9 @@ export interface paths {
                         "application/json": components["schemas"]["UsageEnvelope"];
                     };
                 };
+                401: components["responses"]["Unauthorized"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
             };
         };
         put?: never;
@@ -4759,6 +5018,11 @@ export interface paths {
                         "application/json": components["schemas"]["KeyCreatedEnvelope"];
                     };
                 };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
             };
         };
         delete?: never;
@@ -6020,6 +6284,7 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
+                    /** @description Maximum rows to return (1-200, default 50). Out-of-range values return 400. */
                     limit?: number;
                     /** @description Return ledgers with sequence < this. */
                     before?: number;
@@ -6062,7 +6327,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** A single ledger header. */
+        /**
+         * A single ledger header.
+         * @description One closed ledger's header from the certified lake —
+         *     close time, transaction/operation counts, fee pool, and
+         *     protocol version. The lake reaches back to genesis, so any
+         *     historical sequence resolves; results are immutable and
+         *     cacheable indefinitely. 404 when `seq` is beyond the
+         *     ingest tip (or otherwise outside the indexed range).
+         */
         get: {
             parameters: {
                 query?: never;
@@ -6112,10 +6385,18 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Transactions in a ledger. */
+        /**
+         * Transactions in a ledger.
+         * @description Every transaction applied in ledger `seq`, in apply order:
+         *     hash, source account, operation count, fee charged, and
+         *     success flag. Summary rows only — fetch `/v1/tx/{hash}`
+         *     for the decoded operations + events of one transaction.
+         *     A valid but empty ledger returns an empty array.
+         */
         get: {
             parameters: {
                 query?: {
+                    /** @description Maximum transactions to return (1-1000, default 200). */
                     limit?: number;
                 };
                 header?: never;
@@ -6238,6 +6519,7 @@ export interface paths {
                     ledger?: number;
                     /** @description Opaque keyset cursor (directory mode only). */
                     cursor?: string;
+                    /** @description Page size. Mode-dependent bounds — per-ledger mode: default 500, cap 2000; directory mode: default 50, cap 200. */
                     limit?: number;
                 };
                 header?: never;
@@ -6301,6 +6583,7 @@ export interface paths {
                 query?: {
                     /** @description Window size in days. */
                     days?: number;
+                    /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
                     limit?: number;
                 };
                 header?: never;
@@ -6367,6 +6650,7 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
+                    /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
                     limit?: number;
                     /** @description Opaque keyset cursor from a prior response's next_cursor. */
                     cursor?: string;
@@ -6521,6 +6805,7 @@ export interface paths {
                 query?: {
                     /** @description Window size in days. */
                     days?: number;
+                    /** @description Maximum rows to return (1-200, default 50). Out-of-range values return 400. */
                     limit?: number;
                 };
                 header?: never;
@@ -6650,6 +6935,7 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
+                    /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
                     limit?: number;
                 };
                 header?: never;
@@ -6805,6 +7091,7 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
+                    /** @description Maximum rows to return (1-200, default 50). Out-of-range values return 400. */
                     limit?: number;
                     /** @description Opaque keyset cursor from a prior response's next_cursor. */
                     cursor?: string;
@@ -6862,6 +7149,7 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
+                    /** @description Maximum rows to return (1-200, default 50). Out-of-range values return 400. */
                     limit?: number;
                     /** @description Opaque keyset cursor from a prior response's next_cursor. */
                     cursor?: string;
@@ -8489,14 +8777,35 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
+        /** @description No valid credential — an API key, SEP-10 token, or session is required. */
+        Unauthorized: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "type": "https://api.stellarindex.io/errors/unauthorized",
+                 *       "title": "Authentication required",
+                 *       "status": 401,
+                 *       "detail": "/v1/account/me requires a magic-link session, API key, or SEP-10 token",
+                 *       "instance": "/v1/account/me",
+                 *       "request_id": "2f7c1a9e4b8d3c6a5e0f1b2d4c8a9e7f"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
         /** @description Rate-limit quota exhausted. See `Retry-After` header. */
         RateLimited: {
             headers: {
                 /** @description Seconds until the caller can retry. */
                 "Retry-After"?: number;
+                /** @description Request budget for the caller's tier in the current fixed window (per-key override applied when one is set). */
                 "X-RateLimit-Limit"?: number;
+                /** @description Requests left in the current window AFTER this request. 0 means the next request in this window will be 429'd. */
                 "X-RateLimit-Remaining"?: number;
-                /** @description Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). Emitted on every response, not just 429s. */
+                /** @description Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). All three X-RateLimit-* headers ride every response the rate limiter evaluates — 2xx included, not just 429s — but are absent on deployments running without a rate limiter and on requests served fail-open during a Redis outage. */
                 "X-RateLimit-Reset"?: number;
                 [name: string]: unknown;
             };
@@ -8590,7 +8899,19 @@ export interface components {
          * @example fiat:USD
          */
         QuoteRequired: string;
+        /**
+         * @description Rolling lookback window anchored at now — `24h` means
+         *     "the last 24 hours", `all` means "since first observation".
+         *     Shorthand alternative to explicit `from`/`to` bounds on the
+         *     chart/series surfaces. Default `24h`.
+         */
         Timeframe: "1h" | "24h" | "1w" | "1mo" | "1y" | "all";
+        /**
+         * @description Bucket width for the returned series (`1m` = 1 minute …
+         *     `1mo` = 1 month). When omitted the server picks a sensible
+         *     width for the requested timeframe (e.g. `1m` for `1h`,
+         *     `1h` for `1w`) so the series stays a few hundred points.
+         */
         Granularity: "1m" | "15m" | "1h" | "4h" | "1d" | "1w" | "1mo";
         /**
          * @description Canonical asset identifier for the base side of a pair.
@@ -8601,7 +8922,19 @@ export interface components {
          * @example USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
          */
         Base: string;
+        /**
+         * @description Window start (inclusive), RFC 3339 UTC — e.g.
+         *     `2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.
+         *     When omitted the endpoint applies its own default lookback
+         *     from `to` (documented per endpoint). Must be before `to`
+         *     or the request 400s.
+         */
         From: string;
+        /**
+         * @description Window end (exclusive), RFC 3339 UTC. Defaults to now.
+         *     Windows are half-open `[from, to)` — a trade exactly at
+         *     `to` is excluded.
+         */
         To: string;
         /**
          * @description Series type. `vwap` (default) returns the price series.
@@ -8616,8 +8949,24 @@ export interface components {
          *     they return an empty series.
          */
         PriceType: "vwap" | "twap" | "market_cap";
+        /**
+         * @description Filter rows by asset class: `native` (XLM), `classic`
+         *     (issued CODE-ISSUER assets), `soroban` (SEP-41 contract
+         *     tokens), `fiat` (reference currencies). `any` (the
+         *     default) disables the filter.
+         */
         TypeFilter: "native" | "classic" | "soroban" | "fiat" | "any";
+        /**
+         * @description Filter to rows whose asset code matches exactly
+         *     (case-sensitive, e.g. `USDC`). Codes are not unique on
+         *     Stellar — combine with `issuer` to pin one asset.
+         */
         CodeFilter: string;
+        /**
+         * @description Filter to assets issued by this account (G-strkey,
+         *     SEP-23). Combine with `code` to select a single
+         *     classic asset.
+         */
         IssuerFilter: string;
         /**
          * @description Opaque pagination token echoed from a prior response's
@@ -8631,6 +8980,11 @@ export interface components {
          *     means "start from the beginning".
          */
         Cursor: string;
+        /**
+         * @description Maximum rows per page (1-500, default 100). Values above
+         *     the cap return 400 rather than being silently clamped.
+         *     Page onward with `cursor` where the endpoint supports it.
+         */
         Limit: number;
     };
     requestBodies: never;

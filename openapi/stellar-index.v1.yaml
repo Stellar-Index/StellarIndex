@@ -18,7 +18,7 @@
 openapi: 3.1.0
 info:
   title: Stellar Index API
-  version: "1.0.0-draft"
+  version: "1.0.0"
   summary: Aggregated Stellar asset pricing — real-time and historical.
   description: |
     The Stellar Index API exposes normalised, VWAP-aggregated pricing
@@ -68,6 +68,16 @@ tags:
       already speak SEP-40.
   - name: account
     description: Self-service for API-key holders.
+  - name: auth
+    description: |
+      Sign-in surfaces — magic-link + 6-digit-code email flows that
+      mint the dashboard session cookie, and the SEP-10 Web Auth
+      challenge/token pair for wallet-keypair authentication.
+  - name: dashboard
+    description: |
+      Customer dashboard backend (stellarindex.io/dashboard) —
+      session-cookie-gated key + webhook management. Browser-facing;
+      API-key callers use the /account/* surface instead.
   - name: meta
     description: |
       Metadata about the deployment itself — source catalogue,
@@ -177,6 +187,13 @@ paths:
     get:
       tags: [health]
       summary: Build metadata.
+      description: |
+        Reports what binary is serving: human-readable git-describe
+        `version`, `build_date`, full VCS `commit` SHA, `dirty`
+        (whether the build tree had uncommitted changes — production
+        builds should always be `false`), and the runtime
+        `go_version`. Intended for fleet-wide "what's running"
+        checks over the API instead of shelling into hosts.
       security: []
       responses:
         "200":
@@ -184,6 +201,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/VersionResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
 
   /status:
     get:
@@ -454,6 +473,16 @@ paths:
     get:
       tags: [assets]
       summary: Extended metadata (SEP-1 CURRENCIES block).
+      description: |
+        The asset's SEP-1 `[[CURRENCIES]]` slice on its own —
+        same overlay-resolution path as `/v1/assets/{asset_id}`
+        but returning ONLY the metadata fields, for clients that
+        refresh metadata without re-fetching the pricing core.
+        `sep1_status` reports resolver state (`verified` /
+        `not_fetched` / `unreachable` / `no_match` /
+        `not_applicable`) — resolver failures surface there, not
+        as an HTTP error. 404 only when the asset isn't indexed
+        at all.
       parameters:
         - { $ref: "#/components/parameters/AssetIdPath" }
       responses:
@@ -504,7 +533,7 @@ paths:
         window; full once the Phase-C backfill lands.
       parameters:
         - { $ref: "#/components/parameters/AssetIdPath" }
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: limit, in: query, description: "Maximum rows to return (1-500, default 100). Out-of-range values return 400.", schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
       responses:
         "200":
           description: Ranked holders + total holder count.
@@ -601,7 +630,7 @@ paths:
   /price/at:
     get:
       operationId: getPriceAt
-      tags: [Prices]
+      tags: [price]
       summary: Point-in-time price (closed bucket at-or-before a timestamp)
       description: >-
         The pair's closed 1-minute VWAP bucket at-or-before `ts` — the
@@ -728,6 +757,14 @@ paths:
     get:
       tags: [price]
       summary: Current prices for up to 100 assets.
+      description: |
+        Latest price for each id in `asset_ids` (comma-separated,
+        max 100; duplicates de-duplicated server-side). Assets with
+        no observation are OMITTED from the response rather than
+        failing the batch — a caller asking for 5 assets and
+        getting 3 rows knows exactly which 2 lack data. The
+        envelope's `flags.stale` is the OR over per-row staleness.
+        Above 100 ids, use the POST form (up to 1000 in the body).
       parameters:
         - name: asset_ids
           in: query
@@ -746,9 +783,20 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PriceBatchEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [price]
       summary: Current prices for up to 1000 assets.
+      description: |
+        Body-parameter form of `GET /price/batch` for large
+        watchlists — up to 1000 canonical asset ids in a JSON
+        array (URLs would blow past query-string limits well
+        before that). Same semantics as the GET form: missing
+        observations are omitted, not errored; `flags.stale` is
+        the OR over returned rows.
       requestBody:
         required: true
         content:
@@ -770,6 +818,10 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PriceBatchEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /observations:
     get:
@@ -980,6 +1032,10 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/HistoryEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /chart:
     get:
@@ -1113,7 +1169,7 @@ paths:
 
   /vwap:
     get:
-      tags: [prices]
+      tags: [price]
       summary: Volume-weighted average price over a window.
       description: |
         Returns VWAP = Σ(quote) / Σ(base) for every trade in
@@ -1155,7 +1211,7 @@ paths:
 
   /twap:
     get:
-      tags: [prices]
+      tags: [price]
       summary: Time-weighted average price over a window.
       description: |
         Each trade's price is active from its timestamp to the
@@ -1269,6 +1325,7 @@ paths:
         - { $ref: "#/components/parameters/Cursor" }
         - name: limit
           in: query
+          description: Maximum rows per page (1-500, default 100).
           schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
         - name: order_by
           in: query
@@ -1320,6 +1377,10 @@ paths:
                         type: array
                         items: { $ref: "#/components/schemas/PoolRow" }
                     required: [data]
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /lending/pools:
     get:
@@ -1360,6 +1421,10 @@ paths:
                         net_supplied_30d:    { type: string, description: "Token base-units, 30d net-flow proxy (not TVL)." }
                         net_borrowed_30d:    { type: string, description: "Token base-units, 30d net-flow proxy." }
                         utilization_30d_pct: { type: number, nullable: true, description: "Window borrow/supply ratio %; null when net supply ≤ 0." }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /lending/pools/{pool}/reserves:
     get:
@@ -1437,7 +1502,7 @@ paths:
         isn't wired (feature-gated, like /v1/lending/pools).
       parameters:
         - { name: kind, in: query, description: "Filter to one pattern (e.g. arbitrage).", schema: { type: string, enum: [arbitrage, sandwich, oracle_deviation, liquidation_cascade, wash_trade] } }
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 50 } }
+        - { name: limit, in: query, description: "Maximum events to return (1-500, default 50).", schema: { type: integer, minimum: 1, maximum: 500, default: 50 } }
       responses:
         "200":
           description: MEV events, newest first.
@@ -1481,8 +1546,8 @@ paths:
         reader isn't wired.
       parameters:
         - { name: firing, in: query, description: "true → only currently-firing events.", schema: { type: boolean } }
-        - { name: window_days, in: query, schema: { type: integer, minimum: 1, maximum: 365, default: 30 } }
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: window_days, in: query, description: "Trailing lookback in days for the freeze-event list and the per-reason tally (1-365, default 30).", schema: { type: integer, minimum: 1, maximum: 365, default: 30 } }
+        - { name: limit, in: query, description: "Maximum rows to return (1-500, default 100). Out-of-range values return 400.", schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
       responses:
         "200":
           description: Freeze timeline + firing count + reason tally.
@@ -1538,8 +1603,8 @@ paths:
         200 + empty payload when the reader isn't wired.
       parameters:
         - { name: firing, in: query, description: "true → only rows whose latest status is firing.", schema: { type: boolean } }
-        - { name: window_days, in: query, schema: { type: integer, minimum: 1, maximum: 365, default: 7 } }
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: window_days, in: query, description: "Trailing lookback in days for divergence rows (1-365, default 7).", schema: { type: integer, minimum: 1, maximum: 365, default: 7 } }
+        - { name: limit, in: query, description: "Maximum rows to return (1-500, default 100). Out-of-range values return 400.", schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
       responses:
         "200":
           description: Latest divergence per (pair, reference).
@@ -1582,6 +1647,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OracleLatestEnvelope" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /markets:
     get:
@@ -1603,6 +1671,7 @@ paths:
         - { $ref: "#/components/parameters/Cursor" }
         - name: limit
           in: query
+          description: Maximum rows per page (1-500, default 100).
           schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
         - name: order_by
           in: query
@@ -1829,6 +1898,11 @@ paths:
         - name: g_strkey
           in: path
           required: true
+          description: |
+            Issuer account id — 56-character G-strkey (SEP-23),
+            e.g. `GA5Z…KZVN`. Malformed strkeys return 400;
+            well-formed accounts that have never issued an
+            observed asset return 404.
           schema:
             type: string
             example: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
@@ -1895,7 +1969,7 @@ paths:
 
   /contracts/{contract_id}/transfers:
     get:
-      tags: [meta]
+      tags: [explorer]
       summary: Per-contract SEP-41 transfer audit trail.
       description: |
         Returns the most-recent N (default 100, max 500)
@@ -1915,30 +1989,31 @@ paths:
         - name: contract_id
           in: path
           required: true
+          description: SEP-41 token contract C-strkey.
           schema:
             type: string
-            description: SEP-41 token contract C-strkey.
             example: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75
         - name: from
           in: query
           required: false
+          description: |
+            Filter to events where this G/C-strkey was the
+            sender (transfer.from, approve.from).
           schema:
             type: string
-            description: |
-              Filter to events where this G/C-strkey was the
-              sender (transfer.from, approve.from).
         - name: to
           in: query
           required: false
+          description: |
+            Filter to events where this G/C-strkey was the
+            recipient (transfer.to, approve.spender,
+            set_admin.new_admin, set_authorized.id).
           schema:
             type: string
-            description: |
-              Filter to events where this G/C-strkey was the
-              recipient (transfer.to, approve.spender,
-              set_admin.new_admin, set_authorized.id).
         - name: limit
           in: query
           required: false
+          description: Maximum audit-trail rows to return (1-500, default 100).
           schema:
             type: integer
             minimum: 1
@@ -2017,6 +2092,12 @@ paths:
         - name: entity_type
           in: path
           required: true
+          description: |
+            Which entity family the delta strip is computed over:
+            `coin` (an asset's price/volume deltas), `protocol`
+            (per-protocol activity), `pair` (a trading pair), or
+            `source` (an ingest source). Determines how `{id}` is
+            interpreted — see the `id` parameter.
           schema:
             type: string
             enum: [coin, protocol, pair, source]
@@ -2470,6 +2551,8 @@ paths:
                   `<link>` to the status page anchor, `<summary>`
                   (first paragraph of the markdown body), and
                   full `<content>` (the markdown body).
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
 
   /coverage:
     get:
@@ -2566,6 +2649,8 @@ paths:
                             items:
                               { $ref: "#/components/schemas/ProtocolRow" }
                           total_protocols: { type: integer }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /protocols/{name}:
     get:
       tags: [protocols]
@@ -2850,7 +2935,7 @@ paths:
         partition-pruned. The time-series companion to the snapshot at
         `/v1/network/stats`; backs the explorer `/network` charts.
       parameters:
-        - { name: window_days, in: query, schema: { type: integer, minimum: 1, maximum: 365, default: 30 } }
+        - { name: window_days, in: query, description: "Number of trailing days in the per-day series (1-365, default 30).", schema: { type: integer, minimum: 1, maximum: 365, default: 30 } }
       responses:
         "200":
           description: Daily throughput buckets.
@@ -2985,6 +3070,14 @@ paths:
     get:
       tags: [markets]
       summary: Direct markets for a pair.
+      description: |
+        Single-pair activity lookup — the point-query sibling of
+        the pageable `/v1/markets` scan (same storage, same row
+        shape). Returns a ZERO-OR-ONE-element array: the pair's
+        activity summary when any trade has been observed,
+        otherwise an empty array. A missing pair is deliberately
+        NOT a 404, so clients can distinguish "no such pair" from
+        a malformed request without branching on status code.
       parameters:
         - name: base
           in: query
@@ -3008,11 +3101,26 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PairsEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /oracle/lastprice:
     get:
       tags: [oracle]
       summary: SEP-40 lastprice-equivalent passthrough.
+      description: |
+        HTTP mirror of the SEP-40 oracle contract call
+        `lastprice(asset) -> Option<PriceData>` — for integrators
+        that already speak Reflector's on-chain interface and want
+        the identical shape over REST. The response is
+        deliberately minimal (`price`, `timestamp`); the richer
+        source/confidence view lives on `/v1/oracle/latest` and
+        `/v1/price`. Quote is fixed at USD, matching the on-chain
+        contract's fixed-quote semantic — for other quotes use
+        `/v1/price?asset=&quote=` or `/v1/oracle/x_last_price`.
+        404 when no observation exists for the asset.
       parameters:
         - name: asset
           in: query
@@ -3034,11 +3142,24 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OraclePriceEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /oracle/prices:
     get:
       tags: [oracle]
       summary: SEP-40 prices-equivalent passthrough (N historical).
+      description: |
+        HTTP mirror of the SEP-40 oracle contract call
+        `prices(asset, records) -> Option<Vec<PriceData>>` — "the
+        last N price records". Returns up to `records` most-recent
+        CLOSED 1-minute VWAP snapshots for the asset/USD pair,
+        newest first; the in-progress bucket is excluded
+        (ADR-0015). 200 with an empty array when the asset has no
+        closed buckets yet.
       parameters:
         - name: asset
           in: query
@@ -3056,11 +3177,23 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OraclePricesEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /oracle/x_last_price:
     get:
       tags: [oracle]
       summary: SEP-40 x_last_price-equivalent (cross-pair).
+      description: |
+        HTTP mirror of the SEP-40 oracle contract call
+        `x_last_price(base, quote)` — last observed price of
+        `base` denominated in `quote`. The response's `asset`
+        field carries the canonical base identifier so existing
+        SEP-40 `lastprice` parsing paths can be reused; the quote
+        is implicit from the request. 404 when no observation
+        exists for the pair.
       parameters:
         - name: base
           in: query
@@ -3082,13 +3215,28 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OraclePriceEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /account/me:
     get:
       tags: [account]
       summary: API-key holder info + quota status.
+      description: |
+        Who am I? Returns the authenticated caller's identity.
+        API-key / SEP-10 callers get the top-level `key_*` fields
+        (key id, label, tier, per-minute rate limit); dashboard
+        session callers get the nested `user` / `account` objects
+        instead. When both credentials ride one request the
+        session wins — it identifies a person, a key only
+        identifies a credential. Anonymous callers get 401: /me
+        is meaningless without a credential.
       security:
         - APIKeyAuth: []
+        - SessionCookie: []
       responses:
         "200":
           description: Account.
@@ -3104,6 +3252,9 @@ paths:
                   created_at: "2026-04-12T09:32:18Z"
                 as_of: "2026-05-05T16:25:42.881Z"
                 flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
 
   /account/usage:
     get:
@@ -3137,6 +3288,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/UsageEnvelope" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
 
   /account/keys:
     get:
@@ -3200,6 +3354,11 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/KeyCreatedEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /account/keys/{keyID}:
     delete:
@@ -3453,6 +3612,8 @@ paths:
     get:
       tags: [dashboard]
       summary: Customer dashboard — list this account's API keys.
+      security:
+        - SessionCookie: []
       description: |
         Session-gated. Returns every key (active + revoked) for
         the authenticated user's account, ordered oldest-first.
@@ -3478,6 +3639,8 @@ paths:
     post:
       tags: [dashboard]
       summary: Customer dashboard — mint a new API key.
+      security:
+        - SessionCookie: []
       description: |
         Session-gated. Mints a new key, returns the plaintext
         ONCE. The dashboard surfaces it in a "save this now"
@@ -3516,6 +3679,8 @@ paths:
     delete:
       tags: [dashboard]
       summary: Customer dashboard — revoke a key.
+      security:
+        - SessionCookie: []
       description: |
         Session-gated. Soft-delete by setting revoked_at;
         idempotent. 404 when the key doesn't exist OR belongs
@@ -3549,6 +3714,8 @@ paths:
     get:
       tags: [dashboard]
       summary: Customer dashboard — list this account's webhooks.
+      security:
+        - SessionCookie: []
       description: |
         Session-gated. Returns every webhook this account has
         registered to receive incident / anomaly / divergence
@@ -3574,6 +3741,8 @@ paths:
     post:
       tags: [dashboard]
       summary: Customer dashboard — register a new webhook.
+      security:
+        - SessionCookie: []
       description: |
         Session-gated. Returns the signing secret ONCE — store it
         server-side immediately and use it to HMAC-verify the
@@ -3612,6 +3781,8 @@ paths:
     patch:
       tags: [dashboard]
       summary: Customer dashboard — update a webhook.
+      security:
+        - SessionCookie: []
       description: |
         Session-gated. Patches name / url / events / enabled.
         SecretHash is immutable; rotation lives behind a separate
@@ -3646,6 +3817,8 @@ paths:
     delete:
       tags: [dashboard]
       summary: Customer dashboard — delete a webhook.
+      security:
+        - SessionCookie: []
       description: |
         Session-gated. Hard-deletes the registry row and cascades
         to webhook_deliveries. Idempotent — 204 on absent.
@@ -3667,6 +3840,8 @@ paths:
     get:
       tags: [dashboard]
       summary: Customer dashboard — list recent delivery attempts.
+      security:
+        - SessionCookie: []
       description: |
         Session-gated. Most-recent first; up to 100 attempts.
         Powers the dashboard's delivery-log panel.
@@ -3956,7 +4131,7 @@ paths:
         Recent closed ledgers, newest first. Keyset-page older with
         `?before=<sequence>` (use the response's `next_before`).
       parameters:
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: limit, in: query, description: "Maximum rows to return (1-200, default 50). Out-of-range values return 400.", schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
         - { name: before, in: query, description: Return ledgers with sequence < this., schema: { type: integer } }
       responses:
         "200":
@@ -3977,6 +4152,13 @@ paths:
     get:
       tags: [explorer]
       summary: A single ledger header.
+      description: |
+        One closed ledger's header from the certified lake —
+        close time, transaction/operation counts, fee pool, and
+        protocol version. The lake reaches back to genesis, so any
+        historical sequence resolves; results are immutable and
+        cacheable indefinitely. 404 when `seq` is beyond the
+        ingest tip (or otherwise outside the indexed range).
       parameters:
         - { name: seq, in: path, required: true, schema: { type: integer }, example: 63000000 }
       responses:
@@ -3995,9 +4177,15 @@ paths:
     get:
       tags: [explorer]
       summary: Transactions in a ledger.
+      description: |
+        Every transaction applied in ledger `seq`, in apply order:
+        hash, source account, operation count, fee charged, and
+        success flag. Summary rows only — fetch `/v1/tx/{hash}`
+        for the decoded operations + events of one transaction.
+        A valid but empty ledger returns an empty array.
       parameters:
         - { name: seq, in: path, required: true, schema: { type: integer }, example: 63000000 }
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000, default: 200 } }
+        - { name: limit, in: query, description: "Maximum transactions to return (1-1000, default 200).", schema: { type: integer, minimum: 1, maximum: 1000, default: 200 } }
       responses:
         "200":
           description: The ledger's transactions.
@@ -4057,7 +4245,7 @@ paths:
       parameters:
         - { name: ledger, in: query, description: Ledger sequence. Omit for the network-wide recent directory., schema: { type: integer } }
         - { name: cursor, in: query, description: Opaque keyset cursor (directory mode only)., schema: { type: string } }
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 2000 } }
+        - { name: limit, in: query, description: "Page size. Mode-dependent bounds — per-ledger mode: default 500, cap 2000; directory mode: default 50, cap 200.", schema: { type: integer, minimum: 1, maximum: 2000 } }
       responses:
         "200":
           description: Decoded operations (ledger-scoped or the recent directory).
@@ -4095,7 +4283,7 @@ paths:
         "this contract IS a Blend pool". `since_ledger` echoes the window floor.
       parameters:
         - { name: days, in: query, description: Window size in days., schema: { type: integer, minimum: 1, maximum: 365, default: 30 } }
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: limit, in: query, description: "Maximum rows to return (1-500, default 100). Out-of-range values return 400.", schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
       responses:
         "200":
           description: Ranked contracts directory.
@@ -4136,7 +4324,7 @@ paths:
         the sibling `/contracts/{contract_id}/transfers`.
       parameters:
         - { name: contract_id, in: path, required: true, description: C-strkey contract id., schema: { type: string } }
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: limit, in: query, description: "Maximum rows to return (1-500, default 100). Out-of-range values return 400.", schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
         - { name: cursor, in: query, description: Opaque keyset cursor from a prior response's next_cursor., schema: { type: string } }
       responses:
         "200":
@@ -4232,7 +4420,7 @@ paths:
       parameters:
         - { name: contract_id, in: path, required: true, description: C-strkey contract id., schema: { type: string } }
         - { name: days, in: query, description: Window size in days., schema: { type: integer, minimum: 1, maximum: 365, default: 90 } }
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: limit, in: query, description: "Maximum rows to return (1-200, default 50). Out-of-range values return 400.", schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
       responses:
         "200":
           description: Ranked interaction edges.
@@ -4310,7 +4498,7 @@ paths:
         string (2dp). Coverage tracks the entry-change capture + Phase-C
         backfill — an account ranks once its balances are captured.
       parameters:
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+        - { name: limit, in: query, description: "Maximum rows to return (1-500, default 100). Out-of-range values return 400.", schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
       responses:
         "200":
           description: Accounts ranked by USD wealth, descending.
@@ -4424,7 +4612,7 @@ paths:
         participant capture surfaces once the re-derive lands.
       parameters:
         - { name: g_strkey, in: path, required: true, description: G-strkey account id., schema: { type: string } }
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: limit, in: query, description: "Maximum rows to return (1-200, default 50). Out-of-range values return 400.", schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
         - { name: cursor, in: query, description: Opaque keyset cursor from a prior response's next_cursor., schema: { type: string } }
       responses:
         "200":
@@ -4453,7 +4641,7 @@ paths:
         transactions endpoint above for the coverage/backfill note.
       parameters:
         - { name: g_strkey, in: path, required: true, description: G-strkey account id., schema: { type: string } }
-        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: limit, in: query, description: "Maximum rows to return (1-200, default 50). Out-of-range values return 400.", schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
         - { name: cursor, in: query, description: Opaque keyset cursor from a prior response's next_cursor., schema: { type: string } }
       responses:
         "200":
@@ -4501,6 +4689,27 @@ components:
       type: http
       scheme: bearer
       bearerFormat: "sip_* (Stellar Index key)"
+      description: |
+        API key sent as a bearer token:
+        `Authorization: Bearer sip_…`. Create and manage keys from
+        the customer dashboard at
+        https://stellarindex.io/dashboard/keys (or bootstrap one via
+        `POST /v1/signup`). The same header also accepts SEP-10 JWTs
+        from `/v1/auth/sep10/token`. Anonymous access (no header) is
+        allowed on the public read endpoints at a lower per-IP
+        rate-limit tier — keys raise the limit and unlock the
+        /account/* self-service surface.
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: stellarindex_session
+      description: |
+        Browser session cookie minted by the magic-link /
+        6-digit-code sign-in flows (`/v1/auth/callback`,
+        `/v1/auth/verify-code`). HttpOnly; scoped to the dashboard
+        origin. Gates the `/v1/dashboard/*` management surface —
+        API keys are NOT accepted there. Cleared by
+        `POST /v1/auth/logout`.
 
   parameters:
     AssetIdPath:
@@ -4562,6 +4771,11 @@ components:
     Timeframe:
       name: timeframe
       in: query
+      description: |
+        Rolling lookback window anchored at now — `24h` means
+        "the last 24 hours", `all` means "since first observation".
+        Shorthand alternative to explicit `from`/`to` bounds on the
+        chart/series surfaces. Default `24h`.
       schema:
         type: string
         enum: [1h, 24h, 1w, 1mo, 1y, all]
@@ -4569,6 +4783,11 @@ components:
     Granularity:
       name: granularity
       in: query
+      description: |
+        Bucket width for the returned series (`1m` = 1 minute …
+        `1mo` = 1 month). When omitted the server picks a sensible
+        width for the requested timeframe (e.g. `1m` for `1h`,
+        `1h` for `1w`) so the series stays a few hundred points.
       schema:
         type: string
         enum: [1m, 15m, 1h, 4h, 1d, 1w, 1mo]
@@ -4589,10 +4808,20 @@ components:
     From:
       name: from
       in: query
+      description: |
+        Window start (inclusive), RFC 3339 UTC — e.g.
+        `2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.
+        When omitted the endpoint applies its own default lookback
+        from `to` (documented per endpoint). Must be before `to`
+        or the request 400s.
       schema: { type: string, format: date-time }
     To:
       name: to
       in: query
+      description: |
+        Window end (exclusive), RFC 3339 UTC. Defaults to now.
+        Windows are half-open `[from, to)` — a trade exactly at
+        `to` is excluded.
       schema: { type: string, format: date-time }
     PriceType:
       name: price_type
@@ -4612,9 +4841,19 @@ components:
         type: string
         enum: [vwap, twap, market_cap]
         default: vwap
+    # TypeFilter / CodeFilter / IssuerFilter are forward-documented
+    # for the planned /operations filtering surface — part of the
+    # published parameter vocabulary but not yet referenced by an
+    # operation. Intentional: do NOT delete as "orphans" (they have
+    # been mistaken for dead params before — see commit 8ea2b9ad).
     TypeFilter:
       name: type
       in: query
+      description: |
+        Filter rows by asset class: `native` (XLM), `classic`
+        (issued CODE-ISSUER assets), `soroban` (SEP-41 contract
+        tokens), `fiat` (reference currencies). `any` (the
+        default) disables the filter.
       schema:
         type: string
         enum: [native, classic, soroban, fiat, any]
@@ -4622,10 +4861,18 @@ components:
     CodeFilter:
       name: code
       in: query
+      description: |
+        Filter to rows whose asset code matches exactly
+        (case-sensitive, e.g. `USDC`). Codes are not unique on
+        Stellar — combine with `issuer` to pin one asset.
       schema: { type: string }
     IssuerFilter:
       name: issuer
       in: query
+      description: |
+        Filter to assets issued by this account (G-strkey,
+        SEP-23). Combine with `code` to select a single
+        classic asset.
       schema: { type: string }
     Cursor:
       name: cursor
@@ -4644,6 +4891,10 @@ components:
     Limit:
       name: limit
       in: query
+      description: |
+        Maximum rows per page (1-500, default 100). Values above
+        the cap return 400 rather than being silently clamped.
+        Page onward with `cursor` where the endpoint supports it.
       schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
 
   responses:
@@ -4676,6 +4927,18 @@ components:
             detail: "asset query parameter is required"
             instance: "/v1/price"
             request_id: "499673a2b4d5f84bdbfa18bcfdc65bbe"
+    Unauthorized:
+      description: No valid credential — an API key, SEP-10 token, or session is required.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "https://api.stellarindex.io/errors/unauthorized"
+            title: "Authentication required"
+            status: 401
+            detail: "/v1/account/me requires a magic-link session, API key, or SEP-10 token"
+            instance: "/v1/account/me"
+            request_id: "2f7c1a9e4b8d3c6a5e0f1b2d4c8a9e7f"
     RateLimited:
       description: Rate-limit quota exhausted. See `Retry-After` header.
       headers:
@@ -4684,8 +4947,15 @@ components:
           description: Seconds until the caller can retry.
         X-RateLimit-Limit:
           schema: { type: integer }
+          description: >-
+            Request budget for the caller's tier in the current
+            fixed window (per-key override applied when one is
+            set).
         X-RateLimit-Remaining:
           schema: { type: integer }
+          description: >-
+            Requests left in the current window AFTER this request.
+            0 means the next request in this window will be 429'd.
         X-RateLimit-Reset:
           schema: { type: integer }
           description: >-
@@ -4693,7 +4963,11 @@ components:
             bucket resets. Clients compute
             `seconds_until_reset = X-RateLimit-Reset - now` to back
             off proactively (GitHub / Twitter header semantics).
-            Emitted on every response, not just 429s.
+            All three X-RateLimit-* headers ride every response the
+            rate limiter evaluates — 2xx included, not just 429s —
+            but are absent on deployments running without a rate
+            limiter and on requests served fail-open during a Redis
+            outage.
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }

@@ -15,6 +15,47 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **OpenAPI spec quality batch** (2026-07-03 docs audit): the spec is
+  now fully self-describing — descriptions for all 8 shared
+  `components/parameters` (Timeframe, Granularity, From, To,
+  TypeFilter, CodeFilter, IssuerFilter, Limit), real descriptions for
+  the 11 summary-only operations (the three SEP-40 oracle
+  passthroughs now say they mirror the on-chain contract calls,
+  GET/POST /price/batch, /ledgers/{seq} + /transactions, /pairs,
+  /version, /assets/{id}/metadata, /account/me), and descriptions for
+  the undocumented inline params (`window_days` ×3, `entity_type`,
+  issuer `g_strkey`, the /contracts/{id}/transfers filter set, the
+  per-op `limit` params on explorer listings). Tag hygiene: `auth` +
+  `dashboard` are declared in the top-level tag list, the `Prices` /
+  `prices` casing strays merged into the single `price` group, and
+  /contracts/{id}/transfers moved from `meta` to `explorer`. Auth is
+  now honest: `APIKeyAuth` documents the `Bearer sip_…` scheme +
+  where keys come from, a new `SessionCookie` scheme is applied to
+  all /dashboard/* operations, and /account/me carries the 401 it
+  actually returns (new shared `Unauthorized` response). The 16
+  operations that documented no error shape at all now reference the
+  shared problem+json responses, the X-RateLimit-* headers on the
+  shared 429 are described (including when they are absent:
+  rate-limiter disabled or Redis fail-open), and `info.version` is
+  promoted from `1.0.0-draft` to `1.0.0`.
+- **Postman collection is authable out of the box**: the generator
+  now injects collection-level bearer auth bound to a new empty
+  `bearerToken` collection variable (with instructions on where to
+  get a key), replacing the converter's `noauth` — previously no
+  request in the shipped collection could authenticate, while the
+  README documented a `bearerToken` variable that didn't exist.
+  README corrected: `baseUrl` includes `/v1` (so the localhost
+  override is `http://localhost:3000/v1`). Generation stays
+  deterministic (seeded-random preload + id-stripping unchanged).
+- **pkg/client doc + example truthfulness**: the package Coverage
+  doc claimed "every server endpoint has a typed method (35 as of
+  2026-05-09)" and listed methods that don't exist (Coins, Coin,
+  Currencies, Currency); rewritten to the real ~36-method
+  pricing/read surface with the deliberate exclusions that
+  spec_contract_test.go registers and enforces. Examples now use the
+  current `sip_` key prefix instead of the legacy `rek_`.
+
 ## [v0.7.2] — 2026-07-03
 
 ### Added

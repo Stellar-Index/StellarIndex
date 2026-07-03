@@ -26,11 +26,17 @@ build time; nothing else in the repo writes to this file.
 
 The collection ships with two collection-level variables:
 
-- `baseUrl` — defaults to `https://api.stellarindex.io`. Override
-  to hit a local indexer (`http://localhost:3000`).
-- `bearerToken` — your API key plaintext. Required only for
-  `/v1/account/*`, `/v1/account/keys`, and any other authed
-  endpoint. Get one by running the `POST /v1/signup` request in
-  the collection first.
+- `baseUrl` — defaults to `https://api.stellarindex.io/v1` (note:
+  the `/v1` prefix is part of the base URL, not the request
+  paths). To hit a local indexer, override it to
+  `http://localhost:3000/v1`.
+- `bearerToken` — your API key (`sip_…`), empty by default. The
+  collection carries bearer auth at the collection level, so every
+  request sends `Authorization: Bearer {{bearerToken}}` once the
+  variable is set. Public read endpoints work without it (at the
+  lower anonymous rate limit); `/v1/account/*` requires it. Get a
+  key from the dashboard at
+  <https://stellarindex.io/dashboard/keys>, or by running the
+  collection's `POST /v1/signup` request.
 
 In Postman: Collections → Stellar Index API → Variables tab.

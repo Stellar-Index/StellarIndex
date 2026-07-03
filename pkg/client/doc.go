@@ -73,30 +73,40 @@
 //
 // # Coverage
 //
-// Every server endpoint registered in
-// `internal/api/v1/server.go` has a typed Client method. As of
-// 2026-05-09 that's 35 methods spanning pricing (Price, PriceTip,
-// PriceBatch, Chart, History, HistorySinceInception, OHLC),
-// market data (Markets, Pair, Pools surfaces via Markets,
-// Observations), asset / coin catalogues (Assets, Asset, Coins,
-// Coin, AssetMetadata, Currencies, Currency, Issuers, Issuer,
-// SACWrappers), aggregate snapshots (NetworkStats, Sources,
-// LendingPools, ChangeSummary), incidents + status surfaces
-// (Incidents, Status, Cursors, Healthz, Readyz, Version), and
-// account/auth (Me, Usage, CreateKey, RevokeKey, Keys). Browse
-// godoc.org for the full list with runnable examples on each.
+// The SDK covers the pricing/read surface with ~36 typed methods:
+// pricing (Price, PriceAt, PriceTip, PriceBatch, Chart, History,
+// HistorySinceInception, OHLC, VWAP, TWAP, Observations), market
+// data (Markets, Pair, Pools, LendingPools), the asset catalogue
+// (Assets, Asset, AssetMetadata, Issuers, Issuer, SACWrappers),
+// aggregate snapshots (NetworkStats, Sources, Methodology,
+// ChangeSummary), incidents + status surfaces (Incidents, Status,
+// Cursors, Healthz, Readyz, Version), and account/auth (Me, Usage,
+// Keys, CreateKey, RevokeKey). Browse the godoc for the full list
+// with runnable examples on each.
 //
-// Surfaces deliberately not in the SDK:
+// NOT every server endpoint has a method. The exclusions are
+// deliberate, each registered with its reason in
+// spec_contract_test.go's uncoveredOperations map —
+// TestSDKCoversSpec fails whenever a spec operation is neither
+// covered by a method nor consciously excluded there. The major
+// excluded groups:
 //
-//   - SSE streams (`/v1/price/{,tip/}stream`, `/v1/observations/stream`)
-//     — architecturally outside the request/response shape; consumers
-//     use `net/http` with an eventsource-style reader directly.
+//   - SSE streams (`/v1/price/{,tip/}stream`, `/v1/observations/stream`,
+//     `/v1/ledger/stream`) — architecturally outside the
+//     request/response shape; consumers use `net/http` with an
+//     eventsource-style reader directly.
+//   - The network-explorer read surface (ADR-0038:
+//     `/v1/ledgers*`, `/v1/tx/{hash}`, `/v1/operations`,
+//     `/v1/contracts*`, `/v1/accounts*`, `/v1/search`, …) — serves
+//     the web explorer; the SDK is pricing-first until a customer
+//     asks.
 //   - SEP-40 oracle passthrough (`/v1/oracle/*`) — intended for
 //     SEP-40 oracle-shape consumers specifically; those callers
 //     typically use `internal/sources/reflector` or speak SEP-40
 //     directly rather than going through this generic SDK.
-//   - The `/metrics` Prometheus endpoint — scraped by Prometheus,
-//     not consumed via SDK.
+//   - Browser/dashboard-only surfaces (`/v1/auth/*`,
+//     `/v1/dashboard/*`, `/v1/signup*`, webhooks) and the
+//     `/metrics` Prometheus endpoint.
 //
 // Operator endpoints (Healthz, Readyz, Version, Status) ARE in
 // the SDK despite being infra-facing — useful when an SDK consumer

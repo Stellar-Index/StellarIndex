@@ -18,7 +18,7 @@ func ExampleNew() {
 	// Construct against the public production endpoint:
 	c := client.New(client.Options{
 		BaseURL: "https://api.stellarindex.io",
-		APIKey:  "rek_…", // optional; anonymous works at low rate limit
+		APIKey:  "sip_…", // optional; anonymous works at low rate limit
 	})
 	_ = c // silence "declared and not used" in this snippet
 
@@ -804,7 +804,7 @@ func ExampleClient_Usage() {
 	}))
 	defer srv.Close()
 
-	c := client.New(client.Options{BaseURL: srv.URL, APIKey: "rek_demo"})
+	c := client.New(client.Options{BaseURL: srv.URL, APIKey: "sip_demo"})
 	got, err := c.Usage(context.Background())
 	if err != nil {
 		fmt.Println("error:", err)
@@ -836,7 +836,7 @@ func ExampleClient_CreateKey() {
 		_, _ = w.Write([]byte(`{
 			"data": {
 				"key_id": "ak_demo_xyz789",
-				"plaintext": "rek_live_abc123def456ghi789jkl012mno345pqr",
+				"plaintext": "sip_live_abc123def456ghi789jkl012mno345pqr",
 				"label": "production-server-1"
 			},
 			"as_of": "2026-05-10T12:00:00Z",
@@ -845,7 +845,7 @@ func ExampleClient_CreateKey() {
 	}))
 	defer srv.Close()
 
-	c := client.New(client.Options{BaseURL: srv.URL, APIKey: "rek_demo"})
+	c := client.New(client.Options{BaseURL: srv.URL, APIKey: "sip_demo"})
 	got, err := c.CreateKey(context.Background(), client.CreateKeyRequest{
 		Label: "production-server-1",
 	})
@@ -879,7 +879,7 @@ func ExampleClient_RevokeKey() {
 	}))
 	defer srv.Close()
 
-	c := client.New(client.Options{BaseURL: srv.URL, APIKey: "rek_demo"})
+	c := client.New(client.Options{BaseURL: srv.URL, APIKey: "sip_demo"})
 	err := c.RevokeKey(context.Background(), "ak_demo_xyz789")
 	if err != nil {
 		fmt.Println("error:", err)
@@ -914,7 +914,7 @@ func ExampleClient_Keys() {
 	}))
 	defer srv.Close()
 
-	c := client.New(client.Options{BaseURL: srv.URL, APIKey: "rek_demo"})
+	c := client.New(client.Options{BaseURL: srv.URL, APIKey: "sip_demo"})
 	got, err := c.Keys(context.Background())
 	if err != nil {
 		fmt.Println("error:", err)
