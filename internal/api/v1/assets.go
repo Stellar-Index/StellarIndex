@@ -1116,19 +1116,7 @@ func (s *Server) serveCatalogueUnifiedPage(w http.ResponseWriter, r *http.Reques
 	// q= filter over the catalogue phase (S-011). The classic phase
 	// filters server-side via ListCoinsOptions.Q; the catalogue is a
 	// ~30-row in-process slice.
-	if q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q"))); q != "" {
-		filtered := rows[:0]
-		for _, row := range rows {
-			hay := strings.ToLower(row.AssetID + " " + row.Code + " " + row.Slug)
-			if row.Name != nil {
-				hay += " " + strings.ToLower(*row.Name)
-			}
-			if strings.Contains(hay, q) {
-				filtered = append(filtered, row)
-			}
-		}
-		rows = filtered
-	}
+	rows = filterCatalogueRowsByQuery(rows, r.URL.Query().Get("q"))
 
 	offset := 0
 	if innerCursor != "" {
@@ -1870,4 +1858,24 @@ func (s *Server) resolveSACToClassic(ctx context.Context, contractID string) (ca
 		return canonical.Asset{}, false
 	}
 	return asset, true
+}
+
+// filterCatalogueRowsByQuery applies the case-insensitive q= substring
+// filter over in-process catalogue rows (code / asset id / slug / name).
+func filterCatalogueRowsByQuery(rows []AssetDetail, rawQ string) []AssetDetail {
+	q := strings.ToLower(strings.TrimSpace(rawQ))
+	if q == "" {
+		return rows
+	}
+	filtered := rows[:0]
+	for _, row := range rows {
+		hay := strings.ToLower(row.AssetID + " " + row.Code + " " + row.Slug)
+		if row.Name != nil {
+			hay += " " + strings.ToLower(*row.Name)
+		}
+		if strings.Contains(hay, q) {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
 }
