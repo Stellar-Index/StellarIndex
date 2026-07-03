@@ -1941,15 +1941,29 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		// deployed enrichment merged nothing). Q= is an exact-enough
 		// filter here: the canonical asset_id substring-matches only
 		// its own row.
+		// Filter by ISSUER, not Q: Q substring-matches code/slug/issuer
+		// COLUMN VALUES, so a full asset id (longer than any column)
+		// matches nothing — the v0.7.4 attempt still merged nothing
+		// live. Issuer is exact; pick the exact asset id from the
+		// issuer's (typically 1-row) result.
+		dashIx := strings.Index(entry.AssetID, "-")
+		if dashIx < 0 {
+			return // native / non-classic — no classic_assets twin
+		}
 		rows, err := s.coins.ListCoinsExt(statsCtx, timescale.ListCoinsOptions{
-			Limit: 1,
-			Q:     entry.AssetID,
-			Order: timescale.CoinsOrderVolume24hUSDDesc,
+			Limit:  50,
+			Issuer: entry.AssetID[dashIx+1:],
+			Order:  timescale.CoinsOrderVolume24hUSDDesc,
 		})
-		if err != nil || len(rows) == 0 || rows[0].AssetID != entry.AssetID {
+		if err != nil {
 			return
 		}
-		mergeTwinStats(&page[i], assetDetailFromCoinRow(rows[0]))
+		for j := range rows {
+			if rows[j].AssetID == entry.AssetID {
+				mergeTwinStats(&page[i], assetDetailFromCoinRow(rows[j]))
+				return
+			}
+		}
 	})
 }
 

@@ -22,8 +22,20 @@ type listingOnlyCoins struct {
 }
 
 func (s *listingOnlyCoins) ListCoinsExt(_ context.Context, opts timescale.ListCoinsOptions) ([]timescale.CoinRow, error) {
+	// Mimic the REAL SQL semantics that broke the first two attempts:
+	// Q is a substring match over code/slug/issuer COLUMN VALUES — a
+	// full asset id can never match. Only the exact Issuer filter
+	// returns rows.
+	if opts.Issuer != "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" {
+		return nil, nil
+	}
 	ch, vol := "1.23", "42.00"
-	return []timescale.CoinRow{{AssetID: opts.Q, Code: "USDC", Change24hPct: &ch, Volume24hUSD: &vol}}, nil
+	return []timescale.CoinRow{{
+		AssetID:      "USDC-" + opts.Issuer,
+		Code:         "USDC",
+		Change24hPct: &ch,
+		Volume24hUSD: &vol,
+	}}, nil
 }
 
 func (s *listingOnlyCoins) GetCoinByAssetID(_ context.Context, assetID string) (timescale.CoinRow, error) {

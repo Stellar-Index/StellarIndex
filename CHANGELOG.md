@@ -15,6 +15,14 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Catalogue enrichment, third time honest** (v0.7.4 follow-up): the Q=
+  refinement still merged nothing live — Q substring-matches the
+  code/slug/issuer COLUMN VALUES, so a full asset id (longer than any
+  column) can never match. The twin lookup now uses the exact Issuer
+  filter and picks the matching asset id; the pin test's stub mimics the
+  real SQL semantics so neither wrong reader shape can pass again.
+
 ## [v0.7.4] — 2026-07-03
 
 ### Fixed
