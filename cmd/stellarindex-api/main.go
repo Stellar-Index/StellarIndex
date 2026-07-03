@@ -879,6 +879,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Explorer:             explorerReader,
 		Volume:               storeVolumeReader{s: store},
 		Change24h:            storeChange24hReader{s: store, pegs: usdPegs},
+		PriceAt:              storePriceAtReader{s: store},
 		ChangeSummary:        store,
 		Coins:                cachedCoinsReader,
 		Issuers:              cachedIssuersReader,
@@ -3351,4 +3352,23 @@ func (r *fxHistoryReader) CAGGCoverageStats(ctx context.Context) (timescale.CAGG
 // status page until this landed.
 func (r *fxHistoryReader) SourceEntryCounts(ctx context.Context) (map[string]int64, error) {
 	return r.store.SourceEntryCounts(ctx)
+}
+
+// storePriceAtReader adapts *timescale.Store to v1.PriceAtReader —
+// the point-in-time closed-bucket lookup behind /v1/price/at
+// (board #46). sql.ErrNoRows translates to the sentinel so the
+// handler can 404 honestly.
+type storePriceAtReader struct{ s *timescale.Store }
+
+func (r storePriceAtReader) PriceAt(ctx context.Context, pair canonical.Pair, ts time.Time) (string, time.Time, error) {
+	row, err := r.s.ClosedVWAP1mAtOrBefore(ctx, pair, ts)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", time.Time{}, v1.ErrPriceAtUnavailable
+		}
+		return "", time.Time{}, err
+	}
+	// Bucket end = bucket + 1m: the instant the bucket's VWAP became
+	// final (ADR-0015 closed-bucket semantics).
+	return row.VWAP, row.Bucket.Add(time.Minute), nil
 }

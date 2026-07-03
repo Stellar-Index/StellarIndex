@@ -2906,6 +2906,265 @@
           }
         },
         {
+          "name": "at",
+          "description": "",
+          "item": [
+            {
+              "name": "Point-in-time price (closed bucket at-or-before a timestamp)",
+              "request": {
+                "name": "Point-in-time price (closed bucket at-or-before a timestamp)",
+                "description": {
+                  "content": "The pair's closed 1-minute VWAP bucket at-or-before `ts` — the cost-basis / PnL / tax-tooling lookup. `observed_at` is the BUCKET's close time, never `ts`, so callers see exactly how far the nearest observation was; a nearest bucket more than 24 hours before `ts` is a 404 (the endpoint refuses to fabricate continuity across dead markets). Current price: /v1/price or /v1/price/tip.",
+                  "type": "text/plain"
+                },
+                "url": {
+                  "path": [
+                    "price",
+                    "at"
+                  ],
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "query": [
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "(Required) Canonical asset id (native | CODE-G... | C... | fiat:XXX).",
+                        "type": "text/plain"
+                      },
+                      "key": "asset",
+                      "value": "<string>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Quote asset id; default fiat:USD.",
+                        "type": "text/plain"
+                      },
+                      "key": "quote",
+                      "value": "<string>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "(Required) Historical instant, RFC 3339. Must not be in the future.",
+                        "type": "text/plain"
+                      },
+                      "key": "ts",
+                      "value": "<dateTime>"
+                    }
+                  ],
+                  "variable": []
+                },
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "method": "GET",
+                "body": {},
+                "auth": null
+              },
+              "response": [
+                {
+                  "name": "The closed bucket at-or-before ts.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "price",
+                        "at"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) Canonical asset id (native | CODE-G... | C... | fiat:XXX).",
+                            "type": "text/plain"
+                          },
+                          "key": "asset",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Quote asset id; default fiat:USD.",
+                            "type": "text/plain"
+                          },
+                          "key": "quote",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) Historical instant, RFC 3339. Must not be in the future.",
+                            "type": "text/plain"
+                          },
+                          "key": "ts",
+                          "value": "<dateTime>"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "OK",
+                  "code": 200,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"price\": \"<string>\",\n    \"price_type\": \"vwap\",\n    \"observed_at\": \"<dateTime>\",\n    \"window_seconds\": \"<integer>\",\n    \"change_24h_pct\": \"<string>\",\n    \"confidence\": \"<float>\",\n    \"confidence_factors\": {\n      \"z_score\": \"<float>\",\n      \"source_count\": \"<float>\",\n      \"diversity\": \"<float>\",\n      \"liquidity\": \"<float>\",\n      \"cross_oracle\": \"<float>\",\n      \"baseline_quality\": \"<float>\"\n    }\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Client-supplied parameters didn't validate.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "price",
+                        "at"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) Canonical asset id (native | CODE-G... | C... | fiat:XXX).",
+                            "type": "text/plain"
+                          },
+                          "key": "asset",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Quote asset id; default fiat:USD.",
+                            "type": "text/plain"
+                          },
+                          "key": "quote",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) Historical instant, RFC 3339. Must not be in the future.",
+                            "type": "text/plain"
+                          },
+                          "key": "ts",
+                          "value": "<dateTime>"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "Bad Request",
+                  "code": 400,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Not found.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "price",
+                        "at"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) Canonical asset id (native | CODE-G... | C... | fiat:XXX).",
+                            "type": "text/plain"
+                          },
+                          "key": "asset",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Quote asset id; default fiat:USD.",
+                            "type": "text/plain"
+                          },
+                          "key": "quote",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) Historical instant, RFC 3339. Must not be in the future.",
+                            "type": "text/plain"
+                          },
+                          "key": "ts",
+                          "value": "<dateTime>"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "Not Found",
+                  "code": 404,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                }
+              ],
+              "event": [],
+              "protocolProfileBehavior": {
+                "disableBodyPruning": true
+              }
+            }
+          ]
+        },
+        {
           "name": "tip",
           "description": "",
           "item": [
@@ -4043,7 +4302,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"peg\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"vwap\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"twap\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"last_trade\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }
@@ -4137,7 +4396,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"peg\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"vwap\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": [\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"twap\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    },\n    {\n      \"asset_id\": \"<string>\",\n      \"quote\": \"<string>\",\n      \"price\": \"<string>\",\n      \"price_type\": \"last_trade\",\n      \"observed_at\": \"<dateTime>\",\n      \"window_seconds\": \"<integer>\",\n      \"change_24h_pct\": \"<string>\",\n      \"confidence\": \"<float>\",\n      \"confidence_factors\": {\n        \"z_score\": \"<float>\",\n        \"source_count\": \"<float>\",\n        \"diversity\": \"<float>\",\n        \"liquidity\": \"<float>\",\n        \"cross_oracle\": \"<float>\",\n        \"baseline_quality\": \"<float>\"\n      }\n    }\n  ],\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 }

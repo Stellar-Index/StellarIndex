@@ -35,6 +35,39 @@ func (c *Client) Price(ctx context.Context, q PriceQuery) (*Envelope[PriceSnapsh
 	return &env, nil
 }
 
+// PriceAtQuery parameterises Client.PriceAt. TS is required and
+// must be a past instant.
+type PriceAtQuery struct {
+	Asset string
+	Quote string    // optional; server defaults to fiat:USD
+	TS    time.Time // required; historical instant
+}
+
+// PriceAt fetches the point-in-time price: the closed 1-minute VWAP
+// bucket at-or-before TS (cost-basis / PnL / tax lookups). The
+// response's ObservedAt is the BUCKET's close time — read it to see
+// how far the nearest observation was; a nearest bucket more than
+// 24h before TS is a 404 rather than a fabricated continuity.
+func (c *Client) PriceAt(ctx context.Context, q PriceAtQuery) (*Envelope[PriceSnapshot], error) {
+	if q.Asset == "" {
+		return nil, &APIError{Status: 400, Title: "asset required"}
+	}
+	if q.TS.IsZero() {
+		return nil, &APIError{Status: 400, Title: "ts required"}
+	}
+	v := url.Values{}
+	v.Set("asset", q.Asset)
+	if q.Quote != "" {
+		v.Set("quote", q.Quote)
+	}
+	v.Set("ts", q.TS.UTC().Format(time.RFC3339))
+	var env Envelope[PriceSnapshot]
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/price/at", v, nil, &env); err != nil {
+		return nil, err
+	}
+	return &env, nil
+}
+
 // PriceTipQuery is the input for [Client.PriceTip]. Asset is
 // required; Quote defaults to "fiat:USD" server-side. WindowSeconds
 // is the rolling-window size; the server clamps to [1, 60] and

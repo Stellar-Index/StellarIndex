@@ -904,6 +904,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/price/at": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Point-in-time price (closed bucket at-or-before a timestamp)
+         * @description The pair's closed 1-minute VWAP bucket at-or-before `ts` — the cost-basis / PnL / tax-tooling lookup. `observed_at` is the BUCKET's close time, never `ts`, so callers see exactly how far the nearest observation was; a nearest bucket more than 24 hours before `ts` is a 404 (the endpoint refuses to fabricate continuity across dead markets). Current price: /v1/price or /v1/price/tip.
+         */
+        get: operations["getPriceAt"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/price/tip": {
         parameters: {
             query?: never;
@@ -8610,4 +8630,34 @@ export interface components {
     pathItems: never;
 }
 export type $defs = Record<string, never>;
-export type operations = Record<string, never>;
+export interface operations {
+    getPriceAt: {
+        parameters: {
+            query: {
+                /** @description Canonical asset id (native | CODE-G... | C... | fiat:XXX). */
+                asset: string;
+                /** @description Quote asset id; default fiat:USD. */
+                quote?: string;
+                /** @description Historical instant, RFC 3339. Must not be in the future. */
+                ts: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The closed bucket at-or-before ts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+}

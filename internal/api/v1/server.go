@@ -83,6 +83,7 @@ type Server struct {
 	tokenSupply             TokenSupplyReader
 	volume                  VolumeReader
 	change24h               Change24hReader
+	priceAt                 PriceAtReader
 	changesum               ChangeSummaryReader
 	coins                   CoinsReader
 	issuers                 IssuersReader
@@ -393,6 +394,10 @@ type Options struct {
 	// leaves the field null. Independent of Supply / Volume — any
 	// combination of (Supply, Volume, Change24h) is legal.
 	Change24h Change24hReader
+
+	// PriceAt, when non-nil, backs GET /v1/price/at — point-in-time
+	// closed-bucket VWAP for cost-basis/PnL tooling (board #46).
+	PriceAt PriceAtReader
 
 	// ChangeSummary, when non-nil, backs GET /v1/changes/{entity_type}/{id}.
 	// Production wiring: a thin adapter around
@@ -795,6 +800,7 @@ func New(opts Options) *Server {
 		tokenSupply:             opts.TokenSupply,
 		volume:                  opts.Volume,
 		change24h:               opts.Change24h,
+		priceAt:                 opts.PriceAt,
 		changesum:               opts.ChangeSummary,
 		coins:                   opts.Coins,
 		issuers:                 opts.Issuers,
@@ -1149,6 +1155,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// Rolling-window tip surface (ADR-0018) — VWAP over the last
 	// few seconds, falling back to last-good-price when the window
 	// is empty. NOT cross-region consistent; use /v1/price for that.
+	s.mux.HandleFunc("GET /v1/price/at", s.handlePriceAt)
 	s.mux.HandleFunc("GET /v1/price/tip", s.handlePriceTip)
 
 	// SSE counterpart of /v1/price/tip — same compute logic, pushed
