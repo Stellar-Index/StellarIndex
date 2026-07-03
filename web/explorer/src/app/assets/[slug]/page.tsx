@@ -332,7 +332,22 @@ async function fetchCoin(slug: string): Promise<CoinSummary | null> {
       // Canonical asset_id route (/assets/USDC-GA5Z…) — served from the
       // asset_id side index so it needs no per-page API call.
       cache.byAssetId.get(slug);
-    if (hit) return hit;
+    if (hit) {
+      // AM-04: the cache row is a LISTING row — it lacks the
+      // detail-only fields (ath, top_markets, 24h/7d histories,
+      // markets/trades counts), so pages built from cache hits baked
+      // WITHOUT their differentiating panels while the code read as
+      // if they worked. Merge the memoised direct detail over the
+      // cache row: buildFetch's per-URL memo keeps this one API call
+      // per asset per build (the casing variants + canonical-id route
+      // all share it), and a detail failure degrades to the listing
+      // row instead of failing the page.
+      if (typeof hit.asset_id === 'string' && hit.asset_id) {
+        const direct = await fetchCoinDirect(hit.asset_id).catch(() => null);
+        if (direct) return { ...hit, ...direct };
+      }
+      return hit;
+    }
   }
   // Cache miss: a slug the listing didn't return — e.g. a long-tail
   // asset_id. Fetch it directly.
