@@ -16,6 +16,13 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Catalogue rows carry full analytics; assets stop appearing twice**
+  (Pass-B AM-10 + the catalogue-dash residual): the unified listing's
+  verified rows (XLM, USDC, …) now absorb their Stellar-network twin's
+  1h/24h/7d changes, 24h volume, supply and market cap, and the classic
+  twin row is suppressed — one canonical row per asset instead of a
+  dash-only catalogue row plus a second ranked copy. Contract detail
+  additionally serves `protocol` when attribution is known (CON-3).
 - **OpenAPI spec quality batch** (2026-07-03 docs audit): the spec is
   now fully self-describing — descriptions for all 8 shared
   `components/parameters` (Timeframe, Granularity, From, To,

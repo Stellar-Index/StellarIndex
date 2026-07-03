@@ -912,6 +912,7 @@ func (s *Server) writeCataloguePage(w http.ResponseWriter, r *http.Request, rows
 	}
 	page := rows[offset:end]
 	s.fillCataloguePricesForPage(r.Context(), page)
+	s.fillCatalogueStatsForPage(r.Context(), page)
 	s.attachSparkline7dIfRequested(r, page)
 	env := Envelope{Data: page, Flags: Flags{}}
 	if end < len(rows) {
@@ -1228,6 +1229,7 @@ func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request,
 	for _, row := range rows {
 		out = append(out, assetDetailFromCoinRow(row))
 	}
+	out = s.suppressCatalogueTwins(out)
 	s.fillMarketCapsFromSupply(r.Context(), out)
 	s.attachSparkline7dIfRequested(r, out)
 	nextInner := ""
@@ -1889,6 +1891,74 @@ func (s *Server) attachSparkline7dIfRequested(r *http.Request, rows []AssetDetai
 			rows[i].PriceHistory7d = coinPointsToWire(h)
 		}
 	}
+}
+
+// suppressCatalogueTwins drops classic rows whose asset_id belongs to
+// a verified catalogue entry — the catalogue row (which now absorbs
+// the twin's stats via fillCatalogueStatsForPage) is the single
+// canonical listing row (AM-10: USDC appeared twice on page 1 with
+// two ranks and slightly different prices, nothing marking them as
+// the same entity).
+func (s *Server) suppressCatalogueTwins(rows []AssetDetail) []AssetDetail {
+	if s.verifiedCurrencies == nil {
+		return rows
+	}
+	out := rows[:0]
+	for _, row := range rows {
+		if _, dup := s.verifiedCurrencies.LookupByStellarAssetID(row.AssetID); dup {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// fillCatalogueStatsForPage merges each catalogue row's Stellar-network
+// twin (the classic_assets row for the currency's registered Stellar
+// asset) into the row: 24h/1h/7d changes, 24h volume, circulating
+// supply and market cap (AM-10 + the catalogue-dash residual: rows
+// 1-11 of the unified listing rendered "—" across every analytics
+// column while the same asset's classic row two screens down carried
+// them all). Bounded fan-out, best-effort per row.
+func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDetail) {
+	if s.coins == nil {
+		return
+	}
+	statsCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	forEachBounded(len(page), readFanoutConcurrency, func(i int) {
+		vc, ok := s.verifiedCurrencies.LookupBySlug(page[i].Slug)
+		if !ok {
+			return
+		}
+		entry := vc.StellarEntry()
+		if entry == nil || entry.AssetID == "" {
+			return
+		}
+		row, err := s.coins.GetCoinByAssetID(statsCtx, entry.AssetID)
+		if err != nil {
+			return
+		}
+		twin := assetDetailFromCoinRow(row)
+		if page[i].Change1hPct == nil {
+			page[i].Change1hPct = twin.Change1hPct
+		}
+		if page[i].Change24hPct == nil {
+			page[i].Change24hPct = twin.Change24hPct
+		}
+		if page[i].Change7dPct == nil {
+			page[i].Change7dPct = twin.Change7dPct
+		}
+		if page[i].VolumeUSD24h == nil {
+			page[i].VolumeUSD24h = twin.VolumeUSD24h
+		}
+		if page[i].CirculatingSupply == nil {
+			page[i].CirculatingSupply = twin.CirculatingSupply
+		}
+		if page[i].MarketCapUSD == nil {
+			page[i].MarketCapUSD = twin.MarketCapUSD
+		}
+	})
 }
 
 // filterCatalogueRowsByQuery applies the case-insensitive q= substring
