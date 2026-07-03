@@ -57,3 +57,12 @@ export function formatRelative(iso: string | null | undefined): string {
   if (s < 86_400) return `${Math.round(s / 3600)}h ago`;
   return `${Math.round(s / 86_400)}d ago`;
 }
+
+/**
+ * formatRelativeTitle — the absolute ISO string for a title attr next
+ * to formatRelative's "2m ago" (AM-23: relative-only timestamps were
+ * unverifiable; hover now shows the exact instant).
+ */
+export function formatRelativeTitle(iso: string | null | undefined): string {
+  return iso ?? '';
+}
