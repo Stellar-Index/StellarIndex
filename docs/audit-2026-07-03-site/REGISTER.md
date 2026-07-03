@@ -63,3 +63,15 @@ catalogue-row change/volume enrichment, per-op spec examples.
 
 Guards installed: site-crawl.yml weekly battery (green against prod),
 CONTRIBUTING ten-question checklist.
+
+## Final sweep — 2026-07-04 00:45
+
+The remaining tail is now shipped and live (v0.7.7 + explorer + docs
+deploys): S-016 event-row decode (topics[1:] + data rendered, accounts
+linked — verified live), 77/96 spec operations carry live-sourced
+response examples (the remainder are SSE/POST/redirect ops that take
+none by shape), the docs site redeployed (its meta description was in
+the source all along — the deploy was stale, same class as S-024),
+and the AM-16/17/18/20/25/26 + ACC-7/8 nubs. The register is closed;
+future findings flow through the weekly site-crawl battery + the
+CONTRIBUTING checklist.
