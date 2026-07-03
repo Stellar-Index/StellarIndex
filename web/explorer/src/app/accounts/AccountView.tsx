@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { AssetLink } from '@/components/AssetLink';
 import { Breadcrumbs } from '@/components/ui';
 import { AccountPositions } from './AccountPositions';
 import { useIssuers } from '@/api/hooks';
@@ -400,9 +401,19 @@ function AccountStatePanel({
           <ul className="space-y-1 text-xs">
             {state.signers.map((s) => (
               <li key={s.key} className="flex items-center gap-2">
-                <span className="font-mono text-ink-body" title={s.key}>
-                  {s.key.slice(0, 8)}…{s.key.slice(-6)}
-                </span>
+                {/^G[A-Z2-7]{55}$/.test(s.key) ? (
+                  <Link
+                    href={`/accounts/${s.key}/`}
+                    className="font-mono text-brand-600 hover:underline"
+                    title={s.key}
+                  >
+                    {s.key.slice(0, 8)}…{s.key.slice(-6)}
+                  </Link>
+                ) : (
+                  <span className="font-mono text-ink-body" title={s.key}>
+                    {s.key.slice(0, 8)}…{s.key.slice(-6)}
+                  </span>
+                )}
                 <span className="text-ink-faint">weight {s.weight}</span>
               </li>
             ))}
@@ -427,7 +438,9 @@ function AccountStatePanel({
               <tbody className="divide-y divide-line-subtle">
                 {state.trustlines.map((t) => (
                   <tr key={t.asset}>
-                    <td className="py-1.5 pr-4 font-mono text-xs text-ink-body">{t.asset}</td>
+                    <td className="py-1.5 pr-4 text-xs">
+                      <AssetLink canonical={t.asset} />
+                    </td>
                     <td className="py-1.5 pr-4 text-right font-mono tabular-nums">{stroopsToXlm(t.balance)}</td>
                     <td className="py-1.5 text-right font-mono tabular-nums text-ink-muted">{stroopsToXlm(t.limit)}</td>
                   </tr>
