@@ -1,11 +1,16 @@
+---
+adr: 0044
+title: Explorer rendering moves from static export to edge SSR
+status: Proposed
+date: 2026-07-03
+supersedes: []
+---
+
 # ADR-0044: Explorer rendering moves from static export to edge SSR
 
-- Status: Proposed
-- Date: 2026-07-03
-- Deciders: @ash
-- Supersedes: the `output: 'export'` decision embedded in the explorer
-  since Phase 8 (never ADR'd; this makes the choice explicit before
-  replacing it)
+Deciders: @ash. Supersedes the `output: 'export'` decision embedded in
+the explorer since Phase 8 (never ADR'd; this makes the choice explicit
+before replacing it).
 
 ## Context
 
