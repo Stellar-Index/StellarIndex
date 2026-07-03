@@ -299,3 +299,80 @@ func (r *ExplorerReader) wasmCodeByHash(ctx context.Context, hash xdr.Hash) ([]b
 	}
 	return nil, false, rows.Err()
 }
+
+// SACClassicAssetName resolves a contract to the classic asset its
+// Stellar Asset Contract wraps: "native" or "CODE:GISSUER". found is
+// false when the contract has no instance in the lake OR its
+// executable is NOT StellarAsset (a WASM contract claiming an
+// asset-shaped METADATA name must not be trusted — only stellar-core
+// mints the StellarAsset executable, which is the trust anchor here).
+//
+// Board #40 (RFP audit): wallets look holdings up by contract
+// address; a SAC lookup must land on the classic identity so it
+// carries the classic asset's price.
+func (r *ExplorerReader) SACClassicAssetName(ctx context.Context, contractID string) (string, bool, error) {
+	raw, err := strkey.Decode(strkey.VersionByteContract, contractID)
+	if err != nil {
+		return "", false, fmt.Errorf("clickhouse: SACClassicAssetName: bad contract id: %w", err)
+	}
+	var cid xdr.Hash
+	copy(cid[:], raw)
+	keys, err := instanceKeyXDR(cid)
+	if err != nil {
+		return "", false, err
+	}
+	const q = `SELECT entry_xdr FROM stellar.ledger_entry_changes
+		WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
+		ORDER BY ledger_seq DESC, ingested_at DESC LIMIT 1`
+	rows, err := r.conn.Query(ctx, q, keys)
+	if err != nil {
+		return "", false, fmt.Errorf("clickhouse: SAC instance scan: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	// LIMIT 1 newest-first: a single row decides — if the newest
+	// instance is not a SAC (or carries no metadata), no older row
+	// can change that verdict.
+	if !rows.Next() {
+		return "", false, rows.Err()
+	}
+	var b64 string
+	if err := rows.Scan(&b64); err != nil {
+		return "", false, fmt.Errorf("clickhouse: scan SAC instance: %w", err)
+	}
+	name, ok := sacNameFromInstanceEntry(b64)
+	return name, ok, rows.Err()
+}
+
+// sacNameFromInstanceEntry decodes one contract-instance LedgerEntry
+// and returns the SAC metadata name iff the executable is the
+// core-minted StellarAsset type (the trust anchor — a WASM contract
+// cannot claim it).
+func sacNameFromInstanceEntry(b64 string) (string, bool) {
+	var entry xdr.LedgerEntry
+	if xdr.SafeUnmarshalBase64(b64, &entry) != nil {
+		return "", false
+	}
+	cd, ok := entry.Data.GetContractData()
+	if !ok {
+		return "", false
+	}
+	inst, ok := cd.Val.GetInstance()
+	if !ok || inst.Executable.Type != xdr.ContractExecutableTypeContractExecutableStellarAsset || inst.Storage == nil {
+		return "", false
+	}
+	for _, kv := range *inst.Storage {
+		sym, ok := kv.Key.GetSym()
+		if !ok || string(sym) != "METADATA" || kv.Val.Type != xdr.ScValTypeScvMap || kv.Val.Map == nil {
+			continue
+		}
+		for _, e := range **kv.Val.Map {
+			if ksym, ok := e.Key.GetSym(); !ok || string(ksym) != "name" {
+				continue
+			}
+			if name, ok := e.Val.GetStr(); ok {
+				return string(name), true
+			}
+		}
+	}
+	return "", false
+}

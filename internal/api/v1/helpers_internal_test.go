@@ -87,8 +87,9 @@ func TestDetailFromAsset_native(t *testing.T) {
 	if d.Issuer != nil {
 		t.Errorf("Issuer = %v, want nil for native", d.Issuer)
 	}
-	if d.ContractID != nil {
-		t.Errorf("ContractID = %v, want nil for native", d.ContractID)
+	// Board #40: native carries its SAC address (deterministic).
+	if d.ContractID == nil || *d.ContractID != "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA" {
+		t.Errorf("ContractID = %v, want the native SAC", d.ContractID)
 	}
 	if d.Decimals != 7 {
 		t.Errorf("Decimals = %d, want 7 (XLM stroops)", d.Decimals)
@@ -111,8 +112,9 @@ func TestDetailFromAsset_classic(t *testing.T) {
 	if d.Issuer == nil || *d.Issuer == "" {
 		t.Errorf("Issuer = %v, want populated", d.Issuer)
 	}
-	if d.ContractID != nil {
-		t.Errorf("ContractID = %v, want nil for classic", d.ContractID)
+	// Board #40: classic assets carry their SAC address.
+	if d.ContractID == nil || *d.ContractID != "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75" {
+		t.Errorf("ContractID = %v, want the USDC SAC", d.ContractID)
 	}
 }
 

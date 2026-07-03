@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **SAC contract-address lookups now return the wrapped asset's full detail
+  and price** (board #40, the RFP audit's biggest wallet-facing gap): a
+  `/v1/assets/{C...}` lookup whose contract is a Stellar Asset Contract
+  resolves to the classic (or native) identity it wraps — trust-anchored on
+  the lake instance's core-minted StellarAsset executable AND a
+  derivation cross-check (the resolved asset must re-derive to the queried
+  address, so a spoofed metadata name can never redirect pricing;
+  adversarial test pins it). Classic + native asset detail now carries
+  `contract_id` (the deterministically-derived SAC address, valid even
+  pre-deployment), golden-tested against the on-chain USDC + XLM SACs.
+
 ### Changed
 - **Legacy-brand purge (pre-rebrand naming), everywhere it was still live.**
   The API's diagnostic cache header is now `X-Stellarindex-Cache`;
