@@ -69,8 +69,8 @@ const EXAMPLES: Example[] = [
     path: '/v1/assets/verified',
   },
   {
-    label: 'EUR cross-chain identity + Stellar network detail',
-    path: '/v1/assets/euro',
+    label: 'EUR external reference identity',
+    path: '/v1/external/assets/euro',
   },
   {
     label: 'Latest oracle streams (Reflector / Redstone / Band)',

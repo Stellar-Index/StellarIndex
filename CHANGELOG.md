@@ -15,7 +15,33 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Developer-experience batch** (dev-surfaces audit): the root README's
+  "Start here" gains a Go SDK section (install line + the doc.go quick
+  start + pointers to `examples/curl` / `examples/postman`); four new
+  runnable curl examples — `11-price-at.sh` (point-in-time price),
+  `12-history-since-inception.sh`, `13-sac-wrappers.sh`,
+  `14-asset-detail.sh` — all verified against the live API, with the
+  examples index updated (and its `quote=USD` corrected to
+  `quote=fiat:USD`); and the `openapi` CI job now regenerates the
+  Postman collection and fails on drift, completing the
+  generated-artifact drift guard (API reference + explorer TS types
+  were already gated).
+
 ### Fixed
+- **Dev-surface examples match the shipped SDK** (dev-surfaces audit):
+  the explorer /sdk page's snippets compile against `pkg/client`
+  again — `p.AssetID` not `p.Asset`, `t.Timestamp` not `t.TS`,
+  `HistoryRangeQuery` for raw-trade history, `OHLCQuery` without the
+  nonexistent `Interval` field, and the SSE pattern now shows the
+  intended raw `net/http` consumption instead of a `PriceStream`
+  method the SDK never had; the page intro no longer claims every
+  API endpoint is reachable through the SDK. The homepage "Try the
+  API" EUR example 404'd (`/v1/assets/euro`) — now
+  `/v1/external/assets/euro`. docs/getting-started.md stops claiming
+  SDKs prefer `X-API-Key` (the Go SDK sends `Authorization: Bearer`)
+  and its stale "ships as PR queue lands" SDK method list is replaced
+  with the real ~36-method surface.
 - **Catalogue rows carry full analytics; assets stop appearing twice**
   (Pass-B AM-10 + the catalogue-dash residual): the unified listing's
   verified rows (XLM, USDC, …) now absorb their Stellar-network twin's

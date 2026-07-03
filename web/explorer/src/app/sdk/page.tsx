@@ -55,14 +55,14 @@ if err != nil {
     return err
 }
 for _, p := range prices.Data {
-    fmt.Printf("%-10s %s\\n", p.Asset, p.Price)
+    fmt.Printf("%-10s %s\\n", p.AssetID, p.Price)
 }`,
   },
   {
     title: 'Trade history — recent trades for a pair',
     blurb:
       'Cursor-paginated. For a one-shot recent-trades panel, take the first page; for a backfill or aggregator, follow Pagination.Next until empty.',
-    code: `h, err := c.History(ctx, client.HistoryQuery{
+    code: `h, err := c.History(ctx, client.HistoryRangeQuery{
     Base:  "native",
     Quote: "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
     Limit: 50,
@@ -72,28 +72,32 @@ if err != nil {
 }
 for _, t := range h.Data {
     fmt.Printf("%s  %s/%s  %s @ %s\\n",
-        t.TS.Format(time.RFC3339), t.BaseAsset, t.QuoteAsset,
+        t.Timestamp.Format(time.RFC3339), t.BaseAsset, t.QuoteAsset,
         t.BaseAmount, t.Price)
 }`,
   },
   {
     title: 'Closed-bucket SSE stream',
     blurb:
-      'Per ADR-0018 the API only emits closed buckets — every event is final. The SDK handles reconnect with last-event-id resume; cancel via the parent ctx.',
-    code: `events, err := c.PriceStream(ctx, client.PriceStreamQuery{
-    Asset: "native",
-    Quote: "fiat:USD",
-})
+      'Per ADR-0018 the API only emits closed buckets — every event is final. SSE sits deliberately outside the typed SDK surface (request/response only) — consume the stream with net/http directly; cancel via the parent ctx.',
+    code: `req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+    "https://api.stellarindex.io/v1/price/stream?asset=native&quote=fiat:USD", nil)
 if err != nil {
     return err
 }
-for ev := range events {
-    if ev.Err != nil {
-        log.Printf("stream error: %v", ev.Err)
-        continue
+req.Header.Set("Accept", "text/event-stream")
+
+resp, err := http.DefaultClient.Do(req)
+if err != nil {
+    return err
+}
+defer resp.Body.Close()
+
+sc := bufio.NewScanner(resp.Body)
+for sc.Scan() {
+    if data, ok := strings.CutPrefix(sc.Text(), "data: "); ok {
+        fmt.Println(data) // one closed VWAP bucket per event, JSON
     }
-    fmt.Printf("[%s] %s = %s\\n",
-        ev.Bucket.Format(time.RFC3339), ev.Asset, ev.Price)
 }`,
   },
   {
@@ -101,9 +105,10 @@ for ev := range events {
     blurb:
       'For per-asset cards or sparkline backing data. Pair with /v1/chart for multi-bar series; OHLC is the one-bar variant.',
     code: `o, err := c.OHLC(ctx, client.OHLCQuery{
-    Base:     "native",
-    Quote:    "fiat:USD",
-    Interval: "1h",
+    Base:  "native",
+    Quote: "fiat:USD",
+    // From/To zero → the server defaults to the last hour,
+    // clamped to a closed-bucket boundary (ADR-0015).
 })
 if err != nil {
     return err
@@ -147,9 +152,10 @@ export default function SDKPage() {
         <p className="max-w-2xl text-base text-ink-body">
           Typed, SemVer-stable, no surprises. Anonymous mode for the
           public tier; bearer-token mode for paid tiers and SEP-10
-          JWTs. The Go SDK is the same library the operator CLI uses
-          internally, so every endpoint exposed by the API is reachable
-          through it.
+          JWTs. The SDK covers the pricing/read surface — prices,
+          history, OHLC, markets, the asset catalogue, and account
+          self-service — with ~36 typed methods; SSE streams and the
+          explorer read surface are reachable over plain HTTP.
         </p>
       </header>
 

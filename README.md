@@ -45,9 +45,36 @@ See **[CLAUDE.md](CLAUDE.md)**. It's your orientation map.
 - **Users of the hosted API:** [`docs/getting-started.md`](docs/getting-started.md)
   walks from zero to your first authenticated request in five
   minutes. Rendered at <https://docs.stellarindex.io>.
-- **API examples:** [`examples/curl/`](examples/curl/) — ten runnable
-  shell scripts covering signup, account info, price, OHLC, history,
-  oracle latest, markets, and the SSE price stream.
+- **Go SDK:** the official typed client lives at
+  [`pkg/client/`](pkg/client/) (SemVer-stable surface, godoc-complete):
+
+  ```sh
+  go get github.com/StellarIndex/stellar-index/pkg/client
+  ```
+
+  ```go
+  c := client.New(client.Options{
+      BaseURL: "https://api.stellarindex.io",
+      APIKey:  "sip_…", // optional; anonymous works at low rate-limit
+  })
+  p, err := c.Price(context.Background(), client.PriceQuery{
+      Asset: "native",
+      Quote: "fiat:USD",
+  })
+  if err != nil {
+      panic(err) // *client.APIError for server errors; errors.As to inspect
+  }
+  fmt.Printf("XLM/USD = %s (%s, observed %s)\n",
+      p.Data.Price, p.Data.PriceType, p.Data.ObservedAt)
+  ```
+
+  Prefer raw HTTP? [`examples/curl/`](examples/curl/) has fourteen
+  runnable scripts, and [`examples/postman/`](examples/postman/) a
+  ready-to-import collection (see the next bullet).
+- **API examples:** [`examples/curl/`](examples/curl/) — fourteen runnable
+  shell scripts covering signup, account info, price (current /
+  point-in-time / since-inception), OHLC, history, asset detail,
+  SAC wrappers, oracle latest, markets, and the SSE price stream.
   [`examples/postman/`](examples/postman/) ships a Postman v2.1
   collection auto-generated from the OpenAPI spec (imports cleanly
   into Postman, Insomnia, and Bruno).

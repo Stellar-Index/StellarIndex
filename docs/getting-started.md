@@ -63,7 +63,8 @@ The free tier supports anonymous requests at a low rate limit.
 Authenticated tiers unlock higher limits + access to private
 surfaces (`/v1/observations`, `/v1/account/*`). The key is accepted
 on either the `X-API-Key` header or `Authorization: Bearer <key>`
-(SDKs / curl users tend to prefer `X-API-Key`).
+(the Go SDK always sends `Authorization: Bearer <key>`; `X-API-Key`
+is a convenience for hand-written curl calls).
 
 ### Self-service signup — the ≤1-minute path
 
@@ -188,11 +189,12 @@ fmt.Printf("%s = %s %s (as of %s)\n",
 The SDK returns the full `Envelope[T]` shape so consumers can read
 `env.Flags.Stale`, `env.Flags.DivergenceWarning`, etc. alongside
 `env.Data`. See [`pkg/client/doc.go`](../pkg/client/doc.go) for the
-full surface — typed methods today: `Price`, `Assets`, `Asset`,
-`AssetMetadata`, `HistorySinceInception`, `Me`, `Usage`,
-`CreateKey`. Bulk + chart + market-discovery surfaces (`PriceBatch`,
-`PriceTip`, `OHLC`, `History`, `Sources`, `Markets`, `Pair`) ship
-in the same package as PR queue lands.
+full surface — ~36 typed methods covering pricing (`Price`,
+`PriceAt`, `PriceTip`, `PriceBatch`, `OHLC`, `History`,
+`HistorySinceInception`, `VWAP`, `TWAP`), market data (`Markets`,
+`Pair`, `Pools`), the asset catalogue (`Assets`, `Asset`,
+`AssetMetadata`, `Issuers`, `SACWrappers`), and account
+self-service (`Me`, `Usage`, `Keys`, `CreateKey`, `RevokeKey`).
 
 ## Errors
 

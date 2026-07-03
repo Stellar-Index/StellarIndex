@@ -353,6 +353,18 @@ jobs:
             echo "::error::Generated API reference is stale. Run 'make docs-api' locally and commit the result."
             exit 1
           fi
+      - name: Generated Postman collection is in sync
+        # Third leg of the generated-artifact drift guard: docs/reference/api
+        # is checked above, web/explorer/src/api/types.ts in the web-explorer
+        # job. The converter is deterministic (seeded json-schema-faker
+        # preload + jq ID-strip in docs-postman.sh, commit 8ea2b9ad), so an
+        # exact-diff gate is safe.
+        run: |
+          ./scripts/dev/docs-postman.sh
+          if ! git diff --exit-code -- examples/postman; then
+            echo "::error::Generated Postman collection is stale. Run 'make docs-postman' locally and commit the result."
+            exit 1
+          fi
 
   # ────────────────────────────────────────────────────────────────
   # Showcase site — typecheck, lint, build the Next.js app at
