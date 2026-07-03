@@ -102,6 +102,7 @@ RULES = [
         ],
         "allow": [
             "internal/scval/",                  # the Soroban-event scval wrapper
+            "internal/canonical/sac.go",        # SAC address derivation is a protocol-defined hash over xdr.Asset/HashIdPreimage (CAP-46) — xdr types ARE the spec here, no SCVal decoding (site-audit #40, 2026-07-03)
             "internal/ledgerstream/",           # transport layer — exposes xdr.LedgerCloseMeta
             "internal/dispatcher/",             # routes tx / events (PR 165b)
             "internal/pipeline/",               # shared ledger-meta plumbing (indexer + backfill)
