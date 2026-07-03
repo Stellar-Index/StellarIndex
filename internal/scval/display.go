@@ -92,9 +92,9 @@ func displayScalar(v xdr.ScVal) string {
 
 // truncateDisplay bounds one rendered fragment.
 func truncateDisplay(s string) string {
-	const max = 120
-	if len(s) <= max {
+	const maxLen = 120
+	if len(s) <= maxLen {
 		return s
 	}
-	return s[:max] + "…"
+	return s[:maxLen] + "…"
 }
