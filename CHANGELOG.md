@@ -17,6 +17,15 @@ against.
 
 ## [v0.7.4] — 2026-07-03
 
+### Fixed
+- **Catalogue rows actually gained their analytics** (v0.7.3 follow-up):
+  post-deploy verification showed the twin merge merging nothing — only
+  the listing query computes the windowed change columns, and the
+  per-asset reader returns them nil. The enrichment now reads the
+  listing reader with an exact-id filter; a stub test pins the
+  dependency by mimicking production's reader asymmetry.
+
+
 ## [v0.7.3] — 2026-07-03
 
 ### Added
