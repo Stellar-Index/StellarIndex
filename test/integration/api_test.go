@@ -655,6 +655,10 @@ func (r apiMarketsAdapter) DistinctPairsExt(ctx context.Context, cursor string, 
 	return out, next, nil
 }
 
+func (r apiMarketsAdapter) FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error) {
+	return r.s.FirstTradeBatch(ctx, pairs)
+}
+
 func (r apiMarketsAdapter) PairMarket(ctx context.Context, base, quote c.Asset) (v1.Market, bool, error) {
 	m, ok, err := r.s.PairMarket(ctx, base, quote)
 	if err != nil || !ok {
