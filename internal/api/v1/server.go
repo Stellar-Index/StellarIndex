@@ -949,17 +949,21 @@ func (s *Server) Handler() http.Handler {
 		// CacheControl so the override gets the same Cache-Control
 		// directive a regular handler-side response would.
 		middleware.Envelope404,
-		// 308-redirect trailing-slash paths to their no-slash form
-		// (e.g. /v1/assets/native/ → /v1/assets/native). Every v1
-		// route is registered without a trailing slash; without this
-		// middleware, clients that auto-append (axios with `/v1/`
-		// baseURL, OpenAPI codegens, mistyped curl) hit a dead 404.
-		// 308 preserves method+body so POST/DELETE don't degrade.
-		middleware.TrailingSlashRedirect,
 	}
 	if s.cors != nil {
 		stack = append(stack, s.cors)
 	}
+	// 308-redirect trailing-slash paths to their no-slash form
+	// (e.g. /v1/assets/native/ → /v1/assets/native). Every v1
+	// route is registered without a trailing slash; without this
+	// middleware, clients that auto-append (axios with `/v1/`
+	// baseURL, OpenAPI codegens, mistyped curl) hit a dead 404.
+	// 308 preserves method+body so POST/DELETE don't degrade.
+	// MUST sit INSIDE CORS (site-audit S-009): when it ran outside,
+	// the 308 carried no Access-Control-Allow-Origin, so a browser
+	// fetch of a trailing-slash URL died at the redirect — exactly
+	// as dead as the 404 this middleware exists to prevent.
+	stack = append(stack, middleware.TrailingSlashRedirect)
 	// Auth runs INSIDE CORS (so preflight OPTIONS short-circuits
 	// before any credential check) but OUTSIDE RateLimit (so
 	// per-tier limits see the authenticated Subject in context).

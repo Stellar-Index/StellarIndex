@@ -131,6 +131,10 @@ func (s *stubExplorerReader) SACClassicAssetName(_ context.Context, _ string) (s
 	return "", false, nil
 }
 
+func (s *stubExplorerReader) SACAssetFromEvents(_ context.Context, _ string) (string, bool, error) {
+	return "", false, nil
+}
+
 func (s *stubExplorerReader) AccountsByWealth(_ context.Context, _ []string, _ []float64, _ int) ([]clickhouse.AccountWealth, error) {
 	return s.wealth, s.err
 }

@@ -1,8 +1,10 @@
 package v1
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
@@ -92,6 +94,22 @@ func (s *Server) handleContractWasm(w http.ResponseWriter, r *http.Request) {
 						"module — there is no WASM bytecode to show")
 				return
 			}
+			// Event-derived SAC identification (site-audit S-006): ~55k
+			// contracts are SACs whose instance was never captured
+			// (deployed pre-lake, TTL-evicted before every checkpoint —
+			// structurally invisible to snapshots). Their CAP-67 events
+			// carry the wrapped asset in the trailing sep0011 topic;
+			// the derivation cross-check makes it spoof-proof (a fake
+			// contract can emit the topic but can never occupy the
+			// derived address).
+			if assetName, found := s.sacAssetViaEvents(r.Context(), cid); found {
+				writeProblem(w, r, "https://api.stellarindex.io/errors/contract-is-sac",
+					"Stellar Asset Contract — no WASM", http.StatusNotFound,
+					"this contract is the Stellar Asset Contract for "+assetName+
+						" — built-in SAC host logic, not a user-uploaded WASM module; "+
+						"there is no bytecode to show. Asset detail: /v1/assets/"+assetName)
+				return
+			}
 			writeProblem(w, r, "https://api.stellarindex.io/errors/contract-wasm-not-found",
 				"Contract WASM not found", http.StatusNotFound,
 				"the contract's wasm could not be assembled from the lake — its "+
@@ -146,4 +164,34 @@ func nonNilStrings(s []string) []string {
 		return []string{}
 	}
 	return s
+}
+
+// sacAssetViaEvents resolves an uncaptured-instance contract to the
+// classic asset whose SAC it is, using the event-topic hint + the
+// deterministic-derivation cross-check (never trust the topic alone).
+// Returns the asset in canonical CODE-GISSUER (or "native") form.
+func (s *Server) sacAssetViaEvents(ctx context.Context, contractID string) (string, bool) {
+	name, found, err := s.explorer.SACAssetFromEvents(ctx, contractID)
+	if err != nil || !found {
+		return "", false
+	}
+	var asset canonical.Asset
+	if name == "native" {
+		asset = canonical.NativeAsset()
+	} else {
+		code, issuer, ok := strings.Cut(name, ":")
+		if !ok {
+			return "", false
+		}
+		var aErr error
+		asset, aErr = canonical.NewClassicAsset(code, issuer)
+		if aErr != nil {
+			return "", false
+		}
+	}
+	derived, err := asset.SacContractID()
+	if err != nil || derived != contractID {
+		return "", false
+	}
+	return asset.String(), true
 }

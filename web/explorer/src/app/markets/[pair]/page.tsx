@@ -154,7 +154,13 @@ export async function generateMetadata({
   // Canonical URL: the URL-encoded pair slug. Without this,
   // any case- or encoding-variant of the same pair would be
   // treated as a separate page by Google.
-  const canonical = `https://stellarindex.io/markets/${encodeURIComponent(pair)}`;
+  // S-crawl (site audit): the route param arrives ALREADY URL-encoded
+  // from generateStaticParams, so encoding it again produced %253A
+  // canonicals that 404 — every one of the ~500 market pages told
+  // crawlers its real URL was a dead page. Decode-then-encode is
+  // idempotent for both encoded and raw inputs; trailing slash matches
+  // the site's canonical form (trailingSlash: true).
+  const canonical = `https://stellarindex.io/markets/${encodeURIComponent(decodeURIComponent(pair))}/`;
   return {
     title,
     description,
