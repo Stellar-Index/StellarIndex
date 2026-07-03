@@ -220,3 +220,18 @@
   notify:
     - Restart clickhouse-server
   tags: [log-discipline, clickhouse]
+
+# ─── Redis memory cap (2026-06-16 incident-sweep fix, codified
+# 2026-07-03 during the r1↔ansible drift audit) ──────────────────────
+# r1 runs the Debian-packaged redis-server (the redis-sentinel role is
+# the future HA-cluster shape, NOT applied to archival nodes). The
+# incident sweep set maxmemory by hand; without codification a rebuild
+# ships an uncapped Redis that can eat the host under cache pressure.
+- name: Cap Redis memory (Debian-packaged redis on the archival node)
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: '^#?\s*maxmemory\s+[^-]'
+    line: "maxmemory {{ redis_maxmemory | default('1gb') }}"
+  notify:
+    - Restart redis
+  tags: [log-discipline, redis]

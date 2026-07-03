@@ -1,0 +1,6 @@
+[Unit]
+Description=Stellar Index config-assertion check (guard configs live?)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/config-assertions.sh

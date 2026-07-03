@@ -218,6 +218,48 @@ groups:
             `du -xs /var/log/* /tmp | sort -rh | head` — and see the
             runbook for the CH log-wedge kill sequence.
 
+      # Guard-config liveness — born 2026-07-03: the 2026-06-11
+      # incident's rsyslog suppression was codified in ansible but
+      # NEVER applied to r1 (recorded as fixed), and live-only hand
+      # fixes existed that an ansible render would erase. Ansible does
+      # not auto-run against r1, so neither direction self-heals;
+      # config-assertions.sh (hourly timer) checks the load-bearing
+      # files' CONTENT and this pages the gap within ~2h.
+      - alert: stellarindex_config_assertion_failed
+        expr: stellarindex_config_assertion_ok == 0
+        for: 65m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/config-assertion-failed.md
+        annotations:
+          summary: "Guard config {{ $labels.assertion }} is missing or reverted on {{ $labels.instance }}"
+          description: |
+            config-assertions.sh found {{ $labels.assertion }} absent or
+            content-reverted for two consecutive hourly runs. Each
+            assertion is a load-bearing incident fix (root-fill loop
+            guards, public-edge firewall, redis cap, CS-010 supply
+            config). See the runbook for the per-assertion restore
+            recipe and docs/operations/r1-ansible-drift-2026-07-03.md
+            for why this class exists.
+
+      - alert: stellarindex_config_assertions_stale
+        expr: time() - timestamp(stellarindex_config_assertion_ok) > 7200
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/config-assertion-failed.md
+        annotations:
+          summary: "config-assertions has not run for 2h on {{ $labels.instance }}"
+          description: |
+            The hourly config-assertions.timer is not producing fresh
+            textfile output — a silent checker is the same class of
+            failure the checker exists to catch. systemctl status
+            config-assertions.timer.
+
       # Redis BGSAVE health — when Redis can't snapshot to disk
       # (typically because the volume backing /var/lib/redis is
       # full) it sets stop-writes-on-bgsave-error and rejects

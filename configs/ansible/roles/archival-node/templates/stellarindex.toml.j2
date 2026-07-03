@@ -176,6 +176,18 @@ watched_classic_assets = [
 ]
 watched_sep41_contracts = {{ stellarindex_watched_sep41_contracts | default([]) | to_json }}
 sdf_reserve_accounts = {{ stellarindex_sdf_reserve_accounts | default([]) | to_json }}
+{% if stellarindex_reserve_balances_stroops is defined and stellarindex_reserve_balances_stroops %}
+
+# SDF reserve balances (stroops) — fallback until the AccountEntry
+# observer covers the set (config.go SupplyConfig: every account in
+# sdf_reserve_accounts MUST appear here or the writer refuses to start).
+# Values are a point-in-time snapshot; the live observer takes over once
+# account_observations covers the account.
+[supply.reserve_balances_stroops]
+{% for acct, bal in stellarindex_reserve_balances_stroops.items() %}
+"{{ acct }}" = "{{ bal }}"
+{% endfor %}
+{% endif %}
 
 [supply.sac_wrappers]
 "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75" = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"

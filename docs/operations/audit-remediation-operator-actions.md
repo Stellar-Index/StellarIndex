@@ -11,6 +11,13 @@ GitHub/cloud/vendor account, a secret, a legal decision, prod infra, or a
 judgment call that's yours. The code-side fixes are being applied separately;
 these wait for you.
 
+> **⚠️ Before running any ansible playbook against r1:** read
+> [r1-ansible-drift-2026-07-03](r1-ansible-drift-2026-07-03.md) — the
+> 2026-07-03 audit found live-only hand fixes a render would erase
+> (some since codified) and codified-only "fixes" that were never live.
+> Always `--check --diff` first. The hourly `config-assertions.timer`
+> alerts on regressions of the load-bearing subset.
+
 ## Repo / CI settings (highest leverage — one setting unlocks every guard)
 - [x] **Branch-protect `main` + require status checks** (CS-097) — DONE 2026-07-02
   via two repo rulesets: `main-integrity` (force-push + deletion blocked for
