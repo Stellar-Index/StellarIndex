@@ -26,6 +26,13 @@ against.
   staged migration and the pruned static path supported until cutover.
 
 ### Fixed
+- **Transactions, operations, and ledgers pages get insight** (site audit
+  S-004/S-005): the three directory pages were bare paginated lists while
+  the API already served the aggregates — only /network consumed them. A
+  shared component pair (daily-throughput chart with a metric selector,
+  ranked op-type mix bars) now leads each page with the series that answers
+  that page's question (txs / ops / ledger cadence), and /network consumes
+  the same shared code instead of its private copy.
 - **SAC contract pages answer "what is this?"** (site audit S-016/S-014):
   the contract header names the wrapped asset with a link to its asset page
   (fed by the new event-derived SAC identification), the code-history panel

@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import type { Metadata } from 'next';
 
 import { LedgersTable } from './LedgersTable';
+import { ThroughputPanel } from '@/components/NetworkInsight';
 
 export const metadata: Metadata = {
   alternates: { canonical: '/ledgers' },
@@ -30,6 +31,10 @@ export default function LedgersPage() {
           events those transactions emitted.
         </p>
       </header>
+
+      {/* S-005: ledger cadence answers "is the network healthy" before
+          the row list — same shared series /network renders. */}
+      <ThroughputPanel defaultMetric="ledgers" />
 
       <Suspense fallback={null}>
         <LedgersTable />

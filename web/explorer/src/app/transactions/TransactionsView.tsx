@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { ThroughputPanel } from '@/components/NetworkInsight';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import {
@@ -91,6 +92,11 @@ export function TransactionsView() {
           </div>
         )}
       </header>
+
+      {/* S-004: the page was a bare list — the daily-throughput series
+          the API already serves answers "how busy is the network" before
+          the visitor scrolls a single row. */}
+      <ThroughputPanel defaultMetric="txs" />
 
       <TxTable
         seq={seq}

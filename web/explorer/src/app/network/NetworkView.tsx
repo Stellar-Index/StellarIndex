@@ -26,6 +26,7 @@ import { usePools, useSources, isOnChainSource } from '@/api/hooks';
 import type { NetworkStats } from '@/api/hooks';
 import type { paths } from '@/api/types';
 import { DonutChart } from '@/components/charts/DonutChart';
+import { OperationMixPanel } from '@/components/NetworkInsight';
 import { formatCompact } from '@/lib/format';
 import {
   type Envelope,
@@ -46,11 +47,7 @@ type ThroughputResp = NonNullable<
   paths['/network/throughput']['get']['responses'][200]['content']['application/json']['data']
 >;
 
-type OperationsResp = NonNullable<
-  paths['/operations']['get']['responses'][200]['content']['application/json']['data']
->;
 
-type OpTypeStat = NonNullable<OperationsResp['op_type_stats']>[number];
 
 type Metric = 'ops' | 'txs' | 'events' | 'ledgers';
 const METRICS: { key: Metric; label: string }[] = [
@@ -75,15 +72,6 @@ export function NetworkView() {
     queryKey: ['/v1/ledgers', 'network-strip'],
     queryFn: async () => (await apiGet<Envelope<LedgersPage>>('/v1/ledgers', { limit: 12 })).data,
     staleTime: 10_000,
-  });
-
-  const opStatsQ = useQuery<OpTypeStat[]>({
-    queryKey: ['/v1/operations', 'type-mix'],
-    queryFn: async () =>
-      (await apiGet<Envelope<OperationsResp>>('/v1/operations', { limit: 1 })).data
-        .op_type_stats ?? [],
-    staleTime: 60_000,
-    retry: false,
   });
 
   const tpQ = useQuery<ThroughputResp>({
@@ -177,7 +165,7 @@ export function NetworkView() {
       </Panel>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <OperationMix stats={opStatsQ.data} loading={opStatsQ.isLoading} error={opStatsQ.isError} />
+        <OperationMixPanel />
         <LatestLedgers ledgers={ledgersQ.data?.ledgers} loading={ledgersQ.isLoading} error={ledgersQ.isError} />
       </div>
 
@@ -272,62 +260,6 @@ function HeroStats({ stats: s, tip }: { stats?: NetworkStats; tip?: Ledger }) {
 // OperationMix — proportional bars of operation types over the
 // trailing ~24h, straight from the /v1/operations type aggregate.
 // Far more legible than the raw chip cloud on /operations.
-function OperationMix({
-  stats,
-  loading,
-  error,
-}: {
-  stats?: OpTypeStat[];
-  loading: boolean;
-  error: boolean;
-}) {
-  const sorted = [...(stats ?? [])]
-    .sort((a, b) => (b.count ?? 0) - (a.count ?? 0))
-    .slice(0, 10);
-  const max = sorted.reduce((m, x) => Math.max(m, x.count ?? 0), 0) || 1;
-  const grand = (stats ?? []).reduce((sum, x) => sum + (x.count ?? 0), 0) || 1;
-
-  return (
-    <Panel
-      title="Operation mix — trailing 24h"
-      source={asExample('/v1/operations', { limit: 1 })}
-      bodyClassName="space-y-2.5"
-    >
-      {loading && <Skeleton className="h-40 w-full" />}
-      {error && <p className="text-sm text-ink-muted">Operation stats are unavailable right now.</p>}
-      {!loading && !error && sorted.length === 0 && (
-        <EmptyState title="No operations in the last 24h." />
-      )}
-      {sorted.map((st) => {
-        const count = st.count ?? 0;
-        const pct = (count / grand) * 100;
-        return (
-          <Link
-            key={st.type}
-            href="/operations"
-            className="group block"
-            title={`${count.toLocaleString()} ${st.type} ops (${pct.toFixed(1)}%)`}
-          >
-            <div className="mb-0.5 flex items-baseline justify-between gap-2 text-xs">
-              <code className="truncate text-ink-body group-hover:text-brand-600">{st.type}</code>
-              <span className="shrink-0 font-mono tabular-nums text-ink-muted">
-                {formatCompact(count)}
-                <span className="ml-1 text-ink-faint">{pct.toFixed(1)}%</span>
-              </span>
-            </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-surface-muted">
-              <div
-                className="h-full rounded-full bg-brand-500 transition-all group-hover:bg-brand-600"
-                style={{ width: `${(count / max) * 100}%` }}
-              />
-            </div>
-          </Link>
-        );
-      })}
-    </Panel>
-  );
-}
-
 // LatestLedgers — the chain tip, newest first. Each row deep-links
 // to the per-ledger explorer page.
 function LatestLedgers({

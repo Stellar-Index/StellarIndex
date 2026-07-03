@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { OperationMixPanel, ThroughputPanel } from '@/components/NetworkInsight';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { type Envelope, type TxOperation, formatTimestamp } from '../explorer-shared';
@@ -54,7 +55,6 @@ export function OperationsView() {
   });
 
   const ops = q.data?.operations ?? [];
-  const stats = q.data?.op_type_stats ?? [];
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 px-6 py-8">
@@ -67,20 +67,14 @@ export function OperationsView() {
         </p>
       </header>
 
-      {!cursor && stats.length > 0 && (
-        <Panel title="By type — trailing ~24h" bodyClassName="space-y-2">
-          <div className="flex flex-wrap gap-2 text-xs">
-            {stats.map((s) => (
-              <span
-                key={s.type}
-                className="inline-flex items-center gap-1.5 rounded-sm bg-surface-muted px-2 py-1 text-ink-body"
-              >
-                <code className="font-mono">{s.type}</code>
-                <span className="text-ink-muted">{formatCompact(s.count ?? 0)}</span>
-              </span>
-            ))}
-          </div>
-        </Panel>
+      {/* S-005: the chips row becomes the shared ranked-bars mix +
+          the daily ops series — same components /network uses. Only on
+          page 1; deep-paging visitors came for the rows. */}
+      {!cursor && (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <OperationMixPanel linkRows={false} />
+          <ThroughputPanel defaultMetric="ops" />
+        </div>
       )}
 
       <Panel
