@@ -85,26 +85,6 @@ func displayScalar(v xdr.ScVal) string {
 			return "address"
 		}
 		return addr
-	case xdr.ScValTypeScvVec:
-		vec := v.MustVec()
-		if vec == nil {
-			return "[]"
-		}
-		parts := make([]string, 0, len(*vec))
-		for _, e := range *vec {
-			parts = append(parts, display(e, depth+1))
-		}
-		return "[" + truncateDisplay(strings.Join(parts, ", ")) + "]"
-	case xdr.ScValTypeScvMap:
-		m := v.MustMap()
-		if m == nil {
-			return "{}"
-		}
-		parts := make([]string, 0, len(*m))
-		for _, kv := range *m {
-			parts = append(parts, display(kv.Key, depth+1)+": "+display(kv.Val, depth+1))
-		}
-		return "{" + truncateDisplay(strings.Join(parts, ", ")) + "}"
 	default:
 		return strings.TrimPrefix(v.Type.String(), "ScValTypeScv")
 	}
