@@ -216,6 +216,8 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
 
       <CodeHistoryPanel id={data.contract_id || id} />
 
+      <TransfersPanel id={data.contract_id || id} />
+
       <InteractionsPanel id={data.contract_id || id} />
 
       <EventsPanel
@@ -524,6 +526,108 @@ type InteractionsResp = NonNullable<
  * tagged with their protocol where known. The 90-day window keeps it scoped to
  * current behaviour.
  */
+interface TransferRow {
+  ledger?: number;
+  ledger_close_time?: string;
+  tx_hash?: string;
+  event_kind?: string;
+  from?: string;
+  to?: string;
+  amount?: string;
+}
+
+/**
+ * TransfersPanel — decoded token flows (S-016: the visitor question
+ * "where is the money going" was answered by a raw-JSON external link
+ * while /v1/contracts/{id}/transfers served from/to/amount all along).
+ * Renders only when the endpoint returns rows — non-token contracts
+ * simply don't show the panel.
+ */
+function TransfersPanel({ id }: { id: string }) {
+  const { data } = useQuery<{ transfers?: TransferRow[] }>({
+    queryKey: ['/v1/contracts/{id}/transfers', id],
+    enabled: CONTRACT_RE.test(id),
+    retry: false,
+    staleTime: 30_000,
+    queryFn: async () =>
+      (
+        await apiGet<Envelope<{ transfers?: TransferRow[] }>>(
+          `/v1/contracts/${encodeURIComponent(id)}/transfers`,
+          { limit: 25 },
+        )
+      ).data,
+  });
+  const rows = data?.transfers ?? [];
+  if (rows.length === 0) return null;
+  const gLink = (g?: string) =>
+    g && /^G[A-Z2-7]{55}$/.test(g) ? (
+      <Link
+        href={`/accounts/${g}/`}
+        className="font-mono text-xs text-brand-600 hover:underline"
+        title={g}
+      >
+        {g.slice(0, 6)}…{g.slice(-4)}
+      </Link>
+    ) : g ? (
+      <span className="font-mono text-xs" title={g}>
+        {g.slice(0, 6)}…{g.slice(-4)}
+      </span>
+    ) : (
+      <span className="text-ink-faint">—</span>
+    );
+  return (
+    <Panel
+      title={`Token flows (last ${rows.length})`}
+      source={asExample(`/v1/contracts/${id}/transfers`, { limit: 25 })}
+      bodyClassName="-mx-4 overflow-x-auto"
+    >
+      <table className="min-w-full divide-y divide-line text-sm">
+        <thead>
+          <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
+            <th className="px-4 py-2">Time</th>
+            <th className="px-4 py-2">Kind</th>
+            <th className="px-4 py-2">From</th>
+            <th className="px-4 py-2">To</th>
+            <th className="px-4 py-2 text-right">Amount</th>
+            <th className="px-4 py-2">Tx</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line-subtle">
+          {rows.map((t, i) => (
+            <tr key={`${t.tx_hash}-${i}`} className="hover:bg-surface-muted">
+              <td className="whitespace-nowrap px-4 py-2 text-xs text-ink-muted">
+                {t.ledger_close_time ? relativeAge(t.ledger_close_time) : '—'}
+              </td>
+              <td className="px-4 py-2">
+                <code className="text-xs">{t.event_kind ?? '—'}</code>
+              </td>
+              <td className="px-4 py-2">{gLink(t.from)}</td>
+              <td className="px-4 py-2">{gLink(t.to)}</td>
+              <td className="px-4 py-2 text-right font-mono tabular-nums">
+                {t.amount
+                  ? (Number(t.amount) / 1e7).toLocaleString(undefined, { maximumFractionDigits: 4 })
+                  : '—'}
+              </td>
+              <td className="px-4 py-2">
+                {t.tx_hash ? (
+                  <Link
+                    href={`/transactions/${t.tx_hash}/`}
+                    className="font-mono text-xs text-brand-600 hover:underline"
+                  >
+                    {t.tx_hash.slice(0, 8)}…
+                  </Link>
+                ) : (
+                  '—'
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Panel>
+  );
+}
+
 function InteractionsPanel({ id }: { id: string }) {
   const { data: sacMap } = useSACWrappers();
   const { data, isLoading, isError } = useQuery<InteractionsResp>({
