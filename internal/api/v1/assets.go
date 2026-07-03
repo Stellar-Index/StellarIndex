@@ -1949,26 +1949,31 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		if err != nil || len(rows) == 0 || rows[0].AssetID != entry.AssetID {
 			return
 		}
-		twin := assetDetailFromCoinRow(rows[0])
-		if page[i].Change1hPct == nil {
-			page[i].Change1hPct = twin.Change1hPct
-		}
-		if page[i].Change24hPct == nil {
-			page[i].Change24hPct = twin.Change24hPct
-		}
-		if page[i].Change7dPct == nil {
-			page[i].Change7dPct = twin.Change7dPct
-		}
-		if page[i].VolumeUSD24h == nil {
-			page[i].VolumeUSD24h = twin.VolumeUSD24h
-		}
-		if page[i].CirculatingSupply == nil {
-			page[i].CirculatingSupply = twin.CirculatingSupply
-		}
-		if page[i].MarketCapUSD == nil {
-			page[i].MarketCapUSD = twin.MarketCapUSD
-		}
+		mergeTwinStats(&page[i], assetDetailFromCoinRow(rows[0]))
 	})
+}
+
+// mergeTwinStats fills a catalogue row's nil analytics from its
+// Stellar-network twin without overwriting anything already set.
+func mergeTwinStats(dst *AssetDetail, twin AssetDetail) {
+	if dst.Change1hPct == nil {
+		dst.Change1hPct = twin.Change1hPct
+	}
+	if dst.Change24hPct == nil {
+		dst.Change24hPct = twin.Change24hPct
+	}
+	if dst.Change7dPct == nil {
+		dst.Change7dPct = twin.Change7dPct
+	}
+	if dst.VolumeUSD24h == nil {
+		dst.VolumeUSD24h = twin.VolumeUSD24h
+	}
+	if dst.CirculatingSupply == nil {
+		dst.CirculatingSupply = twin.CirculatingSupply
+	}
+	if dst.MarketCapUSD == nil {
+		dst.MarketCapUSD = twin.MarketCapUSD
+	}
 }
 
 // filterCatalogueRowsByQuery applies the case-insensitive q= substring
