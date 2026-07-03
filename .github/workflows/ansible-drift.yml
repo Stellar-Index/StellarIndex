@@ -42,6 +42,10 @@ jobs:
           mkdir -p ~/.ansible
           echo -n "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > ~/.ansible/r1_vault_pass
           chmod 600 ~/.ansible/r1_vault_pass
+          # The encrypted vault itself is NOT in the (public) repo —
+          # 2026-07-03 exposure response. Materialize it from the
+          # Actions secret.
+          echo "${{ secrets.ANSIBLE_VAULT_FILE_B64 }}" | base64 -d > configs/ansible/inventory/r1.secrets.yml
 
       - name: Dry-run the playbook against r1
         working-directory: configs/ansible

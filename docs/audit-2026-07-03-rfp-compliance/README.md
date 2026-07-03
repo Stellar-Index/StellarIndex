@@ -14,11 +14,12 @@ row verified against the LIVE system (api.stellarindex.io) on
 2. `docs/archive/freighter-rfp.md` — Freighter's asset-detail data RFP
 3. `docs/archive/ctx-proposal.md` — our proposal (what we PROMISED)
 
-**Verdict: the system meets or exceeds the large majority of all three,
-with 5 wallet-visible gaps (fixable in days, tracked as board #40-44),
-one hard compliance item that is a business decision (the public-flip),
-and a handful of documented methodology divergences.** Details below;
-evidence per row.
+**Verdict: the system meets or exceeds the large majority of all three
+— including the open-source requirement (the repo is public) — with 5
+wallet-visible gaps (fixable in days, tracked as board #40-44) and a
+handful of documented methodology divergences.** Details below;
+evidence per row. §4 records the security incident this audit's own
+fact-checking surfaced and the same-hour remediation.
 
 ## 1. Stellar RFP (Prices API) matrix
 
@@ -35,7 +36,7 @@ evidence per row.
 | All-Time = since asset inception | ⚠️ partial | XLM/USDC: full (USDC launched 2021-02 = its inception ✓). **XLM/fiat:USD starts 2021-02** — our CEX venues' backfill floor, though kraken lists XLM/USD from ~2018 (board #44). SDEX-era data to genesis exists in the lake |
 | HA, low-latency, high query volume | ✅ | p95 54ms origin-direct (k6, AC2); CDN in front; 99.99% uptime record claimed in proposal upheld by status page history |
 | Explain unavailable/diverging prices | ✅ **exceeds** | `flags{stale, reduced_redundancy, triangulated, divergence_warning, divergence_checked}` on every price + confidence scoring + divergence workers vs CoinGecko/Chainlink + public methodology docs |
-| **Completely open source (Tranche I & II)** | ❌ **pending** | Repo still private. Public-flip is planned at v1.0 (strategy: publish to NEW repo). **This is the one hard compliance item outstanding** — see §4 |
+| **Completely open source (Tranche I & II)** | ✅ | github.com/StellarIndex/stellar-index is PUBLIC (verified `gh repo view` 2026-07-03 — the audit's first draft wrongly said private from stale memory; see §4 for the incident that correction triggered) |
 | Asset metadata (code/price/type/issuer/contract/home_domain) | ⚠️ 85% | All present EXCEPT **`contract_id` (SAC C-address) absent from classic asset detail** (board #40) |
 | Production API ~10 weeks | ✅ | Live since deliverable claim 2026-06-13 (AC1-7 evidenced) |
 | API reference docs + self-service onboarding | ✅ | docs.stellarindex.io (generated from OpenAPI), dashboard signup → API key (`sip_` prefix), Postman collection, curl examples |
@@ -76,7 +77,7 @@ evidence per row.
 | Public status page + status endpoint + callback alerts | ✅ / ⚠️ status.stellarindex.io + `/v1/healthz`; customer webhooks exist; Discord/Slack incident callbacks pend operator accounts |
 | Per-IP + per-key limits, elevated tiers | ✅ |
 | Versioned API, SemVer | ✅ (ADR-0042 wire-shape policy) |
-| Open source + self-host templates (compose, IaC) | ⚠️ Ansible IaC now PROVEN (2026-07-03 it converged live r1); docker-compose is dev-stack only; full self-host guide pending the public-flip |
+| Open source + self-host templates (compose, IaC) | ⚠️ Ansible IaC now PROVEN (2026-07-03 it converged live r1); docker-compose is dev-stack only; a full self-host guide is now unblocked (repo public) — worth writing |
 | Multi-zone deployment | ⚠️ R1 single-host + full DR evidence (drill PASS); R2/R3 are documented + mechanical, not deployed |
 | Read replicas | ❌ not deployed (not needed at current load; noted) |
 | Wash-trading mitigations: volume floors, outliers, medianization | ✅ volume floor + outlier filtering + oracle exclusion-by-class |
@@ -87,16 +88,21 @@ evidence per row.
 | Backups versioned + restore-TESTED | ✅ **exceeds** (2026-07-03 drill: restored, recovered, bit-identical window) |
 | RBAC, secrets isolation, audit logging | ✅ (vault, non-root services as of 2026-07-03, config-assertions) |
 
-## 4. The one hard item: open source
+## 4. Open source: MET — and the correction that mattered
 
-The Stellar RFP is unambiguous ("Repo needs to be completely Open
-Source (Tranche I and II)"). The public-flip strategy exists
-(publish to a NEW repo at v1.0; never force-push the private one) and
-the repo reads standalone since the 2026-06-17 scrub. Pre-flip
-checklist additions from this audit: rotate the ansible-vault password
-(the encrypted vault is now in-repo), re-run gitleaks full-history,
-and decide the fate of `docs/archive/` (proposal/RFP copies are
-already gitignored archives — verify).
+The repo is PUBLIC, satisfying the RFP's hardest requirement. The
+audit's first draft claimed it was private (stale session memory,
+unverified) — and checking that claim surfaced that the morning's
+drift work had committed the ENCRYPTED ansible vault to the public
+repo. Response (same hour): vault removed from the repo, **every
+infrastructure secret rotated** (postgres, MinIO root + all three
+S3 users, vault password), workflows now materialize the vault from
+an Actions secret, services verified healthy on the new credentials.
+Vendor keys (Resend, Alchemy, Healthchecks, Massive, CoinGecko demo)
+need operator-side rotation — they were in the exposed vault.
+Residual: the encrypted blob remains in git history (commit
+9c8afc61); with all contents rotated it is inert, but GitHub's
+sensitive-data removal process can purge it if desired.
 
 ## 5. Fix backlog (board #40–44, wallet-impact order)
 
