@@ -1113,6 +1113,22 @@ func (s *Server) serveCatalogueUnifiedPage(w http.ResponseWriter, r *http.Reques
 	caps := s.computeAllCatalogueMarketCaps(r.Context(), entries)
 	rows := projectCatalogueRows(entries, caps)
 	sortAssetDetailsByMarketCapDesc(rows)
+	// q= filter over the catalogue phase (S-011). The classic phase
+	// filters server-side via ListCoinsOptions.Q; the catalogue is a
+	// ~30-row in-process slice.
+	if q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q"))); q != "" {
+		filtered := rows[:0]
+		for _, row := range rows {
+			hay := strings.ToLower(row.AssetID + " " + row.Code + " " + row.Slug)
+			if row.Name != nil {
+				hay += " " + strings.ToLower(*row.Name)
+			}
+			if strings.Contains(hay, q) {
+				filtered = append(filtered, row)
+			}
+		}
+		rows = filtered
+	}
 
 	offset := 0
 	if innerCursor != "" {
@@ -1138,10 +1154,30 @@ func (s *Server) serveCatalogueUnifiedPage(w http.ResponseWriter, r *http.Reques
 	env := Envelope{Data: page, Flags: Flags{}}
 	if end < len(rows) {
 		env.Pagination = &Pagination{Next: "catalogue:" + strconv.Itoa(end)}
-	} else {
-		// Catalogue exhausted on this page → next page picks up classic.
-		env.Pagination = &Pagination{Next: "classic:"}
+		writeEnvelope(w, env)
+		return
 	}
+	// Catalogue exhausted below the requested limit: FILL the remainder
+	// of the page from the classic stream (S-002 — this function's own
+	// doc always promised the fill; without it page 1 returned the
+	// 11-row catalogue tail regardless of limit, and the /assets page
+	// presented the curated sliver as the entire asset universe).
+	if remaining := limit - len(page); remaining > 0 {
+		classicRows, nextInner, ok := s.fetchClassicUnifiedRows(w, r, remaining, "")
+		if !ok {
+			return
+		}
+		env.Data = append(page, classicRows...)
+		if nextInner != "" {
+			env.Pagination = &Pagination{Next: "classic:" + nextInner}
+		} else {
+			env.Pagination = nil
+		}
+		writeEnvelope(w, env)
+		return
+	}
+	// Exact-boundary page: next page picks up classic from the top.
+	env.Pagination = &Pagination{Next: "classic:"}
 	writeEnvelope(w, env)
 }
 
@@ -1150,15 +1186,36 @@ func (s *Server) serveCatalogueUnifiedPage(w http.ResponseWriter, r *http.Reques
 // that path returned on the prior call. Next-cursor gets phase-
 // prefixed before going out the wire.
 func (s *Server) serveClassicUnifiedPage(w http.ResponseWriter, r *http.Request, limit int, innerCursor string) {
+	out, nextInner, ok := s.fetchClassicUnifiedRows(w, r, limit, innerCursor)
+	if !ok {
+		return
+	}
+	env := Envelope{Data: out, Flags: Flags{}}
+	if nextInner != "" {
+		env.Pagination = &Pagination{Next: "classic:" + nextInner}
+	}
+	writeEnvelope(w, env)
+}
+
+// fetchClassicUnifiedRows reads one page of the classic (long-tail)
+// phase. ok=false means a response (error or empty terminator) was
+// already written. nextInner is empty when the stream is exhausted.
+// Shared by the classic phase AND the page-1 fill (S-002: page 1 used
+// to return just the 11-row catalogue tail regardless of limit,
+// making the curated sliver look like the asset universe).
+func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request, limit int, innerCursor string) ([]AssetDetail, string, bool) {
 	if s.coins == nil {
 		// No coins reader wired → empty terminator.
 		writeJSON(w, []AssetDetail{}, Flags{})
-		return
+		return nil, "", false
 	}
 	opts := timescale.ListCoinsOptions{
-		Limit:  limit,
 		Cursor: innerCursor,
 		Order:  timescale.CoinsOrderVolume24hUSDDesc,
+		// S-011: the storage layer has supported Q since the coins
+		// store landed; the unified path never passed it, so the
+		// explorer's search box round-tripped to the same page.
+		Q: strings.TrimSpace(r.URL.Query().Get("q")),
 	}
 	// Overfetch-by-one (same shape as handleAssetListFromCoins) to
 	// drive the cursor advance.
@@ -1166,13 +1223,13 @@ func (s *Server) serveClassicUnifiedPage(w http.ResponseWriter, r *http.Request,
 	rows, err := s.coins.ListCoinsExt(r.Context(), opts)
 	if err != nil {
 		if clientAborted(r, err) {
-			return
+			return nil, "", false
 		}
 		s.logger.Error("ListCoinsExt (unified) failed", "err", err)
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
-		return
+		return nil, "", false
 	}
 	hasMore := len(rows) > limit
 	if hasMore {
@@ -1183,7 +1240,7 @@ func (s *Server) serveClassicUnifiedPage(w http.ResponseWriter, r *http.Request,
 		out = append(out, assetDetailFromCoinRow(row))
 	}
 	s.fillMarketCapsFromSupply(r.Context(), out)
-	env := Envelope{Data: out, Flags: Flags{}}
+	nextInner := ""
 	if hasMore && len(out) > 0 {
 		last := rows[len(rows)-1]
 		// Volume24hUSDDesc cursor shape: <vol_or_blank>:<asset_id>.
@@ -1191,10 +1248,9 @@ func (s *Server) serveClassicUnifiedPage(w http.ResponseWriter, r *http.Request,
 		if last.Volume24hUSD != nil {
 			volStr = *last.Volume24hUSD
 		}
-		inner := volStr + ":" + last.AssetID
-		env.Pagination = &Pagination{Next: "classic:" + inner}
+		nextInner = volStr + ":" + last.AssetID
 	}
-	writeEnvelope(w, env)
+	return out, nextInner, true
 }
 
 // computeAllCatalogueMarketCaps fans out market_cap_usd across the

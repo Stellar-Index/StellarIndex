@@ -16,6 +16,13 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **The /assets listing serves the real universe** (site audit
+  S-002/S-011): page 1 of the unified listing now fills from the ~191K
+  classic long tail when the curated catalogue is shorter than the limit
+  (the pager's own doc always promised this; in practice page 1 was 11
+  rows presented as the entire asset universe), and the search box's `q=`
+  now actually filters server-side across both phases (the storage layer
+  supported it all along — the handler never passed it).
 - **Navigation tells the truth** (site audit S-001/S-017/S-019): "DEX /
   AMM" now lands on /dexes (the per-protocol venue + pools view that
   already existed) instead of the verification index; the rail's

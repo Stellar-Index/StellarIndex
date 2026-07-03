@@ -256,6 +256,19 @@ paths:
         unified Stellar listing; omitting it returns the legacy
         classic-assets page.
       parameters:
+        - name: q
+          in: query
+          required: false
+          schema: { type: string }
+          description: >-
+            Case-insensitive substring filter over code / asset id /
+            slug / name, applied server-side across BOTH phases of the
+            unified listing (catalogue + the ~191K classic long tail).
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500 }
+          description: Rows per page (default 100). Page 1 fills from the classic stream when the catalogue is shorter than the limit.
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/Limit" }
         - name: asset_class

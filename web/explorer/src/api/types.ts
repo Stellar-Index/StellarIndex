@@ -313,6 +313,9 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
+                    /** @description Case-insensitive substring filter over code / asset id / slug / name, applied server-side across BOTH phases of the unified listing (catalogue + the ~191K classic long tail). */
+                    q?: string;
+                    limit?: components["parameters"]["Limit"];
                     /**
                      * @description Opaque pagination token echoed from a prior response's
                      *     `pagination.next`. Pass it verbatim — it is a base64url-encoded
@@ -325,7 +328,6 @@ export interface paths {
                      *     means "start from the beginning".
                      */
                     cursor?: components["parameters"]["Cursor"];
-                    limit?: components["parameters"]["Limit"];
                     /**
                      * @description Major dispatch for the listing. One of:
                      *     - `fiat` — fiat currencies from the verified-currency catalogue.
