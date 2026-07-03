@@ -21,7 +21,7 @@ const HISTORY_LIMIT = 100;
  * /v1/history serves raw on-chain trades only; aggregator-derived
  * pairs ship via /v1/vwap and /v1/twap.
  */
-export function HistoryTabPanel({ assetID }: { assetID: string }) {
+export function HistoryTabPanel({ assetID, decimals = 7 }: { assetID: string; decimals?: number }) {
   const history = useHistory(assetID, DEFAULT_QUOTE, HISTORY_LIMIT);
 
   if (history.isError) {
@@ -129,10 +129,10 @@ export function HistoryTabPanel({ assetID }: { assetID: string }) {
                 {r.ledger}
               </td>
               <td className="py-2 pr-3 text-right font-mono text-xs">
-                {formatStroopAmount(r.base_amount)}
+                {formatStroopAmount(r.base_amount, decimals)}
               </td>
               <td className="py-2 pr-3 text-right font-mono text-xs">
-                {formatStroopAmount(r.quote_amount)}
+                {formatStroopAmount(r.quote_amount, decimals)}
               </td>
               <td className="py-2 pr-3 text-right font-mono text-xs">
                 {r.price ?? deriveAvgPrice(r.base_amount, r.quote_amount)}
@@ -163,10 +163,10 @@ function ageOf(iso: string): string {
 // amounts show up to 4 decimals. Strings throughout per ADR-0003 —
 // this is a display-time conversion only, never used for further
 // arithmetic.
-function formatStroopAmount(s: string): string {
+function formatStroopAmount(s: string, decimals = 7): string {
   const n = Number(s);
   if (!Number.isFinite(n)) return s;
-  const v = n / 1e7;
+  const v = n / 10 ** decimals;
   if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
   if (Math.abs(v) >= 1_000) return `${(v / 1_000).toFixed(2)}k`;
   if (Math.abs(v) >= 1) return v.toFixed(2);

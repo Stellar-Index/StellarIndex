@@ -6,7 +6,6 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
-import { stroopsToXlm } from '../../explorer-shared';
 import type { paths } from '@/api/types';
 
 // GET /v1/assets/{id}/holders response body from the generated OpenAPI
@@ -22,7 +21,7 @@ type HoldersResp = NonNullable<
  * build-time snapshot. Coverage grows with the entry-change capture
  * window; full once the Phase-C backfill lands.
  */
-export function HoldersTabPanel({ assetID }: { assetID: string }) {
+export function HoldersTabPanel({ assetID, decimals = 7 }: { assetID: string; decimals?: number }) {
   const { data, isLoading, isError } = useQuery<HoldersResp>({
     queryKey: ['/v1/assets/{id}/holders', assetID],
     retry: false,
@@ -79,7 +78,7 @@ export function HoldersTabPanel({ assetID }: { assetID: string }) {
                     </Link>
                   </td>
                   <td className="px-4 py-3 text-right font-mono tabular-nums text-ink-body">
-                    {stroopsToXlm(h.balance)}
+                    {(Number(h.balance) / 10 ** decimals).toLocaleString(undefined, { maximumFractionDigits: 4 })}
                   </td>
                 </tr>
               ))}
