@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.7.7] — 2026-07-03
+
 ### Added
 - **OpenAPI 200 examples for every GET operation**: all 70 JSON GET
   operations in `openapi/stellar-index.v1.yaml` now carry a media-level
