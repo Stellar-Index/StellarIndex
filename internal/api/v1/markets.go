@@ -94,6 +94,10 @@ type MarketsReader interface {
 	// buckets for the trailing 24h. Backs the /v1/markets sparkline
 	// column when the caller passes ?include=sparkline.
 	GetPairsVolumeHistory24hBatch(ctx context.Context, pairs [][2]string) (map[string][]timescale.PairVolumePoint, error)
+
+	// FirstTradeBatch returns each pair's first daily bucket — the
+	// ?include=inception enrichment on /v1/markets (board #44).
+	FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error)
 }
 
 // Pool is the wire shape for /v1/pools entries. Same fields as
@@ -313,6 +317,11 @@ type Market struct {
 	// `?include=sparkline`. 24 entries oldest → newest, zero-
 	// filled server-side so the wire array length is stable.
 	VolumeHistory24h []MarketVolumeBucket `json:"volume_history_24h,omitempty"`
+	// FirstTradeAt is the pair's first recorded daily bucket — the
+	// RFP's "since inception = first recorded trade", queryable per
+	// market (board #44). Populated only with `?include=inception`;
+	// day precision.
+	FirstTradeAt *time.Time `json:"first_trade_at,omitempty"`
 }
 
 // MarketVolumeBucket — one hourly USD-volume datapoint for the
@@ -511,9 +520,31 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	// for sparkline columns. Default off (avoids ~50KB per page
 	// of bloat for SDK consumers that don't render charts).
 	includeSparkline := false
+	includeInception := false
 	for _, f := range strings.Split(r.URL.Query().Get("include"), ",") {
-		if strings.TrimSpace(f) == "sparkline" {
+		switch strings.TrimSpace(f) {
+		case "sparkline":
 			includeSparkline = true
+		case "inception":
+			includeInception = true
+		}
+	}
+	if includeInception && len(rows) > 0 {
+		pairs := make([][2]string, len(rows))
+		for i, m := range rows {
+			pairs[i] = [2]string{m.Base, m.Quote}
+		}
+		// Best-effort like the sparkline path: a failure ships the
+		// page without inception rather than 5xx-ing a listing.
+		if firsts, fErr := reader.FirstTradeBatch(mCtx, pairs); fErr != nil {
+			s.logger.Warn("markets inception batch failed", "err", fErr)
+		} else {
+			for i, m := range rows {
+				if t, ok := firsts[m.Base+"|"+m.Quote]; ok {
+					tt := t
+					rows[i].FirstTradeAt = &tt
+				}
+			}
 		}
 	}
 	if includeSparkline && len(rows) > 0 {

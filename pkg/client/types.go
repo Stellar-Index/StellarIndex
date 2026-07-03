@@ -454,6 +454,10 @@ type Market struct {
 	// VolumeHistory24h — per-hour USD-volume sparkline buckets.
 	// Populated only when the request sets `?include=sparkline`.
 	VolumeHistory24h []VolumeBucket `json:"volume_history_24h,omitempty"`
+	// FirstTradeAt is the pair's first recorded daily bucket
+	// ("since inception = first recorded trade"). Present only when
+	// the request passed include=inception.
+	FirstTradeAt *time.Time `json:"first_trade_at,omitempty"`
 }
 
 // AssetMetadata is the data shape returned by [Client.AssetMetadata]

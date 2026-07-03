@@ -433,3 +433,7 @@ func TestPools_AssetAndBaseTogether400(t *testing.T) {
 		t.Errorf("Type = %q", p.Type)
 	}
 }
+
+func (r *stubMarketsReader) FirstTradeBatch(_ context.Context, _ [][2]string) (map[string]time.Time, error) {
+	return map[string]time.Time{}, nil
+}

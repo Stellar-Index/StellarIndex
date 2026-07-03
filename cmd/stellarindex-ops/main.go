@@ -1193,6 +1193,7 @@ func backfillExternal(args []string) error {
 	fromStr := fs.String("from", "", "Start time, RFC 3339 (required, e.g. 2024-01-01T00:00:00Z)")
 	toStr := fs.String("to", "", "End time, RFC 3339 (required, e.g. 2024-12-31T00:00:00Z)")
 	granStr := fs.String("granularity", "1h", "Candle granularity as a Go duration (1m / 15m / 1h / 4h / 1d / 1w)")
+	rawTrades := fs.Bool("raw-trades", false, "kraken only: walk the /Trades fills endpoint instead of /OHLC — the deep-history path (OHLC serves only the most recent 720 candles; board #44). Slower (rate-limited pagination) but reaches the pair's full history with exact per-fill prices.")
 	dryRun := fs.Bool("dry-run", false, "Fetch + synthesise trades but don't write to Timescale")
 	progressEvery := fs.Int("progress-every", 1000, "Print a progress line every N trades inserted")
 	if err := fs.Parse(args); err != nil {
@@ -1232,7 +1233,21 @@ func backfillExternal(args []string) error {
 		from.Format(time.RFC3339), to.Format(time.RFC3339), *dryRun)
 
 	t0 := time.Now()
-	trades, err := backfiller.Backfill(ctx, pair, from, to, granularity)
+	var trades []canonical.Trade
+	if *rawTrades {
+		kr, ok := backfiller.(*externalkraken.Streamer)
+		if !ok {
+			return fmt.Errorf("-raw-trades is kraken-only (venue %q has no fills-pagination path)", *source)
+		}
+		// Deep pagination is slow by design (venue rate limit) —
+		// replace the 30-minute candle budget with a day.
+		cancel()
+		ctx, cancel = context.WithTimeout(context.Background(), 24*time.Hour)
+		defer cancel()
+		trades, err = kr.BackfillTrades(ctx, pair, from, to)
+	} else {
+		trades, err = backfiller.Backfill(ctx, pair, from, to, granularity)
+	}
 	if err != nil {
 		return fmt.Errorf("backfill: %w", err)
 	}

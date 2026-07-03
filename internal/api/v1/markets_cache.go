@@ -78,6 +78,12 @@ func (c *CachedMarketsReader) GetPairsVolumeHistory24hBatch(ctx context.Context,
 	return c.upstream.GetPairsVolumeHistory24hBatch(ctx, pairs)
 }
 
+// FirstTradeBatch passes through uncached — inception is immutable
+// once set and the call is opt-in via ?include=inception (board #44).
+func (c *CachedMarketsReader) FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error) {
+	return c.upstream.FirstTradeBatch(ctx, pairs)
+}
+
 // DistinctPairsExt — cached.
 func (c *CachedMarketsReader) DistinctPairsExt(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, error) {
 	if c.ttl <= 0 {

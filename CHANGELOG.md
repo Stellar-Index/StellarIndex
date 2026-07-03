@@ -16,6 +16,14 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Deep CEX history + queryable per-market inception** (board #44):
+  kraken's raw-fills endpoint (`/Trades`, full history, nanosecond-cursor
+  pagination) is now a backfill path — `backfill-external -raw-trades`
+  reaches 2018-era XLM/USD where the OHLC endpoint's 720-candle horizon
+  returned nothing (golden-tested on a real captured 2018 frame; venue
+  rate-limit paced). `/v1/markets?include=inception` serves
+  `first_trade_at` per market — the RFP's "since inception = first
+  recorded trade" as a queryable fact rather than a footnote.
 - **1-month OHLC granularity + query-selectable price window** (board #43,
   the last RFP-text gaps): `/v1/ohlc?interval=1mo` serves true
   calendar-month bars from the prices_1mo CAGG (which existed since

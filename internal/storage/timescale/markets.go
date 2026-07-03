@@ -936,3 +936,49 @@ func (s *Store) GetPairsVolumeHistory24hBatch(ctx context.Context, pairs [][2]st
 	}
 	return out, nil
 }
+
+// FirstTradeBatch returns, for each requested (base, quote) pair,
+// the open time of the pair's FIRST daily bucket in prices_1d — the
+// queryable "since inception = first recorded trade" anchor (RFP;
+// board #44). Day precision is deliberate: prices_1d is indefinite
+// (back to each pair's first trade) and the per-pair MIN is
+// index-assisted, so this stays cheap enough for the ?include=
+// opt-in path on /v1/markets. Both orientations of each pair are
+// consulted and the earlier one wins (mirror-listed pairs).
+// Missing pairs are absent from the map.
+func (s *Store) FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error) {
+	if len(pairs) == 0 {
+		return map[string]time.Time{}, nil
+	}
+	bases := make([]string, 0, len(pairs)*2)
+	quotes := make([]string, 0, len(pairs)*2)
+	for _, p := range pairs {
+		bases = append(bases, p[0], p[1])
+		quotes = append(quotes, p[1], p[0])
+	}
+	const q = `
+        SELECT base_asset, quote_asset, MIN(bucket)
+          FROM prices_1d
+         WHERE (base_asset, quote_asset) IN (
+               SELECT UNNEST($1::text[]), UNNEST($2::text[]))
+         GROUP BY base_asset, quote_asset`
+	rows, err := s.db.QueryContext(ctx, q, pq.Array(bases), pq.Array(quotes))
+	if err != nil {
+		return nil, fmt.Errorf("timescale: FirstTradeBatch: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	firsts := map[string]time.Time{}
+	for rows.Next() {
+		var b, qa string
+		var t time.Time
+		if err := rows.Scan(&b, &qa, &t); err != nil {
+			return nil, fmt.Errorf("timescale: FirstTradeBatch scan: %w", err)
+		}
+		for _, key := range []string{b + "|" + qa, qa + "|" + b} {
+			if cur, ok := firsts[key]; !ok || t.Before(cur) {
+				firsts[key] = t
+			}
+		}
+	}
+	return firsts, rows.Err()
+}
