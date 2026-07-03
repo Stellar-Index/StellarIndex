@@ -15,6 +15,19 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **ClickHouse snapshot rows were being merge-destroyed** (site audit,
+  P0-data): checkpoint state-snapshot rows all carried the same
+  (tx_hash="", op_index=-1, change_index=0) tail of the ReplacingMergeTree
+  sort key, so every snapshot entry modified in the same ledger collapsed
+  to ONE arbitrary survivor at merge time — measured >55% of the 48M-entry
+  Phase-C set already gone (blast radius: account-state, trustline, supply,
+  wasm readers). ChangeIndex is now crc32(key_xdr) — per-key unique,
+  re-run idempotent; the wasm/SAC instance reads repoint at
+  ledger_entries_current (current-state MV, merge-immune, PK-prefix
+  lookup). Operator: re-run `state-snapshot -write -scope all` to re-land
+  the destroyed entries.
+
 ### Added
 - **Asset logos for wallets** (board #47): `/v1/assets/verified` rows now
   carry `image` (the issuer's SEP-1 logo URL, https-only + sanitized — the
