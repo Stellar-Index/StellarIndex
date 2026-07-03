@@ -125,6 +125,12 @@ func (s *stubExplorerReader) AssetHolders(_ context.Context, _ string, _ int) ([
 	return s.holders, s.holderCount, s.err
 }
 
+// sacName lets SAC-resolution tests inject a wrapped-asset name;
+// empty = not a SAC (the common case for explorer stubs).
+func (s *stubExplorerReader) SACClassicAssetName(_ context.Context, _ string) (string, bool, error) {
+	return "", false, nil
+}
+
 func (s *stubExplorerReader) AccountsByWealth(_ context.Context, _ []string, _ []float64, _ int) ([]clickhouse.AccountWealth, error) {
 	return s.wealth, s.err
 }

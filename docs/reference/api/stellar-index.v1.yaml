@@ -5320,7 +5320,18 @@ components:
         type:         { type: string, enum: [native, classic, soroban, fiat, global, external], description: "`global` = a catalogue-identity listing row (slug id); `external` = a reference-only (non-Stellar-issued) asset. Both appear on listing surfaces (assets.go projectCatalogueRow)." }
         code:         { type: string }
         issuer:       { type: string, nullable: true }
-        contract_id:  { type: string, nullable: true }
+        contract_id:
+          type: string
+          nullable: true
+          description: >-
+            C-strkey contract address. For Soroban tokens this is the
+            token contract itself; for classic + native assets it is the
+            deterministically-derived Stellar Asset Contract (SAC)
+            address — present even before the SAC is deployed, since
+            deployment is permissionless and address-stable. Looking an
+            asset up BY a SAC address resolves to the wrapped classic
+            asset (with its price), so wallets can use contract addresses
+            as the primary key for any holding.
         home_domain:  { type: string, nullable: true }
         decimals:     { type: integer }
         sep1_status:

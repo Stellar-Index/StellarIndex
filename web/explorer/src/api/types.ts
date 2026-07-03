@@ -7532,6 +7532,7 @@ export interface components {
             type: "native" | "classic" | "soroban" | "fiat" | "global" | "external";
             code: string;
             issuer?: string | null;
+            /** @description C-strkey contract address. For Soroban tokens this is the token contract itself; for classic + native assets it is the deterministically-derived Stellar Asset Contract (SAC) address — present even before the SAC is deployed, since deployment is permissionless and address-stable. Looking an asset up BY a SAC address resolves to the wrapped classic asset (with its price), so wallets can use contract addresses as the primary key for any holding. */
             contract_id?: string | null;
             home_domain?: string | null;
             decimals: number;

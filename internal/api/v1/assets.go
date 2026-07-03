@@ -333,6 +333,16 @@ func detailFromAsset(a canonical.Asset) AssetDetail {
 		v := a.ContractID
 		d.ContractID = &v
 	}
+	// Classic + native assets carry their SAC address (board #40, RFP
+	// audit: both RFPs put "Contract Address" in the classic-asset
+	// metadata table). Deterministic derivation — valid even before
+	// the SAC is deployed, since deployment is permissionless and
+	// address-stable.
+	if d.ContractID == nil && (a.Type == canonical.AssetClassic || a.Type == canonical.AssetNative) {
+		if sac, err := a.SacContractID(); err == nil {
+			d.ContractID = &sac
+		}
+	}
 	return d
 }
 
@@ -1272,6 +1282,18 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SAC → classic identity (board #40, RFP audit): a C-address that
+	// is a Stellar Asset Contract resolves to the CLASSIC asset it
+	// wraps, so the response carries the classic price/supply/detail.
+	// Trust anchor is the lake instance's StellarAsset executable
+	// (only stellar-core mints it); belt-and-braces, the classic
+	// asset must re-derive to the queried address.
+	if parsed.Type == canonical.AssetSoroban && s.explorer != nil {
+		if classic, ok := s.resolveSACToClassic(r.Context(), parsed.ContractID); ok {
+			parsed = classic
+		}
+	}
+
 	// Response-cache check. Drift-safe by construction — the cached
 	// entry was produced by this same handler within the last 30s.
 	// Covers the full F2 chain (Volume24hUSDForAsset / supply.LatestSupply
@@ -1761,4 +1783,35 @@ func findMatchingCachedCurrency(sep *timescale.IssuerSep1Cached, asset canonical
 // rule out script-execution vectors.
 func isSafeImageURL(s string) bool {
 	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+}
+
+// resolveSACToClassic maps a SAC contract address to the classic (or
+// native) asset it wraps, using the lake instance metadata with a
+// derivation cross-check: the resolved asset's deterministic SAC
+// address must equal the queried contract, so a spoofed metadata name
+// can never redirect pricing (defence-in-depth on top of the
+// StellarAsset-executable trust anchor).
+func (s *Server) resolveSACToClassic(ctx context.Context, contractID string) (canonical.Asset, bool) {
+	name, found, err := s.explorer.SACClassicAssetName(ctx, contractID)
+	if err != nil || !found {
+		return canonical.Asset{}, false
+	}
+	var asset canonical.Asset
+	if name == "native" {
+		asset = canonical.NativeAsset()
+	} else {
+		code, issuer, ok := strings.Cut(name, ":")
+		if !ok {
+			return canonical.Asset{}, false
+		}
+		asset, err = canonical.NewClassicAsset(code, issuer)
+		if err != nil {
+			return canonical.Asset{}, false
+		}
+	}
+	derived, err := asset.SacContractID()
+	if err != nil || derived != contractID {
+		return canonical.Asset{}, false
+	}
+	return asset, true
 }
