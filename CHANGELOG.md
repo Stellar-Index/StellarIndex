@@ -16,6 +16,14 @@ against.
 ## [Unreleased]
 
 ### Added
+- **1-month OHLC granularity + query-selectable price window** (board #43,
+  the last RFP-text gaps): `/v1/ohlc?interval=1mo` serves true
+  calendar-month bars from the prices_1mo CAGG (which existed since
+  migration 0002 — only the endpoint's validator rejected it), completing
+  the RFP's suggested-granularity ladder; `/v1/price?window=300|3600|86400`
+  serves the aggregator's continuously-published rolling VWAP for that
+  window (default 60 = the closed-1m-bucket behavior, unchanged) — an
+  unpublished window is an honest 404, never a silent substitution.
 - **Tip freshness hardening** (board #42): an empty rolling window on
   /v1/price/tip now escalates once to the 30s SLA bound before ANY
   closed-bucket fallback. Live samples had shown ~90s staleness on quiet

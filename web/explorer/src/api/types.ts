@@ -834,6 +834,8 @@ export interface paths {
         get: {
             parameters: {
                 query: {
+                    /** @description Aggregation window in seconds (board #43; proposal: the current-price window is query-selectable). Default 60 = the closed 1-minute bucket (ADR-0015 semantics, unchanged). 300/3600/86400 serve the aggregator's continuously-published rolling VWAP for that window; a window the aggregator has not published for the pair is a 404, never a silent substitution. Sub-minute rolling windows: /v1/price/tip. */
+                    window?: "60" | "300" | "3600" | "86400";
                     /**
                      * @description Canonical asset identifier — matches the `asset_id` on
                      *     response bodies. Query-parameter form is the shorter `asset`
@@ -1712,7 +1714,7 @@ export interface paths {
                      *     single-bar response over `[from, to)`. Invalid intervals
                      *     return 400 `errors/invalid-interval`.
                      */
-                    interval?: "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d" | "1w";
+                    interval?: "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d" | "1w" | "1mo";
                     /**
                      * @description Series-mode bar count (max 1000, default 100). Ignored in
                      *     single-bar mode. Invalid values return 400
@@ -8081,7 +8083,7 @@ export interface components {
             /** @description Canonical quote asset id. */
             quote: string;
             /** @enum {string} */
-            interval: "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d" | "1w";
+            interval: "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d" | "1w" | "1mo";
             /**
              * Format: date-time
              * @description Inclusive lower bound of the series window. When the

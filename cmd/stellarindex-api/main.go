@@ -2188,6 +2188,10 @@ func (r storeHistoryReader) OHLCSeries(ctx context.Context, pair canonical.Pair,
 		bars, err = r.s.OHLCSeries(ctx, pair, timescale.Granularity1d, from, to, limit)
 	case "1w":
 		bars, err = r.s.OHLCSeries(ctx, pair, timescale.Granularity1w, from, to, limit)
+	case "1mo":
+		// Calendar-month CAGG (prices_1mo, migration 0002) — the RFP's
+		// suggested-granularity ladder tops out at 1 month (board #43).
+		bars, err = r.s.OHLCSeries(ctx, pair, timescale.Granularity1mo, from, to, limit)
 	case "5m":
 		bars, err = r.s.OHLCSeriesReBucketed(ctx, pair, timescale.Granularity1m, "5 minutes", from, to, limit)
 	case "30m":

@@ -537,6 +537,18 @@ paths:
 
         Returns 404 only when every path above misses.
       parameters:
+        - name: window
+          in: query
+          required: false
+          schema: { type: string, enum: ["60", "300", "3600", "86400"] }
+          description: >-
+            Aggregation window in seconds (board #43; proposal: the
+            current-price window is query-selectable). Default 60 = the
+            closed 1-minute bucket (ADR-0015 semantics, unchanged).
+            300/3600/86400 serve the aggregator's continuously-published
+            rolling VWAP for that window; a window the aggregator has
+            not published for the pair is a 404, never a silent
+            substitution. Sub-minute rolling windows: /v1/price/tip.
         - { $ref: "#/components/parameters/AssetQuery" }
         - { $ref: "#/components/parameters/Quote" }
       responses:
@@ -1010,7 +1022,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w]
+            enum: [1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w, 1mo]
           description: |
             Bar width for multi-bar series mode. Omit for the
             single-bar response over `[from, to)`. Invalid intervals
@@ -5948,7 +5960,7 @@ components:
       properties:
         base:     { type: string, description: "Canonical base asset id." }
         quote:    { type: string, description: "Canonical quote asset id." }
-        interval: { type: string, enum: [1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w] }
+        interval: { type: string, enum: [1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w, 1mo] }
         from:
           type: string
           format: date-time

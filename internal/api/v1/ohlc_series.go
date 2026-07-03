@@ -67,6 +67,7 @@ const (
 	ohlcInterval4h  ohlcInterval = "4h"
 	ohlcInterval1d  ohlcInterval = "1d"
 	ohlcInterval1w  ohlcInterval = "1w"
+	ohlcInterval1mo ohlcInterval = "1mo"
 )
 
 // duration returns the Go [time.Duration] equivalent of an
@@ -92,6 +93,11 @@ func (i ohlcInterval) duration() time.Duration {
 		return 24 * time.Hour
 	case ohlcInterval1w:
 		return 7 * 24 * time.Hour
+	case ohlcInterval1mo:
+		// Calendar months vary; 30d is only used for default-window
+		// sizing (N × interval), where approximation is harmless —
+		// the CAGG buckets themselves are true calendar months.
+		return 30 * 24 * time.Hour
 	}
 	return 0
 }
@@ -119,11 +125,13 @@ func parseOHLCInterval(w http.ResponseWriter, r *http.Request, raw string) (ohlc
 		return ohlcInterval1d, true
 	case "1w":
 		return ohlcInterval1w, true
+	case "1mo":
+		return ohlcInterval1mo, true
 	}
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/invalid-interval",
 		"Invalid interval", http.StatusBadRequest,
-		"interval must be one of: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w (got "+strconv.Quote(raw)+")")
+		"interval must be one of: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w, 1mo (got "+strconv.Quote(raw)+")")
 	return "", false
 }
 

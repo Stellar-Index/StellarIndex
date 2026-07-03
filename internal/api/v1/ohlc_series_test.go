@@ -71,7 +71,7 @@ func TestOHLCSeries_ReturnsIntervalsArray(t *testing.T) {
 func TestOHLCSeries_InvalidInterval400(t *testing.T) {
 	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
 	ts := httpTestServer(t, srv)
-	for _, raw := range []string{"foo", "2h", "1mo", "10s", " 1h"} {
+	for _, raw := range []string{"foo", "2h", "10s", " 1h"} {
 		resp := mustGet(t, ts.URL+"/v1/ohlc?base=native&quote=fiat:USD&interval="+raw)
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("interval=%q: status = %d, want 400", raw, resp.StatusCode)
