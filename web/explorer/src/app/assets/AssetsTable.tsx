@@ -230,7 +230,10 @@ export function AssetsTable({
       <Pagination
         cursor={cursor}
         nextCursor={data?.next_cursor ?? ''}
-        onPrev={() => router.back()}
+        // AM-18: history.back() walks off-site when a cursor URL is
+        // opened directly; keyset cursors can't step backwards, so
+        // "previous" honestly means "back to the top".
+        onPrev={() => setQuery({ cursor: '' })}
         onNext={() =>
           data?.next_cursor && setQuery({ cursor: data.next_cursor })
         }
@@ -241,8 +244,8 @@ export function AssetsTable({
         <code className="rounded-sm bg-surface-subtle px-1 font-mono text-[11px]">
           {endpoint}?asset_class={assetClass}
         </code>
-        . Catalogue rows surface first (market-cap desc — fiats top
-        the chart), then long-tail Stellar-classic rows by 24h
+        . Verified catalogue rows surface first, then long-tail
+        Stellar-classic rows by 24h
         volume. Per-asset issuer + on-chain pool detail lives on{' '}
         <code className="rounded-sm bg-surface-subtle px-1 font-mono text-[11px]">
           /assets/&#123;slug&#125;
@@ -510,7 +513,7 @@ function Pagination({
         onClick={onPrev}
       >
         <ChevronLeft className="h-3.5 w-3.5" />
-        Previous
+        Back to top
       </Button>
       <span className="text-xs text-ink-faint">
         {hasPrev || hasNext ? 'Cursor-paginated' : ' '}

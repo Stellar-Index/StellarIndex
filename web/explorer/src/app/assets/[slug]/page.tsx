@@ -475,7 +475,13 @@ export async function generateMetadata({
   // treat /assets/XLM and /assets/native as separate pages with
   // duplicate content.
   const canonicalSlug = globalView?.slug ?? coin?.slug ?? slug;
-  const canonical = `https://stellarindex.io/assets/${canonicalSlug}`;
+  // AM-16: fiat currencies have two detail pages (/assets/us-dollar and
+  // /external/assets/us-dollar — split identity, duplicate content).
+  // The external page is canonical post-LC-001; point crawlers there.
+  const canonical =
+    globalView?.class === 'fiat'
+      ? `https://stellarindex.io/external/assets/${canonicalSlug}`
+      : `https://stellarindex.io/assets/${canonicalSlug}`;
 
   return {
     title,

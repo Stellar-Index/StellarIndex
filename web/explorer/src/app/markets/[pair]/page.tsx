@@ -375,11 +375,11 @@ export default async function PairPage({ params }: { params: Params }) {
 
         <SourceBreakdown base={base} quote={quote} />
 
-        <Panel title="Activity" subtitle="last 24h">
+        <Panel title="Recent activity" subtitle={`last ${history.length} trades`}>
           <dl className="grid grid-cols-2 gap-2 text-sm">
-            <Stat label="Trades sampled" value={history.length.toLocaleString()} />
+            <Stat label="Trades in sample" value={history.length.toLocaleString()} />
             <Stat
-              label="Sources"
+              label="Sources in sample"
               value={perSource.size.toString()}
             />
             {points[points.length - 1]?.v_usd && (
