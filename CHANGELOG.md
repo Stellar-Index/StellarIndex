@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.7.6] — 2026-07-03
+
 ### Fixed
 - **Catalogue analytics actually ship** (the v0.7.4/v0.7.5 fix landed in
   the wrong function): two code paths share a byte-identical price-fill
