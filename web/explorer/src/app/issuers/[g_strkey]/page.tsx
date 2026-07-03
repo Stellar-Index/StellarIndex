@@ -66,7 +66,8 @@ export async function generateStaticParams() {
     '/v1/issuers listing for /issuers/[g_strkey] static params',
   );
   const keys = rows.map((i) => i.g_strkey).filter(Boolean);
-  return [{ g_strkey: 'shell' }, ...keys].length > 0 ? keys.map((g_strkey) => ({ g_strkey })) : fallback;
+  const params = keys.length > 0 ? keys.map((g_strkey) => ({ g_strkey })) : fallback;
+  return [{ g_strkey: 'shell' }, ...params];
 }
 
 function fetchIssuer(gStrkey: string): Promise<IssuerDetail | null> {
