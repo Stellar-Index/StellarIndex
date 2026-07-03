@@ -85,7 +85,7 @@ export function HomeNetworkStrip() {
         value={
           exchangeSources != null ? `${exchangeSources}` : '—'
         }
-        sub="Class = exchange"
+        sub="exchange feeds live"
         href="/sources"
       />
       {xlmPrice != null ? (

@@ -89,7 +89,8 @@ export function PoolsTable({
 
   return (
     <Panel
-      title={`${sourceName} pools`}
+      // S-023: SDEX is an order book — 'pools' misnames its rows.
+      title={sourceName === 'sdex' ? 'SDEX markets' : `${sourceName} pools`}
       hint="One row per (base, quote) pair observed in the last 14 days"
       source={asExample('/v1/markets', { source, order_by: order, limit: PAGE_LIMIT })}
       bodyClassName="-mx-4"
