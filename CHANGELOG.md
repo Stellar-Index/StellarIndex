@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.7.3] — 2026-07-03
+
 ### Added
 - **Developer-experience batch** (dev-surfaces audit): the root README's
   "Start here" gains a Go SDK section (install line + the doc.go quick
