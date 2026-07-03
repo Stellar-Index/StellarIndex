@@ -85,6 +85,10 @@ interface CoinPriceRow {
   price_usd?: string | null;
   volume_24h_usd?: string | null;
   change_24h_pct?: string | null;
+  // ISS-1: served by the same fetch all along, previously dropped —
+  // supply and market cap are the canonical issuer questions.
+  circulating_supply?: string | null;
+  market_cap_usd?: string | null;
 }
 
 async function fetchIssuerCoins(gStrkey: string): Promise<Map<string, CoinPriceRow>> {
@@ -303,7 +307,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Panel
           title="Activity"
-          source={asExample('/v1/issuers/{g_strkey}', { g_strkey })}
+          source={asExample(`/v1/issuers/${g_strkey}`)}
           panelId="activity-card"
           className="lg:col-span-2"
         >
@@ -431,7 +435,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
       <Panel
         title={`Issued assets (${detail.assets?.length ?? 0})`}
         hint="All classic assets we've observed minted by this G-strkey"
-        source={asExample('/v1/issuers/{g_strkey}', { g_strkey })}
+        source={asExample(`/v1/issuers/${g_strkey}`)}
         bodyClassName="-mx-4"
       >
         {!detail.assets || detail.assets.length === 0 ? (
@@ -447,6 +451,8 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                   <Th align="right">Price</Th>
                   <Th align="right">24h %</Th>
                   <Th align="right">24h volume</Th>
+                  <Th align="right">Market cap</Th>
+                  <Th align="right">Circulating</Th>
                   <Th align="right">Observations</Th>
                   <Th align="right">First seen</Th>
                 </tr>
@@ -485,6 +491,16 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                       </Td>
                       <Td align="right">
                         <UsdVolumeCell raw={coin?.volume_24h_usd} />
+                      </Td>
+                      <Td align="right">
+                        <UsdVolumeCell raw={coin?.market_cap_usd} />
+                      </Td>
+                      <Td align="right">
+                        <span className="font-mono tabular-nums">
+                          {coin?.circulating_supply
+                            ? formatCompact(Number(coin.circulating_supply) / 1e7)
+                            : '—'}
+                        </span>
                       </Td>
                       <Td align="right">
                         <span className="font-mono tabular-nums">
