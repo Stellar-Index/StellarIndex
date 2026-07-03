@@ -63,9 +63,10 @@ The last command names the flooding unit directly.
   2026-06-11 writer can't touch root.
 - journald capped at 500M (`journald.conf.d/00-cap.conf`).
 - rsyslog drops loki + clickhouse-server unit output from syslog
-  (`10-suppress-noisy-units.conf` — restored 2026-07-03 after it
-  drifted off r1; ansible role 15-log-discipline.yml is the source
-  of truth).
+  (`10-suppress-noisy-units.conf` — applied 2026-07-03; forensics
+  showed it was NEVER live on r1, only codified in ansible role
+  15-log-discipline.yml, which does not auto-run against r1 — the
+  2026-06-11 postmortem recorded codified-as-applied).
 - Open margin item: 16G of the 49G root is a swap file
   (`/swap_f1209`, ~1G used, with a separate 4G md0 swap partition) —
   dropping it doubles root headroom. Operator decision.
