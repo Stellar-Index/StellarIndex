@@ -5710,6 +5710,16 @@ components:
         # (for vwap/twap). RFC 3339, UTC.
         observed_at:       { type: string, format: date-time }
         window_seconds:    { type: integer, nullable: true, description: "Window size for vwap/twap; omitted for last_trade." }
+        change_24h_pct:
+          type: string
+          nullable: true
+          description: >-
+            Trailing-24h percentage change vs the asset's USD price ~24h
+            ago (signed, two fractional digits — "+1.27"). Present on
+            /v1/price/batch rows when the quote is fiat:USD and a closed
+            comparison bucket exists; omitted otherwise. Pairs current
+            price with 24h change in ONE bulk call for wallet portfolio
+            screens.
         # Confidence score per ADR-0019. Populated only on /v1/price
         # (the closed-bucket surface) when the aggregator's
         # confidence-compute path has cached a fresh score for the

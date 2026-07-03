@@ -16,6 +16,14 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Batch price rows carry `change_24h_pct`** (board #41): /v1/price/batch
+  rows with a fiat:USD quote pair current price with the signed trailing-24h
+  change — the exact bulk shape the Freighter RFP names for portfolio
+  screens. Silent-nil when no comparison bucket exists (a missing change
+  never costs the price itself). Audit corrected en route: `fdv_usd`,
+  `max_supply`, and detail `change_24h_pct` already existed with correct
+  null-omission semantics — the first pass mistook null-omission for
+  absence.
 - **SAC contract-address lookups now return the wrapped asset's full detail
   and price** (board #40, the RFP audit's biggest wallet-facing gap): a
   `/v1/assets/{C...}` lookup whose contract is a Stellar Asset Contract

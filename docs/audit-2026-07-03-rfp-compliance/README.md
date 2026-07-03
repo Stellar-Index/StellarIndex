@@ -48,10 +48,10 @@ fact-checking surfaced and the same-hour remediation.
 | V1 asset metadata fields | ⚠️ | Same `contract_id` gap as above; rest present incl. `home_domain` (SEP-1 resolved, org-verified two-way) |
 | V1 chart timeframes/granularities | ✅ | All five timeframe/granularity rows servable (1min→1d) |
 | V2: market cap | ✅ | `market_cap_usd` live (supply pipeline, CS-010-verified circulating) |
-| V2: FDV | ❌ | **Not exposed** (board #41). Supply domain has max_supply; FDV = max × price |
+| V2: FDV | ✅ | `fdv_usd` served when a max supply exists; correctly null-omitted for uncapped assets (the audit's first pass mistook null-omission for absence) |
 | V2: 24h volume | ✅ | `volume_24h_usd` live |
 | V2: circulating/total supply | ✅ **exceeds** | Live + continuously reconciled vs SDF + Stellar Expert (`verify-served-values`, all green) |
-| V2: max supply (nullable) | ❌ | **Not exposed on the wire** (board #41) |
+| V2: max supply (nullable) | ✅ | `max_supply` served, null-omitted when uncapped — exactly the RFP's nullable semantics |
 | p95 ≤200ms / p99 ≤500ms | ✅ | sla-probe continuous: p95 well under (origin 54ms k6; CDN-cached lower) |
 | Responsiveness ≥99.9% | ✅ | Status page + healthchecks history |
 | Freshness ≤30s | ⚠️ | `/v1/price/tip` origin median 20s ✓ (probe). BUT sampled edge staleness hit ~90s between publishes, and `/v1/price` is deliberately closed-bucket (30–150s, ADR-0015). Needs cadence tightening or clearer tip-endpoint steering in docs (board #42) |
@@ -59,7 +59,7 @@ fact-checking surfaced and the same-hour remediation.
 | Lookup by contract address | ⚠️ | `C...` resolves BUT **the USDC SAC returns no price** — a wallet resolving a SAC gets metadata without price (board #40, the biggest wallet-facing gap) |
 | Retention ≥1yr (ideally inception) | ✅ **exceeds** | Indefinite at every granularity |
 | REST, 1000 req/min | ✅ **exceeds** | 6000/min anonymous (verified header), higher per-key |
-| Bulk: current price + **24h % change** | ⚠️ | `/v1/price/batch` live (100 GET / 500 POST) but rows lack `change_24h_pct` (board #41) |
+| Bulk: current price + **24h % change** | ✅ | batch rows carry `change_24h_pct` for USD quotes (board #41, shipped 2026-07-03) |
 | VWAP > TWAP > last-trade w/ timestamp | ✅ | `price_type` on every response; exact fallback chain per aggregation-plan |
 | USD quote / DEX scope / since-inception=first trade | ✅/⚠️ | USD + arbitrary quotes (exceeds); DEX + CEX + FX (exceeds, disclosed); inception see above |
 

@@ -57,6 +57,11 @@ type PriceSnapshot struct {
 	PriceType     string    `json:"price_type"`
 	ObservedAt    time.Time `json:"observed_at"`
 	WindowSeconds int       `json:"window_seconds,omitempty"`
+
+	// Change24hPct is the trailing-24h percentage change vs USD
+	// (signed, 2dp) on batch rows with a fiat:USD quote. Nil
+	// otherwise.
+	Change24hPct *string `json:"change_24h_pct,omitempty"`
 	// Confidence is the multi-factor confidence score per ADR-0019,
 	// in [0, 1]. Populated only on /v1/price (the closed-bucket
 	// surface) when the aggregator has cached a fresh score. Nil

@@ -151,6 +151,14 @@ type PriceSnapshot struct {
 	// Zero for last_trade.
 	WindowSeconds int `json:"window_seconds,omitempty"`
 
+	// Change24hPct is the trailing-24h percentage change vs the
+	// asset's USD price ~24h ago (signed, two fractional digits —
+	// "+1.27"). Populated on batch rows when the quote is fiat:USD
+	// and a closed comparison bucket exists — the Freighter RFP's
+	// bulk requirement pairs current price WITH 24h change (board
+	// #41). Omitted otherwise.
+	Change24hPct *string `json:"change_24h_pct,omitempty"`
+
 	// Confidence is the multi-factor confidence score per ADR-0019,
 	// in [0, 1]. Populated only on `/v1/price` (the closed-bucket
 	// surface) — tip/observations/oracle surfaces leave it unset
@@ -1100,6 +1108,7 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 			// surfaces flags.triangulated for these same fallbacks, so
 			// the batch envelope must OR it in for parity rather than
 			// silently dropping it.
+			fs.Change24hPct = s.batchChange24h(ctx, asset, quote, fs.Price)
 			return batchRowResult{
 				snap: fs, sources: fsrc, stale: true, triangulated: ftri,
 				asset: asset, ok: true,
@@ -1123,10 +1132,32 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 			title:  "Internal error",
 		}}
 	}
+	snap.Change24hPct = s.batchChange24h(ctx, asset, quote, snap.Price)
 	return batchRowResult{
 		snap: snap, sources: sources, stale: stale, asset: asset, ok: true,
 		frozen: s.lookupFrozen(r, asset, quote),
 	}
+}
+
+// batchChange24h computes the trailing-24h percentage change for a
+// batch row. USD-quoted rows only (the comparison anchor is the USD
+// price 24h ago — same reader /v1/assets/{id} uses); nil when the
+// anchor is unavailable (young asset, retention, non-USD quote, or
+// no reader wired). Failures are silent-nil by design: a missing
+// change must never cost a wallet the price itself.
+func (s *Server) batchChange24h(ctx context.Context, asset, quote canonical.Asset, price string) *string {
+	if s.change24h == nil || !quote.Equal(defaultPriceQuote) {
+		return nil
+	}
+	then, err := s.change24h.USDPrice24hAgo(ctx, asset)
+	if err != nil {
+		return nil
+	}
+	pct, err := pctChange(price, then)
+	if err != nil {
+		return nil
+	}
+	return &pct
 }
 
 // lookupPriceBatch resolves every id concurrently — bounded by

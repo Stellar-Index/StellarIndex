@@ -7893,6 +7893,8 @@ export interface components {
             observed_at: string;
             /** @description Window size for vwap/twap; omitted for last_trade. */
             window_seconds?: number | null;
+            /** @description Trailing-24h percentage change vs the asset's USD price ~24h ago (signed, two fractional digits — "+1.27"). Present on /v1/price/batch rows when the quote is fiat:USD and a closed comparison bucket exists; omitted otherwise. Pairs current price with 24h change in ONE bulk call for wallet portfolio screens. */
+            change_24h_pct?: string | null;
             /**
              * Format: float
              * @description Multi-factor confidence score in [0, 1] (ADR-0019).
