@@ -91,6 +91,11 @@
   ansible.builtin.import_tasks: 17-stellarindex-healthchecks.yml
   tags: [healthchecks, monitoring]
 
+- name: "Caddy public edge"
+  ansible.builtin.import_tasks: 19-caddy.yml
+  when: run_caddy | default(true) | bool
+  tags: [caddy]
+
 - name: "Log discipline (rsyslog cap + journald cap)"
   ansible.builtin.import_tasks: 15-log-discipline.yml
   tags: [log-discipline, logrotate, journald]

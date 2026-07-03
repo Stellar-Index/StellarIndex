@@ -56,6 +56,7 @@
     enabled: true
 
 - name: Create stellar-core Postgres role
+  when: run_stellar_core | bool  # 2026-07-03: core was trimmed from r1 (2026-04-23); creating its DB role unconditionally breaks on hosts whose secrets file has no postgres_pass_core
   community.postgresql.postgresql_user:
     name: "{{ postgres_user_core }}"
     password: "{{ postgres_pass_core }}"

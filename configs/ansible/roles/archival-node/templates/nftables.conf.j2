@@ -67,7 +67,7 @@ table inet filter {
 {% endfor %}
 
     # Log drops at low rate for debugging
-    limit rate 1/second log prefix "nft-drop: " flags all
+    limit rate 5/second log prefix "nft-drop: " level info
   }
 
   # ─── Forward + output ──────────────────────────────────────────

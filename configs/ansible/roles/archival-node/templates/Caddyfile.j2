@@ -1,0 +1,155 @@
+# Stellar Index — Caddy reverse proxy.
+#
+# MANAGED BY ANSIBLE (archival-node/19-caddy.yml) since the 2026-07-03
+# drift audit — this was the last hand-managed public-edge config.
+# configs/caddy/Caddyfile.api in the repo is generated-from/kept-in-sync
+# with this template; edit HERE.
+# Auto-HTTPS via Let's Encrypt; fronts the API (and the showcase if
+# served from this box; today the showcase is on Cloudflare Pages
+# per CLAUDE.md, so this block stays inert until DNS for the showcase
+# is repointed).
+#
+# Cert acquisition needs:
+#   - api.stellarindex.io A record → 136.243.90.96
+#   - Ports 80 + 443 reachable from the public internet
+# Until DNS lands, Caddy retries acquisition every few minutes and
+# falls back to its internal CA for testing on the IP directly.
+#
+# Operator email is for Let's Encrypt account registration —
+# expiration warnings and CA-required notices land here.
+{
+	email tls@stellarindex.io
+	# Auto-HTTPS on by default. If we ever need a no-DNS test mode:
+	#   auto_https disable_redirects
+	# but leave it on for production.
+
+	# ─── Real client IP from Cloudflare ────────────────────────────
+	# Without this block, Caddy sees Cloudflare's edge IP as the
+	# immediate peer, propagates that as X-Forwarded-For, and the
+	# API logs every request as if it came from a CF edge POP.
+	# Worse: per-IP rate-limit buckets become per-CF-edge buckets,
+	# so a single CF edge hitting the burst threshold blocks every
+	# customer behind it.
+	#
+	# Fix: trust X-Forwarded-For + CF-Connecting-IP only when the
+	# immediate peer is in Cloudflare's published IP ranges (CF
+	# guarantees these and changes them rarely — refresh from
+	# https://www.cloudflare.com/ips-v4 + ips-v6 on quarterly
+	# audits or when CF publishes a notice).
+	#
+	# `client_ip_headers` order matters: CF-Connecting-IP first
+	# (canonical for CF-fronted services), then X-Forwarded-For
+	# (defensive fallback if CF-Connecting-IP is ever stripped
+	# upstream). Caddy substitutes {client_ip} with the resolved
+	# value; the API's trusted_proxy_cidrs (still 127.0.0.1/32)
+	# then trusts Caddy's downstream X-Forwarded-For.
+	servers {
+		trusted_proxies static \
+			173.245.48.0/20 \
+			103.21.244.0/22 \
+			103.22.200.0/22 \
+			103.31.4.0/22 \
+			141.101.64.0/18 \
+			108.162.192.0/18 \
+			190.93.240.0/20 \
+			188.114.96.0/20 \
+			197.234.240.0/22 \
+			198.41.128.0/17 \
+			162.158.0.0/15 \
+			104.16.0.0/13 \
+			104.24.0.0/14 \
+			172.64.0.0/13 \
+			131.0.72.0/22 \
+			2400:cb00::/32 \
+			2606:4700::/32 \
+			2803:f800::/32 \
+			2405:b500::/32 \
+			2405:8100::/32 \
+			2a06:98c0::/29 \
+			2c0f:f248::/32
+		client_ip_headers CF-Connecting-IP X-Forwarded-For
+	}
+}
+
+# ─── API ──────────────────────────────────────────────────────────
+{{ caddy_site_addresses }} {
+	# Trust X-Forwarded-* headers from Caddy itself (the API's
+	# trusted_proxy_cidrs config should include 127.0.0.1/32 so it
+	# honours the headers Caddy sets).
+	header {
+		# Standard hardening — Caddy sets some by default; explicit
+		# values here belt-and-braces in case of upstream regression.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Allow CORS at this layer too; the API also CORS-handles per
+		# cfg.API.AllowedOrigins.
+		-Server
+	}
+
+	# Block the Prometheus metrics endpoint from the public domain.
+	# The API binary serves /metrics on :3000 alongside /v1/* (one
+	# port = one ServeMux), and the catch-all reverse_proxy below
+	# would otherwise forward the public hit straight through. Local
+	# Prometheus scraping uses 127.0.0.1:3000/metrics directly (per
+	# `prometheus.r1.yml`) and is unaffected — only the public-facing
+	# api.stellarindex.io path is closed. Surface area note: Go
+	# runtime stats, request counters, and per-source ingest gauges
+	# leaked operational fingerprinting to anyone hitting the public
+	# URL; status.stellarindex.io is the right surface for public
+	# transparency.
+	respond /metrics 404 {
+		close
+	}
+
+	# Health probe — Caddy reverse_proxy active health-check.
+	# Drops the upstream from rotation if /v1/healthz starts returning
+	# non-200, surfaces in /metrics. With one upstream this means
+	# 502 on probe failure, but it's the right signal.
+	reverse_proxy localhost:3000 {
+		health_uri /v1/healthz
+		health_interval 10s
+		health_timeout 3s
+		health_status 200
+		# Forward the original Host header so the API can read it
+		# (subdomain-based routing isn't in use today, but leaves
+		# the door open).
+		header_up Host {host}
+		# {client_ip} is Caddy's resolved real-client IP from the
+		# global trusted_proxies + client_ip_headers config above —
+		# safe to forward because it's only set when the immediate
+		# peer is in CF's published IP ranges. Forwarding
+		# {remote_host} here would re-introduce the bug (CF edge IP
+		# instead of real client). The API already trusts
+		# X-Forwarded-For from 127.0.0.1 (Caddy itself), so the
+		# resolved value flows through to the rate-limit and access-
+		# log layers correctly.
+		header_up X-Real-IP {client_ip}
+		header_up X-Forwarded-For {client_ip}
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	# Access logs — JSON to journald, picks up centralized log
+	# aggregation (Loki) when that lands.
+	log {
+		output stdout
+		format json
+		# Skip /v1/healthz spam from the active health check.
+		# It runs every 10s; not interesting in the access log.
+	}
+}
+
+# ─── Future: showcase ─────────────────────────────────────────────
+# When stellarindex.io is repointed off Cloudflare Pages and onto
+# this box, uncomment the block below and arrange for the static
+# Next.js export to land at /var/www/showcase. Today the showcase
+# is served from Cloudflare Pages directly so this block stays
+# commented out.
+#
+# stellarindex.io, www.stellarindex.io {
+#     root * /var/www/showcase
+#     try_files {path} {path}.html /index.html
+#     file_server
+#     header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+# }

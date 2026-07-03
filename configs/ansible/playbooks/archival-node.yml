@@ -27,5 +27,12 @@
           This role targets Ubuntu 22.04 or 24.04 LTS. Got
           {{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}.
 
+  # Vault-encrypted region secrets (postgres passwords, MinIO keys,
+  # healthcheck ping URLs). Wired 2026-07-03 — previously the README
+  # implied it but nothing loaded the file, so every secret-using task
+  # died on undefined vars. Override secrets_file for other regions.
+  vars_files:
+    - "{{ secrets_file | default('../inventory/r1.secrets.yml') }}"
+
   roles:
     - role: archival-node

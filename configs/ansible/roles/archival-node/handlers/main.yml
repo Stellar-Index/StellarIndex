@@ -131,3 +131,8 @@
   ansible.builtin.systemd:
     name: redis-server
     state: restarted
+
+- name: Reload caddy
+  ansible.builtin.systemd:
+    name: caddy
+    state: reloaded

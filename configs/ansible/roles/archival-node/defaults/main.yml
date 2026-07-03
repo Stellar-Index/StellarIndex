@@ -580,3 +580,8 @@ stellarindex_reserve_balances_stroops:
   "GAMGGUQKKJ637ILVDOSCT5X7HYSZDUPGXSUW67B2UKMG2HEN5TPWN3LQ": "33893046756702151"
   "GANII5Y2LABEBK74NWNKS4NREX2T52YTBGQDRDKVBFRIIF5VE4ORYOVY": "52873404079631"
   "GBEZOC5U4TVH7ZY5N3FLYHTCZSI6VFGTULG7PBITLF5ZEBPJXFT46YZM": "2588858475135952"
+
+# Caddy public edge. The legacy alias still serves traffic (2026-07-03);
+# see 19-caddy.yml before removing it.
+run_caddy: true
+caddy_site_addresses: "api.ratesengine.net, api.stellarindex.io"

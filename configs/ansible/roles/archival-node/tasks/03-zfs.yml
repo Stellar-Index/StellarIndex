@@ -24,6 +24,26 @@
 # have to know the exact byte offset where p3 ended. Typecode BF01
 # is Solaris/ZFS root, which is what zpool expects. The
 # 'creates:' guard makes this idempotent.
+# SAFETY GATE (added 2026-07-03 after the drift-audit dry run caught the
+# r1 inventory pointing this task at a whole-disk zpool member — nvme
+# device names are not boot-stable). Refuse to touch any listed drive
+# that (a) is referenced anywhere in current zpool status, or (b) does
+# not already carry the 3-partition OS-mirror layout this task extends.
+- name: "SAFETY: listed carve targets must be OS-mirror drives, never pool members"
+  ansible.builtin.shell: |
+    set -e
+    dev="{{ item }}"
+    if zpool status -P 2>/dev/null | grep -q "${dev}"; then
+      echo "REFUSING: ${dev} appears in zpool status (pool member)"; exit 1
+    fi
+    for p in 1 2 3; do
+      [ -e "${dev}p${p}" ] || { echo "REFUSING: ${dev} lacks OS partition p${p}"; exit 1; }
+    done
+  loop: "{{ zfs_os_drives_needing_data_partition }}"
+  changed_when: false
+  check_mode: false
+  tags: [zfs]
+
 - name: Carve ZFS data partition on OS-mirror drives
   ansible.builtin.command: >-
     sgdisk

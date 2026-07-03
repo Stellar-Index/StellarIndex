@@ -235,3 +235,74 @@
   notify:
     - Restart redis
   tags: [log-discipline, redis]
+
+# ─── nft-drop log routing (hand-applied 2026-06-30, codified 2026-07-03
+# in the drift audit) ────────────────────────────────────────────────
+# Firewall drop logs go to their own small rotated file instead of
+# /var/log/syslog — the security record is preserved but syslog stays
+# readable and the root FS stays bounded (same class of guard as the
+# clickhouse/loki suppression above).
+- name: Route nft-drop kernel log lines to their own file
+  ansible.builtin.copy:
+    dest: /etc/rsyslog.d/10-nft-drop.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible (archival-node/15-log-discipline.yml).
+      # security record is preserved but syslog stays readable + small.
+      :msg, contains, "nft-drop" -/var/log/nft-drop.log
+      & stop
+  notify:
+    - Reload rsyslog
+  tags: [log-discipline, rsyslog, firewall]
+
+- name: Rotate the nft-drop log
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/nft-drop
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      /var/log/nft-drop.log {
+          daily
+          rotate 5
+          compress
+          missingok
+          notifempty
+          create 0640 syslog adm
+      }
+  tags: [log-discipline, firewall]
+
+# ─── config-assertions watchdog (2026-07-03 drift audit) ─────────────
+# Hourly content-assertions over the load-bearing guard configs; the
+# textfile gauge feeds stellarindex_config_assertion_failed. A rebuild
+# without this ships a host whose incident fixes can silently regress.
+- name: Install config-assertions script
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../scripts/ops/config-assertions.sh"
+    dest: /usr/local/bin/config-assertions.sh
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [log-discipline, config-assertions]
+
+- name: Install config-assertions systemd units
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../deploy/systemd/{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - config-assertions.service
+    - config-assertions.timer
+  tags: [log-discipline, config-assertions]
+
+- name: Enable the config-assertions timer
+  ansible.builtin.systemd:
+    name: config-assertions.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  tags: [log-discipline, config-assertions]

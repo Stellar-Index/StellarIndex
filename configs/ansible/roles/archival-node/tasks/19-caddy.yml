@@ -1,0 +1,53 @@
+---
+# Caddy — the public TLS-terminating edge for the /v1 API.
+#
+# Codified 2026-07-03 (drift audit): Caddy was the last hand-managed
+# public-edge config — no role installed it, so a rebuild shipped an
+# archival node with no public API at all, and a naive nftables render
+# was one missing default away from firewalling it dead (the 80/443
+# rules live in public_allow_ports_base; config-assertions.sh asserts
+# them live).
+#
+# caddy_site_addresses keeps the legacy api.ratesengine.net alias —
+# it still resolves and serves traffic (verified 2026-07-03); drop it
+# only with a deprecation window + redirect plan.
+
+- name: Install Caddy signing key
+  ansible.builtin.get_url:
+    url: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
+    dest: /etc/apt/keyrings/caddy.asc
+    mode: "0644"
+  tags: [caddy]
+
+- name: Add Caddy apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/caddy.asc] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main"
+    filename: caddy-stable
+    state: present
+  tags: [caddy]
+
+- name: Install Caddy
+  ansible.builtin.apt:
+    name: caddy
+    state: present
+    update_cache: true
+  tags: [caddy]
+
+- name: Install the Caddyfile
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: /etc/caddy/Caddyfile
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "caddy validate --adapter caddyfile --config %s"
+  notify:
+    - Reload caddy
+  tags: [caddy]
+
+- name: Enable caddy
+  ansible.builtin.systemd:
+    name: caddy
+    enabled: true
+    state: started
+  tags: [caddy]
