@@ -235,3 +235,33 @@ someone wrote something a particular way.
   trust.
 
 Welcome aboard.
+
+## New explorer pages — the ten questions
+
+Every new page (or major page rework) in `web/explorer` ships against
+this checklist — it exists because the 2026-07-03 site audit found a
+class of pages that rendered data without answering their visitor
+(full rubric: `docs/audit-2026-07-03-site/PLAN.md`):
+
+1. What question does a visitor arrive with — is it answered above the fold?
+2. Does every nav label pointing here promise what the page delivers?
+3. If the page lists a subset (top-N, curated), does it SAY so?
+4. Is every entity mention linked, resolving, and named (never a raw
+   strkey when a name exists — use `AssetLabel`, SAC wrappers, issuer orgs)?
+5. Are empty, loading, and error states distinct? (An error must never
+   render as a confident "nothing exists" claim.)
+6. Would a power user call it useful, or a table dump? What chart or
+   aggregate is the obvious missing one?
+7. Are SACs, protocol contracts, and locked/system accounts handled
+   with identity, not as anonymous hashes?
+8. Amounts at asset decimals, times relative + absolute, addresses
+   truncated with copy, USD equivalents where known?
+9. Title/description/canonical set — WITHOUT repeating the layout's
+   `· Stellar Index` suffix; noindex on long-tail shells?
+10. Does the API serve fields the page drops, or does the page expect
+    fields the API doesn't serve? (The two silent-contract bugs of the
+    audit — check the generated `src/api/types.ts` against the render.)
+
+The weekly `site-crawl.yml` workflow enforces the mechanical slice of
+this (dead links, placeholder text, doubled titles, canonical
+encoding, census counts) against production.

@@ -1,0 +1,29 @@
+---
+# Weekly production crawl guard (site audit 2026-07-03, Wave E).
+#
+# The July audit found silent site rot: pages 404ing from the site's
+# own links, canonicals pointing at dead URLs, doubled titles, a
+# curated sliver presented as the asset universe. Each incident is
+# pinned as a check in scripts/ci/site-crawl-check.sh; this runs the
+# battery weekly against production and on demand.
+#
+# Read-only: ~80 GETs against the public site + API, no secrets.
+
+name: site-crawl
+
+on:
+  schedule:
+    - cron: '20 6 * * 1' # Mondays 06:20 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Run the site crawl battery
+        run: bash scripts/ci/site-crawl-check.sh
