@@ -92,6 +92,22 @@ jobs:
           test -f out/index.html || { echo "out/index.html missing — sitemap or routing broken"; exit 1; }
           ls -la out/ | head
 
+      # TRIAGE (site-audit S-024, 2026-07-03): Next 16 emits ~8 per-segment
+      # RSC prefetch files per page (__next.*.txt) for its client segment
+      # cache — 36k files at our page count, past Cloudflare Pages' hard
+      # 20,000-file cap. Every deploy since the Next 15→16 bump silently
+      # failed here and the site froze on a June-24 build. The segment
+      # files are prefetch-only: the client treats a missing segment as a
+      # cache miss and falls back to the standard index.txt RSC fetch
+      # (verified by browsing a pruned build). Pruning restores deploys
+      # while ADR-0044 (edge SSR) replaces static export as the real fix.
+      - name: Prune Next 16 segment-cache prefetch files
+        run: |
+          BEFORE=$(find web/explorer/out -type f | wc -l)
+          find web/explorer/out -type f -name "__next.*" -delete
+          AFTER=$(find web/explorer/out -type f | wc -l)
+          echo "pruned segment files: $BEFORE -> $AFTER"
+
       # Fail BEFORE the CF upload if the static export approaches Cloudflare
       # Pages' 20,000-file-per-deployment cap (Spike A 2026-06-24; SEO plan R1).
       # Exceeding it makes `wrangler pages deploy` fail opaquely; this surfaces
