@@ -17,6 +17,12 @@ interface CurrencyRow {
 // can switch to "All currencies" to see every ticker the forex
 // snapshot returns.
 const FEATURED = ['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'CNY', 'INR', 'BRL', 'MXN'];
+// AM-26: the full verified fiat set — the "show all" branch was a
+// fiction while the batch only requested the featured ten.
+const ALL_FIAT = [
+  ...FEATURED,
+  'KRW', 'HKD', 'SGD', 'SEK', 'NOK', 'ZAR', 'TRY', 'NZD',
+];
 
 /**
  * AssetConverter — bidirectional USD ↔ asset converter.
@@ -56,7 +62,7 @@ export function AssetConverter({
   const fx = useQuery<CurrencyRow[]>({
     queryKey: ['/v1/price/batch', 'forAssetConverter'],
     queryFn: async () => {
-      const assetIds = FEATURED.filter((t) => t !== 'USD')
+      const assetIds = ALL_FIAT.filter((t) => t !== 'USD')
         .map((t) => `fiat:${t}`)
         .join(',');
       const env = await apiGet<{
