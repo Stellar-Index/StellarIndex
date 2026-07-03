@@ -7810,6 +7810,8 @@ export interface components {
             name: string;
             /** @description Short attribution string (e.g. "Circle (centre.io)"). Empty when the catalogue entry didn't include a verified_issuer_label. */
             verified_issuer?: string;
+            /** @description Asset logo URL from the issuer's SEP-1 TOML (https-only, sanitized). Wallets bulk-load logos from this listing. */
+            image?: string | null;
             /** @description CoinGecko slug for this currency (when known). */
             coingecko_id?: string;
             /** @description CoinMarketCap integer ID for this currency (when known). */

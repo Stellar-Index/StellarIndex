@@ -919,8 +919,11 @@ type VerifiedCurrencyListItem struct {
 	Name   string `json:"name"`
 	// Class is one of "crypto" / "stablecoin" / "fiat" — drives the
 	// listing taxonomy on consumers (R-018 assets-unification).
-	Class             string `json:"class"`
-	VerifiedIssuer    string `json:"verified_issuer,omitempty"`
+	Class          string `json:"class"`
+	VerifiedIssuer string `json:"verified_issuer,omitempty"`
+	// Image is the asset's logo URL from the issuer's SEP-1 TOML
+	// (https-only, sanitized). Empty when unavailable.
+	Image             string `json:"image,omitempty"`
 	CoinGeckoID       string `json:"coingecko_id,omitempty"`
 	CMCID             string `json:"coinmarketcap_id,omitempty"`
 	CirculatingSupply string `json:"circulating_supply,omitempty"`
