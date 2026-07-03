@@ -473,12 +473,18 @@ function CodeHistoryPanel({ id }: { id: string }) {
       </Panel>
     );
   }
-  if (isError || versions.length === 0) {
+  if (isError) {
     return (
       <Panel title="Code history" source={source} bodyClassName="text-sm text-ink-muted">
-        No code changes in the captured ledger window — the contract’s
-        instance/upgrade entries aren’t captured yet (fills in with the
-        Phase-C backfill).
+        The code-history lookup failed — reload to retry.
+      </Panel>
+    );
+  }
+  if (versions.length === 0) {
+    return (
+      <Panel title="Code history" source={source} bodyClassName="text-sm text-ink-muted">
+        No code changes in the captured ledger window — the contract has not
+        been upgraded since capture began.
       </Panel>
     );
   }
@@ -665,7 +671,14 @@ function InteractionsPanel({ id }: { id: string }) {
       </Panel>
     );
   }
-  if (isError || edges.length === 0) {
+  if (isError) {
+    return (
+      <Panel title="Interaction map" source={source} bodyClassName="text-sm text-ink-muted">
+        The interaction-map scan failed or timed out — reload to retry.
+      </Panel>
+    );
+  }
+  if (edges.length === 0) {
     return (
       <Panel title="Interaction map" source={source} bodyClassName="text-sm text-ink-muted">
         No cross-contract interactions observed in the last 90 days — this
