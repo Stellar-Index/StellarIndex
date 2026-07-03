@@ -70,12 +70,12 @@ export function AssetSidebar({
 
   // Circulating-supply progress: against max if known, else total.
   const denom = max ?? total ?? null;
+  // AM-22: when neither max nor total is known, the bar previously
+  // asserted 100% — fabricated certainty. Unknown renders as no bar.
   const circPct =
     circulating != null && denom != null && denom > 0
       ? Math.min(100, (circulating / denom) * 100)
-      : circulating != null && max == null && total == null
-        ? 100
-        : null;
+      : null;
 
   return (
     <div className="space-y-4">
@@ -133,7 +133,7 @@ export function AssetSidebar({
         <StatRow label="Vol / Mkt Cap" value={volMktCap != null ? `${(volMktCap * 100).toFixed(2)}%` : '—'} />
         <StatRow label="FDV" value={usd(fdv)} />
         <StatRow label="Total supply" value={supply(total, code)} />
-        <StatRow label="Max supply" value={max != null ? supply(max, code) : '∞'} />
+        <StatRow label="Max supply" value={max != null ? supply(max, code) : '—'} />
         <div className="px-4 py-3">
           <div className="flex items-baseline justify-between">
             <span className="text-[11px] uppercase tracking-wider text-ink-muted">
