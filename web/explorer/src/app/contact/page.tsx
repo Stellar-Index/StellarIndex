@@ -4,7 +4,7 @@ import { AlertTriangle, ArrowRight, ExternalLink, KeyRound, Lock, MessageSquare 
 import { GithubIcon } from '@/components/GithubIcon';
 
 export const metadata: Metadata = {
-  title: 'Contact — Stellar Index',
+  title: 'Contact',
   description:
     'How to reach the Stellar Index team. Security disclosures, sales for higher rate-limit tiers, GitHub for general issues, status feed for incident updates.',
   alternates: { canonical: '/contact' },

@@ -133,7 +133,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { pair } = await params;
   const decoded = decodePairSlug(pair);
-  if (!decoded) return { title: 'Pair — Stellar Index' };
+  if (!decoded) return { title: 'Pair' };
   const baseLabel = shortAsset(decoded.base);
   const quoteLabel = shortAsset(decoded.quote);
   // Best-effort price fetch so the social-share preview reads as
@@ -641,8 +641,14 @@ function AssetBadge({ canonical }: { canonical: string }) {
   } else {
     const dashIx = canonical.indexOf('-');
     if (dashIx !== -1) {
+      // AM-09: link the FULL canonical id, not the bare code — the
+      // code form 404s for anything outside the top-500 listing AND
+      // can resolve to the wrong issuer's asset on code collisions
+      // (every USDC-alike shares /assets/USDC). The canonical-id
+      // routes are emitted for exactly the same set of assets, so
+      // this never links worse and always links precisely.
       label = canonical.slice(0, dashIx);
-      slug = label;
+      slug = canonical;
     } else if (canonical.length <= 12) {
       slug = canonical;
     }

@@ -14,7 +14,7 @@ export function generateStaticParams() {
 }
 
 export const metadata: Metadata = {
-  title: 'Ledger — Stellar Index',
+  title: 'Ledger',
   description:
     'Stellar ledger detail: close time, transaction and operation counts, and the transactions in the ledger.',
   robots: { index: false, follow: true },

@@ -65,7 +65,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { name } = await params;
   const canonical = `https://stellarindex.io/sources/${encodeURIComponent(name)}`;
-  const title = `${name} — source detail · Stellar Index`;
+  const title = `${name} — source detail`;
   const description = `Per-venue source metadata, ingest cursor, and contribution profile for ${name}.`;
   return {
     title,

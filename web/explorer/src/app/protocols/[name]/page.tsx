@@ -30,8 +30,8 @@ export async function generateMetadata({
   const meta = protocolMeta(name);
   const canonical = `https://stellarindex.io/protocols/${encodeURIComponent(name)}`;
   const title = meta
-    ? `${meta.label} — protocol analytics · Stellar Index`
-    : `${name} — protocol analytics · Stellar Index`;
+    ? `${meta.label} — protocol analytics`
+    : `${name} — protocol analytics`;
   const description = meta
     ? `${meta.description} Every contract, event type and on-chain activity for ${meta.label}, verified against the certified ledger lake.`
     : `On-chain analytics, contract roster and event-type breakdown for ${name}.`;

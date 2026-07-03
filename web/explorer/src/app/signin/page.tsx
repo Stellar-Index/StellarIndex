@@ -6,7 +6,7 @@ import { SignInForm } from './SignInForm';
 export const metadata: Metadata = {
   // Auth form — no SEO value; keep it out of the index (and the sitemap).
   robots: { index: false, follow: false },
-  title: 'Sign in — Stellar Index',
+  title: 'Sign in',
   description:
     'Sign in to your Stellar Index account. Magic-link email auth — no passwords.',
 };

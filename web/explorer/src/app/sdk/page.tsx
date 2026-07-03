@@ -5,7 +5,7 @@ import { ExternalLink } from 'lucide-react';
 import { CopyableSnippet } from '../widgets/CopyableSnippet';
 
 export const metadata: Metadata = {
-  title: 'Go SDK — Stellar Index',
+  title: 'Go SDK',
   description:
     'Official Go SDK for the Stellar Index API. Idiomatic typed client, SemVer-stable surface, paste-ready examples for every common pattern.',
   alternates: { canonical: '/sdk' },

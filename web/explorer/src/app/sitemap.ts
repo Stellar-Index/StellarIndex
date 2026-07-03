@@ -146,7 +146,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     fetchSources(),
     fetchLendingPools(),
   ]);
-  const assetPages: MetadataRoute.Sitemap = assetSlugs.map((slug) => ({
+  // Numeric-only asset codes ("9", "818") are legal on Stellar but
+  // read as junk results in a search index — keep the pages, drop
+  // them from the sitemap (they also render noindex).
+  const indexableAssetSlugs = assetSlugs.filter((s) => !/^\d+$/.test(s));
+  const assetPages: MetadataRoute.Sitemap = indexableAssetSlugs.map((slug) => ({
     url: siteURL(`/assets/${slug}`),
     lastModified: now,
     changeFrequency: 'daily',

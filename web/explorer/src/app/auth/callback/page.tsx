@@ -4,7 +4,7 @@ import { CallbackHandler } from './CallbackHandler';
 
 export const metadata: Metadata = {
   alternates: { canonical: '/auth/callback' },
-  title: 'Signing you in… — Stellar Index',
+  title: 'Signing you in…',
   description:
     'Verifying your magic-link sign-in. You will be redirected to your account in a moment.',
   robots: { index: false, follow: false },

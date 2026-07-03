@@ -481,6 +481,10 @@ export async function generateMetadata({
     title,
     description,
     alternates: { canonical },
+    // Numeric-only asset codes ("9", "818") are legal on Stellar but
+    // read as junk results in a search index — serve the page, keep
+    // it out of the index (the sitemap also skips them).
+    ...(/^\d+$/.test(canonicalSlug) ? { robots: { index: false, follow: true } } : {}),
     openGraph: {
       title,
       description,

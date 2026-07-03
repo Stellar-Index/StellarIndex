@@ -15,7 +15,7 @@ export function generateStaticParams() {
 }
 
 export const metadata: Metadata = {
-  title: 'Transaction — Stellar Index',
+  title: 'Transaction',
   description:
     'Stellar transaction detail: summary, decoded operations, and the contract events it emitted.',
   // Long-tail entity shells are noindex (we don't want millions of thin tx

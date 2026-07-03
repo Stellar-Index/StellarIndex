@@ -13,7 +13,7 @@ export function generateStaticParams() {
 }
 
 export const metadata: Metadata = {
-  title: 'Contract — Stellar Index',
+  title: 'Contract',
   description:
     'Soroban contract detail: WASM, exports, events, and state for a Stellar smart contract.',
   robots: { index: false, follow: true },

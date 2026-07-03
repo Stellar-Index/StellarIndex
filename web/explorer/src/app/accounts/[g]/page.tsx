@@ -13,7 +13,7 @@ export function generateStaticParams() {
 }
 
 export const metadata: Metadata = {
-  title: 'Account — Stellar Index',
+  title: 'Account',
   description:
     'Stellar account detail: balances, trustlines, signers, and recent activity.',
   robots: { index: false, follow: true },
