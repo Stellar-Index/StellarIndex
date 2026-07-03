@@ -16,6 +16,14 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Tip freshness hardening** (board #42): an empty rolling window on
+  /v1/price/tip now escalates once to the 30s SLA bound before ANY
+  closed-bucket fallback. Live samples had shown ~90s staleness on quiet
+  seconds — the 5s default window missed and fell straight through to the
+  closed-minute store price; staleness now exceeds 30s only when the pair
+  genuinely had no trade in the last 30s (window_seconds reports the window
+  actually used; test pins the quiet-pair path). The /price-vs-/price/tip
+  freshness contract is now spelled out in the spec.
 - **Batch price rows carry `change_24h_pct`** (board #41): /v1/price/batch
   rows with a fiat:USD quote pair current price with the signed trailing-24h
   change — the exact bulk shape the Freighter RFP names for portfolio
