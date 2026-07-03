@@ -12,18 +12,30 @@
 # it still resolves and serves traffic (verified 2026-07-03); drop it
 # only with a deprecation window + redirect plan.
 
-- name: Install Caddy signing key
-  ansible.builtin.get_url:
-    url: https://dl.cloudsmith.io/public/caddy/stable/gpg.key
-    dest: /etc/apt/keyrings/caddy.asc
-    mode: "0644"
+# Keyring path + list filename MATCH the official caddy install docs
+# (and therefore the hand-installed state on r1) — a different
+# Signed-By path for the same source makes apt refuse the whole
+# sources list (found on the first staged apply).
+- name: Install Caddy signing key (dearmored, official path)
+  ansible.builtin.shell: |
+    set -e
+    curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key \
+      | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  args:
+    creates: /usr/share/keyrings/caddy-stable-archive-keyring.gpg
   tags: [caddy]
 
-- name: Add Caddy apt repository
-  ansible.builtin.apt_repository:
-    repo: "deb [signed-by=/etc/apt/keyrings/caddy.asc] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main"
-    filename: caddy-stable
-    state: present
+- name: Add Caddy apt repository (official form)
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/caddy-stable.list
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible (archival-node/19-caddy.yml). Official caddy
+      # stable repo, keyring at the upstream-documented path.
+      deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main
+      deb-src [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main
   tags: [caddy]
 
 - name: Install Caddy

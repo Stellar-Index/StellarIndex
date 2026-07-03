@@ -53,6 +53,12 @@ assert_grep ch_logs_on_zfs /etc/clickhouse-server/config.d/zzz-logpath.xml \
 assert_grep syslog_maxsize /etc/logrotate.d/rsyslog \
   'maxsize'
 
+# ── ZFS integrity (2026-07-03: an ansible apply downgrade-broke the
+# userspace and deleted the dkms module — pool one reboot from gone) ──
+assert_cmd zfs_userspace_works zpool status data
+assert_cmd zfs_module_on_disk sh -c 'ls /lib/modules/$(uname -r)/updates/dkms/zfs.ko* >/dev/null'
+assert_cmd zfs_packages_held sh -c 'apt-mark showhold | grep -q zfs-dkms'
+
 # ── public edge stays open (a firewall re-render must keep Caddy) ────
 assert_cmd nft_https_open sh -c 'nft list ruleset | grep -qE "dport \{? ?(80, 443|443)"'
 

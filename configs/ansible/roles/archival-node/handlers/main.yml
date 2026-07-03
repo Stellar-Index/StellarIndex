@@ -103,7 +103,7 @@
 - name: Reload rsyslog
   ansible.builtin.systemd:
     name: rsyslog
-    state: reloaded
+    state: restarted  # noble's rsyslog.service has no ExecReload; restart is instant and journald buffers
 
 # 17-stellarindex-healthchecks — wrapper-script and unit edits
 # notify only the matching timer group, so a touch on smoke.sh

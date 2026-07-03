@@ -52,8 +52,8 @@ checkpoint_completion_target = 0.9
 # SYSTEM overrides). 2GB/512MB is comfortable for the ingest +
 # CAGG-refresh write profile; a from-scratch rebuild inherits the
 # running values directly rather than the larger 8GB/2GB defaults.
-max_wal_size              = 8GB   # 2026-07-03: matched to live r1 (hand-tuned for ingest checkpoint spacing)
-min_wal_size              = 2GB
+max_wal_size              = 2GB   # 2026-07-03 drift audit: the 8GB that sat in the live FILE was inert — postgresql.auto.conf (ALTER SYSTEM) overrode it to 2GB the whole time; 2GB is the proven effective value. auto.conf overrides RESET so this file is the single source.
+min_wal_size              = 512MB
 
 # ─── Planner ────────────────────────────────────────────────────────
 random_page_cost          = 1.1     # NVMe

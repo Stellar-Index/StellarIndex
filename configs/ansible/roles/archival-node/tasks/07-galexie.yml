@@ -18,6 +18,16 @@
   failed_when: false
   changed_when: false
 
+- name: Read the installed-galexie tag stamp
+  # The binary self-reports a pseudo-version (v0.0.0-<date>-<sha>), which
+  # can never textually match the pinned tag — the old gate rebuilt on
+  # every run (found on the 2026-07-03 full apply). The stamp records
+  # which TAG produced /usr/local/bin/galexie.
+  ansible.builtin.slurp:
+    src: /usr/local/bin/.galexie.tag
+  register: galexie_stamp
+  failed_when: false
+
 - name: Build galexie via `go install` at pinned tag
   # The module's main package lives at the root (main.go), so we
   # install the module itself — no /cmd/... subpath. Binary filename
@@ -48,7 +58,7 @@
   environment:
     GOPATH:  /root/go
     GOCACHE: /root/.cache/go-build
-  when: galexie_version not in galexie_current.stdout
+  when: galexie_version != (galexie_stamp.content | default('') | b64decode | trim)
   register: galexie_build
   notify: Restart galexie
 
@@ -92,6 +102,13 @@
     group: root
     mode: "0755"
   notify: Restart galexie
+
+- name: Stamp the installed galexie tag
+  when: galexie_paths.results[1].stat.exists
+  ansible.builtin.copy:
+    dest: /usr/local/bin/.galexie.tag
+    content: "{{ galexie_version }}"
+    mode: "0644"
 
 - name: Ensure /etc/galexie exists
   ansible.builtin.file:

@@ -7,7 +7,22 @@
 # re-creation with `creates:` — if the pool already exists, nothing
 # happens. To re-create, operator must manually `zpool destroy` first.
 
+# GATE (2026-07-03, after the stage-A apply nearly broke the live pool):
+# r1 runs upstream OpenZFS 2.3.4 from locally-built debs
+# (/root/zfs-migration-2026-05-21/, apt-mark hold). Installing the
+# Ubuntu-pinned zfsutils on top DOWNGRADES: apt removed the 2.3.4
+# packages AND deleted the dkms module from /lib/modules before dying
+# on a file conflict — one reboot away from a poolless host. Only
+# install packages when NO zfs userspace exists (fresh build).
+- name: Check for existing ZFS userspace
+  ansible.builtin.command: zfs --version
+  register: zfs_existing
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
 - name: Install ZFS userspace + kernel modules + gdisk for partitioning
+  when: zfs_existing.rc != 0
   ansible.builtin.apt:
     name:
       - zfsutils-linux
