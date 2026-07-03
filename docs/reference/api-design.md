@@ -353,7 +353,7 @@ Two runtime-auth classes are shipped in this snapshot:
 | Class | Auth | Default limit | Who |
 | ---- | ---- | ------------- | --- |
 | Anonymous | none | 60 rpm per IP | Public/demo callers |
-| Authenticated | `Authorization: Bearer rek_<64-hex>` or SEP-10 JWT | 1000 rpm per subject/key | Wallet, SDK, and operator clients |
+| Authenticated | `Authorization: Bearer sip_<64-hex>` or SEP-10 JWT | 1000 rpm per subject/key | Wallet, SDK, and operator clients |
 
 API keys are:
 
@@ -361,7 +361,7 @@ API keys are:
   at creation.
 - Stored in Redis under a SHA-256-derived key; the plaintext itself is
   not recoverable from the stored record.
-- Prefixed `rek_` (short for "Stellar Index key") for reverse-grep.
+- Prefixed `sip_` (Stellar Index Pricing key) for reverse-grep.
 - Scopes are reserved in the record model, but scope enforcement is not
   wired on runtime endpoints in this snapshot.
 

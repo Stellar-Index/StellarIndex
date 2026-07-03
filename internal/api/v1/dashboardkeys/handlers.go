@@ -459,8 +459,7 @@ func canManageKeys(role platform.Role) bool {
 
 // generatePlaintext mints a new `sip_<64hex>` plaintext (Stellar Index
 // Prefix) using crypto/rand. 32 bytes = 256 bits = preimage-safe. The prefix
-// is display/identification only — auth hashes the full plaintext — so older
-// `rek_` (Rates-Engine-era) keys keep authenticating unchanged.
+// is display/identification only — auth hashes the full plaintext.
 func generatePlaintext() (string, error) {
 	var buf [32]byte
 	if _, err := rand.Read(buf[:]); err != nil {

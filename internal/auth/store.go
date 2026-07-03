@@ -140,10 +140,10 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: generate key_id: %w", err)
 	}
 	// `sip_` namespace prefix (Stellar Index Pricing). Matches the
-	// dashboard minter (dashboardkeys.generatePlaintext). Legacy
-	// `rek_` keys minted before the rebrand keep authenticating
-	// unchanged — validation is SHA-256 of the full plaintext, so the
-	// prefix is purely a human-facing namespace label.
+	// dashboard minter (dashboardkeys.generatePlaintext). Validation
+	// is SHA-256 of the full plaintext, so the prefix is purely a
+	// human-facing namespace label. (The last pre-rebrand-prefixed
+	// key was deleted from the store 2026-07-03.)
 	plaintext, err := generateID(s.randRead, "sip_", 32)
 	if err != nil {
 		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: generate plaintext: %w", err)

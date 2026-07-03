@@ -15,6 +15,20 @@ against.
 
 ## [Unreleased]
 
+### Changed
+- **Legacy-brand purge (pre-rebrand naming), everywhere it was still live.**
+  The API's diagnostic cache header is now `X-Stellarindex-Cache`;
+  `region.home_domain` serves the current domain; the legacy-domain Caddy
+  alias is REMOVED (hard cutover — the old domain no longer serves); the
+  spec + docs drop the legacy key-prefix examples and the last legacy-prefix
+  API key was deleted from the store; MinIO's root identity and the
+  duplicate legacy reader user/policy are renamed/removed on r1 along with
+  the old hostname, orphaned `/etc/default/*` env files, and `/opt` remnants;
+  the prod-target guard and load-test allowlists drop the old hosts.
+  Deliberately kept: immutable history (changelog entries, frozen audit
+  records) and operator instructions that name legacy external artifacts
+  slated for deletion.
+
 ### Added
 - **Ansible is now r1's config deployment path, with drift guardrails.**
   After the two-way audit: 18 `--check --diff` rounds reconciled the

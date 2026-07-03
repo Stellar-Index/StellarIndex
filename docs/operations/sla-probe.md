@@ -53,7 +53,7 @@ DURATION=30s                                 # default
 CONCURRENCY=4                                # default
 PAIRS="-pair native,fiat:USD -pair USDC-G…,fiat:USD"
 REPORT_FORMAT=json                           # default; text also valid
-STELLARINDEX_PROBE_API_KEY=rek_…              # vault-minted key; required (see below)
+STELLARINDEX_PROBE_API_KEY=sip_…              # vault-minted key; required (see below)
 EXTRA_FLAGS=""                               # default
 ```
 

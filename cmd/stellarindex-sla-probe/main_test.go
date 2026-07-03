@@ -191,12 +191,12 @@ func TestHit_AttachesAuthorizationWhenAPIKeySet(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &http.Client{Timeout: time.Second}
-	_, ok, _ := hit(context.Background(), c, srv.URL, "rek_test_xyz", endpoint{Path: "/x"})
+	_, ok, _ := hit(context.Background(), c, srv.URL, "sip_test_xyz", endpoint{Path: "/x"})
 	if !ok {
 		t.Fatal("hit returned not-ok")
 	}
-	if sawAuth != "Bearer rek_test_xyz" {
-		t.Errorf("Authorization = %q, want %q", sawAuth, "Bearer rek_test_xyz")
+	if sawAuth != "Bearer sip_test_xyz" {
+		t.Errorf("Authorization = %q, want %q", sawAuth, "Bearer sip_test_xyz")
 	}
 }
 

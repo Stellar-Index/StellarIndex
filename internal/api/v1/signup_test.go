@@ -100,7 +100,7 @@ func TestSignup_HappyPath(t *testing.T) {
 			RateLimitPerMin: 1000,
 			CreatedAt:       time.Now().UTC(),
 		},
-		plain: "rek_topsecret",
+		plain: "sip_topsecret",
 	}
 	signups := newFakeSignupTracker()
 	ts := newSignupTestServer(t, store, signups)
@@ -117,8 +117,8 @@ func TestSignup_HappyPath(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body.Data.Plaintext != "rek_topsecret" {
-		t.Errorf("Plaintext = %q, want rek_topsecret", body.Data.Plaintext)
+	if body.Data.Plaintext != "sip_topsecret" {
+		t.Errorf("Plaintext = %q, want sip_topsecret", body.Data.Plaintext)
 	}
 	if body.Data.KeyID != "kid_test12345" {
 		t.Errorf("KeyID = %q", body.Data.KeyID)
@@ -146,7 +146,7 @@ func TestSignup_HappyPath(t *testing.T) {
 func TestSignup_DuplicateEmail(t *testing.T) {
 	store := &fakeAccountStore{
 		rec:   auth.APIKeyRecord{KeyID: "kid_first", Tier: auth.TierAPIKey},
-		plain: "rek_first",
+		plain: "sip_first",
 	}
 	signups := newFakeSignupTracker()
 	ts := newSignupTestServer(t, store, signups)
@@ -175,7 +175,7 @@ func TestSignup_DuplicateEmail(t *testing.T) {
 func TestSignup_DuplicateEmailCaseInsensitive(t *testing.T) {
 	store := &fakeAccountStore{
 		rec:   auth.APIKeyRecord{KeyID: "kid_first", Tier: auth.TierAPIKey},
-		plain: "rek_first",
+		plain: "sip_first",
 	}
 	signups := newFakeSignupTracker()
 	ts := newSignupTestServer(t, store, signups)

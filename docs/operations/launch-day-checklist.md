@@ -146,7 +146,7 @@ Order matters. Don't skip.
 
 4. **Smoke test the public surface.**
    ```sh
-   STELLARINDEX_PROBE_API_KEY=rek_… \
+   STELLARINDEX_PROBE_API_KEY=sip_… \
    stellarindex-sla-probe \
      -base-url https://api.stellarindex.io/v1 \
      -duration 30s \

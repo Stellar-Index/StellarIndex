@@ -239,7 +239,7 @@ func TestSignup_IssuesVerificationToken_WhenWired(t *testing.T) {
 			RateLimitPerMin: 1000,
 			CreatedAt:       time.Now().UTC(),
 		},
-		plain: "rek_plain",
+		plain: "sip_plain",
 	}
 	signups := newFakeSignupTracker()
 	verifier := newFakeSignupVerifier(nil)
@@ -295,7 +295,7 @@ func TestSignup_IssuesVerificationToken_WhenWired(t *testing.T) {
 func TestSignup_SkipsVerificationWhenEmailerMissing(t *testing.T) {
 	store := &fakeAccountStore{
 		rec:   auth.APIKeyRecord{KeyID: "kid_noemail", Tier: auth.TierAPIKey},
-		plain: "rek_p",
+		plain: "sip_p",
 	}
 	signups := newFakeSignupTracker()
 	verifier := newFakeSignupVerifier(nil)
@@ -336,7 +336,7 @@ func TestSignup_SkipsVerificationWhenEmailerMissing(t *testing.T) {
 func TestSignup_SendErrorIsNonFatal(t *testing.T) {
 	store := &fakeAccountStore{
 		rec:   auth.APIKeyRecord{KeyID: "kid_senderr", Tier: auth.TierAPIKey},
-		plain: "rek_p",
+		plain: "sip_p",
 	}
 	signups := newFakeSignupTracker()
 	verifier := newFakeSignupVerifier(nil)

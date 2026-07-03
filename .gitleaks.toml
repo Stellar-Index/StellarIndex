@@ -92,6 +92,8 @@ paths = [
 [[rules.allowlists]]
 description = "Historical spec filenames — gitleaks scans full repo history. openapi/stellar-index.v1.yaml + docs/reference/api/stellar-index.v1.yaml were renamed from an earlier filename in a past commit. Those commits still carry the old paths with the SAME synthetic signup/dashboard OpenAPI example keys (k_... key_id + re_live_... plaintext) already allowlisted on the current names above. Allowlist the historical paths so full-history scans pass. Same rationale as the web/showcase historical allowlist."
 paths = [
+  # Historical pre-rebrand paths — these files no longer exist, but
+  # gitleaks scans full history where they do. Path-scoped, harmless.
   '''openapi/rates-engine\.v1\.yaml''',
   '''docs/reference/api/rates-engine\.v1\.yaml''',
 ]

@@ -4432,7 +4432,7 @@ components:
     APIKeyAuth:
       type: http
       scheme: bearer
-      bearerFormat: "sip_* (Stellar Index key; legacy rek_* still accepted)"
+      bearerFormat: "sip_* (Stellar Index key)"
 
   parameters:
     AssetIdPath:
