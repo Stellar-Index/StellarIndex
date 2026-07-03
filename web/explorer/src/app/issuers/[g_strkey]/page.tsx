@@ -1,4 +1,7 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
+
+import { IssuerPathView } from './IssuerPathView';
 import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
@@ -48,6 +51,10 @@ interface IssuerDetail {
 }
 
 export async function generateStaticParams() {
+  // 'shell' is the runtime-fallback sentinel: functions/issuers/[[path]].js
+  // serves its HTML for any issuer beyond the pre-rendered top-100
+  // (S-022 — those used to hard-404 while search + asset pages linked
+  // to them). Same pattern as accounts/contracts/ledgers/transactions.
   const fallback = [
     { g_strkey: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN' },
   ];
@@ -59,7 +66,7 @@ export async function generateStaticParams() {
     '/v1/issuers listing for /issuers/[g_strkey] static params',
   );
   const keys = rows.map((i) => i.g_strkey).filter(Boolean);
-  return keys.length > 0 ? keys.map((g_strkey) => ({ g_strkey })) : fallback;
+  return [{ g_strkey: 'shell' }, ...keys].length > 0 ? keys.map((g_strkey) => ({ g_strkey })) : fallback;
 }
 
 function fetchIssuer(gStrkey: string): Promise<IssuerDetail | null> {
@@ -115,6 +122,13 @@ export async function generateMetadata({
 
 export default async function IssuerDetailPage({ params }: { params: Params }) {
   const { g_strkey } = await params;
+  if (g_strkey === 'shell') {
+    return (
+      <Suspense fallback={null}>
+        <IssuerPathView />
+      </Suspense>
+    );
+  }
   // Fan out the issuer detail + per-asset price/volume calls in
   // parallel — they share zero data, so we pay 1× round trip
   // instead of 2×.
