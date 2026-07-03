@@ -32,8 +32,8 @@ export function Footer() {
           <FooterColumn
             title="Explore"
             links={[
-              { label: 'Exchanges', href: '/exchanges' },
-              { label: 'DEXes', href: '/dexes' },
+              { label: 'External markets', href: '/exchanges' },
+              { label: 'DEX / AMM pools', href: '/dexes' },
               { label: 'Lending', href: '/lending' },
               { label: 'Aggregators', href: '/aggregators' },
               { label: 'Oracles', href: '/oracles' },
@@ -49,7 +49,7 @@ export function Footer() {
           <FooterColumn
             title="About"
             links={[
-              { label: 'Pricing', href: '/pricing' },
+              { label: 'API pricing', href: '/pricing' },
               { label: 'Blog', href: '/blog' },
               { label: 'Company', href: '/company' },
               { label: 'Careers', href: '/careers' },
