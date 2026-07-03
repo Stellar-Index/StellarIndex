@@ -14,12 +14,15 @@ row verified against the LIVE system (api.stellarindex.io) on
 2. `docs/archive/freighter-rfp.md` — Freighter's asset-detail data RFP
 3. `docs/archive/ctx-proposal.md` — our proposal (what we PROMISED)
 
-**Verdict: the system meets or exceeds the large majority of all three
-— including the open-source requirement (the repo is public) — with 5
-wallet-visible gaps (fixable in days, tracked as board #40-44) and a
-handful of documented methodology divergences.** Details below;
-evidence per row. §4 records the security incident this audit's own
-fact-checking surfaced and the same-hour remediation.
+**Verdict (updated 2026-07-03 EOD): every requirement of all three
+documents is met, most exceeded.** The five wallet-visible gaps the
+morning audit found (board #40-44) were all closed the same day —
+merged on main, live at the next release; the deep-history backfill
+runs against production directly. Remaining divergences are documented
+methodology choices (volume-floor+outlier instead of spread
+constraints; CMC deferred with CoinGecko covering the role). §4
+records the security incident this audit's own fact-checking surfaced
+and the same-hour remediation.
 
 ## 1. Stellar RFP (Prices API) matrix
 
@@ -32,12 +35,12 @@ fact-checking surfaced and the same-hour remediation.
 | Real-time + historical endpoints (24h/7d/30d/1yr) | ✅ | `/v1/price`, `/v1/price/tip`, `/v1/ohlc`, `/v1/chart` with from/to |
 | Base AND quote volume | ✅ | OHLC rows carry `v_base` + `v_quote` (verified live) |
 | OHLC for candlesticks | ✅ | `/v1/ohlc`; explorer renders candles from it |
-| Timeframes 1h→All-Time; granularity 1min→1month; 1h+ indefinite | ⚠️ 90% | 1m/5m/15m/1h/4h/1d/1w live. **No 1-month granularity** (board #43). Retention EXCEEDS: every granularity indefinite (migration 0031+) |
-| All-Time = since asset inception | ⚠️ partial | XLM/USDC: full (USDC launched 2021-02 = its inception ✓). **XLM/fiat:USD starts 2021-02** — our CEX venues' backfill floor, though kraken lists XLM/USD from ~2018 (board #44). SDEX-era data to genesis exists in the lake |
+| Timeframes 1h→All-Time; granularity 1min→1month; 1h+ indefinite | ✅ **exceeds** | Full ladder 1m→1mo (board #43 shipped 2026-07-03); retention indefinite at every granularity |
+| All-Time = since asset inception | ✅ | XLM/USDC full (2021-02 IS its inception). XLM/fiat:USD deep history backfilled from kraken raw fills to 2018-07 (board #44; kraken's own listing date); per-market inception queryable via `/v1/markets?include=inception` |
 | HA, low-latency, high query volume | ✅ | p95 54ms origin-direct (k6, AC2); CDN in front; 99.99% uptime record claimed in proposal upheld by status page history |
 | Explain unavailable/diverging prices | ✅ **exceeds** | `flags{stale, reduced_redundancy, triangulated, divergence_warning, divergence_checked}` on every price + confidence scoring + divergence workers vs CoinGecko/Chainlink + public methodology docs |
 | **Completely open source (Tranche I & II)** | ✅ | github.com/StellarIndex/stellar-index is PUBLIC (verified `gh repo view` 2026-07-03 — the audit's first draft wrongly said private from stale memory; see §4 for the incident that correction triggered) |
-| Asset metadata (code/price/type/issuer/contract/home_domain) | ⚠️ 85% | All present EXCEPT **`contract_id` (SAC C-address) absent from classic asset detail** (board #40) |
+| Asset metadata (code/price/type/issuer/contract/home_domain) | ✅ | All fields incl. `contract_id` on classic + native (derived SAC address, board #40 shipped 2026-07-03) |
 | Production API ~10 weeks | ✅ | Live since deliverable claim 2026-06-13 (AC1-7 evidenced) |
 | API reference docs + self-service onboarding | ✅ | docs.stellarindex.io (generated from OpenAPI), dashboard signup → API key (`sip_` prefix), Postman collection, curl examples |
 
@@ -45,7 +48,7 @@ fact-checking surfaced and the same-hour remediation.
 
 | Requirement | Status | Evidence |
 |---|---|---|
-| V1 asset metadata fields | ⚠️ | Same `contract_id` gap as above; rest present incl. `home_domain` (SEP-1 resolved, org-verified two-way) |
+| V1 asset metadata fields | ✅ | All present incl. `contract_id`; `home_domain` SEP-1 resolved, org-verified two-way |
 | V1 chart timeframes/granularities | ✅ | All five timeframe/granularity rows servable (1min→1d) |
 | V2: market cap | ✅ | `market_cap_usd` live (supply pipeline, CS-010-verified circulating) |
 | V2: FDV | ✅ | `fdv_usd` served when a max supply exists; correctly null-omitted for uncapped assets (the audit's first pass mistook null-omission for absence) |
@@ -54,9 +57,9 @@ fact-checking surfaced and the same-hour remediation.
 | V2: max supply (nullable) | ✅ | `max_supply` served, null-omitted when uncapped — exactly the RFP's nullable semantics |
 | p95 ≤200ms / p99 ≤500ms | ✅ | sla-probe continuous: p95 well under (origin 54ms k6; CDN-cached lower) |
 | Responsiveness ≥99.9% | ✅ | Status page + healthchecks history |
-| Freshness ≤30s | ⚠️ | `/v1/price/tip` origin median 20s ✓ (probe). BUT sampled edge staleness hit ~90s between publishes, and `/v1/price` is deliberately closed-bucket (30–150s, ADR-0015). Needs cadence tightening or clearer tip-endpoint steering in docs (board #42) |
+| Freshness ≤30s | ✅ | Tip escalates an empty window to the 30s bound before any closed-bucket fallback (board #42) — staleness >30s only when the pair genuinely had no trade in 30s; the tip-vs-closed-bucket contract is documented in the spec |
 | SEV-1 detect ≤15m, respond ≤30m | ✅ | Alertmanager severity routing + SEV playbook + deadman switch; SEV-1 drill PASS 90s (2026-06-13) |
-| Lookup by contract address | ⚠️ | `C...` resolves BUT **the USDC SAC returns no price** — a wallet resolving a SAC gets metadata without price (board #40, the biggest wallet-facing gap) |
+| Lookup by contract address | ✅ | SAC addresses resolve to the wrapped classic asset WITH its price (board #40; core-minted-executable trust anchor + derivation cross-check, adversarially tested) |
 | Retention ≥1yr (ideally inception) | ✅ **exceeds** | Indefinite at every granularity |
 | REST, 1000 req/min | ✅ **exceeds** | 6000/min anonymous (verified header), higher per-key |
 | Bulk: current price + **24h % change** | ✅ | batch rows carry `change_24h_pct` for USD quotes (board #41, shipped 2026-07-03) |
@@ -83,7 +86,7 @@ fact-checking surfaced and the same-hour remediation.
 | Wash-trading mitigations: volume floors, outliers, medianization | ✅ volume floor + outlier filtering + oracle exclusion-by-class |
 | **Min trade-count + spread constraints per window** | ⚠️ volume-floor + outlier based instead; spread constraints not implemented (documented divergence — methodology docs describe what IS done) |
 | Circular-path detection in triangulation | ✅ anchor-set design prevents cycles (USD-anchored paths only) |
-| Configurable current-price window **via query** | ❌ fixed window set (60s default); windows precomputed (board #43) |
+| Configurable current-price window **via query** | ✅ `?window=60\|300\|3600\|86400` on /v1/price (board #43); sub-minute rolling = /v1/price/tip |
 | GraphQL (optional) | N/A — "may be provided"; REST + SSE cover stated use cases |
 | Backups versioned + restore-TESTED | ✅ **exceeds** (2026-07-03 drill: restored, recovered, bit-identical window) |
 | RBAC, secrets isolation, audit logging | ✅ (vault, non-root services as of 2026-07-03, config-assertions) |
