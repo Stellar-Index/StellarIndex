@@ -584,6 +584,14 @@ paths:
         URL discipline: `?granularity=` is rejected with 400 — that's
         a closed-bucket concept and accepting it would silently change
         the consistency contract.
+              FRESHNESS CONTRACT (choosing between /price and /price/tip):
+        /price serves the last CLOSED minute bucket (deterministic,
+        cache-friendly — up to ~150s behind wall-clock by design,
+        ADR-0015); THIS endpoint is the ≤30s-freshness surface. An
+        empty rolling window escalates once to 30s (the SLA bound)
+        before any closed-bucket fallback, so staleness exceeds 30s
+        only when the pair genuinely had no trade in the last 30s —
+        read observed_at + window_seconds to know what you got.
       parameters:
         - { $ref: "#/components/parameters/AssetQuery" }
         - { $ref: "#/components/parameters/Quote" }

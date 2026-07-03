@@ -28,6 +28,19 @@ const (
 	// window is short (≤60s), so this is the worst-case row count we
 	// load into memory for one VWAP. Mirrors /v1/vwap's own cap.
 	tipWindowMaxTrades = 10000
+
+	// tipEscalationWindowSeconds is the widened retry window when the
+	// caller's (or default 5s) window contains no trades. Board #42
+	// (RFP audit): the previous behavior fell STRAIGHT from an empty
+	// 5s window to the closed-bucket store price (60–113s stale) —
+	// live samples showed ~90s staleness on /v1/price/tip whenever a
+	// quiet second was hit, breaching the ≤30s freshness SLA the tip
+	// surface exists to serve. Escalating to a 30s window first means
+	// staleness exceeds 30s ONLY when the pair genuinely had no trade
+	// in the last 30s (at which point the closed bucket is the honest
+	// answer and observed_at says so). 30 = the SLA bound, hence not
+	// configurable.
+	tipEscalationWindowSeconds = 30
 )
 
 // handlePriceTip serves GET /v1/price/tip per ADR-0018.
@@ -133,6 +146,14 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, windowSeconds int) (PriceSnapshot, []string, error) {
 	if snap, sources, ok := s.tipWindowVWAP(ctx, asset, quote, windowSeconds); ok {
 		return snap, sources, nil
+	}
+	// Escalation before the closed-bucket fallback (board #42): an
+	// empty caller window widens once to the 30s SLA bound. The
+	// response's window_seconds reports the window actually used.
+	if windowSeconds < tipEscalationWindowSeconds {
+		if snap, sources, ok := s.tipWindowVWAP(ctx, asset, quote, tipEscalationWindowSeconds); ok {
+			return snap, sources, nil
+		}
 	}
 	// Fallback: most-recent known observation for the pair. PriceReader
 	// returns price_type="last_trade" today (MVP) and "vwap" once the
