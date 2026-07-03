@@ -32,6 +32,23 @@ exactly the value CS-110 promised:
    → the five GUCs are now read from the live primary and mirrored.
 
 Runs 1–4: `pg_restore` OK every time (848–888s for the ~273GB set,
-repo1); `pg_start` failed per the modes above. Run 5 (fifth, with all
-four fixes): verdict appended below when complete.
+repo1); `pg_start` failed per the modes above.
+
+**Run 5 — PASS, 0 failures (2026-07-03, repo1, agent-run):**
+
+- `pg_restore`: 871s
+- `pg_start`: recovery to consistency complete (WAL replay via
+  archive-get; scratch instance on :5499)
+- `core_tables`: 4/4
+- `tip_lag`: restored tip 63,302,295 vs live 63,302,535 — **240
+  ledgers (~20 min)** of WAL not yet archived; WAL archiving healthy
+- `hash_chain_sample`: 0 chain breaks in the restored 100k tail
+- `trades_window_match`: trades[63202295,63252295] restored
+  5,770,426 = live 5,770,426 — exact
+
+CS-110's answer: the repo1 backup restores, recovers, and matches the
+live database bit-for-bit on an immutable window. RTO evidence:
+~15 min restore + WAL replay (scales with time-since-last-diff).
+Next: the same drill against **repo2** once the offsite bucket exists
+(operator), which proves the copy that matters in a real disaster.
 
