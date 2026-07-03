@@ -1687,6 +1687,10 @@ func (r storeMarketsReader) GetPairsVolumeHistory24hBatch(ctx context.Context, p
 	return r.s.GetPairsVolumeHistory24hBatch(ctx, pairs)
 }
 
+func (r storeMarketsReader) FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error) {
+	return r.s.FirstTradeBatch(ctx, pairs)
+}
+
 // storeOracleReader adapts *timescale.Store to v1.OracleReader.
 type storeOracleReader struct{ s *timescale.Store }
 
@@ -1825,6 +1829,13 @@ type cachedMarketsReader struct {
 	inner v1.MarketsReader
 	rdb   redis.UniversalClient
 	log   *slog.Logger
+}
+
+// FirstTradeBatch delegates uncached: inception timestamps are
+// immutable once set, the call is already gated behind an opt-in
+// include param, and the underlying MIN is index-assisted.
+func (r cachedMarketsReader) FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error) {
+	return r.inner.FirstTradeBatch(ctx, pairs)
 }
 
 func (r cachedMarketsReader) PairMarket(ctx context.Context, base, quote canonical.Asset) (v1.Market, bool, error) {

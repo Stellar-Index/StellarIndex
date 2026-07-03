@@ -8193,6 +8193,11 @@ export interface components {
             volume_24h_usd?: string | null;
             /** @description Most recent quote-per-base price observed for this pair (cross-source) within the trailing 24h. Decimal string. Null when no recent prices_1m bucket has a non-null last_price. */
             last_price?: string | null;
+            /**
+             * Format: date-time
+             * @description The pair's first recorded daily bucket — "since inception = first recorded trade" (RFP), queryable per market. Present only with `?include=inception`; day precision.
+             */
+            first_trade_at?: string | null;
             /** @description Per-hour USD-volume buckets for the trailing 24h, oldest → newest, zero-filled server-side (always 24 entries when present). Populated only when the request sets `?include=sparkline`; absent otherwise. */
             volume_history_24h?: {
                 /** Format: date-time */

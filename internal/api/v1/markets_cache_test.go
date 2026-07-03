@@ -361,3 +361,7 @@ func TestCachedMarketsReader_PoolsSWRKeepsStaleOnError(t *testing.T) {
 		t.Fatalf("failed refresh was not retried; calls=%d", up.calls.Load())
 	}
 }
+
+func (f *fakeMarketsReader) FirstTradeBatch(_ context.Context, _ [][2]string) (map[string]time.Time, error) {
+	return map[string]time.Time{}, nil
+}
