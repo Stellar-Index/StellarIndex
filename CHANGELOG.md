@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.7.2] — 2026-07-03
+
 ### Added
 - **ADR-0044 (Proposed): explorer rendering moves to edge SSR** — the
   2026-07-03 site audit traced three production failure classes (the
