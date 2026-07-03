@@ -187,6 +187,37 @@ groups:
             Investigate /var/log + /tmp + /var/cache before this
             grows into the page-tier alert.
 
+      # Fast-fill predictor — the static thresholds above fire when
+      # the line is ALREADY crossed; the 2026-06-11 CH log-wedge loop
+      # filled root at ~3.8 GB/min, going from healthy to full in
+      # ~5 min — faster than a human can act on a <10% page. This
+      # fires while there is still time: root trending to FULL within
+      # 30 min. The avail<50% guard keeps meaningless trends on a
+      # roomy disk from paging.
+      - alert: stellarindex_node_root_disk_filling_fast
+        expr: |
+          (
+            predict_linear(node_filesystem_avail_bytes{mountpoint="/"}[10m], 1800) < 0
+          and
+            (node_filesystem_avail_bytes{mountpoint="/"} /
+             node_filesystem_size_bytes{mountpoint="/"}) < 0.5
+          )
+        for: 2m
+        labels:
+          severity: page
+          team: stellarindex
+          component: storage
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/node-root-disk-filling-fast.md
+        annotations:
+          summary: "Root filesystem on {{ $labels.instance }} trending to FULL within 30 min"
+          description: |
+            Root FS (/) on {{ $labels.instance }} is filling fast enough
+            to reach 0 bytes within 30 minutes (10m linear trend). This
+            is the log-flood signature (2026-05-10 / 2026-05-13 /
+            2026-06-11 class): find the writer NOW —
+            `du -xs /var/log/* /tmp | sort -rh | head` — and see the
+            runbook for the CH log-wedge kill sequence.
+
       # Redis BGSAVE health — when Redis can't snapshot to disk
       # (typically because the volume backing /var/lib/redis is
       # full) it sets stop-writes-on-bgsave-error and rejects

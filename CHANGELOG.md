@@ -15,6 +15,22 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Root-disk fast-fill early warning** (`stellarindex_node_root_disk_filling_fast`,
+  both rule trees + runbook + catalog): pages when root trends to full within
+  30 minutes — the 2026-06-11 ClickHouse log-wedge loop filled root at
+  ~3.8 GB/min, going healthy→full in ~5 minutes, faster than the static <10%
+  page can be acted on. Deployed live to r1.
+
+### Fixed
+- **The 2026-06-11 log-discipline rsyslog rules had drifted off r1** —
+  `/etc/rsyslog.d/` was empty; the loki + clickhouse-server `stop` rules from
+  ansible role 15-log-discipline.yml (the belt-and-braces that keeps a
+  journald flood out of /var/log/syslog) were not live, reopening the syslog
+  half of the root-fill loop. Restored and probe-verified (tagged test line
+  reaches journald, not syslog); the restored file names the ansible role as
+  source of truth so the next drift is traceable.
+
 ## [v0.7.1] — 2026-07-03
 
 ### Fixed
