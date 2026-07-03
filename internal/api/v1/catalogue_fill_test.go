@@ -5,6 +5,7 @@ package v1
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -38,7 +39,7 @@ func TestCatalogueStatsUseListingReader(t *testing.T) {
 	}
 	s := &Server{coins: &listingOnlyCoins{}, verifiedCurrencies: cat}
 	page := []AssetDetail{{Slug: "usdc", Code: "USDC", AssetID: "usdc"}}
-	req := httptest.NewRequest("GET", "/v1/assets", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/assets", nil)
 	s.fillCatalogueStatsForPage(req.Context(), page)
 	if page[0].Change24hPct == nil || *page[0].Change24hPct != "1.23" {
 		t.Fatalf("catalogue row did not absorb the twin's change: %+v", page[0].Change24hPct)
