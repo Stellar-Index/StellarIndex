@@ -7,6 +7,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/StellarIndex/stellar-index/internal/scval"
 )
 
 // ExplorerReader serves the network-explorer read path (ADR-0038) directly
@@ -522,6 +523,11 @@ type ContractActivityRow struct {
 	EventIndex uint32
 	EventType  string
 	Topic0Sym  string
+	// TopicsDisplay / DataDisplay are human-readable renderings of the
+	// event's remaining topics + data payload (S-016: rows showed only
+	// topic_0 — 'transfer' fifty times with no amounts or parties).
+	TopicsDisplay []string
+	DataDisplay   string
 }
 
 // ContractEventsRecent returns a contract's most-recent events, descending.
@@ -535,7 +541,8 @@ func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID st
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	q := `SELECT ledger_seq, close_time, tx_hash, op_index, event_index, event_type, topic_0_sym
+	q := `SELECT ledger_seq, close_time, tx_hash, op_index, event_index, event_type, topic_0_sym,
+			topics_xdr, data_xdr
 		FROM stellar.contract_events WHERE contract_id = ?`
 	args := []any{contractID}
 	if cur.IsSet() {
@@ -553,9 +560,23 @@ func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID st
 	var out []ContractActivityRow
 	for rows.Next() {
 		var e ContractActivityRow
-		if err := rows.Scan(&e.Seq, &e.CloseTime, &e.TxHash, &e.OpIndex, &e.EventIndex, &e.EventType, &e.Topic0Sym); err != nil {
+		var topicsB64 []string
+		var dataB64 string
+		if err := rows.Scan(&e.Seq, &e.CloseTime, &e.TxHash, &e.OpIndex, &e.EventIndex, &e.EventType, &e.Topic0Sym,
+			&topicsB64, &dataB64); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan contract event: %w", err)
 		}
+		// Skip topic[0] (already surfaced as Topic0Sym) and render the
+		// rest for display; decode failures degrade to omission.
+		for i, t := range topicsB64 {
+			if i == 0 {
+				continue
+			}
+			if d := scval.DisplayB64(t); d != "" {
+				e.TopicsDisplay = append(e.TopicsDisplay, d)
+			}
+		}
+		e.DataDisplay = scval.DisplayB64(dataB64)
 		out = append(out, e)
 	}
 	return out, rows.Err()

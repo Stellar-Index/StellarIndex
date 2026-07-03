@@ -7317,6 +7317,10 @@ export interface components {
             event_index?: number;
             event_type?: string;
             topic_0?: string;
+            /** @description Human-readable renderings of topics[1:] (topic_0 carries the symbol). Display format — lossy by design; addresses render as strkeys, i128 amounts as integers. */
+            topics?: string[];
+            /** @description Human-readable rendering of the event data payload (display format */
+            data?: string;
         };
         /**
          * @description Transactions involving an account (newest first), with an opaque

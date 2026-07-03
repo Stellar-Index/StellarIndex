@@ -819,7 +819,8 @@ function EventsPanel({
               <Th>Close time</Th>
               <Th>Tx</Th>
               <Th>Event type</Th>
-              <Th>Topic 0</Th>
+              <Th>Event</Th>
+              <Th>Detail</Th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line-subtle">
@@ -861,6 +862,30 @@ function EventsPanel({
                 <Td>
                   <span className="font-mono text-xs text-ink-muted">
                     {ev.topic_0 || '—'}
+                  </span>
+                </Td>
+                <Td>
+                  {/* S-016 tail: decoded topics + payload — accounts
+                      as links, amounts as numbers, instead of fifty
+                      bare 'transfer' rows. */}
+                  <span
+                    className="block max-w-md truncate font-mono text-[11px] text-ink-muted"
+                    title={[...(ev.topics ?? []), ev.data ?? ''].filter(Boolean).join(' · ')}
+                  >
+                    {(ev.topics ?? []).map((t: string, ti: number) => (
+                      /^G[A-Z2-7]{55}$/.test(t) ? (
+                        <Link key={ti} href={`/accounts/${t}/`} className="text-brand-600 hover:underline">
+                          {t.slice(0, 4)}…{t.slice(-4)}{' '}
+                        </Link>
+                      ) : /^C[A-Z2-7]{55}$/.test(t) ? (
+                        <Link key={ti} href={`/contracts/${t}/`} className="text-brand-600 hover:underline">
+                          {t.slice(0, 4)}…{t.slice(-4)}{' '}
+                        </Link>
+                      ) : (
+                        <span key={ti}>{t} </span>
+                      )
+                    ))}
+                    {ev.data ? <span className="text-ink-faint">{ev.data}</span> : null}
                   </span>
                 </Td>
               </tr>

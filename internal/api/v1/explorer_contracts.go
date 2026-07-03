@@ -17,6 +17,12 @@ type ContractEventView struct {
 	EventIndex uint32 `json:"event_index"`
 	EventType  string `json:"event_type"`
 	Topic0     string `json:"topic_0,omitempty"`
+	// Topics are human-readable renderings of topics[1:] (topic_0 is
+	// the symbol above); Data renders the event payload. Display
+	// format — lossy by design (S-016: rows read 'transfer' fifty
+	// times with no amounts or parties).
+	Topics []string `json:"topics,omitempty"`
+	Data   string   `json:"data,omitempty"`
 }
 
 // ContractDetailView is the wire response for GET /v1/contracts/{contract_id}:
@@ -91,5 +97,7 @@ func contractEventView(e clickhouse.ContractActivityRow) ContractEventView {
 		EventIndex: e.EventIndex,
 		EventType:  e.EventType,
 		Topic0:     e.Topic0Sym,
+		Topics:     e.TopicsDisplay,
+		Data:       e.DataDisplay,
 	}
 }

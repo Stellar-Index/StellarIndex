@@ -15,6 +15,14 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Contract event rows decode their payload** (S-016 tail): the events
+  table showed fifty bare "transfer" rows — /v1/contracts/{id} rows now
+  carry `topics` (human-readable renderings of topics[1:] — addresses as
+  strkeys, i128 amounts as integers) and `data`, and the explorer renders
+  a Detail column with accounts/contracts linked. New scval.Display
+  renderer (depth-capped, truncating, display-lossy by design).
+
 ## [v0.7.6] — 2026-07-03
 
 ### Fixed
