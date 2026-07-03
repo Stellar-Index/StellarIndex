@@ -16,6 +16,17 @@ against.
 ## [Unreleased]
 
 ### Added
+- **r1 ↔ ansible drift audit + config-assertion watchdog.** Follow-up to the
+  rsyslog apply-gap finding: audited BOTH directions between r1's live state
+  and the ansible roles. Live-only fixes that a playbook render would have
+  erased are now codified (CS-010 supply reserves → template + r1 inventory
+  vars; redis maxmemory → archival-node task; ssh root-access var pinned);
+  repo-ahead apply-gaps closed (three alert groups + rebrand wording synced
+  to r1's rules). New hourly `config-assertions.sh` timer on r1 asserts the
+  load-bearing guard configs' CONTENT (9 assertions, all green) with
+  `stellarindex_config_assertion_failed`/`_stale` alerts in both trees;
+  full findings table + standing "check --diff first" rule in
+  docs/operations/r1-ansible-drift-2026-07-03.md.
 - **Root-disk fast-fill early warning** (`stellarindex_node_root_disk_filling_fast`,
   both rule trees + runbook + catalog): pages when root trends to full within
   30 minutes — the 2026-06-11 ClickHouse log-wedge loop filled root at

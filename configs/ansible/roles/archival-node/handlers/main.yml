@@ -126,3 +126,8 @@
   ansible.builtin.systemd:
     name: stellarindex-sla-probe.timer
     state: restarted
+
+- name: Restart redis
+  ansible.builtin.systemd:
+    name: redis-server
+    state: restarted
