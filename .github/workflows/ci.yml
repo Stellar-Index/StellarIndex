@@ -456,8 +456,10 @@ jobs:
       - name: Syntax check (secrets stubbed — structure only)
         working-directory: configs/ansible
         run: |
-          # syntax-check parses the play + roles; the vault file is not
-          # decrypted for --syntax-check, so no secret is needed.
+          # syntax-check parses the play + roles without decrypting the
+          # vault, but ansible.cfg names a vault_password_file and errors
+          # if the FILE is absent — a dummy satisfies the existence check.
+          mkdir -p ~/.ansible && echo dummy > ~/.ansible/r1_vault_pass
           ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/archival-node.yml
           ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/monitoring.yml
       - name: ansible-lint (production profile, warnings tolerated)

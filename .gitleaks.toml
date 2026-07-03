@@ -154,4 +154,7 @@ id = "curl-auth-header"
 description = "Explorer API-docs page (/docs) — a `curl -H \"Authorization: Bearer sip_your_key_here\"` usage example showing how to pass an API key. `sip_your_key_here` is a literal placeholder (the whole point of the snippet is to show the header shape); not a credential. Path-scoped so a real secret added to this file under any other rule is still caught."
 paths = [
   '''web/explorer/src/app/docs/page\.tsx''',
+  # Same placeholder pattern on the dashboard onboarding card
+  # (LC-061 "working first request" snippet, `sip_your_key`).
+  '''web/explorer/src/app/dashboard/page\.tsx''',
 ]
