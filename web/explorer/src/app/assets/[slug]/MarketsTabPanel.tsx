@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+
 import { useMemo } from 'react';
 
 import { Panel } from '@/components/reveal';
@@ -88,6 +90,7 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
             <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
               <Th>Side</Th>
               <Th>Pair</Th>
+              <Th align="right">24h volume</Th>
               <Th align="right">24h trades</Th>
               <Th align="right">Last trade</Th>
             </tr>
@@ -104,8 +107,21 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
 }
 
 function Row({ m, assetID }: { m: Market; assetID: string }) {
-  const isBase = m.base === assetID;
+  // AM-08: the server expands a catalogue slug ("usdc") into its
+  // asset_ids, so strict equality against the slug never matched and
+  // rows where the asset IS the base rendered "quote · vs itself".
+  // Match by expanded-form prefix: the asset's code appears at the
+  // start of its expanded ids ("USDC-GA5Z…"), and "native"/"XLM"
+  // alias each other.
+  const matches = (side: string) => {
+    if (side === assetID) return true;
+    const up = assetID.toUpperCase();
+    if ((side === 'native' || /^\d+$/.test(side)) && (up === 'XLM' || up === 'NATIVE')) return true;
+    return side.toUpperCase().startsWith(`${up}-`) || side.toUpperCase().startsWith(`${up}:`);
+  };
+  const isBase = matches(m.base ?? '');
   const counterparty = isBase ? m.quote : m.base;
+  const pairSlug = `${m.base}~${m.quote}`;
   return (
     <tr className="hover:bg-surface-muted">
       <Td>
@@ -114,8 +130,19 @@ function Row({ m, assetID }: { m: Market; assetID: string }) {
         </span>
       </Td>
       <Td>
-        <span className="font-medium">vs </span>
-        <span className="font-mono text-xs">{shortAsset(counterparty)}</span>
+        {/* AM-12: rows link their pair page instead of dead-ending. */}
+        <Link
+          href={`/markets/${encodeURIComponent(pairSlug)}/`}
+          className="hover:text-brand-600"
+        >
+          <span className="font-medium">vs </span>
+          <span className="font-mono text-xs">{shortAsset(counterparty ?? '')}</span>
+        </Link>
+      </Td>
+      <Td align="right">
+        <span className="font-mono tabular-nums text-xs">
+          {m.volume_24h_usd ? `$${formatCompact(Number(m.volume_24h_usd))}` : '—'}
+        </span>
       </Td>
       <Td align="right">
         <span className="font-mono tabular-nums">
@@ -132,7 +159,10 @@ function Row({ m, assetID }: { m: Market; assetID: string }) {
 }
 
 function shortAsset(canonical: string): string {
-  if (canonical.startsWith('fiat:')) return canonical;
+  if (canonical === 'native') return 'XLM';
+  if (canonical.startsWith('crypto:')) return canonical.replace('crypto:', '');
+  if (/^C[A-Z2-7]{55}$/.test(canonical)) return `${canonical.slice(0, 4)}…${canonical.slice(-4)} (SAC)`;
+  if (canonical.startsWith('fiat:')) return canonical.replace('fiat:', '');
   if (/^\d+$/.test(canonical)) return 'XLM';
   const dashIx = canonical.indexOf('-');
   if (dashIx === -1) return canonical;
