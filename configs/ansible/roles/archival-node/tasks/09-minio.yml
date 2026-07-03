@@ -312,7 +312,19 @@
       #   stellarindex-ops verify-archive -config /etc/stellarindex.toml ...
       AWS_ACCESS_KEY_ID={{ stellarindex_reader_access_key }}
       AWS_SECRET_ACCESS_KEY={{ stellarindex_reader_secret_key }}
+      # Endpoint + region MUST accompany the keys — without them the
+      # SDK signs for AWS proper and MinIO rejects with
+      # SignatureDoesNotMatch (feedback_minio_cred_drift; found live
+      # 2026-07-03 drift audit — a render dropped them).
+      AWS_ENDPOINT_URL={{ galexie_s3_endpoint }}
+      AWS_REGION={{ region_id }}
       STELLARINDEX_S3_ACCESS_KEY={{ stellarindex_reader_access_key }}
       STELLARINDEX_S3_SECRET_KEY={{ stellarindex_reader_secret_key }}
       STELLARINDEX_POSTGRES_DSN=postgres://{{ postgres_user_stellarindex }}:{{ postgres_pass_stellarindex }}@127.0.0.1:5432/{{ postgres_db_stellarindex }}?sslmode=disable
+      # Vendor keys for interactive stellarindex-ops runs (divergence
+      # spot-checks, fixture capture) — same values the indexer env
+      # carries; codified 2026-07-03.
+      CHAINLINK_RPC_URL={{ vault_chainlink_rpc_url | default('') }}
+      COINGECKO_DEMO_API_KEY={{ vault_coingecko_demo_api_key | default('') }}
+      MASSIVE_API_KEY={{ vault_massive_api_key | default('') }}
   no_log: true
