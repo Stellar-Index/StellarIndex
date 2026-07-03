@@ -113,6 +113,24 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
             Stellar account ID. Account IDs are 56 characters, starting with{' '}
             <code className="font-mono">G</code>.
           </p>
+          {/^M[A-Z2-7]{68}$/.test(id) && (
+            <p className="mt-2">
+              This looks like a <strong>muxed account</strong> (M-address) — a
+              G-account plus an embedded routing ID, used by exchanges and
+              custodians to distinguish customers behind one shared account.
+              Look up the underlying G-address to see its state and activity;
+              wallets and{' '}
+              <a
+                href={`https://stellar.expert/explorer/public/account/${id}`}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="text-brand-600 hover:underline"
+              >
+                stellar.expert ↗
+              </a>{' '}
+              can decode the M-form.
+            </p>
+          )}
         </Panel>
       </Shell>
     );
