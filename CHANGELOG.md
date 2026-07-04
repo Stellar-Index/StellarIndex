@@ -16,7 +16,27 @@ against.
 ## [Unreleased]
 
 ### Added
-- **Cross-oracle agreement confidence input (BACKLOG #36 /
+- **Supply-observer program completion (BACKLOG #35 / launch-todo
+  P4-2)**: the ADR-0011 SEP-1 `max_supply` overlay is wired into the
+  `/v1/assets/{id}` serving path (previously `supply.Overlay` had
+  zero callers — F-1354): a snapshot with no operator-override max
+  picks up the issuer's stellar.toml `[[CURRENCIES]]` `max_number` /
+  `fixed_number` declaration (blocked by `is_unlimited = true`),
+  scaled from display units to raw units by the asset's decimals,
+  and labels the result `supply_basis: "sep1_declared_max"` so
+  consumers can see the cap (and `fdv_usd`) is issuer-self-declared,
+  not on-chain enforced. The OpenAPI `supply_basis` enum now lists
+  every served value (`xlm_total_only`, `sep41_lake_flows`,
+  `no_metadata` had drifted off it). New `stellarindex-ops supply
+  seed-observations` closes the ADR-0021 dormant-reserve-account
+  bootstrap gap: one-shot idempotent seed of each
+  `[supply] sdf_reserve_accounts` entry's latest AccountEntry from
+  the lake's `ledger_entries_current` into `account_observations`,
+  so the live LCM reserve reader wins over the operator-static map
+  without waiting for the account to transact. ADR-0021/0022/0023
+  carry status addenda documenting that the observer program the
+  launch-todo still called "stub / interim" shipped long ago
+  (readers, observers, aggregator refreshers, lake fallback).
   launch-todo P4-4 / ADR-0019 Phase 3)**: the divergence refresh
   cycle now counts how many external references corroborate our
   VWAP within the divergence threshold

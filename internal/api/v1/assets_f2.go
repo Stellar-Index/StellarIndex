@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"sync"
 	"time"
 
@@ -171,6 +172,27 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 				Basis:             supply.BasisSEP41LakeFlows,
 			}
 			haveSnap = true
+		}
+	}
+
+	// ADR-0011 max_supply precedence, step 2 — the SEP-1 declared
+	// max. Step 1 (operator override) surfaces as snap.MaxSupply
+	// already non-nil; when it didn't fire, overlay the issuer's
+	// stellar.toml [[CURRENCIES]] max_number / fixed_number
+	// declaration. applySep1Overlay (which runs before applyF2Fields
+	// in handleAssetGet) stamped those fields on detail in DISPLAY
+	// units; the resolver scales them to raw units by
+	// detail.Decimals. An applied overlay relabels
+	// supply_basis="sep1_declared_max" so consumers can see the cap
+	// (and the FDV derived from it) is issuer-self-declared, not
+	// on-chain enforced. Wired 2026-07-05 — previously supply.Overlay
+	// had zero callers (F-1354 / D2-03).
+	if haveSnap && snap.MaxSupply == nil {
+		overlaid, applied, err := supply.Overlay(ctx, snap, asset, sep1DeclaredMaxResolver{detail: detail})
+		if err != nil {
+			s.logger.Debug("sep1 max_supply overlay failed", "asset", asset.String(), "err", err)
+		} else if applied {
+			snap = overlaid
 		}
 	}
 
@@ -406,6 +428,81 @@ func pctChange(nowStr, thenStr string) (string, error) {
 		out = "+" + out
 	}
 	return out, nil
+}
+
+// sep1DeclaredMaxResolver adapts the SEP-1 [[CURRENCIES]] fields the
+// applySep1Overlay step already stamped on the AssetDetail into the
+// [supply.MetadataResolver] contract, so [supply.Overlay] can apply
+// the ADR-0011 SEP-1 max_supply precedence step at serving time
+// without a second issuers-table read.
+//
+// Precedence within the declaration: max_number beats fixed_number
+// (a fixed total implies the cap); an explicit is_unlimited=true
+// blocks both (the issuer says the supply is uncapped — a declared
+// number alongside it is contradictory junk we don't publish).
+//
+// Unit contract: SEP-1 declares supply in DISPLAY units (whole
+// tokens); the supply snapshot carries RAW units (stroops for
+// classic, token-decimals scale for SEP-41). The resolver scales by
+// 10^detail.Decimals before handing the value to Overlay — passing
+// the display value through unscaled would understate max_supply
+// (and FDV) by 10^7 for every classic asset.
+type sep1DeclaredMaxResolver struct {
+	detail *AssetDetail
+}
+
+// SEP1MaxSupply implements [supply.MetadataResolver]. Never errors —
+// every junk shape (unparseable, negative, fractional raw units)
+// degrades to ok=false per the "publish nil rather than fabricate"
+// policy.
+func (r sep1DeclaredMaxResolver) SEP1MaxSupply(_ context.Context, _ canonical.Asset) (string, bool, error) {
+	d := r.detail
+	if d == nil {
+		return "", false, nil
+	}
+	if d.IsUnlimited != nil && *d.IsUnlimited {
+		return "", false, nil
+	}
+	declared := ""
+	if d.MaxNumber != nil {
+		declared = strings.TrimSpace(*d.MaxNumber)
+	}
+	if declared == "" && d.FixedNumber != nil {
+		declared = strings.TrimSpace(*d.FixedNumber)
+	}
+	if declared == "" {
+		return "", false, nil
+	}
+	raw, ok := sep1DisplayToRawUnits(declared, d.Decimals)
+	if !ok {
+		return "", false, nil
+	}
+	return raw, true, nil
+}
+
+// sep1DisplayToRawUnits converts a SEP-1 display-unit decimal string
+// (e.g. "500000000" or "21000000.5") to a raw-unit integer string at
+// the asset's decimals. Returns ok=false for anything that doesn't
+// yield a non-negative INTEGER raw amount: unparseable strings,
+// negatives, and declarations with more fractional digits than the
+// asset has decimals (fractional stroops don't exist — that's junk,
+// not a roundable value). Rational syntax ("1/3") and e-notation are
+// rejected outright: stellar.toml numerics are plain decimals, and
+// big.Rat.SetString would otherwise silently accept both.
+func sep1DisplayToRawUnits(display string, decimals int) (string, bool) {
+	if decimals < 0 || strings.ContainsAny(display, "/eE") {
+		return "", false
+	}
+	rat, ok := new(big.Rat).SetString(display)
+	if !ok || rat.Sign() < 0 {
+		return "", false
+	}
+	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
+	rat.Mul(rat, new(big.Rat).SetInt(scale))
+	if !rat.IsInt() {
+		return "", false
+	}
+	return rat.Num().String(), true
 }
 
 // usdMarketValue computes amountStroops × usdPriceStr / 10^decimals,

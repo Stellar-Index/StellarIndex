@@ -279,6 +279,102 @@ func TestF2_NoMaxSupply_OmitsFDV(t *testing.T) {
 	mustContain(t, body, `"market_cap_usd":"3493000000.00"`)
 }
 
+// TestF2_SEP1DeclaredMaxOverlay — ADR-0011 max_supply precedence
+// step 2, wired 2026-07-05 (previously supply.Overlay had zero
+// callers, F-1354). A classic asset with an uncapped snapshot (no
+// operator override) + an issuer stellar.toml declaring max_number
+// must serve max_supply in RAW units (display × 10^decimals),
+// compute fdv_usd from it, and relabel
+// supply_basis="sep1_declared_max" so the wire says the cap is
+// issuer-self-declared.
+func TestF2_SEP1DeclaredMaxOverlay(t *testing.T) {
+	assetID := "USDC-" + testUSDCIssuer
+	snap := supply.Supply{
+		AssetKey:          "USDC:" + testUSDCIssuer,
+		TotalSupply:       mustBigInt("400000000000000"), // 40M tokens raw
+		CirculatingSupply: mustBigInt("400000000000000"),
+		MaxSupply:         nil, // uncapped — the overlay's precondition
+		Basis:             supply.BasisIssuerExclusion,
+	}
+	supplyStub := &stubSupplyLooker{hit: true, snap: snap}
+	priceStub := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			assetID + "/fiat:USD": {Price: "1.00", PriceType: "vwap"},
+		},
+	}
+	sep1 := &stubSep1Cache{
+		byIssuer: map[string]*timescale.IssuerSep1Cached{
+			testUSDCIssuer: {
+				OrgName: "Test Org",
+				Currencies: []timescale.IssuerSep1Currency{{
+					Code:      "USDC",
+					Issuer:    testUSDCIssuer,
+					MaxNumber: "50000000", // DISPLAY units — 50M tokens
+				}},
+			},
+		},
+	}
+	srv := v1.New(v1.Options{Prices: priceStub, Supply: supplyStub, Sep1Cache: sep1})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/assets/"+assetID)
+	body, _ := readAll(resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
+	}
+
+	// max_supply = 50_000_000 display × 10^7 = 5e14 raw.
+	mustContain(t, body, `"max_supply":"500000000000000"`)
+	// fdv = 5e14 / 10^7 × $1.00 = $50,000,000.00
+	mustContain(t, body, `"fdv_usd":"50000000.00"`)
+	// The cap's provenance is on the wire.
+	mustContain(t, body, `"supply_basis":"sep1_declared_max"`)
+	// total/circulating untouched by the overlay.
+	mustContain(t, body, `"total_supply":"400000000000000"`)
+	mustContain(t, body, `"market_cap_usd":"40000000.00"`)
+	// The raw SEP-1 declaration still rides its own metadata field.
+	mustContain(t, body, `"max_number":"50000000"`)
+}
+
+// TestF2_SEP1DeclaredMaxOverlay_UnlimitedBlocks — an issuer that
+// declares is_unlimited=true is saying the supply is uncapped; a
+// number alongside it is contradictory and must NOT become
+// max_supply. Snapshot basis stays the algorithm default.
+func TestF2_SEP1DeclaredMaxOverlay_UnlimitedBlocks(t *testing.T) {
+	assetID := "USDC-" + testUSDCIssuer
+	snap := supply.Supply{
+		AssetKey:          "USDC:" + testUSDCIssuer,
+		TotalSupply:       mustBigInt("400000000000000"),
+		CirculatingSupply: mustBigInt("400000000000000"),
+		Basis:             supply.BasisIssuerExclusion,
+	}
+	supplyStub := &stubSupplyLooker{hit: true, snap: snap}
+	sep1 := &stubSep1Cache{
+		byIssuer: map[string]*timescale.IssuerSep1Cached{
+			testUSDCIssuer: {
+				Currencies: []timescale.IssuerSep1Currency{{
+					Code:        "USDC",
+					Issuer:      testUSDCIssuer,
+					MaxNumber:   "50000000",
+					IsUnlimited: true,
+				}},
+			},
+		},
+	}
+	srv := v1.New(v1.Options{Supply: supplyStub, Sep1Cache: sep1})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/assets/"+assetID)
+	body, _ := readAll(resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if strings.Contains(body, `"max_supply"`) {
+		t.Errorf("max_supply must stay absent when is_unlimited=true; body=%s", body)
+	}
+	mustContain(t, body, `"supply_basis":"issuer_exclusion"`)
+}
+
 // TestF2_NoUSDPrice_OmitsMarketCap — supply numbers populate but
 // the asset has no USD price (untracked pair, ErrPriceNotFound);
 // market_cap_usd + fdv_usd stay null.

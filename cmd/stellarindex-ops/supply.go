@@ -16,20 +16,23 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/supply"
 )
 
-// supplyCmd dispatches the supply sub-subcommand. v1 ships with two
-// modes — `audit` (read) + `snapshot` (write); future modes
-// (e.g. `recompute`, `policy-validate`) plug in here.
+// supplyCmd dispatches the supply sub-subcommand: `audit` (read),
+// `snapshot` (write), `seed-observations` (lake-derived ADR-0021
+// bootstrap for dormant reserve accounts). Future modes (e.g.
+// `recompute`, `policy-validate`) plug in here.
 func supplyCmd(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: supply <audit|snapshot> [flags]")
+		return errors.New("usage: supply <audit|snapshot|seed-observations> [flags]")
 	}
 	switch args[0] {
 	case "audit":
 		return supplyAudit(args[1:])
 	case "snapshot":
 		return supplySnapshot(args[1:])
+	case "seed-observations":
+		return supplySeedObservations(args[1:])
 	default:
-		return fmt.Errorf("unknown supply subcommand %q (expected: audit | snapshot)", args[0])
+		return fmt.Errorf("unknown supply subcommand %q (expected: audit | snapshot | seed-observations)", args[0])
 	}
 }
 

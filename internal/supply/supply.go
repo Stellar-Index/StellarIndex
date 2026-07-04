@@ -39,6 +39,16 @@ const (
 	// (extended locked-set) and max_supply.
 	BasisOverride Basis = "override"
 
+	// BasisSEP1DeclaredMax — the SEP-1 [[CURRENCIES]] max_supply
+	// overlay ([Overlay]) populated max_supply from the issuer's
+	// stellar.toml (max_number, falling back to fixed_number). The
+	// cap is issuer-SELF-DECLARED — a display value, not on-chain
+	// enforced (ADR-0011 §Algorithm 2/3 max_supply precedence step
+	// 2). Total/circulating still come from the snapshot's original
+	// algorithm; this basis flags that the max (and hence FDV) rests
+	// on the issuer's declaration.
+	BasisSEP1DeclaredMax Basis = "sep1_declared_max"
+
 	// BasisSEP41LakeFlows — Algorithm 3, lake-derived: a SEP-41 token's raw
 	// on-chain total (Σmint−Σburn−Σclawback) summed over the certified
 	// ClickHouse lake (ch-supply's token_supply). Used when no LCM observer

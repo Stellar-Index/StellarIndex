@@ -9,6 +9,23 @@ superseded_by: null
 
 # ADR-0022: Classic-supply observers — Trustline / ClaimableBalance / LiquidityPool / ContractData entry tracking
 
+> **Status note (2026-07-05, launch-todo P4-2).** Implemented in
+> full — the "what's missing" below is historical context from the
+> time of writing. All five PRs shipped: migrations 0011–0014, the
+> four observer packages, and `supply.StorageClassicSupplyReader`
+> (`internal/supply/storage_classic_reader.go`), which is wired into
+> the aggregator's per-asset refreshers
+> (`cmd/stellarindex-aggregator/main.go::buildClassicRefreshers`)
+> for every `[supply] watched_classic_assets` entry. One shape
+> difference from the sketch: the reader composes a single
+> `ClassicSupplyStore` interface (satisfied by `*timescale.Store`)
+> rather than five per-component Summer interfaces — same queries,
+> one seam. A broad-coverage complement exists for the long tail:
+> `clickhouse.ClassicCirculatingSupply` derives trustline-sum
+> circulating supply for EVERY classic asset from the lake
+> (undercounts claimable/LP components; the watched-set pipeline
+> here remains the precise source).
+
 ## Context
 
 [ADR-0011](0011-supply-algorithm.md) Algorithm 2 derives classic

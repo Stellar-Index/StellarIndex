@@ -26,7 +26,11 @@ type MetadataResolver interface {
 }
 
 // Overlay applies the SEP-1 max_supply precedence rule on top of a
-// computed [Supply]. Per ADR-0011 the max_supply precedence chain is:
+// computed [Supply]. Wired into the /v1/assets/{id} serving path
+// (internal/api/v1/assets_f2.go) since 2026-07-05 — the resolver
+// there adapts the SEP-1 fields the applySep1Overlay step already
+// stamped on the AssetDetail, scaled from display units to raw
+// units. Per ADR-0011 the max_supply precedence chain is:
 //
 //  1. Operator override (Policy.MaxSupplyOverrides) — applied by
 //     the per-algorithm Computer; surfaces here as snap.MaxSupply
@@ -84,12 +88,13 @@ func Overlay(ctx context.Context, snap Supply, asset canonical.Asset, resolver M
 	}
 
 	snap.MaxSupply = val
-	// Basis upgrades to Override IF the algorithm-default basis was
-	// in play. SEP-1 declaration is a non-derivative external claim,
-	// same lane as the operator override per ADR-0011's "respected
-	// as a display value" framing.
-	if snap.Basis == BasisIssuerExclusion || snap.Basis == BasisAdminExclusion {
-		snap.Basis = BasisOverride
-	}
+	// Basis becomes BasisSEP1DeclaredMax whenever the overlay fires:
+	// the max (and any FDV derived from it) now rests on the
+	// issuer's self-declared stellar.toml value, and consumers must
+	// be able to see that from supply_basis alone — ADR-0011's
+	// "respected as a display value, flagged self-declared" framing.
+	// (Pre-wiring, this upgraded to BasisOverride, which conflated
+	// the SEP-1 declaration with an operator-blessed override.)
+	snap.Basis = BasisSEP1DeclaredMax
 	return snap, true, nil
 }
