@@ -9,6 +9,25 @@ superseded_by: null
 
 # ADR-0021: AccountEntry observer — live home-domain + reserve-balance tracking
 
+> **Status note (2026-07-05, launch-todo P4-2).** Implemented. The
+> observer (`internal/sources/accounts`), the `account_observations`
+> hypertable (migration 0010), the `LedgerEntryChangeDecoder` hook,
+> and `supply.LCMReserveBalanceReader` all shipped; the live reader
+> is chained ahead of `ConfigReserveBalanceReader` in both refresh
+> paths (see `docs/architecture/supply-pipeline.md` §"The
+> chained-fallback reader pattern") — the static map is the
+> intentional bootstrap fallback, not an interim implementation.
+> One gap remained: a reserve account that never CHANGES after the
+> observer starts never emits a `LedgerEntryChange`, so the live
+> reader would defer to the static map forever. Closed by
+> `stellarindex-ops supply seed-observations` — a one-shot,
+> idempotent seed of each `[supply] sdf_reserve_accounts` entry's
+> latest AccountEntry from the ClickHouse lake's
+> `ledger_entries_current` projection (ADR-0034). Accounts dormant
+> since before the lake's entry-change capture window need a
+> `state-snapshot` (history-archive checkpoint) run first; the
+> seeder reports them instead of fabricating.
+
 ## Context
 
 Two operator-static config knobs in the codebase are placeholders

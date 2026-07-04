@@ -571,6 +571,15 @@ Subcommands:
                           attribution is the max last_ledger across
                           all ingestion cursors; pass -ledger to
                           override. -dry-run prints without writing.
+  supply seed-observations -config PATH [-ch-addr ADDR] [-dry-run]
+                          Seed account_observations from the ClickHouse
+                          lake for every [supply].sdf_reserve_accounts
+                          entry (ADR-0021). Closes the dormant-account
+                          bootstrap gap: an account that never changes
+                          after the live observer starts would otherwise
+                          keep the reserve reader on the static fallback
+                          forever. Idempotent; the live observer
+                          supersedes seeded rows on the next real change.
   discovery list -config PATH [-since DUR] [-limit N]
                           List SEP-41 contracts auto-detected from the
                           event stream (the dispatcher's discovery

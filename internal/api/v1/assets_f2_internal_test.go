@@ -1,8 +1,11 @@
 package v1
 
 import (
+	"context"
 	"math/big"
 	"testing"
+
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // TestUsdMarketValue covers the F2 market-cap math helper directly
@@ -111,4 +114,81 @@ func mustBigIntInternal(s string) *big.Int {
 		panic("mustBigIntInternal: bad input " + s)
 	}
 	return v
+}
+
+// TestSep1DisplayToRawUnits — the SEP-1 max_supply overlay's unit
+// conversion. SEP-1 declares supply in DISPLAY units; the snapshot
+// carries RAW units. Getting this wrong understates max_supply/FDV
+// by 10^7 for every classic asset, so the scaling contract is
+// pinned here.
+func TestSep1DisplayToRawUnits(t *testing.T) {
+	tests := []struct {
+		name     string
+		display  string
+		decimals int
+		want     string
+		ok       bool
+	}{
+		{"whole tokens ×10^7", "50000000", 7, "500000000000000", true},
+		{"fractional but integral raw", "21000000.5", 7, "210000005000000", true},
+		{"decimals=0 passthrough", "1000", 0, "1000", true},
+		{"zero is valid", "0", 7, "0", true},
+		{"sub-raw fraction rejected", "1.00000005", 7, "", false}, // ×10^7 = 10000000.5 — fractional stroops don't exist
+		{"negative rejected", "-100", 7, "", false},
+		{"junk rejected", "TBD", 7, "", false},
+		{"rational syntax rejected", "1/3", 7, "", false},
+		{"e-notation rejected", "5e8", 7, "", false},
+		{"negative decimals rejected", "100", -1, "", false},
+		{"empty rejected", "", 7, "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := sep1DisplayToRawUnits(tc.display, tc.decimals)
+			if ok != tc.ok {
+				t.Fatalf("ok = %v, want %v (got %q)", ok, tc.ok, got)
+			}
+			if ok && got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSep1DeclaredMaxResolver — precedence + blocking rules for the
+// serving-path SEP-1 max resolver: max_number beats fixed_number, an
+// explicit is_unlimited=true blocks both, absent declarations return
+// ok=false, and the resolver never errors.
+func TestSep1DeclaredMaxResolver(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+	boolPtr := func(b bool) *bool { return &b }
+	tests := []struct {
+		name    string
+		detail  *AssetDetail
+		wantRaw string
+		wantOK  bool
+	}{
+		{"nil detail", nil, "", false},
+		{"no declaration", &AssetDetail{Decimals: 7}, "", false},
+		{"max_number", &AssetDetail{Decimals: 7, MaxNumber: strPtr("100")}, "1000000000", true},
+		{"fixed_number fallback", &AssetDetail{Decimals: 7, FixedNumber: strPtr("42")}, "420000000", true},
+		{"max_number beats fixed_number", &AssetDetail{Decimals: 7, MaxNumber: strPtr("100"), FixedNumber: strPtr("42")}, "1000000000", true},
+		{"is_unlimited blocks", &AssetDetail{Decimals: 7, MaxNumber: strPtr("100"), IsUnlimited: boolPtr(true)}, "", false},
+		{"is_unlimited=false does not block", &AssetDetail{Decimals: 7, MaxNumber: strPtr("100"), IsUnlimited: boolPtr(false)}, "1000000000", true},
+		{"whitespace-only declaration", &AssetDetail{Decimals: 7, MaxNumber: strPtr("  ")}, "", false},
+		{"junk declaration", &AssetDetail{Decimals: 7, MaxNumber: strPtr("~21M")}, "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, ok, err := sep1DeclaredMaxResolver{detail: tc.detail}.SEP1MaxSupply(context.Background(), canonical.Asset{})
+			if err != nil {
+				t.Fatalf("resolver must never error; got %v", err)
+			}
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v (raw %q)", ok, tc.wantOK, raw)
+			}
+			if ok && raw != tc.wantRaw {
+				t.Errorf("raw = %q, want %q", raw, tc.wantRaw)
+			}
+		})
+	}
 }

@@ -9,14 +9,23 @@ superseded_by: null
 
 # ADR-0011: Supply algorithm — total / circulating / max
 
-> **Reality note (2026-06-12, F-1354 / D2-03).** The SEP-1
-> `max_supply` precedence step and the `self_declared` API flag
-> described below are **not wired into production**: `supply.Overlay`
-> (`internal/supply/overlay.go`) has zero callers, so the SEP-1
-> max_supply fallback never runs and `self_declared` is never stamped.
-> The on-chain supply derivation (XLM / classic / SEP-41) is live; the
-> issuer-declared overlay is dead code retained against future
-> activation. The decision below is preserved as the original record.
+> **Reality note (2026-06-12, F-1354 / D2-03; resolved 2026-07-05,
+> launch-todo P4-2).** For ~3 weeks the SEP-1 `max_supply` precedence
+> step described below was dead code (`supply.Overlay` had zero
+> callers). As of 2026-07-05 it is **wired into the `/v1/assets/{id}`
+> serving path** (`internal/api/v1/assets_f2.go`): when the supply
+> snapshot carries no operator-override max, the handler overlays the
+> issuer's stellar.toml `[[CURRENCIES]]` `max_number` (falling back to
+> `fixed_number`; blocked by an explicit `is_unlimited = true`),
+> scaled from display units to raw units by the asset's decimals. The
+> `self_declared: true` flag described below shipped in a different
+> shape: the wire carries the declaration verbatim as `max_number` /
+> `fixed_number` / `is_unlimited` metadata fields, and an applied
+> overlay labels `supply_basis: "sep1_declared_max"` — a stronger
+> per-source signal than a boolean. The overlay applies at serving
+> time only; `asset_supply_history` rows are never rewritten with
+> declared values. The decision below is preserved as the original
+> record.
 
 ## Context
 

@@ -9,6 +9,25 @@ superseded_by: null
 
 # ADR-0023: SEP-41 supply observer — mint / burn / clawback event-stream tracking
 
+> **Status note (2026-07-05, launch-todo P4-2).** Implemented in
+> full — the "stub" references below are historical context from the
+> time of writing. All four PRs shipped: migration 0015
+> (`sep41_supply_events`), the `internal/sources/sep41_supply/`
+> decoder, `supply.StorageSEP41SupplyReader` +
+> `[supply] watched_sep41_contracts`, and the aggregator's per-
+> contract refreshers (`buildSEP41Refreshers`). `SEP41Computer`
+> (`internal/supply/sep41.go`) is the real Algorithm 3
+> implementation, not a stub. Additionally, the "watch all" follow-up
+> anticipated below landed in a different (better) shape: the
+> serving path (`/v1/assets/{id}` and `/v1/assets/{id}/supply`)
+> falls back to the **lake-derived per-token supply** —
+> Σmint−Σburn−Σclawback over the certified ClickHouse lake's
+> `supply_flows` (`ch-supply` / `token_supply`,
+> `supply_basis: "sep41_lake_flows"`) — so EVERY SEP-41 token serves
+> a complete-history total without operator curation. The watched-
+> set path remains the precise source where admin/locked-set
+> exclusion matters.
+
 ## Context
 
 [ADR-0011](0011-supply-algorithm.md) Algorithm 3 derives supply

@@ -119,7 +119,8 @@ var ErrNotClassic = errors.New("supply: asset is not a classic credit asset")
 //     Σ SAC-wrapped (the four holding-domain components — see
 //     [ClassicSupplyComponents]).
 //   - max_supply = Policy.MaxSupplyOverrides[key] if set, else nil
-//     (uncapped issuer; SEP-1 declaration overlay is a future PR).
+//     (uncapped issuer; the SEP-1 declaration overlay — [Overlay] —
+//     applies at the API serving layer, not here).
 //   - circulating_supply = total − (issuer balance + locked-account
 //     balances + locked-contract balances). The issuer's own balance
 //     is always excluded; per-asset locked-set extends that.
@@ -163,8 +164,9 @@ func (c *ClassicComputer) Compute(ctx context.Context, asset canonical.Asset, le
 		circulating.SetInt64(0)
 	}
 
-	// max_supply: operator override beats the default nil. SEP-1
-	// declaration overlay is a future PR.
+	// max_supply: operator override beats the default nil. The SEP-1
+	// declaration overlay ([Overlay]) applies downstream, at the API
+	// serving layer (internal/api/v1/assets_f2.go).
 	var maxSupply *big.Int
 	basis := BasisIssuerExclusion
 	if override, ok, err := c.policy.MaxSupplyOverride(key); err != nil {

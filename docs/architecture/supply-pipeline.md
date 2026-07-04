@@ -1,6 +1,6 @@
 ---
 title: Supply pipeline — three-algorithm derivation, per-asset refresh
-last_verified: 2026-05-03
+last_verified: 2026-07-05
 status: binding
 ---
 
@@ -65,8 +65,16 @@ operator config: [supply] sdf_reserve_accounts /
 operator-curated via `supply.Policy.PerAsset`.
 
 **Max supply** is `total` for hard-capped assets (XLM), nil
-otherwise unless the operator supplies an override or a SEP-1
-declaration overlay populates it.
+otherwise unless the operator supplies an override or the SEP-1
+declaration overlay populates it. The overlay (`supply.Overlay`,
+wired 2026-07-05) applies at the API **serving** layer, not at
+snapshot-compute time: when the stored snapshot has no max, the
+`/v1/assets/{id}` handler scales the issuer's stellar.toml
+`max_number` / `fixed_number` (display units → raw units by asset
+decimals; blocked by `is_unlimited = true`) and labels the result
+`supply_basis: "sep1_declared_max"` so consumers can see the cap is
+issuer-self-declared. `asset_supply_history` rows never carry
+declared values.
 
 ## The six observers
 
@@ -133,6 +141,17 @@ AccountEntry observer hasn't backfilled the SDF reserves yet,
 the static config produces the answer; once the observer covers
 the live set, the static config can be left stale (the live
 reader wins).
+
+Bootstrap caveat: the live observer only writes when an account
+CHANGES — a dormant reserve account never emits a
+`LedgerEntryChange`, so the chain would stay on the static map
+indefinitely. `stellarindex-ops supply seed-observations` closes
+that: a one-shot, idempotent seed of each
+`[supply] sdf_reserve_accounts` entry's latest AccountEntry from
+the lake's `ledger_entries_current` projection (ADR-0034), at the
+account's true last-modified ledger. Later live observations
+supersede seeded rows via the reader's at-or-before-ledger
+ordering.
 
 For Algorithms 2 + 3: similar pattern, but the static fallback
 is per-component (operators populate
@@ -263,7 +282,16 @@ matching `<X>Computer` reduces to a `Supply` snapshot.
 `fdv_usd` / `supply_basis`) populate when a row exists, stay
 JSON null when no snapshot has been written (per ADR-0011 "we
 don't fabricate"). The handler does NOT consult observer state
-directly — the snapshot table is the API source of truth.
+directly — the snapshot table is the API source of truth. Two
+serving-time refinements sit on top of it:
+
+- **SEP-41 lake fallback** — a Soroban token with no observer
+  snapshot (i.e. not on the watched-set, the common case) serves
+  the lake-derived Σmint−Σburn−Σclawback total
+  (`supply_basis: "sep41_lake_flows"`, total == circulating).
+- **SEP-1 max_supply overlay** — a snapshot with no max picks up
+  the issuer's stellar.toml declaration
+  (`supply_basis: "sep1_declared_max"`, see "Max supply" above).
 
 ## Failure modes (per outcome label)
 

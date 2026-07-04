@@ -10150,13 +10150,20 @@ export interface components {
             /**
              * @description Which ADR-0011 policy produced the supply numbers.
              *     Surfaced so consumers can decide how much to trust the
-             *     absolute value (e.g. `override` indicates an operator
-             *     curated the locked-set or SEP-1 declared a max_supply;
-             *     `issuer_exclusion`/`admin_exclusion` are algorithm
-             *     defaults). Null when no supply snapshot is available.
+             *     absolute value: `issuer_exclusion`/`admin_exclusion` are
+             *     algorithm defaults; `override` indicates an operator
+             *     curated the locked-set or max_supply;
+             *     `sep1_declared_max` means max_supply (and fdv_usd) come
+             *     from the issuer's own stellar.toml `[[CURRENCIES]]`
+             *     max_number/fixed_number declaration — self-declared by
+             *     the issuer, not on-chain enforced; `sep41_lake_flows` is
+             *     the lake-derived Σmint−Σburn−Σclawback event-sum served
+             *     for SEP-41 tokens outside the operator watch-list
+             *     (total == circulating; no admin exclusion). Null when no
+             *     supply snapshot is available.
              * @enum {string|null}
              */
-            supply_basis?: "xlm_sdf_reserve_exclusion" | "issuer_exclusion" | "admin_exclusion" | "override" | null;
+            supply_basis?: "xlm_sdf_reserve_exclusion" | "xlm_total_only" | "issuer_exclusion" | "admin_exclusion" | "override" | "sep1_declared_max" | "sep41_lake_flows" | "no_metadata" | null;
             /**
              * @description Trailing-24h USD-denominated trade volume across every
              *     pair this asset participates in (as base OR quote).

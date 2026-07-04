@@ -78,7 +78,8 @@ func TestOverlay_OperatorOverridePreserved(t *testing.T) {
 
 // TestOverlay_AppliesSEP1WhenAvailable — happy path: no operator
 // override, SEP-1 declaration present and parseable; MaxSupply gets
-// populated and Basis upgrades from algorithm-default to Override.
+// populated and Basis flips to SEP1DeclaredMax so the wire labels
+// the cap as issuer-self-declared.
 func TestOverlay_AppliesSEP1WhenAvailable(t *testing.T) {
 	resolver := &stubMetadataResolver{raw: "21000000000000000", ok: true}
 	snap := supply.Supply{
@@ -98,8 +99,8 @@ func TestOverlay_AppliesSEP1WhenAvailable(t *testing.T) {
 	if got.MaxSupply == nil || got.MaxSupply.String() != "21000000000000000" {
 		t.Errorf("MaxSupply = %v, want 21000000000000000", got.MaxSupply)
 	}
-	if got.Basis != supply.BasisOverride {
-		t.Errorf("Basis = %q, want %q", got.Basis, supply.BasisOverride)
+	if got.Basis != supply.BasisSEP1DeclaredMax {
+		t.Errorf("Basis = %q, want %q", got.Basis, supply.BasisSEP1DeclaredMax)
 	}
 }
 
@@ -217,11 +218,12 @@ func TestOverlay_NilResolverIsNoop(t *testing.T) {
 	}
 }
 
-// TestOverlay_BasisAlreadyOverridePreserved — when an asset already
+// TestOverlay_BasisOverrideAlsoRelabelled — when an asset already
 // has Basis=Override (e.g. operator extended the locked-set but
-// didn't supply a max_supply), the Basis stays Override after the
-// overlay applies. Same lane, no need to flip.
-func TestOverlay_BasisAlreadyOverridePreserved(t *testing.T) {
+// didn't supply a max_supply), applying the SEP-1 max still
+// relabels to SEP1DeclaredMax: the max/FDV now rest on the issuer's
+// declaration and the wire must say so.
+func TestOverlay_BasisOverrideAlsoRelabelled(t *testing.T) {
 	resolver := &stubMetadataResolver{raw: "1000000", ok: true}
 	snap := supply.Supply{
 		AssetKey: "USDC:GA1", TotalSupply: big.NewInt(1000),
@@ -232,7 +234,7 @@ func TestOverlay_BasisAlreadyOverridePreserved(t *testing.T) {
 	if err != nil || !applied {
 		t.Fatalf("expected overlay applied; err=%v applied=%v", err, applied)
 	}
-	if got.Basis != supply.BasisOverride {
-		t.Errorf("Basis = %q, want preserved %q", got.Basis, supply.BasisOverride)
+	if got.Basis != supply.BasisSEP1DeclaredMax {
+		t.Errorf("Basis = %q, want %q", got.Basis, supply.BasisSEP1DeclaredMax)
 	}
 }

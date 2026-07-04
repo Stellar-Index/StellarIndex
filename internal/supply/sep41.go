@@ -110,7 +110,8 @@ var ErrNegativeTotalSupply = errors.New("supply: SEP-41 mint − burn − clawba
 //
 //   - total_supply = MintTotal − BurnTotal − ClawbackTotal.
 //   - max_supply = Policy.MaxSupplyOverrides[key] if set, else nil
-//     (SEP-1 declaration overlay is a future PR).
+//     (the SEP-1 declaration overlay — [Overlay] — applies at the
+//     API serving layer, not here).
 //   - circulating_supply = total − AdminBalance − locked-set
 //     balances. Admin balance is always excluded; per-asset
 //     locked-set extends that.
@@ -162,7 +163,8 @@ func (c *SEP41Computer) Compute(ctx context.Context, asset canonical.Asset, ledg
 		circulating.SetInt64(0)
 	}
 
-	// max_supply: operator override beats nil (SEP-1 overlay future PR).
+	// max_supply: operator override beats nil (the SEP-1 overlay
+	// applies downstream at the API serving layer).
 	var maxSupply *big.Int
 	basis := BasisAdminExclusion
 	if override, ok, err := c.policy.MaxSupplyOverride(key); err != nil {
