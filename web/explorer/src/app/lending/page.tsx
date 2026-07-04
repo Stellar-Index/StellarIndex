@@ -111,12 +111,12 @@ export default function LendingPage() {
         bodyClassName="text-sm text-ink-body space-y-2"
       >
         <p>
-          Per-pool TVL + utilisation + supply/borrow APY plumb in once
-          the pool-storage reader worker ships. For now the table
-          shows pools observed in the auction stream — every pool
-          that has emitted a new / fill / delete auction event.
-          Pools that exist on-chain but haven&apos;t had a liquidation
-          since launch won&apos;t appear until they do.
+          Per-pool TVL and utilisation now read live from pool storage
+          (per-reserve USD); supply/borrow APY columns land at this
+          list level next — the per-reserve APRs already serve on each
+          pool&apos;s detail page. The table lists pools observed in the
+          auction stream, so a pool that has never had a liquidation
+          won&apos;t appear until it does.
         </p>
         <p>
           For more context: head to{' '}

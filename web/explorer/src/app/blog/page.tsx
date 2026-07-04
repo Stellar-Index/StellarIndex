@@ -42,7 +42,7 @@ export default function BlogIndexPage() {
       {posts.length === 0 ? (
         <div className="rounded-xl border border-line bg-surface p-6">
           <p className="text-sm text-ink-body">
-            No posts yet. The first post lands once v1 ships. For
+            No posts match this view. For
             per-release notes meanwhile, see{' '}
             <Link href="/changelog" className="text-brand-600 hover:underline">
               /changelog
