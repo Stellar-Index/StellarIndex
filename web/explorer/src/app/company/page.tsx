@@ -152,8 +152,10 @@ export default function CompanyPage() {
             /changelog
           </Link>
           . Post-v1 priorities — order-book depth ingest, DEX TVL,
-          paid forex feed, multi-network expansion — are public in the
-          same backlog.
+          and deeper per-protocol coverage across every major Stellar
+          protocol — are public in the same backlog. Stellar Index is
+          deliberately a Stellar-only explorer: depth on one network
+          over breadth across many.
         </p>
       </section>
 
