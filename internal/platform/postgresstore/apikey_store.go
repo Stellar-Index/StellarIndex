@@ -41,6 +41,7 @@ const apiKeyColumns = `
 	rate_limit_per_min,
 	COALESCE(monthly_quota, 0),
 	permissions,
+	scopes,
 	ip_allowlist,
 	referer_allowlist,
 	expires_at,
@@ -60,6 +61,7 @@ func scanAPIKey(row interface {
 		expiresAt, revokedAt, lastUsedAt sql.NullTime
 		lastUsedIP                       sql.NullString
 		permissions                      []byte
+		scopes                           pq.StringArray
 		ipAllowlist                      pq.StringArray
 		refererAllowlist                 pq.StringArray
 	)
@@ -68,7 +70,7 @@ func scanAPIKey(row interface {
 		&k.Name, &k.Description,
 		&k.KeyHash, &k.KeyPrefix, &k.Tier,
 		&k.RateLimitPerMin, &k.MonthlyQuota,
-		&permissions, &ipAllowlist, &refererAllowlist,
+		&permissions, &scopes, &ipAllowlist, &refererAllowlist,
 		&expiresAt,
 		&revokedAt, &revokedByUserID, &k.RevokedReason,
 		&lastUsedAt, &lastUsedIP, &k.LastUsedUserAgent,
@@ -95,6 +97,9 @@ func scanAPIKey(row interface {
 		if err := json.Unmarshal(permissions, &k.Permissions); err != nil {
 			return platform.APIKey{}, fmt.Errorf("decode permissions: %w", err)
 		}
+	}
+	if len(scopes) > 0 {
+		k.Scopes = []string(scopes)
 	}
 	k.RefererAllowlist = []string(refererAllowlist)
 	k.IPAllowlist = parseCIDRArray(ipAllowlist)
@@ -204,6 +209,7 @@ func buildAPIKeyCreateArgs(k platform.APIKey) ([]any, error) {
 		k.KeyHash, k.KeyPrefix, string(k.Tier),
 		k.RateLimitPerMin, k.MonthlyQuota,
 		permissionsJSON,
+		nonNilStringArray(k.Scopes),
 		ipAllowlistArray(k.IPAllowlist),
 		nonNilStringArray(k.RefererAllowlist),
 		nullTime(k.ExpiresAt),
@@ -244,6 +250,7 @@ const apiKeyInsertCapped = `
 		key_hash, key_prefix, tier,
 		rate_limit_per_min, monthly_quota,
 		permissions,
+		scopes,
 		ip_allowlist,
 		referer_allowlist,
 		expires_at,
@@ -254,12 +261,13 @@ const apiKeyInsertCapped = `
 	       $6, $7, $8,
 	       $9, NULLIF($10, 0)::bigint,
 	       $11::jsonb,
-	       $12::cidr[],
-	       $13::text[],
-	       $14,
-	       NULLIF($15, 0)
+	       $12::text[],
+	       $13::cidr[],
+	       $14::text[],
+	       $15,
+	       NULLIF($16, 0)
 	  FROM active_count
-	 WHERE active_count.n < $16
+	 WHERE active_count.n < $17
 	RETURNING ` + apiKeyColumns
 
 // apiKeyInsertUncapped is the unfenced INSERT path used by
@@ -272,6 +280,7 @@ const apiKeyInsertUncapped = `
 		key_hash, key_prefix, tier,
 		rate_limit_per_min, monthly_quota,
 		permissions,
+		scopes,
 		ip_allowlist,
 		referer_allowlist,
 		expires_at,
@@ -282,10 +291,11 @@ const apiKeyInsertUncapped = `
 	        $6, $7, $8,
 	        $9, NULLIF($10, 0)::bigint,
 	        $11::jsonb,
-	        $12::cidr[],
-	        $13::text[],
-	        $14,
-	        NULLIF($15, 0))
+	        $12::text[],
+	        $13::cidr[],
+	        $14::text[],
+	        $15,
+	        NULLIF($16, 0))
 	RETURNING ` + apiKeyColumns
 
 func (r *APIKeyStore) Get(ctx context.Context, id string) (platform.APIKey, error) {
@@ -348,16 +358,18 @@ func (r *APIKeyStore) Update(ctx context.Context, k platform.APIKey) error {
 			rate_limit_per_min = $4,
 			monthly_quota = NULLIF($5, 0)::bigint,
 			permissions = $6::jsonb,
-			ip_allowlist = $7::cidr[],
-			referer_allowlist = $8::text[],
-			expires_at = $9,
-			usage_alert_threshold_pct = NULLIF($10, 0)
+			scopes = $7::text[],
+			ip_allowlist = $8::cidr[],
+			referer_allowlist = $9::text[],
+			expires_at = $10,
+			usage_alert_threshold_pct = NULLIF($11, 0)
 		WHERE id = $1
 	`
 	res, err := r.s.db.ExecContext(ctx, q,
 		k.ID, k.Name, k.Description,
 		k.RateLimitPerMin, k.MonthlyQuota,
 		permissionsJSON,
+		nonNilStringArray(k.Scopes),
 		ipAllowlistArray(k.IPAllowlist),
 		nonNilStringArray(k.RefererAllowlist),
 		nullTime(k.ExpiresAt),

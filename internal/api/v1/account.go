@@ -3,12 +3,15 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/auth"
+	"github.com/StellarIndex/stellar-index/internal/platform"
 )
 
 // AccountStore is the v1 boundary against [auth.APIKeyStore].
@@ -154,19 +157,50 @@ type UsageEndpointDay struct {
 // The plaintext appears here exactly once — clients that drop the
 // response can never recover it.
 type KeyCreated struct {
-	KeyID     string `json:"key_id"`
-	Plaintext string `json:"plaintext"`
-	KeyPrefix string `json:"key_prefix,omitempty"`
-	Label     string `json:"label,omitempty"`
+	KeyID     string   `json:"key_id"`
+	Plaintext string   `json:"plaintext"`
+	KeyPrefix string   `json:"key_prefix,omitempty"`
+	Label     string   `json:"label,omitempty"`
+	Scopes    []string `json:"scopes,omitempty"`
 }
 
 // createKeyRequest is the inbound POST body. The server adopts the
 // caller's Identifier (so callers can only mint keys that share
 // their owner reference) and ignores Tier — the new key inherits
-// the caller's tier verbatim. Operator callers can mint any tier
-// via a separate admin endpoint that ships later.
+// the caller's tier verbatim. Operator callers mint for other
+// identifiers/tiers via POST /v1/admin/keys.
+//
+// Scopes is optional: absent/empty mints a full-access key (the
+// pre-scopes posture); non-empty confines the key to the listed
+// route families (platform.KnownKeyScopes vocabulary). A caller can
+// only NARROW — scopes never grant anything the key's tier wouldn't
+// already reach.
 type createKeyRequest struct {
-	Label string `json:"label"`
+	Label  string   `json:"label"`
+	Scopes []string `json:"scopes,omitempty"`
+}
+
+// validateScopes normalises + validates a mint request's scope
+// list against the platform vocabulary. Returns ("", true) on
+// success (with duplicates removed) or (problem detail, false).
+func validateScopes(raw []string) ([]string, string) {
+	if len(raw) == 0 {
+		return nil, ""
+	}
+	seen := make(map[string]struct{}, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, s := range raw {
+		if !platform.ValidKeyScope(s) {
+			return nil, fmt.Sprintf("unknown scope %q — valid scopes: %s",
+				s, strings.Join(platform.KnownKeyScopes(), ", "))
+		}
+		if _, dup := seen[s]; dup {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out, ""
 }
 
 // handleAccountMe serves GET /v1/account/me.
@@ -394,10 +428,19 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	scopes, problem := validateScopes(req.Scopes)
+	if problem != "" {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-scope",
+			"Invalid scope", http.StatusBadRequest, problem)
+		return
+	}
+
 	rec, plaintext, err := s.accounts.Create(r.Context(), auth.CreateAPIKeyRequest{
 		Identifier: subject.Identifier,
 		Label:      req.Label,
 		Tier:       subject.Tier,
+		Scopes:     scopes,
 		// Inherit the caller's per-key budget when set; otherwise
 		// leave zero so the per-tier default applies.
 		RateLimitPerMin: subject.RateLimitPerMin,
@@ -420,6 +463,7 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 			Plaintext: plaintext,
 			KeyPrefix: rec.KeyPrefix,
 			Label:     rec.Label,
+			Scopes:    rec.Scopes,
 		},
 		AsOf:  rec.CreatedAt,
 		Flags: Flags{},

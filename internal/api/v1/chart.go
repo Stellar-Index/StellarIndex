@@ -212,10 +212,12 @@ func (s *Server) dispatchSpecialisedChart(
 // Pair conventions:
 //   - fiat:CCY/fiat:USD  → reader returns rate (1 CCY = N USD); use InverseUSD
 //   - fiat:USD/fiat:CCY  → reader returns inverse (1 USD = N CCY); use RateUSD
-//   - fiat:CCY1/fiat:CCY2 (cross) → not yet supported; returns empty
-//     series + a non-fatal "triangulated=false". The explorer falls
-//     back to "no data for this window"; a follow-up can implement
-//     cross-currency triangulation on read.
+//   - fiat:CCY1/fiat:CCY2 (cross, e.g. EUR/JPY) → triangulated on read
+//     through both USD legs: price(base/quote) = rate_usd[quote] /
+//     rate_usd[base] per daily bucket (rate_usd[T] = "1 USD = N T",
+//     the same algebra /v1/price's tryFiatCrossRate uses). The
+//     division runs in big.Rat, not float (ADR-0003 discipline for
+//     the derived leg), and the response stamps flags.triangulated.
 func (s *Server) handleChartFiat(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -246,8 +248,10 @@ func (s *Server) handleChartFiat(
 	case pair.Quote.Code == "USD" && pair.Base.Code != "USD":
 		ticker, useInverse = pair.Base.Code, true
 	default:
-		// Cross-fiat (e.g. EUR/JPY) or USD/USD — neither supported here.
-		writeJSON(w, series, Flags{})
+		// Cross-fiat (e.g. EUR/JPY) — triangulate both legs vs USD.
+		// (USD/USD can't reach here: identity pairs are rejected in
+		// parseChartPair.)
+		s.handleChartFiatCross(w, r, pair, series, gran, from)
 		return
 	}
 
@@ -299,6 +303,107 @@ func (s *Server) handleChartFiat(
 	}
 
 	writeJSON(w, series, Flags{})
+}
+
+// handleChartFiatCross serves /v1/chart for fiat:CCY1/fiat:CCY2 cross
+// pairs (neither side USD) by triangulating both legs against USD out
+// of fx_quotes: price(base/quote) on day d = rate_usd[quote] /
+// rate_usd[base] — the same algebra /v1/price's tryFiatCrossRate
+// applies to the live forex snapshot, here applied per historical
+// bucket. Buckets are joined on equal date (both series are daily ECB
+// reference rates); a day missing either leg is skipped rather than
+// forward-filled, so every emitted point is two same-day observations.
+// The division runs in big.Rat (exact on the given legs, ADR-0003
+// discipline); the response stamps flags.triangulated.
+func (s *Server) handleChartFiatCross(
+	w http.ResponseWriter,
+	r *http.Request,
+	pair canonical.Pair,
+	series ChartSeries,
+	gran string,
+	from time.Time,
+) {
+	// Same default window as the direct fiat path: trailing 25y when
+	// timeframe=all (ECB inception).
+	to := time.Now().UTC().Truncate(24 * time.Hour)
+	queryFrom := from
+	if queryFrom.IsZero() {
+		queryFrom = to.AddDate(-25, 0, 0)
+	}
+
+	fxCtx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	basePts, err := s.fxHistory.ListFXHistory(fxCtx, pair.Base.Code, queryFrom, to)
+	if err != nil {
+		s.logger.Warn("chart fiat-cross fx_quotes fetch failed",
+			"ticker", pair.Base.Code, "err", err)
+		writeJSON(w, series, Flags{})
+		return
+	}
+	quotePts, err := s.fxHistory.ListFXHistory(fxCtx, pair.Quote.Code, queryFrom, to)
+	if err != nil {
+		s.logger.Warn("chart fiat-cross fx_quotes fetch failed",
+			"ticker", pair.Quote.Code, "err", err)
+		writeJSON(w, series, Flags{})
+		return
+	}
+
+	wire := crossFiatChartPoints(basePts, quotePts)
+	series.Points = wire
+
+	// Retention-truncation signal — same shape as the direct path.
+	if !from.IsZero() && len(wire) > 0 {
+		if grace := chartGranularityGrace(gran); wire[0].T.Sub(from) > grace {
+			startsAt := wire[0].T
+			requested := from
+			series.Truncated = true
+			series.DataStartsAt = &startsAt
+			series.RequestedFrom = &requested
+		}
+	}
+	writeJSON(w, series, Flags{Triangulated: len(wire) > 0})
+}
+
+// crossFiatChartPoints merges two ascending daily USD-leg series on
+// equal buckets and emits the cross rate rate_usd[quote]/rate_usd[base]
+// per shared day. big.Rat.SetFloat64 is exact for every finite float64,
+// and the single Quo keeps the derived leg free of compounding float
+// error; ratToDecimal renders the same 10-digit decimal string the
+// other price surfaces use.
+func crossFiatChartPoints(basePts, quotePts []FXQuotePoint) []HistoryPointWire {
+	n := len(basePts)
+	if len(quotePts) < n {
+		n = len(quotePts)
+	}
+	wire := make([]HistoryPointWire, 0, n)
+	i, j := 0, 0
+	for i < len(basePts) && j < len(quotePts) {
+		b, q := basePts[i], quotePts[j]
+		switch {
+		case b.Bucket.Before(q.Bucket):
+			i++
+		case q.Bucket.Before(b.Bucket):
+			j++
+		default:
+			i++
+			j++
+			if b.RateUSD <= 0 || q.RateUSD <= 0 {
+				continue
+			}
+			br := new(big.Rat).SetFloat64(b.RateUSD)
+			qr := new(big.Rat).SetFloat64(q.RateUSD)
+			if br == nil || qr == nil || br.Sign() <= 0 {
+				continue
+			}
+			cross := new(big.Rat).Quo(qr, br)
+			wire = append(wire, HistoryPointWire{
+				T: b.Bucket,
+				P: ratToDecimal(cross, ohlcPriceDigits),
+				// FX rates have no volume — omit v_usd entirely.
+			})
+		}
+	}
+	return wire
 }
 
 // chartGranularityGrace is the gap (in time) between `from` and the

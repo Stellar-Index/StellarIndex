@@ -29,6 +29,7 @@ type APIKey struct {
 	RateLimitPerMin        int
 	MonthlyQuota           int64 // 0 = inherit from plan
 	Permissions            KeyPermissions
+	Scopes                 []string // capability scopes (see KeyScope*); empty = full access (legacy posture)
 	IPAllowlist            []netip.Prefix
 	RefererAllowlist       []string
 	ExpiresAt              time.Time // zero = no expiry
@@ -53,6 +54,42 @@ const (
 	APIKeyTierPartner  APIKeyTier = "partner"  // higher rate limit, custom contract
 	APIKeyTierOperator APIKeyTier = "operator" // staff-issued; unlocks admin endpoints
 )
+
+// Key capability scopes — the coarse route-family grants a key can
+// carry. Families are derived from the /v1 route table: everything
+// that serves market/network data is `read`; the account
+// self-service surface is `account`; the session-dashboard
+// management surface is `dashboard`; the operator surface is
+// `admin`. A key with an EMPTY scope list retains full access
+// (legacy posture, back-compat with every key minted before scopes
+// shipped); a key WITH scopes is confined to the listed families.
+// Enforcement lives in the API's KeyPolicy middleware
+// (internal/api/v1/middleware/keypolicy.go).
+const (
+	KeyScopeRead      = "read"      // public data surfaces (price, history, chart, assets, explorer, …)
+	KeyScopeAccount   = "account"   // /v1/account/* self-service
+	KeyScopeDashboard = "dashboard" // /v1/dashboard/* management surface
+	KeyScopeAdmin     = "admin"     // /v1/admin/* operator surface
+)
+
+// KnownKeyScopes lists the accepted scope vocabulary, for
+// validation errors and docs.
+func KnownKeyScopes() []string {
+	return []string{KeyScopeRead, KeyScopeAccount, KeyScopeDashboard, KeyScopeAdmin}
+}
+
+// ValidKeyScope reports whether s is one of the known capability
+// scopes. The wildcard "*" is NOT accepted at mint time — an empty
+// list already means full access, so persisting "*" would just be
+// a second spelling of the same thing.
+func ValidKeyScope(s string) bool {
+	switch s {
+	case KeyScopeRead, KeyScopeAccount, KeyScopeDashboard, KeyScopeAdmin:
+		return true
+	default:
+		return false
+	}
+}
 
 // KeyPermissions is the per-key capability set. Stored as JSONB
 // in Postgres. v1 default is {All: true} (no enforcement); the

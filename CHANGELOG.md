@@ -16,6 +16,66 @@ against.
 ## [Unreleased]
 
 ### Added
+- **API-key capability scopes (per-endpoint scope enforcement)**:
+  keys can optionally be minted with `scopes` confining them to
+  route families — `read` (public data), `account`
+  (`/v1/account/*`), `dashboard` (`/v1/dashboard/*`), `admin`
+  (`/v1/admin/*`); vocabulary in `platform.KnownKeyScopes`. The
+  KeyPolicy middleware enforces the gate (403 `scope-denied`) for
+  keys WITH scopes; an empty scope list keeps full access, so every
+  existing key is unaffected (back-compat, `Subject.Scopes` was
+  reserved-unused since v1). Plumbed end-to-end: migration 0073
+  (`api_keys.scopes text[]`), Postgres store + validator + Redis
+  cache round-trip, `POST /v1/account/keys` + dashboard
+  `POST /v1/dashboard/keys` accept `scopes`, SDK
+  `CreateKeyRequest.Scopes` / `KeyCreated.Scopes`.
+- **`POST /v1/admin/keys` — operator key-mint path**: the
+  "separate admin path (not yet shipped)" the self-service handler
+  doc pointed at. Operator-tier credentials mint keys for another
+  identifier with explicit tier (`apikey`/`operator`), rate limit,
+  and scopes. Every mint is audit-logged: structured log line
+  unconditionally plus a persisted `audit_log` row (`key.mint`,
+  staff actor — the `recordStripeUpgradeAudit` pattern) via the new
+  `v1.Options.Audit` sink (wired to `postgresstore.NewAuditStore`
+  whenever Postgres is reachable). SDK: `Client.AdminCreateKey`.
+- **fiat/fiat cross-currency chart triangulation**: `/v1/chart` for
+  cross-fiat pairs where neither side is USD (e.g.
+  `asset=fiat:EUR&quote=fiat:JPY`) now serves a series triangulated
+  through both USD legs of `fx_quotes`
+  (`rate_usd[quote]/rate_usd[base]` per shared day, big.Rat
+  division — the /v1/price `tryFiatCrossRate` algebra applied
+  per-bucket) with `flags.triangulated=true`. Previously returned
+  an empty series ("a follow-up can implement cross-currency
+  triangulation on read").
+- **`/v1/price/at` stablecoin-proxy fallback**: the closed-1m-VWAP
+  CAGG point lookup gains the #1217-family X/fiat:USD → X/⟨peg⟩
+  retry (the CAGG sibling the vwap.go raw-trades fallback doc
+  deferred to "a separate PR"): when the literal pair + aliases
+  have no bucket at-or-before `ts`, each operator-declared
+  USD-pegged classic is tried in priority order, the requested
+  quote is echoed, and `flags.triangulated=true` is stamped.
+- **xdrjson: full InvokeHostFunction argument decode**: explorer
+  operation rows for `invoke_contract` now carry `args` — every
+  invocation argument display-decoded via `scval.Display` (i128
+  amounts as full decimal strings per ADR-0003, addresses as
+  strkeys, containers rendered inline) alongside the existing
+  `contract_id` / `function_name` / `arg_count`. Also restores
+  `scval.Display`'s Vec/Map container rendering, which a gocyclo
+  refactor (c5e7006e + 01e938a1) had orphaned — containers were
+  degrading to bare type names ("Vec"/"Map") on every explorer
+  surface using Display.
+
+### Changed
+- **Tier-aware key/webhook quotas**: the dashboard's flat caps
+  (25 keys / 10 webhooks per account) are replaced by per-tier
+  ladders — keys: free 5 / starter 25 / pro 50 / business 100 /
+  enterprise 250 (`platform.Tier.MaxActiveKeys`); webhooks: free 2
+  / starter 10 / pro 25 / business 50 / enterprise 100
+  (`platform.Tier.MaxWebhooks`) — deployment-overridable per tier
+  via `dashboardkeys.Config.KeyQuotas` /
+  `dashboardwebhooks.Config.WebhookQuotas`. Starter keeps exactly
+  the old key cap; the atomic in-INSERT quota gates (F-1257 /
+  F-1248) now receive the tier-resolved limit.
 - **Supply-observer program completion (BACKLOG #35 / launch-todo
   P4-2)**: the ADR-0011 SEP-1 `max_supply` overlay is wired into the
   `/v1/assets/{id}` serving path (previously `supply.Overlay` had

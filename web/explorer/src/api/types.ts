@@ -1296,7 +1296,7 @@ export interface paths {
         };
         /**
          * Point-in-time price (closed bucket at-or-before a timestamp)
-         * @description The pair's closed 1-minute VWAP bucket at-or-before `ts` — the cost-basis / PnL / tax-tooling lookup. `observed_at` is the BUCKET's close time, never `ts`, so callers see exactly how far the nearest observation was; a nearest bucket more than 24 hours before `ts` is a 404 (the endpoint refuses to fabricate continuity across dead markets). Current price: /v1/price or /v1/price/tip.
+         * @description The pair's closed 1-minute VWAP bucket at-or-before `ts` — the cost-basis / PnL / tax-tooling lookup. `observed_at` is the BUCKET's close time, never `ts`, so callers see exactly how far the nearest observation was; a nearest bucket more than 24 hours before `ts` is a 404 (the endpoint refuses to fabricate continuity across dead markets). When the literal pair (and its aliases) has no bucket and the quote is `fiat:USD`, the lookup retries each operator-declared USD-pegged classic (the same stablecoin-proxy chain as /v1/price) and returns the peg's bucket with `flags.triangulated=true`, echoing the requested quote. Current price: /v1/price or /v1/price/tip.
          */
         get: operations["getPriceAt"];
         put?: never;
@@ -2173,6 +2173,14 @@ export interface paths {
          *     TWAP is available now via `/v1/twap` (true time-weighted
          *     compute from raw trades); only the multi-bar chart variant
          *     is the deferred surface.
+         *
+         *     Fiat:fiat pairs are served from the daily `fx_quotes`
+         *     reference-rate series (sub-daily granularities replicate the
+         *     daily bar). Cross-fiat pairs where neither side is USD
+         *     (e.g. `asset=fiat:EUR&quote=fiat:JPY`) are triangulated on
+         *     read through both USD legs — `rate_usd[quote] /
+         *     rate_usd[base]` per shared day, same algebra as /v1/price's
+         *     cross-rate fallback — and stamp `flags.triangulated=true`.
          */
         get: {
             parameters: {
@@ -6633,6 +6641,13 @@ export interface paths {
          * Create a new API key.
          * @description Issues a new API key for the authenticated caller and returns
          *     the plaintext exactly once.
+         *
+         *     `scopes` (optional) confines the new key to route families:
+         *     `read` (public data surfaces), `account` (`/v1/account/*`),
+         *     `dashboard` (`/v1/dashboard/*`), `admin` (`/v1/admin/*`).
+         *     Omitted/empty mints a full-access key — the posture every key
+         *     minted before scopes shipped keeps. Scopes only narrow; they
+         *     never grant anything the key's tier wouldn't already reach.
          */
         post: {
             parameters: {
@@ -6645,6 +6660,11 @@ export interface paths {
                 content: {
                     "application/json": {
                         label: string;
+                        /**
+                         * @description Optional capability scopes. Empty = full access
+                         *     (back-compat). Unknown values 400.
+                         */
+                        scopes?: ("read" | "account" | "dashboard" | "admin")[];
                     };
                 };
             };
@@ -6741,6 +6761,90 @@ export interface paths {
                 };
             };
         };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Operator — mint an API key for another identifier.
+         * @description The operator key-mint path the self-service POST
+         *     /v1/account/keys has always pointed at: unlike self-service
+         *     (which inherits the caller's identifier + tier), the
+         *     operator names the TARGET `identifier` and may pin `tier`
+         *     (`apikey` default, or `operator`), `rate_limit_per_min`,
+         *     and capability `scopes` explicitly.
+         *
+         *     Restricted to operator-tier credentials (staff-issued via
+         *     stellarindex-ops; never granted to public callers) — other
+         *     tiers 403. Every successful mint is audit-logged: a
+         *     structured log line unconditionally plus a persisted
+         *     `audit_log` row (`key.mint`, staff actor) when the
+         *     deployment wires the audit store.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /**
+                         * @description Owner reference the minted key authenticates as
+                         *     (e.g. `acct:<slug>`).
+                         */
+                        identifier: string;
+                        label: string;
+                        /**
+                         * @default apikey
+                         * @enum {string}
+                         */
+                        tier?: "apikey" | "operator";
+                        /** @description 0 inherits the deployment default. */
+                        rate_limit_per_min?: number;
+                        scopes?: ("read" | "account" | "dashboard" | "admin")[];
+                    };
+                };
+            };
+            responses: {
+                /** @description New key — plaintext shown **once**. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["KeyCreatedEnvelope"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                /** @description Caller is not operator-tier. */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -7158,7 +7262,9 @@ export interface paths {
          *     ONCE. The dashboard surfaces it in a "save this now"
          *     banner; subsequent reads only see the prefix. Owner /
          *     admin / member roles can mint; viewer + billing 403.
-         *     Rate-limited to MaxKeysPerAccount=25 active keys.
+         *     Active-key quota is tier-aware (free 5, starter 25, pro 50,
+         *     business 100, enterprise 250 — deployment-overridable);
+         *     exceeding it returns 409.
          */
         post: {
             parameters: {
@@ -7357,7 +7463,9 @@ export interface paths {
          *     server-side immediately and use it to HMAC-verify the
          *     X-StellarIndex-Signature header on inbound POSTs. URL must
          *     be https://. Owner / admin / member roles can register;
-         *     viewer + billing 403. Capped at 10 webhooks per account.
+         *     viewer + billing 403. Webhook quota is tier-aware (free 2,
+         *     starter 10, pro 25, business 50, enterprise 100 —
+         *     deployment-overridable); exceeding it returns 409.
          */
         post: {
             parameters: {
@@ -9616,6 +9724,11 @@ export interface components {
             /** Format: int64 */
             monthly_quota?: number;
             usage_alert_threshold_pct?: number;
+            /**
+             * @description Capability scopes (read / account / dashboard / admin).
+             *     Absent/empty = full access.
+             */
+            scopes?: string[];
             ip_allowlist?: string[];
             referer_allowlist?: string[];
             /** Format: date-time */
@@ -9651,6 +9764,12 @@ export interface components {
             rate_limit_per_min?: number;
             /** Format: int64 */
             monthly_quota?: number;
+            /**
+             * @description Optional capability scopes confining the key to route
+             *     families. Empty = full access (back-compat posture every
+             *     pre-scopes key keeps). Unknown values 400.
+             */
+            scopes?: ("read" | "account" | "dashboard" | "admin")[];
             /**
              * @description CIDR (`203.0.113.0/24`) or bare IP (auto-promoted to
              *     /32 v4 or /128 v6).
@@ -11023,6 +11142,12 @@ export interface components {
                  */
                 key_prefix?: string;
                 label: string;
+                /**
+                 * @description Capability scopes the key was minted with.
+                 *     Absent/empty = full access (the pre-scopes
+                 *     posture).
+                 */
+                scopes?: string[];
             };
         };
         SEP10Challenge: {

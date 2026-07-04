@@ -52,6 +52,51 @@ func (t Tier) MaxRateLimitPerMin() int {
 	}
 }
 
+// MaxActiveKeys returns the per-tier ceiling on concurrently active
+// (non-revoked) API keys an account can hold. Replaces the flat
+// 25-key cap the dashboard shipped with ("tier-aware quotas can
+// replace this once billing is wired — Phase 2"). Deployments can
+// override per tier via the dashboard handler config
+// (dashboardkeys.Config.KeyQuotas); this method is the
+// config-absent default ladder.
+//
+// An unknown tier value is treated as Free (defensive — a corrupt
+// row should not unlock paid quotas), matching
+// [Tier.MaxRateLimitPerMin].
+func (t Tier) MaxActiveKeys() int {
+	switch t {
+	case TierStarter:
+		return 25
+	case TierPro:
+		return 50
+	case TierBusiness:
+		return 100
+	case TierEnterprise:
+		return 250
+	default: // TierFree + any unknown value
+		return 5
+	}
+}
+
+// MaxWebhooks returns the per-tier ceiling on registered webhook
+// endpoints. Replaces the dashboard's flat 10-webhook cap; override
+// seam is dashboardwebhooks.Config.WebhookQuotas. Unknown tiers are
+// treated as Free, same posture as the other tier ladders.
+func (t Tier) MaxWebhooks() int {
+	switch t {
+	case TierStarter:
+		return 10
+	case TierPro:
+		return 25
+	case TierBusiness:
+		return 50
+	case TierEnterprise:
+		return 100
+	default: // TierFree + any unknown value
+		return 2
+	}
+}
+
 // AccountStatus is the lifecycle state of an account.
 type AccountStatus string
 

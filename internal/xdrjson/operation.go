@@ -13,6 +13,8 @@ import (
 	"strconv"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
+
+	"github.com/StellarIndex/stellar-index/internal/scval"
 )
 
 // opTypeName maps the XDR operation-type enum to the explorer's stable
@@ -170,9 +172,12 @@ func fillOpFields(b xdr.OperationBody, f map[string]any) { //nolint:gocyclo,funl
 	}
 }
 
-// fillInvokeHostFunction summarises a Soroban host-function op: the kind, and
-// for InvokeContract the target contract + function name. Full arg decode is a
-// Phase-A follow-up; contract_id + function_name are the high-value fields.
+// fillInvokeHostFunction decodes a Soroban host-function op: the kind, and for
+// InvokeContract the target contract + function name + the full argument list.
+// Args are rendered through scval.Display — the compact human-readable form the
+// explorer's contract-event rows already use — so i128 amounts stay decimal
+// strings (ADR-0003) and addresses render as strkeys. `arg_count` predates the
+// full decode and is kept for wire back-compat.
 func fillInvokeHostFunction(op xdr.InvokeHostFunctionOp, f map[string]any) {
 	switch op.HostFunction.Type {
 	case xdr.HostFunctionTypeHostFunctionTypeInvokeContract:
@@ -183,6 +188,11 @@ func fillInvokeHostFunction(op xdr.InvokeHostFunctionOp, f map[string]any) {
 		}
 		f["function_name"] = string(ic.FunctionName)
 		f["arg_count"] = len(ic.Args)
+		args := make([]string, len(ic.Args))
+		for i, a := range ic.Args {
+			args[i] = scval.Display(a)
+		}
+		f["args"] = args
 	case xdr.HostFunctionTypeHostFunctionTypeCreateContract:
 		f["function"] = "create_contract"
 	case xdr.HostFunctionTypeHostFunctionTypeUploadContractWasm:

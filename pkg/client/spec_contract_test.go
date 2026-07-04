@@ -82,6 +82,7 @@ var coveredOperations = []coveredOperation{
 	{"Usage", "GET", "/account/usage", UsageRow{}, ""},
 	{"Keys", "GET", "/account/keys", Account{}, ""},
 	{"CreateKey", "POST", "/account/keys", KeyCreated{}, ""},
+	{"AdminCreateKey", "POST", "/admin/keys", KeyCreated{}, ""},
 	{"RevokeKey", "DELETE", "/account/keys/{keyID}", nil, ""}, // 204, no body
 	{"Status", "GET", "/status", Status{}, ""},
 	{"Healthz", "GET", "/healthz", Health{}, ""},

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math/big"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,10 +79,68 @@ func TestChart_Fiat_CNYtoUSD_UsesInverse(t *testing.T) {
 	}
 }
 
-func TestChart_Fiat_CrossPair_EmptySeries(t *testing.T) {
-	// EUR/JPY (neither side USD) is not yet supported.
-	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{
-		{Bucket: time.Now(), RateUSD: 1.0, InverseUSD: 1.0},
+// tickerFXHistoryReader serves a distinct daily series per ticker so
+// cross-fiat tests can hand each USD leg its own rates.
+type tickerFXHistoryReader struct {
+	byTicker map[string][]v1.FXQuotePoint
+}
+
+func (s *tickerFXHistoryReader) ListFXHistory(_ context.Context, ticker string, _, _ time.Time) ([]v1.FXQuotePoint, error) {
+	return s.byTicker[ticker], nil
+}
+
+func TestChart_Fiat_CrossPair_TriangulatesViaUSD(t *testing.T) {
+	// EUR/JPY (neither side USD): price = rate_usd[JPY] / rate_usd[EUR]
+	// per shared day; days missing either leg are skipped.
+	d1 := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
+	d2 := time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC)
+	d3 := time.Date(2024, 1, 4, 0, 0, 0, 0, time.UTC)
+	fx := &tickerFXHistoryReader{byTicker: map[string][]v1.FXQuotePoint{
+		"EUR": {
+			{Bucket: d1, RateUSD: 0.925, InverseUSD: 1 / 0.925},
+			{Bucket: d2, RateUSD: 0.930, InverseUSD: 1 / 0.930},
+			{Bucket: d3, RateUSD: 0.920, InverseUSD: 1 / 0.920}, // JPY leg absent — must be skipped
+		},
+		"JPY": {
+			{Bucket: d1, RateUSD: 155.00, InverseUSD: 1 / 155.00},
+			{Bucket: d2, RateUSD: 156.00, InverseUSD: 1 / 156.00},
+		},
+	}}
+	srv := v1.New(v1.Options{History: &stubHistoryReader{}, FXHistory: fx})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/chart?asset=fiat:EUR&quote=fiat:JPY&timeframe=1y&granularity=1d")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data  v1.ChartSeries `json:"data"`
+		Flags struct {
+			Triangulated bool `json:"triangulated"`
+		} `json:"flags"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Data.Points) != 2 {
+		t.Fatalf("got %d points, want 2 (d3 has no JPY leg)", len(env.Data.Points))
+	}
+	// 155.00 / 0.925 = 167.567567… — assert the stable leading digits
+	// (the 10th decimal wobbles with the float64 representation of
+	// the 0.925 leg, which is inherent to the reader's float fields).
+	if got := env.Data.Points[0].P; !strings.HasPrefix(got, "167.5675675") {
+		t.Errorf("point[0].P = %q, want 167.5675675…", got)
+	}
+	if !env.Flags.Triangulated {
+		t.Errorf("flags.triangulated = false, want true for a cross-fiat series")
+	}
+}
+
+func TestChart_Fiat_CrossPair_NoSharedDays_EmptySeries(t *testing.T) {
+	d1 := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
+	d2 := time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC)
+	fx := &tickerFXHistoryReader{byTicker: map[string][]v1.FXQuotePoint{
+		"EUR": {{Bucket: d1, RateUSD: 0.925, InverseUSD: 1 / 0.925}},
+		"JPY": {{Bucket: d2, RateUSD: 155.00, InverseUSD: 1 / 155.00}},
 	}}
 	srv := v1.New(v1.Options{History: &stubHistoryReader{}, FXHistory: fx})
 	ts := httpTestServer(t, srv)
@@ -94,7 +153,7 @@ func TestChart_Fiat_CrossPair_EmptySeries(t *testing.T) {
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&env)
 	if len(env.Data.Points) != 0 {
-		t.Errorf("cross-fiat should return empty series, got %d", len(env.Data.Points))
+		t.Errorf("no shared buckets should yield an empty series, got %d", len(env.Data.Points))
 	}
 }
 

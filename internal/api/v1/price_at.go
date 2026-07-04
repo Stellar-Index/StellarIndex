@@ -83,6 +83,10 @@ func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, snap, Flags{})
 		return
 	}
+	if snap, found := s.lookupPriceAtStablecoinFallback(r.Context(), asset, quote, ts); found {
+		writeJSON(w, snap, Flags{Triangulated: true})
+		return
+	}
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/price-not-found",
 		"No price at requested time", http.StatusNotFound,
@@ -119,6 +123,39 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 				WindowSeconds: 60,
 			}, true
 		}
+	}
+	return PriceSnapshot{}, false
+}
+
+// lookupPriceAtStablecoinFallback is the CAGG sibling of the
+// raw-trades stablecoin fallback (vwap.go's
+// tradesInRangeWithStablecoinFallback / chart.go's
+// chartStablecoinFallback) — the deferred half of the #1217 family.
+// The 1m VWAP CAGG keys buckets by the REAL stored quote asset, so a
+// historical X/fiat:USD lookup misses unless something traded
+// directly in fiat:USD at that instant. When the literal + alias
+// walk found nothing and the quote is fiat:USD, retry each
+// operator-declared USD-pegged classic in priority order; the first
+// in-lookback bucket wins. The snapshot echoes the REQUESTED quote —
+// flags.triangulated (stamped by the caller) marks the proxy, same
+// contract as tryStablecoinFiatProxy on /v1/price.
+func (s *Server) lookupPriceAtStablecoinFallback(
+	ctx context.Context, asset, quote canonical.Asset, ts time.Time,
+) (PriceSnapshot, bool) {
+	if quote.Type != canonical.AssetFiat || quote.Code != "USD" {
+		return PriceSnapshot{}, false
+	}
+	for _, peg := range s.usdPeggedClassics {
+		if peg.Equal(asset) {
+			continue
+		}
+		snap, found := s.lookupPriceAt(ctx, asset, peg, ts)
+		if !found {
+			continue
+		}
+		snap.AssetID = asset.String()
+		snap.Quote = quote.String()
+		return snap, true
 	}
 	return PriceSnapshot{}, false
 }

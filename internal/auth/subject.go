@@ -50,9 +50,13 @@ type Subject struct {
 	// Tier — see above. Drives rate-limit budget + feature gating.
 	Tier Tier
 
-	// Scopes — optional capability list (e.g. ["price:read",
-	// "history:read", "admin:*"]). Empty for v1; reserved for
-	// per-endpoint scope checks once auth lands.
+	// Scopes — optional capability list drawn from the
+	// platform.KeyScope* vocabulary ("read", "account",
+	// "dashboard", "admin"). EMPTY means full access — the
+	// back-compat posture for every key minted before scopes
+	// shipped. Non-empty confines the key to the listed route
+	// families; the KeyPolicy middleware enforces via
+	// [RequiredScope] + [Subject.HasScope].
 	Scopes []string
 
 	// KeyID — public-safe identifier for the credential the caller

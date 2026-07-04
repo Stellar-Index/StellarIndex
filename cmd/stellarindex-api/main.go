@@ -848,6 +848,16 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		}
 	}
 
+	// Admin audit sink — durable "key.mint" rows for POST
+	// /v1/admin/keys. Wired whenever Postgres is reachable (same
+	// platform audit_log the Stripe webhook sink targets, migration
+	// 0027); nil degrades the admin handler to structured-log-only
+	// audit.
+	var adminAudit v1.AuditSink
+	if pgDB := store.DB(); pgDB != nil {
+		adminAudit = postgresstore.NewAuditStore(postgresstore.New(pgDB))
+	}
+
 	apiSrv := v1.New(v1.Options{
 		Logger:      logger.With("component", "api"),
 		ReadyChecks: checks,
@@ -868,6 +878,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Oracle:              oracleReader,
 		Sep1Cache:           store,
 		Accounts:            accountStore,
+		Audit:               adminAudit,
 		Signups:             signupTracker,
 		SignupIPThrottle:    signupIPThrottle,
 		SignupVerifier:      signupVerifier,

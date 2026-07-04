@@ -107,3 +107,81 @@ func TestMemoTypeName(t *testing.T) {
 		}
 	}
 }
+
+func TestDecodeOperationBody_InvokeHostFunction_Args(t *testing.T) {
+	// Build swap(to: Address, amount: i128 > 2^63, path: Vec<Symbol>) —
+	// exercises the strkey, big-integer, and container display paths.
+	var contractID xdr.ContractId
+	for i := range contractID {
+		contractID[i] = byte(i)
+	}
+	toAddr := xdr.MustAddress(gAddr)
+	addrVal, err := xdr.NewScVal(xdr.ScValTypeScvAddress, xdr.ScAddress{
+		Type:      xdr.ScAddressTypeScAddressTypeAccount,
+		AccountId: &toAddr,
+	})
+	if err != nil {
+		t.Fatalf("NewScVal address: %v", err)
+	}
+	amountVal, err := xdr.NewScVal(xdr.ScValTypeScvI128, xdr.Int128Parts{Hi: 1, Lo: 0})
+	if err != nil {
+		t.Fatalf("NewScVal i128: %v", err)
+	}
+	sym := xdr.ScSymbol("USDC")
+	symVal, err := xdr.NewScVal(xdr.ScValTypeScvSymbol, sym)
+	if err != nil {
+		t.Fatalf("NewScVal symbol: %v", err)
+	}
+	vec := xdr.ScVec{symVal}
+	vecVal, err := xdr.NewScVal(xdr.ScValTypeScvVec, &vec)
+	if err != nil {
+		t.Fatalf("NewScVal vec: %v", err)
+	}
+
+	hf, err := xdr.NewHostFunction(
+		xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+		xdr.InvokeContractArgs{
+			ContractAddress: xdr.ScAddress{
+				Type:       xdr.ScAddressTypeScAddressTypeContract,
+				ContractId: &contractID,
+			},
+			FunctionName: "swap",
+			Args:         []xdr.ScVal{addrVal, amountVal, vecVal},
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewHostFunction: %v", err)
+	}
+	b64 := mustBody(t, xdr.OperationTypeInvokeHostFunction, xdr.InvokeHostFunctionOp{
+		HostFunction: hf,
+	})
+
+	d, err := xdrjson.DecodeOperationBody(b64)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if d.Type != "invoke_host_function" {
+		t.Errorf("type = %q", d.Type)
+	}
+	if d.Fields["function"] != "invoke_contract" || d.Fields["function_name"] != "swap" {
+		t.Errorf("fields = %+v", d.Fields)
+	}
+	if d.Fields["arg_count"] != 3 {
+		t.Errorf("arg_count = %v, want 3", d.Fields["arg_count"])
+	}
+	args, ok := d.Fields["args"].([]string)
+	if !ok || len(args) != 3 {
+		t.Fatalf("args = %#v, want 3 display strings", d.Fields["args"])
+	}
+	if args[0] != gAddr {
+		t.Errorf("args[0] = %q, want the account strkey", args[0])
+	}
+	// ADR-0003: 2^64 must render as the full decimal string, not a
+	// truncated int64.
+	if args[1] != "18446744073709551616" {
+		t.Errorf("args[1] = %q, want 18446744073709551616", args[1])
+	}
+	if args[2] != "[USDC]" {
+		t.Errorf("args[2] = %q, want [USDC]", args[2])
+	}
+}
