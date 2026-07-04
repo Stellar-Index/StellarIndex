@@ -291,3 +291,39 @@ SELECT
     uniqExactState(ledger_seq, tx_hash, op_index, event_index) AS events
 FROM stellar.contract_events
 GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr;
+
+-- ── tx_hash_index — hash-ordered transaction lookup (perf-todo §4) ────────
+-- GET /v1/tx/{hash} resolution table. stellar.transactions is ORDER BY
+-- (ledger_seq, tx_index); its tx_hash bloom skip-index PRUNES but cannot
+-- SEEK — at 10.2B rows a point lookup still scans ~96M residual rows
+-- (~5.4s). This table is ORDER BY tx_hash, so hash → ledger_seq is a
+-- primary-key binary search (µs); the reader then re-reads the summary
+-- row ledger-scoped (partition-pruned, sub-100ms).
+--
+-- ReplacingMergeTree: duplicate inserts (live-sink retries, ch-backfill /
+-- ch-rebuild re-derives re-inserting ranges, overlapping backfill windows)
+-- collapse on merge — tx hashes are unique network-wide, so ORDER BY
+-- tx_hash is the row's natural identity. The MV indexes every NEWLY
+-- ingested transaction immediately; existing history needs the one-time
+-- windowed operator backfill (resumable; see the ClickHouse-log/root-fill
+-- caution in docs/operations/perf-todo.md §4):
+--
+--   stellarindex-ops ch-txindex-backfill -ch-addr 127.0.0.1:9300 \
+--     -from 2 -to <lake tip> -window 5000000
+--
+-- The reader (ExplorerReader.TransactionByHash) falls back to the bloom
+-- scan on an index MISS, so lookups stay correct while the backfill is
+-- incomplete — pre-backfill hashes are just still slow.
+CREATE TABLE IF NOT EXISTS stellar.tx_hash_index
+(
+    tx_hash     String,
+    ledger_seq  UInt32,
+    tx_index    UInt32,
+    ingested_at DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+ORDER BY tx_hash;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.tx_hash_index_mv
+TO stellar.tx_hash_index AS
+SELECT tx_hash, ledger_seq, tx_index FROM stellar.transactions;

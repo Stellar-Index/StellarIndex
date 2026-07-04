@@ -218,6 +218,11 @@ func realMain() int { //nolint:gocyclo,gocognit,funlen // subcommand switch; eac
 			fmt.Fprintf(os.Stderr, "ch-supply: %v\n", err)
 			return 1
 		}
+	case "ch-txindex-backfill":
+		if err := chTxIndexBackfill(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "ch-txindex-backfill: %v\n", err)
+			return 1
+		}
 	case "ch-recognition":
 		if err := chRecognition(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "ch-recognition: %v\n", err)
@@ -763,6 +768,16 @@ Subcommands:
                           per-kind/per-ledger output counts match exactly —
                           proving decoders read ClickHouse identically. Writes
                           nothing; exits non-zero on any divergence.
+  ch-txindex-backfill [-ch-addr H:P] [-from N] [-to N] [-window N]
+                          Fill stellar.tx_hash_index (the hash-ordered
+                          GET /v1/tx/{hash} lookup table, perf-todo §4)
+                          from stellar.transactions history in windowed,
+                          resumable INSERT…SELECT chunks (idempotent —
+                          ReplacingMergeTree keyed on tx_hash). The
+                          tx_hash_index_mv MV covers post-deploy ingest;
+                          this covers the history behind it. -to 0 = lake
+                          tip. Prints a resume point per window; serialize
+                          it and run under the root-<2G watchdog on r1.
   verify-recognition -config PATH -from N -to N
                           ADR-0033 Claim 2a: pull every distinct
                           (contract, topic[0]) shape from soroban_events

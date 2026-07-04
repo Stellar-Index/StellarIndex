@@ -16,6 +16,25 @@ against.
 ## [Unreleased]
 
 ### Added
+- **`/v1/tx/{hash}` hash-ordered lookup path (BACKLOG #13 /
+  launch-todo P1-2 / perf-todo §4)**: cold hash lookups paid a ~5–6s
+  bloom-skip-index scan over 10.2B `stellar.transactions` rows (the
+  bloom prunes granules but cannot seek). New
+  `stellar.tx_hash_index` lookup table (`ORDER BY tx_hash`,
+  ReplacingMergeTree) + `tx_hash_index_mv` materialized view in
+  `deploy/clickhouse/tier1_schema.sql` make hash → ledger a
+  primary-key binary search; `ExplorerReader.TransactionByHash`
+  gains the two-step fast path (index lookup → ledger-scoped,
+  partition-pruned summary read) with a probe-once availability
+  check and graceful fallback to the bloom scan on index miss /
+  absent table — no correctness regression while history is
+  unindexed. New `stellarindex-ops ch-txindex-backfill` fills the
+  index behind the MV in windowed, resumable, idempotent
+  INSERT…SELECT chunks (prints a `-from` resume point per window);
+  the full-history r1 run is operator-serialized per the perf-todo
+  §4 cautions. New transactions are fast immediately after the
+  schema deploy; historical hashes speed up as the backfill covers
+  them.
 - **Router attribution is live (BACKLOG #29 / migration 0025 Phase
   B)**: `trades.routed_via` is now actually populated. (1) The
   indexer runs a routed-via sweeper (1-min cadence, 30-min trailing

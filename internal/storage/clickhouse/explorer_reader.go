@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -22,6 +23,14 @@ import (
 // state (balances) is Phase C and reads a different (to-be-populated) table.
 type ExplorerReader struct {
 	conn driver.Conn
+
+	// tx-hash fast path (perf-todo §4): whether stellar.tx_hash_index
+	// exists on this deployment, probed once per process (probe-once like
+	// the api layer's DailyActivityAvailable use). false → every hash
+	// lookup takes the bloom-skip-index scan, exactly as before the index
+	// existed.
+	txIndexOnce sync.Once
+	txIndexOK   bool
 }
 
 // NewExplorerReader dials ClickHouse (native protocol) with a request-sized
@@ -455,12 +464,83 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	return scanOps(rows)
 }
 
-// TransactionByHash looks up a single transaction by its hex hash. Relies on
-// the tx_hash bloom skip-index (the table is ORDER BY (ledger_seq, tx_index),
-// so without the index this would full-scan). NOT FINAL — FINAL would defeat
-// the skip-index; instead it takes the latest-ingested row. found=false when
-// the hash is unknown.
+// TransactionByHash looks up a single transaction by its hex hash.
+//
+// Fast path (perf-todo §4): when stellar.tx_hash_index exists, the hash
+// resolves to its ledger via the hash-ORDERED lookup table (primary-key
+// binary search, µs) and the summary row is then read ledger-scoped
+// (partition-pruned, sub-100ms). An index MISS is NOT authoritative for
+// not-found — historical rows enter the index only as the operator backfill
+// (`stellarindex-ops ch-txindex-backfill`) covers them — so a miss (or any
+// index-path error) falls back to the pre-index behaviour: the tx_hash
+// bloom-skip-index scan over stellar.transactions (~5s at 10.2B rows; the
+// bloom prunes granules but cannot seek). Deployments without the index
+// table are unchanged. found=false only after the scan also comes up empty.
 func (r *ExplorerReader) TransactionByHash(ctx context.Context, hash string) (TxSummary, bool, error) {
+	if r.txHashIndexAvailable(ctx) {
+		if tx, found, err := r.txByHashIndexed(ctx, hash); err == nil && found {
+			return tx, true, nil
+		}
+		// Miss (pre-backfill history / unknown hash) or index-path error:
+		// graceful fallback to the scan — no correctness regression.
+	}
+	return r.txByHashScan(ctx, hash)
+}
+
+// txHashIndexAvailable reports whether stellar.tx_hash_index exists on this
+// ClickHouse, probed once per process. Availability is table EXISTENCE (the
+// probe query not erroring), not row count — an empty/partially-backfilled
+// index is fine because per-hash misses fall back to the scan anyway.
+func (r *ExplorerReader) txHashIndexAvailable(ctx context.Context) bool {
+	r.txIndexOnce.Do(func() {
+		rows, err := r.conn.Query(ctx, `SELECT ledger_seq FROM stellar.tx_hash_index LIMIT 1`)
+		if err != nil {
+			return
+		}
+		_ = rows.Close()
+		r.txIndexOK = true
+	})
+	return r.txIndexOK
+}
+
+// txByHashIndexed is the two-step fast path: hash → ledger_seq via the
+// ordered index, then the ledger-scoped summary read. found=false on an
+// index miss (the caller falls back to the scan).
+func (r *ExplorerReader) txByHashIndexed(ctx context.Context, hash string) (TxSummary, bool, error) {
+	rows, err := r.conn.Query(ctx,
+		`SELECT ledger_seq FROM stellar.tx_hash_index WHERE tx_hash = ? LIMIT 1`, hash)
+	if err != nil {
+		return TxSummary{}, false, fmt.Errorf("clickhouse: tx index %s: %w", hash, err)
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		return TxSummary{}, false, rows.Err()
+	}
+	var seq uint32
+	if err := rows.Scan(&seq); err != nil {
+		return TxSummary{}, false, fmt.Errorf("clickhouse: scan tx index: %w", err)
+	}
+
+	q := `SELECT ` + txCols + ` FROM stellar.transactions
+		WHERE ledger_seq = ? AND tx_hash = ? ORDER BY ingested_at DESC LIMIT 1`
+	trows, err := r.conn.Query(ctx, q, seq, hash)
+	if err != nil {
+		return TxSummary{}, false, fmt.Errorf("clickhouse: tx %s in ledger %d: %w", hash, seq, err)
+	}
+	defer func() { _ = trows.Close() }()
+	out, err := scanTxSummaries(trows)
+	if err != nil || len(out) == 0 {
+		return TxSummary{}, false, err
+	}
+	return out[0], true, nil
+}
+
+// txByHashScan is the pre-index lookup: relies on the tx_hash bloom
+// skip-index (the table is ORDER BY (ledger_seq, tx_index), so without the
+// index this would full-scan). NOT FINAL — FINAL would defeat the
+// skip-index; instead it takes the latest-ingested row. found=false when
+// the hash is unknown.
+func (r *ExplorerReader) txByHashScan(ctx context.Context, hash string) (TxSummary, bool, error) {
 	q := `SELECT ` + txCols + ` FROM stellar.transactions
 		WHERE tx_hash = ? ORDER BY ingested_at DESC LIMIT 1`
 	rows, err := r.conn.Query(ctx, q, hash)
