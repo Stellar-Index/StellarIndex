@@ -131,6 +131,9 @@ func registerAppMetricsTail() {
 		DivergenceRefreshDurationSeconds,
 		AggregatorSupplyRefreshDurationSeconds,
 		AnomalyFreezeRecoverySweepDurationSeconds,
+
+		UsageRollupSweepsTotal,
+		UsageRollupSweepDurationSeconds,
 	)
 
 	// F-0033 closure: pre-seed zero-valued series for the
@@ -161,6 +164,9 @@ func registerAppMetricsTail() {
 	}
 	for _, outcome := range []string{"ok", "scan_error", "write_error"} {
 		MEVDetectRunsTotal.WithLabelValues(outcome)
+	}
+	for _, outcome := range []string{"ok", "scan_error", "sink_error"} {
+		UsageRollupSweepsTotal.WithLabelValues(outcome)
 	}
 }
 
@@ -781,6 +787,50 @@ var DivergenceRefreshDurationSeconds = prometheus.NewHistogramVec(
 		Name:    "stellarindex_divergence_refresh_duration_seconds",
 		Help:    "Per-pair divergence-refresh latency, labelled by outcome (ok|no_vwap|parse_error|refresh_error).",
 		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	},
+	[]string{"outcome"},
+)
+
+// UsageRollupSweepsTotal — per-outcome counter for the API binary's
+// usage-rollup worker (internal/usage.Rollup), which folds the Redis
+// per-endpoint request counters into the `usage_daily` Timescale
+// hypertable every 5 minutes. Labels:
+//
+//   - `ok`         — sweep completed (including the no-rows case).
+//   - `scan_error` — the Redis SCAN/HGETALL pass failed. Counters
+//     keep accumulating in Redis; nothing is lost yet
+//     (35-day TTL), but /v1/account/usage endpoint rows
+//     stop advancing.
+//   - `sink_error` — the Timescale upsert failed (Postgres
+//     unreachable / migration missing). Same
+//     consequence as scan_error.
+//
+// A sustained non-`ok` rate means the dashboard's per-endpoint
+// usage analytics are going stale — informational severity (the
+// customer-facing pricing surface is unaffected).
+var UsageRollupSweepsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_usage_rollup_sweeps_total",
+		Help: "Usage-rollup worker sweep outcomes (ok|scan_error|sink_error).",
+	},
+	[]string{"outcome"},
+)
+
+// UsageRollupSweepDurationSeconds — latency histogram for one
+// usage-rollup sweep (Redis SCAN + HGETALLs + one batched Timescale
+// upsert), labelled by outcome (matches the counter labels) so
+// operators chart `ok` p95/p99 separately from the fail-fast error
+// paths — "sweep slow" (Redis key population growing, Postgres lock
+// contention) is a different signal from "sweep failing".
+//
+// Buckets span 5 ms → 30 s: a healthy sweep with a handful of
+// active subjects is ≤ 50 ms; hundreds of subjects × two days of
+// hashes plus a slow upsert can reach seconds.
+var UsageRollupSweepDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_usage_rollup_sweep_duration_seconds",
+		Help:    "Usage-rollup sweep latency, labelled by outcome (ok|scan_error|sink_error).",
+		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 	},
 	[]string{"outcome"},
 )

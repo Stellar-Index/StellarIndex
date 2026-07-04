@@ -46,9 +46,12 @@ import {
 import { AccountGate } from '../AccountGate';
 
 /**
- * /dashboard/usage — per-key activity + rate-limit headroom + the daily
- * request counts the API exposes via /v1/account/usage. Detailed
- * per-endpoint analytics are honestly flagged as not-yet-shipped.
+ * /dashboard/usage — per-key activity, rate-limit headroom, daily
+ * request volume, and the per-endpoint request / error / throttle
+ * breakdown served by /v1/account/usage (one row per day × endpoint
+ * family from the server-side usage_daily rollups; legacy
+ * deployments degrade to endpoint-less per-day rows and the
+ * endpoint table hides itself).
  */
 export default function UsagePage() {
   return <AccountGate>{(me) => <UsageBody me={me} />}</AccountGate>;
@@ -101,6 +104,8 @@ function UsageBody({ me }: { me: MeResponse }) {
 
         <DailyRequests usage={usage} />
 
+        <EndpointBreakdown usage={usage} />
+
         <Card>
           <CardHeader
             title="Per-key activity"
@@ -128,15 +133,62 @@ function UsageBody({ me }: { me: MeResponse }) {
           )}
         </Card>
 
-        <Callout tone="info" title="Per-endpoint analytics are on the way">
-          Error rates and per-endpoint breakdowns ship once the usage pipeline
-          (Redis stream → Timescale worker) is fully wired through. Until then
-          this page shows what the API exposes today: daily request totals, the
-          last request seen per key, and your tier headroom.
-        </Callout>
       </Section>
     </Container>
   );
+}
+
+// ─── Aggregations over the (day × endpoint) rows ───────────────────
+
+interface DayAgg {
+  date: string;
+  requests: number;
+  errors: number;
+  throttled: number;
+}
+
+/** Collapse per-endpoint rows into per-day totals for the bars. */
+function aggregateByDate(rows: UsageRow[]): DayAgg[] {
+  const byDate = new Map<string, DayAgg>();
+  for (const r of rows) {
+    const agg = byDate.get(r.date) ?? {
+      date: r.date,
+      requests: 0,
+      errors: 0,
+      throttled: 0,
+    };
+    agg.requests += r.requests || 0;
+    agg.errors += r.errors || 0;
+    agg.throttled += r.throttled || 0;
+    byDate.set(r.date, agg);
+  }
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+interface EndpointAgg {
+  endpoint: string;
+  requests: number;
+  errors: number;
+  throttled: number;
+}
+
+/** Collapse rows into 30-day per-endpoint totals, busiest first. */
+function aggregateByEndpoint(rows: UsageRow[]): EndpointAgg[] {
+  const byEndpoint = new Map<string, EndpointAgg>();
+  for (const r of rows) {
+    if (!r.endpoint) continue; // legacy fallback rows carry no endpoint
+    const agg = byEndpoint.get(r.endpoint) ?? {
+      endpoint: r.endpoint,
+      requests: 0,
+      errors: 0,
+      throttled: 0,
+    };
+    agg.requests += r.requests || 0;
+    agg.errors += r.errors || 0;
+    agg.throttled += r.throttled || 0;
+    byEndpoint.set(r.endpoint, agg);
+  }
+  return [...byEndpoint.values()].sort((a, b) => b.requests - a.requests);
 }
 
 function HeadroomStrip({
@@ -198,14 +250,15 @@ function HeadroomStrip({
 }
 
 function DailyRequests({ usage }: { usage: UsageRow[] | null }) {
-  const total = (usage ?? []).reduce((s, r) => s + (r.requests || 0), 0);
+  const days = usage === null ? null : aggregateByDate(usage);
+  const total = (days ?? []).reduce((s, r) => s + r.requests, 0);
   return (
     <Card>
       <CardHeader
         title="Requests (last 30 days)"
         description="Per-account daily request counts recorded by the API."
         actions={
-          usage && usage.length > 0 ? (
+          days && days.length > 0 ? (
             <span className="tnum font-mono text-sm text-ink-muted">
               {fmtInt(total)} total
             </span>
@@ -213,32 +266,38 @@ function DailyRequests({ usage }: { usage: UsageRow[] | null }) {
         }
       />
       <CardBody>
-        {usage === null ? (
+        {days === null ? (
           <Skeleton className="h-12 w-full" />
-        ) : usage.length === 0 ? (
+        ) : days.length === 0 ? (
           <p className="text-sm text-ink-muted">
             No tracked requests yet for this account in the last 30 days.
             Requests count against the per-account daily window once you start
             calling the API with one of your keys.
           </p>
         ) : (
-          <UsageBars rows={usage} />
+          <UsageBars rows={days} />
         )}
       </CardBody>
     </Card>
   );
 }
 
-function UsageBars({ rows }: { rows: UsageRow[] }) {
-  const max = Math.max(...rows.map((r) => r.requests || 0), 1);
+function UsageBars({ rows }: { rows: DayAgg[] }) {
+  const max = Math.max(...rows.map((r) => r.requests), 1);
   return (
     <div className="flex items-end gap-1">
       {rows.map((r) => {
         const h = Math.max(3, (r.requests / max) * 64);
+        const extras = [
+          r.errors > 0 ? `${fmtInt(r.errors)} errors` : null,
+          r.throttled > 0 ? `${fmtInt(r.throttled)} throttled` : null,
+        ]
+          .filter(Boolean)
+          .join(', ');
         return (
           <div
             key={r.date}
-            title={`${fmtDate(r.date)}: ${fmtInt(r.requests)} requests`}
+            title={`${fmtDate(r.date)}: ${fmtInt(r.requests)} requests${extras ? ` (${extras})` : ''}`}
             className="flex flex-1 flex-col items-center justify-end"
           >
             <div
@@ -249,6 +308,89 @@ function UsageBars({ rows }: { rows: UsageRow[] }) {
         );
       })}
     </div>
+  );
+}
+
+function EndpointBreakdown({ usage }: { usage: UsageRow[] | null }) {
+  const endpoints = usage === null ? null : aggregateByEndpoint(usage);
+  return (
+    <Card>
+      <CardHeader
+        title="Per-endpoint breakdown (last 30 days)"
+        description="Requests, errors (4xx + 5xx), and rate-limit rejections per endpoint family. Throttled calls never count against your quota."
+      />
+      {endpoints === null ? (
+        <CardBody>
+          <Skeleton className="h-12 w-full" />
+        </CardBody>
+      ) : endpoints.length === 0 ? (
+        <CardBody>
+          <p className="text-sm text-ink-muted">
+            No per-endpoint data yet. Rows appear within a few minutes of your
+            first API request — the usage pipeline rolls counters up every five
+            minutes.
+          </p>
+        </CardBody>
+      ) : (
+        <EndpointTable rows={endpoints} />
+      )}
+    </Card>
+  );
+}
+
+function EndpointTable({ rows }: { rows: EndpointAgg[] }) {
+  return (
+    <TableWrap className="rounded-t-none border-0 border-t">
+      <Table>
+        <THead>
+          <tr>
+            <Th>Endpoint</Th>
+            <Th align="right">Requests</Th>
+            <Th align="right">Errors</Th>
+            <Th align="right">Error rate</Th>
+            <Th align="right">Throttled</Th>
+          </tr>
+        </THead>
+        <TBody>
+          {rows.map((r) => {
+            const rate = r.requests > 0 ? (r.errors / r.requests) * 100 : 0;
+            return (
+              <TR key={r.endpoint}>
+                <Td>
+                  <code className="font-mono text-xs text-ink">
+                    {r.endpoint}
+                  </code>
+                </Td>
+                <Td align="right">{fmtInt(r.requests)}</Td>
+                <Td align="right">
+                  {r.errors > 0 ? (
+                    fmtInt(r.errors)
+                  ) : (
+                    <span className="text-ink-faint">0</span>
+                  )}
+                </Td>
+                <Td align="right">
+                  {r.errors > 0 ? (
+                    <span className={rate >= 5 ? 'text-down' : undefined}>
+                      {rate.toFixed(rate < 10 ? 1 : 0)}%
+                    </span>
+                  ) : (
+                    <span className="text-ink-faint">—</span>
+                  )}
+                </Td>
+                <Td align="right">
+                  {r.throttled > 0 ? (
+                    <Badge tone="warn">{fmtInt(r.throttled)}</Badge>
+                  ) : (
+                    <span className="text-ink-faint">0</span>
+                  )}
+                </Td>
+              </TR>
+            );
+          })}
+        </TBody>
+      </Table>
+    </TableWrap>
   );
 }
 

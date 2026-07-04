@@ -16,6 +16,29 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Real per-endpoint usage analytics (#32 / #37b)**: the dashboard's
+  usage page and `/v1/account/usage` now serve actual per-endpoint
+  request / error / throttle data instead of reserved-but-zero
+  fields. `middleware.UsageTracker` (moved OUTSIDE rate-limit so it
+  observes 429s) records per-(subject, route-pattern, outcome-class)
+  daily counters in a Redis hash family (`usage:ep:<subject>:<day>`,
+  35-day TTL; classes ok / 4xx / 429 / 5xx; the legacy per-day total
+  that feeds `MonthlyQuota` still excludes 429s so throttled calls
+  never eat quota). A new ticker worker in the API binary
+  (`internal/usage.Rollup`, 5-min cadence) folds today's +
+  yesterday's counters into the new `usage_daily` hypertable
+  (migration 0071, GREATEST-merged upsert so sweeps are idempotent
+  and a mid-day Redis flush can't regress a row).
+  `/v1/account/usage` reads the rollups — one row per (date,
+  endpoint family) with `endpoint` added additively to `UsageRow`
+  (spec + `pkg/client` + generated artifacts updated); deployments
+  without rollup rows degrade to the legacy per-day shape. Worker
+  observability follows the paired counter/histogram convention
+  (`stellarindex_usage_rollup_sweeps_total` / `_sweep_duration_seconds`,
+  informational alert `stellarindex_usage_rollup_failing` in both
+  rule trees + runbook). The dashboard usage page renders the
+  per-endpoint table (requests / errors / error rate / throttled)
+  and retires the "per-endpoint analytics are on the way" callout.
 - **On-chain oracle divergence references (Reflector / Redstone /
   Band)**: the divergence worker now cross-checks our VWAP against
   the on-chain oracle feeds we already ingest — five new references

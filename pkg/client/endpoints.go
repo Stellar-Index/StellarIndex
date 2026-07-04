@@ -527,9 +527,14 @@ func (c *Client) Me(ctx context.Context) (*Envelope[Account], error) {
 	return &env, nil
 }
 
-// Usage returns the authenticated caller's usage rollup. Currently
-// returns an empty array — server-side usage tracking lands in
-// follow-up PRs (the wire shape is locked already).
+// Usage returns the authenticated caller's usage rollup for the
+// trailing 30 days: one row per (date, endpoint family) with
+// requests / errors / throttled filled from the server-side
+// `usage_daily` rollups. Sum Requests grouped by Date for daily
+// totals. On deployments where the rollup pipeline hasn't produced
+// rows yet, the server degrades to legacy per-day rows (Endpoint
+// empty, errors/throttled zero); without any usage backend it
+// returns an empty array.
 func (c *Client) Usage(ctx context.Context) (*Envelope[[]UsageRow], error) {
 	var env Envelope[[]UsageRow]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/account/usage", nil, nil, &env); err != nil {

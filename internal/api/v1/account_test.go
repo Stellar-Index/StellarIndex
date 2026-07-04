@@ -512,3 +512,138 @@ func TestAccountKeysList_Empty(t *testing.T) {
 		t.Errorf("data len = %d, want 0", len(body.Data))
 	}
 }
+
+// ─── /v1/account/usage rollup path (#32 / #37b) ────────────────────
+
+// fakeUsageRollupReader is the handler-level double for
+// [v1.UsageRollupReader].
+type fakeUsageRollupReader struct {
+	gotSubject string
+	gotDays    int
+	rows       []v1.UsageEndpointDay
+	err        error
+}
+
+func (f *fakeUsageRollupReader) ReadRollup(_ context.Context, subject string, days int) ([]v1.UsageEndpointDay, error) {
+	f.gotSubject = subject
+	f.gotDays = days
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.rows, nil
+}
+
+// fakeUsageReader is the legacy per-day-totals double for
+// [v1.UsageReader].
+type fakeUsageReader struct {
+	days []v1.UsageDay
+	err  error
+}
+
+func (f *fakeUsageReader) Read(_ context.Context, _ string, _ int) ([]v1.UsageDay, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.days, nil
+}
+
+// newUsageTestServer wires a Server with both usage seams so the
+// preference / fallback contract is testable end-to-end.
+func newUsageTestServer(t *testing.T, subject auth.Subject, rollup v1.UsageRollupReader, legacy v1.UsageReader) *httptest.Server {
+	t.Helper()
+	srv := v1.New(v1.Options{
+		Auth:              fakeAuthMiddleware(subject),
+		UsageRollupReader: rollup,
+		UsageReader:       legacy,
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+func getUsageRows(t *testing.T, ts *httptest.Server) []v1.UsageRow {
+	t.Helper()
+	resp, err := http.Get(ts.URL + "/v1/account/usage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.UsageRow `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatal(err)
+	}
+	return env.Data
+}
+
+// TestAccountUsage_RollupRows — the rollup reader backs the wire
+// shape: one row per (day, endpoint) with endpoint + errors +
+// throttled populated, keyed by the same subject derivation the
+// tracker middleware writes under (key:<KeyID>).
+func TestAccountUsage_RollupRows(t *testing.T) {
+	rollup := &fakeUsageRollupReader{rows: []v1.UsageEndpointDay{
+		{Date: "2026-07-02", Endpoint: "/v1/price", Requests: 120, Errors: 3, Throttled: 0},
+		{Date: "2026-07-03", Endpoint: "/v1/assets/{asset_id}", Requests: 40, Errors: 1, Throttled: 7},
+	}}
+	ts := newUsageTestServer(t, auth.Subject{
+		Identifier: "owner-9",
+		KeyID:      "kid_9",
+		Tier:       auth.TierAPIKey,
+	}, rollup, &fakeUsageReader{days: []v1.UsageDay{{Date: "2026-07-03", Requests: 999}}})
+
+	rows := getUsageRows(t, ts)
+	if rollup.gotSubject != "key:kid_9" {
+		t.Errorf("subject = %q, want key:kid_9 (must match the tracker's derivation)", rollup.gotSubject)
+	}
+	if rollup.gotDays != 30 {
+		t.Errorf("days = %d, want 30", rollup.gotDays)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v, want 2 entries", rows)
+	}
+	want := v1.UsageRow{Date: "2026-07-03", Endpoint: "/v1/assets/{asset_id}", Requests: 40, Errors: 1, Throttled: 7}
+	if rows[1] != want {
+		t.Errorf("row[1] = %+v, want %+v", rows[1], want)
+	}
+	// The legacy 999-request day must NOT appear — rollup wins.
+	for _, r := range rows {
+		if r.Requests == 999 {
+			t.Error("legacy fallback rows leaked into a successful rollup response")
+		}
+	}
+}
+
+// TestAccountUsage_RollupFallsBackOnError — a rollup read failure
+// degrades to the legacy per-day totals, not a 5xx.
+func TestAccountUsage_RollupFallsBackOnError(t *testing.T) {
+	ts := newUsageTestServer(t, auth.Subject{
+		Identifier: "owner-9",
+		KeyID:      "kid_9",
+		Tier:       auth.TierAPIKey,
+	}, &fakeUsageRollupReader{err: errors.New("pg down")},
+		&fakeUsageReader{days: []v1.UsageDay{{Date: "2026-07-03", Requests: 55}}})
+
+	rows := getUsageRows(t, ts)
+	if len(rows) != 1 || rows[0].Requests != 55 || rows[0].Endpoint != "" {
+		t.Errorf("rows = %+v, want the single legacy day (55 requests, no endpoint)", rows)
+	}
+}
+
+// TestAccountUsage_RollupEmptyFallsBack — zero rollup rows (fresh
+// deployment, worker not yet swept) also degrade to legacy.
+func TestAccountUsage_RollupEmptyFallsBack(t *testing.T) {
+	ts := newUsageTestServer(t, auth.Subject{
+		Identifier: "owner-9",
+		Tier:       auth.TierAPIKey,
+	}, &fakeUsageRollupReader{},
+		&fakeUsageReader{days: []v1.UsageDay{{Date: "2026-07-01", Requests: 7}}})
+
+	rows := getUsageRows(t, ts)
+	if len(rows) != 1 || rows[0].Requests != 7 {
+		t.Errorf("rows = %+v, want the single legacy day", rows)
+	}
+}

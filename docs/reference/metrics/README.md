@@ -672,6 +672,43 @@ rate(...{outcome="exhausted"}[1h]) > 0
 
 F-1270 (audit-2026-05-12).
 
+### `stellarindex_usage_rollup_sweeps_total`
+
+Counter, label `outcome` (`ok` / `scan_error` / `sink_error`).
+
+Per-sweep outcome of the API binary's usage-rollup worker
+(`internal/usage.Rollup`), which folds the Redis per-endpoint
+request counters (written by `middleware.UsageTracker`) into the
+`usage_daily` Timescale hypertable every 5 minutes. That table
+backs the per-endpoint rows on `/v1/account/usage` and the
+dashboard's usage analytics.
+
+When to look at it: the dashboard's per-endpoint usage table has
+stopped advancing (today's row frozen) or `/v1/account/usage` has
+degraded to endpoint-less legacy rows. Sustained `scan_error` =
+Redis trouble on the SCAN/HGETALL pass; sustained `sink_error` =
+Postgres upsert failing (connectivity, or migration 0071 missing on
+this deployment). Counters keep accumulating in Redis with a 35-day
+TTL, so short outages lose nothing — the next successful sweep
+catches up. Informational severity: customer pricing traffic is
+unaffected. Alert: `stellarindex_usage_rollup_failing`
+(deploy/monitoring/rules/api.yml + configs/prometheus/rules.r1/api.yml).
+
+### `stellarindex_usage_rollup_sweep_duration_seconds`
+
+Histogram, label `outcome` (matches
+`stellarindex_usage_rollup_sweeps_total`). Buckets 5 ms – 30 s.
+
+Wall-clock of one full sweep: Redis SCAN + one HGETALL per active
+(subject, day) hash + one batched Timescale upsert. Chart `ok`
+p95/p99 separately from the error outcomes — "sweep slow" (key
+population growing with the customer base, Postgres contention) is
+an earlier, different signal from "sweep failing". A healthy sweep
+with tens of active subjects sits well under 100 ms; approaching
+the 5-minute cadence means sweeps start overlapping their schedule
+and the rollup lag becomes user-visible on the dashboard's "today"
+row.
+
 ### `stellarindex_aggregator_dropped_trades_total`
 
 Counter, label `reason` (`class` / `outlier`).
