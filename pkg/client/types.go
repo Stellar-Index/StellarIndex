@@ -506,9 +506,16 @@ type Account struct {
 	AccountInfo *AccountOrg  `json:"account,omitempty"`
 }
 
-// UsageRow is one entry in the array returned by [Client.Usage].
+// UsageRow is one entry in the array returned by [Client.Usage] —
+// one (date, endpoint family) aggregate. Endpoint is the route
+// PATTERN requests matched (e.g. "/v1/assets/{asset_id}"); it is
+// empty on the server's legacy fallback shape (one row per day).
+// Requests counts allowed traffic; Errors is 4xx (excl. 429) + 5xx;
+// Throttled is 429 rate-limit rejections (never counted against
+// monthly quota).
 type UsageRow struct {
 	Date      string `json:"date"`
+	Endpoint  string `json:"endpoint,omitempty"`
 	Requests  int    `json:"requests"`
 	Errors    int    `json:"errors"`
 	Throttled int    `json:"throttled"`

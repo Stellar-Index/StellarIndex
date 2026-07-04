@@ -6350,22 +6350,30 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Daily request counters for the authenticated key.
-         * @description Returns per-day request counts for the authenticated caller
-         *     over the last 31 days (or the `from`/`to` window when
-         *     supplied). Counts are incremented by the usage middleware on
-         *     every successful (non-rate-limited, non-policy-denied)
-         *     request and persisted in Redis under the `usage:<subject>:
-         *     <YYYY-MM-DD>` key family.
+         * Daily per-endpoint request counters for the authenticated key.
+         * @description Returns per-day, per-endpoint-family usage rows for the
+         *     authenticated caller over the trailing 30 days: one row per
+         *     (date, endpoint) with `requests` (allowed traffic),
+         *     `errors` (4xx excluding 429, plus 5xx), and `throttled`
+         *     (429 rate-limit rejections — tallied separately and never
+         *     counted against monthly quota). `endpoint` is the route
+         *     PATTERN (e.g. `/v1/assets/{asset_id}`), never a raw URL.
+         *     Sum `requests` grouped by `date` for daily totals.
          *
-         *     F-1259 (codex audit-2026-05-12) — the previous "placeholder,
-         *     returns empty list" wording reflected the pre-launch state;
-         *     the counter is now wired in `cmd/stellarindex-api/main.go`
-         *     whenever Redis is reachable. Deployments without Redis
-         *     (e.g. local dev with `-no-redis`) still return an empty
-         *     envelope — the absence of the counter is reflected on
-         *     /v1/readyz under `checks` (NOT `/v1/healthz` — the
-         *     per-dependency `checks` field is `/readyz`-only; the
+         *     Pipeline: the usage middleware counts every authenticated
+         *     request per (subject, route pattern, outcome class) in
+         *     Redis; the API's rollup worker folds those counters into
+         *     the `usage_daily` Timescale table every 5 minutes, which
+         *     this endpoint reads. Rows can therefore trail live traffic
+         *     by up to ~5 minutes.
+         *
+         *     Fallback shape: deployments where the rollup table has no
+         *     rows yet (or Postgres is absent) degrade to the legacy
+         *     per-day rows — one row per date with `endpoint` omitted
+         *     and `errors`/`throttled` zero. Redis-less deployments
+         *     return an empty array; the absence of the backend is
+         *     reflected on /v1/readyz under `checks` (NOT `/v1/healthz`
+         *     — the per-dependency `checks` field is `/readyz`-only; the
          *     `/healthz` liveness probe stays minimal by design).
          */
         get: {
@@ -6403,15 +6411,24 @@ export interface paths {
                          *       "data": [
                          *         {
                          *           "date": "2026-07-01",
+                         *           "endpoint": "/v1/price",
                          *           "requests": 18234,
                          *           "errors": 12,
                          *           "throttled": 0
                          *         },
                          *         {
                          *           "date": "2026-07-02",
+                         *           "endpoint": "/v1/price",
                          *           "requests": 20117,
                          *           "errors": 3,
                          *           "throttled": 41
+                         *         },
+                         *         {
+                         *           "date": "2026-07-02",
+                         *           "endpoint": "/v1/assets/{asset_id}",
+                         *           "requests": 512,
+                         *           "errors": 0,
+                         *           "throttled": 0
                          *         }
                          *       ],
                          *       "as_of": "2026-07-03T09:00:00Z",
@@ -10826,8 +10843,21 @@ export interface components {
         UsageRow: {
             /** Format: date */
             date?: string;
+            /**
+             * @description Endpoint family — the route PATTERN the requests
+             *     matched (e.g. `/v1/assets/{asset_id}`), never a raw
+             *     URL. Omitted on the legacy fallback shape (one row per
+             *     day, pre-rollup deployments).
+             */
+            endpoint?: string;
+            /**
+             * @description Allowed requests (all responses except 429). Throttled
+             *     calls are reported separately and never eat quota.
+             */
             requests?: number;
+            /** @description 4xx (excluding 429) + 5xx responses. */
             errors?: number;
+            /** @description 429 rate-limit rejections. */
             throttled?: number;
         };
         UsageEnvelope: components["schemas"]["EnvelopeMeta"] & {

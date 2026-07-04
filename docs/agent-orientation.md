@@ -113,7 +113,7 @@ development. If one does, it's a bug.
 │   ├── notify/                   transactional-email abstraction (Sender iface; Resend impl + Noop for dev/tests)
 │   ├── obstest/                  test helpers for asserting against Prometheus metrics (HistogramVec child counts)
 │   ├── platform/                 customer + staff dashboard primitives (accounts, API keys, webhooks, usage) per platform-spec.md
-│   └── usage/                    per-subject daily request counters backed by Redis (feeds /v1/account/usage)
+│   └── usage/                    per-subject daily + per-endpoint×outcome request counters (Redis) + the 5-min rollup worker into the usage_daily hypertable (feeds /v1/account/usage)
 │
 ├── pkg/                      public surface (SemVer-stable)
 │   └── client/                   Go client SDK + wire-shape types

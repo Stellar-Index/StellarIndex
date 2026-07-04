@@ -186,6 +186,23 @@ func CaptureRoute(next http.Handler) http.Handler {
 	})
 }
 
+// RouteFromContext returns the mux-matched route pattern path
+// captured by [CaptureRoute] (e.g. "/v1/assets/{asset_id}"), or ""
+// when no capture is planted / the mux hasn't dispatched yet.
+//
+// Middlewares that sit BETWEEN [HTTPMetrics] and [CaptureRoute]
+// (e.g. the usage tracker) use this after next.ServeHTTP returns —
+// their own *http.Request copy predates the mux's Pattern write, so
+// reading r.Pattern directly would come back empty whenever any
+// inner middleware re-wrapped the request via WithContext.
+func RouteFromContext(ctx context.Context) string {
+	rc, ok := ctx.Value(routeCaptureKey{}).(*routeCapture)
+	if !ok {
+		return ""
+	}
+	return rc.route
+}
+
 // normalizeMethod canonicalises the HTTP method label. HTTP's spec
 // treats method names as case-sensitive, but in practice standard
 // methods are always uppercase — a client sending "get" instead of

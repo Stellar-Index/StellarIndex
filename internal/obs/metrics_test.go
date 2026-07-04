@@ -69,6 +69,7 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 		"stellarindex_aggregator_vwap_writes_total",
 		"stellarindex_aggregator_empty_windows_total",
 		"stellarindex_aggregator_dropped_trades_total",
+		"stellarindex_usage_rollup_sweeps_total",
 		// Language-native + process metrics from collectors.
 		"go_goroutines",
 		"process_open_fds",
@@ -382,6 +383,9 @@ func TestZeroSeed_F0033(t *testing.T) {
 		`stellarindex_stripe_platform_sync_errors_total{operation="account_update"} 0`,
 		`stellarindex_stripe_platform_sync_errors_total{operation="list_keys"} 0`,
 		`stellarindex_stripe_platform_sync_errors_total{operation="key_update"} 0`,
+		`stellarindex_usage_rollup_sweeps_total{outcome="ok"}`,
+		`stellarindex_usage_rollup_sweeps_total{outcome="scan_error"} 0`,
+		`stellarindex_usage_rollup_sweeps_total{outcome="sink_error"} 0`,
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(s, want) {

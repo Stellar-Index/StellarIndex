@@ -93,13 +93,23 @@ type SessionPeeker interface {
 	SessionFromContext(ctx context.Context) (SessionInfo, bool)
 }
 
-// UsageRow is the wire shape for /v1/account/usage entries. Backed
-// by the per-day Redis counters the UsageTracker middleware writes.
-// Errors / throttled stay zero today — they're reserved fields for
-// a follow-up that wires the rate-limit fail-open + non-2xx
-// response counters into this shape.
+// UsageRow is the wire shape for /v1/account/usage entries.
+//
+// When the `usage_daily` rollups are wired (production), the list
+// carries one row per (day, endpoint family) with Endpoint set to
+// the route pattern (e.g. "/v1/assets/{asset_id}") and the
+// errors / throttled columns filled: errors = 4xx (excluding 429)
+// + 5xx responses, throttled = 429 rate-limit rejections. Note
+// `requests` counts ALLOWED traffic only (throttled requests are
+// tallied separately and never eat monthly quota).
+//
+// On the fallback path (rollup reader unwired or not yet swept)
+// rows degrade to the legacy shape: one row per day, Endpoint
+// empty, errors/throttled zero. Clients sum `requests` grouped by
+// `date` for daily totals in either shape.
 type UsageRow struct {
-	Date      string `json:"date"` // YYYY-MM-DD
+	Date      string `json:"date"`               // YYYY-MM-DD
+	Endpoint  string `json:"endpoint,omitempty"` // route pattern; empty on the legacy fallback
 	Requests  int    `json:"requests"`
 	Errors    int    `json:"errors"`
 	Throttled int    `json:"throttled"`
@@ -118,6 +128,26 @@ type UsageReader interface {
 type UsageDay struct {
 	Date     string
 	Requests int64
+}
+
+// UsageRollupReader is the storage seam for the per-endpoint usage
+// rollups (`usage_daily` hypertable, maintained by the API binary's
+// usage-rollup worker). main.go's adapter bridges
+// *timescale.Store.ReadUsageDaily so this package stays free of the
+// storage import.
+type UsageRollupReader interface {
+	ReadRollup(ctx context.Context, subject string, days int) ([]UsageEndpointDay, error)
+}
+
+// UsageEndpointDay is one (day, endpoint) aggregate on the v1
+// boundary. Requests counts allowed traffic (all non-429 outcomes);
+// Errors is 4xx (excl. 429) + 5xx; Throttled is 429s.
+type UsageEndpointDay struct {
+	Date      string // YYYY-MM-DD UTC
+	Endpoint  string // route pattern
+	Requests  int64
+	Errors    int64
+	Throttled int64
 }
 
 // KeyCreated is the wire shape for /v1/account/keys (POST) replies.
@@ -199,31 +229,29 @@ func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 
 // handleAccountUsage serves GET /v1/account/usage.
 //
-// Returns per-day request counts for the authenticated caller over
-// the trailing 30 days. The usage middleware (`middleware.UsageTracker`)
-// increments per-day counters in Redis on every successful request;
-// this handler reads them back via the [UsageReader] seam.
-//
-// F-1259 (codex audit-2026-05-12): the prior "placeholder" doc-block
-// described the pre-launch stub shape; the live runtime now wires
-// `UsageReader: usageReaderOrNil(usageCounter)` whenever Redis is
-// reachable, and the handler short-circuits to the empty-list wire
-// shape only when the reader is nil (Redis-less deployment) or the
-// subject derivation can't pick a stable counter key.
+// Preferred path: the [UsageRollupReader] seam over the
+// `usage_daily` Timescale hypertable (maintained by the API
+// binary's usage-rollup worker) — one row per (day, endpoint
+// family) over the trailing 30 days, with errors + throttled
+// filled. Fallback path: the legacy [UsageReader] per-day Redis
+// totals (one row per day, no endpoint) when the rollup reader is
+// unwired, errors, or hasn't produced rows for this subject yet
+// (fresh deployment / worker not yet swept).
 //
 // Subject keying matches `middleware.UsageTracker`'s
-// `usageKeyForSubject` so the writer + reader stay in lock-step
-// (`key:<KeyID>` for API-key callers; `id:<Identifier>` when KeyID
-// is empty). Anonymous callers receive 401. The `?from=` / `?to=`
-// query params are reserved in the OpenAPI spec but ignored — every
-// successful response is the trailing 30-day window today; full
-// from/to honouring lands when an operator surface needs it.
+// `usageKeyForSubject` so the writer + both readers stay in
+// lock-step (`key:<KeyID>` for API-key callers; `id:<Identifier>`
+// when KeyID is empty). Anonymous callers receive 401. The
+// `?from=` / `?to=` query params are reserved in the OpenAPI spec
+// but ignored — every successful response is the trailing 30-day
+// window today; full from/to honouring lands when an operator
+// surface needs it.
 //
-// Redis-absent posture: the handler returns `[]` in the wire-shape
-// envelope (200 OK with an empty data array). Callers that
-// distinguish "no usage reported" from "usage backend not wired"
-// can probe `/v1/readyz` (NOT `/healthz` — the per-dependency
-// `checks` field is `/readyz`-only).
+// Backend-absent posture: the handler returns `[]` in the
+// wire-shape envelope (200 OK with an empty data array). Callers
+// that distinguish "no usage reported" from "usage backend not
+// wired" can probe `/v1/readyz` (NOT `/healthz` — the
+// per-dependency `checks` field is `/readyz`-only).
 func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
@@ -231,13 +259,6 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 			"https://api.stellarindex.io/errors/unauthorized",
 			"Authentication required", http.StatusUnauthorized,
 			"/v1/account/usage requires an API key or SEP-10 token")
-		return
-	}
-	if s.usageReader == nil {
-		// Reader not wired (older deployment / test) — preserve
-		// the locked wire shape with an empty list rather than
-		// 503; clients integrate against the contract regardless.
-		writeJSON(w, []UsageRow{}, Flags{})
 		return
 	}
 	// Mirror UsageTracker's subject derivation (key:<KeyID> or
@@ -255,14 +276,53 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, []UsageRow{}, Flags{})
 		return
 	}
-	// Default 30-day window; cap to the reader's retention. The
-	// `?from=` / `?to=` params are reserved in OpenAPI but
-	// unused for now — clients always get the trailing window.
+	if rows, ok := s.readUsageRollup(r, key); ok {
+		writeJSON(w, rows, Flags{})
+		return
+	}
+	writeJSON(w, s.readUsageLegacy(r, key), Flags{})
+}
+
+// readUsageRollup reads the per-endpoint rollups for the subject.
+// ok=false means "fall back to the legacy per-day totals": reader
+// unwired, read error, or zero rows.
+func (s *Server) readUsageRollup(r *http.Request, key string) ([]UsageRow, bool) {
+	if s.usageRollupReader == nil {
+		return nil, false
+	}
+	days, err := s.usageRollupReader.ReadRollup(r.Context(), key, 30)
+	if err != nil {
+		s.logger.Warn("usage rollup read", "err", err, "subject", key)
+		return nil, false
+	}
+	if len(days) == 0 {
+		return nil, false
+	}
+	out := make([]UsageRow, len(days))
+	for i, d := range days {
+		out[i] = UsageRow{
+			Date:      d.Date,
+			Endpoint:  d.Endpoint,
+			Requests:  int(d.Requests),
+			Errors:    int(d.Errors),
+			Throttled: int(d.Throttled),
+		}
+	}
+	return out, true
+}
+
+// readUsageLegacy reads the per-day Redis totals (no endpoint
+// dimension). Every failure degrades to the locked empty-list wire
+// shape rather than a 5xx — usage is a dashboard nicety, never
+// worth failing a customer integration over.
+func (s *Server) readUsageLegacy(r *http.Request, key string) []UsageRow {
+	if s.usageReader == nil {
+		return []UsageRow{}
+	}
 	days, err := s.usageReader.Read(r.Context(), key, 30)
 	if err != nil {
 		s.logger.Warn("usage read", "err", err, "subject", key)
-		writeJSON(w, []UsageRow{}, Flags{})
-		return
+		return []UsageRow{}
 	}
 	out := make([]UsageRow, len(days))
 	for i, d := range days {
@@ -271,7 +331,7 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 			Requests: int(d.Requests),
 		}
 	}
-	writeJSON(w, out, Flags{})
+	return out
 }
 
 // handleAccountKeysCreate serves POST /v1/account/keys.

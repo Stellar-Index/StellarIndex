@@ -270,6 +270,7 @@ override.
 | `stellarindex_aggregator_cache_write_errors` | `rate(stellarindex_aggregator_vwap_cache_write_errors_total[5m])` | > 0 for ≥ 2 min | **P1** | [redis-write-blocked-disk-full](runbooks/redis-write-blocked-disk-full.md) |
 | `stellarindex_customer_webhook_delivery_failing` | `rate(stellarindex_customer_webhook_delivery_attempts_total{outcome=~"server_error\|network_error"}[5m])` | > 0.1/s for ≥ 15 min | P3 | [customer-webhook-delivery-failing](runbooks/customer-webhook-delivery-failing.md) |
 | `stellarindex_customer_webhook_delivery_exhausted` | `rate(stellarindex_customer_webhook_delivery_attempts_total{outcome="exhausted"}[1h])` | > 0 for ≥ 1h | informational | [customer-webhook-delivery-failing](runbooks/customer-webhook-delivery-failing.md) |
+| `stellarindex_usage_rollup_failing` | `rate(stellarindex_usage_rollup_sweeps_total{outcome=~"scan_error\|sink_error"}[15m])` | > 0 for ≥ 30 min | informational | [usage-rollup-failing](runbooks/usage-rollup-failing.md) |
 | `stellarindex_stripe_platform_sync_errors` | `rate(stellarindex_stripe_platform_sync_errors_total[15m])` | > 0 for ≥ 15 min | P3 | [stripe-platform-sync-errors](runbooks/stripe-platform-sync-errors.md) |
 | `stellarindex_tls_cert_expiring_soon` | `stellarindex_tls_cert_not_after_unix - time()` per host | < 14 days for ≥ 1 h | P2 | [tls-cert-expiring-soon](runbooks/tls-cert-expiring-soon.md) |
 

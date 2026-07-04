@@ -193,6 +193,33 @@ groups:
                AND created_at > now() - interval '15 min'
              GROUP BY webhook_id ORDER BY 2 DESC LIMIT 10`.
 
+      # Usage-rollup worker health (#32/#37b). The API binary folds
+      # the Redis per-endpoint usage counters into the usage_daily
+      # hypertable every 5 min; /v1/account/usage + the dashboard's
+      # per-endpoint analytics read the rollups. Sustained failure
+      # means the dashboard's usage page goes stale (the API's
+      # pricing surface is unaffected, and counters keep
+      # accumulating in Redis with a 35-day TTL — short outages
+      # lose nothing).
+      - alert: stellarindex_usage_rollup_failing
+        expr: |
+          sum(rate(stellarindex_usage_rollup_sweeps_total{outcome=~"scan_error|sink_error"}[15m])) > 0
+        for: 30m
+        labels:
+          severity: informational
+          team: stellarindex
+          component: api
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/usage-rollup-failing.md
+        annotations:
+          summary: "Usage-rollup sweeps failing ({{ $value | humanize }}/s error rate)"
+          description: |
+            The API binary's usage-rollup worker has been failing its
+            5-minute sweeps (Redis scan or Timescale upsert) for 30+
+            minutes. Dashboard per-endpoint usage analytics stop
+            advancing; /v1/account/usage degrades to endpoint-less
+            legacy rows. Data is safe in Redis for 35 days — fix the
+            failing backend and the next sweep catches up.
+
       - alert: stellarindex_customer_webhook_delivery_exhausted
         expr: |
           sum(rate(stellarindex_customer_webhook_delivery_attempts_total{outcome="exhausted"}[1h])) > 0

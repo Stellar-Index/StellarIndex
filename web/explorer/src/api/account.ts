@@ -152,20 +152,25 @@ export async function revokeKey(id: string): Promise<void> {
 
 // ─── Usage ─────────────────────────────────────────────────────────
 
-// UsageRow mirrors the /v1/account/usage wire shape: per-day request
-// counts written by the UsageTracker middleware. `errors` / `throttled`
-// are reserved server-side and stay zero today, so we surface only the
-// fields the API populates.
+// UsageRow mirrors the /v1/account/usage wire shape: one row per
+// (date, endpoint family) from the server-side usage_daily rollups.
+// `endpoint` is the route PATTERN (e.g. "/v1/assets/{asset_id}");
+// it is absent on the server's legacy fallback shape (one row per
+// day, pre-rollup deployments). `requests` counts allowed traffic;
+// `errors` = 4xx (excl. 429) + 5xx; `throttled` = 429 rejections.
 export interface UsageRow {
   date: string; // YYYY-MM-DD
+  endpoint?: string;
   requests: number;
+  errors: number;
+  throttled: number;
 }
 
 /**
- * GET /v1/account/usage — trailing 30-day per-day request counts for
- * the authenticated account. Returns an empty list when the usage
- * backend isn't wired (Redis-less deployment) rather than erroring,
- * so callers can treat [] as "no usage reported".
+ * GET /v1/account/usage — trailing 30-day per-(day, endpoint) usage
+ * rows for the authenticated account. Returns an empty list when the
+ * usage backend isn't wired (Redis-less deployment) rather than
+ * erroring, so callers can treat [] as "no usage reported".
  */
 export async function fetchUsage(signal?: AbortSignal): Promise<UsageRow[]> {
   const env = await accountFetch<{ data: UsageRow[] }>('/account/usage', {

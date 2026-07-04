@@ -142,6 +142,7 @@ type Server struct {
 	requireEmailVerified middleware.Middleware
 	usageTracker         middleware.Middleware
 	usageReader          UsageReader
+	usageRollupReader    UsageRollupReader
 	hub                  *streaming.Hub
 	confidence           ConfidenceLooker
 	triangulated         TriangulatedPriceLooker
@@ -645,6 +646,15 @@ type Options struct {
 	// "empty list with locked wire shape" default.
 	UsageReader UsageReader
 
+	// UsageRollupReader, when non-nil, backs /v1/account/usage with
+	// per-day × per-endpoint rows (requests / errors / throttled)
+	// read from the `usage_daily` Timescale rollups the usage-rollup
+	// worker maintains. Takes precedence over UsageReader; the
+	// handler falls back to the per-day Redis totals when the
+	// rollup read errors or has no rows yet (fresh deployment,
+	// worker not yet swept).
+	UsageRollupReader UsageRollupReader
+
 	// Hub, when non-nil, backs the closed-bucket SSE endpoint
 	// (`/v1/price/stream`). Producers (typically the aggregator's
 	// per-window-close pass) call Hub.Publish(); subscribers attach
@@ -862,6 +872,7 @@ func New(opts Options) *Server {
 		requireEmailVerified:    opts.RequireEmailVerified,
 		usageTracker:            opts.UsageTracker,
 		usageReader:             opts.UsageReader,
+		usageRollupReader:       opts.UsageRollupReader,
 		hub:                     opts.Hub,
 		confidence:              opts.Confidence,
 		triangulated:            opts.Triangulated,
@@ -1020,15 +1031,17 @@ func (s *Server) Handler() http.Handler {
 	if s.monthlyQuota != nil {
 		stack = append(stack, s.monthlyQuota)
 	}
-	if s.rateLimit != nil {
-		stack = append(stack, s.rateLimit)
-	}
-	// Usage tracker runs INSIDE rate-limit so denied (429) requests
-	// don't pollute per-day counters — only allowed traffic counts
-	// against the user's billing window. Best-effort; failures
-	// log at debug and never block.
+	// Usage tracker runs OUTSIDE rate-limit so it observes 429
+	// rejections and records them under the per-endpoint `throttled`
+	// class. The LEGACY per-day total (the MonthlyQuota input) still
+	// excludes 429s — the middleware skips it by response status —
+	// so denied requests never eat billing quota. Best-effort;
+	// failures log at debug and never block.
 	if s.usageTracker != nil {
 		stack = append(stack, s.usageTracker)
+	}
+	if s.rateLimit != nil {
+		stack = append(stack, s.rateLimit)
 	}
 	// TouchUsage runs INSIDE rate-limit (and after the usage
 	// tracker for ordering symmetry) so a denied (429) request
