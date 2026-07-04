@@ -120,6 +120,7 @@ type Server struct {
 	classicSupplyFlight  chan struct{}
 	soroswapPairs        SoroswapPairsReader
 	networkStats         NetworkStatsReader
+	aggregators          AggregatorsReader
 	marketSources        MarketSourceReader
 	sourcesStats         SourcesStatsReader
 	lending              LendingReader
@@ -515,6 +516,13 @@ type Options struct {
 	// timescale.Store directly. Nil makes the endpoint 503.
 	NetworkStats NetworkStatsReader
 
+	// Aggregators, when non-nil, backs GET /v1/aggregators — the
+	// routers-registry listing with per-router routed-via 24h
+	// rollups (migration 0025 Phase B). Production wiring is
+	// timescale.Store directly (AggregatorRollup). Nil makes the
+	// endpoint 503.
+	Aggregators AggregatorsReader
+
 	// MarketSources backs GET /v1/markets/sources (per-source 24h
 	// volume breakdown for a pair or asset). timescale.Store satisfies
 	// it directly; nil makes the endpoint return an empty list.
@@ -852,6 +860,7 @@ func New(opts Options) *Server {
 		protocolBespoke:         opts.ProtocolBespoke,
 		soroswapPairs:           opts.SoroswapPairs,
 		networkStats:            opts.NetworkStats,
+		aggregators:             opts.Aggregators,
 		marketSources:           opts.MarketSources,
 		sourcesStats:            opts.SourcesStats,
 		lending:                 opts.Lending,
@@ -1293,6 +1302,10 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// Source catalogue — every venue the aggregator knows about,
 	// with class + IncludeInVWAP metadata.
 	s.mux.HandleFunc("GET /v1/sources", s.handleSources)
+
+	// Router / aggregator-vault registry + routed-via 24h rollup
+	// (migration 0025 Phase B).
+	s.mux.HandleFunc("GET /v1/aggregators", s.handleAggregators)
 
 	// Methodology — machine-readable summary of the active
 	// aggregation policy (VWAP method, outlier filters,

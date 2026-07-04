@@ -906,6 +906,11 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		ProtocolBespoke:   store,
 		SoroswapPairs:     store,
 		NetworkStats:      cachedNetworkStats,
+		// Routers registry + routed-via 24h rollup (/v1/aggregators).
+		// Direct store read: the routed-trades scan rides the partial
+		// routed_via index and the registry is a handful of rows; the
+		// 60s edge cache (cachecontrol) absorbs explorer fan-out.
+		Aggregators: store,
 		// Per-source 24h volume breakdown (/v1/markets/sources). Reads the
 		// raw store directly — a single-pair GROUP BY source is cheap and
 		// doesn't need the markets cache layer.

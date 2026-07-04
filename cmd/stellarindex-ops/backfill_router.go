@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -227,22 +226,17 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 }
 
 // signalContext returns a context that cancels on SIGINT / SIGTERM
-// so the backfill can flush a final checkpoint and exit cleanly.
-// Pulled out so callers can defer cancel() right after the call site.
+// so long-running passes (backfill-router, tag-routed-via) can flush
+// a final checkpoint and exit cleanly. Pulled out so callers can
+// defer cancel() right after the call site.
 func signalContext() (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sig
-		fmt.Fprintln(os.Stderr, "backfill-router: signal received, flushing checkpoint + exiting...")
+		fmt.Fprintln(os.Stderr, "stellarindex-ops: signal received, flushing checkpoint + exiting...")
 		cancel()
 	}()
 	return ctx, cancel
 }
-
-// Silence unused-import paranoia: strings is referenced in the
-// future tag-routed_via follow-up (Phase B from the original
-// soroswap_router README). The placeholder _ keeps the import
-// available without lint noise — the Phase-B PR will wire it.
-var _ = strings.Join

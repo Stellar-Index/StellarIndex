@@ -72,6 +72,7 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		// cache band.
 		{"/v1/chart", "public, max-age=60, s-maxage=300"},
 		{"/v1/lending/pools", "public, max-age=60, s-maxage=300"},
+		{"/v1/aggregators", "public, max-age=60, s-maxage=300"},
 		{"/v1/network/stats", "public, max-age=60, s-maxage=300"},
 		{"/v1/sac-wrappers", "public, max-age=60, s-maxage=300"},
 		{"/v1/incidents", "public, max-age=60, s-maxage=300"},
@@ -198,6 +199,7 @@ func TestPolicyForPath_CDNDisabled(t *testing.T) {
 		{"/v1/markets", "public, max-age=60"},
 		{"/v1/pairs", "public, max-age=60"},
 		{"/v1/sources", "public, max-age=60"},
+		{"/v1/aggregators", "public, max-age=60"},
 		{"/v1/oracle/lastprice", "public, max-age=60"},
 		// Non-cacheable directives unchanged.
 		{"/v1/healthz", "no-store"},

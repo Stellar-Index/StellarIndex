@@ -83,9 +83,12 @@ type RouterSwap struct {
 }
 
 // Event wraps a RouterSwap so it satisfies consumer.Event for
-// the dispatcher / pipeline path. Kept minimal — the persist
-// layer is a Phase-B add-on (will tag matching same-tx Trade
-// rows via the trades.routed_via column).
+// the dispatcher / pipeline path. The persist layer writes one
+// soroswap_router_swaps row per invocation (pipeline/sink.go);
+// same-tx Trade rows are then tagged with trades.routed_via =
+// SourceName by the routed-via sweeper (Phase B —
+// internal/pipeline/routedvia.go live, `stellarindex-ops
+// tag-routed-via` historical).
 type Event struct {
 	Swap RouterSwap
 }

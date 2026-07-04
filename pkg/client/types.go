@@ -294,6 +294,34 @@ type TradeRow struct {
 	BaseAmount  string    `json:"base_amount"`
 	QuoteAmount string    `json:"quote_amount"`
 	Price       string    `json:"price"`
+	// RoutedVia is the router/aggregator whose same-transaction
+	// invocation drove this trade (`routers.name`, e.g.
+	// "soroswap-router" — see [Client.Aggregators]). Empty for
+	// direct trades and for very recent routed trades the server's
+	// attribution sweeper (1-minute cadence) hasn't tagged yet.
+	RoutedVia string `json:"routed_via,omitempty"`
+}
+
+// AggregatorRow is the data shape returned by [Client.Aggregators]
+// — one routers-registry entry (a per-tx router like the Soroswap
+// router, or an aggregator vault like DeFindex) with its routed-via
+// attribution rollup over the trailing 24 hours.
+//
+// RoutedVolume24hUSD is a decimal string (ADR-0003); nil when none
+// of the window's routed trades carried a USD valuation — distinct
+// from a zero-trade router, which reports RoutedTrades24h == 0.
+// Vault-kind entries always report zero routed trades: per-tx
+// routed_via tagging applies to Kind == "router" only.
+type AggregatorRow struct {
+	ContractID     string `json:"contract_id"`
+	Name           string `json:"name"`
+	Kind           string `json:"kind"` // "router" | "aggregator-vault"
+	Protocol       string `json:"protocol"`
+	AutoDiscovered bool   `json:"auto_discovered"`
+
+	RoutedTrades24h    int64      `json:"routed_trades_24h"`
+	RoutedVolume24hUSD *string    `json:"routed_volume_24h_usd"`
+	LastRoutedAt       *time.Time `json:"last_routed_at"`
 }
 
 // OHLCBar is the data shape returned by [Client.OHLC] — a single

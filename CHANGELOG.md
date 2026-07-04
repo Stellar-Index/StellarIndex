@@ -16,6 +16,29 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Router attribution is live (BACKLOG #29 / migration 0025 Phase
+  B)**: `trades.routed_via` is now actually populated. (1) The
+  indexer runs a routed-via sweeper (1-min cadence, 30-min trailing
+  window) that joins persisted `soroswap_router_swaps` invocations
+  to same-tx soroswap `trades` rows and stamps
+  `routed_via='soroswap-router'` — a sweep rather than an
+  insert-time tag because the projector (trades writer) races the
+  dispatcher (router-call writer); first-wins, idempotent, zero
+  cost on the trade hot path. (2) New `stellarindex-ops
+  tag-routed-via` back-tags history in resumable ledger windows via
+  the same SQL primitive. (3) New `GET /v1/aggregators` serves the
+  routers registry with per-router routed 24h trade count + USD
+  volume; `/v1/history` rows gain an additive `routed_via` field
+  (omitted for direct trades). OpenAPI + docs/Postman/explorer
+  artifacts regenerated; `pkg/client` gains `Aggregators()` +
+  `TradeRow.RoutedVia`. (4) Migration 0072 aligns the 0032 registry
+  seed's name (`soroswap-router-v1` → `soroswap-router`) with the
+  source name the tagger writes, per the contract in
+  `soroswap_router/events.go`. (5) The explorer /aggregators page
+  renders the live rollup and retires the "Coming next" promise.
+  DeFindex vaults stay per-tx-untagged by design (kind
+  `aggregator-vault`; capital state, not per-tx flow —
+  `aggregator_exposures` remains a future surface).
 - **CI/release hardening cluster (BACKLOG #51b)**: (1) release
   artifacts are now keyless-signed — `release.yml` runs cosign
   `sign-blob` (GitHub OIDC → Fulcio, Rekor-logged) over `SHA256SUMS`

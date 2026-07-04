@@ -65,6 +65,7 @@ var coveredOperations = []coveredOperation{
 	{sdkMethod: "Asset", method: "GET", path: "/assets/{asset_id}", payload: AssetDetail{}, envelopeRef: "#/components/schemas/AssetEnvelope"},
 	{"AssetMetadata", "GET", "/assets/{asset_id}/metadata", AssetMetadata{}, ""},
 	{"Sources", "GET", "/sources", Source{}, ""},
+	{"Aggregators", "GET", "/aggregators", AggregatorRow{}, ""},
 	{"Methodology", "GET", "/methodology", Methodology{}, ""},
 	{"Markets", "GET", "/markets", Market{}, ""},
 	{"Pair", "GET", "/pairs", Market{}, ""},

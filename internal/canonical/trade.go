@@ -69,6 +69,16 @@ type Trade struct {
 
 	// Taker is the account that consumed the offer. Optional.
 	Taker string `json:"taker,omitempty"`
+
+	// RoutedVia is READ-SIDE attribution: the router/aggregator
+	// (routers.name, e.g. "soroswap-router") whose same-tx invocation
+	// drove this trade. Empty = direct trade (or attribution not yet
+	// swept). Populated only by storage readers from the
+	// trades.routed_via column (migration 0025) — decoders and ingest
+	// writers MUST leave it empty; the tag is applied after insert by
+	// the routed-via tagger (internal/pipeline/routedvia.go,
+	// first-wins). Intentionally not part of trade identity.
+	RoutedVia string `json:"routed_via,omitempty"`
 }
 
 // FanoutOpIndex packs an operation index and an in-operation event
