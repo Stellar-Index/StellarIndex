@@ -56,9 +56,16 @@ func openRead(ctx context.Context, addr string) (driver.Conn, error) {
 			// the right guard here is a per-query memory ceiling, conservative
 			// enough never to clip a healthy streaming read but low enough to
 			// fail a pathological query before it starves Postgres on the shared
-			// host. 12 GiB is well under the ~32–48 GB CH server cap (ADR-0034).
+			// host. 24 GiB is still well under the CH server cap (ADR-0034;
+			// r1 has 188 GB): the sdex projection reconcile legitimately
+			// outgrew 12 GiB in 2026-07 (two OOM-failed recomputes, one with
+			// the host otherwise idle — the wide body_xdr InOrder read, not a
+			// pathological query). max_threads bounds how many wide part
+			// streams hold buffers concurrently, which is what actually
+			// drives this class's peak.
 			"max_execution_time": 0,
-			"max_memory_usage":   12 * 1024 * 1024 * 1024,
+			"max_memory_usage":   24 * 1024 * 1024 * 1024,
+			"max_threads":        8,
 		},
 		DialTimeout: 10 * time.Second,
 		// ReadTimeout is per network read, not per query. A FINAL stream over a
