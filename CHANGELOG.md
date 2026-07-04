@@ -16,6 +16,26 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Cross-oracle agreement confidence input (BACKLOG #36 /
+  launch-todo P4-4 / ADR-0019 Phase 3)**: the divergence refresh
+  cycle now counts how many external references corroborate our
+  VWAP within the divergence threshold
+  (`divergence.CountAgreeing`; persisted as `agreement_count` on
+  the cached per-pair result) — distinct from `success_count`
+  ("responded" vs "corroborates"). The confidence score's served
+  decomposition gains `confidence_factors.cross_oracle_checked`
+  (was real reference data used, or the neutral no-data value —
+  the CS-087 DivergenceChecked discipline applied to the
+  confidence surface) and `confidence_factors.cross_oracle_agreement`
+  (the corroborating-reference count; always 0 when unchecked).
+  The combined score and the ADR-0019 freeze condition are
+  unchanged — cross-oracle agreement reaches the freeze machinery
+  only through the confidence score, as the ADR specifies. The
+  `anomaly-freeze-engaged.md` runbook is rewritten against the
+  shipped implementation (real metric names, both freeze phases,
+  marker TTL + recovery lifecycle, config-driven override path,
+  cross-oracle triage via the new fields) and promoted draft →
+  ratified.
 - **`/v1/tx/{hash}` hash-ordered lookup path (BACKLOG #13 /
   launch-todo P1-2 / perf-todo §4)**: cold hash lookups paid a ~5–6s
   bloom-skip-index scan over 10.2B `stellar.transactions` rows (the

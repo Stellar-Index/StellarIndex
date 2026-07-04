@@ -60,6 +60,19 @@ type CachedResult struct {
 	SuccessCount int `json:"success_count"`
 	FailureCount int `json:"failure_count"`
 
+	// AgreementCount is how many successful references corroborated
+	// OurPrice within the worker's threshold — the ADR-0019 Phase 3
+	// cross-oracle agreement input ([CountAgreeing]). Distinct from
+	// SuccessCount ("how many responded"): SuccessCount=5,
+	// AgreementCount=4 reads "five references answered, four agree
+	// with us".
+	//
+	// CS-087 semantics: failed references neither agree nor
+	// disagree, so consumers MUST gate on SuccessCount before
+	// interpreting this — SuccessCount=0 ⇒ AgreementCount=0 means
+	// "unchecked", not "unanimous disagreement".
+	AgreementCount int `json:"agreement_count"`
+
 	// ComputedAt is when the worker wrote this result. RFC 3339 UTC.
 	ComputedAt time.Time `json:"computed_at"`
 }
@@ -262,7 +275,11 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 		Failures:      res.Failures,
 		SuccessCount:  res.SuccessCount,
 		FailureCount:  res.FailureCount,
-		ComputedAt:    time.Now().UTC(),
+		// Agreement uses the same threshold as the per-reference
+		// firing test in flushObservations, so "agrees" is exactly
+		// "would not fire" for that reference.
+		AgreementCount: CountAgreeing(ourPrice, res.Sources, s.threshold),
+		ComputedAt:     time.Now().UTC(),
 	}
 
 	body, err := json.Marshal(cached)

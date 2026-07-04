@@ -7712,6 +7712,23 @@ components:
             liquidity:        { type: number, format: float }
             cross_oracle:     { type: number, format: float }
             baseline_quality: { type: number, format: float }
+            cross_oracle_checked:
+              type: boolean
+              description: >-
+                True only when real cross-oracle reference data fed
+                the cross_oracle factor; false means the neutral
+                no-data value was used. False MUST be read as "could
+                not verify", never as "references agree" (same
+                discipline as flags.divergence_checked).
+            cross_oracle_agreement:
+              type: integer
+              description: >-
+                Number of independent external references (Reflector
+                DEX/CEX/FX, Redstone, Band, CoinGecko, Chainlink)
+                that corroborated this price within the divergence
+                threshold at the last refresh (ADR-0019 Phase 3
+                cross-oracle agreement). Always 0 when
+                cross_oracle_checked is false.
       required: [asset_id, quote, price, price_type, observed_at]
 
     PriceEnvelope:

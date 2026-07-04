@@ -262,3 +262,113 @@ func TestDefaultWeights(t *testing.T) {
 		}
 	}
 }
+
+// TestCompute_CrossOracleAgreementDecomposition — ADR-0019 Phase 3:
+// the served decomposition carries the cross-oracle checked flag +
+// agreement count so consumers can distinguish "neutral because
+// unverified" from "neutral because mildly diverging" (the CS-087
+// DivergenceChecked discipline applied to the confidence surface).
+// The combined score itself is unchanged by the agreement count —
+// the ADR's cross_oracle_factor input is divergence-from-median.
+func TestCompute_CrossOracleAgreementDecomposition(t *testing.T) {
+	cases := []struct {
+		name          string
+		divergencePct float64
+		agreement     int
+		wantChecked   bool
+		wantAgreement int
+	}{
+		{
+			name:          "checked with corroboration",
+			divergencePct: 0.4,
+			agreement:     4,
+			wantChecked:   true,
+			wantAgreement: 4,
+		},
+		{
+			name:          "checked, zero divergence, all agree",
+			divergencePct: 0,
+			agreement:     7,
+			wantChecked:   true,
+			wantAgreement: 7,
+		},
+		{
+			// Real data can show zero corroborators (every reference
+			// responded but none within threshold) — checked stays
+			// true, agreement 0 is a genuine "nobody agrees" verdict.
+			name:          "checked with zero agreement",
+			divergencePct: 12.0,
+			agreement:     0,
+			wantChecked:   true,
+			wantAgreement: 0,
+		},
+		{
+			// The -1 sentinels: unchecked. Agreement must serve as 0
+			// (not -1) so the wire never carries a negative count.
+			name:          "unchecked sentinels",
+			divergencePct: -1,
+			agreement:     -1,
+			wantChecked:   false,
+			wantAgreement: 0,
+		},
+		{
+			// A caller bug pairing "no divergence data" with a
+			// positive agreement count must not leak the count:
+			// unchecked forces agreement to 0.
+			name:          "unchecked suppresses stray agreement",
+			divergencePct: -1,
+			agreement:     3,
+			wantChecked:   false,
+			wantAgreement: 0,
+		},
+		{
+			// NaN divergence is the defensive-zero factor branch —
+			// still reads as unchecked.
+			name:          "NaN divergence reads unchecked",
+			divergencePct: math.NaN(),
+			agreement:     2,
+			wantChecked:   false,
+			wantAgreement: 0,
+		},
+		{
+			// Negative agreement with real divergence data clamps to
+			// 0 rather than serving a negative count.
+			name:          "negative agreement clamps to zero",
+			divergencePct: 0.5,
+			agreement:     -5,
+			wantChecked:   true,
+			wantAgreement: 0,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := healthyInputs()
+			in.CrossOracleDivergencePct = tc.divergencePct
+			in.CrossOracleAgreementCount = tc.agreement
+			got := confidence.Compute(in, confidence.DefaultWeights())
+			if got.Factors.CrossOracleChecked != tc.wantChecked {
+				t.Errorf("CrossOracleChecked = %v, want %v", got.Factors.CrossOracleChecked, tc.wantChecked)
+			}
+			if got.Factors.CrossOracleAgreement != tc.wantAgreement {
+				t.Errorf("CrossOracleAgreement = %d, want %d", got.Factors.CrossOracleAgreement, tc.wantAgreement)
+			}
+		})
+	}
+}
+
+// TestCompute_AgreementCountDoesNotChangeScore — the agreement count
+// is transparency-only per ADR-0019 (the combiner's cross-oracle
+// input is divergence-from-median). Two computations differing only
+// in agreement count must produce identical combined scores.
+func TestCompute_AgreementCountDoesNotChangeScore(t *testing.T) {
+	a := healthyInputs()
+	a.CrossOracleAgreementCount = 0
+	b := healthyInputs()
+	b.CrossOracleAgreementCount = 6
+	sa := confidence.Compute(a, confidence.DefaultWeights())
+	sb := confidence.Compute(b, confidence.DefaultWeights())
+	if sa.Confidence != sb.Confidence {
+		t.Errorf("agreement count changed the combined score: %v vs %v — it must be transparency-only",
+			sa.Confidence, sb.Confidence)
+	}
+}
