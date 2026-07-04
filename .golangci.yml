@@ -59,6 +59,15 @@ linters:
       # "forgot to add the new variant" bug without forcing a case-per-
       # variant on switches that intentionally default.
       default-signifies-exhaustive: true
+      # BACKLOG #48 probe (2026-07-05): the strict form below floods 12
+      # findings repo-wide — of which only 3 are AssetType switches
+      # (canonical/sac.go, supply/key.go, xdrjson/sac.go — all
+      # intentional error-defaults for unsupported classes), plus 2
+      # reflect.Kind walkers and 7 misc. The linter can't scope
+      # strictness to one enum type, so the strict form stays off; the
+      # 3 AssetType defaults are correct rejection paths, not missed
+      # variants.
+      # default-signifies-exhaustive: false
       # Ignore enums we don't own: the go-stellar-sdk `xdr.*` enums have
       # 20+ variants and our decoders intentionally handle a subset (a
       # ManageOffer decoder shouldn't enumerate every OperationType), and
