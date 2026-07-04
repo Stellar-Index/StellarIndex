@@ -96,7 +96,7 @@ Negative / costs:
 
 ## Migration plan (staged, each stage shippable)
 
-1. **Spike — ✅ DONE 2026-07-04** (docs/adr/0044-stage1-spike.md):
+1. **Spike — ✅ DONE 2026-07-04** (docs/architecture/adr-0044-stage1-spike.md):
    exit criterion met — full route inventory renders under
    `wrangler dev`; worker 2.5 MB gzipped (vs 10/15 MB caps); a
    beyond-top-100 issuer rendered on demand in 529 ms with zero

@@ -1,3 +1,9 @@
+---
+title: ADR-0044 Stage 1 spike report — OpenNext on Cloudflare Workers
+last_verified: 2026-07-04
+status: current
+---
+
 # ADR-0044 Stage 1 spike report — OpenNext on Cloudflare Workers
 
 Date: 2026-07-04
