@@ -91,6 +91,16 @@ type ProtocolActivityReader interface {
 	ProtocolContractActivity(ctx context.Context, contractIDs []string, sinceLedger uint32) ([]clickhouse.ProtocolContractActivity, error)
 }
 
+// protocolFastActivityReader is the OPTIONAL capability the daily
+// pre-aggregation adds (BACKLOG #43). The handler type-asserts for it
+// and probes availability once; deployments without the
+// contract_events_daily table stay on the raw scans transparently.
+type protocolFastActivityReader interface {
+	DailyActivityAvailable(ctx context.Context) bool
+	ProtocolDailyActivityFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]clickhouse.ProtocolDailyPoint, error)
+	ProtocolEventBreakdownFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]clickhouse.ProtocolEventTypeCount, error)
+}
+
 // ProtocolBespokeReader builds the per-category bespoke analytics block from the
 // served-tier projected tables (TVL/volume/AUM/flows/feeds). Production wiring
 // is timescale.Store. Nil → the bespoke block is absent (the rest of the page
@@ -543,7 +553,7 @@ func protocolContractIDs(contracts []ProtocolContractView, factories []string) [
 // synthetic "untyped" bucket carrying the remainder. EventsTotal must
 // already be set (series is filled first in enrichProtocolAnalytics).
 func (s *Server) fillProtocolBreakdown(ctx context.Context, name string, ids []string, since uint32, view *ProtocolDetailView) {
-	breakdown, err := s.protocolActivity.ProtocolEventBreakdown(ctx, ids, since)
+	breakdown, err := s.protocolBreakdown(ctx, ids, since)
 	if err != nil {
 		s.logger.Warn("protocol event breakdown failed", "source", name, "err", err)
 		return
@@ -563,7 +573,7 @@ func (s *Server) fillProtocolBreakdown(ctx context.Context, name string, ids []s
 // authoritative total the breakdown reconciles against — NOT the typed
 // breakdown sum, which excludes non-Symbol-topic'd events.
 func (s *Server) fillProtocolSeries(ctx context.Context, name string, ids []string, since uint32, view *ProtocolDetailView) {
-	series, err := s.protocolActivity.ProtocolDailyActivity(ctx, ids, since)
+	series, err := s.protocolSeries(ctx, ids, since)
 	if err != nil {
 		s.logger.Warn("protocol daily activity failed", "source", name, "err", err)
 		return
@@ -742,4 +752,55 @@ func (s *Server) soroswapContracts(ctx context.Context) []ProtocolContractView {
 		})
 	}
 	return out
+}
+
+// protocolSinceDay converts the ledger-window cutoff into the daily
+// table's day grain: the activity window is expressed in ledgers from
+// tip (protocolActivityWindowLedgers); days = ledgers / ~17280.
+func protocolSinceDay(sinceLedger, tip uint32) time.Time {
+	if tip == 0 || sinceLedger >= tip {
+		return time.Now().UTC().AddDate(0, 0, -1)
+	}
+	days := int((tip-sinceLedger)/17280) + 1
+	return time.Now().UTC().AddDate(0, 0, -days)
+}
+
+// fastActivity returns the fast reader when the pre-aggregation is
+// available on this deployment (probed once, cached).
+func (s *Server) fastActivity(ctx context.Context) protocolFastActivityReader {
+	fast, ok := s.protocolActivity.(protocolFastActivityReader)
+	if !ok {
+		return nil
+	}
+	s.protocolFastOnce.Do(func() {
+		s.protocolFastOK = fast.DailyActivityAvailable(ctx)
+	})
+	if !s.protocolFastOK {
+		return nil
+	}
+	return fast
+}
+
+func (s *Server) protocolBreakdown(ctx context.Context, ids []string, since uint32) ([]clickhouse.ProtocolEventTypeCount, error) {
+	if fast := s.fastActivity(ctx); fast != nil {
+		tip, _ := s.protocolActivity.LakeTipLedger(ctx)
+		out, err := fast.ProtocolEventBreakdownFast(ctx, ids, protocolSinceDay(since, tip))
+		if err == nil {
+			return out, nil
+		}
+		s.logger.Warn("fast breakdown failed; raw fallback", "err", err)
+	}
+	return s.protocolActivity.ProtocolEventBreakdown(ctx, ids, since)
+}
+
+func (s *Server) protocolSeries(ctx context.Context, ids []string, since uint32) ([]clickhouse.ProtocolDailyPoint, error) {
+	if fast := s.fastActivity(ctx); fast != nil {
+		tip, _ := s.protocolActivity.LakeTipLedger(ctx)
+		out, err := fast.ProtocolDailyActivityFast(ctx, ids, protocolSinceDay(since, tip))
+		if err == nil {
+			return out, nil
+		}
+		s.logger.Warn("fast series failed; raw fallback", "err", err)
+	}
+	return s.protocolActivity.ProtocolDailyActivity(ctx, ids, since)
 }

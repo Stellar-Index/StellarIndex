@@ -102,6 +102,8 @@ type Server struct {
 	protocolContractsReader ProtocolContractsReader
 	protocolStats           ProtocolStatsReader
 	protocolActivity        ProtocolActivityReader
+	protocolFastOnce        sync.Once
+	protocolFastOK          bool
 	protocolBespoke         ProtocolBespokeReader
 	// Per-server TTL + single-flight cache for the expensive
 	// /v1/protocols/{name} detail (lazy-init'd — see cachedProtocolDetail).
