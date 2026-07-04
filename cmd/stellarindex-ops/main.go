@@ -183,6 +183,11 @@ func realMain() int { //nolint:gocyclo,gocognit,funlen // subcommand switch; eac
 			fmt.Fprintf(os.Stderr, "backfill-router: %v\n", err)
 			return 1
 		}
+	case "tag-routed-via":
+		if err := tagRoutedVia(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "tag-routed-via: %v\n", err)
+			return 1
+		}
 	case "census-backfill":
 		if err := censusBackfill(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "census-backfill: %v\n", err)
@@ -709,6 +714,20 @@ Subcommands:
                               -config /etc/stellarindex.toml \
                               -from 21000000 -to 25000000 \
                               -source soroswap,aquarius
+  tag-routed-via -config PATH [-from N] [-to N] [-window N] [-resume]
+                          Back-tag trades.routed_via='soroswap-router' for
+                          every trade sharing (ledger, tx_hash) with a
+                          persisted soroswap_router_swaps row (migration
+                          0025 Phase B). SQL-only join — no Galexie walk;
+                          run AFTER the router record itself is complete
+                          (backfill-router / ch-rebuild -contract-calls).
+                          Defaults to the full extent of
+                          soroswap_router_swaps; windowed by ledger
+                          (default 500k) so each UPDATE prunes trades
+                          chunks; first-wins (never overwrites an existing
+                          tag) so re-runs are no-ops. Checkpoints into
+                          ingestion_cursors for resume. The live indexer
+                          keeps the trailing 30 min tagged going forward.
   census-backfill -config PATH -from N -to N [-bucket NAME] [-resume]
                           Populate ledger_ingest_log (ADR-0033 substrate
                           record) for a historical range. Pure structural

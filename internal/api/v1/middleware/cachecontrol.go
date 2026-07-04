@@ -204,6 +204,10 @@ func policyForPath(path string, cdnEnabled bool) string {
 		path == "/v1/pools",
 		// Lending pools — Blend pool list; same registry shape.
 		path == "/v1/lending/pools",
+		// Routers registry + routed-via 24h rollup. Rolling
+		// observation kept fresh by the 1-min attribution
+		// sweeper; a 60s edge cache stays inside that cadence.
+		path == "/v1/aggregators",
 		// Network-stats strip — single SQL query backing the
 		// explorer's home network strip; cheap to cache.
 		path == "/v1/network/stats",

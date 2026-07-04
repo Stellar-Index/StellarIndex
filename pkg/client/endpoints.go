@@ -429,6 +429,20 @@ func (c *Client) Sources(ctx context.Context, opts SourcesOptions) (*Envelope[[]
 	return &env, nil
 }
 
+// Aggregators lists the router / aggregator-vault registry with
+// each entry's routed-via attribution over the trailing 24 hours —
+// how many trades (and how much USD volume) reached the underlying
+// venues via that router. Catalogue-shaped (a handful of entries;
+// no pagination). The rollup is a rolling observation recomputed
+// server-side, not a closed-bucket series.
+func (c *Client) Aggregators(ctx context.Context) (*Envelope[[]AggregatorRow], error) {
+	var env Envelope[[]AggregatorRow]
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/aggregators", nil, nil, &env); err != nil {
+		return nil, err
+	}
+	return &env, nil
+}
+
 // Methodology returns a machine-readable summary of the active
 // aggregation policy: VWAP method, per-endpoint outlier filters,
 // stablecoin → fiat-USD proxy allow-list, source classes,

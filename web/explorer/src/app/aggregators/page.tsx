@@ -4,6 +4,7 @@ import { ExternalLink } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
 import { ReferencePriceAggregators } from './ReferencePriceAggregators';
+import { RoutedVolumePanel } from './RoutedVolumePanel';
 
 export const metadata: Metadata = {
   title: 'Aggregators — routers and yield wrappers on Stellar',
@@ -116,23 +117,9 @@ export default function AggregatorsPage() {
         ))}
       </div>
 
-      <ReferencePriceAggregators />
+      <RoutedVolumePanel />
 
-      <Panel
-        title="Coming next"
-        bodyClassName="text-sm text-ink-body space-y-2"
-      >
-        <p>
-          Routed-via attribution (what fraction of each underlying pair
-          volume came in via a router or aggregator) is in the database
-          schema — see migration{' '}
-          <code className="font-mono text-xs">
-            0025_create_routers_and_aggregator_exposures.sql
-          </code>{' '}
-          — but needs the routers registry seeded on r1 before the
-          attribution endpoint goes live.
-        </p>
-      </Panel>
+      <ReferencePriceAggregators />
     </div>
   );
 }

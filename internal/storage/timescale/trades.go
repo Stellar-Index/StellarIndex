@@ -505,7 +505,8 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
         SELECT source, ledger, tx_hash, op_index, ts,
                base_asset, quote_asset,
                base_amount, quote_amount,
-               COALESCE(maker, ''), COALESCE(taker, '')
+               COALESCE(maker, ''), COALESCE(taker, ''),
+               COALESCE(routed_via, '')
           FROM trades
          WHERE base_asset  = $1
            AND quote_asset = $2
@@ -528,7 +529,7 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 			&t.Source, &t.Ledger, &t.TxHash, &t.OpIndex, &t.Timestamp,
 			&baseAsset, &quoteAsset,
 			&t.BaseAmount, &t.QuoteAmount,
-			&t.Maker, &t.Taker,
+			&t.Maker, &t.Taker, &t.RoutedVia,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: LatestTradesForPair scan: %w", err)
 		}
@@ -574,7 +575,8 @@ func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sour
                source, ledger, tx_hash, op_index, ts,
                base_asset, quote_asset,
                base_amount, quote_amount,
-               COALESCE(maker, ''), COALESCE(taker, '')
+               COALESCE(maker, ''), COALESCE(taker, ''),
+               COALESCE(routed_via, '')
           FROM trades
          WHERE base_asset  = $1
            AND quote_asset = $2
@@ -597,7 +599,7 @@ func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sour
 			&t.Source, &t.Ledger, &t.TxHash, &t.OpIndex, &t.Timestamp,
 			&baseAsset, &quoteAsset,
 			&t.BaseAmount, &t.QuoteAmount,
-			&t.Maker, &t.Taker,
+			&t.Maker, &t.Taker, &t.RoutedVia,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: LatestTradePerSource scan: %w", err)
 		}
@@ -653,7 +655,8 @@ func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to ti
         SELECT source, ledger, tx_hash, op_index, ts,
                base_asset, quote_asset,
                base_amount, quote_amount,
-               COALESCE(maker, ''), COALESCE(taker, '')
+               COALESCE(maker, ''), COALESCE(taker, ''),
+               COALESCE(routed_via, '')
           FROM trades
          WHERE base_asset  = $1
            AND quote_asset = $2
@@ -679,7 +682,7 @@ func (s *Store) TradesInRange(ctx context.Context, p canonical.Pair, from, to ti
 			&t.Source, &t.Ledger, &t.TxHash, &t.OpIndex, &t.Timestamp,
 			&baseAsset, &quoteAsset,
 			&t.BaseAmount, &t.QuoteAmount,
-			&t.Maker, &t.Taker,
+			&t.Maker, &t.Taker, &t.RoutedVia,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: TradesInRange scan: %w", err)
 		}
@@ -754,7 +757,8 @@ func (s *Store) TradesInRangeAfter(
         SELECT source, ledger, tx_hash, op_index, ts,
                base_asset, quote_asset,
                base_amount, quote_amount,
-               COALESCE(maker, ''), COALESCE(taker, '')
+               COALESCE(maker, ''), COALESCE(taker, ''),
+               COALESCE(routed_via, '')
           FROM trades
          WHERE base_asset  = $1
            AND quote_asset = $2
@@ -785,7 +789,7 @@ func (s *Store) TradesInRangeAfter(
 			&t.Source, &t.Ledger, &t.TxHash, &t.OpIndex, &t.Timestamp,
 			&baseAsset, &quoteAsset,
 			&t.BaseAmount, &t.QuoteAmount,
-			&t.Maker, &t.Taker,
+			&t.Maker, &t.Taker, &t.RoutedVia,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: TradesInRangeAfter scan: %w", err)
 		}

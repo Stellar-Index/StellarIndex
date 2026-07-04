@@ -5881,6 +5881,96 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/aggregators": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Router / aggregator-vault registry with routed-via 24h rollup.
+         * @description Lists the routers registry — entry contracts that route
+         *     per-tx into underlying venues (Soroswap router) and
+         *     aggregator vaults that hold persistent capital (DeFindex) —
+         *     each with its routed-via attribution over the trailing 24
+         *     hours: how many `trades` rows (and how much USD volume)
+         *     arrived at the underlying DEX via that router. Attribution
+         *     is stamped on trades as `routed_via` (also visible per-row
+         *     on `/v1/history`) by joining same-transaction router
+         *     invocations; the tag is first-wins and applies to
+         *     `kind=router` entries only — vault entries always report
+         *     zero routed trades (their capital state lives on the
+         *     protocol surfaces, not per-tx flow).
+         *
+         *     The window is a rolling observation recomputed per request
+         *     (like `/v1/network/stats`), not a closed-bucket series.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Array of registry entries, vaults after routers, sorted by name. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "contract_id": "CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH",
+                         *           "name": "soroswap-router",
+                         *           "kind": "router",
+                         *           "protocol": "soroswap",
+                         *           "auto_discovered": false,
+                         *           "routed_trades_24h": 342,
+                         *           "routed_volume_24h_usd": "18211.4052710000000000",
+                         *           "last_routed_at": "2026-07-04T21:58:11Z"
+                         *         },
+                         *         {
+                         *           "contract_id": "CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP",
+                         *           "name": "defindex-vault-usdc-autocompound",
+                         *           "kind": "aggregator-vault",
+                         *           "protocol": "defindex",
+                         *           "auto_discovered": false,
+                         *           "routed_trades_24h": 0,
+                         *           "routed_volume_24h_usd": null,
+                         *           "last_routed_at": null
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-04T22:38:53.6445723Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
+                        "application/json": components["schemas"]["AggregatorsEnvelope"];
+                    };
+                };
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sac-wrappers": {
         parameters: {
             query?: never;
@@ -10485,10 +10575,54 @@ export interface components {
             quote_amount: string;
             /** @description quote/base, 10-digit decimal. */
             price: string;
+            /**
+             * @description Router / aggregator whose same-transaction invocation
+             *     drove this trade (`routers.name`, e.g.
+             *     `soroswap-router`; see /v1/aggregators). Omitted for
+             *     direct trades — and for very recent routed trades the
+             *     attribution sweeper (1-minute cadence) hasn't tagged
+             *     yet.
+             */
+            routed_via?: string;
         };
         TradeHistoryEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["TradeRow"][];
             pagination?: components["schemas"]["Pagination"];
+        };
+        AggregatorRow: {
+            /** @description C-strkey of the router / vault contract. */
+            contract_id: string;
+            /** @description Registry name — the value trades carry in routed_via (routers.name). */
+            name: string;
+            /**
+             * @description `router` routes per-tx into underlying venues (Soroswap
+             *     router); `aggregator-vault` holds persistent capital
+             *     (DeFindex). Only routers accrue routed_via trade tags.
+             * @enum {string}
+             */
+            kind: "router" | "aggregator-vault";
+            /** @description Protocol slug the contract belongs to (joins /v1/protocols). */
+            protocol: string;
+            /** @description True when the discovery heuristic surfaced this entry; false for operator-vetted manual seeds. */
+            auto_discovered: boolean;
+            /** @description Count of trades tagged routed_via=name in the trailing 24 h. Always 0 for vault-kind entries. */
+            routed_trades_24h: number;
+            /**
+             * @description SUM of the routed trades' USD volume, decimal string.
+             *     Null when no routed trade in the window carried a USD
+             *     valuation (usd_volume is aggregator-backfilled and can
+             *     lag) — distinct from a zero-trade router, which reports
+             *     `routed_trades_24h: 0`.
+             */
+            routed_volume_24h_usd: string | null;
+            /**
+             * Format: date-time
+             * @description ts of the most recent routed trade in the window; null when none.
+             */
+            last_routed_at: string | null;
+        };
+        AggregatorsEnvelope: components["schemas"]["EnvelopeMeta"] & {
+            data: components["schemas"]["AggregatorRow"][];
         };
         OHLCBar: {
             /**

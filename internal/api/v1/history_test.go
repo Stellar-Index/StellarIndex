@@ -326,6 +326,48 @@ func TestHistory_ReturnsTrades(t *testing.T) {
 	}
 }
 
+// TestHistory_RoutedViaFieldPassthrough pins the additive routed_via
+// wire field (migration 0025 Phase B): populated when the trade
+// carries router attribution, and OMITTED (not empty-string) for
+// direct trades so pre-existing consumers see byte-identical rows.
+func TestHistory_RoutedViaFieldPassthrough(t *testing.T) {
+	routed := mkHistTrade(100)
+	routed.RoutedVia = "soroswap-router"
+	direct := mkHistTrade(101)
+	reader := &stubHistoryReader{trades: []canonical.Trade{routed, direct}}
+	srv := v1.New(v1.Options{History: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/history?base=native&quote=fiat:USD&limit=50")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	_ = resp.Body.Close()
+	var env struct {
+		Data []v1.TradeRow `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Data) != 2 {
+		t.Fatalf("got %d rows, want 2", len(env.Data))
+	}
+	if env.Data[0].RoutedVia != "soroswap-router" {
+		t.Errorf("routed trade RoutedVia = %q, want soroswap-router", env.Data[0].RoutedVia)
+	}
+	if env.Data[1].RoutedVia != "" {
+		t.Errorf("direct trade RoutedVia = %q, want empty", env.Data[1].RoutedVia)
+	}
+	// omitempty contract: exactly one routed_via key in the payload.
+	if n := strings.Count(string(body), `"routed_via"`); n != 1 {
+		t.Errorf("routed_via key count = %d, want 1 (omitted on direct trades); body=%s", n, body)
+	}
+}
+
 func TestHistory_DefaultWindowIs1Hour(t *testing.T) {
 	// When neither from nor to is set, the handler should compute a
 	// 1-hour window ending ~now. Check the window duration rather

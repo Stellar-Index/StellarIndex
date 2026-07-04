@@ -62,6 +62,7 @@ import (
 	externalkraken "github.com/StellarIndex/stellar-index/internal/sources/external/kraken"
 	externalpolygonforex "github.com/StellarIndex/stellar-index/internal/sources/external/polygonforex"
 	"github.com/StellarIndex/stellar-index/internal/sources/sorobanevents"
+	soroswap_router "github.com/StellarIndex/stellar-index/internal/sources/soroswap_router"
 	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 	"github.com/StellarIndex/stellar-index/internal/version"
@@ -242,6 +243,25 @@ func run(cfgPath string, dryRun bool) error {
 	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gatedOpts, soroswapOpts...)
 	if err != nil {
 		return fmt.Errorf("build dispatcher: %w", err)
+	}
+
+	// ─── Router attribution sweeper (migration 0025 Phase B) ────
+	// Periodically tags recent same-tx soroswap `trades` rows with
+	// routed_via='soroswap-router' by joining against
+	// soroswap_router_swaps. A trailing-window sweep (not an inline
+	// UPDATE at router-persist time) because the pair-level trades
+	// are written by the projector, which races the dispatcher's
+	// router-call persist — see internal/pipeline/routedvia.go.
+	// Gated on the router source being enabled: without its decoder
+	// no new soroswap_router_swaps rows appear, so there is nothing
+	// to sweep.
+	if routerEnabled(cfg.Ingestion.EnabledSources) {
+		routedViaStop, routedViaDone := startRoutedViaTagger(rootCtx, store, logger.With("component", "routed-via-tagger"))
+		defer func() {
+			routedViaStop()
+			<-routedViaDone
+		}()
+		logger.Info("routed-via attribution sweeper started")
 	}
 
 	// ─── Supply observers (opt-in via [supply] watched-sets) ──────
@@ -955,6 +975,32 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 		return nil, nil, err
 	}
 	return wait, enabled, nil
+}
+
+// routerEnabled reports whether the soroswap-router source is in the
+// operator's enabled-source list — the gate for the routed-via
+// attribution sweeper.
+func routerEnabled(enabledSources []string) bool {
+	for _, s := range enabledSources {
+		if s == soroswap_router.SourceName {
+			return true
+		}
+	}
+	return false
+}
+
+// startRoutedViaTagger runs pipeline.RunRoutedViaTagger (default
+// cadence/lookback) in its own goroutine. Follows the
+// [watchPostgresPing] (cancel, done) shape so main's shutdown
+// sequence stays uniform.
+func startRoutedViaTagger(parent context.Context, store *timescale.Store, logger *slog.Logger) (context.CancelFunc, <-chan struct{}) {
+	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		pipeline.RunRoutedViaTagger(ctx, logger, store, 0, 0)
+	}()
+	return cancel, done
 }
 
 func setSourceEnabled(sources []string, enabled bool) {

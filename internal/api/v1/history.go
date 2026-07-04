@@ -135,6 +135,11 @@ type TradeRow struct {
 	BaseAmount  string    `json:"base_amount"`
 	QuoteAmount string    `json:"quote_amount"`
 	Price       string    `json:"price"` // quote/base as decimal
+	// RoutedVia is the router/aggregator whose same-tx invocation
+	// drove this trade (routers.name, e.g. "soroswap-router").
+	// Omitted for direct trades — and for very recent routed trades
+	// the attribution sweeper (1-min cadence) hasn't tagged yet.
+	RoutedVia string `json:"routed_via,omitempty"`
 }
 
 // tradeRowFrom converts canonical.Trade → wire shape. Price is
@@ -155,6 +160,7 @@ func tradeRowFrom(t canonical.Trade, decimals int) TradeRow {
 		BaseAmount:  t.BaseAmount.String(),
 		QuoteAmount: t.QuoteAmount.String(),
 		Price:       priceRatioDecimal(t, decimals),
+		RoutedVia:   t.RoutedVia,
 	}
 }
 
