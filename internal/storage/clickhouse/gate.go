@@ -66,6 +66,15 @@ func openRead(ctx context.Context, addr string) (driver.Conn, error) {
 			"max_execution_time": 0,
 			"max_memory_usage":   24 * 1024 * 1024 * 1024,
 			"max_threads":        8,
+			// Spill instead of OOM: after the 12→24 GiB raise the sdex
+			// reconcile STILL hit the ceiling — in MergeSortingTransform
+			// (an ORDER BY over the full-range census). Chasing the
+			// ceiling is the wrong game for a query class that scales
+			// with chain history; external sort/group-by makes growth
+			// cost time (disk spill on the ZFS data pool) instead of
+			// failures.
+			"max_bytes_before_external_sort":     8 * 1024 * 1024 * 1024,
+			"max_bytes_before_external_group_by": 8 * 1024 * 1024 * 1024,
 		},
 		DialTimeout: 10 * time.Second,
 		// ReadTimeout is per network read, not per query. A FINAL stream over a
