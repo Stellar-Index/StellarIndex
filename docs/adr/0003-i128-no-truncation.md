@@ -20,6 +20,8 @@ superseded_by: null
 > `internal/canonical/amount_test.go` (incl. the KALIEN-incident
 > regression), which DO exist. Also: the public amount type lives in
 > `pkg/client`, not the `pkg/types` path named below.
+> **Update 2026-07-05:** both missing mechanisms now exist — see the
+> Guards addendum under Enforcement.
 
 ## Context
 
@@ -126,15 +128,37 @@ verified-correct implementation in
 
 ## Enforcement
 
+> **Guards addendum (2026-07-05, BACKLOG #48).** The analyzer this ADR
+> originally promised now exists, as a repo test plus a migration lint
+> (house precedent: repo-wide AST guards ship as Go tests, cf.
+> `internal/pipeline/lockstep_ast_test.go`):
+>
+> - **`internal/canonical/i128_truncation_guard_test.go`** — a
+>   go/types walk over every non-test package (via `packages.Load`)
+>   that fails on any lossy numeric conversion of the word fields of
+>   `xdr.Int128Parts` / `UInt128Parts` / `Int256Parts` / `UInt256Parts`
+>   (sign reinterpretation like `int64(p.Lo)`, narrowing, floats) and
+>   on `MustI128()`/`MustU128()` results fed into numeric conversions.
+>   The lossless decode shape (`int64(p.Hi)`, `uint64(p.Lo)`) passes
+>   without annotation. Escape hatch: `//i128:ok <reason>` on the site
+>   (stale markers fail the test). First run on 2026-07-05 found zero
+>   violations — the tree was already clean.
+> - **`scripts/ci/lint-migrations.sh`** — every `migrations/*.up.sql`
+>   column whose name looks monetary (amount/price/supply/balance/
+>   volume/reserve/fee/*_usd/stroop/wei/circulating/market_cap) must
+>   be NUMERIC, never BIGINT/INT8/DOUBLE PRECISION/FLOAT/REAL. Escape:
+>   inline `-- lint-money:ok <reason>` (stale markers fail). The only
+>   escapes today are `sdex_offer_events.price_n/price_d` — Stellar's
+>   protocol-defined int32 rational pair; the money value is the
+>   sibling NUMERIC `price`.
+
 - **CI grep-lint — `scripts/ci/lint-i128.sh` (built 2026-07-01, wired into
-  `make verify`).** Two zero-tolerance checks that keep the tree clean:
-  (1) rejects `int64(<x>.Lo)` / `int(<x>.Lo)` in production Go — truncating a
+  `make verify`).** Fast Go-side first line of defence: rejects
+  `int64(<x>.Lo)` / `int(<x>.Lo)` in production Go — truncating a
   128-bit Soroban value to its low word (the classic bug; the correct decode
-  passes lo as `uint64` to `canonical.FromInt128Parts`); (2) rejects
-  BIGINT/DOUBLE/REAL/FLOAT on a monetary-named migration column
-  (amount/balance/reserve/supply/stroop/wei/circulating/market_cap). This is
-  the pragmatic form of the guard originally specified below — a shell grep,
-  not a golangci analyzer (an analyzer plugin is heavier for the same signal).
+  passes lo as `uint64` to `canonical.FromInt128Parts`). Its original
+  migration-column check moved to `scripts/ci/lint-migrations.sh`
+  (2026-07-05, broader name set + escape markers).
 - ~~Lint rule in `.golangci.yml` (via a small custom analyzer) flags
   any function returning or accepting `int64` whose parameter
   name contains `amount`, `balance`, `reserve`, `supply`, `price`,

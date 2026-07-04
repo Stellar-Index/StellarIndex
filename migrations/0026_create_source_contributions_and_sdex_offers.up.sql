@@ -114,8 +114,8 @@ CREATE TABLE sdex_offer_events (
     -- Offer amount + price. Price is rational (n/d) on Stellar;
     -- we store both forms so the read side can choose.
     amount             numeric      CHECK (amount IS NULL OR amount >= 0),
-    price_n            bigint,
-    price_d            bigint,
+    price_n            bigint, -- lint-money:ok protocol-defined int32 rational numerator, dimensionless; the money value is the NUMERIC price below
+    price_d            bigint, -- lint-money:ok protocol-defined int32 rational denominator, dimensionless; the money value is the NUMERIC price below
     -- Computed price = price_n / price_d. Stored alongside for
     -- index-friendly range queries.
     price              numeric,

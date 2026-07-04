@@ -15,6 +15,7 @@ echo "=== Lint ==="          && make lint
 echo "=== Docs ==="          && ./scripts/ci/lint-docs.sh
 echo "=== Imports ==="       && ./scripts/ci/lint-imports.sh
 echo "=== i128/NUMERIC ===" && ./scripts/ci/lint-i128.sh
+echo "=== Migrations money ===" && ./scripts/ci/lint-migrations.sh
 echo "=== OpenAPI URLs ===" && go run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
 echo "=== PK discriminators ===" && go run ./scripts/ci/lint-pk-discriminators
 # Prometheus rule files. Graceful-skip when promtool isn't

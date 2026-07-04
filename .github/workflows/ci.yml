@@ -196,9 +196,15 @@ jobs:
         # baseline to shrink monotonically.
         run: ./scripts/ci/lint-imports.sh
       - name: lint-i128
-        # ADR-0003: reject int64(x.Lo) i128 truncation in Go + BIGINT/float
-        # on monetary migration columns (amounts are NUMERIC).
+        # ADR-0003: reject int64(x.Lo) i128 truncation in Go (fast grep;
+        # the deep go/types guard is TestI128TruncationGuard in
+        # internal/canonical, which runs in the test job).
         run: ./scripts/ci/lint-i128.sh
+      - name: lint-migrations
+        # ADR-0003 SQL side: monetary migration columns must be NUMERIC —
+        # never BIGINT/INT8/DOUBLE PRECISION/FLOAT/REAL. Escapes need an
+        # inline `-- lint-money:ok <reason>`.
+        run: ./scripts/ci/lint-migrations.sh
       - name: lint-baseline-growth
         # CS-098: lint baselines/allowlists are shrink-only. Growing
         # scripts/ci/*.baseline or the KNOWN_INERT allowlist in the
