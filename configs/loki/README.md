@@ -20,6 +20,15 @@ of each via system packages from the Grafana APT repo.
 
 ## Operator install (on a fresh R1-shaped box)
 
+> **Promtail is now ansible-managed** (2026-07-05): the
+> archival-node role installs the Grafana APT package and templates
+> `/etc/promtail/config.yml` from
+> `configs/ansible/roles/archival-node/templates/promtail-config.yml.j2`
+> (rendered identical to `promtail.r1.yml` on r1) — see
+> `roles/archival-node/tasks/10-observability.yml`, gated on
+> `run_promtail`. Only the **loki** half of the steps below is
+> still a hand-install.
+
 ```sh
 # Grafana APT repo
 mkdir -p /etc/apt/keyrings

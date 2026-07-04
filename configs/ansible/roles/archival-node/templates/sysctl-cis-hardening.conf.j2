@@ -1,0 +1,18 @@
+# {{ ansible_managed }}
+# archival-node role / 12-hardening.yml — CIS L2 kernel info-leak
+# minimum set (docs/architecture/repo-hygiene-plan.md §16):
+#
+#   kernel.kptr_restrict=2     never expose kernel pointers in /proc,
+#                              even to root (defeats KASLR-bypass recon)
+#   kernel.dmesg_restrict=1    dmesg requires CAP_SYSLOG (kernel oops
+#                              output leaks addresses + hardware info)
+#   kernel.yama.ptrace_scope=1 ptrace only direct descendants — a
+#                              compromised service can't inspect the
+#                              memory of its peers (API keys, DB creds)
+#
+# Numbered 91- so it layers AFTER 02-kernel.yml's
+# 90-stellarindex.conf. Disable via `hardening_cis_l2: false` in
+# inventory (defaults/main.yml documents when that's legitimate).
+kernel.kptr_restrict = 2
+kernel.dmesg_restrict = 1
+kernel.yama.ptrace_scope = 1

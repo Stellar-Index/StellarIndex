@@ -1,7 +1,8 @@
 ---
-# node_exporter + stellar-core-prometheus-exporter. Ships metrics on
-# :9100 and :9473 respectively; both bound to loopback and reachable
-# only over the internal_cidrs (nftables enforces).
+# node_exporter + stellar-core-prometheus-exporter + promtail.
+# Metrics on :9100 and :9473 respectively; both bound to loopback
+# and reachable only over the internal_cidrs (nftables enforces).
+# Promtail ships journald logs to the local Loki (:3100).
 
 # Node-exporter source-of-truth: the Debian package
 # `prometheus-node-exporter` (#33 cutover 2026-05-20). Previously
@@ -169,4 +170,98 @@
     enabled: true
   when: run_stellar_core | bool
 
-# TODO(#0): wire promtail → loki_push_url. Skeleton only this round.
+# ── Promtail → Loki (journald log shipping) ──────────────────────────
+# Codifies the hand-install documented in configs/loki/README.md
+# (Grafana APT repo + `promtail` system package). Loki itself is
+# still the single-host system package on r1 (same README) — this
+# block manages only the shipper side. The rendered config matches
+# configs/loki/promtail.r1.yml on r1 (host label = region_id,
+# push URL = loki_push_url).
+
+- name: Ensure /etc/apt/keyrings exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: run_promtail | bool
+  tags: [observability, promtail]
+
+- name: Install Grafana APT signing key (dearmored)
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl -fsSL https://apt.grafana.com/gpg.key \
+      | gpg --dearmor --yes -o /etc/apt/keyrings/grafana.gpg
+  args:
+    creates: /etc/apt/keyrings/grafana.gpg
+    executable: /bin/bash
+  when: run_promtail | bool
+  tags: [observability, promtail]
+
+- name: Add Grafana APT repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main"
+    filename: grafana
+    state: present
+  when: run_promtail | bool
+  tags: [observability, promtail]
+
+- name: Install promtail
+  ansible.builtin.apt:
+    name: promtail
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: run_promtail | bool
+  tags: [observability, promtail]
+
+# The packaged unit runs as user `promtail` (group nogroup), which
+# cannot read /run/log/journal/* — without this group grant promtail
+# starts cleanly but ships nothing (silent-empty failure mode).
+- name: Grant promtail systemd-journal read access
+  # check-mode tolerance: the promtail user exists only after the
+  # apt install above, which cannot happen in --check.
+  ignore_errors: "{{ ansible_check_mode }}"
+  ansible.builtin.user:
+    name: promtail
+    groups: systemd-journal
+    append: true
+  when: run_promtail | bool
+  notify: Restart promtail
+  tags: [observability, promtail]
+
+# Default packaging owner-mismatches /var/lib/promtail, so the
+# positions file can't be written and promtail re-ships the whole
+# journal from scratch on every restart.
+- name: Ensure /var/lib/promtail owned by promtail
+  ignore_errors: "{{ ansible_check_mode }}"  # user exists only post-install
+  ansible.builtin.file:
+    path: /var/lib/promtail
+    state: directory
+    owner: promtail
+    group: nogroup
+    mode: "0755"
+  when: run_promtail | bool
+  tags: [observability, promtail]
+
+- name: Template promtail config (journald → loki_push_url)
+  ansible.builtin.template:
+    src: promtail-config.yml.j2
+    dest: /etc/promtail/config.yml
+    owner: root
+    group: root
+    mode: "0644"
+  when: run_promtail | bool
+  notify: Restart promtail
+  tags: [observability, promtail]
+
+- name: Enable + start promtail
+  # check-mode tolerance: unit file exists only after the apt install.
+  ignore_errors: "{{ ansible_check_mode }}"
+  ansible.builtin.systemd:
+    name: promtail
+    state: started
+    enabled: true
+  when: run_promtail | bool
+  tags: [observability, promtail]

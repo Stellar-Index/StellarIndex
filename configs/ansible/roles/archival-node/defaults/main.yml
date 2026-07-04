@@ -42,6 +42,11 @@ run_galexie:         true
 # docs/operations/r1-deployment-state.md for the rationale.
 run_minio:           true
 run_observability:   true
+# Promtail journald → Loki shipper (10-observability.yml). Requires a
+# reachable Loki at `loki_push_url` (r1 runs the single-host system
+# package per configs/loki/README.md). Sub-flag of run_observability:
+# the whole file is skipped when run_observability is false.
+run_promtail:        true
 
 # ───── ZFS ───────────────────────────────────────────────────────────
 # [Per-region:
@@ -516,6 +521,13 @@ node_exporter_port:      9100
 
 core_exporter_port:      9473
 
+# Promtail → Loki push endpoint. Single-host default: the local Loki
+# from configs/loki/loki.r1.yml listens on :3100. When the HA loki
+# role (configs/ansible/roles/loki/) replaces the single-host
+# install, point this at the log_aggregator host instead (see that
+# role's `promtail_target_url` for the multi-host shape).
+loki_push_url:           "http://localhost:3100/loki/api/v1/push"
+
 # ───── Prometheus exporters (F-0152, audit-2026-05-26) ───────────────
 # redis_exporter + postgres_exporter ship as Debian packages
 # (prometheus-redis-exporter / prometheus-postgres-exporter) — no
@@ -535,6 +547,15 @@ admin_ssh_keys: []
 ssh_permit_root_login: "prohibit-password"
 ssh_permit_password_auth: false
 ssh_max_auth_tries: 3
+
+# ───── CIS L2 host hardening (12-hardening.yml) ──────────────────────
+# Default-ON. Covers the kernel info-leak sysctls (kptr_restrict,
+# dmesg_restrict, yama ptrace_scope) + auditd with a minimal
+# auth/sudo-exec ruleset. Deliberately does NOT touch SSH or network
+# settings — those live above / in 11-firewall.yml. Flip to false
+# only on a debugging box where ptrace_scope=1 gets in the way of
+# attaching debuggers to non-child processes.
+hardening_cis_l2: true
 
 # ── SDF reserve accounts (CS-010, ADR-0011 Algorithm 1) ────────────────
 # Network-wide truth, identical for every region: the accounts whose XLM

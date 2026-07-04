@@ -1,0 +1,80 @@
+name: security
+
+# Scheduled deep security scans — trivy filesystem scan (vuln +
+# secret detectors) and a CycloneDX SBOM published as a build
+# artifact.
+#
+# This workflow satisfies the pre-public-flip requirement recorded
+# in ci.yml's `vuln` job header (N2-02): "add a scheduled
+# security.yml before the public flip if container/SBOM scanning is
+# required".
+#
+# Deliberately OFF the PR path (Actions budget discipline — see
+# ci.yml's trigger map): weekly schedule + manual dispatch only.
+# The fast per-PR scans (govulncheck + gitleaks) live in ci.yml's
+# `vuln` job and are NOT duplicated here — govulncheck already runs
+# on every PR, so this workflow adds only the heavier scanners.
+#
+# No container-image scan: release.yml does not build or push
+# images (the ghcr.io job was dropped 2026-05-11 — no consumer).
+# The trivy fs scan covers go.mod/go.sum + the Dockerfiles' base
+# images by manifest; add a `trivy image` job if/when the
+# `containers:` release job is restored.
+
+on:
+  schedule:
+    # Mondays 06:17 UTC — off the :00 thundering herd, lands in the
+    # European morning so a red run is seen the same day.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trivy-fs:
+    name: trivy fs (vuln + secret)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          format: table
+          # Fail the run on findings so the scheduled-workflow badge
+          # goes red — a silent-pass scanner is worthless. Unfixed
+          # upstream CVEs are excluded (nothing actionable; they
+          # re-enter the report once a fixed version exists).
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+  sbom:
+    name: SBOM (CycloneDX)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Generate CycloneDX SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: cyclonedx
+          output: sbom.cdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cdx.json
+          retention-days: 90
+          if-no-files-found: error

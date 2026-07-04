@@ -11,11 +11,12 @@ said "the only role is archival-node" before the rest landed):
 
 - `haproxy` — public-facing HAProxy load balancer for the
   multi-region API + dashboard fronting plan.
-- `loki` — log aggregation (Loki + Promtail). The
-  archival-node task at
-  `roles/archival-node/tasks/10-observability.yml` still leaves
-  `promtail → loki_push_url` as a `TODO(#0)` on the archival
-  side; loki itself is roleified.
+- `loki` — log aggregation (Loki + Promtail) for the future
+  multi-host topology. On the archival side,
+  `roles/archival-node/tasks/10-observability.yml` now installs
+  promtail (Grafana APT package) and templates its
+  journald → `loki_push_url` config (single-host Loki per
+  `configs/loki/README.md`); gate with `run_promtail`.
 - `patroni` — Postgres HA cluster member for the R1↔R2 sync /
   R1→R3 async replication topology.
 - `prometheus` — multi-host Prometheus + Alertmanager. See

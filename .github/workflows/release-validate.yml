@@ -19,7 +19,7 @@ name: release-validate
 #   2. The built binaries actually run: -version (or `version`
 #      subcommand) returns 0 and prints something
 #   3. cut-release.sh is shell-syntactically valid
-#   4. Every docker/<binary>.Dockerfile builds (if docker/ exists)
+#   4. Every docker/<binary>.Dockerfile builds
 #
 # Path-filtered so docs-only PRs don't pay the build cost.
 
@@ -145,7 +145,9 @@ jobs:
           done < <(find dist -maxdepth 1 -type f -executable | sort)
 
       - name: Lint cut-release.sh syntax
-        if: hashFiles('scripts/dev/cut-release.sh') != ''
+        # (Previously guarded by `if: hashFiles(...) != ''` from before
+        # the script existed — moot since it landed; the guard would
+        # now only mask an accidental deletion of the script.)
         run: |
           bash -n scripts/dev/cut-release.sh
           echo "cut-release.sh is shell-syntactically valid"
@@ -162,7 +164,8 @@ jobs:
     # failure" with zero jobs on every push to main since (registered
     # under its file path because the `name:` field couldn't be
     # parsed past the broken expression). docker/ has 6 Dockerfiles
-    # now, so the guard is moot — drop it and let the job always run.
+    # now, so the guard is moot — it has been dropped and the job
+    # always runs. Do NOT reintroduce a job-level hashFiles() guard.
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
