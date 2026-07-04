@@ -547,7 +547,10 @@ func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to u
 		tx string
 		op uint32
 	}
-	const window = 100_000
+	// 25k (was 100k): halves twice the per-window join input after the
+	// 2026-07-05 OOM series — combined with the reader's grace_hash
+	// spill this bounds memory regardless of history growth.
+	const window = 25_000
 	for lo := from; lo <= to; lo += window {
 		hi := lo + window - 1
 		if hi > to {
