@@ -1,3 +1,11 @@
+// ADR-0044 Stage 1 spike: OPEN_NEXT=1 switches the build from the
+// static export (CF Pages, the current production path) to a normal
+// server build consumed by @opennextjs/cloudflare (Workers SSR).
+// The static-export path stays the default — nothing changes unless
+// the env var is set. See docs/adr/0044-explorer-edge-rendering.md
+// and docs/adr/0044-stage1-spike.md.
+const openNext = process.env.OPEN_NEXT === '1';
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -17,14 +25,20 @@ const nextConfig = {
   // hydrates and fetches data from the API based on the URL.
   // High-traffic dynamic routes can be pre-rendered at build time
   // via `generateStaticParams` (added in Phase 8).
-  output: 'export',
+  //
+  // Under OPEN_NEXT=1 (ADR-0044 spike) we omit `output` entirely:
+  // OpenNext consumes the default server build.
+  ...(openNext ? {} : { output: 'export' }),
 
   // Static export needs explicit trailing-slash handling for
   // Cloudflare Pages routing. Trailing slash → directory-style
-  // URL → directly maps to filesystem.
+  // URL → directly maps to filesystem. Kept under OpenNext too so
+  // canonical URLs don't change across the migration.
   trailingSlash: true,
 
-  // No server image optimization in static-export mode.
+  // No server image optimization in static-export mode. Kept off
+  // under OpenNext for the spike (Workers image optimization is a
+  // separate binding decision for Stage 2+).
   images: {
     unoptimized: true,
   },

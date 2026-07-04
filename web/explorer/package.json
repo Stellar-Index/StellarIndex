@@ -12,6 +12,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "generate:api": "openapi-typescript ../../openapi/stellar-index.v1.yaml -o src/api/types.ts",
+    "build:worker": "OPEN_NEXT=1 opennextjs-cloudflare build -c wrangler.ssr.jsonc",
+    "preview:worker": "opennextjs-cloudflare preview -c wrangler.ssr.jsonc",
     "prebuild": "mkdir -p public/openapi && cp ../../openapi/stellar-index.v1.yaml public/openapi/stellar-index.v1.yaml"
   },
   "dependencies": {
@@ -30,6 +32,7 @@
     "workers-og": "^0.0.27"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "1.20.1",
     "@tailwindcss/postcss": "^4.3.2",
     "@types/node": "^26.1.0",
     "@types/react": "^19.2.17",
@@ -42,13 +45,21 @@
     "prettier": "^3.3.3",
     "prettier-plugin-tailwindcss": "^0.8.0",
     "tailwindcss": "^4.3.2",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "wrangler": "4.107.0"
   },
   "engines": {
     "node": ">=20"
   },
   "packageManager": "pnpm@10.33.0",
   "pnpm": {
+    "onlyBuiltDependencies": [
+      "workerd",
+      "esbuild",
+      "sharp",
+      "@resvg/resvg-js",
+      "unrs-resolver"
+    ],
     "overrides": {
       "postcss@<8.5.10": ">=8.5.10",
       "js-yaml@<4.2.0": ">=4.2.0"

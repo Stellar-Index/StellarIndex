@@ -1,0 +1,28 @@
+// ADR-0044 Stage 1 spike — Worker config for the OpenNext SSR build.
+//
+// Lives NEXT TO (not replacing) wrangler.toml: that file is the CF
+// Pages config for the current static-export deploy and stays the
+// production path until Stage 3. Wrangler would otherwise be
+// ambiguous about which config wins, so every worker command passes
+// `--config wrangler.ssr.jsonc` explicitly (see package.json
+// build:worker / preview:worker scripts).
+//
+// LOCAL ONLY for the spike — never `wrangler deploy` this.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "stellarindex-explorer-ssr",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-06-01",
+  // nodejs_compat is required by the OpenNext runtime shim.
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  // Worker observability (headers/logs) — harmless locally, and the
+  // shape Stage 2 will want for the request-level error alerting the
+  // ADR requires.
+  "observability": {
+    "enabled": true
+  }
+}
