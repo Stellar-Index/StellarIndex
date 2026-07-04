@@ -1,7 +1,8 @@
 name: release
 
 # Triggered by pushing a v*.*.* tag to the repo. Cuts a GitHub
-# Release containing cross-compiled Linux binaries (+ SHA256SUMS).
+# Release containing cross-compiled Linux binaries (+ SHA256SUMS,
+# keyless-signed via cosign: SHA256SUMS.sig + SHA256SUMS.pem).
 #
 # Tag conventions per docs/architecture/semver-policy.md:
 #   v0.1.0          — release
@@ -40,12 +41,12 @@ concurrency:
 
 permissions:
   contents: write          # gh release create + upload assets
-  # F-1296 (codex audit-2026-05-13): `id-token: write` removed.
-  # No step currently consumes the OIDC JWT (keyless signing via
-  # cosign is planned but not wired yet); a compromised step in
-  # this workflow shouldn't be able to mint an OIDC token. Add
-  # it back in the SAME PR that wires cosign signing, with a
-  # clear comment pointing at the consuming step.
+  # F-1296 (codex audit-2026-05-13): `id-token: write` was removed
+  # here when nothing consumed the OIDC JWT. It is now granted —
+  # but only at JOB level on the `release` job (see its
+  # `permissions:` block), whose "Sign SHA256SUMS" step is the
+  # sole OIDC consumer (cosign keyless signing). The build matrix
+  # + resolve-tag jobs still cannot mint an OIDC token.
 
 jobs:
   # Pin the tag once so every downstream job sees the same value
@@ -164,6 +165,13 @@ jobs:
     name: Publish GitHub Release
     needs: [resolve-tag, build]
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write      # gh release create + upload assets
+      # Consumed ONLY by the "Sign SHA256SUMS (cosign keyless)"
+      # step below: cosign trades the GitHub OIDC JWT for a
+      # short-lived Fulcio certificate. Scoped to this job per
+      # F-1296 — the other jobs never see an OIDC token.
+      id-token: write
     steps:
       - name: Checkout at tag
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -185,6 +193,52 @@ jobs:
         run: |
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159  # v3.9.2
+
+      # Keyless signing over the checksum manifest: signing
+      # SHA256SUMS transitively covers every binary in the release
+      # (a tampered binary fails the sha256sum -c step of any
+      # verifier). Keyless = no long-lived private key to store or
+      # rotate — cosign exchanges this job's GitHub OIDC identity
+      # (see the job-level `id-token: write` grant above) for a
+      # short-lived Fulcio cert, and the signature is transparency-
+      # logged in Rekor. Verify a download with:
+      #
+      #   cosign verify-blob \
+      #     --signature SHA256SUMS.sig \
+      #     --certificate SHA256SUMS.pem \
+      #     --certificate-identity-regexp \
+      #       '^https://github.com/StellarIndex/stellar-index/\.github/workflows/release\.yml@.*$' \
+      #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      #     SHA256SUMS
+      #   sha256sum -c SHA256SUMS
+      - name: Sign SHA256SUMS (cosign keyless)
+        working-directory: dist
+        env:
+          # Non-interactive: acknowledge the Rekor transparency-log
+          # upload prompt.
+          COSIGN_YES: 'true'
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cosign sign-blob \
+            --oidc-issuer https://token.actions.githubusercontent.com \
+            --output-signature SHA256SUMS.sig \
+            --output-certificate SHA256SUMS.pem \
+            SHA256SUMS
+          # Self-check before publishing: the sig/cert pair must
+          # verify against this repo's workflow identity. Catches a
+          # malformed cert/sig at release time instead of at the
+          # first downstream verification.
+          cosign verify-blob \
+            --signature SHA256SUMS.sig \
+            --certificate SHA256SUMS.pem \
+            --certificate-identity-regexp "^https://github.com/${REPO}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            SHA256SUMS
+          ls -la SHA256SUMS*
 
       # Pull just this version's CHANGELOG block. The release-notes
       # workflow assumes the CHANGELOG section header matches

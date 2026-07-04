@@ -16,6 +16,46 @@ against.
 ## [Unreleased]
 
 ### Added
+- **CI/release hardening cluster (BACKLOG #51b)**: (1) release
+  artifacts are now keyless-signed — `release.yml` runs cosign
+  `sign-blob` (GitHub OIDC → Fulcio, Rekor-logged) over `SHA256SUMS`
+  and publishes `SHA256SUMS.sig`/`SHA256SUMS.pem` as release assets;
+  `id-token: write` restored job-scoped to the `release` job only
+  (closes the F-1296 re-add condition). (2) New scheduled
+  `.github/workflows/security.yml` (weekly + `workflow_dispatch`,
+  deliberately off the PR path): trivy fs scan (vuln + secret,
+  CRITICAL/HIGH-blocking) + CycloneDX SBOM artifact — closes the
+  N2-02 pre-flip TODO in `ci.yml`. (3) archival-node role: promtail
+  is now ansible-managed (Grafana APT repo + package,
+  journald → `loki_push_url` template matching
+  `configs/loki/promtail.r1.yml`, `run_promtail` gate) — retires the
+  `TODO(#0)` in `10-observability.yml`. (4) archival-node role: CIS
+  L2 minimum hardening set (`hardening_cis_l2`, default ON) —
+  `kernel.kptr_restrict=2`, `kernel.dmesg_restrict=1`,
+  `kernel.yama.ptrace_scope=1` via `/etc/sysctl.d/` drop-in +
+  auditd with a minimal auth/sudo-exec ruleset; no SSH/network
+  changes. Operator applies via the archival-node playbook
+  (`--tags promtail,hardening`); nothing was run against r1 in this
+  change.
+
+- **ADR-0003 money-safety guards (BACKLOG #48)**: the i128 analyzer +
+  migration gate the ADR claimed but never had.
+  `TestI128TruncationGuard` (`internal/canonical/`) walks every
+  non-test package with go/types and fails on lossy conversions of
+  xdr 128/256-bit part words (`int64(p.Lo)` sign-reinterpret,
+  narrowing, floats) and on `MustI128()`/`MustU128()` results fed to
+  numeric conversions; the correct `FromInt128Parts(int64(p.Hi),
+  uint64(p.Lo))` shape passes without annotation and `//i128:ok
+  <reason>` escapes are stale-checked. First run: zero violations.
+  `scripts/ci/lint-migrations.sh` (verify.sh + CI import-checks job)
+  requires NUMERIC for monetary-named migration columns with
+  `-- lint-money:ok <reason>` escapes (only `sdex_offer_events.
+  price_n/price_d` — the protocol's int32 rational pair);
+  `lint-i128.sh` keeps the fast Go grep and drops its narrower SQL
+  half. Exhaustive-lint sliver (ADR-0010 P4-9): already enabled since
+  the audit remediation; the strict `default-signifies-exhaustive:
+  false` form floods 12 findings (only 3 AssetType, all intentional
+  error-defaults) and stays off, documented in `.golangci.yml`.
 - **Real per-endpoint usage analytics (#32 / #37b)**: the dashboard's
   usage page and `/v1/account/usage` now serve actual per-endpoint
   request / error / throttle data instead of reserved-but-zero
@@ -92,6 +132,12 @@ against.
   default.
 
 ### Fixed
+- **`release-validate.yml`**: dropped the moot
+  `if: hashFiles('scripts/dev/cut-release.sh')` step guard (the
+  script has long existed; the guard could only mask its accidental
+  deletion) and updated the stale docker-build comment that read as
+  if the job-level `hashFiles` guard were still pending removal
+  (BACKLOG #51b).
 - **`/v1/assets/{id}/supply` no longer 404s classic assets missing
   from the operator's `sac_wrappers` map**: the SAC contract id is
   now derived deterministically for ANY classic asset

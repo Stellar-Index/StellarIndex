@@ -1,6 +1,7 @@
 ---
-# SSH hardening + baseline host security. Keeps the bar reasonable for
-# Phase A; full CIS L2 auditd profile lands in Week-9 hardening pass.
+# SSH hardening + baseline host security, plus the CIS L2 minimum
+# set (kernel info-leak sysctls + auditd auth/sudo-exec ruleset) at
+# the bottom of this file.
 
 - name: Install admin SSH keys for root
   ansible.posix.authorized_key:
@@ -58,6 +59,74 @@
       };
       Unattended-Upgrade::Automatic-Reboot "false";
 
-# TODO(#0): CIS L2 auditd profile, sudo logging to Loki, kernel
-# hardening (kptr_restrict, dmesg_restrict, yama ptrace). See
-# docs/architecture/repo-hygiene-plan.md §16.
+# ── CIS L2 minimum set: kernel info-leak sysctls + auditd ────────────
+# (docs/architecture/repo-hygiene-plan.md §16.) Scope is deliberately
+# narrow: kernel hardening + an auth/sudo-exec audit trail ONLY — no
+# SSH changes (templated above) and no network changes (11-firewall.yml).
+# Gated on `hardening_cis_l2` (default ON, defaults/main.yml).
+# Sudo-exec events land in the journal via auditd → journald and are
+# shipped to Loki by promtail (10-observability.yml), which closes the
+# old "sudo logging to Loki" TODO without any extra plumbing.
+
+- name: Template CIS L2 kernel-hardening sysctls
+  ansible.builtin.template:
+    src: sysctl-cis-hardening.conf.j2
+    dest: /etc/sysctl.d/91-stellarindex-cis-hardening.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: hardening_cis_l2 | bool
+  notify: Apply sysctl hardening
+  tags: [hardening, cis]
+
+- name: Install auditd
+  ansible.builtin.apt:
+    name: auditd
+    state: present
+  when: hardening_cis_l2 | bool
+  tags: [hardening, cis]
+
+- name: Install minimal audit ruleset (auth + sudo exec)
+  # check-mode tolerance: /etc/audit/rules.d exists only after the
+  # apt install above, which cannot happen in --check.
+  ignore_errors: "{{ ansible_check_mode }}"
+  ansible.builtin.copy:
+    dest: /etc/audit/rules.d/90-stellarindex.rules
+    owner: root
+    group: root
+    mode: "0640"
+    content: |
+      ## Managed by ansible (archival-node role / 12-hardening.yml).
+      ## Minimal CIS-L2-shaped ruleset: authentication surface +
+      ## privileged exec only. Keep this SMALL — a full CIS ruleset
+      ## on a busy ingest host floods the journal for no operator
+      ## value.
+
+      ## Identity + sudo configuration changes
+      -w /etc/passwd -p wa -k identity
+      -w /etc/group -p wa -k identity
+      -w /etc/shadow -p wa -k identity
+      -w /etc/sudoers -p wa -k sudo-config
+      -w /etc/sudoers.d/ -p wa -k sudo-config
+
+      ## Login/auth evidence trail
+      -w /var/log/auth.log -p wa -k auth-log
+
+      ## Privileged command execution: every execve where a logged-in
+      ## human (auid >= 1000) runs something as root (sudo/su paths).
+      ## Daemons (auid unset) are excluded — they'd dominate the log.
+      -a always,exit -F arch=b64 -S execve -F euid=0 -F auid>=1000 -F auid!=unset -k sudo-exec
+      -a always,exit -F arch=b32 -S execve -F euid=0 -F auid>=1000 -F auid!=unset -k sudo-exec
+  when: hardening_cis_l2 | bool
+  notify: Load audit rules
+  tags: [hardening, cis]
+
+- name: Enable + start auditd
+  # check-mode tolerance: unit exists only after the apt install.
+  ignore_errors: "{{ ansible_check_mode }}"
+  ansible.builtin.systemd:
+    name: auditd
+    state: started
+    enabled: true
+  when: hardening_cis_l2 | bool
+  tags: [hardening, cis]
