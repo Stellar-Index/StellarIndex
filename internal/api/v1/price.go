@@ -184,6 +184,17 @@ type ConfidenceFactors struct {
 	Liquidity       float64 `json:"liquidity"`
 	CrossOracle     float64 `json:"cross_oracle"`
 	BaselineQuality float64 `json:"baseline_quality"`
+
+	// CrossOracleChecked is true only when real cross-oracle
+	// reference data fed the cross_oracle factor; false means the
+	// neutral no-data value was used. Per the CS-087 discipline,
+	// false MUST NOT be read as "references agree" — it means
+	// "could not verify". CrossOracleAgreement is the count of
+	// independent references that corroborated our price within
+	// the divergence threshold (ADR-0019 Phase 3); always 0 when
+	// unchecked.
+	CrossOracleChecked   bool `json:"cross_oracle_checked"`
+	CrossOracleAgreement int  `json:"cross_oracle_agreement"`
 }
 
 // ConfidenceLooker is the read-side interface the v1 server uses

@@ -52,6 +52,20 @@ type Inputs struct {
 	// per ADR-0019 worked example).
 	CrossOracleDivergencePct float64
 
+	// CrossOracleAgreementCount — how many independent external
+	// references corroborated our VWAP within the divergence
+	// threshold at refresh time (ADR-0019 Phase 3;
+	// divergence.CachedResult.AgreementCount). Transparency-only:
+	// it does NOT enter the combined score (the ADR's
+	// cross_oracle_factor input is divergence-from-median), but it
+	// ships in the served [Factors] decomposition so consumers can
+	// gate on corroboration strength directly. Pass a negative
+	// value when cross-oracle data is unavailable — served as 0
+	// alongside CrossOracleChecked=false. Ignored (forced to 0 on
+	// the wire) when CrossOracleDivergencePct carries the no-data
+	// sentinel.
+	CrossOracleAgreementCount int
+
 	// BaselineAgeDays — days since the per-asset baseline was first
 	// computed. 0 for a brand-new pair (bootstrap penalty). Use
 	// negative to mean "no baseline yet"; the factor returns 0.5.
@@ -70,6 +84,21 @@ type Factors struct {
 	Liquidity       float64 `json:"liquidity"`
 	CrossOracle     float64 `json:"cross_oracle"`
 	BaselineQuality float64 `json:"baseline_quality"`
+
+	// CrossOracleChecked disambiguates the CrossOracle factor value
+	// per the CS-087 DivergenceChecked discipline: true means real
+	// cross-oracle data fed the factor; false means the neutral
+	// no-data value was used. Without it a consumer cannot tell
+	// CrossOracle=0.7 "unverified" from CrossOracle=0.7 "verified,
+	// mildly diverging" — and MUST NOT read false as "references
+	// agree".
+	CrossOracleChecked bool `json:"cross_oracle_checked"`
+
+	// CrossOracleAgreement is the count of independent external
+	// references that corroborated our price within the divergence
+	// threshold (ADR-0019 Phase 3 cross-oracle agreement). Always 0
+	// when CrossOracleChecked is false — read it only when checked.
+	CrossOracleAgreement int `json:"cross_oracle_agreement"`
 }
 
 // Weights are the per-factor exponents in the weighted geometric
@@ -139,6 +168,18 @@ func Compute(in Inputs, w Weights) Score {
 		Liquidity:       LiquidityFactor(in.LiquidityUSD),
 		CrossOracle:     CrossOracleFactor(in.CrossOracleDivergencePct),
 		BaselineQuality: BaselineQualityFactor(in.BaselineAgeDays),
+	}
+	// Checked mirrors CrossOracleFactor's sentinel branch exactly:
+	// a negative divergence means "no cross-oracle data" (neutral
+	// factor), so the served decomposition marks unchecked and the
+	// agreement count is forced to 0 (unchecked ≠ zero agreement —
+	// consumers read the pair together per CS-087). NaN divergence
+	// (defensive-zero factor) also reads as unchecked.
+	if in.CrossOracleDivergencePct >= 0 && !math.IsNaN(in.CrossOracleDivergencePct) {
+		f.CrossOracleChecked = true
+		if in.CrossOracleAgreementCount > 0 {
+			f.CrossOracleAgreement = in.CrossOracleAgreementCount
+		}
 	}
 
 	totalWeight := w.ZScore + w.SourceCount + w.Diversity + w.Liquidity + w.CrossOracle + w.BaselineQuality

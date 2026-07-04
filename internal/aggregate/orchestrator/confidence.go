@@ -95,13 +95,15 @@ func (o *Orchestrator) computeConfidence(
 		return confidenceComputation{}, false
 	}
 
+	xo := o.lookupCrossOracle(ctx, pair)
 	score := confidence.Compute(confidence.Inputs{
-		ZScore:                   z,
-		SourceCount:              distinctSourceCount(trades),
-		SourceClassCount:         distinctSourceClassCount(trades),
-		LiquidityUSD:             approxUSDVolume(trades, pair),
-		CrossOracleDivergencePct: o.lookupDivergencePct(ctx, pair),
-		BaselineAgeDays:          baselineAgeDays(multi, computedAt),
+		ZScore:                    z,
+		SourceCount:               distinctSourceCount(trades),
+		SourceClassCount:          distinctSourceClassCount(trades),
+		LiquidityUSD:              approxUSDVolume(trades, pair),
+		CrossOracleDivergencePct:  xo.divergencePct,
+		CrossOracleAgreementCount: xo.agreementCount,
+		BaselineAgeDays:           baselineAgeDays(multi, computedAt),
 	}, confidence.DefaultWeights())
 
 	return confidenceComputation{Score: score, ZScore: z}, true
@@ -137,12 +139,30 @@ func (o *Orchestrator) cacheConfidence(
 // canonical package import. Same shape; same semantics.
 type canonicalTrade = canonical.Trade
 
-// lookupDivergencePct reads the cached divergence result for the
-// specific `pair` and returns its DivergencePct when the
-// SuccessCount meets the trust floor (`divergenceMinSources`).
-// Otherwise (no key, decode error, transient cache failure,
-// single-source success) returns -1 — the
-// [confidence.CrossOracleFactor] "no cross-oracle data" sentinel.
+// crossOracleSignal is what [Orchestrator.lookupCrossOracle] extracts
+// from the cached divergence result for the confidence step. The
+// no-data state (unchecked per CS-087) is both fields at their -1
+// sentinels — [confidence.Compute] then uses the neutral factor and
+// serves CrossOracleChecked=false.
+type crossOracleSignal struct {
+	// divergencePct — % deviation from the cross-reference median,
+	// or -1 ("no cross-oracle data", the [confidence.CrossOracleFactor]
+	// sentinel).
+	divergencePct float64
+	// agreementCount — references corroborating our VWAP within the
+	// divergence threshold (ADR-0019 Phase 3), or -1 when unchecked.
+	agreementCount int
+}
+
+// noCrossOracle is the unchecked-state signal (both sentinels).
+var noCrossOracle = crossOracleSignal{divergencePct: -1, agreementCount: -1}
+
+// lookupCrossOracle reads the cached divergence result for the
+// specific `pair` and returns its DivergencePct + AgreementCount
+// when the SuccessCount meets the trust floor
+// (`divergenceMinSources`). Otherwise (no key, decode error,
+// transient cache failure, single-source success) returns
+// [noCrossOracle] — the "no cross-oracle data" sentinels.
 //
 // F-1344 (G16-03): reads the per-PAIR key (`div:<base>/<quote>`),
 // not a per-base key. The confidence score for XLM/USDT must use
@@ -152,30 +172,33 @@ type canonicalTrade = canonical.Trade
 //
 // Best-effort: divergence is enrichment, not a publish-blocker.
 // Read failures don't propagate; the confidence step continues with
-// the neutral sentinel.
-func (o *Orchestrator) lookupDivergencePct(ctx context.Context, pair canonical.Pair) float64 {
+// the neutral sentinels.
+func (o *Orchestrator) lookupCrossOracle(ctx context.Context, pair canonical.Pair) crossOracleSignal {
 	raw, err := o.cache.Get(ctx, cachekeys.Divergence(pair)).Bytes()
 	if errors.Is(err, redis.Nil) {
-		return -1 // no cache entry; treat as "no data"
+		return noCrossOracle // no cache entry; treat as "no data"
 	}
 	if err != nil {
 		// Transient Redis read failure — log debug-level (not warn)
 		// because we don't want a Redis blip to flood logs every tick;
 		// the metric label captures this cleanly enough.
 		obs.AggregatorConfidenceComputeTotal.WithLabelValues("divergence_read_error").Inc()
-		return -1
+		return noCrossOracle
 	}
 	var cached divergence.CachedResult
 	if err := json.Unmarshal(raw, &cached); err != nil {
 		obs.AggregatorConfidenceComputeTotal.WithLabelValues("divergence_decode_error").Inc()
-		return -1
+		return noCrossOracle
 	}
 	if cached.SuccessCount < divergenceMinSources {
 		// Single-reference signal: don't trust as a multi-source
-		// divergence input. Pass "no data" sentinel.
-		return -1
+		// divergence input. Pass "no data" sentinels.
+		return noCrossOracle
 	}
-	return cached.DivergencePct
+	return crossOracleSignal{
+		divergencePct:  cached.DivergencePct,
+		agreementCount: cached.AgreementCount,
+	}
 }
 
 // distinctSourceClassCount returns the count of distinct

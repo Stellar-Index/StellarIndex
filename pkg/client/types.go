@@ -82,6 +82,14 @@ type ConfidenceFactors struct {
 	Liquidity       float64 `json:"liquidity"`
 	CrossOracle     float64 `json:"cross_oracle"`
 	BaselineQuality float64 `json:"baseline_quality"`
+	// CrossOracleChecked is true only when real cross-oracle
+	// reference data fed the cross_oracle factor. False means
+	// "could not verify" — NOT "references agree".
+	CrossOracleChecked bool `json:"cross_oracle_checked"`
+	// CrossOracleAgreement counts the independent external
+	// references that corroborated the price within the divergence
+	// threshold (ADR-0019 Phase 3). Always 0 when unchecked.
+	CrossOracleAgreement int `json:"cross_oracle_agreement"`
 }
 
 // HistorySeries is the data shape returned by

@@ -2092,12 +2092,14 @@ func (r redisConfidenceLooker) LookupConfidence(ctx context.Context, asset, quot
 	return v1.PriceSnapshotConfidence{
 		Confidence: score.Confidence,
 		Factors: v1.ConfidenceFactors{
-			ZScore:          score.Factors.ZScore,
-			SourceCount:     score.Factors.SourceCount,
-			Diversity:       score.Factors.Diversity,
-			Liquidity:       score.Factors.Liquidity,
-			CrossOracle:     score.Factors.CrossOracle,
-			BaselineQuality: score.Factors.BaselineQuality,
+			ZScore:               score.Factors.ZScore,
+			SourceCount:          score.Factors.SourceCount,
+			Diversity:            score.Factors.Diversity,
+			Liquidity:            score.Factors.Liquidity,
+			CrossOracle:          score.Factors.CrossOracle,
+			BaselineQuality:      score.Factors.BaselineQuality,
+			CrossOracleChecked:   score.Factors.CrossOracleChecked,
+			CrossOracleAgreement: score.Factors.CrossOracleAgreement,
 		},
 	}, true, nil
 }

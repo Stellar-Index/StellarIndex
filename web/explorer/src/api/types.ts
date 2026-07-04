@@ -10494,6 +10494,10 @@ export interface components {
                 cross_oracle?: number;
                 /** Format: float */
                 baseline_quality?: number;
+                /** @description True only when real cross-oracle reference data fed the cross_oracle factor; false means the neutral no-data value was used. False MUST be read as "could not verify", never as "references agree" (same discipline as flags.divergence_checked). */
+                cross_oracle_checked?: boolean;
+                /** @description Number of independent external references (Reflector DEX/CEX/FX, Redstone, Band, CoinGecko, Chainlink) that corroborated this price within the divergence threshold at the last refresh (ADR-0019 Phase 3 cross-oracle agreement). Always 0 when cross_oracle_checked is false. */
+                cross_oracle_agreement?: number;
             } | null;
         };
         PriceEnvelope: components["schemas"]["EnvelopeMeta"] & {

@@ -209,9 +209,10 @@ func TestConfidence_DivergenceWiredFromCache(t *testing.T) {
 
 	noCache := runOnce(t, nil)
 	withinTolerance := runOnce(t, &divergence.CachedResult{
-		PairID:        pair.String(),
-		DivergencePct: 0.3, // within 1% tolerance → factor 1.0
-		SuccessCount:  3,
+		PairID:         pair.String(),
+		DivergencePct:  0.3, // within 1% tolerance → factor 1.0
+		SuccessCount:   3,
+		AgreementCount: 2,
 	})
 
 	// "No data" returns the neutral 0.7; "within tolerance" returns
@@ -229,6 +230,23 @@ func TestConfidence_DivergenceWiredFromCache(t *testing.T) {
 	}
 	if withinTolerance.Factors.CrossOracle != 1.0 {
 		t.Errorf("within-tolerance CrossOracle = %v, want 1.0", withinTolerance.Factors.CrossOracle)
+	}
+
+	// ADR-0019 Phase 3 agreement transparency: the cached result's
+	// AgreementCount flows into the served decomposition, and the
+	// checked flag disambiguates neutral-because-unchecked from
+	// neutral-because-diverging (CS-087 discipline).
+	if noCache.Factors.CrossOracleChecked {
+		t.Error("no-cache CrossOracleChecked = true, want false")
+	}
+	if noCache.Factors.CrossOracleAgreement != 0 {
+		t.Errorf("no-cache CrossOracleAgreement = %d, want 0", noCache.Factors.CrossOracleAgreement)
+	}
+	if !withinTolerance.Factors.CrossOracleChecked {
+		t.Error("with-cache CrossOracleChecked = false, want true")
+	}
+	if withinTolerance.Factors.CrossOracleAgreement != 2 {
+		t.Errorf("with-cache CrossOracleAgreement = %d, want 2", withinTolerance.Factors.CrossOracleAgreement)
 	}
 }
 
@@ -256,9 +274,10 @@ func TestConfidence_DivergenceLowSuccessCountIgnored(t *testing.T) {
 	rdb, _ := newTestRedis(t)
 
 	body, _ := json.Marshal(&divergence.CachedResult{
-		PairID:        pair.String(),
-		DivergencePct: 0.3, // would be in-tolerance, but…
-		SuccessCount:  1,   // … below trust floor; should be ignored
+		PairID:         pair.String(),
+		DivergencePct:  0.3, // would be in-tolerance, but…
+		SuccessCount:   1,   // … below trust floor; should be ignored
+		AgreementCount: 1,   // must not leak into the served decomposition
 	})
 	if err := rdb.Set(context.Background(),
 		cachekeys.Divergence(pair), body, 5*time.Minute).Err(); err != nil {
@@ -289,6 +308,15 @@ func TestConfidence_DivergenceLowSuccessCountIgnored(t *testing.T) {
 	if s.Factors.CrossOracle < wantNeutral-1e-6 || s.Factors.CrossOracle > wantNeutral+1e-6 {
 		t.Errorf("CrossOracle factor = %v, want %v (neutral; single-source ignored)",
 			s.Factors.CrossOracle, wantNeutral)
+	}
+	// Below the trust floor the signal is UNCHECKED — the agreement
+	// count must not leak through either (CS-087: a single
+	// responder's corroboration is not a multi-source verdict).
+	if s.Factors.CrossOracleChecked {
+		t.Error("CrossOracleChecked = true below trust floor, want false")
+	}
+	if s.Factors.CrossOracleAgreement != 0 {
+		t.Errorf("CrossOracleAgreement = %d below trust floor, want 0", s.Factors.CrossOracleAgreement)
 	}
 }
 
