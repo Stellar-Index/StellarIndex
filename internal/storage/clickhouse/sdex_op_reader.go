@@ -96,7 +96,7 @@ func StreamSDEXOps(ctx context.Context, addr string, from, to uint32, fn func(SD
 		      WHERE successful = 1 AND ledger_seq BETWEEN ? AND ?
 		  )
 		ORDER BY o.ledger_seq, o.tx_hash, o.op_index
-		SETTINGS join_algorithm = 'full_sorting_merge'`, tradeOpTypeInList())
+		SETTINGS join_algorithm = 'grace_hash', grace_hash_join_initial_buckets = 32`, tradeOpTypeInList())
 	rows, err := conn.Query(ctx, query, from, to, from, to)
 	if err != nil {
 		return fmt.Errorf("clickhouse: query sdex ops [%d,%d]: %w", from, to, err)
