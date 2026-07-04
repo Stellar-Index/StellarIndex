@@ -1004,10 +1004,17 @@ export interface paths {
          *     smallest unit (ADR-0003); clients apply per-asset decimals for display.
          *
          *     Resolution: a Soroban contract id (`C…`) is used directly; a classic
-         *     asset (`CODE-ISSUER`) resolves to its Stellar-Asset-Contract via the
-         *     operator's configured SAC wrappers (404 if unmapped); `native` / `XLM`
-         *     returns the ledger header's `total_coins`
-         *     (`source=ledger_total_coins`), since XLM has no SAC mint/burn events.
+         *     asset (`CODE-ISSUER`) resolves to its Stellar-Asset-Contract — derived
+         *     deterministically from the asset + network passphrase (valid even
+         *     before the SAC is deployed), with the operator's configured SAC
+         *     wrappers as an explicit override; `native` / `XLM` returns the ledger
+         *     header's `total_coins` (`source=ledger_total_coins`), since XLM has no
+         *     SAC mint/burn events. Only ids with no contract at all (`fiat:*`)
+         *     return 404.
+         *
+         *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the read
+         *     is fresh to; `flags.stale` fires when the watermark's close time
+         *     trails now by more than 300s.
          */
         get: {
             parameters: {
@@ -1040,7 +1047,8 @@ export interface paths {
                          *         "asset_id": "native",
                          *         "total_supply": "1054439020873472865",
                          *         "flow_count": 0,
-                         *         "source": "ledger_total_coins"
+                         *         "source": "ledger_total_coins",
+                         *         "as_of_ledger": 63340102
                          *       },
                          *       "as_of": "2026-07-03T22:40:11.747021406Z",
                          *       "flags": {
@@ -1082,6 +1090,10 @@ export interface paths {
          *     `asset_id` is the canonical form (`CODE-ISSUER`, or `native`). Balances
          *     are strings (ADR-0003). Coverage grows with the entry-change capture
          *     window; full once the Phase-C backfill lands.
+         *
+         *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the read
+         *     is fresh to; `flags.stale` fires when the watermark's close time
+         *     trails now by more than 300s.
          */
         get: {
             parameters: {
@@ -1125,7 +1137,8 @@ export interface paths {
                          *             "account_id": "GC5LF63GRVIT5ZXXCXLPI3RX2YXKJQFZVBSAO6AUELN3YIMSWPD6Z6FH",
                          *             "balance": "282865538219201"
                          *           }
-                         *         ]
+                         *         ],
+                         *         "as_of_ledger": 63340102
                          *       },
                          *       "as_of": "2026-07-03T22:37:30.738401847Z",
                          *       "flags": {
@@ -1146,6 +1159,11 @@ export interface paths {
                                     account_id?: string;
                                     balance?: string;
                                 }[];
+                                /**
+                                 * Format: int64
+                                 * @description Lake watermark this read is fresh to (ADR-0041). Omitted when no watermark reader is wired. Pairs with flags.stale.
+                                 */
+                                as_of_ledger?: number;
                             };
                         };
                     };
@@ -8963,6 +8981,10 @@ export interface paths {
          *     AccountEntry in the captured ledger window — never created, merged away,
          *     or its create predates live capture (resolves once the Phase-C backfill
          *     lands). Balances are strings (ADR-0003).
+         *
+         *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the read
+         *     is fresh to (NOT the account's `last_modified_ledger`); `flags.stale`
+         *     fires when the watermark's close time trails now by more than 300s.
          */
         get: {
             parameters: {
@@ -9026,7 +9048,8 @@ export interface paths {
                          *             "price_d": 1
                          *           }
                          *         ],
-                         *         "last_modified_ledger": 63314771
+                         *         "last_modified_ledger": 63314771,
+                         *         "as_of_ledger": 63340102
                          *       },
                          *       "as_of": "2026-07-03T22:39:25.722776013Z",
                          *       "flags": {
@@ -9075,6 +9098,11 @@ export interface paths {
                                 }[];
                                 /** Format: int64 */
                                 last_modified_ledger?: number;
+                                /**
+                                 * Format: int64
+                                 * @description Lake watermark this read is fresh to (ADR-0041) — the highest captured ledger at serve time, NOT the account's last_modified_ledger. Omitted when no watermark reader is wired. Pairs with flags.stale.
+                                 */
+                                as_of_ledger?: number;
                             };
                         };
                     };
@@ -9972,6 +10000,7 @@ export interface components {
             /** @description C-strkey contract address. For Soroban tokens this is the token contract itself; for classic + native assets it is the deterministically-derived Stellar Asset Contract (SAC) address — present even before the SAC is deployed, since deployment is permissionless and address-stable. Looking an asset up BY a SAC address resolves to the wrapped classic asset (with its price), so wallets can use contract addresses as the primary key for any holding. */
             contract_id?: string | null;
             home_domain?: string | null;
+            /** @description On-chain smallest-unit scale. 7 for classic + native (stroops, protocol-fixed). For Soroban tokens this is the contract's real decimals() read from its captured instance metadata; 7 when the metadata isn't derivable from the lake. */
             decimals: number;
             /**
              * @description State of the SEP-1 overlay for this asset.
@@ -10310,6 +10339,11 @@ export interface components {
              * @enum {string}
              */
             source: "mint_burn_flows" | "ledger_total_coins";
+            /**
+             * Format: int64
+             * @description Lake watermark this read is fresh to (ADR-0041): the highest ledger captured at serve time (for native, the exact ledger total_coins came from). Omitted when no watermark reader is wired. Pairs with flags.stale.
+             */
+            as_of_ledger?: number;
         };
         AssetSupplyEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["AssetSupply"];

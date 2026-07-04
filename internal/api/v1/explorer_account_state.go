@@ -148,6 +148,11 @@ type AccountStateView struct {
 	Trustlines    []TrustlineV       `json:"trustlines,omitempty"`
 	Offers        []OfferV           `json:"offers,omitempty"`
 	LastLedger    uint32             `json:"last_modified_ledger,omitempty"`
+	// AsOfLedger is the lake watermark this state read is fresh to
+	// (ADR-0041 Decision 4) — the highest ledger the ClickHouse lake had
+	// captured at serve time, NOT the account's last-modified ledger.
+	// Omitted when no watermark reader is wired. Pairs with `flags.stale`.
+	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 }
 
 type AccountThresholds struct {
@@ -207,7 +212,8 @@ func (s *Server) handleAccountState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := AccountStateView{AccountID: g, Exists: st.Exists}
+	wmLedger, stale, _ := s.lakeWatermark(r.Context())
+	out := AccountStateView{AccountID: g, Exists: st.Exists, AsOfLedger: wmLedger}
 	if st.Exists {
 		out.Balance = strconv.FormatInt(st.Balance, 10)
 		out.SeqNum = strconv.FormatInt(st.SeqNum, 10)
@@ -232,7 +238,7 @@ func (s *Server) handleAccountState(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	writeJSON(w, out, Flags{})
+	writeJSON(w, out, Flags{Stale: stale})
 }
 
 // AssetHoldersView is the wire response for GET /v1/assets/{asset_id}/holders.
@@ -240,6 +246,10 @@ type AssetHoldersView struct {
 	Asset       string         `json:"asset"`
 	HolderCount int64          `json:"holder_count"`
 	Holders     []AssetHolderV `json:"holders"`
+	// AsOfLedger is the lake watermark this read is fresh to (ADR-0041
+	// Decision 4). Omitted when no watermark reader is wired. Pairs with
+	// `flags.stale`.
+	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 }
 
 type AssetHolderV struct {
@@ -278,11 +288,12 @@ func (s *Server) handleAssetHolders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := AssetHoldersView{Asset: asset, HolderCount: total, Holders: make([]AssetHolderV, len(holders))}
+	wmLedger, stale, _ := s.lakeWatermark(r.Context())
+	out := AssetHoldersView{Asset: asset, HolderCount: total, Holders: make([]AssetHolderV, len(holders)), AsOfLedger: wmLedger}
 	for i, h := range holders {
 		out.Holders[i] = AssetHolderV{AccountID: h.AccountID, Balance: strconv.FormatInt(h.Balance, 10)}
 	}
-	writeJSON(w, out, Flags{})
+	writeJSON(w, out, Flags{Stale: stale})
 }
 
 // looksLikeStellarAccount is a cheap shape check for a G-strkey (the real

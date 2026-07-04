@@ -36,6 +36,13 @@ type AssetSupply struct {
 	// Σclawback from supply_flows) or "ledger_total_coins" (XLM, from the ledger
 	// header — XLM has no SAC mint/burn events).
 	Source string `json:"source"`
+	// AsOfLedger is the lake watermark this read is fresh to (ADR-0041
+	// Decision 4): the highest ledger captured in the ClickHouse lake at
+	// serve time (for native, the exact ledger the total_coins row came
+	// from). Omitted when no watermark reader is wired. Pairs with
+	// `flags.stale`, which fires when the watermark's close time trails
+	// now beyond the staleness threshold.
+	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 }
 
 // handleAssetSupply serves GET /v1/assets/{asset_id}/supply — a token's live
@@ -59,18 +66,22 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 	// XLM: supply is the ledger header's total_coins (XLM is not minted/burned
 	// via SAC mint/burn events, so it has no supply_flows). Handle every alias.
 	if assetID == "native" || assetID == "XLM" || assetID == "crypto:XLM" {
-		coins, _, err := s.tokenSupply.NativeTotalCoins(r.Context())
+		coins, ledger, err := s.tokenSupply.NativeTotalCoins(r.Context())
 		if err != nil {
 			s.logger.Warn("supply: native total_coins", "err", err)
 			writeProblem(w, r, "https://api.stellarindex.io/errors/supply-error",
 				"Supply read failed", http.StatusBadGateway, "Could not read native supply.")
 			return
 		}
+		_, stale, _ := s.lakeWatermark(r.Context())
 		writeJSON(w, AssetSupply{
 			AssetID:     assetID,
 			TotalSupply: strconv.FormatInt(coins, 10),
 			Source:      "ledger_total_coins",
-		}, Flags{})
+			// The native read already carries its exact source ledger —
+			// more precise than the cached watermark, and free.
+			AsOfLedger: ledger,
+		}, Flags{Stale: stale})
 		return
 	}
 
@@ -78,7 +89,7 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		writeProblem(w, r, "https://api.stellarindex.io/errors/supply-not-mapped",
 			"Supply not available", http.StatusNotFound,
-			"No Stellar-Asset-Contract is mapped for this classic asset; supply is keyed by contract. Soroban tokens (C…) resolve directly.")
+			"Supply is keyed by contract: Soroban tokens (C…) resolve directly and classic assets (CODE-ISSUER) derive their Stellar-Asset-Contract; this id has no contract (fiat:* and malformed ids do not).")
 		return
 	}
 
@@ -90,6 +101,7 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mint, burn, clawback := sup.Mint.String(), sup.Burn.String(), sup.Clawback.String()
+	wmLedger, stale, _ := s.lakeWatermark(r.Context())
 	writeJSON(w, AssetSupply{
 		AssetID:       assetID,
 		ContractID:    contractID,
@@ -99,14 +111,18 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 		ClawbackTotal: &clawback,
 		FlowCount:     sup.FlowCount,
 		Source:        "mint_burn_flows",
-	}, Flags{})
+		AsOfLedger:    wmLedger,
+	}, Flags{Stale: stale})
 }
 
 // resolveSupplyContractID maps an asset_id to the contract_id supply_flows is
 // keyed by: a Soroban C-strkey is itself; a classic asset ("CODE-ISSUER") is
-// resolved to its Stellar-Asset-Contract via the operator's sac_wrappers map
-// (reversed). Full SAC derivation for any classic asset is a follow-up; until
-// then only configured classic assets resolve (others 404).
+// resolved to its Stellar-Asset-Contract. The operator's sac_wrappers map is
+// consulted first (an explicit override / fast path); any OTHER classic asset
+// falls through to deterministic SAC derivation — the SAC address is a pure
+// function of (asset, pubnet passphrase), valid even before the SAC is
+// deployed (canonical.Asset.SacContractID, board #40). Only unparseable ids
+// and shapes with no SAC (fiat:*) fail to resolve.
 func (s *Server) resolveSupplyContractID(assetID string) (string, bool) {
 	if canonical.IsContractID(assetID) {
 		return assetID, true
@@ -116,5 +132,13 @@ func (s *Server) resolveSupplyContractID(assetID string) (string, bool) {
 			return sac, true
 		}
 	}
-	return "", false
+	parsed, err := canonical.ParseAsset(assetID)
+	if err != nil || parsed.Type != canonical.AssetClassic {
+		return "", false
+	}
+	sac, err := parsed.SacContractID()
+	if err != nil {
+		return "", false
+	}
+	return sac, true
 }

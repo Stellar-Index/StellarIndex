@@ -1,14 +1,70 @@
 package v1_test
 
 import (
+	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
 	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
 )
 
 const testG = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+
+// wmStub is a canned v1.LakeWatermarkReader (ADR-0041 D4).
+type wmStub struct {
+	ledger   uint32
+	closedAt time.Time
+}
+
+func (s *wmStub) LakeWatermark(context.Context) (uint32, time.Time, error) {
+	return s.ledger, s.closedAt, nil
+}
+
+// TestExplorer_AccountStateAndHolders_Watermark pins ADR-0041 Decision 4 on
+// the lake-backed explorer reads: `as_of_ledger` carries the (cached) lake
+// watermark and `flags.stale` fires when its close time trails now beyond
+// the threshold (10min here, comfortably past the 300s threshold).
+func TestExplorer_AccountStateAndHolders_Watermark(t *testing.T) {
+	reader := &stubExplorerReader{
+		accountState: clickhouse.AccountState{Exists: true, Balance: 1},
+		holders:      []clickhouse.AssetHolder{{AccountID: testG, Balance: 5}},
+		holderCount:  1,
+	}
+	srv := v1.New(v1.Options{Explorer: reader, LakeWatermark: &wmStub{ledger: 63999999, closedAt: time.Now().Add(-10 * time.Minute)}})
+	base := httpTestServer(t, srv).URL
+
+	resp := mustGet(t, base+"/v1/accounts/"+testG)
+	var acct struct {
+		Data  v1.AccountStateView `json:"data"`
+		Flags struct {
+			Stale bool `json:"stale"`
+		} `json:"flags"`
+	}
+	mustDecode(t, resp, &acct)
+	if acct.Data.AsOfLedger != 63999999 {
+		t.Errorf("account as_of_ledger = %d, want 63999999", acct.Data.AsOfLedger)
+	}
+	if !acct.Flags.Stale {
+		t.Error("account flags.stale should fire for a 10-minute-old watermark")
+	}
+
+	resp = mustGet(t, base+"/v1/assets/native/holders")
+	var hold struct {
+		Data  v1.AssetHoldersView `json:"data"`
+		Flags struct {
+			Stale bool `json:"stale"`
+		} `json:"flags"`
+	}
+	mustDecode(t, resp, &hold)
+	if hold.Data.AsOfLedger != 63999999 {
+		t.Errorf("holders as_of_ledger = %d, want 63999999", hold.Data.AsOfLedger)
+	}
+	if !hold.Flags.Stale {
+		t.Error("holders flags.stale should fire for a 10-minute-old watermark")
+	}
+}
 
 func TestExplorer_AccountState(t *testing.T) {
 	reader := &stubExplorerReader{accountState: clickhouse.AccountState{
