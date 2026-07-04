@@ -28,6 +28,20 @@ against.
   catalogue consumers (compute-completeness / ch-reproject /
   verify-reconciliation) still exclude them.
 
+### Fixed
+- **Triangulation forex-snap reads the live FX feed** (BACKLOG #42 /
+  launch-todo FX-path debt): `FXQuoteAtOrBefore` now reads `fx_quotes`
+  first — the table the active `massive` forex worker writes — instead
+  of only the `trades` rows of the disabled connector-path FX sources,
+  which made every chained-fiat leg soft-fall-back to cached VWAP while
+  fresh quotes sat one table over. Rates convert NUMERIC-text →
+  `*big.Rat` exactly (USD-anchored inversion and non-USD crosses in
+  rational space; the float-derived `inverse_usd` column is never
+  used), with a 7-day lookback and provenance-labelled sources. The
+  legacy trades-path read survives as the fallback when `fx_quotes`
+  has no row in the lookback, keeping `polygon-forex` /
+  `exchangeratesapi` compatible if re-enabled.
+
 ## [v0.7.7] — 2026-07-03
 
 ### Added

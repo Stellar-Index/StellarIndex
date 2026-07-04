@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"slices"
 	"strings"
 	"time"
 
@@ -809,28 +810,44 @@ func (s *Store) TradesInRangeAfter(
 	return out, nil
 }
 
-// FXQuoteAtOrBefore returns the most recent FX-source observation
-// for `pair` whose `ts <= cutoff`, restricted to sources passed in
-// `fxSources` (typically the result of external.FXSources()). When
-// multiple FX sources have a quote at-or-before cutoff, the one with
-// the largest ts wins; ties are broken by source-name DESC ordering
-// (deterministic across regions because every region's source registry
-// is identical).
+// FXQuoteAtOrBefore returns the most recent FX observation for `pair`
+// at-or-before `cutoff`, restricted to sources passed in `fxSources`
+// (typically the result of external.FXSources()).
+//
+// Read order (BACKLOG #42 — the unified FX read path):
+//
+//  1. `fx_quotes` — the table the ACTIVE FX feed (`massive`, the
+//     internal/sources/forex worker) writes. Consulted only when
+//     `fxSources` admits that feed (contains [fxQuotesSourceLabel]) and
+//     both pair sides are fiat. The most recent daily row per needed
+//     ticker within [fxQuotesSnapLookback] wins; USD legs are exact 1
+//     (rate_usd is USD-anchored). See [fxSnapFromRows] for the exact-
+//     Rat cross/inversion math.
+//  2. `trades` — the legacy connector-path fallback (polygon-forex /
+//     exchangeratesapi rows; disabled in production but kept for
+//     compatibility if re-enabled). Fires only when fx_quotes has no
+//     row in the lookback. When multiple FX sources have a quote
+//     at-or-before cutoff, the one with the largest ts wins; ties are
+//     broken by source-name DESC ordering (deterministic across
+//     regions because every region's source registry is identical).
 //
 // Returns (price, observedAt, source, nil) on hit;
-// (nil, time.Time{}, "", [ErrNoFXQuote]) when no FX quote exists at
-// or before cutoff. Other DB errors propagate.
+// (nil, time.Time{}, "", [ErrNoFXQuote]) when neither table has an FX
+// quote at or before cutoff. Other DB errors propagate.
 //
-// `price` is the per-trade ratio QuoteAmount/BaseAmount expressed as a
-// *big.Rat (no precision loss — both sides come from NUMERIC columns).
-// FX-source trades use a uniform 1e8 scale on each side so the ratio
-// is dimensionally clean (the scale cancels). Empty `fxSources`
-// returns ErrNoFXQuote without touching the DB.
+// `price` is quote-units-per-base-unit as a *big.Rat (no precision
+// loss — every input is a NUMERIC column read as text; floats never
+// touch the money path per ADR-0003). On the trades path that is the
+// per-trade ratio QuoteAmount/BaseAmount — FX-source trades use a
+// uniform 1e8 scale on each side so the ratio is dimensionally clean
+// (the scale cancels). On the fx_quotes path it is the rate_usd ratio,
+// which is already scale-free. Empty `fxSources` returns ErrNoFXQuote
+// without touching the DB.
 //
 // Implementation notes:
-//   - The hypertable index `(base_asset, quote_asset, ts DESC)` makes
-//     this a constant-cost descending range scan. Pushing the source
-//     filter to SQL keeps the scan bounded to FX rows.
+//   - The trades hypertable index `(base_asset, quote_asset, ts DESC)`
+//     makes the fallback a constant-cost descending range scan. Pushing
+//     the source filter to SQL keeps the scan bounded to FX rows.
 //   - cutoff is rounded to UTC to match the InsertTrade convention.
 func (s *Store) FXQuoteAtOrBefore(
 	ctx context.Context,
@@ -840,6 +857,17 @@ func (s *Store) FXQuoteAtOrBefore(
 ) (price *big.Rat, observedAt time.Time, source string, err error) {
 	if len(fxSources) == 0 {
 		return nil, time.Time{}, "", ErrNoFXQuote
+	}
+
+	if slices.Contains(fxSources, fxQuotesSourceLabel) {
+		price, observedAt, source, err = s.fxQuotesSnapAtOrBefore(ctx, pair, cutoff)
+		switch {
+		case err == nil:
+			return price, observedAt, source, nil
+		case !errors.Is(err, ErrNoFXQuote):
+			return nil, time.Time{}, "", err
+		}
+		// ErrNoFXQuote within the lookback → legacy trades fallback.
 	}
 
 	const q = `

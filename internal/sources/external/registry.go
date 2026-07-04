@@ -100,13 +100,11 @@ var Registry = map[string]Metadata{
 	//
 	// `polygon-forex` + `exchangeratesapi` are the SAME-role external.Connector
 	// implementations (trades-path, currently disabled); polygon-forex is the
-	// same upstream provider as `massive`. NOTE: the X2.5 triangulation
-	// forex-snap (FXQuoteAtOrBefore) reads `trades` filtered by FXSources(),
-	// so it only sees these connector-path sources — with them disabled it
-	// always soft-falls-back. Unifying the two FX paths (point the snap at
-	// `fx_quotes`, or collapse massive↔polygon-forex) is tracked as FX-debt in
-	// docs/operations/launch-todo.md; massive's own consumers read fx_quotes
-	// directly and are unaffected.
+	// same upstream provider as `massive`. The X2.5 triangulation forex-snap
+	// (FXQuoteAtOrBefore) reads fx_quotes-FIRST (the massive feed's table;
+	// BACKLOG #42) and only falls back to `trades` filtered by FXSources()
+	// when fx_quotes has no row in the lookback — so these connector-path
+	// sources serve the snap only when re-enabled AND the massive feed is dry.
 	// FX pollers stamp amounts at 1e6 (DefaultDecimals=6), NOT the CEX 1e8 —
 	// AmountDecimals:6 so the USD-volume gate scales them right (CS-040).
 	"massive":          {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, BackfillSafe: true, AmountDecimals: 6},
@@ -167,10 +165,11 @@ func BackfillSafe(source string) bool {
 
 // FXSources returns the registered source names whose Subclass is
 // SubclassFX, in deterministic lexicographic order. Used by the
-// X2.5 forex-snap rule to query the trades hypertable for the most
-// recent FX-source quote at-or-before a bucket-end timestamp; the
-// stable order makes the across-region tiebreak deterministic when
-// two FX sources publish the same observed_at.
+// X2.5 forex-snap rule (FXQuoteAtOrBefore): `massive` in the list
+// admits the fx_quotes-first read (the active feed's table), and the
+// full list scopes the legacy trades-hypertable fallback; the stable
+// order makes the across-region tiebreak deterministic when two FX
+// sources publish the same observed_at.
 func FXSources() []string {
 	out := make([]string, 0, 2)
 	for name, m := range Registry {

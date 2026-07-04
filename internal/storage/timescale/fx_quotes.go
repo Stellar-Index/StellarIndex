@@ -3,7 +3,14 @@ package timescale
 import (
 	"context"
 	"fmt"
+	"math/big"
+	"sort"
+	"strings"
 	"time"
+
+	"github.com/lib/pq"
+
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // FXQuote is one (date, ticker) snapshot from the forex pipeline.
@@ -91,6 +98,188 @@ func (s *Store) ListFXHistory(ctx context.Context, ticker string, from, to time.
 		return nil, fmt.Errorf("timescale: ListFXHistory rows: %w", err)
 	}
 	return out, nil
+}
+
+// ─── X2.5 forex-snap read path (fx_quotes-first, BACKLOG #42) ────────
+//
+// The triangulation forex-snap ([Store.FXQuoteAtOrBefore]) historically
+// read the `trades` hypertable filtered by external.FXSources() — the
+// connector-path FX sources (polygon-forex / exchangeratesapi / ecb)
+// which are DISABLED in production. The ACTIVE FX feed (`massive`, the
+// internal/sources/forex worker) writes the `fx_quotes` hypertable
+// instead, so the snap always soft-fell-back to cached VWAP while fresh
+// quotes sat one table over. The helpers below are the fx_quotes-first
+// leg of the unified read path; the trades read survives only as the
+// compatibility fallback for re-enabled connector-path sources.
+
+// fxQuotesSnapLookback bounds how far back the fx_quotes snap read
+// accepts a row. fx_quotes buckets are daily and the feed skips
+// weekends/holidays for some tickers, so 7 days tolerates the longest
+// routine gap while still refusing to price a chained-fiat leg off a
+// quote stale enough to be wrong. Misses inside the window fall back to
+// the legacy trades path; a total miss surfaces [ErrNoFXQuote] and the
+// caller's cached-VWAP fallback. The floor also lets TimescaleDB prune
+// to the window's chunks instead of walking the hypertable to genesis
+// on a miss (same rationale as the G11-06 fix in usd_fx_resolver.go).
+const fxQuotesSnapLookback = 7 * 24 * time.Hour
+
+// fxQuotesSourceLabel is the provenance label for fx_quotes rows. It is
+// both the source tag the forex worker stamps on every row it writes
+// AND the label substituted for legacy backfill rows whose source
+// column is NULL (migration 0028 allows NULL only for pre-attribution
+// recovery rows — same pipeline, provenance merely unrecorded).
+const fxQuotesSourceLabel = "massive"
+
+// usdFiatCode is the anchor currency fx_quotes rates are expressed
+// against (`rate_usd` = USD per 1 unit of ticker).
+const usdFiatCode = "USD"
+
+// fxSnapRow is one latest-per-ticker fx_quotes observation feeding
+// [fxSnapFromRows]. RateUSD carries the NUMERIC column's text form —
+// parsed to *big.Rat, never through a float (ADR-0003).
+type fxSnapRow struct {
+	Bucket  time.Time
+	RateUSD string
+	Source  string
+}
+
+// fxSnapTickers returns the fx_quotes tickers needed to price `pair`,
+// or nil when the pair cannot be priced from fx_quotes at all (either
+// side non-fiat, or the degenerate USD/USD). USD needs no row — it is
+// the rate_usd anchor, exactly 1 by definition.
+func fxSnapTickers(pair canonical.Pair) []string {
+	if pair.Base.Type != canonical.AssetFiat || pair.Quote.Type != canonical.AssetFiat {
+		return nil
+	}
+	out := make([]string, 0, 2)
+	if pair.Base.Code != usdFiatCode {
+		out = append(out, pair.Base.Code)
+	}
+	if pair.Quote.Code != usdFiatCode {
+		out = append(out, pair.Quote.Code)
+	}
+	return out
+}
+
+// fxSnapFromRows computes the pair price (quote units per base unit —
+// the same QuoteAmount/BaseAmount orientation the trades path returns)
+// from latest-per-ticker fx_quotes rows, keyed by ticker.
+//
+// Math is exact *big.Rat throughout: rate_usd(T) is "USD per 1 T", so
+// price(B/Q) = rate_usd(B) / rate_usd(Q), with either USD side
+// contributing an exact 1. The cached float-derived `inverse_usd`
+// column is deliberately NOT used — inversion happens in Rat space.
+//
+// observedAt is the OLDEST bucket among the rows used (the staler
+// input governs the quote's freshness). The source label is the
+// sorted "+"-join of the distinct row sources (a cross like EUR/GBP
+// can mix providers); NULL-source legacy rows read as
+// [fxQuotesSourceLabel].
+//
+// Returns [ErrNoFXQuote] when a needed ticker has no row.
+func fxSnapFromRows(pair canonical.Pair, rows map[string]fxSnapRow) (*big.Rat, time.Time, string, error) {
+	tickers := fxSnapTickers(pair)
+	if len(tickers) == 0 {
+		return nil, time.Time{}, "", ErrNoFXQuote
+	}
+
+	var observedAt time.Time
+	sourceSet := map[string]struct{}{}
+	resolve := func(ticker string) (*big.Rat, error) {
+		row, ok := rows[ticker]
+		if !ok {
+			return nil, ErrNoFXQuote
+		}
+		r, ok := new(big.Rat).SetString(row.RateUSD)
+		if !ok || r.Sign() <= 0 {
+			return nil, fmt.Errorf("timescale: fx_quotes snap: invalid rate_usd %q for ticker %s", row.RateUSD, ticker)
+		}
+		if observedAt.IsZero() || row.Bucket.Before(observedAt) {
+			observedAt = row.Bucket
+		}
+		src := row.Source
+		if src == "" {
+			src = fxQuotesSourceLabel
+		}
+		sourceSet[src] = struct{}{}
+		return r, nil
+	}
+
+	baseRate := big.NewRat(1, 1)
+	quoteRate := big.NewRat(1, 1)
+	var err error
+	if pair.Base.Code != usdFiatCode {
+		if baseRate, err = resolve(pair.Base.Code); err != nil {
+			return nil, time.Time{}, "", err
+		}
+	}
+	if pair.Quote.Code != usdFiatCode {
+		if quoteRate, err = resolve(pair.Quote.Code); err != nil {
+			return nil, time.Time{}, "", err
+		}
+	}
+
+	sources := make([]string, 0, len(sourceSet))
+	for s := range sourceSet {
+		sources = append(sources, s)
+	}
+	sort.Strings(sources)
+
+	return new(big.Rat).Quo(baseRate, quoteRate), observedAt, strings.Join(sources, "+"), nil
+}
+
+// fxQuotesSnapAtOrBefore is the fx_quotes leg of [Store.FXQuoteAtOrBefore]:
+// the most recent fx_quotes observation per needed ticker whose
+// `bucket <= cutoff`, within [fxQuotesSnapLookback]. One round-trip via
+// DISTINCT ON; the (ticker, bucket DESC) index makes each ticker a
+// bounded descending scan.
+//
+// Returns [ErrNoFXQuote] when any needed ticker has no row in the
+// window (caller falls back to the trades path). Other DB errors
+// propagate — a broken fx_quotes read means no chained-fiat output can
+// be trusted this tick.
+func (s *Store) fxQuotesSnapAtOrBefore(
+	ctx context.Context,
+	pair canonical.Pair,
+	cutoff time.Time,
+) (*big.Rat, time.Time, string, error) {
+	tickers := fxSnapTickers(pair)
+	if len(tickers) == 0 {
+		return nil, time.Time{}, "", ErrNoFXQuote
+	}
+
+	const q = `
+        SELECT DISTINCT ON (ticker)
+               ticker, bucket, rate_usd::text, COALESCE(source, '')
+          FROM fx_quotes
+         WHERE ticker = ANY($1)
+           AND bucket <= $2
+           AND bucket >= $3
+         ORDER BY ticker, bucket DESC
+    `
+	rows, err := s.db.QueryContext(ctx, q,
+		pq.Array(tickers), cutoff.UTC(), cutoff.UTC().Add(-fxQuotesSnapLookback),
+	)
+	if err != nil {
+		return nil, time.Time{}, "", fmt.Errorf("timescale: fxQuotesSnapAtOrBefore: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	got := make(map[string]fxSnapRow, len(tickers))
+	for rows.Next() {
+		var (
+			ticker string
+			row    fxSnapRow
+		)
+		if err := rows.Scan(&ticker, &row.Bucket, &row.RateUSD, &row.Source); err != nil {
+			return nil, time.Time{}, "", fmt.Errorf("timescale: fxQuotesSnapAtOrBefore scan: %w", err)
+		}
+		got[ticker] = row
+	}
+	if err := rows.Err(); err != nil {
+		return nil, time.Time{}, "", fmt.Errorf("timescale: fxQuotesSnapAtOrBefore rows: %w", err)
+	}
+	return fxSnapFromRows(pair, got)
 }
 
 // LatestFXBucketPerTicker returns the most-recent (ticker, bucket)
