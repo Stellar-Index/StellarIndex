@@ -1,6 +1,6 @@
 ---
 title: API performance follow-ups
-last_verified: 2026-06-24
+last_verified: 2026-07-05
 status: living doc
 ---
 
@@ -177,3 +177,21 @@ Until the backfill runs, lookups of pre-deploy transactions still pay
 the scan; new transactions are fast immediately after step 1–2 deploy.
 Storage cost of the index is ~3 narrow columns × 10.2 B rows
 (`String` hash dominates) — bounded and acceptable.
+
+**Status 2026-07-05 — steps 1–2 SHIPPED as code; step 3 is the
+remaining operator action.** The schema (table + MV; ReplacingMergeTree
+keyed on `tx_hash` so live-sink retries / `ch-rebuild` re-derives dedup)
+is in `deploy/clickhouse/tier1_schema.sql`; the two-step reader with
+probe-once availability + scan fallback is
+`ExplorerReader.TransactionByHash`; the windowed backfill is
+`stellarindex-ops ch-txindex-backfill` (each window prints its `-from`
+resume point; re-running a window is idempotent). Full-history
+invocation on r1, after applying the schema file (serialize it — don't
+run alongside other heavy CH jobs; run under the root-<2 G watchdog):
+
+```sh
+clickhouse-client < /path/to/tier1_schema.sql   # CREATE ... IF NOT EXISTS — safe
+stellarindex-ops ch-txindex-backfill -ch-addr 127.0.0.1:9300 -window 5000000
+# -from defaults to 2, -to 0 = current lake tip; on interrupt re-run
+# with the last printed "resume point -from N".
+```
