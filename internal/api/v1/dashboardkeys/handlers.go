@@ -22,11 +22,11 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/platform"
 )
 
-// MaxKeysPerAccount caps how many active keys a single account
-// can hold. Tier-aware quotas can replace this once the billing
-// pipeline is wired (Phase 2); for now a flat 25 prevents an
-// enthusiastic operator from minting hundreds in a loop.
-const MaxKeysPerAccount = 25
+// The active-key ceiling is tier-aware: platform.Tier.MaxActiveKeys
+// is the default ladder (free 5 → enterprise 250), overridable per
+// tier via Config.KeyQuotas. This replaced the flat 25-key
+// MaxKeysPerAccount cap ("tier-aware quotas can replace this once
+// the billing pipeline is wired — Phase 2").
 
 // Config wires the handlers' dependencies. Constructed once in
 // cmd/stellarindex-api/main.go alongside the dashboardauth
@@ -54,6 +54,14 @@ type Config struct {
 	CacheInvalidator CacheInvalidator
 	Logger           *slog.Logger
 	Now              func() time.Time
+
+	// KeyQuotas optionally overrides the per-tier ceiling on
+	// concurrently active keys. Tiers absent from the map (or a nil
+	// map, the production default) fall back to
+	// [platform.Tier.MaxActiveKeys]. Non-positive values are
+	// ignored — a deployment can raise or lower a tier's quota but
+	// not disable key creation through this seam.
+	KeyQuotas map[platform.Tier]int
 }
 
 // CacheInvalidator is the subset of
@@ -119,6 +127,7 @@ type keyDTO struct {
 	RateLimitPerMin        int      `json:"rate_limit_per_min"`
 	MonthlyQuota           int64    `json:"monthly_quota,omitempty"`
 	UsageAlertThresholdPct int      `json:"usage_alert_threshold_pct,omitempty"`
+	Scopes                 []string `json:"scopes,omitempty"`
 	IPAllowlist            []string `json:"ip_allowlist,omitempty"`
 	RefererAllowlist       []string `json:"referer_allowlist,omitempty"`
 	// Pointer times so a zero value (no expiry / not revoked / never used)
@@ -142,6 +151,7 @@ func toDTO(k platform.APIKey) keyDTO {
 		RateLimitPerMin:        k.RateLimitPerMin,
 		MonthlyQuota:           k.MonthlyQuota,
 		UsageAlertThresholdPct: k.UsageAlertThresholdPct,
+		Scopes:                 k.Scopes,
 		RefererAllowlist:       k.RefererAllowlist,
 		ExpiresAt:              nilIfZero(k.ExpiresAt),
 		RevokedAt:              nilIfZero(k.RevokedAt),
@@ -194,10 +204,15 @@ func (h *Handlers) HandleList(w http.ResponseWriter, r *http.Request) {
 }
 
 type createRequest struct {
-	Name                   string   `json:"name"`
-	Description            string   `json:"description"`
-	RateLimitPerMin        int      `json:"rate_limit_per_min"`
-	MonthlyQuota           int64    `json:"monthly_quota"`
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	RateLimitPerMin int    `json:"rate_limit_per_min"`
+	MonthlyQuota    int64  `json:"monthly_quota"`
+	// Scopes optionally confines the key to route families
+	// (platform.KnownKeyScopes vocabulary: read / account /
+	// dashboard / admin). Absent or empty mints a full-access key —
+	// the pre-scopes posture every existing key keeps.
+	Scopes                 []string `json:"scopes"`
 	IPAllowlist            []string `json:"ip_allowlist"`
 	RefererAllowlist       []string `json:"referer_allowlist"`
 	ExpiresAt              string   `json:"expires_at"`
@@ -236,7 +251,8 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 	// the Starter budget.
 	req.RateLimitPerMin = clampRateLimitToTier(req.RateLimitPerMin, sc.Account.Tier)
 
-	if status, problem := h.checkQuota(r, sc.Account.ID); problem != "" {
+	maxKeys := h.maxKeysFor(sc.Account.Tier)
+	if status, problem := h.checkQuota(r, sc.Account.ID, maxKeys); problem != "" {
 		writeProblem(w, status, problem, r.URL.Path)
 		return
 	}
@@ -282,6 +298,7 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		RateLimitPerMin:        req.RateLimitPerMin,
 		MonthlyQuota:           req.MonthlyQuota,
 		Permissions:            platform.KeyPermissions{All: true},
+		Scopes:                 req.Scopes,
 		RefererAllowlist:       req.RefererAllowlist,
 		ExpiresAt:              expiresAt,
 		UsageAlertThresholdPct: req.UsageAlertThresholdPct,
@@ -295,15 +312,15 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		rec.IPAllowlist = prefixes
 	}
 
-	out, err := h.cfg.Keys.Create(r.Context(), rec, MaxKeysPerAccount)
+	out, err := h.cfg.Keys.Create(r.Context(), rec, maxKeys)
 	if err != nil {
 		// F-1257 race-window loser: another concurrent create
-		// pushed this account over the 25-key cap between the
+		// pushed this account over its tier's key cap between the
 		// precheck and the INSERT. Surface the same 409 the
 		// precheck would have.
 		if errors.Is(err, platform.ErrAPIKeyQuotaExceeded) {
 			writeProblem(w, http.StatusConflict,
-				fmt.Sprintf("account already has %d active keys (max %d) — revoke one first", MaxKeysPerAccount, MaxKeysPerAccount),
+				fmt.Sprintf("account already has %d active keys (max %d for the %s tier) — revoke one first", maxKeys, maxKeys, sc.Account.Tier),
 				r.URL.Path)
 			return
 		}
@@ -401,7 +418,35 @@ func parseCreateRequest(r *http.Request) (createRequest, int, string) {
 	if req.RateLimitPerMin > 100000 {
 		return req, http.StatusBadRequest, "rate_limit_per_min must be ≤ 100000"
 	}
+	scopes, problem := normaliseScopes(req.Scopes)
+	if problem != "" {
+		return req, http.StatusBadRequest, problem
+	}
+	req.Scopes = scopes
 	return req, 0, ""
+}
+
+// normaliseScopes validates the optional scope list against the
+// platform vocabulary and drops duplicates. Empty input passes
+// through as nil (full-access posture).
+func normaliseScopes(raw []string) ([]string, string) {
+	if len(raw) == 0 {
+		return nil, ""
+	}
+	seen := make(map[string]struct{}, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, s := range raw {
+		if !platform.ValidKeyScope(s) {
+			return nil, fmt.Sprintf("unknown scope %q — valid scopes: %s",
+				s, strings.Join(platform.KnownKeyScopes(), ", "))
+		}
+		if _, dup := seen[s]; dup {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out, ""
 }
 
 // clampRateLimitToTier returns the lower of `requested` and the
@@ -424,9 +469,20 @@ func clampRateLimitToTier(requested int, tier platform.Tier) int {
 	return requested
 }
 
-// checkQuota counts active keys for the account; returns
-// (status, problem) on failure, (0, "") on pass.
-func (h *Handlers) checkQuota(r *http.Request, accountID uuid.UUID) (int, string) {
+// maxKeysFor resolves the active-key ceiling for an account tier:
+// the Config.KeyQuotas override when present and positive, else the
+// [platform.Tier.MaxActiveKeys] default ladder.
+func (h *Handlers) maxKeysFor(tier platform.Tier) int {
+	if v, ok := h.cfg.KeyQuotas[tier]; ok && v > 0 {
+		return v
+	}
+	return tier.MaxActiveKeys()
+}
+
+// checkQuota counts active keys for the account against the
+// tier-resolved ceiling; returns (status, problem) on failure,
+// (0, "") on pass.
+func (h *Handlers) checkQuota(r *http.Request, accountID uuid.UUID, maxKeys int) (int, string) {
 	existing, err := h.cfg.Keys.ListForAccount(r.Context(), accountID)
 	if err != nil {
 		h.cfg.Logger.Error("list keys for quota", "err", err, "account_id", accountID)
@@ -438,9 +494,9 @@ func (h *Handlers) checkQuota(r *http.Request, accountID uuid.UUID) (int, string
 			active++
 		}
 	}
-	if active >= MaxKeysPerAccount {
+	if active >= maxKeys {
 		return http.StatusConflict,
-			fmt.Sprintf("account already has %d active keys (max %d) — revoke one first", active, MaxKeysPerAccount)
+			fmt.Sprintf("account already has %d active keys (max %d) — revoke one first", active, maxKeys)
 	}
 	return 0, ""
 }

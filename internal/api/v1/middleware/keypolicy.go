@@ -38,6 +38,10 @@ import (
 //     Referer header must be present and its host must exactly
 //     match one entry (case-insensitive). Empty / missing
 //     Referer is rejected — the customer asked for the gate.
+//   - Scopes empty: skip the scope gate (full access — the
+//     pre-scopes posture every legacy key keeps). Non-empty: the
+//     request path's route family (auth.RequiredScope) must be in
+//     the key's scope list.
 //   - AllowAllPermissions=true: permission gate passes unless
 //     a deny entry matches. False: at least one allow entry
 //     must match, and no deny entry may.
@@ -54,24 +58,37 @@ func KeyPolicy() Middleware {
 				next.ServeHTTP(w, r)
 				return
 			}
-
-			if err := checkIPAllowlist(r, subject.IPAllowlist); err != nil {
-				writeKeyPolicyDenied(w, r, "ip-not-allowed", err.Error())
+			if slug, err := checkKeyPolicy(r, subject); err != nil {
+				writeKeyPolicyDenied(w, r, slug, err.Error())
 				return
-			}
-			if err := checkRefererAllowlist(r, subject.RefererAllowlist); err != nil {
-				writeKeyPolicyDenied(w, r, "referer-not-allowed", err.Error())
-				return
-			}
-			if subject.Tier != auth.TierOperator {
-				if err := checkPermissions(r, subject); err != nil {
-					writeKeyPolicyDenied(w, r, "permission-denied", err.Error())
-					return
-				}
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// checkKeyPolicy runs the per-key gates in order — IP → Referer →
+// scopes → permissions — returning the reason slug + error of the
+// first failure ("" + nil when all pass). Operator-tier subjects
+// skip the scope + permission gates but not IP/Referer (the
+// operator may have a static IP allowlist for staff credentials).
+func checkKeyPolicy(r *http.Request, subject auth.Subject) (string, error) {
+	if err := checkIPAllowlist(r, subject.IPAllowlist); err != nil {
+		return "ip-not-allowed", err
+	}
+	if err := checkRefererAllowlist(r, subject.RefererAllowlist); err != nil {
+		return "referer-not-allowed", err
+	}
+	if subject.Tier == auth.TierOperator {
+		return "", nil
+	}
+	if err := checkScopes(r, subject); err != nil {
+		return "scope-denied", err
+	}
+	if err := checkPermissions(r, subject); err != nil {
+		return "permission-denied", err
+	}
+	return "", nil
 }
 
 func checkIPAllowlist(r *http.Request, allow []netip.Prefix) error {
@@ -113,6 +130,23 @@ func checkRefererAllowlist(r *http.Request, allow []string) error {
 		}
 	}
 	return fmt.Errorf("referer host %q not in this key's allowlist", host)
+}
+
+// checkScopes enforces the coarse route-family capability scopes.
+// Keys with an empty scope list pass unconditionally (back-compat:
+// scopes are opt-in at mint time). Runs before the fine-grained
+// permission entries so the two layers compose: scopes bound the
+// family, permissions bound individual endpoints inside it.
+func checkScopes(r *http.Request, subject auth.Subject) error {
+	if len(subject.Scopes) == 0 {
+		return nil
+	}
+	need := auth.RequiredScope(r.URL.Path)
+	if subject.HasScope(need) {
+		return nil
+	}
+	return fmt.Errorf("this key's scopes (%s) do not include %q, required for %s %s",
+		strings.Join(subject.Scopes, ", "), need, r.Method, r.URL.Path)
 }
 
 func checkPermissions(r *http.Request, subject auth.Subject) error {

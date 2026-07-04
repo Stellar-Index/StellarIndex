@@ -190,9 +190,11 @@ func (s *Server) fetchVWAPTrades(
 //
 // Without this, /v1/vwap and /v1/twap 404 with "no trades in window"
 // for any X/fiat:USD query out-of-the-box — same root cause as #1217.
-// Used by handleVWAP + handleTWAP; ohlc.go reads the CAGG, not raw
-// trades, so its fallback path is different (deferred — same family
-// of tracking, separate PR).
+// Used by handleVWAP + handleTWAP. The CAGG-reading siblings live
+// elsewhere: ohlc_fiat_combine.go combines the peg constituents for
+// the OHLC series path, and price_at.go's
+// lookupPriceAtStablecoinFallback covers the closed-1m-VWAP-CAGG
+// point lookup.
 func (s *Server) tradesInRangeWithStablecoinFallback(
 	ctx context.Context, pair canonical.Pair, from, to time.Time, maxTrades int,
 ) ([]canonical.Trade, bool, error) {

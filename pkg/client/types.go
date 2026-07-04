@@ -567,6 +567,11 @@ type KeyCreated struct {
 	// KeyPrefix is the first 12 chars of the plaintext
 	// (`sip_<8hex>`) — safe to display; identifies the key later.
 	KeyPrefix string `json:"key_prefix,omitempty"`
+	// Scopes are the capability scopes the key was minted with
+	// (read / account / dashboard / admin). Absent/empty = full
+	// access — the posture every key minted before scopes shipped
+	// keeps.
+	Scopes []string `json:"scopes,omitempty"`
 }
 
 // Coin + CoinsPage types removed — `/v1/coins` HTTP surface

@@ -321,8 +321,8 @@ func TestHandleCreate_RejectsUnknownEventType(t *testing.T) {
 
 func TestHandleCreate_QuotaEnforced(t *testing.T) {
 	h, store, sc := newTestRig(t)
-	// Pre-populate the quota.
-	for i := 0; i < MaxWebhooksPerAccount; i++ {
+	// Pre-populate the tier's quota (the rig's account is Free).
+	for i := 0; i < sc.Account.Tier.MaxWebhooks(); i++ {
 		store.webhooks[uuid.New()] = platform.CustomerWebhook{
 			ID:        uuid.New(),
 			AccountID: sc.Account.ID,
@@ -337,6 +337,56 @@ func TestHandleCreate_QuotaEnforced(t *testing.T) {
 	h.HandleCreate(w, req)
 	if w.Code != http.StatusConflict {
 		t.Errorf("status = %d, want 409", w.Code)
+	}
+}
+
+// TestHandleCreate_QuotaIsTierAware pins the tier ladder: the same
+// webhook count that 409s a Free account passes on a Pro account,
+// and Config.WebhookQuotas overrides the ladder per tier.
+func TestHandleCreate_QuotaIsTierAware(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	for i := 0; i < platform.TierFree.MaxWebhooks(); i++ {
+		store.webhooks[uuid.New()] = platform.CustomerWebhook{
+			ID:        uuid.New(),
+			AccountID: sc.Account.ID,
+		}
+	}
+	hookReq := func(name string) *http.Request {
+		return sessionReq(t, http.MethodPost, "/v1/dashboard/webhooks", createRequest{
+			Name:   name,
+			URL:    "https://example.com/hook",
+			Events: []string{string(platform.WebhookEventIncidentSEV1)},
+		}, sc)
+	}
+
+	// Free (rig default) is at cap → 409.
+	w := httptest.NewRecorder()
+	h.HandleCreate(w, hookReq("over-free"))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("free at cap: status = %d, want 409", w.Code)
+	}
+
+	// Same account on Pro sails through.
+	sc.Account.Tier = platform.TierPro
+	w = httptest.NewRecorder()
+	h.HandleCreate(w, hookReq("pro-ok"))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("pro tier: status = %d (body=%s), want 201", w.Code, w.Body.String())
+	}
+
+	// Config override: cap Pro at 1 — the account (now over it) 409s.
+	h2, err := NewHandlers(Config{
+		Webhooks:      store,
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WebhookQuotas: map[platform.Tier]int{platform.TierPro: 1},
+	})
+	if err != nil {
+		t.Fatalf("NewHandlers: %v", err)
+	}
+	w = httptest.NewRecorder()
+	h2.HandleCreate(w, hookReq("over-override"))
+	if w.Code != http.StatusConflict {
+		t.Errorf("pro override cap 1: status = %d, want 409", w.Code)
 	}
 }
 

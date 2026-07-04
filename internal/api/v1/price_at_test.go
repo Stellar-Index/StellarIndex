@@ -69,3 +69,66 @@ func TestHandlePriceAt(t *testing.T) {
 		t.Errorf("missing ts: status %d body %s", rec.Code, rec.Body.String())
 	}
 }
+
+// priceAtPairStub answers only for pairs present in byPair (keyed
+// "base/quote"); everything else gets ErrPriceAtUnavailable. Lets the
+// stablecoin-fallback test distinguish the literal fiat:USD read from
+// the peg retry.
+type priceAtPairStub struct {
+	byPair   map[string]string
+	bucketAt time.Time
+}
+
+func (s priceAtPairStub) PriceAt(_ context.Context, pair canonical.Pair, _ time.Time) (string, time.Time, error) {
+	if v, ok := s.byPair[pair.Base.String()+"/"+pair.Quote.String()]; ok {
+		return v, s.bucketAt, nil
+	}
+	return "", time.Time{}, ErrPriceAtUnavailable
+}
+
+// TestHandlePriceAt_StablecoinFallback pins the CAGG sibling of the
+// #1217-family stablecoin proxy: a historical native/fiat:USD lookup
+// with no direct fiat:USD bucket serves the USD-pegged-classic bucket
+// instead, echoing the REQUESTED quote and stamping
+// flags.triangulated.
+func TestHandlePriceAt_StablecoinFallback(t *testing.T) {
+	usdc, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatalf("parse USDC: %v", err)
+	}
+	ts := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+	near := ts.Add(-3 * time.Minute)
+
+	s := &Server{
+		priceAt: priceAtPairStub{
+			byPair:   map[string]string{"native/" + usdc.String(): "0.1626"},
+			bucketAt: near,
+		},
+		usdPeggedClassics: []canonical.Asset{usdc},
+	}
+	req := httptest.NewRequest(http.MethodGet,
+		"/v1/price/at?asset=native&quote=fiat:USD&ts="+ts.Format(time.RFC3339), nil)
+	rec := httptest.NewRecorder()
+	s.handlePriceAt(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`"price":"0.1626"`,
+		`"quote":"fiat:USD"`, // requested quote echoed, not the peg
+		`"triangulated":true`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %s: %s", want, body)
+		}
+	}
+
+	// Non-USD fiat quote → fallback must not fire.
+	rec = httptest.NewRecorder()
+	s.handlePriceAt(rec, httptest.NewRequest(http.MethodGet,
+		"/v1/price/at?asset=native&quote=fiat:EUR&ts="+ts.Format(time.RFC3339), nil))
+	if rec.Code != 404 {
+		t.Errorf("fiat:EUR quote: status %d, want 404", rec.Code)
+	}
+}

@@ -24,11 +24,11 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/platform"
 )
 
-// MaxWebhooksPerAccount caps how many endpoints one account can
-// register. Tier-aware quotas can replace this once billing is
-// wired (Phase 2); flat 10 prevents an enthusiastic operator from
-// minting hundreds.
-const MaxWebhooksPerAccount = 10
+// The webhook ceiling is tier-aware: platform.Tier.MaxWebhooks is
+// the default ladder (free 2 → enterprise 100), overridable per
+// tier via Config.WebhookQuotas. This replaced the flat 10-webhook
+// MaxWebhooksPerAccount cap ("tier-aware quotas can replace this
+// once billing is wired — Phase 2").
 
 // Config wires the handlers' dependencies.
 type Config struct {
@@ -37,6 +37,12 @@ type Config struct {
 	Webhooks platform.WebhookStore
 	Logger   *slog.Logger
 	Now      func() time.Time
+
+	// WebhookQuotas optionally overrides the per-tier ceiling on
+	// registered webhook endpoints. Tiers absent from the map (or a
+	// nil map, the production default) fall back to
+	// [platform.Tier.MaxWebhooks]. Non-positive values are ignored.
+	WebhookQuotas map[platform.Tier]int
 }
 
 func (c *Config) validate() error {
@@ -202,7 +208,8 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 	// the precheck only remains as a fast-path UX nicety: it
 	// surfaces the same 409 message without spending a write
 	// budget. The atomic insert is the actual gate.
-	if status, problem := h.checkQuota(r, sc.Account.ID); problem != "" {
+	maxHooks := h.maxWebhooksFor(sc.Account.Tier)
+	if status, problem := h.checkQuota(r, sc.Account.ID, maxHooks); problem != "" {
 		writeProblem(w, status, problem, r.URL.Path)
 		return
 	}
@@ -232,7 +239,7 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		Events:     req.Events,
 		Enabled:    enabled,
 	}
-	out, err := h.cfg.Webhooks.CreateWebhook(r.Context(), rec, MaxWebhooksPerAccount)
+	out, err := h.cfg.Webhooks.CreateWebhook(r.Context(), rec, maxHooks)
 	if err != nil {
 		// F-1248: race-window loser. The atomic gate inside
 		// CreateWebhook returns ErrWebhookQuotaExceeded when the
@@ -240,7 +247,7 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		// INSERT.
 		if errors.Is(err, platform.ErrWebhookQuotaExceeded) {
 			writeProblem(w, http.StatusConflict,
-				fmt.Sprintf("account already has %d webhooks (max %d)", MaxWebhooksPerAccount, MaxWebhooksPerAccount),
+				fmt.Sprintf("account already has %d webhooks (max %d for the %s tier)", maxHooks, maxHooks, sc.Account.Tier),
 				r.URL.Path)
 			return
 		}
@@ -554,14 +561,24 @@ func validateEvents(events []string) error {
 	return nil
 }
 
-func (h *Handlers) checkQuota(r *http.Request, accountID uuid.UUID) (int, string) {
+// maxWebhooksFor resolves the webhook ceiling for an account tier:
+// the Config.WebhookQuotas override when present and positive, else
+// the [platform.Tier.MaxWebhooks] default ladder.
+func (h *Handlers) maxWebhooksFor(tier platform.Tier) int {
+	if v, ok := h.cfg.WebhookQuotas[tier]; ok && v > 0 {
+		return v
+	}
+	return tier.MaxWebhooks()
+}
+
+func (h *Handlers) checkQuota(r *http.Request, accountID uuid.UUID, maxHooks int) (int, string) {
 	hooks, err := h.cfg.Webhooks.ListWebhooksForAccount(r.Context(), accountID)
 	if err != nil {
 		h.cfg.Logger.Error("checkQuota: list webhooks", "err", err, "account_id", accountID)
 		return http.StatusInternalServerError, "internal error"
 	}
-	if len(hooks) >= MaxWebhooksPerAccount {
-		return http.StatusConflict, fmt.Sprintf("account already has %d webhooks (max %d)", len(hooks), MaxWebhooksPerAccount)
+	if len(hooks) >= maxHooks {
+		return http.StatusConflict, fmt.Sprintf("account already has %d webhooks (max %d)", len(hooks), maxHooks)
 	}
 	return 0, ""
 }

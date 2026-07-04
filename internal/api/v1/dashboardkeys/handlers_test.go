@@ -209,7 +209,8 @@ func TestHandleCreate_RejectsPastExpiresAt(t *testing.T) {
 
 func TestHandleCreate_QuotaEnforced(t *testing.T) {
 	h, store, sc := newTestRig(t)
-	for i := 0; i < MaxKeysPerAccount; i++ {
+	// Rig default account is Starter — seed to that tier's ceiling.
+	for i := 0; i < sc.Account.Tier.MaxActiveKeys(); i++ {
 		store.byID[uuid.New().String()] = platform.APIKey{
 			ID: uuid.New().String(), AccountID: sc.Account.ID,
 			Name: "seed", KeyPrefix: "sip_seedseed",
@@ -220,6 +221,53 @@ func TestHandleCreate_QuotaEnforced(t *testing.T) {
 	h.HandleCreate(w, req)
 	if w.Code != http.StatusConflict {
 		t.Errorf("status = %d, want 409", w.Code)
+	}
+}
+
+// TestHandleCreate_QuotaIsTierAware pins the tier ladder: a Free
+// account caps out well below Starter, the same key count passes on
+// a higher tier, and Config.KeyQuotas overrides the ladder per tier.
+func TestHandleCreate_QuotaIsTierAware(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	sc.Account.Tier = platform.TierFree
+	for i := 0; i < platform.TierFree.MaxActiveKeys(); i++ {
+		store.byID[uuid.New().String()] = platform.APIKey{
+			ID: uuid.New().String(), AccountID: sc.Account.ID,
+			Name: "seed", KeyPrefix: "sip_seedseed",
+		}
+	}
+
+	// Free at its (lower) cap → 409.
+	w := httptest.NewRecorder()
+	h.HandleCreate(w, sessionRequest(t, http.MethodPost, "/v1/dashboard/keys",
+		createRequest{Name: "over-free"}, sc))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("free at cap: status = %d, want 409", w.Code)
+	}
+
+	// Same count on Business sails through.
+	sc.Account.Tier = platform.TierBusiness
+	w = httptest.NewRecorder()
+	h.HandleCreate(w, sessionRequest(t, http.MethodPost, "/v1/dashboard/keys",
+		createRequest{Name: "business-ok"}, sc))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("business tier: status = %d (body=%s), want 201", w.Code, w.Body.String())
+	}
+
+	// Config override: cap Business at 1 — the account is over → 409.
+	h2, err := NewHandlers(Config{
+		Keys:      store,
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		KeyQuotas: map[platform.Tier]int{platform.TierBusiness: 1},
+	})
+	if err != nil {
+		t.Fatalf("NewHandlers: %v", err)
+	}
+	w = httptest.NewRecorder()
+	h2.HandleCreate(w, sessionRequest(t, http.MethodPost, "/v1/dashboard/keys",
+		createRequest{Name: "over-override"}, sc))
+	if w.Code != http.StatusConflict {
+		t.Errorf("business override cap 1: status = %d, want 409", w.Code)
 	}
 }
 
@@ -453,5 +501,52 @@ func TestToDTO_OmitsZeroTimes(t *testing.T) {
 	rev := toDTO(platform.APIKey{ID: "kid_2", CreatedAt: time.Now().UTC(), RevokedAt: time.Now().UTC()})
 	if rb, _ := json.Marshal(rev); !strings.Contains(string(rb), "revoked_at") {
 		t.Errorf("revoked key must include revoked_at: %s", rb)
+	}
+}
+
+// TestHandleCreate_Scopes pins the dashboard scope plumbing: valid
+// scopes persist on the record (deduped) and echo in the DTO;
+// unknown scopes 400 before any mint.
+func TestHandleCreate_Scopes(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	req := sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{
+		Name:   "scoped",
+		Scopes: []string{"read", "account", "read"},
+	}, sc)
+	w := httptest.NewRecorder()
+	h.HandleCreate(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp createResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Key.Scopes) != 2 || resp.Key.Scopes[0] != "read" || resp.Key.Scopes[1] != "account" {
+		t.Errorf("DTO scopes = %v, want deduped [read account]", resp.Key.Scopes)
+	}
+	var persisted []string
+	for _, k := range store.byID {
+		if k.Name == "scoped" {
+			persisted = k.Scopes
+		}
+	}
+	if len(persisted) != 2 {
+		t.Errorf("persisted scopes = %v", persisted)
+	}
+
+	// Unknown scope → 400, nothing minted.
+	before := len(store.byID)
+	req = sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{
+		Name:   "bad-scope",
+		Scopes: []string{"everything"},
+	}, sc)
+	w = httptest.NewRecorder()
+	h.HandleCreate(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for unknown scope", w.Code)
+	}
+	if len(store.byID) != before {
+		t.Errorf("key minted despite invalid scope")
 	}
 }

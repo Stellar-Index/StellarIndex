@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
 
 	"github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
@@ -208,5 +209,50 @@ func TestKeyPolicy_OperatorSkipsPermissions(t *testing.T) {
 	})).ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200 (operator should bypass permissions); body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestKeyPolicy_Scopes pins the capability-scope gate: keys with an
+// empty scope list keep full access (back-compat), scoped keys are
+// confined to their route families, and operator-tier subjects
+// bypass the gate entirely.
+func TestKeyPolicy_Scopes(t *testing.T) {
+	cases := []struct {
+		name       string
+		path       string
+		scopes     []string
+		tier       auth.Tier
+		wantStatus int
+	}{
+		{"empty scopes = full access on data", "/v1/price", nil, auth.TierAPIKey, http.StatusOK},
+		{"empty scopes = full access on account", "/v1/account/me", nil, auth.TierAPIKey, http.StatusOK},
+		{"read scope allows data", "/v1/price", []string{"read"}, auth.TierAPIKey, http.StatusOK},
+		{"read scope blocks account", "/v1/account/keys", []string{"read"}, auth.TierAPIKey, http.StatusForbidden},
+		{"read scope blocks admin", "/v1/admin/keys", []string{"read"}, auth.TierAPIKey, http.StatusForbidden},
+		{"account scope allows account", "/v1/account/usage", []string{"account"}, auth.TierAPIKey, http.StatusOK},
+		{"account scope blocks data", "/v1/price", []string{"account"}, auth.TierAPIKey, http.StatusForbidden},
+		{"multi-scope unions", "/v1/account/me", []string{"read", "account"}, auth.TierAPIKey, http.StatusOK},
+		{"operator bypasses scope gate", "/v1/admin/keys", []string{"read"}, auth.TierOperator, http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sub := subjectWithPolicy(t, func(s *auth.Subject) {
+				s.Tier = tc.tier
+				s.Scopes = tc.scopes
+				s.AllowAllPermissions = true // isolate the scope gate
+			})
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req = req.WithContext(auth.WithSubject(req.Context(), sub))
+			w := httptest.NewRecorder()
+			middleware.KeyPolicy()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})).ServeHTTP(w, req)
+			if w.Code != tc.wantStatus {
+				t.Errorf("status = %d, want %d (body=%s)", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantStatus == http.StatusForbidden && !strings.Contains(w.Body.String(), "scope-denied") {
+				t.Errorf("403 body should carry the scope-denied type: %s", w.Body.String())
+			}
+		})
 	}
 }

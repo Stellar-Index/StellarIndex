@@ -149,6 +149,7 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 		CreatedAt:           pgKey.CreatedAt,
 		Label:               pgKey.Name,
 		KeyPrefix:           pgKey.KeyPrefix,
+		Scopes:              pgKey.Scopes,
 		IPAllowlist:         pgKey.IPAllowlist,
 		RefererAllowlist:    pgKey.RefererAllowlist,
 		AllowAllPermissions: pgKey.Permissions.All,

@@ -557,9 +557,14 @@ func (c *Client) Usage(ctx context.Context) (*Envelope[[]UsageRow], error) {
 	return &env, nil
 }
 
-// CreateKeyRequest is the body for [Client.CreateKey].
+// CreateKeyRequest is the body for [Client.CreateKey]. Scopes is
+// optional: empty mints a full-access key; non-empty confines the
+// key to the listed route families ("read", "account", "dashboard",
+// "admin" — unknown values 400). Scopes only narrow; they never
+// grant anything the caller's tier wouldn't already reach.
 type CreateKeyRequest struct {
-	Label string `json:"label"`
+	Label  string   `json:"label"`
+	Scopes []string `json:"scopes,omitempty"`
 }
 
 // CreateKey issues a new API key. The new key inherits the
@@ -572,6 +577,37 @@ func (c *Client) CreateKey(ctx context.Context, req CreateKeyRequest) (*Envelope
 	}
 	var env Envelope[KeyCreated]
 	if err := c.doJSON(ctx, http.MethodPost, "/v1/account/keys", nil, req, &env); err != nil {
+		return nil, err
+	}
+	return &env, nil
+}
+
+// AdminCreateKeyRequest is the body for [Client.AdminCreateKey].
+// Identifier + Label are required. Tier is "apikey" (default) or
+// "operator". RateLimitPerMin zero inherits the deployment default.
+// Scopes as in [CreateKeyRequest].
+type AdminCreateKeyRequest struct {
+	Identifier      string   `json:"identifier"`
+	Label           string   `json:"label"`
+	Tier            string   `json:"tier,omitempty"`
+	RateLimitPerMin int      `json:"rate_limit_per_min,omitempty"`
+	Scopes          []string `json:"scopes,omitempty"`
+}
+
+// AdminCreateKey mints an API key for ANOTHER identifier — the
+// operator path (staff tooling), not customer self-service.
+// Requires an operator-tier credential; other tiers receive 403.
+// Every successful mint is audit-logged server-side. The plaintext
+// appears in the response exactly once.
+func (c *Client) AdminCreateKey(ctx context.Context, req AdminCreateKeyRequest) (*Envelope[KeyCreated], error) {
+	if req.Identifier == "" {
+		return nil, &APIError{Status: 400, Title: "identifier required"}
+	}
+	if req.Label == "" {
+		return nil, &APIError{Status: 400, Title: "label required"}
+	}
+	var env Envelope[KeyCreated]
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/admin/keys", nil, req, &env); err != nil {
 		return nil, err
 	}
 	return &env, nil

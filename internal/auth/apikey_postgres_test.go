@@ -422,3 +422,41 @@ var (
 	_ platform.APIKeyStore  = (*stubKeyStore)(nil)
 	_ platform.AccountStore = (*stubAccountStore)(nil)
 )
+
+// TestPostgresValidator_ScopesPopulateAndRoundTrip pins the scope
+// plumbing: the Postgres-built Subject carries the key's scopes and
+// the Redis cache round-trips them (the cache is the only other
+// path that constructs the Subject, so shedding the field there
+// would silently un-scope a key for the cache TTL).
+func TestPostgresValidator_ScopesPopulateAndRoundTrip(t *testing.T) {
+	keys, accounts, rdb := newStubs()
+	v, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{
+		Keys:     keys,
+		Accounts: accounts,
+		Cache:    rdb,
+		CacheTTL: 5 * time.Minute,
+	})
+	plaintext := "sip_scopes_roundtrip"
+	acct := seedActiveAccount(accounts, "scoped")
+	rec := seedKey(keys, plaintext, acct.ID, platform.APIKeyTierAPIKey, 1000)
+	rec.Scopes = []string{platform.KeyScopeRead, platform.KeyScopeAccount}
+	keys.byID[rec.ID] = rec
+	sum := sha256.Sum256([]byte(plaintext))
+	keys.byHash[hex.EncodeToString(sum[:])] = rec
+
+	first, err := v.Lookup(context.Background(), plaintext)
+	if err != nil {
+		t.Fatalf("first lookup: %v", err)
+	}
+	if len(first.Scopes) != 2 || first.Scopes[0] != platform.KeyScopeRead {
+		t.Fatalf("postgres-built Subject.Scopes = %v", first.Scopes)
+	}
+
+	second, err := v.Lookup(context.Background(), plaintext)
+	if err != nil {
+		t.Fatalf("second lookup (cache hit): %v", err)
+	}
+	if len(second.Scopes) != 2 || second.Scopes[1] != platform.KeyScopeAccount {
+		t.Errorf("cache-hit Subject.Scopes = %v (cache shed the field)", second.Scopes)
+	}
+}

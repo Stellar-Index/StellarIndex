@@ -71,6 +71,7 @@ type Server struct {
 	oracle              OracleReader
 	sep1Cache           Sep1CachedReader
 	accounts            AccountStore
+	audit               AuditSink
 	signups             SignupTracker
 	signupIPThrottle    SignupIPThrottle
 	signupVerifier      SignupVerifier
@@ -295,6 +296,13 @@ type Options struct {
 	// Subject and don't need the store. Wire only when Redis is
 	// reachable; the binary's auth.NewRedisAPIKeyStore enforces that.
 	Accounts AccountStore
+
+	// Audit, when non-nil, receives persisted audit rows for admin
+	// actions (POST /v1/admin/keys → "key.mint"). Production wires
+	// postgresstore.NewAuditStore — the same store the Stripe
+	// webhook's audit sink uses. Nil degrades to structured-log-only
+	// audit (the mint still logs unconditionally).
+	Audit AuditSink
 
 	// Signups, when non-nil, backs POST /v1/signup's per-email
 	// duplicate check. Without it, signup still works but isn't
@@ -871,6 +879,7 @@ func New(opts Options) *Server {
 		explorer:                opts.Explorer,
 		fxHistory:               opts.FXHistory,
 		sessionPeeker:           opts.SessionPeeker,
+		audit:                   opts.Audit,
 		sep10:                   opts.SEP10,
 		cors:                    opts.CORS,
 		auth:                    opts.Auth,
@@ -1330,6 +1339,9 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/account/keys", s.handleAccountKeysList)
 	s.mux.HandleFunc("POST /v1/account/keys", s.handleAccountKeysCreate)
 	s.mux.HandleFunc("DELETE /v1/account/keys/{keyID}", s.handleAccountKeysRevoke)
+	// Operator surface: mint a key for ANOTHER identifier. Gated on
+	// TierOperator inside the handler; audit-logged via Options.Audit.
+	s.mux.HandleFunc("POST /v1/admin/keys", s.handleAdminKeysCreate)
 	s.mux.HandleFunc("POST /v1/signup", s.handleSignup)
 	// F-1218 (codex audit-2026-05-12): email-ownership-proof
 	// flow. The signup handler issues a token (subsequent
