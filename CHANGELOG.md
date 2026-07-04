@@ -15,6 +15,19 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **`stellarindex-ops ch-rebuild -sep41`**: opt-in re-derive of the
+  SEP-41 watched-contract sources (`sep41_transfers`, `sep41_supply`)
+  from the ClickHouse lake. A dedicated contract_id-prefiltered event
+  pass (their topics are the CAP-67 firehose the main event pass
+  excludes) feeds the same watched-set-gated decoders the dispatcher
+  uses and writes through the production sink (idempotent ON CONFLICT).
+  Intended for the operator truncate+re-derive that purges the
+  pre-migration-0057 collapsed rows; after it runs the two sources
+  become eligible for the ADR-0033 projection reconcile. The default
+  catalogue consumers (compute-completeness / ch-reproject /
+  verify-reconciliation) still exclude them.
+
 ## [v0.7.7] — 2026-07-03
 
 ### Added

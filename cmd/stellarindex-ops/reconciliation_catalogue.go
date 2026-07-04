@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/StellarIndex/stellar-index/internal/completeness"
 	"github.com/StellarIndex/stellar-index/internal/config"
 	"github.com/StellarIndex/stellar-index/internal/dispatcher"
@@ -15,6 +17,8 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/sources/redstone"
 	"github.com/StellarIndex/stellar-index/internal/sources/reflector"
 	"github.com/StellarIndex/stellar-index/internal/sources/rozo"
+	sep41supply "github.com/StellarIndex/stellar-index/internal/sources/sep41_supply"
+	sep41transfers "github.com/StellarIndex/stellar-index/internal/sources/sep41_transfers"
 	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
 	soroswap_router "github.com/StellarIndex/stellar-index/internal/sources/soroswap_router"
 )
@@ -81,21 +85,23 @@ type reconSource struct {
 // the LCM op census; and the event-less ContractCall sources (band,
 // soroswap-router) via the InvokeContract-op census (callDec path) — their
 // calls are re-derived from the lake by filtering body_xdr on the contract
-// bytes (stellar.operations has no contract_id column). Deliberately EXCLUDED:
-//   - sep41-transfers / sep41-supply: now eligible in principle — the
-//     re-derive (ReDeriveOutputCountsByKindFromEvents) calls dec.Matches()
-//     before Decode, and the sep41 decoders gate Matches() on the watched
-//     set, so building them here with cfg.Supply.WatchedSEP41Contracts +
-//     contractIDs prefilter would count exactly the watched-contract rows
-//     the dispatcher wrote (kinds: "sep41_transfers.event" /
-//     "sep41_supply.event"; genesis 50_457_424). They are NOT added yet for
-//     a CONCRETE correctness reason: the historical table rows predate the
-//     event_index PK discriminator (migrations 0057), so multiple same-op
-//     events are still COLLAPSED on disk — a re-derive (which counts each
-//     event) would flag every such historical ledger as "missing rows", a
-//     false delta. Add them only AFTER migration 0057 is applied AND the
-//     tables are re-derived from the lake. Until then they're covered by the
-//     data-derived gap detector, not the ADR-0033 projection reconcile.
+// bytes (stellar.operations has no contract_id column). EXCLUDED by default:
+//   - sep41-transfers / sep41-supply: included ONLY behind ch-rebuild's
+//     -sep41 opt-in (see [buildSEP41ReconSources]); run only as part of the
+//     truncate+re-derive procedure (see the flag help). The decoders gate
+//     Matches() on cfg.Supply.WatchedSEP41Contracts (the same watched set
+//     the dispatcher uses), with the watched contracts doubling as the
+//     contractIDs prefilter (kinds: "sep41_transfers.event" /
+//     "sep41_supply.event"; genesis 50_457_424 = sorobanEraGenesis). They
+//     stay OUT of the default catalogue for a CONCRETE correctness reason:
+//     the historical table rows predate the event_index PK discriminator
+//     (migration 0057), so multiple same-op events are still COLLAPSED on
+//     disk — a re-derive (which counts each event) would flag every such
+//     historical ledger as "missing rows", a false delta. Until the operator
+//     truncate + `ch-rebuild -sep41 -write` re-derive has run, they're
+//     covered by the data-derived gap detector, not the ADR-0033 projection
+//     reconcile; AFTER it has run they become eligible for the reconcile
+//     (promote them into this default set then).
 func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.Decoder) {
 	soroswapDec := soroswap.NewDecoder()
 
@@ -208,4 +214,47 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 		targets:      []reconTarget{{"soroswap_router_swaps", "", nil}},
 	})
 	return cat, soroswapDec
+}
+
+// buildSEP41ReconSources builds the two SEP-41 reconSources that
+// [buildReconciliationCatalogue] deliberately excludes (see its doc
+// comment): sep41_transfers + sep41_supply, watched-set-gated exactly
+// like the production dispatcher (pipeline.RegisterSupplyEventDecoders
+// constructs the SAME decoders from the SAME config field, so a
+// re-derive reproduces precisely what the dispatcher would have
+// written). The watched contracts double as the contractIDs prefilter,
+// so the lake read is a contract-indexed scan, not a firehose walk —
+// mandatory here because the SEP-41 topics ARE the CAP-67 classic-token
+// firehose the DEX/lending passes exclude (ClassicTokenTopic0Syms).
+//
+// ONLY ch-rebuild's -sep41 flag consumes this: the sources must not
+// enter the ADR-0033 projection reconcile (compute-completeness /
+// ch-reproject / verify-reconciliation) until the operator
+// truncate+re-derive has purged the pre-migration-0057 collapsed rows.
+//
+// Errors when the watched set is empty: an operator who passed -sep41
+// with no `[supply] watched_sep41_contracts` asked for an impossible
+// rebuild, and silence would read as "nothing to recover".
+func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
+	watched := cfg.Supply.WatchedSEP41Contracts
+	tdec, err := sep41transfers.NewDecoder(watched)
+	if err != nil {
+		return nil, fmt.Errorf("sep41_transfers decoder: %w", err)
+	}
+	sdec, err := sep41supply.NewDecoder(watched)
+	if err != nil {
+		return nil, fmt.Errorf("sep41_supply decoder: %w", err)
+	}
+	return []reconSource{
+		{
+			name: sep41transfers.SourceName, genesis: sorobanEraGenesis,
+			dec: tdec, contractIDs: watched,
+			targets: []reconTarget{{"sep41_transfers", "", []string{sep41transfers.EventKind}}},
+		},
+		{
+			name: sep41supply.SourceName, genesis: sorobanEraGenesis,
+			dec: sdec, contractIDs: watched,
+			targets: []reconTarget{{"sep41_supply_events", "", []string{sep41supply.EventKind}}},
+		},
+	}, nil
 }

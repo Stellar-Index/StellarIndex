@@ -90,6 +90,12 @@ func seedSoroswapFromPG(ctx context.Context, store *timescale.Store, dec *sorosw
 //     source's ContractCallDecoder. Gated behind -contract-calls. These emit no
 //     Soroban events, so the projector can't rebuild them — this pass is the
 //     lake-replay successor to the retired backfill-router MinIO walk.
+//   - SEP-41 watched-contract sources (sep41_transfers / sep41_supply): a
+//     dedicated StreamContractEventsFiltered pass gated behind -sep41. They
+//     CANNOT ride the main event pass — their topics ARE the CAP-67 firehose
+//     it excludes — so this pass prefilters on contract_id IN (the watched
+//     set), turning the 447M-row firehose scan into an indexed one. See the
+//     -sep41 flag help for the operator truncate+re-derive contract.
 //
 // Defaults to DRY-RUN (count only). Pass -write to persist. For a clean-slate
 // rebuild (ADR-0034 "rebuild, not repair") the operator truncates the target
@@ -107,6 +113,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	sdexGaps := fs.Bool("sdex-gaps", false, "with -sdex: re-derive ONLY the served gaps in [from,to] in one pass (each gap is an empty range → pure insert, no ON CONFLICT walk) — efficient drop-backlog recovery vs re-scanning the whole range")
 	sdexReconcile := fs.Bool("sdex-reconcile", false, "with -sdex: re-derive ONLY ledgers where the distinct Validate-passing census exceeds the served count (PARTIAL-drop ledgers the empty-gap pass misses); recovers the served-tier projection to exact parity with the lake")
 	contractCalls := fs.Bool("contract-calls", false, "also re-derive the event-less ContractCall sources (band, soroswap-router) from the lake's InvokeContract ops — filtered on the contract's bytes in body_xdr (no contract_id column) — and run their ContractCallDecoders. These have NO soroban_events landing zone, so neither the event pass nor the projector can rebuild them; this is the ADR-0034 lake-replay successor to the retired backfill-router MinIO walk. Respects -sources.")
+	includeSEP41 := fs.Bool("sep41", false, "also re-derive the SEP-41 watched-contract sources (sep41_transfers, sep41_supply) from the lake via a contract_id-prefiltered event pass (their topics are the CAP-67 firehose the main pass excludes). OPERATOR CONTRACT: run this only as part of the truncate+re-derive procedure — TRUNCATE sep41_transfers + sep41_supply_events FIRST (historical rows predate the migration-0057 event_index PK, so multiple same-op events sit COLLAPSED on disk; the idempotent ON CONFLICT writes cannot un-collapse them — recover-into-existing is accepted only if you accept that residue). After a full-history -write re-derive the two sources become eligible for the ADR-0033 projection reconcile (promote them into buildReconciliationCatalogue). Requires [supply] watched_sep41_contracts. Respects -sources.")
 	write := fs.Bool("write", false, "actually write to Postgres (default: dry-run, count only)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -135,6 +142,16 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	lo, hi := uint32(*from), uint32(*to)
 
 	cat, soroswapDec := buildReconciliationCatalogue(cfg)
+	// -sep41 opt-in: the sep41 sources stay OUT of the default catalogue
+	// (and out of every counting consumer) until the operator truncate+
+	// re-derive this flag exists for has run — see buildSEP41ReconSources.
+	var sep41Cat []reconSource
+	if *includeSEP41 {
+		var serr error
+		if sep41Cat, serr = buildSEP41ReconSources(cfg); serr != nil {
+			return fmt.Errorf("ch-rebuild: -sep41: %w", serr)
+		}
+	}
 	// Seed soroswap pairs from the PG registry (NOT the RPC factory seed —
 	// per-window invocations would each pay a ~200s RPC round-trip + depend on
 	// an external endpoint). The live indexer persists every new_pair to
@@ -158,8 +175,8 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	if *write {
 		mode = "WRITE"
 	}
-	fmt.Fprintf(os.Stderr, "ch-rebuild: [%d,%d] mode=%s sources=%q sdex=%v contract-calls=%v ch=%s\n",
-		lo, hi, mode, *only, *includeSDEX, *contractCalls, *chAddr)
+	fmt.Fprintf(os.Stderr, "ch-rebuild: [%d,%d] mode=%s sources=%q sdex=%v contract-calls=%v sep41=%v ch=%s\n",
+		lo, hi, mode, *only, *includeSDEX, *contractCalls, *includeSEP41, *chAddr)
 
 	written := map[string]int{} // source name -> events written (or counted in dry-run)
 
@@ -217,6 +234,51 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 			time.Since(evStart).Round(time.Second), len(buf))
 	} else {
 		fmt.Fprintln(os.Stderr, "ch-rebuild: event pass skipped (no enabled event-decoder source)")
+	}
+
+	// ─── SEP-41 pass (opt-in; read → buffer) ─────────────────────────────
+	// Cannot ride the main event pass: the sep41 topics ARE the CAP-67
+	// classic-token firehose it excludes via FirehoseExcludeSyms. Stream a
+	// contract_id-prefiltered read instead (the watched set is the ADR-0033
+	// contractIDs prefilter), which is an indexed scan of only the watched
+	// contracts' events. FINAL because the dry-run COUNTS: un-merged
+	// duplicate ReplacingMergeTree parts would inflate the report (the
+	// -write path alone wouldn't care — ON CONFLICT absorbs duplicates).
+	if *includeSEP41 {
+		anySEP41 := false
+		for _, src := range sep41Cat {
+			if enabled(src.name) {
+				anySEP41 = true
+				break
+			}
+		}
+		if anySEP41 {
+			sepStart := time.Now()
+			before := len(buf)
+			seperr := clickhouse.StreamContractEventsFiltered(ctx, *chAddr, lo, hi,
+				cfg.Supply.WatchedSEP41Contracts, nil, nil, true, func(ev events.Event) error {
+					for _, src := range sep41Cat {
+						if !enabled(src.name) || !src.dec.Matches(ev) {
+							continue
+						}
+						outs, derr := src.dec.Decode(ev)
+						if derr != nil {
+							continue // soft-fail, mirroring the live dispatcher path
+						}
+						buf = append(buf, outs...)
+					}
+					return nil
+				})
+			if seperr != nil {
+				return fmt.Errorf("ch-rebuild: sep41 event stream: %w", seperr)
+			}
+			fmt.Fprintf(os.Stderr, "ch-rebuild: sep41 read done in %s (%d events buffered)\n",
+				time.Since(sepStart).Round(time.Second), len(buf)-before)
+		}
+		// Fold into the catalogue AFTER the read passes so the report loop
+		// covers them; the main event pass above must never see them (its
+		// stream excludes their topics — they'd silently count zero).
+		cat = append(cat, sep41Cat...)
 	}
 
 	// ─── SDEX op-based pass (opt-in; read → buffer) ──────────────────────
