@@ -6,6 +6,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
@@ -51,6 +53,25 @@ func (r *ExplorerReader) LakeTipLedger(ctx context.Context) (uint32, error) {
 	return tip, nil
 }
 
+// LakeWatermark returns the lake's captured tip — the highest ledger_seq in
+// stellar.ledgers plus that ledger's close time (ADR-0041 Decision 4: lake
+// reads carry their watermark). API handlers surface the ledger as
+// `as_of_ledger` and compare the close time against now for the
+// `flags.stale` signal. Cheap (small ledgers table), but the API layer still
+// caches it (v1's lakeWatermarkTTL) so per-request reads never fan out to
+// ClickHouse.
+func (r *ExplorerReader) LakeWatermark(ctx context.Context) (uint32, time.Time, error) {
+	var (
+		tip      uint32
+		closedAt time.Time
+	)
+	const q = `SELECT max(ledger_seq), max(close_time) FROM stellar.ledgers`
+	if err := r.conn.QueryRow(ctx, q).Scan(&tip, &closedAt); err != nil {
+		return 0, time.Time{}, fmt.Errorf("clickhouse: lake watermark: %w", err)
+	}
+	return tip, closedAt, nil
+}
+
 // ProtocolEventBreakdown returns the event-type distribution (topic[0] symbol →
 // count) for a protocol's contracts. sinceLedger>0 bounds to a recent window;
 // 0 is all-time. Descending by count.
@@ -83,6 +104,13 @@ func (r *ExplorerReader) ProtocolEventBreakdown(ctx context.Context, contractIDs
 	// decoded topic[1] Symbol. Rows whose name can't be recovered (neither
 	// topic is a Symbol) are dropped here — protocols.go's reconcile folds
 	// them into the "untyped" remainder against the unfiltered total.
+	return scanEventBreakdown(rows)
+}
+
+// scanEventBreakdown aggregates (topic_0_sym, topic1_xdr, count) rows into
+// named event-type counts — shared by the raw-scan and daily-preagg paths
+// so the topic[1] name-recovery behaves identically on both.
+func scanEventBreakdown(rows driver.Rows) ([]ProtocolEventTypeCount, error) {
 	byName := make(map[string]uint64)
 	for rows.Next() {
 		var sym, t1 string
@@ -181,4 +209,73 @@ func (r *ExplorerReader) ProtocolContractActivity(ctx context.Context, contractI
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// ── contract_events_daily fast paths (BACKLOG #43) ──────────────────────
+//
+// The daily pre-aggregation (deploy/clickhouse/tier1_schema.sql,
+// contract_events_daily + its MV) collapses the ~15s raw scans behind
+// /v1/protocols/{name} into millisecond reads over per-day uniqExact
+// states — exact under duplicate inserts by construction (the raw
+// table is ReplacingMergeTree; a Summing MV would overcount on
+// live-sink retries and ch-rebuild re-derives). Callers probe
+// DailyActivityAvailable once and fall back to the raw readers when
+// the table hasn't been created/backfilled on a deployment yet.
+
+// DailyActivityAvailable reports whether the pre-aggregation exists
+// (and has any rows) on this ClickHouse.
+func (r *ExplorerReader) DailyActivityAvailable(ctx context.Context) bool {
+	rows, err := r.conn.Query(ctx,
+		`SELECT 1 FROM stellar.contract_events_daily LIMIT 1`)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = rows.Close() }()
+	return rows.Next()
+}
+
+// ProtocolDailyActivityFast is ProtocolDailyActivity over the daily
+// pre-aggregation. sinceDay bounds the window (callers convert their
+// ledger window to days; day granularity is the table's grain).
+func (r *ExplorerReader) ProtocolDailyActivityFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]ProtocolDailyPoint, error) {
+	if len(contractIDs) == 0 {
+		return nil, nil
+	}
+	const q = `SELECT toString(day) AS d, uniqExactMerge(events) AS c
+		FROM stellar.contract_events_daily
+		WHERE contract_id IN (?) AND event_type = 'contract' AND day >= ?
+		GROUP BY day ORDER BY day ASC`
+	rows, err := r.conn.Query(ctx, q, contractIDs, sinceDay)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: protocol daily activity (fast): %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ProtocolDailyPoint
+	for rows.Next() {
+		var p ProtocolDailyPoint
+		if err := rows.Scan(&p.Date, &p.Events); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan daily activity (fast): %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// ProtocolEventBreakdownFast is ProtocolEventBreakdown over the daily
+// pre-aggregation, preserving the topic[1] name-recovery for events
+// whose topic[0] isn't a Symbol (the t1_xdr column carries it).
+func (r *ExplorerReader) ProtocolEventBreakdownFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]ProtocolEventTypeCount, error) {
+	if len(contractIDs) == 0 {
+		return nil, nil
+	}
+	const q = `SELECT topic_0_sym, t1_xdr, toUInt64(uniqExactMerge(events)) AS c
+		FROM stellar.contract_events_daily
+		WHERE contract_id IN (?) AND event_type = 'contract' AND day >= ?
+		GROUP BY topic_0_sym, t1_xdr ORDER BY c DESC LIMIT 200`
+	rows, err := r.conn.Query(ctx, q, contractIDs, sinceDay)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: protocol event breakdown (fast): %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanEventBreakdown(rows)
 }

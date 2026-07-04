@@ -248,3 +248,46 @@ CREATE TABLE IF NOT EXISTS stellar.supply_flows
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger_seq, 1000000)
 ORDER BY (contract_id, ledger_seq, tx_hash, op_index, event_index);
+
+-- ── contract_events_daily — pre-aggregated per-contract activity ──────────
+-- Serves /v1/protocols/{name} detail (event breakdown + activity series)
+-- without the ~15s raw scan (BACKLOG #43 / page-audit REMAINING). The
+-- source table is ReplacingMergeTree, so a SummingMergeTree MV would
+-- OVERCOUNT on duplicate inserts (live-sink retries, ch-rebuild
+-- re-derives re-inserting parts). uniqExactState over the event's
+-- natural key (ledger_seq, tx_hash, op_index, event_index) is exact
+-- under duplicates by construction.
+--
+-- Historical fill (run ONCE after creating, off-peak):
+--   INSERT INTO stellar.contract_events_daily
+--   SELECT toDate(close_time) AS day, contract_id, event_type,
+--          topic_0_sym, if(topic_0_sym = '', topics_xdr[2], '') AS t1_xdr,
+--          uniqExactState(ledger_seq, tx_hash, op_index, event_index)
+--   FROM stellar.contract_events FINAL
+--   GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr;
+CREATE TABLE IF NOT EXISTS stellar.contract_events_daily
+(
+    day          Date,
+    contract_id  String,
+    event_type   LowCardinality(String),
+    topic_0_sym  LowCardinality(String),
+    -- topic[1] raw XDR, captured ONLY when topic[0] isn't a Symbol —
+    -- preserves ProtocolEventBreakdown's name-recovery for
+    -- soroswap-style [String("SoroswapPair"), Symbol(name)] events.
+    t1_xdr       String,
+    events       AggregateFunction(uniqExact, UInt32, String, UInt32, UInt32)
+)
+ENGINE = AggregatingMergeTree
+ORDER BY (contract_id, day, event_type, topic_0_sym, t1_xdr);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.contract_events_daily_mv
+TO stellar.contract_events_daily AS
+SELECT
+    toDate(close_time) AS day,
+    contract_id,
+    event_type,
+    topic_0_sym,
+    if(topic_0_sym = '', topics_xdr[2], '') AS t1_xdr,
+    uniqExactState(ledger_seq, tx_hash, op_index, event_index) AS events
+FROM stellar.contract_events
+GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr;
