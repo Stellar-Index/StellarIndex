@@ -470,7 +470,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// out of the box; Chainlink is opt-in via cfg.Divergence.Chainlink.
 	var divergenceLooker v1.DivergenceLooker
 	if rdb != nil {
-		refs := buildDivergenceReferences(cfg.Divergence, logger)
+		refs := buildDivergenceReferences(cfg.Divergence, store, logger)
 		divSvc, err := divergence.NewService(divergence.ServiceOptions{
 			Cache:                rdb,
 			References:           refs,
@@ -949,7 +949,13 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// `/v1/account/usage` call. The handler short-circuits on
 		// `usageReader == nil` with an empty list, which is the
 		// correct "Redis absent → no usage data" shape.
-		UsageReader:        usageReaderOrNil(usageCounter),
+		UsageReader: usageReaderOrNil(usageCounter),
+		// Per-endpoint usage rollups (#32/#37b): reads the
+		// `usage_daily` hypertable the usage-rollup worker below
+		// maintains. The handler prefers this over UsageReader and
+		// falls back per-request when the read errors or the table
+		// has no rows for the subject yet.
+		UsageRollupReader:  usageRollupReaderOrNil(store),
 		CDNEnabled:         cfg.API.CDNEnabled,
 		StatusBackend:      statusBackend,
 		RegionName:         cfg.Region.ID,
@@ -1061,6 +1067,23 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			}
 		}()
 		logger.Info("customer-webhook delivery worker started")
+	}
+
+	// Usage-rollup worker (#32/#37b): folds the Redis per-endpoint
+	// detail counters (written by middleware.UsageTracker) into the
+	// `usage_daily` Timescale hypertable every 5 min so
+	// /v1/account/usage can serve per-endpoint request / error /
+	// throttle analytics beyond Redis's 35-day TTL. Needs both
+	// backends; deployments missing Redis keep the legacy
+	// per-day-total posture.
+	if rollup := usage.NewRollup(usageCounter, store, usage.DefaultRollupInterval,
+		logger.With("component", "usage-rollup")); rollup != nil {
+		go func() {
+			if err := rollup.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Error("usage-rollup worker exited", "err", err)
+			}
+		}()
+		logger.Info("usage-rollup worker started", "interval", usage.DefaultRollupInterval)
 	}
 
 	serveErr := make(chan error, 1)
@@ -1446,7 +1469,14 @@ func stellarNetworkPassphrase() string {
 // and skips Chainlink rather than wiring it as a no-op (every
 // LookupPrice call would return ErrAssetUnsupported, which is
 // noisy and a misconfiguration signal).
-func buildDivergenceReferences(cfg config.DivergenceConfig, logger *slog.Logger) []divergence.Reference {
+//
+// The on-chain oracle references (reflector-dex/cex/fx, redstone,
+// band) read the served oracle_updates rows via `oracles`; nil
+// (no Postgres) skips them with a warning when any is enabled.
+// Kept in lockstep with the aggregator binary's helper of the same
+// name — drift here would mean the aggregator and API see different
+// divergence semantics for the same pair.
+func buildDivergenceReferences(cfg config.DivergenceConfig, oracles divergence.OracleReader, logger *slog.Logger) []divergence.Reference {
 	var refs []divergence.Reference
 
 	if cfg.CoinGecko.Enabled {
@@ -1476,6 +1506,46 @@ func buildDivergenceReferences(cfg config.DivergenceConfig, logger *slog.Logger)
 		}
 	}
 
+	return append(refs, buildOracleDivergenceReferences(cfg, oracles, logger)...)
+}
+
+// buildOracleDivergenceReferences constructs the on-chain oracle
+// reference set (reflector-dex/cex/fx + redstone + band) per the
+// `[divergence.{reflector,redstone,band}]` gates. Split from
+// buildDivergenceReferences to stay under the funlen ceiling; same
+// lockstep rule with the aggregator binary applies.
+func buildOracleDivergenceReferences(cfg config.DivergenceConfig, oracles divergence.OracleReader, logger *slog.Logger) []divergence.Reference {
+	anyEnabled := cfg.Reflector.Enabled || cfg.Redstone.Enabled || cfg.Band.Enabled
+	if oracles == nil {
+		if anyEnabled {
+			logger.Warn("divergence: on-chain oracle references enabled but no oracle_updates reader — skipping")
+		}
+		return nil
+	}
+	var refs []divergence.Reference
+	add := func(source string, gate config.DivergenceOracleConfig) {
+		if !gate.Enabled {
+			return
+		}
+		ref, err := divergence.NewOracleReference(divergence.OracleReferenceOptions{
+			Source: source,
+			Reader: oracles,
+			MaxAge: time.Duration(gate.MaxAgeMinutes) * time.Minute,
+		})
+		if err != nil {
+			// Unreachable with non-empty Source + non-nil Reader;
+			// warn-and-skip keeps the rest of the reference set alive.
+			logger.Warn("divergence: oracle reference construction failed",
+				"source", source, "err", err)
+			return
+		}
+		refs = append(refs, ref)
+	}
+	add(divergence.OracleSourceReflectorDEX, cfg.Reflector)
+	add(divergence.OracleSourceReflectorCEX, cfg.Reflector)
+	add(divergence.OracleSourceReflectorFX, cfg.Reflector)
+	add(divergence.OracleSourceRedstone, cfg.Redstone)
+	add(divergence.OracleSourceBand, cfg.Band)
 	return refs
 }
 
@@ -2825,6 +2895,40 @@ func (a usageReaderAdapter) Read(ctx context.Context, subject string, days int) 
 	out := make([]v1.UsageDay, len(rows))
 	for i, d := range rows {
 		out[i] = v1.UsageDay{Date: d.Date, Requests: d.Requests}
+	}
+	return out, nil
+}
+
+// usageRollupReaderOrNil returns a v1.UsageRollupReader over the
+// `usage_daily` hypertable when the Timescale store is wired; nil
+// otherwise so the handler stays on the legacy per-day Redis path.
+func usageRollupReaderOrNil(s *timescale.Store) v1.UsageRollupReader {
+	if s == nil {
+		return nil
+	}
+	return usageRollupReaderAdapter{s: s}
+}
+
+// usageRollupReaderAdapter bridges *timescale.Store.ReadUsageDaily
+// to v1.UsageRollupReader, deriving the wire semantics from the
+// granular columns: requests = allowed traffic (ok + 4xx + 5xx),
+// errors = 4xx (excl. 429) + 5xx, throttled = 429s.
+type usageRollupReaderAdapter struct{ s *timescale.Store }
+
+func (a usageRollupReaderAdapter) ReadRollup(ctx context.Context, subject string, days int) ([]v1.UsageEndpointDay, error) {
+	rows, err := a.s.ReadUsageDaily(ctx, subject, days)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]v1.UsageEndpointDay, len(rows))
+	for i, r := range rows {
+		out[i] = v1.UsageEndpointDay{
+			Date:      r.Day,
+			Endpoint:  r.Endpoint,
+			Requests:  r.OK + r.ClientErrors + r.ServerErrors,
+			Errors:    r.ClientErrors + r.ServerErrors,
+			Throttled: r.Throttled,
+		}
 	}
 	return out, nil
 }

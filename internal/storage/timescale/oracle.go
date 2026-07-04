@@ -284,6 +284,70 @@ func (s *Store) LatestAggregatorPricesForPair(ctx context.Context, base, quote c
 	return out, nil
 }
 
+// LatestOracleObservation returns the single most-recent
+// oracle_updates row for `source` whose asset matches ANY of
+// baseKeys AND whose quote matches ANY of quoteKeys. The key-set
+// shape exists for XLM's dual identity (`native` vs `crypto:XLM`)
+// — the divergence package's on-chain oracle references expand a
+// canonical pair into both forms before calling here.
+//
+// Returns (nil, nil) — NOT ErrNotFound — when no row matches:
+// this method implements internal/divergence.OracleReader, whose
+// contract maps "no observation" to ErrAssetUnsupported without
+// importing this package's sentinel. Empty inputs are treated as
+// "no match" for the same reason.
+func (s *Store) LatestOracleObservation(ctx context.Context, source string, baseKeys, quoteKeys []string) (*canonical.OracleUpdate, error) {
+	if source == "" || len(baseKeys) == 0 || len(quoteKeys) == 0 {
+		return nil, nil
+	}
+	const q = `
+        SELECT source, COALESCE(contract_id, ''),
+               ledger, tx_hash, op_index, ts,
+               asset, quote,
+               price, decimals,
+               COALESCE(confidence, 0),
+               COALESCE(observer, '')
+          FROM oracle_updates
+         WHERE source = $1
+           AND asset  = ANY($2)
+           AND quote  = ANY($3)
+         ORDER BY ts DESC, ledger DESC
+         LIMIT 1
+    `
+	var (
+		u        canonical.OracleUpdate
+		assetStr string
+		quoteStr string
+		decimals int
+	)
+	err := s.db.QueryRowContext(ctx, q,
+		source, pq.StringArray(baseKeys), pq.StringArray(quoteKeys)).Scan(
+		&u.Source, &u.ContractID,
+		&u.Ledger, &u.TxHash, &u.OpIndex, &u.Timestamp,
+		&assetStr, &quoteStr,
+		&u.Price, &decimals,
+		&u.Confidence, &u.Observer,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("timescale: LatestOracleObservation: %w", err)
+	}
+	parsedAsset, err := canonical.ParseAsset(assetStr)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: asset %q: %w", assetStr, err)
+	}
+	parsedQuote, err := canonical.ParseAsset(quoteStr)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: quote %q: %w", quoteStr, err)
+	}
+	u.Asset = parsedAsset
+	u.Quote = parsedQuote
+	u.Decimals = uint8(decimals)
+	return &u, nil
+}
+
 // CountOracleUpdates returns the row count in oracle_updates.
 // Diagnostic helper, not for production hot paths.
 func (s *Store) CountOracleUpdates(ctx context.Context) (int64, error) {

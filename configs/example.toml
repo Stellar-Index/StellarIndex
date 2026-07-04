@@ -376,6 +376,26 @@ enabled  = false
 # address  = "0xBcE206caE7f0ec07b545EddE332A47C2F75bbeb3"
 # decimals = 8
 
+# On-chain oracle references — read our OWN ingested oracle_updates
+# rows (Reflector as three references: reflector-dex/cex/fx;
+# Redstone; Band) and compare the oracle's latest value against our
+# VWAP for pairs both sides cover. On by default: no external quota,
+# and a no-op per pair until the feed tables hold data. max_age_minutes
+# is the staleness ceiling (frozen feed ⇒ reference-unavailable, never
+# agreement/divergence); 0 = per-oracle default (Reflector 30m,
+# Redstone/Band 26h).
+[divergence.reflector]
+enabled = true
+# max_age_minutes = 0
+
+[divergence.redstone]
+enabled = true
+# max_age_minutes = 0
+
+[divergence.band]
+enabled = true
+# max_age_minutes = 0
+
 # ──────────────────────────────────────────────────────────────────
 # Supply — circulating-supply pipeline (ADR-0011 / -0021 / -0022 /
 # -0023). Each block opts the indexer into the corresponding

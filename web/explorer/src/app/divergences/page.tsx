@@ -9,18 +9,20 @@ export const metadata: Metadata = {
   alternates: { canonical: '/divergences' },
   title: 'Divergences — cross-reference monitor',
   description:
-    'Continuously cross-checks the canonical Stellar Index VWAP against external references (CoinGecko active; Chainlink HTTP configured; Reflector/Redstone/Band planned). Persistent gaps flip flags.divergence_warning.',
+    'Continuously cross-checks the canonical Stellar Index VWAP against external references (CoinGecko + on-chain Reflector/Redstone/Band active; Chainlink HTTP configured). Persistent gaps flip flags.divergence_warning.',
 };
 
 type FeedRef = { pair: string; address: string };
 // status reflects what the divergence WORKER actually cross-checks
-// today (audit 2026-06-19) — not just feeds we ingest elsewhere:
+// today — not just feeds we ingest elsewhere:
 //   active     — producing divergence_observations rows now
+//                (Reflector/Redstone/Band went live 2026-07 as
+//                on-chain references: the worker compares the
+//                latest ingested oracle_updates value against our
+//                VWAP for pairs both sides cover)
 //   configured — implemented + operator-configured, may be between
 //                refreshes / awaiting upstream data
 //   planned    — described, but not yet wired as a divergence check
-//                (Reflector/Redstone/Band are ingested as ORACLE feeds
-//                — see /oracles — not yet compared here)
 type RefStatus = 'active' | 'configured' | 'planned';
 type Reference = {
   name: string;
@@ -54,23 +56,23 @@ const REFERENCES: Reference[] = [
   {
     name: 'Reflector (DEX/CEX/FX)',
     type: 'On-chain SEP-40 oracle',
-    status: 'planned',
+    status: 'active',
     blurb:
-      'Stellar-native oracle trio. Reflector divergence often signals an oracle update lag rather than a real price move — important to distinguish for downstream consumers like Blend.',
+      'Stellar-native oracle trio, compared as three references (reflector-dex/cex/fx) from our own ingested oracle_updates rows. Reflector divergence often signals an oracle update lag rather than a real price move — important to distinguish for downstream consumers like Blend.',
   },
   {
     name: 'Redstone',
     type: 'On-chain adapter contract',
-    status: 'planned',
+    status: 'active',
     blurb:
-      'Pull-style oracle on Stellar. Divergence here is rare but high-signal — Redstone batches many feeds in one transaction so divergence on one feed often precedes a wider reading update.',
+      'Pull-style oracle on Stellar, compared from our ingested oracle_updates rows. Divergence here is rare but high-signal — Redstone batches many feeds in one transaction so divergence on one feed often precedes a wider reading update.',
   },
   {
     name: 'Band',
     type: 'On-chain Soroban contract (no events)',
-    status: 'planned',
+    status: 'active',
     blurb:
-      'Operation-args ingest (Band emits zero events). Divergence checks read the same relayed value the on-chain consumer would see.',
+      'Operation-args ingest (Band emits zero events). The divergence check reads the same relayed value the on-chain consumer would see, straight from our ingested rows.',
   },
 ];
 
