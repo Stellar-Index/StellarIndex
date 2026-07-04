@@ -476,3 +476,28 @@ Rationale:
   `Registry["blend"].BackfillSafe`
 - Upstream contracts: <https://github.com/blend-capital/blend-contracts-v2>
 - Local checkout: `.discovery-repos/blend-contracts/`
+
+## Backstop historical replay decision (2026-07-04, BACKLOG #10a)
+
+The `blend_backstop` projected source went live 2026-06-15 with its
+cursor fast-forwarded to tip (live-capture only), leaving ~52k
+historical events in the lake unprojected. Evidence that the replay
+is safe WITHOUT further team confirmation, per this directory's own
+procedure:
+
+- The Phase-2 walk above covered the backstop contract explicitly
+  (11 contracts = 9 pools + backstop + factory; 3 unique WASMs; no
+  mid-life upgrades observed over [50457424, 62249727]).
+- The decoder's 10 event schemas were lake-reverse-engineered and
+  golden-tested at build time (2026-06-15), and 2,474 rows of
+  continuous live capture since prove the current-WASM schema.
+- Catch-up is `projector-replay` (idempotent, ADR-0032), NOT
+  `backfill` — the BackfillSafe flag doesn't gate it, and
+  blend_backstop deliberately has no external.Registry row (it's a
+  projected lending surface, not a VWAP-eligible venue).
+
+Operator command (queued in the serialized r1 heavy-job chain):
+
+    stellarindex-ops projector-replay -source blend_backstop -from 55000000
+
+(55.0M ≈ first backstop activity; the replay no-ops on empty ranges.)
