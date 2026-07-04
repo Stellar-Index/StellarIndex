@@ -98,14 +98,14 @@ export function LendingPoolsTable() {
 function PoolRealStats({ pool }: { pool: string }) {
   const q = useQuery<{
     tvl_usd?: string;
-    reserves?: { supplied_usd?: string; borrowed_usd?: string }[];
+    reserves?: { supplied_usd?: string; borrowed_usd?: string; supply_apr?: number; borrow_apr?: number }[];
   }>({
     queryKey: ['/v1/lending/pools/{pool}/reserves', pool],
     staleTime: 300_000,
     retry: false,
     queryFn: async () =>
       (
-        await apiGet<{ data: { tvl_usd?: string; reserves?: { supplied_usd?: string; borrowed_usd?: string }[] } }>(
+        await apiGet<{ data: { tvl_usd?: string; reserves?: { supplied_usd?: string; borrowed_usd?: string; supply_apr?: number; borrow_apr?: number }[] } }>(
           `/v1/lending/pools/${encodeURIComponent(pool)}/reserves`,
           {},
         )
@@ -115,6 +115,18 @@ function PoolRealStats({ pool }: { pool: string }) {
   const supplied = (q.data?.reserves ?? []).reduce((s, r) => s + Number(r.supplied_usd ?? 0), 0);
   const borrowed = (q.data?.reserves ?? []).reduce((s, r) => s + Number(r.borrowed_usd ?? 0), 0);
   const util = supplied > 0 ? (borrowed / supplied) * 100 : null;
+  // BACKLOG #30: supplied-weighted average APYs from the same reserves
+  // the row already fetched — no extra request.
+  const wSupplyAPR =
+    supplied > 0
+      ? (q.data?.reserves ?? []).reduce(
+          (s, r) => s + Number(r.supplied_usd ?? 0) * (r.supply_apr ?? 0), 0) / supplied
+      : null;
+  const wBorrowAPR =
+    borrowed > 0
+      ? (q.data?.reserves ?? []).reduce(
+          (s, r) => s + Number(r.borrowed_usd ?? 0) * (r.borrow_apr ?? 0), 0) / borrowed
+      : null;
   const fmtUsd = (n: number) =>
     n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(2)}M` : `$${Math.round(n).toLocaleString()}`;
   return (
@@ -127,6 +139,16 @@ function PoolRealStats({ pool }: { pool: string }) {
       <Td align="right">
         <span className="font-mono tabular-nums text-ink-body">
           {q.isLoading ? '…' : util != null ? `${util.toFixed(1)}%` : '—'}
+        </span>
+      </Td>
+      <Td align="right">
+        <span className="font-mono tabular-nums text-up-strong">
+          {q.isLoading ? '…' : wSupplyAPR != null ? `${(wSupplyAPR * 100).toFixed(2)}%` : '—'}
+        </span>
+      </Td>
+      <Td align="right">
+        <span className="font-mono tabular-nums text-ink-body">
+          {q.isLoading ? '…' : wBorrowAPR != null ? `${(wBorrowAPR * 100).toFixed(2)}%` : '—'}
         </span>
       </Td>
     </>
@@ -161,6 +183,8 @@ function PoolRealStats({ pool }: { pool: string }) {
               <Th align="right">All-time auctions</Th>
               <Th align="right">TVL</Th>
               <Th align="right">Utilization</Th>
+              <Th align="right">Supply APY</Th>
+              <Th align="right">Borrow APY</Th>
               <Th align="right">Users (30d)</Th>
               <Th align="right">Last activity</Th>
             </tr>
@@ -168,14 +192,14 @@ function PoolRealStats({ pool }: { pool: string }) {
           <tbody className="divide-y divide-line-subtle">
             {q.isLoading && (
               <tr>
-                <td colSpan={9} className="px-4 py-6 text-center text-sm text-ink-muted">
+                <td colSpan={11} className="px-4 py-6 text-center text-sm text-ink-muted">
                   Loading pools…
                 </td>
               </tr>
             )}
             {!q.isLoading && rows.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-6 text-center text-sm text-ink-muted">
+                <td colSpan={11} className="px-4 py-6 text-center text-sm text-ink-muted">
                   No Blend pools have emitted auction events yet.
                 </td>
               </tr>
