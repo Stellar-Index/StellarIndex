@@ -49,6 +49,16 @@ type AssetReader interface {
 // unknown asset. Handlers translate it to HTTP 404 + problem+json.
 var ErrAssetNotFound = errors.New("api: asset not found")
 
+// TokenDecimalsReader resolves a Soroban token contract's on-chain
+// `decimals()` from its captured contract-instance metadata (the token-sdk
+// METADATA convention in the ClickHouse lake). found=false when the
+// instance isn't captured or the contract stores no standard metadata —
+// the caller then keeps the default. Production wiring is
+// *clickhouse.ExplorerReader.
+type TokenDecimalsReader interface {
+	TokenDecimals(ctx context.Context, contractID string) (uint32, bool, error)
+}
+
 // AssetDetail is the payload for /v1/assets responses. Matches the
 // shape in docs/reference/api-design.md §5.2.
 type AssetDetail struct {
@@ -318,11 +328,15 @@ type UnverifiedWarning struct {
 // the existing default.
 func detailFromAsset(a canonical.Asset) AssetDetail {
 	d := AssetDetail{
-		AssetID:  a.String(),
-		Type:     string(a.Type),
-		Code:     a.Code,
-		Decimals: 7, // default for classic + native; SAC metadata
-		// overlay in a follow-up PR.
+		AssetID: a.String(),
+		Type:    string(a.Type),
+		Code:    a.Code,
+		// Classic + native are 7 by protocol (stroops) — that is the
+		// CORRECT value, not a placeholder. Soroban tokens get their real
+		// on-chain decimals() overlaid by the handler (applyTokenDecimals)
+		// when the lake has the contract's instance metadata; 7 remains
+		// the documented default otherwise.
+		Decimals:   7,
 		Sep1Status: "not_applicable",
 	}
 	if a.Issuer != "" {
@@ -1368,6 +1382,13 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Real-decimals overlay for Soroban tokens (from the lake's captured
+	// instance METADATA). MUST run before applyF2Fields — the market-cap /
+	// FDV math divides by 10^detail.Decimals. Classic + native are always
+	// 7 by protocol and are never consulted (a SAC-address request was
+	// already re-pointed at its classic identity above).
+	s.applyTokenDecimals(r.Context(), &detail, parsed)
+
 	// Backfill HomeDomain from the curated known-issuers map when
 	// the storage row doesn't carry one (classic assets ingested
 	// before `stellarindex-ops sep1-refresh` ran, or issuers whose
@@ -1461,6 +1482,27 @@ func (s *Server) resolveAssetDetail(w http.ResponseWriter, r *http.Request, pars
 		return AssetDetail{}, true
 	}
 	return d, false
+}
+
+// applyTokenDecimals overlays a Soroban token's real on-chain decimals()
+// onto detail.Decimals, read from the lake's captured contract-instance
+// METADATA (token-sdk convention — see clickhouse.TokenDecimals). Only
+// Soroban assets are consulted: classic + native assets ARE 7 by protocol
+// (stroops), so their default is already correct, not an approximation.
+// Best-effort: an uncaptured instance, a non-standard token with no stored
+// metadata, or a read error all leave the documented default of 7 in place.
+func (s *Server) applyTokenDecimals(ctx context.Context, detail *AssetDetail, a canonical.Asset) {
+	if s.tokenDecimals == nil || a.Type != canonical.AssetSoroban || a.ContractID == "" {
+		return
+	}
+	d, found, err := s.tokenDecimals.TokenDecimals(ctx, a.ContractID)
+	if err != nil {
+		s.logger.Debug("token decimals overlay failed; keeping default", "contract_id", a.ContractID, "err", err)
+		return
+	}
+	if found {
+		detail.Decimals = int(d)
+	}
 }
 
 // tryServeGlobalAsset returns true when `raw` matched a verified-

@@ -62,25 +62,33 @@ type ReadyChecker interface {
 //
 // Thread-safe.
 type Server struct {
-	logger                  *slog.Logger
-	checks                  []ReadyChecker
-	assets                  AssetReader
-	prices                  PriceReader
-	history                 HistoryReader
-	markets                 MarketsReader
-	oracle                  OracleReader
-	sep1Cache               Sep1CachedReader
-	accounts                AccountStore
-	signups                 SignupTracker
-	signupIPThrottle        SignupIPThrottle
-	signupVerifier          SignupVerifier
-	signupVerifyEmailer     SignupVerifyEmailer
-	apiKeyEmailVerifier     APIKeyEmailVerifier
-	stripe                  *StripeWebhookConfig
-	divergence              DivergenceLooker
-	freeze                  FrozenLooker
-	supply                  SupplyLooker
-	tokenSupply             TokenSupplyReader
+	logger              *slog.Logger
+	checks              []ReadyChecker
+	assets              AssetReader
+	prices              PriceReader
+	history             HistoryReader
+	markets             MarketsReader
+	oracle              OracleReader
+	sep1Cache           Sep1CachedReader
+	accounts            AccountStore
+	signups             SignupTracker
+	signupIPThrottle    SignupIPThrottle
+	signupVerifier      SignupVerifier
+	signupVerifyEmailer SignupVerifyEmailer
+	apiKeyEmailVerifier APIKeyEmailVerifier
+	stripe              *StripeWebhookConfig
+	divergence          DivergenceLooker
+	freeze              FrozenLooker
+	supply              SupplyLooker
+	tokenSupply         TokenSupplyReader
+	tokenDecimals       TokenDecimalsReader
+	lakeWatermarkReader LakeWatermarkReader
+	// Cached lake watermark (ADR-0041 D4) — see lakeWatermark() in
+	// lake_watermark.go. Refreshed at most every lakeWatermarkTTL.
+	lakeWMMu                sync.Mutex
+	lakeWMLedger            uint32
+	lakeWMClosedAt          time.Time
+	lakeWMFetched           time.Time
 	volume                  VolumeReader
 	change24h               Change24hReader
 	priceAt                 PriceAtReader
@@ -377,6 +385,22 @@ type Options struct {
 	// circulating/max policy over the 9-asset asset_supply_history). Production
 	// wiring is *clickhouse.SupplyReader. Nil → the endpoint 503s.
 	TokenSupply TokenSupplyReader
+
+	// TokenDecimals, when non-nil, overlays real on-chain `decimals()` onto
+	// /v1/assets/{id} for Soroban tokens, read from the lake's captured
+	// contract-instance METADATA (token-sdk convention). Classic + native
+	// assets are ALWAYS 7 by protocol and never consult it. Production
+	// wiring is *clickhouse.ExplorerReader. Nil → Soroban details keep the
+	// 7 default.
+	TokenDecimals TokenDecimalsReader
+
+	// LakeWatermark, when non-nil, stamps lake-backed responses
+	// (/v1/assets/{id}/supply, /v1/accounts/{g}, /v1/assets/{id}/holders)
+	// with `as_of_ledger` and flips `flags.stale` when the lake's captured
+	// tip trails now beyond lakeStaleThreshold (ADR-0041 Decision 4).
+	// Production wiring is *clickhouse.ExplorerReader. Nil → those fields
+	// are omitted and the flag never fires from the watermark.
+	LakeWatermark LakeWatermarkReader
 
 	// Volume, when non-nil, populates the `volume_24h_usd` field on
 	// /v1/assets/{id} (trailing-24h USD-denominated trade volume
@@ -798,6 +822,8 @@ func New(opts Options) *Server {
 		freeze:                  opts.Freeze,
 		supply:                  opts.Supply,
 		tokenSupply:             opts.TokenSupply,
+		tokenDecimals:           opts.TokenDecimals,
+		lakeWatermarkReader:     opts.LakeWatermark,
 		volume:                  opts.Volume,
 		change24h:               opts.Change24h,
 		priceAt:                 opts.PriceAt,

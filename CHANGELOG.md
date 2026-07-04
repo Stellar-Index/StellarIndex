@@ -27,8 +27,35 @@ against.
   become eligible for the ADR-0033 projection reconcile. The default
   catalogue consumers (compute-completeness / ch-reproject /
   verify-reconciliation) still exclude them.
+- **Lake reads carry their watermark (ADR-0041 Decision 4)**: the
+  lake-backed reads — `/v1/assets/{id}/supply`, `/v1/accounts/{g}`,
+  `/v1/assets/{id}/holders` — now stamp `as_of_ledger` (the highest
+  ledger the ClickHouse lake had captured at serve time; for native
+  supply, the exact ledger `total_coins` came from) and flip the
+  envelope's `flags.stale` when the watermark's close time trails now
+  by more than 300s (~60 ledgers — far past normal sink lag, tight
+  enough to catch a wedged sink). The watermark goes through a
+  15s-TTL cached getter on the server, never a per-request lake
+  query. OpenAPI + all three generated artifacts updated.
+- **Real decimals on `/v1/assets/{id}` for Soroban tokens**: asset
+  detail previously hardcoded `decimals: 7` for everything. Soroban
+  tokens now serve their real on-chain `decimals()`, read from the
+  lake's captured contract-instance METADATA (token-sdk convention,
+  `ledger_entries_current` PK-prefix lookup; declarations above 38
+  rejected as garbage) — and the overlay runs before the market-cap /
+  FDV math that divides by 10^decimals. Classic + native stay 7,
+  which is protocol-correct (stroops), and never consult the reader;
+  non-standard tokens with no stored metadata keep the documented 7
+  default.
 
 ### Fixed
+- **`/v1/assets/{id}/supply` no longer 404s classic assets missing
+  from the operator's `sac_wrappers` map**: the SAC contract id is
+  now derived deterministically for ANY classic asset
+  (`canonical.Asset.SacContractID` — a pure function of asset +
+  pubnet passphrase, valid even before the SAC is deployed); the
+  operator map remains as an explicit override / fast path. Only
+  contract-less shapes (`fiat:*`) still 404.
 - **Triangulation forex-snap reads the live FX feed** (BACKLOG #42 /
   launch-todo FX-path debt): `FXQuoteAtOrBefore` now reads `fx_quotes`
   first — the table the active `massive` forex worker writes — instead

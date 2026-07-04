@@ -828,6 +828,12 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// the narrower ProtocolActivityReader seam for /v1/protocols/{name}
 	// analytics. Same nil-degrade posture.
 	var protocolActivityReader v1.ProtocolActivityReader
+	// lakeWatermarkReader stamps lake-backed responses with as_of_ledger +
+	// flags.stale (ADR-0041 Decision 4); tokenDecimalsReader overlays real
+	// Soroban decimals() on /v1/assets/{id}. Both are the SAME concrete lake
+	// reader through narrower seams, same nil-degrade posture.
+	var lakeWatermarkReader v1.LakeWatermarkReader
+	var tokenDecimalsReader v1.TokenDecimalsReader
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
 		er, err := clickhouse.NewExplorerReader(rootCtx, addr)
 		if err != nil {
@@ -836,6 +842,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			defer func() { _ = er.Close() }()
 			explorerReader = er
 			protocolActivityReader = er
+			lakeWatermarkReader = er
+			tokenDecimalsReader = er
 			logger.Info("explorer reader wired (ClickHouse lake, ADR-0038)", "addr", addr)
 		}
 	}
@@ -876,6 +884,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Freeze:               freezeLooker,
 		Supply:               storeSupplyLooker{s: store},
 		TokenSupply:          tokenSupplyReader,
+		TokenDecimals:        tokenDecimalsReader,
+		LakeWatermark:        lakeWatermarkReader,
 		Explorer:             explorerReader,
 		Volume:               storeVolumeReader{s: store},
 		Change24h:            storeChange24hReader{s: store, pegs: usdPegs},
@@ -2376,10 +2386,13 @@ func (r storePriceReader) RecentClosedSnapshots(ctx context.Context, asset, quot
 // to "not_applicable" via the handler.
 func assetToDetail(a canonical.Asset, homeDomainLookup func(issuer string) (string, bool)) v1.AssetDetail {
 	d := v1.AssetDetail{
-		AssetID:    a.String(),
-		Type:       string(a.Type),
-		Code:       a.Code,
-		Decimals:   7, // overlay from SEP-41 decimals() in follow-up
+		AssetID: a.String(),
+		Type:    string(a.Type),
+		Code:    a.Code,
+		// Classic + native are 7 by protocol (stroops). Soroban tokens get
+		// their real on-chain decimals() overlaid by the v1 handler
+		// (applyTokenDecimals, reading the lake's instance METADATA).
+		Decimals:   7,
 		Sep1Status: "not_applicable",
 	}
 	if a.Issuer != "" {
