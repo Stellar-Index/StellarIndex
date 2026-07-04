@@ -129,3 +129,6 @@ gcp-key*.json
 # Internal archive: proposal/RFP sources, historical audit working dirs, and
 # the early-stage discovery notes. Kept on disk for reference, never published.
 /docs/archive/
+
+# Local working notes (backlog inventories, scratch plans) — never published.
+/notes/
