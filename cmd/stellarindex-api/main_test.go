@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"testing"
@@ -8,7 +9,9 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/config"
+	"github.com/StellarIndex/stellar-index/internal/divergence"
 	"github.com/StellarIndex/stellar-index/internal/usage"
 )
 
@@ -52,7 +55,7 @@ func TestBuildDivergenceReferences_DefaultsCoinGeckoOnly(t *testing.T) {
 		CoinGecko: config.DivergenceCoinGeckoConfig{Enabled: true},
 		Chainlink: config.DivergenceChainlinkConfig{Enabled: false},
 	}
-	refs := buildDivergenceReferences(cfg, discardLogger())
+	refs := buildDivergenceReferences(cfg, nil, discardLogger())
 	if len(refs) != 1 {
 		t.Fatalf("len(refs) = %d, want 1 (CoinGecko only)", len(refs))
 	}
@@ -74,7 +77,7 @@ func TestBuildDivergenceReferences_BothWiredWhenChainlinkConfigured(t *testing.T
 			},
 		},
 	}
-	refs := buildDivergenceReferences(cfg, discardLogger())
+	refs := buildDivergenceReferences(cfg, nil, discardLogger())
 	if len(refs) != 2 {
 		t.Fatalf("len(refs) = %d, want 2", len(refs))
 	}
@@ -95,7 +98,7 @@ func TestBuildDivergenceReferences_ChainlinkEnabledButEmptyFeedMap_Skips(t *test
 			FeedMap: map[string]config.ChainlinkFeedConfig{},
 		},
 	}
-	refs := buildDivergenceReferences(cfg, discardLogger())
+	refs := buildDivergenceReferences(cfg, nil, discardLogger())
 	if len(refs) != 0 {
 		t.Fatalf("len(refs) = %d, want 0 (empty FeedMap should not wire Chainlink)", len(refs))
 	}
@@ -106,8 +109,61 @@ func TestBuildDivergenceReferences_AllDisabled(t *testing.T) {
 		CoinGecko: config.DivergenceCoinGeckoConfig{Enabled: false},
 		Chainlink: config.DivergenceChainlinkConfig{Enabled: false},
 	}
-	refs := buildDivergenceReferences(cfg, discardLogger())
+	refs := buildDivergenceReferences(cfg, nil, discardLogger())
 	if len(refs) != 0 {
 		t.Fatalf("len(refs) = %d, want 0", len(refs))
+	}
+}
+
+// nopOracleReader satisfies divergence.OracleReader for wiring
+// tests — never returns a row (the builder only needs non-nil).
+type nopOracleReader struct{}
+
+func (nopOracleReader) LatestOracleObservation(_ context.Context, _ string, _, _ []string) (*canonical.OracleUpdate, error) {
+	return nil, nil
+}
+
+// TestBuildDivergenceReferences_OnChainOraclesWired — the default-ON
+// [divergence.{reflector,redstone,band}] gates wire five on-chain
+// references (Reflector expands to its three per-contract variants)
+// when an oracle_updates reader is available.
+func TestBuildDivergenceReferences_OnChainOraclesWired(t *testing.T) {
+	cfg := config.DivergenceConfig{
+		Reflector: config.DivergenceOracleConfig{Enabled: true},
+		Redstone:  config.DivergenceOracleConfig{Enabled: true},
+		Band:      config.DivergenceOracleConfig{Enabled: true},
+	}
+	refs := buildDivergenceReferences(cfg, nopOracleReader{}, discardLogger())
+	got := make(map[string]bool, len(refs))
+	for _, r := range refs {
+		got[r.Name()] = true
+	}
+	for _, want := range []string{
+		divergence.OracleSourceReflectorDEX,
+		divergence.OracleSourceReflectorCEX,
+		divergence.OracleSourceReflectorFX,
+		divergence.OracleSourceRedstone,
+		divergence.OracleSourceBand,
+	} {
+		if !got[want] {
+			t.Errorf("missing on-chain oracle reference %q (got %v)", want, got)
+		}
+	}
+	if len(refs) != 5 {
+		t.Errorf("len(refs) = %d, want 5", len(refs))
+	}
+}
+
+// TestBuildDivergenceReferences_OnChainOraclesSkippedWithoutReader —
+// enabled gates with a nil reader (no Postgres) skip cleanly rather
+// than wiring references that would nil-deref on every tick.
+func TestBuildDivergenceReferences_OnChainOraclesSkippedWithoutReader(t *testing.T) {
+	cfg := config.DivergenceConfig{
+		Reflector: config.DivergenceOracleConfig{Enabled: true},
+		Redstone:  config.DivergenceOracleConfig{Enabled: true},
+		Band:      config.DivergenceOracleConfig{Enabled: true},
+	}
+	if refs := buildDivergenceReferences(cfg, nil, discardLogger()); len(refs) != 0 {
+		t.Fatalf("len(refs) = %d, want 0 (nil reader must skip on-chain oracles)", len(refs))
 	}
 }

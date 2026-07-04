@@ -16,6 +16,26 @@ against.
 ## [Unreleased]
 
 ### Added
+- **On-chain oracle divergence references (Reflector / Redstone /
+  Band)**: the divergence worker now cross-checks our VWAP against
+  the on-chain oracle feeds we already ingest — five new references
+  (`reflector-dex`, `reflector-cex`, `reflector-fx`, `redstone`,
+  `band`) read the latest served `oracle_updates` row per pair
+  (`divergence.OracleReference` over the new
+  `timescale.LatestOracleObservation` reader; XLM's `native` ⇄
+  `crypto:XLM` dual identity translated on both pair sides) and
+  scale the raw integer price by the row's stored decimals via
+  big-int math (ADR-0003 — Reflector E14, Band E9, Redstone E8).
+  Same observation schema and policy machinery as the HTTP
+  references: rows land in `divergence_observations`, agreement
+  feeds the median, staleness beyond the per-oracle ceiling
+  (Reflector 30m, Redstone/Band 26h; `max_age_minutes` overrides)
+  reads as reference-unavailable per the CS-089 frozen-feed
+  discipline, never as agreement. Gated by
+  `[divergence.{reflector,redstone,band}]` — default ON (no
+  external quota; no-op per pair until the feed tables hold data).
+  The `/divergences` explorer page badges flip from Planned to
+  Active for all three.
 - **`stellarindex-ops ch-rebuild -sep41`**: opt-in re-derive of the
   SEP-41 watched-contract sources (`sep41_transfers`, `sep41_supply`)
   from the ClickHouse lake. A dedicated contract_id-prefiltered event

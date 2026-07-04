@@ -301,15 +301,17 @@ func run(cfgPath string, dryRun bool) error {
 	}
 
 	// ─── Divergence service ────────────────────────────────────
-	// Builds CoinGecko + Chainlink reference clients from
-	// `[divergence]` config; the orchestrator's Tick refreshes
-	// the `div:<asset>` cache once per pair per tick. Empty
-	// reference list (CoinGecko disabled + Chainlink not
-	// configured) leaves the producer nil so the cache stays
-	// empty and the API's `flags.divergence_warning` stays
-	// false — pre-Phase behaviour preserved.
+	// Builds the CoinGecko + Chainlink HTTP reference clients plus
+	// the on-chain oracle references (reflector-dex/cex/fx,
+	// redstone, band — read from our own served oracle_updates
+	// rows) from `[divergence]` config; the orchestrator's Tick
+	// refreshes the `div:<asset>` cache once per pair per tick.
+	// Empty reference list (every reference disabled) leaves the
+	// producer nil so the cache stays empty and the API's
+	// `flags.divergence_warning` stays false — pre-Phase behaviour
+	// preserved.
 	var divRefresher orchestrator.DivergenceRefresher
-	divRefs := buildDivergenceReferences(cfg.Divergence, logger)
+	divRefs := buildDivergenceReferences(cfg.Divergence, store, logger)
 	if len(divRefs) > 0 {
 		// Durable per-reference mirror — every (pair, reference) tick
 		// lands in the divergence_observations hypertable so the
@@ -1308,12 +1310,17 @@ func (obsCrossCheckEmitter) Outcome(kind supply.CrossCheckOutcomeKind) {
 }
 
 // buildDivergenceReferences mirrors the API binary's helper of the
-// same name. Builds the CoinGecko + Chainlink reference clients the
+// same name. Builds the CoinGecko + Chainlink HTTP reference clients
+// plus the on-chain oracle references (Reflector/Redstone/Band,
+// reading our own served oracle_updates rows) the
 // `divergence.Service` runs on each tick. Kept in lockstep with
 // `cmd/stellarindex-api/main.go::buildDivergenceReferences` —
 // drift here would mean the aggregator and API see different
 // divergence semantics for the same pair.
-func buildDivergenceReferences(cfg config.DivergenceConfig, logger *slog.Logger) []divergence.Reference {
+//
+// oracles may be nil (no Postgres) — the on-chain references are
+// skipped with a warning when any is enabled.
+func buildDivergenceReferences(cfg config.DivergenceConfig, oracles divergence.OracleReader, logger *slog.Logger) []divergence.Reference {
 	var refs []divergence.Reference
 
 	if cfg.CoinGecko.Enabled {
@@ -1343,6 +1350,46 @@ func buildDivergenceReferences(cfg config.DivergenceConfig, logger *slog.Logger)
 		}
 	}
 
+	return append(refs, buildOracleDivergenceReferences(cfg, oracles, logger)...)
+}
+
+// buildOracleDivergenceReferences constructs the on-chain oracle
+// reference set (reflector-dex/cex/fx + redstone + band) per the
+// `[divergence.{reflector,redstone,band}]` gates. Split from
+// buildDivergenceReferences to stay under the funlen ceiling; same
+// lockstep rule with the API binary applies.
+func buildOracleDivergenceReferences(cfg config.DivergenceConfig, oracles divergence.OracleReader, logger *slog.Logger) []divergence.Reference {
+	anyEnabled := cfg.Reflector.Enabled || cfg.Redstone.Enabled || cfg.Band.Enabled
+	if oracles == nil {
+		if anyEnabled {
+			logger.Warn("divergence: on-chain oracle references enabled but no oracle_updates reader — skipping")
+		}
+		return nil
+	}
+	var refs []divergence.Reference
+	add := func(source string, gate config.DivergenceOracleConfig) {
+		if !gate.Enabled {
+			return
+		}
+		ref, err := divergence.NewOracleReference(divergence.OracleReferenceOptions{
+			Source: source,
+			Reader: oracles,
+			MaxAge: time.Duration(gate.MaxAgeMinutes) * time.Minute,
+		})
+		if err != nil {
+			// Unreachable with non-empty Source + non-nil Reader;
+			// warn-and-skip keeps the rest of the reference set alive.
+			logger.Warn("divergence: oracle reference construction failed",
+				"source", source, "err", err)
+			return
+		}
+		refs = append(refs, ref)
+	}
+	add(divergence.OracleSourceReflectorDEX, cfg.Reflector)
+	add(divergence.OracleSourceReflectorCEX, cfg.Reflector)
+	add(divergence.OracleSourceReflectorFX, cfg.Reflector)
+	add(divergence.OracleSourceRedstone, cfg.Redstone)
+	add(divergence.OracleSourceBand, cfg.Band)
 	return refs
 }
 

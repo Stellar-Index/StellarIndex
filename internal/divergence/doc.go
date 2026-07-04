@@ -24,13 +24,22 @@
 //   - [ChainlinkReference] — HTTP reference against Chainlink's
 //     EVM AggregatorV3 `latestAnswer()` selector. Off by default;
 //     operator opts in via FeedMap of mainnet feed addresses.
+//   - [OracleReference] — on-chain oracle references (reflector-dex
+//     / reflector-cex / reflector-fx / redstone / band). No HTTP:
+//     each reads the latest row OUR indexer ingested into the
+//     `oracle_updates` served tier (via [OracleReader]) and
+//     compares the oracle's published value against our VWAP for
+//     the pairs both sides cover. On by default — no external
+//     quota; a pair the oracle doesn't publish records
+//     asset_unsupported.
 //
-// On-chain oracles (Reflector, Band, Redstone) are NOT plugged in
-// here — they ingest as on-chain *sources* (`internal/sources/{
-// reflector, band, redstone}`) and contribute to the underlying
-// VWAP itself, not to the divergence cross-check. CoinMarketCap is
-// a candidate future HTTP reference; deferred until an operator
-// asks for a second aggregator behind CoinGecko.
+// The on-chain oracles never contribute to the VWAP itself (their
+// ingest class is `oracle`, excluded at VWAP compute time) — here
+// they serve as independent-methodology cross-checks: the value an
+// on-chain consumer (e.g. Blend) actually sees vs the price we
+// computed. CoinMarketCap is a candidate future HTTP reference;
+// deferred until an operator asks for a second aggregator behind
+// CoinGecko.
 //
 // # Algorithm
 //

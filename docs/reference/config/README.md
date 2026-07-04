@@ -231,6 +231,12 @@ the `env:` column.
 | `divergence.chainlink.feeds.<key>.decimals` | `int` | `8` | — | Power-of-10 divisor for the raw int256. Defaults to 8 (Chainlink standard). |
 | `divergence.chainlink.feeds.<key>.invert` | `bool` | `false` | — | Set true when canonical pair is reciprocal of the feed's natural quote. |
 | `divergence.chainlink.feeds.<key>.max_age_hours` | `int` | `0` | — | Staleness ceiling in hours for the feed's latestRoundData updatedAt; rounds older than this are rejected as reference-unavailable (CS-089). 0 = 3h crypto default; use ~76 for FX feeds (they pause over market closes). |
+| `divergence.reflector.enabled` | `bool` | `true` | — | Whether this on-chain oracle reference is wired into the divergence service. |
+| `divergence.reflector.max_age_minutes` | `int` | `0` | — | Staleness ceiling in minutes for the oracle's latest observation; older observations are rejected as reference-unavailable. 0 = per-oracle default (Reflector 30m, Redstone/Band 26h). |
+| `divergence.redstone.enabled` | `bool` | `true` | — | Whether this on-chain oracle reference is wired into the divergence service. |
+| `divergence.redstone.max_age_minutes` | `int` | `0` | — | Staleness ceiling in minutes for the oracle's latest observation; older observations are rejected as reference-unavailable. 0 = per-oracle default (Reflector 30m, Redstone/Band 26h). |
+| `divergence.band.enabled` | `bool` | `true` | — | Whether this on-chain oracle reference is wired into the divergence service. |
+| `divergence.band.max_age_minutes` | `int` | `0` | — | Staleness ceiling in minutes for the oracle's latest observation; older observations are rejected as reference-unavailable. 0 = per-oracle default (Reflector 30m, Redstone/Band 26h). |
 
 ### `[obs]`
 

@@ -28,7 +28,7 @@ type Config struct {
 	Metadata   MetadataConfig   `toml:"metadata" doc:"Asset metadata overlay — SEP-1 issuer→home-domain map, operator overrides."`
 	Supply     SupplyConfig     `toml:"supply" doc:"Supply pipeline config — SDF reserve list, operator-managed reserve balances (fallback when the LCM AccountEntry observer hasn't yet covered the watched set), watched classic + SEP-41 asset lists, SAC wrappers, and aggregator-refresh cadence. ADR-0011 (XLM) + ADR-0022 (classic) + ADR-0023 (SEP-41)."`
 	Trades     TradesConfig     `toml:"trades" doc:"Trade-insert policy — operator-declared USD-pegged stablecoins so on-chain DEX trades populate trades.usd_volume at insert time (launch-readiness L2.2 phase 1)."`
-	Divergence DivergenceConfig `toml:"divergence" doc:"Cross-check references the divergence service consults (CoinGecko + Chainlink). Empty disables; the divergence_warning envelope flag stays unset."`
+	Divergence DivergenceConfig `toml:"divergence" doc:"Cross-check references the divergence service consults (CoinGecko + Chainlink HTTP, plus the on-chain Reflector/Redstone/Band oracle feeds read from ingested oracle_updates rows). Empty disables; the divergence_warning envelope flag stays unset."`
 	Obs        ObsConfig        `toml:"obs" doc:"Metrics, logs, traces — exporters + sampling."`
 }
 
@@ -104,6 +104,33 @@ type DivergenceConfig struct {
 	// FeedMap with mainnet feed addresses). When enabled, queries
 	// public Ethereum RPC for AggregatorV3 latestAnswer().
 	Chainlink DivergenceChainlinkConfig `toml:"chainlink" doc:"Chainlink reference (HTTP cross-check only; not a VWAP contributor)."`
+
+	// On-chain oracle references — read our OWN ingested
+	// oracle_updates rows (served tier) and compare the oracle's
+	// latest value against our VWAP for pairs both sides cover.
+	// On by default: they consume no external quota and are a
+	// no-op (asset_unsupported per pair) until the feed tables
+	// hold data. Reflector toggles all three variant references
+	// (reflector-dex / reflector-cex / reflector-fx) together —
+	// they're one protocol across three contracts.
+	Reflector DivergenceOracleConfig `toml:"reflector" doc:"Reflector on-chain oracle references (reflector-dex/cex/fx) read from ingested oracle_updates rows. Default max_age is 30 minutes (Reflector publishes ~5-minutely)."`
+	Redstone  DivergenceOracleConfig `toml:"redstone" doc:"Redstone on-chain oracle reference read from ingested oracle_updates rows. Default max_age is 26 hours (batch pushes with a daily-ish heartbeat floor)."`
+	Band      DivergenceOracleConfig `toml:"band" doc:"Band on-chain oracle reference read from ingested oracle_updates rows (relay/force_relay op-args ingest). Default max_age is 26 hours (relayer-driven, sparse)."`
+}
+
+// DivergenceOracleConfig gates one on-chain oracle reference family
+// for the divergence service. Unlike the HTTP references these read
+// the SERVED oracle_updates rows our own indexer ingested, so
+// enabling them costs nothing when the tables are empty — every
+// lookup records asset_unsupported for the pair until rows exist.
+type DivergenceOracleConfig struct {
+	Enabled bool `toml:"enabled" doc:"Whether this on-chain oracle reference is wired into the divergence service." default:"true"`
+	// MaxAgeMinutes is the staleness ceiling: an oracle_updates
+	// observation older than this (relative to the comparison time)
+	// is rejected as reference-unavailable rather than served as a
+	// fresh reference (the CS-089 frozen-feed discipline). 0 = the
+	// per-oracle built-in default (Reflector 30m; Redstone/Band 26h).
+	MaxAgeMinutes int `toml:"max_age_minutes" doc:"Staleness ceiling in minutes for the oracle's latest observation; older observations are rejected as reference-unavailable. 0 = per-oracle default (Reflector 30m, Redstone/Band 26h)." default:"0"`
 }
 
 // DivergenceCoinGeckoConfig configures the CoinGecko reference.
@@ -157,6 +184,12 @@ func defaultDivergenceConfig() DivergenceConfig {
 			Enabled: false,
 			FeedMap: map[string]ChainlinkFeedConfig{},
 		},
+		// On-chain oracle references default ON — they read our own
+		// served oracle_updates rows (no external quota) and are a
+		// per-pair no-op until the feed tables have data.
+		Reflector: DivergenceOracleConfig{Enabled: true},
+		Redstone:  DivergenceOracleConfig{Enabled: true},
+		Band:      DivergenceOracleConfig{Enabled: true},
 	}
 }
 
