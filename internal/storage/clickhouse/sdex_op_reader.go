@@ -63,10 +63,19 @@ type SDEXOp struct {
 // and internal/sources/sdex both count trades only in successful txs, so the
 // re-derivation must too — otherwise it over-counts phantom fills.
 //
-// FINAL dedups ReplacingMergeTree parts; join_algorithm=full_sorting_merge
-// keeps the operations⋈operation_results join (two large co-sorted inputs)
-// memory-bounded. Callers re-deriving all history should window [from,to] per
-// partition so the result set + the successful-tx IN-set stay bounded.
+// NO FINAL — deliberately (2026-07-05, the third OOM of the sdex
+// reconcile): FINAL on a ReplacingMergeTree engages a merge across
+// ALL overlapping parts of each touched PARTITION (~1M ledgers of
+// wide body_xdr rows) even when the WHERE window is 100k ledgers —
+// that partition-scale MergingSortedTransform is what repeatedly
+// blew the query-memory ceiling (12→24GiB, external sort didn't
+// help: the merge isn't a sort spill). Duplicate rows from un-merged
+// parts are HARMLESS to every caller by construction: the census
+// consumer PK-dedups via its `seen` map and ch-rebuild's InsertTrade
+// is ON CONFLICT DO NOTHING. join_algorithm=full_sorting_merge keeps
+// the operations⋈operation_results join memory-bounded. Callers
+// re-deriving all history should window [from,to] so the result set
+// + the successful-tx IN-set stay bounded.
 func StreamSDEXOps(ctx context.Context, addr string, from, to uint32, fn func(SDEXOp) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -77,13 +86,13 @@ func StreamSDEXOps(ctx context.Context, addr string, from, to uint32, fn func(SD
 	query := fmt.Sprintf(`
 		SELECT o.ledger_seq, o.close_time, o.tx_hash, o.op_index, o.source_account,
 		       o.body_xdr, r.result_xdr
-		FROM stellar.operations AS o FINAL
-		INNER JOIN stellar.operation_results AS r FINAL
+		FROM stellar.operations AS o
+		INNER JOIN stellar.operation_results AS r
 		  ON o.ledger_seq = r.ledger_seq AND o.tx_hash = r.tx_hash AND o.op_index = r.op_index
 		WHERE o.ledger_seq BETWEEN ? AND ?
 		  AND o.op_type IN (%s)
 		  AND o.tx_hash IN (
-		      SELECT tx_hash FROM stellar.transactions FINAL
+		      SELECT tx_hash FROM stellar.transactions
 		      WHERE successful = 1 AND ledger_seq BETWEEN ? AND ?
 		  )
 		ORDER BY o.ledger_seq, o.tx_hash, o.op_index
