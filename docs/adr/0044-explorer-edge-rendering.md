@@ -102,9 +102,14 @@ Negative / costs:
    beyond-top-100 issuer rendered on demand in 529 ms with zero
    page-code changes; 7 frictions catalogued, all with Stage-2
    owners. Static path unchanged (OPEN_NEXT=1 gate).
-2. **Shadow deploy**: Worker on a preview hostname; the audit's crawl
-   suite (route inventory × entity sampling) runs against it and must
-   beat the static site's pass rate.
+2. **Shadow deploy — code-ready, operator-gated (2026-07-05)**: the
+   workflow exists (cf-ssr-shadow.yml: OPEN_NEXT build → workers.dev
+   preview → crawl-battery gate) and ran to the deploy step, which
+   failed with CF auth code 10000 — the stored CLOUDFLARE_API_TOKEN
+   carries Pages:Edit + zone DNS scopes but NOT "Workers Scripts:
+   Edit". Operator action: add that scope to the token (or add a
+   second WORKERS-scoped secret), then `gh workflow run
+   cf-ssr-shadow.yml`.
 3. **Cutover**: apex routes to the Worker; CF Pages project retained
    as instant rollback for one release cycle.
 4. **Cleanup**: delete `generateStaticParams` top-N machinery where it
