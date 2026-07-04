@@ -1,0 +1,80 @@
+---
+# ADR-0044 Stage 2 — shadow deploy of the OpenNext SSR Worker.
+#
+# Deploys the edge-SSR build (Stage-1 spike, OPEN_NEXT=1 path) to a
+# *.workers.dev preview hostname — NEVER the apex — and gates it with
+# the site-audit crawl battery pointed at the preview. Stage 3
+# (apex cutover) is a separate decision behind the traffic-modeled
+# cost review recorded in the ADR.
+#
+#   gh workflow run cf-ssr-shadow.yml
+#
+# Uses the same account-level CF secrets as explorer-deploy.yml.
+
+name: cf-ssr-shadow
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cf-ssr-shadow
+  cancel-in-progress: true
+
+jobs:
+  shadow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          package_json_file: web/explorer/package.json
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/explorer/pnpm-lock.yaml
+
+      - name: Build the OpenNext worker
+        working-directory: web/explorer
+        env:
+          NEXT_PUBLIC_API_BASE_URL: https://api.stellarindex.io
+          OPEN_NEXT: "1"
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build:worker
+
+      - name: Deploy to the preview hostname
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: web/explorer
+          command: deploy -c wrangler.ssr.jsonc
+
+      - name: Resolve the preview URL
+        id: url
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          SUB=$(curl -sS "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" | jq -r '.result.subdomain')
+          echo "url=https://stellarindex-explorer-ssr.$SUB.workers.dev" >> "$GITHUB_OUTPUT"
+
+      - name: Crawl battery against the shadow
+        env:
+          SITE: ${{ steps.url.outputs.url }}
+        run: |
+          # The sitemap self-references the production origin, so the
+          # family sample resolves against prod URLs rewritten onto the
+          # shadow host; the battery's own checks (placeholder text,
+          # doubled titles, canonical encoding, census, closure) run
+          # unchanged. Give the Worker one warm-up hit first.
+          curl -s -o /dev/null "$SITE/" || true
+          bash scripts/ci/site-crawl-check.sh
