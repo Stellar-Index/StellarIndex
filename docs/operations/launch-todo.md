@@ -157,7 +157,7 @@ alarm; P0-3 code done (operator purchase pending).
   *audit-trail* (`sep41_transfers` per-account positions) remains a separate
   watch-list-gated feature; the lake holds its full history for on-demand serving
   if/when that feature is built.
-- **FX-path debt** — the X2.5 triangulation forex-snap (`FXQuoteAtOrBefore`) reads the **`trades`** table filtered by `FXSources()` (the disabled connector-path sources), so it *always* soft-falls-back (`AggregatorFXSnapFallbackTotal`). The active FX feed `massive` writes **`fx_quotes`**, a different table. Unify the two FX paths — point the snap at `fx_quotes`, or collapse the redundant `massive`↔`polygon-forex` (same upstream provider). Low impact today (only non-USD-fiat-quoted pairs hit an FX leg).
+- ~~**FX-path debt**~~ ✅ **DONE 2026-07-04 (BACKLOG #42)** — `FXQuoteAtOrBefore` now reads **`fx_quotes`-first** (the active `massive` feed; exact `*big.Rat` from `rate_usd` NUMERIC text, USD-anchored inversion/cross, 7-day lookback) and falls back to the legacy `trades`-path read only when `fx_quotes` has no row in the lookback — keeps `polygon-forex`/`exchangeratesapi` compat if re-enabled. `AggregatorFXSnapFallbackTotal` should go quiet for massive-covered fiat legs after the next aggregator deploy.
 - **ZFS-dataset drift** — `data/{clickhouse,loki,pgbackrest}` exist on r1 but aren't in the Ansible `zfs_datasets` defaults — reconcile in a dedicated pass.
 
 ---
