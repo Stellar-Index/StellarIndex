@@ -96,9 +96,12 @@ Negative / costs:
 
 ## Migration plan (staged, each stage shippable)
 
-1. **Spike**: OpenNext build of the current app; verify routes, RSC,
-   `next/font`, the redirects file, and Worker size limits. Exit
-   criterion: the full route inventory renders under `wrangler dev`.
+1. **Spike — ✅ DONE 2026-07-04** (docs/adr/0044-stage1-spike.md):
+   exit criterion met — full route inventory renders under
+   `wrangler dev`; worker 2.5 MB gzipped (vs 10/15 MB caps); a
+   beyond-top-100 issuer rendered on demand in 529 ms with zero
+   page-code changes; 7 frictions catalogued, all with Stage-2
+   owners. Static path unchanged (OPEN_NEXT=1 gate).
 2. **Shadow deploy**: Worker on a preview hostname; the audit's crawl
    suite (route inventory × entity sampling) runs against it and must
    beat the static site's pass rate.
