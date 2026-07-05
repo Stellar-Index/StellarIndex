@@ -88,6 +88,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/obs"
 	"github.com/StellarIndex/stellar-index/internal/platform"
 	"github.com/StellarIndex/stellar-index/internal/platform/postgresstore"
+	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
 	"github.com/StellarIndex/stellar-index/internal/storage/redisclient"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 	"github.com/StellarIndex/stellar-index/internal/supply"
@@ -545,17 +546,36 @@ func run(cfgPath string, dryRun bool) error {
 	}()
 
 	// ─── MEV detection worker (§7.20) ───────────────────────────
-	// Scans the recent trade window every 5 min for atomic-arbitrage
-	// cycles (one taker, one tx, a closed asset cycle) and writes new
-	// ones to mev_events for the explorer's /mev feed. Idempotent via
-	// the dedup key, so overlapping windows are safe.
+	// Scans the recent served-row window every 5 min for MEV
+	// patterns — atomic arbitrage + wash trading from trades alone,
+	// liquidation cascades from blend_auctions × oracle_updates, and
+	// (when the lake is reachable) sandwich / oracle-sandwich, which
+	// need the intra-ledger tx application order that only the
+	// ClickHouse lake carries (stellar.tx_hash_index). Writes new
+	// events to mev_events for the explorer's /mev feed. Idempotent
+	// via the dedup key, so overlapping windows are safe.
+	mevCfg := mev.WorkerConfig{
+		Logger:   logger.With("component", "mev"),
+		Observer: mevObserver{},
+		Oracles:  store,
+		Auctions: store,
+	}
+	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
+		if txr, err := clickhouse.NewTxIndexReader(rootCtx, addr); err != nil {
+			// Best-effort degradation: without the lake's tx-order
+			// signal the ordering-dependent detectors (sandwich,
+			// oracle_sandwich) stay off; everything else still runs.
+			logger.Warn("mev: ClickHouse tx-order resolver unavailable — sandwich/oracle-sandwich detection disabled",
+				"addr", addr, "err", err)
+		} else {
+			mevCfg.Order = txr
+			defer func() { _ = txr.Close() }()
+		}
+	}
 	refresherWG.Add(1)
 	go func() {
 		defer refresherWG.Done()
-		mevWorker := mev.NewWorker(store, store, mev.WorkerConfig{
-			Logger:   logger.With("component", "mev"),
-			Observer: mevObserver{},
-		})
+		mevWorker := mev.NewWorker(store, store, mevCfg)
 		if err := mevWorker.Run(rootCtx, 5*time.Minute); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("mev worker exited with error", "err", err)
 		}

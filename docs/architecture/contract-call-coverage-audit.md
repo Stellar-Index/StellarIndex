@@ -147,6 +147,68 @@ NOW   (this session) ──► audit done, doc shipped, #48 task design captured
 +9d   #35 resume (other source backfills) with the same headroom
 ```
 
+## Walker terrain check (2026-07-05) — what the lake has vs what the walker needs
+
+Re-verified while building the lake-ordered MEV detectors (BACKLOG #28),
+which share the "what does the lake actually carry?" question:
+
+**Available today (and now consumed):**
+
+- **Intra-ledger transaction ordering IS in the lake.**
+  `stellar.transactions` / `stellar.operations` carry `tx_index`
+  (application order within the ledger), and `stellar.tx_hash_index`
+  (ORDER BY tx_hash) resolves hash → (ledger_seq, tx_index) as a PK
+  point lookup. Any earlier "no intra-ledger ordering" claim is true
+  only of the Postgres served tier. The MEV sandwich detectors consume
+  this via `clickhouse.TxIndexReader` (`internal/storage/clickhouse/tx_index_reader.go`).
+- **Nested-contract EVENTS are captured.** The extract
+  (`internal/storage/clickhouse/extract.go::extractEvents`) reads
+  `tx.GetTransactionEvents()`, which includes contract events emitted
+  by sub-invoked contracts — event-based decoders already see the whole
+  tree.
+- **The auth tree is recoverable from the lake.**
+  `stellar.operations.body_xdr` retains the full InvokeHostFunction op,
+  so `Auth[i].RootInvocation` + `SubInvocations[]` can be walked from
+  ClickHouse for ALL history — with the known caveat that the auth tree
+  is what was *authorized*, not what *executed*.
+
+**Genuinely absent — the walker's real gap:**
+
+- **Diagnostic events (`fn_call` / `fn_return` — the execution call
+  tree) are captured NOWHERE in the lake.** Two independent reasons:
+  1. `extract.go::eventRow` gates on
+     `xdr.ContractEventTypeContract` (matching
+     `dispatcher.captureEligible`), so System/Diagnostic events are
+     skipped even when present, and `tier1_schema.sql` has no
+     `diagnostic_events` table.
+  2. Upstream of us they mostly don't exist: stellar-core only emits
+     diagnostic events into tx meta when
+     `ENABLE_SOROBAN_DIAGNOSTIC_EVENTS = true`, and our galexie
+     captive-core template
+     (`configs/ansible/roles/archival-node/templates/stellar-core.cfg.j2`)
+     does not set it — so the LCMs already in MinIO / the lake were
+     captured without them. **This is not recoverable by re-reading the
+     archive**; producing historical diagnostic events requires a
+     replay with the flag on.
+
+**Capture change the diagnostic-events walker needs (forward-only):**
+
+1. Set `ENABLE_SOROBAN_DIAGNOSTIC_EVENTS = true` in the captive-core
+   template (both galexie captives), via `configs/ansible/` in the same
+   PR as the rollout (r1 ansible-drift rule). Note this inflates LCM
+   size in the galexie bucket.
+2. Add a `stellar.diagnostic_events` lake table + an extract arm that
+   captures `event_type == System` topic `[fn_call, contract, fn]`
+   rows (LCM path: `tx.UnsafeMeta.V3.SorobanMeta.DiagnosticEvents`;
+   SDK also exposes `tx.GetDiagnosticEvents()`).
+3. Dispatcher walker per the plan above dispatches ContractCallDecoders
+   over that trace instead of `tx.Envelope.Operations()` only.
+
+**Until then**, the honest historical option for the router undercount
+is the auth-tree walk over `operations.body_xdr` (available for all
+history today, authorized≠executed caveat documented), or accepting
+forward-only coverage from the flag-flip date.
+
 ## References
 
 - `internal/dispatcher/dispatcher.go` lines 430-494 — current top-level-only walk

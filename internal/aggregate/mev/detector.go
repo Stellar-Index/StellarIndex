@@ -2,18 +2,34 @@
 // patterns from the canonical trade stream and writes them to
 // mev_events for the explorer's /mev feed.
 //
-// v1 detects ATOMIC ARBITRAGE only: a single transaction in which one
-// taker trades a closed asset cycle (≥2 legs that return to a starting
-// asset) across pools/venues. This is the one pattern our served trade
-// data supports without guessing — a row carries (ledger, tx_hash,
-// op_index, taker) but NOT intra-ledger transaction ordering, so
-// cross-transaction sandwich detection (which is fundamentally about
-// block position) would be unreliable. A closed cycle inside ONE
-// atomic transaction, by contrast, is an unambiguous arbitrage
-// signature: the structure itself is the evidence.
+// Detected kinds:
 //
-// The detector is a pure function over a batch of trades; the worker
-// (worker.go) supplies recent trades and persists the candidates.
+//   - arbitrage (detector.go): one taker trades a closed asset cycle
+//     inside a single transaction. Purely structural — the served
+//     trades rows carry everything needed.
+//   - wash_trade (washtrade.go): self-trades (maker == taker) and
+//     repeated two-account back-and-forth on one pair. Served rows
+//     only.
+//   - sandwich (sandwich.go): one account's trades in two different
+//     transactions bracket another account's trade on the same pair
+//     within one ledger. Needs intra-ledger TRANSACTION ordering,
+//     which the served trades table does not carry — the raw lake
+//     does (stellar.transactions.tx_index, application order), so
+//     this detector runs only when a TxOrderResolver is wired.
+//   - oracle_sandwich (oracle_sandwich.go): one account's trades
+//     bracket an on-chain oracle update on an asset the trades touch,
+//     within one ledger. Same tx_index requirement as sandwich.
+//   - liquidation_cascade (cascade.go): Blend liquidation-auction
+//     fills against distinct positions clustered within a short
+//     ledger window with an on-chain oracle update in the bracket.
+//     Served rows only (blend_auctions + oracle_updates).
+//
+// Every detector is a pure function over batches of served rows (plus
+// an optional tx_hash → tx_index map from the lake); the worker
+// (worker.go) supplies the inputs and persists candidates. Detection
+// is positional/structural evidence, not proof of intent — the served
+// rows don't carry trade direction, so direction-dependent claims
+// (front-run vs back-run) are never asserted. See each detail Note.
 package mev
 
 import (
@@ -48,17 +64,26 @@ type Candidate struct {
 	Ledger           uint32
 	DetectedAtLedger uint32
 	Timestamp        time.Time
-	TxHash           string
-	Taker            string
+	TxHash           string   // primary transaction (the dedup anchor)
+	Taker            string   // primary actor
+	TxHashes         []string // all involved txs; nil → [TxHash]
+	Accounts         []string // all involved accounts; nil → [Taker]
 	Assets           []string // sorted distinct assets in the cycle
 	Sources          []string // sorted distinct venues spanned
 	Legs             []Leg
 	NotionalUSD      string // summed USD volume across legs ("" when none priced)
+	Dedup            string // explicit dedup key; "" → kind:tx:taker
+	Detail           any    // per-kind evidence payload (marshalled to mev_events.detail); nil → arbDetail
 }
 
 // DedupKey is the deterministic idempotency key persisted to
-// mev_events.dedup_key: one detection per (pattern, tx, actor).
+// mev_events.dedup_key. Default shape: one detection per (pattern,
+// tx, actor); detectors whose identity needs more dimensions set
+// Candidate.Dedup explicitly.
 func (c Candidate) DedupKey() string {
+	if c.Dedup != "" {
+		return c.Dedup
+	}
 	return c.Kind + ":" + c.TxHash + ":" + c.Taker
 }
 

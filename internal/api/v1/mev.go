@@ -15,9 +15,10 @@ type MEVReader interface {
 }
 
 // MEVEventView is the wire shape for /v1/mev entries. detail is the
-// pattern's evidence object (for arbitrage: assets / sources / legs /
-// notional). profit_usd is null when not meaningful for the kind
-// (arbitrage v1 does not estimate profit — see detail.note).
+// pattern's per-kind evidence object (legs / roles / oracle refs /
+// fills, plus a note stating what is and is not claimed). profit_usd
+// is null when not meaningful for the kind — no current detector
+// estimates profit (trade direction is ambiguous in the served rows).
 type MEVEventView struct {
 	EventID          string          `json:"event_id"`
 	DetectedAt       string          `json:"detected_at"`
@@ -32,7 +33,8 @@ type MEVEventView struct {
 }
 
 // handleMEVEvents serves GET /v1/mev — the auto-flagged MEV-event
-// feed, newest first. ?kind= filters to one pattern (arbitrage today);
+// feed, newest first. ?kind= filters to one pattern (arbitrage /
+// sandwich / oracle_sandwich / liquidation_cascade / wash_trade);
 // ?limit= (default 50, max 500).
 //
 // 200 + empty array when no MEVReader is wired or nothing's been

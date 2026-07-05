@@ -16,6 +16,42 @@ against.
 ## [Unreleased]
 
 ### Added
+- **/diagnostics honest panels + per-source health** (BACKLOG #33):
+  the explorer /diagnostics page now renders a decoder-coverage panel
+  (per-source ADR-0033 completeness verdicts from `/v1/coverage` —
+  the same rows behind the status page's "N/N complete") and an
+  archive-completeness panel over the new
+  `GET /v1/diagnostics/archive`, a read-through of the ADR-0017
+  daemon's JSON report (new `api.archive_report_path` config knob;
+  default matches the archive-completeness.service REPORT_OUTPUT;
+  503 unconfigured / 404 pre-first-run). New
+  `GET /v1/sources/{name}/health` serves one venue's live health row
+  (the ingestion snapshot's `sources` section, addressable per
+  source, `private, no-cache`) and /sources/[name] gains the pane
+  that polls it. Honestly deferred with in-page copy instead of
+  fake panels: SLO burn rates (sla-probe emits node_exporter
+  textfile metrics only — no table or endpoint serves probe-run
+  history yet) and cross-region consistency (single-region today;
+  lands with R2/R3 per ADR-0016).
+- **Four new MEV detectors** (BACKLOG #28): the `/v1/mev` feed now
+  ships `sandwich` + `oracle_sandwich` (one account's transactions
+  bracketing a victim trade / an on-chain oracle update within one
+  ledger — intra-ledger application order resolved from the lake's
+  `stellar.tx_hash_index` via the new `clickhouse.TxIndexReader`;
+  degrades to not-detected when the lake is unreachable),
+  `liquidation_cascade` (Blend fills against distinct positions
+  clustered within 12 ledgers with an oracle update in the bracket),
+  and `wash_trade` (self-crosses + repeated two-account round trips).
+  Migration 0074 adds the `oracle_sandwich` kind; every event's
+  `detail.note` states exactly what is and is NOT claimed (direction
+  and profit are never inferred). The /mev explorer page retires the
+  now-shipped "coming next" bullets and gains a Known-limits panel.
+  Walker terrain finding recorded in
+  docs/architecture/contract-call-coverage-audit.md: `tx_index`
+  ordering EXISTS in the lake (the old "no intra-ledger ordering"
+  claim was served-tier-only), while diagnostic events (`fn_call`
+  call tree) are genuinely absent — capture-change requirements
+  documented for the sub-invocation walker.
 - **Captive-core protection suite** (the 2026-07-05 galexie wedge,
   full class): MemoryLow + CPU/IO-weight drop-in on the galexie unit;
   a mandatory `run-heavy-job.sh` wrapper (MemoryMax=20G, swap-denied,
