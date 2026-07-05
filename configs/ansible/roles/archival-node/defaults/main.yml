@@ -107,6 +107,20 @@ zfs_datasets:
     compression: "zstd"
     atime: "off"
     mountpoint: "/srv/history-archive"
+  # Out-of-band datasets codified 2026-07-05 (BACKLOG #50): both were
+  # hand-created during incidents — clickhouse for the ADR-0034 lake
+  # (2026-06-05 pivot), loki when CH logs moved off the 49G root
+  # (2026-06-11 root-fill incident, commit 5dd6fcda).
+  - name: "clickhouse"
+    recordsize: "128K"
+    compression: "zstd"
+    atime: "off"
+    mountpoint: "/var/lib/clickhouse"
+  - name: "loki"
+    recordsize: "128K"
+    compression: "zstd"
+    atime: "off"
+    mountpoint: "/var/lib/loki"
   - name: "prometheus"
     # The Prometheus TSDB (~12-13G) lived on the 49G OS root and kept it
     # chronically >90% full; relocated to ZFS 2026-06-30 (launch-todo P0-5),
