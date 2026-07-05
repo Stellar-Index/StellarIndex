@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.8.3] — 2026-07-05
+
 ### Security
 - **aquarius + defindex now gate `Matches()` on contract identity**
   (ADR-0035/0040, CS-026 — BACKLOG #5/#7; comet is the last ungated
