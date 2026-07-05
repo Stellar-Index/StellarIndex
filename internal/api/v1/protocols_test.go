@@ -84,10 +84,11 @@ func protocolsTestServer(t *testing.T) *testServer {
 			},
 		}},
 		ProtocolStats: &stubProtocolStatsReader{counts: map[string]int64{
-			"blend":    1234,
-			"soroswap": 567,
-			"sdex":     89_000,
-			"binance":  999_999, // off-protocol key — must be ignored
+			"blend":          1234,
+			"blend_backstop": 42, // folds into blend's events_24h (ExtraEventSources)
+			"soroswap":       567,
+			"sdex":           89_000,
+			"binance":        999_999, // off-protocol key — must be ignored
 		}},
 		SoroswapPairs: &stubSoroswapPairsReader{pairs: []timescale.SoroswapPair{
 			{PairStrkey: "CPAIR1", Token0Strkey: "CTOK0", Token1Strkey: "CTOK1"},
@@ -144,7 +145,9 @@ func TestHandleProtocolsList_Happy(t *testing.T) {
 	if len(blend.Factories) == 0 {
 		t.Errorf("blend.Factories empty, want the pool-factory set")
 	}
-	if blend.ContractCount != 2 || blend.Events24h != 1234 {
+	// Roster = 2 pools (protocol_contracts) + 2 folded-in Backstop module
+	// contracts; events_24h = blend (1234) + blend_backstop (42).
+	if blend.ContractCount != 4 || blend.Events24h != 1276 {
 		t.Errorf("blend joins wrong: count=%d events=%d", blend.ContractCount, blend.Events24h)
 	}
 	if blend.Completeness == nil || !blend.Completeness.Complete || blend.Completeness.WatermarkLedger != 62_999_000 {
@@ -188,7 +191,8 @@ func TestHandleProtocolDetail_Blend(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	d := env.Data
-	if d.Name != "blend" || d.ContractCount != 2 || len(d.Contracts) != 2 {
+	// 2 pool instances + 2 folded-in Backstop module contracts.
+	if d.Name != "blend" || d.ContractCount != 4 || len(d.Contracts) != 4 {
 		t.Fatalf("blend detail identity/contracts wrong: %+v", d)
 	}
 	c0 := d.Contracts[0]
@@ -198,8 +202,19 @@ func TestHandleProtocolDetail_Blend(t *testing.T) {
 	if c0.Token0 != "" || c0.Token1 != "" {
 		t.Errorf("blend contract row should have no token fields: %+v", c0)
 	}
-	if len(d.EventKinds) != 6 {
-		t.Errorf("blend event_kinds = %v, want 6 kinds", d.EventKinds)
+	// The Backstop contracts fold in tagged Kind="module".
+	var modules int
+	for _, c := range d.Contracts {
+		if c.Kind == "module" {
+			modules++
+		}
+	}
+	if modules != 2 {
+		t.Errorf("blend roster should carry 2 module (Backstop) contracts, got %d: %+v", modules, d.Contracts)
+	}
+	// 6 pool/auction event kinds + the folded-in blend_backstop.event.
+	if len(d.EventKinds) != 7 {
+		t.Errorf("blend event_kinds = %v, want 7 kinds", d.EventKinds)
 	}
 	if d.VerificationPage != "docs/protocols/blend.md" {
 		t.Errorf("verification_page = %q", d.VerificationPage)
@@ -267,7 +282,15 @@ func TestHandleProtocols_NilReaderDegradation(t *testing.T) {
 		t.Fatalf("total = %d, want 15", env.Data.TotalProtocols)
 	}
 	for _, p := range env.Data.Protocols {
-		if p.ContractCount != 0 || p.Events24h != 0 || p.Completeness != nil {
+		// blend carries 2 statically-known Backstop module contracts
+		// (ExtraContracts) — like Factories, they're registry constants,
+		// not DB reads, so they survive nil readers. Its dynamic joins
+		// (events, completeness) still degrade to zero/absent.
+		wantContracts := 0
+		if p.Name == "blend" {
+			wantContracts = 2
+		}
+		if p.ContractCount != wantContracts || p.Events24h != 0 || p.Completeness != nil {
 			t.Errorf("%s should degrade to zeros: %+v", p.Name, p)
 		}
 	}

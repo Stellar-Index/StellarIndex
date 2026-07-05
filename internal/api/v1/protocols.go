@@ -371,7 +371,7 @@ func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 
 	view := ProtocolsView{Protocols: make([]ProtocolView, 0, len(protocolRegistry))}
 	for _, meta := range protocolRegistry {
-		contracts := s.protocolContracts(ctx, meta.Name)
+		contracts := s.protocolRoster(ctx, meta)
 		view.Protocols = append(view.Protocols,
 			buildProtocolView(meta, len(contracts), events, verdicts))
 	}
@@ -404,7 +404,7 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
 	view, ok := s.cachedProtocolDetail(ctx, meta.Name, func(c context.Context) ProtocolDetailView {
-		contracts := s.protocolContracts(c, meta.Name)
+		contracts := s.protocolRoster(c, meta)
 		classifyContractKinds(contracts, meta.Factories)
 		v := ProtocolDetailView{
 			ProtocolView:     buildProtocolView(meta, len(contracts), s.protocolEvents24h(c), s.protocolVerdicts(c)),
@@ -444,7 +444,8 @@ func (s *Server) enrichBespoke(ctx context.Context, meta ProtocolMeta, view *Pro
 
 // classifyContractKinds tags each roster contract as "factory" (it is one of
 // the protocol's verified trust-roots) or "instance" (a factory-deployed
-// pool/vault/market).
+// pool/vault/market). A contract already tagged (e.g. "module" for a folded-in
+// sub-module contract) keeps its tag — only untagged rows are set to "instance".
 func classifyContractKinds(contracts []ProtocolContractView, factories []string) {
 	fset := make(map[string]struct{}, len(factories))
 	for _, f := range factories {
@@ -453,10 +454,44 @@ func classifyContractKinds(contracts []ProtocolContractView, factories []string)
 	for i := range contracts {
 		if _, ok := fset[contracts[i].ContractID]; ok {
 			contracts[i].Kind = "factory"
-		} else {
+			continue
+		}
+		// Preserve a pre-set role (e.g. "module" for a folded-in sub-module
+		// contract); only untagged rows default to "instance".
+		if contracts[i].Kind == "" {
 			contracts[i].Kind = "instance"
 		}
 	}
+}
+
+// protocolRoster returns meta's full contract roster: the registry / soroswap-
+// pairs / projection contracts from protocolContracts, plus any ExtraContracts
+// folded in from a sub-module source (the Blend Backstop's contracts belong to
+// the Blend protocol page but live under the separate blend_backstop source).
+// Extras are tagged Kind="module"; because protocolContractIDs scopes the lake
+// analytics to every roster contract id, folding them here also pulls their
+// events into the breakdown / activity / per-contract counts. Deduped against
+// the base roster so a contract already present isn't doubled.
+func (s *Server) protocolRoster(ctx context.Context, meta ProtocolMeta) []ProtocolContractView {
+	rows := s.protocolContracts(ctx, meta.Name)
+	if len(meta.ExtraContracts) == 0 {
+		return rows
+	}
+	seen := make(map[string]struct{}, len(rows))
+	for _, c := range rows {
+		seen[c.ContractID] = struct{}{}
+	}
+	for _, id := range meta.ExtraContracts {
+		if id == "" {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		rows = append(rows, ProtocolContractView{ContractID: id, Kind: "module"})
+	}
+	return rows
 }
 
 // enrichProtocolAnalytics populates the lake-derived analytics on the detail
@@ -628,6 +663,13 @@ func (s *Server) protocolActivitySince(ctx context.Context) uint32 {
 // buildProtocolView projects one registry entry + the dynamic joins
 // into the directory wire shape.
 func buildProtocolView(meta ProtocolMeta, contractCount int, events map[string]int64, verdicts map[string]timescale.CompletenessSnapshot) ProtocolView {
+	events24h := events[meta.Name]
+	// Fold in any sub-module source's 24h count (e.g. blend_backstop into
+	// blend) so the protocol's headline event count reflects the whole
+	// surface the page now shows.
+	for _, src := range meta.ExtraEventSources {
+		events24h += events[src]
+	}
 	v := ProtocolView{
 		Name:          meta.Name,
 		Category:      meta.Category,
@@ -635,7 +677,7 @@ func buildProtocolView(meta ProtocolMeta, contractCount int, events map[string]i
 		GenesisLedger: meta.GenesisLedger,
 		Factories:     append([]string{}, meta.Factories...),
 		ContractCount: contractCount,
-		Events24h:     events[meta.Name],
+		Events24h:     events24h,
 	}
 	if sn, ok := verdicts[meta.Name]; ok {
 		v.Completeness = &ProtocolCompletenessView{
