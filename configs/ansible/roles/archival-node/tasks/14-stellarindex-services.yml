@@ -214,6 +214,16 @@
 # service fired by a systemd timer. R1 is the integrity leader; R2/R3
 # run verify-archive on a slower cadence (separate units, TBD).
 
+- name: stellarindex user reads the galexie report dir (diagnostics/archive endpoint)
+  # /var/lib/galexie is 750 galexie:galexie; the api's
+  # /v1/diagnostics/archive reads last-completeness-report.json from
+  # inside it. Group membership is the narrowest grant (vs 755 on a
+  # dir that also holds captive-core state).
+  ansible.builtin.user:
+    name: stellarindex
+    groups: galexie
+    append: true
+
 - name: galexie drop-in directory
   ansible.builtin.file:
     path: /etc/systemd/system/galexie.service.d
