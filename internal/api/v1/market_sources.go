@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
@@ -22,10 +23,14 @@ func parseFloatOr0(s string) float64 {
 
 // MarketSourceReader is the seam the /v1/markets/sources handler reads
 // through. timescale.Store satisfies it via PairSourceStats /
-// AssetSourceStats.
+// AssetSourceStats. Each asset argument is the full set of canonical
+// FORMS to match (the handler expands via assetAliases), so a
+// multi-form asset's legs — XLM's `native` (SDEX) and `crypto:XLM`
+// (CEX) — aggregate into one per-source breakdown instead of
+// undercounting whichever form the query named.
 type MarketSourceReader interface {
-	PairSourceStats(ctx context.Context, base, quote string) ([]timescale.SourceStats, error)
-	AssetSourceStats(ctx context.Context, asset string) ([]timescale.SourceStats, error)
+	PairSourceStats(ctx context.Context, base, quote []string) ([]timescale.SourceStats, error)
+	AssetSourceStats(ctx context.Context, asset []string) ([]timescale.SourceStats, error)
 }
 
 // SourceVolume is one source's trailing-24h contribution to a market
@@ -95,9 +100,10 @@ func (s *Server) handleMarketSources(w http.ResponseWriter, r *http.Request) {
 		err  error
 	)
 	if asset != "" {
-		rows, err = s.marketSources.AssetSourceStats(r.Context(), asset)
+		rows, err = s.marketSources.AssetSourceStats(r.Context(), sourceStatsAliases(asset))
 	} else {
-		rows, err = s.marketSources.PairSourceStats(r.Context(), base, quote)
+		rows, err = s.marketSources.PairSourceStats(r.Context(),
+			sourceStatsAliases(base), sourceStatsAliases(quote))
 	}
 	if err != nil {
 		s.logger.Warn("market sources", "err", err)
@@ -135,4 +141,25 @@ func (s *Server) handleMarketSources(w http.ResponseWriter, r *http.Request) {
 		out.Sources = append(out.Sources, sv)
 	}
 	writeJSON(w, out, Flags{})
+}
+
+// sourceStatsAliases expands a raw asset_id query param into every
+// canonical FORM the per-source aggregate should match, reusing the
+// price path's assetAliases (rc.89). XLM is the live multi-form case:
+// SDEX writes `native`, every CEX writes `crypto:XLM`, so filtering on
+// one form alone undercounts the market's volume-by-source split.
+// Falls back to the literal id when it doesn't parse as a canonical
+// asset, so a malformed param still produces a (single-form) query
+// rather than an error.
+func sourceStatsAliases(id string) []string {
+	a, err := canonical.ParseAsset(id)
+	if err != nil {
+		return []string{id}
+	}
+	forms := assetAliases(a)
+	out := make([]string, 0, len(forms))
+	for _, f := range forms {
+		out = append(out, f.String())
+	}
+	return out
 }
