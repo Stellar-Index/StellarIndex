@@ -795,21 +795,33 @@ func (s *Store) PairMarket(ctx context.Context, base, quote canonical.Asset) (Ma
 	// directly for one pair. BucketCloseAt is recomputed from the
 	// same value via time_bucket('1 day', …) so the wire shape
 	// matches /v1/markets (which sources it from prices_1d).
+	// Combine BOTH stored directions of the market (the SDEX decoder
+	// records XLM/USDC and USDC/XLM as separate rows) into the requested
+	// ($2, $3) orientation, matching /v1/markets (canonOrientSQL) and
+	// LatestClosedVWAP1mForPair. count_24h + vol_24h_usd sum across
+	// directions (USD volume is orientation-independent); last_price is
+	// the most-recent bucket's price re-expressed in the requested
+	// orientation (inverted for the flipped direction). See
+	// canonical.Orient.
 	const q = `
         SELECT MAX(t.ts) AS last_trade_at,
                count(*) FILTER (WHERE t.ts > NOW() - INTERVAL '24 hours') AS count_24h,
                (SELECT SUM(volume_usd)::text FROM prices_1m
-                 WHERE base_asset = $2 AND quote_asset = $3
+                 WHERE ((base_asset = $2 AND quote_asset = $3)
+                     OR (base_asset = $3 AND quote_asset = $2))
                    AND bucket >= NOW() - INTERVAL '24 hours'
                    AND volume_usd IS NOT NULL) AS vol_24h_usd,
-               (SELECT last_price::text FROM prices_1m
-                 WHERE base_asset = $2 AND quote_asset = $3
+               (SELECT (CASE WHEN base_asset = $2 THEN last_price
+                             ELSE 1.0 / NULLIF(last_price, 0) END)::text FROM prices_1m
+                 WHERE ((base_asset = $2 AND quote_asset = $3)
+                     OR (base_asset = $3 AND quote_asset = $2))
                    AND bucket >= NOW() - INTERVAL '24 hours'
                    AND last_price IS NOT NULL
                  ORDER BY bucket DESC LIMIT 1) AS last_price
           FROM trades t
          WHERE t.ts >= $1
-           AND t.base_asset = $2 AND t.quote_asset = $3
+           AND ((t.base_asset = $2 AND t.quote_asset = $3)
+             OR (t.base_asset = $3 AND t.quote_asset = $2))
     `
 	var (
 		lastAt    *time.Time

@@ -467,13 +467,25 @@ func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from,
 	if !to.After(from) {
 		return nil, fmt.Errorf("timescale: TimedVWAPsForPair1m: to %v <= from %v", to, from)
 	}
+	// Combine BOTH stored directions of the market into the requested
+	// ($1, $2) orientation — same fix as LatestClosedVWAP1mForPair. The
+	// SDEX decoder records the same market both ways (XLM/USDC and
+	// USDC/XLM); reading only (base=$1, quote=$2) fed the anomaly
+	// baseline half the liquidity (and no rows at all for minutes that
+	// traded only the flipped way). Per bucket we invert the flipped
+	// rows' vwap (1/vwap) and trade-count-weight, so every point
+	// expresses the price of $1 in $2. See canonical.Orient.
 	const q = `
-        SELECT vwap::float8, bucket + INTERVAL '1 minute'
+        SELECT (SUM((CASE WHEN base_asset = $1 THEN vwap
+                          ELSE 1.0 / NULLIF(vwap, 0) END) * COALESCE(trade_count, 0))
+                  / NULLIF(SUM(COALESCE(trade_count, 0)), 0))::float8 AS vwap,
+               bucket + INTERVAL '1 minute'
           FROM prices_1m
-         WHERE base_asset = $1
-           AND quote_asset = $2
+         WHERE ((base_asset = $1 AND quote_asset = $2)
+             OR (base_asset = $2 AND quote_asset = $1))
            AND bucket >= $3
            AND bucket <  $4
+         GROUP BY bucket
          ORDER BY bucket ASC
     `
 	rows, err := s.db.QueryContext(ctx, q,
@@ -517,13 +529,21 @@ func (s *Store) VWAPsForPair1m(ctx context.Context, p canonical.Pair, from, to t
 	if !to.After(from) {
 		return nil, fmt.Errorf("timescale: VWAPsForPair1m: to %v <= from %v", to, from)
 	}
+	// Combine BOTH stored directions into the requested ($1, $2)
+	// orientation (invert + trade-count-weight the flipped rows), so the
+	// 30-day baseline training window reflects the full market and not
+	// just the direction the CAGG happened to store. See
+	// TimedVWAPsForPair1m / canonical.Orient.
 	const q = `
-        SELECT vwap::float8
+        SELECT (SUM((CASE WHEN base_asset = $1 THEN vwap
+                          ELSE 1.0 / NULLIF(vwap, 0) END) * COALESCE(trade_count, 0))
+                  / NULLIF(SUM(COALESCE(trade_count, 0)), 0))::float8 AS vwap
           FROM prices_1m
-         WHERE base_asset = $1
-           AND quote_asset = $2
+         WHERE ((base_asset = $1 AND quote_asset = $2)
+             OR (base_asset = $2 AND quote_asset = $1))
            AND bucket >= $3
            AND bucket <  $4
+         GROUP BY bucket
          ORDER BY bucket ASC
     `
 	rows, err := s.db.QueryContext(ctx, q,
@@ -713,24 +733,48 @@ func (s *Store) OHLCSeries(
 	}
 	table := "prices_" + string(granularity)
 	interval := granularity.closedBucketInterval()
+	// Combine BOTH stored directions of the market into the requested
+	// ($1, $2) orientation (the SDEX decoder records XLM/USDC and
+	// USDC/XLM as separate rows). The `norm` CTE re-expresses each row in
+	// the requested orientation: flipped rows invert every price
+	// (1/price) — which SWAPS high↔low — and swap base↔quote volume. Then
+	// per bucket: high = max, low = min (order-independent extrema);
+	// open/close prefer the requested-direction row and fall back to the
+	// inverted flipped row (their intra-bucket ordering across directions
+	// is unknowable from the CAGG); base/quote volume + trade_count sum.
+	// See canonical.Orient / canonOrientSQL.
 	// #nosec G201 — table + interval are derived from the validated
 	// HistoryGranularity enum, not user input. See Validate.
 	q := fmt.Sprintf(`
+		WITH norm AS (
+		    SELECT
+		        bucket,
+		        (base_asset = $1) AS req,
+		        CASE WHEN base_asset = $1 THEN first_price ELSE 1.0 / NULLIF(first_price, 0) END AS o,
+		        CASE WHEN base_asset = $1 THEN last_price  ELSE 1.0 / NULLIF(last_price, 0)  END AS c,
+		        CASE WHEN base_asset = $1 THEN high_price  ELSE 1.0 / NULLIF(low_price, 0)   END AS hi,
+		        CASE WHEN base_asset = $1 THEN low_price   ELSE 1.0 / NULLIF(high_price, 0)  END AS lo,
+		        CASE WHEN base_asset = $1 THEN volume        ELSE vwap * volume END AS base_vol,
+		        CASE WHEN base_asset = $1 THEN vwap * volume ELSE volume        END AS quote_vol,
+		        trade_count AS tc
+		      FROM %s
+		     WHERE ((base_asset = $1 AND quote_asset = $2)
+		         OR (base_asset = $2 AND quote_asset = $1))
+		       AND bucket >= $3
+		       AND bucket <  $4
+		       AND bucket + INTERVAL '%s' <= now()
+		)
 		SELECT
 		    bucket,
-		    first_price::text,
-		    high_price::text,
-		    low_price::text,
-		    last_price::text,
-		    volume::text,
-		    (vwap * volume)::text,
-		    trade_count
-		  FROM %s
-		 WHERE base_asset = $1
-		   AND quote_asset = $2
-		   AND bucket >= $3
-		   AND bucket <  $4
-		   AND bucket + INTERVAL '%s' <= now()
+		    COALESCE((array_agg(o) FILTER (WHERE req))[1], (array_agg(o))[1])::text AS open,
+		    max(hi)::text                                                           AS high,
+		    min(lo)::text                                                           AS low,
+		    COALESCE((array_agg(c) FILTER (WHERE req))[1], (array_agg(c))[1])::text AS close,
+		    sum(base_vol)::text                                                     AS base_volume,
+		    sum(quote_vol)::text                                                    AS quote_volume,
+		    sum(tc)::bigint                                                         AS trade_count
+		  FROM norm
+		 GROUP BY bucket
 		 ORDER BY bucket ASC
 	`, table, interval)
 	args := []any{p.Base.String(), p.Quote.String(), from.UTC(), to.UTC()}
@@ -810,28 +854,57 @@ func (s *Store) OHLCSeriesReBucketed(
 		return nil, fmt.Errorf("timescale: OHLCSeriesReBucketed: outInterval %q not in allow-list", outInterval)
 	}
 	table := "prices_" + string(sourceGranularity)
+	// Combine BOTH stored directions of the market before re-bucketing:
+	// the `norm` CTE collapses each SOURCE bucket's two directions into
+	// one bar expressed in the requested ($1, $2) orientation (flipped
+	// rows invert prices — swapping high↔low — and swap base↔quote
+	// volume; open/close prefer the requested direction), and the outer
+	// query folds those normalized source bars into the coarser
+	// out_bucket. See OHLCSeries / canonical.Orient.
 	// #nosec G201 — table comes from the validated enum;
 	// outInterval comes from the allow-list above. No user input
 	// reaches the SQL string.
 	q := fmt.Sprintf(`
+		WITH norm AS (
+		    SELECT bucket,
+		           COALESCE((array_agg(o) FILTER (WHERE req))[1], (array_agg(o))[1]) AS open,
+		           max(hi) AS high,
+		           min(lo) AS low,
+		           COALESCE((array_agg(c) FILTER (WHERE req))[1], (array_agg(c))[1]) AS close,
+		           sum(base_vol)  AS base_vol,
+		           sum(quote_vol) AS quote_vol,
+		           sum(tc)        AS tc
+		      FROM (
+		        SELECT bucket, (base_asset = $1) AS req,
+		               CASE WHEN base_asset = $1 THEN first_price ELSE 1.0 / NULLIF(first_price, 0) END AS o,
+		               CASE WHEN base_asset = $1 THEN last_price  ELSE 1.0 / NULLIF(last_price, 0)  END AS c,
+		               CASE WHEN base_asset = $1 THEN high_price  ELSE 1.0 / NULLIF(low_price, 0)   END AS hi,
+		               CASE WHEN base_asset = $1 THEN low_price   ELSE 1.0 / NULLIF(high_price, 0)  END AS lo,
+		               CASE WHEN base_asset = $1 THEN volume        ELSE vwap * volume END AS base_vol,
+		               CASE WHEN base_asset = $1 THEN vwap * volume ELSE volume        END AS quote_vol,
+		               trade_count AS tc
+		          FROM %[1]s
+		         WHERE ((base_asset = $1 AND quote_asset = $2)
+		             OR (base_asset = $2 AND quote_asset = $1))
+		           AND bucket >= $3
+		           AND bucket <  $4
+		      ) raw
+		     GROUP BY bucket
+		)
 		SELECT
-		    time_bucket(INTERVAL '%s', bucket)                          AS out_bucket,
-		    (array_agg(first_price ORDER BY bucket ASC))[1]::text       AS open,
-		    max(high_price)::text                                       AS high,
-		    min(low_price)::text                                        AS low,
-		    (array_agg(last_price ORDER BY bucket DESC))[1]::text       AS close,
-		    sum(volume)::text                                           AS base_volume,
-		    sum(vwap * volume)::text                                    AS quote_volume,
-		    sum(trade_count)::bigint                                    AS trade_count
-		  FROM %s
-		 WHERE base_asset = $1
-		   AND quote_asset = $2
-		   AND bucket >= $3
-		   AND bucket <  $4
+		    time_bucket(INTERVAL '%[2]s', bucket)                       AS out_bucket,
+		    (array_agg(open  ORDER BY bucket ASC))[1]::text             AS open,
+		    max(high)::text                                             AS high,
+		    min(low)::text                                              AS low,
+		    (array_agg(close ORDER BY bucket DESC))[1]::text            AS close,
+		    sum(base_vol)::text                                         AS base_volume,
+		    sum(quote_vol)::text                                        AS quote_volume,
+		    sum(tc)::bigint                                             AS trade_count
+		  FROM norm
 		 GROUP BY out_bucket
-		 HAVING time_bucket(INTERVAL '%s', bucket) + INTERVAL '%s' <= now()
+		 HAVING time_bucket(INTERVAL '%[2]s', bucket) + INTERVAL '%[2]s' <= now()
 		 ORDER BY out_bucket ASC
-	`, outInterval, table, outInterval, outInterval)
+	`, table, outInterval)
 	args := []any{p.Base.String(), p.Quote.String(), from.UTC(), to.UTC()}
 	if limit > 0 {
 		q += fmt.Sprintf(" LIMIT $%d", len(args)+1)
