@@ -1,10 +1,56 @@
 package binance
 
 import (
+	_ "embed"
 	"fmt"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
+
+// pairsYAML is the declarative venue-pair table (see pairs.yaml for
+// the per-pair rationale). Embedded at compile time — editing the
+// YAML still means a rebuild + redeploy, exactly like the previous
+// Go-literal table; the YAML form is the 45b per-venue pattern:
+// pair set as reviewable data, constructor plumbing in one loader.
+//
+//go:embed pairs.yaml
+var pairsYAML []byte
+
+// pairsFile mirrors pairs.yaml's document shape.
+type pairsFile struct {
+	Pairs []pairSpec `yaml:"pairs"`
+}
+
+// pairSpec is one venue pair row: the Binance wire symbol plus the
+// canonical identity of each side. Class is load-bearing — fiat vs
+// crypto assets are distinct canonical types (e.g. BTCEUR quotes in
+// fiat EUR, not a hypothetical crypto "EUR").
+type pairSpec struct {
+	Symbol string    `yaml:"symbol"`
+	Base   assetSpec `yaml:"base"`
+	Quote  assetSpec `yaml:"quote"`
+}
+
+type assetSpec struct {
+	Code  string `yaml:"code"`
+	Class string `yaml:"class"`
+}
+
+// asset materialises the spec through the canonical constructors so
+// every code passes the same validation the old Go-literal table
+// got from calling them directly.
+func (a assetSpec) asset() (canonical.Asset, error) {
+	switch a.Class {
+	case "crypto":
+		return canonical.NewCryptoAsset(a.Code)
+	case "fiat":
+		return canonical.NewFiatAsset(a.Code)
+	default:
+		return canonical.Asset{}, fmt.Errorf("%s: unknown asset class %q (want crypto|fiat)", a.Code, a.Class)
+	}
+}
 
 // DefaultPairs returns the built-in pair map for Binance — the
 // common set we stream when the operator enables Binance in config
@@ -14,94 +60,37 @@ import (
 //
 // Returned map is Binance-symbol (uppercase, no separator) →
 // canonical.Pair. Passed into NewStreamer. Extending the set is a
-// one-line addition here; per-operator overrides land in config
-// in a follow-up PR.
-//
-// Pair rationale:
-//   - XLMUSDT — largest XLM market globally; canonical "XLM/USD" proxy
-//     once the aggregator's stablecoin-fiat table maps USDT→USD.
-//   - XLMBTC  — deep BTC-pair liquidity; triangulates for pairs we
-//     don't have direct routes to.
-//   - BTCUSDT — anchor for every crypto-derived rate in our triangulation
-//     graph.
-//   - ETHUSDT — second crypto anchor; needed for any ETH-quoted Soroban
-//     DEX pair.
-//   - {ADA,ATOM,AVAX,BCH,BNB,DASH,DOGE,DOT,LINK,LTC,NEAR,SHIB,SOL,
-//     TON,TRX,UNI,XRP}USDT — top-cap globals for cross-venue VWAP
-//     coverage. All verified TRADING on Binance via /exchangeInfo
-//     2026-05-05.
+// one-entry addition to pairs.yaml; per-operator overrides land in
+// config in a follow-up PR.
 func DefaultPairs() (map[string]canonical.Pair, error) {
-	xlm, err := canonical.NewCryptoAsset("XLM")
-	if err != nil {
-		return nil, fmt.Errorf("XLM: %w", err)
+	var f pairsFile
+	if err := yaml.Unmarshal(pairsYAML, &f); err != nil {
+		return nil, fmt.Errorf("binance pairs.yaml: %w", err)
 	}
-	btc, err := canonical.NewCryptoAsset("BTC")
-	if err != nil {
-		return nil, fmt.Errorf("BTC: %w", err)
+	if len(f.Pairs) == 0 {
+		return nil, fmt.Errorf("binance pairs.yaml: no pairs declared")
 	}
-	eth, err := canonical.NewCryptoAsset("ETH")
-	if err != nil {
-		return nil, fmt.Errorf("ETH: %w", err)
-	}
-	usdt, err := canonical.NewCryptoAsset("USDT")
-	if err != nil {
-		return nil, fmt.Errorf("USDT: %w", err)
-	}
-	eur, err := canonical.NewFiatAsset("EUR")
-	if err != nil {
-		return nil, fmt.Errorf("EUR: %w", err)
-	}
-	gbp, err := canonical.NewFiatAsset("GBP")
-	if err != nil {
-		return nil, fmt.Errorf("GBP: %w", err)
-	}
-
-	majors := []string{
-		"ADA", "ATOM", "AVAX", "BCH", "BNB", "DASH", "DOGE", "DOT",
-		"LINK", "LTC", "NEAR", "SHIB", "SOL", "TON", "TRX", "UNI", "XRP",
-	}
-	majorAssets := make(map[string]canonical.Asset, len(majors))
-	for _, code := range majors {
-		a, err := canonical.NewCryptoAsset(code)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", code, err)
+	out := make(map[string]canonical.Pair, len(f.Pairs))
+	for _, p := range f.Pairs {
+		if p.Symbol == "" {
+			return nil, fmt.Errorf("binance pairs.yaml: entry with empty symbol")
 		}
-		majorAssets[code] = a
-	}
-
-	pairs := []struct {
-		symbol string
-		base   canonical.Asset
-		quote  canonical.Asset
-	}{
-		{"XLMUSDT", xlm, usdt},
-		{"XLMBTC", xlm, btc},
-		// BTC + ETH cross-fiat (2026-05-14): Binance supports BTCEUR
-		// + ETHEUR + BTCGBP + ETHGBP natively. Adding so multi-source
-		// VWAP works on the most-asked-for fiat conversions (the only
-		// pre-fix venue publishing BTC/EUR was Bitstamp).
-		{"BTCUSDT", btc, usdt},
-		{"BTCEUR", btc, eur},
-		{"BTCGBP", btc, gbp},
-		{"ETHUSDT", eth, usdt},
-		{"ETHEUR", eth, eur},
-		{"ETHGBP", eth, gbp},
-	}
-	for _, code := range majors {
-		pairs = append(pairs, struct {
-			symbol string
-			base   canonical.Asset
-			quote  canonical.Asset
-		}{code + "USDT", majorAssets[code], usdt})
-	}
-
-	out := make(map[string]canonical.Pair, len(pairs))
-	for _, p := range pairs {
-		pair, err := canonical.NewPair(p.base, p.quote)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", p.symbol, err)
+		if _, dup := out[p.Symbol]; dup {
+			return nil, fmt.Errorf("binance pairs.yaml: duplicate symbol %s", p.Symbol)
 		}
-		out[p.symbol] = pair
+		base, err := p.Base.asset()
+		if err != nil {
+			return nil, fmt.Errorf("%s base: %w", p.Symbol, err)
+		}
+		quote, err := p.Quote.asset()
+		if err != nil {
+			return nil, fmt.Errorf("%s quote: %w", p.Symbol, err)
+		}
+		pair, err := canonical.NewPair(base, quote)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", p.Symbol, err)
+		}
+		out[p.Symbol] = pair
 	}
 	return out, nil
 }

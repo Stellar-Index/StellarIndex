@@ -70,9 +70,10 @@ type stalledCursorPlan struct {
 // soroban-aware source list. A stalled cursor whose decoder CSV
 // contains any of these names is gated against the data-gap list
 // from FindSorobanEventsLedgerGaps. SDEX (classic) is intentionally
-// NOT in this list — its gap detection is a follow-up and requires
-// a different statistical threshold (SDEX trade density across
-// history is bursty in a way Soroban activity isn't).
+// NOT in this list — it doesn't flow through soroban_events, so
+// SDEX-only plans are gated separately against the per-source
+// trades[source='sdex'] gap scan (see classicGapGate), scoped to
+// the served-tier retention window per ADR-0034.
 var sorobanDecoderNames = map[string]struct{}{
 	"aquarius":        {},
 	"band":            {},
@@ -110,32 +111,96 @@ func planHasSorobanDecoder(sources []string) bool {
 	return false
 }
 
+// classicGapGate carries the data-derived gate inputs for classic
+// (SDEX-only) plans. Built lazily by buildClassicGapGate — only when
+// at least one classic-only plan survives parsing — because the
+// trades[source='sdex'] gap scan is the heaviest per-source scan the
+// gap detector runs (that's why its detector cadence is 6h).
+//
+// available=false means the gate couldn't be built (no served sdex
+// rows, or the sdex target vanished from DefaultGapDetectorTargets);
+// classic plans then fall back to the conservative blanket skip.
+type classicGapGate struct {
+	available bool
+	// floor is the oldest served sdex ledger — the served-tier
+	// retention boundary (ADR-0034: trades holds the recent working
+	// set; full history lives in the CH lake). Gap scans below the
+	// floor would report retention artifacts as gaps, so both the
+	// scan and the gate are clamped to [floor, tip].
+	floor uint32
+	gaps  []timescale.LedgerGap
+}
+
+// sdexGapTarget returns the gap detector's registered sdex/trades
+// target so the resume gate reuses the exact same scan definition
+// (table, WhereFilter, genesis) as the 6h detector cycle.
+func sdexGapTarget() (timescale.GapDetectorTarget, bool) {
+	for _, t := range timescale.DefaultGapDetectorTargets {
+		if t.Source == "sdex" && t.Table == "trades" {
+			return t, true
+		}
+	}
+	return timescale.GapDetectorTarget{}, false
+}
+
+// buildClassicGapGate runs the data-derived SDEX gap scan for the
+// classic-plan gate: floor at the actual retained boundary (mirrors
+// compute-completeness's retentionFloor — drop_chunks can retain
+// less than any nominal window, and census-vs-served below the
+// oldest chunk is a retention artifact, not a gap), then
+// FindPerSourceLedgerGaps over [floor, tip].
+func buildClassicGapGate(ctx context.Context, store *timescale.Store, tip uint32, minGapSize int64) (classicGapGate, error) {
+	target, ok := sdexGapTarget()
+	if !ok || tip == 0 {
+		return classicGapGate{}, nil
+	}
+	floor, ok, err := store.MinLedger(ctx, target.Table, target.LedgerColumn, target.WhereFilter, uint32(target.Genesis), tip) //nolint:gosec // sdex genesis is 2
+	if err != nil {
+		return classicGapGate{}, err
+	}
+	if !ok {
+		return classicGapGate{}, nil // no served sdex rows at all — can't gate
+	}
+	gaps, err := store.FindPerSourceLedgerGaps(ctx, target, int64(floor), int64(tip), minGapSize)
+	if err != nil {
+		return classicGapGate{}, err
+	}
+	return classicGapGate{available: true, floor: floor, gaps: gaps}, nil
+}
+
+// anyClassicOnlyPlan reports whether any parsed, not-yet-skipped
+// plan has no Soroban decoder — i.e. whether the SDEX gap scan is
+// needed at all this run.
+func anyClassicOnlyPlan(plans []stalledCursorPlan) bool {
+	for _, p := range plans {
+		if !p.skip && !planHasSorobanDecoder(p.sources) {
+			return true
+		}
+	}
+	return false
+}
+
 // gateAgainstDataGaps narrows the actionable plan list to those
-// whose remaining range overlaps a real data-gap. For Soroban-era
-// plans we have data-derived ground truth (soroban_events
-// FindSorobanEventsLedgerGaps); for SDEX-only plans we currently
-// don't, so they're skipped with `data-gap detection not available
-// for SDEX` unless --force-classic-cursors is set.
+// whose remaining range overlaps a real data-gap. Soroban-era plans
+// gate against soroban_events ground truth
+// (FindSorobanEventsLedgerGaps); SDEX-only plans gate against the
+// per-source trades[source='sdex'] scan carried in classic
+// (retention-scoped — see classicGapGate).
 //
 // This is the F-0020 follow-up fix to resume-stalled: the original
 // dry-run on r1 surfaced 50 "actionable" plans, most of which were
 // false positives — sibling cursors had already completed the work
 // and the data was in trades / soroban_events. Walking them would
 // have been days of redundant LCM I/O.
-func gateAgainstDataGaps(plans []stalledCursorPlan, gaps []timescale.LedgerGap, forceClassic bool) []stalledCursorPlan {
+func gateAgainstDataGaps(plans []stalledCursorPlan, gaps []timescale.LedgerGap, classic classicGapGate, forceClassic bool) []stalledCursorPlan {
 	out := make([]stalledCursorPlan, len(plans))
 	copy(out, plans)
 	for i := range out {
 		if out[i].skip {
 			continue
 		}
-		hasSoroban := planHasSorobanDecoder(out[i].sources)
-		if !hasSoroban {
-			if forceClassic {
-				continue // operator opt-in: trust cursor inventory for SDEX
-			}
-			out[i].skip = true
-			out[i].skipReason = "data-derived gap detection not yet implemented for non-Soroban decoders (SDEX). Pass --force-classic-cursors to act on cursor inventory alone."
+		if !planHasSorobanDecoder(out[i].sources) {
+			gateClassicPlan(&out[i], classic, forceClassic)
 			continue
 		}
 		if !overlapsAnyDataGap(out[i].rangeFrom, out[i].rangeTo, gaps) {
@@ -144,6 +209,29 @@ func gateAgainstDataGaps(plans []stalledCursorPlan, gaps []timescale.LedgerGap, 
 		}
 	}
 	return out
+}
+
+// gateClassicPlan applies the SDEX data-derived gate to one
+// classic-only plan. Decision order matters: the no-gap check runs
+// before the below-floor-start check so a gapless plan gets the
+// accurate "false-positive" reason rather than a retention one.
+func gateClassicPlan(p *stalledCursorPlan, classic classicGapGate, forceClassic bool) {
+	switch {
+	case forceClassic:
+		// operator opt-in: trust cursor inventory for SDEX
+	case !classic.available:
+		p.skip = true
+		p.skipReason = "sdex data-gap gate unavailable (no served sdex rows, or the sdex gap-detector target is missing). Pass --force-classic-cursors to act on cursor inventory alone."
+	case p.rangeTo < classic.floor:
+		p.skip = true
+		p.skipReason = fmt.Sprintf("remaining range entirely below the served-tier trades retention floor (%d) — full history lives in the CH lake (ADR-0034); re-derive via ch-rebuild, not backfill", classic.floor)
+	case !overlapsAnyDataGap(max(p.rangeFrom, classic.floor), p.rangeTo, classic.gaps):
+		p.skip = true
+		p.skipReason = "remaining range has no sdex data gap in trades within the retained window — cursor inventory false-positive"
+	case p.rangeFrom < classic.floor:
+		p.skip = true
+		p.skipReason = fmt.Sprintf("overlaps an sdex data gap but starts below the retention floor (%d) — a resume would re-walk retention-dropped ledgers; review, then pass --force-classic-cursors if the cursor inventory is right", classic.floor)
+	}
 }
 
 // overlapsAnyDataGap returns true if [from, to] intersects any gap
@@ -248,9 +336,10 @@ func parseResumeStalledFlags(args []string) (resumeStalledOpts, config.Config, e
 		"forward to runBackfillChunk's CAGG-refresh path")
 	fs.BoolVar(&opts.forceClassic, "force-classic-cursors", false,
 		"act on SDEX-only stalled cursors using cursor-inventory alone, "+
-			"bypassing the data-derived gap gate")
+			"bypassing the data-derived gap gate (incl. the retention-floor guard)")
 	fs.Int64Var(&opts.dataGapMinSize, "data-gap-min-size", int64(timescale.GapDetectorMinGapSize),
-		"threshold passed to FindSorobanEventsLedgerGaps for the data-gap gate")
+		"minimum contiguous gap size for both data-gap gates "+
+			"(soroban_events for Soroban plans; trades[source='sdex'] for SDEX-only plans)")
 	if err := fs.Parse(args); err != nil {
 		return opts, cfg, err
 	}
@@ -314,7 +403,19 @@ func resumeStalled(args []string) error {
 	if err != nil {
 		return fmt.Errorf("find data gaps for gate: %w", err)
 	}
-	plans = gateAgainstDataGaps(plans, dataGaps, opts.forceClassic)
+	// SDEX-only plans get their own data-derived gate (trades
+	// doesn't flow through soroban_events). The scan is the gap
+	// detector's heaviest, so build it only when a classic-only
+	// plan actually needs gating and the operator hasn't opted
+	// out via --force-classic-cursors.
+	var classicGate classicGapGate
+	if !opts.forceClassic && anyClassicOnlyPlan(plans) {
+		classicGate, err = buildClassicGapGate(rootCtx, store, tipCursor.LastLedger, opts.dataGapMinSize)
+		if err != nil {
+			return fmt.Errorf("sdex data-gap gate: %w", err)
+		}
+	}
+	plans = gateAgainstDataGaps(plans, dataGaps, classicGate, opts.forceClassic)
 
 	actionable := 0
 	for _, p := range plans {

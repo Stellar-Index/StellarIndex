@@ -266,7 +266,8 @@ func TestGateAgainstDataGaps_HappyPath(t *testing.T) {
 			sources:   []string{"soroswap"},
 		},
 		{
-			// SDEX-only cursor — skipped by default (no SDEX gap detector).
+			// SDEX-only cursor — skipped when the SDEX gate is
+			// unavailable (classicGapGate zero value).
 			cursor:    timescale.Cursor{Sub: "2-15300000:sdex"},
 			rangeFrom: 98334,
 			rangeTo:   15300000,
@@ -280,7 +281,7 @@ func TestGateAgainstDataGaps_HappyPath(t *testing.T) {
 		},
 	}
 
-	out := gateAgainstDataGaps(plans, gaps, false)
+	out := gateAgainstDataGaps(plans, gaps, classicGapGate{}, false)
 
 	// out[0] is the actionable real-gap one — gate should keep it un-skipped.
 	if out[0].skip {
@@ -296,10 +297,10 @@ func TestGateAgainstDataGaps_HappyPath(t *testing.T) {
 		t.Errorf("plan[1] skip reason should mention false-positive; got %q", out[1].skipReason)
 	}
 	if !out[2].skip {
-		t.Errorf("plan[2] sdex-only should be skipped by default; got actionable")
+		t.Errorf("plan[2] sdex-only should be skipped when the sdex gate is unavailable; got actionable")
 	}
-	if !strings.Contains(out[2].skipReason, "not yet implemented for non-Soroban") {
-		t.Errorf("plan[2] skip reason should mention SDEX gap-detector follow-up; got %q", out[2].skipReason)
+	if !strings.Contains(out[2].skipReason, "sdex data-gap gate unavailable") {
+		t.Errorf("plan[2] skip reason should mention the unavailable SDEX gate; got %q", out[2].skipReason)
 	}
 	if !out[3].skip || out[3].skipReason != "doesn't match shape" {
 		t.Errorf("plan[3] pre-existing skip should be untouched by the gate; got skip=%v reason=%q", out[3].skip, out[3].skipReason)
@@ -321,9 +322,90 @@ func TestGateAgainstDataGaps_ForceClassic(t *testing.T) {
 			sources:   []string{"sdex"},
 		},
 	}
-	out := gateAgainstDataGaps(plans, nil, true) // forceClassic=true
+	out := gateAgainstDataGaps(plans, nil, classicGapGate{}, true) // forceClassic=true
 	if out[0].skip {
 		t.Errorf("with --force-classic-cursors the SDEX plan must stay actionable; got skip=%v reason=%q", out[0].skip, out[0].skipReason)
+	}
+}
+
+// TestGateClassicPlan_DataDerived pins the SDEX data-derived gate's
+// decision table: with an available classicGapGate, SDEX-only plans
+// are gated by (a) the served-tier retention floor and (b) real gap
+// overlap in trades[source='sdex'] — instead of the historical
+// blanket "not implemented for non-Soroban" skip.
+func TestGateClassicPlan_DataDerived(t *testing.T) {
+	gate := classicGapGate{
+		available: true,
+		floor:     61_000_000,
+		gaps: []timescale.LedgerGap{
+			{Start: 62_000_000, End: 62_100_000, Size: 100_001},
+		},
+	}
+	cases := []struct {
+		name       string
+		from, to   uint32
+		wantSkip   bool
+		wantReason string // substring; empty = actionable
+	}{
+		{
+			name: "overlaps a real sdex gap, fully inside retained window",
+			from: 61_950_000, to: 62_050_000,
+			wantSkip: false,
+		},
+		{
+			name: "inside retained window but no gap overlap — false positive",
+			from: 61_100_000, to: 61_500_000,
+			wantSkip: true, wantReason: "no sdex data gap",
+		},
+		{
+			name: "entirely below the retention floor",
+			from: 50_000_000, to: 60_000_000,
+			wantSkip: true, wantReason: "below the served-tier trades retention floor",
+		},
+		{
+			name: "straddles the floor and overlaps a gap — needs review",
+			from: 60_000_000, to: 62_050_000,
+			wantSkip: true, wantReason: "starts below the retention floor",
+		},
+		{
+			name: "straddles the floor, no gap above it — false-positive reason wins",
+			from: 60_000_000, to: 61_500_000,
+			wantSkip: true, wantReason: "no sdex data gap",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := stalledCursorPlan{
+				cursor:    timescale.Cursor{Sub: "x:sdex"},
+				rangeFrom: tc.from,
+				rangeTo:   tc.to,
+				sources:   []string{"sdex"},
+			}
+			gateClassicPlan(&p, gate, false)
+			if p.skip != tc.wantSkip {
+				t.Fatalf("skip=%v want %v (reason=%q)", p.skip, tc.wantSkip, p.skipReason)
+			}
+			if tc.wantSkip && !strings.Contains(p.skipReason, tc.wantReason) {
+				t.Errorf("skip reason %q missing %q", p.skipReason, tc.wantReason)
+			}
+		})
+	}
+}
+
+// TestSdexGapTarget guards the registry coupling: the classic gate
+// reuses the gap detector's sdex/trades target definition, so if
+// that target is ever renamed or removed the gate silently degrades
+// to the blanket skip — this test makes that a loud failure instead.
+func TestSdexGapTarget(t *testing.T) {
+	target, ok := sdexGapTarget()
+	if !ok {
+		t.Fatal("sdex/trades target missing from timescale.DefaultGapDetectorTargets")
+	}
+	if target.WhereFilter == "" {
+		t.Error("sdex target must carry a WhereFilter (trades holds many sources)")
+	}
+	if target.LedgerColumn == "" {
+		t.Error("sdex target must declare its ledger column")
 	}
 }
 

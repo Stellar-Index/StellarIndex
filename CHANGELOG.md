@@ -115,6 +115,24 @@ against.
   Closes audit CS-099.
 
 ### Changed
+- **`resume-stalled` now data-gap-gates SDEX-only cursors instead of
+  blanket-skipping them** (BACKLOG 45b): classic plans gate against
+  the gap detector's own `trades[source='sdex']` per-source scan,
+  floored at the actual served-tier retention boundary (ADR-0034 —
+  below-floor ranges are lake territory, `ch-rebuild` not backfill),
+  built lazily only when a classic-only plan survives parsing.
+  Outcomes: actionable on real gap overlap, false-positive skip,
+  below-floor skip, straddling-floor review skip;
+  `--force-classic-cursors` unchanged as the bypass.
+- **Binance default pairs moved to an embedded `pairs.yaml`**
+  (BACKLOG 45b per-venue pattern): behavior-identical swap
+  (golden test pins the exact prior map incl. asset classes);
+  adding a pair is now a data edit. Still compile-time — runtime
+  overrides remain the config follow-up. Verify-first verdicts for
+  the rest of the 45b cluster (incl. stale-claim closures for the
+  freeze-recovery worker and trades composite index, and the
+  completeness-preseed design note):
+  `docs/operations/45b-verify-first-findings.md`.
 - **Maintainability tier-3 structural refactors** (BACKLOG #47,
   maintainability audit D1/D3/D8; behavior-preserving, no wire or
   schema changes):

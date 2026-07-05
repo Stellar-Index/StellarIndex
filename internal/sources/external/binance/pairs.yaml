@@ -1,0 +1,102 @@
+# Binance default pair map — the built-in set we stream when the
+# operator enables Binance in config without specifying a pair list.
+# Embedded into the binary via //go:embed (see pairs.go); editing this
+# file still requires a rebuild + redeploy — it is NOT a runtime
+# config surface. What the YAML buys is a declarative, reviewable
+# venue-pair table (the pattern for other venues, per 45b): adding a
+# pair is a data edit here, not Go plumbing.
+#
+# Shape: symbol is the Binance wire symbol (uppercase, no separator);
+# base/quote carry the canonical asset code + class (crypto | fiat).
+#
+# Pair rationale:
+#   - XLMUSDT — largest XLM market globally; canonical "XLM/USD" proxy
+#     once the aggregator's stablecoin-fiat table maps USDT→USD.
+#   - XLMBTC  — deep BTC-pair liquidity; triangulates for pairs we
+#     don't have direct routes to.
+#   - BTCUSDT — anchor for every crypto-derived rate in our
+#     triangulation graph.
+#   - ETHUSDT — second crypto anchor; needed for any ETH-quoted
+#     Soroban DEX pair.
+#   - BTC/ETH × EUR/GBP (2026-05-14): Binance supports these natively;
+#     added so multi-source VWAP works on the most-asked-for fiat
+#     conversions (the only pre-fix venue publishing BTC/EUR was
+#     Bitstamp).
+#   - <major>USDT — top-cap globals for cross-venue VWAP coverage.
+#     All verified TRADING on Binance via /exchangeInfo 2026-05-05.
+pairs:
+  - symbol: XLMUSDT
+    base: { code: XLM, class: crypto }
+    quote: { code: USDT, class: crypto }
+  - symbol: XLMBTC
+    base: { code: XLM, class: crypto }
+    quote: { code: BTC, class: crypto }
+  - symbol: BTCUSDT
+    base: { code: BTC, class: crypto }
+    quote: { code: USDT, class: crypto }
+  - symbol: BTCEUR
+    base: { code: BTC, class: crypto }
+    quote: { code: EUR, class: fiat }
+  - symbol: BTCGBP
+    base: { code: BTC, class: crypto }
+    quote: { code: GBP, class: fiat }
+  - symbol: ETHUSDT
+    base: { code: ETH, class: crypto }
+    quote: { code: USDT, class: crypto }
+  - symbol: ETHEUR
+    base: { code: ETH, class: crypto }
+    quote: { code: EUR, class: fiat }
+  - symbol: ETHGBP
+    base: { code: ETH, class: crypto }
+    quote: { code: GBP, class: fiat }
+  - symbol: ADAUSDT
+    base: { code: ADA, class: crypto }
+    quote: { code: USDT, class: crypto }
+  - symbol: ATOMUSDT
+    base: { code: ATOM, class: crypto }
+    quote: { code: USDT, class: crypto }
+  - symbol: AVAXUSDT
+    base: { code: AVAX, class: crypto }
+    quote: { code: USDT, class: crypto }
+  - symbol: BCHUSDT
+    base: { code: BCH, class: crypto }
+    quote: { code: USDT, class: crypto }
+  - symbol: BNBUSDT
+    base: { code: BNB, class: crypto }
+    quote: { code: USDT, class: crypto }
+  - symbol: DASHUSDT
+    base: { code: DASH, class: crypto }
+    quote: { code: USDT, class: crypto }
+  - symbol: DOGEUSDT
+    base: { code: DOGE, class: crypto }
+    quote: { code: USDT, class: crypto }
+  - symbol: DOTUSDT
+    base: { code: DOT, class: crypto }
+    quote: { code: USDT, class: crypto }
+  - symbol: LINKUSDT
+    base: { code: LINK, class: crypto }
+    quote: { code: USDT, class: crypto }
+  - symbol: LTCUSDT
+    base: { code: LTC, class: crypto }
+    quote: { code: USDT, class: crypto }
+  - symbol: NEARUSDT
+    base: { code: NEAR, class: crypto }
+    quote: { code: USDT, class: crypto }
+  - symbol: SHIBUSDT
+    base: { code: SHIB, class: crypto }
+    quote: { code: USDT, class: crypto }
+  - symbol: SOLUSDT
+    base: { code: SOL, class: crypto }
+    quote: { code: USDT, class: crypto }
+  - symbol: TONUSDT
+    base: { code: TON, class: crypto }
+    quote: { code: USDT, class: crypto }
+  - symbol: TRXUSDT
+    base: { code: TRX, class: crypto }
+    quote: { code: USDT, class: crypto }
+  - symbol: UNIUSDT
+    base: { code: UNI, class: crypto }
+    quote: { code: USDT, class: crypto }
+  - symbol: XRPUSDT
+    base: { code: XRP, class: crypto }
+    quote: { code: USDT, class: crypto }
