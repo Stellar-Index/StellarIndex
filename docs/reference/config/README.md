@@ -246,6 +246,14 @@ the `env:` column.
 | `price_alerts.enabled` | `bool` | `false` | — | Start the price-alert evaluator loop in the aggregator. Off by default. |
 | `price_alerts.interval_seconds` | `int` | `30` | — | Sweep cadence in seconds between price-alert evaluation passes. 0 = library default (30s). |
 
+### `[signup_reaper]`
+
+| Key | Type | Default | Env override | Description |
+| --- | ---- | ------- | ------------ | ----------- |
+| `signup_reaper.enabled` | `bool` | `true` | — | Start the speculative-account reaper loop in the API binary. On by default — the reaped rows (Suspended signup-race orphans with no user/key) are pure garbage. Set false to disable. |
+| `signup_reaper.interval_minutes` | `int` | `60` | — | Minutes between reaper sweeps. 0 = library default (60). |
+| `signup_reaper.min_age_minutes` | `int` | `1440` | — | Minimum minutes a suspended orphan must age before the reaper deletes it (safety window). 0 = library default (1440 = 24h). |
+
 ### `[obs]`
 
 | Key | Type | Default | Env override | Description |

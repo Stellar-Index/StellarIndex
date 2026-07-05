@@ -137,6 +137,10 @@ func registerAppMetricsTail() {
 
 		PriceAlertEvalTotal,
 		PriceAlertEvalDurationSeconds,
+
+		SignupReaperRunsTotal,
+		SignupReaperRunDurationSeconds,
+		SignupReaperRowsDeletedTotal,
 	)
 
 	// F-0033 closure: pre-seed zero-valued series for the
@@ -173,6 +177,9 @@ func registerAppMetricsTail() {
 	}
 	for _, outcome := range []string{"ok", "list_error", "partial_error"} {
 		PriceAlertEvalTotal.WithLabelValues(outcome)
+	}
+	for _, outcome := range []string{"ok", "error"} {
+		SignupReaperRunsTotal.WithLabelValues(outcome)
 	}
 }
 
@@ -883,6 +890,55 @@ var PriceAlertEvalDurationSeconds = prometheus.NewHistogramVec(
 		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 	},
 	[]string{"outcome"},
+)
+
+// SignupReaperRunsTotal — per-sweep outcome counter for the API
+// binary's speculative-account reaper (internal/signupreaper, F-1255),
+// which deletes orphan `accounts` rows left behind when two concurrent
+// /v1/auth/callback provisions raced for the same just-verified email:
+// the loser's account is marked Suspended with a `signup-race:` reason
+// and never gets a user attached. Labels:
+//
+//   - `ok`    — the reap DELETE ran (deleting 0-N rows; a no-op sweep
+//     with nothing to reap is still `ok`).
+//   - `error` — the DELETE failed (Postgres unreachable / query error);
+//     retried next tick, orphans stay put until it recovers.
+//
+// A sustained `error` rate means orphans accumulate unbounded — a slow
+// leak, not an outage. Alert: divergence-shaped `error` > `ok` guard in
+// the signup-reaper rule group.
+var SignupReaperRunsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_signup_reaper_runs_total",
+		Help: "Speculative-account reaper sweep outcomes (ok|error).",
+	},
+	[]string{"outcome"},
+)
+
+// SignupReaperRunDurationSeconds — latency histogram for one reaper
+// sweep (a single bounded DELETE), labelled by outcome (matches the
+// counter). Buckets 5 ms → 30 s: the DELETE touches a tiny, indexed
+// set (suspended signup-race orphans) so a healthy sweep is a few ms;
+// the wide tail catches a degraded / lock-contended Postgres.
+var SignupReaperRunDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_signup_reaper_run_duration_seconds",
+		Help:    "Speculative-account reaper sweep latency, labelled by outcome (ok|error).",
+		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	},
+	[]string{"outcome"},
+)
+
+// SignupReaperRowsDeletedTotal — cumulative count of orphan accounts
+// the reaper has deleted. Unlabelled: a monotonically-climbing counter
+// operators chart as a rate to see the signup-race orphan production
+// rate (steady non-zero = a race is firing regularly; investigate the
+// /v1/auth/callback provisioning path per F-1255).
+var SignupReaperRowsDeletedTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_signup_reaper_rows_deleted_total",
+		Help: "Cumulative speculative (signup-race) orphan accounts deleted by the reaper.",
+	},
 )
 
 // MEVDetectRunsTotal — per-run outcome counter for the aggregator's

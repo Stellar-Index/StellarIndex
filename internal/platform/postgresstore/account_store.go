@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -212,6 +214,53 @@ func (r *AccountStore) Unsuspend(ctx context.Context, id uuid.UUID) error {
 		return platform.ErrNotFound
 	}
 	return nil
+}
+
+// ReapSuspendedOrphans hard-deletes speculative-account orphans: rows
+// that were Suspended with a `suspended_reason` starting with
+// reasonPrefix (the `signup-race:` marker the F-1255 lost-race
+// recovery path stamps on the losing account) and suspended strictly
+// before olderThan.
+//
+// The predicate is deliberately conservative. Beyond the exact-reason
+// + age-threshold match it additionally requires the account to have
+// NO child users AND NO api_keys. A lost signup-race orphan has
+// neither by construction — its `CreateUser` lost the `users_email_idx`
+// race, so no user (and therefore no dashboard key) was ever attached.
+// The NOT EXISTS guards make the delete self-evidently safe for a
+// human reviewer AND sidestep the `users` / `api_keys`
+// `ON DELETE RESTRICT` foreign keys (migration 0027), which would
+// otherwise abort the whole batch if a single row were ever
+// mislabelled. Returns the number of rows deleted.
+//
+// reasonPrefix is matched with `LIKE '<escaped-prefix>%'`; callers
+// pass a fixed package constant (signupreaper.SignupRaceReasonPrefix),
+// and any LIKE metacharacters in it are escaped, so there is no
+// pattern-injection surface.
+func (r *AccountStore) ReapSuspendedOrphans(ctx context.Context, reasonPrefix string, olderThan time.Time) (int64, error) {
+	const q = `
+		DELETE FROM accounts a
+		WHERE a.status = 'suspended'
+		  AND a.suspended_reason LIKE $1 ESCAPE '\'
+		  AND a.suspended_at IS NOT NULL
+		  AND a.suspended_at < $2
+		  AND NOT EXISTS (SELECT 1 FROM users u WHERE u.account_id = a.id)
+		  AND NOT EXISTS (SELECT 1 FROM api_keys k WHERE k.account_id = a.id)
+	`
+	res, err := r.s.db.ExecContext(ctx, q, likePrefixPattern(reasonPrefix), olderThan)
+	if err != nil {
+		return 0, fmt.Errorf("reap suspended orphans: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// likePrefixPattern escapes LIKE metacharacters in p and appends `%`
+// so the result matches "starts with p literally". Backslash is the
+// ESCAPE char (Postgres default, made explicit in the query).
+func likePrefixPattern(p string) string {
+	esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(p)
+	return esc + "%"
 }
 
 // Compile-time interface check.
