@@ -357,6 +357,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/status/notices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Active operator-posted status banners.
+         * @description The public list of ACTIVE, human-authored status banners an
+         *     operator posted for a maintenance window or an unfolding
+         *     incident (admin Phase 1.5 incident tooling). The status page
+         *     renders these alongside the Alertmanager-derived `incidents`
+         *     block on GET /v1/status. Distinct from GET /v1/incidents, which
+         *     serves the historical post-mortem corpus.
+         *
+         *     Anonymous-friendly. Returns `{"notices":[],"count":0}` (never
+         *     null) when no banners are active or the notice store is unwired.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Active status-notice list. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StatusNoticesEnvelope"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/assets": {
         parameters: {
             query?: never;
@@ -7314,6 +7361,307 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/accounts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Operator — read an account's tier + overrides.
+         * @description Returns the account-level tier plus the per-account
+         *     `rate_limit_per_min_override` / `monthly_request_quota_override`
+         *     (0 = inherit tier default). Operator-tier only; read-only (not
+         *     audit-logged — the audit log records mutations, not reads).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Platform account UUID. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Account view. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AdminAccountEnvelope"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                /** @description Caller is not operator-tier. */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Operator — set an account's tier + rate-limit / quota overrides.
+         * @description Sets the account plan tier and/or the per-account
+         *     `rate_limit_per_min_override` / `monthly_request_quota_override`
+         *     (admin Phase 1.5). All three fields are optional; at least one
+         *     must be present. An override value of `0` clears it (inherit the
+         *     tier default). The rate-limit override acts as an account-wide
+         *     floor applied by the Postgres API-key validator on the next
+         *     Lookup — it raises keys budgeted below it, never lowers a key
+         *     budgeted above.
+         *
+         *     Operator-tier only (staff-issued via stellarindex-ops; never
+         *     granted to public callers) — other tiers 403. Requires an
+         *     `X-Reason` header captured into the audit log; every successful
+         *     mutation lands an `account.override.set` audit row (staff actor)
+         *     when the deployment wires the audit store.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header: {
+                    /** @description Free-form reason captured into the audit log. */
+                    "X-Reason": string;
+                };
+                path: {
+                    /** @description Platform account UUID. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        tier?: "free" | "starter" | "pro" | "business" | "enterprise";
+                        /** @description 0 clears the override (inherit tier default). */
+                        rate_limit_per_min_override?: number;
+                        /**
+                         * Format: int64
+                         * @description 0 clears the override (inherit tier default).
+                         */
+                        monthly_request_quota_override?: number;
+                    };
+                };
+            };
+            responses: {
+                /** @description Updated account view. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AdminAccountEnvelope"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                /** @description Caller is not operator-tier. */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        trace?: never;
+    };
+    "/admin/status-notices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Operator — list all status notices (active + resolved).
+         * @description The operator history view of the customer-facing status banners
+         *     (admin Phase 1.5 incident tooling), newest first. Operator-tier
+         *     only; read-only.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Notice list. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StatusNoticesEnvelope"];
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description Caller is not operator-tier. */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        /**
+         * Operator — post a customer-facing status banner.
+         * @description Creates a LIVE, human-authored status banner shown on the public
+         *     status surface via GET /v1/status/notices (platform-spec §7.1
+         *     "Trigger maintenance mode banner"). Distinct from the embedded
+         *     post-mortem corpus (GET /v1/incidents) and the Alertmanager-
+         *     derived incidents block on GET /v1/status.
+         *
+         *     Operator-tier only. Requires an `X-Reason` header captured into
+         *     the audit log; audit-logged as `status_notice.create` (staff
+         *     actor).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    /** @description Free-form reason captured into the audit log. */
+                    "X-Reason": string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        title: string;
+                        body: string;
+                        /** @enum {string} */
+                        severity: "maintenance" | "minor" | "major" | "critical";
+                    };
+                };
+            };
+            responses: {
+                /** @description Created notice. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StatusNoticeEnvelope"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                /** @description Caller is not operator-tier. */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/status-notices/{id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Operator — resolve (clear) a status banner.
+         * @description Flips an active status banner to resolved — it drops off the
+         *     public GET /v1/status/notices surface but is retained for the
+         *     operator history + audit trail. Idempotent. Operator-tier only;
+         *     requires an `X-Reason` header. Audit-logged as
+         *     `status_notice.resolve` (staff actor).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    /** @description Free-form reason captured into the audit log. */
+                    "X-Reason": string;
+                };
+                path: {
+                    /** @description Status notice UUID. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Resolved notice. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["StatusNoticeEnvelope"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                /** @description Caller is not operator-tier. */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                404: components["responses"]["NotFound"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/webhooks/stripe": {
         parameters: {
             query?: never;
@@ -12040,6 +12388,66 @@ export interface components {
                  */
                 scopes?: string[];
             };
+        };
+        /**
+         * @description Operator projection of a platform account — the tier + override
+         *     knobs a staff member inspects / edits. No customer PII beyond
+         *     the billing email.
+         */
+        AdminAccountView: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            slug: string;
+            /** @enum {string} */
+            tier: "free" | "starter" | "pro" | "business" | "enterprise";
+            /** @enum {string} */
+            status: "active" | "suspended" | "closed";
+            billing_email?: string;
+            /** Format: date-time */
+            created_at?: string;
+            suspended_reason?: string;
+            /** @description 0 = inherit the tier default; positive = account-wide per-key floor. */
+            rate_limit_per_min_override: number;
+            /**
+             * Format: int64
+             * @description 0 = inherit the tier default; positive = metered cap applied when a key has no per-key quota.
+             */
+            monthly_request_quota_override: number;
+        };
+        AdminAccountEnvelope: components["schemas"]["EnvelopeMeta"] & {
+            data: components["schemas"]["AdminAccountView"];
+        };
+        /**
+         * @description An operator-posted customer-facing status banner (admin Phase
+         *     1.5). Distinct from the Alertmanager-derived incidents on
+         *     /v1/status and the embedded post-mortems on /v1/incidents.
+         */
+        StatusNotice: {
+            /** Format: uuid */
+            id: string;
+            title: string;
+            body: string;
+            /** @enum {string} */
+            severity: "maintenance" | "minor" | "major" | "critical";
+            /** @enum {string} */
+            status: "active" | "resolved";
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+            /** Format: date-time */
+            resolved_at?: string;
+        };
+        StatusNoticesList: {
+            notices: components["schemas"]["StatusNotice"][];
+            count: number;
+        };
+        StatusNoticesEnvelope: components["schemas"]["EnvelopeMeta"] & {
+            data: components["schemas"]["StatusNoticesList"];
+        };
+        StatusNoticeEnvelope: components["schemas"]["EnvelopeMeta"] & {
+            data: components["schemas"]["StatusNotice"];
         };
         SEP10Challenge: {
             /** @description Base64-encoded XDR of the unsigned challenge transaction. Field name per SEP-10 §3.2. */

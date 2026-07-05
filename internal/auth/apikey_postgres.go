@@ -141,11 +141,32 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 	if monthlyQuota == 0 && acct.MonthlyRequestQuotaOverride > 0 {
 		monthlyQuota = acct.MonthlyRequestQuotaOverride
 	}
+
+	// Account-level rate-limit override (platform-spec accounts.
+	// rate_limit_per_min_override, "when set, replaces the tier
+	// default"). Symmetric with the monthly-quota cascade above, but
+	// the per-key `rate_limit_per_min` column is NOT NULL CHECK (> 0)
+	// — it's never the zero sentinel that the quota cascade keys on —
+	// so the override can't be a "fall back when per-key is unset"
+	// rule here. Instead it acts as an account-wide FLOOR: the staff
+	// override raises every key that would otherwise be below it (an
+	// operator comps an enterprise account to 100k/min without
+	// touching each key), while a key explicitly budgeted ABOVE the
+	// override keeps its higher value. Monotonic by construction — an
+	// override only ever raises the effective budget, so it can never
+	// silently shrink a customer's paid-for limit. Effective
+	// immediately for cache-miss lookups; cache hits inherit the
+	// resolved value on the next Postgres read after the cache TTL
+	// (same staleness window the monthly-quota override already has).
+	rateLimit := pgKey.RateLimitPerMin
+	if acct.RateLimitPerMinOverride > rateLimit {
+		rateLimit = acct.RateLimitPerMinOverride
+	}
 	sub := Subject{
 		Identifier:          "acct:" + acct.Slug,
 		Tier:                pgTierToAuthTier(pgKey.Tier),
 		KeyID:               pgKey.ID,
-		RateLimitPerMin:     pgKey.RateLimitPerMin,
+		RateLimitPerMin:     rateLimit,
 		CreatedAt:           pgKey.CreatedAt,
 		Label:               pgKey.Name,
 		KeyPrefix:           pgKey.KeyPrefix,

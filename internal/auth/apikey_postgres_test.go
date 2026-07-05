@@ -49,6 +49,63 @@ func TestPostgresValidator_HappyPath_PostgresHit(t *testing.T) {
 	}
 }
 
+// TestPostgresValidator_AccountRateLimitOverride_RaisesFloor pins the
+// admin Phase 1.5 enforcement: an account-level
+// rate_limit_per_min_override acts as a floor — it raises a key whose
+// per-key budget is below it, but never lowers a key budgeted above.
+func TestPostgresValidator_AccountRateLimitOverride_RaisesFloor(t *testing.T) {
+	keys, accounts, _ := newStubs()
+	v, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{
+		Keys:     keys,
+		Accounts: accounts,
+	})
+
+	// Account override 50k; a key minted at the 1k starter default is
+	// raised to 50k.
+	acct := seedActiveAccount(accounts, "enterprise-comp")
+	acct.RateLimitPerMinOverride = 50000
+	accounts.byID[acct.ID] = acct
+	seedKey(keys, "sip_below_override", acct.ID, platform.APIKeyTierAPIKey, 1000)
+
+	sub, err := v.Lookup(context.Background(), "sip_below_override")
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if sub.RateLimitPerMin != 50000 {
+		t.Errorf("RateLimitPerMin = %d, want 50000 (override floors up)", sub.RateLimitPerMin)
+	}
+
+	// A second key explicitly budgeted ABOVE the override keeps its
+	// higher value (override never shrinks a paid-for limit).
+	seedKey(keys, "sip_above_override", acct.ID, platform.APIKeyTierAPIKey, 80000)
+	sub2, err := v.Lookup(context.Background(), "sip_above_override")
+	if err != nil {
+		t.Fatalf("lookup 2: %v", err)
+	}
+	if sub2.RateLimitPerMin != 80000 {
+		t.Errorf("RateLimitPerMin = %d, want 80000 (key above override wins)", sub2.RateLimitPerMin)
+	}
+}
+
+// TestPostgresValidator_NoOverride_UsesPerKey pins that with no
+// account override set, the per-key budget is used verbatim.
+func TestPostgresValidator_NoOverride_UsesPerKey(t *testing.T) {
+	keys, accounts, _ := newStubs()
+	v, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{
+		Keys:     keys,
+		Accounts: accounts,
+	})
+	acct := seedActiveAccount(accounts, "no-override")
+	seedKey(keys, "sip_no_override", acct.ID, platform.APIKeyTierAPIKey, 3000)
+	sub, err := v.Lookup(context.Background(), "sip_no_override")
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if sub.RateLimitPerMin != 3000 {
+		t.Errorf("RateLimitPerMin = %d, want 3000 (per-key, no override)", sub.RateLimitPerMin)
+	}
+}
+
 func TestPostgresValidator_RevokedKey_Unauthorized(t *testing.T) {
 	keys, accounts, _ := newStubs()
 	v, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{

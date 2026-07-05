@@ -1019,4 +1019,98 @@ func TestPlatformPostgresStores(t *testing.T) {
 			t.Errorf("persisted active rows = %d, want %d (the cap)", len(listed), cap_)
 		}
 	})
+
+	// Admin Phase 1.5 incident tooling — status_notices (migration 0082).
+	t.Run("StatusNoticeStore/CRUD+resolve", func(t *testing.T) {
+		notices := postgresstore.NewStatusNoticeStore(store)
+
+		// 1. Create → born active with server timestamps.
+		created, err := notices.Create(ctx, platform.StatusNotice{
+			Title:     "Scheduled maintenance",
+			Body:      "Aggregator restart 02:00–03:00 UTC.",
+			Severity:  platform.NoticeMaintenance,
+			CreatedBy: "kid_operator1",
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if created.ID == uuid.Nil {
+			t.Fatal("ID not populated")
+		}
+		if created.Status != platform.NoticeActive {
+			t.Errorf("Status = %q, want active", created.Status)
+		}
+		if created.CreatedAt.IsZero() {
+			t.Error("CreatedAt not populated")
+		}
+
+		// 2. Get round-trips the fields.
+		got, err := notices.Get(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.Title != "Scheduled maintenance" || got.Severity != platform.NoticeMaintenance {
+			t.Errorf("round-trip mismatch: %+v", got)
+		}
+		if got.CreatedBy != "kid_operator1" {
+			t.Errorf("CreatedBy = %q", got.CreatedBy)
+		}
+
+		// 3. A second, resolved-later notice; ListActive shows both.
+		second, err := notices.Create(ctx, platform.StatusNotice{
+			Title: "Pricing lag", Body: "CEX feed delayed.", Severity: platform.NoticeMajor,
+		})
+		if err != nil {
+			t.Fatalf("Create second: %v", err)
+		}
+		active, err := notices.ListActive(ctx)
+		if err != nil {
+			t.Fatalf("ListActive: %v", err)
+		}
+		if len(active) != 2 {
+			t.Fatalf("ListActive len = %d, want 2", len(active))
+		}
+		// Newest first.
+		if !active[0].CreatedAt.After(active[1].CreatedAt) && active[0].ID != second.ID {
+			t.Errorf("ListActive not newest-first: %v", active)
+		}
+
+		// 4. Resolve the first; it drops off ListActive but stays in List.
+		resolved, err := notices.Resolve(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if resolved.Status != platform.NoticeResolved || resolved.ResolvedAt.IsZero() {
+			t.Errorf("resolve didn't stamp: %+v", resolved)
+		}
+		active, _ = notices.ListActive(ctx)
+		if len(active) != 1 || active[0].ID != second.ID {
+			t.Errorf("ListActive after resolve = %+v, want only the second", active)
+		}
+		all, err := notices.List(ctx, 0)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(all) != 2 {
+			t.Errorf("List (all) len = %d, want 2 (incl resolved)", len(all))
+		}
+
+		// 5. Resolve is idempotent — resolved_at doesn't move.
+		firstResolvedAt := resolved.ResolvedAt
+		again, err := notices.Resolve(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("Resolve (idempotent): %v", err)
+		}
+		if !again.ResolvedAt.Equal(firstResolvedAt) {
+			t.Errorf("resolved_at moved on re-resolve: %v → %v", firstResolvedAt, again.ResolvedAt)
+		}
+
+		// 6. ErrNotFound on absent.
+		if _, err := notices.Get(ctx, uuid.New()); !errors.Is(err, platform.ErrNotFound) {
+			t.Errorf("Get absent: expected ErrNotFound, got %v", err)
+		}
+		if _, err := notices.Resolve(ctx, uuid.New()); !errors.Is(err, platform.ErrNotFound) {
+			t.Errorf("Resolve absent: expected ErrNotFound, got %v", err)
+		}
+	})
 }
