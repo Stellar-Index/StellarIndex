@@ -407,6 +407,20 @@ without codification WILL page Monday morning. Apply changes via
 --tags <area>` — always `--check --diff` first. Findings log:
 docs/operations/r1-ansible-drift-2026-07-03.md.
 
+## Heavy one-shot jobs on r1 — ALWAYS use the wrapper
+
+Any ops one-shot on r1 (re-derives, backfills, bulk SQL, census
+walks) runs under `/usr/local/sbin/run-heavy-job.sh <name> <cmd…>` —
+a systemd scope with MemoryMax=20G, MemorySwapMax=0, and batch-class
+CPU/IO weights. Never run a heavy binary raw: on 2026-07-05 an
+unwindowed re-derive ballooned silently, swapped galexie's captive
+core into an `invalid local state` wedge, and froze the lake for 11
+hours. The wrapper kills a ballooning job before it can starve the
+consensus-critical processes; galexie itself carries MemoryLow=16G +
+elevated CPU/IO weight, and `stellarindex_galexie_catchup_refused`
+pages if the core ever refuses catchup again. One heavy job at a
+time remains the rule.
+
 ## Common task recipes
 
 ### "Bring up a new archival node" / "recover from disaster"
