@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math/big"
 	"net/http"
 	"strings"
@@ -92,39 +91,32 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		endpoint = DefaultEndpoint
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+SnapshotPath, nil)
-	if err != nil {
-		return nil, nil, fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
 	// G10-04: authenticate via the Authorization header rather than an
 	// `apiKey` query param. Polygon.io supports `Authorization: Bearer
 	// <key>`; keeping the key out of the URL means a transport error's
 	// *url.Error can't leak it into the indexer log.
-	req.Header.Set("Authorization", "Bearer "+p.APIKey)
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	status, body, err := external.GetBody(ctx, external.GetRequest{
+		URL: endpoint + SnapshotPath,
+		Headers: map[string]string{
+			"Accept":        "application/json",
+			"Authorization": "Bearer " + p.APIKey,
+		},
+		LimitBytes: 20 * 1024 * 1024,
+	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("http: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 20*1024*1024))
-	if err != nil {
-		return nil, nil, fmt.Errorf("read body: %w", err)
+		return nil, nil, err
 	}
 
 	// Polygon returns 200 on most errors with the error detail in
 	// the body. 401 / 429 come through as HTTP status codes.
-	if resp.StatusCode == http.StatusUnauthorized {
+	if status == http.StatusUnauthorized {
 		return nil, nil, fmt.Errorf("%w: 401 unauthorized — check API key", ErrAPIRejected)
 	}
-	if resp.StatusCode == http.StatusTooManyRequests {
+	if status == http.StatusTooManyRequests {
 		return nil, nil, fmt.Errorf("%w: 429 rate limited — check tier", ErrAPIRejected)
 	}
-	if resp.StatusCode >= 400 {
-		return nil, nil, fmt.Errorf("http %d: %s", resp.StatusCode, string(body))
+	if status >= 400 {
+		return nil, nil, fmt.Errorf("http %d: %s", status, string(body))
 	}
 
 	var snap snapshotResponse
@@ -147,14 +139,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	// Pre-index pair list so we only emit for fiats the operator
 	// cares about (avoids flooding oracle_updates with exotic
 	// Polygon coverage that nobody queries for).
-	wantedQuotes := map[string]struct{}{}
-	for _, pp := range pairs {
-		for _, a := range []canonical.Asset{pp.Base, pp.Quote} {
-			if a.Type == canonical.AssetFiat && !strings.EqualFold(a.Code, base) {
-				wantedQuotes[strings.ToUpper(a.Code)] = struct{}{}
-			}
-		}
-	}
+	wantedQuotes := external.FiatCodesFromPairs(pairs, base)
 
 	baseUpper := strings.ToUpper(base)
 	out := make([]canonical.OracleUpdate, 0, len(snap.Tickers))
@@ -198,11 +183,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 
 		// Polygon quotes "1 base = X quote"; we emit "price of
 		// <quote> in <base>" — invert.
-		scalePow := scale.Pow10(int(DefaultDecimals))
-		inverted := new(big.Int).Div(
-			new(big.Int).Mul(scalePow, scalePow),
-			scaled,
-		)
+		inverted := scale.InvertScaled(scaled, int(DefaultDecimals))
 		if inverted.Sign() <= 0 {
 			continue
 		}
@@ -287,19 +268,9 @@ func intToDecimalString(n *big.Int, decimals int) string {
 }
 
 // syntheticTxHash synthesises a 64-hex-char hash from
-// (base, quote, timestamp). Stable across polls at the same ts.
+// (base, quote, timestamp) via the shared scale.SyntheticTxHash
+// form; only the PGFX- seed prefix is venue-local. Stable across
+// polls at the same ts.
 func syntheticTxHash(base, quote string, ts int64) string {
-	s := fmt.Sprintf("PGFX-%s-%s-%020d", base, quote, ts)
-	var hex strings.Builder
-	hex.Grow(64)
-	for _, b := range []byte(s) {
-		fmt.Fprintf(&hex, "%02x", b)
-		if hex.Len() >= 64 {
-			break
-		}
-	}
-	for hex.Len() < 64 {
-		hex.WriteByte('0')
-	}
-	return hex.String()[:64]
+	return scale.SyntheticTxHash(fmt.Sprintf("PGFX-%s-%s-%020d", base, quote, ts))
 }

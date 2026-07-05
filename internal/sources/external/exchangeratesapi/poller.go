@@ -3,13 +3,8 @@ package exchangeratesapi
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"math/big"
-	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -135,34 +130,26 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	if endpoint == "" {
 		endpoint = DefaultEndpoint
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+LatestPath+"?"+q.Encode(), nil)
+	// G10-04: exchangeratesapi.io / apilayer only accepts the key
+	// as the `access_key` query param — there is no auth-header
+	// form — so the key necessarily appears in the request URL. A
+	// transport error's *url.Error embeds that URL; GetBody redacts
+	// the query string (RedactURL) so the key can't leak to logs.
+	status, body, err := external.GetBody(ctx, external.GetRequest{
+		URL:        endpoint + LatestPath + "?" + q.Encode(),
+		Headers:    map[string]string{"Accept": "application/json"},
+		LimitBytes: 2 * 1024 * 1024,
+		RedactURL:  endpoint + LatestPath,
+	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		// G10-04: exchangeratesapi.io / apilayer only accepts the key
-		// as the `access_key` query param — there is no auth-header
-		// form — so the key necessarily appears in the request URL. A
-		// transport error's *url.Error embeds that URL; we redact the
-		// query string before wrapping so the key can't leak to logs.
-		return nil, nil, fmt.Errorf("http: %s", redactURLError(err, endpoint+LatestPath))
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
-	if err != nil {
-		return nil, nil, fmt.Errorf("read body: %w", err)
+		return nil, nil, err
 	}
 
 	// exchangeratesapi serves 200 OK even on auth errors — the
 	// `success` field is the authoritative status. We surface 5xx /
 	// non-200 as errors but let the JSON shape drive the rest.
-	if resp.StatusCode >= 500 {
-		return nil, nil, fmt.Errorf("http %d: %s", resp.StatusCode, string(body))
+	if status >= 500 {
+		return nil, nil, fmt.Errorf("http %d: %s", status, string(body))
 	}
 
 	var lr latestResponse
@@ -217,18 +204,13 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 			// Reflector decoder's ErrUnknownSymbol pattern.
 			continue
 		}
-		scaled, err := decimalStringToScaledInt(rateNum.String(), int(DefaultDecimals))
+		scaled, err := scale.SciDecimalStringToScaledInt(rateNum.String(), int(DefaultDecimals))
 		if err != nil || scaled.Sign() <= 0 {
 			continue
 		}
 		// Invert: we want "price of symAsset in baseAsset units."
 		// venueRate = base per 1 symbol  →  our price = 1 / venueRate.
-		// Do this in big.Int at 10^(2*decimals) then divide.
-		scalePow := scale.Pow10(int(DefaultDecimals))
-		inverted := new(big.Int).Div(
-			new(big.Int).Mul(scalePow, scalePow),
-			scaled,
-		)
+		inverted := scale.InvertScaled(scaled, int(DefaultDecimals))
 		if inverted.Sign() <= 0 {
 			continue
 		}
@@ -259,99 +241,12 @@ func (p *Poller) resolveSymbols(base string, pairs []canonical.Pair) []string {
 	if len(p.Symbols) > 0 {
 		return p.Symbols
 	}
-	seen := map[string]struct{}{}
-	baseUpper := strings.ToUpper(base)
-	for _, pair := range pairs {
-		for _, a := range []canonical.Asset{pair.Base, pair.Quote} {
-			if a.Type != canonical.AssetFiat {
-				continue
-			}
-			code := strings.ToUpper(a.Code)
-			if code == baseUpper {
-				continue // we don't need the base-to-base "rate 1"
-			}
-			seen[code] = struct{}{}
-		}
-	}
-	out := make([]string, 0, len(seen))
-	for k := range seen {
+	wanted := external.FiatCodesFromPairs(pairs, base)
+	out := make([]string, 0, len(wanted))
+	for k := range wanted {
 		out = append(out, k)
 	}
 	return out
-}
-
-// decimalStringToScaledInt — same helper as the CEX packages. Kept
-// here so each package's scaling convention is self-contained.
-func decimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error) {
-	if s == "" {
-		return nil, fmt.Errorf("empty decimal string")
-	}
-	if strings.ContainsAny(s, "eE") {
-		// ExchangeRatesApi has been known to emit very small
-		// inverted rates in scientific notation — not in practice
-		// for major pairs but defensive against exotics. We
-		// re-serialise via ParseFloat then format as %f to
-		// normalise back to plain decimal.
-		f, err := strconv.ParseFloat(s, 64)
-		if err != nil {
-			return nil, fmt.Errorf("not a decimal: %q", s)
-		}
-		s = strconv.FormatFloat(f, 'f', targetDecimals+2, 64)
-	}
-	neg := false
-	if s[0] == '-' {
-		neg = true
-		s = s[1:]
-	}
-	intPart, fracPart := s, ""
-	if dot := strings.IndexByte(s, '.'); dot >= 0 {
-		intPart = s[:dot]
-		fracPart = s[dot+1:]
-	}
-	if intPart == "" {
-		intPart = "0"
-	}
-	if len(fracPart) > targetDecimals {
-		fracPart = fracPart[:targetDecimals]
-	}
-	for len(fracPart) < targetDecimals {
-		fracPart += "0"
-	}
-	v, ok := new(big.Int).SetString(intPart+fracPart, 10)
-	if !ok {
-		return nil, fmt.Errorf("not a decimal: %q", s)
-	}
-	if neg {
-		v.Neg(v)
-	}
-	return v, nil
-}
-
-// redactURLError converts a transport error into a string with the
-// secret-bearing URL scrubbed. *url.Error.Error() embeds the full
-// request URL — including the `access_key` query param — so we
-// replace it with a query-stripped, path-only form. G10-04.
-//
-// Non-*url.Error inputs are returned via Error() unchanged (they
-// don't carry the request URL).
-func redactURLError(err error, safeURL string) string {
-	var ue *url.Error
-	if !errors.As(err, &ue) {
-		return err.Error()
-	}
-	return fmt.Sprintf("%s %q: %v", ue.Op, redactQuery(safeURL), ue.Err)
-}
-
-// redactQuery returns `rawURL` with any query string replaced by
-// "?<redacted>". Falls back to a constant on parse failure so we
-// never echo the raw (secret-bearing) input.
-func redactQuery(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil || u.Host == "" {
-		return "[redacted-url]"
-	}
-	u.RawQuery = ""
-	return u.String() + "?<redacted>"
 }
 
 // backfillTxHash synthesises a canonical.OracleUpdate tx_hash from
@@ -359,17 +254,6 @@ func redactQuery(rawURL string) string {
 // requires a 64-char hex string; we build one that's stable across
 // repeat polls when the venue timestamp is the same.
 func backfillTxHash(symbol, base string, ts int64) string {
-	s := fmt.Sprintf("XRATES-%s-%s-%020d", strings.ToUpper(base), strings.ToUpper(symbol), ts)
-	var hex strings.Builder
-	hex.Grow(64)
-	for _, b := range []byte(s) {
-		fmt.Fprintf(&hex, "%02x", b)
-		if hex.Len() >= 64 {
-			break
-		}
-	}
-	for hex.Len() < 64 {
-		hex.WriteByte('0')
-	}
-	return hex.String()[:64]
+	return scale.SyntheticTxHash(fmt.Sprintf(
+		"XRATES-%s-%s-%020d", strings.ToUpper(base), strings.ToUpper(symbol), ts))
 }
