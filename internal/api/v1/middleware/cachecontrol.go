@@ -185,6 +185,10 @@ func policyForPath(path string, cdnEnabled bool) string {
 	// inside one bucket so consumers see fresh closed-bucket data.
 	case path == "/v1/price",
 		strings.HasPrefix(path, "/v1/price/batch"),
+		// Multi-horizon change strip — the current-price anchor moves
+		// on every bucket close, so it turns over on the same cadence
+		// as /v1/price (NOT the immutable closed-bucket band).
+		path == "/v1/price/changes",
 		path == "/v1/assets",
 		strings.HasPrefix(path, "/v1/assets/"),
 		// Pool reserves — CURRENT contract state from the lake; can
@@ -203,6 +207,9 @@ func policyForPath(path string, cdnEnabled bool) string {
 	// trailing-edge boundary advances; s-maxage=300 caps how long
 	// a CDN entry can lag the boundary.
 	case strings.HasPrefix(path, "/v1/history"),
+		// Point-in-time price — an immutable closed bucket keyed by a
+		// fixed (asset, quote, ts); as cacheable as /v1/ohlc.
+		path == "/v1/price/at",
 		path == "/v1/ohlc",
 		path == "/v1/vwap",
 		path == "/v1/twap",

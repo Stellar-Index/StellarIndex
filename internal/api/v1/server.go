@@ -1229,10 +1229,15 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// the aggregator ships.
 	s.mux.HandleFunc("GET /v1/price", s.handlePrice)
 
+	// Point-in-time closed bucket at-or-before ts (board #46) +
+	// multi-horizon change strip (1h/24h/7d/30d) — both back onto the
+	// same finest-CAGG point-in-time reader.
+	s.mux.HandleFunc("GET /v1/price/at", s.handlePriceAt)
+	s.mux.HandleFunc("GET /v1/price/changes", s.handlePriceChanges)
+
 	// Rolling-window tip surface (ADR-0018) — VWAP over the last
 	// few seconds, falling back to last-good-price when the window
 	// is empty. NOT cross-region consistent; use /v1/price for that.
-	s.mux.HandleFunc("GET /v1/price/at", s.handlePriceAt)
 	s.mux.HandleFunc("GET /v1/price/tip", s.handlePriceTip)
 
 	// SSE counterpart of /v1/price/tip — same compute logic, pushed

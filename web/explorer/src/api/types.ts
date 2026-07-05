@@ -1296,9 +1296,29 @@ export interface paths {
         };
         /**
          * Point-in-time price (closed bucket at-or-before a timestamp)
-         * @description The pair's closed 1-minute VWAP bucket at-or-before `ts` — the cost-basis / PnL / tax-tooling lookup. `observed_at` is the BUCKET's close time, never `ts`, so callers see exactly how far the nearest observation was; a nearest bucket more than 24 hours before `ts` is a 404 (the endpoint refuses to fabricate continuity across dead markets). When the literal pair (and its aliases) has no bucket and the quote is `fiat:USD`, the lookup retries each operator-declared USD-pegged classic (the same stablecoin-proxy chain as /v1/price) and returns the peg's bucket with `flags.triangulated=true`, echoing the requested quote. Current price: /v1/price or /v1/price/tip.
+         * @description The pair's closed VWAP bucket at-or-before `ts` — the cost-basis / PnL / tax-tooling lookup. The answer comes from the FINEST CAGG resolution that covers the instant: `prices_1m` for recent timestamps, coarser bars (down to daily, back to 2015) for older ones. `observed_at` is the BUCKET's close time, never `ts`, and `window_seconds` reports the resolution used (60 for a 1-minute bar, 86400 for a daily bar) — so callers see exactly how far the nearest observation was and at what granularity. A nearest bucket more than 24 hours before `ts` is a 404 (the endpoint refuses to fabricate continuity across dead markets). When the literal pair (and its aliases) has no bucket and the quote is `fiat:USD`, the lookup retries each operator-declared USD-pegged classic (the same stablecoin-proxy chain as /v1/price) and returns the peg's bucket with `flags.triangulated=true`, echoing the requested quote. Current price: /v1/price or /v1/price/tip. Multi-horizon change: /v1/price/changes.
          */
         get: operations["getPriceAt"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/price/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Multi-horizon price change (1h / 24h / 7d / 30d in one call)
+         * @description The current closed price plus the signed percentage change over 1h, 24h, 7d, and 30d — the wallet/portfolio delta strip in a single request (RFP §6). Each horizon's reference is the closed VWAP at-or-before `now − horizon`, resolved by the SAME point-in-time engine as /v1/price/at (finest CAGG resolution that covers the instant; daily bars reach back to 2015), so long horizons still answer for pairs whose minute-level history has aged out of the served tier. A horizon with no data that far back (a young pair, or a market that predates the window) is returned with all fields `null` and `available: false` — NEVER an error, so a fresh listing still returns its 1h/24h moves. Each horizon carries `reference_at` + `resolution` so callers see exactly which bucket (and at what granularity) the delta was measured against. A 404 only when the pair has no CURRENT price to anchor on. `quote` defaults to `fiat:USD`; when no direct fiat:USD bucket exists the same stablecoin-proxy chain as /v1/price resolves it via an operator-declared USD peg (`flags.triangulated`).
+         */
+        get: operations["getPriceChanges"];
         put?: never;
         post?: never;
         delete?: never;
@@ -11059,6 +11079,49 @@ export interface components {
         PriceBatchEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["Price"][];
         };
+        PriceChangeHorizon: {
+            /** @description Signed percentage move of the current price vs the reference price, two fractional digits with an explicit leading "+" on gains (e.g. "+3.62", "-1.04", "0.00"). Null when unavailable. */
+            change_pct: string | null;
+            /** @description Closed VWAP at-or-before now−horizon (decimal string). Null when unavailable. */
+            reference_price: string | null;
+            /**
+             * Format: date-time
+             * @description Close time of the reference bucket (RFC 3339) — never the exact horizon instant. Null when unavailable.
+             */
+            reference_at: string | null;
+            /** @description CAGG resolution that served the reference bucket — one of 1m, 15m, 1h, 4h, 1d. Null when unavailable. */
+            resolution: string | null;
+            /** @description False when no closed bucket exists that far back (all sibling fields null). */
+            available: boolean;
+        };
+        PriceChanges: {
+            asset_id: string;
+            quote: string;
+            /** @description Current closed VWAP (decimal string; never a JSON number). */
+            current_price: string;
+            /**
+             * @description Always vwap — the anchor is a closed-bucket VWAP.
+             * @enum {string}
+             */
+            current_price_type: "vwap";
+            /**
+             * Format: date-time
+             * @description Close time of the current-price bucket.
+             */
+            observed_at: string;
+            /**
+             * @description CAGG resolution that served the current-price bucket.
+             * @enum {string}
+             */
+            resolution: "1m" | "15m" | "1h" | "4h" | "1d" | "1w" | "1mo";
+            "1h": components["schemas"]["PriceChangeHorizon"];
+            "24h": components["schemas"]["PriceChangeHorizon"];
+            "7d": components["schemas"]["PriceChangeHorizon"];
+            "30d": components["schemas"]["PriceChangeHorizon"];
+        };
+        PriceChangesEnvelope: components["schemas"]["EnvelopeMeta"] & {
+            data: components["schemas"]["PriceChanges"];
+        };
         HistoryPoint: {
             /** Format: date-time */
             t: string;
@@ -11955,6 +12018,98 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    getPriceChanges: {
+        parameters: {
+            query: {
+                /**
+                 * @description Canonical asset identifier — matches the `asset_id` on
+                 *     response bodies. Query-parameter form is the shorter `asset`
+                 *     per the handler implementations (/v1/price, /v1/oracle/latest).
+                 *     Strict canonical form only — `XLM` / `USDC` are rejected;
+                 *     use `native` for XLM and the full `<code>-<G…>` strkey for
+                 *     credit assets.
+                 * @example native
+                 */
+                asset: components["parameters"]["AssetQuery"];
+                /**
+                 * @description Quote-side asset. Either a canonical asset identifier (`native`,
+                 *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
+                 *     the `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,
+                 *     `fiat:EUR`). Default `fiat:USD`.
+                 * @example fiat:USD
+                 */
+                quote?: components["parameters"]["Quote"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current price + per-horizon change. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "asset_id": "native",
+                     *         "quote": "fiat:USD",
+                     *         "current_price": "0.20416",
+                     *         "current_price_type": "vwap",
+                     *         "observed_at": "2026-07-05T00:00:00Z",
+                     *         "resolution": "1m",
+                     *         "1h": {
+                     *           "change_pct": "+0.42",
+                     *           "reference_price": "0.20330",
+                     *           "reference_at": "2026-07-04T23:00:00Z",
+                     *           "resolution": "1m",
+                     *           "available": true
+                     *         },
+                     *         "24h": {
+                     *           "change_pct": "+3.62",
+                     *           "reference_price": "0.19703",
+                     *           "reference_at": "2026-07-04T00:00:00Z",
+                     *           "resolution": "1m",
+                     *           "available": true
+                     *         },
+                     *         "7d": {
+                     *           "change_pct": "-1.08",
+                     *           "reference_price": "0.20639",
+                     *           "reference_at": "2026-06-28T00:00:00Z",
+                     *           "resolution": "1h",
+                     *           "available": true
+                     *         },
+                     *         "30d": {
+                     *           "change_pct": null,
+                     *           "reference_price": null,
+                     *           "reference_at": null,
+                     *           "resolution": null,
+                     *           "available": false
+                     *         }
+                     *       },
+                     *       "as_of": "2026-07-05T00:00:12.481Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PriceChangesEnvelope"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
 }

@@ -74,7 +74,7 @@
 // # Coverage
 //
 // The SDK covers the pricing/read surface with ~36 typed methods:
-// pricing (Price, PriceAt, PriceTip, PriceBatch, Chart, History,
+// pricing (Price, PriceAt, PriceChanges, PriceTip, PriceBatch, Chart, History,
 // HistorySinceInception, OHLC, VWAP, TWAP, Observations), market
 // data (Markets, Pair, Pools, LendingPools), the asset catalogue
 // (Assets, Asset, AssetMetadata, Issuers, Issuer, SACWrappers),
