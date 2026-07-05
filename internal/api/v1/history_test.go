@@ -29,6 +29,12 @@ type stubHistoryReader struct {
 	// test where the literal XLM/fiat:USD pair returns empty and a
 	// proxied XLM/USDC-G… pair carries the fixture.
 	pointsByPair map[string][]v1.HistoryPoint
+	// twapPoints / twapPointsByPair back TWAPPointsInRange (the
+	// /v1/chart?price_type=twap path). Kept separate from `points` so
+	// twap tests don't collide with the vwap-chart fixtures.
+	twapPoints       []v1.HistoryPoint
+	twapPointsByPair map[string][]v1.HistoryPoint
+	twapErr          error
 	// ohlcBars is the static fixture returned by OHLCSeries. Tests
 	// that want per-call behaviour override via ohlcSeriesFn.
 	ohlcBars []v1.OHLCSeriesBar
@@ -107,6 +113,22 @@ func (r *stubHistoryReader) HistoryPointsInRange(_ context.Context, _ canonical.
 		return nil, r.pointsErr
 	}
 	return r.points, nil
+}
+
+// TWAPPointsInRange stub records the (snapped) granularity + window
+// and returns the twap fixture. Honours twapPointsByPair when set,
+// else the global twapPoints slice; twapErr drives error paths.
+func (r *stubHistoryReader) TWAPPointsInRange(_ context.Context, pair canonical.Pair, granularity string, from, to time.Time, _ int) ([]v1.HistoryPoint, error) {
+	r.lastCall.granularity = granularity
+	r.lastCall.from = from
+	r.lastCall.to = to
+	if r.twapErr != nil {
+		return nil, r.twapErr
+	}
+	if r.twapPointsByPair != nil {
+		return r.twapPointsByPair[pair.String()], nil
+	}
+	return r.twapPoints, nil
 }
 
 // OHLCSeries stub: when ohlcSeriesFn is non-nil, delegate (lets

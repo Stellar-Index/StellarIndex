@@ -2345,6 +2345,22 @@ func (r storeHistoryReader) HistoryPointsInRange(ctx context.Context, pair canon
 	return convertHistoryPoints(rows), nil
 }
 
+// TWAPPointsInRange adapts [timescale.Store.TWAPPointsInRange] to the
+// v1.HistoryReader interface. Only 1h / 1d have a TWAP CAGG
+// (migration 0081); any other granularity propagates as
+// v1.ErrUnknownGranularity (handler turns into 400).
+func (r storeHistoryReader) TWAPPointsInRange(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time, limit int) ([]v1.HistoryPoint, error) {
+	g := timescale.HistoryGranularity(granularity)
+	if !timescale.TWAPGranularitySupported(g) {
+		return nil, v1.ErrUnknownGranularity
+	}
+	rows, err := r.s.TWAPPointsInRange(ctx, pair, g, from, to, limit)
+	if err != nil {
+		return nil, err
+	}
+	return convertHistoryPoints(rows), nil
+}
+
 // OHLCSeries adapts [timescale.Store.OHLCSeries] /
 // [timescale.Store.OHLCSeriesReBucketed] to the v1.HistoryReader
 // interface. Routes the request to a native CAGG when the requested

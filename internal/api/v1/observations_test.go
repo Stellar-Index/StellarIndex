@@ -346,6 +346,10 @@ func (h *observationsCallTracker) HistoryPointsInRange(_ context.Context, _ cano
 	return nil, nil
 }
 
+func (h *observationsCallTracker) TWAPPointsInRange(_ context.Context, _ canonical.Pair, _ string, _, _ time.Time, _ int) ([]v1.HistoryPoint, error) {
+	return nil, nil
+}
+
 func (h *observationsCallTracker) OHLCSeries(_ context.Context, _ canonical.Pair, _ string, _, _ time.Time, _ int) ([]v1.OHLCSeriesBar, error) {
 	return nil, nil
 }

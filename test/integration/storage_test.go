@@ -529,3 +529,116 @@ func applyMigrations(t *testing.T, dsn string) {
 		t.Fatalf("migrate up: %v", err)
 	}
 }
+
+// TestTWAPPointsInRange_TimeWeighted proves the twap_1h CAGG (migration
+// 0081) + TWAPPointsInRange read is TIME-weighted at 1-minute
+// resolution, NOT trade-count-weighted. Two minutes in one hour:
+//   - minute A: 3 trades at price 1.0
+//   - minute B: 1 trade  at price 3.0
+//
+// A trade-count mean would be (3·1 + 1·3)/4 = 1.5. A time-weighted mean
+// (each minute equal weight) is (1.0 + 3.0)/2 = 2.0. We assert 2.0.
+func TestTWAPPointsInRange_TimeWeighted(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	usdc, err := c.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, _ := c.NewPair(c.NativeAsset(), usdc)
+
+	// 2 days ago, snapped to the hour → both the hour bucket
+	// (bucket <= now()-1h) AND the day bucket (bucket <= now()-1d) are
+	// fully closed, and both minutes share one hour + one day bucket.
+	base := time.Now().UTC().Add(-48 * time.Hour).Truncate(time.Hour)
+	const stroops = 100_000_000 // 10 XLM
+	mk := func(ts time.Time, opIdx uint32, quote int64) c.Trade {
+		return c.Trade{
+			Source:      "sdex",
+			Ledger:      52_430_001,
+			TxHash:      "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe",
+			OpIndex:     opIdx,
+			Timestamp:   ts,
+			Pair:        pair,
+			BaseAmount:  c.NewAmount(big.NewInt(stroops)),
+			QuoteAmount: c.NewAmount(big.NewInt(quote)),
+			Maker:       "maker-acc",
+			Taker:       "taker-acc",
+		}
+	}
+	// Minute A (base): 3 prints at price 1.0 (quote == base).
+	// Minute B (base+1m): 1 print at price 3.0 (quote == 3·base).
+	trades := []c.Trade{
+		mk(base.Add(0*time.Second), 0, stroops),
+		mk(base.Add(10*time.Second), 1, stroops),
+		mk(base.Add(20*time.Second), 2, stroops),
+		mk(base.Add(1*time.Minute), 3, 3*stroops),
+	}
+	for _, tr := range trades {
+		if err := store.InsertTrade(ctx, tr); err != nil {
+			t.Fatalf("InsertTrade: %v", err)
+		}
+	}
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	// prices_1m first (the twap CAGG's source), then the hierarchical
+	// twap_1h — order matters for a CAGG-on-CAGG refresh.
+	for _, cagg := range []string{"prices_1m", "twap_1h"} {
+		if _, err := db.ExecContext(ctx,
+			"CALL refresh_continuous_aggregate('"+cagg+"', NULL, NULL)"); err != nil {
+			t.Fatalf("refresh %s: %v", cagg, err)
+		}
+	}
+
+	pts, err := store.TWAPPointsInRange(ctx, pair, timescale.Granularity1h, time.Time{}, time.Time{}, 0)
+	if err != nil {
+		t.Fatalf("TWAPPointsInRange: %v", err)
+	}
+	if len(pts) != 1 {
+		t.Fatalf("got %d twap buckets, want 1 (hour %s)", len(pts), base.Format(time.RFC3339))
+	}
+	twap, ok := new(big.Rat).SetString(pts[0].VWAP)
+	if !ok {
+		t.Fatalf("twap %q not numeric", pts[0].VWAP)
+	}
+	// Expect 2.0 (time-weighted), reject 1.5 (count-weighted). Allow a
+	// tiny tolerance for NUMERIC text rounding.
+	want := big.NewRat(2, 1)
+	diff := new(big.Rat).Sub(twap, want)
+	diff.Abs(diff)
+	if diff.Cmp(big.NewRat(1, 1000)) > 0 {
+		t.Errorf("twap = %s, want ~2.0 (time-weighted; 1.5 would be trade-count-weighted)", pts[0].VWAP)
+	}
+
+	// 1d grain must also be gated + readable (same bucket, one day).
+	if _, err := db.ExecContext(ctx,
+		"CALL refresh_continuous_aggregate('twap_1d', NULL, NULL)"); err != nil {
+		t.Fatalf("refresh twap_1d: %v", err)
+	}
+	dayPts, err := store.TWAPPointsInRange(ctx, pair, timescale.Granularity1d, time.Time{}, time.Time{}, 0)
+	if err != nil {
+		t.Fatalf("TWAPPointsInRange(1d): %v", err)
+	}
+	if len(dayPts) != 1 {
+		t.Fatalf("got %d daily twap buckets, want 1", len(dayPts))
+	}
+
+	// Unsupported grain must error (the storage-side gate).
+	if _, err := store.TWAPPointsInRange(ctx, pair, timescale.Granularity15m, time.Time{}, time.Time{}, 0); err == nil {
+		t.Error("TWAPPointsInRange(15m) = nil error, want unsupported-granularity error")
+	}
+}

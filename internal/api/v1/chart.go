@@ -29,7 +29,7 @@ type ChartSeries struct {
 	Quote         string             `json:"quote"`
 	Timeframe     string             `json:"timeframe"`
 	Granularity   string             `json:"granularity"`
-	PriceType     string             `json:"price_type"` // "vwap" today; "twap" reserved
+	PriceType     string             `json:"price_type"` // "vwap" | "twap" | "market_cap"
 	Points        []HistoryPointWire `json:"points"`
 	Truncated     bool               `json:"truncated"`                // true when the requested window starts before the earliest available data
 	DataStartsAt  *time.Time         `json:"data_starts_at,omitempty"` // earliest bucket timestamp present in the result; only populated when Truncated
@@ -63,8 +63,10 @@ var chartTimeframes = map[string]chartTimeframeSpec{
 // table), price_type=vwap. Response is a CAGG-served series of
 // CLOSED buckets (ADR-0015) within the timeframe window.
 //
-// price_type=twap returns 400 — reserved for forward compat but
-// not yet served (see ADR-0020).
+// price_type=twap is served from the twap_1h / twap_1d CAGGs
+// (migration 0081) via handleChartTWAP — snapped to a 1h or 1d grain;
+// price_type=market_cap routes to handleChartMarketCap. Both are
+// dispatched in dispatchSpecialisedChart before the default vwap path.
 func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 	if s.history == nil {
 		writeProblem(w, r,
@@ -139,7 +141,7 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 		// covers the proxy retry too — without that, an empty
 		// literal pair could spend another 8s on each pegged
 		// alternative (10+ pegs × 8s each).
-		if fp, ok := s.chartStablecoinFallback(chartCtx, pair, gran, from); ok {
+		if fp, ok := s.chartStablecoinFallback(chartCtx, pair, s.chartVWAPReader(gran, from)); ok {
 			points = fp
 			triangulated = true
 		}
@@ -182,9 +184,10 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 
 // dispatchSpecialisedChart routes to a non-default chart handler
 // when the request matches a specialised shape: market_cap series,
-// fiat:fiat pairs (which live in fx_quotes, not prices_1m). Returns
-// true when a specialised handler took the request (caller bails);
-// false to let the default path proceed.
+// fiat:fiat pairs (which live in fx_quotes, not prices_1m), and
+// price_type=twap (twap_1h / twap_1d CAGGs). Returns true when a
+// specialised handler took the request (caller bails); false to let
+// the default vwap path proceed.
 func (s *Server) dispatchSpecialisedChart(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -197,10 +200,125 @@ func (s *Server) dispatchSpecialisedChart(
 		return true
 	}
 	if pair.Base.Type == canonical.AssetFiat && pair.Quote.Type == canonical.AssetFiat {
+		// Fiat:fiat pairs (incl. cross-fiat triangulation) are served from
+		// fx_quotes for EVERY price_type — the daily reference rate IS the
+		// time series, so a twap request on fiat/fiat returns the same fx
+		// series (there is no sub-daily trade stream to time-weight).
 		s.handleChartFiat(w, r, pair, tfRaw, gran, priceType, from)
 		return true
 	}
+	if priceType == "twap" {
+		s.handleChartTWAP(w, r, pair, tfRaw, gran, from)
+		return true
+	}
 	return false
+}
+
+// twapChartGranularity snaps an arbitrary requested chart granularity
+// onto one of the two grains backed by a TWAP CAGG (migration 0081):
+// sub-daily → 1h, daily+ → 1d. The TWAP surface is deliberately coarser
+// than VWAP (which has all seven prices_* grains) — a 1h/1d TWAP is the
+// meaningful resolution for a time-weighted view, and it keeps the CAGG
+// footprint to two hierarchical views over prices_1m. handleChartTWAP
+// reports the snapped grain back in the response so the consumer sees
+// exactly what was served.
+func twapChartGranularity(gran string) string {
+	switch gran {
+	case "1d", "1w", "1mo":
+		return "1d"
+	default: // 1m, 15m, 1h, 4h and any unknown → the finer TWAP grain
+		return "1h"
+	}
+}
+
+// handleChartTWAP serves /v1/chart?price_type=twap for a non-fiat base
+// out of the twap_1h / twap_1d CAGGs (migration 0081). It mirrors the
+// default VWAP path — closed CAGG buckets over the timeframe window,
+// stablecoin-USD proxy fallback when the literal fiat:USD pair has no
+// buckets — but reads the time-weighted series and snaps the
+// granularity to the TWAP grain actually served.
+func (s *Server) handleChartTWAP(
+	w http.ResponseWriter,
+	r *http.Request,
+	pair canonical.Pair,
+	tfRaw, gran string,
+	from time.Time,
+) {
+	twapGran := twapChartGranularity(gran)
+
+	// 8s ceiling covering the CAGG scan + the proxy fallback retry,
+	// matching the VWAP path (#1082 / #1099 …).
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+
+	read := func(rc context.Context, p canonical.Pair) ([]HistoryPoint, error) {
+		return s.history.TWAPPointsInRange(rc, p, twapGran, from, time.Time{}, historyMaxPoints)
+	}
+
+	points, err := read(ctx, pair)
+	if errors.Is(err, ErrUnknownGranularity) {
+		// twapChartGranularity only ever emits 1h / 1d, both of which have
+		// a CAGG — this arm guards a future grain change, not user input.
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-granularity",
+			"Invalid granularity", http.StatusBadRequest,
+			"price_type=twap serves 1h and 1d resolutions only")
+		return
+	}
+	if err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		if handlerTimedOut(ctx, err) {
+			s.logger.Warn("TWAPPointsInRange deadline exceeded",
+				"asset", pair.Base.String(), "quote", pair.Quote.String(),
+				"timeframe", tfRaw, "granularity", twapGran)
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/chart-timeout",
+				"Chart query timed out", http.StatusServiceUnavailable,
+				"the underlying twap_1h / twap_1d scan didn't return in 8s; cache may still be warming. Retry in a few seconds.")
+			return
+		}
+		s.logger.Error("TWAPPointsInRange failed",
+			"err", err, "asset", pair.Base.String(), "quote", pair.Quote.String(),
+			"timeframe", tfRaw, "granularity", twapGran)
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+		return
+	}
+
+	triangulated := false
+	if len(points) == 0 {
+		if fp, ok := s.chartStablecoinFallback(ctx, pair, read); ok {
+			points = fp
+			triangulated = true
+		}
+	}
+
+	wire := make([]HistoryPointWire, len(points))
+	for i, p := range points {
+		wire[i] = HistoryPointWire{T: p.Bucket, P: p.VWAP, VUSD: p.VolumeUSD}
+	}
+
+	series := ChartSeries{
+		AssetID:     pair.Base.String(),
+		Quote:       pair.Quote.String(),
+		Timeframe:   tfRaw,
+		Granularity: twapGran, // the grain actually served (snapped)
+		PriceType:   "twap",
+		Points:      wire,
+	}
+	if !from.IsZero() && len(points) > 0 {
+		if grace := chartGranularityGrace(twapGran); points[0].Bucket.Sub(from) > grace {
+			startsAt := points[0].Bucket
+			requested := from
+			series.Truncated = true
+			series.DataStartsAt = &startsAt
+			series.RequestedFrom = &requested
+		}
+	}
+	writeJSON(w, series, Flags{Triangulated: triangulated})
 }
 
 // handleChartFiat serves /v1/chart for fiat:fiat pairs out of the
@@ -443,9 +561,15 @@ func chartGranularityGrace(gran string) time.Duration {
 // non-empty result. ok=false when no fallback fires (caller keeps
 // the empty result + leaves triangulated=false).
 //
+// `read` fetches one proxied pair's closed-bucket series — the VWAP
+// path passes a prices_<gran> reader, the TWAP path a twap_<gran>
+// reader — so both CAGG-reading chart surfaces share the same
+// stablecoin-proxy fallback.
+//
 // Extracted to keep handleChart under the gocognit ceiling.
 func (s *Server) chartStablecoinFallback(
-	ctx context.Context, pair canonical.Pair, gran string, from time.Time,
+	ctx context.Context, pair canonical.Pair,
+	read func(context.Context, canonical.Pair) ([]HistoryPoint, error),
 ) ([]HistoryPoint, bool) {
 	if pair.Quote.Type != canonical.AssetFiat || pair.Quote.Code != "USD" {
 		return nil, false
@@ -458,13 +582,21 @@ func (s *Server) chartStablecoinFallback(
 		if err != nil {
 			continue
 		}
-		pp, err := s.history.HistoryPointsInRange(ctx, proxied, gran, from, time.Time{}, historyMaxPoints)
+		pp, err := read(ctx, proxied)
 		if err != nil || len(pp) == 0 {
 			continue
 		}
 		return pp, true
 	}
 	return nil, false
+}
+
+// chartVWAPReader returns a [chartStablecoinFallback] read closure that
+// fetches a pair's closed prices_<gran> series over [from, now).
+func (s *Server) chartVWAPReader(gran string, from time.Time) func(context.Context, canonical.Pair) ([]HistoryPoint, error) {
+	return func(ctx context.Context, p canonical.Pair) ([]HistoryPoint, error) {
+		return s.history.HistoryPointsInRange(ctx, p, gran, from, time.Time{}, historyMaxPoints)
+	}
 }
 
 // parseChartPair builds the canonical Pair from query params,
@@ -516,21 +648,17 @@ func parseChartParams(w http.ResponseWriter, r *http.Request) (string, chartTime
 	if priceType == "" {
 		priceType = "vwap"
 	}
-	if priceType == "twap" {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/price-type-not-supported",
-			"price_type=twap deferred to post-launch", http.StatusBadRequest,
-			"the chart endpoint accepts price_type=vwap today; multi-bar TWAP charts are deferred to L7.8 in the launch-readiness backlog (single-bar TWAP is available now via /v1/twap). The deferral is documented in ADR-0020 §price_type handling: shipping on-the-fly TWAP from the 1m CAGG today would create a one-time consumer-visible math shift when the proper TWAP CAGG ships later, so we'd rather defer than ship-and-rotate")
-		return "", chartTimeframeSpec{}, "", "", false
-	}
-	if priceType == "market_cap" {
-		// price_type=market_cap is a separate compute path — the
-		// handler dispatches to handleChartMarketCap before falling
-		// through to the vwap-path. parseChartParams just accepts the
-		// token here.
-		return tfRaw, tf, gran, priceType, true
-	}
-	if priceType != "vwap" {
+	switch priceType {
+	case "vwap":
+		// Default price series — the fall-through path in handleChart.
+	case "twap":
+		// Time-weighted series — dispatched to handleChartTWAP, backed by
+		// the twap_1h / twap_1d CAGGs (migration 0081). parseChartParams
+		// just accepts the token here.
+	case "market_cap":
+		// Separate compute path — the handler dispatches to
+		// handleChartMarketCap before falling through to the vwap-path.
+	default:
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-price-type",
 			"Invalid price_type", http.StatusBadRequest,
@@ -757,7 +885,7 @@ func (s *Server) handleChartMarketCapCrypto(
 	}
 	triangulated := false
 	if len(pricePts) == 0 {
-		if fp, ok := s.chartStablecoinFallback(ctx, pair, gran, from); ok {
+		if fp, ok := s.chartStablecoinFallback(ctx, pair, s.chartVWAPReader(gran, from)); ok {
 			pricePts = fp
 			triangulated = true
 		}

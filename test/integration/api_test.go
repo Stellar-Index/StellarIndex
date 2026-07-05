@@ -625,6 +625,25 @@ func (r apiHistoryAdapter) HistoryPointsInRange(ctx context.Context, pair c.Pair
 	return out, nil
 }
 
+// TWAPPointsInRange is required by v1.HistoryReader (BACKLOG #37
+// twap CAGG). Adapts [timescale.Store.TWAPPointsInRange]; only 1h/1d
+// are backed by a TWAP CAGG (migration 0081).
+func (r apiHistoryAdapter) TWAPPointsInRange(ctx context.Context, pair c.Pair, granularity string, from, to time.Time, limit int) ([]v1.HistoryPoint, error) {
+	g := timescale.HistoryGranularity(granularity)
+	if !timescale.TWAPGranularitySupported(g) {
+		return nil, v1.ErrUnknownGranularity
+	}
+	rows, err := r.s.TWAPPointsInRange(ctx, pair, g, from, to, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]v1.HistoryPoint, len(rows))
+	for i, row := range rows {
+		out[i] = v1.HistoryPoint{Bucket: row.Bucket, VWAP: row.VWAP, VolumeUSD: row.VolumeUSD}
+	}
+	return out, nil
+}
+
 // OHLCSeries is required by v1.HistoryReader (F-0071 multi-bar). The
 // integration test for /v1/history doesn't exercise this path; the
 // stub returns an empty series so the adapter implements the full

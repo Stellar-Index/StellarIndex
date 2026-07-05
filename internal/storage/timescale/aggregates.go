@@ -243,6 +243,118 @@ func (s *Store) HistoryPointsInRange(
 	return out, nil
 }
 
+// twapGranularities is the set of granularities backed by a TWAP
+// continuous aggregate (migration 0081). TWAP charts serve only these
+// two resolutions — 1h for sub-daily timeframes, 1d for daily+ — so the
+// TWAP CAGG surface stays minimal (one hierarchical view each over
+// prices_1m) rather than mirroring all seven prices_* grains.
+var twapGranularities = map[HistoryGranularity]struct{}{
+	Granularity1h: {},
+	Granularity1d: {},
+}
+
+// TWAPGranularitySupported reports whether granularity has a TWAP CAGG
+// (twap_1h / twap_1d). Callers snap an arbitrary requested granularity
+// onto one of these before calling [Store.TWAPPointsInRange].
+func TWAPGranularitySupported(g HistoryGranularity) bool {
+	_, ok := twapGranularities[g]
+	return ok
+}
+
+// TWAPPointsInRange returns CLOSED time-weighted-average buckets for the
+// pair from the twap_<granularity> CAGG (migration 0081), ordered
+// chronologically (ASC). It is the TWAP sibling of
+// [Store.HistoryPointsInRange]: same [from, to) window semantics, same
+// closed-bucket guard, same `[]HistoryPoint` wire shape (the VWAP field
+// carries the TWAP value). granularity must be 1h or 1d — the only two
+// grains with a TWAP CAGG; anything else returns an error the API
+// surfaces as an unknown-granularity 400.
+//
+// TWAP methodology lives in the CAGG (migration 0081): time-weighted at
+// 1-minute resolution. This read only combines the two stored market
+// directions into the requested ($1, $2) orientation, exactly as the
+// VWAP reads do (LatestClosedVWAP1mForPair, TimedVWAPsForPair1m,
+// OHLCSeries): the SDEX decoder records XLM/USDC and USDC/XLM as
+// separate rows, so reading only (base=$1, quote=$2) would use half the
+// liquidity. Flipped rows have their twap inverted (1/twap) and are
+// trade-count-weighted within the bucket. See canonical.Orient.
+//
+// Closed-bucket (ADR-0015): `bucket <= now() - <interval>` — the
+// SARGABLE form (a constant on the right, no function on the indexed
+// `bucket` column), so the from/to range bounds + this predicate prune
+// chunks at plan time. Empty slice + nil error when the pair has no
+// closed TWAP buckets in the window.
+func (s *Store) TWAPPointsInRange(
+	ctx context.Context,
+	p canonical.Pair,
+	granularity HistoryGranularity,
+	from, to time.Time,
+	limit int,
+) ([]HistoryPoint, error) {
+	if !TWAPGranularitySupported(granularity) {
+		return nil, fmt.Errorf("timescale: TWAPPointsInRange: unsupported granularity %q (twap CAGG exists for 1h, 1d)", granularity)
+	}
+	table := "twap_" + string(granularity)
+	interval := granularity.closedBucketInterval()
+	// Both stored directions → requested ($1, $2) orientation. Flipped
+	// rows: invert the twap (1/twap) and trade-count-weight so every row
+	// expresses the price of $1 in $2. HAVING guards the (unreachable —
+	// a TWAP bucket always has ≥1 contributing trade) all-zero-weight
+	// case so the twap expression can never scan as NULL.
+	args := []any{p.Base.String(), p.Quote.String()}
+	clauses := "((base_asset = $1 AND quote_asset = $2)\n         OR (base_asset = $2 AND quote_asset = $1))" +
+		"\n       AND bucket <= now() - INTERVAL '" + interval + "'"
+	if !from.IsZero() {
+		args = append(args, from.UTC())
+		clauses += fmt.Sprintf("\n       AND bucket >= $%d", len(args))
+	}
+	if !to.IsZero() {
+		args = append(args, to.UTC())
+		clauses += fmt.Sprintf("\n       AND bucket < $%d", len(args))
+	}
+	// #nosec G201 — table + interval derive from the validated
+	// twapGranularities set, not user input. See TWAPGranularitySupported.
+	q := fmt.Sprintf(`
+		SELECT bucket,
+		       (SUM((CASE WHEN base_asset = $1 THEN twap
+		                  ELSE 1.0 / NULLIF(twap, 0) END) * COALESCE(trade_count, 0))
+		          / NULLIF(SUM(COALESCE(trade_count, 0)), 0))::text AS twap,
+		       SUM(COALESCE(volume_usd, 0))::text                   AS volume_usd
+		  FROM %s
+		 WHERE %s
+		 GROUP BY bucket
+		HAVING SUM(COALESCE(trade_count, 0)) > 0
+		 ORDER BY bucket ASC
+	`, table, clauses)
+	if limit > 0 {
+		args = append(args, limit)
+		q += fmt.Sprintf(" LIMIT $%d", len(args))
+	}
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: TWAPPointsInRange[%s]: %w", granularity, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]HistoryPoint, 0, 1024)
+	for rows.Next() {
+		var pt HistoryPoint
+		var vusd sql.NullString
+		if err := rows.Scan(&pt.Bucket, &pt.VWAP, &vusd); err != nil {
+			return nil, fmt.Errorf("timescale: TWAPPointsInRange[%s] scan: %w", granularity, err)
+		}
+		if vusd.Valid {
+			v := vusd.String
+			pt.VolumeUSD = &v
+		}
+		out = append(out, pt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: TWAPPointsInRange[%s] rows: %w", granularity, err)
+	}
+	return out, nil
+}
+
 // Vwap1mRow is one row from the prices_1m continuous aggregate.
 // The fields mirror migrations/0002_create_price_aggregates.up.sql
 // — see that file for the SQL semantics. Bucket is the START of the
