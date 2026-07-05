@@ -80,6 +80,12 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 
 		// Diagnostics — operator-facing live data, never CDN-cached
 		{"/v1/diagnostics/cursors", "private, no-cache, must-revalidate"},
+		{"/v1/diagnostics/archive", "private, no-cache, must-revalidate"},
+
+		// Per-source health — 15s-snapshot data, same class as
+		// diagnostics. The exact-match catalogue path /v1/sources
+		// above stays public-cacheable.
+		{"/v1/sources/kraken/health", "private, no-cache, must-revalidate"},
 
 		// Unknown — conservative default
 		{"/v1/something-new", "private, no-store"},

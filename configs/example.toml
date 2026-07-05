@@ -234,6 +234,13 @@ auth_mode                = "none"            # none | apikey | sep10
 anon_rate_limit_per_min  = 60
 key_rate_limit_per_min   = 1000
 cdn_enabled              = true
+# archive_report_path — where GET /v1/diagnostics/archive reads the
+# archive-completeness daemon's latest JSON report (ADR-0017). The
+# default matches the archive-completeness.service REPORT_OUTPUT
+# path; the endpoint 404s while the file doesn't exist yet, so the
+# default is harmless on hosts without the daemon. Empty disables
+# the endpoint (503).
+archive_report_path      = "/var/lib/galexie/last-completeness-report.json"
 # allowed_origins — CORS allow-list for browser clients.
 #
 # Recommended: leave at the default ["*"] for any deployment that

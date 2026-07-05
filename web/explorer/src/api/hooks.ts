@@ -728,6 +728,73 @@ export function useCursors() {
   });
 }
 
+// NonNullable: the spec composes `data` via allOf+EnvelopeMeta, so the
+// generated property is optional even though the handler always sets it.
+export type CoverageVerdicts = NonNullable<GetJSON<'/coverage'>['data']>;
+export type CoverageVerdict = CoverageVerdicts['sources'][number];
+
+/**
+ * useCoverage — fetches the per-source ADR-0033 completeness verdicts
+ * from `/v1/coverage` (the same rows the status page's "15/15" claim
+ * is computed from). Verdicts only change when the completeness audit
+ * runs (timer cadence: hours), so a 60s stale window costs nothing.
+ */
+export function useCoverage() {
+  return useQuery<CoverageVerdicts>({
+    queryKey: ['/v1/coverage'],
+    queryFn: async () => {
+      const env = await apiGet<{ data: CoverageVerdicts }>('/v1/coverage');
+      return env.data;
+    },
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  });
+}
+
+export type ArchiveReport = NonNullable<GetJSON<'/diagnostics/archive'>['data']>;
+
+/**
+ * useArchiveReport — fetches the latest ADR-0017 archive-completeness
+ * report from `/v1/diagnostics/archive`. The endpoint legitimately
+ * 404s (daemon hasn't produced a report yet) or 503s (deployment
+ * didn't configure a report path) — both are terminal per session, so
+ * retry is disabled and the panel renders the honest absence state
+ * off the error.
+ */
+export function useArchiveReport() {
+  return useQuery<ArchiveReport>({
+    queryKey: ['/v1/diagnostics/archive'],
+    queryFn: async () => {
+      const env = await apiGet<{ data: ArchiveReport }>('/v1/diagnostics/archive');
+      return env.data;
+    },
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+}
+
+export type SourceHealth = NonNullable<GetJSON<'/sources/{name}/health'>['data']>;
+
+/**
+ * useSourceHealth — fetches one venue's live health row from
+ * `/v1/sources/{name}/health` (registry metadata + trailing-24h
+ * entries/trades/volume counters, served from the API's 15s
+ * ingestion snapshot). Polls at the snapshot cadence.
+ */
+export function useSourceHealth(name: string | undefined) {
+  return useQuery<SourceHealth>({
+    queryKey: ['/v1/sources/health', name],
+    enabled: !!name,
+    queryFn: async () => {
+      const env = await apiGet<{ data: SourceHealth }>(
+        `/v1/sources/${encodeURIComponent(name ?? '')}/health`,
+      );
+      return env.data;
+    },
+    refetchInterval: 15_000,
+  });
+}
+
 export type TradeRow = Schemas['TradeRow'];
 
 type TradeHistoryEnvelope = {

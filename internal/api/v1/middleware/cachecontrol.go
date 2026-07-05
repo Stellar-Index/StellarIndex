@@ -159,6 +159,14 @@ func policyForPath(path string, cdnEnabled bool) string {
 	case strings.HasPrefix(path, "/v1/diagnostics/"):
 		return "private, no-cache, must-revalidate"
 
+	// ─── Per-source health — same freshness class as diagnostics ──
+	// /v1/sources/{name}/health serves the 15s-refreshed ingestion-
+	// snapshot row; the explorer source page polls it. Note the
+	// trailing slash: the exact-match `/v1/sources` catalogue path in
+	// the closed-bucket block below is unaffected.
+	case strings.HasPrefix(path, "/v1/sources/"):
+		return "private, no-cache, must-revalidate"
+
 	// ─── Status — customer-facing health rollup ─────────────────
 	// /v1/status is what the explorer /status page polls every 10 s
 	// and what monitoring dashboards (and the smoke timer) poll on a

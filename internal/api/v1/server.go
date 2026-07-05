@@ -150,6 +150,7 @@ type Server struct {
 	triangulated         TriangulatedPriceLooker
 	cdnEnabled           bool
 	statusBackend        StatusBackend
+	archiveReportPath    string
 	regionName           string
 	regionDeployment     string
 	dashboardAuth        DashboardAuthMounter
@@ -719,6 +720,14 @@ type Options struct {
 	// Prometheus.
 	StatusBackend StatusBackend
 
+	// ArchiveReportPath, when non-empty, backs GET
+	// /v1/diagnostics/archive: the filesystem path of the latest
+	// JSON report the ADR-0017 archive-completeness daemon writes
+	// (`stellarindex-ops archive-completeness verify -output-file`).
+	// Empty → the endpoint returns 503; a configured path whose file
+	// doesn't exist yet → 404 (fresh host, daemon hasn't run).
+	ArchiveReportPath string
+
 	// RegionName + RegionDeployment label /v1/status responses.
 	// Default to "unknown" / "production" when unset.
 	RegionName       string
@@ -896,6 +905,7 @@ func New(opts Options) *Server {
 		triangulated:            opts.Triangulated,
 		cdnEnabled:              opts.CDNEnabled,
 		statusBackend:           opts.StatusBackend,
+		archiveReportPath:       opts.ArchiveReportPath,
 		regionName:              valueOr(opts.RegionName, "unknown"),
 		regionDeployment:        valueOr(opts.RegionDeployment, "production"),
 		dashboardAuth:           opts.DashboardAuth,
@@ -1136,6 +1146,10 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/changes/{entity_type}/{id}", s.handleChangeSummary)
 	s.mux.HandleFunc("GET /v1/diagnostics/cursors", s.handleCursors)
 	s.mux.HandleFunc("GET /v1/diagnostics/ingestion", s.handleDiagnosticsIngestion)
+	// Latest archive-completeness report (ADR-0017) — read-through of
+	// the JSON file the daily verify timer writes. Backs the explorer
+	// /diagnostics archive panel. 503 when unconfigured, 404 pre-first-run.
+	s.mux.HandleFunc("GET /v1/diagnostics/archive", s.handleDiagnosticsArchive)
 	s.mux.HandleFunc("GET /v1/coverage", s.handleCoverageVerdicts)
 
 	// Protocols pillar (explorer-ux-plan §5): directory + per-protocol
@@ -1311,6 +1325,10 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// Source catalogue — every venue the aggregator knows about,
 	// with class + IncludeInVWAP metadata.
 	s.mux.HandleFunc("GET /v1/sources", s.handleSources)
+	// Per-source live health row — the same shape as the `sources`
+	// section on /v1/diagnostics/ingestion, addressable per venue so
+	// the explorer /sources/{name} page polls one source cheaply.
+	s.mux.HandleFunc("GET /v1/sources/{name}/health", s.handleSourceHealth)
 
 	// Router / aggregator-vault registry + routed-via 24h rollup
 	// (migration 0025 Phase B).

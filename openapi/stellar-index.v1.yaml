@@ -3319,6 +3319,116 @@ paths:
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
 
+  /diagnostics/archive:
+    get:
+      tags: [meta]
+      summary: Latest archive-completeness report (ADR-0017).
+      description: |
+        Read-through of the JSON report the archive-completeness
+        daemon (`stellarindex-ops archive-completeness verify`, daily
+        systemd timer) writes after its check → fix → re-check cycle:
+        the ledger range scanned, and per-archive expected / found /
+        missing counts. `scanned_at` is the daemon's own timestamp —
+        a stale value means the timer stopped firing, which is itself
+        a signal (the API deliberately does not re-synthesize
+        freshness).
+
+        The `primary` section is currently always absent — the shipped
+        daemon enforces only the cross-anchor archive; the primary
+        (galexie-archive) scan is monitored through the completeness
+        verdicts on `/v1/coverage` instead.
+
+        Degradation: 503 when the deployment has no
+        `api.archive_report_path` configured; 404 while the configured
+        file doesn't exist yet (fresh host — the daemon hasn't
+        produced a report).
+      responses:
+        "200":
+          description: The latest report, verbatim from the daemon.
+          content:
+            application/json:
+              example:
+                data:
+                  schema: "1"
+                  scanned_at: '2026-07-03T04:00:00Z'
+                  range: { from: 2, to: 63305532 }
+                  cross_anchor:
+                    archive_root: /srv/history-archive
+                    expected: 989148
+                    found: 989148
+                    missing_count: 0
+                as_of: '2026-07-03T22:38:20.564931481Z'
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        required: [schema, scanned_at, range]
+                        properties:
+                          schema: { type: string, example: "1" }
+                          scanned_at: { type: string, format: date-time }
+                          range:
+                            type: object
+                            required: [from, to]
+                            properties:
+                              from: { type: integer, format: int64 }
+                              to: { type: integer, format: int64 }
+                          cross_anchor:
+                            type: object
+                            required: [archive_root, expected, found, missing_count]
+                            properties:
+                              archive_root: { type: string, example: /srv/history-archive }
+                              expected: { type: integer }
+                              found: { type: integer }
+                              missing_count: { type: integer }
+                              missing:
+                                type: array
+                                items: { type: integer, format: int64 }
+                              truncated:
+                                type: boolean
+                                description: |
+                                  True when the daemon capped the `missing`
+                                  list; `missing_count` stays accurate.
+                          primary:
+                            type: object
+                            required: [bucket_name, expected, found, missing_count]
+                            properties:
+                              bucket_name: { type: string }
+                              expected: { type: integer }
+                              found: { type: integer }
+                              missing_count: { type: integer }
+                              missing_ranges:
+                                type: array
+                                items:
+                                  type: object
+                                  required: [start, end]
+                                  properties:
+                                    start: { type: integer, format: int64 }
+                                    end: { type: integer, format: int64 }
+        "404":
+          description: |
+            The configured report file doesn't exist yet — the daemon
+            hasn't completed a run on this host.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503":
+          description: No archive_report_path configured on this deployment.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
   /incidents:
     get:
       tags: [meta]
@@ -4076,6 +4186,89 @@ paths:
                   divergence_checked: false
               schema: { $ref: "#/components/schemas/SourcesEnvelope" }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /sources/{name}/health:
+    get:
+      tags: [meta]
+      summary: One source's live health row.
+      description: |
+        The same per-source health shape the `sources` section of
+        `/v1/diagnostics/ingestion` carries — registry metadata
+        (class, subclass, VWAP-eligibility, backfill-safety) joined
+        with trailing-24h liveness counters — addressable per venue so
+        a page tracking one source polls it cheaply instead of pulling
+        the full operator snapshot.
+
+        `entries_24h` counts every decoded event for the source
+        (trades, oracle updates, supply observations, …) and is the
+        liveness signal that works for non-trade sources;
+        `trade_count_24h` / `volume_24h_usd` / `markets_count_24h` are
+        trades-table aggregates and legitimately 0 for oracles, FX
+        feeds, and bridges.
+
+        Served from a 15-second background-refreshed snapshot;
+        `Cache-Control` is `private, no-cache` accordingly. Unknown
+        source names 404 (the registry is static per deploy — see
+        `/v1/sources` for the catalogue).
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Source name as listed by /v1/sources.
+          schema:
+            type: string
+            example: kraken
+      responses:
+        "200":
+          description: The source's health row.
+          content:
+            application/json:
+              example:
+                data:
+                  name: kraken
+                  class: exchange
+                  subclass: cex
+                  include_in_vwap: true
+                  backfill_safe: true
+                  trade_count_24h: 10023
+                  entries_24h: 10023
+                  volume_24h_usd: "1245001.55"
+                  markets_count_24h: 4
+                as_of: '2026-07-03T22:38:53.6445723Z'
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    required: [data]
+                    properties:
+                      data:
+                        type: object
+                        required:
+                          [name, class, include_in_vwap, backfill_safe,
+                           trade_count_24h, entries_24h, markets_count_24h]
+                        properties:
+                          name: { type: string, example: kraken }
+                          class: { type: string, example: exchange }
+                          subclass: { type: string, example: cex }
+                          include_in_vwap: { type: boolean }
+                          backfill_safe: { type: boolean }
+                          trade_count_24h: { type: integer, format: int64 }
+                          entries_24h: { type: integer, format: int64 }
+                          volume_24h_usd: { type: string }
+                          markets_count_24h: { type: integer, format: int64 }
+        "404":
+          description: No registered source with that name.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
 

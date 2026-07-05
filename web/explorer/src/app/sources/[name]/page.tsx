@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { Breadcrumbs } from '@/components/ui';
+import { SourceHealthPanel } from './SourceHealthPanel';
 import { SourceStatsPanel } from '@/app/dexes/[source]/SourceStatsPanel';
 import { SourceTopChart } from '@/app/dexes/[source]/SourceTopChart';
 import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
@@ -266,6 +267,11 @@ export default async function SourceDetailPage({
           />
         </dl>
       </Panel>
+
+      {/* Live health pane — client-side poll of /v1/sources/{name}/health
+          (board #33). Registry metadata + trailing-24h liveness counters
+          from the API's 15s ingestion snapshot. */}
+      <SourceHealthPanel source={name} />
 
       {/* 24h activity panel — client-side. Was inlined SSR with
           include=stats,sparkline but that endpoint takes 10-25s

@@ -974,6 +974,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		UsageRollupReader:  usageRollupReaderOrNil(store),
 		CDNEnabled:         cfg.API.CDNEnabled,
 		StatusBackend:      statusBackend,
+		ArchiveReportPath:  cfg.API.ArchiveReportPath,
 		RegionName:         cfg.Region.ID,
 		RegionDeployment:   "production",
 		DashboardAuth:      nilOrMounter(dashboardBundle.auth),
