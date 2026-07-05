@@ -868,6 +868,23 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		adminAudit = postgresstore.NewAuditStore(postgresstore.New(pgDB))
 	}
 
+	// Platform account store — backs the operator tier-override
+	// endpoints (PATCH /v1/admin/accounts/{id}) AND is the SAME store
+	// the Postgres API-key validator reads overrides from, so a
+	// staff-set override is effective on the next key Lookup. Status
+	// notice store (migration 0082) backs the operator status-banner
+	// endpoints + public /v1/status/notices. Both wired only when
+	// Postgres is reachable; nil degrades the admin endpoints to 503
+	// and the public notices list to `[]`.
+	var (
+		platformAccountStore v1.PlatformAccountStore
+		statusNoticeStore    v1.StatusNoticeStore
+	)
+	if pgDB := store.DB(); pgDB != nil {
+		platformAccountStore = postgresstore.NewAccountStore(postgresstore.New(pgDB))
+		statusNoticeStore = postgresstore.NewStatusNoticeStore(postgresstore.New(pgDB))
+	}
+
 	apiSrv := v1.New(v1.Options{
 		Logger:      logger.With("component", "api"),
 		ReadyChecks: checks,
@@ -888,6 +905,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Oracle:              oracleReader,
 		Sep1Cache:           store,
 		Accounts:            accountStore,
+		PlatformAccounts:    platformAccountStore,
+		StatusNotices:       statusNoticeStore,
 		Audit:               adminAudit,
 		Signups:             signupTracker,
 		SignupIPThrottle:    signupIPThrottle,

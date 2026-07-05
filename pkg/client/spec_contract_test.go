@@ -176,6 +176,15 @@ var uncoveredOperations = map[string]string{
 	"POST /auth/logout":                       "magic-link browser flow",
 	"GET /auth/sep10/challenge":               "SEP-10 wallet flow — wallet SDKs handle this",
 	"POST /auth/sep10/token":                  "SEP-10 wallet flow — wallet SDKs handle this",
+
+	// Operator/admin surfaces (admin Phase 1.5) — staff-issued
+	// operator-tier credentials only; not a machine-SDK surface.
+	"GET /admin/accounts/{id}":                "operator surface — staff-issued credential only",
+	"PATCH /admin/accounts/{id}":              "operator surface — staff-issued credential only",
+	"GET /admin/status-notices":               "operator surface — staff-issued credential only",
+	"POST /admin/status-notices":              "operator surface — staff-issued credential only",
+	"POST /admin/status-notices/{id}/resolve": "operator surface — staff-issued credential only",
+	"GET /status/notices":                     "status-page banner feed — explorer/status surface",
 }
 
 // schemaExceptions lists per-operation JSON field names excluded

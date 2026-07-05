@@ -71,6 +71,8 @@ type Server struct {
 	oracle              OracleReader
 	sep1Cache           Sep1CachedReader
 	accounts            AccountStore
+	platformAccounts    PlatformAccountStore
+	statusNotices       StatusNoticeStore
 	audit               AuditSink
 	signups             SignupTracker
 	signupIPThrottle    SignupIPThrottle
@@ -299,11 +301,27 @@ type Options struct {
 	// reachable; the binary's auth.NewRedisAPIKeyStore enforces that.
 	Accounts AccountStore
 
+	// PlatformAccounts, when non-nil, backs the operator tier-override
+	// endpoints (GET/PATCH /v1/admin/accounts/{id}). Production wires
+	// postgresstore.NewAccountStore — the SAME store the Postgres
+	// API-key validator reads the account's rate-limit / monthly-quota
+	// overrides from at Lookup time, so a staff-set override takes
+	// effect on the next key lookup. Nil makes those endpoints 503.
+	PlatformAccounts PlatformAccountStore
+
+	// StatusNotices, when non-nil, backs the operator status-banner
+	// endpoints (POST/GET /v1/admin/status-notices, resolve) and the
+	// public GET /v1/status/notices. Production wires
+	// postgresstore.NewStatusNoticeStore (migration 0082). Nil makes
+	// the public list return `[]` and the admin endpoints 503.
+	StatusNotices StatusNoticeStore
+
 	// Audit, when non-nil, receives persisted audit rows for admin
-	// actions (POST /v1/admin/keys → "key.mint"). Production wires
+	// actions (POST /v1/admin/keys → "key.mint"; account overrides;
+	// status-notice mutations). Production wires
 	// postgresstore.NewAuditStore — the same store the Stripe
 	// webhook's audit sink uses. Nil degrades to structured-log-only
-	// audit (the mint still logs unconditionally).
+	// audit (the mutation still logs unconditionally).
 	Audit AuditSink
 
 	// Signups, when non-nil, backs POST /v1/signup's per-email
@@ -860,6 +878,8 @@ func New(opts Options) *Server {
 		oracle:                  opts.Oracle,
 		sep1Cache:               opts.Sep1Cache,
 		accounts:                opts.Accounts,
+		platformAccounts:        opts.PlatformAccounts,
+		statusNotices:           opts.StatusNotices,
 		signups:                 opts.Signups,
 		signupIPThrottle:        opts.SignupIPThrottle,
 		signupVerifier:          opts.SignupVerifier,
@@ -1202,6 +1222,11 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/readyz", s.handleReadyz)
 	s.mux.HandleFunc("GET /v1/version", s.handleVersion)
 	s.mux.HandleFunc("GET /v1/status", s.handleStatus)
+	// Public list of ACTIVE operator-posted status banners (incident
+	// tooling, admin Phase 1.5). Anonymous-friendly; the status page
+	// renders these alongside the Alertmanager-derived /v1/status
+	// incidents block. Empty (`{"notices":[]}`) when unwired.
+	s.mux.HandleFunc("GET /v1/status/notices", s.handleStatusNotices)
 
 	// Prometheus scrape endpoint. Deliberately unversioned — it's
 	// operator-facing, not part of the public API contract.
@@ -1382,6 +1407,19 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// Operator surface: mint a key for ANOTHER identifier. Gated on
 	// TierOperator inside the handler; audit-logged via Options.Audit.
 	s.mux.HandleFunc("POST /v1/admin/keys", s.handleAdminKeysCreate)
+	// Operator surface: per-account tier + rate-limit / monthly-quota
+	// overrides (admin Phase 1.5). Same TierOperator gate as
+	// /v1/admin/keys; PATCH additionally requires an X-Reason header and
+	// audit-logs "account.override.set". The override takes effect on
+	// the next Postgres API-key validator Lookup for that account.
+	s.mux.HandleFunc("GET /v1/admin/accounts/{id}", s.handleAdminAccountGet)
+	s.mux.HandleFunc("PATCH /v1/admin/accounts/{id}", s.handleAdminAccountOverrides)
+	// Operator surface: customer-facing status banners (incident
+	// tooling, admin Phase 1.5). Create/list/resolve gated on
+	// TierOperator; create + resolve require X-Reason and audit-log.
+	s.mux.HandleFunc("GET /v1/admin/status-notices", s.handleAdminStatusNoticesList)
+	s.mux.HandleFunc("POST /v1/admin/status-notices", s.handleAdminStatusNoticeCreate)
+	s.mux.HandleFunc("POST /v1/admin/status-notices/{id}/resolve", s.handleAdminStatusNoticeResolve)
 	s.mux.HandleFunc("POST /v1/signup", s.handleSignup)
 	// F-1218 (codex audit-2026-05-12): email-ownership-proof
 	// flow. The signup handler issues a token (subsequent

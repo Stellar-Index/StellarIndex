@@ -18,7 +18,7 @@
 openapi: 3.1.0
 info:
   title: Stellar Index API
-  version: "1.1.0"
+  version: "1.2.0"
   summary: Aggregated Stellar asset pricing — real-time and historical.
   description: |
     The Stellar Index API exposes normalised, VWAP-aggregated pricing
@@ -300,6 +300,28 @@ paths:
                     informational_count: 0
                 as_of: "2026-05-05T15:09:00.119Z"
                 flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
+
+  /status/notices:
+    get:
+      tags: [health]
+      summary: Active operator-posted status banners.
+      description: |
+        The public list of ACTIVE, human-authored status banners an
+        operator posted for a maintenance window or an unfolding
+        incident (admin Phase 1.5 incident tooling). The status page
+        renders these alongside the Alertmanager-derived `incidents`
+        block on GET /v1/status. Distinct from GET /v1/incidents, which
+        serves the historical post-mortem corpus.
+
+        Anonymous-friendly. Returns `{"notices":[],"count":0}` (never
+        null) when no banners are active or the notice store is unwired.
+      security: []
+      responses:
+        "200":
+          description: Active status-notice list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusNoticesEnvelope" }
 
   /assets:
     get:
@@ -5088,6 +5110,221 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /admin/accounts/{id}:
+    get:
+      tags: [admin]
+      summary: Operator — read an account's tier + overrides.
+      description: |
+        Returns the account-level tier plus the per-account
+        `rate_limit_per_min_override` / `monthly_request_quota_override`
+        (0 = inherit tier default). Operator-tier only; read-only (not
+        audit-logged — the audit log records mutations, not reads).
+      security:
+        - APIKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Platform account UUID.
+      responses:
+        "200":
+          description: Account view.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminAccountEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: Caller is not operator-tier.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    patch:
+      tags: [admin]
+      summary: Operator — set an account's tier + rate-limit / quota overrides.
+      description: |
+        Sets the account plan tier and/or the per-account
+        `rate_limit_per_min_override` / `monthly_request_quota_override`
+        (admin Phase 1.5). All three fields are optional; at least one
+        must be present. An override value of `0` clears it (inherit the
+        tier default). The rate-limit override acts as an account-wide
+        floor applied by the Postgres API-key validator on the next
+        Lookup — it raises keys budgeted below it, never lowers a key
+        budgeted above.
+
+        Operator-tier only (staff-issued via stellarindex-ops; never
+        granted to public callers) — other tiers 403. Requires an
+        `X-Reason` header captured into the audit log; every successful
+        mutation lands an `account.override.set` audit row (staff actor)
+        when the deployment wires the audit store.
+      security:
+        - APIKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Platform account UUID.
+        - name: X-Reason
+          in: header
+          required: true
+          schema: { type: string }
+          description: Free-form reason captured into the audit log.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tier:
+                  type: string
+                  enum: [free, starter, pro, business, enterprise]
+                rate_limit_per_min_override:
+                  type: integer
+                  minimum: 0
+                  maximum: 100000
+                  description: 0 clears the override (inherit tier default).
+                monthly_request_quota_override:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                  description: 0 clears the override (inherit tier default).
+      responses:
+        "200":
+          description: Updated account view.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminAccountEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: Caller is not operator-tier.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /admin/status-notices:
+    get:
+      tags: [admin]
+      summary: Operator — list all status notices (active + resolved).
+      description: |
+        The operator history view of the customer-facing status banners
+        (admin Phase 1.5 incident tooling), newest first. Operator-tier
+        only; read-only.
+      security:
+        - APIKeyAuth: []
+      responses:
+        "200":
+          description: Notice list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusNoticesEnvelope" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: Caller is not operator-tier.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+    post:
+      tags: [admin]
+      summary: Operator — post a customer-facing status banner.
+      description: |
+        Creates a LIVE, human-authored status banner shown on the public
+        status surface via GET /v1/status/notices (platform-spec §7.1
+        "Trigger maintenance mode banner"). Distinct from the embedded
+        post-mortem corpus (GET /v1/incidents) and the Alertmanager-
+        derived incidents block on GET /v1/status.
+
+        Operator-tier only. Requires an `X-Reason` header captured into
+        the audit log; audit-logged as `status_notice.create` (staff
+        actor).
+      security:
+        - APIKeyAuth: []
+      parameters:
+        - name: X-Reason
+          in: header
+          required: true
+          schema: { type: string }
+          description: Free-form reason captured into the audit log.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, minLength: 1, maxLength: 200 }
+                body: { type: string, minLength: 1, maxLength: 5000 }
+                severity:
+                  type: string
+                  enum: [maintenance, minor, major, critical]
+              required: [title, body, severity]
+      responses:
+        "201":
+          description: Created notice.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusNoticeEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: Caller is not operator-tier.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /admin/status-notices/{id}/resolve:
+    post:
+      tags: [admin]
+      summary: Operator — resolve (clear) a status banner.
+      description: |
+        Flips an active status banner to resolved — it drops off the
+        public GET /v1/status/notices surface but is retained for the
+        operator history + audit trail. Idempotent. Operator-tier only;
+        requires an `X-Reason` header. Audit-logged as
+        `status_notice.resolve` (staff actor).
+      security:
+        - APIKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Status notice UUID.
+        - name: X-Reason
+          in: header
+          required: true
+          schema: { type: string }
+          description: Free-form reason captured into the audit log.
+      responses:
+        "200":
+          description: Resolved notice.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusNoticeEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: Caller is not operator-tier.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /webhooks/stripe:
     post:
       tags: [account]
@@ -9318,6 +9555,88 @@ components:
                     Absent/empty = full access (the pre-scopes
                     posture).
               required: [key_id, plaintext, label]
+          required: [data]
+
+    AdminAccountView:
+      type: object
+      description: |
+        Operator projection of a platform account — the tier + override
+        knobs a staff member inspects / edits. No customer PII beyond
+        the billing email.
+      properties:
+        id:              { type: string, format: uuid }
+        name:            { type: string }
+        slug:            { type: string }
+        tier:
+          type: string
+          enum: [free, starter, pro, business, enterprise]
+        status:
+          type: string
+          enum: [active, suspended, closed]
+        billing_email:   { type: string }
+        created_at:      { type: string, format: date-time }
+        suspended_reason: { type: string }
+        rate_limit_per_min_override:
+          type: integer
+          description: 0 = inherit the tier default; positive = account-wide per-key floor.
+        monthly_request_quota_override:
+          type: integer
+          format: int64
+          description: 0 = inherit the tier default; positive = metered cap applied when a key has no per-key quota.
+      required: [id, name, slug, tier, status, rate_limit_per_min_override, monthly_request_quota_override]
+
+    AdminAccountEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/AdminAccountView" }
+          required: [data]
+
+    StatusNotice:
+      type: object
+      description: |
+        An operator-posted customer-facing status banner (admin Phase
+        1.5). Distinct from the Alertmanager-derived incidents on
+        /v1/status and the embedded post-mortems on /v1/incidents.
+      properties:
+        id:       { type: string, format: uuid }
+        title:    { type: string }
+        body:     { type: string }
+        severity:
+          type: string
+          enum: [maintenance, minor, major, critical]
+        status:
+          type: string
+          enum: [active, resolved]
+        created_at:  { type: string, format: date-time }
+        updated_at:  { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time }
+      required: [id, title, body, severity, status]
+
+    StatusNoticesList:
+      type: object
+      properties:
+        notices:
+          type: array
+          items: { $ref: "#/components/schemas/StatusNotice" }
+        count: { type: integer }
+      required: [notices, count]
+
+    StatusNoticesEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/StatusNoticesList" }
+          required: [data]
+
+    StatusNoticeEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/StatusNotice" }
           required: [data]
 
     SEP10Challenge:
