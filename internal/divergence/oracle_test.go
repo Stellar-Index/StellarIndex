@@ -98,22 +98,32 @@ func TestOracleReference_ScaleExactness(t *testing.T) {
 		expected string // decimal string of price / 10^decimals
 	}{
 		// Reflector stores at 14 decimals. Raw value > 2^53.
-		{"reflector E14 above 2^53", divergence.OracleSourceReflectorCEX,
-			"123456789012345678", 14, "1234.56789012345678"},
+		{
+			"reflector E14 above 2^53", divergence.OracleSourceReflectorCEX,
+			"123456789012345678", 14, "1234.56789012345678",
+		},
 		// Band single-asset relayed rates are E9.
-		{"band E9", divergence.OracleSourceBand,
-			"4567890123", 9, "4.567890123"},
+		{
+			"band E9", divergence.OracleSourceBand,
+			"4567890123", 9, "4.567890123",
+		},
 		// Redstone per-feed prices are E8.
-		{"redstone E8", divergence.OracleSourceRedstone,
-			"12345678", 8, "0.12345678"},
+		{
+			"redstone E8", divergence.OracleSourceRedstone,
+			"12345678", 8, "0.12345678",
+		},
 		// E18-class scale (Band's pair-rate scale upstream): 21
 		// digits of significand, far above 2^53 — must stay exact
 		// through the big.Rat path up to float64's own rounding.
-		{"E18 above 2^53", divergence.OracleSourceBand,
-			"1234567890123456789012", 18, "1234.567890123456789012"},
+		{
+			"E18 above 2^53", divergence.OracleSourceBand,
+			"1234567890123456789012", 18, "1234.567890123456789012",
+		},
 		// XLM-ish small price at 14 decimals.
-		{"reflector E14 sub-dollar", divergence.OracleSourceReflectorDEX,
-			"11072000000000", 14, "0.11072"},
+		{
+			"reflector E14 sub-dollar", divergence.OracleSourceReflectorDEX,
+			"11072000000000", 14, "0.11072",
+		},
 	}
 	now := time.Now().UTC()
 	for _, tc := range cases {
