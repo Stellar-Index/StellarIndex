@@ -110,8 +110,10 @@ func TestPoolReserves_PoolFilter(t *testing.T) {
 	tok0, tok1 := mkCStrkey(t, 10), mkCStrkey(t, 11)
 	reader := &stubExplorerReader{
 		pairStates: map[string]clickhouse.SoroswapPairState{
-			pairA: {Pair: pairA, Token0: tok0, Token1: tok1,
-				Reserve0: big.NewInt(1_000), Reserve1: big.NewInt(2_000), Ledger: 1},
+			pairA: {
+				Pair: pairA, Token0: tok0, Token1: tok1,
+				Reserve0: big.NewInt(1_000), Reserve1: big.NewInt(2_000), Ledger: 1,
+			},
 		},
 	}
 	base := poolReservesTestServer(t, reader, []timescale.SoroswapPair{
@@ -162,8 +164,10 @@ func TestPoolReserves_EmptySideOmitsDepth(t *testing.T) {
 	tok0, tok1 := mkCStrkey(t, 10), mkCStrkey(t, 11)
 	reader := &stubExplorerReader{
 		pairStates: map[string]clickhouse.SoroswapPairState{
-			pairA: {Pair: pairA, Token0: tok0, Token1: tok1,
-				Reserve0: new(big.Int), Reserve1: big.NewInt(2_000), Ledger: 1},
+			pairA: {
+				Pair: pairA, Token0: tok0, Token1: tok1,
+				Reserve0: new(big.Int), Reserve1: big.NewInt(2_000), Ledger: 1,
+			},
 		},
 	}
 	base := poolReservesTestServer(t, reader, []timescale.SoroswapPair{
