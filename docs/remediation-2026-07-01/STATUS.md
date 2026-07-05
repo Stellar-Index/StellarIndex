@@ -76,6 +76,19 @@ Each fix landed as its own commit on `main` (see `git log`).
 > extractions, the consumer.Orchestrator retirement, and ADR-0040/
 > 0041/0042/0043. CS-026 has a design + implementation plan
 > (ADR-0040, board #32).
+>
+> **Closed 2026-07-05 — policy codified (no auto-rollback by
+> design):** CS-099 (migrations apply before binaries and are never
+> rolled back on binary rollback). Not a code fix — the fix-everything
+> pass on 2026-07-01 correctly declined to auto-run `migrate down` on
+> a failed deploy (down-migrations can be data-destructive), which
+> left the finding open with no resolution recorded. It's closed now
+> by codifying the policy this repo already practiced: every
+> up-migration must be additive / old-binary-safe, so schema staying
+> one migration ahead of a rolled-back binary is a safe, supported
+> state, not a gap. See `migrations/README.md` rule 9 and
+> `docs/operations/deploy-workflow.md` §Migrations run before
+> binaries, and are not rolled back (BACKLOG #67).
 
 ## ⏭ Deferred — need @ash direction or are large/design-gated
 
