@@ -337,7 +337,11 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 				tx string
 				op uint32
 			}
-			const rwin = 100_000
+			// 25k (was 100k): the sdex reconcile joins OOM'd at 100k even
+			// under grace_hash (2026-07-05 heal run) — and the wedged-CH
+			// bad_alloc followed the same heavy sequence. Match
+			// compute_completeness's window.
+			const rwin = 25_000
 			var nShort int
 			for wlo := lo; wlo <= hi; wlo += rwin {
 				whi := wlo + rwin - 1
