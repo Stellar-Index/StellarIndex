@@ -15,6 +15,52 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **`/v1/chart?price_type=twap` — TWAP served from continuous
+  aggregates** (BACKLOG #37). New `twap_1h` / `twap_1d` hierarchical
+  CAGGs over `prices_1m` (migration `0081`) back the chart's TWAP
+  price type, so time-weighted series come off materialised buckets
+  rather than being recomputed per request.
+- **Admin tier / quota overrides — `GET`/`PATCH
+  /v1/admin/accounts/{id}`** (BACKLOG #32). Staff can override an
+  account's tier and rate-limit quota; the rate-limit override is now
+  enforced in the validator (not just stored), every change requires
+  an `X-Reason` header, and the before/after is audit-logged.
+- **Admin status-notice tooling + public `GET /v1/status/notices`**
+  (BACKLOG #32). Staff-authored incident/status notices (migration
+  `0082`) surface on a public, unauthenticated endpoint for the
+  status page.
+- **F-1255 speculative-account reaper** (37b). A new
+  `internal/signupreaper` worker in the API binary sweeps orphaned
+  signup rows left by an abandoned verification, paired counter +
+  histogram metrics, both rule trees, a runbook, and the
+  alerts-catalog entry. On by default (`[signup_reaper]`).
+- **ClickHouse lake integration harness** (BACKLOG #51). A shared,
+  lazily-started ClickHouse testcontainer (the suite's first
+  `TestMain`) plus lake round-trip, tx-hash-index probe/fallback, and
+  protocol-breakdown `t0_xdr` coverage against the real reader/sink
+  code.
+- **Contract transfers carry real token decimals** (BACKLOG #60).
+  `/v1/contracts/{id}/transfers` now returns the per-token `decimals`
+  and the explorer scales displayed amounts by them instead of
+  assuming a fixed scale.
+- **Homepage asset grid renders SEP-1 logos** (BACKLOG #60). The grid
+  shows each asset's `stellar.toml` icon with a graceful fallback when
+  a logo is missing or fails to load.
+
+### Fixed
+- **Chart fiat-proxy fallback reaches stablecoin backers + XLM base
+  aliases** (BACKLOG #37). When a direct pair has no series the chart
+  now falls through to the stablecoin backer (e.g. `USDC→USD`) and
+  the canonical XLM base aliases, rather than returning empty.
+- **Stripe tier upgrades no longer leave a stale key rate-limit**
+  (X6, 37b). A tier change now evicts the API key's entry from the
+  Postgres read-through cache, so the new quota applies immediately
+  instead of after the cache TTL.
+- **Dropped the stale "sparkline omitted" note from the currency
+  embed** (BACKLOG #60) — the embed renders the sparkline, so the
+  comment was misleading.
+
 ### Fixed
 - **sep41 re-derive: COPY-merge bulk path** — the multi-row INSERT
   batches topped out near 4 statements/s (full parse/plan per 12k
