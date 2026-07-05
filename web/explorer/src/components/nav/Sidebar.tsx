@@ -7,6 +7,7 @@ import {
   ArrowLeftRight,
   BadgeCheck,
   BarChart3,
+  BellRing,
   Blocks,
   BookOpen,
   Boxes,
@@ -119,6 +120,7 @@ const ACCOUNT_GROUP: NavGroup = {
     // state never matched the served URL and the links 404'd under `next dev`.
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, exact: true },
     { href: '/dashboard/keys', label: 'API keys', icon: KeyRound },
+    { href: '/dashboard/price-alerts', label: 'Price alerts', icon: BellRing },
     { href: '/dashboard/usage', label: 'Usage', icon: Gauge },
     { href: '/dashboard/settings', label: 'Settings', icon: Settings },
   ],
