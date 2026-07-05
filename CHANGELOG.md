@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.8.1] — 2026-07-05
+
 ### Fixed
 - **Trade-insert deadlock storm under backlog catch-up**: the indexer's
   parallel drain workers submit overlapping multi-row INSERT..ON CONFLICT
