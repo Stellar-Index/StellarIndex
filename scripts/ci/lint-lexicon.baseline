@@ -1,0 +1,55 @@
+# lint-lexicon.baseline — grandfathered lexicon/idiom deviations.
+#
+# One `<class> <file>` entry per file that already deviates from the
+# domain lexicon (docs/architecture/lexicon.md) or the constructor
+# idiom (docs/engineering-standards.md "Go idioms"):
+#
+#   coin              — Coin* identifiers for what the lexicon calls
+#                       an asset (the Coin*→Asset* rename is pending,
+#                       deferred to @ash; rides other changes).
+#   positional-logger — constructor takes `logger *slog.Logger`
+#                       positionally instead of in the Options struct.
+#   variadic-option   — constructor takes `...Option` functional
+#                       options instead of a plain Options struct.
+#
+# SHRINK-ONLY (CS-098): lint-lexicon.sh fails on entries whose file no
+# longer deviates — delete the line when you clean a file. Additions
+# require a `Baseline-Growth:` commit trailer (lint-baseline-growth.sh)
+# and should essentially never happen: new code uses the canonical
+# term/idiom.
+coin cmd/stellarindex-aggregator/change_summary.go
+coin cmd/stellarindex-api/main.go
+coin internal/api/v1/asset_detail_cache.go
+coin internal/api/v1/assets.go
+coin internal/api/v1/assets_coin_extension.go
+coin internal/api/v1/changes.go
+coin internal/api/v1/coins.go
+coin internal/api/v1/coins_cache.go
+coin internal/api/v1/server.go
+coin internal/obs/metrics.go
+coin internal/storage/timescale/coins.go
+coin pkg/client/endpoints.go
+coin pkg/client/types.go
+positional-logger internal/aggregate/baseline/refresh.go
+positional-logger internal/aggregate/changesummary/rollup.go
+positional-logger internal/api/streaming/redispub/subscriber.go
+positional-logger internal/api/streampublish/publisher.go
+positional-logger internal/customerwebhook/fanout.go
+positional-logger internal/dispatcher/statsflush/flusher.go
+positional-logger internal/projector/projector.go
+positional-logger internal/sources/forex/worker.go
+positional-logger internal/supply/crosscheck_refresher.go
+positional-logger internal/supply/refresher.go
+positional-logger internal/usage/rollup.go
+variadic-option internal/aggregate/freeze/freeze.go
+variadic-option internal/auth/apikey_redis.go
+variadic-option internal/auth/store.go
+variadic-option internal/contractid/registry.go
+variadic-option internal/ratelimit/bucket.go
+variadic-option internal/sources/reflector/dispatcher_adapter.go
+variadic-option internal/sources/soroswap/dispatcher_adapter.go
+variadic-option internal/stellarrpc/client.go
+variadic-option internal/storage/timescale/divergence_observations.go
+variadic-option internal/storage/timescale/freeze_events.go
+variadic-option internal/supply/refresher.go
+variadic-option internal/usage/counter.go

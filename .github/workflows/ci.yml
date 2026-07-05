@@ -205,6 +205,13 @@ jobs:
         # never BIGINT/INT8/DOUBLE PRECISION/FLOAT/REAL. Escapes need an
         # inline `-- lint-money:ok <reason>`.
         run: ./scripts/ci/lint-migrations.sh
+      - name: lint-lexicon
+        # Maintainability audit 2026-07-01 (D2+D6): domain-lexicon +
+        # idiom ratchet. Zero rules (no Fetch/Make verbs, slog is the
+        # only logger) + shrink-only per-file baseline for
+        # grandfathered `Coin*` vocabulary and non-canonical
+        # constructor shapes. See docs/architecture/lexicon.md.
+        run: ./scripts/ci/lint-lexicon.sh
       - name: lint-baseline-growth
         # CS-098: lint baselines/allowlists are shrink-only. Growing
         # scripts/ci/*.baseline or the KNOWN_INERT allowlist in the
