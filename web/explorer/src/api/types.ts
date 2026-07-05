@@ -8149,6 +8149,247 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/dashboard/price-alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Customer dashboard — list this account's price alerts.
+         * @description Session-gated. Returns every price-threshold alert this
+         *     account has registered, newest first. BACKLOG #60.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Price-alert list. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        /**
+                         * @example {
+                         *       "alerts": [
+                         *         {
+                         *           "id": "2f1c8e0a-9b3d-4e7a-8f5b-6d2c4a1e9b0f",
+                         *           "base_asset": "native",
+                         *           "quote_asset": "fiat:USD",
+                         *           "condition": "above",
+                         *           "threshold": "0.15",
+                         *           "cooldown_seconds": 300,
+                         *           "enabled": true,
+                         *           "created_at": "2026-07-05T10:00:00Z",
+                         *           "updated_at": "2026-07-05T10:00:00Z"
+                         *         }
+                         *       ]
+                         *     }
+                         */
+                        "application/json": {
+                            alerts: components["schemas"]["DashboardPriceAlert"][];
+                        };
+                    };
+                };
+                /** @description No valid session cookie. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Customer dashboard — register a new price alert.
+         * @description Session-gated. Registers a "notify me when <base>/<quote>
+         *     goes <above|below> <threshold>" rule. When the aggregator's
+         *     evaluator is enabled it enqueues a `price.alert` webhook to
+         *     this account's subscribed webhooks (register one via
+         *     POST /v1/dashboard/webhooks with `price.alert` in `events`).
+         *     Owner / admin / member roles can register; viewer + billing
+         *     403. Alert quota is tier-aware (free 5, starter 25, pro 100,
+         *     business 250, enterprise 1000 — deployment-overridable);
+         *     exceeding it returns 409.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreatePriceAlertRequest"];
+                };
+            };
+            responses: {
+                /** @description Price alert registered. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DashboardPriceAlert"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                /** @description No valid session cookie. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Role can't manage price alerts. */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Account at the price-alert quota for its tier. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dashboard/price-alerts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Customer dashboard — delete a price alert.
+         * @description Session-gated. Removes the alert. Idempotent from the
+         *     customer's view — a cross-account or absent id returns 404.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted. */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No valid session cookie. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Price alert not found. */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Customer dashboard — update a price alert.
+         * @description Session-gated. Patches any subset of base_asset / quote_asset
+         *     / condition / threshold / cooldown_seconds / enabled. Omitted
+         *     fields keep their current value. 404 when the alert doesn't
+         *     exist OR belongs to a different account (same shape so
+         *     attackers can't enumerate cross-account ids).
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["UpdatePriceAlertRequest"];
+                };
+            };
+            responses: {
+                /** @description Updated. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DashboardPriceAlert"];
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                /** @description No valid session cookie. */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Price alert not found. */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
     "/auth/login": {
         parameters: {
             query?: never;
@@ -10256,10 +10497,11 @@ export interface components {
              * @description Closed enum of event types the customer subscribed to.
              *     Per-event JSON body shapes documented at
              *     `IncidentWebhookPayload` (`incident.sev1` / `incident.resolved`),
-             *     `AnomalyFreezeWebhookPayload` (`anomaly.freeze`), and
-             *     `DivergenceFiringWebhookPayload` (`divergence.firing`).
+             *     `AnomalyFreezeWebhookPayload` (`anomaly.freeze`),
+             *     `DivergenceFiringWebhookPayload` (`divergence.firing`), and
+             *     `PriceAlertWebhookPayload` (`price.alert`).
              */
-            events: ("incident.sev1" | "incident.resolved" | "anomaly.freeze" | "divergence.firing")[];
+            events: ("incident.sev1" | "incident.resolved" | "anomaly.freeze" | "divergence.firing" | "price.alert")[];
             /** @description When false, worker skips deliveries (silently terminates pending rows). */
             enabled: boolean;
             /** Format: date-time */
@@ -10271,7 +10513,7 @@ export interface components {
             name: string;
             /** @description Must start with https://. */
             url: string;
-            events: ("incident.sev1" | "incident.resolved" | "anomaly.freeze" | "divergence.firing")[];
+            events: ("incident.sev1" | "incident.resolved" | "anomaly.freeze" | "divergence.firing" | "price.alert")[];
             /** @description Defaults true when absent. */
             enabled?: boolean;
         };
@@ -10292,7 +10534,7 @@ export interface components {
         UpdateWebhookRequest: {
             name?: string;
             url?: string;
-            events?: ("incident.sev1" | "incident.resolved" | "anomaly.freeze" | "divergence.firing")[];
+            events?: ("incident.sev1" | "incident.resolved" | "anomaly.freeze" | "divergence.firing" | "price.alert")[];
             enabled?: boolean;
         };
         /**
@@ -10304,7 +10546,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** @enum {string} */
-            event_type: "incident.sev1" | "incident.resolved" | "anomaly.freeze" | "divergence.firing";
+            event_type: "incident.sev1" | "incident.resolved" | "anomaly.freeze" | "divergence.firing" | "price.alert";
             attempt_count: number;
             /**
              * Format: date-time
@@ -10318,6 +10560,68 @@ export interface components {
             last_response_status?: number | null;
             /** Format: date-time */
             created_at: string;
+        };
+        /**
+         * @description A customer-registered price-threshold alert backing the
+         *     /v1/dashboard/price-alerts surface (BACKLOG #60). The
+         *     aggregator's evaluator compares each enabled alert against the
+         *     latest closed 1m VWAP for its pair and, on a crossing, enqueues
+         *     a `price.alert` webhook delivery to the account's subscribed
+         *     webhooks.
+         */
+        DashboardPriceAlert: {
+            /** Format: uuid */
+            id: string;
+            /** @description Canonical base asset id (`native`, `USDC-G…`, `C…`, `fiat:USD`). */
+            base_asset: string;
+            /** @description Canonical quote asset id. */
+            quote_asset: string;
+            /**
+             * @description `above` fires at observed >= threshold; `below` at observed <= threshold.
+             * @enum {string}
+             */
+            condition: "above" | "below";
+            /** @description Price boundary as a decimal string (never a float — ADR-0003). */
+            threshold: string;
+            /** @description Minimum seconds between two fires of this alert. 0 = re-fire every tick the condition holds. */
+            cooldown_seconds: number;
+            enabled: boolean;
+            /**
+             * Format: date-time
+             * @description When the alert last enqueued a delivery. Absent/zero = never fired.
+             */
+            last_fired_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        CreatePriceAlertRequest: {
+            /** @description Canonical base asset id. */
+            base_asset: string;
+            /** @description Canonical quote asset id. */
+            quote_asset: string;
+            /** @enum {string} */
+            condition: "above" | "below";
+            /** @description Positive decimal string (e.g. "0.15", "1200"). Fractions / scientific notation are rejected. */
+            threshold: string;
+            /** @description Optional; defaults 0. */
+            cooldown_seconds?: number;
+            /** @description Defaults true when absent. */
+            enabled?: boolean;
+        };
+        /**
+         * @description PATCH body — any subset of fields. Omitted fields keep their
+         *     current value.
+         */
+        UpdatePriceAlertRequest: {
+            base_asset?: string;
+            quote_asset?: string;
+            /** @enum {string} */
+            condition?: "above" | "below";
+            threshold?: string;
+            cooldown_seconds?: number;
+            enabled?: boolean;
         };
         /**
          * @description Body of an `incident.sev1` or `incident.resolved` webhook
@@ -10414,6 +10718,44 @@ export interface components {
             /**
              * Format: date-time
              * @description When the divergence check ran (server time, RFC 3339 nanosecond).
+             */
+            at: string;
+        };
+        /**
+         * @description Body of a `price.alert` webhook delivery (BACKLOG #60). Fired by
+         *     the aggregator's price-alert evaluator when one of the account's
+         *     registered alerts crosses its threshold against the latest closed
+         *     1-minute VWAP. Unlike the operational events, this is enqueued
+         *     ONLY to the owning account's subscribed webhooks.
+         */
+        PriceAlertWebhookPayload: {
+            /** @enum {string} */
+            event: "price.alert";
+            /**
+             * Format: uuid
+             * @description The price_alerts row that fired.
+             */
+            alert_id: string;
+            /** @description Canonical `<base>/<quote>` (e.g. `native/fiat:USD`). */
+            pair: string;
+            /** @description Canonical base asset id. */
+            base_asset: string;
+            /** @description Canonical quote asset id. */
+            quote_asset: string;
+            /** @enum {string} */
+            condition: "above" | "below";
+            /** @description The configured threshold (decimal-as-string). */
+            threshold: string;
+            /** @description The closed-bucket VWAP that crossed the threshold (decimal-as-string). */
+            observed_price: string;
+            /**
+             * Format: date-time
+             * @description Close time of the observed 1-minute VWAP bucket.
+             */
+            bucket: string;
+            /**
+             * Format: date-time
+             * @description When this delivery was generated (server time, RFC 3339 nanosecond).
              */
             at: string;
         };

@@ -16,20 +16,53 @@ import (
 //
 // Adding a field without `doc:` fails `make docs-config`.
 type Config struct {
-	Region     RegionConfig     `toml:"region" doc:"Region identity — ID, display name, home domain."`
-	Stellar    StellarConfig    `toml:"stellar" doc:"Endpoints for stellar-core and stellar-rpc."`
-	Storage    StorageConfig    `toml:"storage" doc:"Postgres/TimescaleDB, Redis, MinIO connection details."`
-	Ingestion  IngestionConfig  `toml:"ingestion" doc:"Source orchestration — which connectors to run, backfill bounds, cursor store."`
-	Oracle     OracleConfig     `toml:"oracle" doc:"On-chain oracle contract addresses (Reflector, Redstone, Band)."`
-	External   ExternalConfig   `toml:"external" doc:"Off-chain connectors — CEX/FX/aggregator sources that run parallel to the on-chain dispatcher."`
-	Aggregate  AggregateConfig  `toml:"aggregate" doc:"VWAP/TWAP windows + outlier thresholds."`
-	Anomaly    AnomalyConfig    `toml:"anomaly" doc:"Per-asset-class anomaly detection thresholds (Phase 1) + Phase-2 freeze thresholds (per-asset MAD-baseline + multi-factor confidence + source count). Both layers run; the orchestrator AND-of-three-signals rule fires ActionFreeze only when both agree (ADR-0019)."`
-	API        APIConfig        `toml:"api" doc:"Public API serving plane — port, auth mode, rate limits, CDN."`
-	Metadata   MetadataConfig   `toml:"metadata" doc:"Asset metadata overlay — SEP-1 issuer→home-domain map, operator overrides."`
-	Supply     SupplyConfig     `toml:"supply" doc:"Supply pipeline config — SDF reserve list, operator-managed reserve balances (fallback when the LCM AccountEntry observer hasn't yet covered the watched set), watched classic + SEP-41 asset lists, SAC wrappers, and aggregator-refresh cadence. ADR-0011 (XLM) + ADR-0022 (classic) + ADR-0023 (SEP-41)."`
-	Trades     TradesConfig     `toml:"trades" doc:"Trade-insert policy — operator-declared USD-pegged stablecoins so on-chain DEX trades populate trades.usd_volume at insert time (launch-readiness L2.2 phase 1)."`
-	Divergence DivergenceConfig `toml:"divergence" doc:"Cross-check references the divergence service consults (CoinGecko + Chainlink HTTP, plus the on-chain Reflector/Redstone/Band oracle feeds read from ingested oracle_updates rows). Empty disables; the divergence_warning envelope flag stays unset."`
-	Obs        ObsConfig        `toml:"obs" doc:"Metrics, logs, traces — exporters + sampling."`
+	Region      RegionConfig      `toml:"region" doc:"Region identity — ID, display name, home domain."`
+	Stellar     StellarConfig     `toml:"stellar" doc:"Endpoints for stellar-core and stellar-rpc."`
+	Storage     StorageConfig     `toml:"storage" doc:"Postgres/TimescaleDB, Redis, MinIO connection details."`
+	Ingestion   IngestionConfig   `toml:"ingestion" doc:"Source orchestration — which connectors to run, backfill bounds, cursor store."`
+	Oracle      OracleConfig      `toml:"oracle" doc:"On-chain oracle contract addresses (Reflector, Redstone, Band)."`
+	External    ExternalConfig    `toml:"external" doc:"Off-chain connectors — CEX/FX/aggregator sources that run parallel to the on-chain dispatcher."`
+	Aggregate   AggregateConfig   `toml:"aggregate" doc:"VWAP/TWAP windows + outlier thresholds."`
+	Anomaly     AnomalyConfig     `toml:"anomaly" doc:"Per-asset-class anomaly detection thresholds (Phase 1) + Phase-2 freeze thresholds (per-asset MAD-baseline + multi-factor confidence + source count). Both layers run; the orchestrator AND-of-three-signals rule fires ActionFreeze only when both agree (ADR-0019)."`
+	API         APIConfig         `toml:"api" doc:"Public API serving plane — port, auth mode, rate limits, CDN."`
+	Metadata    MetadataConfig    `toml:"metadata" doc:"Asset metadata overlay — SEP-1 issuer→home-domain map, operator overrides."`
+	Supply      SupplyConfig      `toml:"supply" doc:"Supply pipeline config — SDF reserve list, operator-managed reserve balances (fallback when the LCM AccountEntry observer hasn't yet covered the watched set), watched classic + SEP-41 asset lists, SAC wrappers, and aggregator-refresh cadence. ADR-0011 (XLM) + ADR-0022 (classic) + ADR-0023 (SEP-41)."`
+	Trades      TradesConfig      `toml:"trades" doc:"Trade-insert policy — operator-declared USD-pegged stablecoins so on-chain DEX trades populate trades.usd_volume at insert time (launch-readiness L2.2 phase 1)."`
+	Divergence  DivergenceConfig  `toml:"divergence" doc:"Cross-check references the divergence service consults (CoinGecko + Chainlink HTTP, plus the on-chain Reflector/Redstone/Band oracle feeds read from ingested oracle_updates rows). Empty disables; the divergence_warning envelope flag stays unset."`
+	PriceAlerts PriceAlertsConfig `toml:"price_alerts" doc:"Customer price-threshold alert evaluator (BACKLOG #60). Off by default; when enabled the aggregator sweeps price_alerts against the latest closed VWAP every tick and enqueues price.alert webhook deliveries."`
+	Obs         ObsConfig         `toml:"obs" doc:"Metrics, logs, traces — exporters + sampling."`
+}
+
+// PriceAlertsConfig gates the aggregator's price-alert evaluator
+// (internal/pricealerts, BACKLOG #60). Off by default — the evaluator
+// goroutine is only started when Enabled is true AND the platform v1
+// schema (migration 0027) + price_alerts table (migration 0080) are
+// present. When off, the price-alert CRUD surface still mounts on the
+// API binary (customers can register alerts); nothing evaluates them
+// until an operator flips this on.
+type PriceAlertsConfig struct {
+	// Enabled starts the evaluator loop in the aggregator binary.
+	Enabled bool `toml:"enabled" doc:"Start the price-alert evaluator loop in the aggregator. Off by default." default:"false"`
+
+	// IntervalSeconds is the sweep cadence — the gap between successive
+	// passes over the enabled price_alerts set. 0 falls back to the
+	// library default (30s). Validated > 0 when Enabled so an operator
+	// enabling the worker with a zero cadence fails at boot rather than
+	// reaching time.NewTicker(0) at runtime (the G19-02 trap).
+	IntervalSeconds int `toml:"interval_seconds" doc:"Sweep cadence in seconds between price-alert evaluation passes. 0 = library default (30s)." default:"30"`
+}
+
+// validate is the sub-validator hook Config.Validate calls. Only
+// enforces constraints when the worker is enabled — a disabled worker
+// with a zero cadence is fine (the field is simply unused).
+func (pc PriceAlertsConfig) validate() error {
+	if !pc.Enabled {
+		return nil
+	}
+	if pc.IntervalSeconds < 0 {
+		return fmt.Errorf("price_alerts: interval_seconds must be >= 0, got %d", pc.IntervalSeconds)
+	}
+	return nil
 }
 
 // TradesConfig configures policy that runs at trade-insert time
@@ -1128,6 +1161,13 @@ func Default() Config {
 		},
 		API:        defaultAPIConfig(),
 		Divergence: defaultDivergenceConfig(),
+		PriceAlerts: PriceAlertsConfig{
+			// Off by default — operator opts in once alerts + webhooks
+			// are wired. Non-zero cadence so an accidental Enabled=true
+			// without an interval doesn't reach time.NewTicker(0).
+			Enabled:         false,
+			IntervalSeconds: 30,
+		},
 		Supply: SupplyConfig{
 			// Cadence is only consumed when AggregatorRefreshEnabled is
 			// flipped on; a non-zero default avoids time.NewTicker(0)

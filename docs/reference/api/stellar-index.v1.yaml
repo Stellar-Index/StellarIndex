@@ -5603,6 +5603,152 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
 
+  /dashboard/price-alerts:
+    get:
+      tags: [dashboard]
+      summary: Customer dashboard — list this account's price alerts.
+      security:
+        - SessionCookie: []
+      description: |
+        Session-gated. Returns every price-threshold alert this
+        account has registered, newest first. BACKLOG #60.
+      responses:
+        "200":
+          description: Price-alert list.
+          content:
+            application/json:
+              example:
+                alerts:
+                - id: 2f1c8e0a-9b3d-4e7a-8f5b-6d2c4a1e9b0f
+                  base_asset: native
+                  quote_asset: fiat:USD
+                  condition: above
+                  threshold: "0.15"
+                  cooldown_seconds: 300
+                  enabled: true
+                  created_at: '2026-07-05T10:00:00Z'
+                  updated_at: '2026-07-05T10:00:00Z'
+              schema:
+                type: object
+                properties:
+                  alerts:
+                    type: array
+                    items: { $ref: "#/components/schemas/DashboardPriceAlert" }
+                required: [alerts]
+        "401":
+          description: No valid session cookie.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+    post:
+      tags: [dashboard]
+      summary: Customer dashboard — register a new price alert.
+      security:
+        - SessionCookie: []
+      description: |
+        Session-gated. Registers a "notify me when <base>/<quote>
+        goes <above|below> <threshold>" rule. When the aggregator's
+        evaluator is enabled it enqueues a `price.alert` webhook to
+        this account's subscribed webhooks (register one via
+        POST /v1/dashboard/webhooks with `price.alert` in `events`).
+        Owner / admin / member roles can register; viewer + billing
+        403. Alert quota is tier-aware (free 5, starter 25, pro 100,
+        business 250, enterprise 1000 — deployment-overridable);
+        exceeding it returns 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreatePriceAlertRequest" }
+      responses:
+        "201":
+          description: Price alert registered.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DashboardPriceAlert" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: No valid session cookie.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "403":
+          description: Role can't manage price alerts.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "409":
+          description: Account at the price-alert quota for its tier.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+  /dashboard/price-alerts/{id}:
+    patch:
+      tags: [dashboard]
+      summary: Customer dashboard — update a price alert.
+      security:
+        - SessionCookie: []
+      description: |
+        Session-gated. Patches any subset of base_asset / quote_asset
+        / condition / threshold / cooldown_seconds / enabled. Omitted
+        fields keep their current value. 404 when the alert doesn't
+        exist OR belongs to a different account (same shape so
+        attackers can't enumerate cross-account ids).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdatePriceAlertRequest" }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DashboardPriceAlert" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: No valid session cookie.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "404":
+          description: Price alert not found.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+    delete:
+      tags: [dashboard]
+      summary: Customer dashboard — delete a price alert.
+      security:
+        - SessionCookie: []
+      description: |
+        Session-gated. Removes the alert. Idempotent from the
+        customer's view — a cross-account or absent id returns 404.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          description: No valid session cookie.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "404":
+          description: Price alert not found.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
   /auth/login:
     post:
       tags: [auth]
@@ -7340,8 +7486,9 @@ components:
             Closed enum of event types the customer subscribed to.
             Per-event JSON body shapes documented at
             `IncidentWebhookPayload` (`incident.sev1` / `incident.resolved`),
-            `AnomalyFreezeWebhookPayload` (`anomaly.freeze`), and
-            `DivergenceFiringWebhookPayload` (`divergence.firing`).
+            `AnomalyFreezeWebhookPayload` (`anomaly.freeze`),
+            `DivergenceFiringWebhookPayload` (`divergence.firing`), and
+            `PriceAlertWebhookPayload` (`price.alert`).
           items:
             type: string
             enum:
@@ -7349,6 +7496,7 @@ components:
               - incident.resolved
               - anomaly.freeze
               - divergence.firing
+              - price.alert
         enabled:    { type: boolean, description: "When false, worker skips deliveries (silently terminates pending rows)." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -7364,7 +7512,7 @@ components:
           minItems: 1
           items:
             type: string
-            enum: [incident.sev1, incident.resolved, anomaly.freeze, divergence.firing]
+            enum: [incident.sev1, incident.resolved, anomaly.freeze, divergence.firing, price.alert]
         enabled:
           type: boolean
           description: "Defaults true when absent."
@@ -7395,7 +7543,7 @@ components:
           type: array
           items:
             type: string
-            enum: [incident.sev1, incident.resolved, anomaly.freeze, divergence.firing]
+            enum: [incident.sev1, incident.resolved, anomaly.freeze, divergence.firing, price.alert]
         enabled: { type: boolean }
 
     WebhookDeliveryDTO:
@@ -7406,7 +7554,7 @@ components:
         attempt records its status + retry plan here.
       properties:
         id:                   { type: string, format: uuid }
-        event_type:           { type: string, enum: [incident.sev1, incident.resolved, anomaly.freeze, divergence.firing] }
+        event_type:           { type: string, enum: [incident.sev1, incident.resolved, anomaly.freeze, divergence.firing, price.alert] }
         attempt_count:        { type: integer, minimum: 0 }
         next_attempt_at:      { type: string, format: date-time, nullable: true, description: "When the worker will retry. Null/zero when terminal (delivered OR retry budget exhausted)." }
         delivered_at:         { type: string, format: date-time, nullable: true }
@@ -7414,6 +7562,52 @@ components:
         last_response_status: { type: integer, nullable: true, description: "HTTP status of the most-recent attempt." }
         created_at:           { type: string, format: date-time }
       required: [id, event_type, attempt_count, created_at]
+
+    DashboardPriceAlert:
+      type: object
+      description: |
+        A customer-registered price-threshold alert backing the
+        /v1/dashboard/price-alerts surface (BACKLOG #60). The
+        aggregator's evaluator compares each enabled alert against the
+        latest closed 1m VWAP for its pair and, on a crossing, enqueues
+        a `price.alert` webhook delivery to the account's subscribed
+        webhooks.
+      properties:
+        id:               { type: string, format: uuid }
+        base_asset:       { type: string, description: "Canonical base asset id (`native`, `USDC-G…`, `C…`, `fiat:USD`)." }
+        quote_asset:      { type: string, description: "Canonical quote asset id." }
+        condition:        { type: string, enum: [above, below], description: "`above` fires at observed >= threshold; `below` at observed <= threshold." }
+        threshold:        { type: string, description: "Price boundary as a decimal string (never a float — ADR-0003)." }
+        cooldown_seconds: { type: integer, minimum: 0, description: "Minimum seconds between two fires of this alert. 0 = re-fire every tick the condition holds." }
+        enabled:          { type: boolean }
+        last_fired_at:    { type: string, format: date-time, description: "When the alert last enqueued a delivery. Absent/zero = never fired." }
+        created_at:       { type: string, format: date-time }
+        updated_at:       { type: string, format: date-time }
+      required: [id, base_asset, quote_asset, condition, threshold, cooldown_seconds, enabled, created_at, updated_at]
+
+    CreatePriceAlertRequest:
+      type: object
+      properties:
+        base_asset:       { type: string, description: "Canonical base asset id." }
+        quote_asset:      { type: string, description: "Canonical quote asset id." }
+        condition:        { type: string, enum: [above, below] }
+        threshold:        { type: string, description: "Positive decimal string (e.g. \"0.15\", \"1200\"). Fractions / scientific notation are rejected." }
+        cooldown_seconds: { type: integer, minimum: 0, description: "Optional; defaults 0." }
+        enabled:          { type: boolean, description: "Defaults true when absent." }
+      required: [base_asset, quote_asset, condition, threshold]
+
+    UpdatePriceAlertRequest:
+      type: object
+      description: |
+        PATCH body — any subset of fields. Omitted fields keep their
+        current value.
+      properties:
+        base_asset:       { type: string }
+        quote_asset:      { type: string }
+        condition:        { type: string, enum: [above, below] }
+        threshold:        { type: string }
+        cooldown_seconds: { type: integer, minimum: 0 }
+        enabled:          { type: boolean }
 
     # ──────────────────────────────────────────────────────────
     # Customer-webhook payload schemas
@@ -7498,6 +7692,27 @@ components:
           description: "Names of the external reference sources that contributed to the median."
         at:                   { type: string, format: date-time, description: "When the divergence check ran (server time, RFC 3339 nanosecond)." }
       required: [event, pair, our_price, median, divergence_pct, success_count, sources, at]
+
+    PriceAlertWebhookPayload:
+      type: object
+      description: |
+        Body of a `price.alert` webhook delivery (BACKLOG #60). Fired by
+        the aggregator's price-alert evaluator when one of the account's
+        registered alerts crosses its threshold against the latest closed
+        1-minute VWAP. Unlike the operational events, this is enqueued
+        ONLY to the owning account's subscribed webhooks.
+      properties:
+        event:          { type: string, enum: [price.alert] }
+        alert_id:       { type: string, format: uuid, description: "The price_alerts row that fired." }
+        pair:           { type: string, description: "Canonical `<base>/<quote>` (e.g. `native/fiat:USD`)." }
+        base_asset:     { type: string, description: "Canonical base asset id." }
+        quote_asset:    { type: string, description: "Canonical quote asset id." }
+        condition:      { type: string, enum: [above, below] }
+        threshold:      { type: string, description: "The configured threshold (decimal-as-string)." }
+        observed_price: { type: string, description: "The closed-bucket VWAP that crossed the threshold (decimal-as-string)." }
+        bucket:         { type: string, format: date-time, description: "Close time of the observed 1-minute VWAP bucket." }
+        at:             { type: string, format: date-time, description: "When this delivery was generated (server time, RFC 3339 nanosecond)." }
+      required: [event, alert_id, pair, base_asset, quote_asset, condition, threshold, observed_price, bucket, at]
 
     # Base envelope pieces
     Flags:

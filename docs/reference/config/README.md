@@ -239,6 +239,13 @@ the `env:` column.
 | `divergence.band.enabled` | `bool` | `true` | — | Whether this on-chain oracle reference is wired into the divergence service. |
 | `divergence.band.max_age_minutes` | `int` | `0` | — | Staleness ceiling in minutes for the oracle's latest observation; older observations are rejected as reference-unavailable. 0 = per-oracle default (Reflector 30m, Redstone/Band 26h). |
 
+### `[price_alerts]`
+
+| Key | Type | Default | Env override | Description |
+| --- | ---- | ------- | ------------ | ----------- |
+| `price_alerts.enabled` | `bool` | `false` | — | Start the price-alert evaluator loop in the aggregator. Off by default. |
+| `price_alerts.interval_seconds` | `int` | `30` | — | Sweep cadence in seconds between price-alert evaluation passes. 0 = library default (30s). |
+
 ### `[obs]`
 
 | Key | Type | Default | Env override | Description |

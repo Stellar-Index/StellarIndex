@@ -97,6 +97,26 @@ func (t Tier) MaxWebhooks() int {
 	}
 }
 
+// MaxPriceAlerts returns the per-tier ceiling on registered price
+// alerts an account can hold (BACKLOG #60). Same tier-aware ladder
+// shape as [Tier.MaxWebhooks]; the override seam is
+// dashboardpricealerts.Config.AlertQuotas. Unknown tiers are treated
+// as Free, matching the other tier ladders.
+func (t Tier) MaxPriceAlerts() int {
+	switch t {
+	case TierStarter:
+		return 25
+	case TierPro:
+		return 100
+	case TierBusiness:
+		return 250
+	case TierEnterprise:
+		return 1000
+	default: // TierFree + any unknown value
+		return 5
+	}
+}
+
 // AccountStatus is the lifecycle state of an account.
 type AccountStatus string
 

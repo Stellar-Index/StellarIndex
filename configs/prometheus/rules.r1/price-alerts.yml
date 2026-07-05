@@ -1,0 +1,50 @@
+---
+# Price-alert evaluator health (BACKLOG #60). The aggregator's
+# price-alert evaluation sweep (internal/pricealerts) checks every
+# enabled price_alerts row against the latest closed 1m VWAP each tick
+# and enqueues `price.alert` customer-webhook deliveries. These alerts
+# fire when the sweep can't even list the alert set — no customer price
+# alerts are being evaluated. Analytics-adjacent, not an SLO: ticket
+# severity.
+
+groups:
+  - name: stellarindex.price_alerts
+    interval: 60s
+    rules:
+
+      # The evaluator's ListEnabledPriceAlerts read is failing more
+      # often than it succeeds (Postgres unreachable / query error) for
+      # 30+ min. While this holds, NO price alerts are evaluated, so
+      # customers who registered alerts get no `price.alert` webhooks
+      # even when their threshold is crossed. `partial_error` (a subset
+      # of alerts hit a price-read / enqueue error) is deliberately NOT
+      # part of this expr — it's narrower and self-heals per-alert.
+      #
+      # Threshold: `list_error` rate exceeds `ok` rate AND total rate is
+      # non-zero (avoids firing during cold start when both are 0). Only
+      # fires at all when the evaluator is enabled ([price_alerts]
+      # enabled=true) — a disabled evaluator emits no series.
+      - alert: stellarindex_price_alert_eval_failing
+        expr: |
+          sum(rate(stellarindex_price_alert_eval_total{outcome="list_error"}[5m]))
+            >
+          sum(rate(stellarindex_price_alert_eval_total{outcome="ok"}[5m]))
+          and
+          sum(rate(stellarindex_price_alert_eval_total{outcome=~"list_error|ok"}[5m])) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: price-alerts
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/price-alert-eval-failing.md
+        annotations:
+          summary: "Price-alert evaluator failing to list alerts (P3)"
+          description: |
+            More list_error outcomes than ok over the last 5 min for 30+
+            min sustained. The aggregator's price-alert evaluator can't
+            read the enabled price_alerts set (Postgres unreachable /
+            query error), so no customer price alerts are being
+            evaluated and no `price.alert` webhooks fire. Check Postgres
+            reachability from the aggregator host and the aggregator's
+            `price-alert evaluator: wired` startup log line, then the
+            runbook.

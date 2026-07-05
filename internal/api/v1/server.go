@@ -156,6 +156,7 @@ type Server struct {
 	dashboardAuth        DashboardAuthMounter
 	dashboardKeys        DashboardAuthMounter
 	dashboardWebhooks    DashboardAuthMounter
+	dashboardPriceAlerts DashboardAuthMounter
 	sessionAuth          middleware.Middleware
 	// verifiedCurrencies is the loaded *currency.Catalogue — the
 	// cross-chain currency seed (USDC, USDT, BTC, ETH, …) plus per-
@@ -759,6 +760,16 @@ type Options struct {
 	// handlers. F-1270 (audit-2026-05-12).
 	DashboardWebhooks DashboardAuthMounter
 
+	// DashboardPriceAlerts, when non-nil, mounts the dashboard's
+	// price-alert CRUD surface (GET / POST /v1/dashboard/price-alerts +
+	// PATCH / DELETE /v1/dashboard/price-alerts/{id}). Backed by
+	// `internal/platform/postgresstore.PriceAlertStore` (migration
+	// 0080); the evaluator that checks the alerts and enqueues
+	// `price.alert` webhook deliveries runs in the aggregator
+	// (`internal/pricealerts`) and is orthogonal to these handlers.
+	// BACKLOG #60.
+	DashboardPriceAlerts DashboardAuthMounter
+
 	// SACWrappers is the operator-config map of SAC C-strkey →
 	// "CODE-ISSUER" classic asset key. Backs /v1/sac-wrappers,
 	// the read-only resolution endpoint the explorer's AssetLabel
@@ -911,6 +922,7 @@ func New(opts Options) *Server {
 		dashboardAuth:           opts.DashboardAuth,
 		dashboardKeys:           opts.DashboardKeys,
 		dashboardWebhooks:       opts.DashboardWebhooks,
+		dashboardPriceAlerts:    opts.DashboardPriceAlerts,
 		sessionAuth:             opts.SessionAuth,
 		verifiedCurrencies:      opts.VerifiedCurrencies,
 		backfillCoverage:        opts.BackfillCoverage,
@@ -1397,6 +1409,11 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// session-cookie + Postgres-wiring gate as dashboardKeys above.
 	if s.dashboardWebhooks != nil {
 		s.dashboardWebhooks.Mount(s.mux)
+	}
+	// Dashboard price-alert-management routes (BACKLOG #60). Same
+	// session-cookie + Postgres-wiring gate as dashboardKeys above.
+	if s.dashboardPriceAlerts != nil {
+		s.dashboardPriceAlerts.Mount(s.mux)
 	}
 
 	// SEP-10 Web Auth. Both endpoints are unauthenticated by design
