@@ -245,8 +245,13 @@ func TestChart_TWAP_GranularitySnapping(t *testing.T) {
 		reqGran  string
 		wantGran string
 	}{
-		{"1m", "1h"}, {"15m", "1h"}, {"1h", "1h"}, {"4h", "1h"},
-		{"1d", "1d"}, {"1w", "1d"}, {"1mo", "1d"},
+		{"1m", "1h"},
+		{"15m", "1h"},
+		{"1h", "1h"},
+		{"4h", "1h"},
+		{"1d", "1d"},
+		{"1w", "1d"},
+		{"1mo", "1d"},
 	} {
 		reader := &stubHistoryReader{twapPoints: []v1.HistoryPoint{
 			{Bucket: time.Unix(1_770_000_000, 0).UTC(), VWAP: "1.0"},
@@ -555,6 +560,55 @@ func TestChart_StablecoinFallback(t *testing.T) {
 	}
 	if reader.calls[1] != "native/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" {
 		t.Errorf("fallback call = %q, want native/USDC-…", reader.calls[1])
+	}
+}
+
+// TestChart_StablecoinFallback_CryptoBacker exercises the BACKLOG #37
+// broadening: the chart's fiat-proxy fallback now also reaches the
+// abstract stablecoin backers (crypto:USDT/USDC/…) crossed with the
+// XLM base aliases — so a native/fiat:USD chart whose only USD depth is
+// the CEX-sourced crypto:XLM/crypto:USDT series (binance) is found even
+// with NO operator classic pegs configured. The old classic-pegs-only
+// fallback returned an empty series here.
+func TestChart_StablecoinFallback_CryptoBacker(t *testing.T) {
+	t0 := time.Unix(1_770_000_000, 0).UTC()
+	reader := &pairKeyedHistoryReader{
+		byPair: map[string][]v1.HistoryPoint{
+			// Binance stamps XLMUSDT as crypto:XLM/crypto:USDT.
+			"crypto:XLM/crypto:USDT": {
+				{Bucket: t0, VWAP: "0.1650"},
+				{Bucket: t0.Add(time.Hour), VWAP: "0.1655"},
+			},
+		},
+	}
+	// No USDPeggedClassics — the crypto-backer path must carry it alone.
+	srv := v1.New(v1.Options{History: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD&timeframe=24h&granularity=1h")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	var env struct {
+		Data  v1.ChartSeries `json:"data"`
+		Flags v1.Flags       `json:"flags"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatal(err)
+	}
+	if len(env.Data.Points) != 2 {
+		t.Fatalf("got %d points, want 2 (from crypto:XLM/crypto:USDT backer)", len(env.Data.Points))
+	}
+	if !env.Flags.Triangulated {
+		t.Error("flags.triangulated = false, want true on stablecoin-backer fallback")
+	}
+	// The literal pair is tried first, and the winning proxy is the
+	// crypto:USDT backer under the crypto:XLM base alias.
+	if reader.calls[0] != "native/fiat:USD" {
+		t.Errorf("first call = %q, want native/fiat:USD (literal)", reader.calls[0])
+	}
+	if last := reader.calls[len(reader.calls)-1]; last != "crypto:XLM/crypto:USDT" {
+		t.Errorf("winning fallback call = %q, want crypto:XLM/crypto:USDT", last)
 	}
 }
 

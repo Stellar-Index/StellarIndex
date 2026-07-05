@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
+	"github.com/StellarIndex/stellar-index/internal/aggregate"
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 	"github.com/StellarIndex/stellar-index/internal/supply"
@@ -552,14 +554,15 @@ func chartGranularityGrace(gran string) time.Duration {
 	}
 }
 
-// chartStablecoinFallback handles the X/fiat:USD → X/<peg> retry
-// path. The literal pair query never has rows in prices_1m for
-// fiat:USD because the synthetic stablecoin → USD mapping is
-// applied at /v1/coins read time, not at write time. When the
-// literal pair returned 0 points and the quote is fiat:USD, walk
-// the operator-declared USD-pegged classics and return the first
-// non-empty result. ok=false when no fallback fires (caller keeps
-// the empty result + leaves triangulated=false).
+// chartStablecoinFallback handles the X/fiat → X/<proxy> retry path.
+// The literal fiat-quoted pair rarely has rows in the CAGGs because
+// the stablecoin → fiat mapping is aggregator policy applied at read
+// time, not at write time — the depth lives under the stablecoin and
+// classic-peg pairs. When the literal pair returned 0 points and the
+// quote is fiat, walk the proxy source pairs (see
+// [Server.chartFiatProxyPairs]) and return the first non-empty result.
+// ok=false when no fallback fires (caller keeps the empty result +
+// leaves triangulated=false).
 //
 // `read` fetches one proxied pair's closed-bucket series — the VWAP
 // path passes a prices_<gran> reader, the TWAP path a twap_<gran>
@@ -571,17 +574,10 @@ func (s *Server) chartStablecoinFallback(
 	ctx context.Context, pair canonical.Pair,
 	read func(context.Context, canonical.Pair) ([]HistoryPoint, error),
 ) ([]HistoryPoint, bool) {
-	if pair.Quote.Type != canonical.AssetFiat || pair.Quote.Code != "USD" {
+	if pair.Quote.Type != canonical.AssetFiat {
 		return nil, false
 	}
-	for _, peg := range s.usdPeggedClassics {
-		if peg.Equal(pair.Base) {
-			continue
-		}
-		proxied, err := canonical.NewPair(pair.Base, peg)
-		if err != nil {
-			continue
-		}
+	for _, proxied := range s.chartFiatProxyPairs(pair) {
 		pp, err := read(ctx, proxied)
 		if err != nil || len(pp) == 0 {
 			continue
@@ -589,6 +585,68 @@ func (s *Server) chartStablecoinFallback(
 		return pp, true
 	}
 	return nil, false
+}
+
+// chartFiatProxyPairs is the ordered proxy-source list to try when a
+// fiat-quoted chart series has no direct rows. It is the chart's
+// first-hit analogue of the constituent set the live aggregator's VWAP
+// and the OHLC-series path (ohlcSeriesFiatCombined) combine — the
+// earlier classic-pegs-only form (BACKLOG #37 gap) missed the abstract
+// stablecoin backers, so a chart for a pair whose USD depth is
+// CEX-sourced (crypto:XLM/crypto:USDT, from binance) found nothing.
+//
+// Order is deterministic for cross-region stability (ADR-0015) and
+// preserves the legacy preference:
+//  1. operator USD-pegged classics (config order) — keeps classic
+//     Circle USDC winning where it has data;
+//  2. abstract stablecoin backers pegged to the quote's fiat
+//     (crypto:USDT / crypto:USDC / … — sorted), so CEX USD depth is
+//     found when no classic peg traded (and EUR-quoted charts reach
+//     crypto:EURC etc. via aggregate.FiatBackers).
+//
+// Each proxy quote is crossed with both base aliases (native ↔
+// crypto:XLM, per assetAliases). The literal pair the caller already
+// tried is skipped; duplicates are dropped, first occurrence kept.
+func (s *Server) chartFiatProxyPairs(pair canonical.Pair) []canonical.Pair {
+	var quotes []canonical.Asset
+	// (1) operator classic pegs — USD only (they carry issuer identity
+	// and are mapped to fiat only for USD by the operator's allow-list).
+	if pair.Quote.Code == "USD" {
+		quotes = append(quotes, s.usdPeggedClassics...)
+	}
+	// (2) abstract stablecoin backers for the quote's fiat, sorted.
+	backers := aggregate.FiatBackers(pair.Quote.Code)
+	sort.Strings(backers)
+	for _, code := range backers {
+		if a, err := canonical.NewCryptoAsset(code); err == nil {
+			quotes = append(quotes, a)
+		}
+	}
+
+	literal := pair.Base.String() + "\x00" + pair.Quote.String()
+	seen := make(map[string]struct{}, len(quotes)*2)
+	out := make([]canonical.Pair, 0, len(quotes)*2)
+	for _, b := range assetAliases(pair.Base) {
+		for _, q := range quotes {
+			if q.Equal(b) {
+				continue
+			}
+			pp, err := canonical.NewPair(b, q)
+			if err != nil {
+				continue
+			}
+			k := pp.Base.String() + "\x00" + pp.Quote.String()
+			if k == literal {
+				continue // caller already tried the literal pair
+			}
+			if _, dup := seen[k]; dup {
+				continue
+			}
+			seen[k] = struct{}{}
+			out = append(out, pp)
+		}
+	}
+	return out
 }
 
 // chartVWAPReader returns a [chartStablecoinFallback] read closure that
