@@ -8,10 +8,33 @@
 # violations OR stale baseline entries, so the baseline shrinks
 # monotonically as reworks land.
 #
-# ─── CURRENT STATE: 0 entries ──────────────────────────────────
+# ─── CURRENT STATE: 15 entries, all L/storage-below-compute ────
 #
 # All legacy RPC-based per-source orchestration code was removed
 # in PR 165d. New code must satisfy the rules in lint-imports.sh
 # or explicitly justify an allowlist addition there. Adding an
 # entry back to this file requires a PR description citing why
 # the exception is temporary.
+#
+# L/storage-below-compute (D8 M0-1): the storage tier imports
+# UPWARD into compute/sources because the persisted domain structs
+# (supply.Supply, blend.PositionEvent, mev.StoredEvent, ...) and Sink
+# interfaces are owned by upward packages. Grandfathered until the
+# structs move to a neutral home (canonical / internal/domain);
+# remove each line as its file's upward import goes away. Do NOT
+# add new files to this list.
+L/storage-below-compute internal/storage/clickhouse/blend_pool_state_reader.go
+L/storage-below-compute internal/storage/timescale/account_observations.go
+L/storage-below-compute internal/storage/timescale/aggregates.go
+L/storage-below-compute internal/storage/timescale/baseline.go
+L/storage-below-compute internal/storage/timescale/blend_admin.go
+L/storage-below-compute internal/storage/timescale/blend_auctions.go
+L/storage-below-compute internal/storage/timescale/blend_emissions.go
+L/storage-below-compute internal/storage/timescale/blend_positions.go
+L/storage-below-compute internal/storage/timescale/divergence_observations.go
+L/storage-below-compute internal/storage/timescale/freeze_events.go
+L/storage-below-compute internal/storage/timescale/mev.go
+L/storage-below-compute internal/storage/timescale/soroban_events.go
+L/storage-below-compute internal/storage/timescale/supply.go
+L/storage-below-compute internal/storage/timescale/topic_samples.go
+L/storage-below-compute internal/storage/timescale/trades.go

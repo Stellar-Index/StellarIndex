@@ -39,6 +39,19 @@
 #      Reason: ADR-0001 rules Horizon out entirely. Preemptive.
 #      Allowed in: nowhere.
 #
+#   P/*. Foundation-purity rules — pin leaf packages (canonical,
+#      nettools, scale, version, cachekeys) to a maximum internal-
+#      dependency set. See PURITY_RULES below.
+#
+#   L/*. Layering rules (D8 dependency-direction) — forbid upward /
+#      sideways edges: pkg→internal (ADR-0005), sources→app layer,
+#      storage→compute (grandfathered via baseline pending D8 M0-1),
+#      internal/api imported outside api+cmd. See LAYERING_RULES.
+#
+#   S/storage-subpackage-only — internal/storage/ holds subpackages
+#      only (timescale/ clickhouse/ redisclient/); no top-level
+#      adapter files.
+#
 # Usage
 # -----
 #
@@ -186,6 +199,60 @@ PURITY_RULES = [
     },
 ]
 
+# ─── Layering rules (D8 dependency-direction) ────────────────────
+#
+# Importer-side boundary rules: non-test files whose path starts with
+# any prefix in `importers` ("" = every file) may NOT import module-
+# local packages matching `forbid`, unless the file also matches an
+# `exempt_importers` prefix. Complements PURITY_RULES (which pin a
+# package's maximum dependency set); these forbid specific upward /
+# sideways edges per the D8 dependency-direction map
+# (docs/maintainability-audit-2026-07-01/D8-dependency-direction.md).
+# Known-legacy violations are grandfathered via lint-imports.baseline
+# and must shrink monotonically.
+LAYERING_RULES = [
+    {
+        "name": "L/pkg-purity",
+        "importers": ["pkg/"],
+        "exempt_importers": [],
+        "forbid": ["internal"],
+        "why": "ADR-0005: pkg/ is the public SemVer-stable surface; it must never import internal/ (Go would refuse for external consumers — this keeps in-repo builds honest too).",
+    },
+    {
+        "name": "L/sources-app-purity",
+        "importers": ["internal/sources/"],
+        "exempt_importers": [],
+        "forbid": [
+            "internal/api",
+            "internal/storage",
+            "internal/platform",
+            "internal/pipeline",
+            "internal/projector",
+            "internal/aggregate",
+        ],
+        "why": "Decoders/connectors sit below the app layer: a source package must not reach api/storage/platform/pipeline/projector/aggregate (D8 rule 3 — the most load-bearing direction in the ingest architecture).",
+    },
+    {
+        "name": "L/storage-below-compute",
+        "importers": ["internal/storage/"],
+        "exempt_importers": [],
+        "forbid": [
+            "internal/aggregate",
+            "internal/divergence",
+            "internal/supply",
+            "internal/sources",
+        ],
+        "why": "Storage is the persistence tier below compute (D8 rule 4). Today it imports upward because persisted domain structs live in aggregate/supply/sources packages (D8 M0-1) — those edges are grandfathered in lint-imports.baseline; do not add new ones, and shrink the baseline as structs move to a neutral home.",
+    },
+    {
+        "name": "L/api-scope",
+        "importers": [""],
+        "exempt_importers": ["internal/api/", "cmd/", "scripts/", "test/"],
+        "forbid": ["internal/api"],
+        "why": "internal/api is the top of the serving stack: only the api tree itself and binaries may import it (D8 rule 5).",
+    },
+]
+
 # ─── Walker ──────────────────────────────────────────────────────
 
 IMPORT_RE = re.compile(r'^\s*(?:[a-zA-Z_][a-zA-Z0-9_]*\s+)?"([^"]+)"')
@@ -225,7 +292,7 @@ def imports_in(path):
                 yield m.group(1)
 
 
-SKIP_DIRS = {".git", "vendor", ".discovery-repos", "node_modules"}
+SKIP_DIRS = {".git", "vendor", ".discovery-repos", "node_modules", ".claude"}
 
 
 def walk_go_files(root):
@@ -266,6 +333,21 @@ def main():
     observed = set()  # (rule_name, rel_path) pairs we actually hit
     regressions = []  # violations NOT in baseline — real fails
 
+    # Structural check: internal/storage/ is subpackage-only
+    # (timescale/ clickhouse/ redisclient/) — no top-level adapter
+    # files (CLAUDE.md repo map; ADR-0034 tiering). A stray
+    # internal/storage/*.go is the start of a new grab-bag layer.
+    strays = sorted(
+        p.name for p in (REPO / "internal/storage").glob("*.go"))
+    if strays:
+        for name in strays:
+            print(f"import-lint [S/storage-subpackage-only] ❌ "
+                  f"internal/storage/{name} — internal/storage must "
+                  "contain only subpackages (timescale/ clickhouse/ "
+                  "redisclient/); put the adapter in its subpackage.",
+                  file=sys.stderr)
+        sys.exit(1)
+
     for go_file in walk_go_files(REPO):
         rel = str(go_file.relative_to(REPO))
         imports = list(imports_in(go_file))
@@ -285,6 +367,26 @@ def main():
         # immediate directory (not the subtree) so a distinct subpackage
         # (e.g. internal/canonical/discovery) isn't held to the parent's
         # purity. Tests are exempt.
+        # Layering: importer-side forbidden edges (subtree-scoped,
+        # tests exempt — integration tests legitimately cross layers).
+        if not rel.endswith("_test.go"):
+            for lrule in LAYERING_RULES:
+                if not any(rel.startswith(p) for p in lrule["importers"]):
+                    continue
+                if any(rel.startswith(p) for p in lrule["exempt_importers"]):
+                    continue
+                for imp in imports:
+                    if not imp.startswith(MODULE):
+                        continue
+                    local = imp[len(MODULE):]
+                    if not any(local == f or local.startswith(f + "/")
+                               for f in lrule["forbid"]):
+                        continue
+                    pair = (lrule["name"], rel)
+                    observed.add(pair)
+                    if pair not in baseline:
+                        regressions.append((lrule, rel, imp))
+
         rel_dir = os.path.dirname(rel) + "/"
         if not rel.endswith("_test.go"):
             for prule in PURITY_RULES:
