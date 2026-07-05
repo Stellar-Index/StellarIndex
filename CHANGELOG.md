@@ -113,6 +113,22 @@ against.
   `issuer` input** (BACKLOG #54). Malformed issuer values now surface a
   `400`.
 
+### Added
+- **Dashboard `/dashboard/price-alerts` management page** (BACKLOG
+  #60/#32 UI). CRUD surface over `/v1/dashboard/price-alerts` — list,
+  create, enable/disable, delete — matching the API-keys page's
+  patterns; a firing alert delivers as a `price.alert` webhook event.
+- **Status page renders operator notices** (BACKLOG #32). The status
+  page fetches `GET /v1/status/notices` and renders active notices as
+  severity-styled banners above the overall-health banner.
+
+### Fixed
+- **Verified-currency asset embeds render a real 24h sparkline**
+  (BACKLOG #60). Catalogue-slug embeds (`usdc`, `aqua`, …) fall back to
+  `/v1/chart` with a canonical-id resolve when the thin
+  `GlobalAssetView` has no inlined price history, restoring both the
+  sparkline and live price refresh.
+
 ## [v0.8.3] — 2026-07-05
 
 ### Security
