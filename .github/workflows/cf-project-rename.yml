@@ -28,6 +28,7 @@ on:
         options:
           - create-and-deploy
           - cutover
+          - delete-old
 
 permissions:
   contents: read
@@ -157,3 +158,17 @@ jobs:
           CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://$APEX/")
           echo "apex probe: HTTP $CODE"
           [ "$CODE" = "200" ] || { echo "apex not serving after cutover — investigate (old project retained)"; exit 1; }
+      - name: Delete the retired project
+        if: inputs.stage == 'delete-old'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          # Preflight: the NEW project must serve the apex and hold the
+          # custom domains; the old one must hold none.
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://stellarindex.io/")
+          [ "$CODE" = "200" ] || { echo "apex not serving — refusing to delete rollback"; exit 1; }
+          NDOM=$(curl -sS "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$OLD_PROJECT/domains"             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" | jq '.result | length')
+          [ "$NDOM" = "0" ] || { echo "old project still holds $NDOM domains — refusing"; exit 1; }
+          curl -sS -X DELETE "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$OLD_PROJECT"             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" | jq -r '.success'
