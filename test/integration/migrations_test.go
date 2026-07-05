@@ -133,6 +133,8 @@ func TestMigrationsRoundTrip(t *testing.T) {
 		"prices_1m", "prices_15m",
 		"prices_1h", "prices_4h", "prices_1d",
 		"prices_1w", "prices_1mo",
+		// TWAP hierarchical CAGGs over prices_1m (migration 0081).
+		"twap_1h", "twap_1d",
 	} {
 		assertContinuousAggregateExists(t, db, ctx, caggName)
 	}
@@ -235,6 +237,7 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	for _, cagg := range []string{
 		"prices_1m", "prices_15m", "prices_1h",
 		"prices_4h", "prices_1d", "prices_1w", "prices_1mo",
+		"twap_1h", "twap_1d",
 	} {
 		assertContinuousAggregateAbsent(t, db, ctx, cagg)
 	}

@@ -5,6 +5,22 @@ import (
 	"testing"
 )
 
+// TestTWAPGranularitySupported pins the two grains backed by a TWAP
+// CAGG (twap_1h / twap_1d, migration 0081) — the storage-side gate
+// TWAPPointsInRange enforces and the adapter maps to a 400.
+func TestTWAPGranularitySupported(t *testing.T) {
+	supported := map[HistoryGranularity]bool{
+		Granularity1h: true, Granularity1d: true,
+		Granularity1m: false, Granularity15m: false,
+		Granularity4h: false, Granularity1w: false, Granularity1mo: false,
+	}
+	for g, want := range supported {
+		if got := TWAPGranularitySupported(g); got != want {
+			t.Errorf("TWAPGranularitySupported(%q) = %v, want %v", g, got, want)
+		}
+	}
+}
+
 // TestStringArray_Scan covers the Postgres TEXT[] decoder used to
 // scan the prices_1m `sources` column. Postgres serialises arrays
 // in the text protocol as `{a,b,c}`; we don't pull pgx's full array

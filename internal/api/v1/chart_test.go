@@ -194,12 +194,124 @@ func TestChart_InvalidTimeframe400(t *testing.T) {
 	}
 }
 
-func TestChart_TWAP400(t *testing.T) {
-	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
+// TestChart_TWAP_ServesTimeWeightedSeries — price_type=twap now serves
+// a series from the twap_1h / twap_1d CAGGs (migration 0081, BACKLOG
+// #37) instead of the old 400. The default 24h timeframe's 15m grain
+// snaps onto the 1h TWAP CAGG, and the response reports the grain
+// actually served + price_type=twap.
+func TestChart_TWAP_ServesTimeWeightedSeries(t *testing.T) {
+	t0 := time.Unix(1_770_000_000, 0).UTC().Truncate(time.Hour)
+	v := "1234.5"
+	reader := &stubHistoryReader{
+		twapPoints: []v1.HistoryPoint{
+			{Bucket: t0, VWAP: "0.4200", VolumeUSD: &v},
+			{Bucket: t0.Add(time.Hour), VWAP: "0.4300"},
+		},
+	}
+	srv := v1.New(v1.Options{History: reader})
 	ts := httpTestServer(t, srv)
-	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&price_type=twap")
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status=%d want 400 for unsupported price_type=twap", resp.StatusCode)
+
+	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD&price_type=twap")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.ChartSeries `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+
+	if env.Data.PriceType != "twap" {
+		t.Errorf("price_type = %q, want twap", env.Data.PriceType)
+	}
+	// 24h default → 15m default grain → snapped to the 1h TWAP CAGG.
+	if env.Data.Granularity != "1h" {
+		t.Errorf("granularity = %q, want 1h (snapped)", env.Data.Granularity)
+	}
+	if reader.lastCall.granularity != "1h" {
+		t.Errorf("reader saw granularity=%q, want snapped 1h", reader.lastCall.granularity)
+	}
+	if len(env.Data.Points) != 2 {
+		t.Fatalf("got %d points, want 2", len(env.Data.Points))
+	}
+	if env.Data.Points[0].P != "0.4200" {
+		t.Errorf("point[0].p = %q, want 0.4200 (twap value pass-through)", env.Data.Points[0].P)
+	}
+}
+
+// TestChart_TWAP_GranularitySnapping pins the sub-daily→1h / daily+→1d
+// snap so the twap surface stays on its two CAGGs.
+func TestChart_TWAP_GranularitySnapping(t *testing.T) {
+	for _, tc := range []struct {
+		reqGran  string
+		wantGran string
+	}{
+		{"1m", "1h"}, {"15m", "1h"}, {"1h", "1h"}, {"4h", "1h"},
+		{"1d", "1d"}, {"1w", "1d"}, {"1mo", "1d"},
+	} {
+		reader := &stubHistoryReader{twapPoints: []v1.HistoryPoint{
+			{Bucket: time.Unix(1_770_000_000, 0).UTC(), VWAP: "1.0"},
+		}}
+		srv := v1.New(v1.Options{History: reader})
+		ts := httpTestServer(t, srv)
+		resp := mustGet(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD&price_type=twap&granularity="+tc.reqGran)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("gran=%s status=%d want 200", tc.reqGran, resp.StatusCode)
+		}
+		var env struct {
+			Data v1.ChartSeries `json:"data"`
+		}
+		mustDecode(t, resp, &env)
+		if env.Data.Granularity != tc.wantGran {
+			t.Errorf("gran=%s → served %q, want %q", tc.reqGran, env.Data.Granularity, tc.wantGran)
+		}
+		if reader.lastCall.granularity != tc.wantGran {
+			t.Errorf("gran=%s → reader saw %q, want %q", tc.reqGran, reader.lastCall.granularity, tc.wantGran)
+		}
+	}
+}
+
+// TestChart_TWAP_StablecoinFallback — the twap chart path reuses the
+// shared X/fiat:USD → X/<USD-pegged classic> fallback: an empty literal
+// twap series for native/fiat:USD falls back to the proxied peg pair's
+// twap buckets and flags triangulated.
+func TestChart_TWAP_StablecoinFallback(t *testing.T) {
+	usdc, err := canonical.NewClassicAsset(
+		"USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatalf("build USDC: %v", err)
+	}
+	native := canonical.NativeAsset()
+	pegPair, err := canonical.NewPair(native, usdc)
+	if err != nil {
+		t.Fatalf("build native/USDC pair: %v", err)
+	}
+	reader := &pairKeyedHistoryReader{byPair: map[string][]v1.HistoryPoint{
+		pegPair.Base.String() + "/" + pegPair.Quote.String(): {
+			{Bucket: time.Unix(1_770_000_000, 0).UTC(), VWAP: "0.4100"},
+		},
+	}}
+	srv := v1.New(v1.Options{
+		History:           reader,
+		USDPeggedClassics: []canonical.Asset{usdc},
+	})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&quote=fiat:USD&price_type=twap")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data  v1.ChartSeries `json:"data"`
+		Flags struct {
+			Triangulated bool `json:"triangulated"`
+		} `json:"flags"`
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data.Points) != 1 {
+		t.Fatalf("got %d points, want 1 (from proxied peg pair)", len(env.Data.Points))
+	}
+	if !env.Flags.Triangulated {
+		t.Error("flags.triangulated = false, want true (stablecoin proxy fired)")
 	}
 }
 
@@ -352,6 +464,15 @@ type pairKeyedHistoryReader struct {
 }
 
 func (r *pairKeyedHistoryReader) HistoryPointsInRange(_ context.Context, p canonical.Pair, _ string, _, _ time.Time, _ int) ([]v1.HistoryPoint, error) {
+	key := p.Base.String() + "/" + p.Quote.String()
+	r.calls = append(r.calls, key)
+	return r.byPair[key], nil
+}
+
+// TWAPPointsInRange mirrors HistoryPointsInRange against the same
+// per-pair fixture, so the twap chart path (and its stablecoin
+// fallback) can be exercised through this reader too.
+func (r *pairKeyedHistoryReader) TWAPPointsInRange(_ context.Context, p canonical.Pair, _ string, _, _ time.Time, _ int) ([]v1.HistoryPoint, error) {
 	key := p.Base.String() + "/" + p.Quote.String()
 	r.calls = append(r.calls, key)
 	return r.byPair[key], nil

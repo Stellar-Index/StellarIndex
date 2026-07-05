@@ -2188,11 +2188,15 @@ export interface paths {
          *     | `1y`      | `1d`                |
          *     | `all`     | `1d`                |
          *
-         *     `price_type=twap` returns 400 — multi-bar TWAP charts are
-         *     deferred to L7.8 (post-launch), see ADR-0020. Single-bar
-         *     TWAP is available now via `/v1/twap` (true time-weighted
-         *     compute from raw trades); only the multi-bar chart variant
-         *     is the deferred surface.
+         *     `price_type=twap` returns a time-weighted series from the
+         *     `twap_1h` / `twap_1d` continuous aggregates. TWAP is
+         *     time-weighted at 1-minute resolution (each minute's mean price
+         *     counts once, regardless of how many trades printed in it), so
+         *     it is served only at 1h or 1d granularity — the requested
+         *     `granularity` is snapped onto the nearer of the two and the
+         *     response reports the grain actually served. Single-bar TWAP
+         *     over an arbitrary window stays on `/v1/twap` (LOCF Δt-weighted
+         *     compute from raw trades).
          *
          *     Fiat:fiat pairs are served from the daily `fx_quotes`
          *     reference-rate series (sub-daily granularities replicate the
@@ -2238,16 +2242,19 @@ export interface paths {
                      */
                     granularity?: components["parameters"]["Granularity"];
                     /**
-                     * @description Series type. `vwap` (default) returns the price series.
-                     *     `twap` is reserved for forward compatibility (currently
-                     *     400). `market_cap` returns a USD-denominated market-cap
-                     *     series. For fiat:* base assets it is M2 (verified-currency
-                     *     catalogue) × daily FX rate (fx_quotes). For on-chain
-                     *     (native / classic / Soroban) base assets it is the daily USD
-                     *     price × daily circulating supply (the `supply_1d` continuous
-                     *     aggregate, forward-filled). Off-chain `crypto:*` reference
-                     *     assets (BTC/ETH/…) have no on-chain supply we publish, so
-                     *     they return an empty series.
+                     * @description Series type. `vwap` (default) returns the volume-weighted
+                     *     price series. `twap` returns the time-weighted price series
+                     *     from the `twap_1h` / `twap_1d` continuous aggregates
+                     *     (time-weighted at 1-minute resolution; served at 1h or 1d
+                     *     granularity, the requested granularity snapped onto the
+                     *     nearer of the two). `market_cap` returns a USD-denominated
+                     *     market-cap series. For fiat:* base assets it is M2
+                     *     (verified-currency catalogue) × daily FX rate (fx_quotes).
+                     *     For on-chain (native / classic / Soroban) base assets it is
+                     *     the daily USD price × daily circulating supply (the
+                     *     `supply_1d` continuous aggregate, forward-filled). Off-chain
+                     *     `crypto:*` reference assets (BTC/ETH/…) have no on-chain
+                     *     supply we publish, so they return an empty series.
                      */
                     price_type?: components["parameters"]["PriceType"];
                 };
@@ -11499,13 +11506,14 @@ export interface components {
                 /** @enum {string} */
                 granularity: "1m" | "15m" | "1h" | "4h" | "1d" | "1w" | "1mo";
                 /**
-                 * @description `vwap` for the default price chart; `market_cap`
-                 *     on the market-cap chart variant (chart.go
-                 *     handleChartMarketCap). `twap` is never emitted on
-                 *     this surface.
+                 * @description `vwap` for the default price chart; `twap` for the
+                 *     time-weighted chart variant (chart.go
+                 *     handleChartTWAP, twap_1h / twap_1d CAGGs);
+                 *     `market_cap` on the market-cap chart variant
+                 *     (chart.go handleChartMarketCap).
                  * @enum {string}
                  */
-                price_type: "vwap" | "market_cap";
+                price_type: "vwap" | "twap" | "market_cap";
                 points: components["schemas"]["HistoryPoint"][];
                 /**
                  * @description True when the requested timeframe extends before
@@ -12267,16 +12275,19 @@ export interface components {
          */
         To: string;
         /**
-         * @description Series type. `vwap` (default) returns the price series.
-         *     `twap` is reserved for forward compatibility (currently
-         *     400). `market_cap` returns a USD-denominated market-cap
-         *     series. For fiat:* base assets it is M2 (verified-currency
-         *     catalogue) × daily FX rate (fx_quotes). For on-chain
-         *     (native / classic / Soroban) base assets it is the daily USD
-         *     price × daily circulating supply (the `supply_1d` continuous
-         *     aggregate, forward-filled). Off-chain `crypto:*` reference
-         *     assets (BTC/ETH/…) have no on-chain supply we publish, so
-         *     they return an empty series.
+         * @description Series type. `vwap` (default) returns the volume-weighted
+         *     price series. `twap` returns the time-weighted price series
+         *     from the `twap_1h` / `twap_1d` continuous aggregates
+         *     (time-weighted at 1-minute resolution; served at 1h or 1d
+         *     granularity, the requested granularity snapped onto the
+         *     nearer of the two). `market_cap` returns a USD-denominated
+         *     market-cap series. For fiat:* base assets it is M2
+         *     (verified-currency catalogue) × daily FX rate (fx_quotes).
+         *     For on-chain (native / classic / Soroban) base assets it is
+         *     the daily USD price × daily circulating supply (the
+         *     `supply_1d` continuous aggregate, forward-filled). Off-chain
+         *     `crypto:*` reference assets (BTC/ETH/…) have no on-chain
+         *     supply we publish, so they return an empty series.
          */
         PriceType: "vwap" | "twap" | "market_cap";
         /**

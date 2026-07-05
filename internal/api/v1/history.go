@@ -63,6 +63,16 @@ type HistoryReader interface {
 	// → from = now-tf, to = now). Per ADR-0020.
 	HistoryPointsInRange(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time, limit int) ([]HistoryPoint, error)
 
+	// TWAPPointsInRange is the time-weighted-average sibling of
+	// [HistoryPointsInRange], reading the twap_<granularity> CAGG
+	// (migration 0081) instead of prices_<granularity>. Same [from, to)
+	// window, closed-bucket guard, and `[]HistoryPoint` shape (the VWAP
+	// field carries the TWAP value). granularity is 1h or 1d — the only
+	// two grains with a TWAP CAGG; other values return
+	// [ErrUnknownGranularity] (handler → 400). Backs
+	// /v1/chart?price_type=twap.
+	TWAPPointsInRange(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time, limit int) ([]HistoryPoint, error)
+
 	// OHLCSeries returns chronologically-ordered OHLC bars from the
 	// CAGG matching the requested interval, in [from, to). Bucket is
 	// the START of each window; window end = bucket + interval.
