@@ -23,13 +23,19 @@
 set -euo pipefail
 . /etc/default/stellarindex
 
+# Debian's pg_wrapper `psql` stats the cluster data dir to pick a version and
+# aborts with "Invalid data directory for cluster 15 main" for any user that
+# cannot read it — which User=stellarindex (2026-07-03 non-root hardening)
+# cannot. Call the versioned binary directly to bypass the wrapper.
+PSQL="/usr/lib/postgresql/${PG_VERSION:-15}/bin/psql"
+
 DSN="$STELLARINDEX_POSTGRES_DSN"
 CHUNK="${COMPLETENESS_CHUNK:-25000}"
 CH_ADDR="${CH_ADDR:-127.0.0.1:9300}"
 CONFIG="${CONFIG_PATH:-/etc/stellarindex.toml}"
 OPS=/usr/local/bin/stellarindex-ops
 
-TIP=$(psql "$DSN" -tA -c \
+TIP=$("$PSQL" "$DSN" -tA -c \
   "SELECT last_ledger FROM ingestion_cursors WHERE source='ledgerstream'" 2>/dev/null | tr -d '[:space:]')
 if [ -z "$TIP" ] || [ "$TIP" = "0" ]; then
   echo "compute-completeness: ledgerstream tip unresolved; bailing" >&2
@@ -40,7 +46,7 @@ fi
 # snapshot yet it simply won't appear here — an operator seeds the initial
 # full verify (`compute-completeness -ch -source <s>`) once; thereafter this
 # driver keeps it fresh.
-SRCS=$(psql "$DSN" -tA -F' ' -c \
+SRCS=$("$PSQL" "$DSN" -tA -F' ' -c \
   "SELECT DISTINCT ON (source) source, watermark_ledger
      FROM completeness_snapshots ORDER BY source, computed_at DESC" 2>/dev/null)
 if [ -z "$SRCS" ]; then

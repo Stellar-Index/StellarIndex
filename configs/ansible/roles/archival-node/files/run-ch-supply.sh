@@ -14,6 +14,12 @@
 set -uo pipefail
 . /etc/default/stellarindex
 
+# Debian's pg_wrapper `psql` stats the cluster data dir to pick a version and
+# aborts with "Invalid data directory for cluster 15 main" for any user that
+# cannot read it — which User=stellarindex (2026-07-03 non-root hardening)
+# cannot. Call the versioned binary directly to bypass the wrapper.
+PSQL="/usr/lib/postgresql/${PG_VERSION:-15}/bin/psql"
+
 DSN="$STELLARINDEX_POSTGRES_DSN"
 OPS=/usr/local/bin/stellarindex-ops
 CONFIG="${CONFIG_PATH:-/etc/stellarindex.toml}"
@@ -23,7 +29,7 @@ MEMGUARD="${CHSUPPLY_MEMGUARD:-6442450944}"   # wait while CH mem > 6 GiB
 LOG=/var/log/ch-supply-refresh.log
 CH() { curl -sS --max-time 3600 http://localhost:8123/ --data-binary "$1" 2>/dev/null; }
 
-TIP=$(psql "$DSN" -tA -c "SELECT last_ledger FROM ingestion_cursors WHERE source='ledgerstream'" 2>/dev/null | tr -d '[:space:]')
+TIP=$("$PSQL" "$DSN" -tA -c "SELECT last_ledger FROM ingestion_cursors WHERE source='ledgerstream'" 2>/dev/null | tr -d '[:space:]')
 [ -n "$TIP" ] && [ "$TIP" != "0" ] || { echo "$(date -u) ch-supply: tip unresolved" >> "$LOG"; exit 1; }
 FROM=$(CH "SELECT max(ledger_seq)+1 FROM stellar.supply_flows" | tr -d '[:space:]')
 [ -n "$FROM" ] && [ "$FROM" != "0" ] || FROM=2

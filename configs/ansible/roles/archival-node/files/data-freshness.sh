@@ -17,6 +17,12 @@
 set -euo pipefail
 . /etc/default/stellarindex
 
+# Debian's pg_wrapper `psql` stats the cluster data dir to pick a version and
+# aborts with "Invalid data directory for cluster 15 main" for any user that
+# cannot read it — which User=stellarindex (2026-07-03 non-root hardening)
+# cannot. Call the versioned binary directly to bypass the wrapper.
+PSQL="/usr/lib/postgresql/${PG_VERSION:-15}/bin/psql"
+
 OUT="${TEXTFILE_OUTPUT:-/var/lib/node_exporter/textfile_collector/data_freshness.prom}"
 TMP="$(mktemp "${OUT}.XXXXXX")"
 trap 'rm -f "$TMP"' EXIT
@@ -32,7 +38,7 @@ trap 'rm -f "$TMP"' EXIT
 
 # (domain, source, age_seconds, threshold_seconds) per domain. Thresholds are a
 # generous multiple of each domain's natural cadence so only a real stall fires.
-psql "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+"$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH f AS (
   -- Crypto oracles (reflector/redstone/band/chainlink/coingecko) update every
   -- few minutes → 3h threshold. ECB is the exception: a DAILY FX reference
@@ -69,7 +75,7 @@ SELECT 'stellarindex_data_freshness_stale{domain="'||domain||'",source="'||src||
 SQL
 
 # Per-source completeness verdict (latest snapshot per source): 1 = incomplete.
-psql "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+"$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 SELECT 'stellarindex_completeness_incomplete{source="'||source||'"} '||(NOT complete)::int::text
   FROM (SELECT DISTINCT ON (source) source, complete
           FROM completeness_snapshots ORDER BY source, computed_at DESC) s;
@@ -80,7 +86,7 @@ SQL
 # alone can't see that, so emit the per-source lag (live ingest cursor tip −
 # verdict watermark) — a source verified only to an old ledger becomes
 # observable/alertable instead of showing a green "N/N complete" badge.
-psql "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+"$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH tip AS (SELECT max(last_ledger) AS t FROM ingestion_cursors)
 SELECT 'stellarindex_completeness_watermark_lag_ledgers{source="'||s.source||'"} '
        ||greatest(0, (SELECT t FROM tip) - s.watermark_ledger)::text

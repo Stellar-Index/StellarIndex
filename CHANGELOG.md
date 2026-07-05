@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **r1 non-root timers crashlooped for 2.5 days on Debian's psql wrapper** —
+  `data-freshness.sh`, `run-compute-completeness.sh`, and `run-ch-supply.sh`
+  died with "Invalid data directory for cluster 15 main" once their units ran
+  as `User=stellarindex` (2026-07-03 hardening): pg_wrapper stats the cluster
+  data dir, which only postgres can read. All three now call the versioned
+  `/usr/lib/postgresql/15/bin/psql` directly. The stale
+  `data_freshness.prom` this left behind kept `stellarindex_completeness_incomplete{source="sdex"}`
+  falsely firing after the SDEX verdict went green.
+
 ### Added
 - **`/v1/chart?price_type=twap` — TWAP served from continuous
   aggregates** (BACKLOG #37). New `twap_1h` / `twap_1d` hierarchical
