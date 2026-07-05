@@ -164,7 +164,7 @@ Grouped by requirement. Numbered IDs (A.1, B.2) map back to the
 
 | Method | Path | Purpose | Req |
 | ------ | ---- | ------- | --- |
-| GET | `/v1/assets` | List every indexed asset (paginated). The `?type=classic,soroban`, `?code=USDC`, `?issuer=G…` filter params are reserved in the OpenAPI spec but the handler currently ignores them and returns the unfiltered page. | F1.*, S1.1-3 |
+| GET | `/v1/assets` | List every indexed asset (paginated). Row filters (BACKLOG #54): `?type=native\|classic\|soroban\|fiat\|any`, `?code=USDC` (exact, case-sensitive), `?issuer=G…` (CRC-checked) — combinable, malformed values return 400. `code`/`issuer` push down to the indexed `classic_assets` columns; `type` folds against the classic-only listing (non-classic → empty). `?asset_class=` remains the major class dispatch. | F1.*, S1.1-3 |
 | GET | `/v1/assets/{asset_id}` | Asset detail with metadata: code, type, issuer, contract_id, home_domain, decimals, image (optional). | F1.*, S1.1-3 |
 | GET | `/v1/assets/{asset_id}/metadata` | Same as above + SEP-1 `[CURRENCIES]` fields (description, image, orgName). | F1.6 |
 
