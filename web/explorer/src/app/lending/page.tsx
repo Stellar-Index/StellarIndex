@@ -107,14 +107,13 @@ export default function LendingPage() {
       <LendingPoolsTable />
 
       <Panel
-        title="Coming next"
+        title="Notes"
         bodyClassName="text-sm text-ink-body space-y-2"
       >
         <p>
-          Per-pool TVL and utilisation now read live from pool storage
-          (per-reserve USD); supply/borrow APY columns land at this
-          list level next — the per-reserve APRs already serve on each
-          pool&apos;s detail page. The table lists pools observed in the
+          Per-pool TVL, utilisation, and the supplied-weighted
+          supply/borrow APY columns all read live from pool storage
+          (per-reserve USD). The table lists pools observed in the
           auction stream, so a pool that has never had a liquidation
           won&apos;t appear until it does.
         </p>
