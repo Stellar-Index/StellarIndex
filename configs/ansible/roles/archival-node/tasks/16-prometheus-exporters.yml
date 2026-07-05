@@ -85,22 +85,29 @@
 # The Debian package ships its own `prometheus` system user and
 # runs the exporter as that user. We auth against postgres on
 # the local Unix socket via peer auth, which means the
-# pg_hba.conf entry must match `prometheus` → `postgres` (the
-# Debian package's postinst creates this row automatically;
-# verify post-deploy with `select * from pg_hba_file_rules()`).
-#
 # DATA_SOURCE_NAME is read from /etc/default/prometheus-postgres-exporter
-# by the package's systemd unit. We connect as the `postgres`
-# superuser via peer auth on the local socket — no password.
+# by the package's systemd unit. We connect as the exporter's OWN
+# OS user (`prometheus`) via peer auth on the local socket to a
+# same-named PG role holding pg_monitor — no password anywhere.
 # `sslmode=disable` is required for Unix-socket connections.
 #
-# Operator post-deploy step (documented in
-# r1-deployment-state.md): if migrating off `postgres`-as-user
-# to a dedicated `postgres_exporter` role:
-#   CREATE USER postgres_exporter;
-#   GRANT pg_monitor TO postgres_exporter;
-#   GRANT CONNECT ON DATABASE stellarindex TO postgres_exporter;
-# then swap `user=postgres` for `user=postgres_exporter` here.
+# HISTORY (2026-07-05, the pg_up=0 blind spell): the previous
+# `user=postgres` socket DSN could NEVER work — peer auth requires
+# the OS user to match, and the unit runs as `prometheus`, not
+# `postgres`. The exporter had ALSO kept a stale pre-rotation TCP
+# DSN in-process for weeks (env-file edits don't apply until
+# restart). Both failure modes are closed by the role task below +
+# the restart handler.
+
+- name: PG monitoring role for the exporter (peer-auth, pg_monitor)
+  become: true
+  become_user: postgres
+  become_flags: ""
+  ansible.builtin.command:
+    cmd: psql -d stellarindex -c "DO $do$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'prometheus') THEN CREATE ROLE prometheus LOGIN; END IF; END $do$; GRANT pg_monitor TO prometheus;"
+  register: pgrole
+  changed_when: "'GRANT ROLE' in pgrole.stdout"
+  failed_when: pgrole.rc != 0
 
 - name: Install prometheus-postgres-exporter Debian package
   ansible.builtin.apt:
@@ -123,13 +130,13 @@
       # Managed by ansible (archival-node role / 16-prometheus-exporters.yml).
       # Sourced via the Debian-shipped systemd unit's `EnvironmentFile=`.
       #
-      # Peer auth on the local Unix socket as `postgres` (superuser);
-      # no password needed. If the operator migrates to a dedicated
-      # postgres_exporter role: GRANT pg_monitor TO postgres_exporter
-      # is the minimum-privilege replacement (PostgreSQL 10+).
-      DATA_SOURCE_NAME="user=postgres host=/var/run/postgresql sslmode=disable"
+      # Peer auth on the local Unix socket as the exporter's own OS
+      # user (`prometheus`), matched to a same-named pg_monitor role
+      # (created by the role task above); no password anywhere.
+      DATA_SOURCE_NAME="user=prometheus host=/var/run/postgresql dbname=stellarindex sslmode=disable"
       # Listen on loopback only — same defence-in-depth as redis_exporter.
       PG_EXPORTER_WEB_LISTEN_ADDRESS=127.0.0.1:9187
+  notify: Restart prometheus-postgres-exporter
 
 - name: Enable + start prometheus-postgres-exporter
   ansible.builtin.systemd:

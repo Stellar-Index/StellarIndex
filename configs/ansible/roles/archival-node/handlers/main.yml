@@ -155,3 +155,8 @@
   ansible.builtin.systemd:
     name: caddy
     state: reloaded
+
+- name: Restart prometheus-postgres-exporter
+  ansible.builtin.systemd:
+    name: prometheus-postgres-exporter
+    state: restarted
