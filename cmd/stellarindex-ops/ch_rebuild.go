@@ -468,12 +468,13 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	// tens of millions of sep41 events per window; per-row HandleEvent
 	// capped writes at ~520/s (round-trip + cold PK-page per insert).
 	// Same batching pattern as trades, same per-row fallback.
-	xferBatch := make([]timescale.SEP41TransferRow, 0, tradeBatchN)
+	const sepBatchN = 50_000
+	xferBatch := make([]timescale.SEP41TransferRow, 0, sepBatchN)
 	flushXfer := func() {
 		if len(xferBatch) == 0 {
 			return
 		}
-		if err := store.InsertSEP41TransferBatch(ctx, xferBatch); err != nil {
+		if err := store.CopyMergeSEP41Transfers(ctx, xferBatch); err != nil {
 			logger.Warn("sep41_transfers batch failed; per-row fallback", "n", len(xferBatch), "err", err)
 			for _, r := range xferBatch {
 				if ierr := store.InsertSEP41Transfer(ctx, r); ierr != nil {
@@ -483,12 +484,12 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		}
 		xferBatch = xferBatch[:0]
 	}
-	supBatch := make([]timescale.SEP41SupplyEvent, 0, tradeBatchN)
+	supBatch := make([]timescale.SEP41SupplyEvent, 0, sepBatchN)
 	flushSup := func() {
 		if len(supBatch) == 0 {
 			return
 		}
-		if err := store.InsertSEP41SupplyEventBatch(ctx, supBatch); err != nil {
+		if err := store.CopyMergeSEP41SupplyEvents(ctx, supBatch); err != nil {
 			logger.Warn("sep41_supply batch failed; per-row fallback", "n", len(supBatch), "err", err)
 			for _, r := range supBatch {
 				if ierr := store.InsertSEP41SupplyEvent(ctx, r); ierr != nil {
@@ -507,14 +508,14 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 			switch e := ev.(type) {
 			case sep41transfers.Event:
 				xferBatch = append(xferBatch, pipeline.SEP41TransferRowOf(e))
-				if len(xferBatch) >= tradeBatchN {
+				if len(xferBatch) >= sepBatchN {
 					flushXfer()
 				}
 				written[ev.Source()]++
 				continue
 			case sep41supply.Event:
 				supBatch = append(supBatch, pipeline.SEP41SupplyRowOf(e))
-				if len(supBatch) >= tradeBatchN {
+				if len(supBatch) >= sepBatchN {
 					flushSup()
 				}
 				written[ev.Source()]++

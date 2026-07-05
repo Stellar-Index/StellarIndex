@@ -16,6 +16,14 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **sep41 re-derive: COPY-merge bulk path** — the multi-row INSERT
+  batches topped out near 4 statements/s (full parse/plan per 12k
+  placeholders; ~3.7k rows/s, days for a 700M-row rebuild). The
+  drain now COPYs 50k-row batches into an ON COMMIT DROP temp table
+  and merges with ON CONFLICT DO NOTHING, keeping idempotence at
+  bulk-load speed.
+
+### Fixed
 - **sep41 re-derive write throughput** (recommitted — the original
   commit was lost to a concurrent-session rebase before it reached
   origin): ch-rebuild drained sep41 events per-row (~520 rows/s at
