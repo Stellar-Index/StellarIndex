@@ -159,7 +159,7 @@ func registerAppMetricsTail() {
 	for _, outcome := range []string{"ok", "missing_leg", "parse_error", "redis_error"} {
 		AggregatorTriangulationsTotal.WithLabelValues(outcome)
 	}
-	for _, op := range []string{"get_account", "upsert_subscription", "account_update", "list_keys", "key_update"} {
+	for _, op := range []string{"get_account", "upsert_subscription", "account_update", "list_keys", "key_update", "key_cache_invalidate"} {
 		StripePlatformSyncErrorsTotal.WithLabelValues(op)
 	}
 	for _, outcome := range []string{"written", "buffered", "dropped", "errored"} {
@@ -1658,7 +1658,8 @@ var TLSCertProbeTotal = prometheus.NewCounterVec(
 //
 // Labels:
 //   - operation: which step failed
-//     (get_account|upsert_subscription|account_update|list_keys|key_update)
+//     (get_account|upsert_subscription|account_update|list_keys|
+//     key_update|key_cache_invalidate)
 var StripePlatformSyncErrorsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_stripe_platform_sync_errors_total",

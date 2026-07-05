@@ -4,14 +4,18 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/StellarIndex/stellar-index/internal/auth"
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/config"
 	"github.com/StellarIndex/stellar-index/internal/divergence"
+	"github.com/StellarIndex/stellar-index/internal/platform"
 	"github.com/StellarIndex/stellar-index/internal/usage"
 )
 
@@ -166,4 +170,111 @@ func TestBuildDivergenceReferences_OnChainOraclesSkippedWithoutReader(t *testing
 	if refs := buildDivergenceReferences(cfg, nil, discardLogger()); len(refs) != 0 {
 		t.Fatalf("len(refs) = %d, want 0 (nil reader must skip on-chain oracles)", len(refs))
 	}
+}
+
+// ── auth_backend flag selection (X6 read-through cutover) ───────────
+
+// stubKeysForBuild / stubAccountsForBuild satisfy the platform stores
+// the Postgres validator constructor requires. It never calls them
+// (construction only nil-checks), so every method panics.
+type stubKeysForBuild struct{}
+
+func (stubKeysForBuild) Create(context.Context, platform.APIKey, int) (platform.APIKey, error) {
+	panic("unused")
+}
+func (stubKeysForBuild) Get(context.Context, string) (platform.APIKey, error) { panic("unused") }
+func (stubKeysForBuild) GetByHash(context.Context, []byte) (platform.APIKey, error) {
+	panic("unused")
+}
+
+func (stubKeysForBuild) ListForAccount(context.Context, uuid.UUID) ([]platform.APIKey, error) {
+	panic("unused")
+}
+func (stubKeysForBuild) Update(context.Context, platform.APIKey) error            { panic("unused") }
+func (stubKeysForBuild) Revoke(context.Context, string, uuid.UUID, string) error  { panic("unused") }
+func (stubKeysForBuild) TouchUsage(context.Context, string, net.IP, string) error { panic("unused") }
+
+type stubAccountsForBuild struct{}
+
+func (stubAccountsForBuild) Create(context.Context, platform.Account) (platform.Account, error) {
+	panic("unused")
+}
+
+func (stubAccountsForBuild) Get(context.Context, uuid.UUID) (platform.Account, error) {
+	panic("unused")
+}
+
+func (stubAccountsForBuild) GetBySlug(context.Context, string) (platform.Account, error) {
+	panic("unused")
+}
+
+func (stubAccountsForBuild) GetByStripeCustomerID(context.Context, string) (platform.Account, error) {
+	panic("unused")
+}
+func (stubAccountsForBuild) Update(context.Context, platform.Account) error   { panic("unused") }
+func (stubAccountsForBuild) Suspend(context.Context, uuid.UUID, string) error { panic("unused") }
+func (stubAccountsForBuild) Unsuspend(context.Context, uuid.UUID) error       { panic("unused") }
+
+// TestBuildAPIKeyValidator_BothFlagStates pins the auth_backend cutover
+// knob: the default/"redis" backend keeps the CURRENT behaviour (legacy
+// RedisAPIKeyValidator), and "postgres" selects the read-through
+// validator — falling loud to the Noop (every request 503s) when a
+// required dependency is missing rather than silently demoting to
+// anonymous.
+func TestBuildAPIKeyValidator_BothFlagStates(t *testing.T) {
+	logger := discardLogger()
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+	pgV, err := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{
+		Keys:     stubKeysForBuild{},
+		Accounts: stubAccountsForBuild{},
+		Cache:    rdb,
+	})
+	if err != nil {
+		t.Fatalf("build postgres validator: %v", err)
+	}
+
+	t.Run("redis backend (current default) → RedisAPIKeyValidator", func(t *testing.T) {
+		v := buildAPIKeyValidator(authValidatorOptions{Backend: "redis", Rdb: rdb, PostgresValidator: pgV}, logger, "apikey")
+		if _, ok := v.(*auth.RedisAPIKeyValidator); !ok {
+			t.Fatalf("got %T, want *auth.RedisAPIKeyValidator", v)
+		}
+	})
+
+	t.Run("empty backend defaults to redis", func(t *testing.T) {
+		v := buildAPIKeyValidator(authValidatorOptions{Backend: "", Rdb: rdb}, logger, "apikey")
+		if _, ok := v.(*auth.RedisAPIKeyValidator); !ok {
+			t.Fatalf("got %T, want *auth.RedisAPIKeyValidator (empty == redis)", v)
+		}
+	})
+
+	t.Run("redis backend without Redis → Noop (fail-loud)", func(t *testing.T) {
+		v := buildAPIKeyValidator(authValidatorOptions{Backend: "redis", Rdb: nil}, logger, "apikey")
+		if _, ok := v.(auth.NoopAPIKeyValidator); !ok {
+			t.Fatalf("got %T, want auth.NoopAPIKeyValidator", v)
+		}
+	})
+
+	t.Run("postgres backend wired → the read-through validator", func(t *testing.T) {
+		v := buildAPIKeyValidator(authValidatorOptions{Backend: "postgres", Rdb: rdb, PostgresValidator: pgV}, logger, "apikey")
+		got, ok := v.(*auth.PostgresAPIKeyValidator)
+		if !ok {
+			t.Fatalf("got %T, want *auth.PostgresAPIKeyValidator", v)
+		}
+		if got != pgV {
+			t.Error("postgres backend must return the pre-built validator, not a fresh one")
+		}
+	})
+
+	t.Run("postgres backend unwired → Noop (fail-loud)", func(t *testing.T) {
+		v := buildAPIKeyValidator(authValidatorOptions{Backend: "postgres", Rdb: rdb, PostgresValidator: nil}, logger, "apikey")
+		if _, ok := v.(auth.NoopAPIKeyValidator); !ok {
+			t.Fatalf("got %T, want auth.NoopAPIKeyValidator (postgres backend without the dashboard bundle must fail loud)", v)
+		}
+	})
 }

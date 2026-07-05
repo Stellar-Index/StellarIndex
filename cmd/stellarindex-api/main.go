@@ -454,6 +454,14 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 				// dashboard keys too — pre-fix only Redis-
 				// stored /v1/signup keys were lifted.
 				APIKeys: postgresstore.NewAPIKeyStore(pgStore),
+				// X6 split-brain follow-up: evict each lifted
+				// key from the auth read-through cache so
+				// auth_backend=postgres serves the new budget
+				// immediately (else the stale cached Subject
+				// lingers until the validator's cache TTL).
+				// No-op when Redis is absent or the deployment
+				// runs auth_backend=redis.
+				KeyCacheInvalidator: auth.NewRedisKeyCacheInvalidator(rdb),
 			}
 			logger.Info("stripe webhook wired", "endpoint", "/v1/webhooks/stripe", "dedupe", "postgres", "audit", "postgres", "platform", "accounts+billing+apikeys")
 		} else {

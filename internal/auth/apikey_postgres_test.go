@@ -171,6 +171,59 @@ func TestPostgresValidator_Invalidate(t *testing.T) {
 	}
 }
 
+// TestPostgresValidator_CacheExpiry_FallsThroughToPostgres proves the
+// read-through cache has a bounded lifetime: once the CacheTTL elapses
+// the entry is gone and the next Lookup falls through to Postgres and
+// re-populates it. This is the safety net behind the invalidation
+// contract — even if a revoke/update DEL is ever missed, a revoked or
+// rate-changed key can only be served stale for at most one TTL window
+// rather than indefinitely.
+func TestPostgresValidator_CacheExpiry_FallsThroughToPostgres(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+	keys := newStubKeyStore()
+	accounts := newStubAccountStore()
+	v, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{
+		Keys: keys, Accounts: accounts, Cache: rdb, CacheTTL: 30 * time.Second,
+	})
+	plaintext := "sip_ttl_expiry"
+	acct := seedActiveAccount(accounts, "ttl")
+	seedKey(keys, plaintext, acct.ID, platform.APIKeyTierAPIKey, 1000)
+
+	// Cold lookup → Postgres hit + write-back.
+	if _, err := v.Lookup(context.Background(), plaintext); err != nil {
+		t.Fatalf("cold lookup: %v", err)
+	}
+	cold := keys.byHashCallCount
+	if cold == 0 {
+		t.Fatal("expected a Postgres lookup on cold cache")
+	}
+
+	// Warm lookup within TTL → cache hit, no new Postgres call.
+	if _, err := v.Lookup(context.Background(), plaintext); err != nil {
+		t.Fatalf("warm lookup: %v", err)
+	}
+	if keys.byHashCallCount != cold {
+		t.Fatalf("cache miss inside TTL: Postgres calls grew %d → %d", cold, keys.byHashCallCount)
+	}
+
+	// Advance past the TTL — miniredis expires the cache entry.
+	mr.FastForward(31 * time.Second)
+
+	// Post-expiry lookup must fall through to Postgres again.
+	if _, err := v.Lookup(context.Background(), plaintext); err != nil {
+		t.Fatalf("post-expiry lookup: %v", err)
+	}
+	if keys.byHashCallCount <= cold {
+		t.Errorf("expected a fresh Postgres lookup after cache TTL expiry: cold=%d now=%d", cold, keys.byHashCallCount)
+	}
+}
+
 // TestPostgresValidator_CacheRoundTripsPolicy — when a key has
 // IP/Referer allowlists and per-endpoint permissions set, the
 // cache-hit Subject MUST carry the same fields as the cache-

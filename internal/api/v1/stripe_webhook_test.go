@@ -1199,3 +1199,150 @@ func TestStripeWebhook_PlatformBridge_RemainingOperationsIncrementMetric(t *test
 		})
 	}
 }
+
+// fakeKeyCacheInvalidator records the hex hashes it was asked to
+// evict (and can be made to fail) so the X6 read-through
+// split-brain tests can assert which keys got invalidated.
+type fakeKeyCacheInvalidator struct {
+	mu          sync.Mutex
+	invalidated []string
+	err         error
+}
+
+func (f *fakeKeyCacheInvalidator) InvalidateCachedKey(_ context.Context, hexHash string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.invalidated = append(f.invalidated, hexHash)
+	return f.err
+}
+
+func (f *fakeKeyCacheInvalidator) seen() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.invalidated))
+	copy(out, f.invalidated)
+	return out
+}
+
+// TestStripeWebhook_PlatformBridge_InvalidatesKeyCacheAfterLift pins
+// the X6 split-brain fix: after a Stripe tier upgrade rewrites a
+// Postgres key's RateLimitPerMin, the runtime auth read-through cache
+// MUST be evicted so `auth_backend=postgres` serves the new budget on
+// the next request rather than the stale cached Subject. Only the
+// keys that were actually lifted (below target, not revoked) get
+// invalidated; a key with no stored hash is skipped.
+func TestStripeWebhook_PlatformBridge_InvalidatesKeyCacheAfterLift(t *testing.T) {
+	now := time.Now().UTC()
+	mgr := &fakeStripeManager{
+		keys: map[string][]auth.APIKeyRecord{
+			"signup-acme": {{KeyID: "kid_signup", Identifier: "signup-acme", Tier: auth.TierAPIKey, RateLimitPerMin: 1000}},
+		},
+	}
+	acctID := uuid.New()
+	accounts := &fakePlatformAccountsForBridge{
+		byStripe: map[string]platform.Account{
+			"cus_acme": {ID: acctID, Slug: "acme", StripeCustomerID: "cus_acme", Tier: platform.TierFree},
+		},
+	}
+	hashA := []byte{0xaa, 0x01}
+	hashB := []byte{0xbb, 0x02}
+	keys := &fakePlatformAPIKeysForBridge{
+		byAcct: map[uuid.UUID][]platform.APIKey{
+			acctID: {
+				{ID: "kid_dash_a", AccountID: acctID, RateLimitPerMin: 1000, KeyHash: hashA},
+				{ID: "kid_dash_b", AccountID: acctID, RateLimitPerMin: 1000, KeyHash: hashB},
+				// Already-above-target — must NOT be lifted or invalidated.
+				{ID: "kid_dash_high", AccountID: acctID, RateLimitPerMin: 50000, KeyHash: []byte{0xcc, 0x03}},
+			},
+		},
+	}
+	inv := &fakeKeyCacheInvalidator{}
+
+	srv := v1.New(v1.Options{
+		Auth: fakeAuthMiddleware(auth.Subject{}),
+		Stripe: &v1.StripeWebhookConfig{
+			SigningSecret: testStripeSecret,
+			Manager:       mgr,
+			Now:           func() time.Time { return now },
+			MaxAge:        5 * time.Minute,
+			Platform: &v1.StripePlatformBridge{
+				Accounts:            accounts,
+				APIKeys:             keys,
+				KeyCacheInvalidator: inv,
+			},
+		},
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	body := `{"id":"evt_acme_inv","type":"checkout.session.completed","data":{"object":{"id":"cs_acme","client_reference_id":"signup-acme","customer":"cus_acme","payment_status":"paid","metadata":{"tier":"pro"}}}}`
+	resp := postStripe(t, ts, body, stripeSign(t, body, testStripeSecret, now))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	got := inv.seen()
+	want := map[string]bool{hex.EncodeToString(hashA): true, hex.EncodeToString(hashB): true}
+	if len(got) != len(want) {
+		t.Fatalf("invalidated %d keys (%v), want exactly the 2 lifted keys %v", len(got), got, want)
+	}
+	for _, h := range got {
+		if !want[h] {
+			t.Errorf("unexpected cache invalidation for hash %q (only lifted keys should be evicted)", h)
+		}
+	}
+}
+
+// TestStripeWebhook_PlatformBridge_CacheInvalidateErrorIsBestEffort
+// proves a cache-eviction failure is counted under the
+// `key_cache_invalidate` operation but never fails the webhook — the
+// Postgres write already succeeded, so a stale cache entry (rolled
+// off by its own TTL) is the only fallout.
+func TestStripeWebhook_PlatformBridge_CacheInvalidateErrorIsBestEffort(t *testing.T) {
+	now := time.Now().UTC()
+	mgr := &fakeStripeManager{keys: map[string][]auth.APIKeyRecord{
+		"signup-acme": {{KeyID: "kid_signup", Identifier: "signup-acme", Tier: auth.TierAPIKey, RateLimitPerMin: 1000}},
+	}}
+	acctID := uuid.New()
+	accounts := &fakePlatformAccountsForBridge{byStripe: map[string]platform.Account{
+		"cus_acme": {ID: acctID, Slug: "acme", StripeCustomerID: "cus_acme", Tier: platform.TierFree},
+	}}
+	keys := &fakePlatformAPIKeysForBridge{byAcct: map[uuid.UUID][]platform.APIKey{
+		acctID: {{ID: "kid_dash_a", AccountID: acctID, RateLimitPerMin: 1000, KeyHash: []byte{0xaa}}},
+	}}
+	inv := &fakeKeyCacheInvalidator{err: errors.New("redis unreachable")}
+
+	before := testutil.ToFloat64(obs.StripePlatformSyncErrorsTotal.WithLabelValues("key_cache_invalidate"))
+
+	srv := v1.New(v1.Options{
+		Auth: fakeAuthMiddleware(auth.Subject{}),
+		Stripe: &v1.StripeWebhookConfig{
+			SigningSecret: testStripeSecret,
+			Manager:       mgr,
+			Now:           func() time.Time { return now },
+			MaxAge:        5 * time.Minute,
+			Platform:      &v1.StripePlatformBridge{Accounts: accounts, APIKeys: keys, KeyCacheInvalidator: inv},
+		},
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	body := `{"id":"evt_acme_inverr","type":"checkout.session.completed","data":{"object":{"id":"cs_acme","client_reference_id":"signup-acme","customer":"cus_acme","payment_status":"paid","metadata":{"tier":"pro"}}}}`
+	resp := postStripe(t, ts, body, stripeSign(t, body, testStripeSecret, now))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (cache-invalidate failure must not fail the webhook)", resp.StatusCode)
+	}
+	// The Postgres key Update still happened.
+	keys.mu.Lock()
+	updated := len(keys.updates)
+	keys.mu.Unlock()
+	if updated != 1 {
+		t.Errorf("Postgres key updates = %d, want 1 (update must land even when cache invalidate fails)", updated)
+	}
+	after := testutil.ToFloat64(obs.StripePlatformSyncErrorsTotal.WithLabelValues("key_cache_invalidate"))
+	if got := after - before; got != 1 {
+		t.Errorf("key_cache_invalidate metric delta = %v, want 1", got)
+	}
+}
