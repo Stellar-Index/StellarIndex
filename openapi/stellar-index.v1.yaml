@@ -2028,27 +2028,39 @@ paths:
   /mev:
     get:
       tags: [analytics]
-      summary: Auto-flagged MEV-event feed (atomic arbitrage today).
+      summary: Auto-flagged MEV-event feed.
       description: |
-        The MEV detector's output, newest first. v1 flags ATOMIC
-        ARBITRAGE: a single transaction in which one taker trades a
-        closed asset cycle (≥2 legs returning to a starting asset)
-        across pools/venues — the one pattern the served trade data
-        supports unambiguously (rows carry tx_hash + taker + op_index
-        but not intra-ledger transaction ordering, so cross-transaction
-        sandwich detection would be guesswork).
+        The MEV detectors' output, newest first. Detected kinds:
 
-        Each row's `detail` carries the evidence (assets, venues, the
-        cyclic legs, and summed USD notional). `profit_usd` is null for
-        arbitrage — v1 does not estimate attacker profit (leg direction
-        is ambiguous in the served rows); see `detail.note`. The
-        other kinds (sandwich / oracle_deviation / liquidation_cascade
-        / wash_trade) are reserved for lake-backed signals not yet wired.
+        - `arbitrage` — one taker trades a closed asset cycle (≥2 legs
+          returning to a starting asset) inside a single transaction.
+        - `wash_trade` — an account crossing its own offer
+          (maker == taker), or two accounts repeatedly filling each
+          other in both directions on one pair within a UTC day.
+        - `sandwich` — one account's trades in two different
+          transactions bracket another account's trade on the same
+          pair within one ledger. Intra-ledger transaction ordering
+          (tx_index, application order) comes from the raw ledger
+          lake — the served rows don't carry it.
+        - `oracle_sandwich` — one account's trades bracket an on-chain
+          oracle update on an asset those trades touch, within one
+          ledger (same lake-ordered signal).
+        - `liquidation_cascade` — Blend liquidation-auction fills
+          against distinct positions clustered within a short ledger
+          window, with an on-chain oracle update inside the bracket.
+
+        Each row's `detail` carries the kind's evidence (legs, roles,
+        tx application order, oracle refs, …) plus a `note` stating
+        exactly what is and is NOT claimed. Detection is positional /
+        structural: the served rows don't carry trade direction, so
+        front-run vs back-run intent is never asserted and
+        `profit_usd` stays null. `oracle_deviation` remains reserved
+        (not yet detected).
 
         200 + empty array when nothing's been detected or the reader
         isn't wired (feature-gated, like /v1/lending/pools).
       parameters:
-        - { name: kind, in: query, description: "Filter to one pattern (e.g. arbitrage).", schema: { type: string, enum: [arbitrage, sandwich, oracle_deviation, liquidation_cascade, wash_trade] } }
+        - { name: kind, in: query, description: "Filter to one pattern (e.g. arbitrage).", schema: { type: string, enum: [arbitrage, sandwich, oracle_sandwich, oracle_deviation, liquidation_cascade, wash_trade] } }
         - { name: limit, in: query, description: "Maximum events to return (1-500, default 50).", schema: { type: integer, minimum: 1, maximum: 500, default: 50 } }
       responses:
         "200":

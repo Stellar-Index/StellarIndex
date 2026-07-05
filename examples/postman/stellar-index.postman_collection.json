@@ -12414,11 +12414,11 @@
       "description": "",
       "item": [
         {
-          "name": "Auto-flagged MEV-event feed (atomic arbitrage today).",
+          "name": "Auto-flagged MEV-event feed.",
           "request": {
-            "name": "Auto-flagged MEV-event feed (atomic arbitrage today).",
+            "name": "Auto-flagged MEV-event feed.",
             "description": {
-              "content": "The MEV detector's output, newest first. v1 flags ATOMIC\nARBITRAGE: a single transaction in which one taker trades a\nclosed asset cycle (≥2 legs returning to a starting asset)\nacross pools/venues — the one pattern the served trade data\nsupports unambiguously (rows carry tx_hash + taker + op_index\nbut not intra-ledger transaction ordering, so cross-transaction\nsandwich detection would be guesswork).\n\nEach row's `detail` carries the evidence (assets, venues, the\ncyclic legs, and summed USD notional). `profit_usd` is null for\narbitrage — v1 does not estimate attacker profit (leg direction\nis ambiguous in the served rows); see `detail.note`. The\nother kinds (sandwich / oracle_deviation / liquidation_cascade\n/ wash_trade) are reserved for lake-backed signals not yet wired.\n\n200 + empty array when nothing's been detected or the reader\nisn't wired (feature-gated, like /v1/lending/pools).\n",
+              "content": "The MEV detectors' output, newest first. Detected kinds:\n\n- `arbitrage` — one taker trades a closed asset cycle (≥2 legs\n  returning to a starting asset) inside a single transaction.\n- `wash_trade` — an account crossing its own offer\n  (maker == taker), or two accounts repeatedly filling each\n  other in both directions on one pair within a UTC day.\n- `sandwich` — one account's trades in two different\n  transactions bracket another account's trade on the same\n  pair within one ledger. Intra-ledger transaction ordering\n  (tx_index, application order) comes from the raw ledger\n  lake — the served rows don't carry it.\n- `oracle_sandwich` — one account's trades bracket an on-chain\n  oracle update on an asset those trades touch, within one\n  ledger (same lake-ordered signal).\n- `liquidation_cascade` — Blend liquidation-auction fills\n  against distinct positions clustered within a short ledger\n  window, with an on-chain oracle update inside the bracket.\n\nEach row's `detail` carries the kind's evidence (legs, roles,\ntx application order, oracle refs, …) plus a `note` stating\nexactly what is and is NOT claimed. Detection is positional /\nstructural: the served rows don't carry trade direction, so\nfront-run vs back-run intent is never asserted and\n`profit_usd` stays null. `oracle_deviation` remains reserved\n(not yet detected).\n\n200 + empty array when nothing's been detected or the reader\nisn't wired (feature-gated, like /v1/lending/pools).\n",
               "type": "text/plain"
             },
             "url": {
@@ -12432,7 +12432,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Filter to one pattern (e.g. arbitrage). (This can only be one of arbitrage,sandwich,oracle_deviation,liquidation_cascade,wash_trade)",
+                    "content": "Filter to one pattern (e.g. arbitrage). (This can only be one of arbitrage,sandwich,oracle_sandwich,oracle_deviation,liquidation_cascade,wash_trade)",
                     "type": "text/plain"
                   },
                   "key": "kind",
@@ -12475,7 +12475,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Filter to one pattern (e.g. arbitrage). (This can only be one of arbitrage,sandwich,oracle_deviation,liquidation_cascade,wash_trade)",
+                        "content": "Filter to one pattern (e.g. arbitrage). (This can only be one of arbitrage,sandwich,oracle_sandwich,oracle_deviation,liquidation_cascade,wash_trade)",
                         "type": "text/plain"
                       },
                       "key": "kind",
@@ -12528,7 +12528,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Filter to one pattern (e.g. arbitrage). (This can only be one of arbitrage,sandwich,oracle_deviation,liquidation_cascade,wash_trade)",
+                        "content": "Filter to one pattern (e.g. arbitrage). (This can only be one of arbitrage,sandwich,oracle_sandwich,oracle_deviation,liquidation_cascade,wash_trade)",
                         "type": "text/plain"
                       },
                       "key": "kind",

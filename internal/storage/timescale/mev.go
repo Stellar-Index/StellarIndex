@@ -112,6 +112,88 @@ func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int
 	return trades, usd, nil
 }
 
+// OracleUpdatesForMEVScan returns recent ON-CHAIN oracle updates
+// (ledger > 0) published after `since`, ascending by ledger, capped
+// at `limit`. Satisfies mev.OracleScanner — the input for the
+// oracle_sandwich + liquidation_cascade detectors.
+func (s *Store) OracleUpdatesForMEVScan(ctx context.Context, since time.Time, limit int) ([]mev.OracleRef, error) {
+	if limit <= 0 {
+		limit = 50_000
+	}
+	const q = `
+        SELECT source, COALESCE(contract_id, ''), ledger, tx_hash, op_index,
+               asset, quote, ts
+          FROM oracle_updates
+         WHERE ts > $1
+           AND ledger > 0
+         ORDER BY ledger ASC, tx_hash ASC, op_index ASC
+         LIMIT $2
+    `
+	rows, err := s.db.QueryContext(ctx, q, since.UTC(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: OracleUpdatesForMEVScan: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []mev.OracleRef
+	for rows.Next() {
+		var o mev.OracleRef
+		if err := rows.Scan(
+			&o.Source, &o.ContractID, &o.Ledger, &o.TxHash, &o.OpIndex,
+			&o.Asset, &o.Quote, &o.Timestamp,
+		); err != nil {
+			return nil, fmt.Errorf("timescale: OracleUpdatesForMEVScan scan: %w", err)
+		}
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: OracleUpdatesForMEVScan rows: %w", err)
+	}
+	return out, nil
+}
+
+// BlendFillsForMEVScan returns recent Blend liquidation-relevant
+// auction fills (event_kind='fill', auction_type 0=UserLiquidation /
+// 1=BadDebt — Interest auctions aren't liquidations) after `since`,
+// ascending by ledger, capped at `limit`. Satisfies
+// mev.AuctionScanner.
+func (s *Store) BlendFillsForMEVScan(ctx context.Context, since time.Time, limit int) ([]mev.AuctionFill, error) {
+	if limit <= 0 {
+		limit = 50_000
+	}
+	const q = `
+        SELECT pool, user_address, COALESCE(filler, ''), auction_type,
+               ledger, tx_hash, op_index, ts
+          FROM blend_auctions
+         WHERE ts > $1
+           AND event_kind = 'fill'
+           AND auction_type IN (0, 1)
+         ORDER BY ledger ASC, tx_hash ASC, op_index ASC
+         LIMIT $2
+    `
+	rows, err := s.db.QueryContext(ctx, q, since.UTC(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: BlendFillsForMEVScan: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []mev.AuctionFill
+	for rows.Next() {
+		var f mev.AuctionFill
+		if err := rows.Scan(
+			&f.Pool, &f.User, &f.Filler, &f.AuctionType,
+			&f.Ledger, &f.TxHash, &f.OpIndex, &f.Timestamp,
+		); err != nil {
+			return nil, fmt.Errorf("timescale: BlendFillsForMEVScan scan: %w", err)
+		}
+		out = append(out, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: BlendFillsForMEVScan rows: %w", err)
+	}
+	return out, nil
+}
+
 // InsertMEVEvent persists a detected MEV event, idempotent on
 // dedup_key (ON CONFLICT DO NOTHING). Returns inserted=false when the
 // event already existed. Satisfies mev.Sink.
