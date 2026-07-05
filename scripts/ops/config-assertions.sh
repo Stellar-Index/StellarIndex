@@ -71,6 +71,32 @@ assert_grep supply_reserve_accounts /etc/stellarindex.toml \
 assert_cmd supply_reserve_accounts_nonempty sh -c \
   'sed -n "/^sdf_reserve_accounts/,/^\]/p" /etc/stellarindex.toml | grep -cqE "G[A-Z0-9]{55}"'
 
+# ── MinIO galexie-writer credential drift (BACKLOG #66, 2026-07-03
+# rotation follow-up: docs/operations/credential-rotation.md) ────────
+# There's no way to read a MinIO/S3 secret back and diff it against
+# the vault — servers only ever accept/reject a signed request, they
+# never expose a stored secret for comparison. So instead of an
+# assert_grep content check, this probes whether the AWS_* creds
+# currently templated into /etc/default/galexie still authenticate
+# against the live MinIO server with ListBucket rights on
+# galexie-live — exactly the capability galexie itself needs on
+# every upload. A rotation that updated one side (the vault or the
+# live MinIO user) but not the other fails this within the hour
+# instead of surfacing as galexie's SignatureDoesNotMatch / upload
+# stall (feedback_minio_cred_drift). Never prints the secret: mc
+# reads it from the MC_HOST_* env var directly, nothing is written
+# to a config file on disk or echoed, and assert_cmd itself already
+# redirects all output to /dev/null.
+assert_cmd galexie_writer_creds_valid sh -c '
+  export HOME=/root
+  [[ -r /etc/default/galexie ]] || exit 1
+  set -a; . /etc/default/galexie; set +a
+  [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" && -n "${AWS_ENDPOINT_URL:-}" ]] || exit 1
+  host="${AWS_ENDPOINT_URL#http://}"; host="${host#https://}"
+  export MC_HOST_cfgassert="http://${AWS_ACCESS_KEY_ID}:${AWS_SECRET_ACCESS_KEY}@${host}"
+  /usr/local/bin/mc ls cfgassert/galexie-live >/dev/null 2>&1
+'
+
 mv "$TMP" "$OUT"
 chmod 644 "$OUT"
 echo "config-assertions: $fails failure(s)" >&2
