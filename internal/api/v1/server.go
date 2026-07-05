@@ -1290,6 +1290,11 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// recency window. Backs the /dexes table on the explorer.
 	s.mux.HandleFunc("GET /v1/pools", s.handlePools)
 
+	// Current per-pool-contract reserves + constant-product depth
+	// (ADR-0039 lake read; Soroswap only today). Literal path wins
+	// over any future /v1/pools/{...} wildcard in Go's mux.
+	s.mux.HandleFunc("GET /v1/pools/reserves", s.handlePoolReserves)
+
 	// Single-pair activity summary.
 	s.mux.HandleFunc("GET /v1/pairs", s.handlePairs)
 

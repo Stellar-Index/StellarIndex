@@ -38,6 +38,8 @@ type ExplorerReader interface {
 	AccountState(ctx context.Context, account string) (clickhouse.AccountState, error)
 	AssetHolders(ctx context.Context, asset string, limit int) ([]clickhouse.AssetHolder, int64, error)
 	AccountsByWealth(ctx context.Context, assets []string, prices []float64, limit int) ([]clickhouse.AccountWealth, error)
+	SoroswapPairReserves(ctx context.Context, pairs []string) (map[string]clickhouse.SoroswapPairState, error)
+	TokenDisplays(ctx context.Context, tokens []string) (map[string]clickhouse.TokenDisplayMeta, error)
 	SACClassicAssetName(ctx context.Context, contractID string) (string, bool, error)
 	SACAssetFromEvents(ctx context.Context, contractID string) (string, bool, error)
 	AccountsUnspendable(ctx context.Context, accountIDs []string) (map[string]bool, error)

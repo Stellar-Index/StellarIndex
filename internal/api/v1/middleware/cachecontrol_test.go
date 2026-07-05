@@ -78,6 +78,10 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		{"/v1/incidents", "public, max-age=60, s-maxage=300"},
 		{"/v1/pools", "public, max-age=60, s-maxage=300"},
 
+		// Pool reserves — current contract state; shorter band than
+		// the /v1/pools listing (exact-match case wins).
+		{"/v1/pools/reserves", "public, max-age=30, s-maxage=60"},
+
 		// Diagnostics — operator-facing live data, never CDN-cached
 		{"/v1/diagnostics/cursors", "private, no-cache, must-revalidate"},
 		{"/v1/diagnostics/archive", "private, no-cache, must-revalidate"},

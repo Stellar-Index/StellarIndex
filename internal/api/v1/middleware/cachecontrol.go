@@ -186,7 +186,13 @@ func policyForPath(path string, cdnEnabled bool) string {
 	case path == "/v1/price",
 		strings.HasPrefix(path, "/v1/price/batch"),
 		path == "/v1/assets",
-		strings.HasPrefix(path, "/v1/assets/"):
+		strings.HasPrefix(path, "/v1/assets/"),
+		// Pool reserves — CURRENT contract state from the lake; can
+		// change every ledger (~5 s) but the explorer polls it, so
+		// the short band absorbs fan-out while staying honest about
+		// "current". Exact-match: the /v1/pools listing keeps its
+		// longer closed-window cache in the catalogue band below.
+		path == "/v1/pools/reserves":
 		if cdnEnabled {
 			return "public, max-age=30, s-maxage=60"
 		}

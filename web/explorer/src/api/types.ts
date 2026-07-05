@@ -2947,6 +2947,166 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/pools/reserves": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Current per-pool-contract AMM reserves + constant-product depth.
+         * @description CURRENT reserve state for AMM pool contracts, decoded straight
+         *     from each pool's Soroban contract storage in the certified lake
+         *     (ADR-0039, same mechanism as
+         *     `/v1/lending/pools/{pool}/reserves`) — plus a depth table
+         *     derived from those reserves under the constant-product model.
+         *
+         *     HONEST-COVERAGE CONTRACT: reserves are served only for venues
+         *     whose pool-storage layout has been verified against the lake.
+         *     Today that is **Soroswap only** (every registered SoroswapPair
+         *     contract). Phoenix / Aquarius / Comet pool layouts are not yet
+         *     verified, so those venues are refused explicitly (400 on
+         *     `?source=`), never served as guesses. Historical reserve series
+         *     are not available anywhere in the API: ingest does not persist
+         *     reserves (Soroswap `SyncEvent`s are consumed transiently at
+         *     trade decode), so only current state is honestly servable.
+         *
+         *     Reserves are exact i128 base-unit decimal strings (ADR-0003).
+         *     `as_of_ledger` stamps the ledger of the pool's last state
+         *     change — reserves are current as of that ledger and unchanged
+         *     since. The `depth` table is a MODEL-DERIVED estimate (labelled
+         *     via `model: constant_product`, x·y=k with the 0.3% fee on
+         *     input): per slippage tier and direction, the largest input
+         *     whose AVERAGE execution price stays within the tier of the mid
+         *     price, and its output. It assumes no other trade lands first —
+         *     it is not an order book. Pools whose contract-storage entry
+         *     isn't captured in the lake are absent from the listing (absent,
+         *     never zero); a pool with an empty side reports its reserves but
+         *     no mid price / depth.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /**
+                     * @description Optional. A pool (pair) contract C-strkey; restricts the
+                     *     response to that pool. 404 when the contract is not a
+                     *     registered Soroswap pair — unknown pools are refused, not
+                     *     silently empty.
+                     */
+                    pool?: string;
+                    /**
+                     * @description Optional venue filter. `soroswap` is the only accepted
+                     *     value today; other venues return 400 naming the coverage
+                     *     limit.
+                     */
+                    source?: "soroswap";
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Per-pool current reserves + depth, sorted by pool contract id. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "pool": "CDYRXTIUEUNJ3SVAKVWKKRK3CZVIY4WOG6TAQU27R777ZHNOKNCO26NL",
+                         *           "source": "soroswap",
+                         *           "model": "constant_product",
+                         *           "fee_bps": 30,
+                         *           "as_of_ledger": 62941880,
+                         *           "token0": {
+                         *             "contract": "CBRP2VD3CZLEQIQZ4JMBXGA5AC2U6JE26YU5CCIOICIZCVWPGBO2QRUB",
+                         *             "symbol": "YBX",
+                         *             "decimals": 7,
+                         *             "reserve": "172458996"
+                         *           },
+                         *           "token1": {
+                         *             "contract": "CBY4MSZXK5L4HDMJHDXQLNLOA5MM5BIGCHQYMRG7ZAFY34UNU4UXPEJJ",
+                         *             "symbol": "LMNR",
+                         *             "decimals": 7,
+                         *             "reserve": "603291773585"
+                         *           },
+                         *           "mid_price_0_in_1": "3498.175146427270166874",
+                         *           "mid_price_1_in_0": "0.000285863331063143",
+                         *           "depth": [
+                         *             {
+                         *               "slippage_pct": "0.5",
+                         *               "token0_in": {
+                         *                 "max_input": "347694",
+                         *                 "output": "1210213039"
+                         *               },
+                         *               "token1_in": {
+                         *                 "max_input": "1216295668",
+                         *                 "output": "345955"
+                         *               }
+                         *             },
+                         *             {
+                         *               "slippage_pct": "1",
+                         *               "token0_in": {
+                         *                 "max_input": "1223076",
+                         *                 "output": "4235748731"
+                         *               },
+                         *               "token1_in": {
+                         *                 "max_input": "4278535014",
+                         *                 "output": "1210845"
+                         *               }
+                         *             },
+                         *             {
+                         *               "slippage_pct": "2",
+                         *               "token0_in": {
+                         *                 "max_input": "3000637",
+                         *                 "output": "10286818733"
+                         *               },
+                         *               "token1_in": {
+                         *                 "max_input": "10496755727",
+                         *                 "output": "2940624"
+                         *               }
+                         *             }
+                         *           ]
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-05T12:00:00.000000000Z",
+                         *       "sources": [
+                         *         "soroswap"
+                         *       ],
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
+                        "application/json": components["schemas"]["EnvelopeMeta"] & {
+                            data: components["schemas"]["PoolReservesRow"][];
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                404: components["responses"]["NotFound"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/lending/pools": {
         parameters: {
             query?: never;
@@ -11228,6 +11388,47 @@ export interface components {
             volume_24h_usd?: string | null;
             /** @description Most recent quote-per-base price observed on THIS venue. Decimal string. */
             last_price?: string | null;
+        };
+        PoolReservesRow: {
+            /** @description Pool (pair) contract C-strkey. */
+            pool: string;
+            /** @description Venue. `soroswap` is the only venue served today. */
+            source: string;
+            /** @description AMM model the depth table assumes: `constant_product` (x·y=k, fee on input). The depth is a model-derived estimate, not an order book. */
+            model: string;
+            /** @description Venue swap fee in basis points (Soroswap: 30). */
+            fee_bps: number;
+            /** @description Ledger of the pool's last state change; reserves are current as of this ledger and unchanged since. */
+            as_of_ledger: number;
+            token0: components["schemas"]["PoolReserveToken"];
+            token1: components["schemas"]["PoolReserveToken"];
+            /** @description Decimals-adjusted mid price, token1 per token0. Decimal string; null when either side is empty. */
+            mid_price_0_in_1: string | null;
+            /** @description Inverse mid price. Null when either side is empty. */
+            mid_price_1_in_0: string | null;
+            /** @description Depth estimate per slippage tier (0.5% / 1% / 2%). Empty when either reserve is zero. */
+            depth: components["schemas"]["PoolDepthLevel"][];
+        };
+        PoolReserveToken: {
+            /** @description Token contract C-strkey. */
+            contract: string;
+            /** @description Best-effort display symbol from the token's on-chain METADATA — SELF-DECLARED by the token contract, not a verified identity. Omitted when the token declares none. */
+            symbol?: string;
+            /** @description Token's on-chain decimals declaration; 7 (the SAC default) when no readable declaration is captured. */
+            decimals: number;
+            /** @description Pool reserve, exact i128 base-unit decimal string (ADR-0003). */
+            reserve: string;
+        };
+        PoolDepthLevel: {
+            /** @description Tier, percent (e.g. `0.5`). */
+            slippage_pct: string;
+            token0_in: components["schemas"]["PoolDepthSide"];
+            token1_in: components["schemas"]["PoolDepthSide"];
+        };
+        /** @description One direction at a tier: the largest input whose AVERAGE execution price stays within the tier of mid, and its output. Base-unit decimal strings of the respective tokens. */
+        PoolDepthSide: {
+            max_input: string;
+            output: string;
         };
         MarketsEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["MarketRow"][];

@@ -50,6 +50,28 @@ against.
     flagged-row cleanup + one green completeness cycle (tracked in
     docs/operations/audit-remediation-operator-actions.md).
 
+### Added
+- **`GET /v1/pools/reserves` — current AMM pool reserves + depth**
+  (BACKLOG #30 second half): per-pool-contract CURRENT reserves read
+  straight from the pool's Soroban instance storage in the certified
+  lake (ADR-0039 pattern, `ledger_entries_current` batched PK lookup),
+  plus a constant-product depth table (largest trade within 0.5%/1%/2%
+  average-execution slippage, per direction — exact i128/big-integer
+  math, ADR-0003; model + 30 bps fee labelled on the wire). Coverage
+  is honest and explicit: **Soroswap only** — the one venue whose
+  pair-storage layout is verified against the r1 lake (u32-keyed
+  `Token0/Token1/Reserve0/Reserve1`, cross-checked against the
+  `soroswap_pairs` registry on live pairs); other venues 400 with the
+  coverage limit rather than serving guesses, and unregistered pools
+  404. Historical reserve series are deliberately NOT served — ingest
+  consumes Soroswap `SyncEvent`s transiently at trade decode and
+  persists no reserve history. Explorer: `/dexes/soroswap` gains a
+  "Pool reserves & depth" panel (expandable per-pool depth rows);
+  `/dexes/{phoenix,aquarius,comet}` state the coverage limit;
+  `/liquidity-pools` retires its stale "reserve and depth views are on
+  the roadmap" promise in favour of what actually exists. Spec + all
+  three generated artifacts + SDK-coverage register updated.
+
 ### Changed
 - **Maintainability tier-3 structural refactors** (BACKLOG #47,
   maintainability audit D1/D3/D8; behavior-preserving, no wire or

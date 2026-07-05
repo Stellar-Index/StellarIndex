@@ -5,6 +5,7 @@ import { ExternalLink } from 'lucide-react';
 
 import { Breadcrumbs } from '@/components/ui';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, serializeJsonLd } from '@/lib/seo';
+import { PairReservesPanel } from './PairReservesPanel';
 import { PoolsTable } from './PoolsTable';
 import { SourceStatsPanel } from './SourceStatsPanel';
 import { SourceTopChart } from './SourceTopChart';
@@ -134,6 +135,16 @@ export default async function SourceDetailPage({
       <SourceTopChart source={source} sourceName={info.name} />
 
       <PoolsTable source={source} sourceName={info.name} />
+
+      {source === 'soroswap' && <PairReservesPanel />}
+      {(source === 'phoenix' || source === 'aquarius' || source === 'comet') && (
+        <p className="text-xs text-ink-muted">
+          Per-pool reserve and depth views are currently served for{' '}
+          <Link href="/dexes/soroswap" className="text-brand-600 hover:underline">Soroswap</Link>{' '}
+          only — {info.name}&apos;s pool-storage layout hasn&apos;t been verified against the
+          ledger lake yet, and we don&apos;t serve guesses.
+        </p>
+      )}
 
       <div className="flex flex-wrap gap-3 text-xs">
         <Link

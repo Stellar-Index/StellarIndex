@@ -30,6 +30,8 @@ type stubExplorerReader struct {
 	holders        []clickhouse.AssetHolder
 	holderCount    int64
 	wealth         []clickhouse.AccountWealth
+	pairStates     map[string]clickhouse.SoroswapPairState
+	tokenDisplays  map[string]clickhouse.TokenDisplayMeta
 	err            error
 }
 
@@ -137,6 +139,14 @@ func (s *stubExplorerReader) SACAssetFromEvents(_ context.Context, _ string) (st
 
 func (s *stubExplorerReader) AccountsUnspendable(_ context.Context, _ []string) (map[string]bool, error) {
 	return nil, nil
+}
+
+func (s *stubExplorerReader) SoroswapPairReserves(_ context.Context, _ []string) (map[string]clickhouse.SoroswapPairState, error) {
+	return s.pairStates, s.err
+}
+
+func (s *stubExplorerReader) TokenDisplays(_ context.Context, _ []string) (map[string]clickhouse.TokenDisplayMeta, error) {
+	return s.tokenDisplays, s.err
 }
 
 func (s *stubExplorerReader) AccountsByWealth(_ context.Context, _ []string, _ []float64, _ int) ([]clickhouse.AccountWealth, error) {

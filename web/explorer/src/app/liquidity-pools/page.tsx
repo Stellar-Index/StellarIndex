@@ -38,10 +38,20 @@ export default function LiquidityPoolsPage() {
           Index serves for every venue.
         </p>
         <p>
-          Pool trades and reserves are captured directly from the certified ledger
-          lake. Per-pool reserve and depth views are on the roadmap; in the
-          meantime, pool-routed trades appear in the{' '}
+          Pool trades are captured directly from the certified ledger lake and
+          appear in the{' '}
           <Link href="/markets" className="text-brand-600 hover:underline">aggregate markets</Link>.
+          Native-pool reserve changes are also captured from the lake, where they
+          feed supply verification for tracked assets — but per-pool reserve views
+          for native pools aren&apos;t served yet.
+        </p>
+        <p>
+          For Soroban AMMs, live per-pool <strong>reserve and depth</strong> views are
+          available for{' '}
+          <Link href="/dexes/soroswap" className="text-brand-600 hover:underline">Soroswap</Link>{' '}
+          — currently the only venue whose pool-contract storage layout is verified
+          against the lake. Coverage notes on each DEX page state exactly which
+          venues are and aren&apos;t served.
         </p>
       </section>
     </div>
