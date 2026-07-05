@@ -48,8 +48,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"io"
-	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
@@ -80,8 +78,6 @@ const (
 	// stays precision-safe under float→integer round-trips.
 	DefaultDecimals uint8 = 6
 )
-
-var _ = external.ClassAuthoritySanity
 
 var (
 	ErrMalformedResponse = errors.New("ecb: malformed XML response")
@@ -147,26 +143,19 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	if endpoint == "" {
 		endpoint = DefaultEndpoint
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	status, body, err := external.GetBody(ctx, external.GetRequest{
+		URL: endpoint,
+		Headers: map[string]string{
+			"Accept":     "application/xml, text/xml",
+			"User-Agent": "stellarindex/1.0",
+		},
+		LimitBytes: 1 * 1024 * 1024,
+	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("build request: %w", err)
+		return nil, nil, err
 	}
-	req.Header.Set("Accept", "application/xml, text/xml")
-	req.Header.Set("User-Agent", "stellarindex/1.0")
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, nil, fmt.Errorf("http: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1*1024*1024))
-	if err != nil {
-		return nil, nil, fmt.Errorf("read body: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("http %d: %s", resp.StatusCode, string(body))
+	if status != http.StatusOK {
+		return nil, nil, fmt.Errorf("http %d: %s", status, string(body))
 	}
 
 	var env gesmesEnvelope
@@ -191,23 +180,11 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	// Build the interest set from configured pairs. ECB gives us
 	// rates against EUR; we emit for every currency that appears in
 	// a pair AND has a rate cube.
-	wanted := map[string]canonical.Asset{}
 	eurAsset, err := canonical.NewFiatAsset("EUR")
 	if err != nil {
 		return nil, nil, fmt.Errorf("EUR asset: %w", err)
 	}
-	for _, pair := range pairs {
-		for _, a := range []canonical.Asset{pair.Base, pair.Quote} {
-			if a.Type != canonical.AssetFiat {
-				continue
-			}
-			code := strings.ToUpper(a.Code)
-			if code == "EUR" {
-				continue
-			}
-			wanted[code] = a
-		}
-	}
+	wanted := external.FiatCodesFromPairs(pairs, "EUR")
 	if len(wanted) == 0 {
 		// No fiat cross-rates to cover — e.g. the pair list is all
 		// crypto-crypto. Silent no-op.
@@ -215,7 +192,6 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	}
 
 	updates := make([]canonical.OracleUpdate, 0, len(wanted))
-	scalePow := scale.Pow10(int(DefaultDecimals))
 
 	for _, row := range day.Rates {
 		code := strings.ToUpper(row.Currency)
@@ -233,10 +209,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		if err != nil || rateScaled.Sign() <= 0 {
 			continue
 		}
-		inverted := new(big.Int).Div(
-			new(big.Int).Mul(scalePow, scalePow),
-			rateScaled,
-		)
+		inverted := scale.InvertScaled(rateScaled, int(DefaultDecimals))
 		if inverted.Sign() <= 0 {
 			continue
 		}
@@ -259,24 +232,12 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	return nil, updates, nil
 }
 
-// floatToScaledInt / decimalStringToScaledInt / syntheticTxHash —
-// package-local scaling helpers, parallel to the other pollers.
-
-// syntheticTxHash derives a stable 64-char hex from (currency, ts).
-// Same-day reruns collide on (currency, unix_day) so the idempotent
-// insert path dedupes multiple polls of the same day's fix.
+// syntheticTxHash derives a stable 64-char hex from (currency, ts)
+// via the shared scale.SyntheticTxHash form; only the ECB- seed
+// prefix is venue-local. Same-day reruns collide on (currency,
+// unix_day) so the idempotent insert path dedupes multiple polls of
+// the same day's fix.
 func syntheticTxHash(currency, base string, ts int64) string {
-	s := fmt.Sprintf("ECB-%s-%s-%020d", strings.ToUpper(currency), strings.ToUpper(base), ts)
-	var hex strings.Builder
-	hex.Grow(64)
-	for _, b := range []byte(s) {
-		fmt.Fprintf(&hex, "%02x", b)
-		if hex.Len() >= 64 {
-			break
-		}
-	}
-	for hex.Len() < 64 {
-		hex.WriteByte('0')
-	}
-	return hex.String()[:64]
+	return scale.SyntheticTxHash(fmt.Sprintf(
+		"ECB-%s-%s-%020d", strings.ToUpper(currency), strings.ToUpper(base), ts))
 }

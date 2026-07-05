@@ -3,13 +3,16 @@ package exchangeratesapi
 import (
 	"testing"
 	"time"
+
+	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
 )
 
-// decimalStringToScaledInt is the precision-preserving converter
-// for ExchangeRatesAPI quotes. Unlike the polygonforex/CMC
-// variants, this one ACCEPTS scientific notation — small inverted
-// rates ("2e-10") are normalised through ParseFloat. Pin both
-// branches so a refactor can't accidentally drop scientific support
+// scale.SciDecimalStringToScaledInt is the precision-preserving
+// converter for ExchangeRatesAPI quotes. Unlike the strict form the
+// polygonforex/CMC callers use, this one ACCEPTS scientific notation
+// — small inverted rates ("2e-10") are normalised through
+// ParseFloat. Pin both branches FROM THIS VENUE'S PERSPECTIVE so a
+// refactor can't accidentally switch the poller to the strict form
 // (we'd start losing exotic-pair rates) or break the empty/garbage
 // rejection.
 
@@ -31,7 +34,7 @@ func TestDecimalStringToScaledInt_edges(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.in, func(t *testing.T) {
-			got, err := decimalStringToScaledInt(c.in, c.decimals)
+			got, err := scale.SciDecimalStringToScaledInt(c.in, c.decimals)
 			if c.wantError {
 				if err == nil {
 					t.Errorf("expected error for %q, got %v", c.in, got)
