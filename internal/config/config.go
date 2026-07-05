@@ -16,21 +16,61 @@ import (
 //
 // Adding a field without `doc:` fails `make docs-config`.
 type Config struct {
-	Region      RegionConfig      `toml:"region" doc:"Region identity — ID, display name, home domain."`
-	Stellar     StellarConfig     `toml:"stellar" doc:"Endpoints for stellar-core and stellar-rpc."`
-	Storage     StorageConfig     `toml:"storage" doc:"Postgres/TimescaleDB, Redis, MinIO connection details."`
-	Ingestion   IngestionConfig   `toml:"ingestion" doc:"Source orchestration — which connectors to run, backfill bounds, cursor store."`
-	Oracle      OracleConfig      `toml:"oracle" doc:"On-chain oracle contract addresses (Reflector, Redstone, Band)."`
-	External    ExternalConfig    `toml:"external" doc:"Off-chain connectors — CEX/FX/aggregator sources that run parallel to the on-chain dispatcher."`
-	Aggregate   AggregateConfig   `toml:"aggregate" doc:"VWAP/TWAP windows + outlier thresholds."`
-	Anomaly     AnomalyConfig     `toml:"anomaly" doc:"Per-asset-class anomaly detection thresholds (Phase 1) + Phase-2 freeze thresholds (per-asset MAD-baseline + multi-factor confidence + source count). Both layers run; the orchestrator AND-of-three-signals rule fires ActionFreeze only when both agree (ADR-0019)."`
-	API         APIConfig         `toml:"api" doc:"Public API serving plane — port, auth mode, rate limits, CDN."`
-	Metadata    MetadataConfig    `toml:"metadata" doc:"Asset metadata overlay — SEP-1 issuer→home-domain map, operator overrides."`
-	Supply      SupplyConfig      `toml:"supply" doc:"Supply pipeline config — SDF reserve list, operator-managed reserve balances (fallback when the LCM AccountEntry observer hasn't yet covered the watched set), watched classic + SEP-41 asset lists, SAC wrappers, and aggregator-refresh cadence. ADR-0011 (XLM) + ADR-0022 (classic) + ADR-0023 (SEP-41)."`
-	Trades      TradesConfig      `toml:"trades" doc:"Trade-insert policy — operator-declared USD-pegged stablecoins so on-chain DEX trades populate trades.usd_volume at insert time (launch-readiness L2.2 phase 1)."`
-	Divergence  DivergenceConfig  `toml:"divergence" doc:"Cross-check references the divergence service consults (CoinGecko + Chainlink HTTP, plus the on-chain Reflector/Redstone/Band oracle feeds read from ingested oracle_updates rows). Empty disables; the divergence_warning envelope flag stays unset."`
-	PriceAlerts PriceAlertsConfig `toml:"price_alerts" doc:"Customer price-threshold alert evaluator (BACKLOG #60). Off by default; when enabled the aggregator sweeps price_alerts against the latest closed VWAP every tick and enqueues price.alert webhook deliveries."`
-	Obs         ObsConfig         `toml:"obs" doc:"Metrics, logs, traces — exporters + sampling."`
+	Region       RegionConfig       `toml:"region" doc:"Region identity — ID, display name, home domain."`
+	Stellar      StellarConfig      `toml:"stellar" doc:"Endpoints for stellar-core and stellar-rpc."`
+	Storage      StorageConfig      `toml:"storage" doc:"Postgres/TimescaleDB, Redis, MinIO connection details."`
+	Ingestion    IngestionConfig    `toml:"ingestion" doc:"Source orchestration — which connectors to run, backfill bounds, cursor store."`
+	Oracle       OracleConfig       `toml:"oracle" doc:"On-chain oracle contract addresses (Reflector, Redstone, Band)."`
+	External     ExternalConfig     `toml:"external" doc:"Off-chain connectors — CEX/FX/aggregator sources that run parallel to the on-chain dispatcher."`
+	Aggregate    AggregateConfig    `toml:"aggregate" doc:"VWAP/TWAP windows + outlier thresholds."`
+	Anomaly      AnomalyConfig      `toml:"anomaly" doc:"Per-asset-class anomaly detection thresholds (Phase 1) + Phase-2 freeze thresholds (per-asset MAD-baseline + multi-factor confidence + source count). Both layers run; the orchestrator AND-of-three-signals rule fires ActionFreeze only when both agree (ADR-0019)."`
+	API          APIConfig          `toml:"api" doc:"Public API serving plane — port, auth mode, rate limits, CDN."`
+	Metadata     MetadataConfig     `toml:"metadata" doc:"Asset metadata overlay — SEP-1 issuer→home-domain map, operator overrides."`
+	Supply       SupplyConfig       `toml:"supply" doc:"Supply pipeline config — SDF reserve list, operator-managed reserve balances (fallback when the LCM AccountEntry observer hasn't yet covered the watched set), watched classic + SEP-41 asset lists, SAC wrappers, and aggregator-refresh cadence. ADR-0011 (XLM) + ADR-0022 (classic) + ADR-0023 (SEP-41)."`
+	Trades       TradesConfig       `toml:"trades" doc:"Trade-insert policy — operator-declared USD-pegged stablecoins so on-chain DEX trades populate trades.usd_volume at insert time (launch-readiness L2.2 phase 1)."`
+	Divergence   DivergenceConfig   `toml:"divergence" doc:"Cross-check references the divergence service consults (CoinGecko + Chainlink HTTP, plus the on-chain Reflector/Redstone/Band oracle feeds read from ingested oracle_updates rows). Empty disables; the divergence_warning envelope flag stays unset."`
+	PriceAlerts  PriceAlertsConfig  `toml:"price_alerts" doc:"Customer price-threshold alert evaluator (BACKLOG #60). Off by default; when enabled the aggregator sweeps price_alerts against the latest closed VWAP every tick and enqueues price.alert webhook deliveries."`
+	SignupReaper SignupReaperConfig `toml:"signup_reaper" doc:"F-1255 speculative-account reaper. Deletes orphan accounts left by a lost signup race (Suspended with a 'signup-race:' reason, no user, no key). Runs in the API binary when the dashboard is wired. On by default — the rows are pure garbage."`
+	Obs          ObsConfig          `toml:"obs" doc:"Metrics, logs, traces — exporters + sampling."`
+}
+
+// SignupReaperConfig gates the F-1255 speculative-account reaper
+// (internal/signupreaper). The reaper deletes orphan `accounts` rows
+// left behind when two concurrent /v1/auth/callback provisions raced
+// for the same just-verified email: the loser's account is Suspended
+// with a `signup-race:` reason and never gets a user attached. Those
+// rows are unambiguous garbage (no users, no api_keys), so the reaper
+// is ON by default. It runs in the API binary and only starts when the
+// dashboard bundle (Postgres platform store) is wired.
+type SignupReaperConfig struct {
+	// Enabled starts the reaper loop in the API binary. On by default.
+	Enabled bool `toml:"enabled" doc:"Start the speculative-account reaper loop in the API binary. On by default — the reaped rows (Suspended signup-race orphans with no user/key) are pure garbage. Set false to disable." default:"true"`
+
+	// IntervalMinutes is the sweep cadence. Signup-race orphans are
+	// rare, so hourly is ample. 0 falls back to the library default
+	// (60m). Validated >= 0 when Enabled.
+	IntervalMinutes int `toml:"interval_minutes" doc:"Minutes between reaper sweeps. 0 = library default (60)." default:"60"`
+
+	// MinAgeMinutes is how long an orphan must have been suspended
+	// before it is eligible for deletion — a safety window well past
+	// any in-flight signup race. 0 falls back to the library default
+	// (1440m = 24h). Validated >= 0 when Enabled.
+	MinAgeMinutes int `toml:"min_age_minutes" doc:"Minimum minutes a suspended orphan must age before the reaper deletes it (safety window). 0 = library default (1440 = 24h)." default:"1440"`
+}
+
+// validate is the sub-validator hook Config.Validate calls. Only
+// enforces constraints when the reaper is enabled.
+func (sc SignupReaperConfig) validate() error {
+	if !sc.Enabled {
+		return nil
+	}
+	if sc.IntervalMinutes < 0 {
+		return fmt.Errorf("signup_reaper: interval_minutes must be >= 0, got %d", sc.IntervalMinutes)
+	}
+	if sc.MinAgeMinutes < 0 {
+		return fmt.Errorf("signup_reaper: min_age_minutes must be >= 0, got %d", sc.MinAgeMinutes)
+	}
+	return nil
 }
 
 // PriceAlertsConfig gates the aggregator's price-alert evaluator
@@ -1167,6 +1207,15 @@ func Default() Config {
 			// without an interval doesn't reach time.NewTicker(0).
 			Enabled:         false,
 			IntervalSeconds: 30,
+		},
+		SignupReaper: SignupReaperConfig{
+			// On by default — F-1255 signup-race orphans are pure
+			// garbage (no user, no key). Non-zero cadence + age so the
+			// worker never reaches time.NewTicker(0) and always leaves a
+			// safety window before deleting.
+			Enabled:         true,
+			IntervalMinutes: 60,
+			MinAgeMinutes:   1440,
 		},
 		Supply: SupplyConfig{
 			// Cadence is only consumed when AggregatorRefreshEnabled is

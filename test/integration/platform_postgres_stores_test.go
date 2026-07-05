@@ -20,6 +20,7 @@ import (
 
 	"github.com/StellarIndex/stellar-index/internal/platform"
 	"github.com/StellarIndex/stellar-index/internal/platform/postgresstore"
+	"github.com/StellarIndex/stellar-index/internal/signupreaper"
 )
 
 // TestPlatformPostgresStores exercises the AccountStore +
@@ -131,6 +132,87 @@ func TestPlatformPostgresStores(t *testing.T) {
 		// ErrNotFound on absent.
 		if _, err := accounts.Get(ctx, uuid.New()); !errors.Is(err, platform.ErrNotFound) {
 			t.Errorf("expected ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("Account/ReapSuspendedOrphans", func(t *testing.T) {
+		// A childless orphan Suspended with the signup-race reason —
+		// the only row that should be reaped.
+		orphan, err := accounts.Create(ctx, platform.Account{
+			Name: "race orphan", Slug: "race-orphan",
+			BillingEmail: "orphan@race.example",
+			Tier:         platform.TierFree, Status: platform.AccountActive,
+		})
+		if err != nil {
+			t.Fatalf("create orphan: %v", err)
+		}
+		if err := accounts.Suspend(ctx, orphan.ID, signupreaper.SignupRaceReasonPrefix+" orphan speculative account orphan@race.example"); err != nil {
+			t.Fatalf("suspend orphan: %v", err)
+		}
+
+		// A signup-race-suspended account that DID get a user attached
+		// — must survive (childless guard).
+		withUser, err := accounts.Create(ctx, platform.Account{
+			Name: "race with user", Slug: "race-with-user",
+			BillingEmail: "winner@race.example",
+			Tier:         platform.TierFree, Status: platform.AccountActive,
+		})
+		if err != nil {
+			t.Fatalf("create race-with-user: %v", err)
+		}
+		if _, err := users.CreateUser(ctx, platform.User{
+			AccountID: withUser.ID, Email: "winner@race.example", Role: platform.RoleOwner,
+		}); err != nil {
+			t.Fatalf("create user: %v", err)
+		}
+		if err := accounts.Suspend(ctx, withUser.ID, signupreaper.SignupRaceReasonPrefix+" orphan speculative account winner@race.example"); err != nil {
+			t.Fatalf("suspend race-with-user: %v", err)
+		}
+
+		// A suspended account with a DIFFERENT reason — must survive
+		// (reason gate).
+		abuse, err := accounts.Create(ctx, platform.Account{
+			Name: "abuse victim", Slug: "abuse-victim",
+			BillingEmail: "abuse@x.example",
+			Tier:         platform.TierFree, Status: platform.AccountActive,
+		})
+		if err != nil {
+			t.Fatalf("create abuse: %v", err)
+		}
+		if err := accounts.Suspend(ctx, abuse.ID, "abuse: fraud"); err != nil {
+			t.Fatalf("suspend abuse: %v", err)
+		}
+
+		// Age gate: an olderThan in the past (before the just-stamped
+		// suspended_at) reaps nothing.
+		n, err := accounts.ReapSuspendedOrphans(ctx, signupreaper.SignupRaceReasonPrefix, time.Now().UTC().Add(-time.Hour))
+		if err != nil {
+			t.Fatalf("reap (age gate): %v", err)
+		}
+		if n != 0 {
+			t.Errorf("age gate: reaped %d, want 0 (rows younger than olderThan must survive)", n)
+		}
+		if _, err := accounts.Get(ctx, orphan.ID); err != nil {
+			t.Errorf("orphan removed by the age-gated reap: %v", err)
+		}
+
+		// Real reap: olderThan in the future makes the just-suspended
+		// orphan eligible. Only the childless signup-race orphan goes.
+		n, err = accounts.ReapSuspendedOrphans(ctx, signupreaper.SignupRaceReasonPrefix, time.Now().UTC().Add(time.Hour))
+		if err != nil {
+			t.Fatalf("reap: %v", err)
+		}
+		if n != 1 {
+			t.Fatalf("reaped %d, want exactly 1 (only the childless signup-race orphan)", n)
+		}
+		if _, err := accounts.Get(ctx, orphan.ID); !errors.Is(err, platform.ErrNotFound) {
+			t.Errorf("orphan not deleted: Get returned %v, want ErrNotFound", err)
+		}
+		if _, err := accounts.Get(ctx, withUser.ID); err != nil {
+			t.Errorf("race-with-user wrongly reaped (childless guard failed): %v", err)
+		}
+		if _, err := accounts.Get(ctx, abuse.ID); err != nil {
+			t.Errorf("abuse-victim wrongly reaped (reason gate failed): %v", err)
 		}
 	})
 

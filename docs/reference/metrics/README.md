@@ -744,6 +744,47 @@ sweep over a handful of alerts sits well under 100 ms; approaching the
 tick cadence (default 30 s) means the alert set or per-account webhook
 fan-out has grown enough that sweeps overlap.
 
+### `stellarindex_signup_reaper_runs_total`
+
+Counter, label `outcome` (`ok` / `error`).
+
+Per-sweep outcome of the API binary's speculative-account reaper
+(`internal/signupreaper`, F-1255), which deletes orphan `accounts`
+rows left behind when two concurrent `/v1/auth/callback` provisions
+raced for the same just-verified email: the loser is Suspended with a
+`signup-race:` reason and never gets a user attached. Runs hourly by
+default; emits only when `[signup_reaper] enabled = true` (the default)
+AND the dashboard/Postgres account store is wired.
+
+When to look at it: `error` = the reap DELETE failed (Postgres
+unreachable, or the `accounts` table is superuser-owned per
+migrations/README rule 7), so signup-race orphans accumulate unbounded
+— a slow table leak, not a customer-facing outage. A sweep that deletes
+zero rows is still `ok`. Alert: `stellarindex_signup_reaper_failing`
+(deploy/monitoring/rules/signup-reaper.yml +
+configs/prometheus/rules.r1/signup-reaper.yml).
+
+### `stellarindex_signup_reaper_run_duration_seconds`
+
+Histogram, label `outcome` (matches
+`stellarindex_signup_reaper_runs_total`). Buckets 5 ms – 30 s.
+
+Wall-clock of one reaper sweep — a single bounded `DELETE` over the
+tiny, indexed set of suspended `signup-race:` orphans. A healthy sweep
+is a few ms; the wide tail catches a degraded / lock-contended
+Postgres. Chart `ok` p95/p99 separately from the `error` path.
+
+### `stellarindex_signup_reaper_rows_deleted_total`
+
+Counter, unlabelled.
+
+Cumulative count of speculative (signup-race) orphan accounts the
+reaper has deleted. Chart as a `rate()` to see the signup-race orphan
+production rate: a steady non-zero rate means a race is firing
+regularly — investigate the `/v1/auth/callback` provisioning path
+(F-1255), separate from the reaper's own health (which the `runs_total`
+`error` outcome + `signup_reaper_failing` alert cover).
+
 ### `stellarindex_aggregator_dropped_trades_total`
 
 Counter, label `reason` (`class` / `outlier`).

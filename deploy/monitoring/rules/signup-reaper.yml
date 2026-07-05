@@ -1,0 +1,46 @@
+---
+# Speculative-account reaper health (F-1255). The API binary's reaper
+# (internal/signupreaper) deletes orphan `accounts` rows left behind by
+# a lost signup race — rows Suspended with a `signup-race:` reason that
+# never got a user (or key) attached. When the reap DELETE keeps
+# failing, those orphans accumulate unbounded: a slow leak in the
+# accounts table, not a customer-facing outage. Ticket severity.
+
+groups:
+  - name: stellarindex.signup_reaper
+    interval: 60s
+    rules:
+
+      # The reaper's DELETE is failing more often than it succeeds
+      # (Postgres unreachable / query error / permission denied on
+      # `accounts`) over a multi-sweep window. The reaper sweeps hourly
+      # by default, so the 6h window spans several sweeps; a sustained
+      # error-majority means signup-race orphans are piling up. Only
+      # fires when the reaper is enabled ([signup_reaper] enabled=true,
+      # the default) AND the dashboard/Postgres account store is wired —
+      # a disabled or unwired reaper emits no series.
+      - alert: stellarindex_signup_reaper_failing
+        expr: |
+          sum(rate(stellarindex_signup_reaper_runs_total{outcome="error"}[6h]))
+            >
+          sum(rate(stellarindex_signup_reaper_runs_total{outcome="ok"}[6h]))
+          and
+          sum(rate(stellarindex_signup_reaper_runs_total{outcome=~"error|ok"}[6h])) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: signup-reaper
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/signup-reaper-failing.md
+        annotations:
+          summary: "Speculative-account reaper failing (P3)"
+          description: |
+            More error outcomes than ok over the last 6h for 30+ min
+            sustained. The API binary's F-1255 speculative-account
+            reaper can't delete orphan `accounts` rows (Postgres
+            unreachable / query error / `accounts` table
+            superuser-owned per migrations/README rule 7), so
+            signup-race orphans accumulate unbounded. Not
+            customer-facing — a slow table leak. Check Postgres
+            reachability from the API host and the API's `signup-reaper
+            worker started` startup log line, then the runbook.

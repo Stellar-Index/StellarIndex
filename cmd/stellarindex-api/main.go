@@ -81,6 +81,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/platform"
 	"github.com/StellarIndex/stellar-index/internal/platform/postgresstore"
 	"github.com/StellarIndex/stellar-index/internal/ratelimit"
+	"github.com/StellarIndex/stellar-index/internal/signupreaper"
 	"github.com/StellarIndex/stellar-index/internal/sources/external"
 	"github.com/StellarIndex/stellar-index/internal/sources/forex"
 	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
@@ -1111,6 +1112,32 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			}
 		}()
 		logger.Info("usage-rollup worker started", "interval", usage.DefaultRollupInterval)
+	}
+
+	// Speculative-account reaper (F-1255). Deletes orphan `accounts`
+	// rows left by a lost signup race — Suspended with a `signup-race:`
+	// reason, no user + no key. On by default; runs only when the
+	// dashboard's Postgres account store is wired (the reaper's
+	// concrete store implements the narrow OrphanStore seam). Bounded
+	// to rootCtx for graceful shutdown, same as the workers above.
+	if cfg.SignupReaper.Enabled {
+		if orphans, ok := dashboardBundle.accounts.(signupreaper.OrphanStore); ok && orphans != nil {
+			reaper := signupreaper.New(orphans, signupreaper.Options{
+				Interval: time.Duration(cfg.SignupReaper.IntervalMinutes) * time.Minute,
+				MinAge:   time.Duration(cfg.SignupReaper.MinAgeMinutes) * time.Minute,
+				Logger:   logger.With("component", "signup-reaper"),
+			})
+			go func() {
+				if err := reaper.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
+					logger.Error("signup-reaper worker exited", "err", err)
+				}
+			}()
+			logger.Info("signup-reaper worker started",
+				"interval_minutes", cfg.SignupReaper.IntervalMinutes,
+				"min_age_minutes", cfg.SignupReaper.MinAgeMinutes)
+		} else {
+			logger.Info("signup-reaper enabled but dashboard/Postgres account store not wired — skipping")
+		}
 	}
 
 	serveErr := make(chan error, 1)
