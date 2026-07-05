@@ -71,7 +71,6 @@ against.
   `/liquidity-pools` retires its stale "reserve and depth views are on
   the roadmap" promise in favour of what actually exists. Spec + all
   three generated artifacts + SDK-coverage register updated.
-### Added
 - **`/v1/protocols/blend` surfaces the Blend Backstop module**
   (BACKLOG #57): the blend protocol page now folds the Backstop's
   V1 + V2 contracts into the instance roster as `kind: "module"` — a
