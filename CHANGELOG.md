@@ -15,6 +15,33 @@ against.
 
 ## [Unreleased]
 
+### Changed
+- **Maintainability tier-3 structural refactors** (BACKLOG #47,
+  maintainability audit D1/D3/D8; behavior-preserving, no wire or
+  schema changes):
+  - `cmd/stellarindex-ops` de-monolithized (D1 M1-5): the ten
+    subcommand implementations that lived inline in the 4.7k-line
+    main.go moved to one file per subcommand, and the 52-case
+    dispatch switch became a `subcommands` registry map — main.go is
+    now thin dispatch.
+  - `scripts/ci/lint-imports.sh` grew the D8 layering arm:
+    `pkg→internal` (ADR-0005), `sources→app-layer`, and
+    `internal/api`-scope rules run strict; `storage→compute` is
+    enforced with the 15 known D8 M0-1 upward edges grandfathered in
+    `lint-imports.baseline` (shrink-only); plus a structural check
+    that `internal/storage/` stays subpackage-only.
+  - The three FX pollers (`ecb` / `exchangeratesapi` /
+    `polygonforex`) fold their duplicated scaffolding into shared
+    helpers (D3): `external.GetBody` (+ transport-error query
+    redaction, G10-04), `external.FiatCodesFromPairs`, and
+    `scale.{SyntheticTxHash,InvertScaled,SciDecimalStringToScaledInt}`
+    — with a regression test pinning the synthetic tx-hash
+    derivation byte-for-byte (it is the dedup identity of persisted
+    rows).
+  - `internal/sources/childgate` → `internal/contractid` (D1 M2-9):
+    the ADR-0035 contract-identity registry is cross-cutting
+    infrastructure, not a source.
+
 ## [v0.8.2] — 2026-07-05
 
 ### Added
