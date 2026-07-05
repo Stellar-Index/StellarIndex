@@ -15,6 +15,15 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Trade-insert deadlock storm under backlog catch-up**: the indexer's
+  parallel drain workers submit overlapping multi-row INSERT..ON CONFLICT
+  batches, and same-keys-different-order locking is a textbook AB/BA
+  deadlock — 918 of them in one afternoon kicked most sources into
+  backoff (6/23 active). Batches now sort by the trades conflict key, so
+  all writers take row locks in one global order and overlapping batches
+  serialize instead of deadlocking.
+
 ## [v0.8.0] — 2026-07-05
 
 ### Added

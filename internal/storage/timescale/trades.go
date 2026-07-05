@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math/big"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -393,6 +394,16 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 	if len(trades) == 0 {
 		return nil
 	}
+
+	// Deterministic PK order WITHIN the batch (2026-07-05 deadlock
+	// storm, 918 in one afternoon): the indexer's parallel drain
+	// workers submit overlapping batches while catching up a backlog,
+	// and two multi-row INSERT..ON CONFLICT statements that touch the
+	// same keys in different orders take row locks in different orders
+	// — a textbook AB/BA deadlock. Sorting every batch by the conflict
+	// key makes all writers acquire locks in one global order, so
+	// concurrent overlapping batches serialize instead of deadlocking.
+	sortTradesByConflictKey(trades)
 
 	// Build VALUES placeholders + args slice. Each row has 12 params
 	// (source, ledger, tx_hash, op_index, ts, base_asset, quote_asset,
@@ -924,4 +935,23 @@ func (s *Store) CountTrades(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("timescale: CountTrades: %w", err)
 	}
 	return n, nil
+}
+
+// sortTradesByConflictKey orders a batch by the trades PK so every
+// writer acquires row locks in one global order (the 2026-07-05
+// deadlock-storm fix; see BatchInsertTrades).
+func sortTradesByConflictKey(trades []canonical.Trade) {
+	sort.Slice(trades, func(i, j int) bool {
+		a, b := &trades[i], &trades[j]
+		if a.Source != b.Source {
+			return a.Source < b.Source
+		}
+		if a.Ledger != b.Ledger {
+			return a.Ledger < b.Ledger
+		}
+		if a.TxHash != b.TxHash {
+			return a.TxHash < b.TxHash
+		}
+		return a.OpIndex < b.OpIndex
+	})
 }
