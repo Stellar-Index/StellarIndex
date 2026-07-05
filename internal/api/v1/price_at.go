@@ -14,13 +14,26 @@ import (
 
 // PriceAtReader returns the closed VWAP bucket at-or-before a
 // historical instant for a pair. Production wiring is a thin adapter
-// around timescale.Store.ClosedVWAP1mAtOrBefore (the same anchor the
-// change_24h_pct path uses, generalized to any timestamp).
+// around timescale.Store.ClosedVWAPAtOrBefore, which picks the finest
+// CAGG resolution (prices_1m for recent instants, coarser bars for
+// older ones — prices_1d spans to 2015) whose nearest at-or-before
+// bucket is within the honesty cap, and reports which it used.
+//
+// The same reader backs GET /v1/price/changes: each horizon's
+// reference price is a PriceAt call at ts=now-horizon, which is why
+// the staleness tolerance is a parameter rather than a fixed cap
+// (/v1/price/at passes [priceAtMaxLookback]; the changes endpoint
+// passes a per-horizon tolerance).
 type PriceAtReader interface {
-	// PriceAt returns (vwap decimal string, the bucket's close time,
-	// error). ErrPriceAtUnavailable when the pair has no closed
-	// bucket at or before ts.
-	PriceAt(ctx context.Context, pair canonical.Pair, ts time.Time) (string, time.Time, error)
+	// PriceAt returns (vwap decimal string, the bucket's CLOSE time,
+	// the resolution of the CAGG that served it in seconds, error).
+	// resolutionSeconds tells the caller the true window the answer
+	// spans (60 for a 1-minute bar, 86400 for a daily bar) so it
+	// labels window_seconds honestly. maxStaleness caps how far before
+	// ts the nearest bucket may close before the answer is refused —
+	// past it the reader returns ErrPriceAtUnavailable rather than
+	// fabricating continuity across a dead-market gap.
+	PriceAt(ctx context.Context, pair canonical.Pair, ts time.Time, maxStaleness time.Duration) (value string, observedAt time.Time, resolutionSeconds int, err error)
 }
 
 // ErrPriceAtUnavailable is the sentinel a PriceAtReader returns when
@@ -41,9 +54,12 @@ const priceAtMaxLookback = 24 * time.Hour
 // handlePriceAt serves GET /v1/price/at?asset=&quote=&ts=RFC3339 —
 // the point-in-time price for portfolio cost-basis / PnL / tax
 // tooling (wallet-builder accommodation, board #46). The answer is
-// the closed 1-minute VWAP bucket at-or-before ts; observed_at is
-// the BUCKET's time, never ts, so callers see exactly how far the
-// nearest observation was.
+// the closed VWAP bucket at-or-before ts from the finest CAGG
+// resolution that covers it (prices_1m for recent instants, coarser
+// bars back to prices_1d for older ones); observed_at is the BUCKET's
+// close time, never ts, and window_seconds reports the resolution
+// used — so callers see exactly how far the nearest observation was
+// and at what granularity.
 func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 	if s.priceAt == nil {
 		writeProblem(w, r,
@@ -105,7 +121,7 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 			if pairErr != nil {
 				continue
 			}
-			value, bucketAt, lookErr := s.priceAt.PriceAt(ctx, pair, ts)
+			value, bucketAt, resSec, lookErr := s.priceAt.PriceAt(ctx, pair, ts, priceAtMaxLookback)
 			if lookErr != nil {
 				continue
 			}
@@ -120,7 +136,7 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 				Price:         value,
 				PriceType:     "vwap",
 				ObservedAt:    bucketAt,
-				WindowSeconds: 60,
+				WindowSeconds: resSec,
 			}, true
 		}
 	}

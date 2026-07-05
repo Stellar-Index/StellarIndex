@@ -32,6 +32,7 @@ API_BASE_URL=http://localhost:3000 bash examples/curl/01-healthz.sh
 | 12 | [`12-history-since-inception.sh`](12-history-since-inception.sh) | `GET /v1/history/since-inception?asset=…` — full bucketed VWAP series |
 | 13 | [`13-sac-wrappers.sh`](13-sac-wrappers.sh) | `GET /v1/sac-wrappers` — SAC contract → classic-asset registry |
 | 14 | [`14-asset-detail.sh`](14-asset-detail.sh) | `GET /v1/assets/{id}` — full detail for one asset |
+| 15 | [`15-price-changes.sh`](15-price-changes.sh) | `GET /v1/price/changes?asset=…&quote=fiat:USD` — current price + 1h/24h/7d/30d change |
 
 ## Asset identifiers
 

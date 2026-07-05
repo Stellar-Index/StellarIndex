@@ -17,11 +17,16 @@ import (
 type priceAtStub struct {
 	value    string
 	bucketAt time.Time
+	resSec   int
 	err      error
 }
 
-func (s priceAtStub) PriceAt(context.Context, canonical.Pair, time.Time) (string, time.Time, error) {
-	return s.value, s.bucketAt, s.err
+func (s priceAtStub) PriceAt(context.Context, canonical.Pair, time.Time, time.Duration) (string, time.Time, int, error) {
+	res := s.resSec
+	if res == 0 {
+		res = 60
+	}
+	return s.value, s.bucketAt, res, s.err
 }
 
 // TestHandlePriceAt pins board #46: a historical instant serves the
@@ -79,11 +84,11 @@ type priceAtPairStub struct {
 	bucketAt time.Time
 }
 
-func (s priceAtPairStub) PriceAt(_ context.Context, pair canonical.Pair, _ time.Time) (string, time.Time, error) {
+func (s priceAtPairStub) PriceAt(_ context.Context, pair canonical.Pair, _ time.Time, _ time.Duration) (string, time.Time, int, error) {
 	if v, ok := s.byPair[pair.Base.String()+"/"+pair.Quote.String()]; ok {
-		return v, s.bucketAt, nil
+		return v, s.bucketAt, 60, nil
 	}
-	return "", time.Time{}, ErrPriceAtUnavailable
+	return "", time.Time{}, 0, ErrPriceAtUnavailable
 }
 
 // TestHandlePriceAt_StablecoinFallback pins the CAGG sibling of the

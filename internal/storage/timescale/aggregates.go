@@ -71,6 +71,40 @@ func (g HistoryGranularity) closedBucketInterval() string {
 	return ""
 }
 
+// BucketDuration is the wall-clock width of one bucket at this
+// granularity — the value the price surfaces stamp into
+// `window_seconds`, and the amount [Store.ClosedVWAPAtOrBefore] adds
+// to a bucket START to get its close instant. 1mo is approximated as
+// 30 days (the CAGG's `time_bucket('1 month', …)` is calendar-exact,
+// but this figure is only used for staleness math + the resolution
+// ladder, where a 30-day nominal month is close enough). Zero for an
+// unknown granularity.
+func (g HistoryGranularity) BucketDuration() time.Duration {
+	switch g {
+	case Granularity1m:
+		return time.Minute
+	case Granularity15m:
+		return 15 * time.Minute
+	case Granularity1h:
+		return time.Hour
+	case Granularity4h:
+		return 4 * time.Hour
+	case Granularity1d:
+		return 24 * time.Hour
+	case Granularity1w:
+		return 7 * 24 * time.Hour
+	case Granularity1mo:
+		return 30 * 24 * time.Hour
+	}
+	return 0
+}
+
+// Seconds is [BucketDuration] in whole seconds — the integer a price
+// snapshot carries in `window_seconds`.
+func (g HistoryGranularity) Seconds() int {
+	return int(g.BucketDuration() / time.Second)
+}
+
 // HistoryPoints returns every CLOSED bucket for the pair from the
 // CAGG matching `granularity`, ordered chronologically (ASC). Used
 // by /v1/history/since-inception to serve the full historical
@@ -315,6 +349,175 @@ func (s *Store) ClosedVWAP1mAtOrBefore(ctx context.Context, p canonical.Pair, t 
 	}
 	normalizeVwapSources(&row)
 	return row, nil
+}
+
+// VWAPAtRow is the result of [Store.ClosedVWAPAtOrBefore]: the VWAP of
+// a single closed bucket at-or-before a historical instant, plus which
+// CAGG resolution served it. VWAP is a decimal string exactly as
+// Postgres serialises NUMERIC (ADR-0003 — no float round-trip). Bucket
+// is the START of the window; the window END is
+// `Bucket + Resolution.BucketDuration()`.
+type VWAPAtRow struct {
+	VWAP       string
+	Bucket     time.Time
+	Resolution HistoryGranularity
+}
+
+// priceAtResolutionLadder returns the CAGG resolutions to probe for a
+// point-in-time lookup whose target instant is `age` behind now, in
+// FINEST-first order. The ladder encodes the served-tier reality
+// (ADR-0034): prices_1m holds the recent working set (probe it for
+// anything within ~2 days), prices_1h reaches back weeks, and
+// prices_1d spans to 2015 (daily OHLC). Probing coarser rungs as a
+// fallback means an old instant still resolves via prices_1d even when
+// the finer CAGGs never held (or have since aged out) a row that far
+// back. Pure — unit-tested without a DB.
+func priceAtResolutionLadder(age time.Duration) []HistoryGranularity {
+	switch {
+	case age <= 48*time.Hour:
+		return []HistoryGranularity{Granularity1m, Granularity15m, Granularity1h, Granularity4h, Granularity1d}
+	case age <= 45*24*time.Hour:
+		return []HistoryGranularity{Granularity1h, Granularity4h, Granularity1d}
+	default:
+		return []HistoryGranularity{Granularity1d}
+	}
+}
+
+// ClosedVWAPAtOrBefore returns the closed VWAP bucket at-or-before
+// `ts` for the pair, picking the FINEST CAGG resolution whose nearest
+// at-or-before bucket closes within `maxStaleness` of ts. It is the
+// shared point-in-time engine behind /v1/price/at (arbitrary instant)
+// and /v1/price/changes (one call per horizon).
+//
+// Selection: walk [priceAtResolutionLadder] finest-first; for each
+// rung read the nearest closed bucket at-or-before ts; accept the
+// first whose close instant (bucket + resolution) is within
+// maxStaleness of ts, else fall through to the coarser rung. This is
+// "pick the finest CAGG whose coverage includes ts" — a dead-market
+// gap in prices_1m falls through to a fresher prices_1d bar rather
+// than fabricating continuity, and the accepted rung is reported in
+// the row's Resolution so callers can label `window_seconds` honestly.
+//
+// Both stored directions of the market are combined (the SDEX decoder
+// records XLM/USDC and USDC/XLM as separate rows); flipped rows invert
+// the vwap (1/vwap) so the answer always expresses the price of the
+// pair's base in its quote — the same both-directions treatment
+// [Store.LatestClosedVWAP1mForPair] and [Store.OHLCSeries] use.
+//
+// Returns [sql.ErrNoRows] when no rung has an in-window bucket (the
+// pair is younger than ts, ts predates recorded history, or the
+// nearest observation is staler than maxStaleness on every rung).
+func (s *Store) ClosedVWAPAtOrBefore(ctx context.Context, p canonical.Pair, ts time.Time, maxStaleness time.Duration) (VWAPAtRow, error) {
+	age := time.Since(ts)
+	if age < 0 {
+		age = 0
+	}
+	for _, g := range priceAtResolutionLadder(age) {
+		bucket, vwap, found, err := s.closedVWAPAtOrBeforeRes(ctx, p, ts, maxStaleness, g)
+		if err != nil {
+			return VWAPAtRow{}, err
+		}
+		if !found {
+			continue
+		}
+		if ts.Sub(bucket.Add(g.BucketDuration())) <= maxStaleness {
+			return VWAPAtRow{VWAP: vwap, Bucket: bucket, Resolution: g}, nil
+		}
+	}
+	return VWAPAtRow{}, sql.ErrNoRows
+}
+
+// closedVWAPAtOrBeforeQueryTemplate finds the nearest closed bucket
+// at-or-before an instant for one CAGG resolution and returns its
+// trade-count-weighted VWAP across both stored directions.
+//
+//	%[1]s — table name (prices_<granularity>, from the validated enum)
+//	%[2]s — upper bound literal (ts − resolution: the closed-bucket
+//	        guard `bucket + resolution <= ts` written sargably as
+//	        `bucket <= ts − resolution`, a constant on the RHS)
+//	%[3]s — lower bound literal (plan-time chunk exclusion; set below
+//	        any bucket ClosedVWAPAtOrBefore would accept)
+//
+// Both bounds are `bucket <= C` / `bucket >= C` against literal
+// constants, so the planner prunes chunks at PLAN time (the
+// [Store.LatestClosedVWAP1mForPair] discipline — a bind parameter
+// would force a whole-history plan). The pair strings stay bound
+// parameters ($1/$2).
+const closedVWAPAtOrBeforeQueryTemplate = `
+    WITH latest AS (
+        SELECT max(b) AS b FROM (
+            SELECT max(bucket) AS b FROM %[1]s
+             WHERE base_asset = $1 AND quote_asset = $2
+               AND bucket <= TIMESTAMPTZ '%[2]s'
+               AND bucket >= TIMESTAMPTZ '%[3]s'
+            UNION ALL
+            SELECT max(bucket) AS b FROM %[1]s
+             WHERE base_asset = $2 AND quote_asset = $1
+               AND bucket <= TIMESTAMPTZ '%[2]s'
+               AND bucket >= TIMESTAMPTZ '%[3]s'
+        ) u
+    ),
+    r AS (
+        SELECT base_asset, vwap, COALESCE(trade_count, 0) AS tc
+          FROM %[1]s
+         WHERE bucket = (SELECT b FROM latest)
+           AND bucket >= TIMESTAMPTZ '%[3]s'
+           AND ((base_asset = $1 AND quote_asset = $2)
+             OR (base_asset = $2 AND quote_asset = $1))
+    )
+    SELECT (SELECT b FROM latest),
+           (SUM((CASE WHEN base_asset = $1 THEN vwap
+                      ELSE 1.0 / NULLIF(vwap, 0) END) * tc)
+              / NULLIF(SUM(tc), 0))::text AS vwap
+      FROM r
+     HAVING count(*) > 0
+`
+
+// closedVWAPAtOrBeforeRes runs [closedVWAPAtOrBeforeQueryTemplate] for
+// one resolution. found=false (nil error) means this rung has no
+// closed bucket in the pruning window — the caller falls through to a
+// coarser rung. The pruning window's lower bound is set generously
+// below any bucket ClosedVWAPAtOrBefore would accept, so a false here
+// is never a wrongly-excluded acceptable bucket.
+func (s *Store) closedVWAPAtOrBeforeRes(
+	ctx context.Context, p canonical.Pair, ts time.Time, maxStaleness time.Duration, g HistoryGranularity,
+) (time.Time, string, bool, error) {
+	if err := g.Validate(); err != nil {
+		return time.Time{}, "", false, err
+	}
+	res := g.BucketDuration()
+	// Closed-bucket guard, sargable form: bucket + res <= ts  ⇒  bucket <= ts − res.
+	upper := ts.Add(-res)
+	// Lower bound strictly below the oldest acceptable bucket START
+	// (ts − maxStaleness − res); the extra res of slack keeps a
+	// borderline bucket inside the window so the Go-side staleness
+	// check — not chunk pruning — is what rejects it.
+	lower := ts.Add(-(maxStaleness + 2*res))
+	const layout = "2006-01-02 15:04:05-07"
+	table := "prices_" + string(g)
+	// #nosec G201 — the ONLY interpolated values are `table` (composed
+	// from the validated HistoryGranularity enum, never user input) and
+	// two of our own time.Time bounds reformatted to a fixed layout (no
+	// injection surface). Pair strings bind as $1/$2. See the template
+	// doc + LatestClosedVWAP1mForPair.
+	q := fmt.Sprintf(closedVWAPAtOrBeforeQueryTemplate,
+		table, upper.UTC().Format(layout), lower.UTC().Format(layout))
+
+	var bucket time.Time
+	var vwap sql.NullString
+	err := s.db.QueryRowContext(ctx, q, p.Base.String(), p.Quote.String()).Scan(&bucket, &vwap)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, "", false, nil
+	}
+	if err != nil {
+		return time.Time{}, "", false, fmt.Errorf("timescale: ClosedVWAPAtOrBefore[%s]: %w", g, err)
+	}
+	if !vwap.Valid {
+		// Degenerate bucket (zero total trade_count → NULL weighted
+		// VWAP): treat as no data on this rung.
+		return time.Time{}, "", false, nil
+	}
+	return bucket, vwap.String, true, nil
 }
 
 // LatestClosedVWAP1mForPair returns the most-recent CLOSED 1-minute

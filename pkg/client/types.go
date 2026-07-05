@@ -92,6 +92,47 @@ type ConfidenceFactors struct {
 	CrossOracleAgreement int `json:"cross_oracle_agreement"`
 }
 
+// PriceChangeHorizon is one trailing-window delta on
+// [Client.PriceChanges]. Every pointer field is nil (and Available
+// is false) when the pair has no closed bucket that far back — a
+// per-horizon miss, never a whole-call error.
+type PriceChangeHorizon struct {
+	// ChangePct is the signed percentage move of the current price vs
+	// ReferencePrice, 2dp with an explicit "+" on gains. Nil when
+	// unavailable.
+	ChangePct *string `json:"change_pct"`
+	// ReferencePrice is the closed VWAP at-or-before now−horizon (decimal
+	// string). Nil when unavailable.
+	ReferencePrice *string `json:"reference_price"`
+	// ReferenceAt is the close time of the reference bucket (RFC 3339),
+	// never the exact horizon instant. Nil when unavailable.
+	ReferenceAt *time.Time `json:"reference_at"`
+	// Resolution is the CAGG that served the reference bucket
+	// ("1m" | "15m" | "1h" | "4h" | "1d"). Nil when unavailable.
+	Resolution *string `json:"resolution"`
+	// Available is false when no closed bucket exists that far back
+	// (all sibling fields nil).
+	Available bool `json:"available"`
+}
+
+// PriceChanges is the data shape returned by [Client.PriceChanges]:
+// the current closed price plus a signed change over 1h / 24h / 7d /
+// 30d in one call.
+type PriceChanges struct {
+	AssetID          string    `json:"asset_id"`
+	Quote            string    `json:"quote"`
+	CurrentPrice     string    `json:"current_price"`
+	CurrentPriceType string    `json:"current_price_type"`
+	ObservedAt       time.Time `json:"observed_at"`
+	// Resolution is the CAGG that served the current-price bucket.
+	Resolution string `json:"resolution"`
+
+	H1  PriceChangeHorizon `json:"1h"`
+	H24 PriceChangeHorizon `json:"24h"`
+	D7  PriceChangeHorizon `json:"7d"`
+	D30 PriceChangeHorizon `json:"30d"`
+}
+
 // HistorySeries is the data shape returned by
 // [Client.HistorySinceInception].
 type HistorySeries struct {

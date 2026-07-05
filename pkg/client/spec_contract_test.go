@@ -52,6 +52,7 @@ var coveredOperations = []coveredOperation{
 	{"Price", "GET", "/price", PriceSnapshot{}, ""},
 	{"PriceTip", "GET", "/price/tip", PriceSnapshot{}, ""},
 	{"PriceAt", "GET", "/price/at", PriceSnapshot{}, ""},
+	{"PriceChanges", "GET", "/price/changes", PriceChanges{}, ""},
 	{"PriceBatch", "GET", "/price/batch", PriceSnapshot{}, ""},
 	{"PriceBatch", "POST", "/price/batch", PriceSnapshot{}, ""},
 	{"History", "GET", "/history", TradeRow{}, ""},

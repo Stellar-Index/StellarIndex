@@ -44,6 +44,9 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		// Current price + asset detail — short cache
 		{"/v1/price", "public, max-age=30, s-maxage=60"},
 		{"/v1/price/batch", "public, max-age=30, s-maxage=60"},
+		// Multi-horizon change strip tracks the current-price band
+		// (anchor moves on every bucket close).
+		{"/v1/price/changes", "public, max-age=30, s-maxage=60"},
 		{"/v1/assets", "public, max-age=30, s-maxage=60"},
 		{"/v1/assets/native", "public, max-age=30, s-maxage=60"},
 		{"/v1/assets/USDC-GA5Z/metadata", "public, max-age=30, s-maxage=60"},
@@ -51,6 +54,8 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		// Historical / closed-bucket
 		{"/v1/history", "public, max-age=60, s-maxage=300"},
 		{"/v1/history/since-inception", "public, max-age=60, s-maxage=300"},
+		// Point-in-time price — immutable closed bucket keyed by ts.
+		{"/v1/price/at", "public, max-age=60, s-maxage=300"},
 		{"/v1/ohlc", "public, max-age=60, s-maxage=300"},
 		{"/v1/vwap", "public, max-age=60, s-maxage=300"},
 		{"/v1/twap", "public, max-age=60, s-maxage=300"},

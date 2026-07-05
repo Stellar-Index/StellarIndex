@@ -68,6 +68,34 @@ func (c *Client) PriceAt(ctx context.Context, q PriceAtQuery) (*Envelope[PriceSn
 	return &env, nil
 }
 
+// PriceChangesQuery parameterises [Client.PriceChanges]. Asset is
+// required; Quote defaults to fiat:USD server-side.
+type PriceChangesQuery struct {
+	Asset string
+	Quote string // optional; server defaults to fiat:USD
+}
+
+// PriceChanges fetches the current closed price plus the signed change
+// over 1h / 24h / 7d / 30d in one call — the wallet/portfolio delta
+// strip. A horizon with no data that far back comes back with
+// Available=false and nil fields (never an error); a 404 only when the
+// pair has no current price to anchor on.
+func (c *Client) PriceChanges(ctx context.Context, q PriceChangesQuery) (*Envelope[PriceChanges], error) {
+	if q.Asset == "" {
+		return nil, &APIError{Status: 400, Title: "asset required"}
+	}
+	v := url.Values{}
+	v.Set("asset", q.Asset)
+	if q.Quote != "" {
+		v.Set("quote", q.Quote)
+	}
+	var env Envelope[PriceChanges]
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/price/changes", v, nil, &env); err != nil {
+		return nil, err
+	}
+	return &env, nil
+}
+
 // PriceTipQuery is the input for [Client.PriceTip]. Asset is
 // required; Quote defaults to "fiat:USD" server-side. WindowSeconds
 // is the rolling-window size; the server clamps to [1, 60] and

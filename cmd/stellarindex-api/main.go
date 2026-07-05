@@ -3491,20 +3491,26 @@ func (r *fxHistoryReader) SourceEntryCounts(ctx context.Context) (map[string]int
 }
 
 // storePriceAtReader adapts *timescale.Store to v1.PriceAtReader —
-// the point-in-time closed-bucket lookup behind /v1/price/at
-// (board #46). sql.ErrNoRows translates to the sentinel so the
-// handler can 404 honestly.
+// the point-in-time lookup behind /v1/price/at (board #46) AND the
+// per-horizon references behind /v1/price/changes. Delegates to
+// ClosedVWAPAtOrBefore, which picks the finest CAGG resolution
+// (prices_1m → … → prices_1d) whose nearest at-or-before bucket is
+// within maxStaleness. sql.ErrNoRows translates to the sentinel so
+// the handler can 404 (or null a horizon) honestly.
 type storePriceAtReader struct{ s *timescale.Store }
 
-func (r storePriceAtReader) PriceAt(ctx context.Context, pair canonical.Pair, ts time.Time) (string, time.Time, error) {
-	row, err := r.s.ClosedVWAP1mAtOrBefore(ctx, pair, ts)
+func (r storePriceAtReader) PriceAt(
+	ctx context.Context, pair canonical.Pair, ts time.Time, maxStaleness time.Duration,
+) (string, time.Time, int, error) {
+	row, err := r.s.ClosedVWAPAtOrBefore(ctx, pair, ts, maxStaleness)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", time.Time{}, v1.ErrPriceAtUnavailable
+			return "", time.Time{}, 0, v1.ErrPriceAtUnavailable
 		}
-		return "", time.Time{}, err
+		return "", time.Time{}, 0, err
 	}
-	// Bucket end = bucket + 1m: the instant the bucket's VWAP became
-	// final (ADR-0015 closed-bucket semantics).
-	return row.VWAP, row.Bucket.Add(time.Minute), nil
+	// observed_at = bucket close = bucket start + resolution: the
+	// instant the bucket's VWAP became final (ADR-0015). window_seconds
+	// carries the resolution so the handler labels it honestly.
+	return row.VWAP, row.Bucket.Add(row.Resolution.BucketDuration()), row.Resolution.Seconds(), nil
 }
