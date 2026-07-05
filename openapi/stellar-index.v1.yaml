@@ -2965,6 +2965,7 @@ paths:
                   contract_id: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75
                   count: 2
                   limit: 2
+                  decimals: 7
                   transfers:
                   - ledger: 62757524
                     ledger_close_time: '2026-05-27T09:41:47Z'
@@ -2998,13 +2999,22 @@ paths:
                     properties:
                       data:
                         type: object
-                        required: [contract_id, count, limit, transfers]
+                        required: [contract_id, count, limit, decimals, transfers]
                         properties:
                           contract_id: { type: string }
                           count: { type: integer }
                           limit: { type: integer }
                           from: { type: string }
                           to: { type: string }
+                          decimals:
+                            type: integer
+                            description: |
+                              The token contract's on-chain `decimals()`, read
+                              from its captured instance metadata — the divisor
+                              exponent for every `amount` in this response
+                              (display value = amount / 10^decimals). Falls back
+                              to 7 (the SAC/classic default) when the contract's
+                              decimals declaration isn't derivable from the lake.
                           transfers:
                             type: array
                             items:

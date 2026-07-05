@@ -561,20 +561,26 @@ interface TransferRow {
  * simply don't show the panel.
  */
 function TransfersPanel({ id }: { id: string }) {
-  const { data } = useQuery<{ transfers?: TransferRow[] }>({
+  const { data } = useQuery<{ transfers?: TransferRow[]; decimals?: number }>({
     queryKey: ['/v1/contracts/{id}/transfers', id],
     enabled: CONTRACT_RE.test(id),
     retry: false,
     staleTime: 30_000,
     queryFn: async () =>
       (
-        await apiGet<Envelope<{ transfers?: TransferRow[] }>>(
+        await apiGet<Envelope<{ transfers?: TransferRow[]; decimals?: number }>>(
           `/v1/contracts/${encodeURIComponent(id)}/transfers`,
           { limit: 25 },
         )
       ).data,
   });
   const rows = data?.transfers ?? [];
+  // Real per-token scale from the endpoint (the contract's on-chain
+  // decimals()). Fallback 7 when the API couldn't derive it — matches
+  // Stellar stroops / the SAC default, so SACs and classic tokens are
+  // exact even on the fallback.
+  const decimals = data?.decimals ?? 7;
+  const scale = 10 ** decimals;
   if (rows.length === 0) return null;
   const gLink = (g?: string) =>
     g && /^G[A-Z2-7]{55}$/.test(g) ? (
@@ -622,7 +628,7 @@ function TransfersPanel({ id }: { id: string }) {
               <td className="px-4 py-2">{gLink(t.to)}</td>
               <td className="px-4 py-2 text-right font-mono tabular-nums">
                 {t.amount
-                  ? (Number(t.amount) / 1e7).toLocaleString(undefined, { maximumFractionDigits: 4 })
+                  ? (Number(t.amount) / scale).toLocaleString(undefined, { maximumFractionDigits: 4 })
                   : '—'}
               </td>
               <td className="px-4 py-2">

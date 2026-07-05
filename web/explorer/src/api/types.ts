@@ -4335,6 +4335,7 @@ export interface paths {
                          *         "contract_id": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
                          *         "count": 2,
                          *         "limit": 2,
+                         *         "decimals": 7,
                          *         "transfers": [
                          *           {
                          *             "ledger": 62757524,
@@ -4377,6 +4378,15 @@ export interface paths {
                                 limit: number;
                                 from?: string;
                                 to?: string;
+                                /**
+                                 * @description The token contract's on-chain `decimals()`, read
+                                 *     from its captured instance metadata — the divisor
+                                 *     exponent for every `amount` in this response
+                                 *     (display value = amount / 10^decimals). Falls back
+                                 *     to 7 (the SAC/classic default) when the contract's
+                                 *     decimals declaration isn't derivable from the lake.
+                                 */
+                                decimals: number;
                                 transfers: {
                                     ledger: number;
                                     /** Format: date-time */

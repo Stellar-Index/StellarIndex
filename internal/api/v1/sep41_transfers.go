@@ -34,12 +34,40 @@ type SEP41TransferEntry struct {
 }
 
 type SEP41TransfersResponse struct {
-	ContractID string               `json:"contract_id"`
-	Count      int                  `json:"count"`
-	Limit      int                  `json:"limit"`
-	From       string               `json:"from,omitempty"`
-	To         string               `json:"to,omitempty"`
-	Transfers  []SEP41TransferEntry `json:"transfers"`
+	ContractID string `json:"contract_id"`
+	Count      int    `json:"count"`
+	Limit      int    `json:"limit"`
+	From       string `json:"from,omitempty"`
+	To         string `json:"to,omitempty"`
+	// Decimals is the token contract's on-chain decimals() — the
+	// divisor exponent for every Amount in this response. All rows
+	// share it (the response is scoped to one token contract). 7 when
+	// the declaration isn't derivable (SAC/classic default).
+	Decimals  int                  `json:"decimals"`
+	Transfers []SEP41TransferEntry `json:"transfers"`
+}
+
+// defaultTokenDecimals is the scale assumed when a contract's real
+// decimals() can't be read from the lake — 7, matching Stellar
+// classic/native stroops and the SAC default.
+const defaultTokenDecimals = 7
+
+// resolveTokenDecimals best-effort reads a token contract's on-chain
+// decimals() via the tokenDecimals reader, falling back to 7 on a nil
+// reader, a read error, or an uncaptured/non-standard token. Bounded
+// by its own short deadline so a slow metadata read can't stall the
+// transfer-list response.
+func (s *Server) resolveTokenDecimals(ctx context.Context, contractID string) int {
+	if s.tokenDecimals == nil {
+		return defaultTokenDecimals
+	}
+	dctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	d, found, err := s.tokenDecimals.TokenDecimals(dctx, contractID)
+	if err != nil || !found {
+		return defaultTokenDecimals
+	}
+	return int(d)
 }
 
 // handleSEP41Transfers serves GET
@@ -135,6 +163,7 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 		Limit:      limit,
 		From:       fromAddr,
 		To:         toAddr,
+		Decimals:   s.resolveTokenDecimals(r.Context(), contractID),
 		Transfers:  entries,
 	}
 	writeJSON(w, resp, Flags{})
