@@ -498,7 +498,11 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		}
 		supBatch = supBatch[:0]
 	}
-	for _, ev := range buf {
+	fmt.Fprintf(os.Stderr, "ch-rebuild: drain start (%d events)\n", len(buf))
+	for i, ev := range buf {
+		if i > 0 && i%1_000_000 == 0 {
+			fmt.Fprintf(os.Stderr, "ch-rebuild: drain %dM/%dM in %s\n", i/1_000_000, len(buf)/1_000_000, time.Since(wStart).Round(time.Second))
+		}
 		if *write {
 			switch e := ev.(type) {
 			case sep41transfers.Event:
