@@ -71,6 +71,25 @@ against.
   `/liquidity-pools` retires its stale "reserve and depth views are on
   the roadmap" promise in favour of what actually exists. Spec + all
   three generated artifacts + SDK-coverage register updated.
+### Added
+- **`/v1/protocols/blend` surfaces the Blend Backstop module**
+  (BACKLOG #57): the blend protocol page now folds the Backstop's
+  V1 + V2 contracts into the instance roster as `kind: "module"` — a
+  new additive enum value alongside `factory`/`instance` for a
+  sub-module contract that belongs to the protocol but emits on its
+  own address. Its events flow into the event breakdown, the activity
+  feed, and the per-instance counts, and `events_24h` sums both the
+  pool and the backstop sources.
+- **Self-hosting guide** (BACKLOG #60): new
+  `docs/operations/self-hosting.md` walks a fresh operator from a bare
+  box to a running indexer + API, linked from
+  `docs/getting-started.md`.
+- **Additive-migrations rollback posture codified** (CS-099,
+  BACKLOG #67): `migrations/README.md` gains rule 9 (migrations are
+  additive — a rolled-back binary must keep running against the newer
+  schema), `docs/operations/deploy-workflow.md` gains a matching
+  section, and the Ansible deploy task carries a louder rescue note.
+  Closes audit CS-099.
 
 ### Changed
 - **Maintainability tier-3 structural refactors** (BACKLOG #47,
@@ -98,6 +117,28 @@ against.
   - `internal/sources/childgate` → `internal/contractid` (D1 M2-9):
     the ADR-0035 contract-identity registry is cross-cutting
     infrastructure, not a source.
+
+### Fixed
+- **`/v1/markets/sources` alias-expands multi-form assets**
+  (BACKLOG #55): per-source volume counts now fold an asset's
+  equivalent forms (`native` ↔ `crypto:XLM`) together, so the SDEX and
+  CEX legs of the same market are counted as one instead of splitting
+  across rows and undercounting.
+- **`/v1/pools` shows the in-progress hour** (BACKLOG #55): migration
+  0076 enables real-time aggregation on the `pools_per_source_1h`
+  continuous aggregate, so the current still-filling hour is visible —
+  matching the earlier `source_volume_1h` fix.
+- **Pricing reads collapse flipped pair directions** (BACKLOG #55):
+  the anomaly-baseline, `PairMarket`, and OHLC-series read paths now
+  canonicalize pair orientation, so a market quoted in either
+  direction reads as one pair instead of two half-populated ones.
+- **Protocol event breakdown labels non-Symbol `topic[0]` events**
+  (BACKLOG #55): events whose leading topic isn't a Symbol (e.g.
+  Phoenix's 2-tuple topics) are labeled at read time instead of
+  collapsing into `untyped`, and `contract_events_daily` gains a
+  `t0_xdr` column carrying the raw leading topic — r1 needs a one-time
+  table recreate + re-fill (steps inline in
+  `deploy/clickhouse/tier1_schema.sql`).
 
 ## [v0.8.2] — 2026-07-05
 
