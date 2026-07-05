@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 
 import { useCoins, useVerifiedSlugs, type Coin } from '@/api/hooks';
@@ -127,9 +128,7 @@ function Row({
           href={`/assets/${coin.slug}`}
           className="group flex items-center gap-2"
         >
-          <span aria-hidden className="flex h-6 w-6 items-center justify-center rounded-full bg-surface-subtle font-mono text-xs">
-            {iconForCode(coin.code)}
-          </span>
+          <AssetIcon image={coin.image} code={coin.code} />
           <span className="font-medium text-ink group-hover:text-brand-600">
             {coin.code}
           </span>
@@ -263,10 +262,52 @@ function ChangePct({ raw }: { raw: string | null | undefined }) {
   );
 }
 
+// AssetIcon renders the asset's real logo when the API surfaces one
+// (coin.image — the issuer's SEP-1 stellar.toml CURRENCIES[].image,
+// sanitized server-side to http(s) only), and gracefully degrades to
+// the glyph/letter stand-in otherwise: a missing image, a null field,
+// or a broken/blocked URL (onError) all fall back to iconForCode.
+//
+// NOTE: today coin.image is populated only on the single-asset detail
+// path (/v1/assets/{id}, applySep1Overlay), NOT on the /v1/assets
+// listing that feeds this grid — so the fallback is what renders until
+// the listing query surfaces the image. Rendering it here is
+// forward-compatible: real logos appear with zero further UI change
+// the moment the listing carries them. Plain <img loading="lazy">
+// (not next/image) — remote SEP-1 hosts can't be enumerated into a
+// next/image domain allowlist under static export.
+function AssetIcon({ image, code }: { image?: string | null; code: string }) {
+  const [broken, setBroken] = useState(false);
+  const safe = typeof image === 'string' && /^https?:\/\//i.test(image);
+  if (safe && !broken) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- remote SEP-1 icons; next/image needs a domain allowlist we can't enumerate under static export
+      <img
+        src={image!}
+        alt=""
+        aria-hidden
+        width={24}
+        height={24}
+        loading="lazy"
+        onError={() => setBroken(true)}
+        className="h-6 w-6 rounded-full bg-surface-subtle object-contain"
+      />
+    );
+  }
+  return (
+    <span
+      aria-hidden
+      className="flex h-6 w-6 items-center justify-center rounded-full bg-surface-subtle font-mono text-xs"
+    >
+      {iconForCode(code)}
+    </span>
+  );
+}
+
 // iconForCode returns a single-glyph stand-in for the asset's
 // row icon. Mirrors the unified currencies listing's iconFor so
 // home + listing render the same visual treatment for the same
-// codes. Real SVG icons land in a follow-up.
+// codes.
 function iconForCode(code: string): string {
   const c = code.toUpperCase();
   const map: Record<string, string> = {
