@@ -214,6 +214,47 @@
 # service fired by a systemd timer. R1 is the integrity leader; R2/R3
 # run verify-archive on a slower cadence (separate units, TBD).
 
+- name: galexie resource-protection drop-in (2026-07-05 captive-core wedge)
+  # The captive stellar-core got swapped/starved by co-located batch
+  # work (CH allocator exhaustion + an unwindowed ops job) and wedged
+  # with 'invalid local state' — an 11h lake stall. MemoryLow makes
+  # the kernel reclaim galexie LAST; the weights outrank batch jobs
+  # for CPU/IO under contention.
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/galexie.service.d/resources.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Service]
+      MemoryLow=16G
+      CPUWeight=500
+      IOWeight=500
+  notify: daemon-reload
+
+- name: heavy-job wrapper (mandatory for ops one-shots on this host)
+  # Wraps any command in a systemd transient scope with a hard memory
+  # budget + batch-class CPU/IO so a ballooning job gets killed before
+  # it can starve galexie/CH/PG (the 2026-07-05 lesson). Usage:
+  #   run-heavy-job.sh <name> <command...>
+  ansible.builtin.copy:
+    dest: /usr/local/sbin/run-heavy-job.sh
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # Mandatory wrapper for heavy one-shot jobs (ops re-derives,
+      # backfills, bulk SQL). Hard-caps memory at 20G (kill, not swap:
+      # MemoryswapMax=0 keeps the job away from swap entirely) and
+      # deprioritises CPU/IO below the service units.
+      set -euo pipefail
+      NAME="$1"; shift
+      exec systemd-run --scope --unit "heavy-${NAME}-$$" \
+        -p MemoryMax=20G -p MemorySwapMax=0 \
+        -p CPUWeight=50 -p IOWeight=50 \
+        "$@"
+
 - name: archive-completeness override drop-in (root user, no legacy env)
   # Replaces a hand-written pre-rebrand override that still loaded
   # /etc/default/ratesengine — dead legacy credentials whose values

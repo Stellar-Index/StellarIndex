@@ -265,3 +265,64 @@
     enabled: true
   when: run_promtail | bool
   tags: [observability, promtail]
+
+- name: galexie catchup-refusal probe (script + timer)
+  # 'History: Skipping catchup' sat verbatim in the journal for 11h
+  # (2026-07-05) with nothing watching. Every minute: count refusals
+  # in the last 5min, write node-exporter textfile metrics; the rule
+  # trees alert on >0 sustained.
+  ansible.builtin.copy:
+    dest: /usr/local/sbin/galexie-catchup-probe.sh
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      DIR=/var/lib/prometheus/node-exporter
+      mkdir -p "$DIR"
+      N=$(journalctl -u galexie --since "-5min" --no-pager 2>/dev/null | grep -c "Skipping catchup" || true)
+      TMP=$(mktemp)
+      {
+        echo "# HELP stellarindex_galexie_catchup_refusals_5m 'History: Skipping catchup' journal lines in the last 5 minutes."
+        echo "# TYPE stellarindex_galexie_catchup_refusals_5m gauge"
+        echo "stellarindex_galexie_catchup_refusals_5m $N"
+      } > "$TMP"
+      mv "$TMP" "$DIR/galexie_catchup.prom"
+
+- name: galexie catchup-probe service unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/galexie-catchup-probe.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Galexie catchup-refusal probe (textfile metric)
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/galexie-catchup-probe.sh
+  notify: daemon-reload
+
+- name: galexie catchup-probe timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/galexie-catchup-probe.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Run the galexie catchup probe every minute
+      [Timer]
+      OnCalendar=*-*-* *:*:30
+      Persistent=true
+      [Install]
+      WantedBy=timers.target
+  notify: daemon-reload
+
+- name: enable the galexie catchup-probe timer
+  ansible.builtin.systemd:
+    name: galexie-catchup-probe.timer
+    enabled: true
+    state: started
+    daemon_reload: true

@@ -176,6 +176,8 @@ chain-link locally. See [archive-completeness.md](archive-completeness.md).
 | `stellarindex_archive_completeness_stale` | `time() - archive_completeness_last_success_timestamp` | > 26 h | P2 | [archive-completeness-stale](runbooks/archive-completeness-stale.md) |
 | `stellarindex_archive_completeness_critical_stale` | same | > 48 h on R1 (integrity leader) | **P1** | [archive-completeness-stale](runbooks/archive-completeness-stale.md) |
 | `stellarindex_archive_repair_source_degraded` | `archive_completeness_repair_failures_total / archive_completeness_repair_attempts_total` per source | > 0.10 over 1 h | P3 | [archive-repair-source-degraded](runbooks/archive-repair-source-degraded.md) |
+| `stellarindex_galexie_catchup_refused` | `stellarindex_galexie_catchup_refusals_5m` (journal probe textfile metric) | > 0 for 10 m | P1 | [galexie-catchup-refused](runbooks/galexie-catchup-refused.md) |
+| `stellarindex_host_swap_activity` | `rate(node_vmstat_pswpout[10m])` | > 100 for 15 m | P3 | [galexie-catchup-refused](runbooks/galexie-catchup-refused.md) |
 | `stellarindex_galexie_archive_tip_lag_high` | `galexie_archive_tip_lag_ledgers` (archive newest vs live newest) | > 5,000 for 30 m | P3 | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |
 | `stellarindex_galexie_archive_tip_lag_severe` | same | > 50,000 for 30 m | **P1** | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |
 | `stellarindex_galexie_archive_tip_lag_metric_stale` | `time() - galexie_archive_tip_lag_updated_seconds` | > 30 m for 15 m | P3 | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |

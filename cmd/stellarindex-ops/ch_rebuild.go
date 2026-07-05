@@ -175,6 +175,20 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	if *write {
 		mode = "WRITE"
 	}
+	// Buffer-pass range guard (2026-07-05): the event + sep41 passes
+	// buffer a whole invocation's decoded events in this process. A
+	// 12.9M-ledger -sep41 run ballooned until the kernel killed it
+	// silently — and the memory pressure swapped galexie's captive
+	// core into an invalid-local-state wedge (11h lake stall). The
+	// tool's docs always said "window your invocation"; docs aren't
+	// guards. 2M ledgers ≈ a comfortable single-window ceiling.
+	const maxBufferedRange = 2_000_000
+	buffering := *includeSEP41 || len(srcFilter) == 0 || anyEventSourceEnabled(cat, srcFilter)
+	if buffering && *to-*from > maxBufferedRange {
+		return fmt.Errorf("ch-rebuild: range [%d,%d] spans %d ledgers — the event/sep41 passes buffer in-process; window invocations to <=%d ledgers (loop externally, resume per window)",
+			*from, *to, *to-*from, maxBufferedRange)
+	}
+
 	fmt.Fprintf(os.Stderr, "ch-rebuild: [%d,%d] mode=%s sources=%q sdex=%v contract-calls=%v sep41=%v ch=%s\n",
 		lo, hi, mode, *only, *includeSDEX, *contractCalls, *includeSEP41, *chAddr)
 
@@ -483,4 +497,15 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		fmt.Printf("\n(dry-run — re-run with -write to persist to Postgres)\n")
 	}
 	return nil
+}
+
+// anyEventSourceEnabled reports whether the -sources filter selects at
+// least one event-decoder source (the buffering pass runs for those).
+func anyEventSourceEnabled(cat []reconSource, srcFilter map[string]bool) bool {
+	for _, src := range cat {
+		if src.dec != nil && srcFilter[src.name] {
+			return true
+		}
+	}
+	return false
 }

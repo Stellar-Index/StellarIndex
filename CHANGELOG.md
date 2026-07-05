@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Captive-core protection suite** (the 2026-07-05 galexie wedge,
+  full class): MemoryLow + CPU/IO-weight drop-in on the galexie unit;
+  a mandatory `run-heavy-job.sh` wrapper (MemoryMax=20G, swap-denied,
+  batch-class weights) for ops one-shots; ch-rebuild now REFUSES
+  unwindowed buffering ranges >2M ledgers; a per-minute journal probe
+  exports `stellarindex_galexie_catchup_refusals_5m` with a paging
+  rule in both trees + runbook; and a host swap-activity early-warning
+  rule. The signature sat unwatched for 11 hours — never again.
+
 ## [v0.8.1] — 2026-07-05
 
 ### Fixed

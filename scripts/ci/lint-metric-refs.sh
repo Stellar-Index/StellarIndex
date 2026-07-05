@@ -49,6 +49,12 @@ EMITTER_PATHS=(internal cmd scripts configs/healthchecks configs/ansible/roles/a
 # comment) but no producer exists / not applicable on this host. Keep
 # this list in lockstep with the INERT comment blocks in the rule files.
 KNOWN_INERT=(
+  # galexie-archive.yml — emitted by the ansible-managed journal probe
+  # (galexie-catchup-probe.sh → node-exporter textfile collector),
+  # not Go code, so this lint can't see the emitter. NOT inert: the
+  # probe timer runs every minute on r1 (14-stellarindex-services /
+  # 10-observability, 2026-07-05 captive-core wedge).
+  stellarindex_galexie_catchup_refusals_5m
   # storage.yml — TimescaleDB job-scheduler state; needs a custom
   # postgres_exporter query or a textfile SQL exporter (not yet built).
   stellarindex_cagg_last_refresh_unix
@@ -79,7 +85,7 @@ EXTERNAL_OK=(
   pgbackrest_backup_since_last_completion_seconds
   node_zfs_zpool_state node_filesystem_avail_bytes node_filesystem_size_bytes
   node_cpu_seconds_total node_memory_MemTotal_bytes node_memory_MemAvailable_bytes
-  node_disk_io_errors_total node_nvme_temperature_celsius
+  node_disk_io_errors_total node_nvme_temperature_celsius node_vmstat_pswpout
   up
 )
 
