@@ -65,7 +65,7 @@ func TestListCoinsBaseSelectSQL_WithPushdown(t *testing.T) {
 // markers in the output, same arg shape.
 func TestBuildCoinsQuery_NoIssuer_NoPushdown(t *testing.T) {
 	t.Parallel()
-	sql, args := buildCoinsQuery(100, "", "", "", CoinsOrderObservationCountDesc)
+	sql, args := buildCoinsQuery(100, "", "", "", "", CoinsOrderObservationCountDesc)
 	if strings.Contains(sql, "chosen_assets") {
 		t.Error("no-filter query must not include chosen_assets CTE")
 	}
@@ -84,7 +84,7 @@ func TestBuildCoinsQuery_NoIssuer_NoPushdown(t *testing.T) {
 func TestBuildCoinsQuery_IssuerFilter_PushdownActive(t *testing.T) {
 	t.Parallel()
 	issuer := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-	sql, args := buildCoinsQuery(100, issuer, "", "", CoinsOrderObservationCountDesc)
+	sql, args := buildCoinsQuery(100, issuer, "", "", "", CoinsOrderObservationCountDesc)
 
 	if !strings.Contains(sql, "WITH chosen_assets AS (SELECT asset_id FROM classic_assets WHERE issuer_g_strkey = $1)") {
 		t.Errorf("issuer-filter query must inject chosen_assets CTE referencing $1; got first 600 chars:\n%s", sql[:600])
@@ -102,7 +102,7 @@ func TestBuildCoinsQuery_IssuerFilter_PushdownActive(t *testing.T) {
 // deferred per the comment in buildCoinsQuery).
 func TestBuildCoinsQuery_QFilter_NoPushdown(t *testing.T) {
 	t.Parallel()
-	sql, _ := buildCoinsQuery(50, "", "", "USDC", CoinsOrderObservationCountDesc)
+	sql, _ := buildCoinsQuery(50, "", "", "", "USDC", CoinsOrderObservationCountDesc)
 	if strings.Contains(sql, "chosen_assets") {
 		t.Error("q-only filter must NOT activate pushdown (deferred per buildCoinsQuery comment)")
 	}
@@ -115,7 +115,7 @@ func TestBuildCoinsQuery_QFilter_NoPushdown(t *testing.T) {
 func TestBuildCoinsQuery_IssuerAndQ_PushdownOnIssuer(t *testing.T) {
 	t.Parallel()
 	issuer := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-	sql, args := buildCoinsQuery(100, issuer, "", "USD", CoinsOrderObservationCountDesc)
+	sql, args := buildCoinsQuery(100, issuer, "", "", "USD", CoinsOrderObservationCountDesc)
 	if !strings.Contains(sql, "WITH chosen_assets AS") {
 		t.Error("issuer-set query must activate pushdown even when q is also set")
 	}
@@ -124,5 +124,43 @@ func TestBuildCoinsQuery_IssuerAndQ_PushdownOnIssuer(t *testing.T) {
 	}
 	if len(args) != 3 || args[0] != issuer || args[1] != "%USD%" || args[2] != 100 {
 		t.Errorf("expected args=[issuer, %%USD%%, 100]; got %v", args)
+	}
+}
+
+// TestBuildCoinsQuery_CodeFilter_PushdownActive verifies the code
+// filter pushes down to the indexed classic_assets.code column via
+// the same chosen_assets CTE the issuer filter uses (BACKLOG #54).
+func TestBuildCoinsQuery_CodeFilter_PushdownActive(t *testing.T) {
+	t.Parallel()
+	sql, args := buildCoinsQuery(100, "", "USDC", "", "", CoinsOrderObservationCountDesc)
+
+	if !strings.Contains(sql, "WITH chosen_assets AS (SELECT asset_id FROM classic_assets WHERE code = $1)") {
+		t.Errorf("code-filter query must inject chosen_assets CTE referencing $1; got first 600 chars:\n%s", sql[:600])
+	}
+	if !strings.Contains(sql, "ca.code = $1") {
+		t.Error("code-filter query must keep the outer WHERE on ca.code")
+	}
+	if len(args) != 2 || args[0] != "USDC" || args[1] != 100 {
+		t.Errorf("expected args=[code, limit]; got %v", args)
+	}
+}
+
+// TestBuildCoinsQuery_IssuerAndCode_CombinedPushdown verifies that
+// issuer + code combine into a single ANDed chosen_assets predicate
+// ($1 issuer, $2 code) — the "pin exactly one classic asset" case
+// the CodeFilter/IssuerFilter docs describe (BACKLOG #54).
+func TestBuildCoinsQuery_IssuerAndCode_CombinedPushdown(t *testing.T) {
+	t.Parallel()
+	issuer := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	sql, args := buildCoinsQuery(100, issuer, "USDC", "", "", CoinsOrderObservationCountDesc)
+
+	if !strings.Contains(sql, "WITH chosen_assets AS (SELECT asset_id FROM classic_assets WHERE issuer_g_strkey = $1 AND code = $2)") {
+		t.Errorf("issuer+code query must AND both predicates in chosen_assets; got first 600 chars:\n%s", sql[:600])
+	}
+	if !strings.Contains(sql, "ca.issuer_g_strkey = $1") || !strings.Contains(sql, "ca.code = $2") {
+		t.Error("issuer+code query must keep both outer-WHERE predicates")
+	}
+	if len(args) != 3 || args[0] != issuer || args[1] != "USDC" || args[2] != 100 {
+		t.Errorf("expected args=[issuer, code, limit]; got %v", args)
 	}
 }

@@ -78,6 +78,13 @@ type ListCoinsOptions struct {
 	Limit int
 	// Issuer, when non-empty, restricts to that G-strkey.
 	Issuer string
+	// Code, when non-empty, restricts to rows whose classic asset
+	// code matches EXACTLY (case-sensitive — Stellar codes are
+	// case-significant; USDC and usdc are distinct assets). Codes
+	// are not unique on Stellar, so combine with Issuer to pin a
+	// single asset. Pushes down to the indexed classic_assets.code
+	// column (BACKLOG #54).
+	Code string
 	// Cursor is the keyset cursor returned by the previous
 	// response's NextCursor field. Empty for the first page.
 	Cursor string
@@ -155,7 +162,7 @@ func (s *Store) ListCoinsExt(ctx context.Context, opts ListCoinsOptions) ([]Coin
 	case limit > 501:
 		limit = 501
 	}
-	query, args := buildCoinsQuery(limit, opts.Issuer, opts.Cursor, opts.Q, opts.Order)
+	query, args := buildCoinsQuery(limit, opts.Issuer, opts.Code, opts.Cursor, opts.Q, opts.Order)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: ListCoins: %w", err)
@@ -576,15 +583,15 @@ func listCoinsBaseSelectSQL(pushdownPredicate string) string {
 }
 
 // buildCoinsQuery composes the WHERE + ORDER + LIMIT around
-// listCoinsBaseSelectSQL, given the limit / issuer-filter / keyset
-// cursor / search query. The combinatorial explosion of
-// (issuer × cursor × q) is too painful as a switch; use a
-// slice + numbered placeholders.
-func buildCoinsQuery(limit int, issuer, cursor, q string, order CoinsOrder) (string, []any) {
+// listCoinsBaseSelectSQL, given the limit / issuer-filter /
+// code-filter / keyset cursor / search query. The combinatorial
+// explosion of (issuer × code × cursor × q) is too painful as a
+// switch; use a slice + numbered placeholders.
+func buildCoinsQuery(limit int, issuer, code, cursor, q string, order CoinsOrder) (string, []any) {
 	var (
-		conds             []string
-		args              []any
-		pushdownPredicate string
+		conds         []string
+		args          []any
+		pushdownConds []string
 	)
 	if issuer != "" {
 		args = append(args, issuer)
@@ -596,8 +603,23 @@ func buildCoinsQuery(limit int, issuer, cursor, q string, order CoinsOrder) (str
 		// dropping per_asset_24h_vol's row count from ~256k to ~9
 		// in the GA5Z… case measured 2026-05-20. Reuses $1 (the
 		// issuer arg) so no additional placeholder is needed.
-		pushdownPredicate = fmt.Sprintf("issuer_g_strkey = $%d", len(args))
+		pushdownConds = append(pushdownConds, fmt.Sprintf("issuer_g_strkey = $%d", len(args)))
 	}
+	if code != "" {
+		// BACKLOG #54: exact, case-sensitive code equality on the
+		// indexed classic_assets.code column (classic_assets_code_idx).
+		// A bare code is not unique (many issuers mint "USDC"), so it
+		// only narrows to a handful of rows — but combined with issuer
+		// it pins a single asset. Same chosen_assets pushdown as issuer:
+		// reuses the outer-WHERE placeholder so no extra arg is bound.
+		args = append(args, code)
+		conds = append(conds, fmt.Sprintf("ca.code = $%d", len(args)))
+		pushdownConds = append(pushdownConds, fmt.Sprintf("code = $%d", len(args)))
+	}
+	// The chosen_assets pushdown predicate ANDs whatever narrowing
+	// filters are active (issuer, code, or both). Empty when neither
+	// is set — listCoinsBaseSelectSQL then skips the CTE entirely.
+	pushdownPredicate := strings.Join(pushdownConds, " AND ")
 	if q != "" {
 		args = append(args, "%"+q+"%")
 		conds = append(conds, fmt.Sprintf(
