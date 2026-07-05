@@ -244,10 +244,11 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 // mandatory here because the SEP-41 topics ARE the CAP-67 classic-token
 // firehose the DEX/lending passes exclude (ClassicTokenTopic0Syms).
 //
-// ONLY ch-rebuild's -sep41 flag consumes this: the sources must not
-// enter the ADR-0033 projection reconcile (compute-completeness /
-// ch-reproject / verify-reconciliation) until the operator
-// truncate+re-derive has purged the pre-migration-0057 collapsed rows.
+// Consumers: ch-rebuild's -sep41 flag (the re-derive) and — since the
+// 2026-07-06 full-history truncate+re-derive purged the
+// pre-migration-0057 collapsed rows — compute-completeness's default
+// catalogue (watched-set-gated), which gives the two sources ADR-0033
+// verdicts like every other projected source.
 //
 // Errors when the watched set is empty: an operator who passed -sep41
 // with no `[supply] watched_sep41_contracts` asked for an impossible
