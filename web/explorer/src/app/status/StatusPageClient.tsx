@@ -57,6 +57,12 @@ type StatusResponse = components['schemas']['StatusResponse'];
 
 type Envelope = components['schemas']['StatusEnvelope'];
 
+// Operator-authored status banner (GET /v1/status/notices). Distinct
+// from the alert-derived ActiveIncident above: a StatusNotice is a
+// hand-posted announcement (maintenance window, ongoing incident) that
+// an operator resolves to clear.
+type StatusNotice = components['schemas']['StatusNotice'];
+
 // REGIONS is the deployment fleet the status page queries. One
 // entry today (r1); r2/r3 join as their deploys land — just append
 // a row and the page renders an extra panel. Each region must
@@ -571,6 +577,7 @@ export default function StatusPageClient({
   return (
     <Container className="max-w-5xl space-y-8 py-10">
       <PageHead />
+      <StatusNotices />
       <OverallBanner status={status?.overall ?? 'unknown'} tone={overallTone} />
       {error && (
         <Card className="border-bad-300 bg-bad-50 px-4 py-3 text-sm text-bad-700">
@@ -675,6 +682,90 @@ function OverallBanner({
           <p className="mt-1.5 text-sm leading-relaxed text-ink-muted">
             {subtitles[status]}
           </p>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+// StatusNotices renders the operator-authored banners from
+// GET /v1/status/notices at the top of the page — a maintenance window
+// or ongoing-incident announcement is the first thing a visitor should
+// see. It polls independently on the standard cadence and, per the
+// page's "never render broken" contract (WB-02), collapses to nothing
+// on an empty list OR any fetch/parse error.
+function StatusNotices() {
+  const [notices, setNotices] = useState<StatusNotice[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function poll() {
+      try {
+        const res = await fetch(`${API_BASE_URL}/v1/status/notices`, {
+          cache: 'no-store',
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const env = (await res.json()) as {
+          data?: { notices?: StatusNotice[] };
+        };
+        if (cancelled) return;
+        // The endpoint already returns only active notices, but filter
+        // defensively so a `resolved` row can never leak into the banner.
+        setNotices(
+          (env.data?.notices ?? []).filter((n) => n.status === 'active'),
+        );
+      } catch {
+        if (cancelled) return;
+        setNotices([]);
+      }
+    }
+    poll();
+    const id = setInterval(poll, POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
+  if (notices.length === 0) return null;
+
+  return (
+    <section className="space-y-3" aria-label="Operator notices">
+      {notices.map((n) => (
+        <NoticeBanner key={n.id} notice={n} />
+      ))}
+    </section>
+  );
+}
+
+function NoticeBanner({ notice }: { notice: StatusNotice }) {
+  const tone = noticeTone(notice.severity);
+  const Icon = tone.icon;
+  const posted = notice.updated_at ?? notice.created_at;
+  return (
+    <Card className={`overflow-hidden border ${tone.cardBorder}`}>
+      <div className={`flex items-start gap-4 p-5 ${tone.cardBg}`}>
+        <div
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-card bg-surface ${tone.fg} ring-1 ${tone.ring}`}
+        >
+          <Icon className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="text-base font-semibold text-ink">{notice.title}</h2>
+            <Badge tone={tone.badge}>{tone.label}</Badge>
+          </div>
+          {/* Plain-text body rendered as a React child — escaped by
+              React, never dangerouslySetInnerHTML. `whitespace-pre-line`
+              preserves operator line breaks without allowing markup. */}
+          <p className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-ink-muted">
+            {notice.body}
+          </p>
+          {posted && (
+            <p className="mt-2 text-xs text-ink-faint">
+              Updated {timeSince(posted)} ago
+            </p>
+          )}
         </div>
       </div>
     </Card>
@@ -1856,6 +1947,63 @@ function toneFor(status?: ServiceStatus): {
         cardBg: 'bg-surface-muted',
         cardBorder: 'border-line',
         badge: 'neutral',
+      };
+  }
+}
+
+// noticeTone maps a StatusNotice severity onto the same semantic
+// palette the rest of the page uses: critical/major → bad (red),
+// minor → warn (amber), maintenance → brand (blue, informational).
+function noticeTone(severity: StatusNotice['severity']): {
+  icon: typeof CheckCircle2;
+  fg: string;
+  ring: string;
+  cardBg: string;
+  cardBorder: string;
+  badge: BadgeTone;
+  label: string;
+} {
+  switch (severity) {
+    case 'critical':
+      return {
+        icon: XCircle,
+        fg: 'text-bad-700',
+        ring: 'ring-bad-300/60',
+        cardBg: 'bg-bad-50',
+        cardBorder: 'border-bad-300',
+        badge: 'bad',
+        label: 'Critical',
+      };
+    case 'major':
+      return {
+        icon: AlertTriangle,
+        fg: 'text-bad-700',
+        ring: 'ring-bad-300/60',
+        cardBg: 'bg-bad-50',
+        cardBorder: 'border-bad-300',
+        badge: 'bad',
+        label: 'Major',
+      };
+    case 'minor':
+      return {
+        icon: AlertTriangle,
+        fg: 'text-warn-700',
+        ring: 'ring-warn-300/60',
+        cardBg: 'bg-warn-50',
+        cardBorder: 'border-warn-300',
+        badge: 'warn',
+        label: 'Minor',
+      };
+    case 'maintenance':
+    default:
+      return {
+        icon: Info,
+        fg: 'text-brand-700',
+        ring: 'ring-brand-200',
+        cardBg: 'bg-brand-50',
+        cardBorder: 'border-brand-200',
+        badge: 'brand',
+        label: 'Maintenance',
       };
   }
 }
