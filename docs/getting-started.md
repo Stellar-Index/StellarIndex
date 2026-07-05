@@ -1,6 +1,6 @@
 ---
 title: Getting started with Stellar Index
-last_verified: 2026-05-04
+last_verified: 2026-07-05
 status: living doc
 ---
 
@@ -242,10 +242,16 @@ cd stellar-index
 make dev    # docker-compose: TimescaleDB + Redis + MinIO (app binaries run on the host)
 ```
 
-Production deployment is documented in
-[`docs/operations/archival-node-bringup.md`](operations/archival-node-bringup.md).
-The tier-1 deployment runs three geographically-separated archival
-nodes per [ADR-0004](adr/0004-tier1-validator-aspiration.md).
+For a full end-to-end operator guide — architecture, hardware/disk
+sizing (including a recent-window-only "light mode" that skips the
+multi-TB history mirror), and step-by-step bring-up of the whole
+stack — see
+[`docs/operations/self-hosting.md`](operations/self-hosting.md). The
+internal bring-up recipe it adapts is
+[`docs/operations/archival-node-bringup.md`](operations/archival-node-bringup.md),
+and the fastest path if you're comfortable with Ansible. The tier-1
+deployment runs three geographically-separated archival nodes per
+[ADR-0004](adr/0004-tier1-validator-aspiration.md).
 
 ## Help
 
