@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.8.2] — 2026-07-05
+
 ### Added
 - **/diagnostics honest panels + per-source health** (BACKLOG #33):
   the explorer /diagnostics page now renders a decoder-coverage panel
