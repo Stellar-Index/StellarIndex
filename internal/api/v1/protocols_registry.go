@@ -3,6 +3,7 @@ package v1
 import (
 	"github.com/StellarIndex/stellar-index/internal/sources/aquarius"
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
+	blend_backstop "github.com/StellarIndex/stellar-index/internal/sources/blend_backstop"
 	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
 )
 
@@ -38,6 +39,22 @@ type ProtocolMeta struct {
 	// VerificationPage is the repo-relative path of the protocol's
 	// public verification/coverage write-up, "" when none exists yet.
 	VerificationPage string
+	// ExtraContracts folds a sub-module source's own contracts into
+	// this protocol's roster + analytics scope — for a source that is
+	// logically part of this protocol but emits on its own contract
+	// address(es) and lands in its own table (e.g. the Blend Backstop
+	// insurance module: distinct contracts + a separate blend_backstop
+	// source, but part of the Blend protocol page). Tagged Kind="module"
+	// in the roster; included in the lake-analytics contract-id scope so
+	// their events show in the breakdown/activity. Empty for the common
+	// case (a protocol that owns every contract it reports).
+	ExtraContracts []string
+	// ExtraEventSources lists additional logical source names whose
+	// trailing-24h event count is summed into this protocol's events_24h
+	// — the count-side companion to ExtraContracts (the Backstop's
+	// blend_backstop_events land under the 'blend_backstop' census key,
+	// which folds into 'blend' here). Empty for a self-contained source.
+	ExtraEventSources []string
 }
 
 // protocolRegistry is the static protocol directory served by
@@ -86,14 +103,24 @@ var protocolRegistry = []ProtocolMeta{
 	{
 		Name:          "blend",
 		Category:      "lending",
-		Description:   "Blend — isolated lending pools on Soroban, deployed from the Blend pool factories.",
+		Description:   "Blend — isolated lending pools on Soroban, deployed from the Blend pool factories, plus the shared Backstop insurance module.",
 		GenesisLedger: blend.FactoryGenesisLedger,
 		Factories:     blend.MainnetPoolFactories,
 		EventKinds: []string{
 			blend.PositionEventKind, blend.EmissionEventKind, blend.AdminEventKind,
 			blend.NewAuctionEventKind, blend.FillAuctionEventKind, blend.DeleteAuctionEventKind,
+			// The Backstop insurance module (blend_backstop source) folds into
+			// the Blend protocol page: its deposit/withdraw/draw/claim/… events
+			// land under blend_backstop.event, on the Backstop contracts below.
+			blend_backstop.Event{}.EventKind(),
 		},
 		VerificationPage: "docs/protocols/blend.md",
+		// The two mainnet Backstop deployments — a separate event surface
+		// (own contracts, own 10-event vocabulary) but part of the Blend
+		// protocol. Folding them here surfaces the backstop on /v1/protocols/blend
+		// (roster + lake analytics + event count) instead of being invisible.
+		ExtraContracts:    []string{blend_backstop.MainnetBackstopV1, blend_backstop.MainnetBackstopV2},
+		ExtraEventSources: []string{blend_backstop.SourceName},
 	},
 	{
 		Name:          "defindex",

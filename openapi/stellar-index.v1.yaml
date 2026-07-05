@@ -3832,6 +3832,7 @@ paths:
                     last_seen: '2026-07-03T21:40:33Z'
                   event_kinds:
                   - blend.position
+                  - blend_backstop.event
                   verification_page: docs/protocols/blend.md
                   event_breakdown:
                   - event_type: untyped
@@ -3883,7 +3884,7 @@ paths:
                                     first_ledger: { type: integer, format: int64, description: First-observed ledger (absent when unknown). }
                                     token0: { type: string, description: Pair token0 C-strkey (soroswap only). }
                                     token1: { type: string, description: Pair token1 C-strkey (soroswap only). }
-                                    kind: { type: string, enum: [factory, instance], description: Role within the protocol — a verified trust-root or a factory-deployed instance. }
+                                    kind: { type: string, enum: [factory, instance, module], description: "Role within the protocol — a verified trust-root (factory), a factory-deployed pool/vault/market (instance), or a folded-in sub-module contract that belongs to this protocol but emits on its own address (module — e.g. the Blend Backstop)." }
                                     events: { type: integer, format: int64, description: "Decoded contract-event count for this instance over activity_window_days (from the lake)." }
                                     last_seen: { type: string, format: date-time, description: Close time of this instance's most recent event in the window. }
                               event_kinds:

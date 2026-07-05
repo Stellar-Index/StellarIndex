@@ -79,25 +79,33 @@ Verified against `blend-contracts-v2` `pool/src/events.rs` /
 | `gulp`, `claim`, `reserve_emission_update`, `gulp_emissions`, `bad_debt`, `defaulted_debt` | `blend_emissions` |
 | `set_admin`, `update_pool`, `queue_set_reserve`, `cancel_set_reserve`, `set_reserve`, `set_status` | `blend_admin` |
 
-## Backstop singletons (2 — events known, NOT yet decoded)
+## Backstop singletons (2 — decoded by the `blend_backstop` source)
 
 Like the pool factories, the Backstop was redeployed — V1 + V2 both have
 on-chain activity. Their event surface (different from the pools) is
-**not yet decoded by us** — listed here for completeness and so the
-Blend team can confirm. Lake-verified 2026-06-12; independently
-corroborated by the community Dune dashboards (mootz12/blend-v2-events
-shows the V2 backstop's ~92k event rows).
+decoded by the dedicated **`blend_backstop`** source (migration 0063; 10
+event kinds), gated on the two contract addresses below. Both contracts
+now fold into this protocol page (roster **module** rows + the lake
+event breakdown + `events_24h`) and back the "Backstop volume / events"
+KPIs in the lending analytics block. Lake-verified 2026-06-12;
+independently corroborated by the community Dune dashboards
+(mootz12/blend-v2-events shows the V2 backstop's ~92k event rows).
 
 | Backstop | Address | Lake events (top kinds) |
 |---|---|---|
 | V1 (**previously undocumented**) | `CAO3AGAMZVRMHITL36EJ2VZQWKYRPWMQAPDQD5YEOF3GIF7T44U4JAL3` | queue_withdrawal ×1,374 · gulp_emissions ×209 · dequeue_withdrawal ×143 · claim ×6 · rw_zone ×5 (51.49M→62.08M) |
 | V2 (documented) | `CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7` | queue_withdrawal ×1,312 · deposit ×634 · claim ×570 · distribute ×247 · dequeue_withdrawal ×163 · donate ×132 · withdraw ×30 · gulp_emissions ×11 · rw_zone_add ×5 |
 
-> **Why they're not in the pool gate:** backstop event bodies differ
-> from the pool events sharing the same topic names (`claim`,
-> `withdraw`, `gulp_emissions`) — routing them through the pool decoder
-> would mis-decode. Pre-gate topic-matching either soft-errored or wrote
-> wrong-shaped rows for these; the 2026-06-12 re-derive purges those.
-> Proper capture = a dedicated backstop decoder (EVERY-event backlog).
-> **Blend team:** please confirm the V1 backstop address and whether an
-> Emitter-contract event surface exists that we should also cover.
+> **Why they're a separate source, not the pool gate:** backstop event
+> bodies differ from the pool events sharing the same topic names
+> (`claim`, `withdraw`, `gulp_emissions`) — routing them through the pool
+> decoder would mis-decode. So the contract-id gate (not the topic
+> symbol) disambiguates a backstop event from a pool event, and the
+> backstop lands in its own `blend_backstop_events` table via the
+> `blend_backstop` source. **Provenance caveat:** the 10 event schemas
+> were reverse-engineered from mainnet lake samples (2026-06-15), not yet
+> confirmed against the Blend team's published contract source — so the
+> source is **live-capture only** (no historical backfill / `BackfillSafe`
+> flip until confirmed). **Blend team:** please confirm the V1 backstop
+> address, the event schemas, and whether an Emitter-contract event
+> surface exists that we should also cover.

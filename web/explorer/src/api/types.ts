@@ -5523,7 +5523,8 @@ export interface paths {
                          *           }
                          *         ],
                          *         "event_kinds": [
-                         *           "blend.position"
+                         *           "blend.position",
+                         *           "blend_backstop.event"
                          *         ],
                          *         "verification_page": "docs/protocols/blend.md",
                          *         "event_breakdown": [
@@ -5582,10 +5583,10 @@ export interface paths {
                                     /** @description Pair token1 C-strkey (soroswap only). */
                                     token1?: string;
                                     /**
-                                     * @description Role within the protocol — a verified trust-root or a factory-deployed instance.
+                                     * @description Role within the protocol — a verified trust-root (factory), a factory-deployed pool/vault/market (instance), or a folded-in sub-module contract that belongs to this protocol but emits on its own address (module — e.g. the Blend Backstop).
                                      * @enum {string}
                                      */
-                                    kind?: "factory" | "instance";
+                                    kind?: "factory" | "instance" | "module";
                                     /**
                                      * Format: int64
                                      * @description Decoded contract-event count for this instance over activity_window_days (from the lake).

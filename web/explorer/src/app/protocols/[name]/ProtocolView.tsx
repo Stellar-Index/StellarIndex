@@ -689,6 +689,16 @@ function RoleChip({ kind }: { kind?: string }) {
       </span>
     );
   }
+  if (kind === 'module') {
+    return (
+      <span
+        className="rounded-sm bg-brand-50 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-brand-700"
+        title="A sub-module contract that belongs to this protocol but emits on its own address (e.g. the Blend Backstop insurance module)."
+      >
+        module
+      </span>
+    );
+  }
   return (
     <span className="rounded-sm bg-surface-subtle px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-ink-body">
       instance
