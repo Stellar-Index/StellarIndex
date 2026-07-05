@@ -81,12 +81,20 @@ func (r *ExplorerReader) ProtocolEventBreakdown(ctx context.Context, contractIDs
 	}
 	// Group by topic[0]'s denormalized symbol. For events whose topic[0] is
 	// NOT a Symbol — the lake leaves topic_0_sym empty — also carry the raw
-	// topic[1] so we can recover the real event name from it. Soroswap is the
-	// dominant case: its events are [String("SoroswapPair"), Symbol(name)], so
-	// the event name (swap/sync/deposit/withdraw/skim) lives in topic[1].
-	// The if() keeps Symbol-topic[0] events grouped by their symbol (topic[1]
-	// coalesced away) and splits only the empty bucket by topic[1].
-	q := `SELECT topic_0_sym, if(topic_0_sym = '', topics_xdr[2], '') AS t1, count() AS c
+	// topic[1] AND topic[0] XDR so scanEventBreakdown can recover the real
+	// event name at read time:
+	//   - Soroswap: [String("SoroswapPair"), Symbol(name)] — the event name
+	//     (swap/sync/deposit/withdraw/skim) lives in topic[1].
+	//   - Phoenix:  [String("swap"), String("<field>")] — the ACTION name is
+	//     topic[0] itself, emitted as a String (its field names have spaces,
+	//     so the whole contract uses ScvString topics), and topic[1] is a
+	//     per-field name we do NOT want to split on.
+	// The if() keeps Symbol-topic[0] events grouped by their symbol (t0/t1
+	// coalesced away) and only splits the empty bucket by (t1, t0).
+	q := `SELECT topic_0_sym,
+		       if(topic_0_sym = '', topics_xdr[2], '') AS t1,
+		       if(topic_0_sym = '', topics_xdr[1], '') AS t0,
+		       count() AS c
 		FROM stellar.contract_events
 		WHERE contract_id IN (?) AND event_type = 'contract'`
 	args := []any{contractIDs}
@@ -94,37 +102,32 @@ func (r *ExplorerReader) ProtocolEventBreakdown(ctx context.Context, contractIDs
 		q += ` AND ledger_seq >= ?`
 		args = append(args, sinceLedger)
 	}
-	q += ` GROUP BY topic_0_sym, t1 ORDER BY c DESC LIMIT 200`
+	q += ` GROUP BY topic_0_sym, t1, t0 ORDER BY c DESC LIMIT 200`
 	rows, err := r.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: protocol event breakdown: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	// Aggregate by effective event name: topic_0_sym when present, else the
-	// decoded topic[1] Symbol. Rows whose name can't be recovered (neither
-	// topic is a Symbol) are dropped here — protocols.go's reconcile folds
-	// them into the "untyped" remainder against the unfiltered total.
+	// Aggregate by effective event name (see effectiveEventName). Rows whose
+	// name can't be recovered from any topic are dropped here — protocols.go's
+	// reconcile folds them into the "untyped" remainder against the total.
 	return scanEventBreakdown(rows)
 }
 
-// scanEventBreakdown aggregates (topic_0_sym, topic1_xdr, count) rows into
-// named event-type counts — shared by the raw-scan and daily-preagg paths
-// so the topic[1] name-recovery behaves identically on both.
+// scanEventBreakdown aggregates (topic_0_sym, topic1_xdr, topic0_xdr, count)
+// rows into named event-type counts — shared by the raw-scan and daily-preagg
+// paths so the topic name-recovery behaves identically on both.
 func scanEventBreakdown(rows driver.Rows) ([]ProtocolEventTypeCount, error) {
 	byName := make(map[string]uint64)
 	for rows.Next() {
-		var sym, t1 string
+		var sym, t1, t0 string
 		var c uint64
-		if err := rows.Scan(&sym, &t1, &c); err != nil {
+		if err := rows.Scan(&sym, &t1, &t0, &c); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan event breakdown: %w", err)
 		}
-		name := sym
+		name := effectiveEventName(sym, t1, t0)
 		if name == "" {
-			dec, ok := decodeTopicSymbol(t1)
-			if !ok {
-				continue
-			}
-			name = dec
+			continue
 		}
 		byName[name] += c
 	}
@@ -139,6 +142,36 @@ func scanEventBreakdown(rows driver.Rows) ([]ProtocolEventTypeCount, error) {
 	return out, nil
 }
 
+// effectiveEventName resolves the display label for a contract event from its
+// denormalized topic[0] Symbol plus the raw topic[1]/topic[0] XDR (populated
+// only when topic[0] isn't a Symbol). Priority, chosen so no currently-labeled
+// event regresses:
+//
+//  1. topic_0_sym — topic[0] is a Symbol (comet "POOL", aquarius "trade", …).
+//  2. topic[1] decoded as a Symbol — topic[0] is a namespace-marker String and
+//     the event name lives in topic[1] (Soroswap: [String("SoroswapPair"),
+//     Symbol("swap")]). Symbol-ONLY on purpose: it must NOT match Phoenix's
+//     String field names, so those fall through to (3).
+//  3. topic[0] decoded as a Symbol OR String — topic[0] IS the action name but
+//     was emitted as a non-Symbol scval (Phoenix: [String("swap"),
+//     String("<field>")]). This is the generalization of the Soroswap
+//     special-case: it labels phoenix swap/provide_liquidity/… instead of
+//     dropping them into "untyped".
+//
+// Returns "" when no topic yields a name (folded into "untyped" upstream).
+func effectiveEventName(topic0Sym, topic1XDR, topic0XDR string) string {
+	if topic0Sym != "" {
+		return topic0Sym
+	}
+	if dec, ok := decodeTopicSymbol(topic1XDR); ok {
+		return dec
+	}
+	if dec, ok := decodeTopicName(topic0XDR); ok {
+		return dec
+	}
+	return ""
+}
+
 // decodeTopicSymbol decodes a base64-XDR ScVal and returns its Symbol string,
 // ok=false when empty or not a Symbol. Recovers the event name from topic[1]
 // for protocols whose topic[0] is a non-Symbol marker (Soroswap).
@@ -151,6 +184,29 @@ func decodeTopicSymbol(b64 string) (string, bool) {
 		return "", false
 	}
 	if s, ok := v.GetSym(); ok {
+		return string(s), true
+	}
+	return "", false
+}
+
+// decodeTopicName decodes a base64-XDR ScVal topic and returns its name when it
+// is a Symbol OR a String, ok=false otherwise. Unlike decodeTopicSymbol
+// (Symbol-only) it also accepts Strings, because some protocols emit their
+// event/action name as an ScvString rather than an ScvSymbol — Phoenix's
+// topics carry field names with spaces (e.g. "actual received amount"), which
+// aren't valid Symbols, so the whole contract uses Strings, topic[0] included.
+func decodeTopicName(b64 string) (string, bool) {
+	if b64 == "" {
+		return "", false
+	}
+	var v xdr.ScVal
+	if err := xdr.SafeUnmarshalBase64(b64, &v); err != nil {
+		return "", false
+	}
+	if s, ok := v.GetSym(); ok {
+		return string(s), true
+	}
+	if s, ok := v.GetStr(); ok {
 		return string(s), true
 	}
 	return "", false
@@ -262,16 +318,17 @@ func (r *ExplorerReader) ProtocolDailyActivityFast(ctx context.Context, contract
 }
 
 // ProtocolEventBreakdownFast is ProtocolEventBreakdown over the daily
-// pre-aggregation, preserving the topic[1] name-recovery for events
-// whose topic[0] isn't a Symbol (the t1_xdr column carries it).
+// pre-aggregation, preserving the topic name-recovery for events whose
+// topic[0] isn't a Symbol (the t1_xdr / t0_xdr columns carry the raw
+// topic[1] / topic[0] XDR — see effectiveEventName).
 func (r *ExplorerReader) ProtocolEventBreakdownFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]ProtocolEventTypeCount, error) {
 	if len(contractIDs) == 0 {
 		return nil, nil
 	}
-	const q = `SELECT topic_0_sym, t1_xdr, toUInt64(uniqExactMerge(events)) AS c
+	const q = `SELECT topic_0_sym, t1_xdr, t0_xdr, toUInt64(uniqExactMerge(events)) AS c
 		FROM stellar.contract_events_daily
 		WHERE contract_id IN (?) AND event_type = 'contract' AND day >= ?
-		GROUP BY topic_0_sym, t1_xdr ORDER BY c DESC LIMIT 200`
+		GROUP BY topic_0_sym, t1_xdr, t0_xdr ORDER BY c DESC LIMIT 200`
 	rows, err := r.conn.Query(ctx, q, contractIDs, sinceDay)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: protocol event breakdown (fast): %w", err)

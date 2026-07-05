@@ -262,9 +262,17 @@ ORDER BY (contract_id, ledger_seq, tx_hash, op_index, event_index);
 --   INSERT INTO stellar.contract_events_daily
 --   SELECT toDate(close_time) AS day, contract_id, event_type,
 --          topic_0_sym, if(topic_0_sym = '', topics_xdr[2], '') AS t1_xdr,
+--          if(topic_0_sym = '', topics_xdr[1], '') AS t0_xdr,
 --          uniqExactState(ledger_seq, tx_hash, op_index, event_index)
 --   FROM stellar.contract_events FINAL
---   GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr;
+--   GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
+--
+-- Adding t0_xdr to an EXISTING deployment (r1) — the column is in the
+-- ORDER BY, so it can't be a bare ADD COLUMN; recreate + re-fill:
+--   RENAME TABLE stellar.contract_events_daily TO stellar.contract_events_daily_old;
+--   -- (also drop/recreate the _mv), run this CREATE, then the fill above,
+--   -- then DROP the _old table. Until t0_xdr is populated the fast query
+--   -- errors and ProtocolEventBreakdown gracefully falls back to the raw scan.
 CREATE TABLE IF NOT EXISTS stellar.contract_events_daily
 (
     day          Date,
@@ -275,10 +283,15 @@ CREATE TABLE IF NOT EXISTS stellar.contract_events_daily
     -- preserves ProtocolEventBreakdown's name-recovery for
     -- soroswap-style [String("SoroswapPair"), Symbol(name)] events.
     t1_xdr       String,
+    -- topic[0] raw XDR, captured ONLY when topic[0] isn't a Symbol —
+    -- recovers the action name for protocols whose topic[0] IS the event
+    -- name but emitted as a non-Symbol scval (Phoenix: [String("swap"),
+    -- String("<field>")]). Decoded at read time by effectiveEventName.
+    t0_xdr       String,
     events       AggregateFunction(uniqExact, UInt32, String, UInt32, UInt32)
 )
 ENGINE = AggregatingMergeTree
-ORDER BY (contract_id, day, event_type, topic_0_sym, t1_xdr);
+ORDER BY (contract_id, day, event_type, topic_0_sym, t1_xdr, t0_xdr);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.contract_events_daily_mv
 TO stellar.contract_events_daily AS
@@ -288,9 +301,10 @@ SELECT
     event_type,
     topic_0_sym,
     if(topic_0_sym = '', topics_xdr[2], '') AS t1_xdr,
+    if(topic_0_sym = '', topics_xdr[1], '') AS t0_xdr,
     uniqExactState(ledger_seq, tx_hash, op_index, event_index) AS events
 FROM stellar.contract_events
-GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr;
+GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
 
 -- ── tx_hash_index — hash-ordered transaction lookup (perf-todo §4) ────────
 -- GET /v1/tx/{hash} resolution table. stellar.transactions is ORDER BY
