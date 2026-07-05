@@ -17,20 +17,117 @@ const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
 type Params = Promise<{ slug: string }>;
 
+interface AssetIndex {
+  // Canonical slugs as returned by the listing — drives
+  // generateStaticParams' route enumeration.
+  slugs: string[];
+  // Lowercased slug / asset_id → canonical asset_id. Used by the chart
+  // sparkline fallback: /v1/chart rejects catalogue slugs (strict
+  // canonical form only) and the thin GlobalAssetView these slugs return
+  // carries no asset_id, so we resolve it from the listing here.
+  byKey: Map<string, string>;
+}
+
+let assetIndexPromise: Promise<AssetIndex> | null = null;
+
+// getAssetIndex fetches the /v1/assets listing ONCE per build and indexes
+// it by slug + asset_id. This is a static-export server component, so the
+// fetch runs at build time only — zero weight in the shipped embed
+// bundle. Shared by generateStaticParams (slug enumeration) and the
+// per-page chart-sparkline fallback (slug → canonical asset_id).
+function getAssetIndex(): Promise<AssetIndex> {
+  if (assetIndexPromise) return assetIndexPromise;
+  assetIndexPromise = (async () => {
+    const slugs: string[] = [];
+    const byKey = new Map<string, string>();
+    if (isCIStub) return { slugs, byKey };
+    try {
+      const res = await fetch(`${API_BASE_URL}/v1/assets?limit=500`, {
+        signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const env = (await res.json()) as {
+        data: { slug?: string; asset_id?: string }[];
+      };
+      for (const row of env.data ?? []) {
+        const slug = row.slug || row.asset_id || '';
+        if (slug) slugs.push(slug);
+        const id = row.asset_id || '';
+        if (id) {
+          if (row.slug) byKey.set(row.slug.toLowerCase(), id);
+          byKey.set(id.toLowerCase(), id);
+        }
+      }
+    } catch {
+      // Leave empty — generateStaticParams falls back to the single
+      // anchor slug, and the sparkline fallback simply renders no chart.
+    }
+    return { slugs, byKey };
+  })();
+  return assetIndexPromise;
+}
+
+// resolveChartAsset picks the canonical asset id to query /v1/chart with.
+// XLM/native and any AssetDetail response already carry coin.asset_id; a
+// thin GlobalAssetView (catalogue slugs like usdc, aqua) has none, so we
+// resolve it from the listing index by slug.
+function resolveChartAsset(
+  slug: string,
+  coin: Coin,
+  index: AssetIndex,
+): string | null {
+  if (coin.asset_id) return coin.asset_id;
+  const norm = slug.toLowerCase();
+  if (norm === 'xlm' || norm === 'native') return 'native';
+  return index.byKey.get(norm) ?? null;
+}
+
+const chartSparklineMemo = new Map<
+  string,
+  Promise<{ t: string; p?: string | null }[]>
+>();
+
+// fetchChartSparkline pulls a trailing-24h hourly USD series from
+// /v1/chart — the same endpoint the currency embed's fetchFxSeries uses —
+// so catalogue slugs (whose thin GlobalAssetView carries no
+// price_history_24h) still get a real sparkline. The widget's price is
+// the asset's USD price, so the pairing is <asset> vs fiat:USD. Memoised
+// per asset so the ~3 casing variants of one slug share a single
+// build-time call (the /v1/assets rate-limit lesson, audit 2026-06-19).
+// Degrades to [] on any error → the card just omits the sparkline.
+function fetchChartSparkline(
+  asset: string,
+): Promise<{ t: string; p?: string | null }[]> {
+  const cached = chartSparklineMemo.get(asset);
+  if (cached) return cached;
+  const p = (async () => {
+    if (isCIStub) return [];
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/v1/chart?asset=${encodeURIComponent(asset)}&quote=fiat:USD&timeframe=24h&granularity=1h`,
+        { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
+      );
+      if (!res.ok) return [];
+      const env = (await res.json()) as {
+        data?: { points?: { t: string; p?: string | null }[] };
+      };
+      return (env.data?.points ?? []).map((pt) => ({
+        t: pt.t,
+        p: pt.p ?? null,
+      }));
+    } catch {
+      return [];
+    }
+  })();
+  chartSparklineMemo.set(asset, p);
+  return p;
+}
+
 export async function generateStaticParams() {
   const fallback = [{ slug: 'XLM' }];
   if (isCIStub) return fallback;
   try {
-    const res = await fetch(`${API_BASE_URL}/v1/assets?limit=500`, {
-      signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const env = (await res.json()) as {
-      data: { slug?: string; asset_id?: string }[];
-    };
-    const slugs = (env.data ?? [])
-      .map((d) => d.slug || d.asset_id || '')
-      .filter(Boolean);
+    const { slugs } = await getAssetIndex();
     if (slugs.length === 0) return fallback;
     // Always include XLM + native explicitly, and emit BOTH cases for
     // every slug — embeds are hand-typed into 3rd-party iframe src=
@@ -110,7 +207,7 @@ async function fetchCoin(slug: string): Promise<Coin | null> {
  */
 export default async function EmbedAssetPage({ params }: { params: Params }) {
   const { slug } = await params;
-  const coin = await fetchCoin(slug);
+  const [coin, index] = await Promise.all([fetchCoin(slug), getAssetIndex()]);
 
   if (!coin) {
     return (
@@ -124,14 +221,30 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
   const change1h = coin.change_1h_pct ? Number(coin.change_1h_pct) : null;
   const change24h = coin.change_24h_pct ? Number(coin.change_24h_pct) : null;
   const change7d = coin.change_7d_pct ? Number(coin.change_7d_pct) : null;
-  const points = coin.price_history_24h ?? [];
+  // The canonical asset id for /v1/price + /v1/chart. Present on
+  // AssetDetail (native + Stellar asset_ids); resolved from the listing
+  // for thin GlobalAssetView catalogue slugs (usdc, aqua, …).
+  const chartAsset = resolveChartAsset(slug, coin, index);
+  // Sparkline points: prefer the inlined 24h history (AssetDetail); fall
+  // back to a /v1/chart series so catalogue slugs get a real sparkline
+  // instead of none.
+  let points = coin.price_history_24h ?? [];
+  if (points.length === 0 && chartAsset) {
+    points = await fetchChartSparkline(chartAsset);
+  }
+  // Thin GlobalAssetView carries `ticker`, not `code`; fall back so the
+  // header renders a label rather than a blank.
+  const code = coin.code ?? (coin as { ticker?: string }).ticker ?? slug;
+  // LivePrice needs a canonical asset id; the resolved chart asset covers
+  // catalogue slugs so their price refreshes live too.
+  const liveAssetId = coin.asset_id ?? chartAsset ?? '';
 
   return (
     <div className="flex h-full min-h-32 flex-col gap-2 bg-surface px-4 py-3 text-ink">
       <div className="flex items-baseline justify-between gap-2">
         <div className="flex items-baseline gap-2">
           <span className="text-base font-semibold tracking-tight">
-            {coin.code}
+            {code}
           </span>
           <span className="font-mono text-[10px] text-ink-muted">
             Stellar
@@ -148,7 +261,7 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
       </div>
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <LivePrice
-          assetId={coin.asset_id}
+          assetId={liveAssetId}
           initial={priceNum != null ? formatPrice(priceNum) : '—'}
         />
         <ChangeChip pct={change1h} label="1h" />
