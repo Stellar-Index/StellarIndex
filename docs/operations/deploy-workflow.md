@@ -1,6 +1,6 @@
 ---
 title: Deploy workflow — pushing a tagged release to a region
-last_verified: 2026-05-05
+last_verified: 2026-07-05
 status: living doc
 ---
 
@@ -64,6 +64,12 @@ Currently only `r1` is wired. Adding `r2` / `r3`:
 
 ## What the playbook does
 
+Before the per-binary loop starts, the playbook's `pre_tasks` sync
+the release tag's `migrations/` tree to the host and run
+`stellarindex-migrate … up` — see
+[§Migrations run before binaries, and are not rolled back](#migrations-run-before-binaries-and-are-not-rolled-back)
+below for what that means for rollback.
+
 [`configs/ansible/playbooks/deploy-binary.yml`](../../configs/ansible/playbooks/deploy-binary.yml)
 loops over each requested binary and includes
 [`configs/ansible/tasks/deploy-one-binary.yml`](../../configs/ansible/tasks/deploy-one-binary.yml).
@@ -122,6 +128,57 @@ Then re-run `gh workflow run deploy.yml -f version=v0.1.3 …` to get
 the workflow's state back in sync (idempotent — it'll be a no-op if
 the sidecar already says v0.1.3 and the binary is healthy).
 
+## Migrations run before binaries, and are not rolled back
+
+`stellarindex-migrate … up` runs in `deploy-binary.yml`'s `pre_tasks`,
+**before any binary is touched** (F-1220, codex audit-2026-05-12) — a
+binary built against a newer schema must never restart onto an older
+one. It's idempotent (`golang-migrate` skips already-applied
+versions), so re-running the same deploy is a no-op here.
+
+The per-binary rollback described above (§What the playbook does,
+step 9) restores only the **binary**. It never runs `migrate down`.
+So if a binary fails its health probe and rolls back, the database is
+left on the **new** schema while the **old** binary runs again —
+"atomic rollback" covers the binary, not the schema (CS-099,
+`docs/audit-2026-06-30/01-cold-system-findings.md`).
+
+**This is intentional, not a gap.** Auto-running `migrate down` on a
+production rollback would be actively unsafe: down-migrations can be
+data-destructive (dropped columns, narrowed types), and there is no
+way for the pipeline to know whether something already depends on the
+schema it would be reverting. The policy this repo already practices
+instead — now codified in [`migrations/README.md`](../../migrations/README.md)
+rule 9 — is that every up-migration must be **additive and
+old-binary-safe**: the previous released binary has to keep running
+correctly against the new schema. A schema that's one migration ahead
+of the binary it's serving is therefore a supported, safe state, not
+a bug — the old binary was written to tolerate exactly that (extra
+nullable columns or tables it doesn't touch, no column it still reads
+renamed or dropped out from under it). `down.sql` files exist for
+local/dev iteration, not as a production rollback lever.
+
+**If the migration step itself fails mid-deploy** (i.e. before any
+binary was touched), the playbook fails at the `Apply outstanding
+migrations` task and no binary is installed — the host is left on its
+*old* binary and on whatever migrations applied before the failing
+one (each migration commits in its own transaction per
+`migrations/README.md` §Conventions, so a single failing migration
+doesn't half-apply, but earlier migrations in the same run already
+did). Operator checklist:
+
+1. `stellarindex-migrate -migrations /usr/local/share/stellarindex/migrations status`
+   on the host to see exactly which version it stopped at.
+2. Read the failing migration's `.up.sql` alongside the Ansible task
+   output for the actual Postgres error (permission, syntax, lock
+   timeout, etc.).
+3. Fix forward with a **new** migration — never hand-edit a migration
+   that may have partially run in production (`migrations/README.md`
+   rule 1).
+4. Re-run the deploy once the fix lands in a new tag; `migrate up`
+   resuming from where it stopped is exactly its designed idempotent-
+   resume behaviour.
+
 ## Failure modes
 
 | Symptom | Likely cause | Fix |
@@ -130,6 +187,7 @@ the sidecar already says v0.1.3 and the binary is healthy).
 | "Region <X> host secret is unset" | `<REGION>_HOST` not configured in GitHub Secrets | Add the secret per §Per-region setup |
 | "Bad binary preserved at …failed-vX.Y.Z" | New binary failed health probe; rolled back | Inspect `/usr/local/bin/<binary>.failed-<v>` on the host; `journalctl -u <binary> -n 200` shows why |
 | SSH timeout / "permission denied" | Stale key, removed `authorized_keys` entry, host firewall change | Verify `DEPLOY_SSH_PRIVATE_KEY` is current; SSH manually from a known-good box |
+| Fails at "Apply outstanding migrations" | A migration errored (permission, syntax, lock timeout) before any binary was touched | See §Migrations run before binaries, and are not rolled back — check `stellarindex-migrate … status`, fix forward with a new migration |
 | "Post-deploy version mismatch" *(future check)* | Currently disabled — no `--version` flag on binaries | Track in launch-readiness backlog |
 
 ## Cross-references
@@ -140,3 +198,4 @@ the sidecar already says v0.1.3 and the binary is healthy).
 - [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml) — the workflow itself
 - [`configs/ansible/playbooks/deploy-binary.yml`](../../configs/ansible/playbooks/deploy-binary.yml) — top-level playbook
 - [`configs/ansible/tasks/deploy-one-binary.yml`](../../configs/ansible/tasks/deploy-one-binary.yml) — per-binary task list
+- [`migrations/README.md`](../../migrations/README.md) — the additive-migrations policy §Migrations run before binaries, and are not rolled back depends on

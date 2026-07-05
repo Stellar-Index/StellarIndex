@@ -23,7 +23,10 @@
 #   7. Health probe (api: /v1/healthz; others: systemctl is-active)
 #      after `health_grace_seconds`.
 #   8. On failure in steps 6-7: rollback (mv .prev back, restart,
-#      restore old sidecar). Playbook exits non-zero.
+#      restore old sidecar). Playbook exits non-zero. This rolls back
+#      the BINARY only — migrations already applied in this deploy's
+#      pre_tasks are never reverted (CS-099; that's policy, not a gap,
+#      see docs/operations/deploy-workflow.md).
 #   9. Prune backups beyond the latest 5 to bound disk use.
 
 - name: "[{{ binary }}] Confirm new artefact exists on controller"
@@ -149,6 +152,10 @@
     - name: "[{{ binary }}] FAILURE — rolling back"
       ansible.builtin.debug:
         msg: "Health probe failed; rolling back {{ binary }} to {{ backup_tag }}"
+
+    - name: "[{{ binary }}] NOTE — binary rolled back, DB schema is not"
+      ansible.builtin.debug:
+        msg: "{{ binary }} will be rolled back to {{ backup_tag }}; DB schema remains at the new version — this is SAFE per the additive-migrations policy (every migration must stay backward-compatible with the previous released binary; see docs/operations/deploy-workflow.md and migrations/README.md rule 9). Migrations are never auto-rolled-back on a binary rollback."
 
     - name: "[{{ binary }}] Stop failing service"
       when: binary not in cli_binaries

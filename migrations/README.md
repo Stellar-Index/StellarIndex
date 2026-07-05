@@ -83,6 +83,26 @@ migrate -path migrations -database "${STELLARINDEX_POSTGRES_DSN}" down 1
    trades (`internal/aggregate/twap.go`). Do not start reading that
    column; treat it as dead.
 
+9. **Every up-migration must be additive and old-binary-safe.** The
+   previous released binary has to keep running correctly against the
+   new schema — a new nullable column, a new table, a new index are
+   fine; dropping/renaming a column, narrowing a type, or tightening a
+   constraint in the same release the code stops using the old shape
+   is not, because the deploy pipeline applies `migrate up` BEFORE the
+   new binary installs (`docs/operations/deploy-workflow.md`), and if
+   that binary then fails its health probe the rollback restores only
+   the **binary** — never the schema (CS-099,
+   `docs/audit-2026-06-30/01-cold-system-findings.md`). Breaking
+   changes go through the two-release deprecation dance: release N
+   adds the new shape alongside the old one (old binary still
+   reads/writes the old shape); release N+1 switches the code over;
+   release N+2, once nothing depends on it, drops the old shape.
+   `down.sql` files exist for local/dev iteration — they are NOT a
+   production rollback lever, and this repo does not auto-run
+   `migrate down` on a failed deploy (down-migrations can be
+   data-destructive, and the pipeline has no way to know whether
+   anything already depends on what it would be reverting).
+
 ## Conventions
 
 - Statement terminators on their own line; always semicolon-end.
