@@ -1,6 +1,6 @@
 ---
 title: Runbook — config-assertion-failed
-last_verified: 2026-07-03
+last_verified: 2026-07-05
 status: current
 severity: P3
 ---
@@ -28,6 +28,7 @@ severity: P3
 | `nft_https_open` | Caddy public edge (80/443) — the API/explorer | check `nft list ruleset`; a firewall re-render dropped the `public_allow_ports_base` rules — reload nftables from a config containing them |
 | `redis_maxmemory` | 2026-06-16 uncapped-Redis fix | `maxmemory 1gb` in `/etc/redis/redis.conf`; restart redis-server |
 | `supply_reserve_accounts` / `_nonempty` | CS-010 circulating-supply config | restore `[supply]` from `inventory/r1.yml` vars (16 accounts + balances); restart indexer + aggregator |
+| `galexie_writer_creds_valid` | MinIO credential-rotation drift (BACKLOG #66, 2026-07-03 follow-up) — `/etc/default/galexie`'s creds must still authenticate against the live MinIO galexie-writer user | see [credential-rotation.md](../credential-rotation.md#minio) — regenerate the galexie-writer secret in the vault AND `--tags minio` re-apply so both sides move together; then restart `galexie` |
 
 ## Diagnosis
 
