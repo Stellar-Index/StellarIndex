@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 // SourceStats is the per-source 24h activity row.
@@ -186,6 +188,15 @@ func (s *Store) sourceVolumeHistory(ctx context.Context, window string) ([]Sourc
 // static query strings (NOT string-concatenated — gosec G202) that
 // differ only in the WHERE predicate; the volume derivation matches
 // GetSourceStats (XLM/USD fallback for native / XLM-SAC legs).
+//
+// The asset filters use `= ANY($n)` against a bound string[] so the
+// handler can pass every canonical FORM of an asset (XLM's
+// `native` ↔ `crypto:XLM` dual form; see assetAliases in
+// internal/api/v1). Without the array a multi-form asset undercounts —
+// SDEX writes `native` while every CEX writes `crypto:XLM`, so a
+// single-form filter saw only one side. `= ANY(array)` stays sargable
+// (equality on the indexed base_asset/quote_asset columns, planned as
+// an index scan / BitmapOr) — NOT a function on the column.
 const (
 	pairSourceStatsQuery = `
 		WITH xlm_usd AS (
@@ -217,7 +228,7 @@ const (
 		       COUNT(DISTINCT (base_asset, quote_asset))::bigint AS markets_24h
 		  FROM trades
 		 WHERE ts >= now() - INTERVAL '24 hours'
-		   AND base_asset = $1 AND quote_asset = $2
+		   AND base_asset = ANY($1) AND quote_asset = ANY($2)
 		 GROUP BY source
 		 ORDER BY 2 DESC
 	`
@@ -251,7 +262,7 @@ const (
 		       COUNT(DISTINCT (base_asset, quote_asset))::bigint AS markets_24h
 		  FROM trades
 		 WHERE ts >= now() - INTERVAL '24 hours'
-		   AND (base_asset = $1 OR quote_asset = $1)
+		   AND (base_asset = ANY($1) OR quote_asset = ANY($1))
 		 GROUP BY source
 		 ORDER BY 2 DESC
 	`
@@ -262,15 +273,23 @@ const (
 // Backs the volume-by-source breakdown (pie) on the market-pair page —
 // the recent-trades feed only samples a page of rows, so an accurate
 // 24h share needs this aggregate.
-func (s *Store) PairSourceStats(ctx context.Context, base, quote string) ([]SourceStats, error) {
-	return s.scanSourceStats(ctx, pairSourceStatsQuery, base, quote)
+//
+// base / quote are each the full set of canonical FORMS the caller
+// wants matched (the handler expands via assetAliases so XLM's
+// `native` and `crypto:XLM` legs both count); pass a single-element
+// slice for a single form.
+func (s *Store) PairSourceStats(ctx context.Context, base, quote []string) ([]SourceStats, error) {
+	return s.scanSourceStats(ctx, pairSourceStatsQuery, pq.Array(base), pq.Array(quote))
 }
 
 // AssetSourceStats returns trailing-24h per-source USD volume + trade
 // count aggregated over every market the asset appears in (base OR
 // quote side). Backs the volume-by-source breakdown on the asset page.
-func (s *Store) AssetSourceStats(ctx context.Context, asset string) ([]SourceStats, error) {
-	return s.scanSourceStats(ctx, assetSourceStatsQuery, asset)
+//
+// asset is the full set of canonical FORMS to match (see
+// PairSourceStats) so a multi-form asset's legs aggregate together.
+func (s *Store) AssetSourceStats(ctx context.Context, asset []string) ([]SourceStats, error) {
+	return s.scanSourceStats(ctx, assetSourceStatsQuery, pq.Array(asset))
 }
 
 // scanSourceStats runs a (static) per-source-breakdown query with the
