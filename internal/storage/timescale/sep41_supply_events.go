@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 )
 
@@ -204,4 +205,68 @@ func parseSEP41Numeric(raw, label string) (*big.Int, error) {
 		return nil, fmt.Errorf("timescale: parse %s %q", label, raw)
 	}
 	return v, nil
+}
+
+// InsertSEP41SupplyEventBatch persists rows via a single multi-row
+// INSERT .. ON CONFLICT DO NOTHING (the batch sibling of
+// InsertSEP41SupplyEvent — added for the 2026-07-05 full-history
+// re-derive, where per-row round-trips capped writes at ~520/s).
+// Rows are validated with the same rules as the single-row path.
+func (s *Store) InsertSEP41SupplyEventBatch(ctx context.Context, rows []SEP41SupplyEvent) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	for i := range rows {
+		e := &rows[i]
+		if e.ContractID == "" {
+			return fmt.Errorf("timescale: InsertSEP41SupplyEventBatch: row %d empty ContractID", i)
+		}
+		if e.TxHash == "" {
+			return fmt.Errorf("timescale: InsertSEP41SupplyEventBatch: row %d empty TxHash", i)
+		}
+		if e.Amount == nil {
+			return fmt.Errorf("timescale: InsertSEP41SupplyEventBatch: row %d nil Amount", i)
+		}
+		if !e.Kind.IsValid() {
+			return fmt.Errorf("timescale: InsertSEP41SupplyEventBatch: row %d invalid Kind %q", i, e.Kind)
+		}
+	}
+
+	const ncols = 9
+	var sb strings.Builder
+	sb.WriteString(`
+        INSERT INTO sep41_supply_events (
+            contract_id, ledger, tx_hash, op_index, event_index,
+            observed_at, event_kind, amount, counterparty
+        ) VALUES `)
+	args := make([]any, 0, ncols*len(rows))
+	for i := range rows {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		base := i * ncols
+		fmt.Fprintf(&sb,
+			"($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+			base+1, base+2, base+3, base+4, base+5,
+			base+6, base+7, base+8, base+9,
+		)
+		e := &rows[i]
+		args = append(args,
+			e.ContractID,
+			int64(e.Ledger),
+			e.TxHash,
+			int16(e.OpIndex),
+			int16(e.EventIndex),
+			e.ObservedAt.UTC(),
+			string(e.Kind),
+			e.Amount.String(),
+			sql.NullString{String: e.Counterparty, Valid: e.Counterparty != ""},
+		)
+	}
+	sb.WriteString(` ON CONFLICT (contract_id, ledger, tx_hash, op_index, observed_at, event_kind, event_index) DO NOTHING`)
+
+	if _, err := s.db.ExecContext(ctx, sb.String(), args...); err != nil {
+		return fmt.Errorf("timescale: InsertSEP41SupplyEventBatch (%d rows): %w", len(rows), err)
+	}
+	return nil
 }

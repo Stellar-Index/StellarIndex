@@ -19,6 +19,8 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/sources/comet"
 	"github.com/StellarIndex/stellar-index/internal/sources/phoenix"
 	"github.com/StellarIndex/stellar-index/internal/sources/sdex"
+	sep41supply "github.com/StellarIndex/stellar-index/internal/sources/sep41_supply"
+	sep41transfers "github.com/StellarIndex/stellar-index/internal/sources/sep41_transfers"
 	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
 	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
@@ -462,8 +464,58 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		}
 		batch = batch[:0]
 	}
+	// sep41 batches (2026-07-05): the full-history re-derive buffers
+	// tens of millions of sep41 events per window; per-row HandleEvent
+	// capped writes at ~520/s (round-trip + cold PK-page per insert).
+	// Same batching pattern as trades, same per-row fallback.
+	xferBatch := make([]timescale.SEP41TransferRow, 0, tradeBatchN)
+	flushXfer := func() {
+		if len(xferBatch) == 0 {
+			return
+		}
+		if err := store.InsertSEP41TransferBatch(ctx, xferBatch); err != nil {
+			logger.Warn("sep41_transfers batch failed; per-row fallback", "n", len(xferBatch), "err", err)
+			for _, r := range xferBatch {
+				if ierr := store.InsertSEP41Transfer(ctx, r); ierr != nil {
+					logger.Error("per-row sep41 transfer insert failed", "err", ierr)
+				}
+			}
+		}
+		xferBatch = xferBatch[:0]
+	}
+	supBatch := make([]timescale.SEP41SupplyEvent, 0, tradeBatchN)
+	flushSup := func() {
+		if len(supBatch) == 0 {
+			return
+		}
+		if err := store.InsertSEP41SupplyEventBatch(ctx, supBatch); err != nil {
+			logger.Warn("sep41_supply batch failed; per-row fallback", "n", len(supBatch), "err", err)
+			for _, r := range supBatch {
+				if ierr := store.InsertSEP41SupplyEvent(ctx, r); ierr != nil {
+					logger.Error("per-row sep41 supply insert failed", "err", ierr)
+				}
+			}
+		}
+		supBatch = supBatch[:0]
+	}
 	for _, ev := range buf {
 		if *write {
+			switch e := ev.(type) {
+			case sep41transfers.Event:
+				xferBatch = append(xferBatch, pipeline.SEP41TransferRowOf(e))
+				if len(xferBatch) >= tradeBatchN {
+					flushXfer()
+				}
+				written[ev.Source()]++
+				continue
+			case sep41supply.Event:
+				supBatch = append(supBatch, pipeline.SEP41SupplyRowOf(e))
+				if len(supBatch) >= tradeBatchN {
+					flushSup()
+				}
+				written[ev.Source()]++
+				continue
+			}
 			if t, ok := tradeOf(ev); ok {
 				batch = append(batch, t)
 				if len(batch) >= tradeBatchN {
@@ -477,6 +529,8 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	}
 	if *write {
 		flush()
+		flushXfer()
+		flushSup()
 		fmt.Fprintf(os.Stderr, "ch-rebuild: wrote %d events in %s\n", len(buf), time.Since(wStart).Round(time.Second))
 	}
 

@@ -1074,17 +1074,7 @@ func persistPhoenixStake(ctx context.Context, logger *slog.Logger, store *timesc
 }
 
 func persistSEP41SupplyEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e sep41_supply.Event) {
-	if err := store.InsertSEP41SupplyEvent(ctx, timescale.SEP41SupplyEvent{
-		ContractID:   e.ContractID,
-		Ledger:       e.Ledger,
-		TxHash:       e.TxHash,
-		OpIndex:      e.OpIndex,
-		EventIndex:   e.EventIndex,
-		ObservedAt:   e.ObservedAt,
-		Kind:         timescale.SEP41EventKind(e.Kind),
-		Amount:       e.Amount,
-		Counterparty: e.Counterparty,
-	}); err != nil {
+	if err := store.InsertSEP41SupplyEvent(ctx, SEP41SupplyRowOf(e)); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(sep41_supply.SourceName, "sep41_supply_event").Inc()
 		logger.Error("insert SEP-41 supply event failed",
 			"contract_id", e.ContractID, "kind", e.Kind, "ledger", e.Ledger,
@@ -1103,7 +1093,24 @@ func persistSEP41SupplyEvent(ctx context.Context, logger *slog.Logger, store *ti
 // unlocks per-account net-position queries — the Stellar moat
 // feature CG/CMC structurally cannot offer.
 func persistSEP41TransferEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e sep41_transfers.Event) {
-	if err := store.InsertSEP41Transfer(ctx, timescale.SEP41TransferRow{
+	if err := store.InsertSEP41Transfer(ctx, SEP41TransferRowOf(e)); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(sep41_transfers.SourceName, "sep41_transfers_event").Inc()
+		logger.Error("insert SEP-41 transfer event failed",
+			"contract_id", e.ContractID, "kind", e.Kind, "ledger", e.Ledger,
+			"tx_hash", e.TxHash, "err", err)
+		return
+	}
+	bumpEntryCount(ctx, logger, store, sep41_transfers.SourceName)
+	logger.Debug("SEP-41 transfer event ingested",
+		"contract_id", e.ContractID, "kind", e.Kind, "ledger", e.Ledger,
+		"from", e.FromAddr, "to", e.ToAddr)
+}
+
+// SEP41TransferRowOf converts a decoded sep41_transfers event to its
+// storage row — exported so batch writers (ch-rebuild) share the
+// exact mapping the live sink uses.
+func SEP41TransferRowOf(e sep41_transfers.Event) timescale.SEP41TransferRow {
+	return timescale.SEP41TransferRow{
 		ContractID:      e.ContractID,
 		Ledger:          e.Ledger,
 		TxHash:          e.TxHash,
@@ -1116,15 +1123,20 @@ func persistSEP41TransferEvent(ctx context.Context, logger *slog.Logger, store *
 		Amount:          e.Amount,
 		LiveUntilLedger: e.LiveUntilLedger,
 		Authorized:      e.Authorized,
-	}); err != nil {
-		obs.SourceInsertErrorsTotal.WithLabelValues(sep41_transfers.SourceName, "sep41_transfers_event").Inc()
-		logger.Error("insert SEP-41 transfer event failed",
-			"contract_id", e.ContractID, "kind", e.Kind, "ledger", e.Ledger,
-			"tx_hash", e.TxHash, "err", err)
-		return
 	}
-	bumpEntryCount(ctx, logger, store, sep41_transfers.SourceName)
-	logger.Debug("SEP-41 transfer event ingested",
-		"contract_id", e.ContractID, "kind", e.Kind, "ledger", e.Ledger,
-		"from", e.FromAddr, "to", e.ToAddr)
+}
+
+// SEP41SupplyRowOf is the sep41_supply sibling of SEP41TransferRowOf.
+func SEP41SupplyRowOf(e sep41_supply.Event) timescale.SEP41SupplyEvent {
+	return timescale.SEP41SupplyEvent{
+		ContractID:   e.ContractID,
+		Ledger:       e.Ledger,
+		TxHash:       e.TxHash,
+		OpIndex:      e.OpIndex,
+		EventIndex:   e.EventIndex,
+		ObservedAt:   e.ObservedAt,
+		Kind:         timescale.SEP41EventKind(e.Kind),
+		Amount:       e.Amount,
+		Counterparty: e.Counterparty,
+	}
 }
