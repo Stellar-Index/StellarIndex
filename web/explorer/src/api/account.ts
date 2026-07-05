@@ -12,6 +12,7 @@
 // `src/api/hooks.ts::useMe`.
 
 import { API_BASE_URL } from './client';
+import type { components } from './types';
 
 export class ApiError extends Error {
   status: number;
@@ -177,6 +178,67 @@ export async function fetchUsage(signal?: AbortSignal): Promise<UsageRow[]> {
     signal,
   });
   return env.data ?? [];
+}
+
+// ─── Price alerts ──────────────────────────────────────────────────
+
+// Wire shapes bound to the generated OpenAPI contract (src/api/types.ts,
+// `make web-generate-api`) so a spec change breaks compilation here
+// rather than silently rendering `—`. The dashboard price-alert surface
+// (`/v1/dashboard/price-alerts`) is session-cookie authed like the keys
+// surface above; a firing alert enqueues a `price.alert` webhook to the
+// account's subscribed webhooks (BACKLOG #60).
+export type DashboardPriceAlert = components['schemas']['DashboardPriceAlert'];
+export type CreatePriceAlertRequest =
+  components['schemas']['CreatePriceAlertRequest'];
+export type UpdatePriceAlertRequest =
+  components['schemas']['UpdatePriceAlertRequest'];
+
+interface PriceAlertListResponse {
+  alerts: DashboardPriceAlert[];
+}
+
+/** GET /v1/dashboard/price-alerts — every alert on the session's account. */
+export async function listPriceAlerts(
+  signal?: AbortSignal,
+): Promise<DashboardPriceAlert[]> {
+  const r = await accountFetch<PriceAlertListResponse>(
+    '/dashboard/price-alerts',
+    { signal },
+  );
+  return r.alerts ?? [];
+}
+
+/** POST /v1/dashboard/price-alerts — register a new alert (409 at quota). */
+export async function createPriceAlert(
+  body: CreatePriceAlertRequest,
+): Promise<DashboardPriceAlert> {
+  return accountFetch<DashboardPriceAlert>('/dashboard/price-alerts', {
+    method: 'POST',
+    body,
+  });
+}
+
+/**
+ * PATCH /v1/dashboard/price-alerts/{id} — update any subset of fields
+ * (used for the enable/disable toggle). Omitted fields keep their value.
+ */
+export async function updatePriceAlert(
+  id: string,
+  body: UpdatePriceAlertRequest,
+): Promise<DashboardPriceAlert> {
+  return accountFetch<DashboardPriceAlert>(
+    `/dashboard/price-alerts/${encodeURIComponent(id)}`,
+    { method: 'PATCH', body },
+  );
+}
+
+/** DELETE /v1/dashboard/price-alerts/{id} — remove an alert. */
+export async function deletePriceAlert(id: string): Promise<void> {
+  await accountFetch<void>(
+    `/dashboard/price-alerts/${encodeURIComponent(id)}`,
+    { method: 'DELETE' },
+  );
 }
 
 // ─── Staff: customer look-up ───────────────────────────────────────
