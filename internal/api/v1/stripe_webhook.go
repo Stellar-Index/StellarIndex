@@ -114,6 +114,20 @@ type StripePlatformBridge struct {
 	// platform fan-out (deployments without a Postgres store
 	// stay on the Redis-only path).
 	APIKeys platform.APIKeyStore
+	// KeyCacheInvalidator, when non-nil, evicts each Postgres key
+	// from the runtime auth read-through cache immediately after
+	// its RateLimitPerMin is lifted, so a deployment on
+	// `auth_backend=postgres` serves the new budget on the very
+	// next request instead of after the validator's cache TTL
+	// (~1h). Without it, the Postgres row (source of truth) and
+	// the cached Subject disagree for the whole TTL window — the
+	// X6 "API-key split-brain" finding class. Nil is safe:
+	// Redis-less deployments and `auth_backend=redis` (where the
+	// canonical record already lives in Redis, with no separate
+	// read-through cache) have nothing to evict — the update still
+	// lands durably in Postgres. Production wires
+	// auth.NewRedisKeyCacheInvalidator(rdb).
+	KeyCacheInvalidator KeyCacheInvalidator
 	// TierMap maps the Stripe metadata.tier value (e.g. "pro")
 	// to the platform.Tier the account should land on. Nil
 	// defaults to {pro: TierPro, business: TierBusiness,
@@ -129,6 +143,17 @@ type StripePlatformBridge struct {
 // `internal/platform/postgresstore.AuditStore`.
 type StripeAuditSink interface {
 	Append(ctx context.Context, e platform.AuditEntry) error
+}
+
+// KeyCacheInvalidator evicts one API-key record from the runtime
+// auth read-through cache by its SHA-256 hex hash. Implemented by
+// both auth.RedisKeyCacheInvalidator and
+// auth.PostgresAPIKeyValidator. Declared here (rather than importing
+// internal/auth) so the v1 package stays free of an auth dependency
+// in its exported bridge type — the same narrowing pattern as
+// [StripeAuditSink] and dashboardkeys.CacheInvalidator.
+type KeyCacheInvalidator interface {
+	InvalidateCachedKey(ctx context.Context, hexHash string) error
 }
 
 // stripeTierMap controls which tier a Stripe metadata.tier value
@@ -742,12 +767,42 @@ func (s *Server) upgradePlatformAPIKeys(ctx context.Context, ev stripeEvent, sto
 			continue
 		}
 		upgraded++
+		// X6 split-brain follow-up: the Postgres row now carries the
+		// lifted budget, but a deployment on `auth_backend=postgres`
+		// would keep authenticating this key against the STALE cached
+		// Subject (old RateLimitPerMin) until the validator's
+		// read-through cache TTL rolls it off (~1h). Evict the cache
+		// entry so the new budget takes effect on the next request.
+		// Best-effort — a miss here just means the customer waits out
+		// the TTL; it must not fail the webhook (Stripe would retry
+		// and re-apply the same already-durable Postgres update).
+		s.invalidatePlatformKeyCache(ctx, ev, account, k)
 	}
 	if upgraded > 0 {
 		s.logger.Info("stripe webhook: lifted platform-backed dashboard keys",
 			"event_id", ev.ID, "account_id", account.ID,
 			"tier", tierName, "rate_limit_per_min", target,
 			"keys_upgraded", upgraded)
+	}
+}
+
+// invalidatePlatformKeyCache evicts a just-upgraded Postgres key from
+// the runtime auth read-through cache. No-op when no invalidator is
+// wired (Redis-less / auth_backend=redis) or the row has no hash.
+// A failure is logged + counted under the
+// `key_cache_invalidate` operation but never surfaced — the Postgres
+// write already succeeded, so the worst case is the customer serving
+// the old budget until the cache TTL elapses.
+func (s *Server) invalidatePlatformKeyCache(ctx context.Context, ev stripeEvent, account platform.Account, k platform.APIKey) {
+	inv := s.stripe.Platform.KeyCacheInvalidator
+	if inv == nil || len(k.KeyHash) == 0 {
+		return
+	}
+	if err := inv.InvalidateCachedKey(ctx, hex.EncodeToString(k.KeyHash)); err != nil {
+		obs.StripePlatformSyncErrorsTotal.WithLabelValues("key_cache_invalidate").Inc()
+		s.logger.Warn("stripe webhook: auth cache invalidate after key upgrade failed",
+			"event_id", ev.ID, "account_id", account.ID,
+			"key_id", k.ID, "err", err)
 	}
 }
 
