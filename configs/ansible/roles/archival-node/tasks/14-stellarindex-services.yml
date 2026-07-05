@@ -214,6 +214,14 @@
 # service fired by a systemd timer. R1 is the integrity leader; R2/R3
 # run verify-archive on a slower cadence (separate units, TBD).
 
+- name: galexie drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/galexie.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: galexie resource-protection drop-in (2026-07-05 captive-core wedge)
   # The captive stellar-core got swapped/starved by co-located batch
   # work (CH allocator exhaustion + an unwindowed ops job) and wedged
