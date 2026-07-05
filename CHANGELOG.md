@@ -21,6 +21,43 @@ against.
   origin): ch-rebuild drained sep41 events per-row (~520 rows/s at
   216M rows); the drain now batches both sep41 tables via multi-row
   INSERT..ON CONFLICT with converters shared with the live sink.
+### Added
+- **`/v1/assets` row filters — `type` / `code` / `issuer`** (BACKLOG
+  #54). The listing now filters at the storage layer (`code` pushed
+  down onto `classic_assets`), and malformed filter values are rejected
+  with a `400` instead of silently returning an empty page.
+- **`GET /v1/price/changes` — multi-horizon price change** (BACKLOG
+  #60). Returns 1h / 24h / 7d / 30d change for a pair, each horizon
+  carrying a per-horizon `available` flag so a partial CAGG ladder is
+  reported honestly rather than as a zero.
+- **Customer price-threshold alerts** (BACKLOG #60). Dashboard CRUD
+  under `/v1/dashboard/price-alerts`, an aggregator-side evaluator
+  (`internal/pricealerts`) that sweeps enabled rows against the latest
+  closed 1m VWAP, and a new `price.alert` webhook event. Off by default
+  (evaluator gated in config).
+- **`/contracts` Registry view** (CON-1, BACKLOG #61). Explorer tab
+  surfacing protocol-attributed contracts.
+- **Credential-rotation runbook + hourly MinIO galexie-writer cred
+  assertion** (BACKLOG #66). New `docs/operations/credential-rotation.md`
+  plus a `galexie_writer_creds_valid` config-assertion wired into
+  `scripts/ops/config-assertions.sh` and the runbook table.
+- **Upstream go-stellar-sdk `SingleLedgerRange` issue draft** (BACKLOG
+  #66). `docs/upstream/go-stellar-sdk-single-ledger-range.md`.
+- **A20/D10 test backfill** (BACKLOG #51): `AuditStore` unit +
+  testcontainers coverage, apikey helpers, customer-webhook HMAC /
+  backoff, and `scval` op-args tests — plus ledgerstream cold-tier
+  fallback `Stream()`-level tests (BACKLOG #56a).
+
+### Changed
+- **`/v1/price/at` resolves across the full CAGG ladder** (BACKLOG #60).
+  Point-in-time price now walks the whole continuous-aggregate ladder
+  back to 2015 and reports which resolution answered via
+  `window_seconds`, rather than failing off the shortest window.
+
+### Fixed
+- **`/v1/assets` no longer returns a silent empty page for garbage
+  `issuer` input** (BACKLOG #54). Malformed issuer values now surface a
+  `400`.
 
 ## [v0.8.3] — 2026-07-05
 
