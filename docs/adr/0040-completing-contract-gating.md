@@ -140,7 +140,21 @@ missing piece), then mechanism #2.
 
 ## Implementation tracking
 
-Phoenix gate: shipped 2026-07-02 (curated-set, board #32). Defindex: moved to the §3 enumeration track after the emitter-set growth was found unverifiable from creation events — see docs/protocols/defindex.md.
-Aquarius enumeration + gate: follows the §3 procedure. Comet: needs
-the wasm-audit hash set confirmed first (`stellarindex-ops
-wasm-history` walk exists; `docs/operations/wasm-audits/`).
+Phoenix gate: shipped 2026-07-02 (curated-set, board #32).
+Aquarius gate: shipped 2026-07-05 — the §3 enumeration found the router's
+`add_pool` events announce a pool set byte-identical to the protocol's own
+registry API (332 pools), so the gate is router-anchored (mechanism 1 fan-out
+via event DATA + mechanism 2 in-code seed for history); a parallel
+same-WASM router deployment (72 pools), a foreign-WASM look-alike (7
+pools), and 8 pre-genesis emitters were excluded + flagged — see
+docs/protocols/aquarius.md "Verification 2026-07-05".
+Defindex gate: shipped 2026-07-05 via the §3 multi-proof classification
+(creation-tx correlation, create-body membership, team-published WASM
+hashes, team Dune registry): 101/110 emitters verified → curated seed;
+9 no-proof emitters excluded + flagged — see docs/protocols/defindex.md
+"Verification 2026-07-05". Both gates await their operator halves
+(re-derive + foreign-row cleanup + verdict watch, tracked in
+docs/operations/audit-remediation-operator-actions.md).
+Comet: still open — needs the wasm-audit hash set confirmed first
+(`stellarindex-ops wasm-history` walk exists;
+`docs/operations/wasm-audits/`).

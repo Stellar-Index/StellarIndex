@@ -2,6 +2,7 @@ package defindex
 
 import (
 	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/contractid"
 	"github.com/StellarIndex/stellar-index/internal/events"
 )
 
@@ -14,32 +15,64 @@ import (
 //   - Blend strategies: `("BlendStrategy","deposit"|"withdraw"|…)` —
 //     vault↔strategy capital movement (`from` = vault C-strkey).
 //
-// We match both. Dispatch is by TOPIC, not a hand-curated contract
-// set — any contract emitting either topic shape is decoded. This
-// mirrors the comet/aquarius shared-emitter topology and is what
-// the granular-coverage mission wants — every DeFindex
-// instance (the 100+ wrappers the factory has spawned over its
-// life, not just the 7 currently advertised on defindex.io).
-//
-// Stateless. Matching is O(1) — two byte-equal topic compares per
-// layer before any SCVal parsing.
-type Decoder struct{}
+// We match both, gated on CONTRACT IDENTITY (ADR-0035/0040, CS-026):
+// the namespaced topic strings are still just strings any pubnet
+// contract can emit, and the lake contains emitters that carry the
+// topic shape but none of the four independent DeFindex-provenance
+// proofs (see MainnetVaults). Dispatch is therefore topic shape AND
+// registry membership — the curated evidence-verified set plus any
+// operator-seeded protocol_contracts rows.
+type Decoder struct {
+	// reg gates Matches() on contract identity. The factory trust
+	// roots (MainnetFactories) gate factory events; children come
+	// from the curated in-code seed + the protocol_contracts warm.
+	// NOTE: unlike blend, the factory `create` event does NOT carry
+	// the new vault's address, so there is no live fan-out — a new
+	// vault fail-closes into a recognition gap until it is verified
+	// and seeded (docs/protocols/defindex.md).
+	reg *contractid.Registry
+}
 
-// NewDecoder constructs a topic-matched DeFindex event decoder.
-// No arguments — matching is purely on the two layer-prefix
-// topic shapes ("BlendStrategy" / "DeFindexVault").
-func NewDecoder() *Decoder { return &Decoder{} }
+// NewDecoder constructs a defindex Decoder. Contract-identity gating
+// (ADR-0035/0040): the curated mainnet set (vault wrappers +
+// strategies, docs/protocols/defindex.md) is ALWAYS seeded — the
+// deploy-graph cannot be reconstructed from creation events (they
+// omit the vault address), so the in-code evidence-verified seed is
+// the trust root. Caller opts layer the protocol_contracts DB warm +
+// live-upsert hook on top (the hook only fires if a future factory
+// WASM ever announces children in a decodable way).
+func NewDecoder(opts ...contractid.Option) *Decoder {
+	base := []contractid.Option{
+		contractid.WithFactories(MainnetFactories),
+		contractid.WithSeed(MainnetGatedSet()),
+	}
+	return &Decoder{reg: contractid.New(append(base, opts...)...)}
+}
 
 // Name implements [dispatcher.Decoder].
 func (d *Decoder) Name() string { return SourceName }
 
-// Matches implements [dispatcher.Decoder]. Cheap predicate: the
-// topic shape is a BlendStrategy, DeFindexVault, or DeFindexFactory
-// event. The dispatcher only calls Decode() when this returns true.
-// Factory events return ([], nil) from Decode — they're recognised
-// for EVERY-event-policy completeness, not decoded into a flow.
+// Matches implements [dispatcher.Decoder]. Gates on CONTRACT
+// IDENTITY, not topic bytes (ADR-0035/0040):
+//
+//   - vault / strategy flow events match ONLY when emitted by a
+//     REGISTERED child (curated seed + protocol_contracts warm);
+//   - factory events (`create` / `n_fee`) match ONLY when emitted
+//     by one of the canonical MainnetFactories. Decode returns
+//     ([], nil) for them — recognised for EVERY-event-policy
+//     completeness, not decoded into a flow.
+//
+// COVERAGE NOTE (ADR-0035): an un-seeded real vault fail-closes into
+// an ADR-0033 recognition gap — visible, never silently
+// mis-attributed. Because the create event omits the child address,
+// closing such a gap is an operator step (verify provenance, then
+// seed protocol_contracts / extend the in-code set) rather than
+// automatic fan-out.
 func (d *Decoder) Matches(ev events.Event) bool {
-	return classify(&ev) != "" || classifyVault(&ev) != "" || classifyFactory(&ev) != ""
+	if classify(&ev) != "" || classifyVault(&ev) != "" {
+		return d.reg.Has(ev.ContractID)
+	}
+	return classifyFactory(&ev) != "" && d.reg.IsFactory(ev.ContractID)
 }
 
 // Decode implements [dispatcher.Decoder]. Emits one Event per
@@ -68,9 +101,10 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	if classifyFactory(&ev) != "" {
 		// Factory create / n_fee — recognised so the dispatcher's
 		// drop-counter doesn't file them as "unmatched topic", but
-		// no consumer.Event yet (body decode is Phase C). Returning
-		// (nil, nil) is the dispatcher's "match, nothing to emit"
-		// shape.
+		// no consumer.Event yet (body decode is Phase C; the body
+		// does NOT carry the new vault's address, so there is no
+		// registry fan-out to do here either). Returning (nil, nil)
+		// is the dispatcher's "match, nothing to emit" shape.
 		return nil, nil
 	}
 	// Defensive — Matches should have filtered.

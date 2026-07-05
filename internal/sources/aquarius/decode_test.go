@@ -259,3 +259,59 @@ func TestTopicSymbolTradeMatchesEncoderOutput(t *testing.T) {
 		t.Errorf("TopicSymbolTrade drift:\n got  %s\n want %s", TopicSymbolTrade, got)
 	}
 }
+
+// encodeAddPoolBody builds the router announcement body shape
+// Vec[Address(pool)] (the on-wire bodies carry more trailing
+// elements; the decoder only reads element 0).
+func encodeAddPoolBody(t *testing.T, pool string) string {
+	t.Helper()
+	sv := decodeB64ScVal(t, encodeContractAddrFromStrkey(t, pool))
+	vec := xdr.ScVec([]xdr.ScVal{sv})
+	pvec := &vec
+	body := xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &pvec}
+	b, err := body.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+// encodeAddPoolBodyAccount is the malformed variant announcing a
+// G-address instead of a pool contract.
+func encodeAddPoolBodyAccount(t *testing.T, g string) string {
+	t.Helper()
+	sv := decodeB64ScVal(t, encodeAccountAddrFromStrkey(t, g))
+	vec := xdr.ScVec([]xdr.ScVal{sv})
+	pvec := &vec
+	body := xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &pvec}
+	b, err := body.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func encodeEmptyVec(t *testing.T) string {
+	t.Helper()
+	vec := xdr.ScVec(nil)
+	pvec := &vec
+	body := xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &pvec}
+	b, err := body.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func decodeB64ScVal(t *testing.T, b64 string) xdr.ScVal {
+	t.Helper()
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatalf("base64: %v", err)
+	}
+	var sv xdr.ScVal
+	if err := sv.UnmarshalBinary(raw); err != nil {
+		t.Fatalf("unmarshal scval: %v", err)
+	}
+	return sv
+}

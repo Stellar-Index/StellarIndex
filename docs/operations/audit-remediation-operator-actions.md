@@ -124,12 +124,12 @@ missing the classic trustline component entirely). Code fix landed
 - [ ] Narrow `allowed_ssh_cidrs` from `0.0.0.0/0` once a stable admin range exists.
 - [ ] Optional: Cloudflare orange-cloud in front of `api.` (WAF/L7).
 
-## Decoder contract-gating (CS-026) — blocked on per-source data/design
-The mechanism exists (`childgate.Registry` seeded from the `protocol_contracts`
-table + hard-coded factories, gated `Matches()` — as `blend`/`soroswap` already
-do). Extending it to the 4 ungated sources is blocked on data only the team /
-operator can supply — a gate on an UNCONFIRMED factory either drops real trades
-(fail-closed, unseeded) or bakes in a wrong trust root, so it must not be guessed:
+## Decoder contract-gating (CS-026) — comet is the last open case
+The mechanism exists (`contractid.Registry` seeded from the `protocol_contracts`
+table + hard-coded factories, gated `Matches()`). Code-side, five of six are now
+gated (`blend`, `soroswap`, `phoenix` 2026-07-02, `aquarius` + `defindex`
+2026-07-05); only `comet` remains (gate *design* needed, not data). The
+per-source operator halves (re-derive + verdict watch) are tracked below:
 - [x] **phoenix** — GATED code-side 2026-07-02 (curated-set registry: the
       page's 11 pools + 3 stake contracts are the in-code seed; the factory's
       creation events predate the lake so the seed is the trust root). Your
@@ -138,27 +138,47 @@ operator can supply — a gate on an UNCONFIRMED factory either drops real trade
       surface as per-ledger projection mismatches) → one green
       `compute-completeness -ch -source phoenix` cycle. Team confirmation of
       the pool list is now ratification, not a blocker.
-- [ ] **defindex** — RE-BLOCKED with evidence 2026-07-02: lake emitters grew
-      to 88 vaults + 22 strategies vs the 57 verified on 2026-06-12, and the
-      `create` event does NOT carry the vault address (the page's open
-      question), so the growth cannot be deploy-graph-verified. Gating on raw
-      emitter lists would bake look-alikes into the trust root. Path: the
-      ADR-0040 §3 enumeration (creation-op chain + wasm-hash cross-check),
-      or the team answers the page's open question (factory view /
-      authoritative list).
+- [x] **defindex** — GATED code-side 2026-07-05 via the ADR-0040 §3
+      enumeration (the 2026-07-02 blocker was executed, not waited out):
+      every one of the 110 lake emitters was classified against four
+      independent proofs (first-event-inside-a-factory-create-tx ×71;
+      listed-in-a-create-body ×16 strategies; team-published WASM hash —
+      `mainnet.contracts.json` names both `ae3409a4…468b` and
+      `11329c24…988`, exactly the two hashes the lake shows; team Dune
+      registry). 101 verified → in-code seed (`defindex.MainnetGatedSet`);
+      **9 emitters with NO proof are excluded + flagged**
+      (docs/protocols/defindex.md "Verification 2026-07-05"; 155 events,
+      0.13%). Your half per ADR-0040 §2: deploy → `projector-replay
+      -source defindex -from 57056338` → delete the flagged contracts'
+      `defindex_flows` rows (exact SQL on the protocol page) → one green
+      `compute-completeness -ch -source defindex` cycle. NOTE: new vaults
+      DO NOT self-register (create event omits the address) — a new vault
+      fail-closes into a recognition gap; unblock = verify provenance then
+      `INSERT INTO protocol_contracts` (no redeploy needed).
 - [x] **cctp `mint_and_forward` catch-up — DONE 2026-07-03 (agent).** The
       rollout found TWO more gating layers (migration 0038's SQL CHECK +
       the storage enum) → migration 0070 + v0.7.1 patch release + replay;
       1,577 historical rows persisted, all five event types live.
-- [ ] **aquarius** — pin the complete pool set (docs/protocols/aquarius.md: "pool
-      enumeration not yet pinned"). Until enumerated, no gate is possible.
+- [x] **aquarius** — GATED code-side 2026-07-05 (router-anchored): the
+      canonical router's `add_pool` events in the lake announce EXACTLY
+      the 332 pools the protocol's own registry API serves (byte-identical
+      sets, docs/protocols/aquarius.md "Verification 2026-07-05") — the
+      router is the trust root, the 332 are the in-code seed, and live
+      `add_pool` events self-register future pools blend-style. **Excluded
+      + flagged: a parallel router deployment `CA7RQDMM…` (same router
+      WASM, 72 pools, 1,302 trades, NOT in the registry API), a
+      foreign-WASM look-alike `CCPHUHQY…` (7 pools, 187 trades), and 8
+      pre-genesis rehearsal pools (35 trades).** Your half: deploy →
+      `projector-replay -source aquarius -from 52728375` → delete the
+      ~1,524 foreign `trades` rows (exact recipe on the protocol page) →
+      one green `compute-completeness -ch -source aquarius` cycle.
 - [ ] **comet** — has NO factory namespace (shared `("POOL",…)` topic). Decide the
       gate design: a curated pool allowlist OR a WASM-hash gate (only decode
       contracts whose code-hash matches the Balancer-v1 Comet WASM). Needs the
       WASM hash + a design call.
-Once each source's factory/allowlist is confirmed, wiring the gate is a small
-mechanical change per source (add to `gatedSources`, make the decoder
-childgate-aware, gate `Matches()` on `reg.Has(contractID)`).
+Once comet's allowlist/WASM-hash set is confirmed, wiring the gate is the same
+small mechanical change (add to `gatedSources`, make the decoder
+contractid-aware, gate `Matches()` on `reg.Has(contractID)`).
 
 ## Legal / vendor (before commercial launch — CS-115/116)
 - [ ] **Vendor-ToS review of raw CEX data redistribution** — `/v1/history` + `/v1/observations?

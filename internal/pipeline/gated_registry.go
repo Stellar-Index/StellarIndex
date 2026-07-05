@@ -9,7 +9,9 @@ import (
 
 	"github.com/StellarIndex/stellar-index/internal/contractid"
 	"github.com/StellarIndex/stellar-index/internal/dispatcher"
+	"github.com/StellarIndex/stellar-index/internal/sources/aquarius"
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
+	"github.com/StellarIndex/stellar-index/internal/sources/defindex"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
@@ -56,6 +58,35 @@ var gatedSources = map[string]GatedMeta{
 		CreationSym: blend.EventDeploy,
 		Genesis:     blend.FactoryGenesisLedger,
 		NewDecoder:  func(opts ...contractid.Option) dispatcher.Decoder { return blend.NewDecoder(opts...) },
+	},
+	aquarius.SourceName: {
+		// Router-anchored gate (ADR-0040, CS-026): the router IS the
+		// protocol's registry — its add_pool events announce exactly
+		// the pool set the protocol's public API serves (verified
+		// byte-identical 2026-07-05, docs/protocols/aquarius.md).
+		// The decoder's in-code seed (MainnetGatedSet) covers history
+		// (the PG soroban_events landing zone is capture-scoped and
+		// holds only recent add_pool rows); live add_pool events
+		// self-register new pools blend-style, and this entry adds
+		// the protocol_contracts warm + live-upsert hook.
+		Factories:   []string{aquarius.MainnetRouter},
+		CreationSym: aquarius.EventAddPool,
+		Genesis:     52_728_375,
+		NewDecoder:  func(opts ...contractid.Option) dispatcher.Decoder { return aquarius.NewDecoder(opts...) },
+	},
+	defindex.SourceName: {
+		// Curated-set gate (ADR-0040 §1 mechanism 2): the factory
+		// `create` event does NOT carry the new vault's address, so
+		// the deploy-graph cannot self-register children — the
+		// decoder's in-code evidence-verified seed (MainnetGatedSet)
+		// is the trust root. This entry adds the protocol_contracts
+		// warm (the operator seam for admitting newly verified
+		// vaults WITHOUT a redeploy) + the live-upsert hook (a no-op
+		// unless a future factory WASM announces children decodably).
+		Factories:   defindex.MainnetFactories,
+		CreationSym: "create",
+		Genesis:     55_484_403, // earliest factory create event (CAVP2QLP…)
+		NewDecoder:  func(opts ...contractid.Option) dispatcher.Decoder { return defindex.NewDecoder(opts...) },
 	},
 }
 

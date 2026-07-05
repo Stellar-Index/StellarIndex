@@ -9,6 +9,8 @@ import (
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/StellarIndex/stellar-index/internal/events"
+
+	"github.com/StellarIndex/stellar-index/internal/contractid"
 )
 
 // TestClassify_depositWithdraw covers the topic-byte equality path —
@@ -303,7 +305,10 @@ func TestClassifyFactory_createNfee(t *testing.T) {
 func TestDecode_factoryEvent_isClassifiedButEmits0Events(t *testing.T) {
 	t.Parallel()
 	d := NewDecoder()
-	ev := events.Event{Topic: []string{TopicPrefixFactory, TopicSymbolCreate}}
+	// The gate (ADR-0035/0040) only honours factory events from the
+	// canonical trust roots — a create from a foreign contract is
+	// rejected (TestDecoder_GateRejectsForeignContract).
+	ev := events.Event{ContractID: MainnetFactories[0], Topic: []string{TopicPrefixFactory, TopicSymbolCreate}}
 	if !d.Matches(ev) {
 		t.Fatal("Matches(factory create) = false, want true")
 	}
@@ -591,4 +596,76 @@ func mustB64Symbol(t *testing.T, s string) string {
 	sym := sdkxdr.ScSymbol(s)
 	sv := sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvSymbol, Sym: &sym}
 	return mustB64(t, sv)
+}
+
+// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040 (CS-026):
+// the namespaced DeFindexVault/BlendStrategy topic strings are still
+// just strings any pubnet contract can emit — the r1 lake contains
+// emitters carrying the exact topic shape with NONE of the four
+// DeFindex-provenance proofs (docs/protocols/defindex.md, flagged
+// set). A perfect topic shape from an unregistered contract must NOT
+// be attributed to defindex; the same event from a curated vault /
+// strategy / factory must.
+func TestDecoder_GateRejectsForeignContract(t *testing.T) {
+	t.Parallel()
+	d := NewDecoder() // production gate: curated evidence-verified set only
+
+	vaultTopics := []string{TopicPrefixVault, TopicSymbolDeposit}
+	strategyTopics := []string{TopicPrefixStrategy, TopicSymbolDeposit}
+	factoryTopics := []string{TopicPrefixFactory, TopicSymbolCreate}
+
+	foreign := "CFOREIGNFAKEVAULT000000000000000000000000000000000000000"
+	for name, ev := range map[string]events.Event{
+		"vault shape":    {ContractID: foreign, Topic: vaultTopics},
+		"strategy shape": {ContractID: foreign, Topic: strategyTopics},
+		"factory shape":  {ContractID: foreign, Topic: factoryTopics},
+	} {
+		if d.Matches(ev) {
+			t.Fatalf("foreign contract with defindex-shaped topics (%s) matched — the CS-026 injection vector is open", name)
+		}
+	}
+
+	// One flagged real-world example (docs/protocols/defindex.md):
+	// carries the DeFindexVault topic shape but none of the four
+	// provenance proofs — must stay excluded until verified.
+	flagged := events.Event{
+		ContractID: "CBGCGVKHVA4TG6MGQ3XTOEHEJXK4DYLOKTMR4UT4PZFPTQKLYXYRF6KV",
+		Topic:      vaultTopics,
+	}
+	if d.Matches(flagged) {
+		t.Fatal("flagged unverified emitter matched — it must fail-close into a recognition gap")
+	}
+
+	if !d.Matches(events.Event{ContractID: MainnetVaults[0], Topic: vaultTopics}) {
+		t.Fatal("curated vault failed to match — gate is over-closed")
+	}
+	if !d.Matches(events.Event{ContractID: MainnetStrategies[0], Topic: strategyTopics}) {
+		t.Fatal("curated strategy failed to match — gate is over-closed")
+	}
+	for _, f := range MainnetFactories {
+		if !d.Matches(events.Event{ContractID: f, Topic: factoryTopics}) {
+			t.Fatalf("canonical factory %s failed to match", f)
+		}
+	}
+	// A factory is a trust root, not a child: vault-shaped events
+	// from a factory address are NOT flows.
+	if d.Matches(events.Event{ContractID: MainnetFactories[0], Topic: vaultTopics}) {
+		t.Fatal("factory address matched a vault flow shape — factory and child sets must stay separate")
+	}
+}
+
+// TestDecoder_OperatorSeedAdmitsNewVault pins the operator unblock
+// path: a newly verified vault is admitted via the protocol_contracts
+// warm (contractid.WithSeed) with NO code change.
+func TestDecoder_OperatorSeedAdmitsNewVault(t *testing.T) {
+	t.Parallel()
+	newVault := "CNEWLYVERIFIEDVAULT0000000000000000000000000000000000000"
+	ev := events.Event{ContractID: newVault, Topic: []string{TopicPrefixVault, TopicSymbolDeposit}}
+
+	if NewDecoder().Matches(ev) {
+		t.Fatal("unseeded vault matched")
+	}
+	if !NewDecoder(contractid.WithSeed([]string{newVault})).Matches(ev) {
+		t.Fatal("protocol_contracts-seeded vault failed to match")
+	}
 }

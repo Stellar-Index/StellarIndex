@@ -106,7 +106,7 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 	case aquarius.SourceName:
 		return Source{
 			Name:              aquarius.SourceName,
-			Decoder:           aquarius.NewDecoder(),
+			Decoder:           aquarius.NewDecoder(gated[aquarius.SourceName]...),
 			ExcludeTopic0Syms: firehoseExcludeSyms,
 		}, true, nil
 	case phoenix.SourceName:
@@ -153,7 +153,7 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 	case defindex.SourceName:
 		return Source{
 			Name:              defindex.SourceName,
-			Decoder:           defindex.NewDecoder(),
+			Decoder:           defindex.NewDecoder(gated[defindex.SourceName]...),
 			ExcludeTopic0Syms: firehoseExcludeSyms,
 		}, true, nil
 	case sep41_transfers.SourceName:

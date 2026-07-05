@@ -94,7 +94,7 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 		case soroswap.SourceName:
 			decoders = append(decoders, soroswap.NewDecoder(soroswapOpts...))
 		case aquarius.SourceName:
-			decoders = append(decoders, aquarius.NewDecoder())
+			decoders = append(decoders, aquarius.NewDecoder(gated[aquarius.SourceName]...))
 		case phoenix.SourceName:
 			decoders = append(decoders, phoenix.NewDecoder(gated[phoenix.SourceName]...))
 		case comet.SourceName:
@@ -153,13 +153,12 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 			callDecoders = append(callDecoders,
 				soroswap_router.NewDecoder(soroswap_router.MainnetRouter))
 		case defindex.SourceName:
-			// DeFindex's deployed vault-address contracts are Blend
-			// strategy contracts emitting
-			// `("BlendStrategy","deposit"|"withdraw")` (verified
-			// on-chain 2026-05-19; see defindex.md). Event-based
-			// Decoder, dispatched by topic across every BlendStrategy
-			// emitter — not a hand-curated contract set.
-			decoders = append(decoders, defindex.NewDecoder())
+			// DeFindex vault wrappers (`DeFindexVault`) + Blend
+			// strategy contracts (`BlendStrategy`). Event-based
+			// Decoder gated on the curated evidence-verified contract
+			// set (ADR-0035/0040 — the namespaced topics alone are
+			// still forgeable; see docs/protocols/defindex.md).
+			decoders = append(decoders, defindex.NewDecoder(gated[defindex.SourceName]...))
 		case sdex.SourceName:
 			opDecoders = append(opDecoders, sdex.NewDecoder())
 		case blend.SourceName:

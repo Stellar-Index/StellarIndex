@@ -212,3 +212,32 @@ func sdkDecodeAddressTopic(topicB64 string) (string, error) {
 	}
 	return scval.AsAddressStrkey(sv)
 }
+
+// decodeAnnouncedPool extracts the pool address a ROUTER `add_pool`
+// event announces (ADR-0035/0040 fan-out seam). The router emits its
+// pool-scoped events with body `Vec[Address(pool), …]` — verified
+// against the r1 lake on 2026-07-05: all 338 add_pool bodies (and
+// every router swap/deposit/withdraw body) decode this way with zero
+// parse failures (docs/protocols/aquarius.md). The announced address
+// must be a contract (C-strkey); anything else is malformed.
+func decodeAnnouncedPool(e *events.Event) (string, error) {
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return "", fmt.Errorf("%w: add_pool body: %w", ErrMalformedPayload, err)
+	}
+	elts, err := scval.AsVec(body)
+	if err != nil {
+		return "", fmt.Errorf("%w: add_pool body not a vec: %w", ErrMalformedPayload, err)
+	}
+	if len(elts) == 0 {
+		return "", fmt.Errorf("%w: add_pool body vec is empty", ErrMalformedPayload)
+	}
+	pool, err := scval.AsAddressStrkey(elts[0])
+	if err != nil {
+		return "", fmt.Errorf("%w: add_pool pool address: %w", ErrMalformedPayload, err)
+	}
+	if len(pool) == 0 || pool[0] != 'C' {
+		return "", fmt.Errorf("%w: add_pool announced a non-contract address %q", ErrMalformedPayload, pool)
+	}
+	return pool, nil
+}

@@ -272,16 +272,20 @@ linked design doc has the full detail.
 - **Comet uses a shared `("POOL", <event>)` topic across every pool
   contract**, not a per-protocol namespace. Any pubnet contract that
   deploys Balancer-v1 Comet code will look identical on the wire.
-  **ADR-0035 factory-anchored contract gating is only PARTIALLY rolled out.**
-  Only `soroswap` (pair/factory registry) and `blend` (`internal/contractid` child gate) currently
-  gate `Matches()` on contract identity. **`aquarius`, `defindex`, and `comet` still match on topic
-  bytes alone** (ungated; phoenix gained its curated-set gate 2026-07-02) — so a look-alike
-  contract emitting the same topic shape can inject fabricated trades under
-  those sources (see docs/audit-2026-06-30/ CS-026). Comet is the *hardest*
-  case (no factory namespace — needs a pool allowlist / WASM-hash gate), not
-  the only one. Until each gate lands, narrow coverage for those sources is a
-  downstream filter on `Trade.Source = "<name>"` + contract address. →
-  [docs/adr/0035-factory-anchored-contract-gating.md](docs/adr/0035-factory-anchored-contract-gating.md)
+  **ADR-0035 contract-identity gating: comet is the LAST ungated source.**
+  `soroswap` (pair/factory registry), `blend` (childgate), `phoenix`
+  (curated set, 2026-07-02), `aquarius` (router-anchored: the router's
+  `add_pool` events announce exactly the registry-API pool set, 2026-07-05)
+  and `defindex` (curated evidence-verified set — the factory `create`
+  event does NOT carry the vault address, so new vaults fail-close until
+  operator-seeded; 2026-07-05) all gate `Matches()` on contract identity.
+  **`comet` still matches on topic bytes alone** — a look-alike contract
+  emitting the shared Balancer-v1 `("POOL",…)` shape can inject fabricated
+  trades under that source (CS-026); it needs a pool allowlist / WASM-hash
+  gate (no factory namespace). Until then, narrow comet coverage is a
+  downstream filter on `Trade.Source = "comet"` + contract address. →
+  [docs/adr/0035-factory-anchored-contract-gating.md](docs/adr/0035-factory-anchored-contract-gating.md),
+  [docs/adr/0040-completing-contract-gating.md](docs/adr/0040-completing-contract-gating.md)
 - **Reflector v3 has no on-chain `twap` or `x_*` methods.** Some
   upstream docs imply it does; it doesn't. We compute TWAP and
   cross-pair locally.

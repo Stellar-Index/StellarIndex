@@ -15,6 +15,41 @@ against.
 
 ## [Unreleased]
 
+### Security
+- **aquarius + defindex now gate `Matches()` on contract identity**
+  (ADR-0035/0040, CS-026 — BACKLOG #5/#7; comet is the last ungated
+  source). Evidence-first, from a full r1-lake re-enumeration
+  (2026-07-05, tip 63,343,398):
+  - **aquarius** is router-anchored: the canonical router's `add_pool`
+    events announce a pool set **byte-identical** to the protocol's own
+    registry API (332 pools) — that set is the in-code seed
+    (`aquarius.MainnetPools`), the router is the factory trust root, and
+    live `add_pool` events self-register future pools (blend-style
+    fan-out via the new `decodeAnnouncedPool` path). Excluded + flagged
+    on the protocol page: a parallel same-WASM router deployment
+    (72 pools, 1,302 trades, absent from the registry API), a
+    foreign-WASM look-alike router + 7 pools (187 trades), and 8
+    pre-genesis rehearsal emitters (35 trades) — 99.95% of shape-matched
+    lake events remain attributed.
+  - **defindex** is curated-set gated (the factory `create` event does
+    not carry the vault address, so no deploy-graph fan-out exists):
+    101/110 lake emitters verified via four independent proofs
+    (create-tx correlation ×71, create-body membership ×16, the team's
+    own published WASM hashes, the team's Dune registry) form the
+    in-code seed (`defindex.MainnetGatedSet`, 85 vaults + 16 strategies
+    + 4 factory trust roots); the 9 no-proof emitters (155 events,
+    0.13%) are excluded + flagged. New vaults fail-close into
+    recognition gaps until verified and seeded via `protocol_contracts`
+    (no redeploy).
+  - Wiring follows the phoenix pattern exactly: `gatedSources` entries,
+    `contractid.Option` forwarding at both construction sites,
+    reconciliation-catalogue notes, gate-reject tests pinning the
+    injection vector per source, and dated verification sections +
+    operator re-derive steps in `docs/protocols/{aquarius,defindex}.md`.
+    Deploy precondition per ADR-0040 §2: `projector-replay` per source +
+    flagged-row cleanup + one green completeness cycle (tracked in
+    docs/operations/audit-remediation-operator-actions.md).
+
 ### Changed
 - **Maintainability tier-3 structural refactors** (BACKLOG #47,
   maintainability audit D1/D3/D8; behavior-preserving, no wire or

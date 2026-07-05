@@ -111,9 +111,19 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			{"trades", "source = 'soroswap'", []string{"soroswap.trade"}},
 			{"soroswap_skim_events", "", []string{"soroswap.skim"}},
 		}},
-		{name: "aquarius", genesis: 52_728_375, dec: aquarius.NewDecoder(), targets: []reconTarget{
-			{"trades", "source = 'aquarius'", []string{"aquarius.trade"}},
-		}},
+		{
+			// ADR-0035/0040 contract-gated (router-anchored). The bare
+			// NewDecoder() already carries the curated in-code pool seed
+			// (aquarius.MainnetPools), so sub-range re-derives work; the
+			// factories/creationSym pair additionally lets the preseed
+			// register pools announced AFTER the in-code snapshot from
+			// the router's add_pool events before counting.
+			name: "aquarius", genesis: 52_728_375, dec: aquarius.NewDecoder(),
+			factories: []string{aquarius.MainnetRouter}, creationSym: aquarius.EventAddPool,
+			targets: []reconTarget{
+				{"trades", "source = 'aquarius'", []string{"aquarius.trade"}},
+			},
+		},
 		{name: "phoenix", genesis: 51_572_016, dec: phoenix.NewDecoder(), targets: []reconTarget{
 			{"trades", "source = 'phoenix'", []string{"phoenix.trade"}},
 			{"phoenix_liquidity", "", []string{"phoenix.liquidity"}},
@@ -141,6 +151,13 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			{"blend_backstop_events", "", []string{"blend_backstop.event"}},
 		}},
 		{name: "defindex", genesis: 57_056_338, dec: defindex.NewDecoder(), targets: []reconTarget{
+			// ADR-0035/0040 contract-gated (curated set): the bare
+			// NewDecoder() carries the in-code evidence-verified seed
+			// (defindex.MainnetGatedSet), which is the trust root — the
+			// factory create event does not announce the child address,
+			// so there is no factories/creationSym preseed to run
+			// (phoenix-style; a vault verified after the snapshot needs
+			// the seed extended before its history reconciles).
 			// Computed kinds: "defindex.{strategy,vault}.{deposit,withdraw}"
 			// (defindex.Event / VaultEvent EventKind()). Both layers land
 			// in defindex_flows (layer discriminator column).
