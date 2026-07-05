@@ -89,8 +89,16 @@ func (c *CachedCoinsReader) ListCoinsExt(ctx context.Context, opts timescale.Lis
 	if c.ttl <= 0 {
 		return c.upstream.ListCoinsExt(ctx, opts)
 	}
-	key := fmt.Sprintf("ListCoinsExt|%d|%s|%s|%s|%d",
-		opts.Limit, opts.Issuer, opts.Cursor, opts.Q, opts.Order)
+	// Every ListCoinsOptions dimension that changes the result set
+	// MUST appear in the key, or two requests differing only by that
+	// dimension collide and one serves the other's rows. Code is a
+	// row-narrowing filter (BACKLOG #54), so it is keyed alongside
+	// Issuer/Cursor/Q. (Type is NOT here: the handler folds it before
+	// reaching the reader — classic_assets is homogeneously classic,
+	// so a non-classic type short-circuits to an empty page and a
+	// classic/any type is a no-op on this call.)
+	key := fmt.Sprintf("ListCoinsExt|%d|%s|%s|%s|%s|%d",
+		opts.Limit, opts.Issuer, opts.Code, opts.Cursor, opts.Q, opts.Order)
 	return c.fetchRows(ctx, "list_coins", key, func(ctx context.Context) ([]timescale.CoinRow, error) {
 		return c.upstream.ListCoinsExt(ctx, opts)
 	})

@@ -601,6 +601,129 @@ func TestAssetList_FromCoinsReader_IssuerFilter(t *testing.T) {
 	}
 }
 
+func TestAssetList_FromCoinsReader_CodeFilter(t *testing.T) {
+	// ?code=USDC pushes down to the CoinsReader's Code option
+	// (BACKLOG #54). Stub records what was passed.
+	listReader := &listingStub{}
+	srv := v1.New(v1.Options{Coins: listReader, Assets: &stubAssetReader{}})
+	ts := httpTestServer(t, srv)
+	mustGet(t, ts.URL+"/v1/assets?code=USDC")
+	if listReader.lastOpts.Code != "USDC" {
+		t.Errorf("ListCoinsExt called with Code=%q, want %q", listReader.lastOpts.Code, "USDC")
+	}
+	if listReader.lastOpts.Issuer != "" {
+		t.Errorf("Issuer must be empty when only code is set; got %q", listReader.lastOpts.Issuer)
+	}
+}
+
+func TestAssetList_FromCoinsReader_IssuerAndCodeCombine(t *testing.T) {
+	// ?issuer=G&code=USDC — both filters combine (the "pin one
+	// classic asset" case). BACKLOG #54.
+	listReader := &listingStub{}
+	srv := v1.New(v1.Options{Coins: listReader, Assets: &stubAssetReader{}})
+	ts := httpTestServer(t, srv)
+	mustGet(t, ts.URL+"/v1/assets?issuer="+testUSDCIssuer+"&code=USDC")
+	if listReader.lastOpts.Issuer != testUSDCIssuer || listReader.lastOpts.Code != "USDC" {
+		t.Errorf("ListCoinsExt opts = {Issuer:%q Code:%q}, want {%q USDC}",
+			listReader.lastOpts.Issuer, listReader.lastOpts.Code, testUSDCIssuer)
+	}
+}
+
+func TestAssetList_TypeClassic_PassesThrough(t *testing.T) {
+	// type=classic is a no-op on the classic-only coins listing:
+	// the reader is still called and its rows are returned.
+	listReader := &listingStub{rows: []timescale.CoinRow{{
+		AssetID: "USDC-" + testUSDCIssuer, Code: "USDC", Slug: "usdc",
+	}}}
+	srv := v1.New(v1.Options{Coins: listReader, Assets: &stubAssetReader{}})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/assets?type=classic")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.AssetDetail `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data) != 1 {
+		t.Fatalf("type=classic must pass through; got %d rows want 1", len(env.Data))
+	}
+}
+
+func TestAssetList_TypeNative_ShortCircuitsEmpty(t *testing.T) {
+	// type=native (or soroban/fiat) matches nothing on the classic-
+	// only coins listing → empty page WITHOUT hitting the reader
+	// (BACKLOG #54 type fold). The stub is seeded with a row that
+	// must NOT surface.
+	listReader := &listingStub{rows: []timescale.CoinRow{{
+		AssetID: "USDC-" + testUSDCIssuer, Code: "USDC", Slug: "usdc",
+	}}}
+	srv := v1.New(v1.Options{Coins: listReader, Assets: &stubAssetReader{}})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/assets?type=native")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.AssetDetail `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data) != 0 {
+		t.Fatalf("type=native must short-circuit empty; got %d rows", len(env.Data))
+	}
+	// Reader must not have been called at all (lastOpts stays zero).
+	if listReader.lastOpts.Limit != 0 {
+		t.Errorf("type=native must NOT call ListCoinsExt; lastOpts.Limit=%d", listReader.lastOpts.Limit)
+	}
+}
+
+func TestAssetList_InvalidFilters_400(t *testing.T) {
+	// Malformed type / code / issuer 400 up front (BACKLOG #54),
+	// before any backing reader is consulted.
+	listReader := &listingStub{}
+	srv := v1.New(v1.Options{Coins: listReader, Assets: &stubAssetReader{}})
+	ts := httpTestServer(t, srv)
+	cases := []struct {
+		name  string
+		query string
+	}{
+		{"bad type", "type=payment"},
+		{"code too long", "code=THIRTEENCHARS"},
+		{"code non-alnum", "code=US-DC"},
+		{"bad issuer", "issuer=not-a-strkey"},
+		{"issuer wrong prefix", "issuer=CA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := mustGet(t, ts.URL+"/v1/assets?"+tc.query)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("query %q: status=%d want 400", tc.query, resp.StatusCode)
+			}
+		})
+	}
+}
+
+func TestAssetList_TypeAny_NoFilter(t *testing.T) {
+	// type=any is the documented "disable the filter" value — it must
+	// pass through identically to omitting type.
+	listReader := &listingStub{rows: []timescale.CoinRow{{
+		AssetID: "USDC-" + testUSDCIssuer, Code: "USDC", Slug: "usdc",
+	}}}
+	srv := v1.New(v1.Options{Coins: listReader, Assets: &stubAssetReader{}})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/assets?type=any")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.AssetDetail `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data) != 1 {
+		t.Fatalf("type=any must be a no-op; got %d rows want 1", len(env.Data))
+	}
+}
+
 // listingStub is a tiny CoinsReader implementation tailored to the
 // listing-endpoint tests. Each method returns the configured value;
 // recording the most-recent ListCoinsExt opts lets tests assert

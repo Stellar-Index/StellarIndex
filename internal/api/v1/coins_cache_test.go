@@ -167,6 +167,51 @@ func TestCachedCoinsReader_TTLZeroBypasses(t *testing.T) {
 	}
 }
 
+// codeEchoUpstream tags each ListCoinsExt result with opts.Code so a
+// cache-key collision (Code omitted from the key) surfaces as a wrong
+// returned value. Embeds *fakeCoinsUpstream for the other methods.
+type codeEchoUpstream struct {
+	*fakeCoinsUpstream
+	calls atomic.Int64
+}
+
+func (u *codeEchoUpstream) ListCoinsExt(_ context.Context, opts timescale.ListCoinsOptions) ([]timescale.CoinRow, error) {
+	u.calls.Add(1)
+	return []timescale.CoinRow{{AssetID: "code=" + opts.Code}}, nil
+}
+
+// TestCachedCoinsReader_CodeInCacheKey pins that the Code filter is
+// part of the ListCoinsExt cache key (BACKLOG #54 lockstep): two
+// requests differing only by Code must NOT collide — each gets its own
+// upstream call + its own rows, and a repeat of the same Code hits
+// the cache.
+func TestCachedCoinsReader_CodeInCacheKey(t *testing.T) {
+	up := &codeEchoUpstream{fakeCoinsUpstream: &fakeCoinsUpstream{}}
+	c := NewCachedCoinsReader(up, 60*time.Second)
+
+	a, err := c.ListCoinsExt(context.Background(), timescale.ListCoinsOptions{Limit: 50, Code: "AAA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := c.ListCoinsExt(context.Background(), timescale.ListCoinsOptions{Limit: 50, Code: "BBB"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a[0].AssetID != "code=AAA" || b[0].AssetID != "code=BBB" {
+		t.Fatalf("Code missing from cache key — got %q then %q (collision)", a[0].AssetID, b[0].AssetID)
+	}
+	if got := up.calls.Load(); got != 2 {
+		t.Errorf("distinct Code values must miss separately; upstream calls=%d want 2", got)
+	}
+	// Same Code repeated → served from cache (no 3rd upstream call).
+	if _, err := c.ListCoinsExt(context.Background(), timescale.ListCoinsOptions{Limit: 50, Code: "AAA"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := up.calls.Load(); got != 2 {
+		t.Errorf("repeat of Code=AAA must hit cache; upstream calls=%d want 2", got)
+	}
+}
+
 // swrCoinsUpstream is a configurable ListCoinsExt stub for the
 // stale-while-revalidate tests: a per-call counter plus a settable
 // delay / return value / failure. Embeds fakeCoinsUpstream so the

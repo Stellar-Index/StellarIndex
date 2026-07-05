@@ -369,19 +369,108 @@ func (s *Server) assetReaderOrNil() AssetReader { return s.assets }
 
 // ─── Handlers ─────────────────────────────────────────────────────
 
+// assetListFilters holds the validated row-narrowing filters shared
+// by the /v1/assets listing paths (BACKLOG #54, matching the
+// TypeFilter / CodeFilter / IssuerFilter parameters in the OpenAPI
+// spec). An empty field means "no filter". typ is normalised so both
+// "any" and omitted collapse to "".
+type assetListFilters struct {
+	typ    string // "" | native | classic | soroban | fiat
+	code   string // exact classic code, case-sensitive
+	issuer string // G-strkey, CRC-checked
+}
+
+// parseAssetListFilters extracts + validates the type / code / issuer
+// query filters for /v1/assets. It returns ok=false — after writing a
+// problem+json 400 — when any value is malformed, so garbage input
+// fails fast regardless of which backing path would serve the request.
+// Empty values are valid and disable the corresponding filter.
+func parseAssetListFilters(w http.ResponseWriter, r *http.Request) (assetListFilters, bool) {
+	q := r.URL.Query()
+	var f assetListFilters
+
+	// type: structural asset class. "any"/"" disable the filter.
+	switch t := strings.TrimSpace(q.Get("type")); t {
+	case "", "any":
+		// no filter
+	case "native", "classic", "soroban", "fiat":
+		f.typ = t
+	default:
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-type",
+			"Invalid type", http.StatusBadRequest,
+			"type must be one of native, classic, soroban, fiat, any")
+		return assetListFilters{}, false
+	}
+
+	// code: exact classic asset code — case-sensitive, 1-12 alnum
+	// (Stellar's alphanum4/alphanum12 rule, matching canonical's
+	// validateClassicAssetCode).
+	if c := strings.TrimSpace(q.Get("code")); c != "" {
+		if !isValidClassicCode(c) {
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/invalid-code",
+				"Invalid code", http.StatusBadRequest,
+				"code must be 1-12 alphanumeric characters (a Stellar asset code)")
+			return assetListFilters{}, false
+		}
+		f.code = c
+	}
+
+	// issuer: G-strkey, CRC-checked (same validator as /v1/accounts).
+	if iss := strings.TrimSpace(q.Get("issuer")); iss != "" {
+		if !canonical.IsAccountID(iss) {
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/invalid-issuer",
+				"Invalid issuer", http.StatusBadRequest,
+				"issuer must be a valid Stellar account G-strkey")
+			return assetListFilters{}, false
+		}
+		f.issuer = iss
+	}
+
+	return f, true
+}
+
+// isValidClassicCode reports whether s is a valid Stellar classic
+// asset code: 1-12 bytes, [A-Za-z0-9] only (XDR alphanum4/alphanum12).
+// Mirrors canonical.validateClassicAssetCode, which is unexported.
+func isValidClassicCode(s string) bool {
+	if len(s) == 0 || len(s) > 12 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		alnum := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+		if !alnum {
+			return false
+		}
+	}
+	return true
+}
+
 // handleAssetList serves GET /v1/assets.
 //
 // Query params:
 //   - cursor (optional): opaque, from a prior response's pagination.next.
 //   - limit  (optional): integer 1-500, default 100.
 //
-// Filter params reserved in the OpenAPI spec — `type=classic,soroban`,
-// `code=USDC`, `issuer=G…` — are accepted by the parser without
-// rejection but **the handler does not apply them**: every request
-// returns the unfiltered paginated catalogue. Operators who need
-// filtering today should walk the cursor and filter client-side.
-// Tracked under the day-1 contract in `docs/reference/api-design.md
-// §5.0 Resource catalogue` so SDK consumers don't expect filtering.
+// Row filters (BACKLOG #54), validated up front (garbage → 400)
+// regardless of which backing path serves the request:
+//   - type (optional): structural asset class, one of native |
+//     classic | soroban | fiat | any. `any`/omitted disables it.
+//   - code (optional): exact classic asset code, case-sensitive,
+//     1-12 alphanumeric (e.g. `USDC`). Not unique on Stellar —
+//     combine with issuer to pin a single asset.
+//   - issuer (optional): a G-strkey (CRC-checked).
+//
+// The filters apply to the default classic-assets listing (the
+// CoinsReader path — `code`/`issuer` push down to the indexed
+// classic_assets columns; `type` folds against the homogeneously-
+// classic backing table). Consistent with how `issuer` already
+// scoped, they are NOT re-applied when `asset_class` dispatches to
+// the catalogue / unified paths (asset_class is the major dispatch);
+// validation still fires on every path so bad input never 200s.
 //
 // Returns an empty list when no AssetReader is wired (operator did
 // not configure the asset-catalog reader). The Envelope shape is
@@ -404,6 +493,14 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 
+	// Row filters (type / code / issuer). Validated BEFORE the
+	// asset_class dispatch so malformed input 400s on every path
+	// (BACKLOG #54), not just the coins-backed one.
+	filters, ok := parseAssetListFilters(w, r)
+	if !ok {
+		return
+	}
+
 	// asset_class filter. Drives the class chip group on the
 	// explorer's /assets page. Recognised values:
 	//   - "fiat"        → catalogue fiat rows only (USD, EUR, …).
@@ -417,8 +514,6 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 		s.handleAssetListFromCatalogue(w, r, assetClass, limit, cursor)
 		return
 	}
-
-	issuer := strings.TrimSpace(r.URL.Query().Get("issuer"))
 
 	// Unified "All" listing — catalogue rows first (market-cap
 	// ordered) then classic_assets via the existing volume-desc
@@ -438,7 +533,7 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	// (R-018 finish — assets-unification endgame). Falls through to
 	// the lean AssetReader path when no CoinsReader is configured.
 	if s.coins != nil {
-		s.handleAssetListFromCoins(w, r, issuer, cursor, limit)
+		s.handleAssetListFromCoins(w, r, filters, cursor, limit)
 		return
 	}
 
@@ -486,15 +581,29 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 // into an AssetDetail with the coin-overlay fields populated — same
 // shape as /v1/coins listings, just under the /v1/assets URL.
 //
-// Honors ?issuer= filter (passed through to ListCoinsExt) and the
-// default order (observation_count_desc). cursor passes through
+// Honors the type / code / issuer row filters (BACKLOG #54):
+//   - code + issuer push down to the indexed classic_assets columns
+//     via ListCoinsExt.
+//   - type folds against the backing table: classic_assets is
+//     homogeneously classic, so a structural type filter that
+//     excludes classic (native / soroban / fiat) matches nothing and
+//     short-circuits to an empty page WITHOUT a DB round-trip.
+//     `classic` / `any` / omitted are a no-op. (Native XLM, Soroban,
+//     and fiat rows live on the catalogue / unified paths.)
+//
+// The default order is observation_count_desc; cursor passes through
 // unchanged.
 func (s *Server) handleAssetListFromCoins(
 	w http.ResponseWriter,
 	r *http.Request,
-	issuer, cursor string,
+	filters assetListFilters,
+	cursor string,
 	limit int,
 ) {
+	if filters.typ != "" && filters.typ != "classic" {
+		writeEnvelope(w, Envelope{Data: []AssetDetail{}, Flags: Flags{}})
+		return
+	}
 	// Overfetch-by-one: request limit+1 so the (limit+1)th row signals
 	// a next page. `limit` is validated to [1,500] by the caller, so the
 	// store sees at most 501 (F-1326: previously this passed `limit`
@@ -503,7 +612,8 @@ func (s *Server) handleAssetListFromCoins(
 	// reachable).
 	opts := timescale.ListCoinsOptions{
 		Limit:  limit + 1,
-		Issuer: issuer,
+		Issuer: filters.issuer,
+		Code:   filters.code,
 		Cursor: cursor,
 	}
 	rows, err := s.coins.ListCoinsExt(r.Context(), opts)
