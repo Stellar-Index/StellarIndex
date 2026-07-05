@@ -231,7 +231,7 @@ func run(cfgPath string, dryRun bool) error {
 		return fmt.Errorf("soroswap registry: %w", err)
 	}
 	// Factory-anchored gated decoders (blend, …): warm each one's
-	// childgate.Registry from protocol_contracts and arm a live-upsert
+	// contractid.Registry from protocol_contracts and arm a live-upsert
 	// hook so factory creation events persist as they stream (ADR-0035).
 	// Empty registry on a fresh deployment is fine — operators run
 	// `stellarindex-ops seed-protocol-contracts -source <name>` once to

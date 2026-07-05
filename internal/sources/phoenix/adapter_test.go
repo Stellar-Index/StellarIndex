@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/contractid"
 	"github.com/StellarIndex/stellar-index/internal/events"
-	"github.com/StellarIndex/stellar-index/internal/sources/childgate"
 )
 
 // ─── consumer.go ──────────────────────────────────────────────────
@@ -207,7 +207,7 @@ func TestDecoder_EvictedOrphans_incrementsOnStaleEviction(t *testing.T) {
 // is real mainnet ids). Gating behavior itself is pinned by
 // TestDecoder_GateRejectsForeignContract.
 func newTestDecoder() *Decoder {
-	return NewDecoder(childgate.WithSeed([]string{
+	return NewDecoder(contractid.WithSeed([]string{
 		"C-pool-strkey", "pool-A",
 		usdcContract, plPool, wlPool,
 	}))

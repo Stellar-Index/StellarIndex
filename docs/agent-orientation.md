@@ -84,6 +84,7 @@ development. If one does, it's a bug.
 ├── internal/                  private packages (Go-enforced, not importable externally)
 │   ├── canonical/                core types: Trade, Price, Asset, Pair, Amount
 │   ├── config/                   config loading + schema
+│   ├── contractid/               ADR-0035 factory-descended contract-identity registry (child gate) that gated decoders embed
 │   ├── consumer/                 transport-neutral ingest contract — the load-bearing `consumer.Event` interface used across indexer/ops/dispatcher/pipeline. (The legacy `Source`/`Orchestrator` per-source-goroutine seam was deleted 2026-07; prod ingest is dispatcher-based.)
 │   ├── ledgerstream/             archive/live LedgerCloseMeta streaming
 │   ├── dispatcher/               production ledger walker + decoder router
@@ -272,7 +273,7 @@ linked design doc has the full detail.
   contract**, not a per-protocol namespace. Any pubnet contract that
   deploys Balancer-v1 Comet code will look identical on the wire.
   **ADR-0035 factory-anchored contract gating is only PARTIALLY rolled out.**
-  Only `soroswap` (pair/factory registry) and `blend` (childgate) currently
+  Only `soroswap` (pair/factory registry) and `blend` (`internal/contractid` child gate) currently
   gate `Matches()` on contract identity. **`aquarius`, `defindex`, and `comet` still match on topic
   bytes alone** (ungated; phoenix gained its curated-set gate 2026-07-02) — so a look-alike
   contract emitting the same topic shape can inject fabricated trades under

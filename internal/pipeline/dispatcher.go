@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/StellarIndex/stellar-index/internal/config"
+	"github.com/StellarIndex/stellar-index/internal/contractid"
 	"github.com/StellarIndex/stellar-index/internal/dispatcher"
 	"github.com/StellarIndex/stellar-index/internal/obs"
 	"github.com/StellarIndex/stellar-index/internal/sources/accounts"
@@ -36,7 +37,6 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
 	blend_backstop "github.com/StellarIndex/stellar-index/internal/sources/blend_backstop"
 	"github.com/StellarIndex/stellar-index/internal/sources/cctp"
-	"github.com/StellarIndex/stellar-index/internal/sources/childgate"
 	"github.com/StellarIndex/stellar-index/internal/sources/claimable_balances"
 	"github.com/StellarIndex/stellar-index/internal/sources/comet"
 	"github.com/StellarIndex/stellar-index/internal/sources/defindex"
@@ -85,7 +85,7 @@ import (
 // Empty soroswapOpts is fine for tests / contexts that don't need
 // persistence (the verify-decoders subcommand uses SeedFromFactoryRPC
 // instead and ignores postgres entirely).
-func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[string][]childgate.Option, soroswapOpts ...soroswap.DecoderOption) (*dispatcher.Dispatcher, error) { //nolint:gocognit,gocyclo // linear case-table, splitting hurts readability
+func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (*dispatcher.Dispatcher, error) { //nolint:gocognit,gocyclo // linear case-table, splitting hurts readability
 	var decoders []dispatcher.Decoder
 	var opDecoders []dispatcher.OpDecoder
 	var callDecoders []dispatcher.ContractCallDecoder

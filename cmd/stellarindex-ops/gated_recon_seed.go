@@ -10,7 +10,7 @@ import (
 )
 
 // preseedFactoryChildren seeds a factory-anchored reconcile source's
-// childgate.Registry (ADR-0035) by walking the factory's creation events
+// contractid.Registry (ADR-0035) by walking the factory's creation events
 // from the source genesis up to `to` and running each through the
 // decoder — dec.Decode registers the announced child as a side effect.
 //

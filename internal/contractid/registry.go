@@ -1,4 +1,4 @@
-// Package childgate provides the shared contract-identity registry
+// Package contractid provides the shared contract-identity registry
 // that factory-anchored Soroban decoders use to gate Matches().
 //
 // Per ADR-0035, a decoder must only accept events from contracts that
@@ -31,7 +31,7 @@
 // Seed may be called from operator tooling concurrently with reads, so
 // the set is mutex-guarded (belt-and-braces, matching soroswap's
 // Decoder).
-package childgate
+package contractid
 
 import "sync"
 

@@ -7,27 +7,27 @@ import (
 
 	"github.com/StellarIndex/stellar-index/internal/sources/phoenix"
 
+	"github.com/StellarIndex/stellar-index/internal/contractid"
 	"github.com/StellarIndex/stellar-index/internal/dispatcher"
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
-	"github.com/StellarIndex/stellar-index/internal/sources/childgate"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // GatedMeta is the per-source description a factory-anchored decoder
-// (ADR-0035) needs to seed its childgate.Registry: the trust-root factory
+// (ADR-0035) needs to seed its contractid.Registry: the trust-root factory
 // SET (a protocol can have several factories — e.g. Blend was redeployed),
 // the topic_0_sym of the factories' creation event (which announces a new
 // child), the genesis ledger (lower bound for the deploy walk across all
 // factories), and a constructor that builds the source's decoder with
-// childgate options applied.
+// contractid (child-gate) options applied.
 type GatedMeta struct {
 	Factories   []string // canonical factory C-strkeys (gate trust roots)
 	CreationSym string   // topic_0_sym of the creation event (e.g. "deploy")
 	Genesis     uint32   // earliest factory deploy ledger; lower bound for the walk
-	// NewDecoder builds the source's decoder with the given childgate
+	// NewDecoder builds the source's decoder with the given contractid
 	// options (WithSeed / WithHook). Returned as a dispatcher.Decoder so
 	// the genesis-seed CLI can drive it generically.
-	NewDecoder func(opts ...childgate.Option) dispatcher.Decoder
+	NewDecoder func(opts ...contractid.Option) dispatcher.Decoder
 }
 
 // gatedSources is the registry of factory-anchored sources. Adding one is
@@ -49,13 +49,13 @@ var gatedSources = map[string]GatedMeta{
 		Factories:   []string{phoenix.MainnetFactory},
 		CreationSym: "create",
 		Genesis:     51_572_016,
-		NewDecoder:  func(opts ...childgate.Option) dispatcher.Decoder { return phoenix.NewDecoder(opts...) },
+		NewDecoder:  func(opts ...contractid.Option) dispatcher.Decoder { return phoenix.NewDecoder(opts...) },
 	},
 	blend.SourceName: {
 		Factories:   blend.MainnetPoolFactories,
 		CreationSym: blend.EventDeploy,
 		Genesis:     blend.FactoryGenesisLedger,
-		NewDecoder:  func(opts ...childgate.Option) dispatcher.Decoder { return blend.NewDecoder(opts...) },
+		NewDecoder:  func(opts ...contractid.Option) dispatcher.Decoder { return blend.NewDecoder(opts...) },
 	},
 }
 
@@ -67,7 +67,7 @@ func GatedMetaFor(source string) (GatedMeta, bool) {
 }
 
 // GatedSourceNames returns the factory-anchored source names (those that
-// warm a childgate.Registry from protocol_contracts). Stable order is not
+// warm a contractid.Registry from protocol_contracts). Stable order is not
 // guaranteed; callers that need determinism should sort.
 func GatedSourceNames() []string {
 	out := make([]string, 0, len(gatedSources))
@@ -81,7 +81,7 @@ func GatedSourceNames() []string {
 // source, or nil if the source is not factory-anchored.
 func GatedFactories(source string) []string { return gatedSources[source].Factories }
 
-// GatedRegistryOptions warms the childgate.Registry for every
+// GatedRegistryOptions warms the contractid.Registry for every
 // factory-anchored source from the protocol_contracts table and returns a
 // map keyed by source name. BuildDispatcher / BuildRegistry forward
 // out[source] to each gated decoder's NewDecoder so the in-memory gate
@@ -103,17 +103,17 @@ func GatedRegistryOptions(
 	logger *slog.Logger,
 	hookCtx context.Context,
 	withHook bool,
-) (map[string][]childgate.Option, error) {
-	out := make(map[string][]childgate.Option, len(gatedSources))
+) (map[string][]contractid.Option, error) {
+	out := make(map[string][]contractid.Option, len(gatedSources))
 	for source, meta := range gatedSources {
 		ids, err := store.LoadProtocolContracts(ctx, source)
 		if err != nil {
 			return nil, fmt.Errorf("gated registry warm %s: %w", source, err)
 		}
-		opts := []childgate.Option{childgate.WithSeed(ids)}
+		opts := []contractid.Option{contractid.WithSeed(ids)}
 		if withHook {
 			src := source // capture per iteration
-			opts = append(opts, childgate.WithHook(func(childID, factoryID string, firstLedger uint32) {
+			opts = append(opts, contractid.WithHook(func(childID, factoryID string, firstLedger uint32) {
 				hookTimeout, cancel := context.WithTimeout(hookCtx, upsertHookTimeout)
 				defer cancel()
 				if err := store.UpsertProtocolContract(hookTimeout, src, childID, factoryID, firstLedger); err != nil {

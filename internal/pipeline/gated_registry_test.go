@@ -3,9 +3,9 @@ package pipeline
 import (
 	"testing"
 
+	"github.com/StellarIndex/stellar-index/internal/contractid"
 	"github.com/StellarIndex/stellar-index/internal/events"
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
-	"github.com/StellarIndex/stellar-index/internal/sources/childgate"
 )
 
 func TestGatedMetaFor_blend(t *testing.T) {
@@ -38,10 +38,10 @@ func TestGatedMetaFor_blend(t *testing.T) {
 	if m.NewDecoder == nil {
 		t.Fatal("NewDecoder must be non-nil")
 	}
-	// The constructor must forward childgate options to a real, gated
+	// The constructor must forward contractid (child-gate) options to a real, gated
 	// decoder: a seeded pool's event matches, an unseeded one does not.
 	const pool = "CDPOOLSEEDEDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	dec := m.NewDecoder(childgate.WithSeed([]string{pool}))
+	dec := m.NewDecoder(contractid.WithSeed([]string{pool}))
 	if !dec.Matches(events.Event{Topic: []string{blend.TopicSymbolSupply}, ContractID: pool}) {
 		t.Error("seeded pool event should match through the constructed decoder")
 	}

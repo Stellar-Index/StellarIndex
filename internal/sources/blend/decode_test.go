@@ -10,9 +10,9 @@ import (
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/StellarIndex/stellar-index/internal/contractid"
 	"github.com/StellarIndex/stellar-index/internal/events"
 	"github.com/StellarIndex/stellar-index/internal/scval"
-	"github.com/StellarIndex/stellar-index/internal/sources/childgate"
 )
 
 // makeDeployEvent builds a Pool-Factory `deploy` event announcing
@@ -420,7 +420,7 @@ func TestDecoder_Matches(t *testing.T) {
 	// unregistered (foreign) contract do not.
 	const registeredPool = "CDPOOLREGISTEREDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	const foreign = "CDFOREIGNCONTRACTBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
-	d := NewDecoder(childgate.WithSeed([]string{registeredPool}))
+	d := NewDecoder(contractid.WithSeed([]string{registeredPool}))
 
 	businessTopics := []string{
 		// Auction.

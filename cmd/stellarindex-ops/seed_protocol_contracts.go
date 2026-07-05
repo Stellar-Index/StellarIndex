@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/config"
+	"github.com/StellarIndex/stellar-index/internal/contractid"
 	"github.com/StellarIndex/stellar-index/internal/pipeline"
-	"github.com/StellarIndex/stellar-index/internal/sources/childgate"
 	"github.com/StellarIndex/stellar-index/internal/sources/sorobanevents"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
@@ -123,7 +123,7 @@ func seedOneGatedSource(ctx context.Context, store *timescale.Store, source stri
 		}
 		seeded++
 	}
-	dec := meta.NewDecoder(childgate.WithHook(hook))
+	dec := meta.NewDecoder(contractid.WithHook(hook))
 
 	// Walk every factory's creation events in one lake scan (filter on the
 	// factory SET — Blend has more than one factory).

@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/childgate"
+	"github.com/StellarIndex/stellar-index/internal/contractid"
 
 	"github.com/StellarIndex/stellar-index/internal/consumer"
 	"github.com/StellarIndex/stellar-index/internal/events"
@@ -34,7 +34,7 @@ type Decoder struct {
 	// (internal/pipeline/processor.go).
 	evictedOrphans int
 	// reg gates Matches() on contract identity (ADR-0035/0040).
-	reg *childgate.Registry
+	reg *contractid.Registry
 }
 
 // NewDecoder constructs a Phoenix Decoder with a fresh buffer.
@@ -46,12 +46,12 @@ type Decoder struct {
 // protocol_contracts DB warm + live-upsert hook on top (harmless
 // no-ops today; load-bearing if the factory ever emits a creation
 // event we can decode).
-func NewDecoder(opts ...childgate.Option) *Decoder {
-	base := []childgate.Option{
-		childgate.WithFactories([]string{MainnetFactory}),
-		childgate.WithSeed(MainnetGatedSet()),
+func NewDecoder(opts ...contractid.Option) *Decoder {
+	base := []contractid.Option{
+		contractid.WithFactories([]string{MainnetFactory}),
+		contractid.WithSeed(MainnetGatedSet()),
 	}
-	return &Decoder{buf: newBuffer(), reg: childgate.New(append(base, opts...)...)}
+	return &Decoder{buf: newBuffer(), reg: contractid.New(append(base, opts...)...)}
 }
 
 // Name implements [dispatcher.Decoder].

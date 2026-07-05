@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/contractid"
 	"github.com/StellarIndex/stellar-index/internal/events"
-	"github.com/StellarIndex/stellar-index/internal/sources/childgate"
 )
 
 // Decoder is the dispatcher-facing view of Blend (ADR-0035
@@ -17,17 +17,17 @@ import (
 //
 // The registry of factory-deployed pools is the load-bearing state. It's
 // seeded live (every `deploy` we decode calls reg.Seed), DB-warmed at
-// boot (the `protocol_contracts` table → childgate.WithSeed), and
+// boot (the `protocol_contracts` table → contractid.WithSeed), and
 // genesis-seeded by walking the factory's `deploy` events from the lake
 // (`stellarindex-ops seed-protocol-contracts -source blend`, and the
 // ADR-0033 reconcile pre-seed). See docs/discovery/dexes-amms/blend.md
 // (Pool Factory V2 = CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU).
 type Decoder struct {
-	reg *childgate.Registry
+	reg *contractid.Registry
 }
 
 // NewDecoder constructs a Blend Decoder. The options seed and persist the
-// factory-deployed-pool registry (childgate.WithSeed / WithHook); with no
+// factory-deployed-pool registry (contractid.WithSeed / WithHook); with no
 // options the registry is empty and only live `deploy` events populate it
 // (correct for a from-genesis stream, insufficient for an incremental
 // restart — hence the DB warm in production wiring).
@@ -36,12 +36,12 @@ type Decoder struct {
 // docs/architecture/contract-schema-evolution.md) would add a version
 // selector but the event surface is currently covered by a single
 // contract version (V2).
-func NewDecoder(opts ...childgate.Option) *Decoder {
+func NewDecoder(opts ...contractid.Option) *Decoder {
 	// The factory trust-root set is intrinsic to the protocol (verified,
 	// hard-coded), so it's always installed first; caller opts (WithSeed /
 	// WithHook) layer the discovered children + persistence on top.
-	base := []childgate.Option{childgate.WithFactories(MainnetPoolFactories)}
-	return &Decoder{reg: childgate.New(append(base, opts...)...)}
+	base := []contractid.Option{contractid.WithFactories(MainnetPoolFactories)}
+	return &Decoder{reg: contractid.New(append(base, opts...)...)}
 }
 
 // Name implements [dispatcher.Decoder].

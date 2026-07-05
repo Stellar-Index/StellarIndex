@@ -16,10 +16,10 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/completeness"
 	"github.com/StellarIndex/stellar-index/internal/config"
 	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/contractid"
 	"github.com/StellarIndex/stellar-index/internal/dispatcher"
 	"github.com/StellarIndex/stellar-index/internal/pipeline"
 	"github.com/StellarIndex/stellar-index/internal/sources/band"
-	"github.com/StellarIndex/stellar-index/internal/sources/childgate"
 	"github.com/StellarIndex/stellar-index/internal/sources/sdex"
 	soroswap_router "github.com/StellarIndex/stellar-index/internal/sources/soroswap_router"
 	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
@@ -469,7 +469,7 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 	// factory's creation events [genesis, lo) before the re-derive, so children
 	// deployed before this window aren't dropped — exactly as
 	// verify-reconciliation does (verify_reconciliation.go). Without this the
-	// daily verdict's childgate was only the static protocol_contracts seed and
+	// daily verdict's child gate was only the static protocol_contracts seed and
 	// went STALE as new pools deployed: blend reported complete=false
 	// (expected=0) on windows whose activity was on pools missing from the seed,
 	// while the live decoder (which self-seeds from deploy events) captured them.
@@ -793,7 +793,7 @@ func projectionDelta(src reconSource, table string, expected, actual map[uint32]
 // classic-token firehose — sep41 isn't enabled, so it's out of protocol scope)
 // run through the dispatcher's Recognize(). Fast + off the serving DB vs the
 // Postgres soroban_events scan in computeRecognitionGaps.
-func computeRecognitionGapsCH(ctx context.Context, cfg config.Config, chAddr string, gated map[string][]childgate.Option, from, tip uint32) ([]completeness.RecognitionGap, error) {
+func computeRecognitionGapsCH(ctx context.Context, cfg config.Config, chAddr string, gated map[string][]contractid.Option, from, tip uint32) ([]completeness.RecognitionGap, error) {
 	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gated)
 	if err != nil {
 		return nil, fmt.Errorf("build dispatcher: %w", err)
@@ -821,7 +821,7 @@ func computeRecognitionGapsCH(ctx context.Context, cfg config.Config, chAddr str
 
 // computeRecognitionGaps runs the global recognition audit over the
 // Soroban era and returns every unrecognized event shape.
-func computeRecognitionGaps(ctx context.Context, store *timescale.Store, cfg config.Config, gated map[string][]childgate.Option, tip uint32) ([]completeness.RecognitionGap, error) {
+func computeRecognitionGaps(ctx context.Context, store *timescale.Store, cfg config.Config, gated map[string][]contractid.Option, tip uint32) ([]completeness.RecognitionGap, error) {
 	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gated)
 	if err != nil {
 		return nil, fmt.Errorf("build dispatcher: %w", err)

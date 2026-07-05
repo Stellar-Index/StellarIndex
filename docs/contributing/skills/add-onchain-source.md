@@ -20,7 +20,7 @@ decision, and the machine checks. Template package:
    `OpDecoder`; LedgerEntry deltas → `LedgerEntryChangeDecoder`.
 3. Decide the **gate** (ADR-0035/0040 — topic-only matching is
    FORBIDDEN for new sources): factory-descended registry, curated
-   set (`childgate.WithSeed`), or WASM-hash. Get the contract set
+   set (`contractid.WithSeed`), or WASM-hash. Get the contract set
    from the lake, not docs — and write the
    `docs/protocols/<name>.md` page in the same PR.
 4. Reverse-engineer event schemas FROM THE LAKE (CH `contract_events`

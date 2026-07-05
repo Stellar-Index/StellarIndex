@@ -1,4 +1,4 @@
-package childgate
+package contractid
 
 import (
 	"sync"

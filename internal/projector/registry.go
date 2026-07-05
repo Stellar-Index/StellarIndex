@@ -4,12 +4,12 @@ import (
 	"strings"
 
 	"github.com/StellarIndex/stellar-index/internal/config"
+	"github.com/StellarIndex/stellar-index/internal/contractid"
 	"github.com/StellarIndex/stellar-index/internal/dispatcher"
 	"github.com/StellarIndex/stellar-index/internal/sources/aquarius"
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
 	blend_backstop "github.com/StellarIndex/stellar-index/internal/sources/blend_backstop"
 	"github.com/StellarIndex/stellar-index/internal/sources/cctp"
-	"github.com/StellarIndex/stellar-index/internal/sources/childgate"
 	"github.com/StellarIndex/stellar-index/internal/sources/comet"
 	"github.com/StellarIndex/stellar-index/internal/sources/defindex"
 	"github.com/StellarIndex/stellar-index/internal/sources/phoenix"
@@ -37,7 +37,7 @@ import (
 // requires oracle config + that config is empty (e.g.
 // `reflector-dex` enabled but `oracle.reflector.dex_contract`
 // is "").
-func BuildRegistry(names []string, oracle config.OracleConfig, watchedSEP41 []string, gated map[string][]childgate.Option, soroswapOpts ...soroswap.DecoderOption) (Registry, error) {
+func BuildRegistry(names []string, oracle config.OracleConfig, watchedSEP41 []string, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (Registry, error) {
 	var sources []Source
 	for _, name := range names {
 		s, ok, err := buildSource(strings.ToLower(name), oracle, watchedSEP41, gated, soroswapOpts...)
@@ -93,7 +93,7 @@ var firehoseExcludeSyms = []string{
 }
 
 //nolint:gocognit,gocyclo,funlen // dispatch switch; one case per source. Same shape as pipeline.BuildDispatcher (which carries the same exemption).
-func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string, gated map[string][]childgate.Option, soroswapOpts ...soroswap.DecoderOption) (Source, bool, error) {
+func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (Source, bool, error) {
 	switch name {
 	case soroswap.SourceName:
 		// Soroswap dispatches via topic[0] across all pairs in

@@ -51,7 +51,7 @@ func (s *Store) UpsertProtocolContract(ctx context.Context, source, contractID, 
 
 // LoadProtocolContracts returns every child contract C-strkey registered
 // for source, as a flat slice. Used by the indexer / projector / audit
-// commands at startup to warm a gated decoder's childgate.Registry.
+// commands at startup to warm a gated decoder's contractid.Registry.
 //
 // Returns an empty slice (not nil + error) when the source has no rows —
 // the steady-state for a fresh deployment that hasn't run
