@@ -64,6 +64,7 @@ import (
 	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
 	"github.com/StellarIndex/stellar-index/internal/api/v1/dashboardauth"
 	"github.com/StellarIndex/stellar-index/internal/api/v1/dashboardkeys"
+	"github.com/StellarIndex/stellar-index/internal/api/v1/dashboardpricealerts"
 	"github.com/StellarIndex/stellar-index/internal/api/v1/dashboardwebhooks"
 	"github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
 	"github.com/StellarIndex/stellar-index/internal/auth"
@@ -971,22 +972,23 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// maintains. The handler prefers this over UsageReader and
 		// falls back per-request when the read errors or the table
 		// has no rows for the subject yet.
-		UsageRollupReader:  usageRollupReaderOrNil(store),
-		CDNEnabled:         cfg.API.CDNEnabled,
-		StatusBackend:      statusBackend,
-		ArchiveReportPath:  cfg.API.ArchiveReportPath,
-		RegionName:         cfg.Region.ID,
-		RegionDeployment:   "production",
-		DashboardAuth:      nilOrMounter(dashboardBundle.auth),
-		DashboardKeys:      nilOrMounter(dashboardBundle.keys),
-		DashboardWebhooks:  nilOrMounter(dashboardBundle.webhooks),
-		SessionAuth:        dashboardBundle.middleware,
-		SessionPeeker:      sessionPeekerAdapter{},
-		SACWrappers:        cfg.Supply.SACWrappers,
-		NetworkPassphrase:  stellarNetworkPassphrase(),
-		USDPeggedClassics:  usdPegs,
-		VerifiedCurrencies: verifiedCurrencies,
-		BackfillCoverage:   backfillCoverageCache,
+		UsageRollupReader:    usageRollupReaderOrNil(store),
+		CDNEnabled:           cfg.API.CDNEnabled,
+		StatusBackend:        statusBackend,
+		ArchiveReportPath:    cfg.API.ArchiveReportPath,
+		RegionName:           cfg.Region.ID,
+		RegionDeployment:     "production",
+		DashboardAuth:        nilOrMounter(dashboardBundle.auth),
+		DashboardKeys:        nilOrMounter(dashboardBundle.keys),
+		DashboardWebhooks:    nilOrMounter(dashboardBundle.webhooks),
+		DashboardPriceAlerts: nilOrMounter(dashboardBundle.priceAlerts),
+		SessionAuth:          dashboardBundle.middleware,
+		SessionPeeker:        sessionPeekerAdapter{},
+		SACWrappers:          cfg.Supply.SACWrappers,
+		NetworkPassphrase:    stellarNetworkPassphrase(),
+		USDPeggedClassics:    usdPegs,
+		VerifiedCurrencies:   verifiedCurrencies,
+		BackfillCoverage:     backfillCoverageCache,
 		GlobalPrice: globalPriceReader{
 			s:   store,
 			tri: redisTriangulatedLooker{rdb: rdb},
@@ -1269,6 +1271,7 @@ type dashboardBundle struct {
 	auth         *dashboardauth.Handlers
 	keys         *dashboardkeys.Handlers
 	webhooks     *dashboardwebhooks.Handlers
+	priceAlerts  *dashboardpricealerts.Handlers
 	webhookStore platform.WebhookStore
 	middleware   middleware.Middleware
 	keysStore    platform.APIKeyStore
@@ -1295,6 +1298,38 @@ type dashboardBundle struct {
 // look up the plaintext from the API's structured logs to test
 // the callback path. This is the expected dev/local default;
 // production sets the env var.
+// buildWebhookHandlers constructs the dashboard webhook CRUD handlers
+// (F-1270) atop a fresh WebhookStore over the same Postgres the
+// delivery worker (a goroutine in main()) drains. Returns the store so
+// the bundle can thread it to the worker.
+func buildWebhookHandlers(db *sql.DB, logger *slog.Logger) (*postgresstore.WebhookStore, *dashboardwebhooks.Handlers, error) {
+	store := postgresstore.NewWebhookStore(postgresstore.New(db))
+	h, err := dashboardwebhooks.NewHandlers(dashboardwebhooks.Config{
+		Webhooks: store,
+		Logger:   logger.With("component", "dashboard-webhooks"),
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("dashboard webhooks handlers: %w", err)
+	}
+	return store, h, nil
+}
+
+// buildPriceAlertHandlers constructs the dashboard price-alert CRUD
+// handlers (BACKLOG #60) atop the shared platform store. The evaluator
+// that checks these alerts + enqueues price.alert deliveries runs in
+// the aggregator binary (internal/pricealerts); these handlers are the
+// customer-facing registration surface.
+func buildPriceAlertHandlers(pg *postgresstore.Store, logger *slog.Logger) (*dashboardpricealerts.Handlers, error) {
+	h, err := dashboardpricealerts.NewHandlers(dashboardpricealerts.Config{
+		Alerts: postgresstore.NewPriceAlertStore(pg),
+		Logger: logger.With("component", "dashboard-price-alerts"),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("dashboard price-alert handlers: %w", err)
+	}
+	return h, nil
+}
+
 func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.UniversalClient, logger *slog.Logger) (dashboardBundle, error) {
 	if cfg.BaseURL == "" {
 		logger.Warn("dashboard not wired (api.dashboard.base_url is empty); /v1/auth/* + /v1/dashboard/* will 404")
@@ -1387,19 +1422,17 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 		return dashboardBundle{}, fmt.Errorf("dashboard keys handlers: %w", err)
 	}
 
-	// F-1270: dashboard webhook handlers atop the same Postgres
-	// store the delivery worker reads. Single store handle threads
-	// through both surfaces: dashboard handlers (CRUD) and the
-	// delivery worker (drain queue). The worker runs as a goroutine
-	// in this binary's main() — see the `customer-webhook delivery
-	// worker` block there.
-	webhookStore := postgresstore.NewWebhookStore(postgresstore.New(db))
-	webhooksH, err := dashboardwebhooks.NewHandlers(dashboardwebhooks.Config{
-		Webhooks: webhookStore,
-		Logger:   logger.With("component", "dashboard-webhooks"),
-	})
+	// F-1270: dashboard webhook handlers atop the same Postgres store
+	// the delivery worker (a goroutine in main()) drains.
+	webhookStore, webhooksH, err := buildWebhookHandlers(db, logger)
 	if err != nil {
-		return dashboardBundle{}, fmt.Errorf("dashboard webhooks handlers: %w", err)
+		return dashboardBundle{}, err
+	}
+
+	// BACKLOG #60: dashboard price-alert CRUD atop the same Postgres.
+	priceAlertsH, err := buildPriceAlertHandlers(pg, logger)
+	if err != nil {
+		return dashboardBundle{}, err
 	}
 	logger.Info("dashboard wired",
 		"base_url", cfg.BaseURL,
@@ -1414,6 +1447,7 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 		auth:         authH,
 		keys:         keysH,
 		webhooks:     webhooksH,
+		priceAlerts:  priceAlertsH,
 		webhookStore: webhookStore,
 		middleware:   middleware.Middleware(dashboardauth.Middleware(&authCfg)),
 		keysStore:    keysStore,

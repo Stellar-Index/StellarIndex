@@ -62,6 +62,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
@@ -88,6 +89,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/obs"
 	"github.com/StellarIndex/stellar-index/internal/platform"
 	"github.com/StellarIndex/stellar-index/internal/platform/postgresstore"
+	"github.com/StellarIndex/stellar-index/internal/pricealerts"
 	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
 	"github.com/StellarIndex/stellar-index/internal/storage/redisclient"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
@@ -580,6 +582,37 @@ func run(cfgPath string, dryRun bool) error {
 			logger.Error("mev worker exited with error", "err", err)
 		}
 	}()
+
+	// ─── Price-alert evaluator (BACKLOG #60) ────────────────────
+	// Off by default. When [price_alerts] enabled=true, sweeps the
+	// enabled price_alerts rows against the latest closed 1m VWAP each
+	// tick and enqueues ACCOUNT-scoped `price.alert` webhook deliveries
+	// (via ListWebhooksForAccount, not the global fan-out). Placed in
+	// this binary because price data is freshest here (it writes
+	// prices_1m) and the other webhook-fan-out producers (anomaly.freeze
+	// / divergence.firing) already live here. Delivery (HMAC-sign + POST)
+	// is the orthogonal internal/customerwebhook worker in the API
+	// binary — no change needed there.
+	if cfg.PriceAlerts.Enabled {
+		paStore := postgresstore.New(store.DB())
+		paWorker := pricealerts.New(
+			postgresstore.NewPriceAlertStore(paStore),
+			postgresstore.NewWebhookStore(paStore),
+			priceAlertVWAPReader{store: store},
+			pricealerts.Options{
+				Interval: time.Duration(cfg.PriceAlerts.IntervalSeconds) * time.Second,
+				Logger:   logger.With("component", "price-alerts"),
+			},
+		)
+		refresherWG.Add(1)
+		go func() {
+			defer refresherWG.Done()
+			if err := paWorker.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Error("price-alert evaluator exited with error", "err", err)
+			}
+		}()
+		logger.Info("price-alert evaluator: wired", "interval_seconds", cfg.PriceAlerts.IntervalSeconds)
+	}
 
 	// ─── Run ─────────────────────────────────────────────────────
 	logger.Info("orchestrator starting")
@@ -1417,6 +1450,29 @@ func buildOracleDivergenceReferences(cfg config.DivergenceConfig, oracles diverg
 // Prometheus metrics (paired counter + duration histogram, plus the
 // new-events counter), matching the divergence_refresh /
 // supply_refresh observability shape.
+// priceAlertVWAPReader adapts *timescale.Store to
+// pricealerts.PriceReader. LatestClosedVWAP1mForPair combines both
+// stored pair orientations; sql.ErrNoRows (no closed bucket in scope)
+// maps to ok=false, nil — a benign no-op the evaluator skips rather than
+// a failure. The Vwap1mRow.Bucket is the START of the 1-minute window;
+// the close time reported to the payload is +1 minute.
+type priceAlertVWAPReader struct{ store *timescale.Store }
+
+func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canonical.Asset) (string, time.Time, bool, error) {
+	pair, err := canonical.NewPair(base, quote)
+	if err != nil {
+		return "", time.Time{}, false, err
+	}
+	row, err := r.store.LatestClosedVWAP1mForPair(ctx, pair)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", time.Time{}, false, nil
+	}
+	if err != nil {
+		return "", time.Time{}, false, err
+	}
+	return row.VWAP, row.Bucket.Add(time.Minute), true, nil
+}
+
 type mevObserver struct{}
 
 func (mevObserver) Run(outcome string, dur time.Duration, _ int, inserted int) {

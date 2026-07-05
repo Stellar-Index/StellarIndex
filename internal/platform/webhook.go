@@ -35,6 +35,17 @@ const (
 	// WebhookEventDivergenceFiring fires when a price-divergence
 	// warning starts or clears. Body carries `firing: true|false`.
 	WebhookEventDivergenceFiring WebhookEventType = "divergence.firing"
+
+	// WebhookEventPriceAlert fires when one of the account's
+	// registered price-threshold alerts crosses its condition
+	// (BACKLOG #60). Unlike the operational events above, this is a
+	// PER-ACCOUNT event: the aggregator's price-alert evaluator
+	// enqueues it only to the owning account's subscribed webhooks
+	// (via ListWebhooksForAccount, not the global fan-out), so one
+	// account's alerts never reach another's. Body shape:
+	// PriceAlertWebhookPayload (alert_id, pair, condition, threshold,
+	// observed_price, bucket, at).
+	WebhookEventPriceAlert WebhookEventType = "price.alert"
 )
 
 // CustomerWebhook is an outbound HTTPS endpoint a customer

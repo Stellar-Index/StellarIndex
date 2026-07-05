@@ -546,6 +546,7 @@ var validEventTypes = map[string]struct{}{
 	string(platform.WebhookEventIncidentResolved): {},
 	string(platform.WebhookEventAnomalyFreeze):    {},
 	string(platform.WebhookEventDivergenceFiring): {},
+	string(platform.WebhookEventPriceAlert):       {},
 }
 
 func validateEvents(events []string) error {
@@ -555,7 +556,7 @@ func validateEvents(events []string) error {
 	for _, e := range events {
 		if _, ok := validEventTypes[e]; !ok {
 			return fmt.Errorf("event %q is not in the supported set "+
-				"(incident.sev1, incident.resolved, anomaly.freeze, divergence.firing)", e)
+				"(incident.sev1, incident.resolved, anomaly.freeze, divergence.firing, price.alert)", e)
 		}
 	}
 	return nil

@@ -709,6 +709,41 @@ the 5-minute cadence means sweeps start overlapping their schedule
 and the rollup lag becomes user-visible on the dashboard's "today"
 row.
 
+### `stellarindex_price_alert_eval_total`
+
+Counter, label `outcome` (`ok` / `list_error` / `partial_error`).
+
+Per-sweep outcome of the aggregator's price-alert evaluator
+(`internal/pricealerts`, BACKLOG #60), which checks every enabled
+`price_alerts` row against the latest closed 1-minute VWAP each tick
+and enqueues account-scoped `price.alert` customer-webhook deliveries
+when a threshold is crossed (respecting cooldown + `last_fired_at`).
+Only emits when `[price_alerts] enabled = true`.
+
+When to look at it: customers report their price-threshold webhooks
+stopped firing. `list_error` = the `ListEnabledPriceAlerts` read
+failed, so the WHOLE sweep was skipped — nothing is being evaluated
+(Postgres unreachable, or the `price_alerts` table is superuser-owned
+per migrations/README rule 7). `partial_error` = the sweep ran but at
+least one alert hit a price-read / parse / enqueue error; narrower and
+self-heals per-alert. Notifications-only degradation — the public
+pricing surface is unaffected. Alert:
+`stellarindex_price_alert_eval_failing`
+(deploy/monitoring/rules/price-alerts.yml +
+configs/prometheus/rules.r1/price-alerts.yml).
+
+### `stellarindex_price_alert_eval_duration_seconds`
+
+Histogram, label `outcome` (matches
+`stellarindex_price_alert_eval_total`). Buckets 5 ms – 30 s.
+
+Wall-clock of one full evaluation sweep: one enabled-alerts read +
+per-alert VWAP point-reads + per-fire webhook enqueues. Chart `ok`
+p95/p99 separately from the `list_error` fast-fail path. A healthy
+sweep over a handful of alerts sits well under 100 ms; approaching the
+tick cadence (default 30 s) means the alert set or per-account webhook
+fan-out has grown enough that sweeps overlap.
+
 ### `stellarindex_aggregator_dropped_trades_total`
 
 Counter, label `reason` (`class` / `outlier`).

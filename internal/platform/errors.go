@@ -48,4 +48,12 @@ var (
 	// the 25-active-key/account cap is enforced atomically inside
 	// the INSERT to defeat the same race the webhook cap had.
 	ErrAPIKeyQuotaExceeded = errors.New("platform: api key quota exceeded")
+
+	// ErrPriceAlertQuotaExceeded mirrors ErrWebhookQuotaExceeded for
+	// the price-alert store (BACKLOG #60). The per-account cap is
+	// enforced atomically inside the CreatePriceAlert INSERT (same
+	// advisory-lock + CTE-gate shape) so concurrent creates at the
+	// boundary see this error rather than slip through a raceable
+	// pre-check.
+	ErrPriceAlertQuotaExceeded = errors.New("platform: price alert quota exceeded")
 )

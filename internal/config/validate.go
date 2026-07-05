@@ -92,6 +92,9 @@ func (c Config) Validate() error {
 	if err := c.Supply.Validate(); err != nil {
 		return err
 	}
+	if err := c.PriceAlerts.validate(); err != nil {
+		return err
+	}
 	// Cross-section checks: enabled sources must have the config
 	// they need. These can't live on the individual sub-structs
 	// because they span two sections (ingestion + oracle).

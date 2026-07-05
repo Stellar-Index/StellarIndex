@@ -24784,7 +24784,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"webhooks\": [\n    {\n      \"id\": \"<uuid>\",\n      \"name\": \"<string>\",\n      \"url\": \"<string>\",\n      \"events\": [\n        \"incident.resolved\",\n        \"incident.resolved\"\n      ],\n      \"enabled\": \"<boolean>\",\n      \"created_at\": \"<dateTime>\",\n      \"updated_at\": \"<dateTime>\"\n    },\n    {\n      \"id\": \"<uuid>\",\n      \"name\": \"<string>\",\n      \"url\": \"<string>\",\n      \"events\": [\n        \"incident.sev1\",\n        \"incident.sev1\"\n      ],\n      \"enabled\": \"<boolean>\",\n      \"created_at\": \"<dateTime>\",\n      \"updated_at\": \"<dateTime>\"\n    }\n  ]\n}",
+                  "body": "{\n  \"webhooks\": [\n    {\n      \"id\": \"<uuid>\",\n      \"name\": \"<string>\",\n      \"url\": \"<string>\",\n      \"events\": [\n        \"incident.resolved\",\n        \"anomaly.freeze\"\n      ],\n      \"enabled\": \"<boolean>\",\n      \"created_at\": \"<dateTime>\",\n      \"updated_at\": \"<dateTime>\"\n    },\n    {\n      \"id\": \"<uuid>\",\n      \"name\": \"<string>\",\n      \"url\": \"<string>\",\n      \"events\": [\n        \"incident.sev1\",\n        \"incident.sev1\"\n      ],\n      \"enabled\": \"<boolean>\",\n      \"created_at\": \"<dateTime>\",\n      \"updated_at\": \"<dateTime>\"\n    }\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -24869,7 +24869,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                  "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"anomaly.freeze\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
                   "options": {
                     "raw": {
                       "headerFamily": "json",
@@ -24931,7 +24931,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                      "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"anomaly.freeze\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -24948,7 +24948,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"webhook\": {\n    \"id\": \"<uuid>\",\n    \"name\": \"<string>\",\n    \"url\": \"<string>\",\n    \"events\": [\n      \"anomaly.freeze\",\n      \"incident.resolved\"\n    ],\n    \"enabled\": \"<boolean>\",\n    \"created_at\": \"<dateTime>\",\n    \"updated_at\": \"<dateTime>\"\n  },\n  \"secret\": \"<string>\"\n}",
+                  "body": "{\n  \"webhook\": {\n    \"id\": \"<uuid>\",\n    \"name\": \"<string>\",\n    \"url\": \"<string>\",\n    \"events\": [\n      \"anomaly.freeze\",\n      \"anomaly.freeze\"\n    ],\n    \"enabled\": \"<boolean>\",\n    \"created_at\": \"<dateTime>\",\n    \"updated_at\": \"<dateTime>\"\n  },\n  \"secret\": \"<string>\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -24987,7 +24987,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                      "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"anomaly.freeze\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -25043,7 +25043,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                      "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"anomaly.freeze\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -25099,7 +25099,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                      "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"anomaly.freeze\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -25155,7 +25155,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                      "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"anomaly.freeze\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -25814,7 +25814,7 @@
                               "value": "application/json"
                             }
                           ],
-                          "body": "{\n  \"deliveries\": [\n    {\n      \"id\": \"<uuid>\",\n      \"event_type\": \"incident.resolved\",\n      \"attempt_count\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"next_attempt_at\": \"<dateTime>\",\n      \"delivered_at\": \"<dateTime>\",\n      \"last_error\": \"<string>\",\n      \"last_response_status\": \"<integer>\"\n    },\n    {\n      \"id\": \"<uuid>\",\n      \"event_type\": \"divergence.firing\",\n      \"attempt_count\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"next_attempt_at\": \"<dateTime>\",\n      \"delivered_at\": \"<dateTime>\",\n      \"last_error\": \"<string>\",\n      \"last_response_status\": \"<integer>\"\n    }\n  ]\n}",
+                          "body": "{\n  \"deliveries\": [\n    {\n      \"id\": \"<uuid>\",\n      \"event_type\": \"anomaly.freeze\",\n      \"attempt_count\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"next_attempt_at\": \"<dateTime>\",\n      \"delivered_at\": \"<dateTime>\",\n      \"last_error\": \"<string>\",\n      \"last_response_status\": \"<integer>\"\n    },\n    {\n      \"id\": \"<uuid>\",\n      \"event_type\": \"price.alert\",\n      \"attempt_count\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"next_attempt_at\": \"<dateTime>\",\n      \"delivered_at\": \"<dateTime>\",\n      \"last_error\": \"<string>\",\n      \"last_response_status\": \"<integer>\"\n    }\n  ]\n}",
                           "cookie": [],
                           "_postman_previewlanguage": "json"
                         },
@@ -25937,6 +25937,1069 @@
                       }
                     }
                   ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "price-alerts",
+          "description": "",
+          "item": [
+            {
+              "name": "Customer dashboard — list this account's price alerts.",
+              "request": {
+                "name": "Customer dashboard — list this account's price alerts.",
+                "description": {
+                  "content": "Session-gated. Returns every price-threshold alert this\naccount has registered, newest first. BACKLOG #60.\n",
+                  "type": "text/plain"
+                },
+                "url": {
+                  "path": [
+                    "dashboard",
+                    "price-alerts"
+                  ],
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "query": [],
+                  "variable": []
+                },
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "method": "GET",
+                "body": {},
+                "auth": {
+                  "type": "apikey",
+                  "apikey": [
+                    {
+                      "key": "key",
+                      "value": "stellarindex_session"
+                    },
+                    {
+                      "key": "value",
+                      "value": "{{apiKey}}"
+                    },
+                    {
+                      "key": "in",
+                      "value": "header"
+                    }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "Price-alert list.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "dashboard",
+                        "price-alerts"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/json"
+                      },
+                      {
+                        "description": {
+                          "content": "Added as a part of security scheme: apikey",
+                          "type": "text/plain"
+                        },
+                        "key": "stellarindex_session",
+                        "value": "<API Key>"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "OK",
+                  "code": 200,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "body": "{\n  \"alerts\": [\n    {\n      \"id\": \"<uuid>\",\n      \"base_asset\": \"<string>\",\n      \"quote_asset\": \"<string>\",\n      \"condition\": \"below\",\n      \"threshold\": \"<string>\",\n      \"cooldown_seconds\": \"<integer>\",\n      \"enabled\": \"<boolean>\",\n      \"created_at\": \"<dateTime>\",\n      \"updated_at\": \"<dateTime>\",\n      \"last_fired_at\": \"<dateTime>\"\n    },\n    {\n      \"id\": \"<uuid>\",\n      \"base_asset\": \"<string>\",\n      \"quote_asset\": \"<string>\",\n      \"condition\": \"above\",\n      \"threshold\": \"<string>\",\n      \"cooldown_seconds\": \"<integer>\",\n      \"enabled\": \"<boolean>\",\n      \"created_at\": \"<dateTime>\",\n      \"updated_at\": \"<dateTime>\",\n      \"last_fired_at\": \"<dateTime>\"\n    }\n  ]\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "No valid session cookie.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "dashboard",
+                        "price-alerts"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      },
+                      {
+                        "description": {
+                          "content": "Added as a part of security scheme: apikey",
+                          "type": "text/plain"
+                        },
+                        "key": "stellarindex_session",
+                        "value": "<API Key>"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "Unauthorized",
+                  "code": 401,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                }
+              ],
+              "event": [],
+              "protocolProfileBehavior": {
+                "disableBodyPruning": true
+              }
+            },
+            {
+              "name": "Customer dashboard — register a new price alert.",
+              "request": {
+                "name": "Customer dashboard — register a new price alert.",
+                "description": {
+                  "content": "Session-gated. Registers a \"notify me when <base>/<quote>\ngoes <above|below> <threshold>\" rule. When the aggregator's\nevaluator is enabled it enqueues a `price.alert` webhook to\nthis account's subscribed webhooks (register one via\nPOST /v1/dashboard/webhooks with `price.alert` in `events`).\nOwner / admin / member roles can register; viewer + billing\n403. Alert quota is tier-aware (free 5, starter 25, pro 100,\nbusiness 250, enterprise 1000 — deployment-overridable);\nexceeding it returns 409.\n",
+                  "type": "text/plain"
+                },
+                "url": {
+                  "path": [
+                    "dashboard",
+                    "price-alerts"
+                  ],
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "query": [],
+                  "variable": []
+                },
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "method": "POST",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                  "options": {
+                    "raw": {
+                      "headerFamily": "json",
+                      "language": "json"
+                    }
+                  }
+                },
+                "auth": {
+                  "type": "apikey",
+                  "apikey": [
+                    {
+                      "key": "key",
+                      "value": "stellarindex_session"
+                    },
+                    {
+                      "key": "value",
+                      "value": "{{apiKey}}"
+                    },
+                    {
+                      "key": "in",
+                      "value": "header"
+                    }
+                  ]
+                }
+              },
+              "response": [
+                {
+                  "name": "Price alert registered.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "dashboard",
+                        "price-alerts"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/json"
+                      },
+                      {
+                        "description": {
+                          "content": "Added as a part of security scheme: apikey",
+                          "type": "text/plain"
+                        },
+                        "key": "stellarindex_session",
+                        "value": "<API Key>"
+                      }
+                    ],
+                    "method": "POST",
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                      "options": {
+                        "raw": {
+                          "headerFamily": "json",
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Created",
+                  "code": 201,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/json"
+                    }
+                  ],
+                  "body": "{\n  \"id\": \"<uuid>\",\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\",\n  \"created_at\": \"<dateTime>\",\n  \"updated_at\": \"<dateTime>\",\n  \"last_fired_at\": \"<dateTime>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Client-supplied parameters didn't validate.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "dashboard",
+                        "price-alerts"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      },
+                      {
+                        "description": {
+                          "content": "Added as a part of security scheme: apikey",
+                          "type": "text/plain"
+                        },
+                        "key": "stellarindex_session",
+                        "value": "<API Key>"
+                      }
+                    ],
+                    "method": "POST",
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                      "options": {
+                        "raw": {
+                          "headerFamily": "json",
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Bad Request",
+                  "code": 400,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "No valid session cookie.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "dashboard",
+                        "price-alerts"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      },
+                      {
+                        "description": {
+                          "content": "Added as a part of security scheme: apikey",
+                          "type": "text/plain"
+                        },
+                        "key": "stellarindex_session",
+                        "value": "<API Key>"
+                      }
+                    ],
+                    "method": "POST",
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                      "options": {
+                        "raw": {
+                          "headerFamily": "json",
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Unauthorized",
+                  "code": 401,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Role can't manage price alerts.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "dashboard",
+                        "price-alerts"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      },
+                      {
+                        "description": {
+                          "content": "Added as a part of security scheme: apikey",
+                          "type": "text/plain"
+                        },
+                        "key": "stellarindex_session",
+                        "value": "<API Key>"
+                      }
+                    ],
+                    "method": "POST",
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                      "options": {
+                        "raw": {
+                          "headerFamily": "json",
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Forbidden",
+                  "code": 403,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Account at the price-alert quota for its tier.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "dashboard",
+                        "price-alerts"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      },
+                      {
+                        "description": {
+                          "content": "Added as a part of security scheme: apikey",
+                          "type": "text/plain"
+                        },
+                        "key": "stellarindex_session",
+                        "value": "<API Key>"
+                      }
+                    ],
+                    "method": "POST",
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                      "options": {
+                        "raw": {
+                          "headerFamily": "json",
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Conflict",
+                  "code": 409,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                }
+              ],
+              "event": [],
+              "protocolProfileBehavior": {
+                "disableBodyPruning": true
+              }
+            },
+            {
+              "name": "{id}",
+              "description": "",
+              "item": [
+                {
+                  "name": "Customer dashboard — update a price alert.",
+                  "request": {
+                    "name": "Customer dashboard — update a price alert.",
+                    "description": {
+                      "content": "Session-gated. Patches any subset of base_asset / quote_asset\n/ condition / threshold / cooldown_seconds / enabled. Omitted\nfields keep their current value. 404 when the alert doesn't\nexist OR belongs to a different account (same shape so\nattackers can't enumerate cross-account ids).\n",
+                      "type": "text/plain"
+                    },
+                    "url": {
+                      "path": [
+                        "dashboard",
+                        "price-alerts",
+                        ":id"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": [
+                        {
+                          "type": "any",
+                          "value": "<uuid>",
+                          "key": "id",
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) ",
+                            "type": "text/plain"
+                          }
+                        }
+                      ]
+                    },
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/json"
+                      }
+                    ],
+                    "method": "PATCH",
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"above\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                      "options": {
+                        "raw": {
+                          "headerFamily": "json",
+                          "language": "json"
+                        }
+                      }
+                    },
+                    "auth": {
+                      "type": "apikey",
+                      "apikey": [
+                        {
+                          "key": "key",
+                          "value": "stellarindex_session"
+                        },
+                        {
+                          "key": "value",
+                          "value": "{{apiKey}}"
+                        },
+                        {
+                          "key": "in",
+                          "value": "header"
+                        }
+                      ]
+                    }
+                  },
+                  "response": [
+                    {
+                      "name": "Updated.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "price-alerts",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          },
+                          {
+                            "key": "Accept",
+                            "value": "application/json"
+                          },
+                          {
+                            "description": {
+                              "content": "Added as a part of security scheme: apikey",
+                              "type": "text/plain"
+                            },
+                            "key": "stellarindex_session",
+                            "value": "<API Key>"
+                          }
+                        ],
+                        "method": "PATCH",
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"above\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                          "options": {
+                            "raw": {
+                              "headerFamily": "json",
+                              "language": "json"
+                            }
+                          }
+                        }
+                      },
+                      "status": "OK",
+                      "code": 200,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/json"
+                        }
+                      ],
+                      "body": "{\n  \"id\": \"<uuid>\",\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\",\n  \"created_at\": \"<dateTime>\",\n  \"updated_at\": \"<dateTime>\",\n  \"last_fired_at\": \"<dateTime>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Client-supplied parameters didn't validate.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "price-alerts",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          },
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          },
+                          {
+                            "description": {
+                              "content": "Added as a part of security scheme: apikey",
+                              "type": "text/plain"
+                            },
+                            "key": "stellarindex_session",
+                            "value": "<API Key>"
+                          }
+                        ],
+                        "method": "PATCH",
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"above\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                          "options": {
+                            "raw": {
+                              "headerFamily": "json",
+                              "language": "json"
+                            }
+                          }
+                        }
+                      },
+                      "status": "Bad Request",
+                      "code": 400,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "No valid session cookie.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "price-alerts",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          },
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          },
+                          {
+                            "description": {
+                              "content": "Added as a part of security scheme: apikey",
+                              "type": "text/plain"
+                            },
+                            "key": "stellarindex_session",
+                            "value": "<API Key>"
+                          }
+                        ],
+                        "method": "PATCH",
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"above\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                          "options": {
+                            "raw": {
+                              "headerFamily": "json",
+                              "language": "json"
+                            }
+                          }
+                        }
+                      },
+                      "status": "Unauthorized",
+                      "code": 401,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Price alert not found.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "price-alerts",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          },
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          },
+                          {
+                            "description": {
+                              "content": "Added as a part of security scheme: apikey",
+                              "type": "text/plain"
+                            },
+                            "key": "stellarindex_session",
+                            "value": "<API Key>"
+                          }
+                        ],
+                        "method": "PATCH",
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"above\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                          "options": {
+                            "raw": {
+                              "headerFamily": "json",
+                              "language": "json"
+                            }
+                          }
+                        }
+                      },
+                      "status": "Not Found",
+                      "code": 404,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    }
+                  ],
+                  "event": [],
+                  "protocolProfileBehavior": {
+                    "disableBodyPruning": true
+                  }
+                },
+                {
+                  "name": "Customer dashboard — delete a price alert.",
+                  "request": {
+                    "name": "Customer dashboard — delete a price alert.",
+                    "description": {
+                      "content": "Session-gated. Removes the alert. Idempotent from the\ncustomer's view — a cross-account or absent id returns 404.\n",
+                      "type": "text/plain"
+                    },
+                    "url": {
+                      "path": [
+                        "dashboard",
+                        "price-alerts",
+                        ":id"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": [
+                        {
+                          "type": "any",
+                          "value": "<uuid>",
+                          "key": "id",
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) ",
+                            "type": "text/plain"
+                          }
+                        }
+                      ]
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "DELETE",
+                    "body": {},
+                    "auth": {
+                      "type": "apikey",
+                      "apikey": [
+                        {
+                          "key": "key",
+                          "value": "stellarindex_session"
+                        },
+                        {
+                          "key": "value",
+                          "value": "{{apiKey}}"
+                        },
+                        {
+                          "key": "in",
+                          "value": "header"
+                        }
+                      ]
+                    }
+                  },
+                  "response": [
+                    {
+                      "name": "Deleted.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "price-alerts",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "description": {
+                              "content": "Added as a part of security scheme: apikey",
+                              "type": "text/plain"
+                            },
+                            "key": "stellarindex_session",
+                            "value": "<API Key>"
+                          }
+                        ],
+                        "method": "DELETE",
+                        "body": {}
+                      },
+                      "status": "No Content",
+                      "code": 204,
+                      "header": [],
+                      "cookie": [],
+                      "_postman_previewlanguage": "text"
+                    },
+                    {
+                      "name": "No valid session cookie.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "price-alerts",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          },
+                          {
+                            "description": {
+                              "content": "Added as a part of security scheme: apikey",
+                              "type": "text/plain"
+                            },
+                            "key": "stellarindex_session",
+                            "value": "<API Key>"
+                          }
+                        ],
+                        "method": "DELETE",
+                        "body": {}
+                      },
+                      "status": "Unauthorized",
+                      "code": 401,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Price alert not found.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "price-alerts",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          },
+                          {
+                            "description": {
+                              "content": "Added as a part of security scheme: apikey",
+                              "type": "text/plain"
+                            },
+                            "key": "stellarindex_session",
+                            "value": "<API Key>"
+                          }
+                        ],
+                        "method": "DELETE",
+                        "body": {}
+                      },
+                      "status": "Not Found",
+                      "code": 404,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    }
+                  ],
+                  "event": [],
+                  "protocolProfileBehavior": {
+                    "disableBodyPruning": true
+                  }
                 }
               ]
             }
@@ -26458,7 +27521,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"036400\"\n}",
+                  "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"428638\"\n}",
                   "options": {
                     "raw": {
                       "headerFamily": "json",
@@ -26496,7 +27559,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"036400\"\n}",
+                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"428638\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -26553,7 +27616,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"036400\"\n}",
+                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"428638\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -26601,7 +27664,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"036400\"\n}",
+                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"428638\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -27890,7 +28953,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"data\": {\n    \"hash\": \"<string>\",\n    \"ledger\": \"<integer>\",\n    \"close_time\": \"<dateTime>\",\n    \"index\": \"<integer>\",\n    \"source_account\": \"<string>\",\n    \"fee_charged\": \"<integer>\",\n    \"max_fee\": \"<integer>\",\n    \"operation_count\": \"<integer>\",\n    \"successful\": \"<boolean>\",\n    \"result_code\": \"<integer>\",\n    \"memo_type\": \"<string>\",\n    \"memo\": \"<string>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 4705,\n          \"key_1\": true,\n          \"key_2\": true\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 2340,\n          \"key_1\": 3634.026632644236\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      }\n    ],\n    \"events\": [\n      {\n        \"contract_id\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"event_type\": \"<string>\",\n        \"topic_0\": \"<string>\",\n        \"topics\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"data\": \"<string>\"\n      },\n      {\n        \"contract_id\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"event_type\": \"<string>\",\n        \"topic_0\": \"<string>\",\n        \"topics\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"data\": \"<string>\"\n      }\n    ]\n  }\n}",
+                  "body": "{\n  \"data\": {\n    \"hash\": \"<string>\",\n    \"ledger\": \"<integer>\",\n    \"close_time\": \"<dateTime>\",\n    \"index\": \"<integer>\",\n    \"source_account\": \"<string>\",\n    \"fee_charged\": \"<integer>\",\n    \"max_fee\": \"<integer>\",\n    \"operation_count\": \"<integer>\",\n    \"successful\": \"<boolean>\",\n    \"result_code\": \"<integer>\",\n    \"memo_type\": \"<string>\",\n    \"memo\": \"<string>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": true,\n          \"key_1\": 3858,\n          \"key_2\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 1196\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      }\n    ],\n    \"events\": [\n      {\n        \"contract_id\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"event_type\": \"<string>\",\n        \"topic_0\": \"<string>\",\n        \"topics\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"data\": \"<string>\"\n      },\n      {\n        \"contract_id\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"event_type\": \"<string>\",\n        \"topic_0\": \"<string>\",\n        \"topics\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"data\": \"<string>\"\n      }\n    ]\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -28149,7 +29212,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"ledger\": \"<integer>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": true,\n          \"key_1\": 5597.616608720273\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 5788.090592250228,\n          \"key_1\": 1524.2065000347793,\n          \"key_2\": false\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"op_type_stats\": [\n      {\n        \"type\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"type\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ]\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"ledger\": \"<integer>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": false,\n          \"key_1\": 9367\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": \"string\",\n          \"key_1\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"op_type_stats\": [\n      {\n        \"type\": \"<string>\",\n        \"count\": \"<long>\"\n      },\n      {\n        \"type\": \"<string>\",\n        \"count\": \"<long>\"\n      }\n    ]\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -29009,7 +30072,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 9554.824708029628\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": false,\n          \"key_1\": 4479.038817808032,\n          \"key_2\": 405\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"scope\": \"all\"\n  }\n}",
+                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 3248\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": false,\n          \"key_1\": false,\n          \"key_2\": 5958\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"scope\": \"all\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -29240,7 +30303,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"contract\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"unknown\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },

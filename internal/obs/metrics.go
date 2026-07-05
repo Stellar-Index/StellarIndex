@@ -134,6 +134,9 @@ func registerAppMetricsTail() {
 
 		UsageRollupSweepsTotal,
 		UsageRollupSweepDurationSeconds,
+
+		PriceAlertEvalTotal,
+		PriceAlertEvalDurationSeconds,
 	)
 
 	// F-0033 closure: pre-seed zero-valued series for the
@@ -167,6 +170,9 @@ func registerAppMetricsTail() {
 	}
 	for _, outcome := range []string{"ok", "scan_error", "sink_error"} {
 		UsageRollupSweepsTotal.WithLabelValues(outcome)
+	}
+	for _, outcome := range []string{"ok", "list_error", "partial_error"} {
+		PriceAlertEvalTotal.WithLabelValues(outcome)
 	}
 }
 
@@ -830,6 +836,50 @@ var UsageRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_usage_rollup_sweep_duration_seconds",
 		Help:    "Usage-rollup sweep latency, labelled by outcome (ok|scan_error|sink_error).",
+		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	},
+	[]string{"outcome"},
+)
+
+// PriceAlertEvalTotal — per-sweep outcome counter for the aggregator's
+// price-alert evaluator (internal/pricealerts, BACKLOG #60), which
+// checks every enabled price_alerts row against the latest closed 1m
+// VWAP each tick and enqueues account-scoped `price.alert` webhook
+// deliveries when a threshold is crossed. Labels:
+//
+//   - `ok`            — sweep completed cleanly (including the no-rows
+//     and nothing-fired cases).
+//   - `list_error`    — the ListEnabledPriceAlerts read failed; the
+//     whole sweep was skipped and retried next tick.
+//   - `partial_error` — the sweep ran but at least one alert hit a
+//     price-read, parse, or enqueue error. Other alerts in the same
+//     sweep were still evaluated.
+//
+// A sustained `list_error` rate means NO alerts are being evaluated —
+// customers stop getting notified. `partial_error` is narrower (a
+// subset of alerts affected). Alerting: divergence-refresh-shaped
+// `list_error` > `ok` guard in the price-alerts rule group.
+var PriceAlertEvalTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_price_alert_eval_total",
+		Help: "Price-alert evaluator sweep outcomes (ok|list_error|partial_error).",
+	},
+	[]string{"outcome"},
+)
+
+// PriceAlertEvalDurationSeconds — latency histogram for one price-alert
+// evaluation sweep (one enabled-alerts read + per-alert VWAP lookups +
+// per-fire webhook enqueues), labelled by outcome (matches the counter
+// labels) so operators chart `ok` p95/p99 separately from the
+// fail-fast `list_error` path.
+//
+// Buckets span 5 ms → 30 s: a healthy sweep over a handful of alerts is
+// ≤ 50 ms; hundreds of alerts each doing a VWAP point-read plus a fan of
+// enqueues can reach seconds.
+var PriceAlertEvalDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_price_alert_eval_duration_seconds",
+		Help:    "Price-alert evaluation sweep latency, labelled by outcome (ok|list_error|partial_error).",
 		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 	},
 	[]string{"outcome"},
