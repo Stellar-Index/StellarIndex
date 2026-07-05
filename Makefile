@@ -200,6 +200,10 @@ lint-docs: ## Doc-code consistency linter (freshness, links, ADR integrity, TODO
 lint-imports: ## Import-boundary lint (production ingest doesn't import stellar-rpc, xdr scoped to scval, etc.)
 	@./scripts/ci/lint-imports.sh
 
+.PHONY: lint-lexicon
+lint-lexicon: ## Domain-lexicon + idiom ratchet (asset-not-coin, Options-struct ctors, slog-only; docs/architecture/lexicon.md)
+	@./scripts/ci/lint-lexicon.sh
+
 .PHONY: lint-openapi-urls
 lint-openapi-urls: ## ADR-0018 URL-discipline check on the OpenAPI spec
 	@$(GO) run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml

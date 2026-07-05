@@ -808,10 +808,188 @@ be a standard, open a PR amending this file.
 
 ---
 
-## 13. Related docs
+## 13. Domain lexicon — one word per concept
+
+The full lexicon lives in
+[docs/architecture/lexicon.md](architecture/lexicon.md) (produced by
+the 2026-07-01 maintainability audit, dimension D2). The binding
+rules, summarised:
+
+- **New code MUST use the canonical term** for each concept:
+  **asset** (not coin/currency), **pair** (not market, outside the
+  `/v1/markets` wire surface), **price** (rate = FX-vendor context
+  only), **source** (not venue/exchange, outside config), **`OpIndex`**
+  (not `OperationIndex`), the **dash-form asset id** (never a new
+  encoding beside `supply.AssetKey`'s grandfathered colon form).
+- **Verbs:** `Get` (keyed read) / `List` (slice) / `…Batch`
+  (multi-key) / `New` (constructor) / `Load` (embedded or file data).
+  `Fetch`, `Make`, `Enumerate` are banned — the repo has zero and
+  `scripts/ci/lint-lexicon.sh` fails the build on the first.
+- **Renames ride other changes** — no rename-only PRs. Existing
+  deviations are frozen in `scripts/ci/lint-lexicon.baseline`
+  (shrink-only, CS-098 growth-tripwire-protected). The bulk
+  `Coin*`→`Asset*` rename is pending, deferred to @ash.
+
+Enforcement: `scripts/ci/lint-lexicon.sh` (verify.sh + CI) for the
+grep-able subset; reviewers cite lexicon.md rows for the rest.
+
+---
+
+## 14. Go idioms — the house style, codified
+
+Codified from the 2026-07-01 maintainability audit (D6): these are
+the idioms the codebase already follows. Each entry is the rule, why,
+a canonical example, and how it's enforced. **When an idiom below
+disagrees with older prose elsewhere in this doc, this section
+wins** — it describes verified current practice.
+
+### 14.1. Errors: `%w` + package-prefixed sentinels
+
+Wrap with `fmt.Errorf("context: %w", err)`; classification errors are
+sentinel `Err…` vars with a `"pkg: message"` prefix, matched via
+`errors.Is/As`. `%v` only when deliberately formatting a value, not
+an error chain. *Why:* callers branch on `errors.Is`, never on string
+matching. Example: `internal/config/validate.go` (`ErrInvalidConfig`),
+`internal/canonical/errors.go`. **Lint-enforced** (`errorlint`).
+
+### 14.2. Constructors: `New(requiredDeps…, opts Options)`
+
+The canonical shape is positional required deps + one trailing
+`Options` struct holding every optional knob — **including
+`Logger`** — with production defaults applied to zero fields inside
+`New`. Return `(*T, error)` when construction can fail, `*T` when it
+can't. Do NOT add new positional `logger *slog.Logger` params or new
+variadic `...Option` functional-options constructors (the existing 11
++ 12 are grandfathered in `lint-lexicon.baseline`). *Why:* one shape
+to learn; options are discoverable as struct fields; loggers stop
+splitting the signature. Example:
+`internal/customerwebhook/worker.go` (`New(store DeliveryStore, opts
+Options)`), `internal/divergence/worker.go` (`NewService`).
+**Ratchet-linted** (`scripts/ci/lint-lexicon.sh`).
+
+### 14.3. Logging: slog only, nil-guarded, stable keys
+
+`log/slog` is the ONLY logger (zero zap/zerolog/logrus/std-`log`).
+Every component defaults a nil logger:
+`if opts.Logger == nil { opts.Logger = slog.Default() }`. Struct
+field is named `logger`. Field keys are stable across the repo
+(`err`, `source`, `ledger`, `contract`, `pair`, `tx_hash`) so grep is
+reliable for humans and agents. *Why:* one logging surface; nil-safe
+components; grep-able logs. Example: `internal/customerwebhook/worker.go`.
+**Lint-enforced** for the logger-import rule
+(`scripts/ci/lint-lexicon.sh` zero rule); keys review-enforced.
+
+### 14.4. Context: first parameter, threaded, never stored
+
+`ctx context.Context` is always the first parameter, passed down
+every call chain, and never stored in a struct field. Every goroutine
+honours `ctx.Done()`. *Why:* cancellation works end-to-end;
+stored contexts hide lifetimes. **Lint-assisted**
+(`contextcheck`, `noctx`) + review.
+
+### 14.5. Explicit discard: `_, _ =` for best-effort writes
+
+`errcheck` runs repo-wide (exempt: `_test.go`, `cmd/*/main.go` — see
+`.golangci.yml`), so an ignored error is always an EXPLICIT
+`_, _ =` / `_ =` discard, never a naked call. The discard is reserved
+for writes whose error genuinely has no consumer — `w.Write` on an
+HTTP response after the status is committed, `fmt.Fprintln` to an
+operator tabwriter. *Why:* the reader sees "considered and
+discarded", not "forgot". Example: `internal/api/v1/server.go:1603`,
+`cmd/stellarindex-ops/list_cursors.go`. **Lint-enforced**
+(`errcheck` forces the choice); the justification is review-enforced.
+
+### 14.6. Concurrency: WaitGroup for workers, errgroup for batches
+
+Long-lived worker goroutines (streamers, pollers, drains) use
+`sync.WaitGroup` + ctx cancellation — shutdown means "drain and
+exit". Bounded one-shot parallel jobs that want first-error abort use
+`golang.org/x/sync/errgroup`. *Why:* the primitive encodes the
+shutdown semantics. Examples: worker shape throughout
+`internal/sources/external/`; errgroup in
+`cmd/stellarindex-ops/ch_backfill.go` +
+`verify_archive_chunks.go`. **Review-enforced.**
+
+### 14.7. The validate-on-copy trap
+
+Validation/normalisation methods on VALUE receivers must not set
+defaults and expect them to persist — the defaults land on a copy.
+Either (a) every consumer of a shared Config/Options struct defaults
+its own copy (self-sufficient components), or (b) normalise once via
+pointer receiver before fan-out. The 2026-06-18 incident: dashboard
+auth's `NewHandlers` defaulted `Now` in `validate()` on its own copy;
+the session-resolver middleware kept the nil and panicked on every
+authed request (commit `47cb6c41`). *Why:* silent nil-deref latents
+that only fire on the untested consumer. Example (the fix):
+`internal/api/v1/dashboardauth/middleware.go`. **Review-enforced** —
+check every new multi-consumer config struct.
+
+### 14.8. Table tests: `[]struct` + `name` + `t.Run`
+
+House shape is a slice of anonymous structs with a `name string`
+field and behaviour-phrase names, executed via `t.Run(tc.name, …)`
+(~55 files; the map-keyed shape in §4.10's example is accepted
+legacy — slice+name is the default for new tests). *Why:* ordered,
+named, `-run`-addressable cases. Example:
+`internal/supply/classic_test.go` (`TestAssetKey_AllShapes`).
+**Review-enforced.**
+
+### 14.9. Worker metrics: paired Total + DurationSeconds, asserted via obstest
+
+IO-doing workers ship the pair: `*_total{outcome}` counter +
+`*_duration_seconds{outcome}` histogram, declared in
+`internal/obs/metrics.go` and registered in `registerAppMetrics()` /
+`registerAppMetricsTail()` (never straight in `init()`). Regression
+tests assert per-label histogram advancement with
+`obstest.HistogramSampleCount` — never a hand-rolled collector
+(that's WHY `internal/obstest` exists: `WithLabelValues` returns an
+`Observer`, not a `Collector`, so `testutil.CollectAndCount` can't
+see per-label children). *Why:* operators chart `outcome="ok"`
+latency separately from failures — "slow" vs "failing" are different
+pages. Examples: `stellarindex_divergence_refresh_*`
+(`internal/obs/metrics.go`), `internal/obstest/histogram.go`. Full
+recipe: the `/add-metric` skill. **Lint-assisted** (`lint-docs.sh` §3
+doc round-trip, `lint-metric-refs.sh`, monitoring-rules CI) + review.
+
+### 14.10. Package docs: `doc.go` for libraries, `README.md` for on-chain sources
+
+Library packages and supply observers carry a `doc.go` package
+comment (godoc-rendered, agent-scannable); on-chain source packages
+under `internal/sources/<venue>/` carry the six-file convention's
+`README.md` instead. Three legacy packages with inline package
+comments (`childgate`, `forex`, `frankfurter`) are grandfathered.
+*Why:* one predictable place to read "what is this package".
+Examples: `internal/canonical/doc.go`,
+`internal/sources/soroswap/README.md`. **Review-enforced.**
+
+### 14.11. Interfaces: consumer-side, narrow, `-er`-named
+
+Interfaces are declared next to the CONSUMER, sized to what that
+consumer calls (often 1–3 methods), and implemented by the fat
+concrete `*timescale.Store` — "accept interfaces, return structs".
+Don't build provider-side mega-interfaces. *Why:* tests fake three
+methods, not seventy; dependencies read off the signature. Example:
+the reader interfaces throughout `internal/api/v1` (e.g.
+`coins.go`'s reader seam). **Review-enforced.**
+
+### 14.12. Decoders: pure functions that propagate
+
+Source decoders are pure (`[]byte`/event in, typed event/error out) —
+no RPC clients, no goroutines, no swallowed errors. The dispatcher
+owns the return-and-metric error path; a decoder never logs-and-drops.
+*Why:* ADR-0031's completeness accounting is only provable if every
+failure surfaces. Binding detail:
+[docs/architecture/ingest-pipeline.md](architecture/ingest-pipeline.md).
+**Review-enforced** (+ import-boundary lint keeps RPC out).
+
+---
+
+## 15. Related docs
 
 - [CLAUDE.md](../CLAUDE.md) — the repo orientation map this policy
   operates over.
+- [docs/architecture/lexicon.md](architecture/lexicon.md) — the
+  domain lexicon §13 summarises.
 - [docs/adr/](adr/) — the specific architectural choices the
   standards reinforce.
 - [docs/architecture/semver-policy.md](architecture/semver-policy.md)

@@ -51,6 +51,30 @@ against.
     docs/operations/audit-remediation-operator-actions.md).
 
 ### Added
+- **Domain lexicon + Go idioms codified, with a lexicon ratchet lint**
+  (maintainability audit 2026-07-01, D2 + D6 — the doc-codification
+  pass the tier-3 refactor deliberately skipped). New
+  `docs/architecture/lexicon.md`: one canonical term per concept
+  (asset not coin/currency, pair, price, source, `OpIndex`, the
+  dash-form asset id), every current deviation mapped file:symbol,
+  and the migration rule (new code uses the canonical term; renames
+  ride other changes; the bulk `Coin*`→`Asset*` rename stays deferred
+  to @ash). `docs/engineering-standards.md` gains §13 (lexicon
+  summary) + §14 "Go idioms" — 12 checkable house idioms
+  (`%w`+sentinels, `New(deps…, opts Options)` with Logger in Options,
+  slog-only, ctx-first, `_, _ =` explicit discards, WaitGroup-vs-
+  errgroup, the validate-on-copy trap from commit `47cb6c41`,
+  `[]struct`+`name` table tests, paired Total/DurationSeconds worker
+  metrics asserted via `obstest`, doc.go-vs-README, consumer-side
+  `-er` interfaces, pure decoders), each with rule / why / canonical
+  example / enforcement tag. New `scripts/ci/lint-lexicon.sh`
+  (verify.sh + `make lint-lexicon` + CI import-checks job): zero
+  rules (no `Fetch`/`Make` verbs, no non-slog loggers — both
+  currently at zero) plus a shrink-only per-file baseline
+  (`lint-lexicon.baseline`, 13 `coin` + 11 positional-logger + 12
+  variadic-`...Option` files) protected by the existing
+  `Baseline-Growth:` tripwire.
+
 - **`GET /v1/pools/reserves` — current AMM pool reserves + depth**
   (BACKLOG #30 second half): per-pool-contract CURRENT reserves read
   straight from the pool's Soroban instance storage in the certified
