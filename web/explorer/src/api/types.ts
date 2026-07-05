@@ -4803,6 +4803,149 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/diagnostics/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Latest archive-completeness report (ADR-0017).
+         * @description Read-through of the JSON report the archive-completeness
+         *     daemon (`stellarindex-ops archive-completeness verify`, daily
+         *     systemd timer) writes after its check → fix → re-check cycle:
+         *     the ledger range scanned, and per-archive expected / found /
+         *     missing counts. `scanned_at` is the daemon's own timestamp —
+         *     a stale value means the timer stopped firing, which is itself
+         *     a signal (the API deliberately does not re-synthesize
+         *     freshness).
+         *
+         *     The `primary` section is currently always absent — the shipped
+         *     daemon enforces only the cross-anchor archive; the primary
+         *     (galexie-archive) scan is monitored through the completeness
+         *     verdicts on `/v1/coverage` instead.
+         *
+         *     Degradation: 503 when the deployment has no
+         *     `api.archive_report_path` configured; 404 while the configured
+         *     file doesn't exist yet (fresh host — the daemon hasn't
+         *     produced a report).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The latest report, verbatim from the daemon. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "schema": "1",
+                         *         "scanned_at": "2026-07-03T04:00:00Z",
+                         *         "range": {
+                         *           "from": 2,
+                         *           "to": 63305532
+                         *         },
+                         *         "cross_anchor": {
+                         *           "archive_root": "/srv/history-archive",
+                         *           "expected": 989148,
+                         *           "found": 989148,
+                         *           "missing_count": 0
+                         *         }
+                         *       },
+                         *       "as_of": "2026-07-03T22:38:20.564931481Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
+                        "application/json": components["schemas"]["EnvelopeMeta"] & {
+                            data: {
+                                /** @example 1 */
+                                schema: string;
+                                /** Format: date-time */
+                                scanned_at: string;
+                                range: {
+                                    /** Format: int64 */
+                                    from: number;
+                                    /** Format: int64 */
+                                    to: number;
+                                };
+                                cross_anchor?: {
+                                    /** @example /srv/history-archive */
+                                    archive_root: string;
+                                    expected: number;
+                                    found: number;
+                                    missing_count: number;
+                                    missing?: number[];
+                                    /**
+                                     * @description True when the daemon capped the `missing`
+                                     *     list; `missing_count` stays accurate.
+                                     */
+                                    truncated?: boolean;
+                                };
+                                primary?: {
+                                    bucket_name: string;
+                                    expected: number;
+                                    found: number;
+                                    missing_count: number;
+                                    missing_ranges?: {
+                                        /** Format: int64 */
+                                        start: number;
+                                        /** Format: int64 */
+                                        end: number;
+                                    }[];
+                                };
+                            };
+                        };
+                    };
+                };
+                /**
+                 * @description The configured report file doesn't exist yet — the daemon
+                 *     hasn't completed a run on this host.
+                 */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                /** @description No archive_report_path configured on this deployment. */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/incidents": {
         parameters: {
             query?: never;
@@ -5889,6 +6032,117 @@ export interface paths {
                     };
                 };
                 400: components["responses"]["BadRequest"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sources/{name}/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One source's live health row.
+         * @description The same per-source health shape the `sources` section of
+         *     `/v1/diagnostics/ingestion` carries — registry metadata
+         *     (class, subclass, VWAP-eligibility, backfill-safety) joined
+         *     with trailing-24h liveness counters — addressable per venue so
+         *     a page tracking one source polls it cheaply instead of pulling
+         *     the full operator snapshot.
+         *
+         *     `entries_24h` counts every decoded event for the source
+         *     (trades, oracle updates, supply observations, …) and is the
+         *     liveness signal that works for non-trade sources;
+         *     `trade_count_24h` / `volume_24h_usd` / `markets_count_24h` are
+         *     trades-table aggregates and legitimately 0 for oracles, FX
+         *     feeds, and bridges.
+         *
+         *     Served from a 15-second background-refreshed snapshot;
+         *     `Cache-Control` is `private, no-cache` accordingly. Unknown
+         *     source names 404 (the registry is static per deploy — see
+         *     `/v1/sources` for the catalogue).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Source name as listed by /v1/sources. */
+                    name: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The source's health row. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "name": "kraken",
+                         *         "class": "exchange",
+                         *         "subclass": "cex",
+                         *         "include_in_vwap": true,
+                         *         "backfill_safe": true,
+                         *         "trade_count_24h": 10023,
+                         *         "entries_24h": 10023,
+                         *         "volume_24h_usd": "1245001.55",
+                         *         "markets_count_24h": 4
+                         *       },
+                         *       "as_of": "2026-07-03T22:38:53.6445723Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
+                        "application/json": components["schemas"]["EnvelopeMeta"] & {
+                            data: {
+                                /** @example kraken */
+                                name: string;
+                                /** @example exchange */
+                                class: string;
+                                /** @example cex */
+                                subclass?: string;
+                                include_in_vwap: boolean;
+                                backfill_safe: boolean;
+                                /** Format: int64 */
+                                trade_count_24h: number;
+                                /** Format: int64 */
+                                entries_24h: number;
+                                volume_24h_usd?: string;
+                                /** Format: int64 */
+                                markets_count_24h: number;
+                            };
+                        };
+                    };
+                };
+                /** @description No registered source with that name. */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
                 429: components["responses"]["RateLimited"];
                 500: components["responses"]["InternalError"];
             };

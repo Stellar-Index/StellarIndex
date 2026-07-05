@@ -688,6 +688,7 @@ type APIConfig struct {
 	Streaming                      StreamingConfig `toml:"streaming" doc:"Closed-bucket SSE fanout — pairs the API binary republishes to the streaming Hub on every new closed prices_1m bucket. Empty Pairs leaves /v1/price/stream returning 503; Hub still constructs so subscribers can connect (and immediately drop) without a panic."`
 	Stripe                         StripeConfig    `toml:"stripe" doc:"Stripe webhook handler — paid-tier upgrades wired to POST /v1/webhooks/stripe. Empty signing_secret leaves the endpoint 503."`
 	PrometheusURL                  string          `toml:"prometheus_url" doc:"Prometheus HTTP API root (e.g. http://localhost:9090) backing /v1/status. Empty leaves /v1/status serving an in-process surface (uptime + region only)." default:""`
+	ArchiveReportPath              string          `toml:"archive_report_path" doc:"Filesystem path of the archive-completeness daemon's latest JSON report (the -output-file of 'stellarindex-ops archive-completeness verify'; the systemd unit writes /var/lib/galexie/last-completeness-report.json). Backs GET /v1/diagnostics/archive. The endpoint 404s while the file doesn't exist yet and 503s when this is empty." default:"/var/lib/galexie/last-completeness-report.json"`
 	Dashboard                      DashboardConfig `toml:"dashboard" doc:"Customer dashboard auth flow — passwordless email login (6-digit code + magic link) + cookie sessions backing the in-site dashboard at stellarindex.io/account. Empty leaves /v1/auth/{login,callback,verify-code,logout} returning 503."`
 }
 
@@ -999,6 +1000,10 @@ func defaultAPIConfig() APIConfig {
 		// F-1218: pre-launch safe default is to require email-ownership
 		// proof on signup-minted keys; operators opt out explicitly.
 		SignupRequireEmailVerification: true,
+		// Matches the archive-completeness.service REPORT_OUTPUT path;
+		// the handler degrades to 404 while the file doesn't exist, so
+		// the default is harmless on hosts without the daemon.
+		ArchiveReportPath: "/var/lib/galexie/last-completeness-report.json",
 		SEP10: SEP10Config{
 			SeedEnv:       "STELLARINDEX_SEP10_SEED",
 			JWTSecretEnv:  "STELLARINDEX_SEP10_JWT_SECRET",

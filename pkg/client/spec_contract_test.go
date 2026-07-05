@@ -146,6 +146,8 @@ var uncoveredOperations = map[string]string{
 	"GET /divergence":                    "divergence feed — explorer surface",
 	"GET /coverage":                      "coverage verdict — explorer/status surface",
 	"GET /diagnostics/ingestion":         "operator diagnostics",
+	"GET /diagnostics/archive":           "operator diagnostics — archive-completeness report, explorer surface",
+	"GET /sources/{name}/health":         "per-source health pane — explorer surface",
 	"GET /ledger/tip":                    "explorer tip feed",
 	"GET /incidents.atom":                "Atom feed — not JSON",
 
