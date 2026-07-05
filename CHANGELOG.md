@@ -15,6 +15,13 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **sep41 re-derive write throughput** (recommitted — the original
+  commit was lost to a concurrent-session rebase before it reached
+  origin): ch-rebuild drained sep41 events per-row (~520 rows/s at
+  216M rows); the drain now batches both sep41 tables via multi-row
+  INSERT..ON CONFLICT with converters shared with the live sink.
+
 ## [v0.8.3] — 2026-07-05
 
 ### Security
