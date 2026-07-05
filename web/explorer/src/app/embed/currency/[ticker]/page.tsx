@@ -87,12 +87,11 @@ async function fetchCurrency(ticker: string): Promise<CurrencyDetail | null> {
   if (isCIStub) return null;
   // Migrated from /v1/currencies/{ticker} → /v1/assets/{ticker}.
   // The catalogue dispatcher resolves an ISO ticker (EUR, GBP, …)
-  // via LookupByTicker and returns the cross-chain GlobalAssetView
-  // shape; we project that into the CurrencyDetail shape this
-  // widget renders. Sparkline + 24h/7d change come from a future
-  // /v1/chart hookup (deliberately omitted for now to keep this
-  // widget rendering after rc.48 — better a static price than a
-  // 404).
+  // via LookupByTicker and returns the GlobalAssetView shape; we
+  // project that into the CurrencyDetail shape this widget renders.
+  // This call supplies only the headline USD rate + name; the
+  // sparkline + 7d change are wired to real data via fetchFxSeries
+  // (/v1/chart), fetched in parallel in the page component below.
   try {
     const res = await fetch(
       `${API_BASE_URL}/v1/assets/${encodeURIComponent(ticker.toUpperCase())}`,
