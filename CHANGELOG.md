@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.8.0] — 2026-07-05
+
 ### Added
 - **API-key capability scopes (per-endpoint scope enforcement)**:
   keys can optionally be minted with `scopes` confining them to
