@@ -1185,27 +1185,33 @@ func (s *Server) fillCataloguePricesForPage(ctx context.Context, page []AssetDet
 	})
 }
 
-// catalogueRowPricing resolves the headline USD price (and market cap) for
-// one catalogue entry: the global three-tier price from buildGlobalAssetView,
-// falling back to the Stellar trades-derived price for Stellar-only tokens
-// (AQUA, yXLM, SHX, …) that have no global CEX/aggregator price — the same
-// price the classic /v1/assets listing shows — so a catalogue row matches
-// the classic asset row instead of listing null.
+// catalogueRowPricing resolves the headline USD price (and market cap)
+// for one catalogue entry from buildGlobalAssetView — which serves the
+// global three-tier CEX/aggregator price and, for Stellar-only tokens
+// (AQUA, yXLM, SHX, …) the global tier can't reach, falls back to the
+// same on-chain trades-derived price the classic /v1/assets listing
+// shows (fillGlobalPriceFromOnChain) so a catalogue row matches the
+// classic asset row instead of listing null.
 func (s *Server) catalogueRowPricing(ctx context.Context, vc *currency.VerifiedCurrency) (priceUSD, marketCapUSD *string) {
 	view := s.buildGlobalAssetView(ctx, vc)
-	priceUSD = view.PriceUSD
-	marketCapUSD = view.MarketCapUSD
-	if priceUSD != nil || s.coins == nil {
-		return priceUSD, marketCapUSD
+	return view.PriceUSD, view.MarketCapUSD
+}
+
+// onChainListingPriceUSD returns the on-chain per-Stellar-asset USD
+// price the /v1/assets listing shows for assetID (via the per-asset
+// listing reader), or nil when no reader is wired, the row is absent,
+// or it carries no price. The GlobalAssetView on-chain fallback
+// (fillGlobalPriceFromOnChain) uses it to price Stellar-only verified
+// tokens (AQUA, yXLM, SHX, …) the global CEX/aggregator tier misses.
+func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) *string {
+	if s.coins == nil || assetID == "" {
+		return nil
 	}
-	se := vc.StellarEntry()
-	if se == nil || se.AssetID == "" {
-		return priceUSD, marketCapUSD
+	row, err := s.coins.GetCoinByAssetID(ctx, assetID)
+	if err != nil || row.PriceUSD == nil {
+		return nil
 	}
-	if cr, err := s.coins.GetCoinByAssetID(ctx, se.AssetID); err == nil && cr.PriceUSD != nil {
-		priceUSD = cr.PriceUSD
-	}
-	return priceUSD, marketCapUSD
+	return row.PriceUSD
 }
 
 // projectCatalogueRow maps a catalogue entry to the listing's
