@@ -19,6 +19,11 @@ echo "=== i128/NUMERIC ===" && ./scripts/ci/lint-i128.sh
 echo "=== Migrations money ===" && ./scripts/ci/lint-migrations.sh
 echo "=== OpenAPI URLs ===" && go run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
 echo "=== PK discriminators ===" && go run ./scripts/ci/lint-pk-discriminators
+# Structural rule-file lint — pure-Python (no promtool), so it runs even
+# on machines without a Prometheus install and catches the mis-indented-rule
+# class that otherwise only CI's promtool job flags (2026-07-06 galexie-archive
+# incident: alerts at group level → "field expr not found in type RuleGroup").
+echo "=== Rule structure ===" && python3 ./scripts/ci/lint-rule-structure.py
 # Prometheus rule files. Graceful-skip when promtool isn't
 # installed locally — CI installs it explicitly. The Makefile
 # target hard-fails on missing promtool; verify.sh wraps it with
