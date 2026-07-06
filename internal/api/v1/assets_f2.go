@@ -90,6 +90,22 @@ type VolumeReader interface {
 	Volume24hUSDForAsset(ctx context.Context, assetKey string) (string, error)
 }
 
+// SorobanVolumeReader is OPTIONALLY implemented by the wired
+// [VolumeReader] to provide the XLM-anchored 24h USD volume for
+// pure-Soroban SEP-41 assets (#37). The plain Volume24hUSDForAsset only
+// sees the insert-time `usd_volume` column — populated when a trade's
+// quote is a USD-pegged classic — so a Soroban token that trades against
+// XLM or another SEP-41 token reports a bogus "0". This variant keeps the
+// USD-pegged legs AND values the XLM-legged trades through the on-chain
+// XLM/USD VWAP (pure SEP-41/SEP-41 legs still need a per-token oracle and
+// contribute 0). Production implementation:
+// timescale.Store.SorobanVolume24hUSDForAsset. Same "0"-not-null
+// convention + assetKey shape as VolumeReader; a reader that doesn't
+// implement it leaves Soroban assets on the plain path.
+type SorobanVolumeReader interface {
+	SorobanVolume24hUSDForAsset(ctx context.Context, assetKey string) (string, error)
+}
+
 // applyF2Fields populates the F2 supply / market-cap / FDV fields
 // on detail by consulting the [SupplyLooker] (for supply numbers)
 // and the [PriceReader] (for USD price). Best-effort — all fields
@@ -140,7 +156,7 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 			fn()
 		}()
 	}
-	run(func() { s.populateVolume24h(ctx, detail, asset.String()) })
+	run(func() { s.populateVolume24h(ctx, detail, asset) })
 	run(func() { s.populateChange24h(ctx, detail, asset) })
 	// F-1271: inline price_usd independent of supply availability so
 	// wallet UIs that just want the price don't pay a second /v1/price
@@ -209,9 +225,33 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 // populateVolume24h fills detail.VolumeUSD24h via the [VolumeReader].
 // Best-effort — failure logs WARN, the field stays null, the rest
 // of the body still serves cleanly.
-func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, assetKey string) {
+//
+// For pure-Soroban SEP-41 assets the plain reader reports a bogus "0"
+// (it only sees the insert-time usd_volume, which XLM-quoted Soroban
+// trades never populate), so when the reader exposes the XLM-anchored
+// [SorobanVolumeReader] variant we use it — it values the XLM-legged
+// trades through the on-chain XLM/USD VWAP on top of any USD-pegged legs
+// (#37). A Soroban lookup ERROR falls back to the plain reader so a
+// transient failure of the richer path can't zero out a figure the plain
+// path could still supply.
+func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
 	if s.volume == nil {
 		return
+	}
+	assetKey := asset.String()
+	if asset.Type == canonical.AssetSoroban {
+		if sv, ok := s.volume.(SorobanVolumeReader); ok {
+			v, err := sv.SorobanVolume24hUSDForAsset(ctx, assetKey)
+			if err == nil {
+				detail.VolumeUSD24h = &v
+				return
+			}
+			if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				s.logger.Warn("soroban volume_24h_usd lookup failed; falling back to plain reader",
+					"err", err, "asset_key", assetKey)
+			}
+			// Fall through to the plain reader below.
+		}
 	}
 	v, err := s.volume.Volume24hUSDForAsset(ctx, assetKey)
 	if err != nil {
