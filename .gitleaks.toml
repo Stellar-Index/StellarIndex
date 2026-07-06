@@ -135,6 +135,12 @@ paths = [
 ]
 
 [[rules.allowlists]]
+description = "Test-only base64-encoded XDR fixtures (ScVal Address/Symbol/Vec bodies for real Aquarius update_reserves / deposit_liquidity / withdraw_liquidity events, captured from the lake) used by the aquarius liquidity/reserves decoder golden tests. These are XDR-encoded public ledger data (contract addresses + i128 amounts), not credentials — the base64 blobs trip gitleaks' generic-api-key entropy heuristic. Same rationale as the other decoder-fixture allowlists above."
+paths = [
+  '''internal/sources/aquarius/liquidity_decode_test\.go''',
+]
+
+[[rules.allowlists]]
 description = "Test-only Redis lock-key fixture (`abcdef0123456789`) used by the signup-email-locker concurrency test. Fabricated 16-hex-char idempotency key; trips the entropy heuristic but is not a credential."
 paths = [
   '''internal/auth/signup_email_locker_test\.go''',
