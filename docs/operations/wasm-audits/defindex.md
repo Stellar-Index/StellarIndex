@@ -1,6 +1,6 @@
 ---
 title: DeFindex WASM-history audit
-last_verified: 2026-05-19
+last_verified: 2026-07-06
 status: complete — BackfillSafe=true (audited 2026-05-19, live-verified post-rc.58 deploy)
 source: defindex
 backfill_safe: false
@@ -290,19 +290,34 @@ didn't list that topic prefix.
   decoded automatically — same shared-emitter topology as
   comet/aquarius and the strategy layer.
 
-**Still out of scope (Phase C+):**
+**Phase-B follow-up (BACKLOG #58, 2026-07-06):** harvest / rebalance /
+the eight admin topics now **drop cleanly** — `Decode` returns
+`(nil, nil)` for every recognised-but-unmodelled topic, exactly like
+factory events, instead of the old `ErrUnknownEvent` path (which
+counted normal upstream yield/admin traffic against the source's
+decode-error counter). The four-way `rebalance_method` discriminator
+also gained decode scaffolding: `defindex.DecodeRebalanceMethod` reads
+the one documented discriminator field and `RebalanceMethod.Known()`
+classifies the four documented methods. **No new `consumer.Event` type,
+hypertable, or projector wiring was added** — that's deliberate: the
+per-method payloads are still unmodelled (see below).
 
-- Body decode for `("BlendStrategy","harvest")` strategy-layer
-  yield events. (Topic now classified per EVERY-event policy —
-  F-0018 closed 2026-05-28 — but the harvest body has not yet been
-  modelled as a `StrategyFlow`.)
-- Body decode for `("DeFindexVault","rebalance")` admin/rebalance
-  events (and the four-way `rebalance_method` discriminator inside
-  the body — see "Surprising gotchas" #3 above). Topic now
-  classified.
+**Still out of scope (Phase C+) — blocked on real on-chain samples:**
+
+- Body decode for `("BlendStrategy","harvest")` strategy-layer yield
+  events — the harvest body has never been observed on-chain and is
+  NOT modelled (inventing field layouts is forbidden). Recognised +
+  clean-dropped today.
+- Per-method payload decode for `("DeFindexVault","rebalance")` — the
+  `rebalance_method` discriminator is now read
+  (`DecodeRebalanceMethod`), but the four per-method bodies (`unwind`
+  / `invest` / `SwapExactIn` / `SwapExactOut`) are unmodelled: the r1
+  lake has **zero** rebalance emits as of 2026-07-06, so the exact
+  wire spelling of the method Symbols and their body layouts are
+  unconfirmed. Blocked until a real sample lands.
 - Body decode for `("DeFindexVault", rescue|paused|unpaused|nreceiver|
-  nmanager|nemanager|rbmanager|dfees)` admin events. Topics now
-  classified per EVERY-event policy.
+  nmanager|nemanager|rbmanager|dfees)` admin events — bodies not
+  documented / not observed. Recognised + clean-dropped today.
 - Body decode for `("DeFindexFactory","create"|"n_fee")` vault-spawn
   events (topic now classified per EVERY-event policy — F-0018 closed
   2026-05-28 — `Decode` returns `(nil, nil)` on a factory match
