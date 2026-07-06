@@ -17,6 +17,13 @@ against.
 
 ### Fixed
 
+- `sep41_transfers` gains a ledger-led index (migration 0083) — the ADR-0033
+  windowed projection reconcile seq-scanned the whole hypertable and hit
+  statement_timeout on every windowed verdict (first hit: the 2026-07-06
+  first-ever sep41 verdicts); `sep41_supply_events` always had one.
+
+### Fixed
+
 - **r1 non-root timers crashlooped for 2.5 days on Debian's psql wrapper** —
   `data-freshness.sh`, `run-compute-completeness.sh`, and `run-ch-supply.sh`
   died with "Invalid data directory for cluster 15 main" once their units ran
