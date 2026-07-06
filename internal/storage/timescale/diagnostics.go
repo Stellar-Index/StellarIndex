@@ -448,21 +448,52 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 //	defindex_flows                 — defindex vault + strategy flows
 //	                                 (migration 0050, both layers);
 //	                                 literal source 'defindex'.
+//	comet_liquidity                — Comet join/exit/deposit/withdraw;
+//	                                 literal source 'comet' (summed WITH
+//	                                 the comet swaps from `trades`).
+//	soroswap_skim_events           — Soroswap skim events; literal source
+//	                                 'soroswap' (summed WITH soroswap
+//	                                 swaps from `trades`).
+//	phoenix_liquidity              — Phoenix provide/withdraw; and
+//	phoenix_stake_events           — Phoenix bond/unbond; both literal
+//	                                 source 'phoenix' (summed WITH each
+//	                                 other AND phoenix swaps from `trades`).
+//	blend_positions                — Blend supply/borrow/repay/…; and
+//	blend_emissions                — Blend gulp/claim/bad-debt/…; and
+//	blend_admin                    — Blend admin/pool-config/deploy; all
+//	                                 three literal source 'blend' (summed
+//	                                 WITH blend_auctions above).
+//	blend_backstop_events          — Blend backstop deposit/withdraw/…;
+//	                                 literal source 'blend_backstop'.
+//	cctp_events                    — CCTP bridge events; literal source
+//	                                 'cctp'.
+//	rozo_events                    — Rozo payment/flush; literal source
+//	                                 'rozo'.
+//	sep41_transfers                — SEP-41 transfer/approve/… audit
+//	                                 trail; literal source 'sep41_transfers'.
 //
-// The soroswap-router + defindex sinks are "log-only" in the sense that
-// they don't ride the trades/oracle_updates per-INSERT bump; instead the
-// sink calls Store.BumpSourceEntryCount(...,1) once per decoded event
-// (pipeline/sink.go). That per-event bump is NOT idempotent, so any
-// replay / re-derive that re-drives the sink double-counts them — a
-// KALE-class trap for the `entries` diagnostics column. The fix: BOTH
-// sinks now also persist one row per event to a countable hypertable
-// (soroswap_router_swaps / defindex_flows, migrations 0049/0050) with an
-// idempotent ON CONFLICT DO NOTHING insert, so the table COUNT is
-// replay-stable and equals the number of bumps. Folding those COUNTs into
-// this authoritative SET-reset gives them the same self-healing
-// reconciliation path as every other table-backed source — a re-seed now
-// CORRECTS their drift instead of zeroing it, so it is SAFE (and required
-// after a replay) to seed-reset router/defindex counts.
+// Every source whose 'entries' tally is bumped via
+// pipeline/sink.go::bumpEntryCount (a NON-idempotent +1 per decoded event)
+// is now folded into this SET-reset from a countable table. That matters
+// because — UNLIKE the trades/oracle_updates bump, which is inlined inside
+// the idempotent INSERT (`HAVING count(*) > 0`, fires only when a row is
+// actually inserted) and so is replay-safe — the bumpEntryCount path ADDs
+// unconditionally, so a replay / re-derive that re-drives the sink
+// double-counts it: a KALE-class trap for the `entries` diagnostics column.
+//
+// The reconciliation invariant: for each such source, the seed's per-source
+// total must equal its steady-state bump total. Each folded table is an
+// idempotent (ON CONFLICT DO NOTHING) hypertable with exactly one row per
+// bumped event, so its COUNT is replay-stable and equals the bumps. Blend
+// bumps one 'blend' source across four tables (auctions + positions +
+// emissions + admin) — the outer GROUP BY sums all four. comet / soroswap /
+// phoenix ALSO bump via the idempotent trades INSERT for their swaps; their
+// non-swap streams (liquidity / skim / stake) are a DISJOINT event set, so
+// summing the folded table with the trades count is the honest total, not a
+// double-count. Net effect: a re-seed now CORRECTS a replay's over-count for
+// every bumpEntryCount source instead of leaving it drifted (or zeroing the
+// ones that used to have no table), so seed-reset is SAFE and required after
+// a replay.
 func (s *Store) SeedSourceEntryCounts(ctx context.Context) (int64, error) {
 	const q = `
         INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
@@ -501,6 +532,50 @@ func (s *Store) SeedSourceEntryCounts(ctx context.Context) (int64, error) {
             SELECT 'soroswap-router'    AS source, count(*) AS c FROM soroswap_router_swaps
             UNION ALL
             SELECT 'defindex'           AS source, count(*) AS c FROM defindex_flows
+            UNION ALL
+            -- Per-source non-'trades' sinks whose 'entries' tally is bumped
+            -- 1/event via pipeline/sink.go::bumpEntryCount — a NON-idempotent
+            -- +1 (unlike the trades/oracle_updates bump, which is inlined in
+            -- the idempotent INSERT and so is replay-safe). Each row below is
+            -- an idempotent (ON CONFLICT DO NOTHING) hypertable holding exactly
+            -- one row per bumped event, so its COUNT is replay-stable and equals
+            -- the bump total — folding it gives the source the same self-healing
+            -- SET-reset the trades-backed sources already have.
+            --
+            -- comet / soroswap / phoenix ALSO write to 'trades' (their swap
+            -- events), which the trades GROUP BY source above already counts.
+            -- The tables below hold their NON-swap events (liquidity / skim /
+            -- stake) — a DISJOINT event set (one decoded event -> exactly one
+            -- handler -> one table), so the outer GROUP-BY sum is the honest
+            -- total-activity count, NOT a double-count of any trade row.
+            SELECT 'comet'              AS source, count(*) AS c FROM comet_liquidity
+            UNION ALL
+            SELECT 'soroswap'           AS source, count(*) AS c FROM soroswap_skim_events
+            UNION ALL
+            SELECT 'phoenix'            AS source, count(*) AS c FROM phoenix_liquidity
+            UNION ALL
+            SELECT 'phoenix'            AS source, count(*) AS c FROM phoenix_stake_events
+            UNION ALL
+            -- Blend already contributes blend_auctions above; its position /
+            -- emission / admin event streams bump the SAME 'blend' source but
+            -- land in separate tables. Fold each so the seed's 'blend' total =
+            -- the full bump total (the outer GROUP BY sums all four).
+            SELECT 'blend'              AS source, count(*) AS c FROM blend_positions
+            UNION ALL
+            SELECT 'blend'              AS source, count(*) AS c FROM blend_emissions
+            UNION ALL
+            SELECT 'blend'              AS source, count(*) AS c FROM blend_admin
+            UNION ALL
+            -- Pure log-only sinks (no 'trades' side at all): the whole
+            -- 'entries' tally is the bumpEntryCount total, so the table COUNT
+            -- is authoritative on its own.
+            SELECT 'blend_backstop'     AS source, count(*) AS c FROM blend_backstop_events
+            UNION ALL
+            SELECT 'cctp'               AS source, count(*) AS c FROM cctp_events
+            UNION ALL
+            SELECT 'rozo'               AS source, count(*) AS c FROM rozo_events
+            UNION ALL
+            SELECT 'sep41_transfers'    AS source, count(*) AS c FROM sep41_transfers
         ) u
         GROUP BY source
         ON CONFLICT (source) DO UPDATE
@@ -516,20 +591,25 @@ func (s *Store) SeedSourceEntryCounts(ctx context.Context) (int64, error) {
 }
 
 // BumpSourceEntryCount increments the running entry tally for one
-// source by n. Idempotent under ON CONFLICT — the first writer for
-// a source creates the row, subsequent writers ADD. Used by:
+// source by n. Under ON CONFLICT the first writer for a source creates
+// the row, subsequent writers ADD. Two callers, with different
+// replay-safety:
 //
-//   - per-table insert paths (trades, oracle_updates, blend_auctions,
-//     fx_quotes) — usually n = batch size after a multi-row INSERT.
-//   - log-only sinks (soroswap-router, defindex) — n = 1 per
-//     decoded event in the dispatcher → sink hand-off.
+//   - the trades + oracle_updates + fx_quotes insert paths bump INLINE
+//     inside the idempotent INSERT (`HAVING count(*) > 0`) — the bump
+//     fires only when a row is actually inserted, so a backfill re-walk
+//     over already-stored rows is a no-op. Replay-safe.
+//   - pipeline/sink.go::bumpEntryCount — n = 1 per decoded event in the
+//     dispatcher → sink hand-off, for every non-trades/oracle sink
+//     (blend*, comet, cctp, rozo, soroswap-router, defindex, the SAC /
+//     account / trustline / claimable / LP observers, sep41_*, phoenix
+//     liquidity/stake, soroswap skim). This ADD is UNCONDITIONAL — NOT
+//     replay-safe: re-driving the sink over an already-ingested range
+//     double-counts.
 //
-// The bump ADDs (it is NOT replay-safe on its own — re-driving the sink
-// over an already-ingested range double-counts). That drift is corrected
-// by [Store.SeedSourceEntryCounts], which SET-resets every source
-// (including soroswap-router + defindex) from its now-existing countable
-// table — so a replay's over-count is transient, reconciled on the next
-// seed.
+// That drift is corrected by [Store.SeedSourceEntryCounts], which
+// SET-resets every source from its now-existing countable table — so a
+// replay's over-count is transient, reconciled on the next seed.
 //
 // The bump is a single UPSERT — cheap enough for per-event use on
 // the low-volume log-only sinks (router + defindex emit handfuls
