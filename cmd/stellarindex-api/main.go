@@ -2662,6 +2662,14 @@ func (r storeVolumeReader) Volume24hUSDForAsset(ctx context.Context, assetKey st
 	return r.s.Volume24hUSDForAsset(ctx, assetKey)
 }
 
+// SorobanVolume24hUSDForAsset implements the optional
+// v1.SorobanVolumeReader — the XLM-anchored 24h USD-volume variant used
+// for pure-Soroban SEP-41 assets whose liquidity is quoted in XLM rather
+// than a USD-pegged classic (#37).
+func (r storeVolumeReader) SorobanVolume24hUSDForAsset(ctx context.Context, assetKey string) (string, error) {
+	return r.s.SorobanVolume24hUSDForAsset(ctx, assetKey)
+}
+
 // usdQuoteAsset is the implicit USD quote used to anchor 24h-ago
 // price lookups in [storeChange24hReader]. Same string value as
 // the v1 handler's defaultPriceQuote — keeping them constructed
