@@ -360,6 +360,31 @@ stale by N minutes" expressible as `time() - <gauge>` rather than
 multi-window rate math, which simplifies alerting (see
 `stellarindex_external_poller_stale`).
 
+### `stellarindex_external_fx_last_quote_unix`
+
+Gauge, label `source`.
+
+UNIX-seconds timestamp of the most recent successful `fx_quotes` WRITE
+from the active fiat-FX feed (`massive`, the `internal/sources/forex`
+worker in the API binary). Advances ONLY when `InsertFXQuoteBatch`
+commits a non-empty batch — a failed write or an empty snapshot
+(upstream returned no usable rates) leaves the prior stamp untouched, so
+a wedged-but-erroring worker cannot keep the feed looking fresh.
+
+Deliberately SEPARATE from `stellarindex_external_poller_last_success_unix`:
+`massive` does not run under the `external.Connector` poller framework
+(it writes `fx_quotes` directly, out of band from the poller runner), so
+it emits no `external_poller` series at all. The triangulation
+forex-snap (`Store.FXQuoteAtOrBefore`) reads `fx_quotes` with a **7-day
+lookback** to price every fiat-quoted pair, so a dead feed prices fine
+off a stale row for up to a week before fiat pairs silently break.
+
+When to look: `time() - <gauge>` is the feed's age. Healthy is < 1 h
+(r1's forex worker writes exactly hourly). The
+`stellarindex_external_fx_feed_stale` alert fires at 6 h (well below the
+7-day cliff); the companion `stellarindex_external_fx_feed_absent` fires
+when the series is missing entirely (worker never wrote since startup).
+
 ### `stellarindex_external_dust_dropped_total`
 
 Counter, label `source`.

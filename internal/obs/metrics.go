@@ -58,6 +58,7 @@ func registerAppMetrics() {
 		SourceOrphanEventsTotal,
 		ExternalPollerPollsTotal,
 		ExternalPollerLastSuccessUnix,
+		ExternalFXLastQuoteUnix,
 		ExternalDustDroppedTotal,
 		CEXStreamDisconnectTotal,
 		DiscoveryDroppedHitsTotal,
@@ -710,6 +711,39 @@ var ExternalPollerLastSuccessUnix = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_external_poller_last_success_unix",
 		Help: "UNIX seconds of the most recent successful PollOnce, per source. Zero = never succeeded since startup.",
+	},
+	[]string{"source"},
+)
+
+// ExternalFXLastQuoteUnix — per-source UNIX-seconds timestamp of the
+// most recent successful fx_quotes WRITE from the active fiat-FX feed
+// (`massive`, the internal/sources/forex worker). Stamped only after
+// InsertFXQuoteBatch commits a NON-EMPTY batch — a failed write or an
+// empty snapshot (upstream returned no usable rates) leaves the prior
+// stamp untouched, so a stuck-but-erroring worker cannot keep the
+// gauge green.
+//
+// Why a SEPARATE gauge from ExternalPollerLastSuccessUnix: the FX feed
+// does NOT run under the external.Connector poller framework — it is
+// the forex worker in the API binary writing the fx_quotes hypertable,
+// which the X2.5 triangulation forex-snap (FXQuoteAtOrBefore) reads
+// with a 7-day lookback for every fiat-quoted pair (XLM/EUR, …). A dry
+// feed is invisible to the poller-staleness alert (massive emits no
+// external_poller series) and to the fx_snap read (a stale-but-present
+// row still prices) until the 7-day lookback finally expires and fiat
+// pairs silently break. This gauge makes "the FX feed VWAP depends on
+// has gone dry" expressible as `time() - <gauge>` and alertable long
+// before that 7-day cliff (see stellarindex_external_fx_feed_stale).
+//
+// Reset-proof across restarts: the worker's startup refresh re-stamps
+// it within seconds of a healthy boot (mirrors the gap-detector
+// last_success gauge, 2026-07-06). A source that has never once
+// written since process start emits no series here — that "never came
+// up" case is covered by the paired absent()-based alert.
+var ExternalFXLastQuoteUnix = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_external_fx_last_quote_unix",
+		Help: "UNIX seconds of the most recent successful fx_quotes write per FX source (currently `massive`). Reset-proof liveness for the active fiat-FX feed the triangulation forex-snap depends on; only advances on a committed non-empty batch.",
 	},
 	[]string{"source"},
 )
