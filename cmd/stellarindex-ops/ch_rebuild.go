@@ -97,7 +97,13 @@ func seedSoroswapFromPG(ctx context.Context, store *timescale.Store, dec *sorosw
 //     CANNOT ride the main event pass — their topics ARE the CAP-67 firehose
 //     it excludes — so this pass prefilters on contract_id IN (the watched
 //     set), turning the 447M-row firehose scan into an indexed one. See the
-//     -sep41 flag help for the operator truncate+re-derive contract.
+//     -sep41 flag help for the operator truncate+re-derive contract. For a
+//     SCOPED dropped-rows recovery (a decoder bug that lost a few rows from
+//     otherwise-clean data), -contracts <csv> narrows the contract_id prefilter
+//     to just the affected contracts and -sep41-supply-only narrows the read to
+//     the supply topics (mint/burn/clawback), so the additive ON CONFLICT write
+//     recovers the missing rows without a full re-derive or a truncate
+//     (docs/operations/sep41-mint-recovery.md).
 //
 // Defaults to DRY-RUN (count only). Pass -write to persist. For a clean-slate
 // rebuild (ADR-0034 "rebuild, not repair") the operator truncates the target
@@ -115,13 +121,22 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	sdexGaps := fs.Bool("sdex-gaps", false, "with -sdex: re-derive ONLY the served gaps in [from,to] in one pass (each gap is an empty range → pure insert, no ON CONFLICT walk) — efficient drop-backlog recovery vs re-scanning the whole range")
 	sdexReconcile := fs.Bool("sdex-reconcile", false, "with -sdex: re-derive ONLY ledgers where the distinct Validate-passing census exceeds the served count (PARTIAL-drop ledgers the empty-gap pass misses); recovers the served-tier projection to exact parity with the lake")
 	contractCalls := fs.Bool("contract-calls", false, "also re-derive the event-less ContractCall sources (band, soroswap-router) from the lake's InvokeContract ops — filtered on the contract's bytes in body_xdr (no contract_id column) — and run their ContractCallDecoders. These have NO soroban_events landing zone, so neither the event pass nor the projector can rebuild them; this is the ADR-0034 lake-replay successor to the retired backfill-router MinIO walk. Respects -sources.")
-	includeSEP41 := fs.Bool("sep41", false, "also re-derive the SEP-41 watched-contract sources (sep41_transfers, sep41_supply) from the lake via a contract_id-prefiltered event pass (their topics are the CAP-67 firehose the main pass excludes). OPERATOR CONTRACT: run this only as part of the truncate+re-derive procedure — TRUNCATE sep41_transfers + sep41_supply_events FIRST (historical rows predate the migration-0057 event_index PK, so multiple same-op events sit COLLAPSED on disk; the idempotent ON CONFLICT writes cannot un-collapse them — recover-into-existing is accepted only if you accept that residue). After a full-history -write re-derive the two sources become eligible for the ADR-0033 projection reconcile (promote them into buildReconciliationCatalogue). Requires [supply] watched_sep41_contracts. Respects -sources.")
+	includeSEP41 := fs.Bool("sep41", false, "also re-derive the SEP-41 watched-contract sources (sep41_transfers, sep41_supply) from the lake via a contract_id-prefiltered event pass (their topics are the CAP-67 firehose the main pass excludes). FULL re-derive contract: for a whole-history rebuild run this as part of the truncate+re-derive procedure — TRUNCATE sep41_transfers + sep41_supply_events FIRST (historical rows predate the migration-0057 event_index PK, so multiple same-op events sit COLLAPSED on disk; the idempotent ON CONFLICT writes cannot un-collapse them — recover-into-existing is accepted only if you accept that residue). After a full-history -write re-derive the two sources become eligible for the ADR-0033 projection reconcile (promote them into buildReconciliationCatalogue). For a SCOPED dropped-rows recovery (a decoder bug that lost a handful of rows from post-0057-clean data), use -contracts to narrow to the affected contracts instead — no truncate needed, the additive ON CONFLICT write only ADDS the missing rows (docs/operations/sep41-mint-recovery.md). Requires [supply] watched_sep41_contracts. Respects -sources.")
+	contractsCSV := fs.String("contracts", "", "comma-separated contract C-strkeys to SCOPE the read to (default: no scope). For -sep41 this REPLACES [supply] watched_sep41_contracts as the contract_id READ prefilter, so a scoped recovery does an indexed scan of ONLY these contracts' events (far cheaper than all watched contracts) and idempotently ADDS their missing rows — the leanest way to recover dropped rows without a full re-derive. Must be a SUBSET of the watched set: the sep41 decoders still gate Matches() on the full watched set, so a contract outside it is read but decoded to nothing (a warning is printed). For the general event pass it is an extra decode-time contract gate. See docs/operations/sep41-mint-recovery.md.")
+	sep41SupplyOnly := fs.Bool("sep41-supply-only", false, "with -sep41 -sources sep41_supply: narrow the CH read to the supply-affecting topics (mint/burn/clawback) via the topic_0_sym prefilter, skipping the transfer firehose at the SQL layer — so recovering a high-transfer-volume contract's few mints does not re-read millions of transfer events. Invalid unless sep41_transfers is disabled (via -sources sep41_supply): the topic prefilter would otherwise silently drop transfer recovery.")
 	write := fs.Bool("write", false, "actually write to Postgres (default: dry-run, count only)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *cfgPath == "" || *from == 0 || *to == 0 || *to < *from {
 		return fmt.Errorf("-config, -from, -to are required; -to must be >= -from")
+	}
+	// -contracts scopes both passes to a contract subset; the sep41 pass pushes
+	// it into the CH read as the contract_id prefilter (narrows the scan), the
+	// general event pass applies it as a decode-time gate.
+	contractsOverride := parseCSVList(*contractsCSV)
+	if *sep41SupplyOnly && !*includeSEP41 {
+		return fmt.Errorf("-sep41-supply-only requires -sep41")
 	}
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
@@ -225,6 +240,9 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		// excluding it wholesale dropped blend_admin's set_admin rows from the
 		// re-derive (matches the projector's firehoseExcludeSyms).
 		cherr := clickhouse.StreamContractEvents(ctx, *chAddr, lo, hi, clickhouse.FirehoseExcludeSyms, func(ev events.Event) error {
+			if !contractAllowed(contractsOverride, ev.ContractID) {
+				return nil // -contracts scope: skip events outside the subset
+			}
 			for _, src := range cat {
 				if src.dec == nil || !enabled(src.name) {
 					continue
@@ -269,10 +287,35 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 			}
 		}
 		if anySEP41 {
+			// Contract prefilter: default is the whole watched set; -contracts
+			// narrows the CH read to a subset (the scoped dropped-rows recovery).
+			sep41Contracts := cfg.Supply.WatchedSEP41Contracts
+			if len(contractsOverride) > 0 {
+				sep41Contracts = contractsOverride
+				// The sep41 decoders gate Matches() on the FULL watched set, so a
+				// -contracts entry outside it is read but decoded to nothing — a
+				// likely typo that would leave the dominant-burn alerts firing.
+				for _, c := range contractsOverride {
+					if !containsStr(cfg.Supply.WatchedSEP41Contracts, c) {
+						fmt.Fprintf(os.Stderr, "ch-rebuild: WARNING -contracts %s is not in [supply] watched_sep41_contracts — the sep41 decoder will not match it (recovers nothing)\n", c)
+					}
+				}
+			}
+			// Topic prefilter: -sep41-supply-only reads ONLY the supply-affecting
+			// topics (mint/burn/clawback), skipping the transfer firehose at the
+			// SQL layer. Invalid with sep41_transfers enabled — it would silently
+			// drop transfer recovery — so require -sources sep41_supply.
+			var sep41Topic0 []string
+			if *sep41SupplyOnly {
+				if enabled(sep41transfers.SourceName) {
+					return fmt.Errorf("-sep41-supply-only excludes the transfer topic firehose but sep41_transfers is enabled (it would silently recover nothing); restrict with -sources sep41_supply")
+				}
+				sep41Topic0 = []string{sep41supply.SymbolMint, sep41supply.SymbolBurn, sep41supply.SymbolClawback}
+			}
 			sepStart := time.Now()
 			before := len(buf)
 			seperr := clickhouse.StreamContractEventsFiltered(ctx, *chAddr, lo, hi,
-				cfg.Supply.WatchedSEP41Contracts, nil, nil, true, func(ev events.Event) error {
+				sep41Contracts, sep41Topic0, nil, true, func(ev events.Event) error {
 					for _, src := range sep41Cat {
 						if !enabled(src.name) || !src.dec.Matches(ev) {
 							continue
@@ -556,6 +599,30 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		fmt.Printf("\n(dry-run — re-run with -write to persist to Postgres)\n")
 	}
 	return nil
+}
+
+// parseCSVList splits a comma-separated flag value into a trimmed,
+// order-preserving, de-duplicated slice (empty entries dropped). Used for the
+// -contracts scope filter (mirrors the inline -sources split).
+func parseCSVList(s string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// contractAllowed reports whether an event's contract passes the -contracts
+// scope gate: true when no override is set, or the contract is in the subset.
+// The general event pass applies this per event; the sep41 pass instead pushes
+// the same subset into the CH read as the contract_id prefilter (which narrows
+// the scan, not just the decode).
+func contractAllowed(override []string, contractID string) bool {
+	return len(override) == 0 || containsStr(override, contractID)
 }
 
 // anyEventSourceEnabled reports whether the -sources filter selects at
