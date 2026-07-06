@@ -1078,6 +1078,10 @@ func (a supplyAggregatorSEP41Store) MinSEP41ComponentLedger(ctx context.Context,
 	return a.s.MinSEP41ComponentLedger(ctx, contractID, asOfLedger)
 }
 
+func (a supplyAggregatorSEP41Store) SEP41GenesisBaselineSeeded(ctx context.Context, contractID string) (bool, error) {
+	return a.s.SEP41GenesisBaselineSeeded(ctx, contractID)
+}
+
 // runBaselineRefresh ticks the baseline refresher on
 // [baselineRefreshCadence], emitting per-outcome Prometheus counters
 // for each cycle. Returns on rootCtx cancellation.
