@@ -623,9 +623,16 @@ type IngestionConfig struct {
 // — the projector becomes the sole writer for that subset. sdex,
 // external CEX/FX, band, and supply observers continue through the
 // events-goroutine because they don't flow through soroban_events.
+//
+// PersistPerSource governs only the sources still in Phase-3 parallel.
+// Domains the projector has EARNED sole-writer status for (currently
+// sep41 — TASK #16b) are exempt: pipeline.SinkModeForProjector routes
+// them through the projector alone whenever it is enabled, regardless
+// of this flag, so no value of it can drop their rows (the F-1316
+// foot-gun). See pipeline.IsSoleWriterProjected.
 type ProjectorConfig struct {
 	Enabled          bool `toml:"enabled"            doc:"Master switch. When false the projector goroutines are not started." default:"false"`
-	PersistPerSource bool `toml:"persist_per_source" doc:"When false (Phase 4+), the dispatcher's events-goroutine skips Soroban-derived events so the projector is sole writer. Requires Enabled=true. Defaults true (Phase 3 parallel mode); operator flips to false once projector lag is verified low." default:"true"`
+	PersistPerSource bool `toml:"persist_per_source" doc:"When false (Phase 4+), the dispatcher's events-goroutine skips Soroban-derived events so the projector is sole writer. Requires Enabled=true. Defaults true (Phase 3 parallel mode); operator flips to false once projector lag is verified low. The sep41 domain is exempt — the projector is always its sole writer (F-1316 / TASK #16b)." default:"true"`
 }
 
 // AnomalyConfig configures both phases of ADR-0019 anomaly
@@ -1141,13 +1148,15 @@ func Default() Config {
 			LiveSeamLedger:     0,
 			// Projector defaults to Phase-3 PARALLEL mode: when an
 			// operator enables it (Enabled=true) the dispatcher KEEPS
-			// writing Soroban-derived events (PersistPerSource=true) so
-			// nothing is lost while projector lag is verified. Leaving
-			// PersistPerSource at its zero-value (false) would silently
-			// select Phase-4 sole-writer mode the moment the projector is
-			// enabled — and the projector cannot yet serve the sep41
-			// domain (F-1316), so that would drop all sep41 rows. MUST
-			// stay true until the projector earns sole-writer status.
+			// double-writing the still-un-promoted Soroban-derived
+			// sources (PersistPerSource=true) so nothing is lost while
+			// projector lag is verified. The sep41 domain is EXEMPT from
+			// this flag: it has earned sole-writer status (TASK #16b —
+			// full-history re-derive + ADR-0033 catalogue promotion), so
+			// pipeline.SinkModeForProjector routes it through the
+			// projector alone whether PersistPerSource is true or false.
+			// That closes the old F-1316 foot-gun where leaving this flag
+			// at its zero-value (false) silently dropped every sep41 row.
 			Projector: ProjectorConfig{
 				Enabled:          false,
 				PersistPerSource: true,
