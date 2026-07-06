@@ -20,7 +20,7 @@
 set -uo pipefail
 
 API_BASE_URL="${API_BASE_URL:-https://api.stellarindex.io}"
-TIMEOUT="${AUDIT_TIMEOUT:-10}"
+TIMEOUT="${AUDIT_TIMEOUT:-20}"  # 20s: a cold edge-cache miss can fall through to a slow origin fetch (e.g. /v1/pairs ~13s cold) on a smoke audit; don't red the whole audit for a working-but-cold endpoint
 FAILS=0
 TOTAL=0
 
