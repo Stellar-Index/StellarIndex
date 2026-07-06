@@ -43,7 +43,7 @@ meaningful weight). A window with zero contributing base volume returns
 
 ## The policy chain — raw trade → served price
 
-Every served price flows through one ordered path
+The **filtered** price flows through one ordered path
 (`internal/aggregate/orchestrator`). The order matters:
 
 | Step | Default | What it does |
@@ -51,11 +51,51 @@ Every served price flows through one ordered path
 | 1. Stablecoin expansion | OFF (operator opt-in) | Expand a fiat-quote target (`XLM/fiat:USD`) to its direct pair + stablecoin-backed pairs, rewriting the quote side |
 | 2. Source-class filter | ON | Drop every trade whose source is not a VWAP-eligible exchange (see below) |
 | 3. Outlier filter | ON (σ = 4.0) | Drop trades whose price is > N standard deviations from the window mean |
-| 4. VWAP | — | `Σquote / Σbase` over what survives |
+| 4. Min-USD-volume gate + freeze | ON | Suppress a window that clears too little USD volume; serve last-known-good instead of a freshly-computed value on an anomaly freeze |
+| 5. VWAP | — | `Σquote / Σbase` over what survives |
 
 The class filter runs **before** the outlier filter so outlier statistics
 are computed only over eligible exchange trades, not contaminated by
 oracle/aggregator rows.
+
+### Two serving paths — the direct read and its guard
+
+Be precise about which price a given `/v1/price` request returns, because
+there are **two** paths:
+
+1. **Filtered (Redis).** For the aggregator's configured pairs — the
+   headline fiat pairs, triangulated cross-pairs, and stablecoin-proxy
+   rewrites — the value above is written to Redis and served from cache.
+   This is the primary product.
+2. **Direct (`prices_1m` CAGG).** `/v1/price` also reads the most-recent
+   CLOSED `prices_1m` continuous-aggregate bucket for the requested pair.
+   That CAGG is a bare `Σ(quote)/Σ(base)` per bucket — it does **not** run
+   through the class / outlier / min-volume / freeze chain above. A pair
+   with **no** `prices_1m` rows — a pure-synthetic fiat pair like
+   `native/fiat:USD` (SDEX native trades are quoted in issuer-stablecoins,
+   never `fiat:USD`) — misses this read and falls through to the filtered
+   Redis value. But any pair with real `prices_1m` rows is served straight
+   off the raw CAGG bucket, and that includes both **directly-quoted**
+   DEX/CEX pairs (a Soroban token priced in `USDC-GA5Z…`,
+   `crypto:BTC/crypto:USDT`, …) **and** headline pairs that have a real
+   fiat CEX market (`crypto:XLM/fiat:USD` via Kraken/Coinbase XLM/USD
+   books).
+
+To keep the direct path honest, that read is wrapped in a
+**serving-sanity guard** (`internal/aggregate.GuardServedVWAP`): the
+candidate bucket's VWAP is checked against a robust bound — the union of a
+wide **ratio band** and a **MAD band** — over the pair's recent trailing
+closed buckets. A candidate that is grossly off (an order-of-magnitude
+fat-finger / manipulation print the CAGG would otherwise serve with
+`stale=false`) is rejected, and the newest clean trailing bucket
+(last-known-good) is served instead. The guard is deliberately
+**conservative**: on a healthy bucket it is a pure pass-through (a liquid
+pair like `crypto:XLM/fiat:USD` sits tightly clustered and always passes,
+so its served value is byte-identical to pre-guard behaviour); it catches
+only gross deviation and never a legitimately volatile-but-real move — a
+stablecoin depeg is *served*, not hidden — and a pair with too little
+history to form a baseline fails **open** (serves the
+candidate). All of it is exact `*big.Rat` (ADR-0003).
 
 ## Source-class policy — who gets a vote
 
@@ -163,6 +203,28 @@ most-recent fully-closed aggregate bucket**, never the in-progress one
 is immutable and replicates deterministically to every replica. The
 response carries the bucket's `[from_ts, to_ts]` as `as_of` so the client
 sees exactly which window the rate covers.
+
+### Continuous-aggregate column caveats (`prices_1m`/`prices_*`)
+
+The direct-read path serves the `prices_*` continuous aggregates
+(`migrations/0002…`). Two honest notes on how those columns are computed:
+
+- **The `vwap` column is `sum((quote/base)·base) / sum(base)`.** That is
+  algebraically identical to the exact `Σquote / Σbase` documented above,
+  but it is written as a per-row divide-then-multiply in NUMERIC, so the
+  intermediate `quote/base` is rounded to NUMERIC's division scale before
+  being re-multiplied — a negligible-but-nonzero difference from the exact
+  single-division form that `internal/aggregate/vwap.go` (the Redis/tip
+  path) computes in `*big.Int`. Editing the applied migration 0002 in place
+  is not possible, and recreating seven CAGGs over a decade of history to
+  save that rounding is not worth the re-materialisation risk, so the form
+  stands and is documented here instead.
+- **The `twap` column is `avg(quote/base)` — an unweighted per-trade
+  mean, NOT a time-weighted average.** Despite the name it carries no time
+  weighting. The genuinely time-weighted TWAP lives in the dedicated
+  `twap_1h` / `twap_1d` aggregates (`migrations/0081…`), which
+  `/v1/twap` and `/v1/history` read; nothing reads `prices_*.twap`. Treat
+  that column as a legacy equal-weight mean.
 
 ## Freshness — two honest contracts
 
