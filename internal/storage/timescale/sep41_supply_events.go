@@ -8,6 +8,8 @@ import (
 	"math/big"
 	"strings"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 // SEP41EventKind discriminates the three supply-affecting SEP-41
@@ -541,9 +543,11 @@ type SEP41RollupAdvance struct {
 // accumulated in Postgres NUMERIC (ADR-0003).
 //
 // NOTE: a re-derive that rewrites sep41_supply_events history BELOW an
-// existing checkpoint must `TRUNCATE sep41_supply_rollup` first so the
-// worker re-folds from zero; the incremental watermark cannot see
-// edits it already passed.
+// existing checkpoint must reset the fold columns first so the worker
+// re-folds from zero; the incremental watermark cannot see edits it
+// already passed. `ch-rebuild -sep41 -write` does this automatically via
+// [Store.ResetSEP41SupplyRollupFold] (which preserves the genesis
+// baseline, unlike a bare `TRUNCATE sep41_supply_rollup`).
 func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string) (SEP41RollupAdvance, error) {
 	if contractID == "" {
 		return SEP41RollupAdvance{}, errors.New("timescale: AdvanceSEP41SupplyRollup: empty contractID")
@@ -599,4 +603,69 @@ func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string)
 		ToLedger:   uint32(toLedger),
 		Advanced:   uint32(toLedger) > fromLedger,
 	}, nil
+}
+
+// ResetSEP41SupplyRollupFold zeroes the WORKER-OWNED fold columns
+// (mint_total, burn_total, clawback_total, last_ledger) of
+// sep41_supply_rollup so the aggregator's rollup worker
+// ([Store.AdvanceSEP41SupplyRollup]) re-folds a re-derived
+// sep41_supply_events history FROM ZERO instead of trusting a checkpoint
+// that no longer matches the events beneath it. Incident 2026-07-06 follow-up.
+//
+// Why it exists. `ch-rebuild -sep41 -write` rewrites sep41_supply_events
+// history BELOW an existing checkpoint. The worker only ever folds
+// `ledger > last_ledger`, so it never re-examines the rewritten range —
+// leaving the checkpoint stale in one of two ways:
+//   - a FULL re-derive re-populates the whole history, but the checkpoint's
+//     stale totals get the re-folded tail ADDED on top → served supply
+//     double-counts (the KALE 2× served-value bug);
+//   - a SCOPED recovery ADDS previously-missing rows at ledgers ≤ last_ledger,
+//     which the worker's `> last_ledger` fold never sees → served undercount.
+//
+// Resetting the fold columns forces a clean re-fold over the corrected set.
+//
+// This is the automated form of the manual "TRUNCATE sep41_supply_rollup" the
+// migration-0085 header prescribed — but it PRESERVES the migration-0088
+// pre-Soroban genesis-baseline columns (genesis_mint_total / genesis_burn_total
+// / genesis_clawback_total / genesis_baseline_ledger / genesis_seeded_at),
+// which a bare TRUNCATE would drop. Those are seeded separately
+// (`stellarindex-ops supply seed-sep41-genesis`, from the ClickHouse lake) and
+// a Soroban-era re-derive must never wipe them.
+//
+// Scope:
+//   - contractIDs nil/empty → FULL reset: every rollup row's fold columns (the
+//     whole-table TRUNCATE-equivalent, for a full-history re-derive).
+//   - contractIDs non-empty → SCOPED reset: only those contracts' rows (for a
+//     `-contracts` scoped dropped-rows recovery).
+//
+// Correctness during the gap: a reset row's `last_ledger` returns to 0, so the
+// reader ([Store.SEP41KindTotalsAtOrBefore]) serves the exact full-sum fallback
+// until the worker re-folds it — supply stays correct throughout, just off the
+// fast path for a cadence or two. Returns the number of rows reset.
+func (s *Store) ResetSEP41SupplyRollupFold(ctx context.Context, contractIDs []string) (int64, error) {
+	var (
+		res sql.Result
+		err error
+	)
+	if len(contractIDs) == 0 {
+		const q = `
+            UPDATE sep41_supply_rollup
+               SET mint_total = 0, burn_total = 0, clawback_total = 0,
+                   last_ledger = 0, updated_at = now()
+        `
+		res, err = s.db.ExecContext(ctx, q)
+	} else {
+		const q = `
+            UPDATE sep41_supply_rollup
+               SET mint_total = 0, burn_total = 0, clawback_total = 0,
+                   last_ledger = 0, updated_at = now()
+             WHERE contract_id = ANY($1)
+        `
+		res, err = s.db.ExecContext(ctx, q, pq.Array(contractIDs))
+	}
+	if err != nil {
+		return 0, fmt.Errorf("timescale: ResetSEP41SupplyRollupFold: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
