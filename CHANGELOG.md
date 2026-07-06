@@ -63,6 +63,17 @@ against.
   positions/emissions/admin, blend-backstop, cctp, rozo, sep41_transfers) is folded
   into `SeedSourceEntryCounts` from its countable table, so a replay/re-derive's
   per-event over-count self-heals on the next seed instead of drifting.
+- **Monitoring: gap-detector-silent false-fire.** `stellarindex_ingest_gap_detector_silent`
+  no longer false-fires on the 6h-cadence heavy targets (`sdex/trades`,
+  `soroban-events/soroban_events`) — the alert was keyed off
+  `rate(gap_detector_runs_total{outcome="ok"}[7h])`, but those targets increment `ok`
+  once per 6h and pin at 1 across restarts (1→1 defeats Prometheus reset detection →
+  `rate` reads 0 forever). Re-keyed off a reset-proof
+  `stellarindex_ingest_gap_detector_last_success_unix` gauge; a non-ok scan is now
+  logged loudly with `elapsed_s`.
+- **CI: gitleaks now runs in local `verify.sh`** (graceful-skip when absent) so a new
+  base64/XDR test fixture that trips the entropy heuristic is caught pre-push, not as a
+  CI email; allowlisted the aquarius liquidity-decoder XDR fixtures.
 
 ### Changed
 - Docs: corrected the `outlier_sigma_threshold` config description (mean+stdev per
