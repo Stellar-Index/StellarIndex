@@ -15,6 +15,41 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- `as_of_ledger` + `flags.stale` stamped on the remaining ClickHouse
+  current-state reads — `/v1/lending/pools/{pool}/reserves`,
+  `/v1/pools/reserves`, and `/v1/accounts` now carry the ledger the
+  snapshot was taken at so consumers can reason about freshness
+  (ADR-0041 D4, BACKLOG #41).
+- Pure-Soroban SEP-41 assets now report `volume_24h_usd`, derived by
+  anchoring on-chain trade quantities to the latest closed XLM/USD
+  bucket — assets with no direct fiat pair get an honest USD volume
+  instead of a null (#37).
+- `protocol_events_24h` + `asset_volume_24h` worker-maintained rollups
+  (migrations 0086/0087) back `/v1/protocols` and `/v1/assets`, cutting
+  their ~5s / ~4.8s cold-latency legs to indexed lookups; both rollup
+  workers page via new aggregator alerts and runbooks (#43).
+- Typed in-process cache-key builder replaces ad-hoc string keys across
+  the markets/coins/issuers readers, closing the prewarm/handler
+  key-drift class for good (BACKLOG #48).
+- Restored the weekly k6 SLA-evidence cron; it skips gracefully when the
+  load-target secrets are absent instead of failing the run (BACKLOG #51b).
+
+### Fixed
+
+- SEP-41 decoder now decodes CAP-67 map-shaped `mint`/`burn` amount
+  bodies (the P23 unified-event form carries the amount inside a map,
+  not a bare `i128`) — previously these rows were silently dropped,
+  undercounting supply. Recover the lost history with
+  `ch-rebuild -sep41` (#28 / BACKLOG #9).
+- F-1316: the projector now earns sole-writer for the `sep41` domain,
+  closing the config-default foot-gun where a dispatcher-side writer
+  could double-write or silently drop SEP-41 supply rows (BACKLOG #16b).
+- `/v1/price` stablecoin-proxy fallback is now gated on non-empty pairs
+  via a cheap recent-existence probe, so a row-less proxy pair no longer
+  triggers a cold full-history VWAP walk (2026-07-06 incident).
+
 ## [v0.8.5] — 2026-07-06
 
 ### Fixed
