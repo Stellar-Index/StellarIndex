@@ -290,6 +290,17 @@ type AssetDetail struct {
 	// docs/architecture/multi-network-assets-migration.md.
 	UnverifiedWarning *UnverifiedWarning `json:"unverified_warning,omitempty"`
 
+	// UnverifiedTickerCollision is the LISTING-row trust signal on
+	// /v1/assets: true when this row's (code, issuer) uses a verified
+	// currency's Stellar ticker but is NOT the verified issuer — a
+	// look-alike/impersonator. The listing serves COALESCE(slug, code)
+	// AS slug, so a NULL-slug impersonator emits the verified asset's
+	// CODE as its slug; consumers must AND the verified-slug check with
+	// `!UnverifiedTickerCollision`. False (omitted) for the verified
+	// asset and for codes no verified currency claims. The detail path
+	// carries the richer UnverifiedWarning body instead.
+	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
+
 	// ─── Coin-overlay listing fields (spec'd 2026-07-02, board #33;
 	// populated when the server's CoinsReader is wired) ─────────────
 	Slug             string          `json:"slug,omitempty"`

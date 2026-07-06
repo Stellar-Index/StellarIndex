@@ -18,7 +18,7 @@
 openapi: 3.1.0
 info:
   title: Stellar Index API
-  version: "1.2.0"
+  version: "1.3.0"
   summary: Aggregated Stellar asset pricing — real-time and historical.
   description: |
     The Stellar Index API exposes normalised, VWAP-aggregated pricing
@@ -8578,6 +8578,22 @@ components:
             no verified currency claims on Stellar. See R-018 /
             docs/architecture/multi-network-assets-migration.md
             Phase 1.1.
+        unverified_ticker_collision:
+          type: boolean
+          default: false
+          description: |
+            LISTING-row trust signal (/v1/assets): true when this
+            row's (code, issuer) uses a verified currency's Stellar
+            ticker but is NOT the verified issuer — a look-alike /
+            impersonator. The listing serves `COALESCE(slug, code)
+            AS slug`, so an impersonator with a NULL slug emits the
+            VERIFIED asset's CODE as its slug; a consumer keyed only
+            on `slug ∈ verified-set` would badge it "verified". AND
+            the verified-slug check with `!unverified_ticker_collision`
+            so only the real verified row (which carries this false)
+            keeps the badge. The detail path stamps the richer
+            `unverified_warning` body instead. Omitted (false) for the
+            verified asset and codes no verified currency claims.
       required: [asset_id, type, code, decimals, sep1_status]
 
     UnverifiedWarning:

@@ -290,6 +290,23 @@ type AssetDetail struct {
 	// Pairs with Flags.UnverifiedTickerCollision for client-side
 	// detection.
 	UnverifiedWarning *UnverifiedWarning `json:"unverified_warning,omitempty"`
+
+	// UnverifiedTickerCollision is the per-row trust signal on the
+	// /v1/assets LISTING: true when this row's (code, issuer) uses a
+	// verified currency's Stellar ticker but is NOT the verified
+	// issuer — i.e. a look-alike/impersonator. The listing serves
+	// COALESCE(slug, code) AS slug, so an impersonator with a NULL
+	// slug emits the VERIFIED asset's CODE as its slug; a consumer
+	// keyed only on slug∈verified-set would then badge the
+	// impersonator "verified". Consumers must AND the verified-slug
+	// check with `!unverified_ticker_collision` (the real verified
+	// row carries it false; look-alikes carry it true). The detail
+	// path (/v1/assets/{id}) stamps the richer UnverifiedWarning body
+	// + Flags.UnverifiedTickerCollision instead; this bool is the
+	// lightweight listing-row equivalent. Omitted (false) for the
+	// verified asset and for codes no verified currency claims on
+	// Stellar.
+	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
 }
 
 // UnverifiedWarning is the body attached to /v1/assets/{id} when
@@ -638,6 +655,7 @@ func (s *Server) handleAssetListFromCoins(
 	for _, row := range rows {
 		out = append(out, assetDetailFromCoinRow(row))
 	}
+	s.stampListingCollisions(out)
 	s.fillMarketCapsFromSupply(r.Context(), out)
 	s.fillImagesFromSep1(r.Context(), out)
 	env := Envelope{Data: out, Flags: Flags{}}
@@ -1472,6 +1490,7 @@ func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request,
 		out = append(out, assetDetailFromCoinRow(row))
 	}
 	out = s.suppressCatalogueTwins(out)
+	s.stampListingCollisions(out)
 	s.fillMarketCapsFromSupply(r.Context(), out)
 	s.fillImagesFromSep1(r.Context(), out)
 	s.attachSparkline7dIfRequested(r, out)
@@ -1807,6 +1826,33 @@ func (s *Server) verifiedCurrencyFlags(detail *AssetDetail, asset canonical.Asse
 		flags.UnverifiedTickerCollision = true
 	}
 	return flags
+}
+
+// stampListingCollisions sets AssetDetail.UnverifiedTickerCollision on
+// every LISTING row whose (code, issuer) is a look-alike of a verified
+// currency — a classic asset using a verified Stellar ticker but NOT
+// the verified issuer. The listing query serves COALESCE(slug, code)
+// AS slug, so a NULL-slug impersonator emits the verified asset's CODE
+// as its slug and would otherwise be badged "verified" by a
+// slug-keyed consumer. Stamping the per-row flag lets consumers
+// withhold the badge from impersonators while the real verified row
+// (StellarCollision → false) keeps it.
+//
+// No-op when no catalogue is wired. Catalogue rows on the unified
+// listing carry no issuer (type=global) and are skipped — they ARE the
+// verified identities.
+func (s *Server) stampListingCollisions(rows []AssetDetail) {
+	if s.verifiedCurrencies == nil {
+		return
+	}
+	for i := range rows {
+		if rows[i].Issuer == nil || *rows[i].Issuer == "" || rows[i].Code == "" {
+			continue
+		}
+		if _, collision := s.verifiedCurrencies.StellarCollision(rows[i].Code, *rows[i].Issuer); collision {
+			rows[i].UnverifiedTickerCollision = true
+		}
+	}
 }
 
 // applyUnverifiedWarning stamps detail.UnverifiedWarning when asset

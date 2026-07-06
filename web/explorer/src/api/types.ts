@@ -11734,6 +11734,22 @@ export interface components {
              *     Phase 1.1.
              */
             unverified_warning?: components["schemas"]["UnverifiedWarning"] | null;
+            /**
+             * @description LISTING-row trust signal (/v1/assets): true when this
+             *     row's (code, issuer) uses a verified currency's Stellar
+             *     ticker but is NOT the verified issuer — a look-alike /
+             *     impersonator. The listing serves `COALESCE(slug, code)
+             *     AS slug`, so an impersonator with a NULL slug emits the
+             *     VERIFIED asset's CODE as its slug; a consumer keyed only
+             *     on `slug ∈ verified-set` would badge it "verified". AND
+             *     the verified-slug check with `!unverified_ticker_collision`
+             *     so only the real verified row (which carries this false)
+             *     keeps the badge. The detail path stamps the richer
+             *     `unverified_warning` body instead. Omitted (false) for the
+             *     verified asset and codes no verified currency claims.
+             * @default false
+             */
+            unverified_ticker_collision: boolean;
         };
         /**
          * @description Pointer at the verified Stellar-canonical asset when an
