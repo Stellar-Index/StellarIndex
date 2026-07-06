@@ -148,6 +148,13 @@ paths = [
 ]
 
 [[rules.allowlists]]
+description = "Test-only Phoenix swap fixtures — base64-encoded XDR (ScvMap/Symbol swap-event bodies for the new Map-body pool CBENABXP…, captured from ledger 63307899) + C-strkey pool/token contract IDs — used by the phoenix volatile + map-body swap decoder golden tests. XDR-encoded public ledger data + deterministic public contract IDs (i128 amounts), not credentials — the base64 blobs + strkeys trip gitleaks' generic-api-key entropy heuristic. Same rationale as the aquarius/cctp decoder-fixture allowlists above."
+paths = [
+  '''internal/sources/phoenix/mapswap_test\.go''',
+  '''internal/sources/phoenix/source_test\.go''',
+]
+
+[[rules.allowlists]]
 description = "Test-only Redis lock-key fixture (`abcdef0123456789`) used by the signup-email-locker concurrency test. Fabricated 16-hex-char idempotency key; trips the entropy heuristic but is not a credential."
 paths = [
   '''internal/auth/signup_email_locker_test\.go''',
