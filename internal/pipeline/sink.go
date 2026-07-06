@@ -50,12 +50,14 @@ import (
 type SinkMode int
 
 const (
-	// SinkModeAll writes every consumer.Event the dispatcher emits.
-	// The projector ALWAYS uses this mode (it's the sole writer for
-	// the Soroban-derived subset, so it must persist them).
-	// Pre-Phase-4 the dispatcher's events-goroutine also uses this
-	// mode (parallel write with projector, ON CONFLICT DO NOTHING
-	// absorbs duplicates).
+	// SinkModeAll writes every consumer.Event the dispatcher emits —
+	// nothing is skipped. Used when the projector is NOT running: the
+	// dispatcher's events-goroutine is then the only writer, so it must
+	// persist every class (including sep41). `stellarindex-ops backfill`
+	// also uses this mode (the projector never runs there). When the
+	// projector IS enabled the events-goroutine instead uses
+	// [SinkModeSkipSoleWriter] (Phase-3) or [SinkModeSkipProjected]
+	// (Phase-4) — see [SinkModeForProjector].
 	SinkModeAll SinkMode = iota
 
 	// SinkModeSkipProjected skips Soroban-derived events the
@@ -64,7 +66,62 @@ const (
 	// owns Soroban-derived writes outright; the events-goroutine
 	// continues handling sdex / external / band / supply observers.
 	SinkModeSkipProjected
+
+	// SinkModeSkipSoleWriter skips ONLY the events whose domain the
+	// projector has EARNED sole-writer status for (see
+	// [IsSoleWriterProjected]) — currently just the sep41 domain
+	// (F-1316 / TASK #16b). It's the Phase-3 parallel mode for every
+	// OTHER projected source (those still double-write for the
+	// duplicate-absorbing ON CONFLICT soak) while the promoted
+	// sole-writer domains are owned by the projector outright — so
+	// they never double-write and, crucially, never depend on the
+	// `PersistPerSource` flag's value (closing the config foot-gun
+	// where a mis-set flag silently dropped sep41 rows). The
+	// events-goroutine still writes sdex / external / band / supply
+	// observers, exactly as in [SinkModeSkipProjected].
+	SinkModeSkipSoleWriter
 )
+
+// SinkModeForProjector selects the dispatcher events-goroutine's sink
+// mode from the projector config booleans. Extracted here (rather than
+// inlined in cmd/stellarindex-indexer) so the foot-gun-closure
+// invariant is unit-testable: for EVERY combination of these two
+// booleans, a sep41 event is written exactly once (see
+// TestSinkModeForProjector_Sep41SoleWriterInvariant).
+//
+//   - projector disabled → SinkModeAll: the events-goroutine is the
+//     ONLY writer, so it must persist every class (including sep41).
+//   - projector enabled, persist_per_source=true → SinkModeSkipSoleWriter:
+//     Phase-3 parallel for un-promoted sources, but the projector owns
+//     the sole-writer domains (sep41) outright — the events-goroutine
+//     skips them so they are never double-written and never at risk of
+//     the flag being flipped.
+//   - projector enabled, persist_per_source=false → SinkModeSkipProjected:
+//     Phase-4, projector is sole writer for ALL projected sources.
+func SinkModeForProjector(projectorEnabled, persistPerSource bool) SinkMode {
+	if !projectorEnabled {
+		return SinkModeAll
+	}
+	if persistPerSource {
+		return SinkModeSkipSoleWriter
+	}
+	return SinkModeSkipProjected
+}
+
+// skipInSink reports whether the dispatcher's events-goroutine must
+// SKIP writing ev under mode because a running projector owns the
+// write. The single source of truth for the two drain loops
+// (persistWorker + drainBufferedEvents) so they can never disagree.
+func skipInSink(ev consumer.Event, mode SinkMode) bool {
+	switch mode {
+	case SinkModeSkipProjected:
+		return IsProjectedEvent(ev)
+	case SinkModeSkipSoleWriter:
+		return IsSoleWriterProjected(ev)
+	default: // SinkModeAll
+		return false
+	}
+}
 
 // PersistEvents drains `in` and writes each event to its hypertable
 // via the supplied store. Returns when ctx is canceled and the
@@ -216,7 +273,7 @@ func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.St
 				flushShutdown()
 				return
 			}
-			if mode == SinkModeSkipProjected && IsProjectedEvent(ev) {
+			if skipInSink(ev, mode) {
 				continue
 			}
 			if t, ok := tradeFromEvent(ev); ok {
@@ -317,6 +374,35 @@ func IsProjectedEvent(ev consumer.Event) bool {
 	}
 }
 
+// IsSoleWriterProjected reports whether the projector has EARNED
+// sole-writer status for ev's domain — i.e. the domain is fully
+// re-derived and its projection is verified by the default ADR-0033
+// reconcile catalogue, so the projector owns the write outright even
+// in Phase-3 parallel mode and the dispatcher's events-goroutine must
+// skip it REGARDLESS of the `PersistPerSource` flag. This closes the
+// F-1316 config foot-gun: the sep41 domain's write path no longer
+// depends on a flag whose zero-value (false) once silently dropped
+// all sep41 rows.
+//
+// The set is deliberately narrow — a strict SUBSET of
+// [IsProjectedEvent] (guarded by TestSoleWriter_SubsetOfProjected).
+// A source is added here only after its full-history re-derive lands
+// AND it enters the compute-completeness catalogue
+// (cmd/stellarindex-ops/reconciliation_catalogue.go), so an
+// undetected projector regression can't silently lose rows the
+// dispatcher used to double-write. Today that is only the sep41
+// domain (TASK #16b, 2026-07-06 re-derive + f457f2a4 catalogue
+// promotion); every other projected source stays in Phase-3 parallel
+// (double-write) until it too is promoted.
+func IsSoleWriterProjected(ev consumer.Event) bool {
+	switch ev.(type) {
+	case sep41_supply.Event, sep41_transfers.Event:
+		return true
+	default:
+		return false
+	}
+}
+
 // drainBufferedEvents writes any remaining buffered events using a
 // fresh shutdown context so postgres calls succeed past the parent
 // context's cancellation. Bounded by [drainTimeout] so a hung
@@ -351,7 +437,7 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 				flushTrades()
 				return
 			}
-			if mode == SinkModeSkipProjected && IsProjectedEvent(ev) {
+			if skipInSink(ev, mode) {
 				continue
 			}
 			if t, ok := tradeFromEvent(ev); ok {
