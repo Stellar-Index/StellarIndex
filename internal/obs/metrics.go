@@ -98,6 +98,7 @@ func registerAppMetrics() {
 		AggregatorFXSnapFallbackTotal,
 		AggregatorBaselineRefreshTotal,
 		AggregatorSupplyRefreshTotal,
+		SEP41SupplyRollupAdvancesTotal,
 		AggregatorConfidenceComputeTotal,
 
 		VerifyArchiveLedgersVerified,
@@ -132,6 +133,7 @@ func registerAppMetricsTail() {
 		CustomerWebhookDeliveryDurationSeconds,
 		DivergenceRefreshDurationSeconds,
 		AggregatorSupplyRefreshDurationSeconds,
+		SEP41SupplyRollupAdvanceDurationSeconds,
 		AnomalyFreezeRecoverySweepDurationSeconds,
 
 		UsageRollupSweepsTotal,
@@ -1600,6 +1602,52 @@ var AggregatorSupplyRefreshDurationSeconds = prometheus.NewHistogramVec(
 		Name:    "stellarindex_aggregator_supply_refresh_duration_seconds",
 		Help:    "Supply-snapshot refresh tick latency, labelled by outcome. Asset-level granularity available via per-tick log timestamps.",
 		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	},
+	[]string{"outcome"},
+)
+
+// SEP41SupplyRollupAdvancesTotal — counter of sep41_supply_rollup
+// incremental-advance passes (migration 0085, incident 2026-07-06).
+// The rollup is what keeps the SEP-41 Algorithm-3 supply reader cheap:
+// each pass folds a contract's newly-settled mint/burn/clawback events
+// into a per-contract running checkpoint so the reader never re-sums
+// the full per-contract history. One increment per (contract_id, tick);
+// labels:
+//
+//   - contract_id: the watched SEP-41 C-strkey being advanced.
+//   - outcome ∈ {ok, noop, error}. `ok` folded new settled rows;
+//     `noop` ran cleanly with nothing new to settle (steady state for
+//     a dormant token); `error` is a failed advance (Postgres issue).
+//
+// Sustained `error` for a contract means its checkpoint is frozen and
+// the reader is silently back on the slow full-sum fallback for that
+// contract — correlate with a p99 climb on
+// `stellarindex_aggregator_supply_refresh_duration_seconds`.
+var SEP41SupplyRollupAdvancesTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_sep41_supply_rollup_advances_total",
+		Help: "SEP-41 supply rollup incremental-advance passes per (contract_id, outcome). Outcome ∈ {ok, noop, error}.",
+	},
+	[]string{"contract_id", "outcome"},
+)
+
+// SEP41SupplyRollupAdvanceDurationSeconds — latency histogram for one
+// AdvanceSEP41SupplyRollup pass. Pairs with the per-contract counter
+// above; labelled by outcome only (NOT contract_id) to keep cardinality
+// bounded across deployments watching many contracts.
+//
+// Steady-state is sub-second (a bounded tail sum on the
+// (contract_id, ledger DESC) index). The one exception is a cold
+// contract's FIRST fold — that pass sums the whole per-contract history
+// once and can take seconds→minutes on a hundreds-of-millions-row
+// table; every subsequent pass is incremental. A sustained high p99
+// after warm-up means the tail delta stopped being bounded (worker
+// starved / checkpoint not advancing).
+var SEP41SupplyRollupAdvanceDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_sep41_supply_rollup_advance_duration_seconds",
+		Help:    "SEP-41 supply rollup advance-pass latency, labelled by outcome. Steady-state sub-second; the cold first fold is the exception.",
+		Buckets: []float64{0.005, 0.025, 0.1, 0.5, 1, 2.5, 5, 15, 60, 300},
 	},
 	[]string{"outcome"},
 )

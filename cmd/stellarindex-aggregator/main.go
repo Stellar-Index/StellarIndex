@@ -486,6 +486,22 @@ func run(cfgPath string, dryRun bool) error {
 	// operator's mechanism. When true, the goroutine path takes
 	// over and the systemd timer should be disabled.
 	if cfg.Supply.AggregatorRefreshEnabled {
+		// SEP-41 supply rollup worker (migration 0085, incident
+		// 2026-07-06). Advances the per-contract mint/burn/clawback
+		// checkpoint the SEP41KindTotalsAtOrBefore fast path reads, so
+		// the per-asset SEP-41 refreshers below never re-sum a watched
+		// contract's full sep41_supply_events history each tick. Started
+		// first so its immediate fold warms the checkpoint. No-op when
+		// no SEP-41 contract is watched.
+		if len(cfg.Supply.WatchedSEP41Contracts) > 0 {
+			refresherWG.Add(1)
+			go func() {
+				defer refresherWG.Done()
+				runSEP41SupplyRollup(rootCtx, store, cfg.Supply.WatchedSEP41Contracts,
+					cfg.Supply.AggregatorRefreshCadence, logger.With("component", "sep41-supply-rollup"))
+			}()
+		}
+
 		bindings, err := buildSupplyRefreshers(cfg, store, logger.With("component", "supply-refresh"))
 		if err != nil {
 			return fmt.Errorf("supply refresher init: %w", err)
@@ -801,6 +817,67 @@ func buildXLMRefresher(cfg config.Config, store *timescale.Store, logger *slog.L
 // goroutine just drives the loop and emits the outcome metric
 // labeled with the bound asset_key so operators can chart
 // per-asset bootstrap progress + isolate failure modes per asset.
+// sep41RollupAdvancer is the narrow seam runSEP41SupplyRollup drives —
+// *timescale.Store in production, a fake in the worker test. One method:
+// fold a contract's newly-settled supply events into its rollup
+// checkpoint.
+type sep41RollupAdvancer interface {
+	AdvanceSEP41SupplyRollup(ctx context.Context, contractID string) (timescale.SEP41RollupAdvance, error)
+}
+
+// runSEP41SupplyRollup periodically folds each watched SEP-41 contract's
+// newly-settled mint/burn/clawback events into its rollup checkpoint
+// (migration 0085, incident 2026-07-06). Advancing the rollup is what
+// keeps the per-tick SEP-41 supply refresh cheap: the reader adds a
+// bounded live delta to the checkpoint instead of re-summing the
+// contract's whole `sep41_supply_events` history each refresh.
+//
+// Contracts are advanced SEQUENTIALLY within a pass. This is
+// deliberate: a cold contract's first fold is a one-off full-history
+// sum, and running them one-at-a-time keeps those cold folds from
+// fanning back out into the concurrent full-table scans that saturated
+// Postgres and blew up API p95/p99 in the first place.
+func runSEP41SupplyRollup(ctx context.Context, advancer sep41RollupAdvancer, contracts []string, cadence time.Duration, logger *slog.Logger) {
+	advanceAll := func() {
+		for _, c := range contracts {
+			if ctx.Err() != nil {
+				return
+			}
+			start := time.Now()
+			res, err := advancer.AdvanceSEP41SupplyRollup(ctx, c)
+			outcome := "ok"
+			switch {
+			case err != nil:
+				outcome = "error"
+			case !res.Advanced:
+				outcome = "noop"
+			}
+			obs.SEP41SupplyRollupAdvancesTotal.WithLabelValues(c, outcome).Inc()
+			obs.SEP41SupplyRollupAdvanceDurationSeconds.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
+			switch {
+			case err != nil && ctx.Err() == nil:
+				logger.Warn("sep41 supply rollup advance failed", "contract_id", c, "err", err)
+			case res.Advanced:
+				logger.Debug("sep41 supply rollup advanced",
+					"contract_id", c, "from_ledger", res.FromLedger, "to_ledger", res.ToLedger)
+			}
+		}
+	}
+
+	advanceAll() // immediate first fold — warms the checkpoint before the refresher reads it
+
+	ticker := time.NewTicker(cadence)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			advanceAll()
+		}
+	}
+}
+
 func runSupplyRefresh(ctx context.Context, r *supply.Refresher, cadence time.Duration, assetKey string) {
 	tick := func() {
 		// Time the full Tick — Postgres reads (ledger lookup +

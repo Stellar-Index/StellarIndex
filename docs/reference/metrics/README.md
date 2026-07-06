@@ -1142,6 +1142,48 @@ a per-component freshness reader fell off its index. Buckets span
 `stellarindex_supply_snapshot_*` alert family covers freshness
 + never-initialised paths.
 
+### `stellarindex_sep41_supply_rollup_advances_total`
+
+Counter, labels `contract_id` + `outcome` (`ok` / `noop` /
+`error`).
+
+Counts passes of the aggregator's SEP-41 supply rollup worker —
+the incremental maintainer (migration 0085) that keeps the
+Algorithm-3 supply reader off the full-history aggregate. Each
+pass folds a watched contract's newly-SETTLED mint/burn/clawback
+events into a per-contract running checkpoint
+(`sep41_supply_rollup`) so `SEP41KindTotalsAtOrBefore` reads
+`checkpoint + a bounded live delta` instead of re-summing the whole
+per-contract history. Background: on 2026-07-06 the full per-tick
+aggregate over `sep41_supply_events` (grown to hundreds of millions
+of rows by the 2026-07-05 re-derive) took minutes, ran in parallel
+across watched contracts, saturated Postgres IO, and blew up API
+p95/p99. `noop` is the dormant-token steady state (nothing new
+settled). Sustained `error` for a `contract_id` means that
+contract's checkpoint is frozen and the reader silently fell back
+to the slow full sum for it — correlate with a p99 climb on
+`_aggregator_supply_refresh_duration_seconds`.
+
+### `stellarindex_sep41_supply_rollup_advance_duration_seconds`
+
+Histogram, label `outcome` (matches the counter's enum). Pairs
+with `_sep41_supply_rollup_advances_total{contract_id,outcome}` —
+that one tells you which contracts advance + how often; this one
+tells you how long each pass takes.
+
+**Why no `contract_id` label here?** Same cardinality reasoning as
+the supply-refresh histogram — `contract_id × outcome × buckets`
+multiplies fast; per-contract latency is recoverable from the
+worker log line + timestamp.
+
+Steady-state is sub-second (a bounded tail sum on the
+`(contract_id, ledger DESC)` index). The one expected outlier is a
+cold contract's FIRST fold, which sums the whole per-contract
+history once (seconds→minutes on the large table) before every
+later pass goes incremental — buckets extend to 300 s to capture
+it. A sustained high p99 *after* warm-up means the tail delta
+stopped being bounded (worker starved / checkpoint not advancing).
+
 ### `stellarindex_divergence_refresh_duration_seconds`
 
 Histogram, label `outcome` (`ok` / `no_vwap` / `parse_error` /
