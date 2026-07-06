@@ -87,6 +87,7 @@ var subcommands = map[string]func(args []string) error{
 	"ch-rebuild":                chRebuild,
 	"ch-supply":                 chSupply,
 	"ch-txindex-backfill":       chTxIndexBackfill,
+	"ch-participant-backfill":   chParticipantBackfill,
 	"ch-recognition":            chRecognition,
 	"sdex-claim-audit":          sdexClaimAudit,
 	"verify-recognition":        verifyRecognition,
@@ -590,6 +591,18 @@ Subcommands:
                           this covers the history behind it. -to 0 = lake
                           tip. Prints a resume point per window; serialize
                           it and run under the root-<2G watchdog on r1.
+  ch-participant-backfill [-ch-addr H:P] [-from N] [-to N] [-window N] [-dry-run]
+                          Fill stellar.operation_participants (the non-source
+                          side of ADR-0038 Phase B account history) for
+                          HISTORICAL ledgers by re-deriving participants from
+                          stellar.operations.body_xdr in the ClickHouse lake —
+                          NOT a Galexie re-walk (BACKLOG #59). Reuses the live
+                          extractor's participant derivation, so the fill is
+                          byte-identical to live capture. -to 0 = the
+                          live-capture floor − 1 (exactly the gap). Windowed,
+                          resumable (idempotent ReplacingMergeTree), prints a
+                          resume point per window. -dry-run counts what WOULD
+                          be written. Run under run-heavy-job.sh on r1.
   verify-recognition -config PATH -from N -to N
                           ADR-0033 Claim 2a: pull every distinct
                           (contract, topic[0]) shape from soroban_events
