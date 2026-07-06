@@ -16,6 +16,9 @@ against.
 ## [Unreleased]
 
 ### Added
+- `/v1/assets` listing rows carry `unverified_ticker_collision` (bool) so clients can
+  distinguish a same-ticker impersonator from the verified asset (OpenAPI 1.2.0 → 1.3.0).
+
 - `stellarindex-ops supply seed-sac-balances` + `state-snapshot -scope storage`:
   seed dormant contract-held SAC balances / `contract_data` current-state from the
   lake into the served tier (the ~ledger-62M current-state-projection floor fill),
@@ -73,7 +76,13 @@ against.
   logged loudly with `elapsed_s`.
 - **CI: gitleaks now runs in local `verify.sh`** (graceful-skip when absent) so a new
   base64/XDR test fixture that trips the entropy heuristic is caught pre-push, not as a
-  CI email; allowlisted the aquarius liquidity-decoder XDR fixtures.
+  CI email; allowlisted the aquarius liquidity-decoder + served-data-correctness fixtures.
+- **Served data:** impersonator assets no longer show a false "verified" badge on the
+  `/assets` listing + home grids (rows now carry the per-row `unverified_ticker_collision`
+  signal the explorer gates on); XLM's `native` and `crypto:XLM` forms now serve one
+  identical USD price (`/v1/assets/native` was ~0.2% off the canonical `/v1/price`); and
+  Stellar-only verified tokens (SHX, AQUA, yXLM, VELO, BLND, PHO) show their on-chain
+  headline price on `/v1/assets/{slug}` instead of null.
 
 ### Changed
 - Docs: corrected the `outlier_sigma_threshold` config description (mean+stdev per
