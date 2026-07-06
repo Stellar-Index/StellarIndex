@@ -60,8 +60,8 @@ func supplySeedSEP41Genesis(args []string) error {
 	if *cfgPath == "" {
 		return errors.New("-config is required")
 	}
-	if *genesisLedger == 0 {
-		return errors.New("-genesis-ledger must be > 0")
+	if err := validateGenesisLedgerBoundary(*genesisLedger); err != nil {
+		return err
 	}
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
@@ -113,6 +113,36 @@ func supplySeedSEP41Genesis(args []string) error {
 	fmt.Printf("\n%s %d/%d watched SEP-41 contracts (%d with a non-zero pre-Soroban baseline, boundary ledger %d)\n",
 		label, seeded, len(watched), nonzero, boundary)
 	fmt.Println("NOTE: pre-Soroban supply_flows are REPLAY-DERIVED (post-P23 CAP-67 synthesis) — legitimate but core-version-dependent (ADR-0033). Re-run after a lake re-derive below the boundary.")
+	return nil
+}
+
+// validateGenesisLedgerBoundary vets the operator-supplied -genesis-ledger.
+//
+// The whole reason the seed is CORRECT is that the two supply slices it stitches
+// together are a DISJOINT ledger partition: the ClickHouse genesis sum covers
+// `ledger < boundary`, and the Postgres Soroban-era total covers the era the
+// SEP-41 observer populates, `ledger >= clickhouse.SorobanGenesisLedger`. That
+// disjointness — and therefore "no double-count" — only holds when the boundary
+// is AT-OR-BELOW the true Soroban genesis ledger. A boundary set ABOVE it would
+// make the CH `ledger < boundary` slice reach up into the Soroban era and sum
+// flows that the PG total ALSO counts, so the seeded baseline would inflate the
+// served lifetime supply. Fail closed: reject rather than silently double-count.
+//
+// The default (clickhouse.SorobanGenesisLedger) is accepted — the check is
+// strictly-greater-than, so boundary == genesis passes.
+func validateGenesisLedgerBoundary(genesisLedger uint) error {
+	if genesisLedger == 0 {
+		return errors.New("-genesis-ledger must be > 0")
+	}
+	if genesisLedger > uint(clickhouse.SorobanGenesisLedger) {
+		return fmt.Errorf(
+			"-genesis-ledger %d exceeds the Soroban genesis ledger %d: a boundary above it "+
+				"double-counts Soroban-era flows (the CH pre-genesis sum over ledger<boundary would "+
+				"overlap the PG Soroban-era total over ledger>=%d) and inflates served supply — pass a "+
+				"value <= %d (the default)",
+			genesisLedger, clickhouse.SorobanGenesisLedger,
+			clickhouse.SorobanGenesisLedger, clickhouse.SorobanGenesisLedger)
+	}
 	return nil
 }
 
