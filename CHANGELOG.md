@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.8.4] — 2026-07-06
+
 ### Fixed
 
 - **Trade sink retries on a Postgres outage with backpressure instead of
