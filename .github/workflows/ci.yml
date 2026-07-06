@@ -252,6 +252,11 @@ jobs:
       PROM_VERSION: "2.55.1"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - name: structural rule lint (no promtool)
+        # Pure-Python guard that runs even if the promtool install below fails —
+        # catches the mis-indented-rule class (2026-07-06 galexie-archive: alerts
+        # at group level). Also wired into scripts/dev/verify.sh for local dev.
+        run: python3 ./scripts/ci/lint-rule-structure.py
       - name: install promtool
         run: |
           # F-1294 (codex audit-2026-05-13): SHA-verified install.
