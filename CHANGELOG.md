@@ -15,6 +15,63 @@ against.
 
 ## [Unreleased]
 
+## [v0.8.7] — 2026-07-06
+
+### Added
+
+- **`GET /v1/liquidity-pools` — native CAP-38 pool reserves + depth** (BACKLOG
+  #30). Each native (classic) constant-product liquidity pool now exposes its
+  two-sided reserves and depth, served from a new current-state pool reader over
+  the ClickHouse lake (with `as_of_ledger` freshness stamping).
+- **Scoped SEP-41 dropped-row recovery for `ch-rebuild`** — new `-contracts
+  <csv>` (replaces the `[supply] watched_sep41_contracts` read prefilter so a
+  recovery does an indexed scan of only the affected contracts) and
+  `-sep41-supply-only` (narrows the read to the mint/burn/clawback topics,
+  skipping the transfer firehose at the SQL layer) flags turn a full,
+  multi-hour `-sep41` truncate+re-derive into a targeted windowed pass. Both are
+  additive and `ON CONFLICT`-safe (they only re-add dropped rows). Runbook:
+  `docs/operations/sep41-mint-recovery.md`.
+- **DeFindex `rebalance`/`harvest`/admin decode scaffolding** (BACKLOG #58). The
+  `harvest` (strategy) and `rebalance` + eight vault admin topics now drop
+  cleanly (recognised, nothing to emit) instead of counting normal upstream
+  traffic against defindex's decode-error counter, and a four-way
+  `rebalance_method` discriminator (unwind/invest/SwapExactIn/SwapExactOut)
+  reads the one documented body field. No new event type is persisted until
+  real on-chain samples confirm the wire layout.
+- ADR-0045 (Proposed) + an architecture doc scoping a possible SEP-40 oracle
+  read-adapter (BACKLOG #60).
+
+### Fixed
+
+- **SEP-41 / SAC-wrapper lifetime supply undercounted for pre-Soroban
+  issuance.** The Algorithm-3 supply refresher derives per-contract total from
+  `sep41_supply_events`, which the observer only fills over the Soroban era
+  `[50457424, tip]`. A classic asset's SAC wrapper (VELO, AQUA, yXLM, LIBRE,
+  ACT, MBC, XAU, BTC, GQX) was largely issued *before* Soroban, so the
+  Soroban-only window read Σburn > Σmint → negative derived total → the
+  negative-total guard rejected the snapshot, firing
+  `supply_refresh_error_dominant` + `supply_cross_check_divergence` for all nine
+  wrappers. Migration `0088` adds a `genesis_baseline_ledger` +
+  `genesis_{mint,burn,clawback}_total` opening balance to `sep41_supply_rollup`,
+  seeded from the certified ClickHouse lake's pre-Soroban `supply_flows` slice
+  (a disjoint partition PG never held) by the new one-time
+  `stellarindex-ops supply seed-sep41-genesis` command. An unseeded negative
+  total now routes to a benign `missing_baseline` outcome (excluded from
+  `error_dominant`) instead of paging; a genuine post-seed inconsistency still
+  pages. Soroban-only tokens get a zero baseline — served numbers unchanged.
+- **Explorer static build no longer aborts on a missing/slow `/v1/price`** —
+  the build-time price fetches in the assets and markets static pages now
+  soft-fail (render without the headline price) rather than failing the Next.js
+  export.
+
+### Changed
+
+- Explorer lint: `react-hooks/exhaustive-deps` + `react-hooks/rules-of-hooks`
+  promoted from warn to error (BACKLOG #49).
+- CI now enforces, via an AST guard, that every `consumer.Event` type has a
+  matching arm in `internal/pipeline/sink.go`, so a new event type that is never
+  sunk fails the build (BACKLOG #56).
+
 ## [v0.8.6] — 2026-07-06
 
 ### Added
