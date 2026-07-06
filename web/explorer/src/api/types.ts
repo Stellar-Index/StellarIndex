@@ -3187,6 +3187,168 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/liquidity-pools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Current native (CAP-38) liquidity-pool two-sided reserves + depth.
+         * @description CURRENT two-sided reserves for Stellar's protocol-native
+         *     (CAP-38) constant-product liquidity pools, read straight from
+         *     the `liquidity_pool` LedgerEntry in the certified lake's
+         *     current-state table (ADR-0039, the same read-time-decode design
+         *     as `/v1/pools/reserves` and
+         *     `/v1/lending/pools/{pool}/reserves`) — plus a depth table under
+         *     the constant-product model.
+         *
+         *     Native pools are DISTINCT from Soroban AMM protocols (Soroswap,
+         *     Aquarius, Phoenix, Comet — see `/v1/pools/reserves`): they are
+         *     built into the ledger by CAP-38 with no smart contract, and
+         *     their reserves are TWO-sided on-chain (both `reserve_a` and
+         *     `reserve_b` live in the entry). Unlike the Soroban AMM path —
+         *     where reserves are consumed transiently at trade decode and
+         *     persisted nowhere — the full per-pool reserve state is honestly
+         *     available for every native pool. (The supply-verification path
+         *     only records the operator-watched side of watched-asset pools;
+         *     this endpoint reads both sides of every pool.)
+         *
+         *     Reserves are exact base-unit (stroop) decimal strings (ADR-0003;
+         *     classic assets are always 7 decimals). `as_of_ledger` stamps the
+         *     ledger of the pool's last state change — reserves are current as
+         *     of that ledger and unchanged since. The envelope's `flags.stale`
+         *     reflects lake freshness (ADR-0041): it fires when the lake
+         *     watermark's close time trails now by more than 300s. The `depth`
+         *     table is a MODEL-DERIVED estimate (labelled `model:
+         *     constant_product`, x·y=k with the pool's on-chain fee on input),
+         *     not an order book. A pool with an empty side reports its
+         *     reserves but no mid price / depth.
+         *
+         *     Without `?pool=`, the response is the top-N native pools ranked
+         *     by pool-share trustline count (number of liquidity providers —
+         *     the only cross-pool-comparable size signal without USD pricing
+         *     of arbitrary pool assets).
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /**
+                     * @description Optional. A native pool id — an L-strkey (SEP-23) or 32-byte
+                     *     hex. Restricts the response to that pool. 404 when the id is
+                     *     not a captured native pool; 400 when it is neither an
+                     *     L-strkey nor 32-byte hex.
+                     */
+                    pool?: string;
+                    /**
+                     * @description Optional (listing only, ignored with `?pool=`). Number of
+                     *     top-ranked pools to return. 1-100, default 25.
+                     */
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Per-pool current two-sided reserves + depth. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "pool": "LBBQAH75JTPHENBF3UJEYMPQR4GQ43VZNPAE4H5XVUYS5YRBY6NFFKVM",
+                         *           "pool_hex": "43001ffd4cde723425dd124c31f08f0d0e6eb96bc04e1fb7ad312ee221c79a52",
+                         *           "model": "constant_product",
+                         *           "fee_bps": 30,
+                         *           "as_of_ledger": 63356894,
+                         *           "trustlines": 1,
+                         *           "total_shares": "14133656465",
+                         *           "reserve_a": {
+                         *             "asset": "LibreDrone-GB7LCUIDT3C2DUOX4O2FSCCBH5NXIUJZ64YQ2N75N5POZRI4DA4AMGEE",
+                         *             "decimals": 7,
+                         *             "reserve": "109841733381"
+                         *           },
+                         *           "reserve_b": {
+                         *             "asset": "deCent-GBVRVE6CCHJFZ6IFEKYRCRODKPPJHJFPCYOZILWADK4CEZB6DEXBYTI6",
+                         *             "decimals": 7,
+                         *             "reserve": "1868365732"
+                         *           },
+                         *           "mid_price_a_in_b": "0.017009616240480621",
+                         *           "mid_price_b_in_a": "58.790274034527197162",
+                         *           "depth": [
+                         *             {
+                         *               "slippage_pct": "0.5",
+                         *               "asset_a_in": {
+                         *                 "max_input": "221451759",
+                         *                 "output": "3747975"
+                         *               },
+                         *               "asset_b_in": {
+                         *                 "max_input": "3766809",
+                         *                 "output": "220344474"
+                         *               }
+                         *             },
+                         *             {
+                         *               "slippage_pct": "1",
+                         *               "asset_a_in": {
+                         *                 "max_input": "778995707",
+                         *                 "output": "13117913"
+                         *               },
+                         *               "asset_b_in": {
+                         *                 "max_input": "13250418",
+                         *                 "output": "771205748"
+                         *               }
+                         *             },
+                         *             {
+                         *               "slippage_pct": "2",
+                         *               "asset_a_in": {
+                         *                 "max_input": "1911151277",
+                         *                 "output": "31857790"
+                         *               },
+                         *               "asset_b_in": {
+                         *                 "max_input": "32507949",
+                         *                 "output": "1872928206"
+                         *               }
+                         *             }
+                         *           ]
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-06T12:00:00.000000000Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
+                        "application/json": components["schemas"]["EnvelopeMeta"] & {
+                            data: components["schemas"]["LiquidityPoolReservesRow"][];
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                404: components["responses"]["NotFound"];
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/lending/pools": {
         parameters: {
             query?: never;
@@ -12243,6 +12405,46 @@ export interface components {
         PoolDepthSide: {
             max_input: string;
             output: string;
+        };
+        /** @description One native (CAP-38) constant-product liquidity pool's current two-sided reserve state + depth (ADR-0039). */
+        LiquidityPoolReservesRow: {
+            /** @description Pool id, L-strkey (SEP-23). */
+            pool: string;
+            /** @description Pool id as 32-byte hex (Horizon/SDEX form). */
+            pool_hex: string;
+            /** @description AMM model the depth table assumes: `constant_product` (x·y=k, fee on input). Model-derived estimate, not an order book. */
+            model: string;
+            /** @description Pool's on-chain swap fee in basis points (30 for every constant-product pool today). */
+            fee_bps: number;
+            /** @description Ledger of the pool's last state change; reserves are current as of this ledger and unchanged since. */
+            as_of_ledger: number;
+            /** @description Number of pool-share trustlines (distinct liquidity providers). The listing rank key. */
+            trustlines: number;
+            /** @description Total issued pool-share supply, base-unit decimal string. */
+            total_shares: string;
+            reserve_a: components["schemas"]["LiquidityPoolReserveSide"];
+            reserve_b: components["schemas"]["LiquidityPoolReserveSide"];
+            /** @description Decimals-adjusted mid price, asset B per asset A. Decimal string; null when either side is empty. */
+            mid_price_a_in_b: string | null;
+            /** @description Inverse mid price. Null when either side is empty. */
+            mid_price_b_in_a: string | null;
+            /** @description Depth estimate per slippage tier (0.5% / 1% / 2%). Empty when either reserve is zero. */
+            depth: components["schemas"]["LiquidityPoolDepthLevel"][];
+        };
+        /** @description One side of a native pool: the classic asset's canonical id + its reserve. */
+        LiquidityPoolReserveSide: {
+            /** @description Canonical asset_id (`native` or `CODE-ISSUER`). */
+            asset: string;
+            /** @description Asset decimals — always 7 for classic Stellar assets. */
+            decimals: number;
+            /** @description Pool reserve, exact base-unit (stroop) decimal string (ADR-0003). */
+            reserve: string;
+        };
+        LiquidityPoolDepthLevel: {
+            /** @description Tier, percent (e.g. `0.5`). */
+            slippage_pct: string;
+            asset_a_in: components["schemas"]["PoolDepthSide"];
+            asset_b_in: components["schemas"]["PoolDepthSide"];
         };
         MarketsEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["MarketRow"][];

@@ -88,10 +88,17 @@ type Server struct {
 	lakeWatermarkReader LakeWatermarkReader
 	// Cached lake watermark (ADR-0041 D4) — see lakeWatermark() in
 	// lake_watermark.go. Refreshed at most every lakeWatermarkTTL.
-	lakeWMMu                sync.Mutex
-	lakeWMLedger            uint32
-	lakeWMClosedAt          time.Time
-	lakeWMFetched           time.Time
+	lakeWMMu       sync.Mutex
+	lakeWMLedger   uint32
+	lakeWMClosedAt time.Time
+	lakeWMFetched  time.Time
+	// Cached top-N native (CAP-38) liquidity-pool listing — a
+	// whole-`liquidity_pool`-prefix lake scan (~40k pools) ranked in
+	// Go; cached so the listing endpoint doesn't re-scan per request
+	// (see handleLiquidityPools in liquidity_pools.go).
+	nativeLPMu              sync.Mutex
+	nativeLPCached          []LiquidityPoolReservesRow
+	nativeLPFetched         time.Time
 	volume                  VolumeReader
 	change24h               Change24hReader
 	priceAt                 PriceAtReader
@@ -1345,6 +1352,11 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// (ADR-0039 lake read; Soroswap only today). Literal path wins
 	// over any future /v1/pools/{...} wildcard in Go's mux.
 	s.mux.HandleFunc("GET /v1/pools/reserves", s.handlePoolReserves)
+
+	// Native (CAP-38) liquidity-pool two-sided reserves + depth,
+	// read from the `liquidity_pool` LedgerEntry in the lake
+	// (ADR-0039). Listing ranked by LP count; ?pool= for one pool.
+	s.mux.HandleFunc("GET /v1/liquidity-pools", s.handleLiquidityPools)
 
 	// Single-pair activity summary.
 	s.mux.HandleFunc("GET /v1/pairs", s.handlePairs)

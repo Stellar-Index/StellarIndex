@@ -196,7 +196,10 @@ func policyForPath(path string, cdnEnabled bool) string {
 		// the short band absorbs fan-out while staying honest about
 		// "current". Exact-match: the /v1/pools listing keeps its
 		// longer closed-window cache in the catalogue band below.
-		path == "/v1/pools/reserves":
+		path == "/v1/pools/reserves",
+		// Native (CAP-38) liquidity-pool reserves — same CURRENT-lake-
+		// state nature as /v1/pools/reserves (both listing + ?pool=).
+		path == "/v1/liquidity-pools":
 		if cdnEnabled {
 			return "public, max-age=30, s-maxage=60"
 		}
