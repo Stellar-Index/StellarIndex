@@ -129,7 +129,7 @@ export function AssetsTable({
       setQuery({ q: trimmed, cursor: '' });
     }, 250);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- debounce keys on the local input `q` only; `queryParam` (the URL this effect writes back) and the stable `setQuery` setter are intentionally omitted so the timer doesn't refire when the URL it just set re-renders.
   }, [q]);
 
   const assets = data?.assets ?? [];

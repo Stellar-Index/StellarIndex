@@ -211,10 +211,10 @@ export function LineChart({
       seriesRef.current = null;
       volumeRef.current = null;
     };
-    // height / isUp / hasVolume / area / timeVisible drive chart
-    // re-creation; data updates are pushed via setData in the second
-    // effect.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // height / isUp / hasVolume / area / timeVisible / legendEnabled
+    // drive chart re-creation; data updates are pushed via setData in
+    // the second effect. Every reactive value this body reads is in the
+    // dep array, so exhaustive-deps is satisfied — no disable needed.
   }, [height, isUp, hasVolume, area, timeVisible, legendEnabled]);
 
   useEffect(() => {
