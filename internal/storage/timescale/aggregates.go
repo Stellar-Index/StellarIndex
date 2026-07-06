@@ -786,6 +786,30 @@ func (s *Store) recentClosedVWAP1mExists(ctx context.Context, p canonical.Pair, 
 	return true, nil
 }
 
+// RecentClosedVWAP1mExists reports whether the pair has at least one
+// CLOSED 1-minute VWAP bucket (in either stored direction) within the
+// price surface's default freshness horizon ([latestVWAPGateWindow], two
+// weeks). It is the EXPORTED sibling of the unexported gate
+// [LatestClosedVWAP1mForPair] runs internally — same query, same bounded
+// window — exposed for the /v1/price stablecoin-proxy fallback layer.
+//
+// Why the proxy needs it: `tryStablecoinFiatProxy` walks the operator's
+// USD-pegged classics calling `LatestPrice(asset, <peg>)`. A peg's quote
+// is a classic asset (USDC-GA5Z…), so on a VWAP miss `LatestPrice` does
+// NOT take the synthetic-fiat fast path — it falls through to
+// [Store.LatestTradesForPair], an UNBOUNDED last-trade scan. For an
+// empty proxy pair (e.g. a pure-Soroban token that only trades vs XLM,
+// so <token>/USDC has zero rows) that is a cold full-history walk, and
+// the proxy repeats it for EVERY peg. Gating each peg on this cheap
+// bounded probe lets the proxy skip empty pairs before the walk — the
+// same 2026-07-06 empty-alias latency fix, applied at the proxy layer.
+// A hit means a live proxy pair (do the `LatestPrice` read, whose VWAP
+// path is itself gated + fast); a miss means skip the peg.
+func (s *Store) RecentClosedVWAP1mExists(ctx context.Context, p canonical.Pair) (bool, error) {
+	since := time.Now().UTC().Add(-latestVWAPGateWindow)
+	return s.recentClosedVWAP1mExists(ctx, p, since)
+}
+
 // latestClosedVWAP1m runs the combined-direction latest-closed-bucket query
 // with a LITERAL `bucket >= since` lower bound on every prices_1m scan, so the
 // planner prunes old chunks at PLAN time (see [LatestClosedVWAP1mForPair]).

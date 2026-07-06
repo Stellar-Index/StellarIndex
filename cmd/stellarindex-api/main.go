@@ -2563,6 +2563,20 @@ func (r storePriceReader) RecentClosedSnapshots(ctx context.Context, asset, quot
 	return out, nil
 }
 
+// RecentClosedVWAP1mExists implements the optional gate the /v1/price
+// stablecoin-proxy fallback uses to skip empty proxy pairs before the
+// unbounded last-trade walk (2026-07-06 empty-alias latency incident,
+// proxy layer). Delegates to the bounded, both-directions probe on the
+// store. Satisfies the unexported `proxyPairGate` interface in
+// internal/api/v1.
+func (r storePriceReader) RecentClosedVWAP1mExists(ctx context.Context, base, quote canonical.Asset) (bool, error) {
+	pair, err := canonical.NewPair(base, quote)
+	if err != nil {
+		return false, err
+	}
+	return r.s.RecentClosedVWAP1mExists(ctx, pair)
+}
+
 // assetToDetail converts canonical.Asset → v1.AssetDetail. Nullable
 // fields become nil pointers when empty so the JSON omits them.
 //
