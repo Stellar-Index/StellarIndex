@@ -145,13 +145,90 @@ type SEP41KindTotals struct {
 }
 
 // SEP41KindTotalsAtOrBefore returns the per-kind sums for
-// `contractID` at-or-before `asOfLedger`. Single round-trip via
-// SQL `SUM(...) FILTER (WHERE ...)` per kind.
+// `contractID` at-or-before `asOfLedger`.
 //
-// Each component is non-nil; zero is a valid answer for a
-// contract with no events of that kind observed yet (e.g. a
-// token that's never been clawed back returns Clawback=0).
+// Fast path (incident 2026-07-06, migration 0085). Reads the
+// per-contract checkpoint from `sep41_supply_rollup` and adds only the
+// live tail delta above it:
+//
+//	rollup(ledger ≤ last_ledger)  ⊕  Σ(last_ledger < ledger ≤ asOfLedger)
+//
+// — a bounded scan on the (contract_id, ledger DESC) index instead of
+// aggregating the whole per-contract history on every call. The
+// aggregator's rollup worker keeps `last_ledger` within one cadence of
+// the tip, so the delta is a handful of ledgers. Before this the
+// reader ran `Σ … FILTER (WHERE event_kind = …)` over ALL of a
+// contract's rows; once `sep41_supply_events` grew to hundreds of
+// millions of rows (the 2026-07-05 full-history re-derive) that full
+// aggregate took minutes — and, because the hypertable is chunked by
+// `observed_at` while the query bounds only contract_id + ledger, it
+// could prune no chunks and scanned every one.
+//
+// Fallback path. When the contract has no rollup row yet (the worker
+// hasn't folded it) OR the request ledger predates the checkpoint (a
+// rare historical/backfill read), it computes the original full
+// at-or-before aggregate. rollup ⊕ delta and the full aggregate return
+// identical totals — the rollup sums exactly the rows the full query
+// would (proof: the checkpoint folds ledger ≤ last_ledger and the delta
+// folds last_ledger < ledger ≤ asOfLedger; their disjoint union is
+// ledger ≤ asOfLedger).
+//
+// Each component is non-nil; zero is a valid answer for a contract with
+// no events of that kind observed yet (e.g. a token that's never been
+// clawed back returns Clawback=0).
 func (s *Store) SEP41KindTotalsAtOrBefore(ctx context.Context, contractID string, asOfLedger uint32) (SEP41KindTotals, error) {
+	base, lastLedger, ok, err := s.sep41RollupCheckpoint(ctx, contractID)
+	if err != nil {
+		return SEP41KindTotals{}, err
+	}
+	// No checkpoint yet, or the checkpoint is AHEAD of the requested
+	// ledger (a historical read below the watermark) — the rollup can't
+	// be subtracted back, so take the exact full aggregate.
+	if !ok || lastLedger > asOfLedger {
+		return s.sep41KindTotalsFullSum(ctx, contractID, asOfLedger)
+	}
+	// Checkpoint ≤ asOfLedger: add only the live tail delta above it.
+	delta, err := s.sep41KindTotalsRange(ctx, contractID, lastLedger, asOfLedger)
+	if err != nil {
+		return SEP41KindTotals{}, err
+	}
+	return SEP41KindTotals{
+		Mint:     new(big.Int).Add(base.Mint, delta.Mint),
+		Burn:     new(big.Int).Add(base.Burn, delta.Burn),
+		Clawback: new(big.Int).Add(base.Clawback, delta.Clawback),
+	}, nil
+}
+
+// sep41RollupCheckpoint reads the per-contract rollup row. ok=false
+// (with zero totals) when no checkpoint exists yet — the caller falls
+// back to the full aggregate.
+func (s *Store) sep41RollupCheckpoint(ctx context.Context, contractID string) (SEP41KindTotals, uint32, bool, error) {
+	const q = `
+        SELECT mint_total::text, burn_total::text, clawback_total::text, last_ledger
+          FROM sep41_supply_rollup
+         WHERE contract_id = $1
+    `
+	var mintRaw, burnRaw, clawbackRaw string
+	var lastLedger int64
+	err := s.db.QueryRowContext(ctx, q, contractID).Scan(&mintRaw, &burnRaw, &clawbackRaw, &lastLedger)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SEP41KindTotals{}, 0, false, nil
+	}
+	if err != nil {
+		return SEP41KindTotals{}, 0, false, fmt.Errorf("timescale: sep41 rollup checkpoint %s: %w", contractID, err)
+	}
+	totals, err := parseSEP41Totals(mintRaw, burnRaw, clawbackRaw)
+	if err != nil {
+		return SEP41KindTotals{}, 0, false, err
+	}
+	return totals, uint32(lastLedger), true, nil
+}
+
+// sep41KindTotalsFullSum is the original full per-contract aggregate,
+// bounded at-or-before asOfLedger. The correctness backstop the fast
+// path falls back to; kept identical so rollup ⊕ delta is provably the
+// same number.
+func (s *Store) sep41KindTotalsFullSum(ctx context.Context, contractID string, asOfLedger uint32) (SEP41KindTotals, error) {
 	const q = `
         SELECT
             COALESCE(sum(amount) FILTER (WHERE event_kind = 'mint'),     0)::text AS mint_total,
@@ -165,6 +242,35 @@ func (s *Store) SEP41KindTotalsAtOrBefore(ctx context.Context, contractID string
 	if err := s.db.QueryRowContext(ctx, q, contractID, int(asOfLedger)).Scan(&mintRaw, &burnRaw, &clawbackRaw); err != nil {
 		return SEP41KindTotals{}, fmt.Errorf("timescale: SEP41KindTotalsAtOrBefore %s@%d: %w", contractID, asOfLedger, err)
 	}
+	return parseSEP41Totals(mintRaw, burnRaw, clawbackRaw)
+}
+
+// sep41KindTotalsRange sums the delta over the half-open ledger window
+// (afterLedger, asOfLedger]. The `ledger > afterLedger` lower bound
+// walks only the tail of the (contract_id, ledger DESC) index, so the
+// live delta above a fresh checkpoint is cheap regardless of history
+// depth.
+func (s *Store) sep41KindTotalsRange(ctx context.Context, contractID string, afterLedger, asOfLedger uint32) (SEP41KindTotals, error) {
+	const q = `
+        SELECT
+            COALESCE(sum(amount) FILTER (WHERE event_kind = 'mint'),     0)::text AS mint_total,
+            COALESCE(sum(amount) FILTER (WHERE event_kind = 'burn'),     0)::text AS burn_total,
+            COALESCE(sum(amount) FILTER (WHERE event_kind = 'clawback'), 0)::text AS clawback_total
+          FROM sep41_supply_events
+         WHERE contract_id = $1
+           AND ledger      >  $2
+           AND ledger      <= $3
+    `
+	var mintRaw, burnRaw, clawbackRaw string
+	if err := s.db.QueryRowContext(ctx, q, contractID, int(afterLedger), int(asOfLedger)).Scan(&mintRaw, &burnRaw, &clawbackRaw); err != nil {
+		return SEP41KindTotals{}, fmt.Errorf("timescale: sep41 kind-totals delta %s@(%d,%d]: %w", contractID, afterLedger, asOfLedger, err)
+	}
+	return parseSEP41Totals(mintRaw, burnRaw, clawbackRaw)
+}
+
+// parseSEP41Totals parses the three ::text NUMERIC sums into non-nil
+// *big.Int components (ADR-0003: i128 sums never truncate).
+func parseSEP41Totals(mintRaw, burnRaw, clawbackRaw string) (SEP41KindTotals, error) {
 	mint, err := parseSEP41Numeric(mintRaw, "mint_total")
 	if err != nil {
 		return SEP41KindTotals{}, err
@@ -269,4 +375,93 @@ func (s *Store) InsertSEP41SupplyEventBatch(ctx context.Context, rows []SEP41Sup
 		return fmt.Errorf("timescale: InsertSEP41SupplyEventBatch (%d rows): %w", len(rows), err)
 	}
 	return nil
+}
+
+// SEP41RollupAdvance reports what one AdvanceSEP41SupplyRollup pass
+// folded, for the worker's metrics + logging.
+type SEP41RollupAdvance struct {
+	ContractID string
+	FromLedger uint32 // checkpoint ledger before the pass
+	ToLedger   uint32 // checkpoint ledger after the pass
+	Advanced   bool   // true when newly-settled rows were folded in
+}
+
+// AdvanceSEP41SupplyRollup folds a contract's newly-SETTLED
+// sep41_supply_events into its sep41_supply_rollup checkpoint — the
+// incremental maintainer that keeps the SEP41KindTotalsAtOrBefore fast
+// path cheap (migration 0085, incident 2026-07-06). This is the ONLY
+// writer of sep41_supply_rollup.
+//
+// It sums only rows with `ledger > last_ledger` AND strictly below the
+// contract's current max ledger. The `< max(ledger)` guard defers the
+// tip ledger — which may still be mid-write in the indexer (a separate
+// process) — so a partially-written ledger is never half-folded into
+// the running total (that would permanently undercount, since the
+// reader's delta only picks up `ledger > last_ledger`). The tip folds
+// on a later pass, once a higher ledger exists to prove it settled;
+// meanwhile the reader's live delta covers it, so nothing is lost.
+//
+// Idempotent + monotonic: re-running with no newly-settled rows is a
+// no-op (zero delta, unchanged last_ledger); the per-kind totals only
+// ever grow by the summed delta. i128-safe — amounts are summed and
+// accumulated in Postgres NUMERIC (ADR-0003).
+//
+// NOTE: a re-derive that rewrites sep41_supply_events history BELOW an
+// existing checkpoint must `TRUNCATE sep41_supply_rollup` first so the
+// worker re-folds from zero; the incremental watermark cannot see
+// edits it already passed.
+func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string) (SEP41RollupAdvance, error) {
+	if contractID == "" {
+		return SEP41RollupAdvance{}, errors.New("timescale: AdvanceSEP41SupplyRollup: empty contractID")
+	}
+	_, fromLedger, _, err := s.sep41RollupCheckpoint(ctx, contractID)
+	if err != nil {
+		return SEP41RollupAdvance{}, err
+	}
+
+	// One statement:
+	//   bound.mx — the contract's current max ledger; we fold strictly
+	//              below it so the (possibly mid-write) tip is deferred.
+	//   delta    — the settled tail sum over (from_ledger, mx).
+	//   UPSERT   — add the delta into the running totals and move
+	//              last_ledger to the max ledger actually folded
+	//              (COALESCE back to from_ledger when nothing settled).
+	const q = `
+        WITH bound AS (
+            SELECT COALESCE(max(ledger), 0) AS mx
+              FROM sep41_supply_events
+             WHERE contract_id = $1
+        ),
+        delta AS (
+            SELECT
+                COALESCE(sum(e.amount) FILTER (WHERE e.event_kind = 'mint'),     0) AS d_mint,
+                COALESCE(sum(e.amount) FILTER (WHERE e.event_kind = 'burn'),     0) AS d_burn,
+                COALESCE(sum(e.amount) FILTER (WHERE e.event_kind = 'clawback'), 0) AS d_clawback,
+                COALESCE(max(e.ledger), $2)                                        AS to_ledger
+              FROM sep41_supply_events e, bound
+             WHERE e.contract_id = $1
+               AND e.ledger       > $2
+               AND e.ledger       < bound.mx
+        )
+        INSERT INTO sep41_supply_rollup
+            (contract_id, mint_total, burn_total, clawback_total, last_ledger, updated_at)
+        SELECT $1, d_mint, d_burn, d_clawback, to_ledger, now() FROM delta
+        ON CONFLICT (contract_id) DO UPDATE SET
+            mint_total     = sep41_supply_rollup.mint_total     + EXCLUDED.mint_total,
+            burn_total     = sep41_supply_rollup.burn_total     + EXCLUDED.burn_total,
+            clawback_total = sep41_supply_rollup.clawback_total + EXCLUDED.clawback_total,
+            last_ledger    = EXCLUDED.last_ledger,
+            updated_at     = now()
+        RETURNING last_ledger
+    `
+	var toLedger int64
+	if err := s.db.QueryRowContext(ctx, q, contractID, int(fromLedger)).Scan(&toLedger); err != nil {
+		return SEP41RollupAdvance{}, fmt.Errorf("timescale: AdvanceSEP41SupplyRollup %s: %w", contractID, err)
+	}
+	return SEP41RollupAdvance{
+		ContractID: contractID,
+		FromLedger: fromLedger,
+		ToLedger:   uint32(toLedger),
+		Advanced:   uint32(toLedger) > fromLedger,
+	}, nil
 }
