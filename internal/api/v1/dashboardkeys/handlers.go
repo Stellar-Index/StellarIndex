@@ -251,6 +251,18 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 	// the Starter budget.
 	req.RateLimitPerMin = clampRateLimitToTier(req.RateLimitPerMin, sc.Account.Tier)
 
+	// audit-2026-07 (MEDIUM): clamp the customer-supplied
+	// monthly_quota to the account's hard ceiling so a metered
+	// customer can only LOWER their cap, never raise it above the
+	// plan. Without this clamp the handler persisted any int64 the
+	// POST body carried (e.g. 9_000_000_000), and the auth cascade
+	// let that per-key value win — an effectively-unmetered key on a
+	// metered plan. The ceiling is the operator's account-level
+	// override when set, else the tier default; see
+	// clampMonthlyQuotaToAccount. Mirrors clampRateLimitToTier but is
+	// a CEILING (only lowers), not a FLOOR.
+	req.MonthlyQuota = clampMonthlyQuotaToAccount(req.MonthlyQuota, sc.Account)
+
 	maxKeys := h.maxKeysFor(sc.Account.Tier)
 	if status, problem := h.checkQuota(r, sc.Account.ID, maxKeys); problem != "" {
 		writeProblem(w, status, problem, r.URL.Path)
@@ -463,6 +475,37 @@ func normaliseScopes(raw []string) ([]string, string) {
 // per-tier ladder.
 func clampRateLimitToTier(requested int, tier platform.Tier) int {
 	ceiling := tier.MaxRateLimitPerMin()
+	if requested > ceiling {
+		return ceiling
+	}
+	return requested
+}
+
+// clampMonthlyQuotaToAccount returns the lower of `requested` and the
+// account's monthly-quota ceiling, preserving the "0 = inherit /
+// unlimited" sentinel.
+//
+//   - requested <= 0: pass through unchanged (0 stays the "inherit the
+//     account override, or unlimited if none" sentinel the auth cascade
+//     keys on — see internal/auth/apikey_postgres.go). Clamping this to
+//     a positive ceiling would silently START metering a key the
+//     customer left unset.
+//   - requested > 0: clamp to min(requested, ceiling), where the
+//     ceiling is the operator's [platform.Account.MonthlyRequestQuotaOverride]
+//     when set (> 0), else the tier default [platform.Tier.MaxMonthlyQuota].
+//
+// This makes the operator's account-level cap a HARD ceiling the
+// customer can only lower — the CEILING analogue of the rate-limit
+// FLOOR (clampRateLimitToTier + the account rate-limit override at
+// auth time). audit-2026-07 (MEDIUM).
+func clampMonthlyQuotaToAccount(requested int64, acct platform.Account) int64 {
+	if requested <= 0 {
+		return requested
+	}
+	ceiling := acct.MonthlyRequestQuotaOverride
+	if ceiling <= 0 {
+		ceiling = acct.Tier.MaxMonthlyQuota()
+	}
 	if requested > ceiling {
 		return ceiling
 	}
