@@ -343,6 +343,14 @@ type TradeRow struct {
 	BaseAmount  string    `json:"base_amount"`
 	QuoteAmount string    `json:"quote_amount"`
 	Price       string    `json:"price"`
+	// BaseDecimals / QuoteDecimals are the smallest-unit scale for each
+	// side: divide BaseAmount by 10^BaseDecimals (QuoteAmount by
+	// 10^QuoteDecimals) for whole-asset units. 7 for native/classic/fiat;
+	// the token contract's declared decimals() for Soroban tokens.
+	// Populated by [Client.History]; omitted (zero) on the /v1/observations
+	// rows, which carry no per-side scale.
+	BaseDecimals  int `json:"base_decimals,omitempty"`
+	QuoteDecimals int `json:"quote_decimals,omitempty"`
 	// RoutedVia is the router/aggregator whose same-transaction
 	// invocation drove this trade (`routers.name`, e.g.
 	// "soroswap-router" — see [Client.Aggregators]). Empty for

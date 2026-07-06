@@ -2077,7 +2077,9 @@ export interface paths {
                          *           "quote_asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
                          *           "base_amount": "4331",
                          *           "quote_amount": "863",
-                         *           "price": "0.1992611406"
+                         *           "price": "0.1992611406",
+                         *           "base_decimals": 7,
+                         *           "quote_decimals": 7
                          *         }
                          *       ],
                          *       "as_of": "2026-07-03T22:42:25.518134702Z",
@@ -11903,6 +11905,20 @@ export interface components {
             quote_amount: string;
             /** @description quote/base, 10-digit decimal. */
             price: string;
+            /**
+             * @description Smallest-unit scale for `base_amount`: divide by
+             *     10^base_decimals for whole-asset units. 7 for
+             *     native/classic/fiat; the token contract's declared
+             *     `decimals()` for Soroban tokens. Present on /v1/history
+             *     (resolved once per pair per request); omitted on
+             *     /v1/observations, whose rows carry no per-side scale.
+             */
+            base_decimals?: number;
+            /**
+             * @description Smallest-unit scale for `quote_amount` — see
+             *     `base_decimals`.
+             */
+            quote_decimals?: number;
             /**
              * @description Router / aggregator whose same-transaction invocation
              *     drove this trade (`routers.name`, e.g.
