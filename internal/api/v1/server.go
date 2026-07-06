@@ -117,10 +117,19 @@ type Server struct {
 	// classic circulating-supply map (one ~0.5s ClickHouse GROUP BY over
 	// the trustline slice — see cachedClassicSupply). Backs market-cap
 	// fill on the long tail of /v1/assets.
-	classicSupplyMu      sync.Mutex
-	classicSupplyCache   map[string]string
-	classicSupplyAt      time.Time
-	classicSupplyFlight  chan struct{}
+	classicSupplyMu     sync.Mutex
+	classicSupplyCache  map[string]string
+	classicSupplyAt     time.Time
+	classicSupplyFlight chan struct{}
+	// Per-server TTL + single-flight cache for the SEP-1 logo map
+	// (canonical asset_id → safe image URL), built from every verified
+	// issuer's cached sep1_payload in one scan. Backs the image fill on
+	// the /v1/assets listing so the homepage grid renders real logos
+	// instead of fallback avatars — see cachedSep1Images.
+	sep1ImagesMu         sync.Mutex
+	sep1ImagesCache      map[string]string
+	sep1ImagesAt         time.Time
+	sep1ImagesFlight     chan struct{}
 	soroswapPairs        SoroswapPairsReader
 	networkStats         NetworkStatsReader
 	aggregators          AggregatorsReader
