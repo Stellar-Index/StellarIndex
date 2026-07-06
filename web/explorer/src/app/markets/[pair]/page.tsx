@@ -191,9 +191,17 @@ export async function generateMetadata({
 // return null/[] only when the API authoritatively answered 4xx —
 // a pair with no direct VWAP or no recent trades is a legitimate
 // state the page renders honestly as "—".
+//
+// EXCEPTION: fetchPrice passes softFail — the live price is refreshed
+// client-side by <LivePrice>, so a cold/slow/unreachable /v1/price must
+// NOT abort the export (the edge has been seen hanging ~25s on a
+// cold-cache asset, landing on a different one each run). It degrades to
+// no build-time price instead of throwing; short timeout + few attempts
+// keep a hung endpoint from stalling the build.
 function fetchPrice(base: string, quote: string): Promise<PriceResp | null> {
   return buildFetchData<PriceResp>(
     `/v1/price?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
+    { softFail: true, timeoutMs: 6_000, attempts: 2 },
   );
 }
 

@@ -379,8 +379,14 @@ function fetchPriceDirect(
   asset: string,
   quote: string,
 ): Promise<PriceResp | null> {
+  // softFail: the live price is refreshed client-side by <LivePrice>, so a
+  // cold/slow/unreachable /v1/price must NOT abort the export (the edge has
+  // been seen hanging ~25s on a cold-cache asset). A persistent failure
+  // degrades this page to no build-time price rather than throwing; short
+  // timeout + few attempts keep a hung endpoint from stalling the build.
   return buildFetchData<PriceResp>(
     `/v1/price?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}`,
+    { softFail: true, timeoutMs: 6_000, attempts: 2 },
   );
 }
 
