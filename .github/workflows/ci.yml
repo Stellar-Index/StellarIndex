@@ -481,7 +481,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install ansible + lint
         run: pipx install --include-deps ansible && pipx install ansible-lint
       - name: Syntax check (secrets stubbed — structure only)
