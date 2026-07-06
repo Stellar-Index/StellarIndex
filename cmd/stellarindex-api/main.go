@@ -1024,6 +1024,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			pkPairFor: func(base, quote canonical.Asset) (canonical.Pair, error) {
 				return canonical.NewPair(base, quote)
 			},
+			logger: logger,
 		},
 		GlobalPriceOpts: aggregate.GlobalPriceOptions{
 			AggregatorSources: external.AggregatorSources(),
@@ -2263,6 +2264,7 @@ type globalPriceReader struct {
 	s         *timescale.Store
 	tri       redisTriangulatedLooker
 	pkPairFor func(base, quote canonical.Asset) (canonical.Pair, error)
+	logger    *slog.Logger // nil → no guard logging
 }
 
 func (g globalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical.Asset) (string, time.Time, int64, []string, bool, error) {
@@ -2280,12 +2282,24 @@ func (g globalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical
 	if err != nil {
 		return "", time.Time{}, 0, nil, false, err
 	}
+	// Same raw-CAGG serving-sanity guard as /v1/price
+	// (storePriceReader.LatestPrice): LatestClosedVWAP1mForPair returns a
+	// bare Σ(quote)/Σ(base) closed bucket that bypasses the orchestrator's
+	// σ-outlier filter / min-USD-volume gate / freeze protection, so the
+	// GlobalAssetView headline price carries the identical unfiltered
+	// fat-finger / manipulation vector. guardServedVWAP1m serves
+	// last-known-good when the latest bucket is grossly off its recent
+	// trailing baseline, and is a byte-identical pass-through on a healthy
+	// bucket (fails open on thin history).
+	served := guardServedVWAP1m(ctx, g.s, g.logger, pair, row)
 	// row.Bucket is the bucket's *start*; the closed-bucket contract
 	// (ADR-0015) means the bucket's served observation_at is the
 	// bucket end. Add one minute to surface the consumer-facing
-	// timestamp matching every other closed-bucket surface.
-	asOf := row.Bucket.Add(time.Minute)
-	return row.VWAP, asOf, row.TradeCount, row.Sources, true, nil
+	// timestamp matching every other closed-bucket surface. Applied to the
+	// bucket we actually serve (candidate, or the older last-known-good on a
+	// guard rejection — which is naturally staler).
+	asOf := served.Bucket.Add(time.Minute)
+	return served.VWAP, asOf, served.TradeCount, served.Sources, true, nil
 }
 
 func (g globalPriceReader) LatestAggregatorPrices(ctx context.Context, base, quote canonical.Asset, sources []string) ([]canonical.OracleUpdate, error) {
@@ -2525,7 +2539,7 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	// bucket.
 	row, err := r.s.LatestClosedVWAP1mForPair(ctx, pair)
 	if err == nil {
-		served := r.guardServedVWAP1m(ctx, pair, row)
+		served := guardServedVWAP1m(ctx, r.s, r.logger, pair, row)
 		// CS-017: the bucket closes at Bucket+1min; flag stale when that
 		// close is older than the freshness window, so a dormant pair's
 		// months-old VWAP is no longer served as stale=false. Applied to the
@@ -2568,9 +2582,16 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	return snap, []string{trades[0].Source}, true, nil
 }
 
-// guardServedVWAP1m is the /v1/price serving-sanity guard
-// (adversarial-review HIGH). Given the latest CLOSED prices_1m bucket
-// (`candidate`) it returns the row to actually serve:
+// guardServedVWAP1m is the serving-sanity guard shared by the TWO raw
+// prices_1m serving paths (adversarial-review HIGH): /v1/price
+// (storePriceReader.LatestPrice) and the /v1/assets/{slug} GlobalAssetView
+// headline price (globalPriceReader.LatestVWAP). Both read the same
+// most-recent CLOSED prices_1m bucket via LatestClosedVWAP1mForPair — a
+// bare Σ(quote)/Σ(base) CAGG that bypasses the orchestrator's σ-outlier
+// filter / min-USD-volume gate / freeze protection — so both carry the
+// identical unfiltered fat-finger / manipulation vector and need the same
+// guard. Given the latest CLOSED bucket (`candidate`) it returns the row
+// to actually serve:
 //   - the candidate unchanged, when it is robust-sane against the pair's
 //     recent trailing closed buckets, or when there is no baseline / the
 //     trailing fetch failed (fail-open — favour serving a real price);
@@ -2580,23 +2601,26 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 //
 // The decision math is exact-rational (aggregate.GuardServedVWAP, ADR-0003
 // — no float64 in the value path). This never errors: on any doubt it
-// serves the candidate rather than 404 a pair that has data.
-func (r storePriceReader) guardServedVWAP1m(
+// serves the candidate rather than 404 a pair that has data. A nil logger
+// disables the guard's warn logging (the decision is unaffected).
+func guardServedVWAP1m(
 	ctx context.Context,
+	s *timescale.Store,
+	logger *slog.Logger,
 	pair canonical.Pair,
 	candidate timescale.Vwap1mRow,
 ) timescale.Vwap1mRow {
-	rows, err := r.s.RecentClosedVWAP1mCombined(ctx, pair, servedGuardSampleFetch)
+	rows, err := s.RecentClosedVWAP1mCombined(ctx, pair, servedGuardSampleFetch)
 	if err != nil {
-		if r.logger != nil {
-			r.logger.Warn("served-vwap guard: trailing fetch failed — serving candidate unguarded",
+		if logger != nil {
+			logger.Warn("served-vwap guard: trailing fetch failed — serving candidate unguarded",
 				"pair", pair.String(), "err", err)
 		}
 		return candidate // fail-open
 	}
 	served, rejected := selectGuardedVWAP1m(candidate, rows)
-	if rejected && r.logger != nil {
-		r.logger.Warn("served-vwap guard: candidate bucket rejected as outlier — serving last-known-good",
+	if rejected && logger != nil {
+		logger.Warn("served-vwap guard: candidate bucket rejected as outlier — serving last-known-good",
 			"pair", pair.String(),
 			"candidate_bucket", candidate.Bucket,
 			"candidate_vwap", candidate.VWAP,
