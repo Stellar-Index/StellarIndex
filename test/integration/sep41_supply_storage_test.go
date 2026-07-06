@@ -4,6 +4,7 @@ package integration_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"math/big"
@@ -577,6 +578,189 @@ func TestSEP41GenesisBaseline_BoundaryPartitionDisjoint(t *testing.T) {
 	// At tip: identical — no further events, and the fold does not re-add.
 	if got := mintAt(tip); got.Cmp(wantLifetime) != 0 {
 		t.Errorf("mint @tip = %s, want %s (disjoint fold, no double-count)", got, wantLifetime)
+	}
+}
+
+// TestSEP41SupplyRollupFoldReset proves the incident-2026-07-06 re-derive
+// footgun fix: ResetSEP41SupplyRollupFold (which `ch-rebuild -sep41 -write`
+// calls automatically) clears the worker-owned fold columns so the aggregator
+// re-folds a re-derived history correctly, WITHOUT wiping the migration-0088
+// genesis baseline. It exercises both variants the ch-rebuild wiring drives:
+//
+//   - SCOPED reset (-contracts) zeroes ONLY the listed contract's fold row,
+//     leaving other watched contracts' checkpoints intact;
+//   - FULL reset (nil scope) zeroes EVERY contract's fold row (the whole-table
+//     TRUNCATE-equivalent);
+//   - both PRESERVE the seeded genesis columns (genesis_mint_total +
+//     genesis_baseline_ledger), asserted directly against the row;
+//   - and after a reset + re-advance the worker re-folds a below-checkpoint
+//     recovery it would otherwise never see (the served-undercount half of the
+//     bug that a bare re-derive leaves behind).
+func TestSEP41SupplyRollupFoldReset(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	// Raw connection for DIRECT column assertions — the exported reader hides
+	// last_ledger and the fold-vs-genesis column split, so this is the literal
+	// proof that the reset zeroes the fold columns and spares the genesis ones.
+	rawdb, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("raw open: %v", err)
+	}
+	t.Cleanup(func() { _ = rawdb.Close() })
+
+	const (
+		contractA = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+		contractB = "CC4WPS7HRSPRZAXBVUDYLRXLZRHPLA6VTZARKZJTNVNECAS5IDRXRUB6"
+
+		boundary  uint32 = 50457424 // clickhouse.SorobanGenesisLedger
+		lSettled1 uint32 = 50457500 // folded into the checkpoint
+		lSettled2 uint32 = 50458000 // folded into the checkpoint (becomes last_ledger)
+		lRecover  uint32 = 50457600 // a below-checkpoint recovery row (< last_ledger)
+		lTip      uint32 = 50460000 // deferred by the < max(ledger) watermark guard
+		readAt    uint32 = 50460000 // >= boundary, so the genesis baseline is added
+	)
+	t0 := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
+	txh := func(n int) string { return fmt.Sprintf("%064x", n) }
+
+	insert := func(c string, ledger uint32, kind timescale.SEP41EventKind, amount int64, tx int) {
+		t.Helper()
+		if err := store.InsertSEP41SupplyEvent(ctx, timescale.SEP41SupplyEvent{
+			ContractID: c, Ledger: ledger, TxHash: txh(tx), OpIndex: 0,
+			ObservedAt: t0, Kind: kind, Amount: big.NewInt(amount), Counterparty: "GA1",
+		}); err != nil {
+			t.Fatalf("insert %s %s@%d: %v", c, kind, ledger, err)
+		}
+	}
+
+	type rollupRow struct {
+		mint, genesisMint string
+		lastLedger        int64
+		genesisSeeded     bool
+	}
+	readRow := func(c string) rollupRow {
+		t.Helper()
+		var r rollupRow
+		var genesisLedger sql.NullInt64
+		if err := rawdb.QueryRowContext(ctx, `
+			SELECT mint_total::text, last_ledger, genesis_mint_total::text, genesis_baseline_ledger
+			  FROM sep41_supply_rollup WHERE contract_id = $1`, c).
+			Scan(&r.mint, &r.lastLedger, &r.genesisMint, &genesisLedger); err != nil {
+			t.Fatalf("read rollup %s: %v", c, err)
+		}
+		r.genesisSeeded = genesisLedger.Valid
+		return r
+	}
+	mintAt := func(c string, asOf uint32) int64 {
+		t.Helper()
+		got, err := store.SEP41KindTotalsAtOrBefore(ctx, c, asOf)
+		if err != nil {
+			t.Fatalf("SEP41KindTotalsAtOrBefore %s@%d: %v", c, asOf, err)
+		}
+		return got.Mint.Int64()
+	}
+
+	// ─── Seed both contracts: settled history + a seeded genesis baseline ─
+	genesisMint := big.NewInt(4_000_000)
+	for _, c := range []string{contractA, contractB} {
+		insert(c, lSettled1, timescale.SEP41EventMint, 1_000_000, 1)
+		insert(c, lSettled2, timescale.SEP41EventMint, 500_000, 2)
+		insert(c, lTip, timescale.SEP41EventMint, 1, 3) // tip — deferred by the < max guard
+		if err := store.UpsertSEP41GenesisBaseline(ctx, c,
+			timescale.SEP41KindTotals{Mint: genesisMint, Burn: big.NewInt(0), Clawback: big.NewInt(0)},
+			boundary); err != nil {
+			t.Fatalf("seed genesis %s: %v", c, err)
+		}
+		if _, err := store.AdvanceSEP41SupplyRollup(ctx, c); err != nil {
+			t.Fatalf("advance %s: %v", c, err)
+		}
+	}
+	for _, c := range []string{contractA, contractB} {
+		if r := readRow(c); r.mint != "1500000" || r.lastLedger != int64(lSettled2) {
+			t.Fatalf("%s pre-reset fold = mint %s last_ledger %d; want 1500000 / %d", c, r.mint, r.lastLedger, lSettled2)
+		}
+	}
+
+	// ─── Recover a below-checkpoint row on BOTH (the re-derive's effect) ──
+	// A previously-missing mint at ledger lRecover (< last_ledger). The worker's
+	// `> last_ledger` fold can never see it, so a bare re-advance UNDERCOUNTS.
+	for _, c := range []string{contractA, contractB} {
+		insert(c, lRecover, timescale.SEP41EventMint, 700_000, 4)
+	}
+	// Lifetime mint = genesis(4M) + 1M + 0.5M + tip(1) [+ recovered 0.7M when folded].
+	const wantUndercount = 5_500_001 // recovered row invisible to the incremental worker
+	const wantFixed = 6_200_001      // recovered row folded after a reset
+	for _, c := range []string{contractA, contractB} {
+		if _, err := store.AdvanceSEP41SupplyRollup(ctx, c); err != nil {
+			t.Fatalf("advance-no-reset %s: %v", c, err)
+		}
+		if got := mintAt(c, readAt); got != wantUndercount {
+			t.Fatalf("%s without reset = %d; want %d (below-checkpoint row invisible to the worker)", c, got, wantUndercount)
+		}
+	}
+
+	// ─── SCOPED reset: only contractA ─────────────────────────────────────
+	n, err := store.ResetSEP41SupplyRollupFold(ctx, []string{contractA})
+	if err != nil {
+		t.Fatalf("scoped reset: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("scoped reset touched %d rows; want 1 (only contractA)", n)
+	}
+	ra := readRow(contractA)
+	if ra.mint != "0" || ra.lastLedger != 0 {
+		t.Errorf("A post-scoped-reset fold = mint %s last_ledger %d; want 0 / 0", ra.mint, ra.lastLedger)
+	}
+	if ra.genesisMint != "4000000" || !ra.genesisSeeded {
+		t.Errorf("A post-scoped-reset genesis = %s seeded %v; want 4000000 / true (baseline must survive the reset)", ra.genesisMint, ra.genesisSeeded)
+	}
+	if rb := readRow(contractB); rb.lastLedger != int64(lSettled2) {
+		t.Errorf("B fold last_ledger = %d; want %d (scoped reset must not touch B)", rb.lastLedger, lSettled2)
+	}
+
+	if _, err := store.AdvanceSEP41SupplyRollup(ctx, contractA); err != nil {
+		t.Fatalf("re-advance A: %v", err)
+	}
+	if got := mintAt(contractA, readAt); got != wantFixed {
+		t.Errorf("A after scoped reset+advance = %d; want %d (recovered row now folded)", got, wantFixed)
+	}
+	if got := mintAt(contractB, readAt); got != wantUndercount {
+		t.Errorf("B still = %d; want %d (unaffected by the A-scoped reset)", got, wantUndercount)
+	}
+
+	// ─── FULL reset: nil scope zeroes EVERY remaining folded row ──────────
+	n, err = store.ResetSEP41SupplyRollupFold(ctx, nil)
+	if err != nil {
+		t.Fatalf("full reset: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("full reset touched %d rows; want 2 (all watched contracts)", n)
+	}
+	for _, c := range []string{contractA, contractB} {
+		r := readRow(c)
+		if r.mint != "0" || r.lastLedger != 0 {
+			t.Errorf("%s post-full-reset fold = mint %s last_ledger %d; want 0 / 0", c, r.mint, r.lastLedger)
+		}
+		if r.genesisMint != "4000000" || !r.genesisSeeded {
+			t.Errorf("%s post-full-reset genesis = %s seeded %v; want 4000000 / true (baseline preserved)", c, r.genesisMint, r.genesisSeeded)
+		}
+	}
+	for _, c := range []string{contractA, contractB} {
+		if _, err := store.AdvanceSEP41SupplyRollup(ctx, c); err != nil {
+			t.Fatalf("final advance %s: %v", c, err)
+		}
+		if got := mintAt(c, readAt); got != wantFixed {
+			t.Errorf("%s after full reset+advance = %d; want %d", c, got, wantFixed)
+		}
 	}
 }
 

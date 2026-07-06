@@ -67,3 +67,41 @@ func TestContractAllowed(t *testing.T) {
 		t.Errorf("override %v must skip non-member %q (prefilter not applied)", override, other)
 	}
 }
+
+// TestSEP41RollupResetPlan pins WHEN a -sep41 -write run resets the
+// sep41_supply_rollup fold checkpoint, and for WHICH contracts. This is the
+// footgun guard from incident 2026-07-06: a re-derive that rewrites
+// sep41_supply_events below the worker's checkpoint must reset the fold, or the
+// worker double-counts a full re-derive (KALE 2×) / undercounts a scoped
+// recovery. The reset must fire ONLY when the SUPPLY source is actually being
+// written, and scope to exactly the CH read set (nil = FULL/all rows, the
+// -contracts override = scoped).
+func TestSEP41RollupResetPlan(t *testing.T) {
+	affected := []string{"CBH4M45TOCKF", "CDLZFC3SYJYD"}
+	cases := []struct {
+		name          string
+		includeSEP41  bool
+		write         bool
+		supplyEnabled bool
+		override      []string
+		wantReset     bool
+		wantContracts []string
+	}{
+		{"dry-run never resets", true, false, true, nil, false, nil},
+		{"non-sep41 run never resets", false, true, true, nil, false, nil},
+		{"transfers-only (supply not enabled) never resets", true, true, false, nil, false, nil},
+		{"full re-derive resets ALL rows (nil scope)", true, true, true, nil, true, nil},
+		{"scoped recovery resets only the override", true, true, true, affected, true, affected},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reset, contracts := sep41RollupResetPlan(tc.includeSEP41, tc.write, tc.supplyEnabled, tc.override)
+			if reset != tc.wantReset {
+				t.Errorf("reset = %v, want %v", reset, tc.wantReset)
+			}
+			if !reflect.DeepEqual(contracts, tc.wantContracts) {
+				t.Errorf("contracts = %v, want %v", contracts, tc.wantContracts)
+			}
+		})
+	}
+}
