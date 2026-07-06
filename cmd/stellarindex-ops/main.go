@@ -364,6 +364,25 @@ Subcommands:
                           Soroban-era-only total. Idempotent (baseline is
                           SET, not added); Soroban-only contracts seed a
                           zero baseline (served total unchanged).
+  supply verify-rollup -config PATH [-contracts C1,C2,...] [-tolerance N] [-statement-timeout DUR] [-timeout DUR]
+                          Derived-checkpoint reconcile (ADR-0033 fourth
+                          integrity check): diff every watched contract's
+                          sep41_supply_rollup fold (the served incremental
+                          checkpoint) against the AUTHORITATIVE same-source
+                          re-sum of the exact sep41_supply_events rows it
+                          folds (ledger <= last_ledger). Reports any
+                          (contract, kind) that diverge by more than
+                          -tolerance (Delta > 0 = double-fold over-count,
+                          the KALE 2× signature; Delta < 0 = a
+                          below-checkpoint edit the worker never re-summed).
+                          Exit 1 if any drift. SLOW / post-re-derive check,
+                          NOT a per-tick job — each re-sum is the
+                          full-history aggregate the served fast path
+                          avoids (the incident's 30s probe timed out at 6
+                          contracts), so it runs under -statement-timeout
+                          (default 15m per contract), is scoped/resumable
+                          via -contracts, and on r1 must run under the
+                          heavy-job wrapper (run-heavy-job.sh).
   discovery list -config PATH [-since DUR] [-limit N]
                           List SEP-41 contracts auto-detected from the
                           event stream (the dispatcher's discovery

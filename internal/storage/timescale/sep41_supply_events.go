@@ -605,6 +605,122 @@ func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string)
 	}, nil
 }
 
+// SEP41RollupCheckpoint is the WORKER-OWNED fold state of one
+// sep41_supply_rollup row: the incremental per-kind running totals
+// (Fold) and the checkpoint ledger they fold sep41_supply_events up to
+// (ledger ≤ LastLedger). It EXCLUDES the migration-0088 pre-Soroban
+// genesis-baseline columns — those are a separately-seeded constant
+// (from the ClickHouse lake), not folded from sep41_supply_events, so
+// they are not part of the derived-checkpoint reconcile.
+type SEP41RollupCheckpoint struct {
+	ContractID string
+	Fold       SEP41KindTotals
+	LastLedger uint32
+}
+
+// ListSEP41RollupCheckpoints returns the worker-owned fold state of
+// every sep41_supply_rollup row — or, when contractIDs is non-empty,
+// only those rows (scoped/resumable auditing). It reads ONLY the fold
+// columns + last_ledger; the genesis-baseline columns are out of scope.
+//
+// This is the "checkpoint" side of the derived-checkpoint reconcile
+// ([completeness.ReconcileRunningTotals], wired by `stellarindex-ops
+// supply verify-rollup`): each returned Fold is diffed against
+// [Store.SEP41SupplyEventKindResum](contract, LastLedger) — a
+// double-fold (incident 2026-07-06 KALE 2×) shows up as Fold = k×resum.
+// Cheap: a scan of the small rollup table (one row per watched
+// contract), NOT the sep41_supply_events hypertable.
+func (s *Store) ListSEP41RollupCheckpoints(ctx context.Context, contractIDs []string) ([]SEP41RollupCheckpoint, error) {
+	const base = `
+        SELECT contract_id, mint_total::text, burn_total::text, clawback_total::text, last_ledger
+          FROM sep41_supply_rollup
+    `
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if len(contractIDs) == 0 {
+		rows, err = s.db.QueryContext(ctx, base+` ORDER BY contract_id`)
+	} else {
+		rows, err = s.db.QueryContext(ctx, base+` WHERE contract_id = ANY($1) ORDER BY contract_id`, pq.Array(contractIDs))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("timescale: ListSEP41RollupCheckpoints: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []SEP41RollupCheckpoint
+	for rows.Next() {
+		var cid, mintRaw, burnRaw, clawbackRaw string
+		var lastLedger int64
+		if err := rows.Scan(&cid, &mintRaw, &burnRaw, &clawbackRaw, &lastLedger); err != nil {
+			return nil, fmt.Errorf("timescale: ListSEP41RollupCheckpoints scan: %w", err)
+		}
+		fold, perr := parseSEP41Totals(mintRaw, burnRaw, clawbackRaw)
+		if perr != nil {
+			return nil, perr
+		}
+		out = append(out, SEP41RollupCheckpoint{ContractID: cid, Fold: fold, LastLedger: uint32(lastLedger)})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: ListSEP41RollupCheckpoints rows: %w", err)
+	}
+	return out, nil
+}
+
+// SEP41SupplyEventKindResum is the AUTHORITATIVE per-kind re-sum of
+// sep41_supply_events for contractID up to (and including) asOfLedger —
+// the "truth" side of the derived-checkpoint reconcile
+// ([completeness.ReconcileRunningTotals], wired by `stellarindex-ops
+// supply verify-rollup`).
+//
+// It is the SAME-SOURCE re-sum: it sums the exact PG rows the checkpoint
+// folds, NOT the network-wide ClickHouse lake (the PG observer and the
+// lake legitimately differ for map/muxed variants — migrations
+// 0085/0088). It is the full at-or-before aggregate the
+// [Store.SEP41KindTotalsAtOrBefore] fast path deliberately AVOIDS: on
+// the hundreds-of-millions-row sep41_supply_events hypertable (chunked
+// by observed_at, not ledger) a contract_id+ledger-bounded sum can prune
+// no chunks and scans every one — which is why the incident audit's 30s
+// probe timed out at just 6 contracts. It therefore runs under a
+// generous, caller-supplied SET LOCAL statement_timeout and is meant for
+// the slow-cadence operator check, NEVER the per-tick hot path.
+//
+// i128-safe (ADR-0003): the three sums are NUMERIC, parsed to *big.Int.
+func (s *Store) SEP41SupplyEventKindResum(ctx context.Context, contractID string, asOfLedger uint32, statementTimeout time.Duration) (SEP41KindTotals, error) {
+	if contractID == "" {
+		return SEP41KindTotals{}, errors.New("timescale: SEP41SupplyEventKindResum: empty contractID")
+	}
+	if statementTimeout <= 0 {
+		return SEP41KindTotals{}, fmt.Errorf("timescale: SEP41SupplyEventKindResum: statementTimeout must be > 0, got %s", statementTimeout)
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return SEP41KindTotals{}, fmt.Errorf("timescale: SEP41SupplyEventKindResum begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Generous SET LOCAL statement_timeout (ms) so PG doesn't abort the
+	// full-history scan the fast path avoids. Same tx-scoped pattern as
+	// CountRowsByLedger.
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL statement_timeout = '%d'", statementTimeout.Milliseconds())); err != nil {
+		return SEP41KindTotals{}, fmt.Errorf("timescale: SEP41SupplyEventKindResum SET: %w", err)
+	}
+	const q = `
+        SELECT
+            COALESCE(sum(amount) FILTER (WHERE event_kind = 'mint'),     0)::text AS mint_total,
+            COALESCE(sum(amount) FILTER (WHERE event_kind = 'burn'),     0)::text AS burn_total,
+            COALESCE(sum(amount) FILTER (WHERE event_kind = 'clawback'), 0)::text AS clawback_total
+          FROM sep41_supply_events
+         WHERE contract_id = $1
+           AND ledger      <= $2
+    `
+	var mintRaw, burnRaw, clawbackRaw string
+	if err := tx.QueryRowContext(ctx, q, contractID, int(asOfLedger)).Scan(&mintRaw, &burnRaw, &clawbackRaw); err != nil {
+		return SEP41KindTotals{}, fmt.Errorf("timescale: SEP41SupplyEventKindResum %s@%d: %w", contractID, asOfLedger, err)
+	}
+	return parseSEP41Totals(mintRaw, burnRaw, clawbackRaw)
+}
+
 // ResetSEP41SupplyRollupFold zeroes the WORKER-OWNED fold columns
 // (mint_total, burn_total, clawback_total, last_ledger) of
 // sep41_supply_rollup so the aggregator's rollup worker

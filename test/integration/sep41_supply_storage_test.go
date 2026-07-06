@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/completeness"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 	"github.com/StellarIndex/stellar-index/internal/supply"
 )
@@ -761,6 +762,115 @@ func TestSEP41SupplyRollupFoldReset(t *testing.T) {
 		if got := mintAt(c, readAt); got != wantFixed {
 			t.Errorf("%s after full reset+advance = %d; want %d", c, got, wantFixed)
 		}
+	}
+}
+
+// TestSEP41RollupCheckpoints_DerivedReconcile exercises the two storage
+// seams the derived-checkpoint reconcile (`stellarindex-ops supply
+// verify-rollup`) is built on — ListSEP41RollupCheckpoints (the
+// checkpoint side) and SEP41SupplyEventKindResum (the same-source truth
+// side) — against real TimescaleDB, then feeds them through
+// completeness.ReconcileRunningTotals. It pins that:
+//
+//   - a healthy checkpoint (fold == Σ rows it folds, bounded at
+//     last_ledger) reconciles CLEAN, and the re-sum is correctly bounded
+//     at the checkpoint's own last_ledger (NOT the tip — the deferred
+//     tip must not count as drift);
+//   - the KALE 2× double-fold (incident 2026-07-06) — a fold column
+//     wrongly doubled below the checkpoint — is FLAGGED with Delta =
+//     +truth, the exact signature the row-count reconciles miss;
+//   - the -contracts scope filters ListSEP41RollupCheckpoints.
+func TestSEP41RollupCheckpoints_DerivedReconcile(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const (
+		contractA = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+		contractB = "CC4WPS7HRSPRZAXBVUDYLRXLZRHPLA6VTZARKZJTNVNECAS5IDRXRUB6"
+	)
+	t0 := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
+	txh := func(n int) string { return fmt.Sprintf("%064x", n) }
+	insert := func(c string, ledger uint32, kind timescale.SEP41EventKind, amount int64, tx int) {
+		t.Helper()
+		if err := store.InsertSEP41SupplyEvent(ctx, timescale.SEP41SupplyEvent{
+			ContractID: c, Ledger: ledger, TxHash: txh(tx), OpIndex: 0,
+			ObservedAt: t0, Kind: kind, Amount: big.NewInt(amount), Counterparty: "GA1",
+		}); err != nil {
+			t.Fatalf("insert %s %s@%d: %v", c, kind, ledger, err)
+		}
+	}
+
+	// Settled history + a deferred tip on each contract, then fold.
+	insert(contractA, 1000, timescale.SEP41EventMint, 1_000_000, 1)
+	insert(contractA, 2000, timescale.SEP41EventBurn, 200_000, 2)
+	insert(contractA, 5000, timescale.SEP41EventMint, 9, 3) // deferred tip (< max guard)
+	insert(contractB, 1000, timescale.SEP41EventMint, 42, 4)
+	insert(contractB, 5000, timescale.SEP41EventMint, 1, 5) // deferred tip
+	for _, c := range []string{contractA, contractB} {
+		if _, err := store.AdvanceSEP41SupplyRollup(ctx, c); err != nil {
+			t.Fatalf("advance %s: %v", c, err)
+		}
+	}
+
+	// reconcile lists checkpoints, computes the same-source re-sum bounded
+	// at each checkpoint's own last_ledger, and diffs them.
+	reconcile := func(contractIDs []string) ([]completeness.TotalsDrift, int) {
+		t.Helper()
+		cps, err := store.ListSEP41RollupCheckpoints(ctx, contractIDs)
+		if err != nil {
+			t.Fatalf("ListSEP41RollupCheckpoints: %v", err)
+		}
+		cpMap := map[string]completeness.RunningTotals{}
+		truthMap := map[string]completeness.RunningTotals{}
+		for _, cp := range cps {
+			cpMap[cp.ContractID] = completeness.RunningTotals{Mint: cp.Fold.Mint, Burn: cp.Fold.Burn, Clawback: cp.Fold.Clawback}
+			resum, err := store.SEP41SupplyEventKindResum(ctx, cp.ContractID, cp.LastLedger, 2*time.Minute)
+			if err != nil {
+				t.Fatalf("SEP41SupplyEventKindResum %s@%d: %v", cp.ContractID, cp.LastLedger, err)
+			}
+			truthMap[cp.ContractID] = completeness.RunningTotals{Mint: resum.Mint, Burn: resum.Burn, Clawback: resum.Clawback}
+		}
+		return completeness.ReconcileRunningTotals(cpMap, truthMap, nil), len(cps)
+	}
+
+	// ─── Healthy: fold == bounded re-sum → clean ─────────────────────────
+	if drifts, checked := reconcile(nil); len(drifts) != 0 || checked != 2 {
+		t.Fatalf("healthy reconcile = %d drift(s) over %d checkpoint(s); want 0 over 2: %+v", len(drifts), checked, drifts)
+	}
+
+	// ─── Scope filter: -contracts restricts the checkpoint set ───────────
+	if _, checked := reconcile([]string{contractB}); checked != 1 {
+		t.Fatalf("scoped reconcile checked %d checkpoints; want 1 (contractB only)", checked)
+	}
+
+	// ─── KALE double-fold: wrongly double contractA's folded mint ────────
+	// The raw rows stay correct (row-count reconciles pass); only the
+	// derived checkpoint is doubled. Delta must equal +truth.
+	if _, err := store.DB().ExecContext(ctx,
+		`UPDATE sep41_supply_rollup SET mint_total = mint_total * 2 WHERE contract_id = $1`, contractA); err != nil {
+		t.Fatalf("poison double-fold: %v", err)
+	}
+	drifts, _ := reconcile(nil)
+	if len(drifts) != 1 {
+		t.Fatalf("post-poison reconcile = %d drift(s); want exactly 1 (contractA mint): %+v", len(drifts), drifts)
+	}
+	d := drifts[0]
+	if d.ContractID != contractA || d.Kind != "mint" {
+		t.Fatalf("drift = %s/%s; want %s/mint", d.ContractID, d.Kind, contractA)
+	}
+	// contractA folded mint = 1_000_000 (the 5000 tip was deferred), doubled
+	// to 2_000_000 ⇒ Delta = checkpoint − truth = +1_000_000.
+	if d.Delta.Cmp(big.NewInt(1_000_000)) != 0 {
+		t.Fatalf("Delta = %s; want +1000000 (the 2× over-count signature)", d.Delta)
 	}
 }
 
