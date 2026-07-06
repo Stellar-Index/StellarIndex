@@ -142,6 +142,9 @@ func registerAppMetricsTail() {
 		ProtocolEventsRollupSweepsTotal,
 		ProtocolEventsRollupSweepDurationSeconds,
 
+		AssetVolumeRollupSweepsTotal,
+		AssetVolumeRollupSweepDurationSeconds,
+
 		PriceAlertEvalTotal,
 		PriceAlertEvalDurationSeconds,
 
@@ -184,6 +187,7 @@ func registerAppMetricsTail() {
 	}
 	for _, outcome := range []string{"ok", "refresh_error"} {
 		ProtocolEventsRollupSweepsTotal.WithLabelValues(outcome)
+		AssetVolumeRollupSweepsTotal.WithLabelValues(outcome)
 	}
 	for _, outcome := range []string{"ok", "list_error", "partial_error"} {
 		PriceAlertEvalTotal.WithLabelValues(outcome)
@@ -909,6 +913,48 @@ var ProtocolEventsRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 		Name:    "stellarindex_protocol_events_rollup_sweep_duration_seconds",
 		Help:    "Protocol-events rollup sweep latency, labelled by outcome (ok|refresh_error).",
 		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	},
+	[]string{"outcome"},
+)
+
+// AssetVolumeRollupSweepsTotal — per-sweep outcome counter for the
+// aggregator's asset-volume rollup worker
+// (internal/aggregate/assetvolrollup, #43), which folds the trailing-24h
+// per-asset USD-volume SUM over prices_1m (single-sided: base OR quote)
+// into the asset_volume_24h table so the /v1/assets listing reads a
+// keyed-on-PK lookup instead of the ~256k-row per-request scan the
+// 2026-07-06 latency incident measured (~4.8s cold). Labels:
+//
+//   - `ok`            — sweep completed; rollup rows upserted + pruned.
+//   - `refresh_error` — the sum/upsert transaction failed (Postgres
+//     unreachable, migration 0087 missing). The rollup keeps its
+//     previous rows; the listing's volume_24h_usd goes stale, not blank.
+//
+// A sustained `refresh_error` rate means /v1/assets 24h volumes stop
+// advancing — informational severity (the customer-facing pricing
+// surface is unaffected).
+var AssetVolumeRollupSweepsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_asset_volume_rollup_sweeps_total",
+		Help: "Asset-volume rollup worker sweep outcomes (ok|refresh_error).",
+	},
+	[]string{"outcome"},
+)
+
+// AssetVolumeRollupSweepDurationSeconds — latency histogram for one
+// asset-volume rollup sweep (the trailing-24h base-OR-quote SUM over
+// prices_1m + one upsert + one prune), labelled by outcome so operators
+// chart `ok` p95/p99 separately from the fail-fast error path.
+//
+// Buckets span 50 ms → 60 s: this is the heaviest of the two #43
+// rollups (an all-asset prices_1m scan), so watching its p95 here is
+// how an operator learns the served-tier volume scan is getting heavier
+// — long before it would have shown up as a slow /v1/assets endpoint.
+var AssetVolumeRollupSweepDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_asset_volume_rollup_sweep_duration_seconds",
+		Help:    "Asset-volume rollup sweep latency, labelled by outcome (ok|refresh_error).",
+		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
 	},
 	[]string{"outcome"},
 )

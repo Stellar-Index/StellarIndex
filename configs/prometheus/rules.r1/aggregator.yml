@@ -165,3 +165,29 @@ groups:
             events_24h counters stop advancing (last-good values persist,
             not zeros). Customer pricing surface is unaffected. Fix the
             failing Postgres backend and the next sweep catches up.
+
+      # ─── #43: asset-volume rollup worker ───────────────────────
+      # The aggregator's assetvolrollup worker folds the trailing-24h
+      # per-asset USD-volume SUM over prices_1m into asset_volume_24h
+      # so the /v1/assets listing reads a keyed-on-PK lookup. A
+      # sustained refresh-error rate means the listing's volume_24h_usd
+      # stops advancing (goes stale, not blank) — informational: no
+      # pricing impact.
+      - alert: stellarindex_asset_volume_rollup_failing
+        expr: |
+          sum(rate(stellarindex_asset_volume_rollup_sweeps_total{outcome="refresh_error"}[15m])) > 0
+        for: 30m
+        labels:
+          severity: informational
+          team: stellarindex
+          component: aggregator
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/asset-volume-rollup-failing.md
+        annotations:
+          summary: "Asset-volume rollup sweeps failing ({{ $value | humanize }}/s error rate)"
+          description: |
+            The aggregator's asset-volume rollup worker has been failing
+            its refresh (the trailing-24h prices_1m SUM + upsert into
+            asset_volume_24h) for 30+ minutes. The /v1/assets listing's
+            volume_24h_usd column stops advancing (last-good values
+            persist, not zeros). Customer pricing surface is unaffected.
+            Fix the failing Postgres backend and the next sweep catches up.

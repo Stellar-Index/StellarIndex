@@ -795,6 +795,41 @@ path, so watching `ok` p95/p99 here is how an operator learns the
 served-tier census is getting heavier as the protocol tables grow —
 long before it would have shown up as a slow endpoint.
 
+### `stellarindex_asset_volume_rollup_sweeps_total`
+
+Counter, label `outcome` (`ok` / `refresh_error`).
+
+Per-sweep outcome of the aggregator's asset-volume rollup worker
+(`internal/aggregate/assetvolrollup`, #43), which folds the trailing-24h
+per-asset USD-volume SUM over the `prices_1m` continuous aggregate
+(single-sided: each asset as base OR quote) into the `asset_volume_24h`
+table every couple of minutes. That table backs the `volume_24h_usd`
+column on the `/v1/assets` listing, so the listing LEFT JOINs a
+keyed-on-PK lookup instead of the ~256k-row per-request scan the
+2026-07-06 latency incident measured (~4.8s cold).
+
+When to look at it: the explorer's assets list shows a frozen
+24h-volume column or a stale volume-ranked order. Sustained
+`refresh_error` = the sum/upsert transaction is failing (Postgres
+unreachable, or migration 0087 missing on this deployment). The rollup
+keeps its last-good rows, so the column goes stale, not blank.
+Informational severity: customer pricing traffic is unaffected. Alert:
+`stellarindex_asset_volume_rollup_failing`
+(deploy/monitoring/rules/aggregator.yml + configs/prometheus/rules.r1/aggregator.yml).
+
+### `stellarindex_asset_volume_rollup_sweep_duration_seconds`
+
+Histogram, label `outcome` (matches
+`stellarindex_asset_volume_rollup_sweeps_total`). Buckets 50 ms – 60 s.
+
+Wall-clock of one rollup sweep: the trailing-24h base-OR-quote SUM over
+`prices_1m` (all pairs) + one upsert + one prune. This is the heaviest
+of the two #43 rollups and the query the rollup moved off the
+`/v1/assets` request path, so watching `ok` p95/p99 here is how an
+operator learns the served-tier volume scan is getting heavier as the
+prices_1m history grows. If it climbs toward the 2-minute cadence the
+sweeps start overlapping and the rollup lag becomes user-visible.
+
 ### `stellarindex_price_alert_eval_total`
 
 Counter, label `outcome` (`ok` / `list_error` / `partial_error`).

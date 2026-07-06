@@ -76,6 +76,7 @@ import (
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/aggregate/anomaly"
+	"github.com/StellarIndex/stellar-index/internal/aggregate/assetvolrollup"
 	"github.com/StellarIndex/stellar-index/internal/aggregate/baseline"
 	"github.com/StellarIndex/stellar-index/internal/aggregate/changesummary"
 	"github.com/StellarIndex/stellar-index/internal/aggregate/freeze"
@@ -496,6 +497,24 @@ func run(cfgPath string, dryRun bool) error {
 		defer refresherWG.Done()
 		if err := protoEventsRollup.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("protocol-events rollup worker exited with error", "err", err)
+		}
+	}()
+
+	// ─── Asset-volume rollup worker (#43) ───────────────────────
+	// Folds the trailing-24h per-asset USD-volume SUM over prices_1m
+	// into the asset_volume_24h table (migration 0087) every couple of
+	// minutes so the /v1/assets listing reads a keyed-on-PK lookup
+	// instead of the ~256k-row per-request scan the 2026-07-06 latency
+	// incident measured. Always on (backs a core API read).
+	assetVolRollup := assetvolrollup.New(store, assetvolrollup.Options{
+		Interval: assetvolrollup.DefaultInterval,
+		Logger:   logger.With("component", "asset-volume-rollup"),
+	})
+	refresherWG.Add(1)
+	go func() {
+		defer refresherWG.Done()
+		if err := assetVolRollup.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("asset-volume rollup worker exited with error", "err", err)
 		}
 	}()
 
