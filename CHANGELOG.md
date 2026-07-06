@@ -15,6 +15,65 @@ against.
 
 ## [Unreleased]
 
+### Added
+- `stellarindex-ops supply seed-sac-balances` + `state-snapshot -scope storage`:
+  seed dormant contract-held SAC balances / `contract_data` current-state from the
+  lake into the served tier (the ~ledger-62M current-state-projection floor fill),
+  so Algorithm-2 classic supply and the ADR-0039 state readers see balances that
+  have been idle since before live entry-change capture began.
+- `stellarindex-ops supply verify-rollup`: runs the ADR-0033 derived-checkpoint
+  reconcile as an operator check — diffs each `sep41_supply_rollup` fold against the
+  authoritative same-source re-sum and flags KALE-class double-fold drift (non-zero
+  exit). Slow-cadence/post-re-derive only.
+- `stellarindex-ops ch-participant-backfill`: historical `operation_participants`
+  (ADR-0038 account history) re-derived from `stellar.operations.body_xdr` in the
+  ClickHouse lake — windowed, resumable, idempotent, `-dry-run`-capable — instead of
+  a multi-day Galexie re-walk; shares the live extractor's participant derivation so
+  it is byte-identical to live capture.
+- Aquarius: capture the liquidity/reserves event stream — `update_reserves` (per-pool
+  post-state reserves; first Aquarius TVL/depth signal), `deposit_liquidity`,
+  `withdraw_liquidity` — into `aquarius_reserves` / `aquarius_liquidity` hypertables
+  (migration 0089). N-token-pool-safe fan-out, i128-preserving, gated on the
+  router-anchored contract-identity set; additive analytics (does not affect pricing).
+- `internal/completeness` reconcile-running-totals guard that catches a KALE-class
+  incremental-checkpoint double-fold (checkpoint vs authoritative same-source re-sum).
+
+### Fixed
+- **Pricing serving-sanity guard.** `/v1/price`, the `/v1/assets/{slug}` GlobalAssetView
+  headline, and the customer price-alert evaluator now guard their raw `prices_1m`
+  closed-bucket reads (ratio + MAD band over recent trailing buckets, serve
+  last-known-good on a fat-finger/manipulation print) so a manipulated bucket can no
+  longer corrupt a served price or fire a spurious alert. Healthy buckets are
+  byte-identical; shared `internal/pricingguard`. Exact `big.Rat` (ADR-0003).
+- **SEP-41 supply re-derive safety.** `ch-rebuild -sep41 -write` now auto-resets the
+  `sep41_supply_rollup` fold checkpoint (preserving the seeded migration-0088 genesis
+  baseline) so a full re-derive can't double-count and a scoped `-contracts` recovery
+  can't under-count — the KALE 2× served-supply footgun (incident 2026-07-06);
+  `supply seed-sep41-genesis` rejects a `-genesis-ledger` above the Soroban boundary.
+- **Explorer verified-currency resolution.** `/assets/{shx,aqua,eurc,yxlm}` now resolve
+  to the verified issuer instead of a same-ticker look-alike that shares the code, so a
+  curated verified currency no longer renders a self-referential
+  "Unverified · Ticker collision" warning under its "Verified" badge.
+- **Config scale guard.** `usd_pegged_classic_assets` entries are validated as classic
+  (7-decimal) credit assets at load, failing loud + consistently across binaries — a
+  non-classic peg previously mis-scaled `usd_volume` and under-counted the
+  min-USD-volume gate.
+- **`source_entry_counts` reconcile completeness.** Every non-idempotent
+  `bumpEntryCount` sink (soroswap-router, defindex, comet, soroswap, phoenix, blend
+  positions/emissions/admin, blend-backstop, cctp, rozo, sep41_transfers) is folded
+  into `SeedSourceEntryCounts` from its countable table, so a replay/re-derive's
+  per-event over-count self-heals on the next seed instead of drifting.
+
+### Changed
+- Docs: corrected the `outlier_sigma_threshold` config description (mean+stdev per
+  window, not rolling median); filled the protocol-verification (`docs/protocols/`) and
+  pricing-methodology (`docs/methodology/`) gaps against actual code.
+
+### Tested
+- Locked in the migration-0088 SEP-41 genesis-baseline money-math: the seeded/unseeded ×
+  sign routing to the paging vs benign sentinel, and the disjoint
+  `genesis(<boundary) ⊕ Soroban(>=boundary)` fold at the exact boundary ledger.
+
 ## [v0.8.7] — 2026-07-06
 
 ### Added
