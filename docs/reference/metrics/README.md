@@ -761,6 +761,40 @@ the 5-minute cadence means sweeps start overlapping their schedule
 and the rollup lag becomes user-visible on the dashboard's "today"
 row.
 
+### `stellarindex_protocol_events_rollup_sweeps_total`
+
+Counter, label `outcome` (`ok` / `refresh_error`).
+
+Per-sweep outcome of the aggregator's protocol-events rollup worker
+(`internal/aggregate/protoeventsrollup`, #43), which folds the
+trailing-24h per-source event census (a UNION ALL count over ~17
+served protocol hypertables) into the `protocol_events_24h` table
+every couple of minutes. That table backs the `events_24h` column on
+`/v1/protocols` and `/v1/protocols/{name}`, so the handler reads a
+keyed-on-PK lookup instead of running the multi-second census per
+request (the 2026-07-06 latency incident).
+
+When to look at it: the explorer's protocol pages show a frozen
+`events_24h`. Sustained `refresh_error` = the census/upsert
+transaction is failing (Postgres unreachable, or migration 0086
+missing on this deployment). The rollup keeps its last-good rows, so
+the column goes stale, not blank. Informational severity: customer
+pricing traffic is unaffected. Alert:
+`stellarindex_protocol_events_rollup_failing`
+(deploy/monitoring/rules/aggregator.yml + configs/prometheus/rules.r1/aggregator.yml).
+
+### `stellarindex_protocol_events_rollup_sweep_duration_seconds`
+
+Histogram, label `outcome` (matches
+`stellarindex_protocol_events_rollup_sweeps_total`). Buckets 10 ms – 30 s.
+
+Wall-clock of one rollup sweep: the trailing-24h UNION ALL census over
+the served protocol hypertables + one upsert + one prune. This is the
+multi-second leg the #43 rollup moved off the `/v1/protocols` request
+path, so watching `ok` p95/p99 here is how an operator learns the
+served-tier census is getting heavier as the protocol tables grow —
+long before it would have shown up as a slow endpoint.
+
 ### `stellarindex_price_alert_eval_total`
 
 Counter, label `outcome` (`ok` / `list_error` / `partial_error`).

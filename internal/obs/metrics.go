@@ -139,6 +139,9 @@ func registerAppMetricsTail() {
 		UsageRollupSweepsTotal,
 		UsageRollupSweepDurationSeconds,
 
+		ProtocolEventsRollupSweepsTotal,
+		ProtocolEventsRollupSweepDurationSeconds,
+
 		PriceAlertEvalTotal,
 		PriceAlertEvalDurationSeconds,
 
@@ -178,6 +181,9 @@ func registerAppMetricsTail() {
 	}
 	for _, outcome := range []string{"ok", "scan_error", "sink_error"} {
 		UsageRollupSweepsTotal.WithLabelValues(outcome)
+	}
+	for _, outcome := range []string{"ok", "refresh_error"} {
+		ProtocolEventsRollupSweepsTotal.WithLabelValues(outcome)
 	}
 	for _, outcome := range []string{"ok", "list_error", "partial_error"} {
 		PriceAlertEvalTotal.WithLabelValues(outcome)
@@ -863,6 +869,46 @@ var UsageRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 		Name:    "stellarindex_usage_rollup_sweep_duration_seconds",
 		Help:    "Usage-rollup sweep latency, labelled by outcome (ok|scan_error|sink_error).",
 		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	},
+	[]string{"outcome"},
+)
+
+// ProtocolEventsRollupSweepsTotal — per-sweep outcome counter for the
+// aggregator's protocol-events rollup worker
+// (internal/aggregate/protoeventsrollup, #43), which folds the
+// trailing-24h per-source event census into the protocol_events_24h
+// table so /v1/protocols' events_24h column reads a keyed-on-PK lookup
+// instead of a multi-table UNION count per request. Labels:
+//
+//   - `ok`            — sweep completed; rollup rows upserted + pruned.
+//   - `refresh_error` — the census/upsert transaction failed (Postgres
+//     unreachable, migration 0086 missing). The rollup keeps its
+//     previous rows; /v1/protocols events_24h goes stale, not blank.
+//
+// A sustained `refresh_error` rate means /v1/protocols' activity
+// counters stop advancing — informational severity (the customer-facing
+// pricing surface is unaffected).
+var ProtocolEventsRollupSweepsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_protocol_events_rollup_sweeps_total",
+		Help: "Protocol-events rollup worker sweep outcomes (ok|refresh_error).",
+	},
+	[]string{"outcome"},
+)
+
+// ProtocolEventsRollupSweepDurationSeconds — latency histogram for one
+// protocol-events rollup sweep (the trailing-24h UNION ALL census over
+// ~17 hypertables + one upsert + one prune), labelled by outcome so
+// operators chart `ok` p95/p99 separately from the fail-fast error path.
+//
+// Buckets span 10 ms → 30 s: the census is the multi-second leg the
+// #43 rollup moved off the request path, so watching its p95 here is
+// how an operator learns the served-tier census is getting heavier.
+var ProtocolEventsRollupSweepDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_protocol_events_rollup_sweep_duration_seconds",
+		Help:    "Protocol-events rollup sweep latency, labelled by outcome (ok|refresh_error).",
+		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 	},
 	[]string{"outcome"},
 )

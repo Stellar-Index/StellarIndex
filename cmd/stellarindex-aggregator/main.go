@@ -81,6 +81,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/aggregate/freeze"
 	"github.com/StellarIndex/stellar-index/internal/aggregate/mev"
 	"github.com/StellarIndex/stellar-index/internal/aggregate/orchestrator"
+	"github.com/StellarIndex/stellar-index/internal/aggregate/protoeventsrollup"
 	"github.com/StellarIndex/stellar-index/internal/api/streaming/redispub"
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/config"
@@ -477,6 +478,25 @@ func run(cfgPath string, dryRun bool) error {
 	go func() {
 		defer refresherWG.Done()
 		_ = changeSummaryWorker.Run(rootCtx)
+	}()
+
+	// ─── Protocol-events rollup worker (#43) ────────────────────
+	// Folds the trailing-24h per-source event census into the
+	// protocol_events_24h table (migration 0086) every couple of
+	// minutes so /v1/protocols' events_24h column reads a keyed-on-PK
+	// lookup instead of the ~17-table UNION count the 2026-07-06
+	// latency incident measured cold. Always on (backs a core API
+	// read), like the change-summary + gap-detector workers.
+	protoEventsRollup := protoeventsrollup.New(store, protoeventsrollup.Options{
+		Interval: protoeventsrollup.DefaultInterval,
+		Logger:   logger.With("component", "protocol-events-rollup"),
+	})
+	refresherWG.Add(1)
+	go func() {
+		defer refresherWG.Done()
+		if err := protoEventsRollup.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("protocol-events rollup worker exited with error", "err", err)
+		}
 	}()
 
 	// ─── Supply-snapshot refresh worker (ADR-0011 / Task #57) ────

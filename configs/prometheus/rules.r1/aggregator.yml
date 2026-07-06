@@ -140,3 +140,28 @@ groups:
             (stop-writes-on-bgsave-error=yes default — May-10 SEV-2
             class). Recovery: free disk → BGSAVE → cache rebuilds.
             Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+
+      # ─── #43: protocol-events rollup worker ────────────────────
+      # The aggregator's protoeventsrollup worker folds the
+      # trailing-24h per-source event census into protocol_events_24h
+      # so /v1/protocols' events_24h reads a keyed-on-PK lookup. A
+      # sustained refresh-error rate means that column stops advancing
+      # (goes stale, not blank) — informational: no pricing impact.
+      - alert: stellarindex_protocol_events_rollup_failing
+        expr: |
+          sum(rate(stellarindex_protocol_events_rollup_sweeps_total{outcome="refresh_error"}[15m])) > 0
+        for: 30m
+        labels:
+          severity: informational
+          team: stellarindex
+          component: aggregator
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/protocol-events-rollup-failing.md
+        annotations:
+          summary: "Protocol-events rollup sweeps failing ({{ $value | humanize }}/s error rate)"
+          description: |
+            The aggregator's protocol-events rollup worker has been
+            failing its refresh (the trailing-24h census + upsert into
+            protocol_events_24h) for 30+ minutes. /v1/protocols
+            events_24h counters stop advancing (last-good values persist,
+            not zeros). Customer pricing surface is unaffected. Fix the
+            failing Postgres backend and the next sweep catches up.
