@@ -497,6 +497,89 @@ func TestSEP41GenesisBaseline_LifetimeSupplyEndToEnd(t *testing.T) {
 	}
 }
 
+// TestSEP41GenesisBaseline_BoundaryPartitionDisjoint pins the EXACT ledger seam
+// between the two supply slices the migration-0088 reader stitches together: the
+// seeded pre-Soroban genesis baseline (ledger < boundary, from the CH lake) and
+// the Soroban-era totals (ledger >= boundary, from PG). The invariant is that
+// they are a DISJOINT partition — every ledger belongs to exactly one — so
+// folding them cannot double-count.
+//
+// It places a Soroban-era mint at EXACTLY the boundary ledger and asserts:
+//
+//   - a read one ledger BELOW the boundary sees NEITHER slice (genesis gated off
+//     by asOf < genesis_baseline_ledger; the boundary event is above asOf) → 0;
+//   - a read AT the boundary sees the genesis baseline PLUS the boundary event,
+//     each counted exactly once (genesis + soroban), never twice;
+//   - a read at the chain tip is identical.
+//
+// The `< boundary` (genesis) vs `>= boundary` (Soroban observer / the reader's
+// `asOf >= genesis_baseline_ledger` gate) seam is what makes the fold sound; the
+// operator-facing half of the same invariant — refusing a seed boundary above
+// the true Soroban genesis — is enforced by validateGenesisLedgerBoundary in
+// cmd/stellarindex-ops (its own unit test).
+func TestSEP41GenesisBaseline_BoundaryPartitionDisjoint(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const contractID = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
+	const boundary uint32 = 50457424 // clickhouse.SorobanGenesisLedger
+	const tip uint32 = 62000000
+	t0 := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	genesisMint := big.NewInt(900)  // pre-Soroban opening balance (ledger < boundary)
+	boundaryMint := big.NewInt(100) // a Soroban-era mint at EXACTLY the boundary ledger
+
+	// Soroban-era event at ledger == boundary — the seam case: it must land in
+	// the PG (Soroban) slice, never in the CH (genesis) slice.
+	if err := store.InsertSEP41SupplyEvent(ctx, timescale.SEP41SupplyEvent{
+		ContractID: contractID, Ledger: boundary, OpIndex: 0,
+		TxHash:     fmt.Sprintf("%064x", 1),
+		ObservedAt: t0, Kind: timescale.SEP41EventMint, Amount: boundaryMint,
+	}); err != nil {
+		t.Fatalf("insert boundary mint: %v", err)
+	}
+
+	// Seed the pre-Soroban genesis baseline with the boundary as its exclusive
+	// upper bound (production passes clickhouse.SorobanGenesisLedger).
+	if err := store.UpsertSEP41GenesisBaseline(ctx, contractID,
+		timescale.SEP41KindTotals{Mint: genesisMint, Burn: big.NewInt(0), Clawback: big.NewInt(0)},
+		boundary); err != nil {
+		t.Fatalf("UpsertSEP41GenesisBaseline: %v", err)
+	}
+
+	mintAt := func(asOf uint32) *big.Int {
+		t.Helper()
+		got, err := store.SEP41KindTotalsAtOrBefore(ctx, contractID, asOf)
+		if err != nil {
+			t.Fatalf("SEP41KindTotalsAtOrBefore @%d: %v", asOf, err)
+		}
+		return got.Mint
+	}
+
+	// Below the boundary: genesis gated off, boundary event above asOf → 0.
+	if got := mintAt(boundary - 1); got.Sign() != 0 {
+		t.Errorf("mint @boundary-1 = %s, want 0 (neither slice contributes below the seam)", got)
+	}
+	// At the boundary: genesis (900) + the boundary event (100), each once.
+	wantLifetime := new(big.Int).Add(genesisMint, boundaryMint) // 1000
+	if got := mintAt(boundary); got.Cmp(wantLifetime) != 0 {
+		t.Errorf("mint @boundary = %s, want %s (genesis + boundary event, each counted once)", got, wantLifetime)
+	}
+	// At tip: identical — no further events, and the fold does not re-add.
+	if got := mintAt(tip); got.Cmp(wantLifetime) != 0 {
+		t.Errorf("mint @tip = %s, want %s (disjoint fold, no double-count)", got, wantLifetime)
+	}
+}
+
 // TestSEP41SupplyRollup_LargeI128 verifies the rollup checkpoint + delta
 // preserve values exceeding int64 — Σmint alone can exceed i128, so the
 // running NUMERIC totals must never truncate (ADR-0003).
