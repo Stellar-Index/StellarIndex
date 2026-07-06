@@ -144,3 +144,46 @@ func TestRecentClosedVWAP1mExistsQueryShape(t *testing.T) {
 			latestVWAPGateWindow, latestVWAPWindow)
 	}
 }
+
+// TestRecentClosedVWAP1mCombinedQueryShape guards the trailing-baseline
+// query that feeds the /v1/price serving-sanity guard. It MUST stay
+// sargable (closed-bucket guard as a constant on the RHS, never a function
+// on the indexed bucket column), literal-cutoff-bounded (plan-time chunk
+// pruning), both-directions (a flipped-only pair still contributes), with
+// the flipped-row vwap inversion — otherwise the guard's baseline drifts
+// off the served value's own combine and would false-positive.
+func TestRecentClosedVWAP1mCombinedQueryShape(t *testing.T) {
+	lower := "AND bucket >= TIMESTAMPTZ '2026-06-01 00:00:00+00'\n"
+	q := fmt.Sprintf(recentClosedVWAP1mCombinedTemplate, lower)
+
+	if !strings.Contains(q, "bucket <= now() - INTERVAL '1 minute'") {
+		t.Error("combined query missing sargable closed-bucket guard")
+	}
+	if strings.Contains(q, "bucket + INTERVAL") {
+		t.Error("combined query uses non-sargable `bucket + INTERVAL` form")
+	}
+	if !strings.Contains(q, "bucket >= TIMESTAMPTZ") {
+		t.Error("combined query missing literal lower bound for plan-time pruning")
+	}
+	if !strings.Contains(q, "base_asset = $1 AND quote_asset = $2") ||
+		!strings.Contains(q, "base_asset = $2 AND quote_asset = $1") {
+		t.Error("combined query does not read both stored directions")
+	}
+	if !strings.Contains(q, "1.0 / NULLIF(vwap, 0)") {
+		t.Error("combined query missing flipped-direction vwap inversion")
+	}
+	// Trade-count-weighted combine — must match the served value's combine
+	// (LatestClosedVWAP1mForPair) so candidate and baseline are comparable.
+	if !strings.Contains(q, "COALESCE(trade_count, 0)") {
+		t.Error("combined query missing trade-count weighting")
+	}
+	// Distinct sources aggregated separately (so the unnest can't inflate
+	// the trade-count SUM).
+	if !strings.Contains(q, "array_agg(DISTINCT src)") {
+		t.Error("combined query missing distinct-source aggregation")
+	}
+	// Newest-first so trailing[0] is the most recent closed bucket.
+	if !strings.Contains(q, "ORDER BY b.bucket DESC") {
+		t.Error("combined query must return newest-first")
+	}
+}

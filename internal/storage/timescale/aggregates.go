@@ -421,6 +421,97 @@ func (s *Store) RecentClosedVWAP1mForPair(ctx context.Context, p canonical.Pair,
 	return out, nil
 }
 
+// recentClosedVWAP1mCombinedTemplate is the newest-first, both-directions,
+// LIMIT-N variant of [latestClosedVWAP1mTemplate]. `%[1]s` carries the
+// literal `bucket >=` lower-bound clause for plan-time chunk pruning. CTE
+// `b` computes the per-bucket combined VWAP (flipped rows inverted +
+// trade-count-weighted, so every row is the price of $1 in $2); CTE `s`
+// aggregates the distinct source list for exactly those buckets (kept
+// separate from `b` so the source unnest can't inflate `b`'s trade-count
+// SUM). Both stored directions are read so a flipped-only bucket still
+// contributes.
+const recentClosedVWAP1mCombinedTemplate = `
+        WITH b AS (
+            SELECT bucket,
+                   (SUM((CASE WHEN base_asset = $1 THEN vwap
+                              ELSE 1.0 / NULLIF(vwap, 0) END) * COALESCE(trade_count, 0))
+                      / NULLIF(SUM(COALESCE(trade_count, 0)), 0))::text AS vwap,
+                   SUM(COALESCE(trade_count, 0))::bigint                 AS trade_count
+              FROM prices_1m
+             WHERE ((base_asset = $1 AND quote_asset = $2)
+                 OR (base_asset = $2 AND quote_asset = $1))
+               AND bucket <= now() - INTERVAL '1 minute'
+               %[1]s
+             GROUP BY bucket
+            HAVING SUM(COALESCE(trade_count, 0)) > 0
+             ORDER BY bucket DESC
+             LIMIT $3
+        ),
+        s AS (
+            SELECT p.bucket, array_agg(DISTINCT src) AS sources
+              FROM prices_1m p, unnest(p.sources) AS src
+             WHERE p.bucket IN (SELECT bucket FROM b)
+               AND ((p.base_asset = $1 AND p.quote_asset = $2)
+                 OR (p.base_asset = $2 AND p.quote_asset = $1))
+             GROUP BY p.bucket
+        )
+        SELECT b.bucket, b.vwap, b.trade_count, COALESCE(s.sources, '{}'::text[])
+          FROM b LEFT JOIN s USING (bucket)
+         ORDER BY b.bucket DESC
+    `
+
+// RecentClosedVWAP1mCombined returns up to `limit` most-recent CLOSED
+// 1-minute buckets from the prices_1m CAGG for the pair, newest-first,
+// each COMBINED across both stored market directions (same invert +
+// trade-count-weight math as [LatestClosedVWAP1mForPair]) so every row
+// expresses the price of Base in Quote.
+//
+// This is the trailing-baseline source for the /v1/price serving-sanity
+// guard (aggregate.GuardServedVWAP): the handler compares the latest
+// closed bucket against these recent buckets and serves last-known-good
+// when the latest is grossly off (a fat-finger / manipulation print in a
+// bucket the raw CAGG would otherwise serve unfiltered). It is called
+// ONLY after [LatestClosedVWAP1mForPair] has already confirmed the pair
+// is populated (its cheap recent-existence gate ran first), so this
+// bounded, index-driven LIMIT-N read never pays the empty-pair cold walk
+// — but it still carries the same literal `bucket >=` lower bound for
+// plan-time chunk pruning.
+//
+// Empty slice + nil error when the pair has no closed buckets in scope.
+func (s *Store) RecentClosedVWAP1mCombined(ctx context.Context, p canonical.Pair, limit int) ([]Vwap1mRow, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	cutoff := time.Now().UTC().Add(-latestVWAPWindow)
+	lower := fmt.Sprintf("AND bucket >= TIMESTAMPTZ '%s'\n", cutoff.Format("2006-01-02 15:04:05-07"))
+	// #nosec G201 — the only interpolated value is `lower`, built from our
+	// own time.Time in a fixed layout; pair strings + limit bind as
+	// $1/$2/$3. Same discipline as latestClosedVWAP1m.
+	q := fmt.Sprintf(recentClosedVWAP1mCombinedTemplate, lower) //nolint:gosec // G201: see note above
+	rows, err := s.db.QueryContext(ctx, q, p.Base.String(), p.Quote.String(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: RecentClosedVWAP1mCombined: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]Vwap1mRow, 0, limit)
+	for rows.Next() {
+		row := Vwap1mRow{BaseAsset: p.Base.String(), QuoteAsset: p.Quote.String()}
+		if err := rows.Scan(
+			&row.Bucket, &row.VWAP, &row.TradeCount,
+			(*stringArray)(&row.Sources),
+		); err != nil {
+			return nil, fmt.Errorf("timescale: RecentClosedVWAP1mCombined scan: %w", err)
+		}
+		normalizeVwapSources(&row)
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: RecentClosedVWAP1mCombined rows: %w", err)
+	}
+	return out, nil
+}
+
 // ClosedVWAP1mAtOrBefore returns the most-recent CLOSED 1-minute
 // bucket from the prices_1m CAGG for the given pair whose end
 // timestamp (`bucket + 1 minute`) is at or before t. Used by

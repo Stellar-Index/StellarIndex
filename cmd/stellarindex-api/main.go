@@ -46,6 +46,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"os"
 	"os/signal"
@@ -544,7 +545,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// Hub further down (gated on rdb != nil).
 	hub := streaming.NewHub(0)
 
-	priceReader := storePriceReader{s: store}
+	priceReader := storePriceReader{s: store, logger: logger}
 
 	// Oracle reader — Redis-cached read-through wrapper around the
 	// store reader. /v1/oracle/latest's DISTINCT ON (source) sort
@@ -2469,7 +2470,16 @@ type storePriceReader struct {
 	s             *timescale.Store
 	vwapFreshness time.Duration    // 0 → defaultVWAPFreshness
 	now           func() time.Time // nil → time.Now
+	logger        *slog.Logger     // nil → no guard logging
 }
+
+// servedGuardSampleFetch is how many recent CLOSED combined-direction 1m
+// buckets the serving-sanity guard pulls to build a robust trailing
+// baseline for the latest bucket (aggregate.GuardServedVWAP). 40 is a few
+// tens of minutes for an active pair — enough to clear the guard's
+// minimum-sample floor while staying a cheap, index-driven LIMIT-N read
+// (only ever run for a pair already confirmed populated).
+const servedGuardSampleFetch = 40
 
 func (r storePriceReader) freshnessWindow() time.Duration {
 	if r.vwapFreshness > 0 {
@@ -2491,20 +2501,39 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 		return v1.PriceSnapshot{}, nil, false, err
 	}
 
-	// Primary path: most-recent CLOSED 1-minute VWAP from the
-	// prices_1m CAGG (per ADR-0015 we serve only closed buckets).
-	// This is preferred because:
-	//   - it's volume-weighted across every contributing source;
-	//   - it's pre-computed by the aggregator policy (sub-100ms read);
-	//   - it labels stale=false in the envelope.
+	// Primary path: most-recent CLOSED 1-minute VWAP from the prices_1m
+	// CAGG (per ADR-0015 we serve only closed buckets). Note the CAGG is a
+	// bare Σ(quote)/Σ(base) per bucket — it is NOT the orchestrator's
+	// filtered VWAP. The σ-outlier filter, the min-USD-volume gate, and
+	// freeze value-protection all live on the ORCHESTRATOR path that writes
+	// the filtered value to Redis (which this CAGG bypasses). A pair with no
+	// prices_1m rows at all (pure-synthetic fiat like native/fiat:USD —
+	// SDEX native trades are quoted in issuer-stablecoins, never fiat:USD)
+	// misses here (ErrNoRows) and the handler's Redis-VWAP fallback — which
+	// IS filtered — serves it. But any pair with real prices_1m rows serves
+	// this raw bucket: that includes directly-quoted DEX/CEX pairs (a
+	// Soroban token priced in USDC-GA5Z…, crypto:BTC/crypto:USDT) AND
+	// headline pairs with a real fiat CEX market (crypto:XLM/fiat:USD via
+	// Kraken/Coinbase). A single fat-finger / manipulation trade in the
+	// served minute would otherwise corrupt the price with stale=false, no
+	// outlier rejection, no volume floor. guardServedVWAP1m applies a robust
+	// sanity bound over the pair's recent trailing closed buckets and serves
+	// last-known-good when the latest is grossly off (adversarial-review
+	// HIGH). It is a pass-through (byte-identical) on a healthy bucket — a
+	// liquid pair like crypto:XLM/fiat:USD sits tightly clustered and always
+	// passes — so it only ever changes the served value for a manipulated
+	// bucket.
 	row, err := r.s.LatestClosedVWAP1mForPair(ctx, pair)
 	if err == nil {
+		served := r.guardServedVWAP1m(ctx, pair, row)
 		// CS-017: the bucket closes at Bucket+1min; flag stale when that
 		// close is older than the freshness window, so a dormant pair's
-		// months-old VWAP is no longer served as stale=false.
-		stale := r.clock().Sub(row.Bucket.Add(time.Minute)) > r.freshnessWindow()
-		return v1.VWAP1mToSnapshot(asset.String(), quote.String(), row.VWAP, row.Bucket),
-			row.Sources, stale, nil
+		// months-old VWAP is no longer served as stale=false. Applied to the
+		// bucket we actually serve (candidate, or the older last-known-good
+		// on a guard rejection — which is naturally staler).
+		stale := r.clock().Sub(served.Bucket.Add(time.Minute)) > r.freshnessWindow()
+		return v1.VWAP1mToSnapshot(asset.String(), quote.String(), served.VWAP, served.Bucket),
+			served.Sources, stale, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return v1.PriceSnapshot{}, nil, false, err
@@ -2537,6 +2566,79 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	// revision reads per-asset decimals from internal/metadata.
 	snap := v1.LastTradeToSnapshot(trades[0], 7)
 	return snap, []string{trades[0].Source}, true, nil
+}
+
+// guardServedVWAP1m is the /v1/price serving-sanity guard
+// (adversarial-review HIGH). Given the latest CLOSED prices_1m bucket
+// (`candidate`) it returns the row to actually serve:
+//   - the candidate unchanged, when it is robust-sane against the pair's
+//     recent trailing closed buckets, or when there is no baseline / the
+//     trailing fetch failed (fail-open — favour serving a real price);
+//   - the newest trailing closed bucket that IS within the robust band
+//     (last-known-good), when the candidate is grossly off — a fat-finger
+//     / manipulation print the raw CAGG would otherwise serve unfiltered.
+//
+// The decision math is exact-rational (aggregate.GuardServedVWAP, ADR-0003
+// — no float64 in the value path). This never errors: on any doubt it
+// serves the candidate rather than 404 a pair that has data.
+func (r storePriceReader) guardServedVWAP1m(
+	ctx context.Context,
+	pair canonical.Pair,
+	candidate timescale.Vwap1mRow,
+) timescale.Vwap1mRow {
+	rows, err := r.s.RecentClosedVWAP1mCombined(ctx, pair, servedGuardSampleFetch)
+	if err != nil {
+		if r.logger != nil {
+			r.logger.Warn("served-vwap guard: trailing fetch failed — serving candidate unguarded",
+				"pair", pair.String(), "err", err)
+		}
+		return candidate // fail-open
+	}
+	served, rejected := selectGuardedVWAP1m(candidate, rows)
+	if rejected && r.logger != nil {
+		r.logger.Warn("served-vwap guard: candidate bucket rejected as outlier — serving last-known-good",
+			"pair", pair.String(),
+			"candidate_bucket", candidate.Bucket,
+			"candidate_vwap", candidate.VWAP,
+			"served_bucket", served.Bucket,
+			"served_vwap", served.VWAP)
+	}
+	return served
+}
+
+// selectGuardedVWAP1m is the pure decision half of guardServedVWAP1m:
+// given the candidate bucket and the recent combined-direction closed
+// buckets (`rows`, newest-first, as returned by
+// timescale.RecentClosedVWAP1mCombined), it returns the row to serve and
+// whether the candidate was rejected. Kept store-free so the selection +
+// index-alignment logic is unit-testable without a database. Exact-rational
+// throughout (ADR-0003).
+func selectGuardedVWAP1m(candidate timescale.Vwap1mRow, rows []timescale.Vwap1mRow) (served timescale.Vwap1mRow, rejected bool) {
+	candRat, ok := new(big.Rat).SetString(candidate.VWAP)
+	if !ok {
+		return candidate, false // unparseable candidate → can't judge, serve as-is
+	}
+	// Trailing baseline = combined-direction closed buckets STRICTLY older
+	// than the candidate bucket, kept index-aligned with their rows so the
+	// guard's last-known-good index maps straight back to a servable row.
+	trailingRows := make([]timescale.Vwap1mRow, 0, len(rows))
+	trailing := make([]*big.Rat, 0, len(rows))
+	for i := range rows {
+		if !rows[i].Bucket.Before(candidate.Bucket) {
+			continue
+		}
+		trailingRows = append(trailingRows, rows[i])
+		if v, ok := new(big.Rat).SetString(rows[i].VWAP); ok {
+			trailing = append(trailing, v)
+		} else {
+			trailing = append(trailing, nil)
+		}
+	}
+	accept, lkgIdx := aggregate.GuardServedVWAP(candRat, trailing)
+	if accept {
+		return candidate, false // byte-identical to the pre-guard served value
+	}
+	return trailingRows[lkgIdx], true
 }
 
 // RecentClosedSnapshots is the SEP-40 prices(asset, records)
