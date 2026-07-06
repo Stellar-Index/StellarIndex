@@ -141,6 +141,12 @@ paths = [
 ]
 
 [[rules.allowlists]]
+description = "Test-only Stellar G-strkey + C-strkey fixtures (verified issuers + same-ticker impersonator issuers, e.g. USDC/AQUA/EURC/SHX issuer account IDs and SAC contract IDs) used by the served-data-correctness tests for the ticker-collision / verified-badge / dual-form-price cases. Bare public account/contract IDs trip the entropy heuristic; not credentials — same shape as the supply/dispatcher/issuers allowlists above."
+paths = [
+  '''internal/api/v1/served_data_correctness_test\.go''',
+]
+
+[[rules.allowlists]]
 description = "Test-only Redis lock-key fixture (`abcdef0123456789`) used by the signup-email-locker concurrency test. Fabricated 16-hex-char idempotency key; trips the entropy heuristic but is not a credential."
 paths = [
   '''internal/auth/signup_email_locker_test\.go''',
