@@ -60,11 +60,13 @@ func (*Decoder) Name() string { return SourceName }
 // Matches implements [dispatcher.Decoder]. Phoenix emits its
 // per-action events with topic[0] = String(<action>). The second
 // topic slot carries the field name; the buffer routes it
-// internally. Five actions are claimed:
+// internally. The claimed actions:
 //
-//   - swap (volatile + stableswap pools)
-//   - provide_liquidity / withdraw_liquidity (volatile +
-//     stableswap pools)
+//   - swap — TWO on-wire shapes: the legacy 8-event ScvString schema
+//     (actionSwap) and the newer single-event ScvSymbol("swap") +
+//     ScvMap body schema (actionSwapMap, Q5). classifyAny picks the
+//     shape from the topic; both reconstruct into the same TradeEvent.
+//   - provide_liquidity / withdraw_liquidity (String schema)
 //   - bond / unbond (per-pool stake contracts)
 //
 // Each action's per-field correlation is independent.
@@ -105,6 +107,8 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	switch a {
 	case actionSwap:
 		return d.decodeSwapEvent(&ev, fieldTopic, closedAt)
+	case actionSwapMap:
+		return d.decodeSwapMapEvent(&ev, closedAt)
 	case actionProvideLiquidity:
 		return d.decodeProvideLiquidityEvent(&ev, fieldTopic, closedAt)
 	case actionWithdrawLiquidity:
@@ -121,6 +125,18 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		return nil, nil
 	}
 	return nil, nil
+}
+
+// decodeSwapMapEvent handles the NEWER single-event Map-body swap
+// schema (Q5). One event carries the whole trade, so — unlike the
+// 8-event String path — there is no correlation buffer: decode and
+// emit immediately. Assumes d.mu is held by Decode.
+func (d *Decoder) decodeSwapMapEvent(ev *events.Event, closedAt time.Time) ([]consumer.Event, error) {
+	trade, err := decodeSwapMap(ev, closedAt)
+	if err != nil {
+		return nil, err
+	}
+	return []consumer.Event{TradeEvent{Trade: trade}}, nil
 }
 
 // decodeSwapEvent / decodeProvideLiquidityEvent /
