@@ -353,7 +353,7 @@ func tradeFromEvent(ev consumer.Event) (canonical.Trade, bool) {
 func IsProjectedEvent(ev consumer.Event) bool {
 	switch ev.(type) {
 	case soroswap.TradeEvent, soroswap.SkimEvent,
-		aquarius.TradeEvent,
+		aquarius.TradeEvent, aquarius.ReservesEvent, aquarius.LiquidityEvent,
 		phoenix.TradeEvent, phoenix.LiquidityEvent, phoenix.StakeEvent,
 		comet.TradeEvent, comet.LiquidityEvent,
 		reflector.UpdateEvent, redstone.UpdateEvent,
@@ -548,6 +548,10 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		persistSoroswapSkim(ctx, logger, store, e)
 	case aquarius.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)
+	case aquarius.ReservesEvent:
+		persistAquariusReserves(ctx, logger, store, e)
+	case aquarius.LiquidityEvent:
+		persistAquariusLiquidity(ctx, logger, store, e)
 	case phoenix.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)
 	case phoenix.LiquidityEvent:
@@ -858,6 +862,62 @@ func persistCometLiquidity(ctx context.Context, logger *slog.Logger, store *time
 		"source", comet.SourceName, "kind", e.Kind,
 		"contract_id", e.ContractID, "ledger", e.Ledger,
 		"token", e.Token, "amount", e.Amount.String())
+}
+
+// persistAquariusReserves lands one update_reserves observation (the
+// pool's POST-STATE reserve vector) into aquarius_reserves — one row
+// per token position (migration 0089). The first real Aquarius TVL /
+// liquidity-depth signal; Aquarius has no published price so these
+// rows never reach VWAP.
+func persistAquariusReserves(ctx context.Context, logger *slog.Logger, store *timescale.Store, e aquarius.ReservesEvent) {
+	if err := store.InsertAquariusReserves(ctx, timescale.AquariusReservesEvent{
+		ContractID:      e.ContractID,
+		Ledger:          e.Ledger,
+		LedgerCloseTime: e.ObservedAt,
+		TxHash:          e.TxHash,
+		OpIndex:         e.OpIndex,
+		EventIndex:      e.EventIndex,
+		Reserves:        e.Reserves,
+	}); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(aquarius.SourceName, "aquarius_reserves").Inc()
+		logger.Error("insert Aquarius reserves failed",
+			"contract_id", e.ContractID, "ledger", e.Ledger,
+			"tx_hash", e.TxHash, "tokens", len(e.Reserves), "err", err)
+		return
+	}
+	bumpEntryCount(ctx, logger, store, aquarius.SourceName)
+	logger.Debug("Aquarius reserves ingested",
+		"source", aquarius.SourceName, "contract_id", e.ContractID,
+		"ledger", e.Ledger, "tokens", len(e.Reserves))
+}
+
+// persistAquariusLiquidity lands one deposit_liquidity /
+// withdraw_liquidity observation into aquarius_liquidity — one row per
+// token position, shares on the token_index=0 row (migration 0089).
+func persistAquariusLiquidity(ctx context.Context, logger *slog.Logger, store *timescale.Store, e aquarius.LiquidityEvent) {
+	if err := store.InsertAquariusLiquidity(ctx, timescale.AquariusLiquidityEvent{
+		ContractID:      e.ContractID,
+		Ledger:          e.Ledger,
+		LedgerCloseTime: e.ObservedAt,
+		TxHash:          e.TxHash,
+		OpIndex:         e.OpIndex,
+		EventIndex:      e.EventIndex,
+		Action:          timescale.AquariusLiquidityAction(e.Action),
+		Tokens:          e.Tokens,
+		Amounts:         e.Amounts,
+		Shares:          e.Shares,
+	}); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(aquarius.SourceName, "aquarius_liquidity").Inc()
+		logger.Error("insert Aquarius liquidity failed",
+			"contract_id", e.ContractID, "action", e.Action,
+			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return
+	}
+	bumpEntryCount(ctx, logger, store, aquarius.SourceName)
+	logger.Debug("Aquarius liquidity ingested",
+		"source", aquarius.SourceName, "action", e.Action,
+		"contract_id", e.ContractID, "ledger", e.Ledger,
+		"tokens", len(e.Tokens))
 }
 
 // persistBlendPositionEvent routes one money-market position event

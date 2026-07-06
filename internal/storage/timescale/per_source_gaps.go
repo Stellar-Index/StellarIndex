@@ -193,6 +193,19 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// (no loss). Bumped 50K → 200K to sit above the observed envelope.
 	{Source: "phoenix-liquidity", Table: "phoenix_liquidity", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 200000},
 	{Source: "phoenix-stake", Table: "phoenix_stake_events", LedgerColumn: "ledger", Genesis: 51_572_016, MinGapSizeOverride: 200000},
+	// aquarius-liquidity: deposit_liquidity / withdraw_liquidity are
+	// user-action-triggered and sparse (a few thousand events/month on
+	// r1 vs 360K+ trades) — multi-hour quiet windows are normal, so a
+	// wide override matches the phoenix-liquidity cadence. Genesis is
+	// the Aquarius pool deploy ledger (same as the aquarius trades
+	// target below). Migration 0089.
+	{Source: "aquarius-liquidity", Table: "aquarius_liquidity", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 200000},
+	// aquarius-reserves: update_reserves fires on EVERY state-changing
+	// pool op (trade/deposit/withdraw), so it is roughly as dense as
+	// aquarius trades — a dense stream going quiet is a strong
+	// writer-halt tripwire. 100K override matches the aquarius trades
+	// target. Migration 0089.
+	{Source: "aquarius-reserves", Table: "aquarius_reserves", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 100000},
 	// blend_auctions: live r1 (2026-05-28) showed 8049 distinct
 	// ledgers across a 5.9M-ledger span = one event per ~735
 	// ledgers. 2026-05-29 measurement bumped the 50K override to
