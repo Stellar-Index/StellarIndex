@@ -218,7 +218,16 @@ export function AssetsTable({
                     key={coin.asset_id}
                     coin={coin}
                     rank={idx + 1}
-                    verified={verifiedSlugSet.has(coin.slug.toLowerCase())}
+                    // Badge "verified" ONLY for the real verified row.
+                    // The listing serves COALESCE(slug, code) AS slug, so
+                    // a NULL-slug impersonator emits the verified asset's
+                    // CODE as its slug and would otherwise match the
+                    // verified set — the API's per-row
+                    // unverified_ticker_collision flag distinguishes it.
+                    verified={
+                      verifiedSlugSet.has(coin.slug.toLowerCase()) &&
+                      !coin.unverified_ticker_collision
+                    }
                     basePath={basePath}
                   />
                 ))}
