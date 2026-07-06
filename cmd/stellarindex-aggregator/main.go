@@ -92,6 +92,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/platform"
 	"github.com/StellarIndex/stellar-index/internal/platform/postgresstore"
 	"github.com/StellarIndex/stellar-index/internal/pricealerts"
+	"github.com/StellarIndex/stellar-index/internal/pricingguard"
 	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
 	"github.com/StellarIndex/stellar-index/internal/storage/redisclient"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
@@ -653,7 +654,7 @@ func run(cfgPath string, dryRun bool) error {
 		paWorker := pricealerts.New(
 			postgresstore.NewPriceAlertStore(paStore),
 			postgresstore.NewWebhookStore(paStore),
-			priceAlertVWAPReader{store: store},
+			priceAlertVWAPReader{store: store, logger: logger.With("component", "price-alert-guard")},
 			pricealerts.Options{
 				Interval: time.Duration(cfg.PriceAlerts.IntervalSeconds) * time.Second,
 				Logger:   logger.With("component", "price-alerts"),
@@ -1571,13 +1572,25 @@ func buildOracleDivergenceReferences(cfg config.DivergenceConfig, oracles diverg
 // Prometheus metrics (paired counter + duration histogram, plus the
 // new-events counter), matching the divergence_refresh /
 // supply_refresh observability shape.
-// priceAlertVWAPReader adapts *timescale.Store to
+// priceAlertVWAPStore is the storage seam priceAlertVWAPReader needs:
+// the latest closed bucket plus the guard's trailing baseline.
+// *timescale.Store satisfies it; the interface keeps the reader
+// unit-testable without a database.
+type priceAlertVWAPStore interface {
+	LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair) (timescale.Vwap1mRow, error)
+	RecentClosedVWAP1mCombined(ctx context.Context, p canonical.Pair, limit int) ([]timescale.Vwap1mRow, error)
+}
+
+// priceAlertVWAPReader adapts the timescale store to
 // pricealerts.PriceReader. LatestClosedVWAP1mForPair combines both
 // stored pair orientations; sql.ErrNoRows (no closed bucket in scope)
 // maps to ok=false, nil — a benign no-op the evaluator skips rather than
 // a failure. The Vwap1mRow.Bucket is the START of the 1-minute window;
 // the close time reported to the payload is +1 minute.
-type priceAlertVWAPReader struct{ store *timescale.Store }
+type priceAlertVWAPReader struct {
+	store  priceAlertVWAPStore
+	logger *slog.Logger
+}
 
 func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canonical.Asset) (string, time.Time, bool, error) {
 	pair, err := canonical.NewPair(base, quote)
@@ -1591,7 +1604,17 @@ func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canoni
 	if err != nil {
 		return "", time.Time{}, false, err
 	}
-	return row.VWAP, row.Bucket.Add(time.Minute), true, nil
+	// Same serving-sanity guard as the two API raw-bucket paths (/v1/price,
+	// /v1/assets/{slug}): LatestClosedVWAP1mForPair is the bare
+	// Σ(quote)/Σ(base) closed bucket that BYPASSES the orchestrator's
+	// σ-outlier filter / min-USD-volume gate / freeze protection, so a
+	// fat-finger / manipulation print in the served minute would otherwise
+	// fire a SPURIOUS customer price alert. pricingguard.GuardServedVWAP1m
+	// serves last-known-good when the latest bucket is grossly off its
+	// trailing baseline (no spurious alert), is byte-identical on a healthy
+	// bucket, and fails open on thin history.
+	served := pricingguard.GuardServedVWAP1m(ctx, r.store, r.logger, pair, row)
+	return served.VWAP, served.Bucket.Add(time.Minute), true, nil
 }
 
 type mevObserver struct{}

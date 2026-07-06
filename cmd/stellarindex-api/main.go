@@ -46,7 +46,6 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"math/big"
 	"net/http"
 	"os"
 	"os/signal"
@@ -81,6 +80,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/obs"
 	"github.com/StellarIndex/stellar-index/internal/platform"
 	"github.com/StellarIndex/stellar-index/internal/platform/postgresstore"
+	"github.com/StellarIndex/stellar-index/internal/pricingguard"
 	"github.com/StellarIndex/stellar-index/internal/ratelimit"
 	"github.com/StellarIndex/stellar-index/internal/signupreaper"
 	"github.com/StellarIndex/stellar-index/internal/sources/external"
@@ -2287,11 +2287,11 @@ func (g globalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical
 	// bare Σ(quote)/Σ(base) closed bucket that bypasses the orchestrator's
 	// σ-outlier filter / min-USD-volume gate / freeze protection, so the
 	// GlobalAssetView headline price carries the identical unfiltered
-	// fat-finger / manipulation vector. guardServedVWAP1m serves
-	// last-known-good when the latest bucket is grossly off its recent
-	// trailing baseline, and is a byte-identical pass-through on a healthy
-	// bucket (fails open on thin history).
-	served := guardServedVWAP1m(ctx, g.s, g.logger, pair, row)
+	// fat-finger / manipulation vector. pricingguard.GuardServedVWAP1m
+	// serves last-known-good when the latest bucket is grossly off its
+	// recent trailing baseline, and is a byte-identical pass-through on a
+	// healthy bucket (fails open on thin history).
+	served := pricingguard.GuardServedVWAP1m(ctx, g.s, g.logger, pair, row)
 	// row.Bucket is the bucket's *start*; the closed-bucket contract
 	// (ADR-0015) means the bucket's served observation_at is the
 	// bucket end. Add one minute to surface the consumer-facing
@@ -2487,14 +2487,6 @@ type storePriceReader struct {
 	logger        *slog.Logger     // nil → no guard logging
 }
 
-// servedGuardSampleFetch is how many recent CLOSED combined-direction 1m
-// buckets the serving-sanity guard pulls to build a robust trailing
-// baseline for the latest bucket (aggregate.GuardServedVWAP). 40 is a few
-// tens of minutes for an active pair — enough to clear the guard's
-// minimum-sample floor while staying a cheap, index-driven LIMIT-N read
-// (only ever run for a pair already confirmed populated).
-const servedGuardSampleFetch = 40
-
 func (r storePriceReader) freshnessWindow() time.Duration {
 	if r.vwapFreshness > 0 {
 		return r.vwapFreshness
@@ -2530,16 +2522,16 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	// headline pairs with a real fiat CEX market (crypto:XLM/fiat:USD via
 	// Kraken/Coinbase). A single fat-finger / manipulation trade in the
 	// served minute would otherwise corrupt the price with stale=false, no
-	// outlier rejection, no volume floor. guardServedVWAP1m applies a robust
-	// sanity bound over the pair's recent trailing closed buckets and serves
-	// last-known-good when the latest is grossly off (adversarial-review
-	// HIGH). It is a pass-through (byte-identical) on a healthy bucket — a
-	// liquid pair like crypto:XLM/fiat:USD sits tightly clustered and always
-	// passes — so it only ever changes the served value for a manipulated
-	// bucket.
+	// outlier rejection, no volume floor. pricingguard.GuardServedVWAP1m
+	// applies a robust sanity bound over the pair's recent trailing closed
+	// buckets and serves last-known-good when the latest is grossly off
+	// (adversarial-review HIGH). It is a pass-through (byte-identical) on a
+	// healthy bucket — a liquid pair like crypto:XLM/fiat:USD sits tightly
+	// clustered and always passes — so it only ever changes the served value
+	// for a manipulated bucket.
 	row, err := r.s.LatestClosedVWAP1mForPair(ctx, pair)
 	if err == nil {
-		served := guardServedVWAP1m(ctx, r.s, r.logger, pair, row)
+		served := pricingguard.GuardServedVWAP1m(ctx, r.s, r.logger, pair, row)
 		// CS-017: the bucket closes at Bucket+1min; flag stale when that
 		// close is older than the freshness window, so a dormant pair's
 		// months-old VWAP is no longer served as stale=false. Applied to the
@@ -2580,89 +2572,6 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	// revision reads per-asset decimals from internal/metadata.
 	snap := v1.LastTradeToSnapshot(trades[0], 7)
 	return snap, []string{trades[0].Source}, true, nil
-}
-
-// guardServedVWAP1m is the serving-sanity guard shared by the TWO raw
-// prices_1m serving paths (adversarial-review HIGH): /v1/price
-// (storePriceReader.LatestPrice) and the /v1/assets/{slug} GlobalAssetView
-// headline price (globalPriceReader.LatestVWAP). Both read the same
-// most-recent CLOSED prices_1m bucket via LatestClosedVWAP1mForPair — a
-// bare Σ(quote)/Σ(base) CAGG that bypasses the orchestrator's σ-outlier
-// filter / min-USD-volume gate / freeze protection — so both carry the
-// identical unfiltered fat-finger / manipulation vector and need the same
-// guard. Given the latest CLOSED bucket (`candidate`) it returns the row
-// to actually serve:
-//   - the candidate unchanged, when it is robust-sane against the pair's
-//     recent trailing closed buckets, or when there is no baseline / the
-//     trailing fetch failed (fail-open — favour serving a real price);
-//   - the newest trailing closed bucket that IS within the robust band
-//     (last-known-good), when the candidate is grossly off — a fat-finger
-//     / manipulation print the raw CAGG would otherwise serve unfiltered.
-//
-// The decision math is exact-rational (aggregate.GuardServedVWAP, ADR-0003
-// — no float64 in the value path). This never errors: on any doubt it
-// serves the candidate rather than 404 a pair that has data. A nil logger
-// disables the guard's warn logging (the decision is unaffected).
-func guardServedVWAP1m(
-	ctx context.Context,
-	s *timescale.Store,
-	logger *slog.Logger,
-	pair canonical.Pair,
-	candidate timescale.Vwap1mRow,
-) timescale.Vwap1mRow {
-	rows, err := s.RecentClosedVWAP1mCombined(ctx, pair, servedGuardSampleFetch)
-	if err != nil {
-		if logger != nil {
-			logger.Warn("served-vwap guard: trailing fetch failed — serving candidate unguarded",
-				"pair", pair.String(), "err", err)
-		}
-		return candidate // fail-open
-	}
-	served, rejected := selectGuardedVWAP1m(candidate, rows)
-	if rejected && logger != nil {
-		logger.Warn("served-vwap guard: candidate bucket rejected as outlier — serving last-known-good",
-			"pair", pair.String(),
-			"candidate_bucket", candidate.Bucket,
-			"candidate_vwap", candidate.VWAP,
-			"served_bucket", served.Bucket,
-			"served_vwap", served.VWAP)
-	}
-	return served
-}
-
-// selectGuardedVWAP1m is the pure decision half of guardServedVWAP1m:
-// given the candidate bucket and the recent combined-direction closed
-// buckets (`rows`, newest-first, as returned by
-// timescale.RecentClosedVWAP1mCombined), it returns the row to serve and
-// whether the candidate was rejected. Kept store-free so the selection +
-// index-alignment logic is unit-testable without a database. Exact-rational
-// throughout (ADR-0003).
-func selectGuardedVWAP1m(candidate timescale.Vwap1mRow, rows []timescale.Vwap1mRow) (served timescale.Vwap1mRow, rejected bool) {
-	candRat, ok := new(big.Rat).SetString(candidate.VWAP)
-	if !ok {
-		return candidate, false // unparseable candidate → can't judge, serve as-is
-	}
-	// Trailing baseline = combined-direction closed buckets STRICTLY older
-	// than the candidate bucket, kept index-aligned with their rows so the
-	// guard's last-known-good index maps straight back to a servable row.
-	trailingRows := make([]timescale.Vwap1mRow, 0, len(rows))
-	trailing := make([]*big.Rat, 0, len(rows))
-	for i := range rows {
-		if !rows[i].Bucket.Before(candidate.Bucket) {
-			continue
-		}
-		trailingRows = append(trailingRows, rows[i])
-		if v, ok := new(big.Rat).SetString(rows[i].VWAP); ok {
-			trailing = append(trailing, v)
-		} else {
-			trailing = append(trailing, nil)
-		}
-	}
-	accept, lkgIdx := aggregate.GuardServedVWAP(candRat, trailing)
-	if accept {
-		return candidate, false // byte-identical to the pre-guard served value
-	}
-	return trailingRows[lkgIdx], true
 }
 
 // RecentClosedSnapshots is the SEP-40 prices(asset, records)
