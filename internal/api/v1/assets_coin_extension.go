@@ -111,7 +111,18 @@ func (s *Server) applyCoinRowToDetail(detail *AssetDetail, row timescale.CoinRow
 		}
 		return
 	}
-	if row.PriceUSD != nil {
+	// Fill PriceUSD from the coin-row ONLY when the canonical
+	// price path (F2 populatePriceUSD → lookupUSDPrice, run earlier)
+	// left it nil. The coin-row's USD price is the listing-query
+	// COALESCE(direct_usd, asset_vs_xlm × xlm_usd) — for native XLM
+	// its xlm_usd CTE mixes the SDEX (native/USDC) and CEX
+	// (native/fiat:USD) pairs and picks the latest bucket, which
+	// diverged from the canonical /v1/price CEX VWAP by ~0.2%.
+	// Yielding to the already-set canonical value keeps
+	// /v1/assets/native in agreement with /v1/price and
+	// /v1/assets/crypto:XLM, while still pricing the XLM-triangulated
+	// long tail (SHX, AQUA, …) that the canonical reader can't reach.
+	if row.PriceUSD != nil && detail.PriceUSD == nil {
 		detail.PriceUSD = row.PriceUSD
 	}
 	if row.Change1hPct != nil {

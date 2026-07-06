@@ -382,7 +382,17 @@ func (s *Server) lookupUSDPrice(ctx context.Context, asset canonical.Asset) (str
 		// short-circuit before the reader rejects it.
 		return "", false
 	}
-	snap, _, _, err := s.prices.LatestPrice(ctx, asset, defaultPriceQuote)
+	// Alias-aware read — the SAME resolution /v1/price uses. XLM
+	// surfaces in two canonical forms (`native` per-network and
+	// `crypto:XLM` global ticker); the aggregator writes the fresh
+	// CEX VWAP under whichever matches its configured pair set. A bare
+	// LatestPrice(native, fiat:USD) misses that VWAP and falls through
+	// to the stablecoin-proxy SDEX bucket below, so /v1/assets/native
+	// diverged from /v1/price?asset=native by ~0.2% (they read
+	// different pairs). readPriceWithAliases makes both dual-forms
+	// resolve to the same canonical USD price. Non-aliased assets are
+	// unaffected (assetAliases returns [asset] for everything else).
+	snap, _, _, err := s.readPriceWithAliases(ctx, s.prices, asset, defaultPriceQuote)
 	if err == nil && snap.Price != "" {
 		return snap.Price, true
 	}
