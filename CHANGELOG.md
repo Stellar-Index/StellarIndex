@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.8.5] — 2026-07-06
+
 ### Fixed
 
 - `/v1/price` empty-alias latency: XLM queries (`?asset=native&quote=fiat:USD`)
