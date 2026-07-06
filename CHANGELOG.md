@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.8.6] — 2026-07-06
+
 ### Added
 
 - `as_of_ledger` + `flags.stale` stamped on the remaining ClickHouse
@@ -49,6 +51,21 @@ against.
 - `/v1/price` stablecoin-proxy fallback is now gated on non-empty pairs
   via a cheap recent-existence probe, so a row-less proxy pair no longer
   triggers a cold full-history VWAP walk (2026-07-06 incident).
+- Ansible archival-node drift: ZFS `recordsize` is now stored in byte form
+  (131072/8192/1048576) so it matches `zfs get -p`, and
+  `shared_preload_libraries` matches Postgres's space-joined stored value —
+  both previously phantom-drifted on every weekly `ansible-drift.yml` run
+  (recap 14 → 11). The out-of-band `data/pgbackrest` + `data/restore-drill`
+  datasets are now codified (BACKLOG #50).
+- galexie-archive `catchup-refused` + host-swap alert rules were indented at
+  group level (promtool rejected them and they never armed) in both the R1
+  overlay and multi-host rule trees — now corrected. A promtool-free
+  structural rule lint runs in `verify.sh` + CI to catch the mis-indented-rule
+  class locally before it reaches main.
+- Public-API smoke audit: `euro` now probes `/v1/external/assets/euro` (the
+  Stellar-focus refactor retired `/v1/assets/euro`), and the per-check timeout
+  is 10s → 20s so a cold edge-cache miss on a slow origin fetch (e.g.
+  `/v1/pairs`) no longer reds the audit.
 
 ## [v0.8.5] — 2026-07-06
 
