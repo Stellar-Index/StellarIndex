@@ -100,3 +100,47 @@ func TestClosedVWAPAtOrBeforeQueryShape(t *testing.T) {
 		t.Error("query missing flipped-direction vwap inversion")
 	}
 }
+
+// TestRecentClosedVWAP1mExistsQueryShape guards the recent-existence
+// gate LatestClosedVWAP1mForPair runs BEFORE its value walk (2026-07-06
+// empty-alias latency incident). The gate is what keeps an EMPTY pair
+// (native/fiat:USD, read as an alias on every XLM query) off the full
+// ~400-day walk, so it MUST stay sargable + literal-cutoff-bounded +
+// both-directions + LIMIT 1. A regression on any of these silently
+// reintroduces the cold-start timeout.
+func TestRecentClosedVWAP1mExistsQueryShape(t *testing.T) {
+	lower := "AND bucket >= TIMESTAMPTZ '2026-06-01 00:00:00+00'\n"
+	q := fmt.Sprintf(recentClosedVWAP1mExistsTemplate, lower)
+
+	// Sargable closed-bucket guard: the interval is a constant on the RHS,
+	// NEVER a function on the indexed bucket column (the 2026-06-20
+	// latency-burn shape).
+	if !strings.Contains(q, "bucket <= now() - INTERVAL '1 minute'") {
+		t.Error("gate missing sargable closed-bucket guard `bucket <= now() - INTERVAL '1 minute'`")
+	}
+	if strings.Contains(q, "bucket + INTERVAL") {
+		t.Error("gate uses non-sargable `bucket + INTERVAL` form (function on indexed column)")
+	}
+	// Literal lower bound → PLAN-time chunk pruning: the whole point of the
+	// gate is that a truly-empty pair proves emptiness over recent chunks
+	// only, not the value walk's ~400-day span.
+	if !strings.Contains(q, "bucket >= TIMESTAMPTZ") {
+		t.Error("gate missing literal `bucket >= TIMESTAMPTZ` lower bound for plan-time pruning")
+	}
+	// Both stored directions — else a flipped-only live pair (USDC/XLM with
+	// no XLM/USDC rows) would be wrongly gated to ErrNoRows.
+	if !strings.Contains(q, "base_asset = $1 AND quote_asset = $2") ||
+		!strings.Contains(q, "base_asset = $2 AND quote_asset = $1") {
+		t.Error("gate does not probe both stored directions of the pair")
+	}
+	// LIMIT 1 → a populated pair short-circuits at the first matching row.
+	if !strings.Contains(q, "LIMIT 1") {
+		t.Error("gate missing LIMIT 1 short-circuit")
+	}
+	// The gate is the freshness horizon and MUST be tighter than the value
+	// walk's window, else it prunes nothing and the empty walk returns.
+	if latestVWAPGateWindow <= 0 || latestVWAPGateWindow >= latestVWAPWindow {
+		t.Errorf("latestVWAPGateWindow (%v) must be positive and < latestVWAPWindow (%v)",
+			latestVWAPGateWindow, latestVWAPWindow)
+	}
+}
