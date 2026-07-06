@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- `/v1/price` empty-alias latency: XLM queries (`?asset=native&quote=fiat:USD`)
+  probe the row-less `native/fiat:USD` alias first; `LatestClosedVWAP1mForPair`
+  now gates its value walk behind a cheap 14-day recent-existence probe, so a
+  row-less/quiet pair returns fast (falls through to the
+  last-trade/triangulation fallback) instead of a cold ~400-day max() scan that
+  timed out under cache pressure. Pairs with no closed 1-minute bucket in 14
+  days now surface their last trade rather than a stale VWAP. (2026-07-06
+  incident)
+
 ## [v0.8.4] — 2026-07-06
 
 ### Fixed
