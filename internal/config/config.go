@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"time"
+
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // Config is the root configuration for every Stellar Index binary.
@@ -127,16 +129,37 @@ type TradesConfig struct {
 }
 
 // validate is the sub-validator hook the top-level Config.Validate
-// calls. The deeper "is this a parseable classic asset" check lives
-// in `internal/storage/timescale.NewUSDVolumeQuoteSpec` so we don't
-// duplicate the parse logic; the indexer's wiring step fails loud
-// if any asset_key is unparseable. Here we only catch obvious
-// operator-config mistakes (empty strings) so the parse-side error
-// names the offending index cleanly.
+// calls. It enforces that every declared USD-peg is a well-formed
+// CLASSIC credit asset (CODE-ISSUER form) at config-load time — the
+// loudest, earliest gate, and the same for every binary.
+//
+// This is a scale-uniformity safety net: the `usd_volume` computation and
+// the on-chain stablecoin→fiat proxy scale a peg's quote amount by 10^7,
+// which is correct ONLY because classic Stellar assets are 7-decimal by
+// protocol. A mislisted non-classic entry (a Soroban `C…` token, a
+// `crypto:`/`fiat:` ticker) has different decimals, so silently accepting
+// it would mis-scale `usd_volume` by orders of magnitude and corrupt the
+// min-USD-volume eligibility gate. Failing at load also makes the two
+// downstream parsers consistent: the indexer's
+// `timescale.NewUSDVolumeQuoteSpec` already hard-errors on a non-classic
+// peg, while the aggregator's `parseUSDPeggedClassicAssets` used to
+// SILENTLY skip one — this check makes that soft-skip unreachable for a
+// config that loads.
 func (tc TradesConfig) validate() error {
 	for i, raw := range tc.USDPeggedClassicAssets {
 		if raw == "" {
-			return fmt.Errorf("trades: usd_pegged_classic_assets[%d] is empty", i)
+			return fmt.Errorf("%w: trades: usd_pegged_classic_assets[%d] is empty", ErrInvalidConfig, i)
+		}
+		asset, err := canonical.ParseAsset(raw)
+		if err != nil {
+			return fmt.Errorf("%w: trades: usd_pegged_classic_assets[%d] (%q): %w", ErrInvalidConfig, i, raw, err)
+		}
+		if asset.Type != canonical.AssetClassic {
+			return fmt.Errorf(
+				"%w: trades: usd_pegged_classic_assets[%d] (%q) must be a classic credit asset "+
+					"in CODE-ISSUER form — the usd_volume 10^7 scaling assumes 7 decimals, which "+
+					"only classic Stellar assets guarantee (got %s)",
+				ErrInvalidConfig, i, raw, asset.Type)
 		}
 	}
 	return nil

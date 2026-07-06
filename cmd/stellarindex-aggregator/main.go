@@ -1180,13 +1180,14 @@ func (a baselineSinkAdapter) UpsertBaseline(
 // expansion can also pull XLM/USDC-GA5Z…-style classic-quoted trades
 // when the target is `XLM/fiat:USD`.
 //
-// Soft-fails: a single malformed entry is logged and skipped rather
-// than aborting startup. Validate() at config load already
-// roundtrips each entry through canonical.NewClassicAsset; reaching
-// a parse error here would mean the validator regressed, in which
-// case the safe behaviour is "skip and keep serving" — a missing
-// classic peg is a smaller failure than the binary refusing to
-// start.
+// Soft-fails: a single malformed / non-classic entry is logged and
+// skipped rather than aborting startup. TradesConfig.validate() at config
+// load already parses each entry and rejects anything that is not a
+// classic (7-decimal) credit asset, so on a well-formed config this loop
+// never hits either skip path; reaching one would mean the validator
+// regressed, in which case the safe behaviour is "skip and keep serving"
+// — a missing classic peg is a smaller failure than the binary refusing
+// to start.
 func parseUSDPeggedClassicAssets(raws []string, logger *slog.Logger) []canonical.Asset {
 	if len(raws) == 0 {
 		return nil
