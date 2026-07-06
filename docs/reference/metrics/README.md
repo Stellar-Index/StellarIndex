@@ -111,10 +111,31 @@ because every target uses the same tip in the same cycle.
 Counter, labels `source`, `table`, `outcome`.
 
 Periodic gap-detector cycle outcomes — `ok` on a clean scan,
-`error` on a transient Postgres / timeout failure. Operators
-chart `rate({outcome="ok"}[5m])` to confirm the worker is alive;
-the `stellarindex_ingest_gap_detector_silent` ticket-tier alert
-fires when this rate goes to zero.
+`error` on a Postgres / timeout failure (a non-ok outcome is also
+logged loudly as `gap-detector: scan failed` with `elapsed_s` so a
+timeout is unmistakable). A climbing `{outcome="error"}` rate is the
+diagnostic when the silent-detector alert fires. Do NOT alert on
+`rate({outcome="ok"}) == 0`: the heavy targets scan once per 6h, so
+their ok counter is pinned at 1 within a process life and 1 → 1 across
+a restart is invisible to `rate()` (it only detects a decrease) — that
+false-fired the silent alert for >7h on 2026-07-06. Liveness is keyed
+off `stellarindex_ingest_gap_detector_last_success_unix` instead.
+
+### `stellarindex_ingest_gap_detector_last_success_unix`
+
+Gauge, labels `source`, `table`.
+
+Wall-clock timestamp (Unix seconds) of the most recent SUCCESSFUL
+per-(source, table) scan. This is the reset-proof liveness primitive
+the `stellarindex_ingest_gap_detector_silent` ticket-tier alert keys
+off: it fires on `(time() - gauge) > 8h`. A wall-clock stamp survives
+restarts correctly where a rarely-incrementing counter does not — a
+healthy startup scan re-stamps it to `now()`, clearing staleness
+immediately, while a genuinely wedged target's stamp stops advancing.
+Only advances on a clean scan; an errored/timed-out scan leaves the
+previous stamp untouched so staleness grows. A target that has never
+once succeeded since process start emits no series here (that case is
+covered by the `runs_total{outcome="error"}` rate).
 
 ### `stellarindex_ingest_gap_detector_duration_seconds`
 

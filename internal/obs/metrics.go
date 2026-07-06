@@ -41,6 +41,7 @@ func registerAppMetrics() {
 		IngestGapDetectorTip,
 		IngestGapDetectorRunsTotal,
 		IngestGapDetectorDurationSeconds,
+		IngestGapDetectorLastSuccessUnix,
 		ProjectorLagLedgers,
 		ProjectorRunsTotal,
 		ProjectorEventsDecoded,
@@ -380,6 +381,39 @@ var IngestGapDetectorDurationSeconds = prometheus.NewHistogramVec(
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600},
 	},
 	[]string{"source", "table", "outcome"},
+)
+
+// IngestGapDetectorLastSuccessUnix is the wall-clock timestamp (Unix
+// seconds) of the most recent SUCCESSFUL per-(source, table) gap scan.
+// It is the reset-proof liveness primitive the
+// `stellarindex_ingest_gap_detector_silent` alert keys off, replacing
+// the fragile `rate(runs_total{outcome="ok"}[7h]) == 0` construct.
+//
+// Why a timestamp gauge, not rate() over the counter: the heavy targets
+// (sdex/trades, soroban-events/soroban_events) scan on a 6h
+// ScanCadence, so their `ok` counter increments only once every 6h.
+// When the aggregator restarts more often than that (deploys, incident
+// recoveries), each process life records exactly ONE ok, pinning the
+// counter at 1. Because the value is 1 both before AND after the
+// restart, Prometheus counter-reset detection never triggers (it only
+// fires on a DECREASE), so `rate(...ok[7h])` reads a flat line and
+// evaluates to 0 — the silent alert false-fired for >7h even though
+// every startup scan succeeded (live incident 2026-07-06). A wall-clock
+// gauge is immune: the startup scan re-stamps it to now(), so a healthy
+// restart immediately clears staleness, while a genuinely wedged
+// target's stamp simply stops advancing and `time() - gauge` grows past
+// the alert threshold.
+//
+// Advances ONLY on a clean scan; a scan that errors or times out leaves
+// the previous stamp untouched. A target that has NEVER once succeeded
+// since process start emits no series here — that case is covered by the
+// paired `runs_total{outcome="error"}` rate, not this gauge.
+var IngestGapDetectorLastSuccessUnix = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_ingest_gap_detector_last_success_unix",
+		Help: "Wall-clock timestamp (Unix seconds) of the most recent successful gap-detector scan per (source, table). The silent-detector alert keys off its staleness; reset-proof across restarts, unlike rate() over the once-per-6h runs_total counter.",
+	},
+	[]string{"source", "table"},
 )
 
 // ProjectorLagLedgers is how far behind tip each projector source

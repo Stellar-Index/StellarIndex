@@ -301,11 +301,21 @@ func scanOneGapDetectorTarget(ctx context.Context, store *Store, logger *slog.Lo
 
 	gaps, err := store.FindPerSourceLedgerGaps(scanCtx, target, from, tip, target.EffectiveMinGapSize())
 	if err != nil {
+		// A non-ok outcome MUST be loud: this is the only signal that a
+		// heavy scan is timing out (Go ctx deadline / SQL statement_timeout)
+		// rather than succeeding, and it is what advances the silent-detector
+		// alert toward firing (the last-success gauge stops updating). The
+		// 2026-07-06 incident showed a healthy detector reading as "silent";
+		// the inverse — a genuinely failing scan — must never be quiet.
+		// `elapsed_s` makes a timeout obvious: a deadline hit reads ~780s
+		// (statement_timeout) / ~900s (Go timeout), a fast error reads <1s.
+		elapsed := time.Since(start).Seconds()
 		obs.IngestGapDetectorRunsTotal.WithLabelValues(target.Source, target.Table, "error").Inc()
 		obs.IngestGapDetectorDurationSeconds.WithLabelValues(target.Source, target.Table, "error").
-			Observe(time.Since(start).Seconds())
-		logger.Warn("gap-detector: scan failed",
-			"source", target.Source, "table", target.Table, "err", err, "tip", tip, "from", from)
+			Observe(elapsed)
+		logger.Warn("gap-detector: scan failed (non-ok outcome — last-success gauge NOT advanced)",
+			"source", target.Source, "table", target.Table, "outcome", "error",
+			"err", err, "tip", tip, "from", from, "elapsed_s", elapsed)
 		return
 	}
 
@@ -365,9 +375,7 @@ func scanOneGapDetectorTarget(ctx context.Context, store *Store, logger *slog.Lo
 				"source", target.Source, "table", target.Table, "err", err)
 		}
 	}
-	obs.IngestGapDetectorRunsTotal.WithLabelValues(target.Source, target.Table, "ok").Inc()
-	obs.IngestGapDetectorDurationSeconds.WithLabelValues(target.Source, target.Table, "ok").
-		Observe(time.Since(start).Seconds())
+	markGapDetectorScanSuccess(target, start, time.Now())
 
 	if totalMissing > 0 {
 		logger.Warn("gap-detector: data-coverage gaps detected",
@@ -382,6 +390,26 @@ func scanOneGapDetectorTarget(ctx context.Context, store *Store, logger *slog.Lo
 		logger.Debug("gap-detector: clean coverage",
 			"source", target.Source, "table", target.Table, "tip", tip)
 	}
+}
+
+// markGapDetectorScanSuccess records a clean per-target scan: the ok
+// counter, the duration histogram, AND — critically — the wall-clock
+// last-success gauge the `stellarindex_ingest_gap_detector_silent`
+// alert keys off.
+//
+// `now` is threaded in (rather than read inside) so tests can assert
+// the exact stamp. The gauge is the reset-proof liveness primitive: a
+// rarely-incrementing counter reset to the same value (1) across a
+// restart is invisible to rate(), which is why the silent alert
+// false-fired for >7h on the 6h-cadence heavy targets (sdex/trades,
+// soroban-events) on 2026-07-06. A wall-clock stamp re-set on every
+// successful scan is not.
+func markGapDetectorScanSuccess(target GapDetectorTarget, start, now time.Time) {
+	obs.IngestGapDetectorRunsTotal.WithLabelValues(target.Source, target.Table, "ok").Inc()
+	obs.IngestGapDetectorDurationSeconds.WithLabelValues(target.Source, target.Table, "ok").
+		Observe(now.Sub(start).Seconds())
+	obs.IngestGapDetectorLastSuccessUnix.WithLabelValues(target.Source, target.Table).
+		Set(float64(now.Unix()))
 }
 
 // resolveGapDetectorTip reads the live ledgerstream cursor's

@@ -3,6 +3,10 @@ package timescale
 import (
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/StellarIndex/stellar-index/internal/obs"
 )
 
 // TestComputeGapScanWindow pins the trailing-window arithmetic that
@@ -124,5 +128,42 @@ func TestGapScanWindowCoverageMathCoherent(t *testing.T) {
 	}
 	if cov.GapFreePct >= 1.0 {
 		t.Errorf("gap_free must drop below 1.0 when a gap is present, got %v", cov.GapFreePct)
+	}
+}
+
+// TestMarkGapDetectorScanSuccessAdvancesLivenessGauge pins the crux of
+// the 2026-07-06 false-`stellarindex_ingest_gap_detector_silent` fix: a
+// successful scan stamps the wall-clock last-success gauge the alert
+// keys off. The once-per-6h `ok` COUNTER is invisible to `rate()` across
+// a restart (its value is 1 → 1, no detectable reset), so liveness must
+// ride a reset-proof timestamp gauge instead. This test proves the
+// success path advances that gauge.
+func TestMarkGapDetectorScanSuccessAdvancesLivenessGauge(t *testing.T) {
+	t.Parallel()
+	// Unique (source, table) so the assertion is isolated from the real
+	// detector targets and from parallel tests sharing the global registry.
+	target := GapDetectorTarget{Source: "test-liveness-src", Table: "test_liveness_tbl"}
+
+	now := time.Unix(1_700_000_000, 0)
+	markGapDetectorScanSuccess(target, now.Add(-3*time.Second), now)
+
+	got := testutil.ToFloat64(obs.IngestGapDetectorLastSuccessUnix.WithLabelValues(target.Source, target.Table))
+	if want := float64(now.Unix()); got != want {
+		t.Fatalf("last-success gauge = %v; want %v (now.Unix())", got, want)
+	}
+	// The ok counter increments alongside, but it is NOT the liveness
+	// signal — the alert no longer reads its rate.
+	if c := testutil.ToFloat64(obs.IngestGapDetectorRunsTotal.WithLabelValues(target.Source, target.Table, "ok")); c != 1 {
+		t.Fatalf("ok counter = %v; want 1", c)
+	}
+
+	// A later successful scan advances the stamp forward: staleness
+	// (time() - gauge) resets, which is exactly what clears the alert on a
+	// healthy scan even after the process (and thus the counter) reset.
+	later := now.Add(6 * time.Hour)
+	markGapDetectorScanSuccess(target, later.Add(-2*time.Second), later)
+	got = testutil.ToFloat64(obs.IngestGapDetectorLastSuccessUnix.WithLabelValues(target.Source, target.Table))
+	if want := float64(later.Unix()); got != want {
+		t.Fatalf("after second scan, gauge = %v; want %v", got, want)
 	}
 }
