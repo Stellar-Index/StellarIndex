@@ -3051,7 +3051,11 @@ export interface paths {
          *     Reserves are exact i128 base-unit decimal strings (ADR-0003).
          *     `as_of_ledger` stamps the ledger of the pool's last state
          *     change — reserves are current as of that ledger and unchanged
-         *     since. The `depth` table is a MODEL-DERIVED estimate (labelled
+         *     since. Separately, the envelope's `flags.stale` reflects lake
+         *     freshness (ADR-0041): it fires when the lake watermark's close
+         *     time trails now by more than 300s (a wedged galexie→ClickHouse
+         *     sink makes every reserve read stale regardless of per-pool
+         *     last-change ledger). The `depth` table is a MODEL-DERIVED estimate (labelled
          *     via `model: constant_product`, x·y=k with the 0.3% fee on
          *     input): per slippage tier and direction, the largest input
          *     whose AVERAGE execution price stays within the tier of the mid
@@ -3305,6 +3309,11 @@ export interface paths {
          *     the token-unit amounts + utilization + APR are always exact.
          *     Coverage = the live contract-storage capture window; a reserve
          *     with no captured entry is absent.
+         *
+         *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark this
+         *     current-state read is fresh to (the highest captured ledger at
+         *     serve time); `flags.stale` fires when the watermark's close time
+         *     trails now by more than 300s (a wedged sink).
          */
         get: {
             parameters: {
@@ -3352,7 +3361,8 @@ export interface paths {
                          *             "borrow_apr": 0.001,
                          *             "supply_apr": 0
                          *           }
-                         *         ]
+                         *         ],
+                         *         "as_of_ledger": 63340102
                          *       },
                          *       "as_of": "2026-07-03T22:38:00.032774886Z",
                          *       "flags": {
@@ -3386,6 +3396,11 @@ export interface paths {
                                     /** @description Supply APR as a fraction. Null when the rate-model config is uncaptured. */
                                     supply_apr?: number | null;
                                 }[];
+                                /**
+                                 * Format: int64
+                                 * @description Lake watermark this current-state read is fresh to (ADR-0041) — the highest captured ledger at serve time. Omitted when no watermark reader is wired. Pairs with flags.stale.
+                                 */
+                                as_of_ledger?: number;
                             };
                         };
                     };
@@ -10161,6 +10176,11 @@ export interface paths {
          *     catalogue had a live price at request time). `usd_value` is a decimal
          *     string (2dp). Coverage tracks the entry-change capture + Phase-C
          *     backfill — an account ranks once its balances are captured.
+         *
+         *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark this
+         *     current-state ranking is fresh to (the highest captured ledger at
+         *     serve time); `flags.stale` fires when the watermark's close time
+         *     trails now by more than 300s (a wedged sink).
          */
         get: {
             parameters: {
@@ -10194,7 +10214,8 @@ export interface paths {
                          *             "account_id": "GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4",
                          *             "usd_value": "838665433.46"
                          *           }
-                         *         ]
+                         *         ],
+                         *         "as_of_ledger": 63340102
                          *       },
                          *       "as_of": "2026-07-03T22:39:22.213002912Z",
                          *       "flags": {
@@ -10217,6 +10238,11 @@ export interface paths {
                                     /** @description Provably unspendable burn address — master weight 0 */
                                     locked?: boolean;
                                 }[];
+                                /**
+                                 * Format: int64
+                                 * @description Lake watermark this current-state ranking is fresh to (ADR-0041) — the highest captured ledger at serve time. Omitted when no watermark reader is wired. Pairs with flags.stale.
+                                 */
+                                as_of_ledger?: number;
                             };
                         };
                     };
