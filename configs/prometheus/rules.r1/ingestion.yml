@@ -241,6 +241,37 @@ groups:
             certified-lake tail (the coverage claim's substrate) is at
             risk. Treat as data-loss-risk (ADR-0041).
 
+      # 2026-07-06 Postgres-outage fix (ADR-0041): the trade sink now
+      # RETRIES an infrastructure-classified insert failure (connection
+      # refused/reset, PG restarting) with backpressure instead of
+      # dropping the write. While it retries, the on-chain drain
+      # goroutine is blocked, so the ledger cursor STALLS (nothing lost)
+      # but the served tier is frozen. A sustained retry rate is the
+      # early signal that Postgres is unreachable and ingest is
+      # backpressured. Ticket, not page: no data is being lost, and
+      # cursor-stuck / all-sources-stopped page separately if this turns
+      # into a full outage. Mirror of the rule in
+      # deploy/monitoring/rules/ingestion.yml (wave-96 pairing lint).
+      - alert: stellarindex_ingestion_trade_insert_backpressure
+        expr: sum(rate(stellarindex_trade_insert_retries_total{outcome="retry"}[5m])) > 0
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+        annotations:
+          summary: "Trade sink retrying under backpressure — Postgres write path blocked"
+          description: |
+            The trade sink has been retrying infrastructure-classified
+            insert failures (connection refused/reset, PG restarting) for
+            ≥ 10 min. The on-chain ledger cursor is HELD (not advancing)
+            until the writes land — nothing is dropped, but the served
+            tier is frozen and external (CEX/FX) price freshness is
+            degrading (watch stellarindex_trade_insert_buffer_depth).
+            Almost always a Postgres outage/restart.
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+
       - alert: stellarindex_ingestion_insert_errors
         expr: sum by (source, kind) (rate(stellarindex_source_insert_errors_total[5m])) > 0.1
         for: 5m
@@ -257,8 +288,11 @@ groups:
             writes — usually Timescale outage, disk-full, or a schema
             mismatch after a migration.
 
-            Without a retry queue, these events are LOST from the pipeline.
-            Escalate quickly if the rate is high.
+            Post-2026-07-06 (ADR-0041), INFRASTRUCTURE faults no longer
+            drop — they retry with backpressure (see
+            trade_insert_backpressure). So a firing here means GENUINE
+            loss: a permanent data fault (kind=trade) or external-buffer
+            overflow (kind=dropped). Escalate quickly if the rate is high.
 
       # Detects cursor-replay / stuck-tip pattern via the
       # trade_insert_outcome_total counter (added 2026-05-28).
