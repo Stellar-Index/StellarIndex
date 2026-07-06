@@ -314,6 +314,31 @@ async function fetchCoin(slug: string): Promise<CoinSummary | null> {
   if (norm === 'xlm' || norm === 'native') {
     return fetchCoinDirect('native');
   }
+  const coin = await resolveCoin(slug, norm);
+  // Verified-slug collision guard: a bare catalogue slug (shx, aqua,
+  // eurc, yxlm) can share its ticker code with one or more UNVERIFIED
+  // look-alike issuers (e.g. SHX-GDSTRSHX… = the real Stronghold token
+  // vs SHX-GDFAFUKV… = an impersonator). Both carry the SAME listing
+  // slug, so the volume-sorted listing + last-write-wins bySlug map
+  // lands /assets/shx on the (zero-volume) look-alike. That page then
+  // renders its OWN "Unverified · Ticker collision" warning UNDER the
+  // catalogue "Verified" badge, and links "the verified asset" back to
+  // this very URL — a curated verified currency reading as unverified.
+  // Re-resolve to the asset the API's unverified_warning points at (its
+  // documented "slug the consumer can redirect to" contract). The
+  // canonical asset_id route (/assets/SHX-GDFAFUKV…) is unaffected — its
+  // norm never equals the verified slug — so the collision warning
+  // remains reachable where it belongs.
+  return redirectVerifiedCollision(coin, norm);
+}
+
+// resolveCoin performs the cache-first, case-insensitive slug → coin
+// lookup — the raw resolution, before the verified-collision guard in
+// fetchCoin re-points a bare catalogue slug off any look-alike.
+async function resolveCoin(
+  slug: string,
+  norm: string,
+): Promise<CoinSummary | null> {
   // Cache-first, CASE-INSENSITIVE: the /v1/assets listing keys slugs in
   // their canonical casing (USDC, AQUA, BTC), but user-typed and
   // lowercase catalogue URLs (usdc, aqua) must hit the SAME rich row —
@@ -352,6 +377,38 @@ async function fetchCoin(slug: string): Promise<CoinSummary | null> {
   // Cache miss: a slug the listing didn't return — e.g. a long-tail
   // asset_id. Fetch it directly.
   return fetchCoinDirect(slug);
+}
+
+// redirectVerifiedCollision re-points a bare verified-currency slug off
+// an unverified look-alike and onto the canonical verified asset.
+//
+// The API stamps `unverified_warning` on the look-alike's detail (never
+// on the verified asset) with the verified `verified_asset_id` + the
+// `verified_slug` the consumer "can redirect to" (its documented
+// contract). We honour that ONLY when the requested route IS the bare
+// catalogue slug — i.e. `norm` equals the warning's verified_slug. A
+// request that named the look-alike by its own asset_id
+// (/assets/SHX-GDFAFUKV…) has a norm like "shx-gdfafukv…" that never
+// equals "shx", so it keeps rendering the look-alike + its warning.
+// The verified asset carries no unverified_warning, so re-resolution
+// can't loop.
+async function redirectVerifiedCollision(
+  coin: CoinSummary | null,
+  norm: string,
+): Promise<CoinSummary | null> {
+  const warn = coin?.unverified_warning;
+  if (
+    coin &&
+    warn?.verified_asset_id &&
+    warn.verified_slug &&
+    warn.verified_slug.toLowerCase() === norm
+  ) {
+    const verified = await fetchCoinDirect(warn.verified_asset_id).catch(
+      () => null,
+    );
+    if (verified) return verified;
+  }
+  return coin;
 }
 
 // buildFetch's per-URL memo makes the detail + price fetches one-shot
