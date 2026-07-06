@@ -17,6 +17,13 @@ against.
 
 ### Fixed
 
+- The daily completeness refresh reconciles to `tip − 100` instead of the
+  live ledgerstream cursor — reconciling right up to the cursor read normal
+  served-tier drain lag as a projection mismatch (false red: sdex "205
+  mismatched ledgers, served=0" on 2026-07-06 while trades were flowing).
+
+### Fixed
+
 - `sep41_transfers` gains a ledger-led index (migration 0083) — the ADR-0033
   windowed projection reconcile seq-scanned the whole hypertable and hit
   statement_timeout on every windowed verdict (first hit: the 2026-07-06

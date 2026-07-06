@@ -41,6 +41,12 @@ if [ -z "$TIP" ] || [ "$TIP" = "0" ]; then
   echo "compute-completeness: ledgerstream tip unresolved; bailing" >&2
   exit 1
 fi
+# Reconcile a safety margin BELOW the live cursor: the served-tier drain
+# legitimately trails the lake by seconds-minutes under load, and a
+# per-ledger reconcile right up to the cursor reads that lag as
+# "expected>0 served=0" — a false red (seen 2026-07-06: sdex "205
+# mismatched ledgers" that were simply not drained yet).
+TIP=$(( TIP - 100 ))
 
 # Latest watermark per source from the prior snapshots. If a source has no
 # snapshot yet it simply won't appear here — an operator seeds the initial
