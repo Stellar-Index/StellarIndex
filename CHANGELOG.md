@@ -18,6 +18,12 @@ against.
 ### Added
 - `/v1/assets` listing rows carry `unverified_ticker_collision` (bool) so clients can
   distinguish a same-ticker impersonator from the verified asset (OpenAPI 1.2.0 → 1.3.0).
+- Phoenix: decode the new Map-body swap event (single `Symbol("swap")` event, `ScvMap`
+  body) emitted by post-2026-07-02 pools (e.g. CBENABXP…), gated on the phoenix contract
+  set — previously silently dropped.
+- Monitoring: `stellarindex_external_fx_last_quote_unix{source}` liveness gauge + a
+  staleness alert on the active fiat-FX feed (`massive`), so a dead FX feed is caught
+  before fiat-pair triangulation silently breaks at the 7-day lookback + a runbook.
 
 - `stellarindex-ops supply seed-sac-balances` + `state-snapshot -scope storage`:
   seed dormant contract-held SAC balances / `contract_data` current-state from the
@@ -42,6 +48,13 @@ against.
   incremental-checkpoint double-fold (checkpoint vs authoritative same-source re-sum).
 
 ### Fixed
+- **Phoenix pricing (Critical).** The Phoenix swap decoder set `QuoteAmount` to
+  `actual_received_amount`, which the pool contract emits as the swap's *input* (equal
+  to `offer_amount`), not the taker's *output* — so every Phoenix trade had
+  `base_amount == quote_amount` and every Phoenix price was ~1:1 (wrong). Now uses
+  `return_amount` (the bought-token output). Affected ~6 Phoenix-sole pairs (fully wrong)
+  + blended pairs incl. XLM/USDC. **Requires a historical Phoenix trade re-derive**
+  (`projector-replay -source phoenix`) to correct the ~237k existing trades.
 - **Pricing serving-sanity guard.** `/v1/price`, the `/v1/assets/{slug}` GlobalAssetView
   headline, and the customer price-alert evaluator now guard their raw `prices_1m`
   closed-bucket reads (ratio + MAD band over recent trailing buckets, serve
