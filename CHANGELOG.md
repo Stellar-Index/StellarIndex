@@ -17,6 +17,43 @@ against.
 
 ### Fixed
 
+- **Trade sink retries on a Postgres outage with backpressure instead of
+  dropping** (2026-07-06 incident, ADR-0041). Infrastructure faults
+  (connection-refused, timeouts, admin shutdown) are now classified apart
+  from data faults; on an infra fault the trade sink retries with a bounded
+  buffer and applies backpressure to ingest rather than silently discarding
+  the batch.
+- **SEP-41 supply reads use an incremental rollup** (migration `0085`)
+  instead of re-aggregating the entire `sep41_supply_events` history on every
+  tick — the per-tick full-history scan saturated IO once the table grew
+  (2026-07-06 IO-saturation incident). A rollup worker advances a persisted
+  high-water mark and reads fold onto it.
+- **The gap detector scans a trailing window instead of `genesis → tip`
+  every cycle** (2026-07-06 IO-saturation incident). Re-running a
+  `DISTINCT ledger … LAG()` plus a `COUNT(DISTINCT ledger)` over the whole
+  hypertable each 30-min cycle burned two multi-minute scans that hit
+  `statement_timeout`; the detector now scans just `[last high-water, tip]`
+  (bounded on first run), with density math window-scoped to match. Deep
+  history remains the ADR-0033 completeness verdict's domain.
+- **`/v1/assets` listing overlays SEP-1 logos** — the listing rows now carry
+  each asset's `stellar.toml` icon, resolved from the issuer metadata.
+- **A20: platform-store CRUD integration tests assert on the previously
+  swallowed errors** (#51), so a store method that silently drops an error
+  now fails the suite.
+
+### Added
+
+- **`/v1/history` rows expose per-side base/quote decimals** — each history
+  row now carries the base-asset and quote-asset decimal scale so clients
+  can render on-chain amounts without assuming a fixed scale.
+- **Trade-backpressure + SEP-41-rollup worker metrics and their alerts** —
+  `stellarindex_trade_insert_retries_total` /
+  `stellarindex_trade_insert_buffer_depth` (with a trade-insert-backpressure
+  alert + runbook) and the SEP-41 supply-rollup advance counter + duration
+  histogram.
+
+### Fixed
+
 - The daily completeness refresh reconciles to `tip − 100` instead of the
   live ledgerstream cursor — reconciling right up to the cursor read normal
   served-tier drain lag as a projection mismatch (false red: sdex "205
