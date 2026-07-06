@@ -2015,7 +2015,11 @@ paths:
         Reserves are exact i128 base-unit decimal strings (ADR-0003).
         `as_of_ledger` stamps the ledger of the pool's last state
         change — reserves are current as of that ledger and unchanged
-        since. The `depth` table is a MODEL-DERIVED estimate (labelled
+        since. Separately, the envelope's `flags.stale` reflects lake
+        freshness (ADR-0041): it fires when the lake watermark's close
+        time trails now by more than 300s (a wedged galexie→ClickHouse
+        sink makes every reserve read stale regardless of per-pool
+        last-change ledger). The `depth` table is a MODEL-DERIVED estimate (labelled
         via `model: constant_product`, x·y=k with the 0.3% fee on
         input): per slippage tier and direction, the largest input
         whose AVERAGE execution price stays within the tier of the mid
@@ -2179,6 +2183,11 @@ paths:
         the token-unit amounts + utilization + APR are always exact.
         Coverage = the live contract-storage capture window; a reserve
         with no captured entry is absent.
+
+        Freshness (ADR-0041): `as_of_ledger` is the lake watermark this
+        current-state read is fresh to (the highest captured ledger at
+        serve time); `flags.stale` fires when the watermark's close time
+        trails now by more than 300s (a wedged sink).
       parameters:
         - { name: pool, in: path, required: true, description: Pool contract C-strkey., schema: { type: string } }
       responses:
@@ -2209,6 +2218,7 @@ paths:
                     utilization_pct: 0.2
                     borrow_apr: 0.001
                     supply_apr: 0
+                  as_of_ledger: 63340102
                 as_of: '2026-07-03T22:38:00.032774886Z'
                 flags:
                   stale: false
@@ -2238,6 +2248,7 @@ paths:
                             utilization_pct: { type: number, description: Borrowed/supplied, 0..100. }
                             borrow_apr:      { type: number, nullable: true, description: "Borrow APR as a fraction (0.05 = 5%). Null when the reserve's rate-model config isn't in the captured contract-storage window." }
                             supply_apr:      { type: number, nullable: true, description: "Supply APR as a fraction. Null when the rate-model config is uncaptured." }
+                      as_of_ledger: { type: integer, format: int64, description: "Lake watermark this current-state read is fresh to (ADR-0041) — the highest captured ledger at serve time. Omitted when no watermark reader is wired. Pairs with flags.stale." }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -6890,6 +6901,11 @@ paths:
         catalogue had a live price at request time). `usd_value` is a decimal
         string (2dp). Coverage tracks the entry-change capture + Phase-C
         backfill — an account ranks once its balances are captured.
+
+        Freshness (ADR-0041): `as_of_ledger` is the lake watermark this
+        current-state ranking is fresh to (the highest captured ledger at
+        serve time); `flags.stale` fires when the watermark's close time
+        trails now by more than 300s (a wedged sink).
       parameters:
         - { name: limit, in: query, description: "Maximum rows to return (1-500, default 100). Out-of-range values return 400.", schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
       responses:
@@ -6906,6 +6922,7 @@ paths:
                     locked: true
                   - account_id: GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4
                     usd_value: '838665433.46'
+                  as_of_ledger: 63340102
                 as_of: '2026-07-03T22:39:22.213002912Z'
                 flags:
                   stale: false
@@ -6928,6 +6945,7 @@ paths:
                             account_id: { type: string }
                             usd_value: { type: string, description: Total holdings value in USD (decimal string). }
                             locked: { type: boolean, description: Provably unspendable burn address — master weight 0, all thresholds 0, no signers. The balance is real; no key can move it. }
+                      as_of_ledger: { type: integer, format: int64, description: "Lake watermark this current-state ranking is fresh to (ADR-0041) — the highest captured ledger at serve time. Omitted when no watermark reader is wired. Pairs with flags.stale." }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /accounts/{g_strkey}:
