@@ -315,11 +315,18 @@ var IngestGapDetectorRunsTotal = prometheus.NewCounterVec(
 
 // IngestSourceDistinctLedgers is the **data-derived covered-
 // ledgers** signal: COUNT(DISTINCT ledger) per (source, table)
-// over [genesis, tip]. Together with `IngestGapMaxSize` powers
-// the ADR-0031 data-derived coverage projection.
+// over the detector's trailing scan window [from, tip]. Together
+// with `IngestGapMaxSize` powers the ADR-0031 data-derived coverage
+// projection.
 //
-// Density = IngestSourceDistinctLedgers / (tip - genesis + 1).
-// Gap-free = 1 - IngestGapMaxSize / (tip - genesis + 1).
+// Density = IngestSourceDistinctLedgers / (tip - from + 1).
+// Gap-free = 1 - IngestGapMaxSize / (tip - from + 1).
+//
+// The `from` lower bound is the trailing window the detector scans
+// (2026-07-06 IO-saturation incident) — steady state ~[last high-
+// water, tip], first run within FirstScanCap of tip, never the full
+// [genesis, tip]. Deep-history coverage is the ADR-0033 completeness
+// verdict's domain, not this gauge.
 //
 // Emitted by the gap detector at the same cadence as the gap
 // gauges (one COUNT query alongside the LAG-over-DISTINCT scan
@@ -334,9 +341,11 @@ var IngestSourceDistinctLedgers = prometheus.NewGaugeVec(
 
 // IngestGapDetectorTip is the live ledgerstream cursor's
 // `last_ledger` value at the most recent gap-detector cycle's
-// start — the upper bound used by every per-target scan. The
-// ADR-0031 coverage consumer subtracts the per-source genesis
-// from this to compute the density denominator.
+// start — the upper bound `tip` used by every per-target scan. The
+// per-target density denominator is `tip - from + 1` where `from`
+// is the target's trailing-window lower bound (2026-07-06 incident),
+// so this gauge alone is no longer sufficient to recompute density;
+// read the persisted source_coverage_snapshots row for that.
 //
 // Single-vector gauge (no `source`/`table` labels) because every
 // target uses the same tip in the same cycle; emitting per-target
@@ -344,7 +353,7 @@ var IngestSourceDistinctLedgers = prometheus.NewGaugeVec(
 var IngestGapDetectorTip = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_ingest_gap_detector_tip_ledger",
-		Help: "Live ledgerstream tip ledger at the most recent gap-detector cycle. Upper bound of the [genesis, tip] window used by ADR-0031's density computation.",
+		Help: "Live ledgerstream tip ledger at the most recent gap-detector cycle. Upper bound of the per-target trailing scan window; the lower bound is per-source (see source_coverage_snapshots).",
 	},
 )
 
