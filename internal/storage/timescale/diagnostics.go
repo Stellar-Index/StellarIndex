@@ -442,15 +442,27 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 //	sep41_supply_events            — SEP-41 mint/burn/clawback per
 //	                                 ADR-0023; literal source
 //	                                 'sep41_supply'.
+//	soroswap_router_swaps          — soroswap-router ContractCall swaps
+//	                                 (migration 0049); literal source
+//	                                 'soroswap-router'.
+//	defindex_flows                 — defindex vault + strategy flows
+//	                                 (migration 0050, both layers);
+//	                                 literal source 'defindex'.
 //
-// Sources whose Phase A sink is log-only (soroswap-router, defindex)
-// have no storage table; the counter for those is bumped directly in
-// the sink case via Store.BumpSourceEntryCount, so they're picked up
-// in the steady-state bump path but NOT by this seed reconciliation.
-// A re-seed will RESET their counts to 0 because there's no table to
-// recompute from — until a per-protocol log-table lands or the sink
-// gains a dedicated tally hypertable, operators must NOT seed-reset
-// router/defindex counts.
+// The soroswap-router + defindex sinks are "log-only" in the sense that
+// they don't ride the trades/oracle_updates per-INSERT bump; instead the
+// sink calls Store.BumpSourceEntryCount(...,1) once per decoded event
+// (pipeline/sink.go). That per-event bump is NOT idempotent, so any
+// replay / re-derive that re-drives the sink double-counts them — a
+// KALE-class trap for the `entries` diagnostics column. The fix: BOTH
+// sinks now also persist one row per event to a countable hypertable
+// (soroswap_router_swaps / defindex_flows, migrations 0049/0050) with an
+// idempotent ON CONFLICT DO NOTHING insert, so the table COUNT is
+// replay-stable and equals the number of bumps. Folding those COUNTs into
+// this authoritative SET-reset gives them the same self-healing
+// reconciliation path as every other table-backed source — a re-seed now
+// CORRECTS their drift instead of zeroing it, so it is SAFE (and required
+// after a replay) to seed-reset router/defindex counts.
 func (s *Store) SeedSourceEntryCounts(ctx context.Context) (int64, error) {
 	const q = `
         INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
@@ -482,6 +494,13 @@ func (s *Store) SeedSourceEntryCounts(ctx context.Context) (int64, error) {
             SELECT 'sac_balances'       AS source, count(*) AS c FROM sac_balance_observations
             UNION ALL
             SELECT 'sep41_supply'       AS source, count(*) AS c FROM sep41_supply_events
+            UNION ALL
+            -- Log-only sinks (bumped 1/event, non-idempotently) that now
+            -- ALSO persist one idempotent row/event to a countable table,
+            -- so the COUNT is replay-stable and safe to SET-reset from.
+            SELECT 'soroswap-router'    AS source, count(*) AS c FROM soroswap_router_swaps
+            UNION ALL
+            SELECT 'defindex'           AS source, count(*) AS c FROM defindex_flows
         ) u
         GROUP BY source
         ON CONFLICT (source) DO UPDATE
@@ -503,8 +522,14 @@ func (s *Store) SeedSourceEntryCounts(ctx context.Context) (int64, error) {
 //   - per-table insert paths (trades, oracle_updates, blend_auctions,
 //     fx_quotes) — usually n = batch size after a multi-row INSERT.
 //   - log-only sinks (soroswap-router, defindex) — n = 1 per
-//     decoded event in the dispatcher → sink hand-off, since there's
-//     no Postgres table to seed-reconcile from.
+//     decoded event in the dispatcher → sink hand-off.
+//
+// The bump ADDs (it is NOT replay-safe on its own — re-driving the sink
+// over an already-ingested range double-counts). That drift is corrected
+// by [Store.SeedSourceEntryCounts], which SET-resets every source
+// (including soroswap-router + defindex) from its now-existing countable
+// table — so a replay's over-count is transient, reconciled on the next
+// seed.
 //
 // The bump is a single UPSERT — cheap enough for per-event use on
 // the low-volume log-only sinks (router + defindex emit handfuls
