@@ -1029,9 +1029,11 @@ or `write_error` rates indicate the storage layer needs investigation
 ### `stellarindex_aggregator_supply_refresh_total`
 
 Counter, labels `asset_key` + `outcome`. `outcome` ∈ (`ok` /
-`no_ledger` / `no_observation` / `compute_error` / `write_error`).
-`asset_key` is the `supply.AssetKey` form: `XLM`, `CODE:ISSUER`
-for classic credits, the bare contract C-strkey for SEP-41.
+`no_ledger` / `no_observation` / `compute_error` / `write_error` /
+`stale_component` / `missing_freshness` / `dormant` /
+`missing_baseline`). `asset_key` is the `supply.AssetKey` form:
+`XLM`, `CODE:ISSUER` for classic credits, the bare contract
+C-strkey for SEP-41.
 
 Supply-snapshot refresh outcomes per (asset_key, outcome) per
 refresh cycle (ADR-0011, ADR-0021, ADR-0022, ADR-0023). The
@@ -1053,6 +1055,12 @@ empty or missing entries — expected briefly post-deploy, alarming
 sustained. `no_ledger` fires before the indexer produces its
 first ingestion cursor; clears as soon as ingest catches up.
 `write_error` indicates the storage layer needs investigation.
+`missing_baseline` is a SEP-41 SAC-wrapper whose pre-Soroban opening
+balance hasn't been seeded — its Soroban-era-only total reads
+Σburn > Σmint (incident 2026-07-06); it is benign (excluded from
+`error_dominant`) and clears after `stellarindex-ops supply
+seed-sep41-genesis`. A negative total AFTER the baseline is seeded
+surfaces as `compute_error` (genuine inconsistency, pages).
 
 The `asset_key` label lets operators chart per-asset bootstrap
 progress + isolate failure modes per asset rather than chasing

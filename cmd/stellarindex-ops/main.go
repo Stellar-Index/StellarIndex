@@ -354,6 +354,16 @@ Subcommands:
                           keep the reserve reader on the static fallback
                           forever. Idempotent; the live observer
                           supersedes seeded rows on the next real change.
+  supply seed-sep41-genesis -config PATH [-ch-addr ADDR] [-genesis-ledger N] [-dry-run]
+                          Seed each [supply].watched_sep41_contracts
+                          contract's pre-Soroban (ledger < 50457424)
+                          per-kind opening balance into sep41_supply_rollup
+                          from the ClickHouse supply_flows lake (migration
+                          0088, incident 2026-07-06). Fixes SAC-wrappers
+                          issued before Soroban reading a negative
+                          Soroban-era-only total. Idempotent (baseline is
+                          SET, not added); Soroban-only contracts seed a
+                          zero baseline (served total unchanged).
   discovery list -config PATH [-since DUR] [-limit N]
                           List SEP-41 contracts auto-detected from the
                           event stream (the dispatcher's discovery
