@@ -68,6 +68,8 @@ func registerAppMetrics() {
 		DivergenceRefreshTotal,
 		TradeInsertsTotal,
 		TradeInsertOutcomeTotal,
+		TradeInsertRetriesTotal,
+		TradeInsertBufferDepth,
 		StreamPublishTotal,
 
 		PriceStalenessSeconds,
@@ -180,6 +182,12 @@ func registerAppMetricsTail() {
 	}
 	for _, outcome := range []string{"ok", "error"} {
 		SignupReaperRunsTotal.WithLabelValues(outcome)
+	}
+	// Bounded outcome set for the 2026-07-06 backpressure retry counter
+	// so the `trade_insert_backpressure` alert's rate() query reads a
+	// real zero (not "no data") before the first outage.
+	for _, outcome := range []string{"retry", "recovered", "abandoned"} {
+		TradeInsertRetriesTotal.WithLabelValues(outcome)
 	}
 }
 
@@ -1024,6 +1032,56 @@ var TradeInsertOutcomeTotal = prometheus.NewCounterVec(
 		Help: "Trade-insert outcomes per source. outcome=new when a fresh row landed; outcome=duplicate when ON CONFLICT DO NOTHING short-circuited (indicates cursor replay or stuck-tip).",
 	},
 	[]string{"source", "outcome"},
+)
+
+// TradeInsertRetriesTotal — counter of the trade sink's blocking
+// retry loop (2026-07-06 Postgres-outage fix), labelled by `outcome`:
+//
+//   - "retry"     — one backoff retry attempt after an infrastructure-
+//     classified insert failure (connection refused/reset, PG
+//     restarting, too-many-connections). Each attempt increments; a
+//     sustained nonzero rate means the served-tier write path is
+//     blocked and the on-chain ledger cursor is NOT advancing
+//     (backpressure holding, no data lost). The
+//     `trade_insert_backpressure` alert fires on this.
+//   - "recovered" — a previously-blocked insert (batch or row) finally
+//     landed after ≥1 retry. Pairs with "retry": a healthy recovery
+//     shows a burst of "retry" then one "recovered".
+//   - "abandoned" — a blocked insert gave up because the context was
+//     cancelled mid-retry (shutdown). On-chain rows are re-derivable
+//     from the CH lake (ADR-0034); the exact ledger range is logged at
+//     ERROR alongside this bump.
+//
+// Distinct from genuine drops (data-fault skips + external-buffer
+// overflow), which are counted on
+// [SourceInsertErrorsTotal]{kind="trade"|"dropped"} — see ADR-0041.
+var TradeInsertRetriesTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_trade_insert_retries_total",
+		Help: "Trade-sink blocking-retry events by outcome (retry|recovered|abandoned) — the 2026-07-06 Postgres-outage backpressure path.",
+	},
+	[]string{"outcome"},
+)
+
+// TradeInsertBufferDepth — gauge of the number of external
+// (CEX/FX) trades currently held in the bounded in-memory retry
+// buffer, waiting to land after an infrastructure-classified insert
+// failure (ADR-0041 / 2026-07-06 outage fix).
+//
+// External trades have no ledger cursor and are vendor-refillable, so
+// they are NOT allowed to block the pipeline: on an infra fault they
+// are buffered here and retried by a background goroutine. When the
+// buffer's bound is exceeded the OLDEST entry is dropped (counted on
+// [SourceInsertErrorsTotal]{kind="dropped"}). A depth that climbs and
+// stays high means Postgres has been unreachable long enough that
+// external price freshness is degrading. On-chain trades do NOT use
+// this buffer — they block-and-retry instead (cursor gating), so this
+// gauge is external-only.
+var TradeInsertBufferDepth = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_trade_insert_buffer_depth",
+		Help: "External (CEX/FX) trades currently held in the bounded retry buffer pending durable insert (ADR-0041).",
+	},
 )
 
 // StreamPublishTotal — per-stream counter of envelopes the API

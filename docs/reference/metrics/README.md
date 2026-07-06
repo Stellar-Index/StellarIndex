@@ -386,13 +386,23 @@ records (no-op upsert if already in DB).
 
 ### `stellarindex_source_insert_errors_total`
 
-Counter, labels `source`, `kind` (`trade` / `oracle` / `panic` / `unhandled`).
+Counter, labels `source`, `kind` (`trade` / `oracle` / `panic` /
+`unhandled` / `dropped`).
 
 `unhandled` fires when a source emits an event type the sink's
 type-switch doesn't recognise — usually a half-wired new source
 registered in `buildSources()` without a matching case in
 `handleOneEvent`. Silent drops would otherwise look like "metrics
 say we're ingesting" with empty tables.
+
+`dropped` (2026-07-06 outage / ADR-0041) counts external CEX/FX
+trades genuinely lost when the bounded retry buffer overflowed
+(drop-oldest) or a data fault couldn't be isolated — the
+vendor-refillable path. Infrastructure faults are NOT counted here:
+they retry with backpressure (see
+[`stellarindex_trade_insert_retries_total`](#stellarindex_trade_insert_retries_total)),
+so a firing `insert-errors` alert now means genuine loss (data fault
+or external overflow), not a transient outage.
 
 Events that failed to persist to the store. `panic` kind flags a
 recovered panic in the event-sink handler. A sustained rate signals
@@ -436,6 +446,48 @@ a cursor-replay loop or stuck-tip pattern produces a fast-growing
 `rate({outcome="new"}[5m]) == 0 AND rate({outcome="duplicate"}[5m]) > 0`
 to catch the live r1-2026-05-28 signature (157 SDEX insert
 attempts/min while the hypertable's `max(ts)` was 11 h old).
+
+### `stellarindex_trade_insert_retries_total`
+
+Counter, label `outcome` (`retry` | `recovered` | `abandoned`).
+
+The trade sink's blocking-retry path (2026-07-06 Postgres-outage
+fix, ADR-0041). Before this, an infrastructure fault
+(`connection refused` / PG restarting) made the sink DROP the write
+while the ledger cursor kept advancing; now it retries with
+backpressure instead.
+
+- `retry` — one backoff retry attempt after an infrastructure-
+  classified insert failure. **A sustained nonzero rate means the
+  served-tier write path is blocked and the on-chain ledger cursor is
+  NOT advancing** — data is held safely in memory, not lost. The
+  `trade_insert_backpressure` alert fires on this.
+- `recovered` — a previously-blocked insert (batch or row) landed
+  after ≥ 1 retry. A healthy recovery shows a burst of `retry` then
+  one `recovered`.
+- `abandoned` — a blocked insert gave up because the context was
+  cancelled mid-retry (shutdown). On-chain rows are re-derivable from
+  the CH lake (ADR-0034); the exact ledger range is logged at ERROR.
+
+Genuine drops (permanent data faults + external-buffer overflow) are
+NOT counted here — they land on
+[`stellarindex_source_insert_errors_total`](#stellarindex_source_insert_errors_total)
+(`kind=trade` / `kind=dropped`).
+
+### `stellarindex_trade_insert_buffer_depth`
+
+Gauge (no labels).
+
+Number of external (CEX/FX) trades currently held in the bounded
+in-memory retry buffer, waiting to land after an infrastructure fault
+(ADR-0041). External trades have no ledger cursor and are
+vendor-refillable, so they are buffered and retried asynchronously
+rather than blocking the pipeline; on overflow the OLDEST are dropped
+(counted on `stellarindex_source_insert_errors_total{kind="dropped"}`).
+On-chain trades do NOT use this buffer — they block-and-retry (cursor
+gating) — so this gauge is external-only. A depth that climbs and
+stays high means Postgres has been unreachable long enough that
+external price freshness is degrading.
 
 ### `stellarindex_stream_publish_total`
 
