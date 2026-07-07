@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"net/http"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
+	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
@@ -174,5 +176,56 @@ func TestLendingPools_NilSliceFromReaderMarshalsAsEmptyArray(t *testing.T) {
 	body, _ := readAll(resp)
 	if !strings.Contains(body, `"data":[]`) {
 		t.Errorf("expected `\"data\":[]`, got: %s", body)
+	}
+}
+
+// TestLendingPoolReserves_Watermark pins ADR-0041 Decision 4 on the
+// Blend per-reserve current-state read: `as_of_ledger` carries the
+// (cached) lake watermark, `flags.stale` fires when its close time
+// trails now beyond the threshold (10min here), and the exact reserve
+// amounts survive the disclosure add unchanged.
+func TestLendingPoolReserves_Watermark(t *testing.T) {
+	pool := mkCStrkey(t, 7)
+	asset := mkCStrkey(t, 20)
+	explorer := &stubExplorerReader{
+		reserves: []clickhouse.BlendReserveState{{
+			Pool:     pool,
+			Asset:    asset,
+			Decimals: 7,
+			Metrics: blend.ReserveMetrics{
+				SuppliedUnderlying: big.NewInt(1_000_000),
+				BorrowedUnderlying: big.NewInt(400_000),
+				UtilizationPct:     40,
+			},
+		}},
+	}
+	lending := &stubLendingReader{assets: []string{asset}}
+	srv := v1.New(v1.Options{
+		Explorer:      explorer,
+		Lending:       lending,
+		LakeWatermark: &wmStub{ledger: 63_500_000, closedAt: time.Now().Add(-10 * time.Minute)},
+	})
+	base := httpTestServer(t, srv).URL
+
+	resp := mustGet(t, base+"/v1/lending/pools/"+pool+"/reserves")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data  v1.LendingPoolReservesView `json:"data"`
+		Flags struct {
+			Stale bool `json:"stale"`
+		} `json:"flags"`
+	}
+	mustDecode(t, resp, &env)
+	if env.Data.AsOfLedger != 63_500_000 {
+		t.Errorf("as_of_ledger = %d, want 63500000", env.Data.AsOfLedger)
+	}
+	if !env.Flags.Stale {
+		t.Error("flags.stale should fire for a 10-minute-old watermark")
+	}
+	// The disclosure add must not perturb the exact i128 reserve figures.
+	if len(env.Data.Reserves) != 1 || env.Data.Reserves[0].Supplied != "1000000" || env.Data.Reserves[0].Borrowed != "400000" {
+		t.Errorf("reserves = %+v, want one reserve supplied=1000000 borrowed=400000", env.Data.Reserves)
 	}
 }

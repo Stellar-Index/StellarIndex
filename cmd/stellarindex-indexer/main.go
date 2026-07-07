@@ -458,19 +458,25 @@ func run(cfgPath string, dryRun bool) error {
 	metricsSrv := startMetricsServer(cfg.Obs, logger)
 
 	// ─── Sink goroutine ────────────────────────────────────────
-	// Sink mode depends on the projector config (ADR-0032 Phase 4):
-	//   - projector disabled OR persist_per_source=true →
-	//     SinkModeAll: write everything, parallel-mode with projector
-	//     if it's running.
-	//   - projector enabled AND persist_per_source=false →
-	//     SinkModeSkipProjected: skip Soroban-derived events so the
-	//     projector is sole writer for that subset; non-Soroban
-	//     events (sdex, external, band, supply observers) still
-	//     ride this path.
-	sinkMode := pipeline.SinkModeAll
-	if cfg.Ingestion.Projector.Enabled && !cfg.Ingestion.Projector.PersistPerSource {
-		sinkMode = pipeline.SinkModeSkipProjected
+	// Sink mode depends on the projector config (ADR-0032). See
+	// pipeline.SinkModeForProjector for the full truth table:
+	//   - projector disabled → SinkModeAll: events-goroutine writes
+	//     everything (only writer).
+	//   - projector enabled, persist_per_source=true → SinkModeSkipSoleWriter:
+	//     Phase-3 parallel for un-promoted sources, but the projector
+	//     owns the sole-writer domains (sep41) outright.
+	//   - projector enabled, persist_per_source=false → SinkModeSkipProjected:
+	//     Phase-4, projector is sole writer for all projected sources.
+	// Non-Soroban events (sdex, external, band, supply observers)
+	// always ride this path regardless of mode.
+	sinkMode := pipeline.SinkModeForProjector(cfg.Ingestion.Projector.Enabled, cfg.Ingestion.Projector.PersistPerSource)
+	switch sinkMode {
+	case pipeline.SinkModeSkipProjected:
 		logger.Info("dispatcher events-goroutine: SKIP-PROJECTED mode — projector is sole writer for Soroban-derived events (ADR-0032 Phase 4)")
+	case pipeline.SinkModeSkipSoleWriter:
+		logger.Info("dispatcher events-goroutine: SKIP-SOLE-WRITER mode — projector is sole writer for the sep41 domain; other projected sources double-write in Phase-3 parallel (ADR-0032 / F-1316)")
+	case pipeline.SinkModeAll:
+		// Projector disabled — events-goroutine writes every class.
 	}
 	events := make(chan consumer.Event, 256)
 	sinkDone := make(chan struct{})

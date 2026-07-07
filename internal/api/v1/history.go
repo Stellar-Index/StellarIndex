@@ -145,6 +145,16 @@ type TradeRow struct {
 	BaseAmount  string    `json:"base_amount"`
 	QuoteAmount string    `json:"quote_amount"`
 	Price       string    `json:"price"` // quote/base as decimal
+	// BaseDecimals / QuoteDecimals are the smallest-unit scale for each
+	// side's amount: divide base_amount by 10^base_decimals (and quote by
+	// 10^quote_decimals) to get whole-asset units. 7 for native/classic/
+	// fiat; the token contract's declared decimals() for Soroban tokens
+	// (resolved once per pair per request, so a market pairing a 6-decimal
+	// Soroban token no longer mis-scales at a hardcoded 7). Populated on
+	// /v1/history; omitted on /v1/observations, whose rows don't carry a
+	// per-side scale. Never 0 in practice — omitempty drops the unset case.
+	BaseDecimals  int `json:"base_decimals,omitempty"`
+	QuoteDecimals int `json:"quote_decimals,omitempty"`
 	// RoutedVia is the router/aggregator whose same-tx invocation
 	// drove this trade (routers.name, e.g. "soroswap-router").
 	// Omitted for direct trades — and for very recent routed trades
@@ -281,9 +291,17 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 		return
 	}
 
+	// Per-side decimals are constant across the page (base+quote are
+	// fixed request params), so resolve each side ONCE — not per row —
+	// then stamp onto every row. Fixes the markets pair page hardcoding 7
+	// for Soroban tokens that declare a different scale.
+	baseDec := s.resolveAssetDecimals(hCtx, base)
+	quoteDec := s.resolveAssetDecimals(hCtx, quote)
 	rows := make([]TradeRow, len(trades))
 	for i, t := range trades {
 		rows[i] = tradeRowFrom(t, 10)
+		rows[i].BaseDecimals = baseDec
+		rows[i].QuoteDecimals = quoteDec
 	}
 
 	// If the page is full, emit a next-cursor pointing at the last

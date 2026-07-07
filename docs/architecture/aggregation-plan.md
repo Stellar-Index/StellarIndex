@@ -1,12 +1,17 @@
 ---
 title: Aggregation plan — the policy chain from raw trade to served price
-last_verified: 2026-05-03
+last_verified: 2026-07-06
 status: binding
 ---
 
 # Aggregation plan
 
-**Every served price flows through one path:**
+**There are TWO serving paths, not one.** The filtered orchestrator path
+below is the primary product; `/v1/price` has a second, direct read of the
+`prices_1m` continuous aggregate that must be understood alongside it (see
+[Two serving paths](#two-serving-paths--and-the-guard-that-keeps-the-direct-one-honest)).
+
+The filtered orchestrator path:
 
 ```text
 Timescale `trades` hypertable    ← decoders write here (per ingest-pipeline.md)
@@ -21,7 +26,8 @@ internal/aggregate/orchestrator/ ← tick loop, one (pair, window) per call
     │                  the target)
     │   2. class filter (default: drop non-ClassExchange rows)
     │   3. σ-threshold outlier filter (default 4σ)
-    │   4. VWAP via internal/aggregate/vwap.go
+    │   4. min-USD-volume gate + freeze value-protection
+    │   5. VWAP via internal/aggregate/vwap.go
     │
     ▼
 Redis  ← key `vwap:<base>:<quote>:<window-seconds>`, TTL = window
@@ -36,6 +42,46 @@ HTTP consumer
 `/v1/sources` is the read-only sibling: it surfaces the same
 `external.Registry` the class filter consults so API consumers can
 see which venues contribute to VWAP and which are visible-only.
+
+## Two serving paths — and the guard that keeps the direct one honest
+
+The diagram above is the path for the aggregator's **configured** pair set
+(the headline fiat pairs, triangulated cross-pairs, and stablecoin-proxy
+rewrites). Those land in Redis already filtered, and `/v1/price` serves
+them from cache.
+
+But `/v1/price` also does a **direct** read: `LatestClosedVWAP1mForPair`
+returns the most-recent CLOSED `prices_1m` bucket for the requested pair.
+That CAGG is a bare `Σ(quote)/Σ(base)` per bucket
+(`migrations/0002…`) — it does **not** pass through the class / σ-outlier /
+min-USD-volume / freeze policy chain above. A pair with **no** `prices_1m`
+rows at all — a pure-synthetic fiat pair like `native/fiat:USD` (SDEX
+native trades are quoted in issuer-stablecoins, never `fiat:USD`) — misses
+this read and falls through to the filtered Redis value. But any pair with
+**real** `prices_1m` rows is served straight off that raw CAGG bucket, and
+that set is broader than "obscure DEX pairs": it includes directly-quoted
+DEX/CEX pairs (a Soroban token priced in `USDC-GA5Z…`,
+`crypto:BTC/crypto:USDT`) **and** headline pairs with a real fiat CEX
+market (`crypto:XLM/fiat:USD` via Kraken/Coinbase real XLM/USD books, which
+on r1 do populate `prices_1m`).
+
+Unfiltered, a single fat-finger / manipulation trade in the served minute
+would corrupt that price with `stale=false`, no outlier rejection, no
+volume floor. So the direct read is wrapped in a **serving-sanity guard**
+(`internal/aggregate.GuardServedVWAP`, wired in
+`cmd/stellarindex-api storePriceReader.guardServedVWAP1m`): it compares the
+candidate bucket's VWAP against a robust bound (the UNION of a wide ratio
+band and a MAD band) over the pair's recent trailing closed buckets, and
+when the candidate is grossly off it serves the newest clean trailing
+bucket (last-known-good) instead. The guard is tuned **conservatively** —
+it only ever catches gross, order-of-magnitude-ish deviation and never a
+legitimately volatile-but-real move (a stablecoin depeg is served, not
+hidden); all math is exact `*big.Rat` (ADR-0003). On a healthy bucket it is
+a pure **pass-through** — a liquid pair like `crypto:XLM/fiat:USD` sits
+tightly clustered and always passes, so its served value is byte-identical
+to pre-guard behaviour — and a pair with too little history to establish a
+robust baseline fails **open** (serves the candidate) rather than risk
+dropping a real price.
 
 ---
 
@@ -238,6 +284,7 @@ orchestrator's `Config` or to the surrounding contracts.
 - [`internal/aggregate/orchestrator/orchestrator.go`](../../internal/aggregate/orchestrator/orchestrator.go) — Tick loop + filter chain
 - [`internal/aggregate/stablecoin.go`](../../internal/aggregate/stablecoin.go) — `FiatProxy` / `ProxyPair` / `ExpandTargetPair`
 - [`internal/aggregate/outliers.go`](../../internal/aggregate/outliers.go) — σ-threshold filter
+- [`internal/aggregate/served_guard.go`](../../internal/aggregate/served_guard.go) — `/v1/price` direct-read serving-sanity guard (robust ratio + MAD band)
 - [`internal/sources/external/registry.go`](../../internal/sources/external/registry.go) — Source-class registry (single source of truth)
 - [`internal/obs/metrics.go`](../../internal/obs/metrics.go) — Aggregator counters
 - [`deploy/monitoring/rules/aggregator.yml`](../../deploy/monitoring/rules/aggregator.yml) — Prometheus rules

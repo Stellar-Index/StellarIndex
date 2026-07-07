@@ -132,11 +132,17 @@ func (s *Store) ListProtocolContracts(ctx context.Context, source string) ([]Pro
 // projectionContractColumn maps a protocol source to the (table, column) in
 // its PROJECTED table that holds the per-instance contract id. Used as the
 // fallback roster for protocols not seeded into protocol_contracts (only blend
-// is today) — defindex/phoenix/comet/cctp/rozo all have a per-contract
-// projected table. Aquarius + sdex are pair/op-keyed (no per-contract column),
-// soroswap uses soroswap_pairs, blend uses the registry — those return ok=false
-// and fall back to their own path. The table+column are HARD-CODED here (never
-// from the request), so the formatted query carries no injected SQL.
+// is today) — defindex/phoenix/comet/cctp/rozo/aquarius all have a per-contract
+// projected table. sdex is op-keyed (no contract, N/A), soroswap uses
+// soroswap_pairs, blend uses the registry — those return ok=false and fall back
+// to their own path. The table+column are HARD-CODED here (never from the
+// request), so the formatted query carries no injected SQL.
+//
+// Aquarius was previously listed as "pair-keyed, no per-contract column" and so
+// its /v1/protocols/aquarius roster read 0 contracts despite being the most
+// active AMM (14.9k events/24h, 300+ pools). aquarius_liquidity (migration 0089)
+// carries the emitting POOL contract_id AND the pool's token identities, so
+// aquarius now has a per-pool roster source that also renders a pair (2026-07-07, #91).
 func projectionContractColumn(source string) (table, column string, ok bool) {
 	switch source {
 	case "defindex":
@@ -149,6 +155,11 @@ func projectionContractColumn(source string) (table, column string, ok bool) {
 		return "phoenix_liquidity", "pool", true
 	case "comet":
 		return "comet_liquidity", "contract_id", true
+	case "aquarius":
+		// aquarius_liquidity carries the pool's token identities (topics),
+		// so a roster built from it always has a PoolTokens pair to render;
+		// every Aquarius pool emits a deposit at creation, so it is complete.
+		return "aquarius_liquidity", "contract_id", true
 	}
 	return "", "", false
 }
@@ -161,6 +172,15 @@ func projectionContractColumn(source string) (table, column string, ok bool) {
 // (caller keeps its registry/pairs path). Capped so a pathological table can't
 // blow the response.
 func (s *Store) ListSourceContractsFromProjection(ctx context.Context, source string) ([]string, error) {
+	// Oracle sources (band/reflector-*/redstone) share ONE projected table,
+	// oracle_updates, so the generic unfiltered DISTINCT below would return
+	// EVERY oracle's contracts for each source. Their pinned contracts emit
+	// into oracle_updates.contract_id — scope by the source column (#91,
+	// 2026-07-07: band/reflector/redstone previously read 0 contracts).
+	switch source {
+	case "band", "reflector-cex", "reflector-dex", "reflector-fx", "redstone":
+		return s.listContractsFilteredBySource(ctx, "oracle_updates", "contract_id", source)
+	}
 	table, column, ok := projectionContractColumn(source)
 	if !ok {
 		return nil, nil
@@ -183,6 +203,34 @@ func (s *Store) ListSourceContractsFromProjection(ctx context.Context, source st
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("timescale: ListSourceContractsFromProjection %s rows: %w", source, err)
+	}
+	return out, nil
+}
+
+// listContractsFilteredBySource is the source-SCOPED projection roster, for
+// tables that hold more than one source's rows (oracle_updates — band,
+// reflector-cex/dex/fx, redstone all land there). `table` and `column` are
+// caller constants (never the request); `source` binds as a parameter. Returns
+// the DISTINCT contract ids that source emitted, capped like the unscoped path.
+func (s *Store) listContractsFilteredBySource(ctx context.Context, table, column, source string) ([]string, error) {
+	// #nosec G201 -- table+column are hard-coded caller constants, never the
+	// request; source is a bind parameter.
+	q := fmt.Sprintf(`SELECT DISTINCT %s FROM %s WHERE source = $1 AND %s IS NOT NULL LIMIT 5000`, column, table, column)
+	rows, err := s.db.QueryContext(ctx, q, source)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: listContractsFilteredBySource %s: %w", source, err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]string, 0, 8)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("timescale: listContractsFilteredBySource %s scan: %w", source, err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: listContractsFilteredBySource %s rows: %w", source, err)
 	}
 	return out, nil
 }

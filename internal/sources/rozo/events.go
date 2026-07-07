@@ -72,17 +72,24 @@ var MainnetRelayerAccounts = []string{
 	"GB4CLV3UMXDPFP5OQJQKUCWPRJXPXPJSHTUKZEJLAIZFZR7UHYAQ6EB4",
 }
 
-// Event names — these are the `symbol_short!()` literals from
-// `v1/stellar/payment/src/lib.rs`:
-//
-//	const PAYMENT: Symbol = symbol_short!("payment");
-//	const FLUSH:   Symbol = symbol_short!("flush");
-//
-// `symbol_short!()` caps at 9 chars; both fit, so on-wire they
-// serialize as ScSymbol (not the long-form ScString).
+// Event kinds — the internal classify() labels routing to the right
+// decoder. The contract source (`v1/stellar/payment/src/lib.rs`)
+// suggested `symbol_short!("payment")` / `symbol_short!("flush")`, but
+// the DEPLOYED mainnet contract emits the full-length ScSymbols
+// "payment_event" / "flush_event" (13/11 chars — too long for
+// symbol_short!). Confirmed against the lake 2026-07-07: the three
+// gated Rozo contracts emit topic_0_sym="payment_event" (393 events),
+// zero as "payment" — so the original short-form match never fired and
+// rozo_events was empty. We match BOTH forms: the long form is what's
+// live, the short form is kept for forward-safety (contracts upgrade
+// in place; a future/other version could emit either).
 const (
 	EventPayment = "payment"
 	EventFlush   = "flush"
+
+	// The actual on-wire topic[0] symbols the deployed contract emits.
+	symPaymentEvent = "payment_event"
+	symFlushEvent   = "flush_event"
 )
 
 // Topic-prefix base64 strings (topic[0]). Pre-computed at package
@@ -90,8 +97,12 @@ const (
 // a single string-equal comparison rather than a full SCVal
 // decode per event.
 var (
-	TopicSymbolPayment = scval.MustEncodeSymbol(EventPayment) // topic[0] of payment events
-	TopicSymbolFlush   = scval.MustEncodeSymbol(EventFlush)   // topic[0] of flush events
+	TopicSymbolPayment = scval.MustEncodeSymbol(EventPayment) // legacy short form (never observed live)
+	TopicSymbolFlush   = scval.MustEncodeSymbol(EventFlush)   // legacy short form (never observed live)
+
+	// The live long-form topics — what the deployed contract emits.
+	TopicSymbolPaymentEvent = scval.MustEncodeSymbol(symPaymentEvent) // topic[0] of payment events (live)
+	TopicSymbolFlushEvent   = scval.MustEncodeSymbol(symFlushEvent)   // topic[0] of flush events (live)
 )
 
 // Payment is the canonical Go-side projection of one

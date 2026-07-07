@@ -32,6 +32,16 @@ type SEP41SupplyStore interface {
 	// observations yet (gate-skip signal). Optional: returning
 	// (0, nil) preserves legacy permissive behaviour.
 	MinSEP41ComponentLedger(ctx context.Context, contractID string, asOfLedger uint32) (uint32, error)
+
+	// SEP41GenesisBaselineSeeded reports whether a pre-Soroban
+	// genesis baseline has been seeded for the contract (migration
+	// 0088, incident 2026-07-06). Feeds the computer's negative-total
+	// guard so a not-yet-seeded SAC-wrapper's negative Soroban-era
+	// total is reported as the benign `missing_baseline` outcome
+	// rather than a paging `compute_error`. Returning (false, nil)
+	// when unimplemented preserves the pre-0088 posture (negative
+	// total → ErrNegativeTotalMissingBaseline).
+	SEP41GenesisBaselineSeeded(ctx context.Context, contractID string) (bool, error)
 }
 
 // SEP41KindTotals mirrors the timescale.SEP41KindTotals shape
@@ -110,6 +120,15 @@ func (r *StorageSEP41SupplyReader) SEP41SupplyAt(ctx context.Context, asset cano
 		minLedger = 0
 	}
 
+	// Migration 0088 / incident 2026-07-06: whether the pre-Soroban
+	// genesis baseline has been seeded. Non-fatal on query error —
+	// treat as not-seeded (the guard then routes a negative total to
+	// the benign `missing_baseline` outcome, the safe default).
+	genesisSeeded, err := r.store.SEP41GenesisBaselineSeeded(ctx, contractID)
+	if err != nil {
+		genesisSeeded = false
+	}
+
 	return SEP41SupplyComponents{
 		MintTotal:              totals.Mint,
 		BurnTotal:              totals.Burn,
@@ -118,6 +137,7 @@ func (r *StorageSEP41SupplyReader) SEP41SupplyAt(ctx context.Context, asset cano
 		LockedAccountBalances:  lockedAccounts,
 		LockedContractBalances: lockedContracts,
 		MinComponentLedger:     minLedger,
+		GenesisBaselineSeeded:  genesisSeeded,
 	}, nil
 }
 
