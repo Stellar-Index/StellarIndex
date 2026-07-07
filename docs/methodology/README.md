@@ -10,6 +10,7 @@ excluded.
 |---|---|
 | [vwap-aggregation.md](vwap-aggregation.md) | VWAP computation, the source-class policy (only exchange trades vote), stablecoin fiat-proxy late-binding, σ-outlier filtering, triangulation, closed-bucket serving, and the two freshness contracts (`/v1/price/tip` ≤5s vs `/v1/price` 30–150s) |
 | [twap-ohlc.md](twap-ohlc.md) | TWAP + OHLC computation and the "no trades in window" contract (404, not a fabricated/LKG value) |
+| [xlm-circulating-supply.md](xlm-circulating-supply.md) | How XLM `circulating_supply` / `market_cap_usd` are computed (total − SDF non-circulating holdings), and the live reconciliation showing 0.03% agreement with CoinGecko + the Stellar Network Dashboard |
 
 Related, non-public references:
 
