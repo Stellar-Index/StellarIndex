@@ -244,6 +244,7 @@ stellarindex_enabled_sources:
   - "band"
   - "blend"
   - "blend_backstop"
+  - "sorocredit"
   - "sdex"
   - "cctp"
   - "rozo"
