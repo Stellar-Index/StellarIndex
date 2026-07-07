@@ -24,6 +24,12 @@ against.
 - Monitoring: `stellarindex_external_fx_last_quote_unix{source}` liveness gauge + a
   staleness alert on the active fiat-FX feed (`massive`), so a dead FX feed is caught
   before fiat-pair triangulation silently breaks at the 7-day lookback + a runbook.
+- Supply-divergence cross-check: the aggregator compares our served `circulating_supply`
+  against the Stellar Network Dashboard (XLM, credential-free) and — with a CoinGecko Pro
+  key — CoinGecko, emitting `stellarindex_supply_divergence_ratio` + `_total{outcome}` and
+  the `stellarindex_supply_divergence_high` alert (>1%, well above the ~0.03% XLM Fee-Pool
+  noise floor). Off by default via `[divergence.supply]`; degrades to `no_reference` (never
+  a false alarm) when a source is dark. Runbook + methodology-doc-authoritative guidance.
 - Decimals-assumption guard: the aggregator sweeps recently-DEX-traded Soroban tokens and
   raises `stellarindex_dex_trade_nonstandard_decimals_total` (+ alert, both rule trees, a
   runbook) when a DEX trade lands for a token whose on-chain `decimals()` != 7 — the served
