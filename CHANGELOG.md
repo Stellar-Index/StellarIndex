@@ -86,6 +86,16 @@ against.
   incremental-checkpoint double-fold (checkpoint vs authoritative same-source re-sum).
 
 ### Fixed
+- **Completeness recognition blind spot (ADR-0033).** The recognition audit (Claim 2a — "every
+  on-chain topic shape is one a decoder handles") was scoped to the incremental `--from` window
+  when run incrementally, so a low-volume source's rare wrong-topic event slipped through and
+  never flipped `recognition_ok` — how rozo's `payment_event` (393 events over ~2 months) read
+  `complete=true` while capturing nothing. Recognition now always scans from genesis (a cheap
+  ClickHouse distinct-shapes GROUP BY; only the expensive projection reconcile stays
+  incremental). Consequence: the next completeness compute will surface previously-hidden
+  admin/config topic gaps (e.g. cctp's `ownership_transfer`/`admin_changed`) as
+  `recognition_ok=false` — informative, not a regression; resolve by adding the decoder arm or
+  allowlisting the topic.
 - **Rozo captured nothing (topic mismatch).** The rozo decoder matched only the short-form
   `symbol_short!("payment")`/`"flush"` topics, but the deployed mainnet contract emits the
   full-length ScSymbols `"payment_event"`/`"flush_event"` — so `Classify` never fired and
