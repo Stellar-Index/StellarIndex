@@ -56,6 +56,7 @@ date, so a team can tell us if a contract is missing or mis-attributed.
 |---|---|---|---|
 | Soroswap | lake deploy-graph | ✅ Gated (4 factories) | [soroswap.md](soroswap.md) |
 | Blend | lake deploy-graph | ✅ Gated (2 factories, 27 pools) — lending, excluded from VWAP | [blend.md](blend.md) |
+| SoroCredit | single trust-root | ✅ Gated (1 contract + child collateral positions) — consumer USDC credit/CDP, no pricing signal | [sorocredit.md](sorocredit.md) |
 | Aquarius | router-anchored | ✅ Gated (router + 332 pools, 2026-07-05) | [aquarius.md](aquarius.md) |
 | Phoenix | RPC view (pre-lake) | ✅ Gated code-side (curated set, 2026-07-02); operator rollout pending | [phoenix.md](phoenix.md) |
 | DeFindex | multi-proof classification | ✅ Gated (curated 85 vaults + 16 strategies, 4 factories, 2026-07-05) | [defindex.md](defindex.md) |
