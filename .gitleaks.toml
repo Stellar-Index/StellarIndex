@@ -172,6 +172,14 @@ paths = [
   '''docs/audit-2026-05-12-codex/evidence/cross-file-interactions\.md''',
 ]
 
+[[rules.allowlists]]
+description = "Test-only Stellar C-strkey / G-strkey fixtures (synthetic pool / token / collateral contract IDs + account IDs) used by the orphaned-analytics bespoke-surfacing storage integration tests (sorocredit credit tables, comet/phoenix liquidity-flow depth, phoenix stake, soroswap skim). Deterministic public ledger entries (contract IDs are the hash of deployer + WASM) / public account IDs, not credentials — bare strkeys trip gitleaks' generic-api-key entropy heuristic. Same rationale as the aquarius/comet/phoenix decoder-fixture + supply allowlists above."
+paths = [
+  '''test/integration/sorocredit_bespoke_storage_test\.go''',
+  '''test/integration/dex_liquidity_depth_storage_test\.go''',
+  '''test/integration/blend_emissions_bespoke_storage_test\.go''',
+]
+
 # ── curl-auth-header (default rule) ─────────────────────────────────
 # The default ruleset flags any `curl -H "Authorization: Bearer …"`
 # string. The explorer API-docs page embeds exactly that as a usage
