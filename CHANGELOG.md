@@ -22,8 +22,7 @@ against.
   `credit_statements`, `credit_settlements`, `credit_events`); all 7 event types decoded
   from real lake fixtures; ADR-0035 childgate; projector is the sole writer. Its on-wire
   `Liquidation` events are decoded as **scheduled settlements** (not distress — verified
-  ~1:1 with statements, single recurring keeper). Explorer-scope; no pricing signal;
-  `BackfillSafe:false` pending a WASM-history audit.
+  ~1:1 with statements, single recurring keeper). Explorer-scope; no pricing signal.
 - `/v1/assets` listing rows carry `unverified_ticker_collision` (bool) so clients can
   distinguish a same-ticker impersonator from the verified asset (OpenAPI 1.2.0 → 1.3.0).
 - Phoenix: decode the new Map-body swap event (single `Symbol("swap")` event, `ScvMap`
@@ -136,6 +135,10 @@ against.
   headline price on `/v1/assets/{slug}` instead of null.
 
 ### Changed
+- `sorocredit`: WASM-history audit complete — `BackfillSafe` flipped `false` → `true`.
+  Lake-direct audit (ADR-0034): the main contract has run a single instance WASM with no
+  executable change, and all 7 event types keep one invariant on-wire schema across the
+  contract's whole life, so historical `projector-replay` is safe from genesis (61,620,822).
 - Docs: corrected the `outlier_sigma_threshold` config description (mean+stdev per
   window, not rolling median); filled the protocol-verification (`docs/protocols/`) and
   pricing-methodology (`docs/methodology/`) gaps against actual code.
@@ -146,6 +149,13 @@ against.
   `genesis(<boundary) ⊕ Soroban(>=boundary)` fold at the exact boundary ledger.
 
 ### Security
+- **SEP-10 replay guard fails loud, not open.** If SEP-10 auth is configured but Redis is
+  absent at startup, the API now refuses to start instead of silently running the validator
+  with no replay protection (a captured signed challenge XDR would otherwise be replayable
+  for the full `ChallengeTTL` window). Very-low-exploitability defense-in-depth (Redis is
+  always present in production) — from the 2026-07-07 public-surface security audit, which
+  otherwise found the API + auth surface clean (no injection / IDOR / SSRF / rate-limit
+  bypass / secret leakage).
 - Dashboard-minted API keys: the per-key `monthly_quota` is now clamped at mint to the
   account's cap (operator `monthly_request_quota_override` if set, else the tier ceiling),
   and the auth cascade enforces `min(per-key, account-override)` so the operator cap is a
