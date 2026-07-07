@@ -54,6 +54,13 @@ against.
   incremental-checkpoint double-fold (checkpoint vs authoritative same-source re-sum).
 
 ### Fixed
+- **Oracle (reflector-dex).** Reflector's Stellar-DEX oracle denominates in USD, but the
+  decoder hardcoded XLM as the quote — so all 41 of its assets carried the wrong denominator
+  (confirmed the base is the USDC SAC via the contract's SEP-40 `base()` method). Now quotes
+  `fiat:USD`. Existing `oracle_updates` rows need a re-label/re-derive to correct.
+- **Oracle (redstone MXNe).** MXNe was served ~302× too high — RedStone publishes it as
+  USDMXN (pesos-per-USD); the decoder now reciprocates it to MXNe-in-USD (~0.0575), consistent
+  with every other currency feed. (Only MXNe was affected; all 19 feeds audited.)
 - **Phoenix pricing (Critical).** The Phoenix swap decoder set `QuoteAmount` to
   `actual_received_amount`, which the pool contract emits as the swap's *input* (equal
   to `offer_amount`), not the taker's *output* — so every Phoenix trade had
