@@ -545,7 +545,7 @@ function ContractRoster({
     return { factories: f, instances: i };
   }, [contracts, sortKey]);
 
-  const hasTokens = contracts.some((c) => c.token0 || c.token1);
+  const hasTokens = contracts.some((c) => c.pair || c.token0 || c.token1);
 
   // Long instance lists collapse to the top slice behind a "+N more" expander.
   // Factories always render (there are few and they anchor the protocol).
@@ -624,7 +624,16 @@ function ContractRoster({
                 </td>
                 {hasTokens && (
                   <td className="px-4 py-2">
-                    {c.token0 || c.token1 ? (
+                    {c.pair ? (
+                      // Human asset pair ("XLM/USDC") prominent; the raw token
+                      // contracts hang off the tooltip for the on-chain reader.
+                      <span
+                        className="font-medium text-ink-body"
+                        title={(c.tokens ?? []).join(' · ')}
+                      >
+                        {c.pair}
+                      </span>
+                    ) : c.token0 || c.token1 ? (
                       <span className="font-mono text-[11px] text-ink-muted">
                         {shortId(c.token0)} / {shortId(c.token1)}
                       </span>

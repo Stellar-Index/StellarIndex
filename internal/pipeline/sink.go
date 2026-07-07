@@ -29,6 +29,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/sources/sdex"
 	sep41_supply "github.com/StellarIndex/stellar-index/internal/sources/sep41_supply"
 	sep41_transfers "github.com/StellarIndex/stellar-index/internal/sources/sep41_transfers"
+	"github.com/StellarIndex/stellar-index/internal/sources/sorocredit"
 	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
 	soroswap_router "github.com/StellarIndex/stellar-index/internal/sources/soroswap_router"
 	"github.com/StellarIndex/stellar-index/internal/sources/trustlines"
@@ -50,12 +51,14 @@ import (
 type SinkMode int
 
 const (
-	// SinkModeAll writes every consumer.Event the dispatcher emits.
-	// The projector ALWAYS uses this mode (it's the sole writer for
-	// the Soroban-derived subset, so it must persist them).
-	// Pre-Phase-4 the dispatcher's events-goroutine also uses this
-	// mode (parallel write with projector, ON CONFLICT DO NOTHING
-	// absorbs duplicates).
+	// SinkModeAll writes every consumer.Event the dispatcher emits —
+	// nothing is skipped. Used when the projector is NOT running: the
+	// dispatcher's events-goroutine is then the only writer, so it must
+	// persist every class (including sep41). `stellarindex-ops backfill`
+	// also uses this mode (the projector never runs there). When the
+	// projector IS enabled the events-goroutine instead uses
+	// [SinkModeSkipSoleWriter] (Phase-3) or [SinkModeSkipProjected]
+	// (Phase-4) — see [SinkModeForProjector].
 	SinkModeAll SinkMode = iota
 
 	// SinkModeSkipProjected skips Soroban-derived events the
@@ -64,7 +67,62 @@ const (
 	// owns Soroban-derived writes outright; the events-goroutine
 	// continues handling sdex / external / band / supply observers.
 	SinkModeSkipProjected
+
+	// SinkModeSkipSoleWriter skips ONLY the events whose domain the
+	// projector has EARNED sole-writer status for (see
+	// [IsSoleWriterProjected]) — currently just the sep41 domain
+	// (F-1316 / TASK #16b). It's the Phase-3 parallel mode for every
+	// OTHER projected source (those still double-write for the
+	// duplicate-absorbing ON CONFLICT soak) while the promoted
+	// sole-writer domains are owned by the projector outright — so
+	// they never double-write and, crucially, never depend on the
+	// `PersistPerSource` flag's value (closing the config foot-gun
+	// where a mis-set flag silently dropped sep41 rows). The
+	// events-goroutine still writes sdex / external / band / supply
+	// observers, exactly as in [SinkModeSkipProjected].
+	SinkModeSkipSoleWriter
 )
+
+// SinkModeForProjector selects the dispatcher events-goroutine's sink
+// mode from the projector config booleans. Extracted here (rather than
+// inlined in cmd/stellarindex-indexer) so the foot-gun-closure
+// invariant is unit-testable: for EVERY combination of these two
+// booleans, a sep41 event is written exactly once (see
+// TestSinkModeForProjector_Sep41SoleWriterInvariant).
+//
+//   - projector disabled → SinkModeAll: the events-goroutine is the
+//     ONLY writer, so it must persist every class (including sep41).
+//   - projector enabled, persist_per_source=true → SinkModeSkipSoleWriter:
+//     Phase-3 parallel for un-promoted sources, but the projector owns
+//     the sole-writer domains (sep41) outright — the events-goroutine
+//     skips them so they are never double-written and never at risk of
+//     the flag being flipped.
+//   - projector enabled, persist_per_source=false → SinkModeSkipProjected:
+//     Phase-4, projector is sole writer for ALL projected sources.
+func SinkModeForProjector(projectorEnabled, persistPerSource bool) SinkMode {
+	if !projectorEnabled {
+		return SinkModeAll
+	}
+	if persistPerSource {
+		return SinkModeSkipSoleWriter
+	}
+	return SinkModeSkipProjected
+}
+
+// skipInSink reports whether the dispatcher's events-goroutine must
+// SKIP writing ev under mode because a running projector owns the
+// write. The single source of truth for the two drain loops
+// (persistWorker + drainBufferedEvents) so they can never disagree.
+func skipInSink(ev consumer.Event, mode SinkMode) bool {
+	switch mode {
+	case SinkModeSkipProjected:
+		return IsProjectedEvent(ev)
+	case SinkModeSkipSoleWriter:
+		return IsSoleWriterProjected(ev)
+	default: // SinkModeAll
+		return false
+	}
+}
 
 // PersistEvents drains `in` and writes each event to its hypertable
 // via the supplied store. Returns when ctx is canceled and the
@@ -119,15 +177,36 @@ const (
 //
 // `mode` semantics unchanged from the single-goroutine version.
 func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.Store, in <-chan consumer.Event, mode SinkMode) {
+	// Bounded async retry buffer for external (CEX/FX) trades that hit
+	// an infrastructure fault (ADR-0041 / 2026-07-06 Postgres outage).
+	// On-chain trades block-and-retry instead (cursor gating); external
+	// trades — no cursor, vendor-refillable — buffer here and drop-oldest
+	// under sustained overflow so they never block the pipeline. A nil
+	// store (unit tests hitting only the default/unhandled path) skips
+	// the buffer + its goroutine entirely.
+	var extBuf *externalRetryBuffer
+	var bufWG sync.WaitGroup
+	if store != nil {
+		extBuf = newExternalRetryBuffer(store, logger, externalRetryBufferMaxDepth)
+		bufWG.Add(1)
+		go func() {
+			defer bufWG.Done()
+			extBuf.run(ctx)
+		}()
+	}
+
 	var wg sync.WaitGroup
 	for i := 0; i < PersistWorkers; i++ {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			persistWorker(ctx, logger, store, in, mode, workerID)
+			persistWorker(ctx, logger, store, in, mode, workerID, extBuf)
 		}(i)
 	}
 	wg.Wait()
+	// Workers have drained + block-retried their buffers; let the
+	// external buffer's background retrier finish its final drain.
+	bufWG.Wait()
 }
 
 // PersistWorkers is the count of concurrent drain goroutines run by
@@ -140,25 +219,25 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 const PersistWorkers = 8
 
 //nolint:gocognit,contextcheck // batched-drain loop has natural fan-out: ctx.Done, ticker, channel — splitting hurts readability of the flush invariants. The shutdown flush intentionally uses a fresh context (parent is canceled); see flushShutdown.
-func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.Store, in <-chan consumer.Event, mode SinkMode, workerID int) {
+func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.Store, in <-chan consumer.Event, mode SinkMode, workerID int, extBuf *externalRetryBuffer) {
 	tradeBuf := make([]canonical.Trade, 0, tradeBatchSize)
 	flushTicker := time.NewTicker(tradeBatchFlushInterval)
 	defer flushTicker.Stop()
 
-	flush := func(fctx context.Context) {
+	// flushWith writes the buffered batch through the resilient sink.
+	// buf routes external trades to the async retry buffer; passing nil
+	// (shutdown paths) makes external trades block-and-retry within the
+	// bounded shutdown context instead, since the buffer's background
+	// retrier is winding down (2026-07-06 outage fix).
+	flushWith := func(fctx context.Context, buf *externalRetryBuffer) {
 		if len(tradeBuf) == 0 {
 			return
 		}
 		batch := tradeBuf
 		tradeBuf = make([]canonical.Trade, 0, tradeBatchSize)
-		if err := store.BatchInsertTrades(fctx, batch); err != nil {
-			logger.Warn("batch trade insert failed; falling back per-row",
-				"worker", workerID, "batch_size", len(batch), "err", err)
-			for _, t := range batch {
-				persistTrade(fctx, logger, store, t)
-			}
-		}
+		flushTradeBatch(fctx, logger, store, buf, batch, workerID)
 	}
+	flush := func(fctx context.Context) { flushWith(fctx, extBuf) }
 
 	// flushShutdown flushes this worker's in-memory tradeBuf on the
 	// shutdown paths (parent ctx canceled OR channel closed) using a
@@ -175,7 +254,7 @@ func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.St
 		}
 		fctx, cancel := context.WithTimeout(context.Background(), drainTimeout)
 		defer cancel()
-		flush(fctx)
+		flushWith(fctx, nil)
 	}
 
 	for {
@@ -195,7 +274,7 @@ func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.St
 				flushShutdown()
 				return
 			}
-			if mode == SinkModeSkipProjected && IsProjectedEvent(ev) {
+			if skipInSink(ev, mode) {
 				continue
 			}
 			if t, ok := tradeFromEvent(ev); ok {
@@ -275,7 +354,7 @@ func tradeFromEvent(ev consumer.Event) (canonical.Trade, bool) {
 func IsProjectedEvent(ev consumer.Event) bool {
 	switch ev.(type) {
 	case soroswap.TradeEvent, soroswap.SkimEvent,
-		aquarius.TradeEvent,
+		aquarius.TradeEvent, aquarius.ReservesEvent, aquarius.LiquidityEvent,
 		phoenix.TradeEvent, phoenix.LiquidityEvent, phoenix.StakeEvent,
 		comet.TradeEvent, comet.LiquidityEvent,
 		reflector.UpdateEvent, redstone.UpdateEvent,
@@ -283,6 +362,7 @@ func IsProjectedEvent(ev consumer.Event) bool {
 		blend.PositionEvent, blend.EmissionEvent, blend.AdminEvent,
 		blend_backstop.Event,
 		cctp.Event, rozo.Event,
+		sorocredit.Event,
 		defindex.Event, defindex.VaultEvent,
 		sep41_supply.Event, sep41_transfers.Event:
 		return true
@@ -292,6 +372,35 @@ func IsProjectedEvent(ev consumer.Event) bool {
 		// observers (accounts / trustlines / claimable_balances /
 		// liquidity_pools / sac_balances) — all out of scope for the
 		// projector per ADR-0032.
+		return false
+	}
+}
+
+// IsSoleWriterProjected reports whether the projector has EARNED
+// sole-writer status for ev's domain — i.e. the domain is fully
+// re-derived and its projection is verified by the default ADR-0033
+// reconcile catalogue, so the projector owns the write outright even
+// in Phase-3 parallel mode and the dispatcher's events-goroutine must
+// skip it REGARDLESS of the `PersistPerSource` flag. This closes the
+// F-1316 config foot-gun: the sep41 domain's write path no longer
+// depends on a flag whose zero-value (false) once silently dropped
+// all sep41 rows.
+//
+// The set is deliberately narrow — a strict SUBSET of
+// [IsProjectedEvent] (guarded by TestSoleWriter_SubsetOfProjected).
+// A source is added here only after its full-history re-derive lands
+// AND it enters the compute-completeness catalogue
+// (cmd/stellarindex-ops/reconciliation_catalogue.go), so an
+// undetected projector regression can't silently lose rows the
+// dispatcher used to double-write. Today that is only the sep41
+// domain (TASK #16b, 2026-07-06 re-derive + f457f2a4 catalogue
+// promotion); every other projected source stays in Phase-3 parallel
+// (double-write) until it too is promoted.
+func IsSoleWriterProjected(ev consumer.Event) bool {
+	switch ev.(type) {
+	case sep41_supply.Event, sep41_transfers.Event:
+		return true
+	default:
 		return false
 	}
 }
@@ -317,13 +426,11 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 		}
 		batch := tradeBuf
 		tradeBuf = make([]canonical.Trade, 0, tradeBatchSize)
-		if err := store.BatchInsertTrades(drainCtx, batch); err != nil {
-			logger.Warn("drain batch trade insert failed; falling back per-row",
-				"batch_size", len(batch), "err", err)
-			for _, t := range batch {
-				persistTrade(drainCtx, logger, store, t)
-			}
-		}
+		// nil extBuf: at shutdown the async external buffer is winding
+		// down, so every trade block-retries within the bounded drainCtx
+		// (2026-07-06 outage fix). An infra fault here abandons after the
+		// drainTimeout and logs the recoverable ledger range at ERROR.
+		flushTradeBatch(drainCtx, logger, store, nil, batch, -1)
 	}
 	for {
 		select {
@@ -332,7 +439,7 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 				flushTrades()
 				return
 			}
-			if mode == SinkModeSkipProjected && IsProjectedEvent(ev) {
+			if skipInSink(ev, mode) {
 				continue
 			}
 			if t, ok := tradeFromEvent(ev); ok {
@@ -443,6 +550,10 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		persistSoroswapSkim(ctx, logger, store, e)
 	case aquarius.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)
+	case aquarius.ReservesEvent:
+		persistAquariusReserves(ctx, logger, store, e)
+	case aquarius.LiquidityEvent:
+		persistAquariusLiquidity(ctx, logger, store, e)
 	case phoenix.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)
 	case phoenix.LiquidityEvent:
@@ -570,6 +681,8 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		persistCCTPEvent(ctx, logger, store, e)
 	case rozo.Event:
 		persistRozoEvent(ctx, logger, store, e)
+	case sorocredit.Event:
+		persistSoroCreditEvent(ctx, logger, store, e)
 	case accounts.Observation:
 		persistAccountObservation(ctx, logger, store, e)
 	case trustlines.Observation:
@@ -598,7 +711,19 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 	}
 }
 
-func persistTrade(ctx context.Context, logger *slog.Logger, store *timescale.Store, t canonical.Trade) {
+// persistTrade writes one trade with infrastructure-resilience
+// (ADR-0041 / 2026-07-06 Postgres-outage fix). An infra fault
+// (connection refused/reset, PG restarting) is RETRIED with
+// backpressure — blocking the caller so an on-chain cursor can't
+// advance past an un-landed trade — rather than dropped. A data fault
+// (constraint / numeric / validation) is error-and-skipped exactly as
+// before: permanent for that row, so retrying would just wedge the
+// pipeline. Also used by the projector's per-event sink (HandleEvent),
+// which gains the same cursor-gating retry.
+//
+// Takes the narrow [tradeWriter] interface (satisfied by
+// *timescale.Store) so the retry path is unit-testable with a fake.
+func persistTrade(ctx context.Context, logger *slog.Logger, w tradeWriter, t canonical.Trade) {
 	// Check populated-ness BEFORE InsertTrade so the metric counts
 	// every attempt — including the ON CONFLICT DO NOTHING dedupe
 	// case, which from this layer's POV is still "we tried, with
@@ -610,10 +735,20 @@ func persistTrade(ctx context.Context, logger *slog.Logger, store *timescale.Sto
 	// would slow the trade-insert hot path by 2× (predicate +
 	// InsertTrade both call it). Treat resolver latency as a
 	// constraint when wiring one.
-	populated := store.WouldPopulateUSDVolume(ctx, t)
+	populated := w.WouldPopulateUSDVolume(ctx, t)
 
-	if err := store.InsertTrade(ctx, t); err != nil {
+	if err := retryInfra(ctx, logger, "insert_trade", func(c context.Context) error {
+		return w.InsertTrade(c, t)
+	}); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(t.Source, "trade").Inc()
+		if isCtxErr(err) {
+			// Shutdown mid-retry — the raw op is durable in the CH lake
+			// (ADR-0034), so this row is re-derivable; surface it loudly
+			// instead of dropping silently.
+			logger.Error("insert trade abandoned on shutdown — recoverable from the CH lake (ADR-0034); re-derive",
+				"source", t.Source, "ledger", t.Ledger, "tx_hash", t.TxHash, "op_index", t.OpIndex, "err", err)
+			return
+		}
 		logger.Error("insert trade failed",
 			"source", t.Source,
 			"ledger", t.Ledger,
@@ -731,6 +866,62 @@ func persistCometLiquidity(ctx context.Context, logger *slog.Logger, store *time
 		"source", comet.SourceName, "kind", e.Kind,
 		"contract_id", e.ContractID, "ledger", e.Ledger,
 		"token", e.Token, "amount", e.Amount.String())
+}
+
+// persistAquariusReserves lands one update_reserves observation (the
+// pool's POST-STATE reserve vector) into aquarius_reserves — one row
+// per token position (migration 0089). The first real Aquarius TVL /
+// liquidity-depth signal; Aquarius has no published price so these
+// rows never reach VWAP.
+func persistAquariusReserves(ctx context.Context, logger *slog.Logger, store *timescale.Store, e aquarius.ReservesEvent) {
+	if err := store.InsertAquariusReserves(ctx, timescale.AquariusReservesEvent{
+		ContractID:      e.ContractID,
+		Ledger:          e.Ledger,
+		LedgerCloseTime: e.ObservedAt,
+		TxHash:          e.TxHash,
+		OpIndex:         e.OpIndex,
+		EventIndex:      e.EventIndex,
+		Reserves:        e.Reserves,
+	}); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(aquarius.SourceName, "aquarius_reserves").Inc()
+		logger.Error("insert Aquarius reserves failed",
+			"contract_id", e.ContractID, "ledger", e.Ledger,
+			"tx_hash", e.TxHash, "tokens", len(e.Reserves), "err", err)
+		return
+	}
+	bumpEntryCount(ctx, logger, store, aquarius.SourceName)
+	logger.Debug("Aquarius reserves ingested",
+		"source", aquarius.SourceName, "contract_id", e.ContractID,
+		"ledger", e.Ledger, "tokens", len(e.Reserves))
+}
+
+// persistAquariusLiquidity lands one deposit_liquidity /
+// withdraw_liquidity observation into aquarius_liquidity — one row per
+// token position, shares on the token_index=0 row (migration 0089).
+func persistAquariusLiquidity(ctx context.Context, logger *slog.Logger, store *timescale.Store, e aquarius.LiquidityEvent) {
+	if err := store.InsertAquariusLiquidity(ctx, timescale.AquariusLiquidityEvent{
+		ContractID:      e.ContractID,
+		Ledger:          e.Ledger,
+		LedgerCloseTime: e.ObservedAt,
+		TxHash:          e.TxHash,
+		OpIndex:         e.OpIndex,
+		EventIndex:      e.EventIndex,
+		Action:          timescale.AquariusLiquidityAction(e.Action),
+		Tokens:          e.Tokens,
+		Amounts:         e.Amounts,
+		Shares:          e.Shares,
+	}); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(aquarius.SourceName, "aquarius_liquidity").Inc()
+		logger.Error("insert Aquarius liquidity failed",
+			"contract_id", e.ContractID, "action", e.Action,
+			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return
+	}
+	bumpEntryCount(ctx, logger, store, aquarius.SourceName)
+	logger.Debug("Aquarius liquidity ingested",
+		"source", aquarius.SourceName, "action", e.Action,
+		"contract_id", e.ContractID, "ledger", e.Ledger,
+		"tokens", len(e.Tokens))
 }
 
 // persistBlendPositionEvent routes one money-market position event
@@ -863,6 +1054,94 @@ func persistRozoEvent(ctx context.Context, logger *slog.Logger, store *timescale
 	logger.Debug("Rozo event ingested",
 		"source", rozo.SourceName, "event_type", e.EventType,
 		"contract_id", e.ContractID, "ledger", e.Ledger, "tx_hash", e.TxHash)
+}
+
+// persistSoroCreditEvent routes one sorocredit event to its served-tier
+// table by EventType — the single Go event type fans out to four tables
+// (credit_positions / credit_statements / credit_settlements /
+// credit_events). It converts the source event into the timescale row
+// struct here (storage keeps its no-upward-import boundary). NOTE: the
+// on-wire "Liquidation" event is a SCHEDULED settlement, written to
+// credit_settlements — NOT a distress/liquidation signal (see
+// internal/sources/sorocredit).
+func persistSoroCreditEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e sorocredit.Event) {
+	var err error
+	switch e.EventType {
+	case sorocredit.TypeNewCollateralContract:
+		err = store.InsertCreditPosition(ctx, timescale.CreditPosition{
+			CollateralContract: e.CollateralContract,
+			PositionUUID:       e.PositionUUID,
+			PositionName:       e.PositionName,
+			Owner:              e.Owner,
+			Ledger:             e.Ledger,
+			LedgerCloseTime:    e.ObservedAt,
+			TxHash:             e.TxHash,
+			OpIndex:            e.OpIndex,
+			EventIndex:         e.EventIndex,
+		})
+	case sorocredit.TypeStatement:
+		var stmtTime time.Time
+		if e.StatementTime != nil {
+			stmtTime = *e.StatementTime
+		}
+		err = store.InsertCreditStatement(ctx, timescale.CreditStatement{
+			StatementUUID:      e.StatementUUID,
+			PositionUUID:       e.PositionUUID,
+			CollateralContract: e.CollateralContract,
+			Amount:             e.Amount,
+			StatementTime:      stmtTime,
+			Ledger:             e.Ledger,
+			LedgerCloseTime:    e.ObservedAt,
+			TxHash:             e.TxHash,
+			OpIndex:            e.OpIndex,
+			EventIndex:         e.EventIndex,
+		})
+	case sorocredit.TypeSettlement:
+		err = store.InsertCreditSettlement(ctx, timescale.CreditSettlement{
+			CollateralContract: e.CollateralContract,
+			PositionUUID:       e.PositionUUID,
+			StatementUUID:      e.StatementUUID,
+			SettlerAccount:     e.Account,
+			DebtAsset:          e.Asset,
+			SettledAmount:      e.Amount,
+			Attributes:         e.Attributes,
+			Ledger:             e.Ledger,
+			LedgerCloseTime:    e.ObservedAt,
+			TxHash:             e.TxHash,
+			OpIndex:            e.OpIndex,
+			EventIndex:         e.EventIndex,
+		})
+	case sorocredit.TypeWithdrawal, sorocredit.TypeBeaconUpdated,
+		sorocredit.TypeSupportedAssetAdded, sorocredit.TypeCollateralHashUpdated:
+		err = store.InsertCreditEvent(ctx, timescale.CreditEvent{
+			EventType:          string(e.EventType),
+			CollateralContract: e.CollateralContract,
+			Asset:              e.Asset,
+			Account:            e.Account,
+			Amount:             e.Amount,
+			Attributes:         e.Attributes,
+			Ledger:             e.Ledger,
+			LedgerCloseTime:    e.ObservedAt,
+			TxHash:             e.TxHash,
+			OpIndex:            e.OpIndex,
+			EventIndex:         e.EventIndex,
+		})
+	default:
+		obs.SourceInsertErrorsTotal.WithLabelValues(sorocredit.SourceName, "unhandled_type").Inc()
+		logger.Warn("unhandled sorocredit EventType", "event_type", e.EventType, "ledger", e.Ledger)
+		return
+	}
+	if err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(sorocredit.SourceName, "sorocredit_"+string(e.EventType)).Inc()
+		logger.Error("insert sorocredit event failed",
+			"event_type", e.EventType, "collateral_contract", e.CollateralContract,
+			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return
+	}
+	bumpEntryCount(ctx, logger, store, sorocredit.SourceName)
+	logger.Debug("sorocredit event ingested",
+		"source", sorocredit.SourceName, "event_type", e.EventType,
+		"collateral_contract", e.CollateralContract, "ledger", e.Ledger)
 }
 
 // bumpEntryCount is the shared 'entries' counter increment used by

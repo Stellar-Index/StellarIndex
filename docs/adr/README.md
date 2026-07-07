@@ -83,6 +83,8 @@ See [_template.md](_template.md) for the boilerplate.
 | [0041](0041-ingest-durability-semantics.md) | Proposed | Ingest durability semantics — cursor is a resume hint, verdict is the durability claim; CH sink defaults on; drop alerting | 2026-07-02 |
 | [0042](0042-v1-wire-shape.md) | Proposed | The v1 wire shape — Unit-D collapse pre-flip, /v1/assets/{slug} kind discriminator, v1.0 freeze contract with x-stability tiers | 2026-07-02 |
 | [0043](0043-backup-and-restore-strategy.md) | Proposed | Backup + restore strategy — offsite repo2, CH lake protection via drilled re-derive + tail/DDL push, monthly scratch-restore drills | 2026-07-02 |
+| [0044](0044-explorer-edge-rendering.md) | Accepted | Explorer rendering moves from static export to edge SSR | 2026-07-04 |
+| [0045](0045-sep40-oracle-read-adapter.md) | Proposed | SEP-40 on-chain oracle read adapter — defer generic reader; serve surface already ships | 2026-07-06 |
 
 ## Related
 

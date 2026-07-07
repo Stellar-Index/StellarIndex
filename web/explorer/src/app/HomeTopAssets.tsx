@@ -98,7 +98,13 @@ export function HomeTopAssets() {
                   key={coin.asset_id}
                   coin={coin}
                   rank={idx + 1}
-                  verified={verifiedSlugs?.has(coin.slug.toLowerCase()) ?? false}
+                  // Withhold the badge from ticker-collision look-alikes:
+                  // COALESCE(slug, code) makes an impersonator's slug the
+                  // verified code, so gate on the per-row API flag too.
+                  verified={
+                    (verifiedSlugs?.has(coin.slug.toLowerCase()) ?? false) &&
+                    !coin.unverified_ticker_collision
+                  }
                 />
               ))}
             </TBody>

@@ -98,6 +98,77 @@ func TestF2_VolumeReaderReceivesTradeTableKey(t *testing.T) {
 	}
 }
 
+// stubDualVolumeReader implements BOTH v1.VolumeReader and the optional
+// v1.SorobanVolumeReader, recording which method the asset-detail path
+// invoked so tests can pin the Soroban→XLM-anchored routing (#37).
+type stubDualVolumeReader struct {
+	plainKey   string
+	sorobanKey string
+	plain      string
+	soroban    string
+}
+
+func (s *stubDualVolumeReader) Volume24hUSDForAsset(_ context.Context, assetKey string) (string, error) {
+	s.plainKey = assetKey
+	return s.plain, nil
+}
+
+func (s *stubDualVolumeReader) SorobanVolume24hUSDForAsset(_ context.Context, assetKey string) (string, error) {
+	s.sorobanKey = assetKey
+	return s.soroban, nil
+}
+
+// TestF2_SorobanAssetUsesAnchoredVolume — a pure-Soroban SEP-41 asset's
+// volume_24h_usd must come from the XLM-anchored SorobanVolumeReader, not
+// the plain reader (which reports a bogus "0" because it only sees the
+// insert-time usd_volume that XLM-quoted Soroban trades never populate).
+func TestF2_SorobanAssetUsesAnchoredVolume(t *testing.T) {
+	const contractID = "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
+	vol := &stubDualVolumeReader{plain: "0", soroban: "98765.43"}
+	srv := v1.New(v1.Options{Volume: vol})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/assets/"+contractID)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := readAll(resp)
+		t.Fatalf("status = %d: %s", resp.StatusCode, body)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"volume_24h_usd":"98765.43"`) {
+		t.Errorf("expected XLM-anchored volume 98765.43; body: %s", body)
+	}
+	if vol.sorobanKey != contractID {
+		t.Errorf("SorobanVolume24hUSDForAsset key = %q, want %q", vol.sorobanKey, contractID)
+	}
+	if vol.plainKey != "" {
+		t.Errorf("plain Volume24hUSDForAsset should NOT be called for a Soroban asset; got key %q", vol.plainKey)
+	}
+}
+
+// TestF2_NonSorobanUsesPlainVolume — native/classic assets keep the plain
+// reader; the XLM-anchored variant is Soroban-only.
+func TestF2_NonSorobanUsesPlainVolume(t *testing.T) {
+	vol := &stubDualVolumeReader{plain: "12345.67", soroban: "999.99"}
+	srv := v1.New(v1.Options{Volume: vol})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/assets/native")
+	if resp.StatusCode != http.StatusOK {
+		body, _ := readAll(resp)
+		t.Fatalf("status = %d: %s", resp.StatusCode, body)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"volume_24h_usd":"12345.67"`) {
+		t.Errorf("expected plain volume 12345.67; body: %s", body)
+	}
+	if vol.plainKey != "native" {
+		t.Errorf("plain key = %q, want native", vol.plainKey)
+	}
+	if vol.sorobanKey != "" {
+		t.Errorf("Soroban reader should NOT be called for native; got key %q", vol.sorobanKey)
+	}
+}
+
 // stubChange24hReader implements v1.Change24hReader for tests.
 // Returns the per-asset price string from `prices`, or unavailable
 // when the asset key isn't seeded; an explicit `err` short-circuits

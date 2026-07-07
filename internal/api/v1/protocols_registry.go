@@ -4,6 +4,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/sources/aquarius"
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
 	blend_backstop "github.com/StellarIndex/stellar-index/internal/sources/blend_backstop"
+	"github.com/StellarIndex/stellar-index/internal/sources/sorocredit"
 	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
 )
 
@@ -121,6 +122,23 @@ var protocolRegistry = []ProtocolMeta{
 		// (roster + lake analytics + event count) instead of being invisible.
 		ExtraContracts:    []string{blend_backstop.MainnetBackstopV1, blend_backstop.MainnetBackstopV2},
 		ExtraEventSources: []string{blend_backstop.SourceName},
+	},
+	{
+		Name:          "sorocredit",
+		Category:      "lending",
+		Description:   "SoroCredit — an on-chain consumer USDC credit / CDP protocol on Soroban: per-user collateral-position child contracts, recurring published statements, and scheduled settlements (the on-wire \"Liquidation\" event is a scheduled settlement, not distress).",
+		GenesisLedger: sorocredit.GenesisLedger,
+		Factories:     []string{sorocredit.MainnetContract},
+		EventKinds: []string{
+			sorocredit.SourceName + ".new_collateral_contract",
+			sorocredit.SourceName + ".statement_published",
+			sorocredit.SourceName + ".settlement",
+			sorocredit.SourceName + ".withdrawal",
+			sorocredit.SourceName + ".beacon_updated",
+			sorocredit.SourceName + ".supported_asset_added",
+			sorocredit.SourceName + ".collateral_hash_updated",
+		},
+		VerificationPage: "docs/protocols/sorocredit.md",
 	},
 	{
 		Name:          "defindex",

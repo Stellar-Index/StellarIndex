@@ -598,6 +598,14 @@ func mustB64Symbol(t *testing.T, s string) string {
 	return mustB64(t, sv)
 }
 
+// symSCVal builds a Symbol ScVal (the raw value, not base64) for use
+// as a map entry value — the sibling of mustB64Symbol which returns
+// the encoded topic string.
+func symSCVal(s string) sdkxdr.ScVal {
+	sym := sdkxdr.ScSymbol(s)
+	return sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvSymbol, Sym: &sym}
+}
+
 // TestDecoder_GateRejectsForeignContract pins ADR-0035/0040 (CS-026):
 // the namespaced DeFindexVault/BlendStrategy topic strings are still
 // just strings any pubnet contract can emit — the r1 lake contains
@@ -668,4 +676,145 @@ func TestDecoder_OperatorSeedAdmitsNewVault(t *testing.T) {
 	if !NewDecoder(contractid.WithSeed([]string{newVault})).Matches(ev) {
 		t.Fatal("protocol_contracts-seeded vault failed to match")
 	}
+}
+
+// ─── Phase-B follow-up: harvest / rebalance / admin (BACKLOG #58) ──
+
+// TestDecode_strategyHarvestRecognisedEmits0Events pins the harvest
+// contract: a ("BlendStrategy","harvest") from a registered strategy
+// is recognised (Matches true) but drops cleanly — Decode returns
+// (nil, nil), NOT the ErrUnknownEvent sentinel it returned before
+// #58. Filing harvest as a decode error inflated the source's
+// decode-error counter for normal upstream yield events.
+func TestDecode_strategyHarvestRecognisedEmits0Events(t *testing.T) {
+	t.Parallel()
+	d := NewDecoder()
+	ev := events.Event{
+		ContractID: MainnetStrategies[0],
+		Topic:      []string{TopicPrefixStrategy, TopicSymbolHarvest},
+	}
+	if !d.Matches(ev) {
+		t.Fatal("Matches(strategy harvest) = false, want true")
+	}
+	out, err := d.Decode(ev)
+	if err != nil {
+		t.Errorf("Decode(strategy harvest) err = %v, want nil (recognised, unmodelled — not a decode error)", err)
+	}
+	if len(out) != 0 {
+		t.Errorf("Decode(strategy harvest) emitted %d events, want 0", len(out))
+	}
+}
+
+// TestDecode_vaultRebalanceAndAdminRecognisedEmit0Events pins the
+// vault-layer clean-drop contract across the rebalance topic and all
+// eight admin topics: each is recognised (Matches true) and emits
+// nothing without erroring. Their bodies are unmodelled (blocked on
+// real on-chain samples), so they must not count as decode errors.
+func TestDecode_vaultRebalanceAndAdminRecognisedEmit0Events(t *testing.T) {
+	t.Parallel()
+	d := NewDecoder()
+	symbols := map[string]string{
+		"rebalance": TopicSymbolRebalance,
+		"rescue":    TopicSymbolRescue,
+		"paused":    TopicSymbolPaused,
+		"unpaused":  TopicSymbolUnpaused,
+		"nreceiver": TopicSymbolNReceiver,
+		"nmanager":  TopicSymbolNManager,
+		"nemanager": TopicSymbolNEManager,
+		"rbmanager": TopicSymbolRBManager,
+		"dfees":     TopicSymbolDFees,
+	}
+	for name, sym := range symbols {
+		t.Run(name, func(t *testing.T) {
+			ev := events.Event{
+				ContractID: MainnetVaults[0],
+				Topic:      []string{TopicPrefixVault, sym},
+			}
+			if !d.Matches(ev) {
+				t.Fatalf("Matches(vault %s) = false, want true", name)
+			}
+			out, err := d.Decode(ev)
+			if err != nil {
+				t.Errorf("Decode(vault %s) err = %v, want nil (recognised, unmodelled)", name, err)
+			}
+			if len(out) != 0 {
+				t.Errorf("Decode(vault %s) emitted %d events, want 0", name, len(out))
+			}
+		})
+	}
+}
+
+// TestDecodeRebalanceMethod exercises the four-way rebalance
+// discriminator scaffolding (BACKLOG #58). It verifies the decoder
+// reads the `rebalance_method` Symbol verbatim and that Known()
+// classifies the four documented methods — WITHOUT asserting anything
+// about the (unmodelled) per-method payload. Wire spelling for the
+// four methods is unconfirmed on-chain; the decoder returns whatever
+// the body carries, so a real sample can validate the exact values.
+func TestDecodeRebalanceMethod(t *testing.T) {
+	t.Parallel()
+
+	documented := []RebalanceMethod{
+		RebalanceUnwind, RebalanceInvest, RebalanceSwapExactIn, RebalanceSwapExactOut,
+	}
+	for _, want := range documented {
+		t.Run("documented/"+string(want), func(t *testing.T) {
+			ev := &events.Event{
+				Topic: []string{TopicPrefixVault, TopicSymbolRebalance},
+				Value: mustB64(t, mapSCVal(t,
+					mapEntry(t, RebalanceMethodField, symSCVal(string(want))),
+				)),
+			}
+			got, err := DecodeRebalanceMethod(ev)
+			if err != nil {
+				t.Fatalf("DecodeRebalanceMethod: %v", err)
+			}
+			if got != want {
+				t.Errorf("method = %q, want %q", got, want)
+			}
+			if !got.Known() {
+				t.Errorf("Known(%q) = false, want true", got)
+			}
+		})
+	}
+
+	t.Run("unknown method is read verbatim but not Known", func(t *testing.T) {
+		ev := &events.Event{
+			Value: mustB64(t, mapSCVal(t,
+				mapEntry(t, RebalanceMethodField, symSCVal("some_future_method")),
+			)),
+		}
+		got, err := DecodeRebalanceMethod(ev)
+		if err != nil {
+			t.Fatalf("DecodeRebalanceMethod: %v", err)
+		}
+		if got != RebalanceMethod("some_future_method") {
+			t.Errorf("method = %q, want verbatim %q", got, "some_future_method")
+		}
+		if got.Known() {
+			t.Errorf("Known(%q) = true, want false (unmodelled/renamed method)", got)
+		}
+	})
+
+	t.Run("missing discriminator field is ErrMalformedPayload", func(t *testing.T) {
+		ev := &events.Event{
+			Value: mustB64(t, mapSCVal(t,
+				mapEntry(t, "not_the_field", symSCVal("unwind")),
+			)),
+		}
+		if _, err := DecodeRebalanceMethod(ev); !errors.Is(err, ErrMalformedPayload) {
+			t.Errorf("err = %v, want ErrMalformedPayload", err)
+		}
+	})
+
+	t.Run("discriminator not a Symbol is ErrMalformedPayload", func(t *testing.T) {
+		ev := &events.Event{
+			Value: mustB64(t, mapSCVal(t,
+				mapEntry(t, RebalanceMethodField, i128SCVal(big.NewInt(7))),
+			)),
+		}
+		if _, err := DecodeRebalanceMethod(ev); !errors.Is(err, ErrMalformedPayload) {
+			t.Errorf("err = %v, want ErrMalformedPayload", err)
+		}
+	})
 }

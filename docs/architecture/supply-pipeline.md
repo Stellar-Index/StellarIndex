@@ -1,6 +1,6 @@
 ---
 title: Supply pipeline — three-algorithm derivation, per-asset refresh
-last_verified: 2026-07-05
+last_verified: 2026-07-06
 status: binding
 ---
 
@@ -302,12 +302,52 @@ The aggregator-refresh metric labels each tick with one of:
 | `ok` | Snapshot written | none — steady state |
 | `no_ledger` | `ListCursors` returned no max_ledger | wait for indexer's first cursor; check ingestion is alive |
 | `no_observation` | Live reader has no row + static fallback empty | bootstrap window — wait for backfill OR populate static config |
-| `compute_error` | Algorithm returned non-OK (e.g. negative SEP-41 total) | code bug or operator config drift; check logs + roll back if recent deploy |
+| `missing_baseline` | SEP-41 total went negative AND the contract's pre-Soroban genesis baseline hasn't been seeded (a SAC-wrapper issued before Soroban, reading Σburn > Σmint over the Soroban-era-only window) | run `stellarindex-ops supply seed-sep41-genesis` once (idempotent). Benign — excluded from `error_dominant` |
+| `compute_error` | Algorithm returned non-OK for a genuine reason (e.g. SEP-41 total negative **after** the genesis baseline is seeded — physically impossible) | code bug or upstream data inconsistency; check logs + roll back if recent deploy |
 | `write_error` | `InsertSupply` failed | storage layer down; route to `pg-conns-saturated` runbook |
 
-Sustained non-`ok` for ≥ 30 min triggers
+Sustained non-`ok` (excluding the benign `dormant` + `missing_baseline`)
+for ≥ 30 min triggers
 `stellarindex_aggregator_supply_refresh_error_dominant`; no `ok`
 in ≥ 30 min triggers `_stalled`.
+
+### SEP-41 / SAC-wrapper lifetime supply (pre-Soroban genesis baseline)
+
+Algorithm 3 sums `sep41_supply_events` (Postgres), which the supply
+observer fills only over the **Soroban era** `[50457424, tip]` —
+contract events don't exist below the protocol-20 activation ledger.
+A classic asset's SAC wrapper (VELO, AQUA, yXLM, LIBRE, ACT, MBC,
+XAU, BTC, GQX, …) was largely **issued before Soroban existed**, so
+over the Soroban-era-only window it reads `Σburn > Σmint` → negative
+derived total → the negative-total guard rejects it (incident
+2026-07-06).
+
+The fix (migration 0088) seeds each watched contract's pre-Soroban
+per-kind **opening balance** into `sep41_supply_rollup`
+(`genesis_mint_total` / `genesis_burn_total` / `genesis_clawback_total`,
+bounded by `genesis_baseline_ledger`) from the certified ClickHouse
+lake (`stellar.supply_flows`, ADR-0034). The reader serves
+`genesis(ledger < 50457424, CH) ⊕ soroban(ledger ≥ 50457424, PG)`, a
+**disjoint ledger partition** — so lifetime total comes out correct +
+positive, and a Soroban-only token (no pre-genesis flows) gets a zero
+baseline and its served number is **unchanged** (no double-count). We
+deliberately do **not** re-point the per-tick read at ClickHouse
+(migration 0085's rationale): the CH lake is network-wide +
+map/muxed-variant aware while the PG observer is watched-set-gated +
+bare-i128, so their Soroban-era per-contract totals can legitimately
+differ — CH is used only for the pre-Soroban slice PG has no data for.
+
+Operator step: `stellarindex-ops supply seed-sep41-genesis -config PATH`
+(idempotent; re-run after any lake re-derive below the boundary).
+
+**Provenance (ADR-0033 substrate reproducibility).** The pre-Soroban
+`contract_events` / `supply_flows` rows are **replay-derived**: a
+post-P23 captive core synthesized the CAP-67 unified asset events for
+classic history that predates them. They are legitimate,
+on-chain-faithful data — but the exact event enumeration is
+**core-version-dependent**, so the seeded baseline is a point-in-time
+capture. `genesis_baseline_ledger` + `genesis_seeded_at` record the
+boundary and capture time so a re-seed is auditable.
 
 The cross-check refresher emits its own per-outcome counter:
 

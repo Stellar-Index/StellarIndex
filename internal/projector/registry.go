@@ -18,6 +18,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/sources/rozo"
 	"github.com/StellarIndex/stellar-index/internal/sources/sep41_supply"
 	"github.com/StellarIndex/stellar-index/internal/sources/sep41_transfers"
+	"github.com/StellarIndex/stellar-index/internal/sources/sorocredit"
 	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
 )
 
@@ -149,6 +150,19 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 			Name:              rozo.SourceName,
 			Decoder:           rozo.NewDecoder(),
 			ExcludeTopic0Syms: firehoseExcludeSyms,
+		}, true, nil
+	case sorocredit.SourceName:
+		// ADR-0035 contract-gated on a single trust-root contract. Its
+		// seven topic[0] symbols are DISTINCTIVE (not part of the CAP-67
+		// firehose), so a topic-include prefilter pulls exactly this
+		// source's events efficiently and the identity gate then rejects
+		// the two look-alike emitters. No gated[] warm — the trust root is
+		// hard-coded and children never emit (see the source README), so
+		// there is nothing to DB-warm.
+		return Source{
+			Name:       sorocredit.SourceName,
+			Decoder:    sorocredit.NewDecoder(),
+			Topic0Syms: sorocredit.EventSymbols(),
 		}, true, nil
 	case defindex.SourceName:
 		return Source{

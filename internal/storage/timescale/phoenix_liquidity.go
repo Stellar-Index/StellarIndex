@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // PhoenixLiquidityAction discriminates the two Phoenix pool
@@ -126,4 +128,145 @@ func (s *Store) InsertPhoenixLiquidityChange(ctx context.Context, e PhoenixLiqui
 			e.Pool, e.Ledger, err)
 	}
 	return nil
+}
+
+// PhoenixPoolFlow is one Phoenix pool's net liquidity flow over a window —
+// the two-token (leg A / leg B) net (provide − withdraw) from
+// phoenix_liquidity per-event amounts (migration 0044). This is a WINDOW
+// DELTA, NOT an absolute pool reserve: Phoenix pool events carry the moved
+// amounts (actual_received / return_amount), not post-state reserves, so a
+// clean pool-reserve / TVL is not derivable here.
+//
+// TokenA / TokenB are resolved from the pool's most recent provide_liquidity
+// row (withdraw events omit the token addresses); they are "" when no
+// provide was observed for the pool in the window. NetA / NetB are
+// i128/NUMERIC (canonical.Amount, never int64 — ADR-0003) and can be
+// negative when withdrawals exceed provides in the window.
+type PhoenixPoolFlow struct {
+	Pool      string
+	TokenA    string
+	TokenB    string
+	NetA      canonical.Amount
+	NetB      canonical.Amount
+	Provides  int64
+	Withdraws int64
+	LatestAt  time.Time
+}
+
+// LatestPhoenixLiquidityFlows returns per-pool net liquidity flow over the
+// trailing windowDays, most-active pool first. NetA / NetB are the leg-A /
+// leg-B provide-minus-withdraw deltas; token addresses are resolved
+// positionally from the pool's most recent provide (mirrors the
+// aquarius_reserves address-recovery pattern — withdraw events carry no
+// token address, migration 0044).
+//
+// This is the READ side of the Phoenix liquidity-depth signal
+// InsertPhoenixLiquidityChange captures. Phoenix has no post-state reserve
+// snapshot and no published price, so the figures are native-token
+// base-unit WINDOW deltas, not absolute reserves or USD TVL. (Phoenix is
+// contract-identity gated — the curated-set gate, 2026-07-02 — so unlike
+// Comet these figures carry no un-gated-injection caveat.)
+//
+// Empty-safe: returns (nil, nil) when no liquidity events were captured in
+// the window. windowDays <= 0 is treated as 90.
+func (s *Store) LatestPhoenixLiquidityFlows(ctx context.Context, windowDays int) ([]PhoenixPoolFlow, error) {
+	if windowDays <= 0 {
+		windowDays = 90
+	}
+	since := fmt.Sprintf("%d days", windowDays)
+
+	flows, err := s.phoenixPoolFlowRows(ctx, since)
+	if err != nil {
+		return nil, err
+	}
+	if len(flows) == 0 {
+		return nil, nil
+	}
+	tokens, err := s.phoenixPoolTokenPositions(ctx, since)
+	if err != nil {
+		return nil, err
+	}
+	for i := range flows {
+		if tp, ok := tokens[flows[i].Pool]; ok {
+			flows[i].TokenA = tp[0]
+			flows[i].TokenB = tp[1]
+		}
+	}
+	return flows, nil
+}
+
+// phoenixPoolFlowRows reads the per-pool provide-minus-withdraw net flow
+// (leg A / leg B) + action counts over the window. Its result set is fully
+// consumed and closed before returning, so LatestPhoenixLiquidityFlows
+// never holds two open cursors.
+func (s *Store) phoenixPoolFlowRows(ctx context.Context, since string) ([]PhoenixPoolFlow, error) {
+	const q = `
+		SELECT pool,
+		       COALESCE(sum(CASE WHEN action = 'provide_liquidity' THEN amount_a
+		                         WHEN action = 'withdraw_liquidity' THEN -amount_a END),0)::text,
+		       COALESCE(sum(CASE WHEN action = 'provide_liquidity' THEN amount_b
+		                         WHEN action = 'withdraw_liquidity' THEN -amount_b END),0)::text,
+		       count(*) FILTER (WHERE action = 'provide_liquidity'),
+		       count(*) FILTER (WHERE action = 'withdraw_liquidity'),
+		       max(ledger_close_time)
+		  FROM phoenix_liquidity
+		 WHERE ledger_close_time > now() - $1::interval
+		 GROUP BY pool
+		 ORDER BY count(*) DESC, pool`
+	rows, err := s.db.QueryContext(ctx, q, since)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: LatestPhoenixLiquidityFlows flows: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []PhoenixPoolFlow
+	for rows.Next() {
+		var (
+			f      PhoenixPoolFlow
+			latest time.Time
+		)
+		if err := rows.Scan(&f.Pool, &f.NetA, &f.NetB, &f.Provides, &f.Withdraws, &latest); err != nil {
+			return nil, fmt.Errorf("timescale: LatestPhoenixLiquidityFlows scan: %w", err)
+		}
+		f.LatestAt = latest.UTC()
+		out = append(out, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: LatestPhoenixLiquidityFlows rows: %w", err)
+	}
+	return out, nil
+}
+
+// phoenixPoolTokenPositions resolves (token_a, token_b) per pool from the
+// most recent provide_liquidity in the window — best-effort address
+// recovery for withdraw rows, which omit the token addresses. Returns
+// pool → [tokenA, tokenB].
+func (s *Store) phoenixPoolTokenPositions(ctx context.Context, since string) (map[string][2]string, error) {
+	const q = `
+		SELECT DISTINCT ON (pool) pool, token_a, token_b
+		  FROM phoenix_liquidity
+		 WHERE action = 'provide_liquidity' AND token_a IS NOT NULL
+		   AND ledger_close_time > now() - $1::interval
+		 ORDER BY pool, ledger_close_time DESC`
+	rows, err := s.db.QueryContext(ctx, q, since)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: LatestPhoenixLiquidityFlows tokens: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := map[string][2]string{}
+	for rows.Next() {
+		var (
+			pool           string
+			tokenA, tokenB sql.NullString
+		)
+		if err := rows.Scan(&pool, &tokenA, &tokenB); err != nil {
+			return nil, fmt.Errorf("timescale: LatestPhoenixLiquidityFlows token scan: %w", err)
+		}
+		out[pool] = [2]string{tokenA.String, tokenB.String}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: LatestPhoenixLiquidityFlows token rows: %w", err)
+	}
+	return out, nil
 }
