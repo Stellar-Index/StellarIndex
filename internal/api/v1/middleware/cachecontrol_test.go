@@ -86,6 +86,8 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		// Pool reserves — current contract state; shorter band than
 		// the /v1/pools listing (exact-match case wins).
 		{"/v1/pools/reserves", "public, max-age=30, s-maxage=60"},
+		// Native (CAP-38) liquidity-pool reserves — same short band.
+		{"/v1/liquidity-pools", "public, max-age=30, s-maxage=60"},
 
 		// Diagnostics — operator-facing live data, never CDN-cached
 		{"/v1/diagnostics/cursors", "private, no-cache, must-revalidate"},

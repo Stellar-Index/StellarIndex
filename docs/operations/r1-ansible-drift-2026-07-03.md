@@ -1,6 +1,6 @@
 ---
 title: r1 ↔ ansible drift audit
-last_verified: 2026-07-03
+last_verified: 2026-07-06
 status: current
 ---
 
@@ -67,6 +67,43 @@ as "missing" — the nftables 80/443/SSH-limit rules ARE in the role
 (`public_allow_ports_base` defaults) despite not appearing in the
 template text. Render (`ansible-playbook --check --diff`) before
 believing a template gap.
+
+## 2026-07-06 reconcile — ZFS datasets + shared_preload false-drift (BACKLOG #50)
+
+The weekly `ansible-drift.yml` was failing at `changed=14` (allowance 13).
+A read-only `--check --diff` against live r1 broke the count down, and three
+of the changed items were **phantom drift** (the codified value could never
+equal what the module reads back), now fixed:
+
+- **`Create ZFS datasets` (8 item-diffs → 1 changed task).** The
+  `community.general.zfs` module reads current props with `zfs get -p`
+  (parsable), so a human-readable `recordsize: "128K"` never equals the live
+  `131072` and every run re-reported a change. `zfs_datasets` recordsize
+  values are now the byte form (`131072`/`8192`/`1048576`), grounded in
+  `zfs get -p` on r1.
+- **`Add timescaledb to shared_preload_libraries` (+ its `Restart postgres`
+  handler = 2 changed items).** `postgresql_set` string-compares the desired
+  value against the live `pg_settings` value, which Postgres stores with a
+  space (`timescaledb, pg_stat_statements`). The spaceless codified value
+  drifted every run; now matches the stored form.
+
+Same pass **closed BACKLOG #50**: the out-of-band `data/pgbackrest` and
+`data/restore-drill` datasets are now codified. Both set only `mountpoint`
+locally on r1 (the rest inherit the pool defaults), so the
+`Create ZFS datasets` task was made **item-driven** — it manages exactly the
+properties each entry declares, rather than forcing all six with defaults.
+Forcing an inherited/default-source property would have re-reported a change
+on every run. `pgbackrest`'s mount dir carries `dir_mode: "0750"` (postgres
+backup repo) via the new per-item `dir_mode` knob.
+
+Post-fix the verified recap is `changed=11` (≤ 13). The remaining 11 are all
+either **repo-ahead-of-r1** (clear on the next apply — `Install r1-smoke.sh`
++ its smoke-timer handler, `Install config-assertions script`, `heavy-job
+wrapper`, the three `Ownership — … data dir` 0755→0750 hardenings) or
+**inherently non-idempotent** (`Sync migrations` rsync mtime/owner itemize
+from a fresh checkout; `disable-thp` oneshot `state: started`; the
+catchup-probe/`Ensure migrations dir` metadata) — i.e. exactly what the
+allowance exists for. The allowance was left at 13.
 
 ## The durable fix
 

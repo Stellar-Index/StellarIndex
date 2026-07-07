@@ -78,6 +78,47 @@ func (t Tier) MaxActiveKeys() int {
 	}
 }
 
+// MaxMonthlyQuota returns the per-tier ceiling on a dashboard-minted
+// key's customer-supplied `monthly_quota` (the monthly request-volume
+// cap the runtime quota middleware enforces).
+//
+// This is the CEILING the account-level operator override
+// ([Account.MonthlyRequestQuotaOverride]) falls back to when unset: the
+// dashboard clamps a customer-supplied per-key quota to
+// min(requested, override-if-set-else-this-ladder) so a metered
+// customer can only LOWER their cap, never raise it above the plan.
+// Without this ceiling the create handler honoured any int64 the POST
+// body carried — a customer on a metered plan could self-mint a key
+// with `monthly_quota: 9_000_000_000` and run effectively unmetered
+// (audit-2026-07 MEDIUM).
+//
+// Symmetric-opposite of [Tier.MaxRateLimitPerMin]: rate limit is a
+// burst ceiling clamped at mint AND raised by the account override as
+// a FLOOR at auth time; monthly quota is a volume ceiling clamped at
+// mint AND lowered by the account override as a CEILING at auth time.
+//
+// Values are round plan budgets (monotonic across the ladder), not a
+// mechanical rate×minutes derivation. Operators grant a specific
+// customer more by setting a higher [Account.MonthlyRequestQuotaOverride]
+// — that override, not this default, is then the hard ceiling.
+//
+// An unknown tier value is treated as Free (defensive — a corrupt row
+// should not unlock paid quotas), matching the other tier ladders.
+func (t Tier) MaxMonthlyQuota() int64 {
+	switch t {
+	case TierStarter:
+		return 1_000_000
+	case TierPro:
+		return 10_000_000
+	case TierBusiness:
+		return 100_000_000
+	case TierEnterprise:
+		return 1_000_000_000
+	default: // TierFree + any unknown value
+		return 100_000
+	}
+}
+
 // MaxWebhooks returns the per-tier ceiling on registered webhook
 // endpoints. Replaces the dashboard's flat 10-webhook cap; override
 // seam is dashboardwebhooks.Config.WebhookQuotas. Unknown tiers are

@@ -140,3 +140,89 @@ groups:
             (stop-writes-on-bgsave-error=yes default — May-10 SEV-2
             class). Recovery: free disk → BGSAVE → cache rebuilds.
             Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+
+      # ─── #43: protocol-events rollup worker ────────────────────
+      # The aggregator's protoeventsrollup worker folds the
+      # trailing-24h per-source event census into protocol_events_24h
+      # so /v1/protocols' events_24h reads a keyed-on-PK lookup. A
+      # sustained refresh-error rate means that column stops advancing
+      # (goes stale, not blank) — informational: no pricing impact.
+      - alert: stellarindex_protocol_events_rollup_failing
+        expr: |
+          sum(rate(stellarindex_protocol_events_rollup_sweeps_total{outcome="refresh_error"}[15m])) > 0
+        for: 30m
+        labels:
+          severity: informational
+          team: stellarindex
+          component: aggregator
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/protocol-events-rollup-failing.md
+        annotations:
+          summary: "Protocol-events rollup sweeps failing ({{ $value | humanize }}/s error rate)"
+          description: |
+            The aggregator's protocol-events rollup worker has been
+            failing its refresh (the trailing-24h census + upsert into
+            protocol_events_24h) for 30+ minutes. /v1/protocols
+            events_24h counters stop advancing (last-good values persist,
+            not zeros). Customer pricing surface is unaffected. Fix the
+            failing Postgres backend and the next sweep catches up.
+
+      # ─── #43: asset-volume rollup worker ───────────────────────
+      # The aggregator's assetvolrollup worker folds the trailing-24h
+      # per-asset USD-volume SUM over prices_1m into asset_volume_24h
+      # so the /v1/assets listing reads a keyed-on-PK lookup. A
+      # sustained refresh-error rate means the listing's volume_24h_usd
+      # stops advancing (goes stale, not blank) — informational: no
+      # pricing impact.
+      - alert: stellarindex_asset_volume_rollup_failing
+        expr: |
+          sum(rate(stellarindex_asset_volume_rollup_sweeps_total{outcome="refresh_error"}[15m])) > 0
+        for: 30m
+        labels:
+          severity: informational
+          team: stellarindex
+          component: aggregator
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/asset-volume-rollup-failing.md
+        annotations:
+          summary: "Asset-volume rollup sweeps failing ({{ $value | humanize }}/s error rate)"
+          description: |
+            The aggregator's asset-volume rollup worker has been failing
+            its refresh (the trailing-24h prices_1m SUM + upsert into
+            asset_volume_24h) for 30+ minutes. The /v1/assets listing's
+            volume_24h_usd column stops advancing (last-good values
+            persist, not zeros). Customer pricing surface is unaffected.
+            Fix the failing Postgres backend and the next sweep catches up.
+
+      # ─── Decimals-assumption landmine (decoder-correctness audit F2) ─
+      # The served price is Σ(quote_amount)/Σ(base_amount) on RAW
+      # smallest-unit integers (prices_* CAGGs + aggregate.VWAP); the
+      # per-asset decimals cancel ONLY when base and quote share a scale
+      # — true today because every DEX-traded token is 7-decimal. The
+      # decimals-guard sweep (internal/decimalsguard, in the aggregator)
+      # raises this counter the first time a DEX trade is observed for a
+      # Soroban token whose on-chain decimals() != 7, i.e. the assumption
+      # is violated and pairs involving that asset are being served a
+      # price skewed by 10^(7-decimals). It should be zero forever; any
+      # non-zero value is a real, silent mispricing on a live pair.
+      - alert: stellarindex_dex_nonstandard_decimals_detected
+        expr: |
+          sum by (source, asset) (stellarindex_dex_trade_nonstandard_decimals_total) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+        annotations:
+          summary: "DEX trade for a non-7-decimal Soroban token — served price silently skewed (P2)"
+          description: |
+            A DEX trade landed for a Soroban token whose on-chain
+            decimals() is not 7 (source {{ $labels.source }}, asset
+            {{ $labels.asset }}). The served price (prices_* continuous
+            aggregates + aggregate.VWAP) is Σ(quote)/Σ(base) on raw
+            smallest-unit integers, which is correct only when base and
+            quote share a decimals scale — so every pair involving this
+            asset is now served a price skewed by 10^(7-decimals). This
+            should never fire: suppress the affected pair(s) from serving
+            and apply the decimals normalization. The guard's ERROR log
+            line carries the exact decimals + skew magnitude.
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md

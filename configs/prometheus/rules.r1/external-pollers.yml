@@ -61,6 +61,76 @@ groups:
             indexer host lost outbound HTTPS to ECB, or the poller
             goroutine deadlocked.
 
+      # Active fiat-FX feed (`massive`, the internal/sources/forex
+      # worker) has gone dry. Distinct from the poller-staleness alert
+      # above: `massive` does NOT run under the external.Connector
+      # poller framework — it writes the fx_quotes hypertable directly
+      # from the API binary — so it emits NO external_poller series and
+      # is invisible to `stellarindex_external_poller_stale`. The X2.5
+      # triangulation forex-snap (FXQuoteAtOrBefore) reads fx_quotes
+      # with a 7-DAY lookback for every fiat-quoted pair (XLM/EUR, …),
+      # so a dead feed prices fine off a stale row until that window
+      # expires, THEN fiat pairs silently break with no earlier signal.
+      # This closes that gap. r1's forex worker writes exactly hourly
+      # (verified 2026-07-07: 803 rows/tick, dead-regular); 6h = 6
+      # missed cycles, comfortably above the normal cadence + transient
+      # upstream-fetch failures, and ~6.75 days below the 7-day cliff.
+      # `max` (no by) is fleet-level: fires only when EVERY FX source's
+      # freshest quote is stale, so re-enabling polygon-forex /
+      # exchangeratesapi as fallbacks naturally clears it. Found silent
+      # ~4h on 2026-07-07 with no alert — this is the fix.
+      - alert: stellarindex_external_fx_feed_stale
+        expr: |
+          (time() - max(stellarindex_external_fx_last_quote_unix)) > 21600
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: external-poller
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/fx-feed-stale.md
+        annotations:
+          summary: "active fiat-FX feed has written no fx_quote in 6+ h"
+          description: |
+            The freshest stellarindex_external_fx_last_quote_unix across
+            all FX sources is > 6 h stale for > 15 min. The active feed
+            (`massive`, the internal/sources/forex worker in the API
+            binary) has stopped committing fx_quotes rows. Every
+            fiat-quoted pair (XLM/EUR, XLM/GBP, …) is still priced off the
+            last-good fx_quotes row via the 7-day forex-snap lookback, so
+            there is NO customer impact yet — but it will silently break
+            those pairs once the lookback expires. `massive` is a PAID
+            feed (massive.com / Polygon FX backend): a 429 / subscription
+            lapse / MASSIVE_API_KEY problem is the likely cause
+            (CoinGecko-class). See the runbook for the subscription check
+            and the ecb/frankfurter fallback re-enable.
+
+      # Companion "never came up" catch: the forex worker refreshes once
+      # on startup, so a healthy API boot stamps the gauge within
+      # seconds. If the series is ABSENT for 30 min the worker has never
+      # once written since process start — dead worker, unset
+      # MASSIVE_API_KEY (every fetch 401s), or a persist path wedged
+      # from the first tick. absent() catches this because the staleness
+      # expr above yields no data when there is no series to subtract.
+      - alert: stellarindex_external_fx_feed_absent
+        expr: |
+          absent(stellarindex_external_fx_last_quote_unix)
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: external-poller
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/fx-feed-stale.md
+        annotations:
+          summary: "active fiat-FX feed has never written an fx_quote since startup"
+          description: |
+            stellarindex_external_fx_last_quote_unix has no series for
+            30 min. The forex worker refreshes on startup, so a healthy
+            API boot stamps this within seconds — 30 min absence means it
+            has never succeeded: dead worker, unset / invalid
+            MASSIVE_API_KEY, or the fx_quotes persist path wedged from
+            the first tick. Same customer-impact profile + same runbook
+            as stellarindex_external_fx_feed_stale.
+
       # Sustained error rate over 15 min — catches the case where
       # the poller is hitting the venue successfully sometimes but
       # >50% of attempts return non-nil err. Lower severity than

@@ -256,21 +256,20 @@ func nullStringPtr(ns sql.NullString) *string {
 // defeat the "stop lying" rule.
 const listCoinsBaseSelect = `
 		WITH per_asset_24h_vol AS (
-		  SELECT asset_id, SUM(volume_usd) AS vol_usd
-		    FROM (
-		      SELECT base_asset  AS asset_id, volume_usd
-		        FROM prices_1m
-		       WHERE bucket >= now() - INTERVAL '24 hours'
-		         AND bucket  <  now()
-		         AND volume_usd IS NOT NULL /*PUSHDOWN_BASE*/
-		      UNION ALL
-		      SELECT quote_asset AS asset_id, volume_usd
-		        FROM prices_1m
-		       WHERE bucket >= now() - INTERVAL '24 hours'
-		         AND bucket  <  now()
-		         AND volume_usd IS NOT NULL /*PUSHDOWN_QUOTE*/
-		    ) t
-		   GROUP BY asset_id
+		  -- #43 (2026-07-06 latency incident): read the trailing-24h
+		  -- per-asset USD volume from the asset_volume_24h rollup
+		  -- (migration 0087) instead of re-summing prices_1m per
+		  -- request. The aggregator's assetvolrollup worker runs the
+		  -- exact base-OR-quote SUM this CTE used to inline; the listing
+		  -- now LEFT JOINs a small keyed-on-PK table (one row per asset
+		  -- with 24h volume), so the UNFILTERED /v1/assets page stops
+		  -- paying the ~4.8s cold ~256k-row scan the incident measured.
+		  -- vol_usd stays NUMERIC → the wire string is byte-identical to
+		  -- the old inline SUM (the rollup moved the compute, not the
+		  -- value). No asset-filter pushdown here: reading the rollup is
+		  -- cheap regardless of the caller's asset filter.
+		  SELECT asset_id, vol_usd
+		    FROM asset_volume_24h
 		),
 		direct_usd AS (
 		  SELECT DISTINCT ON (base_asset) base_asset AS asset_id, vwap
@@ -543,11 +542,15 @@ const listCoinsBaseSelect = `
 // `AND <side>_asset IN (SELECT asset_id FROM chosen_assets)`.
 //
 // Measured impact (2026-05-20 on r1, /v1/assets?issuer=GA5Z…):
-// the per_asset_24h_vol CTE without pushdown reads 256k rows
+// each per-asset price CTE without pushdown reads 256k rows
 // for a 1-row result (1.3M buffer hits); with pushdown it reads
-// ~9 rows. Same shape for the eight other per-asset CTEs.
-// The four xlm_usd CTEs deliberately stay unfiltered — they
-// look up XLM specifically, not the caller-supplied asset.
+// ~9 rows. Applies to the eight direct_usd* / asset_vs_xlm* CTEs.
+// per_asset_24h_vol no longer takes part: since #43 it reads the
+// asset_volume_24h rollup (migration 0087), which is a small
+// keyed-on-PK table regardless of the caller's filter, so it carries
+// no PUSHDOWN markers. The four xlm_usd CTEs deliberately stay
+// unfiltered — they look up XLM specifically, not the caller-supplied
+// asset.
 //
 // pushdownPredicate is the WHERE-expression body for the
 // chosen_assets CTE — e.g. "issuer_g_strkey = $1" or any
@@ -580,6 +583,71 @@ func listCoinsBaseSelectSQL(pushdownPredicate string) string {
 	s = strings.ReplaceAll(s, "/*PUSHDOWN_BASE*/", "AND base_asset IN (SELECT asset_id FROM chosen_assets)")
 	s = strings.ReplaceAll(s, "/*PUSHDOWN_QUOTE*/", "AND quote_asset IN (SELECT asset_id FROM chosen_assets)")
 	return s
+}
+
+// refreshAssetVolumeUpsert recomputes the trailing-24h per-asset USD
+// volume (single-sided: the asset as base OR quote) and upserts one row
+// per asset into asset_volume_24h. This is the exact SUM the
+// per_asset_24h_vol CTE used to inline per request (minus the pushdown
+// markers, which don't apply to a full recompute), so the rollup value
+// is byte-identical to the old live figure — only NUMERIC, never float
+// (ADR-0003). computed_at is stamped to the transaction timestamp so
+// the sibling prune can drop assets whose volume lapsed this pass.
+const refreshAssetVolumeUpsert = `
+INSERT INTO asset_volume_24h AS t (asset_id, vol_usd, computed_at)
+SELECT asset_id, SUM(volume_usd) AS vol_usd, now()
+  FROM (
+    SELECT base_asset  AS asset_id, volume_usd
+      FROM prices_1m
+     WHERE bucket >= now() - INTERVAL '24 hours'
+       AND bucket  <  now()
+       AND volume_usd IS NOT NULL
+    UNION ALL
+    SELECT quote_asset AS asset_id, volume_usd
+      FROM prices_1m
+     WHERE bucket >= now() - INTERVAL '24 hours'
+       AND bucket  <  now()
+       AND volume_usd IS NOT NULL
+  ) t
+ GROUP BY asset_id
+ON CONFLICT (asset_id) DO UPDATE
+   SET vol_usd     = EXCLUDED.vol_usd,
+       computed_at = EXCLUDED.computed_at`
+
+// refreshAssetVolumePrune deletes assets that fell out of the
+// trailing-24h window (no prices_1m volume counted them this pass, so
+// their computed_at stayed at the previous run). Same one-transaction
+// now() trick as the protocol-events rollup: just-upserted rows carry
+// computed_at = now() and survive; stale rows carry an older timestamp
+// and are dropped.
+const refreshAssetVolumePrune = `DELETE FROM asset_volume_24h WHERE computed_at < now()`
+
+// RefreshAssetVolume24h recomputes the asset_volume_24h rollup from the
+// live trailing-24h prices_1m sum and atomically replaces its contents.
+// Called on a slow cadence by the aggregator's assetvolrollup worker so
+// the /v1/assets listing (per_asset_24h_vol CTE) never runs the
+// all-asset ~256k-row SUM per request (2026-07-06 latency incident, #43).
+//
+// Upsert + prune run in one transaction (row-level locks only — no
+// ACCESS EXCLUSIVE table lock that would stall concurrent listing reads
+// on the customer-facing endpoint).
+func (s *Store) RefreshAssetVolume24h(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("timescale: RefreshAssetVolume24h begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, refreshAssetVolumeUpsert); err != nil {
+		return fmt.Errorf("timescale: RefreshAssetVolume24h upsert: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, refreshAssetVolumePrune); err != nil {
+		return fmt.Errorf("timescale: RefreshAssetVolume24h prune: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("timescale: RefreshAssetVolume24h commit: %w", err)
+	}
+	return nil
 }
 
 // buildCoinsQuery composes the WHERE + ORDER + LIMIT around

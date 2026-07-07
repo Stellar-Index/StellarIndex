@@ -128,16 +128,41 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 }
 
 // quoteForVariant returns the implicit quote-currency for a given
-// Reflector contract. DEX quotes XLM; CEX + FX quote USD per the
-// Reflector docs (ADR-0010 fiat sentinel).
+// Reflector contract. All three Reflector mainnet oracles denominate
+// in USD-equivalent, so every variant stamps fiat:USD:
+//
+//   - CEX (CAFJ…) and FX (CBKG…) publish an explicit USD base per the
+//     Reflector docs (ADR-0010 fiat sentinel).
+//   - DEX (CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M)
+//     denominates in USDC, NOT XLM. Confirmed 2026-07-07 by calling
+//     the contract's SEP-40 base() method via simulateTransaction:
+//     it returns Asset::Stellar(CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75)
+//     — the pubnet USDC SAC (decimals()=14, resolution()=300 also
+//     confirmed). Corroborating live evidence: the native-XLM SAC
+//     (CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA) is
+//     served at ~0.2002 (XLM in USD), not the 1.0 a true XLM-in-XLM
+//     self-price would be; the USD stablecoins cluster at ~1.0; and
+//     USDC itself is absent from the 41-asset feed (a base never
+//     prices itself).
+//
+// Before this fix quoteForVariant(VariantDEX) returned
+// canonical.NativeAsset(), mislabelling every DEX row's denominator
+// as XLM (right magnitude, wrong quote). We stamp fiat:USD rather
+// than crypto:USDC so all three variants share one quote
+// representation and the /v1/oracle divergence path — which compares
+// against our USD VWAP and does NOT translate USDC→USD in
+// oracleAssetKeys (internal/divergence/oracle.go) — matches the
+// stored rows. The aggregator's stablecoin map already treats USDC
+// as USD, so this loses no information. Existing rows need a
+// projector-replay to pick up the corrected quote.
 func quoteForVariant(v Variant) canonical.Asset {
 	switch v {
-	case VariantDEX:
-		return canonical.NativeAsset()
-	case VariantCEX, VariantFX:
+	case VariantDEX, VariantCEX, VariantFX:
 		return usdFiat
 	default:
-		return canonical.NativeAsset()
+		// Unknown variant should never occur; default to the USD
+		// quote every real Reflector oracle uses rather than XLM.
+		return usdFiat
 	}
 }
 
@@ -306,8 +331,12 @@ func decodeUpdateDataEntry(pair scval.ScVal) (PriceEntry, error) {
 }
 
 // sdkDecodeUpdateTimestamp decodes Event.Topic[2] (base64 SCVal U64)
-// into a uint64 seconds timestamp. Matches the #[topic] declaration
-// on UpdateEvent.timestamp.
+// into the raw uint64 the contract emits — MILLISECONDS, the
+// contract's internal scale (see the topic[2] comment in decodeUpdate
+// and oracle/src/price_oracle.rs, which divides by 1000 to expose
+// seconds via last_timestamp). The caller passes the value through
+// canonical.SafeUnixMillis; do NOT treat this return as seconds.
+// Matches the #[topic] declaration on UpdateEvent.timestamp.
 func sdkDecodeUpdateTimestamp(topicB64 string) (uint64, error) {
 	sv, err := scval.Parse(topicB64)
 	if err != nil {

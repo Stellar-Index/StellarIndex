@@ -87,7 +87,16 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 		if pd.Price.Sign() <= 0 {
 			// Redstone publishes non-zero prices by construction —
 			// defensive skip in case a contract upgrade relaxes that.
+			// Also guarantees a positive divisor for the Invert path.
 			continue
+		}
+		price := pd.Price
+		if entry.Invert {
+			// Feed published in market-FX orientation (units-per-USD);
+			// reciprocate to our canonical "<Base> in USD" convention
+			// so the row is comparable to every other feed. See
+			// feedEntry.Invert + reciprocalAtScale.
+			price = reciprocalAtScale(price, DefaultDecimals)
 		}
 		u := canonical.OracleUpdate{
 			Source:     SourceName,
@@ -107,7 +116,7 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 			// Per-feed quote — USD for all but EUROC/EUR (ADR-0028).
 			// Pre-#53 this was hardcoded USD, mislabelling EUROC.
 			Quote:    entry.Quote,
-			Price:    pd.Price,
+			Price:    price,
 			Decimals: DefaultDecimals,
 			Observer: observer,
 		}

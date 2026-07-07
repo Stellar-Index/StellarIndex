@@ -91,6 +91,12 @@ func (c *Config) ApplyEnvOverrides() {
 	if v := os.Getenv("CRYPTOCOMPARE_API_KEY"); v != "" {
 		c.External.CryptoCompare.APIKey = v
 	}
+	if v := os.Getenv("COINGECKO_API_KEY"); v != "" {
+		// Feeds the divergence supply cross-check's CoinGecko reference
+		// (internal/divergence/supply.go) — the Pro key that lifts the
+		// free-tier 429 ceiling the reference otherwise hits.
+		c.Divergence.Supply.CoinGecko.APIKey = v
+	}
 	if v := os.Getenv("CHAINLINK_RPC_URL"); v != "" {
 		c.External.Chainlink.RPCUrl = v
 		// The divergence Chainlink reference is a SECOND consumer of the
