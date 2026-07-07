@@ -497,6 +497,9 @@ jobs:
         run: |
           # syntax-check only needs the vars file to exist and parse.
           # Do not expose production vault material to Dependabot PRs.
+          mkdir -p ~/.ansible
+          printf '%s\n' 'ci-syntax-only' > ~/.ansible/r1_vault_pass
+          chmod 600 ~/.ansible/r1_vault_pass
           printf '%s\n' '--- {}' > inventory/ci.syntax-secrets.yml
           ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/archival-node.yml -e secrets_file=../inventory/ci.syntax-secrets.yml
           ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/monitoring.yml
