@@ -16,6 +16,14 @@ against.
 ## [Unreleased]
 
 ### Added
+- Per-protocol bespoke analytics now surface six previously captured-but-invisible tables:
+  `/v1/protocols/sorocredit` renders a full lending block (positions, open positions, unique
+  users, statements, **scheduled**-settlement volume/count + recent-settlements table — labelled
+  scheduled, not distressed liquidations; `bespokeLending` previously returned nil for non-blend
+  sources); `/v1/protocols/{comet,phoenix}` surface pool liquidity-depth (window net-flow) KPIs
+  + per-pool tables (Comet's carries the CS-026 topic-only-match caveat); `/v1/protocols/phoenix`
+  adds LP-staking KPIs; `/v1/protocols/soroswap` adds skim KPIs; `/v1/protocols/blend` adds
+  emission-claim volume + a bad_debt/defaulted_debt credit-risk tally.
 - `/v1/protocols/aquarius` now surfaces pool liquidity depth — the first Aquarius TVL/depth
   signal — from the captured `aquarius_reserves` hypertable (migration 0089): pools-with-live-
   reserves / reserve-legs / latest-snapshot KPIs + a per-pool latest-reserves table, alongside
