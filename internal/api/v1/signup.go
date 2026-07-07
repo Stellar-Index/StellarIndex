@@ -125,10 +125,27 @@ const signupDefaultRateLimitPerMin = 1000
 //     60 the caller gets a 429 from the middleware before this
 //     handler runs.
 //   - **Per-email volume**: emailHash is checked against the
-//     SignupTracker; a second signup for the same email returns
-//     409 with the existing key_id surfaced. (Tracker is nil-safe
-//     — without it the check is skipped, which is acceptable for
-//     deployments that don't have Redis up.)
+//     SignupTracker; a second signup for the same email returns a
+//     generic 409 (no key_id, no existing-key material surfaced —
+//     the body only points the caller at the recovery paths).
+//     (Tracker is nil-safe — without it the check is skipped, which
+//     is acceptable for deployments that don't have Redis up.)
+//
+// KNOWN, ACCEPTED enumeration trade-off (audit-2026-07 LOW): the 409
+// on a duplicate vs the 201+plaintext on a new email is an email-
+// existence oracle. It is UNAVOIDABLE while this endpoint keeps its
+// contract of minting-and-returning the plaintext key SYNCHRONOUSLY in
+// the response body ("shown ONCE" — SignupResult.Plaintext): a new
+// caller needs their secret returned now, an existing caller cannot be
+// handed one, so the two responses are inherently distinguishable
+// regardless of status code. The enumeration-safe posture is the
+// magic-link flow (dashboardauth.HandleLogin — always a generic 200,
+// secret delivered out-of-band by email, no existence disclosure); the
+// clean long-term fix is to RETIRE /v1/signup in favour of that unified
+// email-first flow rather than genericise this response (which would
+// break every client that reads `plaintext` from the body). Left as-is
+// deliberately; do not "fix" by returning 200 for duplicates without
+// also moving key delivery off the synchronous response.
 //   - **Garbage emails**: net/mail.ParseAddress + heuristic
 //     strip-and-lower normalisation. Bounces are not detected
 //     (we don't send confirmation email here); a follow-up Stripe-
@@ -169,6 +186,15 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 	if s.signups != nil {
 		err := s.signups.ReserveEmail(r.Context(), emailHash)
 		if errors.Is(err, auth.ErrSignupEmailReserved) {
+			// audit-2026-07 (LOW): this 409 is an email-existence
+			// oracle, but genericising it away is impossible without
+			// abandoning the synchronous-plaintext contract (see the
+			// handler doc). The body is kept deliberately generic — it
+			// surfaces NO key_id or existing-key material, only the
+			// recovery paths — so the disclosure is bounded to "an
+			// account exists for this email", which the magic-link
+			// login (the enumeration-safe entry point) already lets a
+			// determined attacker probe by other means.
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/already-signed-up",
 				"Already signed up", http.StatusConflict,

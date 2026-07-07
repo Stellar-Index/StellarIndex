@@ -98,11 +98,21 @@ func (s *Server) buildGlobalAssetView(ctx context.Context, vc *currency.Verified
 		return s.populateFiatView(ctx, view, vc)
 	}
 
-	// Populate the price block via the three-tier fallback chain
-	// (vwap_native → aggregator_avg → triangulated). Skipped when
-	// the binary didn't wire a GlobalPriceReader, leaving the price
-	// fields nil — consumers fall back to the canonical
-	// /v1/assets/{asset_id} surface.
+	// Crypto / stablecoin: try the global CEX/aggregator price tier
+	// first, then fall back to the on-chain per-Stellar-asset price
+	// for Stellar-only tokens (AQUA, yXLM, SHX, …) the global tier
+	// doesn't cover. Without the fallback the headline read null even
+	// though the classic /v1/assets listing prices the same token.
+	view = s.populateGlobalCryptoPrice(ctx, view, vc)
+	return s.fillGlobalPriceFromOnChain(ctx, view, vc)
+}
+
+// populateGlobalCryptoPrice fills the price block for a crypto /
+// stablecoin catalogue entry via the three-tier global chain
+// (vwap_native → aggregator_avg → triangulated). Leaves the price
+// fields nil when no GlobalPriceReader is wired or every tier misses
+// — the caller applies the on-chain fallback.
+func (s *Server) populateGlobalCryptoPrice(ctx context.Context, view GlobalAssetView, vc *currency.VerifiedCurrency) GlobalAssetView {
 	if s.globalPrice == nil {
 		return view
 	}
@@ -129,7 +139,7 @@ func (s *Server) buildGlobalAssetView(ctx context.Context, vc *currency.Verified
 	res, err := aggregate.ComputeGlobalPrice(ctx, base, quote, s.globalPrice, opts)
 	if err != nil {
 		if errors.Is(err, aggregate.ErrNoPrice) {
-			return view // expected miss; leave price fields nil
+			return view // expected miss; leave price fields nil for the on-chain fallback
 		}
 		s.logger.Warn("global asset view: ComputeGlobalPrice failed",
 			"ticker", vc.Ticker, "err", err)
@@ -145,7 +155,41 @@ func (s *Server) buildGlobalAssetView(ctx context.Context, vc *currency.Verified
 	// Crypto / stablecoin market cap stays on the per-asset surface
 	// (/v1/assets/{asset_id}'s F2 fields) — catalogue.CirculatingSupply
 	// is empty for those classes, so no inline computation here.
-	// Fiat already returned above with both price + cap populated.
+	return view
+}
+
+// fillGlobalPriceFromOnChain is the headline-price fallback for a
+// Stellar-only verified token (AQUA, yXLM, SHX, VELO, BLND, PHO):
+// when the global CEX/aggregator tier produced no price, serve the
+// SAME on-chain per-Stellar-asset USD price the /v1/assets listing
+// shows, sourced from the catalogue entry's Stellar-network twin.
+// This is a real observed on-chain price, not a fabricated one — we
+// only set it when the per-asset reader returns a non-nil PriceUSD
+// for the twin asset_id.
+//
+// Disclosure: authority is stamped AuthorityVWAPNative (the price IS
+// the Stellar-network on-chain VWAP), price_sources carries a
+// "stellar_onchain" marker so consumers can tell the headline came
+// from the network rather than the global CEX tier, and price_as_of
+// is left nil — the listing query's row carries no per-read
+// timestamp; the value tracks the recent (≤24h) prices_1m working
+// set. No-op when the price is already set, no per-asset reader is
+// wired, or the catalogue entry has no Stellar issuance.
+func (s *Server) fillGlobalPriceFromOnChain(ctx context.Context, view GlobalAssetView, vc *currency.VerifiedCurrency) GlobalAssetView {
+	if view.PriceUSD != nil || s.coins == nil {
+		return view
+	}
+	se := vc.StellarEntry()
+	if se == nil || se.AssetID == "" {
+		return view
+	}
+	price := s.onChainListingPriceUSD(ctx, se.AssetID)
+	if price == nil {
+		return view
+	}
+	view.PriceUSD = price
+	view.PriceAuthority = aggregate.AuthorityVWAPNative
+	view.PriceSources = []string{"stellar_onchain"}
 	return view
 }
 

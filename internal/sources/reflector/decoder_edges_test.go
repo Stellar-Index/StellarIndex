@@ -11,17 +11,19 @@ import (
 
 // quoteForVariant has a default-fallback branch for unknown Variant
 // values (e.g. a future ADR-0014 oracle variant we haven't wired
-// up). Pin: the fallback returns native XLM rather than zero — a
+// up). Pin: the fallback returns fiat:USD (every real Reflector
+// oracle denominates in USD-equivalent) rather than zero — a
 // zero-asset return would later break canonical.NewPair downstream.
 //
 // TestQuoteForVariant in source_test.go covers DEX/CEX/FX. This
 // adds the default branch.
 
-func TestQuoteForVariant_unknownFallsBackToNative(t *testing.T) {
+func TestQuoteForVariant_unknownFallsBackToUSD(t *testing.T) {
 	const bogus Variant = 99
+	usd, _ := canonical.NewFiatAsset("USD")
 	got := quoteForVariant(bogus)
-	if got.Type != canonical.AssetNative {
-		t.Errorf("quoteForVariant(unknown) = %+v, want native (default fallback)", got)
+	if !got.Equal(usd) {
+		t.Errorf("quoteForVariant(unknown) = %+v, want fiat:USD (default fallback)", got)
 	}
 }
 
