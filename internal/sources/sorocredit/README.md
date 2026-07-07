@@ -98,14 +98,22 @@ in-memory seeding suffices.
   malformed tracked event returns `ErrMalformedPayload` (counted +
   skipped by the dispatcher/projector).
 
-## Provenance — LIVE-CAPTURE ONLY
+## Provenance — LIVE-CAPTURE, audited
 
 Schemas were reverse-engineered from real lake fixtures (2026-07-07),
-**not** from a published contract source. Consequence: `BackfillSafe`
-stays **false** in `external.Registry` and there is **no** WASM-history
-audit yet. Do **not** flip `BackfillSafe` or run a historical re-derive
-against these schemas until a WASM-history audit lands at
-`docs/operations/wasm-audits/sorocredit.md`.
+**not** from a published contract source. The WASM-history audit landed
+2026-07-07 at
+[`docs/operations/wasm-audits/sorocredit.md`](../../../docs/operations/wasm-audits/sorocredit.md):
+the main contract has run a **single** instance WASM (`84a88013…810ea`,
+set at deploy) with no executable change in the dense-coverage window
+`[62.0M→tip]`, and **all 7 event types have one invariant on-wire
+schema across the contract's whole life** (`NewCollateralContract`
+structurally identical from its first occurrence 61,624,053 through
+63,363,505, spanning the sparse early window). `BackfillSafe` is
+therefore **true** in `external.Registry`, safe **from genesis
+(61,620,822)**. Historical re-derive:
+`stellarindex-ops projector-replay -source sorocredit -from 61620822`
+(under the heavy-job wrapper).
 
 ## Storage + wiring
 
