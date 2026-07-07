@@ -87,6 +87,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/config"
 	"github.com/StellarIndex/stellar-index/internal/customerwebhook"
+	"github.com/StellarIndex/stellar-index/internal/decimalsguard"
 	"github.com/StellarIndex/stellar-index/internal/divergence"
 	"github.com/StellarIndex/stellar-index/internal/obs"
 	"github.com/StellarIndex/stellar-index/internal/platform"
@@ -638,6 +639,40 @@ func run(cfgPath string, dryRun bool) error {
 			logger.Error("mev worker exited with error", "err", err)
 		}
 	}()
+
+	// ─── Decimals-assumption guard (decoder-correctness audit F2) ─
+	// The served price is Σ(quote)/Σ(base) on RAW smallest-unit
+	// integers (prices_* CAGGs + aggregate.VWAP); the per-asset
+	// decimals cancel ONLY when base and quote share a scale. That
+	// holds today because every DEX-traded token is 7-decimal, but a
+	// non-7-decimal SEP-41 token getting DEX liquidity would silently
+	// skew every served price on its pairs by 10^(7-decimals) with no
+	// other alarm. This sweep resolves each recently-DEX-traded
+	// Soroban token's on-chain decimals() from the lake and raises
+	// stellarindex_dex_trade_nonstandard_decimals_total the moment one
+	// is != 7 — detection only; the forward normalization is a
+	// deferred follow-up (a consistent fix would rewrite the decade-
+	// deep CAGGs). Best-effort: needs the lake for decimals(), so it's
+	// off when ClickHouse is unreachable (like the MEV order resolver).
+	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
+		if er, err := clickhouse.NewExplorerReader(rootCtx, addr); err != nil {
+			logger.Warn("decimals-guard: ClickHouse decimals resolver unavailable — non-7-decimal DEX-token detection disabled",
+				"addr", addr, "err", err)
+		} else {
+			defer func() { _ = er.Close() }()
+			guard := decimalsguard.New(store, er, decimalsguard.Options{
+				Window: decimalsguard.DefaultWindow,
+				Logger: logger.With("component", "decimals-guard"),
+			})
+			refresherWG.Add(1)
+			go func() {
+				defer refresherWG.Done()
+				if err := guard.Run(rootCtx, decimalsguard.DefaultInterval); err != nil && !errors.Is(err, context.Canceled) {
+					logger.Error("decimals-guard exited with error", "err", err)
+				}
+			}()
+		}
+	}
 
 	// ─── Price-alert evaluator (BACKLOG #60) ────────────────────
 	// Off by default. When [price_alerts] enabled=true, sweeps the

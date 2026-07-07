@@ -153,6 +153,8 @@ func registerAppMetricsTail() {
 		SignupReaperRunsTotal,
 		SignupReaperRunDurationSeconds,
 		SignupReaperRowsDeletedTotal,
+
+		DEXTradeNonstandardDecimalsTotal,
 	)
 
 	// F-0033 closure: pre-seed zero-valued series for the
@@ -2042,4 +2044,40 @@ var MarketsSkippedRowsTotal = prometheus.NewCounter(
 		Name: "stellarindex_markets_skipped_rows_total",
 		Help: "Count of trades rows skipped by the /v1/markets scanner because base/quote did not parse as canonical asset strings. Non-zero indicates non-pipeline writes; investigate and clean up.",
 	},
+)
+
+// DEXTradeNonstandardDecimalsTotal — the decimals-assumption landmine
+// detector (adversarial-review HIGH-latent, decoder-correctness audit
+// Finding 2). Emitted by the aggregator's decimals-guard sweep
+// (internal/decimalsguard) once per (source, asset) the FIRST time a
+// DEX trade is observed for a Soroban-contract token whose ON-CHAIN
+// decimals() != 7.
+//
+// Why it matters: the served price is Σ(quote_amount)/Σ(base_amount) on
+// RAW smallest-unit integers — in the prices_* continuous aggregates
+// (migrations/0002) and in aggregate.VWAP. The per-asset decimals CANCEL
+// in that ratio ONLY when base and quote share the same scale. Every
+// DEX-traded Stellar token today is 7-decimal (SACs are always 7;
+// pure-SEP-41 tokens observed so far all declare decimals=7), so the
+// ratio is correct. The moment a non-7-decimal SEP-41 token (an
+// 18-decimal bridged asset, a 6-dp token, …) gains DEX liquidity, every
+// served price for a pair involving it silently skews by 10^(7−decimals)
+// with NO other signal. This counter turns that silent landmine into a
+// loud, per-asset signal so the operator can apply the decimals
+// normalization (deferred follow-up — see the runbook) BEFORE customers
+// consume a wrong price.
+//
+// Labels: `source` (the DEX connector that traded it — soroswap /
+// phoenix / aquarius / comet / …) and `asset` (the token's C-strkey
+// contract id). The label set is unbounded in principle but near-empty
+// in practice (offenders should be zero), so it is NOT pre-seeded and a
+// series exists ONLY once a real offender is detected — the alert is a
+// bare `> 0`. The actual decimals value is logged (ERROR) at detection,
+// not carried as a label.
+var DEXTradeNonstandardDecimalsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_dex_trade_nonstandard_decimals_total",
+		Help: "DEX trades observed for a Soroban token whose on-chain decimals() != 7 — the served price for pairs involving this asset is silently skewed by 10^(7-decimals). Labels: source, asset (C-strkey). Any non-zero value is an unmitigated mispricing landmine; see runbook dex-nonstandard-decimals.md.",
+	},
+	[]string{"source", "asset"},
 )

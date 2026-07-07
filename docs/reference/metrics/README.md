@@ -1506,8 +1506,39 @@ grouping + a few inserts) is sub-second; chart the `ok` p95/p99
 separately from `scan_error` to tell "Postgres scan is slow" from
 "detector is failing fast".
 
+## Decimals-assumption guard (aggregator binary)
+
+### `stellarindex_dex_trade_nonstandard_decimals_total`
+
+Counter, labels `source`, `asset`.
+
+**When to look at this: never — it should be permanently absent/zero.**
+The served price is `Σ(quote_amount)/Σ(base_amount)` on raw smallest-unit
+integers (the `prices_*` continuous aggregates and `aggregate.VWAP`); the
+per-asset decimals cancel in that ratio only when the base and quote share a
+decimals scale. That holds today because every DEX-traded Stellar token is
+7-decimal (SACs are always 7; classic credits are 7; observed pure-SEP-41
+tokens declare 7). The aggregator's `internal/decimalsguard` sweep resolves
+each recently-DEX-traded Soroban token's on-chain `decimals()` from the
+certified lake and increments this counter — once per (`source`, `asset`),
+latched — the first time one is confirmed `!= 7`, i.e. the moment the
+assumption is violated and every served price for a pair involving that
+`asset` is silently skewed by `10^(7−decimals)`. `source` is the DEX
+connector; `asset` is the token's C-strkey contract id. The label set is
+unbounded in principle but near-empty in practice, so it is **not**
+pre-seeded — a series exists only once a real offender is detected, and the
+alert is a bare `> 0`. The exact decimals + skew magnitude are in the guard's
+ERROR log line, not a label. Any non-zero value is a real, silent mispricing
+on a live pair — page-adjacent (P2). Runbook:
+`docs/operations/runbooks/dex-nonstandard-decimals.md`.
+
 ## Changelog
 
+- 2026-07-07 — added `stellarindex_dex_trade_nonstandard_decimals_total`
+  (`source`, `asset`), emitted by the aggregator's decimals-assumption guard
+  (`internal/decimalsguard`). Detection-only signal for the served-price
+  decimals landmine (decoder-correctness audit Finding 2): fires when a DEX
+  trade lands for a Soroban token whose on-chain `decimals()` != 7.
 - 2026-06-18 — added the MEV detection metrics
   (`stellarindex_mev_detect_runs_total`,
   `stellarindex_mev_events_inserted_total`,
