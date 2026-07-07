@@ -16,6 +16,11 @@ against.
 ## [Unreleased]
 
 ### Added
+- `/v1/protocols/aquarius` now surfaces pool liquidity depth — the first Aquarius TVL/depth
+  signal — from the captured `aquarius_reserves` hypertable (migration 0089): pools-with-live-
+  reserves / reserve-legs / latest-snapshot KPIs + a per-pool latest-reserves table, alongside
+  the existing volume KPIs. Depth is in native token base units (Aquarius pools have no
+  published price, so USD TVL is not computed). New reader `timescale.LatestAquariusReserves`.
 - **`sorocredit` source** — capture an unbranded consumer-USDC credit/CDP protocol
   (contract `CCG5EWFY…`), the largest Soroban protocol previously undecoded (221k
   events/30d, 7,086 users). New credit domain (migration 0090: `credit_positions`,
