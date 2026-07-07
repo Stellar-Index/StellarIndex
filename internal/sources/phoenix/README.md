@@ -105,17 +105,28 @@ received amount"`). This is legal SCVal symbol syntax but unusual.
 The decoder byte-matches the full SCVal blob — nothing special
 required — but it's worth knowing when reading bug reports.
 
-### Q3 — Return vs actual-received
+### Q3 — QuoteAmount is `return_amount`, NOT `actual received amount`
 
-Phoenix distinguishes:
-- `return_amount` = computed swap output before fees.
-- `actual received amount` = after-fee amount the buyer saw.
+Verified against the pool contract's `do_swap` and confirmed
+byte-for-byte against the mainnet lake:
 
-For our canonical.Trade.QuoteAmount we use
-`actual received amount` — that's what actually changed hands.
-`return_amount - actual_received` is the fee. **Not surfaced
-today** — `canonical.Trade` has no `Fee` field; if we add one,
-the decoder already has the value to populate it.
+- `offer_amount` — the base the taker sells (input).
+- `actual received amount` — `balance_after − balance_before` of the
+  **sell (input)** token, i.e. the amount the POOL received of
+  `sell_token`. For fee-less tokens it is **byte-identical to
+  `offer_amount`**; it is NOT an output amount.
+- `return_amount` — `compute_swap.return_amount`, already **net of
+  protocol commission + referral fee**, and is exactly the `buy_token`
+  amount transferred to the sender.
+
+So `canonical.Trade.QuoteAmount = return_amount` (the `buy_token` the
+taker actually received). The earlier decoder used
+`actual received amount` — which, because it equals `offer_amount`,
+made every Phoenix trade `base_amount == quote_amount` and collapsed
+all Phoenix prices to ~1:1. **Fixed 2026-07-07; a historical Phoenix
+trade re-derive is required to correct rows written before the fix.**
+`spread_amount` / `referral_fee_amount` are emitted but not surfaced
+(no `Fee` field on `canonical.Trade`).
 
 ### Q4 — Multihop expands to N×8 events
 
@@ -130,15 +141,35 @@ N trades for one multihop don't collide on the trades PK
 (ADR-0033, same as aquarius/comet/soroswap). See `RawSwap.EventIndex`
 in `decode.go`.
 
-### Q5 — Stableswap pool contract emits a different schema
+### Q5 — Two on-wire swap shapes (String 8-event vs Symbol/Map single-event)
 
-`contracts/pool_stable/src/contract.rs` uses a similar but
-distinct event shape. **Not decoded yet.** The volatile
-(`contracts/pool/`) schema above is the only one we handle in this
-first implementation. Stableswap pool support is deferred until
-after the volatile path has soaked in production — the field set
-needs enumeration from a stableswap-pool fixture capture, and we
-don't want to ship a partial decoder.
+Phoenix pools upgrade in place ([contract-schema-evolution](../../../docs/architecture/contract-schema-evolution.md)),
+and the newer pool WASM (first seen on mainnet 2026-07-02, pool
+`CBENABXP…`) emits a swap as a **single** `ScvSymbol("swap")` event
+whose body is an `ScvMap` of all 8 fields — Symbol keys spelled with
+underscores (`actual_received_amount`), not the legacy spaced String
+(`actual received amount`). Both shapes are decoded:
+
+| Shape | topic[0] | Events/swap | Body | Decoder |
+| --- | --- | --- | --- | --- |
+| Legacy | `ScvString("swap")` (disc 14) | 8 (one per field) | scalar per event | `decodeSwap` (8-event buffer) |
+| Map | `ScvSymbol("swap")` (disc 15) | 1 | `ScvMap` | `decodeSwapMap` (no buffer) |
+
+`classifyAny` routes on the topic shape; both reconstruct the same
+`canonical.Trade` (QuoteAmount = `return_amount`, per Q3). Map-schema
+pools are gated via `MainnetMapPools`; because gating is by contract
+identity, a curated String pool that upgrades to the Map shape in
+place is already covered.
+
+**On the `pool_stable` contract:** the current
+`contracts/pool_stable/src/contract.rs` swap emits a 6-field String
+*subset* (no `actual received amount`, no `referral_fee_amount`),
+which would orphan under the 8-field buffer. **No pool with that
+schema is deployed on mainnet** — the factory
+`("create","liquidity_pool")` walk (13 pools, 2026-07-06) yields only
+8-field String pools plus the new Map-schema pool. If a `pool_stable`
+instance is ever deployed, add a 6-field completeness variant then;
+until a real fixture exists we do not ship a speculative decoder.
 
 ## File layout (five-file convention)
 
@@ -162,12 +193,16 @@ fixtures and write to `trades`, `phoenix_liquidity`, and
 optional event on withdraws is recognised + discarded
 (intentionally).
 
-Stableswap pool support is **partially shipped** — Phoenix's stable
-pool emits identical `provide_liquidity` / `withdraw_liquidity`
-topic shapes (verified against `contracts/pool_stable/src/contract.rs`
-lines 353-362 / 506-513), so the new liquidity decoders cover both
-pool variants. Stable-pool **swap** still drops to the orphan
-counter; the field set is different and remains unenumerated (Q5).
+Both on-wire swap shapes are decoded (Q5): the legacy 8-event
+`ScvString` schema (`decodeSwap`) and the newer single-event
+`ScvSymbol("swap")` + `ScvMap` schema (`decodeSwapMap`, gated via
+`MainnetMapPools`). Liquidity decoders cover both pool WASMs'
+identical `provide_liquidity` / `withdraw_liquidity` String shapes.
+
+Swap `QuoteAmount` is `return_amount` (the output the taker received),
+corrected 2026-07-07 from the earlier `actual received amount` which
+equals the input and produced `base == quote` (Q3). A historical
+Phoenix trade re-derive is required to fix pre-2026-07-07 rows.
 
 ### Historical fill
 

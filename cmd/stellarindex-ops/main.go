@@ -87,6 +87,7 @@ var subcommands = map[string]func(args []string) error{
 	"ch-rebuild":                chRebuild,
 	"ch-supply":                 chSupply,
 	"ch-txindex-backfill":       chTxIndexBackfill,
+	"ch-participant-backfill":   chParticipantBackfill,
 	"ch-recognition":            chRecognition,
 	"sdex-claim-audit":          sdexClaimAudit,
 	"verify-recognition":        verifyRecognition,
@@ -354,6 +355,35 @@ Subcommands:
                           keep the reserve reader on the static fallback
                           forever. Idempotent; the live observer
                           supersedes seeded rows on the next real change.
+  supply seed-sep41-genesis -config PATH [-ch-addr ADDR] [-genesis-ledger N] [-dry-run]
+                          Seed each [supply].watched_sep41_contracts
+                          contract's pre-Soroban (ledger < 50457424)
+                          per-kind opening balance into sep41_supply_rollup
+                          from the ClickHouse supply_flows lake (migration
+                          0088, incident 2026-07-06). Fixes SAC-wrappers
+                          issued before Soroban reading a negative
+                          Soroban-era-only total. Idempotent (baseline is
+                          SET, not added); Soroban-only contracts seed a
+                          zero baseline (served total unchanged).
+  supply verify-rollup -config PATH [-contracts C1,C2,...] [-tolerance N] [-statement-timeout DUR] [-timeout DUR]
+                          Derived-checkpoint reconcile (ADR-0033 fourth
+                          integrity check): diff every watched contract's
+                          sep41_supply_rollup fold (the served incremental
+                          checkpoint) against the AUTHORITATIVE same-source
+                          re-sum of the exact sep41_supply_events rows it
+                          folds (ledger <= last_ledger). Reports any
+                          (contract, kind) that diverge by more than
+                          -tolerance (Delta > 0 = double-fold over-count,
+                          the KALE 2× signature; Delta < 0 = a
+                          below-checkpoint edit the worker never re-summed).
+                          Exit 1 if any drift. SLOW / post-re-derive check,
+                          NOT a per-tick job — each re-sum is the
+                          full-history aggregate the served fast path
+                          avoids (the incident's 30s probe timed out at 6
+                          contracts), so it runs under -statement-timeout
+                          (default 15m per contract), is scoped/resumable
+                          via -contracts, and on r1 must run under the
+                          heavy-job wrapper (run-heavy-job.sh).
   discovery list -config PATH [-since DUR] [-limit N]
                           List SEP-41 contracts auto-detected from the
                           event stream (the dispatcher's discovery
@@ -561,6 +591,18 @@ Subcommands:
                           this covers the history behind it. -to 0 = lake
                           tip. Prints a resume point per window; serialize
                           it and run under the root-<2G watchdog on r1.
+  ch-participant-backfill [-ch-addr H:P] [-from N] [-to N] [-window N] [-dry-run]
+                          Fill stellar.operation_participants (the non-source
+                          side of ADR-0038 Phase B account history) for
+                          HISTORICAL ledgers by re-deriving participants from
+                          stellar.operations.body_xdr in the ClickHouse lake —
+                          NOT a Galexie re-walk (BACKLOG #59). Reuses the live
+                          extractor's participant derivation, so the fill is
+                          byte-identical to live capture. -to 0 = the
+                          live-capture floor − 1 (exactly the gap). Windowed,
+                          resumable (idempotent ReplacingMergeTree), prints a
+                          resume point per window. -dry-run counts what WOULD
+                          be written. Run under run-heavy-job.sh on r1.
   verify-recognition -config PATH -from N -to N
                           ADR-0033 Claim 2a: pull every distinct
                           (contract, topic[0]) shape from soroban_events

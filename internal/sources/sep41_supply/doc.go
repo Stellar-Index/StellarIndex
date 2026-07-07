@@ -39,10 +39,20 @@
 // the counterparty at a DIFFERENT index. sep0011_asset is a
 // String (ScvString), not an Address.
 //
-// Body (event.Value) is the i128 amount in stroops (per the
-// asset's decimals — SEP-41 is decimal-agnostic at the wire
-// level; total / circulating in `asset_supply_history` carry
-// the wire stroop value verbatim).
+// Body (event.Value) carries the amount in stroops in ONE of two
+// shapes (SEP-41 is decimal-agnostic at the wire level; total /
+// circulating in `asset_supply_history` carry the wire stroop value
+// verbatim):
+//
+//	bare i128                              (the amount directly)
+//	CAP-67 map { amount: i128, to_muxed_id: String }
+//
+// The map form appears when the destination is a muxed account, or
+// when the issuer stamps a memo string into `to_muxed_id` (mainnet-
+// observed on watched tokens, e.g. "Auto recharge transaction"). The
+// amount then lives in the map's `amount` field — [decodeAmount]
+// type-tests and unwraps it (2026-07-06 dropped-mints finding: the old
+// i128-only decode rejected every map body and dropped the row).
 //
 // # Counterparty extraction
 //

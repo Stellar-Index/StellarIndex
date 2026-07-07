@@ -13,7 +13,10 @@ import (
 // One stroop is the float-rounding boundary that arises in honest
 // indexer math (a NUMERIC truncation here, a Soroban-emitted i128 →
 // SAC contract-data write rounding there). Anything larger is a real
-// disagreement worth paging.
+// disagreement worth paging — BUT only for a fully-SAC-represented
+// asset; see the CAVEAT on [CrossCheck]: a partially-wrapped classic
+// asset legitimately diverges by ~its whole supply, so this 1-stroop
+// bound produces false alerts there (BACKLOG #59).
 var CrossCheckTolerance = big.NewInt(1)
 
 // CrossCheckResult is the comparison output. The caller emits the
@@ -39,13 +42,24 @@ type CrossCheckResult struct {
 var ErrCrossCheckNilSupply = errors.New("supply: cross-check requires non-nil TotalSupply on both inputs")
 
 // CrossCheck compares a classic-asset Algorithm 2 reading with its
-// SAC-wrapped Algorithm 3 reading. The two should agree because
-// every SAC contract's ledger-entry footprint is observable both ways
-// — through trustline + claimable + LP + SAC-wrapped sums (Algorithm
-// 2) AND through the contract's own SEP-41 mint/burn/clawback events
-// (Algorithm 3). Disagreement beyond [CrossCheckTolerance] indicates
-// indexer corruption upstream and triggers the
-// supply_cross_check_divergence Prometheus alert.
+// SAC-wrapped Algorithm 3 reading.
+//
+// CAVEAT (audit-2026-07-07, see BACKLOG #59): the equality
+// classic.TotalSupply == sac.TotalSupply only holds for an asset whose
+// ENTIRE economic supply is represented through the SAC's SEP-41
+// mint/burn events (a genuinely SAC-issued token). It does NOT hold for
+// a classic asset that merely HAS a SAC wrapper but is mostly held
+// classically: Algorithm 2 sums the TOTAL classic supply (trustlines +
+// claimables + LP + contract balances) while Algorithm 3 sums only the
+// SEP-41-MINTED amount — which is ~0 for a classic asset that the
+// classic issuer mints (not the SAC). For such assets the two legitimately
+// diverge by ~the whole supply (e.g. AQUA: Alg-2 ≈ 86.4B, Alg-3 ≈ 0), so a
+// 1-stroop tolerance fires a FALSE supply_cross_check_divergence alert.
+// The comparison is only a valid corruption signal for fully-SAC-
+// represented assets; #59 tracks fixing the pair selection / comparison.
+// Until then, over-tolerance divergence on a classic asset is a category
+// error, not indexer corruption — do NOT treat it as a served-supply bug
+// (the served total, via Algorithm 2, is correct).
 //
 // The function is pure: no I/O, no metric emission. The caller emits
 // metrics via [obs.SupplyCrossCheckDivergence] using the returned

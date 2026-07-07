@@ -16,6 +16,8 @@ type fakeSEP41Store struct {
 	totalsErr       error
 	holderBalances  map[string]*big.Int // key: "holder:assetKey"
 	holderLookupErr error
+	genesisSeeded   bool
+	genesisErr      error
 }
 
 func (f *fakeSEP41Store) SEP41KindTotalsAtOrBefore(_ context.Context, _ string, _ uint32) (SEP41KindTotals, error) {
@@ -39,6 +41,15 @@ func (f *fakeSEP41Store) SACBalanceForContractAtOrBefore(_ context.Context, hold
 // MinSEP41ComponentLedger — fake returns 0 (gate-skip) by default.
 func (f *fakeSEP41Store) MinSEP41ComponentLedger(_ context.Context, _ string, _ uint32) (uint32, error) {
 	return 0, nil
+}
+
+// SEP41GenesisBaselineSeeded — fake returns the configured flag (default
+// false = not seeded).
+func (f *fakeSEP41Store) SEP41GenesisBaselineSeeded(_ context.Context, _ string) (bool, error) {
+	if f.genesisErr != nil {
+		return false, f.genesisErr
+	}
+	return f.genesisSeeded, nil
 }
 
 const tContract = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4"
@@ -83,6 +94,45 @@ func TestStorageSEP41SupplyReader_HappyPath(t *testing.T) {
 	}
 	if got.LockedContractBalances.Sign() != 0 {
 		t.Errorf("LockedContractBalances=%s want 0 (empty LockedSet)", got.LockedContractBalances)
+	}
+}
+
+// TestStorageSEP41SupplyReader_GenesisSeededPropagates — the reader threads
+// the store's genesis-baseline-seeded flag onto the components so the computer
+// can route a negative total to `missing_baseline` vs `compute_error`
+// (migration 0088, incident 2026-07-06).
+func TestStorageSEP41SupplyReader_GenesisSeededPropagates(t *testing.T) {
+	asset := mustSorobanAsset(t, tContract)
+	for _, seeded := range []bool{false, true} {
+		store := &fakeSEP41Store{
+			totals: SEP41KindTotals{
+				Mint:     big.NewInt(1),
+				Burn:     big.NewInt(0),
+				Clawback: big.NewInt(0),
+			},
+			genesisSeeded: seeded,
+		}
+		r := NewStorageSEP41SupplyReader(store)
+		got, err := r.SEP41SupplyAt(context.Background(), asset, LockedSet{}, 100)
+		if err != nil {
+			t.Fatalf("SEP41SupplyAt (seeded=%v): %v", seeded, err)
+		}
+		if got.GenesisBaselineSeeded != seeded {
+			t.Errorf("GenesisBaselineSeeded=%v want %v", got.GenesisBaselineSeeded, seeded)
+		}
+	}
+	// A genesis-seeded query error is non-fatal — defaults to not-seeded
+	// (the safe posture: a negative total routes to the benign outcome).
+	store := &fakeSEP41Store{
+		totals:     SEP41KindTotals{Mint: big.NewInt(1), Burn: big.NewInt(0), Clawback: big.NewInt(0)},
+		genesisErr: errors.New("DB blip"),
+	}
+	got, err := NewStorageSEP41SupplyReader(store).SEP41SupplyAt(context.Background(), asset, LockedSet{}, 100)
+	if err != nil {
+		t.Fatalf("SEP41SupplyAt (genesis err): %v", err)
+	}
+	if got.GenesisBaselineSeeded {
+		t.Error("GenesisBaselineSeeded should default false on query error")
 	}
 }
 

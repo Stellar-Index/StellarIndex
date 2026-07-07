@@ -73,7 +73,7 @@ the `env:` column.
 | `ingestion.cursor_store_scheme` | `string` | `postgres` | — | Where per-source cursors live — postgres / redis. |
 | `ingestion.live_seam_ledger` | `uint32` | `0` | — | First ledger in the live bucket. Below this, indexer reads from galexie-archive. 0 disables the archive bucket entirely. |
 | `ingestion.projector.enabled` | `bool` | `false` | — | Master switch. When false the projector goroutines are not started. |
-| `ingestion.projector.persist_per_source` | `bool` | `true` | — | When false (Phase 4+), the dispatcher's events-goroutine skips Soroban-derived events so the projector is sole writer. Requires Enabled=true. Defaults true (Phase 3 parallel mode); operator flips to false once projector lag is verified low. |
+| `ingestion.projector.persist_per_source` | `bool` | `true` | — | When false (Phase 4+), the dispatcher's events-goroutine skips Soroban-derived events so the projector is sole writer. Requires Enabled=true. Defaults true (Phase 3 parallel mode); operator flips to false once projector lag is verified low. The sep41 domain is exempt — the projector is always its sole writer (F-1316 / TASK #16b). |
 
 ### `[oracle]`
 
@@ -128,7 +128,7 @@ the `env:` column.
 | `aggregate.vwap_window_seconds` | `int` | `300` | — | Rolling VWAP window in seconds. |
 | `aggregate.twap_window_seconds` | `int` | `300` | — | Rolling TWAP window in seconds (fallback when volume below threshold). |
 | `aggregate.min_usd_volume` | `float64` | `10000` | — | Per-pair minimum USD volume within the window for VWAP eligibility. |
-| `aggregate.outlier_sigma_threshold` | `float64` | `4` | — | Reject trades priced > N sigma from the rolling median before VWAP. |
+| `aggregate.outlier_sigma_threshold` | `float64` | `4` | — | Reject trades priced more than N standard deviations from the per-window (unweighted) MEAN before VWAP. Implementation is mean+stdev computed per window (internal/aggregate/outliers.go), NOT a rolling median or MAD; 0 disables it and fewer than 3 valid prices is a no-op. |
 | `aggregate.triangulation_enabled` | `bool` | `true` | — | Master switch for the post-refresh triangulation pass. When true (default), the aggregator runs each aggregate.triangulations chain × window after the per-pair refresh, multiplying the leg VWAPs and writing the implied target price. When false, the pass is skipped entirely regardless of aggregate.triangulations entries — an operator-side kill-switch for the triangulation feature without having to clear the chain table. |
 | `aggregate.interval_seconds` | `int` | `30` | — | Tick cadence — gap between successive (pair, window) refresh passes. 0 falls back to the library default (30s). |
 | `aggregate.divergence_min_interval_seconds` | `int` | `300` | — | Minimum wall-clock seconds between divergence-refresh passes. Tick still fires at interval_seconds, but the divergence pass is skipped if elapsed < this value. Default 300s (= cachekeys.DivergenceTTL) keeps the API's div:<asset> cache continuously populated while burning ~10× less of the CMC monthly-quota (F-0030 follow-up). Set to 0 to refresh every tick (legacy). |
@@ -238,6 +238,16 @@ the `env:` column.
 | `divergence.redstone.max_age_minutes` | `int` | `0` | — | Staleness ceiling in minutes for the oracle's latest observation; older observations are rejected as reference-unavailable. 0 = per-oracle default (Reflector 30m, Redstone/Band 26h). |
 | `divergence.band.enabled` | `bool` | `true` | — | Whether this on-chain oracle reference is wired into the divergence service. |
 | `divergence.band.max_age_minutes` | `int` | `0` | — | Staleness ceiling in minutes for the oracle's latest observation; older observations are rejected as reference-unavailable. 0 = per-oracle default (Reflector 30m, Redstone/Band 26h). |
+| `divergence.supply.enabled` | `bool` | `false` | — | Whether the supply cross-check worker runs. Off by default (makes outbound HTTP calls; opt in on r1 via ansible). |
+| `divergence.supply.refresh_interval_seconds` | `int` | `900` | — | Per-cycle interval for the supply cross-check worker. Supply moves slowly, so a slow cadence is fine. Default 900 (15 min). |
+| `divergence.supply.threshold_pct` | `float64` | `1.0` | — | Relative-divergence percentage above which a supply cross-check reads 'divergent' and the alert fires. Default 1.0 (well above the ~0.03% XLM noise floor). |
+| `divergence.supply.per_reference_timeout_seconds` | `int` | `10` | — | Bound for each supply-reference HTTP call. Default 10. |
+| `divergence.supply.dashboard.enabled` | `bool` | `true` | — | Whether the Stellar Dashboard supply reference is consulted. On by default within [divergence.supply]. |
+| `divergence.supply.dashboard.base_url` | `string` | _(required)_ | — | Dashboard API base. Empty defaults to https://dashboard.stellar.org/api/v3. The reference GETs base_url + /lumens. |
+| `divergence.supply.coingecko.enabled` | `bool` | `false` | — | Whether the CoinGecko supply reference is consulted. Off by default (free tier 429-throttled). |
+| `divergence.supply.coingecko.api_key` | `string` | _(required)_ | `COINGECKO_API_KEY` | CoinGecko Pro API key, sent as x-cg-pro-api-key. Prefer env var COINGECKO_API_KEY. |
+| `divergence.supply.coingecko.base_url` | `string` | _(required)_ | — | CoinGecko API base. Empty defaults to https://api.coingecko.com/api/v3. |
+| `divergence.supply.coingecko.id_map` | `map` | `{}` | — | Maps canonical asset_id → CoinGecko coin id for the supply lookup. Empty falls back to the built-in default (native/crypto:XLM → stellar). |
 
 ### `[price_alerts]`
 

@@ -85,7 +85,10 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if err := accounts.Update(ctx, acme); err != nil {
 			t.Fatalf("update: %v", err)
 		}
-		got, _ = accounts.Get(ctx, acme.ID)
+		got, err = accounts.Get(ctx, acme.ID)
+		if err != nil {
+			t.Fatalf("get after update: %v", err)
+		}
 		if got.Tier != platform.TierPro {
 			t.Errorf("tier didn't persist: %q", got.Tier)
 		}
@@ -97,7 +100,10 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if err := accounts.Suspend(ctx, acme.ID, "abuse-again"); err != nil {
 			t.Fatalf("suspend (idempotent): %v", err)
 		}
-		got, _ = accounts.Get(ctx, acme.ID)
+		got, err = accounts.Get(ctx, acme.ID)
+		if err != nil {
+			t.Fatalf("get after suspend: %v", err)
+		}
 		if got.Status != platform.AccountSuspended {
 			t.Errorf("not suspended: %q", got.Status)
 		}
@@ -111,7 +117,10 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if err := accounts.Unsuspend(ctx, acme.ID); err != nil {
 			t.Fatalf("unsuspend: %v", err)
 		}
-		got, _ = accounts.Get(ctx, acme.ID)
+		got, err = accounts.Get(ctx, acme.ID)
+		if err != nil {
+			t.Fatalf("get after unsuspend: %v", err)
+		}
 		if got.Status != platform.AccountActive {
 			t.Errorf("not active after unsuspend: %q", got.Status)
 		}
@@ -303,7 +312,10 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if err := users.TouchSession(ctx, sess.ID, newIP, "curl/8"); err != nil {
 			t.Fatalf("touch: %v", err)
 		}
-		gotSess, _ = users.GetSession(ctx, sess.ID)
+		gotSess, err = users.GetSession(ctx, sess.ID)
+		if err != nil {
+			t.Fatalf("get session after touch: %v", err)
+		}
 		if !gotSess.IPLastSeen.Equal(newIP) {
 			t.Errorf("IPLastSeen = %v, want %v", gotSess.IPLastSeen, newIP)
 		}
@@ -431,7 +443,10 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 
 		// Pending list now empty.
-		pending, _ = tokens.ListInvitesForAccount(ctx, acct.ID)
+		pending, err = tokens.ListInvitesForAccount(ctx, acct.ID)
+		if err != nil {
+			t.Fatalf("list invites after accept: %v", err)
+		}
 		if len(pending) != 0 {
 			t.Errorf("pending after accept = %d, want 0", len(pending))
 		}
@@ -443,14 +458,19 @@ func TestPlatformPostgresStores(t *testing.T) {
 
 		// Revoke pre-accept (separate token).
 		hash2 := sha256.Sum256([]byte("invite-2"))
-		_ = tokens.CreateInvite(ctx, platform.Invite{
+		// Check the create error: a swallowed failure here made the
+		// downstream ErrNotFound assertion pass for the WRONG reason —
+		// row never created vs. row revoked (audit-2026-06-14 A20).
+		if err := tokens.CreateInvite(ctx, platform.Invite{
 			TokenHash:       hash2[:],
 			AccountID:       acct.ID,
 			Email:           "second@i.example",
 			Role:            platform.RoleMember,
 			InvitedByUserID: inviter.ID,
 			ExpiresAt:       time.Now().Add(time.Hour),
-		})
+		}); err != nil {
+			t.Fatalf("create invite 2: %v", err)
+		}
 		if err := tokens.RevokeInvite(ctx, hash2[:]); err != nil {
 			t.Fatalf("revoke: %v", err)
 		}
@@ -554,7 +574,10 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if err := keys.Update(ctx, byID); err != nil {
 			t.Fatalf("update: %v", err)
 		}
-		got, _ := keys.Get(ctx, byID.ID)
+		got, err := keys.Get(ctx, byID.ID)
+		if err != nil {
+			t.Fatalf("get after update: %v", err)
+		}
 		if got.RateLimitPerMin != 5000 {
 			t.Errorf("RateLimitPerMin = %d", got.RateLimitPerMin)
 		}
@@ -567,7 +590,10 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if err := keys.TouchUsage(ctx, byID.ID, ip, "curl/8"); err != nil {
 			t.Fatalf("touch: %v", err)
 		}
-		got, _ = keys.Get(ctx, byID.ID)
+		got, err = keys.Get(ctx, byID.ID)
+		if err != nil {
+			t.Fatalf("get after touch: %v", err)
+		}
 		if got.LastUsedAt.IsZero() {
 			t.Errorf("LastUsedAt not stamped")
 		}
@@ -579,7 +605,10 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if err := keys.Revoke(ctx, byID.ID, owner.ID, "rotated"); err != nil {
 			t.Fatalf("revoke: %v", err)
 		}
-		got, _ = keys.Get(ctx, byID.ID)
+		got, err = keys.Get(ctx, byID.ID)
+		if err != nil {
+			t.Fatalf("get after revoke: %v", err)
+		}
 		if got.RevokedAt.IsZero() {
 			t.Errorf("RevokedAt not stamped")
 		}
@@ -770,7 +799,10 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if err := webhooks.UpdateWebhook(ctx, got); err != nil {
 			t.Fatalf("UpdateWebhook: %v", err)
 		}
-		after, _ := webhooks.GetWebhook(ctx, got.ID)
+		after, err := webhooks.GetWebhook(ctx, got.ID)
+		if err != nil {
+			t.Fatalf("GetWebhook after update: %v", err)
+		}
 		if after.Name != "ops-slack-renamed" {
 			t.Errorf("name not updated: %q", after.Name)
 		}
@@ -827,7 +859,10 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if err != nil {
 			t.Fatalf("EnqueueDelivery #2: %v", err)
 		}
-		pending, _ = webhooks.ListPendingDeliveries(ctx, 10)
+		pending, err = webhooks.ListPendingDeliveries(ctx, 10)
+		if err != nil {
+			t.Fatalf("ListPendingDeliveries (fresh): %v", err)
+		}
 		if len(pending) != 1 {
 			t.Fatalf("expected 1 fresh pending delivery, got %d", len(pending))
 		}
@@ -850,7 +885,10 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if _, err := webhooks.GetWebhook(ctx, created.ID); !errors.Is(err, platform.ErrNotFound) {
 			t.Errorf("expected ErrNotFound on deleted webhook, got %v", err)
 		}
-		histAfter, _ := webhooks.ListDeliveries(ctx, created.ID, 10)
+		histAfter, err := webhooks.ListDeliveries(ctx, created.ID, 10)
+		if err != nil {
+			t.Fatalf("ListDeliveries after delete: %v", err)
+		}
 		if len(histAfter) != 0 {
 			t.Errorf("expected deliveries cascade-deleted with webhook; got %d", len(histAfter))
 		}
@@ -1083,7 +1121,10 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if resolved.Status != platform.NoticeResolved || resolved.ResolvedAt.IsZero() {
 			t.Errorf("resolve didn't stamp: %+v", resolved)
 		}
-		active, _ = notices.ListActive(ctx)
+		active, err = notices.ListActive(ctx)
+		if err != nil {
+			t.Fatalf("ListActive after resolve: %v", err)
+		}
 		if len(active) != 1 || active[0].ID != second.ID {
 			t.Errorf("ListActive after resolve = %+v, want only the second", active)
 		}

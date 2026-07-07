@@ -131,6 +131,10 @@ type action int
 const (
 	actionUnknown action = iota
 	actionSwap
+	// actionSwapMap is the NEWER single-event swap schema: one
+	// ScvSymbol("swap") event carrying an ScvMap body (decodeSwapMap),
+	// vs actionSwap's 8 ScvString-tuple events (Q5).
+	actionSwapMap
 	actionProvideLiquidity
 	actionWithdrawLiquidity
 	actionBond
@@ -155,6 +159,17 @@ const (
 // dispatcher path) while letting new code reach for the broader
 // classifier — same byte-equality match work, one routing fan-out.
 func classifyAny(e *events.Event) (action, string) {
+	// NEWER Map-body swap: a SINGLE ScvSymbol("swap") topic whose body
+	// is an ScvMap of all fields (post-2026-07-02 pools, e.g.
+	// CBENABXP…). Checked before the two-topic String schema below —
+	// this event has only one topic. See README Q5 and
+	// docs/architecture/contract-schema-evolution.md.
+	if len(e.Topic) == 1 {
+		if e.Topic[0] == TopicSymbolSwapMap {
+			return actionSwapMap, ""
+		}
+		return actionUnknown, ""
+	}
 	if len(e.Topic) < 2 {
 		return actionUnknown, ""
 	}
@@ -181,8 +196,15 @@ func classifyAny(e *events.Event) (action, string) {
 // Field mapping (per Q3):
 //   - Trade.Pair.Base    = asset parsed from SellToken event body
 //   - Trade.Pair.Quote   = asset parsed from BuyToken event body
-//   - Trade.BaseAmount   = OfferAmount
-//   - Trade.QuoteAmount  = ActualReceived (after fees — what actually changed hands)
+//   - Trade.BaseAmount   = OfferAmount (base sold by the taker)
+//   - Trade.QuoteAmount  = ReturnAmount — the buy_token amount the
+//     taker actually receives. Verified against the pool contract's
+//     do_swap: `return_amount` is `compute_swap.return_amount`, already
+//     net of protocol commission + referral fee, and is exactly the
+//     amount transferred to the sender. NOT ActualReceived: the pool
+//     emits "actual received amount" as the INPUT it received of
+//     sell_token (== OfferAmount), so using it made every Phoenix trade
+//     base==quote and corrupted all Phoenix prices (Q3).
 //   - Trade.Taker        = sender address
 func decodeSwap(r *RawSwap) (canonical.Trade, error) {
 	if !r.Complete() {
@@ -206,14 +228,18 @@ func decodeSwap(r *RawSwap) (canonical.Trade, error) {
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("offer_amount: %w", err)
 	}
-	received, err := decodeI128(r.ActualReceived.Value)
+	// QuoteAmount is the OUTPUT the taker received of buy_token =
+	// return_amount (net of fees; see the doc comment above). The
+	// "actual received amount" field is the INPUT the pool received of
+	// sell_token (== offer_amount) — using it made base==quote.
+	returned, err := decodeI128(r.ReturnAmount.Value)
 	if err != nil {
-		return canonical.Trade{}, fmt.Errorf("actual received amount: %w", err)
+		return canonical.Trade{}, fmt.Errorf("return_amount: %w", err)
 	}
 
-	if offer.Sign() <= 0 || received.Sign() <= 0 {
-		return canonical.Trade{}, fmt.Errorf("%w: non-positive amount (offer %s / received %s)",
-			ErrMalformedPayload, offer, received)
+	if offer.Sign() <= 0 || returned.Sign() <= 0 {
+		return canonical.Trade{}, fmt.Errorf("%w: non-positive amount (offer %s / return %s)",
+			ErrMalformedPayload, offer, returned)
 	}
 
 	pair, err := canonical.NewPair(sellToken, buyToken)
@@ -232,7 +258,104 @@ func decodeSwap(r *RawSwap) (canonical.Trade, error) {
 		Timestamp:   r.ClosedAt,
 		Pair:        pair,
 		BaseAmount:  offer,
-		QuoteAmount: received,
+		QuoteAmount: returned,
+		Taker:       sender,
+	}, nil
+}
+
+// decodeSwapMap decodes the NEWER single-event Phoenix swap schema
+// (Q5): one ScvSymbol("swap") event whose body is an ScvMap keyed by
+// underscore-spelled Symbols. Unlike decodeSwap this needs NO
+// correlation buffer — the whole trade is in one event.
+//
+// Field mapping is IDENTICAL to decodeSwap: BaseAmount = offer_amount
+// (base sold), QuoteAmount = return_amount (buy_token the taker
+// received, net of fees — NOT actual_received_amount, which the pool
+// emits as the INPUT it received of sell_token, == offer_amount).
+// Decode is by Map-field name (contract-schema-evolution.md), so extra
+// / reordered fields don't break us.
+func decodeSwapMap(ev *events.Event, closedAt time.Time) (canonical.Trade, error) {
+	sv, err := scval.Parse(ev.Value)
+	if err != nil {
+		return canonical.Trade{}, fmt.Errorf("parse swap map body: %w", err)
+	}
+	entries, err := scval.AsMap(sv)
+	if err != nil {
+		return canonical.Trade{}, fmt.Errorf("swap map body: %w", err)
+	}
+
+	// Local field readers keyed by Symbol name. entries' element type
+	// stays inferred so this package needn't import xdr (ADR-0013 /
+	// lint rule B — scval is the sole xdr boundary).
+	addr := func(key string) (string, error) {
+		v, ferr := scval.MustMapField(entries, key)
+		if ferr != nil {
+			return "", ferr
+		}
+		return scval.AsAddressStrkey(v)
+	}
+	amount := func(key string) (canonical.Amount, error) {
+		v, ferr := scval.MustMapField(entries, key)
+		if ferr != nil {
+			return canonical.Amount{}, ferr
+		}
+		return scval.AsAmountFromI128(v)
+	}
+
+	// Map keys reuse the swap field names shared with the String
+	// schema (sender / sell_token / offer_amount / buy_token /
+	// return_amount are spelled identically in both).
+	sender, err := addr(FieldSender)
+	if err != nil {
+		return canonical.Trade{}, fmt.Errorf("sender: %w", err)
+	}
+	sellAddr, err := addr(FieldSellToken)
+	if err != nil {
+		return canonical.Trade{}, fmt.Errorf("sell_token: %w", err)
+	}
+	buyAddr, err := addr(FieldBuyToken)
+	if err != nil {
+		return canonical.Trade{}, fmt.Errorf("buy_token: %w", err)
+	}
+	offer, err := amount(FieldOfferAmount)
+	if err != nil {
+		return canonical.Trade{}, fmt.Errorf("offer_amount: %w", err)
+	}
+	returned, err := amount(FieldReturnAmount)
+	if err != nil {
+		return canonical.Trade{}, fmt.Errorf("return_amount: %w", err)
+	}
+
+	if offer.Sign() <= 0 || returned.Sign() <= 0 {
+		return canonical.Trade{}, fmt.Errorf("%w: non-positive amount (offer %s / return %s)",
+			ErrMalformedPayload, offer, returned)
+	}
+
+	sellToken, err := canonical.NewSorobanAsset(sellAddr)
+	if err != nil {
+		return canonical.Trade{}, fmt.Errorf("sell_token asset: %w", err)
+	}
+	buyToken, err := canonical.NewSorobanAsset(buyAddr)
+	if err != nil {
+		return canonical.Trade{}, fmt.Errorf("buy_token asset: %w", err)
+	}
+	pair, err := canonical.NewPair(sellToken, buyToken)
+	if err != nil {
+		return canonical.Trade{}, fmt.Errorf("pair: %w", err)
+	}
+
+	return canonical.Trade{
+		Source: SourceName,
+		Ledger: ev.Ledger,
+		TxHash: ev.TxHash,
+		// A router multihop can emit several Map swaps in one op; fan
+		// out by event index so they don't collide on the trades PK
+		// (ADR-0033, same as the String path's RawSwap.EventIndex).
+		OpIndex:     canonical.FanoutOpIndex(ev.OperationIndex, ev.EventIndex),
+		Timestamp:   closedAt,
+		Pair:        pair,
+		BaseAmount:  offer,
+		QuoteAmount: returned,
 		Taker:       sender,
 	}, nil
 }

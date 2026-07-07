@@ -94,7 +94,8 @@ function MoverColumn({
                 <span className="font-medium text-ink">
                   {c.code}
                 </span>
-                {verifiedSlugs?.has(c.slug.toLowerCase()) && (
+                {verifiedSlugs?.has(c.slug.toLowerCase()) &&
+                  !c.unverified_ticker_collision && (
                   <span
                     title="Verified currency"
                     aria-label="Verified currency"
