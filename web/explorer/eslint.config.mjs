@@ -26,6 +26,14 @@ const eslintConfig = [
       'react-hooks/purity': 'error',
       'react-hooks/immutability': 'error',
       'react-hooks/refs': 'error',
+      // The two classic hook rules were left at their core-web-vitals
+      // defaults (exhaustive-deps=warn, rules-of-hooks=error). Promote
+      // BOTH to error so a missing effect dependency fails CI like every
+      // other hook rule — an intentionally-omitted dep must be an
+      // explicit `eslint-disable-next-line ... -- <reason>`, never a
+      // silently-tolerated warning.
+      'react-hooks/exhaustive-deps': 'error',
+      'react-hooks/rules-of-hooks': 'error',
     },
   },
 ];

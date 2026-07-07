@@ -22,12 +22,16 @@ name: k6-weekly
 # without waiting for next Sunday.
 
 on:
-  # Cron disabled while the GitHub Actions spending cap is tight
-  # (Task #50). Manual dispatch is still available for the SLA-evidence
-  # workflow when needed; restore the schedule once the budget is
-  # comfortable:
-  #   schedule:
-  #     - cron: '0 2 * * 0'   # 02:00 UTC every Sunday
+  # Weekly SLA-evidence run — restored 2026-07-06 (was disabled under
+  # the Actions spending cap, Task #50; the cap has since eased). Kept
+  # cheap: one ≤30-min job a week. The scheduled path SKIPS GRACEFULLY
+  # (green, with a notice) when the staging secrets aren't configured,
+  # so re-enabling can't reintroduce the weekly red-badge noise if
+  # staging is down or the secrets aren't minted yet. Manual dispatch
+  # still hard-errors on missing secrets (an operator running it wants
+  # the failure to be loud).
+  schedule:
+    - cron: '0 2 * * 0'   # 02:00 UTC every Sunday
   workflow_dispatch:
     inputs:
       scenario:
@@ -51,22 +55,37 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
-      - name: Verify secrets are configured
+      - name: Check secrets are configured
+        id: secrets
         run: |
-          if [ -z "$K6_TARGET" ] || [ -z "$STELLARINDEX_LOAD_API_KEY" ]; then
-            echo "::error::K6_TARGET_STAGING and STELLARINDEX_LOAD_API_KEY secrets are required."
-            exit 1
+          if [ -n "$K6_TARGET" ] && [ -n "$STELLARINDEX_LOAD_API_KEY" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          # Missing secrets. On a scheduled run this is a no-op (the
+          # weekly badge stays green) so restoring the cron can't page
+          # anyone before staging is wired up; on manual dispatch it is
+          # a hard error so an operator sees why nothing ran.
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "::notice::K6_TARGET_STAGING / STELLARINDEX_LOAD_API_KEY not set — skipping the scheduled SLA run until staging secrets are minted."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::error::K6_TARGET_STAGING and STELLARINDEX_LOAD_API_KEY secrets are required."
+          exit 1
 
       - name: Install k6
+        if: steps.secrets.outputs.ready == 'true'
         uses: grafana/setup-k6-action@db07bd9765aac508ef18982e52ab937fe633a065  # v1
         with:
           k6-version: '0.50.0'
 
       - name: Compile-check all scenarios
+        if: steps.secrets.outputs.ready == 'true'
         run: make test-load-check
 
       - name: Run scenario
+        if: steps.secrets.outputs.ready == 'true'
         run: |
           k6 run \
             --out experimental-prometheus-rw \

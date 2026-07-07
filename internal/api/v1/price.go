@@ -649,6 +649,22 @@ func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset
 	return PriceSnapshot{}, nil, false, false
 }
 
+// proxyPairGate is OPTIONALLY implemented by the wired [PriceReader] to
+// let [Server.tryStablecoinFiatProxy] cheaply skip empty proxy pairs.
+// The production reader (storePriceReader) satisfies it via a bounded,
+// both-directions recent-existence probe over prices_1m; readers that
+// don't implement it fall through to the pre-gate behaviour (every peg
+// gets a full LatestPrice). See the gate rationale on
+// timescale.Store.RecentClosedVWAP1mExists.
+type proxyPairGate interface {
+	// RecentClosedVWAP1mExists reports whether base/quote has a closed
+	// 1-minute VWAP bucket (either stored direction) inside the price
+	// surface's freshness horizon. A false return means "no live proxy
+	// pair here — skip the peg"; an error means "couldn't tell — let the
+	// caller try LatestPrice anyway".
+	RecentClosedVWAP1mExists(ctx context.Context, base, quote canonical.Asset) (bool, error)
+}
+
 // tryStablecoinFiatProxy handles the X / fiat:USD → X / <classic-USD-peg>
 // rewrite at handler read time, as a safety net for deployments
 // where the aggregator's [aggregate].enable_stablecoin_fiat_proxy
@@ -701,6 +717,20 @@ func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canoni
 	if len(s.usdPeggedClassics) == 0 || s.prices == nil {
 		return PriceSnapshot{}, nil, false
 	}
+	// Empty-proxy-pair gate (2026-07-06 empty-alias latency incident,
+	// proxy layer). Each peg lookup below is a LatestPrice(asset, <peg>),
+	// and a <peg> quote is a CLASSIC asset — so on a VWAP miss LatestPrice
+	// does NOT take the synthetic-fiat fast path; it falls through to an
+	// UNBOUNDED last-trade scan. A pure-Soroban token that only trades vs
+	// XLM has zero rows for every <token>/<peg> pair, so the proxy would
+	// run that cold full-history walk once PER PEG before returning a miss.
+	// When the reader exposes the cheap bounded recent-existence probe,
+	// skip any peg with no closed 1m bucket in the freshness horizon before
+	// paying for LatestPrice — a live proxy pair still hits it (its VWAP
+	// path is itself gated + fast), an empty one is skipped in ~one recent
+	// chunk. A gate ERROR falls through to LatestPrice so a probe blip can
+	// never suppress a real price.
+	gate, _ := s.prices.(proxyPairGate)
 	for _, peg := range s.usdPeggedClassics {
 		if peg.Equal(asset) {
 			// F-1232 (codex audit-2026-05-12): asset IS one of
@@ -725,6 +755,16 @@ func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canoni
 				ObservedAt: time.Now().UTC(),
 			}
 			return snap, nil, true
+		}
+		if gate != nil {
+			exists, gerr := gate.RecentClosedVWAP1mExists(ctx, asset, peg)
+			if gerr == nil && !exists {
+				// No closed 1m bucket for asset/<peg> in the freshness
+				// horizon — skip before the unbounded last-trade walk.
+				continue
+			}
+			// gerr != nil: fall through to LatestPrice (best-effort — a
+			// probe error must not hide a price the walk could still find).
 		}
 		snap, srcs, _, err := s.prices.LatestPrice(ctx, asset, peg)
 		if err != nil {

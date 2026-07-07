@@ -15,6 +15,367 @@ against.
 
 ## [Unreleased]
 
+### Added
+- Protocol pool contracts now display as their human **asset pair** (e.g. `XLM/USDC`) on
+  `/v1/protocols/{name}` — `token_symbols` + `pair` resolved from the pool's token contracts,
+  not raw C-strkeys. Populated for soroswap/phoenix/aquarius/comet pools + blend/sorocredit
+  reserve-asset lists, with a graceful fallback to a short contract when a token doesn't
+  resolve. OpenAPI 1.3.0 → 1.4.0; explorer roster renders the pair. (#91)
+
+### Fixed
+- `/v1/protocols/aquarius` now lists its pool contracts — it read **0** despite being the
+  busiest AMM (14.9k events/24h, 300+ pools) because the projection-fallback roster listed
+  aquarius as "pair-keyed, no per-contract column." Sourced from `aquarius_liquidity` (which
+  also carries the pool's token identities for the pair label). (#91)
+
+## [v0.9.0] — 2026-07-07
+
+### Added
+- Per-protocol bespoke analytics now surface six previously captured-but-invisible tables:
+  `/v1/protocols/sorocredit` renders a full lending block (positions, open positions, unique
+  users, statements, **scheduled**-settlement volume/count + recent-settlements table — labelled
+  scheduled, not distressed liquidations; `bespokeLending` previously returned nil for non-blend
+  sources); `/v1/protocols/{comet,phoenix}` surface pool liquidity-depth (window net-flow) KPIs
+  + per-pool tables (Comet's carries the CS-026 topic-only-match caveat); `/v1/protocols/phoenix`
+  adds LP-staking KPIs; `/v1/protocols/soroswap` adds skim KPIs; `/v1/protocols/blend` adds
+  emission-claim volume + a bad_debt/defaulted_debt credit-risk tally.
+- `/v1/protocols/aquarius` now surfaces pool liquidity depth — the first Aquarius TVL/depth
+  signal — from the captured `aquarius_reserves` hypertable (migration 0089): pools-with-live-
+  reserves / reserve-legs / latest-snapshot KPIs + a per-pool latest-reserves table, alongside
+  the existing volume KPIs. Depth is in native token base units (Aquarius pools have no
+  published price, so USD TVL is not computed). New reader `timescale.LatestAquariusReserves`.
+- **`sorocredit` source** — capture an unbranded consumer-USDC credit/CDP protocol
+  (contract `CCG5EWFY…`), the largest Soroban protocol previously undecoded (221k
+  events/30d, 7,086 users). New credit domain (migration 0090: `credit_positions`,
+  `credit_statements`, `credit_settlements`, `credit_events`); all 7 event types decoded
+  from real lake fixtures; ADR-0035 childgate; projector is the sole writer. Its on-wire
+  `Liquidation` events are decoded as **scheduled settlements** (not distress — verified
+  ~1:1 with statements, single recurring keeper). Explorer-scope; no pricing signal.
+  Listed in `/v1/protocols` (category `lending`) with its event kinds + verification page,
+  so the captured events surface on the protocol page rather than being invisible; also
+  added to the explorer's static protocol registry so `/protocols/sorocredit` pre-renders.
+- CI: `lint-protocol-registry-sync` cross-checks the explorer's static protocol registry
+  against the Go source-of-truth (`protocols_registry.go`) — nothing did before, so a
+  Go-registered protocol could silently ship with no pre-rendered explorer page (a 404).
+- `/v1/assets` listing rows carry `unverified_ticker_collision` (bool) so clients can
+  distinguish a same-ticker impersonator from the verified asset (OpenAPI 1.2.0 → 1.3.0).
+- Phoenix: decode the new Map-body swap event (single `Symbol("swap")` event, `ScvMap`
+  body) emitted by post-2026-07-02 pools (e.g. CBENABXP…), gated on the phoenix contract
+  set — previously silently dropped.
+- Monitoring: `stellarindex_external_fx_last_quote_unix{source}` liveness gauge + a
+  staleness alert on the active fiat-FX feed (`massive`), so a dead FX feed is caught
+  before fiat-pair triangulation silently breaks at the 7-day lookback + a runbook.
+- Supply-divergence cross-check: the aggregator compares our served `circulating_supply`
+  against the Stellar Network Dashboard (XLM, credential-free) and — with a CoinGecko Pro
+  key — CoinGecko, emitting `stellarindex_supply_divergence_ratio` + `_total{outcome}` and
+  the `stellarindex_supply_divergence_high` alert (>1%, well above the ~0.03% XLM Fee-Pool
+  noise floor). Off by default via `[divergence.supply]`; degrades to `no_reference` (never
+  a false alarm) when a source is dark. Runbook + methodology-doc-authoritative guidance.
+- Decimals-assumption guard: the aggregator sweeps recently-DEX-traded Soroban tokens and
+  raises `stellarindex_dex_trade_nonstandard_decimals_total` (+ alert, both rule trees, a
+  runbook) when a DEX trade lands for a token whose on-chain `decimals()` != 7 — the served
+  price ratio assumes uniform 7-dp scale, so this catches a would-be silent mispricing on a
+  real pair before it happens. Detection only; the forward normalization is a tracked
+  follow-up (the fix must cover both the query-time VWAP and the `prices_*` CAGGs together).
+
+- `stellarindex-ops supply seed-sac-balances` + `state-snapshot -scope storage`:
+  seed dormant contract-held SAC balances / `contract_data` current-state from the
+  lake into the served tier (the ~ledger-62M current-state-projection floor fill),
+  so Algorithm-2 classic supply and the ADR-0039 state readers see balances that
+  have been idle since before live entry-change capture began.
+- `stellarindex-ops supply verify-rollup`: runs the ADR-0033 derived-checkpoint
+  reconcile as an operator check — diffs each `sep41_supply_rollup` fold against the
+  authoritative same-source re-sum and flags KALE-class double-fold drift (non-zero
+  exit). Slow-cadence/post-re-derive only.
+- `stellarindex-ops ch-participant-backfill`: historical `operation_participants`
+  (ADR-0038 account history) re-derived from `stellar.operations.body_xdr` in the
+  ClickHouse lake — windowed, resumable, idempotent, `-dry-run`-capable — instead of
+  a multi-day Galexie re-walk; shares the live extractor's participant derivation so
+  it is byte-identical to live capture.
+- Aquarius: capture the liquidity/reserves event stream — `update_reserves` (per-pool
+  post-state reserves; first Aquarius TVL/depth signal), `deposit_liquidity`,
+  `withdraw_liquidity` — into `aquarius_reserves` / `aquarius_liquidity` hypertables
+  (migration 0089). N-token-pool-safe fan-out, i128-preserving, gated on the
+  router-anchored contract-identity set; additive analytics (does not affect pricing).
+- `internal/completeness` reconcile-running-totals guard that catches a KALE-class
+  incremental-checkpoint double-fold (checkpoint vs authoritative same-source re-sum).
+
+### Fixed
+- **Completeness recognition blind spot (ADR-0033).** The recognition audit (Claim 2a — "every
+  on-chain topic shape is one a decoder handles") was scoped to the incremental `--from` window
+  when run incrementally, so a low-volume source's rare wrong-topic event slipped through and
+  never flipped `recognition_ok` — how rozo's `payment_event` (393 events over ~2 months) read
+  `complete=true` while capturing nothing. Recognition now always scans from genesis (a cheap
+  ClickHouse distinct-shapes GROUP BY; only the expensive projection reconcile stays
+  incremental). Consequence: the next completeness compute will surface previously-hidden
+  admin/config topic gaps (e.g. cctp's `ownership_transfer`/`admin_changed`) as
+  `recognition_ok=false` — informative, not a regression; resolve by adding the decoder arm or
+  allowlisting the topic.
+- **Rozo captured nothing (topic mismatch).** The rozo decoder matched only the short-form
+  `symbol_short!("payment")`/`"flush"` topics, but the deployed mainnet contract emits the
+  full-length ScSymbols `"payment_event"`/`"flush_event"` — so `Classify` never fired and
+  `rozo_events` stayed empty despite **393 events in the lake**. Now matches both forms
+  (routed to the same field-name-based body decoder). Requires `projector-replay -source rozo`
+  to backfill the historical rows. (Also exposed an ADR-0033 completeness blind spot — a
+  wrong-topic decoder self-references in the projection reconcile, so `complete=true` doesn't
+  guarantee capture; a per-source recognition fix + a full decoder topic-match audit are
+  tracked follow-ups.)
+- **Oracle (reflector-dex).** Reflector's Stellar-DEX oracle denominates in USD, but the
+  decoder hardcoded XLM as the quote — so all 41 of its assets carried the wrong denominator
+  (confirmed the base is the USDC SAC via the contract's SEP-40 `base()` method). Now quotes
+  `fiat:USD`. Existing `oracle_updates` rows need a re-label/re-derive to correct.
+- **Oracle (redstone MXNe).** MXNe was served ~302× too high — RedStone publishes it as
+  USDMXN (pesos-per-USD); the decoder now reciprocates it to MXNe-in-USD (~0.0575), consistent
+  with every other currency feed. (Only MXNe was affected; all 19 feeds audited.)
+- **Phoenix pricing (Critical).** The Phoenix swap decoder set `QuoteAmount` to
+  `actual_received_amount`, which the pool contract emits as the swap's *input* (equal
+  to `offer_amount`), not the taker's *output* — so every Phoenix trade had
+  `base_amount == quote_amount` and every Phoenix price was ~1:1 (wrong). Now uses
+  `return_amount` (the bought-token output). Affected ~6 Phoenix-sole pairs (fully wrong)
+  + blended pairs incl. XLM/USDC. **Requires a historical Phoenix trade re-derive**
+  (`projector-replay -source phoenix`) to correct the ~237k existing trades.
+- **Pricing serving-sanity guard.** `/v1/price`, the `/v1/assets/{slug}` GlobalAssetView
+  headline, and the customer price-alert evaluator now guard their raw `prices_1m`
+  closed-bucket reads (ratio + MAD band over recent trailing buckets, serve
+  last-known-good on a fat-finger/manipulation print) so a manipulated bucket can no
+  longer corrupt a served price or fire a spurious alert. Healthy buckets are
+  byte-identical; shared `internal/pricingguard`. Exact `big.Rat` (ADR-0003).
+- **SEP-41 supply re-derive safety.** `ch-rebuild -sep41 -write` now auto-resets the
+  `sep41_supply_rollup` fold checkpoint (preserving the seeded migration-0088 genesis
+  baseline) so a full re-derive can't double-count and a scoped `-contracts` recovery
+  can't under-count — the KALE 2× served-supply footgun (incident 2026-07-06);
+  `supply seed-sep41-genesis` rejects a `-genesis-ledger` above the Soroban boundary.
+- **Explorer verified-currency resolution.** `/assets/{shx,aqua,eurc,yxlm}` now resolve
+  to the verified issuer instead of a same-ticker look-alike that shares the code, so a
+  curated verified currency no longer renders a self-referential
+  "Unverified · Ticker collision" warning under its "Verified" badge.
+- **Stellar-only verified-token headline price.** `/v1/assets/{slug}` GlobalAssetView now
+  falls back to the on-chain (DEX/SDEX) price for verified crypto tokens that have no
+  CEX/CoinGecko feed (e.g. AQUA), so a verified asset page no longer shows a blank headline
+  price when the asset only trades on-chain.
+- **XLM dual-form USD price convergence.** The `native` and `crypto:XLM` asset-id forms now
+  serve the same USD price via the canonical `/v1/price` reader — previously the two forms
+  could resolve through different read paths and disagree.
+- **Gap-detector-silent alert reliability.** The `gap_detector_silent` alert is now keyed
+  off a reset-proof `last_success_unix` gauge instead of a counter `rate()`, so a
+  6h-cadence detector no longer pins its `ok` counter at 1 across restarts and false-fires
+  (or masks a real stall) forever.
+- **Config scale guard.** `usd_pegged_classic_assets` entries are validated as classic
+  (7-decimal) credit assets at load, failing loud + consistently across binaries — a
+  non-classic peg previously mis-scaled `usd_volume` and under-counted the
+  min-USD-volume gate.
+- **`source_entry_counts` reconcile completeness.** Every non-idempotent
+  `bumpEntryCount` sink (soroswap-router, defindex, comet, soroswap, phoenix, blend
+  positions/emissions/admin, blend-backstop, cctp, rozo, sep41_transfers) is folded
+  into `SeedSourceEntryCounts` from its countable table, so a replay/re-derive's
+  per-event over-count self-heals on the next seed instead of drifting.
+- **Monitoring: gap-detector-silent false-fire.** `stellarindex_ingest_gap_detector_silent`
+  no longer false-fires on the 6h-cadence heavy targets (`sdex/trades`,
+  `soroban-events/soroban_events`) — the alert was keyed off
+  `rate(gap_detector_runs_total{outcome="ok"}[7h])`, but those targets increment `ok`
+  once per 6h and pin at 1 across restarts (1→1 defeats Prometheus reset detection →
+  `rate` reads 0 forever). Re-keyed off a reset-proof
+  `stellarindex_ingest_gap_detector_last_success_unix` gauge; a non-ok scan is now
+  logged loudly with `elapsed_s`.
+- **CI: gitleaks now runs in local `verify.sh`** (graceful-skip when absent) so a new
+  base64/XDR test fixture that trips the entropy heuristic is caught pre-push, not as a
+  CI email; allowlisted the aquarius liquidity-decoder + served-data-correctness fixtures.
+- **Served data:** impersonator assets no longer show a false "verified" badge on the
+  `/assets` listing + home grids (rows now carry the per-row `unverified_ticker_collision`
+  signal the explorer gates on); XLM's `native` and `crypto:XLM` forms now serve one
+  identical USD price (`/v1/assets/native` was ~0.2% off the canonical `/v1/price`); and
+  Stellar-only verified tokens (SHX, AQUA, yXLM, VELO, BLND, PHO) show their on-chain
+  headline price on `/v1/assets/{slug}` instead of null.
+
+### Changed
+- `sorocredit`: WASM-history audit complete — `BackfillSafe` flipped `false` → `true`.
+  Lake-direct audit (ADR-0034): the main contract has run a single instance WASM with no
+  executable change, and all 7 event types keep one invariant on-wire schema across the
+  contract's whole life, so historical `projector-replay` is safe from genesis (61,620,822).
+- Docs: corrected the `outlier_sigma_threshold` config description (mean+stdev per
+  window, not rolling median); filled the protocol-verification (`docs/protocols/`) and
+  pricing-methodology (`docs/methodology/`) gaps against actual code.
+
+### Tested
+- Locked in the migration-0088 SEP-41 genesis-baseline money-math: the seeded/unseeded ×
+  sign routing to the paging vs benign sentinel, and the disjoint
+  `genesis(<boundary) ⊕ Soroban(>=boundary)` fold at the exact boundary ledger.
+
+### Security
+- **SEP-10 replay guard fails loud, not open.** If SEP-10 auth is configured but Redis is
+  absent at startup, the API now refuses to start instead of silently running the validator
+  with no replay protection (a captured signed challenge XDR would otherwise be replayable
+  for the full `ChallengeTTL` window). Very-low-exploitability defense-in-depth (Redis is
+  always present in production) — from the 2026-07-07 public-surface security audit, which
+  otherwise found the API + auth surface clean (no injection / IDOR / SSRF / rate-limit
+  bypass / secret leakage).
+- Dashboard-minted API keys: the per-key `monthly_quota` is now clamped at mint to the
+  account's cap (operator `monthly_request_quota_override` if set, else the tier ceiling),
+  and the auth cascade enforces `min(per-key, account-override)` so the operator cap is a
+  hard ceiling the customer can only lower — previously a metered customer could self-mint
+  a key with an arbitrarily large `monthly_quota` and run unmetered.
+
+## [v0.8.7] — 2026-07-06
+
+### Added
+
+- **`GET /v1/liquidity-pools` — native CAP-38 pool reserves + depth** (BACKLOG
+  #30). Each native (classic) constant-product liquidity pool now exposes its
+  two-sided reserves and depth, served from a new current-state pool reader over
+  the ClickHouse lake (with `as_of_ledger` freshness stamping).
+- **Scoped SEP-41 dropped-row recovery for `ch-rebuild`** — new `-contracts
+  <csv>` (replaces the `[supply] watched_sep41_contracts` read prefilter so a
+  recovery does an indexed scan of only the affected contracts) and
+  `-sep41-supply-only` (narrows the read to the mint/burn/clawback topics,
+  skipping the transfer firehose at the SQL layer) flags turn a full,
+  multi-hour `-sep41` truncate+re-derive into a targeted windowed pass. Both are
+  additive and `ON CONFLICT`-safe (they only re-add dropped rows). Runbook:
+  `docs/operations/sep41-mint-recovery.md`.
+- **DeFindex `rebalance`/`harvest`/admin decode scaffolding** (BACKLOG #58). The
+  `harvest` (strategy) and `rebalance` + eight vault admin topics now drop
+  cleanly (recognised, nothing to emit) instead of counting normal upstream
+  traffic against defindex's decode-error counter, and a four-way
+  `rebalance_method` discriminator (unwind/invest/SwapExactIn/SwapExactOut)
+  reads the one documented body field. No new event type is persisted until
+  real on-chain samples confirm the wire layout.
+- ADR-0045 (Proposed) + an architecture doc scoping a possible SEP-40 oracle
+  read-adapter (BACKLOG #60).
+
+### Fixed
+
+- **SEP-41 / SAC-wrapper lifetime supply undercounted for pre-Soroban
+  issuance.** The Algorithm-3 supply refresher derives per-contract total from
+  `sep41_supply_events`, which the observer only fills over the Soroban era
+  `[50457424, tip]`. A classic asset's SAC wrapper (VELO, AQUA, yXLM, LIBRE,
+  ACT, MBC, XAU, BTC, GQX) was largely issued *before* Soroban, so the
+  Soroban-only window read Σburn > Σmint → negative derived total → the
+  negative-total guard rejected the snapshot, firing
+  `supply_refresh_error_dominant` + `supply_cross_check_divergence` for all nine
+  wrappers. Migration `0088` adds a `genesis_baseline_ledger` +
+  `genesis_{mint,burn,clawback}_total` opening balance to `sep41_supply_rollup`,
+  seeded from the certified ClickHouse lake's pre-Soroban `supply_flows` slice
+  (a disjoint partition PG never held) by the new one-time
+  `stellarindex-ops supply seed-sep41-genesis` command. An unseeded negative
+  total now routes to a benign `missing_baseline` outcome (excluded from
+  `error_dominant`) instead of paging; a genuine post-seed inconsistency still
+  pages. Soroban-only tokens get a zero baseline — served numbers unchanged.
+- **Explorer static build no longer aborts on a missing/slow `/v1/price`** —
+  the build-time price fetches in the assets and markets static pages now
+  soft-fail (render without the headline price) rather than failing the Next.js
+  export.
+
+### Changed
+
+- Explorer lint: `react-hooks/exhaustive-deps` + `react-hooks/rules-of-hooks`
+  promoted from warn to error (BACKLOG #49).
+- CI now enforces, via an AST guard, that every `consumer.Event` type has a
+  matching arm in `internal/pipeline/sink.go`, so a new event type that is never
+  sunk fails the build (BACKLOG #56).
+
+## [v0.8.6] — 2026-07-06
+
+### Added
+
+- `as_of_ledger` + `flags.stale` stamped on the remaining ClickHouse
+  current-state reads — `/v1/lending/pools/{pool}/reserves`,
+  `/v1/pools/reserves`, and `/v1/accounts` now carry the ledger the
+  snapshot was taken at so consumers can reason about freshness
+  (ADR-0041 D4, BACKLOG #41).
+- Pure-Soroban SEP-41 assets now report `volume_24h_usd`, derived by
+  anchoring on-chain trade quantities to the latest closed XLM/USD
+  bucket — assets with no direct fiat pair get an honest USD volume
+  instead of a null (#37).
+- `protocol_events_24h` + `asset_volume_24h` worker-maintained rollups
+  (migrations 0086/0087) back `/v1/protocols` and `/v1/assets`, cutting
+  their ~5s / ~4.8s cold-latency legs to indexed lookups; both rollup
+  workers page via new aggregator alerts and runbooks (#43).
+- Typed in-process cache-key builder replaces ad-hoc string keys across
+  the markets/coins/issuers readers, closing the prewarm/handler
+  key-drift class for good (BACKLOG #48).
+- Restored the weekly k6 SLA-evidence cron; it skips gracefully when the
+  load-target secrets are absent instead of failing the run (BACKLOG #51b).
+
+### Fixed
+
+- SEP-41 decoder now decodes CAP-67 map-shaped `mint`/`burn` amount
+  bodies (the P23 unified-event form carries the amount inside a map,
+  not a bare `i128`) — previously these rows were silently dropped,
+  undercounting supply. Recover the lost history with
+  `ch-rebuild -sep41` (#28 / BACKLOG #9).
+- F-1316: the projector now earns sole-writer for the `sep41` domain,
+  closing the config-default foot-gun where a dispatcher-side writer
+  could double-write or silently drop SEP-41 supply rows (BACKLOG #16b).
+- `/v1/price` stablecoin-proxy fallback is now gated on non-empty pairs
+  via a cheap recent-existence probe, so a row-less proxy pair no longer
+  triggers a cold full-history VWAP walk (2026-07-06 incident).
+- Ansible archival-node drift: ZFS `recordsize` is now stored in byte form
+  (131072/8192/1048576) so it matches `zfs get -p`, and
+  `shared_preload_libraries` matches Postgres's space-joined stored value —
+  both previously phantom-drifted on every weekly `ansible-drift.yml` run
+  (recap 14 → 11). The out-of-band `data/pgbackrest` + `data/restore-drill`
+  datasets are now codified (BACKLOG #50).
+- galexie-archive `catchup-refused` + host-swap alert rules were indented at
+  group level (promtool rejected them and they never armed) in both the R1
+  overlay and multi-host rule trees — now corrected. A promtool-free
+  structural rule lint runs in `verify.sh` + CI to catch the mis-indented-rule
+  class locally before it reaches main.
+- Public-API smoke audit: `euro` now probes `/v1/external/assets/euro` (the
+  Stellar-focus refactor retired `/v1/assets/euro`), and the per-check timeout
+  is 10s → 20s so a cold edge-cache miss on a slow origin fetch (e.g.
+  `/v1/pairs`) no longer reds the audit.
+
+## [v0.8.5] — 2026-07-06
+
+### Fixed
+
+- `/v1/price` empty-alias latency: XLM queries (`?asset=native&quote=fiat:USD`)
+  probe the row-less `native/fiat:USD` alias first; `LatestClosedVWAP1mForPair`
+  now gates its value walk behind a cheap 14-day recent-existence probe, so a
+  row-less/quiet pair returns fast (falls through to the
+  last-trade/triangulation fallback) instead of a cold ~400-day max() scan that
+  timed out under cache pressure. Pairs with no closed 1-minute bucket in 14
+  days now surface their last trade rather than a stale VWAP. (2026-07-06
+  incident)
+
+## [v0.8.4] — 2026-07-06
+
+### Fixed
+
+- **Trade sink retries on a Postgres outage with backpressure instead of
+  dropping** (2026-07-06 incident, ADR-0041). Infrastructure faults
+  (connection-refused, timeouts, admin shutdown) are now classified apart
+  from data faults; on an infra fault the trade sink retries with a bounded
+  buffer and applies backpressure to ingest rather than silently discarding
+  the batch.
+- **SEP-41 supply reads use an incremental rollup** (migration `0085`)
+  instead of re-aggregating the entire `sep41_supply_events` history on every
+  tick — the per-tick full-history scan saturated IO once the table grew
+  (2026-07-06 IO-saturation incident). A rollup worker advances a persisted
+  high-water mark and reads fold onto it.
+- **The gap detector scans a trailing window instead of `genesis → tip`
+  every cycle** (2026-07-06 IO-saturation incident). Re-running a
+  `DISTINCT ledger … LAG()` plus a `COUNT(DISTINCT ledger)` over the whole
+  hypertable each 30-min cycle burned two multi-minute scans that hit
+  `statement_timeout`; the detector now scans just `[last high-water, tip]`
+  (bounded on first run), with density math window-scoped to match. Deep
+  history remains the ADR-0033 completeness verdict's domain.
+- **`/v1/assets` listing overlays SEP-1 logos** — the listing rows now carry
+  each asset's `stellar.toml` icon, resolved from the issuer metadata.
+- **A20: platform-store CRUD integration tests assert on the previously
+  swallowed errors** (#51), so a store method that silently drops an error
+  now fails the suite.
+
+### Added
+
+- **`/v1/history` rows expose per-side base/quote decimals** — each history
+  row now carries the base-asset and quote-asset decimal scale so clients
+  can render on-chain amounts without assuming a fixed scale.
+- **Trade-backpressure + SEP-41-rollup worker metrics and their alerts** —
+  `stellarindex_trade_insert_retries_total` /
+  `stellarindex_trade_insert_buffer_depth` (with a trade-insert-backpressure
+  alert + runbook) and the SEP-41 supply-rollup advance counter + duration
+  histogram.
+
 ### Fixed
 
 - The daily completeness refresh reconciles to `tip − 100` instead of the

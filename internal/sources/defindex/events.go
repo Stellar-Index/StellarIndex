@@ -183,6 +183,53 @@ const (
 	DirectionWithdraw Direction = "withdraw"
 )
 
+// RebalanceMethod is the multiplexed sub-type of a
+// ("DeFindexVault","rebalance") event. Four rebalance actions share
+// the single `rebalance` topic; per docs/operations/wasm-audits/
+// defindex.md (surprising-gotcha #3) they are discriminated by a
+// `rebalance_method` Symbol field inside the event body.
+//
+// SCOPE / HONESTY (do-not-invent; CLAUDE.md "Soroban DeFi contracts
+// upgrade in place"): the discriminator FIELD NAME + method values
+// below come from upstream research, NOT from an observed on-chain
+// sample — the r1 lake has ZERO ("DeFindexVault","rebalance") emits
+// as of 2026-07-06, so this is forward-looking scaffolding.
+// [DecodeRebalanceMethod] reads only this one discriminator field and
+// returns the raw Symbol verbatim (so a real sample validates the
+// exact wire spelling — snake_case vs CamelCase is unconfirmed); the
+// per-method PAYLOAD (amounts, swap legs, routes) is deliberately NOT
+// modelled because inventing field layouts is forbidden. When a real
+// rebalance sample lands, the per-method decode slots in behind the
+// discriminator here.
+type RebalanceMethod string
+
+const (
+	// RebalanceMethodField is the body Map key that carries the
+	// discriminator Symbol. Documented, UNCONFIRMED on-chain.
+	RebalanceMethodField = "rebalance_method"
+
+	// The four documented methods. Wire spelling unconfirmed — see the
+	// type godoc. The decoder returns whatever the contract emits; these
+	// constants are for comparison/reporting, not assumed by the decode.
+	RebalanceUnwind       RebalanceMethod = "unwind"
+	RebalanceInvest       RebalanceMethod = "invest"
+	RebalanceSwapExactIn  RebalanceMethod = "SwapExactIn"
+	RebalanceSwapExactOut RebalanceMethod = "SwapExactOut"
+)
+
+// Known reports whether m is one of the four documented rebalance
+// methods. A false here on a real event means the upstream contract
+// added or renamed a method — recognised (topic classified) but its
+// sub-type is unmodelled, so it is handled as "recognised, no flow".
+func (m RebalanceMethod) Known() bool {
+	switch m {
+	case RebalanceUnwind, RebalanceInvest, RebalanceSwapExactIn, RebalanceSwapExactOut:
+		return true
+	default:
+		return false
+	}
+}
+
 // Event wraps a StrategyFlow so it satisfies consumer.Event for the
 // dispatcher / pipeline path. Log-only sink for now; a per-flow
 // persist hypertable is a Phase-C follow-up (see audit doc).
