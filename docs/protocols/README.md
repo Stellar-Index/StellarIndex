@@ -2,9 +2,15 @@
 
 One page per on-chain protocol we index, listing **every contract we
 attribute to that protocol** — factories, pools/vaults, and the events we
-decode from each. These pages exist to be **sent to each protocol team for
-verification**: "this is the complete set of your contracts and events we
-ingest; please confirm it's correct and complete."
+decode from each. For the DEXes/AMMs these pages exist to be **sent to
+each protocol team for verification**: "this is the complete set of your
+contracts and events we ingest; please confirm it's correct and complete."
+
+The tree also covers the **oracles** (Reflector/RedStone/Band),
+**bridges** (CCTP/Rozo), the **classic DEX** (SDEX), and the **supply
+observers** (SEP-41 + classic). For those, the page documents coverage +
+provenance (and, for third-party oracles/bridges, a contract-set
+confirmation) rather than a full pool enumeration.
 
 ## Why this matters (ADR-0035)
 
@@ -44,27 +50,53 @@ date, so a team can tell us if a contract is missing or mis-attributed.
   gate not yet shipped.
 - ⏳ **Pending verification** — set not yet enumerated.
 
-| Protocol | Method | Status | Page |
-|---|---|---|---|
-| Blend | lake deploy-graph | ✅ Gated (2 factories, 27 pools) | [blend.md](blend.md) |
-| Soroswap | lake deploy-graph | ✅ Gated (4 factories) | [soroswap.md](soroswap.md) |
-| Phoenix | RPC view (pre-lake) | ⏳ Enumerated (factory + multihop + 11 pools + 3 stake) — completeness needs team confirmation | [phoenix.md](phoenix.md) |
-| DeFindex | tx create_contract | ⏳ Enumerated (4 factories, 34 vaults, 7 strategies) — open: `create` event lacks vault address | [defindex.md](defindex.md) |
-| Aquarius | lake observation | ⏳ Enumerated (router + ~177 pools) — open: authoritative pool enumeration | [aquarius.md](aquarius.md) |
+### DEXes / AMMs (trades)
 
-> **Why blend + soroswap are gated but the rest aren't (yet):** the
-> factory-fan-out gate needs a way to enumerate the *complete* child set.
-> That's clean only when the creation event **carries the child's
-> address** — true for Blend (`deploy` → pool address) and Soroswap
-> (`new_pair` → pair address), both lake-verified complete. For the rest
-> the creation signal is absent or insufficient: Phoenix/Aquarius pools
-> predate our lake (50.46M); DeFindex's `create` event carries the vault's
-> *config* but not its address (0/34 vaults appear in the event bodies);
-> Comet has no factory namespace at all. Those four need the protocol team
-> to confirm the contract set (this page) or a view-function/WASM-hash
-> enumeration — enforcing a gate on an unverified set would silently drop
-> events, the one regression ADR-0035 forbids.
-| Comet | WASM-hash | ⏳ Pending (shared Balancer-v1 WASM, no factory namespace) | — |
+| Protocol | Method | Gate status | Page |
+|---|---|---|---|
+| Soroswap | lake deploy-graph | ✅ Gated (4 factories) | [soroswap.md](soroswap.md) |
+| Blend | lake deploy-graph | ✅ Gated (2 factories, 27 pools) — lending, excluded from VWAP | [blend.md](blend.md) |
+| SoroCredit | single trust-root | ✅ Gated (1 contract + child collateral positions) — consumer USDC credit/CDP, no pricing signal | [sorocredit.md](sorocredit.md) |
+| Aquarius | router-anchored | ✅ Gated (router + 332 pools, 2026-07-05) | [aquarius.md](aquarius.md) |
+| Phoenix | RPC view (pre-lake) | ✅ Gated code-side (curated set, 2026-07-02); operator rollout pending | [phoenix.md](phoenix.md) |
+| DeFindex | multi-proof classification | ✅ Gated (curated 85 vaults + 16 strategies, 4 factories, 2026-07-05) | [defindex.md](defindex.md) |
+| Comet | — (topic-bytes only) | ❌ **UNGATED — last remaining (CS-026)** | [comet.md](comet.md) |
+| SDEX (classic) | op-result XDR | N/A — no contracts | [sdex.md](sdex.md) |
+
+> **Gating is now complete except Comet.** ADR-0035 gates every decoder on
+> contract identity so a look-alike contract can't inject fabricated
+> trades under a protocol's source name. Factory fan-out is clean when the
+> creation event **carries the child's address** (Blend `deploy`, Soroswap
+> `new_pair` — both lake-verified). Where that signal is absent —
+> Phoenix/Aquarius pools predate the lake (50.46M), DeFindex's `create`
+> carries the vault *config* but not its address — the gate anchors on a
+> curated / registry-cross-checked seed instead (Phoenix curated set,
+> Aquarius router `add_pool` == registry API, DeFindex multi-proof
+> classification). **Comet is the one source still matching on topic bytes
+> alone** — it has no factory namespace and needs a pool allowlist /
+> WASM-hash gate (CS-026, [ADR-0040](../adr/0040-completing-contract-gating.md)).
+
+### Oracles (reported on `/v1/sources`, excluded from VWAP)
+
+| Protocol | Gate status | Page |
+|---|---|---|
+| Reflector (DEX/CEX/FX) | ✅ Gated — 3 pinned contract IDs | [reflector.md](reflector.md) |
+| RedStone | ✅ Gated — 1 Adapter contract + 19-feed registry | [redstone.md](redstone.md) |
+| Band | ✅ Gated — 1 StandardReference contract (ContractCall, zero events) | [band.md](band.md) |
+
+### Bridges (flow coverage, excluded from VWAP)
+
+| Protocol | Gate status | Page |
+|---|---|---|
+| CCTP (Circle) | ✅ Gated — 3 pinned contracts | [cctp.md](cctp.md) |
+| Rozo | ✅ Gated — 3 v1 Payment contracts | [rozo.md](rozo.md) |
+
+### Supply
+
+| Domain | Gate status | Page |
+|---|---|---|
+| SEP-41 Soroban tokens (Algorithm 3) | ✅ Gated — operator watched-set | [sep41-supply.md](sep41-supply.md) |
+| Classic supply observers (Algorithm 1 + 2) | ✅ Gated — operator watched-set | [supply-observers.md](supply-observers.md) |
 
 ## External cross-checks — Dune dashboards
 

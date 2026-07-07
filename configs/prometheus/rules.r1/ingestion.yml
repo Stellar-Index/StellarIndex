@@ -241,6 +241,37 @@ groups:
             certified-lake tail (the coverage claim's substrate) is at
             risk. Treat as data-loss-risk (ADR-0041).
 
+      # 2026-07-06 Postgres-outage fix (ADR-0041): the trade sink now
+      # RETRIES an infrastructure-classified insert failure (connection
+      # refused/reset, PG restarting) with backpressure instead of
+      # dropping the write. While it retries, the on-chain drain
+      # goroutine is blocked, so the ledger cursor STALLS (nothing lost)
+      # but the served tier is frozen. A sustained retry rate is the
+      # early signal that Postgres is unreachable and ingest is
+      # backpressured. Ticket, not page: no data is being lost, and
+      # cursor-stuck / all-sources-stopped page separately if this turns
+      # into a full outage. Mirror of the rule in
+      # deploy/monitoring/rules/ingestion.yml (wave-96 pairing lint).
+      - alert: stellarindex_ingestion_trade_insert_backpressure
+        expr: sum(rate(stellarindex_trade_insert_retries_total{outcome="retry"}[5m])) > 0
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+        annotations:
+          summary: "Trade sink retrying under backpressure — Postgres write path blocked"
+          description: |
+            The trade sink has been retrying infrastructure-classified
+            insert failures (connection refused/reset, PG restarting) for
+            ≥ 10 min. The on-chain ledger cursor is HELD (not advancing)
+            until the writes land — nothing is dropped, but the served
+            tier is frozen and external (CEX/FX) price freshness is
+            degrading (watch stellarindex_trade_insert_buffer_depth).
+            Almost always a Postgres outage/restart.
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+
       - alert: stellarindex_ingestion_insert_errors
         expr: sum by (source, kind) (rate(stellarindex_source_insert_errors_total[5m])) > 0.1
         for: 5m
@@ -257,8 +288,11 @@ groups:
             writes — usually Timescale outage, disk-full, or a schema
             mismatch after a migration.
 
-            Without a retry queue, these events are LOST from the pipeline.
-            Escalate quickly if the rate is high.
+            Post-2026-07-06 (ADR-0041), INFRASTRUCTURE faults no longer
+            drop — they retry with backpressure (see
+            trade_insert_backpressure). So a firing here means GENUINE
+            loss: a permanent data fault (kind=trade) or external-buffer
+            overflow (kind=dropped). Escalate quickly if the rate is high.
 
       # Detects cursor-replay / stuck-tip pattern via the
       # trade_insert_outcome_total counter (added 2026-05-28).
@@ -368,7 +402,7 @@ groups:
 
       - alert: stellarindex_ingest_gap_detector_silent
         expr: |
-          rate(stellarindex_ingest_gap_detector_runs_total{outcome="ok"}[7h]) == 0
+          (time() - stellarindex_ingest_gap_detector_last_success_unix) > 28800
           OR
           absent_over_time(stellarindex_ingest_gap_detector_runs_total[15m]) == 1
         for: 10m
@@ -378,20 +412,25 @@ groups:
           component: ingestion
           runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
         annotations:
-          summary: "Data-gap detector hasn't run successfully in >7h"
+          summary: "Data-gap detector hasn't scanned {{ $labels.source }}/{{ $labels.table }} successfully in >8h"
           description: |
             The aggregator's data-gap detector goroutine appears
-            stuck or absent for a source. Without it the operator-facing
+            stuck or absent for a target. Without it the operator-facing
             `stellarindex_ingest_gap_max_size_ledgers` gauge stops
-            updating. The 7h rate window sits above the longest
-            per-source ScanCadence (sdex / soroban-events scan the
-            62M-row trades + soroban_events tables on a 6h cadence, so a
-            shorter window false-fires between their normal runs); the
-            absent_over_time[15m] clause still catches an aggregator
-            that is fully down within 15m.
+            updating. Keyed off the last-success TIMESTAMP gauge, not
+            rate() over the runs_total counter: the heavy targets (sdex /
+            soroban-events) scan the 62M-row trades + soroban_events
+            tables on a 6h cadence, so their ok counter is pinned at 1
+            within a process life and 1 → 1 across a restart is invisible
+            to rate() — that false-fired for >7h even though every scan
+            succeeded (incident 2026-07-06). The 8h staleness threshold
+            sits above the 6h cadence; the absent_over_time[15m] clause
+            still catches an aggregator fully down within 15m.
 
-            Likely causes: aggregator binary crash-looping;
-            Postgres connection-pool exhaustion; deploy regression
-            removed the worker wiring.
+            Likely causes: aggregator binary crash-looping; Postgres
+            connection-pool exhaustion causing every scan to hit the
+            per-target Go timeout / SQL statement_timeout and increment
+            outcome=error (grep `gap-detector: scan failed`); deploy
+            regression removed the worker wiring.
 
             Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md

@@ -53,14 +53,22 @@ func TestVariantSourceName(t *testing.T) {
 }
 
 func TestQuoteForVariant(t *testing.T) {
-	// DEX → XLM native. CEX + FX → fiat:USD (ADR-0010).
-	if q := quoteForVariant(VariantDEX); q.Type != canonical.AssetNative {
-		t.Errorf("DEX quote = %+v, want native", q)
-	}
+	// All three Reflector oracles denominate in USD-equivalent → every
+	// variant quotes fiat:USD. DEX (CALI2BYU…) denominates in USDC
+	// (its base() SEP-40 method returns the USDC SAC); we stamp it
+	// fiat:USD for consistency with CEX/FX and the /v1/oracle path.
+	// Before the fix DEX returned canonical.NativeAsset() (XLM) — a
+	// wrong denominator that made XLM's ~0.20 USD price read as a
+	// nonsensical XLM-in-XLM self-price.
 	usd, _ := canonical.NewFiatAsset("USD")
-	for _, v := range []Variant{VariantCEX, VariantFX} {
-		if q := quoteForVariant(v); !q.Equal(usd) {
+	native := canonical.NativeAsset()
+	for _, v := range []Variant{VariantDEX, VariantCEX, VariantFX} {
+		q := quoteForVariant(v)
+		if !q.Equal(usd) {
 			t.Errorf("%s quote = %+v, want fiat:USD", v.SourceName(), q)
+		}
+		if q.Equal(native) {
+			t.Errorf("%s quote must NOT be native (XLM)", v.SourceName())
 		}
 	}
 }

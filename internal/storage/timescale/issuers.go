@@ -300,6 +300,56 @@ func (s *Store) GetIssuerSep1Cached(ctx context.Context, gStrkey string) (*Issue
 	return &out, nil
 }
 
+// Sep1Image is one (code, issuer, image) triple taken from a verified
+// issuer's cached SEP-1 [[CURRENCIES]] payload. Only entries carrying a
+// non-empty Code, Issuer AND Image are returned.
+type Sep1Image struct {
+	Code   string
+	Issuer string
+	Image  string
+}
+
+// AllSep1Images returns every populated [[CURRENCIES]] image across all
+// issuers whose sep1_payload is set — the raw material for the
+// /v1/assets listing logo overlay. It is one indexed scan over the (few
+// dozen) verified issuers; the API layer caches the result with a TTL so
+// this never runs on the per-request hot path, and applies its own
+// URL-scheme safety filter. Malformed payloads are skipped, not fatal.
+func (s *Store) AllSep1Images(ctx context.Context) ([]Sep1Image, error) {
+	const q = `SELECT sep1_payload FROM issuers WHERE sep1_payload IS NOT NULL`
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: AllSep1Images: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]Sep1Image, 0, 64)
+	for rows.Next() {
+		var payload sql.NullString
+		if err := rows.Scan(&payload); err != nil {
+			return nil, fmt.Errorf("timescale: AllSep1Images scan: %w", err)
+		}
+		if !payload.Valid || payload.String == "" {
+			continue
+		}
+		var parsed IssuerSep1Cached
+		if err := json.Unmarshal([]byte(payload.String), &parsed); err != nil {
+			// One issuer's corrupt payload must not blank the whole map.
+			continue
+		}
+		for _, c := range parsed.Currencies {
+			if c.Image == "" || c.Code == "" || c.Issuer == "" {
+				continue
+			}
+			out = append(out, Sep1Image{Code: c.Code, Issuer: c.Issuer, Image: c.Image})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: AllSep1Images rows: %w", err)
+	}
+	return out, nil
+}
+
 // SetIssuerSep1Payload writes a SEP-1 fetch result back to the
 // issuers row — sep1_payload (jsonb) + sep1_resolved_at = now().
 // Caller is responsible for serialising the payload.

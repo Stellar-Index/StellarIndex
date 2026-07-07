@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // PhoenixStakeAction discriminates the two stake-contract actions.
@@ -100,4 +102,51 @@ func (s *Store) InsertPhoenixStakeEvent(ctx context.Context, e PhoenixStakeEvent
 			e.StakeContract, e.Ledger, err)
 	}
 	return nil
+}
+
+// PhoenixStakeSummary is the windowed Phoenix LP-staking activity summary —
+// the READ side of phoenix_stake_events (migration 0044). Amounts are the
+// staked LP-share-token amount in base units (i128/NUMERIC, never int64 —
+// ADR-0003); NetStaked can be negative when unbonds exceed bonds in the
+// window.
+type PhoenixStakeSummary struct {
+	Bonds         int64
+	Unbonds       int64
+	Bonded        canonical.Amount
+	Unbonded      canonical.Amount
+	NetStaked     canonical.Amount
+	UniqueStakers int64
+}
+
+// PhoenixStakeWindowStats reads the windowed Phoenix LP-staking summary
+// (bond / unbond volumes + participants) from phoenix_stake_events. Amounts
+// are LP-share-token base units (per-asset decimals), preserved as
+// canonical.Amount (ADR-0003).
+//
+// Empty-safe: returns (nil, nil) when no bond/unbond event exists in the
+// window, so the bespoke KPI is omitted cleanly. windowDays <= 0 is treated
+// as 90.
+func (s *Store) PhoenixStakeWindowStats(ctx context.Context, windowDays int) (*PhoenixStakeSummary, error) {
+	if windowDays <= 0 {
+		windowDays = 90
+	}
+	since := fmt.Sprintf("%d days", windowDays)
+
+	var out PhoenixStakeSummary
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT count(*) FILTER (WHERE action = 'bond'),
+		       count(*) FILTER (WHERE action = 'unbond'),
+		       COALESCE(sum(amount) FILTER (WHERE action = 'bond'),0)::text,
+		       COALESCE(sum(amount) FILTER (WHERE action = 'unbond'),0)::text,
+		       COALESCE(sum(CASE WHEN action = 'bond' THEN amount
+		                         WHEN action = 'unbond' THEN -amount END),0)::text,
+		       count(DISTINCT user_addr)
+		  FROM phoenix_stake_events WHERE ledger_close_time > now() - $1::interval`, since).
+		Scan(&out.Bonds, &out.Unbonds, &out.Bonded, &out.Unbonded, &out.NetStaked, &out.UniqueStakers); err != nil {
+		return nil, fmt.Errorf("timescale: PhoenixStakeWindowStats: %w", err)
+	}
+	if out.Bonds == 0 && out.Unbonds == 0 {
+		return nil, nil
+	}
+	return &out, nil
 }
