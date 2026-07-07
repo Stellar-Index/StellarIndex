@@ -23,6 +23,8 @@ against.
   from real lake fixtures; ADR-0035 childgate; projector is the sole writer. Its on-wire
   `Liquidation` events are decoded as **scheduled settlements** (not distress — verified
   ~1:1 with statements, single recurring keeper). Explorer-scope; no pricing signal.
+  Listed in `/v1/protocols` (category `lending`) with its event kinds + verification page,
+  so the captured events surface on the protocol page rather than being invisible.
 - `/v1/assets` listing rows carry `unverified_ticker_collision` (bool) so clients can
   distinguish a same-ticker impersonator from the verified asset (OpenAPI 1.2.0 → 1.3.0).
 - Phoenix: decode the new Map-body swap event (single `Symbol("swap")` event, `ScvMap`
