@@ -194,3 +194,10 @@ paths = [
   # (LC-061 "working first request" snippet, `sip_your_key`).
   '''web/explorer/src/app/dashboard/page\.tsx''',
 ]
+
+[[rules.allowlists]]
+description = "Test-only token-SAC C-strkey fixtures (e.g. the XLM native SAC CAS3J7GY…, USDC SAC CCW67TSZ…) used by the protocol pool-pair label resolver tests. Deterministic public Stellar contract identifiers, not credentials — the 56-char base32 trips gitleaks' generic-api-key entropy heuristic. Same rationale as the aquarius/phoenix/liquidity-pool decoder-fixture allowlists above (#91)."
+paths = [
+  '''internal/api/v1/protocol_pairs_internal_test\.go''',
+  '''internal/api/v1/protocols_pairs_test\.go''',
+]

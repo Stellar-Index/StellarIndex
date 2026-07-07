@@ -15,6 +15,19 @@ against.
 
 ## [Unreleased]
 
+### Added
+- Protocol pool contracts now display as their human **asset pair** (e.g. `XLM/USDC`) on
+  `/v1/protocols/{name}` — `token_symbols` + `pair` resolved from the pool's token contracts,
+  not raw C-strkeys. Populated for soroswap/phoenix/aquarius/comet pools + blend/sorocredit
+  reserve-asset lists, with a graceful fallback to a short contract when a token doesn't
+  resolve. OpenAPI 1.3.0 → 1.4.0; explorer roster renders the pair. (#91)
+
+### Fixed
+- `/v1/protocols/aquarius` now lists its pool contracts — it read **0** despite being the
+  busiest AMM (14.9k events/24h, 300+ pools) because the projection-fallback roster listed
+  aquarius as "pair-keyed, no per-contract column." Sourced from `aquarius_liquidity` (which
+  also carries the pool's token identities for the pair label). (#91)
+
 ## [v0.9.0] — 2026-07-07
 
 ### Added
