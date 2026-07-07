@@ -103,10 +103,14 @@ groups:
         # fleet-wide fraction past 50% while healthy siblings diluted it,
         # so a permanently-stale asset was un-alertable. Also exclude the
         # benign `dormant` outcome (a dormant asset's last observation IS
-        # current — accepted, not an error).
+        # current — accepted, not an error) and `missing_baseline`
+        # (incident 2026-07-06: a SAC-wrapper whose pre-Soroban opening
+        # balance hasn't been seeded — a range-scoped condition fixed by
+        # `stellarindex-ops supply seed-sep41-genesis`, not corruption; a
+        # genuine post-seed negative still surfaces as `compute_error`).
         expr: |
           (
-            sum by (asset_key) (rate(stellarindex_aggregator_supply_refresh_total{outcome!~"ok|dormant"}[5m]))
+            sum by (asset_key) (rate(stellarindex_aggregator_supply_refresh_total{outcome!~"ok|dormant|missing_baseline"}[5m]))
             /
             (sum by (asset_key) (rate(stellarindex_aggregator_supply_refresh_total[5m])) > 0)
           ) > 0.5
@@ -123,10 +127,13 @@ groups:
             asset {{ $labels.asset_key }} are failing — outcome ∈
             {no_ledger, no_observation, compute_error, write_error,
             stale_component, missing_freshness} (the benign `dormant`
-            outcome is excluded). Steady-state should be mostly `ok`;
-            a single asset stuck here is usually a stalled freshness
-            producer (sustained `stale_component`) or operator config
-            drift (watched_classic_assets parse errors, sac_wrappers
-            map missing entries). Runbook: split by outcome, inspect
-            the dominant kind; for sustained `stale_component` on one
-            asset, see WithStaleComponentLedgersFor.
+            and `missing_baseline` outcomes are excluded). Steady-state
+            should be mostly `ok`; a single asset stuck here is usually a
+            stalled freshness producer (sustained `stale_component`) or
+            operator config drift (watched_classic_assets parse errors,
+            sac_wrappers map missing entries). A SAC-wrapper stuck on
+            `missing_baseline` (visible in the per-asset series, not this
+            alert) needs `stellarindex-ops supply seed-sep41-genesis`.
+            Runbook: split by outcome, inspect the dominant kind; for
+            sustained `stale_component` on one asset, see
+            WithStaleComponentLedgersFor.

@@ -135,11 +135,18 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	case *skipRecognition:
 		fmt.Fprintln(os.Stderr, "compute-completeness: -skip-recognition — trusting prior recognition audit (no shape scan)")
 	case *useCH:
-		recFrom := uint32(sorobanEraGenesis)
-		if uint32(*fromLedger) > recFrom { //nolint:gosec // ledger seq fits uint32
-			recFrom = uint32(*fromLedger) //nolint:gosec // ledger seq fits uint32
-		}
-		recGaps, recErr = computeRecognitionGapsCH(ctx, cfg, *chAddr, gatedOpts, recFrom, tip)
+		// Recognition (Claim 2a) is a FULL-HISTORY property — "is every
+		// topic shape a gated contract has EVER emitted recognized by some
+		// decoder" — NOT an incremental one. It must NOT be scoped to the
+		// incremental -from window: a low-volume source's rare wrong-topic
+		// event (rozo emitted 393 payment_events over ~2 months, none in a
+		// recent incremental window) would slip through and never flip
+		// recognition_ok — the 2026-07-07 rozo blind spot (BACKLOG #89).
+		// DistinctTopicShapes is a cheap ClickHouse GROUP BY even over the
+		// whole lake (the distinct (contract,topic) set is tiny), so always
+		// scan from genesis regardless of -from — which correctly scopes
+		// only the expensive row-by-row projection reconcile below.
+		recGaps, recErr = computeRecognitionGapsCH(ctx, cfg, *chAddr, gatedOpts, uint32(sorobanEraGenesis), tip)
 	default:
 		recGaps, recErr = computeRecognitionGaps(ctx, store, cfg, gatedOpts, tip)
 	}

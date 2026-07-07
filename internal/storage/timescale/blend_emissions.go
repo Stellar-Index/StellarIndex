@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
 )
 
@@ -65,6 +66,50 @@ func (s *Store) InsertBlendEmissionEvent(ctx context.Context, e blend.EmissionEv
 		return fmt.Errorf("timescale: InsertBlendEmissionEvent %s@%d: %w", e.Pool, e.Ledger, err)
 	}
 	return nil
+}
+
+// BlendEmissionSummary is the windowed Blend emission / credit-risk
+// activity summary — the READ side of blend_emissions (migration 0045).
+// ClaimVolume is the summed claimed-emission amount in token base units
+// (i128/NUMERIC, never int64 — ADR-0003). CreditRisk counts bad_debt +
+// defaulted_debt events (a genuine risk signal — surface honestly).
+type BlendEmissionSummary struct {
+	Claims      int64
+	ClaimVolume canonical.Amount
+	Gulps       int64 // gulp + gulp_emissions (emission accounting)
+	CreditRisk  int64 // bad_debt + defaulted_debt
+	TotalEvents int64
+}
+
+// BlendEmissionWindowStats reads the windowed Blend emission / credit-risk
+// summary (claims + claim volume + gulps + credit-risk events) from
+// blend_emissions. Claim amounts are token base units (per-asset decimals),
+// preserved as canonical.Amount (ADR-0003).
+//
+// Empty-safe: returns (nil, nil) when no emission event exists in the
+// window, so the bespoke KPI is omitted cleanly. windowDays <= 0 is treated
+// as 90.
+func (s *Store) BlendEmissionWindowStats(ctx context.Context, windowDays int) (*BlendEmissionSummary, error) {
+	if windowDays <= 0 {
+		windowDays = 90
+	}
+	since := fmt.Sprintf("%d days", windowDays)
+
+	var out BlendEmissionSummary
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT count(*) FILTER (WHERE event_kind = 'claim'),
+		       COALESCE(sum(amount) FILTER (WHERE event_kind = 'claim'),0)::text,
+		       count(*) FILTER (WHERE event_kind IN ('gulp','gulp_emissions')),
+		       count(*) FILTER (WHERE event_kind IN ('bad_debt','defaulted_debt')),
+		       count(*)
+		  FROM blend_emissions WHERE ledger_close_time > now() - $1::interval`, since).
+		Scan(&out.Claims, &out.ClaimVolume, &out.Gulps, &out.CreditRisk, &out.TotalEvents); err != nil {
+		return nil, fmt.Errorf("timescale: BlendEmissionWindowStats: %w", err)
+	}
+	if out.TotalEvents == 0 {
+		return nil, nil
+	}
+	return &out, nil
 }
 
 // buildEmissionAttributes builds the jsonb payload for the

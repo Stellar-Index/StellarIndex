@@ -76,20 +76,24 @@ import (
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/aggregate/anomaly"
+	"github.com/StellarIndex/stellar-index/internal/aggregate/assetvolrollup"
 	"github.com/StellarIndex/stellar-index/internal/aggregate/baseline"
 	"github.com/StellarIndex/stellar-index/internal/aggregate/changesummary"
 	"github.com/StellarIndex/stellar-index/internal/aggregate/freeze"
 	"github.com/StellarIndex/stellar-index/internal/aggregate/mev"
 	"github.com/StellarIndex/stellar-index/internal/aggregate/orchestrator"
+	"github.com/StellarIndex/stellar-index/internal/aggregate/protoeventsrollup"
 	"github.com/StellarIndex/stellar-index/internal/api/streaming/redispub"
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/config"
 	"github.com/StellarIndex/stellar-index/internal/customerwebhook"
+	"github.com/StellarIndex/stellar-index/internal/decimalsguard"
 	"github.com/StellarIndex/stellar-index/internal/divergence"
 	"github.com/StellarIndex/stellar-index/internal/obs"
 	"github.com/StellarIndex/stellar-index/internal/platform"
 	"github.com/StellarIndex/stellar-index/internal/platform/postgresstore"
 	"github.com/StellarIndex/stellar-index/internal/pricealerts"
+	"github.com/StellarIndex/stellar-index/internal/pricingguard"
 	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
 	"github.com/StellarIndex/stellar-index/internal/storage/redisclient"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
@@ -479,6 +483,43 @@ func run(cfgPath string, dryRun bool) error {
 		_ = changeSummaryWorker.Run(rootCtx)
 	}()
 
+	// ─── Protocol-events rollup worker (#43) ────────────────────
+	// Folds the trailing-24h per-source event census into the
+	// protocol_events_24h table (migration 0086) every couple of
+	// minutes so /v1/protocols' events_24h column reads a keyed-on-PK
+	// lookup instead of the ~17-table UNION count the 2026-07-06
+	// latency incident measured cold. Always on (backs a core API
+	// read), like the change-summary + gap-detector workers.
+	protoEventsRollup := protoeventsrollup.New(store, protoeventsrollup.Options{
+		Interval: protoeventsrollup.DefaultInterval,
+		Logger:   logger.With("component", "protocol-events-rollup"),
+	})
+	refresherWG.Add(1)
+	go func() {
+		defer refresherWG.Done()
+		if err := protoEventsRollup.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("protocol-events rollup worker exited with error", "err", err)
+		}
+	}()
+
+	// ─── Asset-volume rollup worker (#43) ───────────────────────
+	// Folds the trailing-24h per-asset USD-volume SUM over prices_1m
+	// into the asset_volume_24h table (migration 0087) every couple of
+	// minutes so the /v1/assets listing reads a keyed-on-PK lookup
+	// instead of the ~256k-row per-request scan the 2026-07-06 latency
+	// incident measured. Always on (backs a core API read).
+	assetVolRollup := assetvolrollup.New(store, assetvolrollup.Options{
+		Interval: assetvolrollup.DefaultInterval,
+		Logger:   logger.With("component", "asset-volume-rollup"),
+	})
+	refresherWG.Add(1)
+	go func() {
+		defer refresherWG.Done()
+		if err := assetVolRollup.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("asset-volume rollup worker exited with error", "err", err)
+		}
+	}()
+
 	// ─── Supply-snapshot refresh worker (ADR-0011 / Task #57) ────
 	// Operator-opted-in via cfg.Supply.AggregatorRefreshEnabled.
 	// When false (the default), the systemd-timer-driven path
@@ -486,6 +527,22 @@ func run(cfgPath string, dryRun bool) error {
 	// operator's mechanism. When true, the goroutine path takes
 	// over and the systemd timer should be disabled.
 	if cfg.Supply.AggregatorRefreshEnabled {
+		// SEP-41 supply rollup worker (migration 0085, incident
+		// 2026-07-06). Advances the per-contract mint/burn/clawback
+		// checkpoint the SEP41KindTotalsAtOrBefore fast path reads, so
+		// the per-asset SEP-41 refreshers below never re-sum a watched
+		// contract's full sep41_supply_events history each tick. Started
+		// first so its immediate fold warms the checkpoint. No-op when
+		// no SEP-41 contract is watched.
+		if len(cfg.Supply.WatchedSEP41Contracts) > 0 {
+			refresherWG.Add(1)
+			go func() {
+				defer refresherWG.Done()
+				runSEP41SupplyRollup(rootCtx, store, cfg.Supply.WatchedSEP41Contracts,
+					cfg.Supply.AggregatorRefreshCadence, logger.With("component", "sep41-supply-rollup"))
+			}()
+		}
+
 		bindings, err := buildSupplyRefreshers(cfg, store, logger.With("component", "supply-refresh"))
 		if err != nil {
 			return fmt.Errorf("supply refresher init: %w", err)
@@ -516,6 +573,31 @@ func run(cfgPath string, dryRun bool) error {
 				runCrossCheckRefresh(rootCtx, ccRefresher, cfg.Supply.AggregatorRefreshCadence)
 			}()
 		}
+	}
+
+	// ─── Supply-divergence cross-check worker ───────────────────
+	// Compares OUR served circulating_supply against an external
+	// authoritative reference (Stellar Network Dashboard for XLM;
+	// CoinGecko when a Pro key is set) and emits
+	// stellarindex_supply_divergence_ratio + _total{outcome}. This
+	// automates the manual "is our supply right?" check — catching a
+	// stale SDF-reserve exclusion list — while degrading gracefully to
+	// `no_reference` (not a false alarm) when a reference is dark.
+	// Gated on [divergence.supply].enabled; reads whatever snapshots
+	// the supply pipeline (goroutine OR systemd-timer path) has
+	// written, so it lives OUTSIDE the aggregator_refresh_enabled gate.
+	supplyDivSvc, err := buildSupplyDivergenceService(cfg.Divergence.Supply, store,
+		logger.With("component", "supply-divergence"))
+	if err != nil {
+		return fmt.Errorf("supply-divergence service init: %w", err)
+	}
+	if supplyDivSvc != nil {
+		interval := time.Duration(cfg.Divergence.Supply.RefreshIntervalSeconds) * time.Second
+		refresherWG.Add(1)
+		go func() {
+			defer refresherWG.Done()
+			runSupplyDivergenceRefresh(rootCtx, supplyDivSvc, interval)
+		}()
 	}
 
 	// ─── Freeze-recovery worker (F-1229) ────────────────────────
@@ -583,6 +665,40 @@ func run(cfgPath string, dryRun bool) error {
 		}
 	}()
 
+	// ─── Decimals-assumption guard (decoder-correctness audit F2) ─
+	// The served price is Σ(quote)/Σ(base) on RAW smallest-unit
+	// integers (prices_* CAGGs + aggregate.VWAP); the per-asset
+	// decimals cancel ONLY when base and quote share a scale. That
+	// holds today because every DEX-traded token is 7-decimal, but a
+	// non-7-decimal SEP-41 token getting DEX liquidity would silently
+	// skew every served price on its pairs by 10^(7-decimals) with no
+	// other alarm. This sweep resolves each recently-DEX-traded
+	// Soroban token's on-chain decimals() from the lake and raises
+	// stellarindex_dex_trade_nonstandard_decimals_total the moment one
+	// is != 7 — detection only; the forward normalization is a
+	// deferred follow-up (a consistent fix would rewrite the decade-
+	// deep CAGGs). Best-effort: needs the lake for decimals(), so it's
+	// off when ClickHouse is unreachable (like the MEV order resolver).
+	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
+		if er, err := clickhouse.NewExplorerReader(rootCtx, addr); err != nil {
+			logger.Warn("decimals-guard: ClickHouse decimals resolver unavailable — non-7-decimal DEX-token detection disabled",
+				"addr", addr, "err", err)
+		} else {
+			defer func() { _ = er.Close() }()
+			guard := decimalsguard.New(store, er, decimalsguard.Options{
+				Window: decimalsguard.DefaultWindow,
+				Logger: logger.With("component", "decimals-guard"),
+			})
+			refresherWG.Add(1)
+			go func() {
+				defer refresherWG.Done()
+				if err := guard.Run(rootCtx, decimalsguard.DefaultInterval); err != nil && !errors.Is(err, context.Canceled) {
+					logger.Error("decimals-guard exited with error", "err", err)
+				}
+			}()
+		}
+	}
+
 	// ─── Price-alert evaluator (BACKLOG #60) ────────────────────
 	// Off by default. When [price_alerts] enabled=true, sweeps the
 	// enabled price_alerts rows against the latest closed 1m VWAP each
@@ -598,7 +714,7 @@ func run(cfgPath string, dryRun bool) error {
 		paWorker := pricealerts.New(
 			postgresstore.NewPriceAlertStore(paStore),
 			postgresstore.NewWebhookStore(paStore),
-			priceAlertVWAPReader{store: store},
+			priceAlertVWAPReader{store: store, logger: logger.With("component", "price-alert-guard")},
 			pricealerts.Options{
 				Interval: time.Duration(cfg.PriceAlerts.IntervalSeconds) * time.Second,
 				Logger:   logger.With("component", "price-alerts"),
@@ -801,6 +917,67 @@ func buildXLMRefresher(cfg config.Config, store *timescale.Store, logger *slog.L
 // goroutine just drives the loop and emits the outcome metric
 // labeled with the bound asset_key so operators can chart
 // per-asset bootstrap progress + isolate failure modes per asset.
+// sep41RollupAdvancer is the narrow seam runSEP41SupplyRollup drives —
+// *timescale.Store in production, a fake in the worker test. One method:
+// fold a contract's newly-settled supply events into its rollup
+// checkpoint.
+type sep41RollupAdvancer interface {
+	AdvanceSEP41SupplyRollup(ctx context.Context, contractID string) (timescale.SEP41RollupAdvance, error)
+}
+
+// runSEP41SupplyRollup periodically folds each watched SEP-41 contract's
+// newly-settled mint/burn/clawback events into its rollup checkpoint
+// (migration 0085, incident 2026-07-06). Advancing the rollup is what
+// keeps the per-tick SEP-41 supply refresh cheap: the reader adds a
+// bounded live delta to the checkpoint instead of re-summing the
+// contract's whole `sep41_supply_events` history each refresh.
+//
+// Contracts are advanced SEQUENTIALLY within a pass. This is
+// deliberate: a cold contract's first fold is a one-off full-history
+// sum, and running them one-at-a-time keeps those cold folds from
+// fanning back out into the concurrent full-table scans that saturated
+// Postgres and blew up API p95/p99 in the first place.
+func runSEP41SupplyRollup(ctx context.Context, advancer sep41RollupAdvancer, contracts []string, cadence time.Duration, logger *slog.Logger) {
+	advanceAll := func() {
+		for _, c := range contracts {
+			if ctx.Err() != nil {
+				return
+			}
+			start := time.Now()
+			res, err := advancer.AdvanceSEP41SupplyRollup(ctx, c)
+			outcome := "ok"
+			switch {
+			case err != nil:
+				outcome = "error"
+			case !res.Advanced:
+				outcome = "noop"
+			}
+			obs.SEP41SupplyRollupAdvancesTotal.WithLabelValues(c, outcome).Inc()
+			obs.SEP41SupplyRollupAdvanceDurationSeconds.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
+			switch {
+			case err != nil && ctx.Err() == nil:
+				logger.Warn("sep41 supply rollup advance failed", "contract_id", c, "err", err)
+			case res.Advanced:
+				logger.Debug("sep41 supply rollup advanced",
+					"contract_id", c, "from_ledger", res.FromLedger, "to_ledger", res.ToLedger)
+			}
+		}
+	}
+
+	advanceAll() // immediate first fold — warms the checkpoint before the refresher reads it
+
+	ticker := time.NewTicker(cadence)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			advanceAll()
+		}
+	}
+}
+
 func runSupplyRefresh(ctx context.Context, r *supply.Refresher, cadence time.Duration, assetKey string) {
 	tick := func() {
 		// Time the full Tick — Postgres reads (ledger lookup +
@@ -962,6 +1139,10 @@ func (a supplyAggregatorSEP41Store) MinSEP41ComponentLedger(ctx context.Context,
 	return a.s.MinSEP41ComponentLedger(ctx, contractID, asOfLedger)
 }
 
+func (a supplyAggregatorSEP41Store) SEP41GenesisBaselineSeeded(ctx context.Context, contractID string) (bool, error) {
+	return a.s.SEP41GenesisBaselineSeeded(ctx, contractID)
+}
+
 // runBaselineRefresh ticks the baseline refresher on
 // [baselineRefreshCadence], emitting per-outcome Prometheus counters
 // for each cycle. Returns on rootCtx cancellation.
@@ -1060,13 +1241,14 @@ func (a baselineSinkAdapter) UpsertBaseline(
 // expansion can also pull XLM/USDC-GA5Z…-style classic-quoted trades
 // when the target is `XLM/fiat:USD`.
 //
-// Soft-fails: a single malformed entry is logged and skipped rather
-// than aborting startup. Validate() at config load already
-// roundtrips each entry through canonical.NewClassicAsset; reaching
-// a parse error here would mean the validator regressed, in which
-// case the safe behaviour is "skip and keep serving" — a missing
-// classic peg is a smaller failure than the binary refusing to
-// start.
+// Soft-fails: a single malformed / non-classic entry is logged and
+// skipped rather than aborting startup. TradesConfig.validate() at config
+// load already parses each entry and rejects anything that is not a
+// classic (7-decimal) credit asset, so on a well-formed config this loop
+// never hits either skip path; reaching one would mean the validator
+// regressed, in which case the safe behaviour is "skip and keep serving"
+// — a missing classic peg is a smaller failure than the binary refusing
+// to start.
 func parseUSDPeggedClassicAssets(raws []string, logger *slog.Logger) []canonical.Asset {
 	if len(raws) == 0 {
 		return nil
@@ -1362,6 +1544,123 @@ func (obsCrossCheckEmitter) Outcome(kind supply.CrossCheckOutcomeKind) {
 	obs.SupplyCrossCheckTotal.WithLabelValues(string(kind)).Inc()
 }
 
+// ─── Supply-divergence cross-check wiring ────────────────────────────
+
+// buildSupplyDivergenceService composes the supply cross-check service
+// from `[divergence.supply]`. Returns (nil, nil) when the check is
+// disabled OR when no reference is enabled — a service with nothing to
+// compare against would emit only `no_reference` forever, so it isn't
+// wired (the graceful-degrade posture the task calls for).
+func buildSupplyDivergenceService(cfg config.DivergenceSupplyConfig, store *timescale.Store, logger *slog.Logger) (*divergence.SupplyService, error) {
+	if !cfg.Enabled {
+		return nil, nil
+	}
+	refs := buildSupplyDivergenceReferences(cfg)
+	if len(refs) == 0 {
+		logger.Warn("supply divergence enabled but every reference is disabled — skipping (no reference to compare against)")
+		return nil, nil
+	}
+	svc, err := divergence.NewSupplyService(divergence.SupplyServiceOptions{
+		References:          refs,
+		Reader:              divergenceServedSupplyReader{s: store},
+		Emitter:             obsSupplyDivergenceEmitter{},
+		Threshold:           cfg.ThresholdPct / 100.0, // percent → ratio
+		PerReferenceTimeout: time.Duration(cfg.PerReferenceTimeoutSeconds) * time.Second,
+		Logger:              logger,
+	})
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(refs))
+	for i, r := range refs {
+		names[i] = r.Name()
+	}
+	logger.Info("supply-divergence worker wired",
+		"references", names,
+		"threshold_pct", cfg.ThresholdPct,
+		"refresh_interval_seconds", cfg.RefreshIntervalSeconds)
+	return svc, nil
+}
+
+// buildSupplyDivergenceReferences constructs the enabled external
+// circulating-supply references. The Stellar Dashboard covers XLM (free,
+// authoritative); CoinGecko covers any asset with a coin id but is off
+// by default (free tier 429-throttled since 2026-06-19).
+func buildSupplyDivergenceReferences(cfg config.DivergenceSupplyConfig) []divergence.SupplyReference {
+	var refs []divergence.SupplyReference
+	if cfg.Dashboard.Enabled {
+		refs = append(refs, divergence.NewStellarDashboardReference(divergence.StellarDashboardOptions{
+			BaseURL: cfg.Dashboard.BaseURL,
+		}))
+	}
+	if cfg.CoinGecko.Enabled {
+		refs = append(refs, divergence.NewCoinGeckoSupplyReference(divergence.CoinGeckoSupplyOptions{
+			BaseURL: cfg.CoinGecko.BaseURL,
+			APIKey:  cfg.CoinGecko.APIKey,
+			IDMap:   cfg.CoinGecko.IDMap,
+		}))
+	}
+	return refs
+}
+
+// runSupplyDivergenceRefresh ticks the supply cross-check on interval,
+// returning on ctx cancellation. The first cycle runs immediately so a
+// fresh deployment surfaces the outcome metric on the first scrape
+// (operators see "the checker is running" rather than silence).
+func runSupplyDivergenceRefresh(ctx context.Context, svc *divergence.SupplyService, interval time.Duration) {
+	svc.Tick(ctx)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			svc.Tick(ctx)
+		}
+	}
+}
+
+// divergenceServedSupplyReader adapts *timescale.Store to
+// divergence.ServedSupplyReader, mapping timescale's ErrNotFound onto
+// divergence.ErrNoServedSupply so the service reads the bootstrap state
+// (no snapshot yet) as `refresh_error`, distinct from a real read
+// failure.
+type divergenceServedSupplyReader struct{ s *timescale.Store }
+
+func (a divergenceServedSupplyReader) LatestCirculatingSupply(ctx context.Context, assetKey string) (divergence.ServedSupply, error) {
+	snap, err := a.s.LatestSupply(ctx, assetKey)
+	if errors.Is(err, timescale.ErrNotFound) {
+		return divergence.ServedSupply{}, fmt.Errorf("LatestSupply %s: %w", assetKey, divergence.ErrNoServedSupply)
+	}
+	if err != nil {
+		return divergence.ServedSupply{}, err
+	}
+	return divergence.ServedSupply{
+		Circulating:    snap.CirculatingSupply,
+		LedgerSequence: snap.LedgerSequence,
+		ObservedAt:     snap.ObservedAt,
+	}, nil
+}
+
+// obsSupplyDivergenceEmitter wires divergence.SupplyEmitter onto the
+// package-level obs collectors — kept as a tiny adapter so the
+// divergence package stays Prometheus-agnostic (same split as
+// obsCrossCheckEmitter).
+type obsSupplyDivergenceEmitter struct{}
+
+func (obsSupplyDivergenceEmitter) Ratio(asset, reference string, ratio float64) {
+	obs.SupplyDivergenceRatio.WithLabelValues(asset, reference).Set(ratio)
+}
+
+func (obsSupplyDivergenceEmitter) Outcome(kind divergence.SupplyOutcomeKind) {
+	obs.SupplyDivergenceTotal.WithLabelValues(string(kind)).Inc()
+}
+
+func (obsSupplyDivergenceEmitter) Duration(kind divergence.SupplyOutcomeKind, seconds float64) {
+	obs.SupplyDivergenceDurationSeconds.WithLabelValues(string(kind)).Observe(seconds)
+}
+
 // buildDivergenceReferences mirrors the API binary's helper of the
 // same name. Builds the CoinGecko + Chainlink HTTP reference clients
 // plus the on-chain oracle references (Reflector/Redstone/Band,
@@ -1450,13 +1749,25 @@ func buildOracleDivergenceReferences(cfg config.DivergenceConfig, oracles diverg
 // Prometheus metrics (paired counter + duration histogram, plus the
 // new-events counter), matching the divergence_refresh /
 // supply_refresh observability shape.
-// priceAlertVWAPReader adapts *timescale.Store to
+// priceAlertVWAPStore is the storage seam priceAlertVWAPReader needs:
+// the latest closed bucket plus the guard's trailing baseline.
+// *timescale.Store satisfies it; the interface keeps the reader
+// unit-testable without a database.
+type priceAlertVWAPStore interface {
+	LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair) (timescale.Vwap1mRow, error)
+	RecentClosedVWAP1mCombined(ctx context.Context, p canonical.Pair, limit int) ([]timescale.Vwap1mRow, error)
+}
+
+// priceAlertVWAPReader adapts the timescale store to
 // pricealerts.PriceReader. LatestClosedVWAP1mForPair combines both
 // stored pair orientations; sql.ErrNoRows (no closed bucket in scope)
 // maps to ok=false, nil — a benign no-op the evaluator skips rather than
 // a failure. The Vwap1mRow.Bucket is the START of the 1-minute window;
 // the close time reported to the payload is +1 minute.
-type priceAlertVWAPReader struct{ store *timescale.Store }
+type priceAlertVWAPReader struct {
+	store  priceAlertVWAPStore
+	logger *slog.Logger
+}
 
 func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canonical.Asset) (string, time.Time, bool, error) {
 	pair, err := canonical.NewPair(base, quote)
@@ -1470,7 +1781,17 @@ func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canoni
 	if err != nil {
 		return "", time.Time{}, false, err
 	}
-	return row.VWAP, row.Bucket.Add(time.Minute), true, nil
+	// Same serving-sanity guard as the two API raw-bucket paths (/v1/price,
+	// /v1/assets/{slug}): LatestClosedVWAP1mForPair is the bare
+	// Σ(quote)/Σ(base) closed bucket that BYPASSES the orchestrator's
+	// σ-outlier filter / min-USD-volume gate / freeze protection, so a
+	// fat-finger / manipulation print in the served minute would otherwise
+	// fire a SPURIOUS customer price alert. pricingguard.GuardServedVWAP1m
+	// serves last-known-good when the latest bucket is grossly off its
+	// trailing baseline (no spurious alert), is byte-identical on a healthy
+	// bucket, and fails open on thin history.
+	served := pricingguard.GuardServedVWAP1m(ctx, r.store, r.logger, pair, row)
+	return served.VWAP, served.Bucket.Add(time.Minute), true, nil
 }
 
 type mevObserver struct{}

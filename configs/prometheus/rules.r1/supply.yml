@@ -35,3 +35,39 @@ groups:
             circulating/total/max_supply on the API will be
             correspondingly wrong until reconciled.
             Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/supply-cross-check-divergence.md
+
+      # Served circulating supply drifted > 1% from an EXTERNAL
+      # authoritative reference (Stellar Network Dashboard for XLM;
+      # CoinGecko when a Pro key is configured). DISTINCT from the
+      # cross-check above (which compares two of OUR OWN numbers): this
+      # is our served figure vs the market's. The 1% threshold sits
+      # two-plus orders of magnitude above the ~0.03% XLM Fee-Pool noise
+      # floor (docs/methodology/xlm-circulating-supply.md), so it fires
+      # only on a REAL drift — most likely a stale SDF-reserve exclusion
+      # account list. The gauge only updates while the worker runs
+      # ([divergence.supply].enabled); a dead reference freezes the last
+      # value rather than manufacturing a divergence (the no_reference
+      # outcome on stellarindex_supply_divergence_total carries that
+      # signal and is deliberately NOT paged).
+      - alert: stellarindex_supply_divergence_high
+        expr: |
+          stellarindex_supply_divergence_ratio > 0.01
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: supply
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/supply-divergence.md
+        annotations:
+          summary: "Served circulating supply {{ $value | humanizePercentage }} off {{ $labels.reference }} for {{ $labels.asset }} (P3)"
+          description: |
+            Our served circulating_supply for {{ $labels.asset }} differs
+            from {{ $labels.reference }} by {{ $value | humanizePercentage }},
+            sustained > 1 h — above the 1% threshold (the ~0.03% XLM
+            Fee-Pool noise floor is well below this). The likely cause is
+            a STALE SDF-reserve exclusion account list: SDF distributed
+            from — or added — an account `stellarindex_sdf_reserve_accounts`
+            no longer tracks accurately. Do NOT blindly change our number
+            to match the reference; the methodology doc
+            (docs/methodology/xlm-circulating-supply.md) is authoritative.
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/supply-divergence.md

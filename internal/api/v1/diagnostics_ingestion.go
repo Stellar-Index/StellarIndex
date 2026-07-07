@@ -208,9 +208,13 @@ type BackfillCoverageRow struct {
 	// successful backfill ranges between genesis and tip. The
 	// numerator of DensityPct.
 	CoveredLedgers int64 `json:"covered_ledgers,omitempty"`
-	// ExpectedLedgers is tip - genesis + 1 — the denominator of
-	// DensityPct. Exposed so the UI can render absolute "X / Y
-	// ledgers covered" rather than just a percentage.
+	// ExpectedLedgers is the denominator of DensityPct. Seeded as
+	// tip - genesis + 1, then overwritten by overlaySourceCoverageV2
+	// with the snapshot's window size when a coverage snapshot exists
+	// — the gap detector scans a trailing window (2026-07-06 incident),
+	// so covered/expected are window-scoped to stay coherent with
+	// DensityPct. Exposed so the UI can render absolute "X / Y ledgers
+	// covered" rather than just a percentage.
 	ExpectedLedgers int64 `json:"expected_ledgers,omitempty"`
 
 	// GapFreePct = `1 - max_gap_ledgers / expected_ledger` from the
@@ -697,6 +701,14 @@ func (s *Server) buildIngestionSnapshot(ctx context.Context) IngestionDiagnostic
 // snapshot_at = OLDEST per-table last_updated — "how stale is
 // the stalest read in this source's aggregation".
 //
+// expected_ledgers is overwritten from the snapshot too: since the
+// gap detector scans a trailing window (2026-07-06 IO-saturation
+// incident), covered_ledgers is the distinct count WITHIN that
+// window and the snapshot's expected_ledgers is the window size —
+// not tip-genesis+1. Replacing the whole-span value seeded by
+// buildBackfillCoverage keeps the covered/expected pair coherent
+// with density_pct (all three window-scoped).
+//
 // Soft-fail: a reader error or empty table leaves the row's
 // data-derived fields at zero. The UI should render "Pending"
 // for zero DensityPct + nil CoverageSnapshotAt rather than
@@ -725,6 +737,7 @@ func (s *Server) overlaySourceCoverageV2(ctx context.Context, rows *[]BackfillCo
 		}
 		density, gapFree := ss[0].DensityPct, ss[0].GapFreePct
 		covered := ss[0].DistinctLedgers
+		expected := ss[0].ExpectedLedgers
 		oldest := ss[0].LastUpdated
 		for _, s := range ss[1:] {
 			if s.DensityPct < density {
@@ -736,6 +749,9 @@ func (s *Server) overlaySourceCoverageV2(ctx context.Context, rows *[]BackfillCo
 			if s.DistinctLedgers < covered {
 				covered = s.DistinctLedgers
 			}
+			if s.ExpectedLedgers < expected {
+				expected = s.ExpectedLedgers
+			}
 			if s.LastUpdated.Before(oldest) {
 				oldest = s.LastUpdated
 			}
@@ -744,6 +760,12 @@ func (s *Server) overlaySourceCoverageV2(ctx context.Context, rows *[]BackfillCo
 		(*rows)[i].CoveredLedgers = covered
 		(*rows)[i].GapFreePct = gapFree
 		(*rows)[i].CoverageSnapshotAt = &oldest
+		// Window-scope the denominator so covered/expected stays
+		// coherent with density_pct (see godoc). Guarded: never zero a
+		// populated row if a snapshot somehow carries expected=0.
+		if expected > 0 {
+			(*rows)[i].ExpectedLedgers = expected
+		}
 		// `coverage_pct` is what the customer-facing status page
 		// renders. It must answer "are we walking this source
 		// completely (no gaps)?" — NOT "how dense is the source's

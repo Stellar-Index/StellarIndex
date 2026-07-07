@@ -20,7 +20,7 @@
 set -uo pipefail
 
 API_BASE_URL="${API_BASE_URL:-https://api.stellarindex.io}"
-TIMEOUT="${AUDIT_TIMEOUT:-10}"
+TIMEOUT="${AUDIT_TIMEOUT:-20}"  # 20s: a cold edge-cache miss can fall through to a slow origin fetch (e.g. /v1/pairs ~13s cold) on a smoke audit; don't red the whole audit for a working-but-cold endpoint
 FAILS=0
 TOTAL=0
 
@@ -45,9 +45,18 @@ audit() {
   TOTAL=$((TOTAL + 1))
   body=$(/usr/bin/curl -sS -m "$TIMEOUT" -A "stellarindex-audit/1" \
     -w "\n%{http_code}" "${API_BASE_URL}${path}" 2>&1) || {
-    printf "  %sFAIL%s %-44s %scurl error%s\n" "$RED" "$OFF" "$label" "$DIM" "$OFF"
-    FAILS=$((FAILS + 1))
-    return
+    # Transient curl failure: a connect blip, or a slow-but-working origin
+    # under heavy backfill/re-derive load exceeding TIMEOUT (e.g. the XLM/USDC
+    # pricing path while a Phoenix trade re-derive rewrites that pair). Retry
+    # ONCE with a doubled timeout before hard-failing — a slow endpoint should
+    # not red this smoke audit (same intent as the generous TIMEOUT default).
+    sleep 3
+    body=$(/usr/bin/curl -sS -m "$((TIMEOUT * 2))" -A "stellarindex-audit/1" \
+      -w "\n%{http_code}" "${API_BASE_URL}${path}" 2>&1) || {
+      printf "  %sFAIL%s %-44s %scurl error (2 attempts)%s\n" "$RED" "$OFF" "$label" "$DIM" "$OFF"
+      FAILS=$((FAILS + 1))
+      return
+    }
   }
   status=$(echo "$body" | tail -1)
   body=$(echo "$body" | sed '$d')
@@ -84,7 +93,8 @@ audit "assets metadata=native" "/v1/assets/native/metadata"
 audit "assets verified"        "/v1/assets/verified"
 audit "assets/{slug}=xlm"      "/v1/assets/xlm"
 audit "assets/{slug}=usdc"     "/v1/assets/usdc"
-audit "assets/{slug}=euro"     "/v1/assets/euro"
+# euro (fiat) is non-Stellar → detail lives under /v1/external/assets/ post Stellar-focus refactor
+audit "external/assets/euro"   "/v1/external/assets/euro"
 audit "markets (5)"            "/v1/markets?limit=5"
 audit "sources"                "/v1/sources"
 audit "issuers (5)"            "/v1/issuers?limit=5"

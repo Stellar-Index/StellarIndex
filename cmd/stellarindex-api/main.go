@@ -80,6 +80,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/obs"
 	"github.com/StellarIndex/stellar-index/internal/platform"
 	"github.com/StellarIndex/stellar-index/internal/platform/postgresstore"
+	"github.com/StellarIndex/stellar-index/internal/pricingguard"
 	"github.com/StellarIndex/stellar-index/internal/ratelimit"
 	"github.com/StellarIndex/stellar-index/internal/signupreaper"
 	"github.com/StellarIndex/stellar-index/internal/sources/external"
@@ -544,7 +545,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// Hub further down (gated on rdb != nil).
 	hub := streaming.NewHub(0)
 
-	priceReader := storePriceReader{s: store}
+	priceReader := storePriceReader{s: store, logger: logger}
 
 	// Oracle reader — Redis-cached read-through wrapper around the
 	// store reader. /v1/oracle/latest's DISTINCT ON (source) sort
@@ -940,12 +941,13 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// Protocols pillar (/v1/protocols*): contract registry, 24h
 		// event census, soroswap pair registry. All three optional —
 		// the directory degrades to zeros/empties when absent.
-		ProtocolContracts: store,
-		ProtocolStats:     store,
-		ProtocolActivity:  protocolActivityReader,
-		ProtocolBespoke:   store,
-		SoroswapPairs:     store,
-		NetworkStats:      cachedNetworkStats,
+		ProtocolContracts:  store,
+		ProtocolStats:      store,
+		ProtocolActivity:   protocolActivityReader,
+		ProtocolBespoke:    store,
+		SoroswapPairs:      store,
+		ProtocolPoolTokens: store,
+		NetworkStats:       cachedNetworkStats,
 		// Routers registry + routed-via 24h rollup (/v1/aggregators).
 		// Direct store read: the routed-trades scan rides the partial
 		// routed_via index and the registry is a handful of rows; the
@@ -1023,6 +1025,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			pkPairFor: func(base, quote canonical.Asset) (canonical.Pair, error) {
 				return canonical.NewPair(base, quote)
 			},
+			logger: logger,
 		},
 		GlobalPriceOpts: aggregate.GlobalPriceOptions{
 			AggregatorSources: external.AggregatorSources(),
@@ -1533,10 +1536,20 @@ func buildSEP10Validator(cfg config.SEP10Config, rdb redis.UniversalClient) (aut
 	// the full ChallengeTTL window — long enough for an attacker
 	// who steals one signed XDR (e.g. via XSS exfil) to mint a
 	// stream of JWTs after the user closes the tab.
-	var replayGuard sep10.ReplayGuard
-	if rdb != nil {
-		replayGuard = sep10.NewRedisReplayGuard(rdb)
+	//
+	// L2 (audit-2026-07-07): fail LOUD, not open. Reaching this
+	// function means SEP-10 auth is configured (seed_env + jwt_secret_env
+	// are set, checked above). A nil Redis here would leave replayGuard
+	// nil and the validator falls open — issuing JWTs with no replay
+	// protection. Refuse to start so a misconfigured deploy is caught at
+	// boot, not silently exploited for the ChallengeTTL window at runtime.
+	if rdb == nil {
+		return nil, fmt.Errorf(
+			"sep10: %w: SEP-10 auth is configured but Redis is not — the replay guard requires Redis",
+			sep10.ErrReplayGuardUnavailable,
+		)
 	}
+	replayGuard := sep10.NewRedisReplayGuard(rdb)
 
 	v, err := sep10.NewValidator(sep10.Options{
 		ServerSeed:        seed,
@@ -2262,6 +2275,7 @@ type globalPriceReader struct {
 	s         *timescale.Store
 	tri       redisTriangulatedLooker
 	pkPairFor func(base, quote canonical.Asset) (canonical.Pair, error)
+	logger    *slog.Logger // nil → no guard logging
 }
 
 func (g globalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical.Asset) (string, time.Time, int64, []string, bool, error) {
@@ -2279,12 +2293,24 @@ func (g globalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical
 	if err != nil {
 		return "", time.Time{}, 0, nil, false, err
 	}
+	// Same raw-CAGG serving-sanity guard as /v1/price
+	// (storePriceReader.LatestPrice): LatestClosedVWAP1mForPair returns a
+	// bare Σ(quote)/Σ(base) closed bucket that bypasses the orchestrator's
+	// σ-outlier filter / min-USD-volume gate / freeze protection, so the
+	// GlobalAssetView headline price carries the identical unfiltered
+	// fat-finger / manipulation vector. pricingguard.GuardServedVWAP1m
+	// serves last-known-good when the latest bucket is grossly off its
+	// recent trailing baseline, and is a byte-identical pass-through on a
+	// healthy bucket (fails open on thin history).
+	served := pricingguard.GuardServedVWAP1m(ctx, g.s, g.logger, pair, row)
 	// row.Bucket is the bucket's *start*; the closed-bucket contract
 	// (ADR-0015) means the bucket's served observation_at is the
 	// bucket end. Add one minute to surface the consumer-facing
-	// timestamp matching every other closed-bucket surface.
-	asOf := row.Bucket.Add(time.Minute)
-	return row.VWAP, asOf, row.TradeCount, row.Sources, true, nil
+	// timestamp matching every other closed-bucket surface. Applied to the
+	// bucket we actually serve (candidate, or the older last-known-good on a
+	// guard rejection — which is naturally staler).
+	asOf := served.Bucket.Add(time.Minute)
+	return served.VWAP, asOf, served.TradeCount, served.Sources, true, nil
 }
 
 func (g globalPriceReader) LatestAggregatorPrices(ctx context.Context, base, quote canonical.Asset, sources []string) ([]canonical.OracleUpdate, error) {
@@ -2469,6 +2495,7 @@ type storePriceReader struct {
 	s             *timescale.Store
 	vwapFreshness time.Duration    // 0 → defaultVWAPFreshness
 	now           func() time.Time // nil → time.Now
+	logger        *slog.Logger     // nil → no guard logging
 }
 
 func (r storePriceReader) freshnessWindow() time.Duration {
@@ -2491,20 +2518,39 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 		return v1.PriceSnapshot{}, nil, false, err
 	}
 
-	// Primary path: most-recent CLOSED 1-minute VWAP from the
-	// prices_1m CAGG (per ADR-0015 we serve only closed buckets).
-	// This is preferred because:
-	//   - it's volume-weighted across every contributing source;
-	//   - it's pre-computed by the aggregator policy (sub-100ms read);
-	//   - it labels stale=false in the envelope.
+	// Primary path: most-recent CLOSED 1-minute VWAP from the prices_1m
+	// CAGG (per ADR-0015 we serve only closed buckets). Note the CAGG is a
+	// bare Σ(quote)/Σ(base) per bucket — it is NOT the orchestrator's
+	// filtered VWAP. The σ-outlier filter, the min-USD-volume gate, and
+	// freeze value-protection all live on the ORCHESTRATOR path that writes
+	// the filtered value to Redis (which this CAGG bypasses). A pair with no
+	// prices_1m rows at all (pure-synthetic fiat like native/fiat:USD —
+	// SDEX native trades are quoted in issuer-stablecoins, never fiat:USD)
+	// misses here (ErrNoRows) and the handler's Redis-VWAP fallback — which
+	// IS filtered — serves it. But any pair with real prices_1m rows serves
+	// this raw bucket: that includes directly-quoted DEX/CEX pairs (a
+	// Soroban token priced in USDC-GA5Z…, crypto:BTC/crypto:USDT) AND
+	// headline pairs with a real fiat CEX market (crypto:XLM/fiat:USD via
+	// Kraken/Coinbase). A single fat-finger / manipulation trade in the
+	// served minute would otherwise corrupt the price with stale=false, no
+	// outlier rejection, no volume floor. pricingguard.GuardServedVWAP1m
+	// applies a robust sanity bound over the pair's recent trailing closed
+	// buckets and serves last-known-good when the latest is grossly off
+	// (adversarial-review HIGH). It is a pass-through (byte-identical) on a
+	// healthy bucket — a liquid pair like crypto:XLM/fiat:USD sits tightly
+	// clustered and always passes — so it only ever changes the served value
+	// for a manipulated bucket.
 	row, err := r.s.LatestClosedVWAP1mForPair(ctx, pair)
 	if err == nil {
+		served := pricingguard.GuardServedVWAP1m(ctx, r.s, r.logger, pair, row)
 		// CS-017: the bucket closes at Bucket+1min; flag stale when that
 		// close is older than the freshness window, so a dormant pair's
-		// months-old VWAP is no longer served as stale=false.
-		stale := r.clock().Sub(row.Bucket.Add(time.Minute)) > r.freshnessWindow()
-		return v1.VWAP1mToSnapshot(asset.String(), quote.String(), row.VWAP, row.Bucket),
-			row.Sources, stale, nil
+		// months-old VWAP is no longer served as stale=false. Applied to the
+		// bucket we actually serve (candidate, or the older last-known-good
+		// on a guard rejection — which is naturally staler).
+		stale := r.clock().Sub(served.Bucket.Add(time.Minute)) > r.freshnessWindow()
+		return v1.VWAP1mToSnapshot(asset.String(), quote.String(), served.VWAP, served.Bucket),
+			served.Sources, stale, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return v1.PriceSnapshot{}, nil, false, err
@@ -2561,6 +2607,20 @@ func (r storePriceReader) RecentClosedSnapshots(ctx context.Context, asset, quot
 		out[i] = v1.VWAP1mToSnapshot(asset.String(), quote.String(), row.VWAP, row.Bucket)
 	}
 	return out, nil
+}
+
+// RecentClosedVWAP1mExists implements the optional gate the /v1/price
+// stablecoin-proxy fallback uses to skip empty proxy pairs before the
+// unbounded last-trade walk (2026-07-06 empty-alias latency incident,
+// proxy layer). Delegates to the bounded, both-directions probe on the
+// store. Satisfies the unexported `proxyPairGate` interface in
+// internal/api/v1.
+func (r storePriceReader) RecentClosedVWAP1mExists(ctx context.Context, base, quote canonical.Asset) (bool, error) {
+	pair, err := canonical.NewPair(base, quote)
+	if err != nil {
+		return false, err
+	}
+	return r.s.RecentClosedVWAP1mExists(ctx, pair)
 }
 
 // assetToDetail converts canonical.Asset → v1.AssetDetail. Nullable
@@ -2646,6 +2706,14 @@ type storeVolumeReader struct{ s *timescale.Store }
 
 func (r storeVolumeReader) Volume24hUSDForAsset(ctx context.Context, assetKey string) (string, error) {
 	return r.s.Volume24hUSDForAsset(ctx, assetKey)
+}
+
+// SorobanVolume24hUSDForAsset implements the optional
+// v1.SorobanVolumeReader — the XLM-anchored 24h USD-volume variant used
+// for pure-Soroban SEP-41 assets whose liquidity is quoted in XLM rather
+// than a USD-pegged classic (#37).
+func (r storeVolumeReader) SorobanVolume24hUSDForAsset(ctx context.Context, assetKey string) (string, error) {
+	return r.s.SorobanVolume24hUSDForAsset(ctx, assetKey)
 }
 
 // usdQuoteAsset is the implicit USD quote used to anchor 24h-ago
