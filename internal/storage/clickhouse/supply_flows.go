@@ -81,6 +81,18 @@ func WriteSupplyFlows(ctx context.Context, addr string, rows []SupplyFlowRow) er
 	return nil
 }
 
+// SorobanGenesisLedger is the protocol-20 (Soroban) activation ledger on
+// pubnet — the boundary between the pre-Soroban classic era and the Soroban
+// era. SEP-41 / SAC-wrapper contract events only exist at or above it; the
+// Postgres SEP-41 supply observer (sep41_supply_events) therefore populates
+// only [SorobanGenesisLedger, tip]. A classic asset's SAC-wrapper mint history
+// that predates Soroban lives BELOW this ledger — captured in the ClickHouse
+// lake's stellar.supply_flows via the post-P23 (CAP-67) replay — and is summed
+// as the pre-genesis opening balance (TokenSupplyBelowLedger) that the
+// aggregator seeds into sep41_supply_rollup (migration 0088, incident
+// 2026-07-06).
+const SorobanGenesisLedger uint32 = 50457424
+
 // TokenSupply is one token's supply, summed live from supply_flows.
 type TokenSupply struct {
 	ContractID string
@@ -110,6 +122,33 @@ func querySupply(ctx context.Context, conn driver.Conn, contractID string) (Toke
 	if err := conn.QueryRow(ctx, supplySumQuery, contractID).Scan(&mintS, &burnS, &clawbackS, &flows); err != nil {
 		return TokenSupply{}, fmt.Errorf("clickhouse: supply for %s: %w", contractID, err)
 	}
+	return assembleTokenSupply(contractID, mintS, burnS, clawbackS, flows), nil
+}
+
+// supplySumBelowLedgerQuery sums a contract's supply_flows STRICTLY BELOW a
+// ledger. Identical shape to supplySumQuery with a `ledger_seq < ?` upper
+// bound — the pre-genesis (pre-Soroban) opening-balance slice the SEP-41
+// baseline seed reads (migration 0088). Int256 accumulation for the same
+// overflow reason.
+const supplySumBelowLedgerQuery = `
+	SELECT
+		toString(sum(toInt256(if(kind = 'mint', amount, toInt128(0))))) AS mint,
+		toString(sum(toInt256(if(kind = 'burn', amount, toInt128(0))))) AS burn,
+		toString(sum(toInt256(if(kind = 'clawback', amount, toInt128(0))))) AS clawback,
+		count() AS flows
+	FROM stellar.supply_flows FINAL
+	WHERE contract_id = ? AND ledger_seq < ?`
+
+func querySupplyBelowLedger(ctx context.Context, conn driver.Conn, contractID string, ledgerExclusive uint32) (TokenSupply, error) {
+	var mintS, burnS, clawbackS string
+	var flows uint64
+	if err := conn.QueryRow(ctx, supplySumBelowLedgerQuery, contractID, ledgerExclusive).Scan(&mintS, &burnS, &clawbackS, &flows); err != nil {
+		return TokenSupply{}, fmt.Errorf("clickhouse: supply for %s below ledger %d: %w", contractID, ledgerExclusive, err)
+	}
+	return assembleTokenSupply(contractID, mintS, burnS, clawbackS, flows), nil
+}
+
+func assembleTokenSupply(contractID, mintS, burnS, clawbackS string, flows uint64) TokenSupply {
 	mint := mustBig(mintS)
 	burn := mustBig(burnS)
 	clawback := mustBig(clawbackS)
@@ -121,7 +160,7 @@ func querySupply(ctx context.Context, conn driver.Conn, contractID string) (Toke
 		Burn:       burn,
 		Clawback:   clawback,
 		FlowCount:  flows,
-	}, nil
+	}
 }
 
 // SupplyForContract returns a token's current supply by summing its
@@ -169,6 +208,17 @@ func NewSupplyReader(ctx context.Context, addr string) (*SupplyReader, error) {
 // TokenSupply returns a contract's live supply (Σmint − Σburn − Σclawback).
 func (r *SupplyReader) TokenSupply(ctx context.Context, contractID string) (TokenSupply, error) {
 	return querySupply(ctx, r.conn, contractID)
+}
+
+// TokenSupplyBelowLedger returns a contract's supply summed STRICTLY BELOW
+// ledgerExclusive (Σmint − Σburn − Σclawback over ledger_seq < ledgerExclusive).
+// The SEP-41 genesis-baseline seed calls it with [SorobanGenesisLedger] to read
+// the pre-Soroban opening balance the Postgres observer never captured
+// (migration 0088, incident 2026-07-06). The pre-Soroban rows are
+// REPLAY-DERIVED — a post-P23 core synthesized the CAP-67 unified asset events
+// for classic history (legitimate but core-version-dependent, ADR-0033).
+func (r *SupplyReader) TokenSupplyBelowLedger(ctx context.Context, contractID string, ledgerExclusive uint32) (TokenSupply, error) {
+	return querySupplyBelowLedger(ctx, r.conn, contractID, ledgerExclusive)
 }
 
 // NativeTotalCoins returns XLM's total supply (in stroops, 7 decimals) and the

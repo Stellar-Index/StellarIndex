@@ -421,6 +421,97 @@ func (s *Store) RecentClosedVWAP1mForPair(ctx context.Context, p canonical.Pair,
 	return out, nil
 }
 
+// recentClosedVWAP1mCombinedTemplate is the newest-first, both-directions,
+// LIMIT-N variant of [latestClosedVWAP1mTemplate]. `%[1]s` carries the
+// literal `bucket >=` lower-bound clause for plan-time chunk pruning. CTE
+// `b` computes the per-bucket combined VWAP (flipped rows inverted +
+// trade-count-weighted, so every row is the price of $1 in $2); CTE `s`
+// aggregates the distinct source list for exactly those buckets (kept
+// separate from `b` so the source unnest can't inflate `b`'s trade-count
+// SUM). Both stored directions are read so a flipped-only bucket still
+// contributes.
+const recentClosedVWAP1mCombinedTemplate = `
+        WITH b AS (
+            SELECT bucket,
+                   (SUM((CASE WHEN base_asset = $1 THEN vwap
+                              ELSE 1.0 / NULLIF(vwap, 0) END) * COALESCE(trade_count, 0))
+                      / NULLIF(SUM(COALESCE(trade_count, 0)), 0))::text AS vwap,
+                   SUM(COALESCE(trade_count, 0))::bigint                 AS trade_count
+              FROM prices_1m
+             WHERE ((base_asset = $1 AND quote_asset = $2)
+                 OR (base_asset = $2 AND quote_asset = $1))
+               AND bucket <= now() - INTERVAL '1 minute'
+               %[1]s
+             GROUP BY bucket
+            HAVING SUM(COALESCE(trade_count, 0)) > 0
+             ORDER BY bucket DESC
+             LIMIT $3
+        ),
+        s AS (
+            SELECT p.bucket, array_agg(DISTINCT src) AS sources
+              FROM prices_1m p, unnest(p.sources) AS src
+             WHERE p.bucket IN (SELECT bucket FROM b)
+               AND ((p.base_asset = $1 AND p.quote_asset = $2)
+                 OR (p.base_asset = $2 AND p.quote_asset = $1))
+             GROUP BY p.bucket
+        )
+        SELECT b.bucket, b.vwap, b.trade_count, COALESCE(s.sources, '{}'::text[])
+          FROM b LEFT JOIN s USING (bucket)
+         ORDER BY b.bucket DESC
+    `
+
+// RecentClosedVWAP1mCombined returns up to `limit` most-recent CLOSED
+// 1-minute buckets from the prices_1m CAGG for the pair, newest-first,
+// each COMBINED across both stored market directions (same invert +
+// trade-count-weight math as [LatestClosedVWAP1mForPair]) so every row
+// expresses the price of Base in Quote.
+//
+// This is the trailing-baseline source for the /v1/price serving-sanity
+// guard (aggregate.GuardServedVWAP): the handler compares the latest
+// closed bucket against these recent buckets and serves last-known-good
+// when the latest is grossly off (a fat-finger / manipulation print in a
+// bucket the raw CAGG would otherwise serve unfiltered). It is called
+// ONLY after [LatestClosedVWAP1mForPair] has already confirmed the pair
+// is populated (its cheap recent-existence gate ran first), so this
+// bounded, index-driven LIMIT-N read never pays the empty-pair cold walk
+// — but it still carries the same literal `bucket >=` lower bound for
+// plan-time chunk pruning.
+//
+// Empty slice + nil error when the pair has no closed buckets in scope.
+func (s *Store) RecentClosedVWAP1mCombined(ctx context.Context, p canonical.Pair, limit int) ([]Vwap1mRow, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	cutoff := time.Now().UTC().Add(-latestVWAPWindow)
+	lower := fmt.Sprintf("AND bucket >= TIMESTAMPTZ '%s'\n", cutoff.Format("2006-01-02 15:04:05-07"))
+	// #nosec G201 — the only interpolated value is `lower`, built from our
+	// own time.Time in a fixed layout; pair strings + limit bind as
+	// $1/$2/$3. Same discipline as latestClosedVWAP1m.
+	q := fmt.Sprintf(recentClosedVWAP1mCombinedTemplate, lower) //nolint:gosec // G201: see note above
+	rows, err := s.db.QueryContext(ctx, q, p.Base.String(), p.Quote.String(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: RecentClosedVWAP1mCombined: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]Vwap1mRow, 0, limit)
+	for rows.Next() {
+		row := Vwap1mRow{BaseAsset: p.Base.String(), QuoteAsset: p.Quote.String()}
+		if err := rows.Scan(
+			&row.Bucket, &row.VWAP, &row.TradeCount,
+			(*stringArray)(&row.Sources),
+		); err != nil {
+			return nil, fmt.Errorf("timescale: RecentClosedVWAP1mCombined scan: %w", err)
+		}
+		normalizeVwapSources(&row)
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: RecentClosedVWAP1mCombined rows: %w", err)
+	}
+	return out, nil
+}
+
 // ClosedVWAP1mAtOrBefore returns the most-recent CLOSED 1-minute
 // bucket from the prices_1m CAGG for the given pair whose end
 // timestamp (`bucket + 1 minute`) is at or before t. Used by
@@ -679,13 +770,40 @@ func (s *Store) LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair)
 	// reads native/fiat:USD as an alias on every XLM query, that synthetic
 	// pair has zero rows, so the bounded miss fell through to the slow
 	// all-chunk scan finding nothing. A pair with no closed bucket in the
-	// (generous, ~400-day) window returns ErrNoRows, which the price handler
-	// already resolves via its Redis-triangulation / last-trade fallback
-	// chain — the right path for a synthetic pair, and the honest answer for
-	// a genuinely-dead asset (a >400-day-old "latest" is not a current price).
-	// The window is wide enough to cover every actively- or recently-priced
-	// pair (the staleness long tail is ~250k delisted assets) yet still lets
-	// the planner exclude the bulk of prices_1m's ~374 chunks at PLAN time.
+	// window returns ErrNoRows, which the price handler already resolves via
+	// its Redis-triangulation / last-trade fallback chain — the right path
+	// for a synthetic pair, and the honest answer for a genuinely-dead asset
+	// (a stale "latest" is not a current price).
+	//
+	// 2026-07-06 empty-alias latency incident: the two layers above make the
+	// EMPTY pair cheap only WARM. The value walk's max() arms still have to
+	// PROVE emptiness across the whole (generous, ~400-day) literal window —
+	// min/max short-circuits when a matching row exists, but a truly-empty
+	// (base,quote) forces touching every chunk in the window to conclude "no
+	// rows". COLD (post-ARC-eviction, decompressing hundreds of old chunks)
+	// that is minutes, not milliseconds, and /v1/price?asset=native timed out
+	// on the native/fiat:USD alias probe BEFORE the fast crypto:XLM/fiat:USD
+	// alias was ever tried. So gate the value walk behind a cheap
+	// recent-existence probe bounded to the last latestVWAPGateWindow: a
+	// populated pair short-circuits at the first row (one recent chunk); a
+	// truly-empty pair proves emptiness over only ~2 weeks of recent (hot,
+	// mostly-uncompressed) chunks and returns ErrNoRows. The gate — NOT the
+	// value walk's window — is the freshness horizon: a pair with no closed
+	// 1-minute bucket in a fortnight is not "currently priced", and the
+	// handler's fallback chain surfaces its last trade with an honest
+	// observed_at. Reordering the handler's aliases can't fix this (it just
+	// moves the empty walk onto the SDEX native/<asset> pairs); the gate
+	// makes the empty case cheap for EVERY pair. On a gate HIT the value walk
+	// below is byte-identical to the pre-incident path (combined-direction,
+	// literal-cutoff pruned) and returns the same recent bucket as before.
+	gateSince := time.Now().UTC().Add(-latestVWAPGateWindow)
+	exists, err := s.recentClosedVWAP1mExists(ctx, p, gateSince)
+	if err != nil {
+		return Vwap1mRow{}, err
+	}
+	if !exists {
+		return Vwap1mRow{}, sql.ErrNoRows
+	}
 	cutoff := time.Now().UTC().Add(-latestVWAPWindow)
 	return s.latestClosedVWAP1m(ctx, p, cutoff)
 }
@@ -696,6 +814,92 @@ func (s *Store) LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair)
 // 400 days is generous — it covers every recently-traded pair while still
 // excluding most of prices_1m's decade of chunks.
 const latestVWAPWindow = 400 * 24 * time.Hour
+
+// latestVWAPGateWindow bounds the cheap recent-existence probe
+// [LatestClosedVWAP1mForPair] runs BEFORE its combined-direction value
+// walk (2026-07-06 empty-alias latency incident). It is the price
+// surface's freshness horizon: a pair with no closed 1-minute VWAP
+// bucket in the last two weeks is treated as "not currently priced" —
+// the read returns [sql.ErrNoRows] and the /v1/price handler resolves it
+// via its Redis-triangulation / last-trade fallback chain. Two weeks is
+// generous for an on-chain price surface whose freshness contract is
+// minutes, yet small enough that PROVING a pair empty touches only a
+// fortnight of recent (hot, mostly-uncompressed) prices_1m chunks —
+// cheap even cold — instead of the value walk's ~400-day span. It MUST
+// stay < [latestVWAPWindow]: on a gate HIT the value walk (bounded by the
+// wider window) always finds the just-confirmed recent bucket.
+const latestVWAPGateWindow = 14 * 24 * time.Hour
+
+// recentClosedVWAP1mExistsTemplate is the recent-existence gate query.
+// `%[1]s` carries the literal lower-bound clause (plan-time chunk
+// pruning — the same discipline as [latestClosedVWAP1mTemplate]). It
+// probes BOTH stored market directions: the SDEX decoder records XLM/USDC
+// and USDC/XLM as separate rows, so a one-direction probe could miss a
+// flipped-only bucket and wrongly gate a live pair to ErrNoRows. LIMIT 1
+// makes a populated pair short-circuit at the first matching row (one
+// recent chunk) rather than scanning the window.
+const recentClosedVWAP1mExistsTemplate = `
+        SELECT 1
+          FROM prices_1m
+         WHERE ((base_asset = $1 AND quote_asset = $2)
+             OR (base_asset = $2 AND quote_asset = $1))
+           AND bucket <= now() - INTERVAL '1 minute'
+           %[1]s
+         LIMIT 1
+    `
+
+// recentClosedVWAP1mExists reports whether the pair has at least one
+// CLOSED 1-minute bucket (in either stored direction) at or after
+// `since`. It is the cheap gate in front of
+// [LatestClosedVWAP1mForPair]'s value walk: a hit means a live pair (do
+// the walk); a miss returns (false, nil) so the caller returns
+// [sql.ErrNoRows] and the handler falls back. Both the closed-bucket
+// guard (`bucket <= now() - 1 minute`, sargable — no function on the
+// indexed column) and the literal lower bound prune chunks, so an empty
+// pair proves emptiness over the recent chunks only.
+func (s *Store) recentClosedVWAP1mExists(ctx context.Context, p canonical.Pair, since time.Time) (bool, error) {
+	// Literal lower bound (our own timestamp, not user input), so
+	// TimescaleDB does PLAN-time chunk exclusion — a $N bind parameter
+	// would force a whole-history plan. Same discipline as
+	// latestClosedVWAP1m.
+	lower := fmt.Sprintf("AND bucket >= TIMESTAMPTZ '%s'\n", since.Format("2006-01-02 15:04:05-07"))
+	// #nosec G201 — the only interpolated value is `lower`, built from our
+	// own time.Time in a fixed layout; the pair strings bind as $1/$2.
+	q := fmt.Sprintf(recentClosedVWAP1mExistsTemplate, lower) //nolint:gosec // G201: see note above
+	var one int
+	err := s.db.QueryRowContext(ctx, q, p.Base.String(), p.Quote.String()).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("timescale: recentClosedVWAP1mExists: %w", err)
+	}
+	return true, nil
+}
+
+// RecentClosedVWAP1mExists reports whether the pair has at least one
+// CLOSED 1-minute VWAP bucket (in either stored direction) within the
+// price surface's default freshness horizon ([latestVWAPGateWindow], two
+// weeks). It is the EXPORTED sibling of the unexported gate
+// [LatestClosedVWAP1mForPair] runs internally — same query, same bounded
+// window — exposed for the /v1/price stablecoin-proxy fallback layer.
+//
+// Why the proxy needs it: `tryStablecoinFiatProxy` walks the operator's
+// USD-pegged classics calling `LatestPrice(asset, <peg>)`. A peg's quote
+// is a classic asset (USDC-GA5Z…), so on a VWAP miss `LatestPrice` does
+// NOT take the synthetic-fiat fast path — it falls through to
+// [Store.LatestTradesForPair], an UNBOUNDED last-trade scan. For an
+// empty proxy pair (e.g. a pure-Soroban token that only trades vs XLM,
+// so <token>/USDC has zero rows) that is a cold full-history walk, and
+// the proxy repeats it for EVERY peg. Gating each peg on this cheap
+// bounded probe lets the proxy skip empty pairs before the walk — the
+// same 2026-07-06 empty-alias latency fix, applied at the proxy layer.
+// A hit means a live proxy pair (do the `LatestPrice` read, whose VWAP
+// path is itself gated + fast); a miss means skip the peg.
+func (s *Store) RecentClosedVWAP1mExists(ctx context.Context, p canonical.Pair) (bool, error) {
+	since := time.Now().UTC().Add(-latestVWAPGateWindow)
+	return s.recentClosedVWAP1mExists(ctx, p, since)
+}
 
 // latestClosedVWAP1m runs the combined-direction latest-closed-bucket query
 // with a LITERAL `bucket >= since` lower bound on every prices_1m scan, so the

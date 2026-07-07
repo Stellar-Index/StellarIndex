@@ -2,7 +2,6 @@ package v1
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -97,33 +96,35 @@ func (c *CachedCoinsReader) ListCoinsExt(ctx context.Context, opts timescale.Lis
 	// reaching the reader — classic_assets is homogeneously classic,
 	// so a non-classic type short-circuits to an empty page and a
 	// classic/any type is a no-op on this call.)
-	key := fmt.Sprintf("ListCoinsExt|%d|%s|%s|%s|%s|%d",
-		opts.Limit, opts.Issuer, opts.Code, opts.Cursor, opts.Q, opts.Order)
+	key := newCacheKey("ListCoinsExt").
+		int(opts.Limit).str(opts.Issuer).str(opts.Code).
+		str(opts.Cursor).str(opts.Q).order(int(opts.Order)).build()
 	return c.fetchRows(ctx, "list_coins", key, func(ctx context.Context) ([]timescale.CoinRow, error) {
 		return c.upstream.ListCoinsExt(ctx, opts)
 	})
 }
 
-// GetCoinsPriceHistory24hBatch — cached on the asset-id slice.
-// Slice order matters for keying; callers normally pass a stable
-// order (the listing iterates rows in returned order).
+// GetCoinsPriceHistory24hBatch — cached on the asset-id set.
+// [cacheKey.strSet] order-normalises the ids so two callers passing
+// the same set in a different order share one slot (the result is a
+// map keyed by asset_id — order-independent).
 func (c *CachedCoinsReader) GetCoinsPriceHistory24hBatch(ctx context.Context, assetIDs []string) (map[string][]timescale.CoinPricePoint, error) {
 	if c.ttl <= 0 {
 		return c.upstream.GetCoinsPriceHistory24hBatch(ctx, assetIDs)
 	}
-	key := fmt.Sprintf("Price24hBatch|%v", assetIDs)
+	key := newCacheKey("Price24hBatch").strSet(assetIDs).build()
 	return c.fetchHistoryMap(ctx, "price_history_24h", key, func(ctx context.Context) (map[string][]timescale.CoinPricePoint, error) {
 		return c.upstream.GetCoinsPriceHistory24hBatch(ctx, assetIDs)
 	})
 }
 
-// GetCoinsPriceHistory7dBatch — cached. Same keying caveat as the
-// 24h batch.
+// GetCoinsPriceHistory7dBatch — cached. Same order-normalised keying
+// as the 24h batch.
 func (c *CachedCoinsReader) GetCoinsPriceHistory7dBatch(ctx context.Context, assetIDs []string) (map[string][]timescale.CoinPricePoint, error) {
 	if c.ttl <= 0 {
 		return c.upstream.GetCoinsPriceHistory7dBatch(ctx, assetIDs)
 	}
-	key := fmt.Sprintf("Price7dBatch|%v", assetIDs)
+	key := newCacheKey("Price7dBatch").strSet(assetIDs).build()
 	return c.fetchHistoryMap(ctx, "price_history_7d", key, func(ctx context.Context) (map[string][]timescale.CoinPricePoint, error) {
 		return c.upstream.GetCoinsPriceHistory7dBatch(ctx, assetIDs)
 	})
@@ -188,7 +189,7 @@ func (c *CachedCoinsReader) GetCoinTopMarkets(ctx context.Context, assetID strin
 	if c.ttl <= 0 {
 		return c.upstream.GetCoinTopMarkets(ctx, assetID, limit)
 	}
-	return swr(ctx, c, "coin_top_markets", fmt.Sprintf("GetCoinTopMarkets|%s|%d", assetID, limit),
+	return swr(ctx, c, "coin_top_markets", newCacheKey("GetCoinTopMarkets").str(assetID).int(limit).build(),
 		func(ctx context.Context) ([]timescale.CoinTopMarket, error) {
 			return c.upstream.GetCoinTopMarkets(ctx, assetID, limit)
 		})

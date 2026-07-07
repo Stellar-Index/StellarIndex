@@ -102,29 +102,29 @@ groups:
             the service's last journal entries; verify the script
             can read both MinIO buckets via the `local` mc alias.
 
-  - alert: stellarindex_galexie_catchup_refused
-    # 2026-07-05: the captive core wedged with 'invalid local state'
-    # and refused catchup for 11 hours while the lake froze — the
-    # signature sat verbatim in the journal, unwatched. Sustained
-    # refusals = the core cannot heal itself; the remedy is a galexie
-    # restart (fresh bucket catchup from the archive).
-    expr: stellarindex_galexie_catchup_refusals_5m > 0
-    for: 10m
-    labels:
-      severity: page
-    annotations:
-      summary: "galexie captive core is refusing catchup (invalid local state)"
-      runbook: docs/operations/runbooks/galexie-catchup-refused.md
+      - alert: stellarindex_galexie_catchup_refused
+        # 2026-07-05: the captive core wedged with 'invalid local state'
+        # and refused catchup for 11 hours while the lake froze — the
+        # signature sat verbatim in the journal, unwatched. Sustained
+        # refusals = the core cannot heal itself; the remedy is a galexie
+        # restart (fresh bucket catchup from the archive).
+        expr: stellarindex_galexie_catchup_refusals_5m > 0
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "galexie captive core is refusing catchup (invalid local state)"
+          runbook: docs/operations/runbooks/galexie-catchup-refused.md
 
-  - alert: stellarindex_host_swap_activity
-    # Swap engagement is the early warning of the pressure class that
-    # wedged the captive core — batch jobs must be memory-capped
-    # (run-heavy-job.sh), so ANY sustained swapping means a budget is
-    # being violated.
-    expr: rate(node_vmstat_pswpout[10m]) > 100
-    for: 15m
-    labels:
-      severity: ticket
-    annotations:
-      summary: "host is swapping — a memory budget is being violated"
-      runbook: docs/operations/runbooks/galexie-catchup-refused.md
+      - alert: stellarindex_host_swap_activity
+        # Swap engagement is the early warning of the pressure class that
+        # wedged the captive core — batch jobs must be memory-capped
+        # (run-heavy-job.sh), so ANY sustained swapping means a budget is
+        # being violated.
+        expr: rate(node_vmstat_pswpout[10m]) > 100
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "host is swapping — a memory budget is being violated"
+          runbook: docs/operations/runbooks/galexie-catchup-refused.md

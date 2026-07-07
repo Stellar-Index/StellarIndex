@@ -106,6 +106,58 @@ func TestPostgresValidator_NoOverride_UsesPerKey(t *testing.T) {
 	}
 }
 
+// TestPostgresValidator_MonthlyQuotaOverride_IsCeiling pins
+// audit-2026-07 (MEDIUM): the account-level
+// monthly_request_quota_override is the operator's hard CEILING —
+// symmetric-opposite of the rate-limit override (a FLOOR). A per-key
+// quota above it is clamped down to it at enforcement time (min), so
+// even a key that was minted with an oversized per-key value before
+// the dashboard clamp shipped can never out-spend the account cap. A
+// per-key 0 still falls back to the override; both 0 stays 0
+// (unmetered), preserving the pre-existing default.
+func TestPostgresValidator_MonthlyQuotaOverride_IsCeiling(t *testing.T) {
+	cases := []struct {
+		name         string
+		perKeyQuota  int64
+		override     int64
+		wantEffQuota int64
+	}{
+		{"override clamps oversized per-key down", 9_000_000_000, 5_000_000, 5_000_000},
+		{"per-key below override honored", 1_000_000, 5_000_000, 1_000_000},
+		{"per-key equal override honored", 5_000_000, 5_000_000, 5_000_000},
+		{"per-key 0 falls back to override", 0, 5_000_000, 5_000_000},
+		{"both 0 stays unmetered", 0, 0, 0},
+		{"per-key honored when no override", 2_000_000, 0, 2_000_000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			keys, accounts, _ := newStubs()
+			v, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{
+				Keys:     keys,
+				Accounts: accounts,
+			})
+			acct := seedActiveAccount(accounts, "metered")
+			acct.MonthlyRequestQuotaOverride = tc.override
+			accounts.byID[acct.ID] = acct
+
+			plaintext := "sip_quota_" + tc.name
+			rec := seedKey(keys, plaintext, acct.ID, platform.APIKeyTierAPIKey, 1000)
+			rec.MonthlyQuota = tc.perKeyQuota
+			keys.byID[rec.ID] = rec
+			keys.byHash[hexHashOf(plaintext)] = rec
+
+			sub, err := v.Lookup(context.Background(), plaintext)
+			if err != nil {
+				t.Fatalf("lookup: %v", err)
+			}
+			if sub.MonthlyQuota != tc.wantEffQuota {
+				t.Errorf("effective MonthlyQuota = %d, want %d (per-key %d, override %d)",
+					sub.MonthlyQuota, tc.wantEffQuota, tc.perKeyQuota, tc.override)
+			}
+		})
+	}
+}
+
 func TestPostgresValidator_RevokedKey_Unauthorized(t *testing.T) {
 	keys, accounts, _ := newStubs()
 	v, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{

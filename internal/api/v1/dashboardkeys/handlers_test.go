@@ -181,6 +181,59 @@ func TestHandleCreate_TierClampsRateLimit(t *testing.T) {
 	}
 }
 
+// TestHandleCreate_ClampsMonthlyQuota pins audit-2026-07 (MEDIUM):
+// the customer-supplied monthly_quota is clamped at mint to the
+// account's hard ceiling (the operator's account-level override when
+// set, else the tier default), so a metered customer can only LOWER
+// their cap, never raise it above the plan. Regression-guards the
+// revenue-exposure hole where a `monthly_quota: 9_000_000_000` was
+// persisted verbatim and then won the auth cascade.
+func TestHandleCreate_ClampsMonthlyQuota(t *testing.T) {
+	cases := []struct {
+		name      string
+		tier      platform.Tier
+		override  int64 // account-level MonthlyRequestQuotaOverride (0 = unset)
+		requested int64
+		wantQuota int64
+	}{
+		{"override is ceiling: huge clamped down", platform.TierStarter, 5_000_000, 9_000_000_000, 5_000_000},
+		{"override is ceiling: below honored", platform.TierStarter, 5_000_000, 1_000_000, 1_000_000},
+		{"override is ceiling: equal honored", platform.TierStarter, 5_000_000, 5_000_000, 5_000_000},
+		{"override set, request 0 stays inherit", platform.TierStarter, 5_000_000, 0, 0},
+		{"no override: tier ceiling clamps huge", platform.TierStarter, 0, 9_000_000_000, platform.TierStarter.MaxMonthlyQuota()},
+		{"no override: below tier ceiling honored", platform.TierPro, 0, 2_000_000, 2_000_000},
+		{"no override, request 0 stays inherit/unlimited", platform.TierFree, 0, 0, 0},
+		{"free tier ceiling clamps", platform.TierFree, 0, 500_000, platform.TierFree.MaxMonthlyQuota()},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, store, sc := newTestRig(t)
+			sc.Account.Tier = tc.tier
+			sc.Account.MonthlyRequestQuotaOverride = tc.override
+			req := sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{
+				Name:         "quota-test",
+				MonthlyQuota: tc.requested,
+			}, sc)
+			w := httptest.NewRecorder()
+			h.HandleCreate(w, req)
+			if w.Code != http.StatusCreated {
+				t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+			}
+			var got int64 = -1
+			for _, k := range store.byID {
+				if k.AccountID == sc.Account.ID && k.Name == "quota-test" {
+					got = k.MonthlyQuota
+					break
+				}
+			}
+			if got != tc.wantQuota {
+				t.Errorf("persisted MonthlyQuota = %d, want %d (requested %d, override %d, tier %s)",
+					got, tc.wantQuota, tc.requested, tc.override, tc.tier)
+			}
+		})
+	}
+}
+
 func TestHandleCreate_RejectsMalformedExpiresAt(t *testing.T) {
 	h, _, sc := newTestRig(t)
 	req := sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{

@@ -77,36 +77,67 @@ func (d *Decoder) Matches(ev events.Event) bool {
 
 // Decode implements [dispatcher.Decoder]. Emits one Event per
 // matched flow — Event (strategy layer) or VaultEvent (vault
-// wrapper layer) depending on the topic prefix. Returning an error
-// is a "skip + count" signal per the dispatcher's contract: a
-// malformed event doesn't abort the ledger, just gets dropped +
-// counted.
+// wrapper layer) — for the deposit/withdraw events we model. Every
+// OTHER recognised topic (strategy harvest; vault rebalance + the
+// eight admin events; factory create / n_fee) drops cleanly with
+// (nil, nil): "match, nothing to emit". Returning an ERROR is a
+// "skip + count-as-decode-error" signal, reserved for genuinely
+// malformed deposit/withdraw bodies — NOT for topics we recognise
+// but intentionally don't model yet (BACKLOG #58). Filing those as
+// decode errors would inflate the source's decode-error counter for
+// normal upstream traffic.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	if kind := classify(&ev); kind != "" {
-		flow, err := decodeFlow(&ev, kind)
-		if err != nil {
-			return nil, err
-		}
-		flow.EventIndex = uint32(ev.EventIndex) //nolint:gosec // event index is small, non-negative
-		return []consumer.Event{Event{Flow: flow}}, nil
+		return d.decodeStrategy(&ev, kind)
 	}
 	if kind := classifyVault(&ev); kind != "" {
-		flow, err := decodeVaultFlow(&ev, kind)
-		if err != nil {
-			return nil, err
-		}
-		flow.EventIndex = uint32(ev.EventIndex) //nolint:gosec // event index is small, non-negative
-		return []consumer.Event{VaultEvent{Flow: flow}}, nil
+		return d.decodeVault(&ev, kind)
 	}
 	if classifyFactory(&ev) != "" {
 		// Factory create / n_fee — recognised so the dispatcher's
 		// drop-counter doesn't file them as "unmatched topic", but
 		// no consumer.Event yet (body decode is Phase C; the body
 		// does NOT carry the new vault's address, so there is no
-		// registry fan-out to do here either). Returning (nil, nil)
-		// is the dispatcher's "match, nothing to emit" shape.
+		// registry fan-out to do here either).
 		return nil, nil
 	}
 	// Defensive — Matches should have filtered.
 	return nil, ErrUnknownEvent
+}
+
+// decodeStrategy handles a classified BlendStrategy event. Only
+// deposit/withdraw model a StrategyFlow; `harvest` is recognised
+// (EVERY-event policy) but its body has never been observed on-chain
+// and is NOT modelled — it drops cleanly rather than counting as a
+// decode error (BACKLOG #58, blocked on real samples).
+func (d *Decoder) decodeStrategy(ev *events.Event, kind string) ([]consumer.Event, error) {
+	if kind != EventDeposit && kind != EventWithdraw {
+		return nil, nil // harvest (or any future unmodelled strategy topic)
+	}
+	flow, err := decodeFlow(ev, kind)
+	if err != nil {
+		return nil, err
+	}
+	flow.EventIndex = uint32(ev.EventIndex) //nolint:gosec // event index is small, non-negative
+	return []consumer.Event{Event{Flow: flow}}, nil
+}
+
+// decodeVault handles a classified DeFindexVault event. Only
+// deposit/withdraw model a VaultFlow; `rebalance` and the eight admin
+// topics (rescue / paused / unpaused / nreceiver / nmanager /
+// nemanager / rbmanager / dfees) are recognised but NOT modelled —
+// their bodies (including the four-way rebalance_method payloads) have
+// never been observed on-chain, so they drop cleanly. The rebalance
+// discriminator scaffolding lives in [DecodeRebalanceMethod]; the
+// per-method payload decode is blocked on real samples (BACKLOG #58).
+func (d *Decoder) decodeVault(ev *events.Event, kind string) ([]consumer.Event, error) {
+	if kind != EventDeposit && kind != EventWithdraw {
+		return nil, nil // rebalance / admin (unmodelled)
+	}
+	flow, err := decodeVaultFlow(ev, kind)
+	if err != nil {
+		return nil, err
+	}
+	flow.EventIndex = uint32(ev.EventIndex) //nolint:gosec // event index is small, non-negative
+	return []consumer.Event{VaultEvent{Flow: flow}}, nil
 }
