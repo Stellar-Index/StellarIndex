@@ -243,15 +243,12 @@ func (s *Store) bespokeDEX(ctx context.Context, source string, windowDays int) (
 		}
 	}
 
-	// Aquarius carries a captured liquidity/reserves surface (migration
-	// 0089) no other DEX source has yet. Augment its block with the
-	// pool-depth KPIs + latest-reserves table — independent of trade volume
-	// so a quiet window still surfaces depth, and empty-safe until the
-	// reserves decoder has captured anything on r1.
-	if source == "aquarius" {
-		if err := s.aquariusReserveBlocks(ctx, blk, windowDays); err != nil {
-			return nil, err
-		}
+	// Per-source captured-liquidity augments (reserves / net-flow depth /
+	// staking / skim) — independent of trade volume so a quiet window still
+	// surfaces depth, and empty-safe until the decoders have captured
+	// anything on r1.
+	if err := s.dexSourceAugments(ctx, blk, source, windowDays); err != nil {
+		return nil, err
 	}
 
 	// Omit an all-empty block — a dormant DEX, or soroswap-router whose
@@ -261,6 +258,34 @@ func (s *Store) bespokeDEX(ctx context.Context, source string, windowDays int) (
 		return nil, nil
 	}
 	return blk, nil
+}
+
+// dexSourceAugments adds the per-source captured-liquidity surfaces to a DEX
+// block, keyed on source. Each augment is empty-safe (a no-op when its table
+// holds nothing in the window):
+//
+//	aquarius → pool reserves / depth (aquarius_reserves, migration 0089)
+//	comet    → net liquidity flow (comet_liquidity, migration 0042) + CS-026 caveat
+//	phoenix  → net liquidity flow (phoenix_liquidity) + LP staking (phoenix_stake_events, migration 0044)
+//	soroswap → skim KPIs (soroswap_skim_events, migration 0043)
+//
+// Split out of bespokeDEX so the per-source dispatch stays under the
+// cognitive-complexity ceiling.
+func (s *Store) dexSourceAugments(ctx context.Context, blk *BespokeBlock, source string, windowDays int) error {
+	switch source {
+	case "aquarius":
+		return s.aquariusReserveBlocks(ctx, blk, windowDays)
+	case "comet":
+		return s.cometLiquidityBlocks(ctx, blk, windowDays)
+	case "phoenix":
+		if err := s.phoenixLiquidityBlocks(ctx, blk, windowDays); err != nil {
+			return err
+		}
+		return s.phoenixStakeKPIs(ctx, blk, windowDays)
+	case "soroswap":
+		return s.soroswapSkimKPIs(ctx, blk, windowDays)
+	}
+	return nil
 }
 
 // aquariusReserveBlocks augments the Aquarius DEX block with the pool
@@ -349,6 +374,206 @@ func (s *Store) aquariusReserveBlocks(ctx context.Context, blk *BespokeBlock, wi
 	return nil
 }
 
+// cometLiquidityBlocks augments the Comet DEX block with the pool
+// liquidity-flow surface derived from comet_liquidity (migration 0042). It
+// adds LP-activity KPIs (pools with flow / token legs / events) and a
+// per-(pool, token) net-flow table in native token base units.
+//
+// Depth here is a WINDOW net flow (added − removed over the window), NOT an
+// absolute reserve or USD TVL — Comet emits no post-state reserve snapshot
+// and has no published price. And per CS-026 Comet is the LAST un-gated
+// on-chain source: its decoder matches the shared Balancer-v1 ("POOL", …)
+// topic bytes with no contract-identity gate, so the surfaced flow is NOT
+// contract-identity-gated. Both caveats are appended as Notes.
+//
+// Empty-safe: a no-op when no liquidity events were captured, so the block
+// renders cleanly with just the volume KPIs.
+func (s *Store) cometLiquidityBlocks(ctx context.Context, blk *BespokeBlock, windowDays int) error {
+	flows, err := s.LatestCometLiquidityFlows(ctx, windowDays)
+	if err != nil {
+		return fmt.Errorf("timescale: bespokeDEX comet liquidity: %w", err)
+	}
+	if len(flows) == 0 {
+		return nil // no liquidity events captured yet — leave the volume-only block as is
+	}
+
+	var events int64
+	pools := map[string]struct{}{}
+	for _, f := range flows {
+		events += f.Events
+		pools[f.ContractID] = struct{}{}
+	}
+	blk.KPIs = append(blk.KPIs,
+		BespokeKPI{
+			Label: fmt.Sprintf("Pools with LP activity (%dd)", windowDays),
+			Value: strconv.Itoa(len(pools)),
+			Unit:  "pools",
+			Hint:  "distinct pools with a join/exit/deposit/withdraw liquidity event in the window",
+		},
+		BespokeKPI{
+			Label: fmt.Sprintf("LP events (%dd)", windowDays),
+			Value: strconv.FormatInt(events, 10),
+			Hint:  "total comet_liquidity events (join_pool / exit_pool / deposit / withdraw) in the window",
+		},
+		BespokeKPI{
+			Label: "Token legs with flow",
+			Value: strconv.Itoa(len(flows)),
+			Hint:  "distinct (pool, token) legs with net liquidity flow in the window",
+		},
+	)
+
+	const maxRows = 100
+	tbl := BespokeTable{
+		Title:   "Net liquidity flow by pool/token (window)",
+		Columns: []string{"Pool", "Token", "Added", "Removed", "Net", "Events"},
+	}
+	for _, f := range flows {
+		if len(tbl.Rows) >= maxRows {
+			break
+		}
+		tbl.Rows = append(tbl.Rows, []string{
+			f.ContractID, f.Token, f.Added.String(), f.Removed.String(),
+			f.Net.String(), strconv.FormatInt(f.Events, 10),
+		})
+	}
+	if len(tbl.Rows) > 0 {
+		blk.Tables = append(blk.Tables, tbl)
+	}
+
+	blk.Notes = append(blk.Notes,
+		"Net liquidity flow is a WINDOW delta (added − removed) from comet_liquidity per-event amounts (migration 0042) in native token base units (per-asset decimals) — NOT an absolute pool reserve or USD TVL. Comet emits no post-state reserve snapshot and has no independently published price; Net can be negative when removals exceed adds in the window.",
+		"CS-026 caveat: Comet is the LAST un-gated on-chain source — its decoder matches the shared Balancer-v1 (\"POOL\", …) topic bytes with no contract-identity gate (ADR-0035), so a look-alike contract deploying the Comet code can inject fabricated liquidity events (and trades) under source=comet. These depth figures are therefore NOT contract-identity-gated; trust them only scoped to a known pool contract (e.g. the Blend backstop CAS3FL6T…). See docs/protocols/comet.md.",
+	)
+	return nil
+}
+
+// phoenixLiquidityBlocks augments the Phoenix DEX block with the pool
+// liquidity-flow surface derived from phoenix_liquidity (migration 0044). It
+// adds LP-activity KPIs (pools with flow / provides / withdraws) and a
+// per-pool two-token net-flow table in native token base units.
+//
+// Depth here is a WINDOW net flow (provide − withdraw over the window), NOT
+// an absolute reserve or USD TVL — Phoenix pool events carry the moved
+// amounts, not post-state reserves, and Phoenix has no published price.
+// Phoenix IS contract-identity gated (the curated-set gate, 2026-07-02), so
+// unlike Comet there is no un-gated-injection caveat.
+//
+// Empty-safe: a no-op when no liquidity events were captured, so the block
+// renders cleanly with just the volume KPIs.
+func (s *Store) phoenixLiquidityBlocks(ctx context.Context, blk *BespokeBlock, windowDays int) error {
+	flows, err := s.LatestPhoenixLiquidityFlows(ctx, windowDays)
+	if err != nil {
+		return fmt.Errorf("timescale: bespokeDEX phoenix liquidity: %w", err)
+	}
+	if len(flows) == 0 {
+		return nil // no liquidity events captured yet — leave the volume-only block as is
+	}
+
+	var provides, withdraws int64
+	for _, f := range flows {
+		provides += f.Provides
+		withdraws += f.Withdraws
+	}
+	blk.KPIs = append(blk.KPIs,
+		BespokeKPI{
+			Label: fmt.Sprintf("Pools with LP activity (%dd)", windowDays),
+			Value: strconv.Itoa(len(flows)),
+			Unit:  "pools",
+			Hint:  "distinct pools with a provide/withdraw liquidity event in the window",
+		},
+		BespokeKPI{
+			Label: fmt.Sprintf("Liquidity provides (%dd)", windowDays),
+			Value: strconv.FormatInt(provides, 10),
+			Hint:  "provide_liquidity events in the window",
+		},
+		BespokeKPI{
+			Label: fmt.Sprintf("Liquidity withdraws (%dd)", windowDays),
+			Value: strconv.FormatInt(withdraws, 10),
+			Hint:  "withdraw_liquidity events in the window",
+		},
+	)
+
+	const maxRows = 100
+	tbl := BespokeTable{
+		Title:   "Net liquidity flow by pool (window)",
+		Columns: []string{"Pool", "Token A", "Net A", "Token B", "Net B", "Provides", "Withdraws"},
+	}
+	for _, f := range flows {
+		if len(tbl.Rows) >= maxRows {
+			break
+		}
+		tokenA, tokenB := f.TokenA, f.TokenB
+		if tokenA == "" {
+			tokenA = "—"
+		}
+		if tokenB == "" {
+			tokenB = "—"
+		}
+		tbl.Rows = append(tbl.Rows, []string{
+			f.Pool, tokenA, f.NetA.String(), tokenB, f.NetB.String(),
+			strconv.FormatInt(f.Provides, 10), strconv.FormatInt(f.Withdraws, 10),
+		})
+	}
+	if len(tbl.Rows) > 0 {
+		blk.Tables = append(blk.Tables, tbl)
+	}
+
+	blk.Notes = append(blk.Notes,
+		"Net liquidity flow is a WINDOW delta (provide − withdraw) from phoenix_liquidity per-event amounts (migration 0044) in native token base units (per-asset decimals) — NOT an absolute pool reserve or USD TVL. Phoenix pool events carry the moved amounts, not post-state reserves; token addresses are resolved from the pool's most recent provide_liquidity (withdraw events omit them) and show '—' when none was observed in the window. Net can be negative when withdrawals exceed provides.",
+	)
+	return nil
+}
+
+// phoenixStakeKPIs augments the Phoenix DEX block with LP-staking KPIs
+// derived from phoenix_stake_events (migration 0044) — bonded / unbonded /
+// net-staked LP-share amounts and unique stakers over the window. Amounts
+// are LP-share-token base units, not USD. Empty-safe: a no-op when no
+// bond/unbond event was captured.
+func (s *Store) phoenixStakeKPIs(ctx context.Context, blk *BespokeBlock, windowDays int) error {
+	st, err := s.PhoenixStakeWindowStats(ctx, windowDays)
+	if err != nil {
+		return fmt.Errorf("timescale: bespokeDEX phoenix stake: %w", err)
+	}
+	if st == nil {
+		return nil // no staking activity captured yet
+	}
+	blk.KPIs = append(blk.KPIs,
+		BespokeKPI{Label: fmt.Sprintf("LP staked (%dd)", windowDays), Value: st.Bonded.String(), Unit: "LP-token-units", Hint: "summed bond amount (LP-share base units) in the window"},
+		BespokeKPI{Label: fmt.Sprintf("LP unstaked (%dd)", windowDays), Value: st.Unbonded.String(), Unit: "LP-token-units", Hint: "summed unbond amount (LP-share base units) in the window"},
+		BespokeKPI{Label: fmt.Sprintf("Net LP staked (%dd)", windowDays), Value: st.NetStaked.String(), Unit: "LP-token-units", Hint: "bond − unbond (window delta; can be negative)"},
+		BespokeKPI{Label: fmt.Sprintf("Unique stakers (%dd)", windowDays), Value: strconv.FormatInt(st.UniqueStakers, 10)},
+	)
+	blk.Notes = append(blk.Notes,
+		"LP staking figures are summed phoenix_stake_events bond/unbond amounts (migration 0044) in LP-share-token base units — a WINDOW delta, not an absolute staked total, and not USD.",
+	)
+	return nil
+}
+
+// soroswapSkimKPIs augments the Soroswap DEX block with skim KPIs derived
+// from soroswap_skim_events (migration 0043) — the caller-initiated claim of
+// pool balance above recorded reserves (rare). Amounts are native token base
+// units, not USD; skim is not a trade and never feeds VWAP. Empty-safe: a
+// no-op when no skim was captured.
+func (s *Store) soroswapSkimKPIs(ctx context.Context, blk *BespokeBlock, windowDays int) error {
+	sk, err := s.SoroswapSkimWindowStats(ctx, windowDays)
+	if err != nil {
+		return fmt.Errorf("timescale: bespokeDEX soroswap skim: %w", err)
+	}
+	if sk == nil {
+		return nil // no skims captured yet
+	}
+	blk.KPIs = append(blk.KPIs,
+		BespokeKPI{Label: fmt.Sprintf("Skim events (%dd)", windowDays), Value: strconv.FormatInt(sk.Skims, 10), Hint: "caller-initiated claims of pool balance above recorded reserves (rare; not trades)"},
+		BespokeKPI{Label: fmt.Sprintf("Skimmed token0 (%dd)", windowDays), Value: sk.Amount0.String(), Unit: "token-units", Hint: "summed token0 excess skimmed (base units)"},
+		BespokeKPI{Label: fmt.Sprintf("Skimmed token1 (%dd)", windowDays), Value: sk.Amount1.String(), Unit: "token-units", Hint: "summed token1 excess skimmed (base units)"},
+		BespokeKPI{Label: fmt.Sprintf("Pairs skimmed (%dd)", windowDays), Value: strconv.FormatInt(sk.Pairs, 10)},
+	)
+	blk.Notes = append(blk.Notes,
+		"Skim figures are summed soroswap_skim_events amounts (migration 0043) in native token base units — the excess pool balance a caller claimed above recorded reserves. Skim is not a trade and never feeds VWAP.",
+	)
+	return nil
+}
+
 // bespokeLending builds the Blend lending bespoke block: per-asset net
 // supplied (supply + supply_collateral − withdraw − withdraw_collateral) and
 // net borrowed (borrow − repay) from blend_positions, plus auction and
@@ -358,6 +583,13 @@ func (s *Store) aquariusReserveBlocks(ctx context.Context, blk *BespokeBlock, wi
 // supply_collateral, withdraw_collateral, borrow, repay, flash_loan};
 // token_amount + b_or_d_amount are both ≥ 0.
 func (s *Store) bespokeLending(ctx context.Context, source string, windowDays int) (*BespokeBlock, error) {
+	// sorocredit is a lending-category source with its own event surface
+	// (credit_positions / credit_statements / credit_settlements /
+	// credit_events, migration 0090) — not the Blend money-market tables —
+	// so it gets a dedicated builder rather than the blend_* path below.
+	if source == "sorocredit" {
+		return s.bespokeCredit(ctx, windowDays)
+	}
 	if source != "blend" {
 		return nil, nil
 	}
@@ -380,7 +612,35 @@ func (s *Store) bespokeLending(ctx context.Context, source string, windowDays in
 	if err := s.lendingBackstopKPIs(ctx, blk, since, windowDays); err != nil {
 		return nil, err
 	}
+	if err := s.lendingEmissionKPIs(ctx, blk, windowDays); err != nil {
+		return nil, err
+	}
 	return blk, nil
+}
+
+// lendingEmissionKPIs augments the Blend lending block with emission /
+// credit-risk KPIs from blend_emissions (migration 0045) — claimed-emission
+// volume + claim/gulp counts, and a credit-risk (bad_debt + defaulted_debt)
+// event count surfaced honestly. Claim amounts are token base units, not
+// USD. Empty-safe: a no-op when no emission event was captured.
+func (s *Store) lendingEmissionKPIs(ctx context.Context, blk *BespokeBlock, windowDays int) error {
+	em, err := s.BlendEmissionWindowStats(ctx, windowDays)
+	if err != nil {
+		return fmt.Errorf("timescale: bespokeLending emissions: %w", err)
+	}
+	if em == nil {
+		return nil // no emission activity captured yet
+	}
+	blk.KPIs = append(blk.KPIs,
+		BespokeKPI{Label: fmt.Sprintf("Emissions claimed (%dd)", windowDays), Value: em.ClaimVolume.String(), Unit: "token-units", Hint: "summed blend_emissions claim amount (base units)"},
+		BespokeKPI{Label: fmt.Sprintf("Claim events (%dd)", windowDays), Value: strconv.FormatInt(em.Claims, 10)},
+		BespokeKPI{Label: fmt.Sprintf("Emission gulps (%dd)", windowDays), Value: strconv.FormatInt(em.Gulps, 10), Hint: "gulp + gulp_emissions accounting events in the window"},
+		BespokeKPI{Label: fmt.Sprintf("Credit-risk events (%dd)", windowDays), Value: strconv.FormatInt(em.CreditRisk, 10), Hint: "bad_debt + defaulted_debt events — a genuine risk signal (unlike sorocredit's scheduled settlements)"},
+	)
+	blk.Notes = append(blk.Notes,
+		"Emission figures are summed blend_emissions amounts (migration 0045) in token base units, not USD. Credit-risk events count bad_debt + defaulted_debt (a genuine risk signal); emissions claimed is a WINDOW sum, not an all-time total.",
+	)
+	return nil
 }
 
 // lendingPositionBlocks fills the net-supplied / net-borrowed KPIs, the
@@ -533,6 +793,94 @@ func (s *Store) lendingBackstopKPIs(ctx context.Context, blk *BespokeBlock, sinc
 		BespokeKPI{Label: fmt.Sprintf("Backstop events (%dd)", windowDays), Value: backstopCount},
 	)
 	return nil
+}
+
+// bespokeCredit builds the sorocredit (consumer-USDC credit / CDP protocol)
+// lending bespoke block from the four credit_* hypertables (migration 0090):
+// positions opened + a window-scoped open-position proxy, statements
+// published, SCHEDULED settlements (volume + count), withdrawals, and a
+// recent-settlements table.
+//
+// CRITICAL semantic: credit_settlements rows are the on-wire "Liquidation"
+// event but are recurring SCHEDULED keeper settlements of published
+// statements — NOT distressed liquidations. Every settlement label + the
+// appended Note says so; a "liquidations" risk signal must never be surfaced
+// from this data (migration 0090 header + internal/sources/sorocredit).
+//
+// Empty-safe: returns nil (not an error) when no credit_* row exists in the
+// window, so /v1/protocols/sorocredit degrades to its generic analytics —
+// r1's credit_* tables are empty until the sorocredit projector-replay runs
+// post-deploy. Amounts are USDC / token base units (per-asset decimals),
+// never USD (sorocredit has no published price).
+func (s *Store) bespokeCredit(ctx context.Context, windowDays int) (*BespokeBlock, error) {
+	a, err := s.CreditWindowAnalytics(ctx, windowDays)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: bespokeCredit analytics: %w", err)
+	}
+	if a == nil {
+		return nil, nil // no activity in the window — omit the panel
+	}
+
+	since := fmt.Sprintf("%d days", windowDays)
+	blk := &BespokeBlock{
+		Category: "lending",
+		Notes: []string{
+			"Settlements are SCHEDULED settlements decoded from the on-wire \"Liquidation\" event — a single keeper settles published statements on a recurring schedule (~1:1 with statements). These are NOT distressed liquidations; do not read them as a risk/liquidation signal.",
+			"Open positions is a WINDOW-SCOPED proxy: positions opened in the window whose collateral child has no withdrawal (cash-out) observed in the window. It is not an all-time live-position count (the served tier is retention-scoped).",
+			"Amounts are in token base units (USDC settlements/withdrawals at 6-decimal USDC base units; statement amounts at the protocol's i128 scale) — NOT USD. sorocredit has no published price and never contributes to VWAP.",
+		},
+	}
+
+	blk.KPIs = append(blk.KPIs,
+		BespokeKPI{Label: fmt.Sprintf("Positions opened (%dd)", windowDays), Value: strconv.FormatInt(a.PositionsOpened, 10), Hint: "NewCollateralContract events (one child position per open) in the window"},
+		BespokeKPI{Label: fmt.Sprintf("Open positions (%dd)", windowDays), Value: strconv.FormatInt(a.OpenPositions, 10), Hint: "opened in the window without an observed withdrawal in the window (window-scoped proxy, not all-time)"},
+		BespokeKPI{Label: fmt.Sprintf("Unique users (%dd)", windowDays), Value: strconv.FormatInt(a.UniqueUsers, 10), Hint: "distinct position owners (G-addresses)"},
+		BespokeKPI{Label: fmt.Sprintf("Statements published (%dd)", windowDays), Value: strconv.FormatInt(a.Statements, 10), Hint: "StatementPublished events (periodic per-position charge statements)"},
+		BespokeKPI{Label: fmt.Sprintf("Scheduled settlements (%dd)", windowDays), Value: strconv.FormatInt(a.Settlements, 10), Hint: "recurring keeper settlements of published statements — NOT distressed liquidations"},
+		BespokeKPI{Label: fmt.Sprintf("Settlement volume (%dd)", windowDays), Value: a.SettlementVolume.String(), Unit: "USDC-units", Hint: "summed scheduled-settlement amount in 6-decimal USDC base units (NOT a liquidation/risk signal)"},
+		BespokeKPI{Label: fmt.Sprintf("Withdrawals (%dd)", windowDays), Value: strconv.FormatInt(a.Withdrawals, 10), Hint: "position cash-out events in the window"},
+	)
+	if !a.LatestActivity.IsZero() {
+		blk.KPIs = append(blk.KPIs, BespokeKPI{
+			Label: "Latest activity",
+			Value: a.LatestActivity.UTC().Format("2006-01-02 15:04"),
+			Unit:  "UTC",
+			Hint:  "most recent credit event across positions/statements/settlements/withdrawals",
+		})
+	}
+
+	// Daily scheduled-settlement volume (the protocol's dominant recurring
+	// flow). Native USDC base units, not USD.
+	series, err := s.scanDailySeries(ctx, `
+		SELECT to_char(date_trunc('day', ledger_close_time), 'YYYY-MM-DD'), COALESCE(sum(settled_amount),0)::text
+		FROM credit_settlements WHERE ledger_close_time > now() - $1::interval
+		GROUP BY 1 ORDER BY 1 ASC`, since)
+	if err != nil {
+		return nil, err
+	}
+	if len(series) > 0 {
+		blk.Series = append(blk.Series, BespokeSeries{Name: "Daily settlement volume", Unit: "USDC-units", Points: series})
+	}
+
+	// Recent scheduled settlements. Ordered newest-first; settled_amount is
+	// rendered as text so the i128 NUMERIC never round-trips through int64.
+	tbl, err := s.scanTable(ctx,
+		BespokeTable{Title: "Recent scheduled settlements", Columns: []string{"When", "Position", "Debt asset", "Settled amount", "Settler"}},
+		`SELECT to_char(ledger_close_time, 'YYYY-MM-DD HH24:MI'),
+		        position_uuid,
+		        COALESCE(debt_asset, '—'),
+		        COALESCE(settled_amount::text, '—'),
+		        settler_account
+		   FROM credit_settlements WHERE ledger_close_time > now() - $1::interval
+		  ORDER BY ledger_close_time DESC LIMIT 25`, since)
+	if err != nil {
+		return nil, err
+	}
+	if len(tbl.Rows) > 0 {
+		blk.Tables = append(blk.Tables, tbl)
+	}
+
+	return blk, nil
 }
 
 // bespokeYield builds the DeFindex vault bespoke block from defindex_flows:

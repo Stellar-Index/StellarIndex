@@ -2,10 +2,13 @@ package timescale
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // This file is the served-tier writer for the sorocredit source (an
@@ -232,4 +235,128 @@ func (s *Store) InsertCreditEvent(ctx context.Context, e CreditEvent) error {
 		return fmt.Errorf("timescale: InsertCreditEvent %s@%d: %w", e.EventType, e.Ledger, err)
 	}
 	return nil
+}
+
+// CreditAnalyticsSummary is the windowed sorocredit activity summary the
+// /v1/protocols/sorocredit bespoke block is built from — the READ side of
+// the four credit_* tables the projector fills. All volume fields are
+// i128/NUMERIC (canonical.Amount, never int64 — ADR-0003); counts are
+// exact row / distinct-key tallies.
+//
+// SettlementVolume is the summed SCHEDULED-settlement amount (the on-wire
+// "Liquidation" event — a recurring keeper settlement, NOT distress; see
+// InsertCreditSettlement and migration 0090). It must NEVER be surfaced as
+// a liquidation / risk signal.
+type CreditAnalyticsSummary struct {
+	// PositionsOpened is the count of NewCollateralContract events in the
+	// window (one child Collateral-<uuid> contract per opened position).
+	PositionsOpened int64
+	// OpenPositions is the count of positions opened in the window whose
+	// collateral child has no observed withdrawal (cash-out) in the window
+	// — a window-scoped proxy for still-open positions, not an all-time
+	// live-position count (the served tier is retention-scoped).
+	OpenPositions int64
+	// UniqueUsers is the count of distinct position owners (G-addresses) in
+	// the window.
+	UniqueUsers int64
+
+	Statements      int64
+	StatementVolume canonical.Amount
+
+	// Settlements + SettlementVolume are SCHEDULED settlements — recurring
+	// keeper settlements of published statements, NOT distressed
+	// liquidations. Label accordingly wherever surfaced.
+	Settlements      int64
+	SettlementVolume canonical.Amount
+
+	Withdrawals      int64
+	WithdrawalVolume canonical.Amount
+
+	// LatestActivity is the most recent ledger_close_time across all four
+	// credit_* tables in the window (a freshness signal).
+	LatestActivity time.Time
+}
+
+// HasActivity reports whether any credit_* table had a row in the window —
+// the gate the bespoke block uses to omit an all-empty panel.
+func (a *CreditAnalyticsSummary) HasActivity() bool {
+	return a != nil && (a.PositionsOpened > 0 || a.Statements > 0 ||
+		a.Settlements > 0 || a.Withdrawals > 0)
+}
+
+// CreditWindowAnalytics reads the windowed sorocredit activity summary
+// (positions / statements / SCHEDULED settlements / withdrawals) from the
+// four credit_* hypertables. Volumes are i128/NUMERIC preserved as
+// canonical.Amount (never int64 — ADR-0003).
+//
+// Empty-safe: returns (nil, nil) when no credit_* row exists in the window,
+// so the bespoke block omits the panel cleanly (r1's credit_* tables are
+// empty until the sorocredit projector-replay runs post-deploy).
+// windowDays <= 0 is treated as 90.
+func (s *Store) CreditWindowAnalytics(ctx context.Context, windowDays int) (*CreditAnalyticsSummary, error) {
+	if windowDays <= 0 {
+		windowDays = 90
+	}
+	since := fmt.Sprintf("%d days", windowDays)
+
+	var (
+		out          CreditAnalyticsSummary
+		posLatest    sql.NullTime
+		stmtLatest   sql.NullTime
+		settleLatest sql.NullTime
+		wdLatest     sql.NullTime
+	)
+
+	// Positions + open-position proxy + distinct owners. The NOT EXISTS is
+	// window-scoped on both sides so it stays an index-only probe of
+	// credit_events (credit_events_collateral_ts_idx) and the semantics are
+	// honestly "opened AND not withdrawn within the window".
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT count(*),
+		       count(*) FILTER (WHERE NOT EXISTS (
+		           SELECT 1 FROM credit_events e
+		            WHERE e.event_type = 'withdrawal'
+		              AND e.collateral_contract = p.collateral_contract
+		              AND e.ledger_close_time > now() - $1::interval)),
+		       count(DISTINCT owner),
+		       max(ledger_close_time)
+		  FROM credit_positions p
+		 WHERE p.ledger_close_time > now() - $1::interval`, since).
+		Scan(&out.PositionsOpened, &out.OpenPositions, &out.UniqueUsers, &posLatest); err != nil {
+		return nil, fmt.Errorf("timescale: CreditWindowAnalytics positions: %w", err)
+	}
+
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT count(*), COALESCE(sum(amount),0)::text, max(ledger_close_time)
+		  FROM credit_statements WHERE ledger_close_time > now() - $1::interval`, since).
+		Scan(&out.Statements, &out.StatementVolume, &stmtLatest); err != nil {
+		return nil, fmt.Errorf("timescale: CreditWindowAnalytics statements: %w", err)
+	}
+
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT count(*), COALESCE(sum(settled_amount),0)::text, max(ledger_close_time)
+		  FROM credit_settlements WHERE ledger_close_time > now() - $1::interval`, since).
+		Scan(&out.Settlements, &out.SettlementVolume, &settleLatest); err != nil {
+		return nil, fmt.Errorf("timescale: CreditWindowAnalytics settlements: %w", err)
+	}
+
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT count(*) FILTER (WHERE event_type = 'withdrawal'),
+		       COALESCE(sum(amount) FILTER (WHERE event_type = 'withdrawal'),0)::text,
+		       max(ledger_close_time) FILTER (WHERE event_type = 'withdrawal')
+		  FROM credit_events WHERE ledger_close_time > now() - $1::interval`, since).
+		Scan(&out.Withdrawals, &out.WithdrawalVolume, &wdLatest); err != nil {
+		return nil, fmt.Errorf("timescale: CreditWindowAnalytics withdrawals: %w", err)
+	}
+
+	for _, t := range []sql.NullTime{posLatest, stmtLatest, settleLatest, wdLatest} {
+		if t.Valid && t.Time.After(out.LatestActivity) {
+			out.LatestActivity = t.Time.UTC()
+		}
+	}
+
+	if !out.HasActivity() {
+		return nil, nil
+	}
+	return &out, nil
 }
