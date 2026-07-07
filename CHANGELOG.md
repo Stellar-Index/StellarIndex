@@ -89,6 +89,17 @@ against.
   to the verified issuer instead of a same-ticker look-alike that shares the code, so a
   curated verified currency no longer renders a self-referential
   "Unverified · Ticker collision" warning under its "Verified" badge.
+- **Stellar-only verified-token headline price.** `/v1/assets/{slug}` GlobalAssetView now
+  falls back to the on-chain (DEX/SDEX) price for verified crypto tokens that have no
+  CEX/CoinGecko feed (e.g. AQUA), so a verified asset page no longer shows a blank headline
+  price when the asset only trades on-chain.
+- **XLM dual-form USD price convergence.** The `native` and `crypto:XLM` asset-id forms now
+  serve the same USD price via the canonical `/v1/price` reader — previously the two forms
+  could resolve through different read paths and disagree.
+- **Gap-detector-silent alert reliability.** The `gap_detector_silent` alert is now keyed
+  off a reset-proof `last_success_unix` gauge instead of a counter `rate()`, so a
+  6h-cadence detector no longer pins its `ok` counter at 1 across restarts and false-fires
+  (or masks a real stall) forever.
 - **Config scale guard.** `usd_pegged_classic_assets` entries are validated as classic
   (7-decimal) credit assets at load, failing loud + consistently across binaries — a
   non-classic peg previously mis-scaled `usd_volume` and under-counted the
