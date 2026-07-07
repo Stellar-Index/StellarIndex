@@ -495,18 +495,10 @@ jobs:
       - name: Syntax check (secrets stubbed — structure only)
         working-directory: configs/ansible
         run: |
-          # syntax-check loads vars_files, which includes the encrypted
-          # vault — the real password (same secret the ansible-drift
-          # workflow uses) is required; a dummy fails decryption.
-          mkdir -p ~/.ansible
-          echo -n "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > ~/.ansible/r1_vault_pass
-          chmod 600 ~/.ansible/r1_vault_pass
-          # The encrypted vault itself is NOT in the (public) repo —
-          # 2026-07-03 exposure response. Materialize it from the
-          # Actions secret.
-          # NB: this step runs with working-directory: configs/ansible
-          echo "${{ secrets.ANSIBLE_VAULT_FILE_B64 }}" | base64 -d > inventory/r1.secrets.yml
-          ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/archival-node.yml
+          # syntax-check only needs the vars file to exist and parse.
+          # Do not expose production vault material to Dependabot PRs.
+          printf '%s\n' '--- {}' > inventory/ci.syntax-secrets.yml
+          ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/archival-node.yml -e secrets_file=../inventory/ci.syntax-secrets.yml
           ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/monitoring.yml
       - name: ansible-lint (production profile, warnings tolerated)
         working-directory: configs/ansible
