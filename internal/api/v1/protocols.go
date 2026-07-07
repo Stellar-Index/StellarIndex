@@ -141,11 +141,11 @@ type ProtocolContractsReader interface {
 	// ListSourceContractsFromProjection is the fallback roster for protocols
 	// the protocol_contracts registry doesn't carry yet (only blend is seeded
 	// today): the distinct contract ids from the source's projected table
-	// (defindex_flows / phoenix_liquidity / comet_liquidity / cctp_events /
-	// rozo_events). Returns nil for sources without one — the page then keeps
-	// its registry/pairs path. Lets defindex/phoenix/comet/cctp/rozo show a
-	// full roster + the lake analytics scoped to it, without waiting on the
-	// factory-enumeration team answer.
+	// (defindex_flows / phoenix_liquidity / comet_liquidity / aquarius_liquidity
+	// / cctp_events / rozo_events). Returns nil for sources without one — the
+	// page then keeps its registry/pairs path. Lets defindex/phoenix/comet/
+	// aquarius/cctp/rozo show a full roster + the lake analytics scoped to it,
+	// without waiting on the factory-enumeration team answer.
 	ListSourceContractsFromProjection(ctx context.Context, source string) ([]string, error)
 	// ProtocolContractIndex returns a contract_id → source map over every
 	// registered protocol contract — the explorer's contract-attribution
@@ -233,6 +233,20 @@ type ProtocolContractView struct {
 	// Token0 / Token1 are the pair's token C-strkeys (soroswap only).
 	Token0 string `json:"token0,omitempty"`
 	Token1 string `json:"token1,omitempty"`
+	// Tokens is the ordered raw token contract C-strkeys the pool holds —
+	// 2 for a pair, 3/4 for an Aquarius stableswap, N for a Comet weighted
+	// pool, or the reserve-asset set for a lending market (blend). Absent for
+	// non-pool contracts (factories, oracles). Parallel to TokenSymbols.
+	Tokens []string `json:"tokens,omitempty"`
+	// TokenSymbols is the human display symbols for Tokens, in the same
+	// order ("XLM", "USDC", "AQUA", …). An unresolvable token degrades to a
+	// short truncated contract ("CAS3…OWMA") rather than dropping — so this
+	// stays parallel to Tokens.
+	TokenSymbols []string `json:"token_symbols,omitempty"`
+	// Pair is the roster's human label: TokenSymbols joined with "/" —
+	// "XLM/USDC" for a pair, "XLM/USDC/USDT" for a 3-token stableswap, or the
+	// reserve-asset list for a lending market. Absent when no tokens resolve.
+	Pair string `json:"pair,omitempty"`
 	// Kind classifies the instance within the protocol: "factory" (a verified
 	// trust-root in meta.Factories) or "instance" (a pool/vault/market the
 	// factory deployed). Lets the page group the roster by role.
@@ -406,6 +420,7 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 	view, ok := s.cachedProtocolDetail(ctx, meta.Name, func(c context.Context) ProtocolDetailView {
 		contracts := s.protocolRoster(c, meta)
 		classifyContractKinds(contracts, meta.Factories)
+		s.enrichContractTokens(c, meta, contracts)
 		v := ProtocolDetailView{
 			ProtocolView:     buildProtocolView(meta, len(contracts), s.protocolEvents24h(c), s.protocolVerdicts(c)),
 			Contracts:        contracts,
@@ -758,8 +773,11 @@ func (s *Server) protocolContracts(ctx context.Context, name string) []ProtocolC
 
 // protocolContractsFromProjection is the registry-empty fallback: the distinct
 // contracts from name's projected table (nil/empty when the source has no
-// per-contract table — aquarius/sdex/oracles, which legitimately have no
-// contract roster).
+// per-contract table). aquarius now populates here from aquarius_liquidity
+// (2026-07-07, #91 — previously read 0 pools despite being the busiest AMM);
+// the oracles (band/reflector-*/redstone) populate from their pinned contracts
+// in oracle_updates via a source-scoped query (#91 — they read 0 before). Only
+// sdex is op-keyed (no contract) and truly has no roster here.
 func (s *Server) protocolContractsFromProjection(ctx context.Context, name string) []ProtocolContractView {
 	ids, err := s.protocolContractsReader.ListSourceContractsFromProjection(ctx, name)
 	if err != nil {

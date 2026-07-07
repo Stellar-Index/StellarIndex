@@ -157,3 +157,43 @@ func TestExplorer_AssetHolders(t *testing.T) {
 		t.Errorf("holders = %+v (balance must be a string)", body.Data.Holders)
 	}
 }
+
+// TestExplorer_AccountsList_Watermark pins ADR-0041 Decision 4 on the
+// /v1/accounts wealth ranking (a current-state read over the
+// ledger_entry_changes projection): `as_of_ledger` carries the cached
+// lake watermark and `flags.stale` fires when its close time trails now
+// beyond the threshold — the same disclosure the /v1/accounts/{g}
+// detail read already carries. An empty stubPriceReader prices nothing,
+// so the ranking is served straight from the stub wealth rows.
+func TestExplorer_AccountsList_Watermark(t *testing.T) {
+	reader := &stubExplorerReader{
+		wealth: []clickhouse.AccountWealth{{AccountID: testG, USD: 123.45}},
+	}
+	srv := v1.New(v1.Options{
+		Explorer:      reader,
+		Prices:        &stubPriceReader{},
+		LakeWatermark: &wmStub{ledger: 63_888_888, closedAt: time.Now().Add(-10 * time.Minute)},
+	})
+	base := httpTestServer(t, srv).URL
+
+	resp := mustGet(t, base+"/v1/accounts")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data  v1.AccountsListView `json:"data"`
+		Flags struct {
+			Stale bool `json:"stale"`
+		} `json:"flags"`
+	}
+	mustDecode(t, resp, &env)
+	if env.Data.AsOfLedger != 63_888_888 {
+		t.Errorf("as_of_ledger = %d, want 63888888", env.Data.AsOfLedger)
+	}
+	if !env.Flags.Stale {
+		t.Error("flags.stale should fire for a 10-minute-old watermark")
+	}
+	if len(env.Data.Accounts) != 1 || env.Data.Accounts[0].AccountID != testG {
+		t.Errorf("accounts = %+v, want one row for testG", env.Data.Accounts)
+	}
+}

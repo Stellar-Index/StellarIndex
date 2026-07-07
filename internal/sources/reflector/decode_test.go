@@ -310,6 +310,71 @@ func TestTopicSymbolsMatchEncodedContractTopics(t *testing.T) {
 	}
 }
 
+// TestRealDecoder_DEXRowQuotedInUSD_SelfPriceSanity is the FIX-1
+// regression: a reflector-dex UpdateEvent carrying the native-XLM SAC
+// priced at 0.2002 (14 decimals). The DEX oracle (CALI2BYU…)
+// denominates in USDC — confirmed via its base() SEP-40 method — so
+// this is XLM-in-USD ≈ 0.20, NOT XLM-in-XLM (which would be exactly
+// 1.0). The decoder must stamp the quote as fiat:USD, never native:
+// before the fix it stamped native, making 0.2002 read as a
+// nonsensical XLM self-price.
+func TestRealDecoder_DEXRowQuotedInUSD_SelfPriceSanity(t *testing.T) {
+	xlmSAC := contractAddressFromStrkey(t,
+		"CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA")
+	addrSv := xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &xlmSAC}
+
+	priceRaw := big.NewInt(20_020_000_000_000) // 0.2002 × 1e14
+	bodyB64 := encodeUpdateBody(t, []xdr.ScVal{addrSv}, []*big.Int{priceRaw})
+
+	e := &events.Event{
+		Topic:          []string{TopicSymbolReflector, TopicSymbolUpdate, encodeTimestampTopic(t, 1_745_123_456_000)},
+		Value:          bodyB64,
+		ContractID:     "CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M",
+		Ledger:         52_000_000,
+		TxHash:         "dexrow",
+		OperationIndex: 0,
+		LedgerClosedAt: "2026-04-23T12:00:00Z",
+	}
+	closedAt, _ := time.Parse(time.RFC3339, e.LedgerClosedAt)
+
+	updates, err := decodeUpdate(e, VariantDEX, DefaultDecimals, "GRELAYER", closedAt)
+	if err != nil {
+		t.Fatalf("decodeUpdate: %v", err)
+	}
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 update, got %d", len(updates))
+	}
+
+	// The quote must be fiat:USD, NOT native (XLM) — the fix.
+	if got := updates[0].Quote.String(); got != "fiat:USD" {
+		t.Errorf("reflector-dex quote = %q, want fiat:USD (was native before the USDC-base fix)", got)
+	}
+	if updates[0].Quote.Equal(canonical.NativeAsset()) {
+		t.Error("reflector-dex quote must not be native — the DEX oracle base is the USDC SAC, not XLM")
+	}
+
+	// Self-price sanity: 0.2002 scaled by 1e14 is a plausible XLM/USD;
+	// a value near 1.0 would mean we (wrongly) read it as XLM-in-XLM.
+	scaled, _ := new(big.Rat).SetFrac(updates[0].Price.BigInt(), big.NewInt(100_000_000_000_000)).Float64()
+	if scaled < 0.05 || scaled > 0.5 {
+		t.Errorf("scaled XLM-in-USD = %v, want ~0.20 (a ~1.0 self-price would indicate the native-quote bug)", scaled)
+	}
+}
+
 // Small helper — &zeroContractAddress(t) isn't addressable since it's
 // a function return.
 func ptrScAddr(a xdr.ScAddress) *xdr.ScAddress { return &a }
+
+// contractAddressFromStrkey builds an xdr.ScAddress (Contract) from a
+// C-strkey so tests can encode a specific on-chain contract (e.g. the
+// native-XLM SAC) as a Reflector Asset::Stellar entry.
+func contractAddressFromStrkey(t *testing.T, cStrkey string) xdr.ScAddress {
+	t.Helper()
+	raw, err := strkey.Decode(strkey.VersionByteContract, cStrkey)
+	if err != nil {
+		t.Fatalf("decode contract strkey %q: %v", cStrkey, err)
+	}
+	var cid xdr.ContractId
+	copy(cid[:], raw)
+	return xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &cid}
+}

@@ -50,6 +50,7 @@ const (
 	OutcomeKindComputeError     OutcomeKind = "compute_error"     // computer failed for non-observation reasons
 	OutcomeKindStaleComponent   OutcomeKind = "stale_component"   // F-1236: a component observation lags the snapshot ledger past the configured threshold (and the observation is itself advancing past the gate — a genuinely stalled producer, not a dormant asset; see F-1320)
 	OutcomeKindMissingFreshness OutcomeKind = "missing_freshness" // F-1236 wave 60 (codex audit-2026-05-13): strict mode + MinComponentLedger==0 (no signal); reject rather than publish without a freshness anchor
+	OutcomeKindMissingBaseline  OutcomeKind = "missing_baseline"  // incident 2026-07-06 / migration 0088: SEP-41 total negative because the pre-Soroban genesis baseline hasn't been seeded yet — a range-scoped-baseline-missing condition (needs `stellarindex-ops supply seed-sep41-genesis`), NOT indexer corruption. Benign: excluded from error_dominant.
 	OutcomeKindDormant          OutcomeKind = "dormant"           // F-1320: MinComponentLedger lags past threshold but is UNCHANGED tick-over-tick — the asset simply had no balance change, so its last observation IS the current supply; accepted (snapshot inserted)
 	OutcomeKindWriteError       OutcomeKind = "write_error"       // InsertSupply failed
 )
@@ -207,9 +208,20 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 		// ChainReader surfaces with ErrNoObservation when both live
 		// AND static fall through) from generic compute errors so
 		// operators can chart the bootstrap-progress signal.
+		//
+		// ErrNegativeTotalMissingBaseline (incident 2026-07-06) is a
+		// benign bootstrap-like state — a SAC-wrapper whose pre-Soroban
+		// opening balance hasn't been seeded yet reads Σburn > Σmint over
+		// the Soroban-era window. Route it to `missing_baseline` (excluded
+		// from error_dominant) so it prompts a seed instead of paging;
+		// once seeded, a still-negative total surfaces as ErrNegativeTotalSupply
+		// → compute_error, which DOES page (genuine inconsistency).
 		kind := OutcomeKindComputeError
-		if errors.Is(err, ErrNoObservation) {
+		switch {
+		case errors.Is(err, ErrNoObservation):
 			kind = OutcomeKindNoObservation
+		case errors.Is(err, ErrNegativeTotalMissingBaseline):
+			kind = OutcomeKindMissingBaseline
 		}
 		r.logger.Warn("supply refresh: compute failed",
 			"err", err, "ledger", ledger, "kind", string(kind))

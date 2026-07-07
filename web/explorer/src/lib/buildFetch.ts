@@ -43,6 +43,21 @@
  * 4. CI-stub builds (no network by design) get `null` back without any
  *    fetch, and failBuild() is a no-op — the CI fallback branches keep
  *    rendering so networkless smoke builds still pass.
+ *
+ * ── The `softFail` opt-out (build-time LIVE-PRICE enrichment) ─────────
+ * Fail-hard is right for a page's core entity data (baking "not found"
+ * for a real asset is the incident it guards against). It is WRONG for
+ * the ephemeral live price: /v1/price is refreshed client-side by
+ * <LivePrice> on every asset/market page, so a cold/slow/unreachable
+ * price endpoint at build time should degrade the page (render without
+ * the price — the client fills it in on hydration) rather than abort
+ * the whole static export. The edge has been seen hanging ~25s on a
+ * cold-cache asset, and it lands on a DIFFERENT asset each run, so any
+ * single cold /v1/price must be non-fatal. Price fetches therefore pass
+ * `{ softFail: true }` with a short timeout + few attempts; a persistent
+ * transport failure/timeout then resolves to `null` instead of throwing.
+ * NOTHING else opts in — the fail-hard contract for entity data (the
+ * listing, per-asset detail, etc.) is unchanged.
  */
 
 import { API_BASE_URL } from '@/api/client';
@@ -77,26 +92,39 @@ const memo = new Map<string, Promise<unknown>>();
  * Returns `null` only for CI-stub builds or an authoritative 4xx
  * ("this resource does not exist"). THROWS BuildFetchError on
  * persistent transport failure — see the fail-hard contract above.
+ *
+ * Options:
+ * - `timeoutMs` — per-attempt fetch timeout (default 8s).
+ * - `attempts`  — max attempts before giving up (default 5).
+ * - `softFail`  — when true, a persistent transport failure/timeout
+ *   resolves to `null` INSTEAD of throwing. Reserved for build-time
+ *   live-price enrichment (see the softFail note in the module header).
+ *   Do NOT use for a page's core entity data.
  */
 export function buildFetchData<T>(
   path: string,
-  opts?: { timeoutMs?: number },
+  opts?: { timeoutMs?: number; attempts?: number; softFail?: boolean },
 ): Promise<T | null> {
   if (isCIStub) return Promise.resolve(null);
   const url = `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
   const hit = memo.get(url);
   if (hit) return hit as Promise<T | null>;
-  const p = fetchWithRetry<T>(url, opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const p = fetchWithRetry<T>(url, {
+    timeoutMs: opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    maxAttempts: opts?.attempts ?? MAX_ATTEMPTS,
+    softFail: opts?.softFail ?? false,
+  });
   memo.set(url, p);
   return p;
 }
 
 async function fetchWithRetry<T>(
   url: string,
-  timeoutMs: number,
+  opts: { timeoutMs: number; maxAttempts: number; softFail: boolean },
 ): Promise<T | null> {
+  const { timeoutMs, maxAttempts, softFail } = opts;
   let lastErr: unknown = null;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const res = await fetch(url, {
         headers: { Accept: 'application/json' },
@@ -106,7 +134,7 @@ async function fetchWithRetry<T>(
         // Rate-limited: longer, jittered backoff (the whole export runs
         // against r1's anonymous tier).
         lastErr = new Error('HTTP 429');
-        if (attempt < MAX_ATTEMPTS) {
+        if (attempt < maxAttempts) {
           await sleep(1_000 * attempt + Math.floor(Math.random() * 500));
         }
         continue;
@@ -118,7 +146,7 @@ async function fetchWithRetry<T>(
       }
       if (!res.ok) {
         lastErr = new Error(`HTTP ${res.status}`);
-        if (attempt < MAX_ATTEMPTS) await sleep(500 * attempt);
+        if (attempt < maxAttempts) await sleep(500 * attempt);
         continue;
       }
       // A 200 with a non-JSON or non-envelope body is an error payload,
@@ -127,11 +155,17 @@ async function fetchWithRetry<T>(
       return env.data ?? null;
     } catch (err) {
       lastErr = err;
-      if (attempt < MAX_ATTEMPTS) await sleep(500 * attempt);
+      if (attempt < maxAttempts) await sleep(500 * attempt);
     }
   }
+  if (softFail) {
+    // Opt-in non-fatal caller (build-time live-price enrichment): the
+    // value is refreshed client-side, so degrade the page rather than
+    // abort the export. See the softFail note in the module header.
+    return null;
+  }
   throw new BuildFetchError(
-    `GET ${url} failed after ${MAX_ATTEMPTS} attempts — refusing to bake fallback HTML; fix the API (or the URL) and re-run the build. Last error: ${
+    `GET ${url} failed after ${maxAttempts} attempts — refusing to bake fallback HTML; fix the API (or the URL) and re-run the build. Last error: ${
       lastErr instanceof Error ? lastErr.message : String(lastErr)
     }`,
   );
