@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.9.0] — 2026-07-07
+
 ### Added
 - Per-protocol bespoke analytics now surface six previously captured-but-invisible tables:
   `/v1/protocols/sorocredit` renders a full lending block (positions, open positions, unique
