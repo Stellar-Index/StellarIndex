@@ -187,21 +187,27 @@ jobs:
             echo "  OK"
           done
 
-      - name: Smoke-test --help on every image
+      - name: Smoke-test version reporting on every image
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number || 'manual' }}
         run: |
           set -euo pipefail
+          EXPECT="v0.0.0-pr${PR_NUMBER}"
           for df in docker/*.Dockerfile; do
             b=$(basename "$df" .Dockerfile)
-            echo "== smoke-test stellarindex/${b}:pr-test --help =="
-            # --help may exit 0 (most binaries) or non-zero with a usage
-            # message (some). Either is fine — the assertion is that the
-            # container starts and prints something. Container that fails
-            # to start (missing libc, broken ENTRYPOINT) returns no
-            # output from a quick run.
-            out=$(docker run --rm "stellarindex/${b}:pr-test" --help 2>&1 | head -5 || true)
-            if [ -z "$out" ]; then
-              echo "::error::Image stellarindex/${b}:pr-test produced no --help output"
+            echo "== smoke-test stellarindex/${b}:pr-test version =="
+            out=""
+            if docker run --rm "stellarindex/${b}:pr-test" -version >/tmp/docker-version.out 2>&1; then
+              out=$(cat /tmp/docker-version.out)
+            elif docker run --rm "stellarindex/${b}:pr-test" version >/tmp/docker-version.out 2>&1; then
+              out=$(cat /tmp/docker-version.out)
+            else
+              echo "::error::Image stellarindex/${b}:pr-test does not respond to -version flag or 'version' subcommand"
               exit 1
             fi
-            echo "  OK: $(echo "$out" | head -1)"
+            if ! echo "$out" | grep -q "$EXPECT"; then
+              echo "::error::Image stellarindex/${b}:pr-test version output does not contain expected '$EXPECT' (got: '$out')"
+              exit 1
+            fi
+            echo "  OK: $out"
           done
