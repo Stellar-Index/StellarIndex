@@ -139,6 +139,104 @@ func decodeTrade(e *events.Event, closedAt time.Time) (canonical.Trade, error) {
 	}, nil
 }
 
+// decodeReserves decodes an Aquarius `update_reserves` event into a
+// ReservesEvent carrying the pool's POST-STATE reserve vector.
+//
+// Verified against the r1 lake 2026-07-06: topic[0] is the only topic
+// (Symbol("update_reserves"), no token addresses), and the body is a
+// Vec<i128> of the pool's reserves in canonical token order —
+// [reserve_0, …, reserve_{n-1}]. n is the pool's token count (2 for a
+// volatile pool, N for stableswap), so we read a variable-length vec
+// rather than a fixed tuple.
+func decodeReserves(e *events.Event, closedAt time.Time) (ReservesEvent, error) {
+	reserves, err := decodeAmountVec(e.Value)
+	if err != nil {
+		return ReservesEvent{}, fmt.Errorf("%w: update_reserves body: %w", ErrMalformedPayload, err)
+	}
+	if len(reserves) == 0 {
+		return ReservesEvent{}, fmt.Errorf("%w: update_reserves empty reserve vector", ErrMalformedPayload)
+	}
+	for i, r := range reserves {
+		if r.Sign() < 0 {
+			return ReservesEvent{}, fmt.Errorf("%w: update_reserves reserve[%d] negative: %s", ErrMalformedPayload, i, r)
+		}
+	}
+	return ReservesEvent{
+		ContractID: e.ContractID,
+		Ledger:     e.Ledger,
+		TxHash:     e.TxHash,
+		OpIndex:    uint32(e.OperationIndex), //nolint:gosec // OperationIndex is non-negative by Soroban spec.
+		EventIndex: uint32(e.EventIndex),     //nolint:gosec // EventIndex is non-negative by Soroban spec.
+		ObservedAt: closedAt,
+		Reserves:   reserves,
+	}, nil
+}
+
+// decodeLiquidity decodes an Aquarius `deposit_liquidity` /
+// `withdraw_liquidity` event into a LiquidityEvent.
+//
+// Verified against the r1 lake 2026-07-06. Wire shape (both events
+// share it):
+//
+//	topics: [Symbol(action), Address(token_0), …, Address(token_{n-1})]
+//	body:   Vec<i128> of length n+1 =
+//	        [amount_0, …, amount_{n-1}, share_amount]
+//
+// where n = len(topics) - 1 is the pool's token count (2 for a
+// volatile pool, 3–4 for stableswap — all three widths observed live).
+// The trailing body element is the LP-share amount minted (deposit) /
+// burned (withdraw). Decode by the (topic-count, body-length)
+// relationship rather than a fixed 2-token assumption so N-token
+// stableswap events are captured, not dropped.
+func decodeLiquidity(e *events.Event, action LiquidityAction, closedAt time.Time) (LiquidityEvent, error) {
+	if len(e.Topic) < 2 {
+		return LiquidityEvent{}, fmt.Errorf("%w: %s needs >=2 topics (symbol + >=1 token), got %d",
+			ErrMalformedPayload, action, len(e.Topic))
+	}
+	nTokens := len(e.Topic) - 1
+	tokens := make([]string, nTokens)
+	for i := 0; i < nTokens; i++ {
+		addr, err := decodeAddressTopic(e.Topic[i+1])
+		if err != nil {
+			return LiquidityEvent{}, fmt.Errorf("%w: %s token[%d]: %w", ErrMalformedPayload, action, i, err)
+		}
+		tokens[i] = addr
+	}
+
+	vals, err := decodeAmountVec(e.Value)
+	if err != nil {
+		return LiquidityEvent{}, fmt.Errorf("%w: %s body: %w", ErrMalformedPayload, action, err)
+	}
+	// n token amounts + 1 trailing share amount.
+	if len(vals) != nTokens+1 {
+		return LiquidityEvent{}, fmt.Errorf("%w: %s body length %d != %d tokens + 1 (shares)",
+			ErrMalformedPayload, action, len(vals), nTokens)
+	}
+	amounts := vals[:nTokens]
+	shares := vals[nTokens]
+	for i, a := range amounts {
+		if a.Sign() < 0 {
+			return LiquidityEvent{}, fmt.Errorf("%w: %s amount[%d] negative: %s", ErrMalformedPayload, action, i, a)
+		}
+	}
+	if shares.Sign() < 0 {
+		return LiquidityEvent{}, fmt.Errorf("%w: %s shares negative: %s", ErrMalformedPayload, action, shares)
+	}
+
+	return LiquidityEvent{
+		ContractID: e.ContractID,
+		Ledger:     e.Ledger,
+		TxHash:     e.TxHash,
+		OpIndex:    uint32(e.OperationIndex), //nolint:gosec // OperationIndex is non-negative by Soroban spec.
+		EventIndex: uint32(e.EventIndex),     //nolint:gosec // EventIndex is non-negative by Soroban spec.
+		ObservedAt: closedAt,
+		Action:     action,
+		Tokens:     tokens,
+		Amounts:    amounts,
+		Shares:     shares,
+	}, nil
+}
+
 // tradeAmounts holds the three i128 values from a trade body.
 type tradeAmounts struct {
 	SoldAmount   canonical.Amount
@@ -153,7 +251,36 @@ var (
 	decodeTradeAmounts = sdkDecodeTradeAmounts
 	decodeAssetTopic   = sdkDecodeAssetTopic
 	decodeAddressTopic = sdkDecodeAddressTopic
+	decodeAmountVec    = sdkDecodeAmountVec
 )
+
+// sdkDecodeAmountVec unpacks a body that is a Vec of i128 values of
+// arbitrary length (the update_reserves reserve vector and the
+// deposit/withdraw [amounts…, shares] vector). Unlike the trade body
+// (a fixed 3-tuple) these vectors are variable-length — one element
+// per pool token (+1 for the liquidity share amount) — so we read the
+// vec and decode each element positionally. Every element MUST be an
+// i128 (ADR-0003 / verified live 2026-07-06); a non-i128 element is a
+// schema violation we reject rather than truncate.
+func sdkDecodeAmountVec(valueB64 string) ([]canonical.Amount, error) {
+	body, err := scval.Parse(valueB64)
+	if err != nil {
+		return nil, fmt.Errorf("parse body: %w", err)
+	}
+	elts, err := scval.AsVec(body)
+	if err != nil {
+		return nil, fmt.Errorf("body not a vec: %w", err)
+	}
+	out := make([]canonical.Amount, len(elts))
+	for i, el := range elts {
+		amt, err := scval.AsAmountFromI128(el)
+		if err != nil {
+			return nil, fmt.Errorf("element %d not i128: %w", i, err)
+		}
+		out[i] = amt
+	}
+	return out, nil
+}
 
 // sdkDecodeTradeAmounts unpacks the body Vec of 3 i128s.
 //

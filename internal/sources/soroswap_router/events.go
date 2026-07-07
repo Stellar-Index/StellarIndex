@@ -76,9 +76,17 @@ type RouterSwap struct {
 	// downstream SAC-wrapper resolver (cfg.Supply.SacWrappers)
 	// can map to canonical.Asset on its own schedule. Length
 	// ≥ 2 by router contract precondition.
-	Path       []string
-	AmountIn   canonical.Amount // exact-input or upper-bound
-	AmountOut  canonical.Amount // exact-output or lower-bound
+	Path []string
+	// AmountIn / AmountOut mix a REALIZED amount with a user-supplied LIMIT,
+	// per Function: swap_exact_tokens_for_tokens fixes AmountIn (realized) and
+	// AmountOut is `amount_out_min` (a lower bound); swap_tokens_for_exact_tokens
+	// fixes AmountOut (realized) and AmountIn is `amount_in_max` (an upper
+	// bound). NEVER treat AmountOut/AmountIn as an execution price — one leg is
+	// a slippage guardrail, not a fill. The realized price comes from the
+	// per-pair swap events (matching tx_hash), which carry both actual amounts;
+	// this struct is the router's INTENT record only.
+	AmountIn   canonical.Amount // realized (exact-in fn) OR amount_in_max upper bound
+	AmountOut  canonical.Amount // realized (exact-out fn) OR amount_out_min lower bound
 	DeadlineTs time.Time        // user-supplied expiry
 }
 

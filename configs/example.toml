@@ -403,6 +403,42 @@ enabled = true
 enabled = true
 # max_age_minutes = 0
 
+# Supply cross-check — compares OUR served circulating_supply against an
+# external authoritative reference (the Stellar Network Dashboard for
+# XLM; CoinGecko when a Pro key is set). This automates the manual "is
+# our supply right?" check and catches a stale SDF-reserve exclusion
+# account list (docs/methodology/xlm-circulating-supply.md). Off by
+# default (it makes outbound HTTP calls); flip enabled = true on r1 via
+# ansible to arm it. The 1% threshold sits well above the ~0.03% XLM
+# Fee-Pool noise floor, so it fires only on a REAL drift; when a
+# reference is dark the worker degrades to a no_reference outcome (not a
+# false alert).
+[divergence.supply]
+enabled                       = false
+refresh_interval_seconds      = 900    # supply moves slowly; 15 min is fine
+threshold_pct                 = 1.0    # > 0.03% XLM noise floor, fires only on real drift
+per_reference_timeout_seconds = 10
+
+# Stellar Network Dashboard reference — authoritative XLM circulating
+# supply, free, no auth. On by default WITHIN this block (only runs once
+# the parent enabled = true above).
+[divergence.supply.dashboard]
+enabled  = true
+# base_url defaults to https://dashboard.stellar.org/api/v3 when empty.
+# base_url = "https://dashboard.stellar.org/api/v3"
+
+# CoinGecko /coins/{id} market_data.circulating_supply reference. Off by
+# default — the free tier has been 429-throttled since 2026-06-19; set a
+# Pro key (prefer the COINGECKO_API_KEY env var) and enable it.
+[divergence.supply.coingecko]
+enabled = false
+# api_key = ""   # prefer env COINGECKO_API_KEY
+# base_url defaults to https://api.coingecko.com/api/v3 when empty.
+# id_map maps canonical asset_id → CoinGecko coin id; empty falls back
+# to the built-in default (native / crypto:XLM → stellar).
+# [divergence.supply.coingecko.id_map]
+# native = "stellar"
+
 # ──────────────────────────────────────────────────────────────────
 # Supply — circulating-supply pipeline (ADR-0011 / -0021 / -0022 /
 # -0023). Each block opts the indexer into the corresponding

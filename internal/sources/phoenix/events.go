@@ -173,13 +173,32 @@ var MainnetStakeContracts = []string{
 	"CBBUVHCEML7UE46XXZXLTMGKFMKX7KOC2XAKI3TW6WBQBKWMSARMU3YM",
 }
 
+// MainnetMapPools are Phoenix pools running the NEWER pool WASM whose
+// swap emits a SINGLE ScvSymbol("swap") event with an ScvMap body (all
+// 8 fields as underscore-spelled Symbol keys) instead of the legacy 8
+// ScvString-tuple events (Q5). Same factory + `("create",
+// "liquidity_pool")` event set; enumerated from the factory create-
+// event walk cross-checked against lake activity (docs/protocols/
+// phoenix.md). Both schemas are gated + decoded (decode.go:
+// actionSwap / actionSwapMap). Because gating is by contract identity,
+// a curated pool that upgrades from the String to the Map shape in
+// place (contract-schema-evolution.md) is already covered — only the
+// decode dispatch depends on the topic shape, not this list.
+// CBENABXP appeared 2026-07-02 (factory "Updated Config" + create in
+// the same window).
+var MainnetMapPools = []string{
+	"CBENABXP6C4C7WG6KB7JQOTDS5GIIXF3IX3PIYNZFCDZDWUHITO2HZ4S",
+}
+
 // MainnetGatedSet is the full curated child set the decoder seeds:
-// pools + stake contracts. The multihop relay is deliberately
-// EXCLUDED — it emits no swap/liquidity/stake events (it relays to
-// pools), so gating loses nothing (docs/protocols/phoenix.md).
+// String-schema pools + Map-schema pools + stake contracts. The
+// multihop relay is deliberately EXCLUDED — it emits no
+// swap/liquidity/stake events (it relays to pools), so gating loses
+// nothing (docs/protocols/phoenix.md).
 func MainnetGatedSet() []string {
-	out := make([]string, 0, len(MainnetPools)+len(MainnetStakeContracts))
+	out := make([]string, 0, len(MainnetPools)+len(MainnetMapPools)+len(MainnetStakeContracts))
 	out = append(out, MainnetPools...)
+	out = append(out, MainnetMapPools...)
 	out = append(out, MainnetStakeContracts...)
 	return out
 }
@@ -202,6 +221,17 @@ var (
 	TopicSymbolSpreadAmount   = scval.MustEncodeString(FieldSpreadAmount)   //
 	TopicSymbolReferralFee    = scval.MustEncodeString(FieldReferralFee)    //
 )
+
+// TopicSymbolSwapMap is the topic[0] of the NEWER single-event Map-body
+// swap schema (post-2026-07-02 pools, e.g. CBENABXP…): a SINGLE
+// ScvSymbol("swap") topic (disc 0x0F) whose body is an ScvMap of every
+// swap field — distinct from the legacy 8-event ScvString("swap")
+// schema above (disc 0x0E). The Map keys are Symbols spelled with
+// underscores ("actual_received_amount"), not the legacy spaced String
+// ("actual received amount"). Decoded by decode.go::decodeSwapMap; see
+// README Q5 and docs/architecture/contract-schema-evolution.md (Soroban
+// pools upgrade in place and can change event SHAPE, not just fields).
+var TopicSymbolSwapMap = scval.MustEncodeSymbol(EventActionSwap)
 
 // Liquidity-management topic[0] encodings + topic[1] field names.
 // Same ScString-discriminator reasoning as swap above: contracts

@@ -131,17 +131,26 @@
   register: zpool_create
   changed_when: zpool_create.rc == 0
 
+# extra_zfs_properties carries ONLY the properties an item sets locally
+# (mountpoint is always local). Omitted keys are left to inherit the pool
+# default — the module compares against `zfs get -p`, and a property whose
+# live source is inherited/default reads back as "unset" and would always
+# report changed if we declared it. Building the dict per-item (rather than
+# forcing recordsize/compression/atime/logbias/primarycache with defaults)
+# keeps --check clean for the inherited-tuning datasets (pgbackrest,
+# restore-drill). See defaults/main.yml `zfs_datasets` for the rationale.
 - name: Create ZFS datasets (per-workload tuning)
   community.general.zfs:
     name: "{{ zfs_data_pool_name }}/{{ item.name }}"
     state: present
-    extra_zfs_properties:
-      recordsize: "{{ item.recordsize | default('128K') }}"
-      compression: "{{ item.compression | default('zstd') }}"
-      atime: "{{ item.atime | default('off') }}"
-      mountpoint: "{{ item.mountpoint }}"
-      logbias: "{{ item.logbias | default('latency') }}"
-      primarycache: "{{ item.primarycache | default('all') }}"
+    extra_zfs_properties: >-
+      {{ {}
+         | combine({'recordsize': item.recordsize} if item.recordsize is defined else {})
+         | combine({'compression': item.compression} if item.compression is defined else {})
+         | combine({'atime': item.atime} if item.atime is defined else {})
+         | combine({'logbias': item.logbias} if item.logbias is defined else {})
+         | combine({'primarycache': item.primarycache} if item.primarycache is defined else {})
+         | combine({'mountpoint': item.mountpoint}) }}
   loop: "{{ zfs_datasets }}"
   loop_control:
     label: "{{ item.name }} → {{ item.mountpoint }}"
@@ -150,7 +159,7 @@
   ansible.builtin.file:
     path: "{{ item.mountpoint }}"
     state: directory
-    mode: "0755"
+    mode: "{{ item.dir_mode | default('0755') }}"
   loop: "{{ zfs_datasets }}"
   loop_control:
     label: "{{ item.mountpoint }}"

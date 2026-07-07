@@ -4,6 +4,7 @@ import (
 	"math/big"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 
@@ -202,6 +203,50 @@ func TestPoolReserves_ExplorerUnavailable(t *testing.T) {
 	resp := mustGet(t, base+"/v1/pools/reserves")
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503 when no lake reader is wired", resp.StatusCode)
+	}
+}
+
+// TestPoolReserves_WatermarkStale pins ADR-0041 Decision 4 on the pool
+// reserves read: each row keeps its exact per-pool `as_of_ledger` (the
+// pool's last state-change ledger), but the envelope's `flags.stale`
+// now reflects lake freshness — a wedged sink (10-min-old watermark
+// here) flips it regardless of when the pool last changed.
+func TestPoolReserves_WatermarkStale(t *testing.T) {
+	pairA := mkCStrkey(t, 1)
+	tok0, tok1 := mkCStrkey(t, 10), mkCStrkey(t, 11)
+	reader := &stubExplorerReader{
+		pairStates: map[string]clickhouse.SoroswapPairState{
+			pairA: {
+				Pair: pairA, Token0: tok0, Token1: tok1,
+				Reserve0: big.NewInt(1_000), Reserve1: big.NewInt(2_000), Ledger: 62_900_000,
+			},
+		},
+	}
+	srv := v1.New(v1.Options{
+		Explorer:      reader,
+		SoroswapPairs: &stubSoroswapPairsReader{pairs: []timescale.SoroswapPair{{PairStrkey: pairA, Token0Strkey: tok0, Token1Strkey: tok1}}},
+		LakeWatermark: &wmStub{ledger: 63_500_000, closedAt: time.Now().Add(-10 * time.Minute)},
+	})
+	base := httpTestServer(t, srv).URL
+
+	resp := mustGet(t, base+"/v1/pools/reserves")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var body struct {
+		Data  []v1.PoolReservesRow `json:"data"`
+		Flags struct {
+			Stale bool `json:"stale"`
+		} `json:"flags"`
+	}
+	mustDecode(t, resp, &body)
+	if !body.Flags.Stale {
+		t.Error("flags.stale should fire for a 10-minute-old lake watermark")
+	}
+	// Per-pool as_of_ledger stays the pool's own last-change ledger, not
+	// the watermark (they are deliberately distinct signals).
+	if len(body.Data) != 1 || body.Data[0].AsOfLedger != 62_900_000 {
+		t.Errorf("row as_of_ledger = %+v, want the pool's last-change ledger 62900000", body.Data)
 	}
 }
 

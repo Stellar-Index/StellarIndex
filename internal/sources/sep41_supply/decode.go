@@ -37,20 +37,23 @@ func classify(ev *events.Event) string {
 	}
 }
 
-// decodeAmount extracts the i128 Value (the event's amount) and
-// converts it to *big.Int. Per ADR-0011 / ADR-0023 amounts are
-// non-negative (the kind discriminates direction); the storage
-// writer rejects negatives upstream, so this just guards against
-// SDK quirks.
+// decodeAmount extracts the i128 event amount and converts it to
+// *big.Int. Per ADR-0011 / ADR-0023 amounts are non-negative (the
+// kind discriminates direction); the storage writer rejects negatives
+// upstream, so this just guards against SDK quirks.
+//
+// The amount arrives in TWO on-chain SHAPES — the body (event.Value)
+// is EITHER a bare i128 OR a CAP-67 map wrapping it (see amountScVal).
 func decodeAmount(ev *events.Event) (*big.Int, error) {
 	sv, err := scval.Parse(ev.Value)
 	if err != nil {
 		return nil, fmt.Errorf("sep41_supply: parse Value: %w", err)
 	}
-	if sv.Type != xdr.ScValTypeScvI128 {
-		return nil, fmt.Errorf("%w: got %s", ErrAmountNotI128, sv.Type)
+	amountSV, err := amountScVal(sv)
+	if err != nil {
+		return nil, err
 	}
-	amt, err := scval.AsAmountFromI128(sv)
+	amt, err := scval.AsAmountFromI128(amountSV)
 	if err != nil {
 		return nil, fmt.Errorf("sep41_supply: i128 → amount: %w", err)
 	}
@@ -59,6 +62,50 @@ func decodeAmount(ev *events.Event) (*big.Int, error) {
 		return nil, fmt.Errorf("sep41_supply: negative amount %s (kind discriminates direction)", out)
 	}
 	return out, nil
+}
+
+// amountScVal returns the i128-typed ScVal carrying the event amount,
+// unwrapping the CAP-67 map form when the body is a map instead of a
+// bare i128:
+//
+//	bare i128   AAAACg… (ScvI128)              → the amount directly
+//	CAP-67 map  { amount: i128, to_muxed_id }  → amount lives in the field
+//
+// A mint / transfer emits the MAP form when the destination is a muxed
+// account — or, as several watched SEP-41 tokens do, when the issuer
+// stamps a memo string into `to_muxed_id` (e.g. "Auto recharge
+// transaction"). The amount then moves OUT of the body and INTO the
+// map's `amount` field, exactly as CLAUDE.md warns: "SEP-41 transfer
+// data can be EITHER a simple i128 OR a map containing amount +
+// to_muxed_id — type-test before MustI128()."
+//
+// The previous i128-only decode rejected every map-shaped body with
+// ErrAmountNotI128 and dropped the whole row (2026-07-06 dropped-mints
+// finding: 37 of 54 mints on CBH4M45T…OCKF — and map-shaped mints on 8
+// of the 15 watched contracts — were lost, driving mint_total to zero
+// so `burn_total > mint_total` tripped the aggregator's dominant-burn
+// guard). Decode by Map-field-NAME (`amount`), never by position, per
+// docs/architecture/contract-schema-evolution.md.
+func amountScVal(sv xdr.ScVal) (xdr.ScVal, error) {
+	switch sv.Type {
+	case xdr.ScValTypeScvI128:
+		return sv, nil
+	case xdr.ScValTypeScvMap:
+		entries, err := scval.AsMap(sv)
+		if err != nil {
+			return xdr.ScVal{}, fmt.Errorf("sep41_supply: amount map: %w", err)
+		}
+		field, ok := scval.MapField(entries, "amount")
+		if !ok {
+			return xdr.ScVal{}, fmt.Errorf("%w: map body has no \"amount\" field", ErrAmountNotI128)
+		}
+		if field.Type != xdr.ScValTypeScvI128 {
+			return xdr.ScVal{}, fmt.Errorf("%w: map \"amount\" is %s", ErrAmountNotI128, field.Type)
+		}
+		return field, nil
+	default:
+		return xdr.ScVal{}, fmt.Errorf("%w: got %s", ErrAmountNotI128, sv.Type)
+	}
 }
 
 // decodeCounterparty extracts the recipient (mint) or holder
