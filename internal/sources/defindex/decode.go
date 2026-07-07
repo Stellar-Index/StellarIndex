@@ -286,3 +286,37 @@ func decodeVaultFlow(e *events.Event, kind string) (VaultFlow, error) {
 
 	return flow, nil
 }
+
+// DecodeRebalanceMethod extracts the `rebalance_method` discriminator
+// Symbol from a ("DeFindexVault","rebalance") event body. It reads
+// ONLY that one documented field and returns the raw Symbol verbatim
+// as a [RebalanceMethod]; the per-method payload is deliberately NOT
+// decoded — see the [RebalanceMethod] godoc for the do-not-invent
+// scope caveats. Returns ErrMalformedPayload if the body is not a Map
+// or the discriminator field is absent / not a Symbol.
+//
+// This is the multiplexer scaffolding for the four-way rebalance
+// event (BACKLOG #58): production Decode() does not yet emit a
+// consumer.Event for rebalance (the payload is unmodelled pending a
+// real on-chain sample), so this decoder is exercised by the golden
+// tests + available to operator tooling that inspects raw rebalance
+// bodies from the lake once samples exist.
+func DecodeRebalanceMethod(e *events.Event) (RebalanceMethod, error) {
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return "", fmt.Errorf("%w: parse rebalance body: %w", ErrMalformedPayload, err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return "", fmt.Errorf("%w: rebalance body not a Map: %w", ErrMalformedPayload, err)
+	}
+	sv, err := scval.MustMapField(entries, RebalanceMethodField)
+	if err != nil {
+		return "", fmt.Errorf("%w: rebalance.%s: %w", ErrMalformedPayload, RebalanceMethodField, err)
+	}
+	sym, err := scval.AsSymbol(sv)
+	if err != nil {
+		return "", fmt.Errorf("%w: rebalance.%s: %w", ErrMalformedPayload, RebalanceMethodField, err)
+	}
+	return RebalanceMethod(sym), nil
+}

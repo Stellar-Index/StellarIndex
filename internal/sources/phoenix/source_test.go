@@ -237,9 +237,13 @@ func TestDecodeSwap_happyPath(t *testing.T) {
 	decodeI128 = func(v string) (canonical.Amount, error) {
 		switch v {
 		case "offer":
-			return canonical.NewAmount(big.NewInt(1_000_000_000)), nil // 100 XLM
+			return canonical.NewAmount(big.NewInt(1_000_000_000)), nil // 100 XLM sold (base, input)
 		case "received":
-			return canonical.NewAmount(big.NewInt(12_420_000)), nil // 12.42 USDC
+			// "actual received amount" is the INPUT the pool received of
+			// sell_token (== offer), NOT the output — must NOT be the quote.
+			return canonical.NewAmount(big.NewInt(1_000_000_000)), nil
+		case "return":
+			return canonical.NewAmount(big.NewInt(12_420_000)), nil // 12.42 USDC received (quote, output)
 		}
 		return canonical.NewAmount(big.NewInt(0)), nil
 	}
@@ -272,7 +276,13 @@ func TestDecodeSwap_happyPath(t *testing.T) {
 		t.Errorf("base_amount = %s", trade.BaseAmount)
 	}
 	if trade.QuoteAmount.Cmp(canonical.NewAmount(big.NewInt(12_420_000))) != 0 {
-		t.Errorf("quote_amount = %s", trade.QuoteAmount)
+		t.Errorf("quote_amount = %s (want return_amount, not actual_received)", trade.QuoteAmount)
+	}
+	// Regression guard: QuoteAmount must be return_amount (the output),
+	// never actual_received (== offer). base==quote was the Phoenix
+	// pricing bug that mapped every trade to a ~1:1 price.
+	if trade.BaseAmount.Cmp(trade.QuoteAmount) == 0 {
+		t.Fatal("base_amount == quote_amount — QuoteAmount regressed to actual_received")
 	}
 	if trade.Taker != "GSENDER" {
 		t.Errorf("taker = %q", trade.Taker)

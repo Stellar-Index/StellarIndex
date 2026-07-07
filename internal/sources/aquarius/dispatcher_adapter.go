@@ -60,7 +60,14 @@ func (*Decoder) Name() string { return SourceName }
 // router's add_pool events living in the lake (every API-registry
 // pool is announced by one) plus the curated seed for history.
 func (d *Decoder) Matches(ev events.Event) bool {
-	if classify(&ev) == EventTrade {
+	switch classify(&ev) {
+	case EventTrade, EventUpdateReserves, EventDepositLiquidity, EventWithdrawLiquidity:
+		// Pool flow events (trade + liquidity/reserves) are gated
+		// IDENTICALLY on contract identity: they match ONLY when
+		// emitted by a REGISTERED Aquarius pool. The bare topic
+		// symbols are forgeable — a look-alike must not be able to
+		// inject fabricated reserves/liquidity any more than it could
+		// inject fabricated trades (CS-026).
 		return d.reg.Has(ev.ContractID)
 	}
 	return isAddPool(&ev) && d.reg.IsFactory(ev.ContractID)
@@ -95,9 +102,32 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	if err != nil {
 		return nil, err
 	}
-	trade, err := decodeTrade(&ev, closedAt)
-	if err != nil {
-		return nil, err
+	switch classify(&ev) {
+	case EventUpdateReserves:
+		rv, err := decodeReserves(&ev, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{rv}, nil
+	case EventDepositLiquidity:
+		lq, err := decodeLiquidity(&ev, LiquidityDeposit, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{lq}, nil
+	case EventWithdrawLiquidity:
+		lq, err := decodeLiquidity(&ev, LiquidityWithdraw, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{lq}, nil
+	default:
+		// EventTrade (and, defensively, anything Matches() let
+		// through) decodes as a trade.
+		trade, err := decodeTrade(&ev, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{TradeEvent{Trade: trade}}, nil
 	}
-	return []consumer.Event{TradeEvent{Trade: trade}}, nil
 }

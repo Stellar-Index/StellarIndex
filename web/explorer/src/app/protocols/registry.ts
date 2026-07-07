@@ -59,6 +59,12 @@ export const PROTOCOLS: ProtocolRegistryEntry[] = [
     description: 'Isolated lending pools on Soroban.',
   },
   {
+    name: 'sorocredit',
+    category: 'lending',
+    label: 'SoroCredit',
+    description: 'On-chain consumer USDC credit / CDP with scheduled settlements.',
+  },
+  {
     name: 'defindex',
     category: 'yield',
     label: 'DeFindex',

@@ -70,6 +70,18 @@ func (s *Server) resolveTokenDecimals(ctx context.Context, contractID string) in
 	return int(d)
 }
 
+// resolveAssetDecimals returns the smallest-unit scale for a canonical
+// asset: the token contract's declared decimals() for Soroban tokens
+// (via resolveTokenDecimals), else the classic/native/fiat default of 7.
+// Callers resolve once per side per request — never per row — since a
+// /v1/history page shares one base+quote pair.
+func (s *Server) resolveAssetDecimals(ctx context.Context, a canonical.Asset) int {
+	if a.Type == canonical.AssetSoroban && a.ContractID != "" {
+		return s.resolveTokenDecimals(ctx, a.ContractID)
+	}
+	return defaultTokenDecimals
+}
+
 // handleSEP41Transfers serves GET
 // /v1/contracts/{contract_id}/transfers[?from=&to=&limit=].
 //

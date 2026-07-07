@@ -135,6 +135,32 @@ paths = [
 ]
 
 [[rules.allowlists]]
+description = "Test-only base64-encoded XDR fixtures (ScVal Address/Symbol/Vec bodies for real Aquarius update_reserves / deposit_liquidity / withdraw_liquidity events, captured from the lake) + Stellar C-strkey token/pool contract-id fixtures, used by the aquarius liquidity/reserves decoder golden tests AND the timescale storage integration test. These are XDR-encoded public ledger data / deterministic public contract IDs (i128 amounts), not credentials — the base64 blobs + strkeys trip gitleaks' generic-api-key entropy heuristic. Same rationale as the other decoder-fixture allowlists above."
+paths = [
+  '''internal/sources/aquarius/liquidity_decode_test\.go''',
+  '''test/integration/aquarius_liquidity_storage_test\.go''',
+]
+
+[[rules.allowlists]]
+description = "Test-only Stellar G-strkey + C-strkey fixtures (verified issuers + same-ticker impersonator issuers, e.g. USDC/AQUA/EURC/SHX issuer account IDs and SAC contract IDs) used by the served-data-correctness tests for the ticker-collision / verified-badge / dual-form-price cases. Bare public account/contract IDs trip the entropy heuristic; not credentials — same shape as the supply/dispatcher/issuers allowlists above."
+paths = [
+  '''internal/api/v1/served_data_correctness_test\.go''',
+]
+
+[[rules.allowlists]]
+description = "Test-only Phoenix swap fixtures — base64-encoded XDR (ScvMap/Symbol swap-event bodies for the new Map-body pool CBENABXP…, captured from ledger 63307899) + C-strkey pool/token contract IDs — used by the phoenix volatile + map-body swap decoder golden tests. XDR-encoded public ledger data + deterministic public contract IDs (i128 amounts), not credentials — the base64 blobs + strkeys trip gitleaks' generic-api-key entropy heuristic. Same rationale as the aquarius/cctp decoder-fixture allowlists above."
+paths = [
+  '''internal/sources/phoenix/mapswap_test\.go''',
+  '''internal/sources/phoenix/source_test\.go''',
+]
+
+[[rules.allowlists]]
+description = "Test-only Stellar L-strkey fixture (a liquidity-pool id, e.g. LBBQ…) used by the native CAP-38 liquidity-pool state-reader test. L-strkeys are deterministic public ledger-entry identifiers (SHA-256 of the pool params), not credentials — the 56-char base32 trips gitleaks' generic-api-key entropy heuristic. Same rationale as the C-strkey / G-strkey fixture allowlists above."
+paths = [
+  '''internal/storage/clickhouse/liquidity_pool_state_reader_test\.go''',
+]
+
+[[rules.allowlists]]
 description = "Test-only Redis lock-key fixture (`abcdef0123456789`) used by the signup-email-locker concurrency test. Fabricated 16-hex-char idempotency key; trips the entropy heuristic but is not a credential."
 paths = [
   '''internal/auth/signup_email_locker_test\.go''',
@@ -144,6 +170,14 @@ paths = [
 description = "Codex audit evidence doc — a cross-file-interactions findings table quoting public git commit SHAs (e.g. `e9e57cb2...`) and evidence/finding IDs inline. These high-entropy hex strings are commit references, not credentials."
 paths = [
   '''docs/audit-2026-05-12-codex/evidence/cross-file-interactions\.md''',
+]
+
+[[rules.allowlists]]
+description = "Test-only Stellar C-strkey / G-strkey fixtures (synthetic pool / token / collateral contract IDs + account IDs) used by the orphaned-analytics bespoke-surfacing storage integration tests (sorocredit credit tables, comet/phoenix liquidity-flow depth, phoenix stake, soroswap skim). Deterministic public ledger entries (contract IDs are the hash of deployer + WASM) / public account IDs, not credentials — bare strkeys trip gitleaks' generic-api-key entropy heuristic. Same rationale as the aquarius/comet/phoenix decoder-fixture + supply allowlists above."
+paths = [
+  '''test/integration/sorocredit_bespoke_storage_test\.go''',
+  '''test/integration/dex_liquidity_depth_storage_test\.go''',
+  '''test/integration/blend_emissions_bespoke_storage_test\.go''',
 ]
 
 # ── curl-auth-header (default rule) ─────────────────────────────────
@@ -159,4 +193,11 @@ paths = [
   # Same placeholder pattern on the dashboard onboarding card
   # (LC-061 "working first request" snippet, `sip_your_key`).
   '''web/explorer/src/app/dashboard/page\.tsx''',
+]
+
+[[rules.allowlists]]
+description = "Test-only token-SAC C-strkey fixtures (e.g. the XLM native SAC CAS3J7GY…, USDC SAC CCW67TSZ…) used by the protocol pool-pair label resolver tests. Deterministic public Stellar contract identifiers, not credentials — the 56-char base32 trips gitleaks' generic-api-key entropy heuristic. Same rationale as the aquarius/phoenix/liquidity-pool decoder-fixture allowlists above (#91)."
+paths = [
+  '''internal/api/v1/protocol_pairs_internal_test\.go''',
+  '''internal/api/v1/protocols_pairs_test\.go''',
 ]

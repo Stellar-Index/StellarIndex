@@ -130,15 +130,33 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 		return Subject{}, ErrUnauthorized
 	}
 
-	// F-1226 (codex audit-2026-05-12) monthly-quota cascade:
-	// per-key value wins; if 0 (default/inherit), fall back to
-	// the account-level override; if both are 0, the middleware's
-	// `MonthlyQuota <= 0` short-circuit leaves the request
-	// unmetered. Plan-default values plug in at policy-config
-	// time (operators set a non-zero override on the account
-	// row when they upgrade the customer to a metered plan).
+	// Monthly-quota cascade. The account-level override
+	// (accounts.monthly_request_quota_override) is the operator's
+	// hard CEILING — the customer can only ever LOWER their cap
+	// beneath it, never raise it. This is the deliberate
+	// symmetric-opposite of the rate-limit override below (which is a
+	// FLOOR that only raises).
+	//
+	//   - per-key 0 (default/inherit): fall back to the account
+	//     override. If that's also 0 the middleware's
+	//     `MonthlyQuota <= 0` short-circuit leaves the request
+	//     unmetered (the current default when nothing is set).
+	//   - per-key > 0 AND override > 0: use min(per-key, override) so
+	//     an override always clamps a per-key value budgeted above it.
+	//     This retroactively closes the hole for any key minted before
+	//     the dashboard's mint-time clamp shipped (audit-2026-07
+	//     MEDIUM): even a persisted `monthly_quota: 9_000_000_000` can
+	//     never exceed the operator's account cap at enforcement time.
+	//   - per-key > 0 AND override 0: honour the per-key value (the
+	//     dashboard already clamped it to the tier ceiling at mint).
+	//
+	// F-1226 (codex audit-2026-05-12) introduced the fallback leg;
+	// audit-2026-07 hardened it into a ceiling.
 	monthlyQuota := pgKey.MonthlyQuota
-	if monthlyQuota == 0 && acct.MonthlyRequestQuotaOverride > 0 {
+	switch {
+	case monthlyQuota == 0:
+		monthlyQuota = acct.MonthlyRequestQuotaOverride
+	case acct.MonthlyRequestQuotaOverride > 0 && acct.MonthlyRequestQuotaOverride < monthlyQuota:
 		monthlyQuota = acct.MonthlyRequestQuotaOverride
 	}
 
