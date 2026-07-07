@@ -758,8 +758,11 @@ func (s *Server) protocolContracts(ctx context.Context, name string) []ProtocolC
 
 // protocolContractsFromProjection is the registry-empty fallback: the distinct
 // contracts from name's projected table (nil/empty when the source has no
-// per-contract table — aquarius/sdex/oracles, which legitimately have no
-// contract roster).
+// per-contract table). aquarius now populates here from aquarius_reserves
+// (2026-07-07, #91 — previously read 0 pools despite being the busiest AMM);
+// sdex is op-keyed (no contract, N/A) and the oracles are pinned-contract
+// (band/reflector/redstone — their few contract IDs are a follow-up, since
+// oracle_updates mixes all oracle sources and needs a source filter).
 func (s *Server) protocolContractsFromProjection(ctx context.Context, name string) []ProtocolContractView {
 	ids, err := s.protocolContractsReader.ListSourceContractsFromProjection(ctx, name)
 	if err != nil {

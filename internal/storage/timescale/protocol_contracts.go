@@ -132,11 +132,17 @@ func (s *Store) ListProtocolContracts(ctx context.Context, source string) ([]Pro
 // projectionContractColumn maps a protocol source to the (table, column) in
 // its PROJECTED table that holds the per-instance contract id. Used as the
 // fallback roster for protocols not seeded into protocol_contracts (only blend
-// is today) — defindex/phoenix/comet/cctp/rozo all have a per-contract
-// projected table. Aquarius + sdex are pair/op-keyed (no per-contract column),
-// soroswap uses soroswap_pairs, blend uses the registry — those return ok=false
-// and fall back to their own path. The table+column are HARD-CODED here (never
-// from the request), so the formatted query carries no injected SQL.
+// is today) — defindex/phoenix/comet/cctp/rozo/aquarius all have a per-contract
+// projected table. sdex is op-keyed (no contract, N/A), soroswap uses
+// soroswap_pairs, blend uses the registry — those return ok=false and fall back
+// to their own path. The table+column are HARD-CODED here (never from the
+// request), so the formatted query carries no injected SQL.
+//
+// Aquarius was previously listed as "pair-keyed, no per-contract column" and so
+// its /v1/protocols/aquarius roster read 0 contracts despite being the most
+// active AMM (14.9k events/24h, 300+ pools). The aquarius_reserves hypertable
+// (migration 0089) added this session carries the emitting POOL contract_id, so
+// aquarius now has a per-pool roster source (2026-07-07, #91).
 func projectionContractColumn(source string) (table, column string, ok bool) {
 	switch source {
 	case "defindex":
@@ -149,6 +155,8 @@ func projectionContractColumn(source string) (table, column string, ok bool) {
 		return "phoenix_liquidity", "pool", true
 	case "comet":
 		return "comet_liquidity", "contract_id", true
+	case "aquarius":
+		return "aquarius_reserves", "contract_id", true
 	}
 	return "", "", false
 }
