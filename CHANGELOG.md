@@ -24,6 +24,12 @@ against.
 - Monitoring: `stellarindex_external_fx_last_quote_unix{source}` liveness gauge + a
   staleness alert on the active fiat-FX feed (`massive`), so a dead FX feed is caught
   before fiat-pair triangulation silently breaks at the 7-day lookback + a runbook.
+- Decimals-assumption guard: the aggregator sweeps recently-DEX-traded Soroban tokens and
+  raises `stellarindex_dex_trade_nonstandard_decimals_total` (+ alert, both rule trees, a
+  runbook) when a DEX trade lands for a token whose on-chain `decimals()` != 7 — the served
+  price ratio assumes uniform 7-dp scale, so this catches a would-be silent mispricing on a
+  real pair before it happens. Detection only; the forward normalization is a tracked
+  follow-up (the fix must cover both the query-time VWAP and the `prices_*` CAGGs together).
 
 - `stellarindex-ops supply seed-sac-balances` + `state-snapshot -scope storage`:
   seed dormant contract-held SAC balances / `contract_data` current-state from the
