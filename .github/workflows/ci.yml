@@ -195,6 +195,14 @@ jobs:
         # violations or on stale baseline entries, forcing the
         # baseline to shrink monotonically.
         run: ./scripts/ci/lint-imports.sh
+      - name: lint-protocol-registry-sync
+        # The frontend protocol registry (web/explorer/.../protocols/registry.ts)
+        # mirrors the Go source-of-truth (internal/api/v1/protocols_registry.go)
+        # for the static-export slug set. Nothing cross-checked them, so a
+        # Go-registered protocol could silently ship with no pre-rendered
+        # explorer page (sorocredit, 2026-07-07). This fails on any name-set
+        # drift between the two registries.
+        run: ./scripts/ci/lint-protocol-registry-sync.sh
       - name: lint-i128
         # ADR-0003: reject int64(x.Lo) i128 truncation in Go (fast grep;
         # the deep go/types guard is TestI128TruncationGuard in
