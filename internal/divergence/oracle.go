@@ -148,7 +148,9 @@ func (r *OracleReference) Name() string { return r.source }
 // match its canonical string exactly. Which pairs each oracle
 // actually covers falls out of the stored rows:
 //
-//   - reflector-dex   — Soroban token assets quoted in native (XLM)
+//   - reflector-dex   — Soroban token assets quoted in fiat:USD (the
+//     DEX oracle's base is the USDC SAC, stamped as
+//     fiat:USD — see reflector.quoteForVariant)
 //   - reflector-cex   — crypto tickers quoted in fiat:USD
 //   - reflector-fx    — fiat codes quoted in fiat:USD
 //   - redstone        — per-feed base quoted in fiat:USD (EUROC→EUR)
