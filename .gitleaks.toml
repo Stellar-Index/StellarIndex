@@ -155,6 +155,12 @@ paths = [
 ]
 
 [[rules.allowlists]]
+description = "Test-only Stellar L-strkey fixture (a liquidity-pool id, e.g. LBBQ…) used by the native CAP-38 liquidity-pool state-reader test. L-strkeys are deterministic public ledger-entry identifiers (SHA-256 of the pool params), not credentials — the 56-char base32 trips gitleaks' generic-api-key entropy heuristic. Same rationale as the C-strkey / G-strkey fixture allowlists above."
+paths = [
+  '''internal/storage/clickhouse/liquidity_pool_state_reader_test\.go''',
+]
+
+[[rules.allowlists]]
 description = "Test-only Redis lock-key fixture (`abcdef0123456789`) used by the signup-email-locker concurrency test. Fabricated 16-hex-char idempotency key; trips the entropy heuristic but is not a credential."
 paths = [
   '''internal/auth/signup_email_locker_test\.go''',
