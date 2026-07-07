@@ -29,6 +29,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/sources/sdex"
 	sep41_supply "github.com/StellarIndex/stellar-index/internal/sources/sep41_supply"
 	sep41_transfers "github.com/StellarIndex/stellar-index/internal/sources/sep41_transfers"
+	"github.com/StellarIndex/stellar-index/internal/sources/sorocredit"
 	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
 	soroswap_router "github.com/StellarIndex/stellar-index/internal/sources/soroswap_router"
 	"github.com/StellarIndex/stellar-index/internal/sources/trustlines"
@@ -361,6 +362,7 @@ func IsProjectedEvent(ev consumer.Event) bool {
 		blend.PositionEvent, blend.EmissionEvent, blend.AdminEvent,
 		blend_backstop.Event,
 		cctp.Event, rozo.Event,
+		sorocredit.Event,
 		defindex.Event, defindex.VaultEvent,
 		sep41_supply.Event, sep41_transfers.Event:
 		return true
@@ -679,6 +681,8 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		persistCCTPEvent(ctx, logger, store, e)
 	case rozo.Event:
 		persistRozoEvent(ctx, logger, store, e)
+	case sorocredit.Event:
+		persistSoroCreditEvent(ctx, logger, store, e)
 	case accounts.Observation:
 		persistAccountObservation(ctx, logger, store, e)
 	case trustlines.Observation:
@@ -1050,6 +1054,94 @@ func persistRozoEvent(ctx context.Context, logger *slog.Logger, store *timescale
 	logger.Debug("Rozo event ingested",
 		"source", rozo.SourceName, "event_type", e.EventType,
 		"contract_id", e.ContractID, "ledger", e.Ledger, "tx_hash", e.TxHash)
+}
+
+// persistSoroCreditEvent routes one sorocredit event to its served-tier
+// table by EventType — the single Go event type fans out to four tables
+// (credit_positions / credit_statements / credit_settlements /
+// credit_events). It converts the source event into the timescale row
+// struct here (storage keeps its no-upward-import boundary). NOTE: the
+// on-wire "Liquidation" event is a SCHEDULED settlement, written to
+// credit_settlements — NOT a distress/liquidation signal (see
+// internal/sources/sorocredit).
+func persistSoroCreditEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e sorocredit.Event) {
+	var err error
+	switch e.EventType {
+	case sorocredit.TypeNewCollateralContract:
+		err = store.InsertCreditPosition(ctx, timescale.CreditPosition{
+			CollateralContract: e.CollateralContract,
+			PositionUUID:       e.PositionUUID,
+			PositionName:       e.PositionName,
+			Owner:              e.Owner,
+			Ledger:             e.Ledger,
+			LedgerCloseTime:    e.ObservedAt,
+			TxHash:             e.TxHash,
+			OpIndex:            e.OpIndex,
+			EventIndex:         e.EventIndex,
+		})
+	case sorocredit.TypeStatement:
+		var stmtTime time.Time
+		if e.StatementTime != nil {
+			stmtTime = *e.StatementTime
+		}
+		err = store.InsertCreditStatement(ctx, timescale.CreditStatement{
+			StatementUUID:      e.StatementUUID,
+			PositionUUID:       e.PositionUUID,
+			CollateralContract: e.CollateralContract,
+			Amount:             e.Amount,
+			StatementTime:      stmtTime,
+			Ledger:             e.Ledger,
+			LedgerCloseTime:    e.ObservedAt,
+			TxHash:             e.TxHash,
+			OpIndex:            e.OpIndex,
+			EventIndex:         e.EventIndex,
+		})
+	case sorocredit.TypeSettlement:
+		err = store.InsertCreditSettlement(ctx, timescale.CreditSettlement{
+			CollateralContract: e.CollateralContract,
+			PositionUUID:       e.PositionUUID,
+			StatementUUID:      e.StatementUUID,
+			SettlerAccount:     e.Account,
+			DebtAsset:          e.Asset,
+			SettledAmount:      e.Amount,
+			Attributes:         e.Attributes,
+			Ledger:             e.Ledger,
+			LedgerCloseTime:    e.ObservedAt,
+			TxHash:             e.TxHash,
+			OpIndex:            e.OpIndex,
+			EventIndex:         e.EventIndex,
+		})
+	case sorocredit.TypeWithdrawal, sorocredit.TypeBeaconUpdated,
+		sorocredit.TypeSupportedAssetAdded, sorocredit.TypeCollateralHashUpdated:
+		err = store.InsertCreditEvent(ctx, timescale.CreditEvent{
+			EventType:          string(e.EventType),
+			CollateralContract: e.CollateralContract,
+			Asset:              e.Asset,
+			Account:            e.Account,
+			Amount:             e.Amount,
+			Attributes:         e.Attributes,
+			Ledger:             e.Ledger,
+			LedgerCloseTime:    e.ObservedAt,
+			TxHash:             e.TxHash,
+			OpIndex:            e.OpIndex,
+			EventIndex:         e.EventIndex,
+		})
+	default:
+		obs.SourceInsertErrorsTotal.WithLabelValues(sorocredit.SourceName, "unhandled_type").Inc()
+		logger.Warn("unhandled sorocredit EventType", "event_type", e.EventType, "ledger", e.Ledger)
+		return
+	}
+	if err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(sorocredit.SourceName, "sorocredit_"+string(e.EventType)).Inc()
+		logger.Error("insert sorocredit event failed",
+			"event_type", e.EventType, "collateral_contract", e.CollateralContract,
+			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return
+	}
+	bumpEntryCount(ctx, logger, store, sorocredit.SourceName)
+	logger.Debug("sorocredit event ingested",
+		"source", sorocredit.SourceName, "event_type", e.EventType,
+		"collateral_contract", e.CollateralContract, "ledger", e.Ledger)
 }
 
 // bumpEntryCount is the shared 'entries' counter increment used by

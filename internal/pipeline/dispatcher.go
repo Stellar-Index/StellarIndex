@@ -49,6 +49,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/sources/sdex"
 	sep41supply "github.com/StellarIndex/stellar-index/internal/sources/sep41_supply"
 	sep41transfers "github.com/StellarIndex/stellar-index/internal/sources/sep41_transfers"
+	"github.com/StellarIndex/stellar-index/internal/sources/sorocredit"
 	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
 	soroswap_router "github.com/StellarIndex/stellar-index/internal/sources/soroswap_router"
 	"github.com/StellarIndex/stellar-index/internal/sources/trustlines"
@@ -85,7 +86,7 @@ import (
 // Empty soroswapOpts is fine for tests / contexts that don't need
 // persistence (the verify-decoders subcommand uses SeedFromFactoryRPC
 // instead and ignores postgres entirely).
-func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (*dispatcher.Dispatcher, error) { //nolint:gocognit,gocyclo // linear case-table, splitting hurts readability
+func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (*dispatcher.Dispatcher, error) { //nolint:gocognit,gocyclo,funlen // linear case-table, splitting hurts readability
 	var decoders []dispatcher.Decoder
 	var opDecoders []dispatcher.OpDecoder
 	var callDecoders []dispatcher.ContractCallDecoder
@@ -190,6 +191,14 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 			// Class=ClassBridge: bridge flow, never VWAP. See
 			// internal/sources/rozo/README.md.
 			decoders = append(decoders, rozo.NewDecoder())
+		case sorocredit.SourceName:
+			// sorocredit — an unbranded consumer-USDC credit / CDP
+			// protocol. Event Decoder gated on a SINGLE trust-root main
+			// contract (+ its announced Collateral-<uuid> children) —
+			// ADR-0035. Class=ClassLending, never VWAP. Its "Liquidation"
+			// events are SCHEDULED SETTLEMENTS, not distress — see
+			// internal/sources/sorocredit/README.md.
+			decoders = append(decoders, sorocredit.NewDecoder())
 		default:
 			return nil, fmt.Errorf("unknown source %q in ingestion.enabled_sources — check internal/sources/", name)
 		}
