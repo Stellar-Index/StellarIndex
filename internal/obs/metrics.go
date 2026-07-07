@@ -92,6 +92,8 @@ func registerAppMetrics() {
 
 		SupplyCrossCheckDivergenceStroops,
 		SupplyCrossCheckTotal,
+		SupplyDivergenceRatio,
+		SupplyDivergenceTotal,
 
 		AnomalyFreezeEngagedTotal,
 		AnomalyFreezeRecoveredTotal,
@@ -134,6 +136,7 @@ func registerAppMetricsTail() {
 
 		CustomerWebhookDeliveryDurationSeconds,
 		DivergenceRefreshDurationSeconds,
+		SupplyDivergenceDurationSeconds,
 		AggregatorSupplyRefreshDurationSeconds,
 		SEP41SupplyRollupAdvanceDurationSeconds,
 		AnomalyFreezeRecoverySweepDurationSeconds,
@@ -204,6 +207,12 @@ func registerAppMetricsTail() {
 	// real zero (not "no data") before the first outage.
 	for _, outcome := range []string{"retry", "recovered", "abandoned"} {
 		TradeInsertRetriesTotal.WithLabelValues(outcome)
+	}
+	// Supply cross-check outcomes — bounded, well-known label set so the
+	// `no_reference` "checker running blind" query reads a real zero
+	// (not "no data") before the first supply cross-check tick.
+	for _, outcome := range []string{"ok", "divergent", "no_reference", "refresh_error"} {
+		SupplyDivergenceTotal.WithLabelValues(outcome)
 	}
 }
 
@@ -1592,6 +1601,90 @@ var SupplyCrossCheckTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_supply_cross_check_total",
 		Help: "Cross-check evaluations, labelled by outcome (within|over|missing_snapshot|read_error).",
+	},
+	[]string{"outcome"},
+)
+
+// ─── Supply-divergence cross-check metrics ────────────────────────────
+//
+// DISTINCT from the SupplyCrossCheck* pair above: that pair is an
+// INTERNAL consistency check (a classic asset's Algorithm 2 sum vs its
+// SAC-wrapped Algorithm 3 sum — both OUR OWN numbers). The
+// SupplyDivergence* set below cross-checks OUR served circulating
+// supply against an EXTERNAL authoritative reference (the Stellar
+// Network Dashboard for XLM; CoinGecko when a Pro key is configured).
+// It catches a genuinely-stale SDF-reserve exclusion list — the drift
+// that a manual "is our supply right?" investigation is otherwise the
+// only defense against (docs/methodology/xlm-circulating-supply.md).
+//
+// Emitted by `cmd/stellarindex-aggregator/main.go` (obsSupplyDivergenceEmitter,
+// driven by `internal/divergence.SupplyService.Tick`) once per
+// `[divergence.supply].refresh_interval` when the check is enabled.
+
+// SupplyDivergenceRatio — gauge of the absolute relative divergence
+// |our − reference| / reference between OUR served circulating supply
+// and an external reference's, per (asset, reference).
+//
+// The primary alert target: `stellarindex_supply_divergence_high`
+// fires when this exceeds the operator threshold (default 0.01 = 1%,
+// well above the ~0.03% XLM Fee-Pool noise floor —
+// docs/methodology/xlm-circulating-supply.md). Labelled by `asset`
+// (canonical wire form, e.g. "native") and `reference`
+// ("stellar-dashboard" / "coingecko"). Cardinality bound by the tiny
+// flagship check set × reference set (single digits).
+//
+// NOT updated on the no_reference / refresh_error outcomes — a frozen
+// gauge (last-known value) is the correct behaviour when a reference
+// goes dark (the no_reference counter carries that signal), so a dead
+// reference never manufactures a divergence reading.
+var SupplyDivergenceRatio = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_supply_divergence_ratio",
+		Help: "Absolute relative divergence |our − reference| / reference of served circulating supply, per (asset, reference). Alert when > 1% (well above the ~0.03% XLM noise floor).",
+	},
+	[]string{"asset", "reference"},
+)
+
+// SupplyDivergenceTotal — per-outcome counter for the supply
+// cross-check, one increment per (asset, tick):
+//
+//   - `ok`            — served figure agreed with every responding
+//     reference within the threshold.
+//   - `divergent`     — a responding reference disagreed by more than
+//     the threshold. The ratio gauge carries the magnitude.
+//   - `no_reference`  — served figure loaded but every reference was
+//     unreachable / didn't publish the asset (CoinGecko 429, Dashboard
+//     outage). Graceful-degrade — deliberately NOT paged, so a dead
+//     reference isn't a false divergence alarm.
+//   - `refresh_error` — OUR served snapshot couldn't be read
+//     (bootstrap, storage error). Nothing to compare.
+//
+// The `no_reference` rate is the "checker running blind" signal (the
+// CS-088 analogue on the supply path); operators watch it but it does
+// not page.
+var SupplyDivergenceTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_supply_divergence_total",
+		Help: "Supply cross-check evaluations per (asset, tick), labelled by outcome (ok|divergent|no_reference|refresh_error).",
+	},
+	[]string{"outcome"},
+)
+
+// SupplyDivergenceDurationSeconds — latency histogram for one
+// (asset, tick) supply cross-check evaluation, including the served
+// read + the HTTP fan-out to every reference. Labelled by outcome
+// (matches the counter) so operators chart the healthy `ok` path
+// separately from the slow-vendor / timeout `no_reference` path.
+//
+// Buckets span 10 ms → 30 s: a warm served read is single-digit ms;
+// a single slow reference (Dashboard / CoinGecko) is ~1-10 s; the
+// worst case is the per-reference timeout (default 10s) compounded
+// across the reference set.
+var SupplyDivergenceDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_supply_divergence_duration_seconds",
+		Help:    "Per-(asset, tick) supply cross-check latency, labelled by outcome (ok|divergent|no_reference|refresh_error).",
+		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 	},
 	[]string{"outcome"},
 )

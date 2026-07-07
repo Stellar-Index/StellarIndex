@@ -575,6 +575,31 @@ func run(cfgPath string, dryRun bool) error {
 		}
 	}
 
+	// ─── Supply-divergence cross-check worker ───────────────────
+	// Compares OUR served circulating_supply against an external
+	// authoritative reference (Stellar Network Dashboard for XLM;
+	// CoinGecko when a Pro key is set) and emits
+	// stellarindex_supply_divergence_ratio + _total{outcome}. This
+	// automates the manual "is our supply right?" check — catching a
+	// stale SDF-reserve exclusion list — while degrading gracefully to
+	// `no_reference` (not a false alarm) when a reference is dark.
+	// Gated on [divergence.supply].enabled; reads whatever snapshots
+	// the supply pipeline (goroutine OR systemd-timer path) has
+	// written, so it lives OUTSIDE the aggregator_refresh_enabled gate.
+	supplyDivSvc, err := buildSupplyDivergenceService(cfg.Divergence.Supply, store,
+		logger.With("component", "supply-divergence"))
+	if err != nil {
+		return fmt.Errorf("supply-divergence service init: %w", err)
+	}
+	if supplyDivSvc != nil {
+		interval := time.Duration(cfg.Divergence.Supply.RefreshIntervalSeconds) * time.Second
+		refresherWG.Add(1)
+		go func() {
+			defer refresherWG.Done()
+			runSupplyDivergenceRefresh(rootCtx, supplyDivSvc, interval)
+		}()
+	}
+
 	// ─── Freeze-recovery worker (F-1229) ────────────────────────
 	// Closes durable freeze rows once the Redis marker TTL elapses;
 	// without it, the freeze_events table accumulates open rows
@@ -1517,6 +1542,123 @@ func (obsCrossCheckEmitter) Divergence(classicKey string, stroops float64) {
 
 func (obsCrossCheckEmitter) Outcome(kind supply.CrossCheckOutcomeKind) {
 	obs.SupplyCrossCheckTotal.WithLabelValues(string(kind)).Inc()
+}
+
+// ─── Supply-divergence cross-check wiring ────────────────────────────
+
+// buildSupplyDivergenceService composes the supply cross-check service
+// from `[divergence.supply]`. Returns (nil, nil) when the check is
+// disabled OR when no reference is enabled — a service with nothing to
+// compare against would emit only `no_reference` forever, so it isn't
+// wired (the graceful-degrade posture the task calls for).
+func buildSupplyDivergenceService(cfg config.DivergenceSupplyConfig, store *timescale.Store, logger *slog.Logger) (*divergence.SupplyService, error) {
+	if !cfg.Enabled {
+		return nil, nil
+	}
+	refs := buildSupplyDivergenceReferences(cfg)
+	if len(refs) == 0 {
+		logger.Warn("supply divergence enabled but every reference is disabled — skipping (no reference to compare against)")
+		return nil, nil
+	}
+	svc, err := divergence.NewSupplyService(divergence.SupplyServiceOptions{
+		References:          refs,
+		Reader:              divergenceServedSupplyReader{s: store},
+		Emitter:             obsSupplyDivergenceEmitter{},
+		Threshold:           cfg.ThresholdPct / 100.0, // percent → ratio
+		PerReferenceTimeout: time.Duration(cfg.PerReferenceTimeoutSeconds) * time.Second,
+		Logger:              logger,
+	})
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(refs))
+	for i, r := range refs {
+		names[i] = r.Name()
+	}
+	logger.Info("supply-divergence worker wired",
+		"references", names,
+		"threshold_pct", cfg.ThresholdPct,
+		"refresh_interval_seconds", cfg.RefreshIntervalSeconds)
+	return svc, nil
+}
+
+// buildSupplyDivergenceReferences constructs the enabled external
+// circulating-supply references. The Stellar Dashboard covers XLM (free,
+// authoritative); CoinGecko covers any asset with a coin id but is off
+// by default (free tier 429-throttled since 2026-06-19).
+func buildSupplyDivergenceReferences(cfg config.DivergenceSupplyConfig) []divergence.SupplyReference {
+	var refs []divergence.SupplyReference
+	if cfg.Dashboard.Enabled {
+		refs = append(refs, divergence.NewStellarDashboardReference(divergence.StellarDashboardOptions{
+			BaseURL: cfg.Dashboard.BaseURL,
+		}))
+	}
+	if cfg.CoinGecko.Enabled {
+		refs = append(refs, divergence.NewCoinGeckoSupplyReference(divergence.CoinGeckoSupplyOptions{
+			BaseURL: cfg.CoinGecko.BaseURL,
+			APIKey:  cfg.CoinGecko.APIKey,
+			IDMap:   cfg.CoinGecko.IDMap,
+		}))
+	}
+	return refs
+}
+
+// runSupplyDivergenceRefresh ticks the supply cross-check on interval,
+// returning on ctx cancellation. The first cycle runs immediately so a
+// fresh deployment surfaces the outcome metric on the first scrape
+// (operators see "the checker is running" rather than silence).
+func runSupplyDivergenceRefresh(ctx context.Context, svc *divergence.SupplyService, interval time.Duration) {
+	svc.Tick(ctx)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			svc.Tick(ctx)
+		}
+	}
+}
+
+// divergenceServedSupplyReader adapts *timescale.Store to
+// divergence.ServedSupplyReader, mapping timescale's ErrNotFound onto
+// divergence.ErrNoServedSupply so the service reads the bootstrap state
+// (no snapshot yet) as `refresh_error`, distinct from a real read
+// failure.
+type divergenceServedSupplyReader struct{ s *timescale.Store }
+
+func (a divergenceServedSupplyReader) LatestCirculatingSupply(ctx context.Context, assetKey string) (divergence.ServedSupply, error) {
+	snap, err := a.s.LatestSupply(ctx, assetKey)
+	if errors.Is(err, timescale.ErrNotFound) {
+		return divergence.ServedSupply{}, fmt.Errorf("LatestSupply %s: %w", assetKey, divergence.ErrNoServedSupply)
+	}
+	if err != nil {
+		return divergence.ServedSupply{}, err
+	}
+	return divergence.ServedSupply{
+		Circulating:    snap.CirculatingSupply,
+		LedgerSequence: snap.LedgerSequence,
+		ObservedAt:     snap.ObservedAt,
+	}, nil
+}
+
+// obsSupplyDivergenceEmitter wires divergence.SupplyEmitter onto the
+// package-level obs collectors — kept as a tiny adapter so the
+// divergence package stays Prometheus-agnostic (same split as
+// obsCrossCheckEmitter).
+type obsSupplyDivergenceEmitter struct{}
+
+func (obsSupplyDivergenceEmitter) Ratio(asset, reference string, ratio float64) {
+	obs.SupplyDivergenceRatio.WithLabelValues(asset, reference).Set(ratio)
+}
+
+func (obsSupplyDivergenceEmitter) Outcome(kind divergence.SupplyOutcomeKind) {
+	obs.SupplyDivergenceTotal.WithLabelValues(string(kind)).Inc()
+}
+
+func (obsSupplyDivergenceEmitter) Duration(kind divergence.SupplyOutcomeKind, seconds float64) {
+	obs.SupplyDivergenceDurationSeconds.WithLabelValues(string(kind)).Observe(seconds)
 }
 
 // buildDivergenceReferences mirrors the API binary's helper of the

@@ -238,6 +238,16 @@ the `env:` column.
 | `divergence.redstone.max_age_minutes` | `int` | `0` | — | Staleness ceiling in minutes for the oracle's latest observation; older observations are rejected as reference-unavailable. 0 = per-oracle default (Reflector 30m, Redstone/Band 26h). |
 | `divergence.band.enabled` | `bool` | `true` | — | Whether this on-chain oracle reference is wired into the divergence service. |
 | `divergence.band.max_age_minutes` | `int` | `0` | — | Staleness ceiling in minutes for the oracle's latest observation; older observations are rejected as reference-unavailable. 0 = per-oracle default (Reflector 30m, Redstone/Band 26h). |
+| `divergence.supply.enabled` | `bool` | `false` | — | Whether the supply cross-check worker runs. Off by default (makes outbound HTTP calls; opt in on r1 via ansible). |
+| `divergence.supply.refresh_interval_seconds` | `int` | `900` | — | Per-cycle interval for the supply cross-check worker. Supply moves slowly, so a slow cadence is fine. Default 900 (15 min). |
+| `divergence.supply.threshold_pct` | `float64` | `1.0` | — | Relative-divergence percentage above which a supply cross-check reads 'divergent' and the alert fires. Default 1.0 (well above the ~0.03% XLM noise floor). |
+| `divergence.supply.per_reference_timeout_seconds` | `int` | `10` | — | Bound for each supply-reference HTTP call. Default 10. |
+| `divergence.supply.dashboard.enabled` | `bool` | `true` | — | Whether the Stellar Dashboard supply reference is consulted. On by default within [divergence.supply]. |
+| `divergence.supply.dashboard.base_url` | `string` | _(required)_ | — | Dashboard API base. Empty defaults to https://dashboard.stellar.org/api/v3. The reference GETs base_url + /lumens. |
+| `divergence.supply.coingecko.enabled` | `bool` | `false` | — | Whether the CoinGecko supply reference is consulted. Off by default (free tier 429-throttled). |
+| `divergence.supply.coingecko.api_key` | `string` | _(required)_ | `COINGECKO_API_KEY` | CoinGecko Pro API key, sent as x-cg-pro-api-key. Prefer env var COINGECKO_API_KEY. |
+| `divergence.supply.coingecko.base_url` | `string` | _(required)_ | — | CoinGecko API base. Empty defaults to https://api.coingecko.com/api/v3. |
+| `divergence.supply.coingecko.id_map` | `map` | `{}` | — | Maps canonical asset_id → CoinGecko coin id for the supply lookup. Empty falls back to the built-in default (native/crypto:XLM → stellar). |
 
 ### `[price_alerts]`
 
