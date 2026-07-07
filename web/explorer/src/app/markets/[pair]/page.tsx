@@ -66,6 +66,11 @@ interface HistoryTrade {
   base_amount?: string;
   quote_amount?: string;
   price: string;
+  // Smallest-unit scale per side (divisor 10^n). /v1/history resolves
+  // the Soroban token's declared decimals(); omitted (→ fall back to 7)
+  // for native/classic/fiat.
+  base_decimals?: number;
+  quote_decimals?: number;
 }
 
 const PAIR_SEPARATOR = '~';
@@ -186,9 +191,17 @@ export async function generateMetadata({
 // return null/[] only when the API authoritatively answered 4xx —
 // a pair with no direct VWAP or no recent trades is a legitimate
 // state the page renders honestly as "—".
+//
+// EXCEPTION: fetchPrice passes softFail — the live price is refreshed
+// client-side by <LivePrice>, so a cold/slow/unreachable /v1/price must
+// NOT abort the export (the edge has been seen hanging ~25s on a
+// cold-cache asset, landing on a different one each run). It degrades to
+// no build-time price instead of throwing; short timeout + few attempts
+// keep a hung endpoint from stalling the build.
 function fetchPrice(base: string, quote: string): Promise<PriceResp | null> {
   return buildFetchData<PriceResp>(
     `/v1/price?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
+    { softFail: true, timeoutMs: 6_000, attempts: 2 },
   );
 }
 
@@ -471,17 +484,16 @@ export default async function PairPage({ params }: { params: Params }) {
                       {t.price}
                     </td>
                     {/* AM-02: amounts arrive as smallest-unit scaled
-                        integers; render in asset units. NOTE: /v1/history
-                        doesn't yet carry per-side decimals, so we assume 7
-                        (correct for XLM/classic + most Soroban tokens). A
-                        base/quote token declaring non-7 decimals would
-                        mis-scale here until the endpoint exposes them —
-                        tracked as the documented fallback constraint. */}
+                        integers; render in asset units using the per-side
+                        decimals /v1/history now resolves (the token
+                        contract's declared decimals() for Soroban tokens),
+                        falling back to 7 for native/classic/fiat where the
+                        field is omitted. */}
                     <td className="px-3 py-2 text-right tabular-nums text-ink-muted">
-                      {t.base_amount ? (Number(t.base_amount) / 1e7).toLocaleString(undefined, { maximumFractionDigits: 4 }) : '—'}
+                      {t.base_amount ? (Number(t.base_amount) / 10 ** (t.base_decimals ?? 7)).toLocaleString(undefined, { maximumFractionDigits: 4 }) : '—'}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-ink-muted">
-                      {t.quote_amount ? (Number(t.quote_amount) / 1e7).toLocaleString(undefined, { maximumFractionDigits: 4 }) : '—'}
+                      {t.quote_amount ? (Number(t.quote_amount) / 10 ** (t.quote_decimals ?? 7)).toLocaleString(undefined, { maximumFractionDigits: 4 }) : '—'}
                     </td>
                   </tr>
                 ))}

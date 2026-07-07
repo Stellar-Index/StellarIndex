@@ -536,3 +536,115 @@ func TestDecode_RealMainnetEvent_BytesWrappedBody(t *testing.T) {
 		t.Errorf("Price = %s want 4349500000", updates[0].Price)
 	}
 }
+
+// mxneUSDMXNAt8 is RedStone's on-chain MXNe value in market-FX
+// orientation: ~17.3911 pesos per USD (USDMXN), scaled to 8 decimals.
+const mxneUSDMXNAt8 = int64(1_739_110_000) // 17.3911 × 1e8
+
+// TestDecode_MXNe_InvertedToTokenInUSD is the FIX-2 regression.
+// RedStone publishes MXNe as USDMXN (~17.39 pesos/USD); our registry
+// marks it Invert, so the decoder must reciprocate to MXNe-in-USD
+// (~0.0575) — matching every other feed (quote fiat:USD) and
+// reflector-fx MXN (~0.0573, verified live 2026-07-07). Before the
+// fix this served ~17.39, implying 1 MXNe = $17.39 — a ~302× error.
+func TestDecode_MXNe_InvertedToTokenInUSD(t *testing.T) {
+	body := encodeWritePricesBody(t, relayerG,
+		[]*big.Int{big.NewInt(mxneUSDMXNAt8)}, 1_745_000_000_000, 1_745_000_060_000)
+	args := []string{
+		encodeAddressArg(t, relayerG),
+		encodeStringVecArg(t, []string{"MXNe"}),
+		encodePayloadArg(t),
+	}
+	ev := &events.Event{
+		Topic:          []string{TopicSymbolRedstone},
+		Value:          body,
+		OpArgs:         args,
+		ContractID:     adapterC,
+		Ledger:         52_000_001,
+		TxHash:         "mxne",
+		OperationIndex: 0,
+		LedgerClosedAt: "2026-04-23T12:00:00Z",
+	}
+	closedAt, _ := time.Parse(time.RFC3339, ev.LedgerClosedAt)
+
+	updates, err := decodeWritePrices(ev, closedAt)
+	if err != nil {
+		t.Fatalf("decodeWritePrices: %v", err)
+	}
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 update, got %d", len(updates))
+	}
+
+	mxne, _ := canonical.NewCryptoAsset("MXNe")
+	if !updates[0].Asset.Equal(mxne) {
+		t.Errorf("asset = %s want crypto:MXNe", updates[0].Asset)
+	}
+	if updates[0].Quote.String() != "fiat:USD" {
+		t.Errorf("quote = %s want fiat:USD", updates[0].Quote)
+	}
+	// Value must be reciprocated: ~0.0575 in USD, NOT the raw ~17.39.
+	scaled, _ := new(big.Rat).SetFrac(updates[0].Price.BigInt(), big.NewInt(100_000_000)).Float64()
+	if scaled < 0.055 || scaled > 0.060 {
+		t.Errorf("MXNe-in-USD = %v, want ~0.0575 (raw USDMXN ~17.39 means the inversion did not run)", scaled)
+	}
+	// Guard explicitly against the pre-fix (un-inverted) value.
+	if updates[0].Price.BigInt().Cmp(big.NewInt(mxneUSDMXNAt8)) == 0 {
+		t.Error("MXNe price stored un-inverted (still ~17.39 pesos/USD) — the Invert path did not fire")
+	}
+}
+
+// TestDecode_NonInvertedCurrencyFeed_Unchanged pins that inversion is
+// scoped to Invert feeds only: the sibling Mexican-peso RWA feed
+// CETES (published dollars-per-unit, ~$0.067) passes through
+// unchanged. A regression that inverted every currency feed would
+// turn CETES into ~14.85 and be caught here.
+func TestDecode_NonInvertedCurrencyFeed_Unchanged(t *testing.T) {
+	const cetesUSDAt8 = int64(6_734_600) // 0.067346 × 1e8
+	body := encodeWritePricesBody(t, relayerG,
+		[]*big.Int{big.NewInt(cetesUSDAt8)}, 1_745_000_000_000, 1_745_000_060_000)
+	args := []string{
+		encodeAddressArg(t, relayerG),
+		encodeStringVecArg(t, []string{"CETES"}),
+		encodePayloadArg(t),
+	}
+	ev := &events.Event{
+		Topic:      []string{TopicSymbolRedstone},
+		Value:      body,
+		OpArgs:     args,
+		ContractID: adapterC,
+		Ledger:     52_000_002,
+		TxHash:     "cetes",
+	}
+	updates, err := decodeWritePrices(ev, time.Now())
+	if err != nil {
+		t.Fatalf("decodeWritePrices: %v", err)
+	}
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 update, got %d", len(updates))
+	}
+	if updates[0].Price.BigInt().Cmp(big.NewInt(cetesUSDAt8)) != 0 {
+		t.Errorf("CETES price = %s, want %d unchanged (non-Invert feed must not be reciprocated)",
+			updates[0].Price, cetesUSDAt8)
+	}
+	if updates[0].Quote.String() != "fiat:USD" {
+		t.Errorf("CETES quote = %s want fiat:USD", updates[0].Quote)
+	}
+}
+
+// TestReciprocalAtScale checks the exact big.Int reciprocal used by
+// the Invert path (ADR-0003 — no float/int64 truncation).
+func TestReciprocalAtScale(t *testing.T) {
+	// 1/2.0 at 8 decimals: raw 2e8 → 0.5e8.
+	if got := reciprocalAtScale(canonical.NewAmount(big.NewInt(200_000_000)), 8); got.BigInt().Cmp(big.NewInt(50_000_000)) != 0 {
+		t.Errorf("1/2.0 @1e8 = %s, want 50000000", got)
+	}
+	// Round half-up: 1/0.3 at scale 1e1 → 100/3 = 33.33 → 33.
+	if got := reciprocalAtScale(canonical.NewAmount(big.NewInt(3)), 1); got.BigInt().Cmp(big.NewInt(33)) != 0 {
+		t.Errorf("100/3 = %s, want 33 (round half-up)", got)
+	}
+	// Involution on a clean value: invert(invert(4.0)) == 4.0.
+	inv := reciprocalAtScale(canonical.NewAmount(big.NewInt(400_000_000)), 8)
+	if back := reciprocalAtScale(inv, 8); back.BigInt().Cmp(big.NewInt(400_000_000)) != 0 {
+		t.Errorf("invert(invert(4.0)) = %s, want 400000000", back)
+	}
+}

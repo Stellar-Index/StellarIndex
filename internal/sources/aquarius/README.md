@@ -8,29 +8,37 @@ or a pool-token cache. See the protocol verification page:
 
 ## What this ingests
 
-Aquarius has multiple pool shapes. The current runtime only cares
-about the common `trade` event shape they share:
+Aquarius has multiple pool shapes. The decoder handles the `trade`
+event (pricing) plus the liquidity/reserves surface (analytics):
 
-1. **Volatile** — constant-product pools.
-2. **Stableswap** — stablecoin-oriented pools.
-3. **Future variants** — any pool/event shape that does not match the
-   current 4-topic `trade` contract is rejected until explicitly
-   audited and added.
+1. **Volatile** — constant-product pools (2 tokens).
+2. **Stableswap** — stablecoin-oriented pools (2/3/4 tokens).
+3. **Future variants** — any pool/event shape that does not match a
+   known topic contract is rejected until explicitly audited and added.
 
-The decoder emits one `canonical.Trade` per accepted trade event.
-Unlike Soroswap, there is no swap+sync correlation buffer.
+The decoder emits one `canonical.Trade` per accepted `trade` event and
+one `ReservesEvent` / `LiquidityEvent` per accepted reserves / liquidity
+event. Unlike Soroswap, there is no swap+sync correlation buffer.
 
 ## Events we care about
 
-| Event | Topic 0 | Carries | Role |
+| Event | Topic 0 | Carries | Lands in |
 | --- | --- | --- | --- |
-| `trade` | `trade` | `token_in`, `token_out`, `user` in topics; sold/bought/fee amounts in body | PRIMARY — single event per trade |
-| `deposit_liquidity` | `deposit_liquidity` | LP state change | ignored |
-| `withdraw_liquidity` | `withdraw_liquidity` | LP state change | ignored |
-| `update_reserves` | `update_reserves` | reserve sync state | ignored |
+| `trade` | `trade` | `token_in`, `token_out`, `user` in topics; sold/bought/fee amounts in body | `trades` (source=aquarius) |
+| `update_reserves` | `update_reserves` | POST-STATE reserve vector `Vec<i128>` in body (no token addresses — positional, canonical pool token order) | `aquarius_reserves` (fanned one row per token position) — the first real Aquarius TVL/liquidity-depth signal |
+| `deposit_liquidity` | `deposit_liquidity` | per-token amounts + LP shares minted; token addresses in topics `[Symbol, token_0…token_{n-1}]`, body `Vec<i128>=[amount_0…amount_{n-1}, shares]` | `aquarius_liquidity` (action=deposit, fanned per token) |
+| `withdraw_liquidity` | `withdraw_liquidity` | same wire shape as deposit; trailing body element is shares BURNED | `aquarius_liquidity` (action=withdraw, fanned per token) |
 
-The live dispatcher matches only `trade`. Other Aquarius event types
-are intentionally excluded from the ingest path.
+All four are gated IDENTICALLY on contract identity (ADR-0035/0040,
+CS-026): they match only when emitted by a REGISTERED Aquarius pool, so
+a look-alike cannot inject fabricated reserves any more than fabricated
+trades. Reserves/liquidity are ADDITIVE analytics — Aquarius has no
+published price, so these rows never reach VWAP.
+
+`update_reserves` and the liquidity events fire on N-token pools
+(topic_count 3/4/5 observed live for 2/3/4-token pools); the decoder
+fans out one row per token position rather than assuming a 2-token
+(a/b) shape, so stableswap events are captured, not dropped.
 
 ## Quirks
 
@@ -67,10 +75,10 @@ Aquarius differs from Soroswap and Phoenix operationally:
 | --- | --- |
 | `README.md` | this file |
 | `events.go` | topic symbols and source constants |
-| `decode.go` | Aquarius `trade` event -> `canonical.Trade` |
-| `dispatcher_adapter.go` | stateless dispatcher-facing decoder |
-| `consumer.go` | `consumer.Event` wrapper emitted after decode |
-| `decode_test.go`, `adapter_test.go`, `source_test.go`, `topic_decoder_reject_test.go`, `real_fixture_test.go` | unit + reject-path + real-fixture coverage |
+| `decode.go` | Aquarius `trade` -> `canonical.Trade`; `update_reserves`/`deposit_liquidity`/`withdraw_liquidity` -> `ReservesEvent`/`LiquidityEvent` |
+| `dispatcher_adapter.go` | contract-identity-gated dispatcher-facing decoder |
+| `consumer.go` | `consumer.Event` wrappers emitted after decode (`TradeEvent`, `ReservesEvent`, `LiquidityEvent`) |
+| `decode_test.go`, `adapter_test.go`, `source_test.go`, `topic_decoder_reject_test.go`, `real_fixture_test.go`, `liquidity_decode_test.go` | unit + reject-path + real-fixture coverage |
 
 ## Relationship to other connectors
 

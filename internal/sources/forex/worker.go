@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log/slog"
 	"time"
+
+	"github.com/StellarIndex/stellar-index/internal/obs"
 )
 
 // FXQuoteWriter is the write seam between the worker and persistent
@@ -199,6 +201,18 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 		return
 	}
 	w.logger.Info("forex: fx_quotes persisted", "rows", len(batch))
+
+	// Stamp the FX-feed liveness gauge ONLY on a committed non-empty
+	// write. An empty batch (upstream returned no usable rates) or a
+	// failed InsertFXQuoteBatch (returned above) deliberately leaves the
+	// prior stamp untouched so a wedged-but-erroring worker cannot keep
+	// the feed looking fresh. The staleness of this gauge is what the
+	// stellarindex_external_fx_feed_stale alert keys off — it catches a
+	// dry fiat-FX feed BEFORE the 7-day fx_snap lookback expires and
+	// fiat-quoted pairs silently break.
+	if len(batch) > 0 {
+		obs.ExternalFXLastQuoteUnix.WithLabelValues(sourceTag).Set(float64(time.Now().Unix()))
+	}
 }
 
 // shouldRefreshHistory returns true when the worker should re-pull

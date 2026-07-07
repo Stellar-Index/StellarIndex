@@ -43,9 +43,14 @@ func Classify(e *events.Event) string {
 		return ""
 	}
 	switch e.Topic[0] {
-	case TopicSymbolPayment:
+	case TopicSymbolPayment, TopicSymbolPaymentEvent:
+		// Both the legacy short-form symbol_short!("payment") and the
+		// live long-form ScSymbol "payment_event" route to the same
+		// field-name-based body decode (DecodePayment). The deployed
+		// mainnet contract emits the long form — the short form never
+		// fired live, leaving rozo_events empty (fixed 2026-07-07).
 		return EventPayment
-	case TopicSymbolFlush:
+	case TopicSymbolFlush, TopicSymbolFlushEvent:
 		return EventFlush
 	}
 	return ""

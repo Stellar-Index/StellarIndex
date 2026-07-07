@@ -57,6 +57,18 @@ type SEP41SupplyComponents struct {
 	// the F-1236 (codex audit-2026-05-12) refresher freshness
 	// gate. Zero = "reader didn't populate" — the gate skips.
 	MinComponentLedger uint32
+
+	// GenesisBaselineSeeded reports whether a pre-Soroban genesis
+	// baseline has been seeded for this contract (migration 0088,
+	// incident 2026-07-06). When false, MintTotal/BurnTotal/
+	// ClawbackTotal cover only the Soroban era; a SAC-wrapper issued
+	// before Soroban therefore legitimately reads Σburn > Σmint until
+	// the operator seeds its opening balance. [SEP41Computer.Compute]
+	// uses this to route a negative total to the benign
+	// `missing_baseline` outcome (needs seeding) rather than the
+	// paging `compute_error` reserved for a genuine post-seed
+	// inconsistency.
+	GenesisBaselineSeeded bool
 }
 
 // SEP41SupplyReader is the read-side interface the [SEP41Computer]
@@ -98,12 +110,25 @@ func NewSEP41Computer(policy Policy, reader SEP41SupplyReader) (*SEP41Computer, 
 var ErrNotSoroban = errors.New("supply: asset is not a SEP-41 Soroban token")
 
 // ErrNegativeTotalSupply is returned when MintTotal − BurnTotal −
-// ClawbackTotal goes negative. Per SEP-41 semantics this is
-// physically impossible (you can't burn more than was minted); a
-// negative reading means the indexer's running totals mis-summed
-// somewhere upstream. Surface the error rather than emit a
-// negative-supply reading downstream.
+// ClawbackTotal goes negative AND the contract's pre-Soroban genesis
+// baseline HAS been seeded (so the totals already reflect lifetime
+// supply). Per SEP-41 semantics this is physically impossible (you
+// can't burn more than was ever minted); a negative reading here means
+// the indexer's running totals mis-summed somewhere upstream. Surface
+// the error rather than emit a negative-supply reading downstream —
+// the refresher maps it to the paging `compute_error` outcome.
 var ErrNegativeTotalSupply = errors.New("supply: SEP-41 mint − burn − clawback went negative")
+
+// ErrNegativeTotalMissingBaseline is returned when the total goes
+// negative but the contract's pre-Soroban genesis baseline has NOT
+// been seeded (migration 0088, incident 2026-07-06). A classic asset's
+// SAC-wrapper minted largely before Soroban legitimately reads
+// Σburn > Σmint over the Soroban-era-only window until the operator
+// seeds its opening balance (`stellarindex-ops supply seed-sep41-genesis`).
+// This is a range-scoped-baseline-missing condition, NOT indexer
+// corruption — the refresher maps it to the benign `missing_baseline`
+// outcome so it doesn't page.
+var ErrNegativeTotalMissingBaseline = errors.New("supply: SEP-41 total negative and pre-Soroban genesis baseline not seeded — run `stellarindex-ops supply seed-sep41-genesis`")
 
 // Compute returns the [Supply] for a SEP-41 Soroban token at the
 // supplied ledger. Per Algorithm 3:
@@ -145,8 +170,20 @@ func (c *SEP41Computer) Compute(ctx context.Context, asset canonical.Asset, ledg
 	total.Sub(total, comps.ClawbackTotal)
 
 	if total.Sign() < 0 {
+		// Distinguish a legitimately-missing pre-Soroban baseline (the
+		// SAC-wrapper's opening balance hasn't been seeded yet — a
+		// negative Soroban-era-only total is EXPECTED, not corruption)
+		// from a genuine post-seed inconsistency (baseline present and
+		// the total is STILL negative — physically impossible). The
+		// former routes to the benign `missing_baseline` outcome; the
+		// latter pages via `compute_error`. Migration 0088 / incident
+		// 2026-07-06.
+		sentinel := ErrNegativeTotalSupply
+		if !comps.GenesisBaselineSeeded {
+			sentinel = ErrNegativeTotalMissingBaseline
+		}
 		return Supply{}, fmt.Errorf("%w: mint=%s burn=%s clawback=%s for %s at ledger %d",
-			ErrNegativeTotalSupply,
+			sentinel,
 			comps.MintTotal, comps.BurnTotal, comps.ClawbackTotal,
 			key, ledger)
 	}

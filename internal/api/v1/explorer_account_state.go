@@ -13,6 +13,13 @@ import (
 type AccountsListView struct {
 	PricedAssets int                `json:"priced_assets"`
 	Accounts     []AccountWealthRow `json:"accounts"`
+	// AsOfLedger is the lake watermark this current-state ranking is
+	// fresh to (ADR-0041 Decision 4): the highest ledger the ClickHouse
+	// lake had captured at serve time. The ranking is a one-pass read
+	// over the current-state (ledger_entry_changes) projection, so a
+	// wedged sink makes it stale — pairs with `flags.stale`. Omitted
+	// when no watermark reader is wired.
+	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 }
 
 type AccountWealthRow struct {
@@ -67,7 +74,8 @@ func (s *Server) handleAccountsList(w http.ResponseWriter, r *http.Request) {
 	if lockErr != nil {
 		s.logger.Warn("accounts unspendable", "err", lockErr)
 	}
-	out := AccountsListView{PricedAssets: len(assets), Accounts: make([]AccountWealthRow, len(ranked))}
+	wmLedger, stale, _ := s.lakeWatermark(r.Context())
+	out := AccountsListView{PricedAssets: len(assets), Accounts: make([]AccountWealthRow, len(ranked)), AsOfLedger: wmLedger}
 	for i, a := range ranked {
 		out.Accounts[i] = AccountWealthRow{
 			AccountID: a.AccountID,
@@ -75,7 +83,7 @@ func (s *Server) handleAccountsList(w http.ResponseWriter, r *http.Request) {
 			Locked:    locked[a.AccountID],
 		}
 	}
-	writeJSON(w, out, Flags{})
+	writeJSON(w, out, Flags{Stale: stale})
 }
 
 // usdPriceMap builds parallel (asset, price) arrays for wealth ranking: native

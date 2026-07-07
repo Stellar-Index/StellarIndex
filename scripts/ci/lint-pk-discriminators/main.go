@@ -43,6 +43,7 @@ var protocolRowTables = []string{
 	"cctp_events", "rozo_events",
 	"defindex_flows",
 	"sep41_supply_events", "sep41_transfers",
+	"credit_positions", "credit_statements", "credit_settlements", "credit_events",
 }
 
 // allow maps a protocol-row table to the reason its PK is collision-free

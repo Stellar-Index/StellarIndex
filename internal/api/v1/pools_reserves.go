@@ -151,7 +151,15 @@ func (s *Server) handlePoolReserves(w http.ResponseWriter, r *http.Request) {
 		out = append(out, buildPoolReservesRow(st, displays))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Pool < out[j].Pool })
-	writeJSON(w, out, Flags{}, sourceSoroswap)
+	// ADR-0041 Decision 4: each row already carries its exact per-pool
+	// `as_of_ledger` (the pool's last state-change ledger — more precise
+	// than the cached watermark), but the envelope's `flags.stale` still
+	// reflects lake freshness: a wedged galexie→ClickHouse sink makes
+	// EVERY reserve read stale regardless of when a given pool last
+	// changed. Stamp it from the same cached watermark the other
+	// current-state reads use.
+	_, stale, _ := s.lakeWatermark(ctx)
+	writeJSON(w, out, Flags{Stale: stale}, sourceSoroswap)
 }
 
 // parsePoolReservesQuery validates ?source= and ?pool=. ok=false after

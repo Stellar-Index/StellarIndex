@@ -1,7 +1,7 @@
 ---
 title: Phoenix WASM-history audit
-last_verified: 2026-05-03
-status: ratified — v2 per-instance walk complete
+last_verified: 2026-07-07
+status: ratified — v2 per-instance walk complete; 2026-07-07 Map-schema addendum
 source: phoenix
 backfill_safe: true
 ---
@@ -280,6 +280,55 @@ here for completeness; backfill safety is unaffected.
   factory has been upgraded with a new pool-WASM-hash setting since
   this audit, the next run of this audit (extending
   `last_verified`) would catch any new hash.
+
+## 2026-07-07 addendum — new Map-body swap schema + QuoteAmount correction
+
+Two findings from the 2026-07-06 lake audit (factory
+`("create","liquidity_pool")` walk over `stellar.contract_events` —
+**13 pools**, up from the 11 in the 2026-04 walk).
+
+### New pool WASM: single-event Map-body swap (`CBENABXP…`)
+
+A 13th pool,
+`CBENABXP6C4C7WG6KB7JQOTDS5GIIXF3IX3PIYNZFCDZDWUHITO2HZ4S`
+(factory-created 2026-07-02, immediately after a factory
+`("Factory","Updated Config")` event), runs a NEWER pool WASM whose
+swap event shape differs from the audited 8-event String schema:
+
+- topic[0] is `ScvSymbol("swap")` (disc 15) — **not** the audited
+  `ScvString("swap")` (disc 14).
+- ONE event per swap; the body is an `ScvMap` with 8 Symbol keys
+  (underscore-spelled): `sender`, `sell_token`, `offer_amount`,
+  `buy_token`, `return_amount`, `actual_received_amount`,
+  `referral_fee_amount`, `spread_amount`. Note failure-mode #2 above
+  (underscore variant of `actual received amount`) is exactly what
+  this schema does — it is a distinct shape, not a corruption of the
+  String schema.
+
+Decoded via `decodeSwapMap` (map-field-name lookup, no correlation
+buffer) and gated via `MainnetMapPools`. Real fixture: ledger
+63307899, tx `3cb06db3…`, event_index 3 (golden test
+`internal/sources/phoenix/mapswap_test.go`).
+
+**WASM hash: PENDING operator capture.** Run
+`stellar contract fetch --id CBENABXP…` + sha256 against mainnet RPC
+and record it here. The decode is field-name driven (safe against the
+exact hash), but the BackfillSafe audit trail needs the hash before
+this pool contributes to any historical backfill range. This audit
+could not capture it from the lake — `contract_events` stores events,
+not the ContractInstance WASM reference.
+
+### QuoteAmount field-mapping correction (ALL pools)
+
+The audit found the decoder mapped `canonical.Trade.QuoteAmount =
+actual received amount`. Per `do_swap`, that field is the INPUT the
+pool received of `sell_token` (`balance_after − balance_before`),
+byte-identical to `offer_amount` — NOT an output. Every Phoenix trade
+therefore had `base_amount == quote_amount` (confirmed live:
+237,387/237,387 served rows). Corrected to `return_amount` (the
+net-of-fees `buy_token` amount transferred to the taker) 2026-07-07.
+Both swap schemas use `return_amount`. **Requires a historical Phoenix
+trade re-derive** to fix pre-fix rows.
 
 ## Decision
 
