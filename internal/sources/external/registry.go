@@ -55,6 +55,14 @@ var Registry = map[string]Metadata{
 	// docs/discovery/dexes-amms/blend.md and the blend source
 	// package README for the full extraction scope.
 	"blend": {Class: ClassLending, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-05-02; 11 contracts (9 pools + backstop + factory), 3 unique WASMs, no mid-life upgrades observed in 5h4m walk over [50457424, 62249727]. See docs/operations/wasm-audits/blend.md §"Phase 2 results". */},
+	// sorocredit — an unbranded consumer-USDC credit / CDP protocol
+	// (single main contract CCG5EWFY…). Credit positions / statements /
+	// scheduled-settlements — no published price, never VWAP. BackfillSafe
+	// stays FALSE until a WASM-history audit at
+	// docs/operations/wasm-audits/sorocredit.md. Its "Liquidation" events
+	// are SCHEDULED SETTLEMENTS, not distress — see
+	// internal/sources/sorocredit/README.md.
+	"sorocredit": {Class: ClassLending, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: false},
 
 	// ─── On-chain routers + aggregator vaults ────────────────────
 	// Excluded from VWAP — these don't emit independent trades; they

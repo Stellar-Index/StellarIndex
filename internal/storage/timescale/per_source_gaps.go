@@ -229,6 +229,16 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// per-ledger), so a wide override avoids paging on natural quiet.
 	// Genesis ≈ first backstop activity observed in the lake.
 	{Source: "blend-backstop", Table: "blend_backstop_events", LedgerColumn: "ledger", Genesis: 56_627_571, MinGapSizeOverride: 100000},
+	// sorocredit — consumer-USDC credit / CDP protocol (single main
+	// contract). Four tables. Genesis = the main contract's first event
+	// (2026-03-12). Wide override: live ingest starts at deploy and the
+	// historical back-window fills only via projector-replay, so a large
+	// threshold avoids paging on the empty pre-fill range. See
+	// internal/sources/sorocredit/README.md.
+	{Source: "sorocredit-positions", Table: "credit_positions", LedgerColumn: "ledger", Genesis: 61_620_822, MinGapSizeOverride: 200000},
+	{Source: "sorocredit-statements", Table: "credit_statements", LedgerColumn: "ledger", Genesis: 61_620_822, MinGapSizeOverride: 200000},
+	{Source: "sorocredit-settlements", Table: "credit_settlements", LedgerColumn: "ledger", Genesis: 61_620_822, MinGapSizeOverride: 200000},
+	{Source: "sorocredit-events", Table: "credit_events", LedgerColumn: "ledger", Genesis: 61_620_822, MinGapSizeOverride: 200000},
 	// soroban-events spans the entire Soroban era from pubnet
 	// activation. Same lower bound as sep41-transfers. Long
 	// ScanCadence: 50M+ rows, scan dominates postgres for 5+ min

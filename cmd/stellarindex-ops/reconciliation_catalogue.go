@@ -19,6 +19,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/sources/rozo"
 	sep41supply "github.com/StellarIndex/stellar-index/internal/sources/sep41_supply"
 	sep41transfers "github.com/StellarIndex/stellar-index/internal/sources/sep41_transfers"
+	"github.com/StellarIndex/stellar-index/internal/sources/sorocredit"
 	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
 	soroswap_router "github.com/StellarIndex/stellar-index/internal/sources/soroswap_router"
 )
@@ -102,6 +103,8 @@ type reconSource struct {
 //     covered by the data-derived gap detector, not the ADR-0033 projection
 //     reconcile; AFTER it has run they become eligible for the reconcile
 //     (promote them into this default set then).
+//
+//nolint:funlen // linear per-source catalogue; one entry per projected source, splitting scatters the reconcile spec.
 func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.Decoder) {
 	soroswapDec := soroswap.NewDecoder()
 
@@ -147,6 +150,29 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 		{name: "rozo", genesis: 62_403_000, dec: rozo.NewDecoder(), targets: []reconTarget{
 			{"rozo_events", "", []string{"rozo.event"}},
 		}},
+		{
+			// sorocredit — ADR-0035 contract-gated on a SINGLE trust-root
+			// main contract. The bare NewDecoder() hard-codes that trust
+			// root as its only "factory" and the main contract emits ALL
+			// events (children emit nothing), so IsFactory(main) matches
+			// everything without a factories/creationSym preseed. contractIDs
+			// pins the re-derive to the one emitter (fast + recognition
+			// attribution). One Go Event type fans out to four tables by the
+			// dynamic EventKind() — hence a target per table. NOTE: the
+			// "settlement" kind is the on-wire "Liquidation" event (scheduled
+			// settlement, NOT distress).
+			name: sorocredit.SourceName, genesis: sorocredit.GenesisLedger,
+			dec: sorocredit.NewDecoder(), contractIDs: []string{sorocredit.MainnetContract},
+			targets: []reconTarget{
+				{"credit_positions", "", []string{"sorocredit.new_collateral_contract"}},
+				{"credit_statements", "", []string{"sorocredit.statement_published"}},
+				{"credit_settlements", "", []string{"sorocredit.settlement"}},
+				{"credit_events", "", []string{
+					"sorocredit.withdrawal", "sorocredit.beacon_updated",
+					"sorocredit.supported_asset_added", "sorocredit.collateral_hash_updated",
+				}},
+			},
+		},
 		{name: blend_backstop.SourceName, genesis: blend_backstop.BackstopGenesisLedger, dec: blend_backstop.NewDecoder(), targets: []reconTarget{
 			{"blend_backstop_events", "", []string{"blend_backstop.event"}},
 		}},
