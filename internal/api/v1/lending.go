@@ -113,6 +113,13 @@ type LendingPoolReservesView struct {
 	Pool     string        `json:"pool"`
 	TVLUSD   *string       `json:"tvl_usd"` // sum of priced reserves; null when none priced
 	Reserves []ReserveView `json:"reserves"`
+	// AsOfLedger is the lake watermark this current-state read is fresh
+	// to (ADR-0041 Decision 4): the highest ledger the ClickHouse lake
+	// had captured at serve time. The reserve state is decoded from the
+	// lake's contract storage, so a wedged sink makes these figures
+	// stale — pairs with `flags.stale`. Omitted when no watermark reader
+	// is wired.
+	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 }
 
 // ReserveView is one reserve's decoded state + derived metrics.
@@ -207,7 +214,13 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 		tvlStr := tvl.FloatString(2)
 		out.TVLUSD = &tvlStr
 	}
-	writeJSON(w, out, Flags{})
+	// ADR-0041 Decision 4: stamp the lake watermark this current-state
+	// read is fresh to, and flip `flags.stale` when the sink is wedged —
+	// same disclosure the sibling /v1/pools/reserves + account-state
+	// reads carry.
+	wmLedger, stale, _ := s.lakeWatermark(ctx)
+	out.AsOfLedger = wmLedger
+	writeJSON(w, out, Flags{Stale: stale})
 }
 
 // buildReserveView maps one decoded reserve state to its wire shape,

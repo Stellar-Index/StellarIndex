@@ -1204,3 +1204,117 @@ func TestPrice_XLMAlias_PrefersFreshOverStale(t *testing.T) {
 		t.Errorf("expected fresh crypto:XLM 0.1500; got: %s", body)
 	}
 }
+
+// gatingStubPriceReader is a stubPriceReader that ALSO implements the
+// optional proxyPairGate (RecentClosedVWAP1mExists) the stablecoin proxy
+// consults to skip empty proxy pairs before the unbounded last-trade walk
+// (2026-07-06 empty-alias latency incident, proxy layer). `exists` keyed
+// on "<base>/<quote>" drives the gate; `latestCalls` records which pairs
+// reached LatestPrice, so a test can prove a gated-out peg is never walked.
+type gatingStubPriceReader struct {
+	stubPriceReader
+	exists      map[string]bool
+	latestCalls map[string]int
+}
+
+func (r *gatingStubPriceReader) RecentClosedVWAP1mExists(_ context.Context, base, quote canonical.Asset) (bool, error) {
+	return r.exists[base.String()+"/"+quote.String()], nil
+}
+
+func (r *gatingStubPriceReader) LatestPrice(ctx context.Context, a, q canonical.Asset) (v1.PriceSnapshot, []string, bool, error) {
+	if r.latestCalls != nil {
+		r.latestCalls[a.String()+"/"+q.String()]++
+	}
+	return r.stubPriceReader.LatestPrice(ctx, a, q)
+}
+
+// TestPrice_StablecoinProxy_GateSkipsEmptyPeg pins the 2026-07-06 fix at
+// the proxy layer: when the reader exposes the recent-existence gate, the
+// stablecoin proxy must SKIP a peg with no recent closed VWAP bucket
+// BEFORE calling LatestPrice — which on a classic-peg quote falls through
+// to an unbounded last-trade walk. Two pegs, empty one first: the empty
+// peg is gated out (never walked) and the populated peg triangulates.
+func TestPrice_StablecoinProxy_GateSkipsEmptyPeg(t *testing.T) {
+	emptyPeg, err := canonical.ParseAsset("USDT-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
+	if err != nil {
+		t.Fatalf("parse empty peg: %v", err)
+	}
+	livePeg, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatalf("parse live peg: %v", err)
+	}
+	reader := &gatingStubPriceReader{
+		stubPriceReader: stubPriceReader{
+			snapshots: map[string]v1.PriceSnapshot{
+				"native/" + livePeg.String(): {
+					AssetID: "native", Quote: livePeg.String(),
+					Price: "0.1626", PriceType: "vwap",
+					ObservedAt: time.Unix(1745000000, 0).UTC(),
+				},
+			},
+			sources: map[string][]string{"native/" + livePeg.String(): {"sdex"}},
+		},
+		exists: map[string]bool{
+			// emptyPeg: false (dormant); livePeg: true (live).
+			"native/" + livePeg.String(): true,
+		},
+		latestCalls: map[string]int{},
+	}
+	srv := v1.New(v1.Options{
+		Prices:            reader,
+		USDPeggedClassics: []canonical.Asset{emptyPeg, livePeg}, // empty first
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		body, _ := readAll(resp)
+		t.Fatalf("status = %d, want 200 (live peg should triangulate): %s", resp.StatusCode, body)
+	}
+	body, _ := readAll(resp)
+	for _, want := range []string{`"price":"0.1626"`, `"quote":"fiat:USD"`, `"triangulated":true`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q: %s", want, body)
+		}
+	}
+	// The load-bearing assertion: the empty peg was NEVER walked.
+	if n := reader.latestCalls["native/"+emptyPeg.String()]; n != 0 {
+		t.Errorf("empty peg native/%s walked %d times, want 0 (gate must skip it)", emptyPeg.String(), n)
+	}
+	if n := reader.latestCalls["native/"+livePeg.String()]; n != 1 {
+		t.Errorf("live peg native/%s walked %d times, want 1", livePeg.String(), n)
+	}
+}
+
+// TestPrice_StablecoinProxy_GateAllEmpty_FastMiss — when EVERY proxy peg
+// is gated out (no recent closed bucket anywhere), the proxy returns a
+// miss without walking any pair. With no other fallback layer wired, the
+// handler 404s, and LatestPrice is never called.
+func TestPrice_StablecoinProxy_GateAllEmpty_FastMiss(t *testing.T) {
+	peg, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatalf("parse peg: %v", err)
+	}
+	reader := &gatingStubPriceReader{
+		stubPriceReader: stubPriceReader{err: v1.ErrPriceNotFound},
+		exists:          map[string]bool{}, // gate false for everything
+		latestCalls:     map[string]int{},
+	}
+	srv := v1.New(v1.Options{
+		Prices:            reader,
+		USDPeggedClassics: []canonical.Asset{peg},
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 (all pegs gated out → fast miss)", resp.StatusCode)
+	}
+	// The primary alias read walks native/fiat:USD (+ crypto:XLM/fiat:USD);
+	// the load-bearing assertion is that the CLASSIC-PEG pair — the one
+	// whose LatestPrice miss triggers the unbounded last-trade walk — is
+	// never touched once the gate reports it empty.
+	if n := reader.latestCalls["native/"+peg.String()]; n != 0 {
+		t.Errorf("peg pair native/%s walked %d times, want 0 (gate must skip it)", peg.String(), n)
+	}
+}

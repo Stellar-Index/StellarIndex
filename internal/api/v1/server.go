@@ -88,10 +88,17 @@ type Server struct {
 	lakeWatermarkReader LakeWatermarkReader
 	// Cached lake watermark (ADR-0041 D4) — see lakeWatermark() in
 	// lake_watermark.go. Refreshed at most every lakeWatermarkTTL.
-	lakeWMMu                sync.Mutex
-	lakeWMLedger            uint32
-	lakeWMClosedAt          time.Time
-	lakeWMFetched           time.Time
+	lakeWMMu       sync.Mutex
+	lakeWMLedger   uint32
+	lakeWMClosedAt time.Time
+	lakeWMFetched  time.Time
+	// Cached top-N native (CAP-38) liquidity-pool listing — a
+	// whole-`liquidity_pool`-prefix lake scan (~40k pools) ranked in
+	// Go; cached so the listing endpoint doesn't re-scan per request
+	// (see handleLiquidityPools in liquidity_pools.go).
+	nativeLPMu              sync.Mutex
+	nativeLPCached          []LiquidityPoolReservesRow
+	nativeLPFetched         time.Time
 	volume                  VolumeReader
 	change24h               Change24hReader
 	priceAt                 PriceAtReader
@@ -108,6 +115,7 @@ type Server struct {
 	protocolFastOnce        sync.Once
 	protocolFastOK          bool
 	protocolBespoke         ProtocolBespokeReader
+	protocolPoolTokens      ProtocolPoolTokensReader
 	// Per-server TTL + single-flight cache for the expensive
 	// /v1/protocols/{name} detail (lazy-init'd — see cachedProtocolDetail).
 	protoDetailMu     sync.Mutex
@@ -117,10 +125,19 @@ type Server struct {
 	// classic circulating-supply map (one ~0.5s ClickHouse GROUP BY over
 	// the trustline slice — see cachedClassicSupply). Backs market-cap
 	// fill on the long tail of /v1/assets.
-	classicSupplyMu      sync.Mutex
-	classicSupplyCache   map[string]string
-	classicSupplyAt      time.Time
-	classicSupplyFlight  chan struct{}
+	classicSupplyMu     sync.Mutex
+	classicSupplyCache  map[string]string
+	classicSupplyAt     time.Time
+	classicSupplyFlight chan struct{}
+	// Per-server TTL + single-flight cache for the SEP-1 logo map
+	// (canonical asset_id → safe image URL), built from every verified
+	// issuer's cached sep1_payload in one scan. Backs the image fill on
+	// the /v1/assets listing so the homepage grid renders real logos
+	// instead of fallback avatars — see cachedSep1Images.
+	sep1ImagesMu         sync.Mutex
+	sep1ImagesCache      map[string]string
+	sep1ImagesAt         time.Time
+	sep1ImagesFlight     chan struct{}
 	soroswapPairs        SoroswapPairsReader
 	networkStats         NetworkStatsReader
 	aggregators          AggregatorsReader
@@ -538,6 +555,14 @@ type Options struct {
 	// contract list / zero count.
 	SoroswapPairs SoroswapPairsReader
 
+	// ProtocolPoolTokens, when non-nil, maps each pool-based protocol's
+	// contracts to the token contract C-strkeys it holds, so the
+	// /v1/protocols/{name} roster renders a human pair ("XLM/USDC") in place
+	// of raw C-strkeys. Production wiring is timescale.Store (PoolTokens).
+	// Nil serves the roster without the pair label (soroswap still labels
+	// its rows from its own token0/token1).
+	ProtocolPoolTokens ProtocolPoolTokensReader
+
 	// NetworkStats, when non-nil, backs GET /v1/network/stats —
 	// the consolidated home-page aggregate (24h volume, markets,
 	// assets indexed, latest ledger). Production wiring is
@@ -906,6 +931,7 @@ func New(opts Options) *Server {
 		protocolStats:           opts.ProtocolStats,
 		protocolActivity:        opts.ProtocolActivity,
 		protocolBespoke:         opts.ProtocolBespoke,
+		protocolPoolTokens:      opts.ProtocolPoolTokens,
 		soroswapPairs:           opts.SoroswapPairs,
 		networkStats:            opts.NetworkStats,
 		aggregators:             opts.Aggregators,
@@ -1336,6 +1362,11 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// (ADR-0039 lake read; Soroswap only today). Literal path wins
 	// over any future /v1/pools/{...} wildcard in Go's mux.
 	s.mux.HandleFunc("GET /v1/pools/reserves", s.handlePoolReserves)
+
+	// Native (CAP-38) liquidity-pool two-sided reserves + depth,
+	// read from the `liquidity_pool` LedgerEntry in the lake
+	// (ADR-0039). Listing ranked by LP count; ?pool= for one pool.
+	s.mux.HandleFunc("GET /v1/liquidity-pools", s.handleLiquidityPools)
 
 	// Single-pair activity summary.
 	s.mux.HandleFunc("GET /v1/pairs", s.handlePairs)

@@ -210,6 +210,36 @@ groups:
             certified-lake tail (the coverage claim's substrate) is at
             risk. Treat as data-loss-risk (ADR-0041).
 
+      # 2026-07-06 Postgres-outage fix (ADR-0041): the trade sink now
+      # RETRIES an infrastructure-classified insert failure (connection
+      # refused/reset, PG restarting) with backpressure instead of
+      # dropping the write. While it retries, the on-chain drain
+      # goroutine is blocked, so the ledger cursor STALLS (nothing lost)
+      # but the served tier is frozen. A sustained retry rate is the
+      # early signal that Postgres is unreachable and ingest is
+      # backpressured. Ticket, not page: no data is being lost, and
+      # cursor-stuck / all-sources-stopped page separately if this turns
+      # into a full outage.
+      - alert: stellarindex_ingestion_trade_insert_backpressure
+        expr: sum(rate(stellarindex_trade_insert_retries_total{outcome="retry"}[5m])) > 0
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+        annotations:
+          summary: "Trade sink retrying under backpressure — Postgres write path blocked"
+          description: |
+            The trade sink has been retrying infrastructure-classified
+            insert failures (connection refused/reset, PG restarting) for
+            ≥ 10 min. The on-chain ledger cursor is HELD (not advancing)
+            until the writes land — nothing is dropped, but the served
+            tier is frozen and external (CEX/FX) price freshness is
+            degrading (watch stellarindex_trade_insert_buffer_depth).
+            Almost always a Postgres outage/restart.
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+
       - alert: stellarindex_ingestion_insert_errors
         expr: sum by (source, kind) (rate(stellarindex_source_insert_errors_total[5m])) > 0.1
         for: 5m
@@ -226,8 +256,11 @@ groups:
             writes — usually Timescale outage, disk-full, or a schema
             mismatch after a migration.
 
-            Without a retry queue, these events are LOST from the pipeline.
-            Escalate quickly if the rate is high.
+            Post-2026-07-06 (ADR-0041), INFRASTRUCTURE faults no longer
+            drop — they retry with backpressure (see
+            trade_insert_backpressure). So a firing here means GENUINE
+            loss: a permanent data fault (kind=trade) or external-buffer
+            overflow (kind=dropped). Escalate quickly if the rate is high.
 
       # Live r1 evidence on 2026-05-28 surfaced a cursor-replay
       # pattern: trade_inserts_total{source=sdex} ticked at 157/min
@@ -359,13 +392,22 @@ groups:
 
             Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingest-gap-detected.md
 
-      # Meta-alert: gap detector itself is wedged. Fires when
-      # runs_total{outcome="ok"} stops incrementing AND the gauges
-      # aren't being refreshed — distinguishes "no gaps" (healthy)
-      # from "detector silent" (broken).
+      # Meta-alert: gap detector itself is wedged for a target. Fires
+      # when a (source, table)'s last SUCCESSFUL scan is older than 8h
+      # (comfortably above the 6h sdex/soroban ScanCadence) OR the
+      # detector metric is entirely absent (aggregator down).
+      #
+      # Keyed off the last-success TIMESTAMP gauge, not
+      # rate(runs_total{outcome="ok"}). The heavy targets scan once per
+      # 6h, so their ok counter is pinned at 1 within a process life;
+      # across restarts the value is 1 → 1, which Prometheus cannot see
+      # as a reset, so rate() read a flat line and false-fired for >7h
+      # even though every scan succeeded (incident 2026-07-06). A
+      # wall-clock gauge is reset-proof: a healthy startup scan re-stamps
+      # it to now(), clearing staleness immediately.
       - alert: stellarindex_ingest_gap_detector_silent
         expr: |
-          rate(stellarindex_ingest_gap_detector_runs_total{outcome="ok"}[7h]) == 0
+          (time() - stellarindex_ingest_gap_detector_last_success_unix) > 28800
           OR
           absent_over_time(stellarindex_ingest_gap_detector_runs_total[15m]) == 1
         for: 10m
@@ -375,19 +417,24 @@ groups:
           component: ingestion
           runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
         annotations:
-          summary: "Data-gap detector hasn't run successfully in >7h (above the 6h sdex/soroban scan cadence)"
+          summary: "Data-gap detector hasn't scanned {{ $labels.source }}/{{ $labels.table }} successfully in >8h (above the 6h sdex/soroban scan cadence)"
           description: |
             The aggregator's data-gap detector goroutine appears
-            stuck or absent. Without it the operator-facing
+            stuck or absent for a target. Without it the operator-facing
             `stellarindex_ingest_gap_max_size_ledgers` gauge stops
             updating — gauges read stale value until restart.
 
             Likely causes: aggregator binary crash-looping; Postgres
-            connection-pool exhaustion preventing the 60s scan
-            timeout from completing; deploy regression that removed
-            the worker wiring.
+            connection-pool exhaustion causing every scan to hit the
+            per-target Go timeout / SQL statement_timeout and increment
+            outcome=error; deploy regression that removed the worker
+            wiring. Grep the aggregator log for
+            `gap-detector: scan failed` (a non-ok outcome is logged
+            loudly with elapsed_s so a timeout is unmistakable).
 
             Cross-check: aggregator service `active`?
             postgres_exporter targets `up`?
+            `stellarindex_ingest_gap_detector_runs_total{outcome="error"}`
+            climbing?
 
             Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md

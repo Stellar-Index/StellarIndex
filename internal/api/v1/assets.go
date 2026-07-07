@@ -290,6 +290,23 @@ type AssetDetail struct {
 	// Pairs with Flags.UnverifiedTickerCollision for client-side
 	// detection.
 	UnverifiedWarning *UnverifiedWarning `json:"unverified_warning,omitempty"`
+
+	// UnverifiedTickerCollision is the per-row trust signal on the
+	// /v1/assets LISTING: true when this row's (code, issuer) uses a
+	// verified currency's Stellar ticker but is NOT the verified
+	// issuer — i.e. a look-alike/impersonator. The listing serves
+	// COALESCE(slug, code) AS slug, so an impersonator with a NULL
+	// slug emits the VERIFIED asset's CODE as its slug; a consumer
+	// keyed only on slug∈verified-set would then badge the
+	// impersonator "verified". Consumers must AND the verified-slug
+	// check with `!unverified_ticker_collision` (the real verified
+	// row carries it false; look-alikes carry it true). The detail
+	// path (/v1/assets/{id}) stamps the richer UnverifiedWarning body
+	// + Flags.UnverifiedTickerCollision instead; this bool is the
+	// lightweight listing-row equivalent. Omitted (false) for the
+	// verified asset and for codes no verified currency claims on
+	// Stellar.
+	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
 }
 
 // UnverifiedWarning is the body attached to /v1/assets/{id} when
@@ -638,7 +655,9 @@ func (s *Server) handleAssetListFromCoins(
 	for _, row := range rows {
 		out = append(out, assetDetailFromCoinRow(row))
 	}
+	s.stampListingCollisions(out)
 	s.fillMarketCapsFromSupply(r.Context(), out)
+	s.fillImagesFromSep1(r.Context(), out)
 	env := Envelope{Data: out, Flags: Flags{}}
 	if hasMore && len(out) > 0 {
 		last := rows[len(rows)-1]
@@ -780,6 +799,110 @@ func computeMarketCapUSD(circRaw, priceRaw string, decimals int) string {
 		return ""
 	}
 	return mc.Text('f', 2)
+}
+
+// sep1ImagesTTL bounds how long the SEP-1 logo map is reused before a
+// refresh. The payloads only move on the sep1-refresh cron cadence
+// (hours), so a 10-minute TTL keeps the scan off the API hot path while
+// staying fresh enough for a newly-verified issuer's logo to appear.
+const sep1ImagesTTL = 10 * time.Minute
+
+// sep1ImageKey is the join key shared by the logo-map build + lookup.
+// Asset codes are matched case-insensitively (as the per-asset SEP-1
+// overlay does via EqualFold); the issuer G-strkey must match exactly.
+func sep1ImageKey(code, issuer string) string {
+	return strings.ToUpper(strings.TrimSpace(code)) + "-" + issuer
+}
+
+// cachedSep1Images returns the SEP-1 logo map (case-folded CODE-ISSUER →
+// safe image URL) built from every verified issuer's cached payload,
+// cached per-server with a TTL + single-flight. The backing scan is one
+// indexed SELECT over the few-dozen issuers carrying a sep1_payload;
+// caching it means the /v1/assets listing image overlay costs a map
+// lookup per row, never a per-row JOIN into the hot listing query.
+// Returns nil when no reader exposing AllSep1Images is wired (test stubs
+// / overlay disabled) — the listing then simply omits images, exactly as
+// before. Serves the last good map on a refresh error.
+func (s *Server) cachedSep1Images(ctx context.Context) map[string]string {
+	reader, ok := s.sep1Cache.(interface {
+		AllSep1Images(context.Context) ([]timescale.Sep1Image, error)
+	})
+	if !ok {
+		return nil
+	}
+	s.sep1ImagesMu.Lock()
+	if s.sep1ImagesCache != nil && time.Since(s.sep1ImagesAt) < sep1ImagesTTL {
+		m := s.sep1ImagesCache
+		s.sep1ImagesMu.Unlock()
+		return m
+	}
+	if ch := s.sep1ImagesFlight; ch != nil {
+		s.sep1ImagesMu.Unlock()
+		select {
+		case <-ch:
+			s.sep1ImagesMu.Lock()
+			m := s.sep1ImagesCache
+			s.sep1ImagesMu.Unlock()
+			return m
+		case <-ctx.Done():
+			return nil
+		}
+	}
+	done := make(chan struct{})
+	s.sep1ImagesFlight = done
+	s.sep1ImagesMu.Unlock()
+
+	imgs, err := reader.AllSep1Images(ctx)
+	var built map[string]string
+	if err == nil {
+		built = make(map[string]string, len(imgs))
+		for _, img := range imgs {
+			if !isSafeImageURL(img.Image) {
+				continue
+			}
+			built[sep1ImageKey(img.Code, img.Issuer)] = img.Image
+		}
+	}
+
+	s.sep1ImagesMu.Lock()
+	if err == nil {
+		s.sep1ImagesCache = built
+		s.sep1ImagesAt = time.Now()
+	} else {
+		built = s.sep1ImagesCache // serve last good on error
+	}
+	s.sep1ImagesFlight = nil
+	s.sep1ImagesMu.Unlock()
+	close(done)
+	if err != nil {
+		s.logger.Warn("sep1 image refresh failed", "err", err)
+	}
+	return built
+}
+
+// fillImagesFromSep1 overlays the SEP-1 [[CURRENCIES]] logo URL onto
+// listing rows that don't already carry one. It runs OFF the hot listing
+// query — which deliberately doesn't JOIN the sep1_payload JSONB — by
+// reading the once-per-TTL-window logo map: a map lookup per row for the
+// returned page (bounded by the page limit, ≤500). Best-effort: a row
+// with no verified image is left as-is (the explorer renders a fallback
+// avatar), and a missing/failed reader is a no-op. This is why the
+// homepage grid used to show fallback avatars even for verified issuers —
+// the single-asset path overlaid the image but the listing never did.
+func (s *Server) fillImagesFromSep1(ctx context.Context, rows []AssetDetail) {
+	images := s.cachedSep1Images(ctx)
+	if len(images) == 0 {
+		return
+	}
+	for i := range rows {
+		if rows[i].Image != nil || rows[i].Issuer == nil || rows[i].Code == "" {
+			continue
+		}
+		if img := images[sep1ImageKey(rows[i].Code, *rows[i].Issuer)]; img != "" {
+			v := img
+			rows[i].Image = &v
+		}
+	}
 }
 
 // assetDetailFromCoinRow projects a storage CoinRow into the
@@ -1080,27 +1203,33 @@ func (s *Server) fillCataloguePricesForPage(ctx context.Context, page []AssetDet
 	})
 }
 
-// catalogueRowPricing resolves the headline USD price (and market cap) for
-// one catalogue entry: the global three-tier price from buildGlobalAssetView,
-// falling back to the Stellar trades-derived price for Stellar-only tokens
-// (AQUA, yXLM, SHX, …) that have no global CEX/aggregator price — the same
-// price the classic /v1/assets listing shows — so a catalogue row matches
-// the classic asset row instead of listing null.
+// catalogueRowPricing resolves the headline USD price (and market cap)
+// for one catalogue entry from buildGlobalAssetView — which serves the
+// global three-tier CEX/aggregator price and, for Stellar-only tokens
+// (AQUA, yXLM, SHX, …) the global tier can't reach, falls back to the
+// same on-chain trades-derived price the classic /v1/assets listing
+// shows (fillGlobalPriceFromOnChain) so a catalogue row matches the
+// classic asset row instead of listing null.
 func (s *Server) catalogueRowPricing(ctx context.Context, vc *currency.VerifiedCurrency) (priceUSD, marketCapUSD *string) {
 	view := s.buildGlobalAssetView(ctx, vc)
-	priceUSD = view.PriceUSD
-	marketCapUSD = view.MarketCapUSD
-	if priceUSD != nil || s.coins == nil {
-		return priceUSD, marketCapUSD
+	return view.PriceUSD, view.MarketCapUSD
+}
+
+// onChainListingPriceUSD returns the on-chain per-Stellar-asset USD
+// price the /v1/assets listing shows for assetID (via the per-asset
+// listing reader), or nil when no reader is wired, the row is absent,
+// or it carries no price. The GlobalAssetView on-chain fallback
+// (fillGlobalPriceFromOnChain) uses it to price Stellar-only verified
+// tokens (AQUA, yXLM, SHX, …) the global CEX/aggregator tier misses.
+func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) *string {
+	if s.coins == nil || assetID == "" {
+		return nil
 	}
-	se := vc.StellarEntry()
-	if se == nil || se.AssetID == "" {
-		return priceUSD, marketCapUSD
+	row, err := s.coins.GetCoinByAssetID(ctx, assetID)
+	if err != nil || row.PriceUSD == nil {
+		return nil
 	}
-	if cr, err := s.coins.GetCoinByAssetID(ctx, se.AssetID); err == nil && cr.PriceUSD != nil {
-		priceUSD = cr.PriceUSD
-	}
-	return priceUSD, marketCapUSD
+	return row.PriceUSD
 }
 
 // projectCatalogueRow maps a catalogue entry to the listing's
@@ -1361,7 +1490,9 @@ func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request,
 		out = append(out, assetDetailFromCoinRow(row))
 	}
 	out = s.suppressCatalogueTwins(out)
+	s.stampListingCollisions(out)
 	s.fillMarketCapsFromSupply(r.Context(), out)
+	s.fillImagesFromSep1(r.Context(), out)
 	s.attachSparkline7dIfRequested(r, out)
 	nextInner := ""
 	if hasMore && len(out) > 0 {
@@ -1695,6 +1826,33 @@ func (s *Server) verifiedCurrencyFlags(detail *AssetDetail, asset canonical.Asse
 		flags.UnverifiedTickerCollision = true
 	}
 	return flags
+}
+
+// stampListingCollisions sets AssetDetail.UnverifiedTickerCollision on
+// every LISTING row whose (code, issuer) is a look-alike of a verified
+// currency — a classic asset using a verified Stellar ticker but NOT
+// the verified issuer. The listing query serves COALESCE(slug, code)
+// AS slug, so a NULL-slug impersonator emits the verified asset's CODE
+// as its slug and would otherwise be badged "verified" by a
+// slug-keyed consumer. Stamping the per-row flag lets consumers
+// withhold the badge from impersonators while the real verified row
+// (StellarCollision → false) keeps it.
+//
+// No-op when no catalogue is wired. Catalogue rows on the unified
+// listing carry no issuer (type=global) and are skipped — they ARE the
+// verified identities.
+func (s *Server) stampListingCollisions(rows []AssetDetail) {
+	if s.verifiedCurrencies == nil {
+		return
+	}
+	for i := range rows {
+		if rows[i].Issuer == nil || *rows[i].Issuer == "" || rows[i].Code == "" {
+			continue
+		}
+		if _, collision := s.verifiedCurrencies.StellarCollision(rows[i].Code, *rows[i].Issuer); collision {
+			rows[i].UnverifiedTickerCollision = true
+		}
+	}
 }
 
 // applyUnverifiedWarning stamps detail.UnverifiedWarning when asset

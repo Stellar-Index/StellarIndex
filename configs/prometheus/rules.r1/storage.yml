@@ -291,7 +291,7 @@ groups:
 
       - alert: stellarindex_timescale_connections_saturated
         expr: |
-          (pg_stat_activity_count / on (instance)
+          (sum by (instance) (pg_stat_activity_count) / on (instance)
            pg_settings_max_connections) * 100 > 80
         for: 5m
         labels:

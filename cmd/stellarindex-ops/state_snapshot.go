@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/historyarchive"
@@ -33,15 +34,41 @@ type snapTally struct {
 	elapsed       time.Duration
 	partial       bool
 
-	// collect=true accumulates rows for InsertEntryChanges. scopeAll widens
-	// the set from the G1 contract scope (contract_code + instances) to the
-	// account-state/supply types (account, trustline, offer, data, claimable,
-	// LP) for G2/G3. closeTime stamps every collected row (metadata only —
-	// readers key on ledger_seq = the entry's LastModifiedLedgerSeq).
-	collect   bool
-	scopeAll  bool
-	closeTime time.Time
-	rows      []clickhouse.LedgerEntryChangeRow
+	// collect=true accumulates rows for InsertEntryChanges. scope widens the
+	// set from the G1 contract scope (contract_code + instances) to the
+	// account-state/supply types for G2/G3 (scope.all) or to contract_data
+	// STORAGE + LP for the dormant current-state fill (scope.storage).
+	// closeTime stamps every collected row (metadata only — readers key on
+	// ledger_seq = the entry's LastModifiedLedgerSeq). maxModLedger, when
+	// non-zero, restricts collection to entries last modified BELOW that
+	// ledger — the dormant tail the live-capture floor (~62M) never captured.
+	collect      bool
+	scope        snapScope
+	maxModLedger uint32
+	closeTime    time.Time
+	rows         []clickhouse.LedgerEntryChangeRow
+}
+
+// snapScope is the collection decision derived from the -scope flag. The zero
+// value is the G1 contract scope (contract_code + contract_data instances).
+type snapScope struct {
+	all     bool // G2/G3: + account/trustline/offer/data/claimable/liquidity_pool
+	storage bool // dormant current-state fill: contract_data STORAGE + liquidity_pool
+}
+
+// parseSnapScope maps the -scope flag to a snapScope, rejecting unknown values
+// (a silent fall-through to the contract scope has masked typos before).
+func parseSnapScope(s string) (snapScope, error) {
+	switch s {
+	case "contracts":
+		return snapScope{}, nil
+	case "all":
+		return snapScope{all: true}, nil
+	case "storage":
+		return snapScope{storage: true}, nil
+	default:
+		return snapScope{}, fmt.Errorf("unknown -scope %q (want contracts|all|storage)", s)
+	}
 }
 
 // stateSnapshot reads a history-archive checkpoint's full current ledger-entry
@@ -63,12 +90,20 @@ func stateSnapshot(args []string) error {
 	checkpoint := fs.Uint("checkpoint", 0, "checkpoint ledger (default: latest checkpoint)")
 	limit := fs.Uint64("limit", 2_000_000, "max entries to read (0 = full snapshot)")
 	write := fs.Bool("write", false, "BACKFILL: write entries into ClickHouse ledger_entry_changes (DATA-TRUTH-PLAN G1-G3)")
-	scope := fs.String("scope", "contracts", "write scope: 'contracts' (G1: code+instances) or 'all' (G2/G3: +account/trustline/offer/data/claimable/LP)")
-	chAddr := fs.String("ch", "127.0.0.1:9000", "ClickHouse native address for -write")
+	scope := fs.String("scope", "contracts", "write scope: 'contracts' (G1: code+instances), 'all' (G2/G3: +account/trustline/offer/data/claimable/LP), or 'storage' (contract_data STORAGE + LP — the dormant SAC/Blend/LP current-state fill)")
+	maxModLedger := fs.Uint("max-modified-ledger", 0, "collect only entries last modified BELOW this ledger (0 = all); use ~62000000 to write only the dormant tail the live-capture floor never captured")
+	dryRun := fs.Bool("dry-run", false, "collect + report the write set (per-type counts + total) WITHOUT writing — size the fill before committing")
+	chAddr := fs.String("ch", "127.0.0.1:9300", "ClickHouse native address for -write (r1 native port is 9300; 9000 is MinIO)")
 	throttleMS := fs.Uint("throttle-ms", 50, "pause between insert chunks (keeps the live CH gentle)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	sc, err := parseSnapScope(*scope)
+	if err != nil {
+		return err
+	}
+	// -dry-run collects the write set (so it can be counted) but never writes.
+	collect := *write || *dryRun
 
 	url, passphrase := resolveArchiveTarget(*cfgPath, *archiveURL)
 	ctx := context.Background()
@@ -84,15 +119,17 @@ func stateSnapshot(args []string) error {
 	if err != nil {
 		return err
 	}
-	scopeAll := *scope == "all"
-	fmt.Fprintf(os.Stderr, "state-snapshot: reading checkpoint %d from %s (limit=%d, write=%v, scope=%s)\n",
-		seq, url, *limit, *write, *scope)
+	fmt.Fprintf(os.Stderr, "state-snapshot: reading checkpoint %d from %s (limit=%d, write=%v, dry-run=%v, scope=%s, max-modified-ledger=%d)\n",
+		seq, url, *limit, *write, *dryRun, *scope, *maxModLedger)
 
-	t, err := tallyCheckpoint(ctx, arch, seq, *limit, *write, scopeAll)
+	t, err := tallyCheckpoint(ctx, arch, seq, *limit, collect, sc, uint32(*maxModLedger)) //nolint:gosec // operator-supplied ledger
 	if err != nil {
 		return err
 	}
 	printTally(seq, t)
+	if collect {
+		printWriteSet(t)
+	}
 
 	if *write {
 		fmt.Fprintf(os.Stderr, "state-snapshot: writing %d entries (scope=%s) → %s ledger_entry_changes ...\n",
@@ -103,8 +140,29 @@ func stateSnapshot(args []string) error {
 		}
 		fmt.Printf("\n✅ wrote %d entries into ledger_entry_changes (scope=%s).\n", n, *scope)
 		fmt.Printf("   The entry readers + ledger_entries_current MV pick these up.\n")
+	} else if *dryRun {
+		fmt.Printf("\n─── DRY RUN ─── %d entries would be written (scope=%s); nothing written.\n", len(t.rows), *scope)
 	}
 	return nil
+}
+
+// printWriteSet reports the collected write set — the total plus a per-entry-type
+// breakdown — so an operator can size a fill (and confirm the -max-modified-ledger
+// bound targeted the dormant tail) before committing the INSERT.
+func printWriteSet(t *snapTally) {
+	byType := make(map[string]int, 8)
+	for i := range t.rows {
+		byType[t.rows[i].EntryType]++
+	}
+	types := make([]string, 0, len(byType))
+	for typ := range byType {
+		types = append(types, typ)
+	}
+	sort.Strings(types)
+	fmt.Printf("\n--- write set: %d entries ---\n", len(t.rows))
+	for _, typ := range types {
+		fmt.Printf("  %-24s %d\n", typ, byType[typ])
+	}
 }
 
 // resolveArchiveTarget picks the archive URL + network passphrase, preferring
@@ -143,14 +201,14 @@ func resolveCheckpoint(arch *historyarchive.Archive, want uint32) (uint32, error
 
 // tallyCheckpoint streams the checkpoint's bucket list and rolls it up by entry
 // type (read-only). limit>0 stops early for a bounded proof.
-func tallyCheckpoint(ctx context.Context, arch *historyarchive.Archive, seq uint32, limit uint64, collect, scopeAll bool) (*snapTally, error) {
+func tallyCheckpoint(ctx context.Context, arch *historyarchive.Archive, seq uint32, limit uint64, collect bool, scope snapScope, maxModLedger uint32) (*snapTally, error) {
 	reader, err := ingest.NewCheckpointChangeReader(ctx, arch, seq)
 	if err != nil {
 		return nil, fmt.Errorf("checkpoint change reader @ %d: %w", seq, err)
 	}
 	defer func() { _ = reader.Close() }()
 
-	t := &snapTally{byType: map[xdr.LedgerEntryType]uint64{}, collect: collect, scopeAll: scopeAll, closeTime: time.Now().UTC()}
+	t := &snapTally{byType: map[xdr.LedgerEntryType]uint64{}, collect: collect, scope: scope, maxModLedger: maxModLedger, closeTime: time.Now().UTC()}
 	start := time.Now()
 	for {
 		ch, rerr := reader.Read()
@@ -200,27 +258,46 @@ func (t *snapTally) observe(typ xdr.LedgerEntryType, post *xdr.LedgerEntry) {
 			}
 		}
 	}
-	if t.collect && t.shouldCollect(typ, isInstance) {
+	if t.collect && t.withinModWindow(uint32(post.LastModifiedLedgerSeq)) && t.shouldCollect(typ, isInstance) { //nolint:gosec // ledger seq fits uint32
 		if row, ok := clickhouse.SnapshotEntryRow(post, t.closeTime); ok {
 			t.rows = append(t.rows, row)
 		}
 	}
 }
 
+// withinModWindow reports whether an entry last modified at ledgerSeq is in the
+// collection window. maxModLedger=0 collects everything (the historical G1-G3
+// posture); a non-zero bound restricts collection to the dormant tail — entries
+// whose last change predates the live-capture floor and so are absent from the
+// current-state projection. Writing an entry already present is idempotent
+// (ledger_entry_changes is a ReplacingMergeTree keyed by the entry's ledger),
+// so the bound is purely a cost control, never a correctness gate.
+func (t *snapTally) withinModWindow(ledgerSeq uint32) bool {
+	return t.maxModLedger == 0 || ledgerSeq < t.maxModLedger
+}
+
 // shouldCollect decides whether an entry of this type is in the write scope.
 // contract_code + contract instances are always in (G1); the account-state /
-// supply types join when scope=all (G2/G3). contract_data STORAGE entries and
-// ttl/config_setting are never written (not read by the entry explorers).
+// supply types join when scope=all (G2/G3). contract_data STORAGE entries join
+// when scope=storage — the dormant current-state fill (2026-07-06): the
+// ledger_entries_current MV only projects contract_data changes captured after
+// the ~62M live-capture floor, so a SAC/SEP-41 Balance(Address) or Blend
+// reserve entry idle since before then is ABSENT from current-state and
+// invisible to seed-sac-balances / the ADR-0039 reserve readers. LP joins
+// scope=all AND scope=storage (the #30 native-pool reserve reader). ttl /
+// config_setting are never written (not read by any current-state reader).
 func (t *snapTally) shouldCollect(typ xdr.LedgerEntryType, isInstance bool) bool {
 	switch typ {
 	case xdr.LedgerEntryTypeContractCode:
 		return true
 	case xdr.LedgerEntryTypeContractData:
-		return isInstance
+		return isInstance || t.scope.storage
+	case xdr.LedgerEntryTypeLiquidityPool:
+		return t.scope.all || t.scope.storage
 	case xdr.LedgerEntryTypeAccount, xdr.LedgerEntryTypeTrustline,
 		xdr.LedgerEntryTypeOffer, xdr.LedgerEntryTypeData,
-		xdr.LedgerEntryTypeClaimableBalance, xdr.LedgerEntryTypeLiquidityPool:
-		return t.scopeAll
+		xdr.LedgerEntryTypeClaimableBalance:
+		return t.scope.all
 	default:
 		return false
 	}
