@@ -190,3 +190,183 @@ func (s *Store) InsertAquariusLiquidity(ctx context.Context, e AquariusLiquidity
 	}
 	return nil
 }
+
+// AquariusReserveLeg is one token position within a pool's latest reserve
+// snapshot.
+type AquariusReserveLeg struct {
+	// TokenIndex is the 0-based position in the pool's canonical token
+	// order.
+	TokenIndex int
+	// Token is the token address resolved for this position, or "" when no
+	// deposit_liquidity / withdraw_liquidity has been observed for the
+	// pool in the window — update_reserves carries no token address, only
+	// the position (migration 0089).
+	Token string
+	// Reserve is the POST-STATE reserve for the token at TokenIndex, in the
+	// token's base units (i128 per ADR-0003 — never int64).
+	Reserve canonical.Amount
+}
+
+// AquariusPoolReserve is one Aquarius pool's latest POST-STATE reserve
+// snapshot: the complete reserve vector from the pool's single most recent
+// update_reserves event.
+type AquariusPoolReserve struct {
+	ContractID string
+	ObservedAt time.Time
+	Ledger     uint32
+	// Legs is one entry per token position, ordered by TokenIndex ascending.
+	Legs []AquariusReserveLeg
+}
+
+// LatestAquariusReserves returns the newest reserve snapshot per pool
+// observed within the trailing windowDays, most-recently-updated pool
+// first. A pool's snapshot is the complete reserve vector from its single
+// most recent update_reserves event (max ledger_close_time, then
+// ledger/op_index/event_index), so a multi-token stableswap pool comes
+// back with all its legs. Token addresses are resolved positionally from
+// the pool's most recent deposit/withdraw in the window (update_reserves
+// carries no token address — CLAUDE.md / migration 0089); a leg with no
+// observed liquidity event keeps an empty Token.
+//
+// This is the READ side of the Aquarius TVL / liquidity-depth signal that
+// InsertAquariusReserves captures. Reserves are per-asset base units, not
+// USD — Aquarius pools have no independently published price, so a clean
+// USD TVL is not derived here; callers surface depth in native units.
+//
+// Empty-safe: returns (nil, nil) when no reserves have been captured in the
+// window. windowDays <= 0 is treated as 90.
+func (s *Store) LatestAquariusReserves(ctx context.Context, windowDays int) ([]AquariusPoolReserve, error) {
+	if windowDays <= 0 {
+		windowDays = 90
+	}
+	since := fmt.Sprintf("%d days", windowDays)
+
+	pools, err := s.aquariusLatestReserveLegs(ctx, since)
+	if err != nil {
+		return nil, err
+	}
+	if len(pools) == 0 {
+		return nil, nil
+	}
+	tokenByPos, err := s.aquariusReserveTokenPositions(ctx, since)
+	if err != nil {
+		return nil, err
+	}
+	for i := range pools {
+		positions := tokenByPos[pools[i].ContractID]
+		if positions == nil {
+			continue
+		}
+		for j := range pools[i].Legs {
+			pools[i].Legs[j].Token = positions[pools[i].Legs[j].TokenIndex]
+		}
+	}
+	return pools, nil
+}
+
+// aquariusLatestReserveLegs reads, per pool, the fanned reserve legs of its
+// single most recent update_reserves event within the window. Ordered so a
+// pool's legs are contiguous and pools come back recency-first. Its result
+// set is fully consumed and closed before returning, so LatestAquariusReserves
+// never holds two open cursors.
+func (s *Store) aquariusLatestReserveLegs(ctx context.Context, since string) ([]AquariusPoolReserve, error) {
+	const q = `
+		WITH latest AS (
+		    SELECT DISTINCT ON (contract_id)
+		           contract_id, ledger_close_time, ledger, tx_hash, op_index, event_index
+		      FROM aquarius_reserves
+		     WHERE ledger_close_time > now() - $1::interval
+		     ORDER BY contract_id,
+		              ledger_close_time DESC, ledger DESC, op_index DESC, event_index DESC
+		)
+		SELECT r.contract_id, r.ledger_close_time, r.ledger, r.token_index, r.reserve::text
+		  FROM aquarius_reserves r
+		  JOIN latest l USING (contract_id, ledger_close_time, ledger, tx_hash, op_index, event_index)
+		 ORDER BY r.ledger_close_time DESC, r.contract_id, r.token_index`
+	rows, err := s.db.QueryContext(ctx, q, since)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: LatestAquariusReserves legs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	// Build without holding pointers into a growing slice (append can
+	// reallocate): accumulate legs per contract, preserve first-seen order.
+	type meta struct {
+		observedAt time.Time
+		ledger     uint32
+	}
+	var order []string
+	legs := map[string][]AquariusReserveLeg{}
+	metas := map[string]meta{}
+	for rows.Next() {
+		var (
+			contractID string
+			closeTime  time.Time
+			ledger     int64
+			tokenIndex int
+			reserve    canonical.Amount
+		)
+		if err := rows.Scan(&contractID, &closeTime, &ledger, &tokenIndex, &reserve); err != nil {
+			return nil, fmt.Errorf("timescale: LatestAquariusReserves scan: %w", err)
+		}
+		if _, seen := legs[contractID]; !seen {
+			order = append(order, contractID)
+			metas[contractID] = meta{observedAt: closeTime.UTC(), ledger: uint32(ledger)}
+		}
+		legs[contractID] = append(legs[contractID], AquariusReserveLeg{TokenIndex: tokenIndex, Reserve: reserve})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: LatestAquariusReserves legs rows: %w", err)
+	}
+
+	out := make([]AquariusPoolReserve, 0, len(order))
+	for _, id := range order {
+		m := metas[id]
+		out = append(out, AquariusPoolReserve{
+			ContractID: id,
+			ObservedAt: m.observedAt,
+			Ledger:     m.ledger,
+			Legs:       legs[id],
+		})
+	}
+	return out, nil
+}
+
+// aquariusReserveTokenPositions resolves the token address at each
+// (pool, token_index) from the most recent deposit/withdraw in the window
+// — best-effort address recovery for the positional update_reserves stream.
+// Returns pool → token_index → token address.
+func (s *Store) aquariusReserveTokenPositions(ctx context.Context, since string) (map[string]map[int]string, error) {
+	const q = `
+		SELECT DISTINCT ON (contract_id, token_index) contract_id, token_index, token
+		  FROM aquarius_liquidity
+		 WHERE ledger_close_time > now() - $1::interval
+		 ORDER BY contract_id, token_index, ledger_close_time DESC`
+	rows, err := s.db.QueryContext(ctx, q, since)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: LatestAquariusReserves tokens: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := map[string]map[int]string{}
+	for rows.Next() {
+		var (
+			contractID string
+			tokenIndex int
+			token      string
+		)
+		if err := rows.Scan(&contractID, &tokenIndex, &token); err != nil {
+			return nil, fmt.Errorf("timescale: LatestAquariusReserves token scan: %w", err)
+		}
+		positions := out[contractID]
+		if positions == nil {
+			positions = map[int]string{}
+			out[contractID] = positions
+		}
+		positions[tokenIndex] = token
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: LatestAquariusReserves token rows: %w", err)
+	}
+	return out, nil
+}

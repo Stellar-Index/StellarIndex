@@ -3,6 +3,8 @@ package timescale
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"time"
 )
 
 // BespokeBlock is the served-tier, per-category bespoke analytics for a
@@ -202,49 +204,149 @@ func (s *Store) bespokeDEX(ctx context.Context, source string, windowDays int) (
 	if err != nil {
 		return nil, fmt.Errorf("timescale: bespokeDEX KPIs: %w", err)
 	}
-	if txCount == "0" {
-		// No trades in the window — e.g. soroswap-router, whose swaps are
-		// ContractCall-derived and never land in `trades`, or a dormant DEX.
-		// Omit the block rather than render an all-zero DEX panel.
+	if txCount != "0" {
+		blk.KPIs = append(blk.KPIs,
+			BespokeKPI{Label: fmt.Sprintf("USD volume (%dd)", windowDays), Value: vol, Unit: "USD", Hint: "summed usd_volume of priced trades over the window"},
+			BespokeKPI{Label: fmt.Sprintf("Trades (%dd)", windowDays), Value: txCount},
+			BespokeKPI{Label: fmt.Sprintf("Active pairs (%dd)", windowDays), Value: pairs, Hint: "distinct base/quote pairs traded in the window"},
+		)
+
+		// Daily USD-volume series.
+		series, err := s.scanDailySeries(ctx, `
+			SELECT to_char(bucket, 'YYYY-MM-DD'), COALESCE(sum(vol),0)::text
+			FROM dex_volume_by_pair_1d
+			WHERE source = $1 AND bucket > now() - $2::interval
+			GROUP BY 1 ORDER BY 1 ASC`, source, since)
+		if err != nil {
+			return nil, err
+		}
+		if len(series) > 0 {
+			blk.Series = append(blk.Series, BespokeSeries{Name: "Daily USD volume", Unit: "USD", Points: series})
+		}
+
+		// Top pairs by USD volume.
+		tbl, err := s.scanTable(ctx,
+			BespokeTable{Title: "Top pairs by USD volume", Columns: []string{"Base", "Quote", "Trades", "USD volume", "Base turnover"}},
+			`SELECT base_asset, quote_asset,
+			        COALESCE(sum(trades),0)::text,
+			        COALESCE(sum(vol),0)::text,
+			        COALESCE(sum(base_vol),0)::text
+			   FROM dex_volume_by_pair_1d
+			  WHERE source = $1 AND bucket > now() - $2::interval
+			  GROUP BY base_asset, quote_asset
+			  ORDER BY sum(vol) DESC NULLS LAST, sum(trades) DESC LIMIT 25`, source, since)
+		if err != nil {
+			return nil, err
+		}
+		if len(tbl.Rows) > 0 {
+			blk.Tables = append(blk.Tables, tbl)
+		}
+	}
+
+	// Aquarius carries a captured liquidity/reserves surface (migration
+	// 0089) no other DEX source has yet. Augment its block with the
+	// pool-depth KPIs + latest-reserves table — independent of trade volume
+	// so a quiet window still surfaces depth, and empty-safe until the
+	// reserves decoder has captured anything on r1.
+	if source == "aquarius" {
+		if err := s.aquariusReserveBlocks(ctx, blk, windowDays); err != nil {
+			return nil, err
+		}
+	}
+
+	// Omit an all-empty block — a dormant DEX, or soroswap-router whose
+	// swaps are ContractCall-derived and never land in `trades` — rather
+	// than render an all-zero DEX panel.
+	if len(blk.KPIs) == 0 {
 		return nil, nil
 	}
+	return blk, nil
+}
+
+// aquariusReserveBlocks augments the Aquarius DEX block with the pool
+// liquidity-depth surface derived from aquarius_reserves (migration 0089) —
+// the first Aquarius TVL/depth signal on the analytics axis. It adds a
+// pool-depth KPI (pools with a live reserve snapshot), a latest-snapshot
+// recency KPI, and a per-pool latest-reserves table in native token base
+// units. Aquarius pools have no independently published price, so USD TVL
+// is NOT computed — depth is reported in native units with the caveat in
+// the appended Note (mirrors bespokeDEX's "quote never resolved to USD
+// contributes 0" honesty on the volume side).
+//
+// Empty-safe: a no-op when no reserves have been captured, so the block
+// renders cleanly with just the volume KPIs (r1 captures no reserves until
+// the reserves decoder deploys).
+func (s *Store) aquariusReserveBlocks(ctx context.Context, blk *BespokeBlock, windowDays int) error {
+	pools, err := s.LatestAquariusReserves(ctx, windowDays)
+	if err != nil {
+		return fmt.Errorf("timescale: bespokeDEX aquarius reserves: %w", err)
+	}
+	if len(pools) == 0 {
+		return nil // no reserves captured yet — leave the volume-only block as is
+	}
+
+	var (
+		legs   int
+		latest time.Time
+	)
+	for _, p := range pools {
+		legs += len(p.Legs)
+		if p.ObservedAt.After(latest) {
+			latest = p.ObservedAt
+		}
+	}
 	blk.KPIs = append(blk.KPIs,
-		BespokeKPI{Label: fmt.Sprintf("USD volume (%dd)", windowDays), Value: vol, Unit: "USD", Hint: "summed usd_volume of priced trades over the window"},
-		BespokeKPI{Label: fmt.Sprintf("Trades (%dd)", windowDays), Value: txCount},
-		BespokeKPI{Label: fmt.Sprintf("Active pairs (%dd)", windowDays), Value: pairs, Hint: "distinct base/quote pairs traded in the window"},
+		BespokeKPI{
+			Label: fmt.Sprintf("Pools with live reserves (%dd)", windowDays),
+			Value: strconv.Itoa(len(pools)),
+			Unit:  "pools",
+			Hint:  "distinct pools with an update_reserves (TVL/depth) snapshot in the window",
+		},
+		BespokeKPI{
+			Label: "Reserve legs tracked",
+			Value: strconv.Itoa(legs),
+			Hint:  "total token positions across the latest per-pool reserve snapshots",
+		},
+		BespokeKPI{
+			Label: "Latest reserve snapshot",
+			Value: latest.UTC().Format("2006-01-02 15:04"),
+			Unit:  "UTC",
+			Hint:  "most recent update_reserves observation across pools",
+		},
 	)
 
-	// Daily USD-volume series.
-	series, err := s.scanDailySeries(ctx, `
-		SELECT to_char(bucket, 'YYYY-MM-DD'), COALESCE(sum(vol),0)::text
-		FROM dex_volume_by_pair_1d
-		WHERE source = $1 AND bucket > now() - $2::interval
-		GROUP BY 1 ORDER BY 1 ASC`, source, since)
-	if err != nil {
-		return nil, err
+	// Per-pool latest reserves — one row per (pool, token position). No USD
+	// ranking is possible (Aquarius has no published price), so rows are
+	// ordered most-recently-updated pool first and capped.
+	const maxRows = 100
+	tbl := BespokeTable{
+		Title:   "Pool liquidity depth (latest reserves)",
+		Columns: []string{"Pool", "Token", "Reserve (base units)", "Observed (UTC)"},
 	}
-	if len(series) > 0 {
-		blk.Series = append(blk.Series, BespokeSeries{Name: "Daily USD volume", Unit: "USD", Points: series})
-	}
-
-	// Top pairs by USD volume.
-	tbl, err := s.scanTable(ctx,
-		BespokeTable{Title: "Top pairs by USD volume", Columns: []string{"Base", "Quote", "Trades", "USD volume", "Base turnover"}},
-		`SELECT base_asset, quote_asset,
-		        COALESCE(sum(trades),0)::text,
-		        COALESCE(sum(vol),0)::text,
-		        COALESCE(sum(base_vol),0)::text
-		   FROM dex_volume_by_pair_1d
-		  WHERE source = $1 AND bucket > now() - $2::interval
-		  GROUP BY base_asset, quote_asset
-		  ORDER BY sum(vol) DESC NULLS LAST, sum(trades) DESC LIMIT 25`, source, since)
-	if err != nil {
-		return nil, err
+	for _, p := range pools {
+		if len(tbl.Rows) >= maxRows {
+			break
+		}
+		observed := p.ObservedAt.UTC().Format("2006-01-02 15:04")
+		for _, leg := range p.Legs {
+			if len(tbl.Rows) >= maxRows {
+				break
+			}
+			token := leg.Token
+			if token == "" {
+				token = "—"
+			}
+			tbl.Rows = append(tbl.Rows, []string{p.ContractID, token, leg.Reserve.String(), observed})
+		}
 	}
 	if len(tbl.Rows) > 0 {
 		blk.Tables = append(blk.Tables, tbl)
 	}
-	return blk, nil
+
+	blk.Notes = append(blk.Notes,
+		"Pool liquidity depth is the latest per-pool POST-STATE reserve vector (aquarius_reserves, migration 0089) in native token base units (per-asset decimals) — NOT USD. Aquarius pools have no independently published price and update_reserves carries positional reserves with no token address, so a clean USD TVL is not computed; the token address is resolved positionally from the pool's most recent deposit/withdraw and shows '—' when none was observed in the window.",
+	)
+	return nil
 }
 
 // bespokeLending builds the Blend lending bespoke block: per-asset net
