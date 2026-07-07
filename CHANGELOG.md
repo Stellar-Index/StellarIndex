@@ -86,6 +86,15 @@ against.
   incremental-checkpoint double-fold (checkpoint vs authoritative same-source re-sum).
 
 ### Fixed
+- **Rozo captured nothing (topic mismatch).** The rozo decoder matched only the short-form
+  `symbol_short!("payment")`/`"flush"` topics, but the deployed mainnet contract emits the
+  full-length ScSymbols `"payment_event"`/`"flush_event"` — so `Classify` never fired and
+  `rozo_events` stayed empty despite **393 events in the lake**. Now matches both forms
+  (routed to the same field-name-based body decoder). Requires `projector-replay -source rozo`
+  to backfill the historical rows. (Also exposed an ADR-0033 completeness blind spot — a
+  wrong-topic decoder self-references in the projection reconcile, so `complete=true` doesn't
+  guarantee capture; a per-source recognition fix + a full decoder topic-match audit are
+  tracked follow-ups.)
 - **Oracle (reflector-dex).** Reflector's Stellar-DEX oracle denominates in USD, but the
   decoder hardcoded XLM as the quote — so all 41 of its assets carried the wrong denominator
   (confirmed the base is the USDC SAC via the contract's SEP-40 `base()` method). Now quotes
