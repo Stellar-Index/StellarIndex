@@ -212,6 +212,64 @@ type DivergenceConfig struct {
 	Reflector DivergenceOracleConfig `toml:"reflector" doc:"Reflector on-chain oracle references (reflector-dex/cex/fx) read from ingested oracle_updates rows. Default max_age is 30 minutes (Reflector publishes ~5-minutely)."`
 	Redstone  DivergenceOracleConfig `toml:"redstone" doc:"Redstone on-chain oracle reference read from ingested oracle_updates rows. Default max_age is 26 hours (batch pushes with a daily-ish heartbeat floor)."`
 	Band      DivergenceOracleConfig `toml:"band" doc:"Band on-chain oracle reference read from ingested oracle_updates rows (relay/force_relay op-args ingest). Default max_age is 26 hours (relayer-driven, sparse)."`
+
+	// Supply cross-check — compares OUR served circulating_supply
+	// against an external authoritative reference (Stellar Network
+	// Dashboard / CoinGecko), separate from the price cross-checks
+	// above. Off by default; the operator opts in on r1 via ansible.
+	Supply DivergenceSupplyConfig `toml:"supply" doc:"Supply cross-check: compare our served circulating_supply against the Stellar Network Dashboard (XLM) and/or CoinGecko. Catches a stale SDF-reserve exclusion list. Off by default."`
+}
+
+// DivergenceSupplyConfig gates the supply cross-check worker — the
+// automated counterpart to the manual "is our circulating supply
+// right?" investigation (docs/methodology/xlm-circulating-supply.md).
+// Off by default: it makes outbound HTTP calls, so a fresh deployment
+// stays silent until the operator opts in. When enabled, it needs at
+// least one enabled reference below or the worker refuses to start.
+type DivergenceSupplyConfig struct {
+	Enabled bool `toml:"enabled" doc:"Whether the supply cross-check worker runs. Off by default (makes outbound HTTP calls; opt in on r1 via ansible)." default:"false"`
+	// RefreshIntervalSeconds is the per-cycle interval. Supply moves
+	// glacially, so a slow cadence is fine and keeps external-quota
+	// pressure minimal. Default 900 (15 min).
+	RefreshIntervalSeconds int `toml:"refresh_interval_seconds" doc:"Per-cycle interval for the supply cross-check worker. Supply moves slowly, so a slow cadence is fine. Default 900 (15 min)." default:"900"`
+	// ThresholdPct is the relative-divergence percentage above which
+	// the ratio gauge reads `divergent` and the supply-divergence alert
+	// fires. Default 1.0 — two-plus orders of magnitude above the
+	// ~0.03% XLM Fee-Pool noise floor, so it fires only on a REAL drift.
+	ThresholdPct float64 `toml:"threshold_pct" doc:"Relative-divergence percentage above which a supply cross-check reads 'divergent' and the alert fires. Default 1.0 (well above the ~0.03% XLM noise floor)." default:"1.0"`
+	// PerReferenceTimeoutSeconds bounds each reference HTTP call.
+	// Default 10 (supply endpoints are slower + rarer than price ones).
+	PerReferenceTimeoutSeconds int `toml:"per_reference_timeout_seconds" doc:"Bound for each supply-reference HTTP call. Default 10." default:"10"`
+	// Dashboard is the Stellar Network Dashboard reference (XLM only).
+	// On by default WITHIN this block (free, no auth, authoritative) —
+	// but the block itself is Enabled=false, so it only runs once the
+	// operator flips the parent gate.
+	Dashboard DivergenceSupplyDashboardConfig `toml:"dashboard" doc:"Stellar Network Dashboard reference (dashboard.stellar.org) — authoritative XLM circulating supply, free, no auth. On by default within this block."`
+	// CoinGecko is the CoinGecko `/coins/{id}` circulating-supply
+	// reference. Off by default — the free tier has been 429-throttled
+	// since 2026-06-19; enable it once a Pro key is set.
+	CoinGecko DivergenceSupplyCoinGeckoConfig `toml:"coingecko" doc:"CoinGecko /coins/{id} market_data.circulating_supply reference. Off by default (free tier 429-throttled since 2026-06-19; enable with a Pro key)."`
+}
+
+// DivergenceSupplyDashboardConfig configures the Stellar Dashboard
+// supply reference. Covers XLM only; every other asset is
+// asset_unsupported for this reference.
+type DivergenceSupplyDashboardConfig struct {
+	Enabled bool   `toml:"enabled" doc:"Whether the Stellar Dashboard supply reference is consulted. On by default within [divergence.supply]." default:"true"`
+	BaseURL string `toml:"base_url" doc:"Dashboard API base. Empty defaults to https://dashboard.stellar.org/api/v3. The reference GETs base_url + /lumens." default:""`
+}
+
+// DivergenceSupplyCoinGeckoConfig configures the CoinGecko supply
+// reference. Distinct from [DivergenceCoinGeckoConfig] (the price
+// reference): supply reads `/coins/{id}` not `/simple/price`.
+type DivergenceSupplyCoinGeckoConfig struct {
+	Enabled bool `toml:"enabled" doc:"Whether the CoinGecko supply reference is consulted. Off by default (free tier 429-throttled)." default:"false"`
+	// APIKey follows the secret-field convention: prefer the env var;
+	// TOML fallback for local-dev only. Sent as the x-cg-pro-api-key
+	// header (Pro-tier auth that lifts the 429 ceiling).
+	APIKey  string            `toml:"api_key" doc:"CoinGecko Pro API key, sent as x-cg-pro-api-key. Prefer env var COINGECKO_API_KEY." env:"COINGECKO_API_KEY" default:""`
+	BaseURL string            `toml:"base_url" doc:"CoinGecko API base. Empty defaults to https://api.coingecko.com/api/v3." default:""`
+	IDMap   map[string]string `toml:"id_map" doc:"Maps canonical asset_id → CoinGecko coin id for the supply lookup. Empty falls back to the built-in default (native/crypto:XLM → stellar)." default:"{}"`
 }
 
 // DivergenceOracleConfig gates one on-chain oracle reference family
@@ -286,6 +344,18 @@ func defaultDivergenceConfig() DivergenceConfig {
 		Reflector: DivergenceOracleConfig{Enabled: true},
 		Redstone:  DivergenceOracleConfig{Enabled: true},
 		Band:      DivergenceOracleConfig{Enabled: true},
+		// Supply cross-check OFF by default (outbound HTTP; opt in on
+		// r1). The Dashboard sub-reference is on WITHIN the block —
+		// enabling the parent gate gives XLM-vs-Dashboard out of the
+		// box — while CoinGecko stays off (free tier 429-throttled).
+		Supply: DivergenceSupplyConfig{
+			Enabled:                    false,
+			RefreshIntervalSeconds:     900,
+			ThresholdPct:               1.0,
+			PerReferenceTimeoutSeconds: 10,
+			Dashboard:                  DivergenceSupplyDashboardConfig{Enabled: true},
+			CoinGecko:                  DivergenceSupplyCoinGeckoConfig{Enabled: false, IDMap: map[string]string{}},
+		},
 	}
 }
 

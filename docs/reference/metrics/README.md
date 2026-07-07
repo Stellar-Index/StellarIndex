@@ -1003,6 +1003,65 @@ the gauge — a flat gauge with zero counter increments means the
 orchestrator stopped invoking the cross-check, not that everything's
 healthy.
 
+### `stellarindex_supply_divergence_ratio`
+
+Gauge, labels `asset` (canonical wire form, e.g. `native`) and
+`reference` (`stellar-dashboard` / `coingecko`).
+
+The absolute relative divergence `|our − reference| / reference`
+between OUR served `circulating_supply` and an EXTERNAL authoritative
+reference's. **Distinct from the `supply_cross_check_*` pair above**:
+that pair is an internal consistency check (two of our own numbers);
+this is our served figure vs the market's.
+
+Look at this when you need to know whether
+`/v1/assets/native` circulating supply still tracks the Stellar Network
+Dashboard. Steady state for XLM is ~0.0003 (the ~0.03% Fee-Pool noise
+floor documented in
+[`docs/methodology/xlm-circulating-supply.md`](../../methodology/xlm-circulating-supply.md)).
+Drives the
+[`stellarindex_supply_divergence_high`](../../operations/runbooks/supply-divergence.md)
+alert when > 0.01 (1%) — a threshold two-plus orders of magnitude above
+that noise floor, so it fires only on a real drift (usually a stale
+SDF-reserve exclusion account list). NOT updated on the `no_reference`
+/ `refresh_error` outcomes: a frozen gauge is the correct behaviour
+when a reference goes dark, so a dead reference never manufactures a
+divergence reading. Emitted only while `[divergence.supply].enabled`
+(off by default; opt in on r1 via ansible).
+
+### `stellarindex_supply_divergence_total`
+
+Counter, label `outcome` (`ok` / `divergent` / `no_reference` /
+`refresh_error`).
+
+One increment per (asset, tick) of the supply cross-check worker.
+`ok` = agreed with every responding reference within the threshold;
+`divergent` = a responding reference disagreed by more than the
+threshold (the ratio gauge carries the magnitude); `no_reference` =
+served figure loaded but every reference was unreachable / didn't
+publish the asset (CoinGecko 429, Dashboard outage) — the
+graceful-degrade "checker running blind" signal, deliberately NOT
+paged so a dead reference isn't a false supply alarm; `refresh_error` =
+our served snapshot couldn't be read (bootstrap, storage error).
+
+Watch a sustained `no_reference` rate to know the check has gone blind;
+watch `divergent` to know a real drift is firing. Pre-seeded to zero
+for all four outcomes so the alert PromQL reads a real zero before the
+first tick.
+
+### `stellarindex_supply_divergence_duration_seconds`
+
+Histogram, label `outcome` (`ok` / `divergent` / `no_reference` /
+`refresh_error`).
+
+Per-(asset, tick) supply cross-check latency including the served read
++ the HTTP fan-out to every reference. Labelled by outcome (matches the
+counter) so operators chart the healthy `ok` path separately from the
+slow-vendor / timeout `no_reference` path. Buckets 10 ms – 30 s: a warm
+served read is single-digit ms; a single slow reference is ~1-10 s; the
+worst case is the per-reference timeout (default 10 s) compounded across
+the reference set.
+
 ### `stellarindex_aggregator_triangulations_total`
 
 Counter, label `outcome` (`ok` / `missing_leg` / `parse_error` /

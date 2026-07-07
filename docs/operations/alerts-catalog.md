@@ -289,6 +289,7 @@ override.
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_supply_cross_check_divergence` | `stellarindex_supply_cross_check_divergence_stroops` per `classic_key` | > 1 stroop for > 5 min | P3 | [supply-cross-check-divergence](runbooks/supply-cross-check-divergence.md) |
+| `stellarindex_supply_divergence_high` | `stellarindex_supply_divergence_ratio` per `asset` × `reference` | > 1% for ≥ 1 h | P3 | [supply-divergence](runbooks/supply-divergence.md) |
 | `stellarindex_supply_snapshot_unit_failed_alert` | `stellarindex_supply_snapshot_unit_failed` | > 0 for ≥ 30 min | P3 | [supply-snapshot-unit-failed](runbooks/supply-snapshot-unit-failed.md) |
 | `stellarindex_supply_snapshot_stale` | `time() - stellarindex_supply_snapshot_last_success_timestamp` | > 36 h for ≥ 5 min | P3 | [supply-snapshot-stale](runbooks/supply-snapshot-stale.md) |
 | `stellarindex_supply_snapshot_critical_stale` | same | > 72 h for ≥ 5 min | **P2** | [supply-snapshot-stale](runbooks/supply-snapshot-stale.md) |
