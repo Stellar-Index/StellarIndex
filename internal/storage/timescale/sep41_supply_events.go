@@ -8,6 +8,8 @@ import (
 	"math/big"
 	"strings"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 // SEP41EventKind discriminates the three supply-affecting SEP-41
@@ -173,55 +175,189 @@ type SEP41KindTotals struct {
 // folds last_ledger < ledger ≤ asOfLedger; their disjoint union is
 // ledger ≤ asOfLedger).
 //
+// Genesis baseline (migration 0088, incident 2026-07-06). When the contract
+// has a SEEDED pre-Soroban baseline (genesis_baseline_ledger IS NOT NULL) and
+// asOfLedger is at-or-above that boundary, the per-kind pre-Soroban totals are
+// ADDED to the Soroban-era totals so the result is LIFETIME supply. A classic
+// asset's SAC-wrapper was largely issued before Soroban existed; those mints
+// live only in the ClickHouse lake below ledger [clickhouse.SorobanGenesisLedger]
+// and are seeded once via `stellarindex-ops supply seed-sep41-genesis`. Tokens
+// with no pre-genesis flows carry a zero baseline, so their served total is
+// unchanged (no double-count). The baseline slice and the Soroban-era slice are
+// a disjoint ledger partition, so summing them cannot double-count. For a
+// historical read strictly below the baseline boundary the genesis is NOT added
+// (the pre-Soroban answer would be a ledger-bounded subset the seed doesn't
+// carry) — the aggregator always reads at the chain tip, so this affects only
+// rare backfill reads.
+//
 // Each component is non-nil; zero is a valid answer for a contract with
 // no events of that kind observed yet (e.g. a token that's never been
 // clawed back returns Clawback=0).
 func (s *Store) SEP41KindTotalsAtOrBefore(ctx context.Context, contractID string, asOfLedger uint32) (SEP41KindTotals, error) {
-	base, lastLedger, ok, err := s.sep41RollupCheckpoint(ctx, contractID)
+	cp, ok, err := s.sep41RollupCheckpoint(ctx, contractID)
 	if err != nil {
 		return SEP41KindTotals{}, err
 	}
-	// No checkpoint yet, or the checkpoint is AHEAD of the requested
-	// ledger (a historical read below the watermark) — the rollup can't
-	// be subtracted back, so take the exact full aggregate.
-	if !ok || lastLedger > asOfLedger {
-		return s.sep41KindTotalsFullSum(ctx, contractID, asOfLedger)
+
+	// ─── Soroban-era totals (ledger ≥ SorobanGenesisLedger, from PG) ───
+	var soroban SEP41KindTotals
+	switch {
+	case !ok || cp.lastLedger > asOfLedger:
+		// No checkpoint yet, or the checkpoint is AHEAD of the requested
+		// ledger (a historical read below the watermark) — the rollup can't
+		// be subtracted back, so take the exact full aggregate.
+		soroban, err = s.sep41KindTotalsFullSum(ctx, contractID, asOfLedger)
+		if err != nil {
+			return SEP41KindTotals{}, err
+		}
+	default:
+		// Checkpoint ≤ asOfLedger: add only the live tail delta above it.
+		delta, derr := s.sep41KindTotalsRange(ctx, contractID, cp.lastLedger, asOfLedger)
+		if derr != nil {
+			return SEP41KindTotals{}, derr
+		}
+		soroban = SEP41KindTotals{
+			Mint:     new(big.Int).Add(cp.rollup.Mint, delta.Mint),
+			Burn:     new(big.Int).Add(cp.rollup.Burn, delta.Burn),
+			Clawback: new(big.Int).Add(cp.rollup.Clawback, delta.Clawback),
+		}
 	}
-	// Checkpoint ≤ asOfLedger: add only the live tail delta above it.
-	delta, err := s.sep41KindTotalsRange(ctx, contractID, lastLedger, asOfLedger)
-	if err != nil {
-		return SEP41KindTotals{}, err
+
+	// ─── Pre-Soroban genesis baseline (ledger < boundary, seeded from CH) ─
+	if ok && cp.genesisSeeded && asOfLedger >= cp.genesisLedger {
+		return SEP41KindTotals{
+			Mint:     new(big.Int).Add(soroban.Mint, cp.genesis.Mint),
+			Burn:     new(big.Int).Add(soroban.Burn, cp.genesis.Burn),
+			Clawback: new(big.Int).Add(soroban.Clawback, cp.genesis.Clawback),
+		}, nil
 	}
-	return SEP41KindTotals{
-		Mint:     new(big.Int).Add(base.Mint, delta.Mint),
-		Burn:     new(big.Int).Add(base.Burn, delta.Burn),
-		Clawback: new(big.Int).Add(base.Clawback, delta.Clawback),
-	}, nil
+	return soroban, nil
 }
 
-// sep41RollupCheckpoint reads the per-contract rollup row. ok=false
-// (with zero totals) when no checkpoint exists yet — the caller falls
-// back to the full aggregate.
-func (s *Store) sep41RollupCheckpoint(ctx context.Context, contractID string) (SEP41KindTotals, uint32, bool, error) {
+// SEP41GenesisBaselineSeeded reports whether a pre-Soroban genesis baseline has
+// been seeded for the contract (genesis_baseline_ledger IS NOT NULL, migration
+// 0088). The SEP-41 computer uses it to distinguish a legitimately-missing
+// baseline (negative Soroban-era total is expected until the operator seeds it
+// — benign `missing_baseline` outcome) from a genuine data inconsistency
+// (baseline seeded and total STILL negative — physically impossible → paging
+// `compute_error`). Returns false when no rollup row exists yet.
+func (s *Store) SEP41GenesisBaselineSeeded(ctx context.Context, contractID string) (bool, error) {
 	const q = `
-        SELECT mint_total::text, burn_total::text, clawback_total::text, last_ledger
+        SELECT genesis_baseline_ledger IS NOT NULL
+          FROM sep41_supply_rollup
+         WHERE contract_id = $1
+    `
+	var seeded bool
+	err := s.db.QueryRowContext(ctx, q, contractID).Scan(&seeded)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("timescale: sep41 genesis-baseline seeded %s: %w", contractID, err)
+	}
+	return seeded, nil
+}
+
+// sep41RollupRow is the parsed sep41_supply_rollup row: the Soroban-era running
+// totals + checkpoint ledger, plus the seeded pre-Soroban genesis baseline
+// (migration 0088). genesisSeeded reflects genesis_baseline_ledger IS NOT NULL.
+type sep41RollupRow struct {
+	rollup        SEP41KindTotals
+	lastLedger    uint32
+	genesis       SEP41KindTotals
+	genesisLedger uint32
+	genesisSeeded bool
+}
+
+// sep41RollupCheckpoint reads the per-contract rollup row. ok=false when no
+// checkpoint exists yet — the caller falls back to the full aggregate.
+func (s *Store) sep41RollupCheckpoint(ctx context.Context, contractID string) (sep41RollupRow, bool, error) {
+	const q = `
+        SELECT mint_total::text, burn_total::text, clawback_total::text, last_ledger,
+               genesis_mint_total::text, genesis_burn_total::text, genesis_clawback_total::text,
+               genesis_baseline_ledger
           FROM sep41_supply_rollup
          WHERE contract_id = $1
     `
 	var mintRaw, burnRaw, clawbackRaw string
 	var lastLedger int64
-	err := s.db.QueryRowContext(ctx, q, contractID).Scan(&mintRaw, &burnRaw, &clawbackRaw, &lastLedger)
+	var gMintRaw, gBurnRaw, gClawbackRaw string
+	var genesisLedger sql.NullInt64
+	err := s.db.QueryRowContext(ctx, q, contractID).Scan(
+		&mintRaw, &burnRaw, &clawbackRaw, &lastLedger,
+		&gMintRaw, &gBurnRaw, &gClawbackRaw, &genesisLedger,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return SEP41KindTotals{}, 0, false, nil
+		return sep41RollupRow{}, false, nil
 	}
 	if err != nil {
-		return SEP41KindTotals{}, 0, false, fmt.Errorf("timescale: sep41 rollup checkpoint %s: %w", contractID, err)
+		return sep41RollupRow{}, false, fmt.Errorf("timescale: sep41 rollup checkpoint %s: %w", contractID, err)
 	}
-	totals, err := parseSEP41Totals(mintRaw, burnRaw, clawbackRaw)
+	rollup, err := parseSEP41Totals(mintRaw, burnRaw, clawbackRaw)
 	if err != nil {
-		return SEP41KindTotals{}, 0, false, err
+		return sep41RollupRow{}, false, err
 	}
-	return totals, uint32(lastLedger), true, nil
+	genesis, err := parseSEP41Totals(gMintRaw, gBurnRaw, gClawbackRaw)
+	if err != nil {
+		return sep41RollupRow{}, false, err
+	}
+	row := sep41RollupRow{
+		rollup:        rollup,
+		lastLedger:    uint32(lastLedger),
+		genesis:       genesis,
+		genesisSeeded: genesisLedger.Valid,
+	}
+	if genesisLedger.Valid {
+		row.genesisLedger = uint32(genesisLedger.Int64)
+	}
+	return row, true, nil
+}
+
+// UpsertSEP41GenesisBaseline seeds (or re-seeds) a contract's pre-Soroban
+// per-kind opening balance into sep41_supply_rollup (migration 0088, incident
+// 2026-07-06). It SETS the genesis columns (not add) so re-running is
+// idempotent — the CH-lake pre-genesis sum is deterministic — and never
+// double-counts. It leaves the worker-owned Soroban-era rollup columns
+// (mint_total / burn_total / clawback_total / last_ledger) untouched: the
+// INSERT arm gives them their column DEFAULT (0), the ON CONFLICT arm updates
+// only the genesis columns, so the seed and the rollup worker coexist on the
+// same row regardless of which runs first.
+//
+// baselineLedger is the EXCLUSIVE upper ledger bound of the seeded sum
+// (typically clickhouse.SorobanGenesisLedger); it is stored so the reader can
+// gate the baseline on `asOfLedger >= baselineLedger` and so a re-seed is
+// auditable (with genesis_seeded_at). i128-safe — the three totals are Postgres
+// NUMERIC (ADR-0003).
+func (s *Store) UpsertSEP41GenesisBaseline(ctx context.Context, contractID string, genesis SEP41KindTotals, baselineLedger uint32) error {
+	if contractID == "" {
+		return errors.New("timescale: UpsertSEP41GenesisBaseline: empty contractID")
+	}
+	if genesis.Mint == nil || genesis.Burn == nil || genesis.Clawback == nil {
+		return fmt.Errorf("timescale: UpsertSEP41GenesisBaseline %s: nil genesis total", contractID)
+	}
+	if genesis.Mint.Sign() < 0 || genesis.Burn.Sign() < 0 || genesis.Clawback.Sign() < 0 {
+		return fmt.Errorf("timescale: UpsertSEP41GenesisBaseline %s: negative genesis total (mint=%s burn=%s clawback=%s) — per-kind sums are non-negative",
+			contractID, genesis.Mint, genesis.Burn, genesis.Clawback)
+	}
+	const q = `
+        INSERT INTO sep41_supply_rollup
+            (contract_id, genesis_mint_total, genesis_burn_total, genesis_clawback_total,
+             genesis_baseline_ledger, genesis_seeded_at)
+        VALUES ($1, $2, $3, $4, $5, now())
+        ON CONFLICT (contract_id) DO UPDATE SET
+            genesis_mint_total      = EXCLUDED.genesis_mint_total,
+            genesis_burn_total      = EXCLUDED.genesis_burn_total,
+            genesis_clawback_total  = EXCLUDED.genesis_clawback_total,
+            genesis_baseline_ledger = EXCLUDED.genesis_baseline_ledger,
+            genesis_seeded_at       = now()
+    `
+	if _, err := s.db.ExecContext(ctx, q,
+		contractID, genesis.Mint.String(), genesis.Burn.String(), genesis.Clawback.String(),
+		int(baselineLedger),
+	); err != nil {
+		return fmt.Errorf("timescale: UpsertSEP41GenesisBaseline %s: %w", contractID, err)
+	}
+	return nil
 }
 
 // sep41KindTotalsFullSum is the original full per-contract aggregate,
@@ -407,17 +543,20 @@ type SEP41RollupAdvance struct {
 // accumulated in Postgres NUMERIC (ADR-0003).
 //
 // NOTE: a re-derive that rewrites sep41_supply_events history BELOW an
-// existing checkpoint must `TRUNCATE sep41_supply_rollup` first so the
-// worker re-folds from zero; the incremental watermark cannot see
-// edits it already passed.
+// existing checkpoint must reset the fold columns first so the worker
+// re-folds from zero; the incremental watermark cannot see edits it
+// already passed. `ch-rebuild -sep41 -write` does this automatically via
+// [Store.ResetSEP41SupplyRollupFold] (which preserves the genesis
+// baseline, unlike a bare `TRUNCATE sep41_supply_rollup`).
 func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string) (SEP41RollupAdvance, error) {
 	if contractID == "" {
 		return SEP41RollupAdvance{}, errors.New("timescale: AdvanceSEP41SupplyRollup: empty contractID")
 	}
-	_, fromLedger, _, err := s.sep41RollupCheckpoint(ctx, contractID)
+	cp, _, err := s.sep41RollupCheckpoint(ctx, contractID)
 	if err != nil {
 		return SEP41RollupAdvance{}, err
 	}
+	fromLedger := cp.lastLedger
 
 	// One statement:
 	//   bound.mx — the contract's current max ledger; we fold strictly
@@ -464,4 +603,185 @@ func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string)
 		ToLedger:   uint32(toLedger),
 		Advanced:   uint32(toLedger) > fromLedger,
 	}, nil
+}
+
+// SEP41RollupCheckpoint is the WORKER-OWNED fold state of one
+// sep41_supply_rollup row: the incremental per-kind running totals
+// (Fold) and the checkpoint ledger they fold sep41_supply_events up to
+// (ledger ≤ LastLedger). It EXCLUDES the migration-0088 pre-Soroban
+// genesis-baseline columns — those are a separately-seeded constant
+// (from the ClickHouse lake), not folded from sep41_supply_events, so
+// they are not part of the derived-checkpoint reconcile.
+type SEP41RollupCheckpoint struct {
+	ContractID string
+	Fold       SEP41KindTotals
+	LastLedger uint32
+}
+
+// ListSEP41RollupCheckpoints returns the worker-owned fold state of
+// every sep41_supply_rollup row — or, when contractIDs is non-empty,
+// only those rows (scoped/resumable auditing). It reads ONLY the fold
+// columns + last_ledger; the genesis-baseline columns are out of scope.
+//
+// This is the "checkpoint" side of the derived-checkpoint reconcile
+// ([completeness.ReconcileRunningTotals], wired by `stellarindex-ops
+// supply verify-rollup`): each returned Fold is diffed against
+// [Store.SEP41SupplyEventKindResum](contract, LastLedger) — a
+// double-fold (incident 2026-07-06 KALE 2×) shows up as Fold = k×resum.
+// Cheap: a scan of the small rollup table (one row per watched
+// contract), NOT the sep41_supply_events hypertable.
+func (s *Store) ListSEP41RollupCheckpoints(ctx context.Context, contractIDs []string) ([]SEP41RollupCheckpoint, error) {
+	const base = `
+        SELECT contract_id, mint_total::text, burn_total::text, clawback_total::text, last_ledger
+          FROM sep41_supply_rollup
+    `
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if len(contractIDs) == 0 {
+		rows, err = s.db.QueryContext(ctx, base+` ORDER BY contract_id`)
+	} else {
+		rows, err = s.db.QueryContext(ctx, base+` WHERE contract_id = ANY($1) ORDER BY contract_id`, pq.Array(contractIDs))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("timescale: ListSEP41RollupCheckpoints: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []SEP41RollupCheckpoint
+	for rows.Next() {
+		var cid, mintRaw, burnRaw, clawbackRaw string
+		var lastLedger int64
+		if err := rows.Scan(&cid, &mintRaw, &burnRaw, &clawbackRaw, &lastLedger); err != nil {
+			return nil, fmt.Errorf("timescale: ListSEP41RollupCheckpoints scan: %w", err)
+		}
+		fold, perr := parseSEP41Totals(mintRaw, burnRaw, clawbackRaw)
+		if perr != nil {
+			return nil, perr
+		}
+		out = append(out, SEP41RollupCheckpoint{ContractID: cid, Fold: fold, LastLedger: uint32(lastLedger)})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: ListSEP41RollupCheckpoints rows: %w", err)
+	}
+	return out, nil
+}
+
+// SEP41SupplyEventKindResum is the AUTHORITATIVE per-kind re-sum of
+// sep41_supply_events for contractID up to (and including) asOfLedger —
+// the "truth" side of the derived-checkpoint reconcile
+// ([completeness.ReconcileRunningTotals], wired by `stellarindex-ops
+// supply verify-rollup`).
+//
+// It is the SAME-SOURCE re-sum: it sums the exact PG rows the checkpoint
+// folds, NOT the network-wide ClickHouse lake (the PG observer and the
+// lake legitimately differ for map/muxed variants — migrations
+// 0085/0088). It is the full at-or-before aggregate the
+// [Store.SEP41KindTotalsAtOrBefore] fast path deliberately AVOIDS: on
+// the hundreds-of-millions-row sep41_supply_events hypertable (chunked
+// by observed_at, not ledger) a contract_id+ledger-bounded sum can prune
+// no chunks and scans every one — which is why the incident audit's 30s
+// probe timed out at just 6 contracts. It therefore runs under a
+// generous, caller-supplied SET LOCAL statement_timeout and is meant for
+// the slow-cadence operator check, NEVER the per-tick hot path.
+//
+// i128-safe (ADR-0003): the three sums are NUMERIC, parsed to *big.Int.
+func (s *Store) SEP41SupplyEventKindResum(ctx context.Context, contractID string, asOfLedger uint32, statementTimeout time.Duration) (SEP41KindTotals, error) {
+	if contractID == "" {
+		return SEP41KindTotals{}, errors.New("timescale: SEP41SupplyEventKindResum: empty contractID")
+	}
+	if statementTimeout <= 0 {
+		return SEP41KindTotals{}, fmt.Errorf("timescale: SEP41SupplyEventKindResum: statementTimeout must be > 0, got %s", statementTimeout)
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return SEP41KindTotals{}, fmt.Errorf("timescale: SEP41SupplyEventKindResum begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Generous SET LOCAL statement_timeout (ms) so PG doesn't abort the
+	// full-history scan the fast path avoids. Same tx-scoped pattern as
+	// CountRowsByLedger.
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL statement_timeout = '%d'", statementTimeout.Milliseconds())); err != nil {
+		return SEP41KindTotals{}, fmt.Errorf("timescale: SEP41SupplyEventKindResum SET: %w", err)
+	}
+	const q = `
+        SELECT
+            COALESCE(sum(amount) FILTER (WHERE event_kind = 'mint'),     0)::text AS mint_total,
+            COALESCE(sum(amount) FILTER (WHERE event_kind = 'burn'),     0)::text AS burn_total,
+            COALESCE(sum(amount) FILTER (WHERE event_kind = 'clawback'), 0)::text AS clawback_total
+          FROM sep41_supply_events
+         WHERE contract_id = $1
+           AND ledger      <= $2
+    `
+	var mintRaw, burnRaw, clawbackRaw string
+	if err := tx.QueryRowContext(ctx, q, contractID, int(asOfLedger)).Scan(&mintRaw, &burnRaw, &clawbackRaw); err != nil {
+		return SEP41KindTotals{}, fmt.Errorf("timescale: SEP41SupplyEventKindResum %s@%d: %w", contractID, asOfLedger, err)
+	}
+	return parseSEP41Totals(mintRaw, burnRaw, clawbackRaw)
+}
+
+// ResetSEP41SupplyRollupFold zeroes the WORKER-OWNED fold columns
+// (mint_total, burn_total, clawback_total, last_ledger) of
+// sep41_supply_rollup so the aggregator's rollup worker
+// ([Store.AdvanceSEP41SupplyRollup]) re-folds a re-derived
+// sep41_supply_events history FROM ZERO instead of trusting a checkpoint
+// that no longer matches the events beneath it. Incident 2026-07-06 follow-up.
+//
+// Why it exists. `ch-rebuild -sep41 -write` rewrites sep41_supply_events
+// history BELOW an existing checkpoint. The worker only ever folds
+// `ledger > last_ledger`, so it never re-examines the rewritten range —
+// leaving the checkpoint stale in one of two ways:
+//   - a FULL re-derive re-populates the whole history, but the checkpoint's
+//     stale totals get the re-folded tail ADDED on top → served supply
+//     double-counts (the KALE 2× served-value bug);
+//   - a SCOPED recovery ADDS previously-missing rows at ledgers ≤ last_ledger,
+//     which the worker's `> last_ledger` fold never sees → served undercount.
+//
+// Resetting the fold columns forces a clean re-fold over the corrected set.
+//
+// This is the automated form of the manual "TRUNCATE sep41_supply_rollup" the
+// migration-0085 header prescribed — but it PRESERVES the migration-0088
+// pre-Soroban genesis-baseline columns (genesis_mint_total / genesis_burn_total
+// / genesis_clawback_total / genesis_baseline_ledger / genesis_seeded_at),
+// which a bare TRUNCATE would drop. Those are seeded separately
+// (`stellarindex-ops supply seed-sep41-genesis`, from the ClickHouse lake) and
+// a Soroban-era re-derive must never wipe them.
+//
+// Scope:
+//   - contractIDs nil/empty → FULL reset: every rollup row's fold columns (the
+//     whole-table TRUNCATE-equivalent, for a full-history re-derive).
+//   - contractIDs non-empty → SCOPED reset: only those contracts' rows (for a
+//     `-contracts` scoped dropped-rows recovery).
+//
+// Correctness during the gap: a reset row's `last_ledger` returns to 0, so the
+// reader ([Store.SEP41KindTotalsAtOrBefore]) serves the exact full-sum fallback
+// until the worker re-folds it — supply stays correct throughout, just off the
+// fast path for a cadence or two. Returns the number of rows reset.
+func (s *Store) ResetSEP41SupplyRollupFold(ctx context.Context, contractIDs []string) (int64, error) {
+	var (
+		res sql.Result
+		err error
+	)
+	if len(contractIDs) == 0 {
+		const q = `
+            UPDATE sep41_supply_rollup
+               SET mint_total = 0, burn_total = 0, clawback_total = 0,
+                   last_ledger = 0, updated_at = now()
+        `
+		res, err = s.db.ExecContext(ctx, q)
+	} else {
+		const q = `
+            UPDATE sep41_supply_rollup
+               SET mint_total = 0, burn_total = 0, clawback_total = 0,
+                   last_ledger = 0, updated_at = now()
+             WHERE contract_id = ANY($1)
+        `
+		res, err = s.db.ExecContext(ctx, q, pq.Array(contractIDs))
+	}
+	if err != nil {
+		return 0, fmt.Errorf("timescale: ResetSEP41SupplyRollupFold: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }

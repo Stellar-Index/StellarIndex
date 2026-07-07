@@ -3,6 +3,7 @@ package supply_test
 import (
 	"context"
 	"errors"
+	"math/big"
 	"testing"
 	"time"
 
@@ -111,8 +112,10 @@ func TestSEP41_Compute_RejectsNonSoroban(t *testing.T) {
 }
 
 // TestSEP41_Compute_NegativeTotalRejected — burn > mint can never
-// be a real on-chain state for a SEP-41 token; an indexer that
-// produces this is mis-summing somewhere. Refuse to publish.
+// be a real on-chain state for a SEP-41 token whose LIFETIME supply
+// is captured (genesis baseline seeded); an indexer that produces
+// this is mis-summing somewhere. Refuse to publish, and surface the
+// paging sentinel.
 func TestSEP41_Compute_NegativeTotalRejected(t *testing.T) {
 	reader := &stubSEP41Reader{
 		comps: supply.SEP41SupplyComponents{
@@ -122,6 +125,7 @@ func TestSEP41_Compute_NegativeTotalRejected(t *testing.T) {
 			AdminBalance:           bigInt(0),
 			LockedAccountBalances:  bigInt(0),
 			LockedContractBalances: bigInt(0),
+			GenesisBaselineSeeded:  true, // lifetime totals — a negative here is genuine corruption
 		},
 	}
 	c, _ := supply.NewSEP41Computer(supply.Policy{}, reader)
@@ -129,6 +133,196 @@ func TestSEP41_Compute_NegativeTotalRejected(t *testing.T) {
 	_, err := c.Compute(context.Background(), asset, 1, time.Now())
 	if !errors.Is(err, supply.ErrNegativeTotalSupply) {
 		t.Errorf("err = %v, want ErrNegativeTotalSupply", err)
+	}
+	// A genuine inconsistency must NOT masquerade as the benign
+	// missing-baseline case.
+	if errors.Is(err, supply.ErrNegativeTotalMissingBaseline) {
+		t.Errorf("seeded-but-negative must not map to ErrNegativeTotalMissingBaseline: %v", err)
+	}
+}
+
+// TestSEP41_Compute_NegativeTotalMissingBaseline — a SAC-wrapper whose
+// pre-Soroban opening balance has NOT been seeded legitimately reads
+// Σburn > Σmint over the Soroban-era-only window (its mints predate
+// Soroban). This is a range-scoped-baseline-missing condition, not
+// corruption — surface the benign sentinel so the refresher reports
+// `missing_baseline` (needs a seed) rather than paging (incident
+// 2026-07-06 / migration 0088).
+func TestSEP41_Compute_NegativeTotalMissingBaseline(t *testing.T) {
+	reader := &stubSEP41Reader{
+		comps: supply.SEP41SupplyComponents{
+			MintTotal:              bigInt(2),
+			BurnTotal:              bigInt(2_180_000_000_000), // VELO-shaped: huge Soroban-era unwrap/burn
+			ClawbackTotal:          bigInt(0),
+			AdminBalance:           bigInt(0),
+			LockedAccountBalances:  bigInt(0),
+			LockedContractBalances: bigInt(0),
+			GenesisBaselineSeeded:  false, // opening balance not seeded yet
+		},
+	}
+	c, _ := supply.NewSEP41Computer(supply.Policy{}, reader)
+	asset := mustSoroban(t, validContractID)
+	_, err := c.Compute(context.Background(), asset, 1, time.Now())
+	if !errors.Is(err, supply.ErrNegativeTotalMissingBaseline) {
+		t.Errorf("err = %v, want ErrNegativeTotalMissingBaseline", err)
+	}
+	// It must be distinguishable from the genuine-corruption sentinel
+	// so the refresher routes it to the non-paging outcome.
+	if errors.Is(err, supply.ErrNegativeTotalSupply) {
+		t.Errorf("missing-baseline case must not also match ErrNegativeTotalSupply: %v", err)
+	}
+}
+
+// TestSEP41_Compute_GenesisBaselineMakesTotalPositive — once the pre-Soroban
+// baseline IS folded into the totals (the reader returns lifetime mint/burn/
+// clawback), the same SAC-wrapper computes a POSITIVE total and the guard does
+// not trip. This is the fixed steady state for the 9 watched SAC-wrappers.
+func TestSEP41_Compute_GenesisBaselineMakesTotalPositive(t *testing.T) {
+	reader := &stubSEP41Reader{
+		comps: supply.SEP41SupplyComponents{
+			// Lifetime totals: pre-Soroban mint dwarfs the Soroban-era burn.
+			MintTotal:              bigInt(2_400_000_000_000),
+			BurnTotal:              bigInt(2_180_000_000_000),
+			ClawbackTotal:          bigInt(0),
+			AdminBalance:           bigInt(0),
+			LockedAccountBalances:  bigInt(0),
+			LockedContractBalances: bigInt(0),
+			GenesisBaselineSeeded:  true,
+		},
+	}
+	c, _ := supply.NewSEP41Computer(supply.Policy{}, reader)
+	asset := mustSoroban(t, validContractID)
+	got, err := c.Compute(context.Background(), asset, 1, time.Now())
+	if err != nil {
+		t.Fatalf("seeded lifetime total should compute cleanly; got %v", err)
+	}
+	if got.TotalSupply.Sign() <= 0 {
+		t.Errorf("TotalSupply = %s, want > 0 once genesis baseline is folded in", got.TotalSupply)
+	}
+	if got.TotalSupply.Cmp(bigInt(220_000_000_000)) != 0 {
+		t.Errorf("TotalSupply = %s, want 220000000000 (2.4e12 − 2.18e12)", got.TotalSupply)
+	}
+}
+
+// TestSEP41_Compute_GenesisBaselineGuardMatrix locks in the migration-0088
+// money-math guard as a single table: how the sign of the SEP-41 total and the
+// GenesisBaselineSeeded flag route to a published supply, the PAGING sentinel,
+// or the BENIGN one. The reader folds the pre-Soroban baseline (CH lake, ledger
+// < boundary) into the Soroban-era totals (PG, ledger >= boundary) BEFORE
+// Compute runs, so the computer's guard operates purely on the already-folded
+// components — exactly what this exercises. A refactor that drops the
+// seeded-vs-unseeded distinction, lets a negative total through, or shifts a
+// positive total when a (zero) baseline is present regresses one of these rows.
+func TestSEP41_Compute_GenesisBaselineGuardMatrix(t *testing.T) {
+	asset := mustSoroban(t, validContractID)
+	// Both negative-total sentinels; a case's wantErr is one of these, and the
+	// non-matched one MUST NOT match — the refresher routes paging vs benign
+	// off exactly that distinction.
+	negSentinels := []error{supply.ErrNegativeTotalSupply, supply.ErrNegativeTotalMissingBaseline}
+
+	cases := []struct {
+		name      string
+		mint      *big.Int // folded LIFETIME mint the reader returns
+		burn      *big.Int // folded LIFETIME burn
+		seeded    bool
+		wantErr   error    // nil => expect a clean non-negative total
+		wantTotal *big.Int // checked only when wantErr == nil
+	}{
+		{
+			// (a) seeded, and the pre-Soroban baseline dominates the Soroban-era
+			// burn → positive lifetime total, guard not tripped. The fixed
+			// steady state for the 9 watched SAC-wrappers post-seed.
+			name:      "a_seeded_genesis_dominates_negative_soroban",
+			mint:      bigInt(2_400_000_000_002), // 2 Soroban-era + 2.4e12 pre-Soroban
+			burn:      bigInt(2_180_000_000_000),
+			seeded:    true,
+			wantTotal: bigInt(220_000_000_002),
+		},
+		{
+			// (b) seeded but STILL negative (baseline too small, or a genuine
+			// upstream mis-sum) → PAGING ErrNegativeTotalSupply. Once lifetime
+			// totals are captured, burn > mint is physically impossible.
+			name:    "b_seeded_still_negative_pages",
+			mint:    bigInt(100),
+			burn:    bigInt(150),
+			seeded:  true,
+			wantErr: supply.ErrNegativeTotalSupply,
+		},
+		{
+			// (c) NOT seeded + negative → BENIGN ErrNegativeTotalMissingBaseline
+			// (needs a seed; does not page). A SAC-wrapper's mints predate
+			// Soroban, so the Soroban-era-only window legitimately reads
+			// burn > mint until the opening balance is seeded.
+			name:    "c_unseeded_negative_missing_baseline",
+			mint:    bigInt(2),
+			burn:    bigInt(2_180_000_000_000),
+			seeded:  false,
+			wantErr: supply.ErrNegativeTotalMissingBaseline,
+		},
+		{
+			// (d) zero baseline / Soroban-only token → total is EXACTLY the
+			// Soroban-era total, unchanged. A seeded ZERO genesis (the seed for
+			// a token with no pre-genesis flows) never touches the guard and
+			// cannot double-count.
+			name:      "d_zero_baseline_soroban_only_unchanged",
+			mint:      bigInt(1_000_000_000),
+			burn:      bigInt(0),
+			seeded:    true,
+			wantTotal: bigInt(1_000_000_000),
+		},
+		{
+			// (d') the same token NOT seeded — identical published total.
+			// Proves the seeded flag alone never shifts a positive number.
+			name:      "d_prime_unseeded_positive_unchanged",
+			mint:      bigInt(1_000_000_000),
+			burn:      bigInt(0),
+			seeded:    false,
+			wantTotal: bigInt(1_000_000_000),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := &stubSEP41Reader{
+				comps: supply.SEP41SupplyComponents{
+					MintTotal:              tc.mint,
+					BurnTotal:              tc.burn,
+					ClawbackTotal:          bigInt(0),
+					AdminBalance:           bigInt(0),
+					LockedAccountBalances:  bigInt(0),
+					LockedContractBalances: bigInt(0),
+					GenesisBaselineSeeded:  tc.seeded,
+				},
+			}
+			c, _ := supply.NewSEP41Computer(supply.Policy{}, reader)
+			// Ledger is above the boundary (the aggregator always reads at tip);
+			// the stub ignores it — the fold/gate is the real reader's job,
+			// covered by the timescale integration test.
+			got, err := c.Compute(context.Background(), asset, 60_000_000, time.Now())
+
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tc.wantErr)
+				}
+				// Sentinels must stay mutually exclusive: only the wanted one
+				// may match, so the refresher's paging-vs-benign routing holds.
+				for _, s := range negSentinels {
+					if got, want := errors.Is(err, s), errors.Is(tc.wantErr, s); got != want {
+						t.Errorf("errors.Is(err, %v) = %v, want %v", s, got, want)
+					}
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Compute: unexpected error %v", err)
+			}
+			if got.TotalSupply.Cmp(tc.wantTotal) != 0 {
+				t.Errorf("TotalSupply = %s, want %s", got.TotalSupply, tc.wantTotal)
+			}
+			if got.TotalSupply.Sign() < 0 {
+				t.Errorf("TotalSupply = %s, must never publish negative", got.TotalSupply)
+			}
+		})
 	}
 }
 

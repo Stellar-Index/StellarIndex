@@ -14,6 +14,7 @@ echo "=== Vet ==="           && make vet
 echo "=== Lint ==="          && make lint
 echo "=== Docs ==="          && ./scripts/ci/lint-docs.sh
 echo "=== Imports ==="       && ./scripts/ci/lint-imports.sh
+echo "=== Protocol registry sync ===" && ./scripts/ci/lint-protocol-registry-sync.sh
 echo "=== Lexicon ==="       && ./scripts/ci/lint-lexicon.sh
 echo "=== i128/NUMERIC ===" && ./scripts/ci/lint-i128.sh
 echo "=== Migrations money ===" && ./scripts/ci/lint-migrations.sh
@@ -43,6 +44,17 @@ if command -v govulncheck >/dev/null 2>&1; then
     echo "=== Vuln ==="        && make vuln
 else
     echo "=== Vuln (skipped — govulncheck not installed; install via 'go install golang.org/x/vuln/cmd/govulncheck@latest') ==="
+fi
+# gitleaks (secret scan). CI runs this as its own job; verify.sh didn't,
+# so a new base64/XDR test fixture that trips the generic-api-key entropy
+# heuristic passed local gate but reddened CI (2026-07-06). Graceful-skip
+# when absent (mirrors promtool/govulncheck). `detect --no-git` scans the
+# working tree against .gitleaks.toml — fast, catches a new fixture leak
+# before push so the fix is a .gitleaks.toml allowlist, not a CI email.
+if command -v gitleaks >/dev/null 2>&1; then
+    echo "=== Secrets (gitleaks) ===" && gitleaks detect --no-git --no-banner --redact --config .gitleaks.toml
+else
+    echo "=== Secrets (skipped — gitleaks not installed; install via 'brew install gitleaks') ==="
 fi
 echo "=== Test ==="          && make test
 # Compile-only: catches interface-extension breakage in

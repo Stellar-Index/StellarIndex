@@ -41,6 +41,7 @@ func registerAppMetrics() {
 		IngestGapDetectorTip,
 		IngestGapDetectorRunsTotal,
 		IngestGapDetectorDurationSeconds,
+		IngestGapDetectorLastSuccessUnix,
 		ProjectorLagLedgers,
 		ProjectorRunsTotal,
 		ProjectorEventsDecoded,
@@ -57,6 +58,7 @@ func registerAppMetrics() {
 		SourceOrphanEventsTotal,
 		ExternalPollerPollsTotal,
 		ExternalPollerLastSuccessUnix,
+		ExternalFXLastQuoteUnix,
 		ExternalDustDroppedTotal,
 		CEXStreamDisconnectTotal,
 		DiscoveryDroppedHitsTotal,
@@ -90,6 +92,8 @@ func registerAppMetrics() {
 
 		SupplyCrossCheckDivergenceStroops,
 		SupplyCrossCheckTotal,
+		SupplyDivergenceRatio,
+		SupplyDivergenceTotal,
 
 		AnomalyFreezeEngagedTotal,
 		AnomalyFreezeRecoveredTotal,
@@ -132,6 +136,7 @@ func registerAppMetricsTail() {
 
 		CustomerWebhookDeliveryDurationSeconds,
 		DivergenceRefreshDurationSeconds,
+		SupplyDivergenceDurationSeconds,
 		AggregatorSupplyRefreshDurationSeconds,
 		SEP41SupplyRollupAdvanceDurationSeconds,
 		AnomalyFreezeRecoverySweepDurationSeconds,
@@ -151,6 +156,8 @@ func registerAppMetricsTail() {
 		SignupReaperRunsTotal,
 		SignupReaperRunDurationSeconds,
 		SignupReaperRowsDeletedTotal,
+
+		DEXTradeNonstandardDecimalsTotal,
 	)
 
 	// F-0033 closure: pre-seed zero-valued series for the
@@ -200,6 +207,12 @@ func registerAppMetricsTail() {
 	// real zero (not "no data") before the first outage.
 	for _, outcome := range []string{"retry", "recovered", "abandoned"} {
 		TradeInsertRetriesTotal.WithLabelValues(outcome)
+	}
+	// Supply cross-check outcomes — bounded, well-known label set so the
+	// `no_reference` "checker running blind" query reads a real zero
+	// (not "no data") before the first supply cross-check tick.
+	for _, outcome := range []string{"ok", "divergent", "no_reference", "refresh_error"} {
+		SupplyDivergenceTotal.WithLabelValues(outcome)
 	}
 }
 
@@ -380,6 +393,39 @@ var IngestGapDetectorDurationSeconds = prometheus.NewHistogramVec(
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600},
 	},
 	[]string{"source", "table", "outcome"},
+)
+
+// IngestGapDetectorLastSuccessUnix is the wall-clock timestamp (Unix
+// seconds) of the most recent SUCCESSFUL per-(source, table) gap scan.
+// It is the reset-proof liveness primitive the
+// `stellarindex_ingest_gap_detector_silent` alert keys off, replacing
+// the fragile `rate(runs_total{outcome="ok"}[7h]) == 0` construct.
+//
+// Why a timestamp gauge, not rate() over the counter: the heavy targets
+// (sdex/trades, soroban-events/soroban_events) scan on a 6h
+// ScanCadence, so their `ok` counter increments only once every 6h.
+// When the aggregator restarts more often than that (deploys, incident
+// recoveries), each process life records exactly ONE ok, pinning the
+// counter at 1. Because the value is 1 both before AND after the
+// restart, Prometheus counter-reset detection never triggers (it only
+// fires on a DECREASE), so `rate(...ok[7h])` reads a flat line and
+// evaluates to 0 — the silent alert false-fired for >7h even though
+// every startup scan succeeded (live incident 2026-07-06). A wall-clock
+// gauge is immune: the startup scan re-stamps it to now(), so a healthy
+// restart immediately clears staleness, while a genuinely wedged
+// target's stamp simply stops advancing and `time() - gauge` grows past
+// the alert threshold.
+//
+// Advances ONLY on a clean scan; a scan that errors or times out leaves
+// the previous stamp untouched. A target that has NEVER once succeeded
+// since process start emits no series here — that case is covered by the
+// paired `runs_total{outcome="error"}` rate, not this gauge.
+var IngestGapDetectorLastSuccessUnix = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_ingest_gap_detector_last_success_unix",
+		Help: "Wall-clock timestamp (Unix seconds) of the most recent successful gap-detector scan per (source, table). The silent-detector alert keys off its staleness; reset-proof across restarts, unlike rate() over the once-per-6h runs_total counter.",
+	},
+	[]string{"source", "table"},
 )
 
 // ProjectorLagLedgers is how far behind tip each projector source
@@ -676,6 +722,39 @@ var ExternalPollerLastSuccessUnix = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_external_poller_last_success_unix",
 		Help: "UNIX seconds of the most recent successful PollOnce, per source. Zero = never succeeded since startup.",
+	},
+	[]string{"source"},
+)
+
+// ExternalFXLastQuoteUnix — per-source UNIX-seconds timestamp of the
+// most recent successful fx_quotes WRITE from the active fiat-FX feed
+// (`massive`, the internal/sources/forex worker). Stamped only after
+// InsertFXQuoteBatch commits a NON-EMPTY batch — a failed write or an
+// empty snapshot (upstream returned no usable rates) leaves the prior
+// stamp untouched, so a stuck-but-erroring worker cannot keep the
+// gauge green.
+//
+// Why a SEPARATE gauge from ExternalPollerLastSuccessUnix: the FX feed
+// does NOT run under the external.Connector poller framework — it is
+// the forex worker in the API binary writing the fx_quotes hypertable,
+// which the X2.5 triangulation forex-snap (FXQuoteAtOrBefore) reads
+// with a 7-day lookback for every fiat-quoted pair (XLM/EUR, …). A dry
+// feed is invisible to the poller-staleness alert (massive emits no
+// external_poller series) and to the fx_snap read (a stale-but-present
+// row still prices) until the 7-day lookback finally expires and fiat
+// pairs silently break. This gauge makes "the FX feed VWAP depends on
+// has gone dry" expressible as `time() - <gauge>` and alertable long
+// before that 7-day cliff (see stellarindex_external_fx_feed_stale).
+//
+// Reset-proof across restarts: the worker's startup refresh re-stamps
+// it within seconds of a healthy boot (mirrors the gap-detector
+// last_success gauge, 2026-07-06). A source that has never once
+// written since process start emits no series here — that "never came
+// up" case is covered by the paired absent()-based alert.
+var ExternalFXLastQuoteUnix = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_external_fx_last_quote_unix",
+		Help: "UNIX seconds of the most recent successful fx_quotes write per FX source (currently `massive`). Reset-proof liveness for the active fiat-FX feed the triangulation forex-snap depends on; only advances on a committed non-empty batch.",
 	},
 	[]string{"source"},
 )
@@ -1526,6 +1605,90 @@ var SupplyCrossCheckTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
+// ─── Supply-divergence cross-check metrics ────────────────────────────
+//
+// DISTINCT from the SupplyCrossCheck* pair above: that pair is an
+// INTERNAL consistency check (a classic asset's Algorithm 2 sum vs its
+// SAC-wrapped Algorithm 3 sum — both OUR OWN numbers). The
+// SupplyDivergence* set below cross-checks OUR served circulating
+// supply against an EXTERNAL authoritative reference (the Stellar
+// Network Dashboard for XLM; CoinGecko when a Pro key is configured).
+// It catches a genuinely-stale SDF-reserve exclusion list — the drift
+// that a manual "is our supply right?" investigation is otherwise the
+// only defense against (docs/methodology/xlm-circulating-supply.md).
+//
+// Emitted by `cmd/stellarindex-aggregator/main.go` (obsSupplyDivergenceEmitter,
+// driven by `internal/divergence.SupplyService.Tick`) once per
+// `[divergence.supply].refresh_interval` when the check is enabled.
+
+// SupplyDivergenceRatio — gauge of the absolute relative divergence
+// |our − reference| / reference between OUR served circulating supply
+// and an external reference's, per (asset, reference).
+//
+// The primary alert target: `stellarindex_supply_divergence_high`
+// fires when this exceeds the operator threshold (default 0.01 = 1%,
+// well above the ~0.03% XLM Fee-Pool noise floor —
+// docs/methodology/xlm-circulating-supply.md). Labelled by `asset`
+// (canonical wire form, e.g. "native") and `reference`
+// ("stellar-dashboard" / "coingecko"). Cardinality bound by the tiny
+// flagship check set × reference set (single digits).
+//
+// NOT updated on the no_reference / refresh_error outcomes — a frozen
+// gauge (last-known value) is the correct behaviour when a reference
+// goes dark (the no_reference counter carries that signal), so a dead
+// reference never manufactures a divergence reading.
+var SupplyDivergenceRatio = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_supply_divergence_ratio",
+		Help: "Absolute relative divergence |our − reference| / reference of served circulating supply, per (asset, reference). Alert when > 1% (well above the ~0.03% XLM noise floor).",
+	},
+	[]string{"asset", "reference"},
+)
+
+// SupplyDivergenceTotal — per-outcome counter for the supply
+// cross-check, one increment per (asset, tick):
+//
+//   - `ok`            — served figure agreed with every responding
+//     reference within the threshold.
+//   - `divergent`     — a responding reference disagreed by more than
+//     the threshold. The ratio gauge carries the magnitude.
+//   - `no_reference`  — served figure loaded but every reference was
+//     unreachable / didn't publish the asset (CoinGecko 429, Dashboard
+//     outage). Graceful-degrade — deliberately NOT paged, so a dead
+//     reference isn't a false divergence alarm.
+//   - `refresh_error` — OUR served snapshot couldn't be read
+//     (bootstrap, storage error). Nothing to compare.
+//
+// The `no_reference` rate is the "checker running blind" signal (the
+// CS-088 analogue on the supply path); operators watch it but it does
+// not page.
+var SupplyDivergenceTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_supply_divergence_total",
+		Help: "Supply cross-check evaluations per (asset, tick), labelled by outcome (ok|divergent|no_reference|refresh_error).",
+	},
+	[]string{"outcome"},
+)
+
+// SupplyDivergenceDurationSeconds — latency histogram for one
+// (asset, tick) supply cross-check evaluation, including the served
+// read + the HTTP fan-out to every reference. Labelled by outcome
+// (matches the counter) so operators chart the healthy `ok` path
+// separately from the slow-vendor / timeout `no_reference` path.
+//
+// Buckets span 10 ms → 30 s: a warm served read is single-digit ms;
+// a single slow reference (Dashboard / CoinGecko) is ~1-10 s; the
+// worst case is the per-reference timeout (default 10s) compounded
+// across the reference set.
+var SupplyDivergenceDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_supply_divergence_duration_seconds",
+		Help:    "Per-(asset, tick) supply cross-check latency, labelled by outcome (ok|divergent|no_reference|refresh_error).",
+		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	},
+	[]string{"outcome"},
+)
+
 // ─── verify-archive metrics ───────────────────────────────────────
 //
 // Emitted by `stellarindex-ops verify-archive` when the operator
@@ -1974,4 +2137,40 @@ var MarketsSkippedRowsTotal = prometheus.NewCounter(
 		Name: "stellarindex_markets_skipped_rows_total",
 		Help: "Count of trades rows skipped by the /v1/markets scanner because base/quote did not parse as canonical asset strings. Non-zero indicates non-pipeline writes; investigate and clean up.",
 	},
+)
+
+// DEXTradeNonstandardDecimalsTotal — the decimals-assumption landmine
+// detector (adversarial-review HIGH-latent, decoder-correctness audit
+// Finding 2). Emitted by the aggregator's decimals-guard sweep
+// (internal/decimalsguard) once per (source, asset) the FIRST time a
+// DEX trade is observed for a Soroban-contract token whose ON-CHAIN
+// decimals() != 7.
+//
+// Why it matters: the served price is Σ(quote_amount)/Σ(base_amount) on
+// RAW smallest-unit integers — in the prices_* continuous aggregates
+// (migrations/0002) and in aggregate.VWAP. The per-asset decimals CANCEL
+// in that ratio ONLY when base and quote share the same scale. Every
+// DEX-traded Stellar token today is 7-decimal (SACs are always 7;
+// pure-SEP-41 tokens observed so far all declare decimals=7), so the
+// ratio is correct. The moment a non-7-decimal SEP-41 token (an
+// 18-decimal bridged asset, a 6-dp token, …) gains DEX liquidity, every
+// served price for a pair involving it silently skews by 10^(7−decimals)
+// with NO other signal. This counter turns that silent landmine into a
+// loud, per-asset signal so the operator can apply the decimals
+// normalization (deferred follow-up — see the runbook) BEFORE customers
+// consume a wrong price.
+//
+// Labels: `source` (the DEX connector that traded it — soroswap /
+// phoenix / aquarius / comet / …) and `asset` (the token's C-strkey
+// contract id). The label set is unbounded in principle but near-empty
+// in practice (offenders should be zero), so it is NOT pre-seeded and a
+// series exists ONLY once a real offender is detected — the alert is a
+// bare `> 0`. The actual decimals value is logged (ERROR) at detection,
+// not carried as a label.
+var DEXTradeNonstandardDecimalsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_dex_trade_nonstandard_decimals_total",
+		Help: "DEX trades observed for a Soroban token whose on-chain decimals() != 7 — the served price for pairs involving this asset is silently skewed by 10^(7-decimals). Labels: source, asset (C-strkey). Any non-zero value is an unmitigated mispricing landmine; see runbook dex-nonstandard-decimals.md.",
+	},
+	[]string{"source", "asset"},
 )

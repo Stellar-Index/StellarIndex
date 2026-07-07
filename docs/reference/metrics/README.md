@@ -111,10 +111,31 @@ because every target uses the same tip in the same cycle.
 Counter, labels `source`, `table`, `outcome`.
 
 Periodic gap-detector cycle outcomes — `ok` on a clean scan,
-`error` on a transient Postgres / timeout failure. Operators
-chart `rate({outcome="ok"}[5m])` to confirm the worker is alive;
-the `stellarindex_ingest_gap_detector_silent` ticket-tier alert
-fires when this rate goes to zero.
+`error` on a Postgres / timeout failure (a non-ok outcome is also
+logged loudly as `gap-detector: scan failed` with `elapsed_s` so a
+timeout is unmistakable). A climbing `{outcome="error"}` rate is the
+diagnostic when the silent-detector alert fires. Do NOT alert on
+`rate({outcome="ok"}) == 0`: the heavy targets scan once per 6h, so
+their ok counter is pinned at 1 within a process life and 1 → 1 across
+a restart is invisible to `rate()` (it only detects a decrease) — that
+false-fired the silent alert for >7h on 2026-07-06. Liveness is keyed
+off `stellarindex_ingest_gap_detector_last_success_unix` instead.
+
+### `stellarindex_ingest_gap_detector_last_success_unix`
+
+Gauge, labels `source`, `table`.
+
+Wall-clock timestamp (Unix seconds) of the most recent SUCCESSFUL
+per-(source, table) scan. This is the reset-proof liveness primitive
+the `stellarindex_ingest_gap_detector_silent` ticket-tier alert keys
+off: it fires on `(time() - gauge) > 8h`. A wall-clock stamp survives
+restarts correctly where a rarely-incrementing counter does not — a
+healthy startup scan re-stamps it to `now()`, clearing staleness
+immediately, while a genuinely wedged target's stamp stops advancing.
+Only advances on a clean scan; an errored/timed-out scan leaves the
+previous stamp untouched so staleness grows. A target that has never
+once succeeded since process start emits no series here (that case is
+covered by the `runs_total{outcome="error"}` rate).
 
 ### `stellarindex_ingest_gap_detector_duration_seconds`
 
@@ -338,6 +359,31 @@ since process start. Companion to
 stale by N minutes" expressible as `time() - <gauge>` rather than
 multi-window rate math, which simplifies alerting (see
 `stellarindex_external_poller_stale`).
+
+### `stellarindex_external_fx_last_quote_unix`
+
+Gauge, label `source`.
+
+UNIX-seconds timestamp of the most recent successful `fx_quotes` WRITE
+from the active fiat-FX feed (`massive`, the `internal/sources/forex`
+worker in the API binary). Advances ONLY when `InsertFXQuoteBatch`
+commits a non-empty batch — a failed write or an empty snapshot
+(upstream returned no usable rates) leaves the prior stamp untouched, so
+a wedged-but-erroring worker cannot keep the feed looking fresh.
+
+Deliberately SEPARATE from `stellarindex_external_poller_last_success_unix`:
+`massive` does not run under the `external.Connector` poller framework
+(it writes `fx_quotes` directly, out of band from the poller runner), so
+it emits no `external_poller` series at all. The triangulation
+forex-snap (`Store.FXQuoteAtOrBefore`) reads `fx_quotes` with a **7-day
+lookback** to price every fiat-quoted pair, so a dead feed prices fine
+off a stale row for up to a week before fiat pairs silently break.
+
+When to look: `time() - <gauge>` is the feed's age. Healthy is < 1 h
+(r1's forex worker writes exactly hourly). The
+`stellarindex_external_fx_feed_stale` alert fires at 6 h (well below the
+7-day cliff); the companion `stellarindex_external_fx_feed_absent` fires
+when the series is missing entirely (worker never wrote since startup).
 
 ### `stellarindex_external_dust_dropped_total`
 
@@ -957,6 +1003,65 @@ the gauge — a flat gauge with zero counter increments means the
 orchestrator stopped invoking the cross-check, not that everything's
 healthy.
 
+### `stellarindex_supply_divergence_ratio`
+
+Gauge, labels `asset` (canonical wire form, e.g. `native`) and
+`reference` (`stellar-dashboard` / `coingecko`).
+
+The absolute relative divergence `|our − reference| / reference`
+between OUR served `circulating_supply` and an EXTERNAL authoritative
+reference's. **Distinct from the `supply_cross_check_*` pair above**:
+that pair is an internal consistency check (two of our own numbers);
+this is our served figure vs the market's.
+
+Look at this when you need to know whether
+`/v1/assets/native` circulating supply still tracks the Stellar Network
+Dashboard. Steady state for XLM is ~0.0003 (the ~0.03% Fee-Pool noise
+floor documented in
+[`docs/methodology/xlm-circulating-supply.md`](../../methodology/xlm-circulating-supply.md)).
+Drives the
+[`stellarindex_supply_divergence_high`](../../operations/runbooks/supply-divergence.md)
+alert when > 0.01 (1%) — a threshold two-plus orders of magnitude above
+that noise floor, so it fires only on a real drift (usually a stale
+SDF-reserve exclusion account list). NOT updated on the `no_reference`
+/ `refresh_error` outcomes: a frozen gauge is the correct behaviour
+when a reference goes dark, so a dead reference never manufactures a
+divergence reading. Emitted only while `[divergence.supply].enabled`
+(off by default; opt in on r1 via ansible).
+
+### `stellarindex_supply_divergence_total`
+
+Counter, label `outcome` (`ok` / `divergent` / `no_reference` /
+`refresh_error`).
+
+One increment per (asset, tick) of the supply cross-check worker.
+`ok` = agreed with every responding reference within the threshold;
+`divergent` = a responding reference disagreed by more than the
+threshold (the ratio gauge carries the magnitude); `no_reference` =
+served figure loaded but every reference was unreachable / didn't
+publish the asset (CoinGecko 429, Dashboard outage) — the
+graceful-degrade "checker running blind" signal, deliberately NOT
+paged so a dead reference isn't a false supply alarm; `refresh_error` =
+our served snapshot couldn't be read (bootstrap, storage error).
+
+Watch a sustained `no_reference` rate to know the check has gone blind;
+watch `divergent` to know a real drift is firing. Pre-seeded to zero
+for all four outcomes so the alert PromQL reads a real zero before the
+first tick.
+
+### `stellarindex_supply_divergence_duration_seconds`
+
+Histogram, label `outcome` (`ok` / `divergent` / `no_reference` /
+`refresh_error`).
+
+Per-(asset, tick) supply cross-check latency including the served read
++ the HTTP fan-out to every reference. Labelled by outcome (matches the
+counter) so operators chart the healthy `ok` path separately from the
+slow-vendor / timeout `no_reference` path. Buckets 10 ms – 30 s: a warm
+served read is single-digit ms; a single slow reference is ~1-10 s; the
+worst case is the per-reference timeout (default 10 s) compounded across
+the reference set.
+
 ### `stellarindex_aggregator_triangulations_total`
 
 Counter, label `outcome` (`ok` / `missing_leg` / `parse_error` /
@@ -1029,9 +1134,11 @@ or `write_error` rates indicate the storage layer needs investigation
 ### `stellarindex_aggregator_supply_refresh_total`
 
 Counter, labels `asset_key` + `outcome`. `outcome` ∈ (`ok` /
-`no_ledger` / `no_observation` / `compute_error` / `write_error`).
-`asset_key` is the `supply.AssetKey` form: `XLM`, `CODE:ISSUER`
-for classic credits, the bare contract C-strkey for SEP-41.
+`no_ledger` / `no_observation` / `compute_error` / `write_error` /
+`stale_component` / `missing_freshness` / `dormant` /
+`missing_baseline`). `asset_key` is the `supply.AssetKey` form:
+`XLM`, `CODE:ISSUER` for classic credits, the bare contract
+C-strkey for SEP-41.
 
 Supply-snapshot refresh outcomes per (asset_key, outcome) per
 refresh cycle (ADR-0011, ADR-0021, ADR-0022, ADR-0023). The
@@ -1053,6 +1160,12 @@ empty or missing entries — expected briefly post-deploy, alarming
 sustained. `no_ledger` fires before the indexer produces its
 first ingestion cursor; clears as soon as ingest catches up.
 `write_error` indicates the storage layer needs investigation.
+`missing_baseline` is a SEP-41 SAC-wrapper whose pre-Soroban opening
+balance hasn't been seeded — its Soroban-era-only total reads
+Σburn > Σmint (incident 2026-07-06); it is benign (excluded from
+`error_dominant`) and clears after `stellarindex-ops supply
+seed-sep41-genesis`. A negative total AFTER the baseline is seeded
+surfaces as `compute_error` (genuine inconsistency, pages).
 
 The `asset_key` label lets operators chart per-asset bootstrap
 progress + isolate failure modes per asset rather than chasing
@@ -1452,8 +1565,39 @@ grouping + a few inserts) is sub-second; chart the `ok` p95/p99
 separately from `scan_error` to tell "Postgres scan is slow" from
 "detector is failing fast".
 
+## Decimals-assumption guard (aggregator binary)
+
+### `stellarindex_dex_trade_nonstandard_decimals_total`
+
+Counter, labels `source`, `asset`.
+
+**When to look at this: never — it should be permanently absent/zero.**
+The served price is `Σ(quote_amount)/Σ(base_amount)` on raw smallest-unit
+integers (the `prices_*` continuous aggregates and `aggregate.VWAP`); the
+per-asset decimals cancel in that ratio only when the base and quote share a
+decimals scale. That holds today because every DEX-traded Stellar token is
+7-decimal (SACs are always 7; classic credits are 7; observed pure-SEP-41
+tokens declare 7). The aggregator's `internal/decimalsguard` sweep resolves
+each recently-DEX-traded Soroban token's on-chain `decimals()` from the
+certified lake and increments this counter — once per (`source`, `asset`),
+latched — the first time one is confirmed `!= 7`, i.e. the moment the
+assumption is violated and every served price for a pair involving that
+`asset` is silently skewed by `10^(7−decimals)`. `source` is the DEX
+connector; `asset` is the token's C-strkey contract id. The label set is
+unbounded in principle but near-empty in practice, so it is **not**
+pre-seeded — a series exists only once a real offender is detected, and the
+alert is a bare `> 0`. The exact decimals + skew magnitude are in the guard's
+ERROR log line, not a label. Any non-zero value is a real, silent mispricing
+on a live pair — page-adjacent (P2). Runbook:
+`docs/operations/runbooks/dex-nonstandard-decimals.md`.
+
 ## Changelog
 
+- 2026-07-07 — added `stellarindex_dex_trade_nonstandard_decimals_total`
+  (`source`, `asset`), emitted by the aggregator's decimals-assumption guard
+  (`internal/decimalsguard`). Detection-only signal for the served-price
+  decimals landmine (decoder-correctness audit Finding 2): fires when a DEX
+  trade lands for a Soroban token whose on-chain `decimals()` != 7.
 - 2026-06-18 — added the MEV detection metrics
   (`stellarindex_mev_detect_runs_total`,
   `stellarindex_mev_events_inserted_total`,

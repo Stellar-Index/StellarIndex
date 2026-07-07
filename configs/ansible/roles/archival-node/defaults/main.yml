@@ -68,15 +68,29 @@ zfs_ashift:          12          # 4K NVMe sector alignment
 zfs_os_drives_needing_data_partition: []
 zfs_os_drives_data_partition_number: 4
 
-# Per-workload dataset tuning
+# Per-workload dataset tuning.
+#
+# recordsize is the PARSABLE byte value (131072, not "128K"): the
+# community.general.zfs module reads current properties with `zfs get -p`
+# and string-compares, so a human-readable "128K" never equals the live
+# "131072" and the task reports a phantom change on every --check run
+# (BACKLOG #50 / 2026-07-06 drift reconcile). Every value here is grounded
+# in the live `zfs get -p -o property,value,source data/<ds>` output on r1.
+#
+# List ONLY the properties a dataset sets LOCALLY. A property left to
+# inherit the pool default (recordsize 131072 / compression zstd / atime
+# off / logbias latency / primarycache all) is simply omitted — the
+# "Create ZFS datasets" task manages exactly the keys present on the item,
+# so --check never tries to convert an inherited property to local (which
+# is a real, drift-reporting change on the mountpoint-only datasets below).
 zfs_datasets:
   - name: "os"
-    recordsize: "128K"
+    recordsize: "131072"
     compression: "zstd"
     atime: "off"
     mountpoint: "/var/lib/stellarindex"
   - name: "postgres"
-    recordsize: "8K"
+    recordsize: "8192"
     compression: "zstd"
     atime: "off"
     logbias: "throughput"
@@ -88,36 +102,39 @@ zfs_datasets:
   # validator work, add this entry back and re-apply the zfs tag:
   #
   #   - name: "core"
-  #     recordsize: "128K"
+  #     recordsize: "131072"
   #     compression: "zstd"
   #     atime: "off"
   #     mountpoint: "/var/lib/stellar-core"
   - name: "galexie"
-    recordsize: "1M"
+    recordsize: "1048576"
     compression: "zstd"
     atime: "off"
     mountpoint: "/var/lib/galexie"
   - name: "minio"
-    recordsize: "1M"
+    recordsize: "1048576"
     compression: "zstd"
     atime: "off"
     mountpoint: "/var/lib/minio"
   - name: "archive"
-    recordsize: "1M"
+    recordsize: "1048576"
     compression: "zstd"
     atime: "off"
     mountpoint: "/srv/history-archive"
-  # Out-of-band datasets codified 2026-07-05 (BACKLOG #50): both were
-  # hand-created during incidents — clickhouse for the ADR-0034 lake
-  # (2026-06-05 pivot), loki when CH logs moved off the 49G root
-  # (2026-06-11 root-fill incident, commit 5dd6fcda).
+  # Out-of-band datasets, hand-created during incidents and now fully
+  # codified (BACKLOG #50 — no un-codified ZFS dataset remains on r1):
+  #   clickhouse  — ADR-0034 lake (2026-06-05 pivot)
+  #   loki        — CH logs off the 49G root (2026-06-11, commit 5dd6fcda)
+  #   prometheus  — TSDB off the root (2026-06-30, launch-todo P0-5)
+  #   pgbackrest  — pgBackRest repo1 backups (ADR-0043)
+  #   restore-drill — DRILL_ROOT for scripts/ops/restore-drill.sh (CS-110)
   - name: "clickhouse"
-    recordsize: "128K"
+    recordsize: "131072"
     compression: "zstd"
     atime: "off"
     mountpoint: "/var/lib/clickhouse"
   - name: "loki"
-    recordsize: "128K"
+    recordsize: "131072"
     compression: "zstd"
     atime: "off"
     mountpoint: "/var/lib/loki"
@@ -125,13 +142,20 @@ zfs_datasets:
     # The Prometheus TSDB (~12-13G) lived on the 49G OS root and kept it
     # chronically >90% full; relocated to ZFS 2026-06-30 (launch-todo P0-5),
     # where zstd compresses it ~12x. recordsize 128K suits its chunk writes.
-    recordsize: "128K"
+    recordsize: "131072"
     compression: "zstd"
     atime: "off"
     mountpoint: "/var/lib/prometheus"
-  # NOTE (2026-06-30 audit): r1 also runs data/clickhouse, data/loki, and
-  # data/pgbackrest datasets created out-of-band that are NOT yet codified
-  # here — a pre-existing drift to reconcile in a dedicated pass.
+  # pgbackrest + restore-drill inherit the pool tuning (recordsize 131072 /
+  # compression zstd / atime off / logbias latency / primarycache all on
+  # r1), so only the LOCAL properties are declared: the mountpoint, plus
+  # the mount-dir mode for pgbackrest (0750, postgres-owned backup repo —
+  # dir_mode overrides the file task's 0755 default).
+  - name: "pgbackrest"
+    mountpoint: "/var/lib/pgbackrest"
+    dir_mode: "0750"
+  - name: "restore-drill"
+    mountpoint: "/var/tmp/restore-drill"
 
 # ───── OS kernel tuning ──────────────────────────────────────────────
 sysctl_tunings:
@@ -220,6 +244,7 @@ stellarindex_enabled_sources:
   - "band"
   - "blend"
   - "blend_backstop"
+  - "sorocredit"
   - "sdex"
   - "cctp"
   - "rozo"

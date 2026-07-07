@@ -45,6 +45,7 @@ var KnownSources = map[string]struct{}{
 	"band":            {},
 	"cctp":            {},
 	"rozo":            {},
+	"sorocredit":      {},
 }
 
 // Validate checks the loaded Config against the same constraints

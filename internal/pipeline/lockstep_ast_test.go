@@ -23,6 +23,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -39,6 +40,18 @@ var notProjectedEvents = map[string]string{
 	// defines is projector-owned. If you add a log-only or
 	// dispatcher-owned event type to a projected source package,
 	// register it here with the ADR/why.)
+}
+
+// notSunkEvents is the conscious-decision register for consumer.Event
+// types under internal/sources that deliberately have NO persist arm
+// in sink.go's HandleEvent (i.e. some OTHER writer owns them and they
+// never reach HandleEvent). Empty today — every source event type is
+// sunk by HandleEvent. If you ever add an event type handled entirely
+// off the HandleEvent path, register it here with the reason so the
+// exhaustiveness guard below stays a real signal rather than being
+// loosened wholesale.
+var notSunkEvents = map[string]string{
+	// (none today.)
 }
 
 // parseFile parses one Go file into an AST.
@@ -286,5 +299,72 @@ func TestLockstep_RegistrySourcesFullyWired(t *testing.T) {
 		if !regPkgs[pkg] {
 			t.Errorf("notProjectedEvents entry %q references a package that is not a projected source — stale entry", full)
 		}
+	}
+}
+
+// allSourceEventTypes walks internal/sources recursively and returns
+// the set of "pkg.Type" names for every consumer.Event implementer
+// (a type with an EventKind() method), keyed by DIRECTORY BASENAME —
+// which is exactly the import ident sink.go's HandleEvent uses for
+// every source package (underscore dirs are import-aliased to their
+// basename throughout the repo). This is the authoritative universe
+// of event types the sink's type-switch must cover.
+func allSourceEventTypes(t *testing.T) map[string]bool {
+	t.Helper()
+	root := repoDir("internal", "sources")
+	out := map[string]bool{}
+	err := filepath.WalkDir(root, func(path string, de fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !de.IsDir() {
+			return nil
+		}
+		base := filepath.Base(path)
+		for typ := range eventTypesInPackage(t, path) {
+			out[base+"."+typ] = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+	if len(out) == 0 {
+		t.Fatalf("found no consumer.Event implementers under %s — walker broken?", root)
+	}
+	return out
+}
+
+// TestLockstep_EveryConsumerEventHasSinkArm is the exhaustiveness guard
+// for the "pipeline sink type-switch trap" (BACKLOG #56): EVERY type
+// that implements consumer.Event under internal/sources MUST have a
+// persist arm in sink.go's HandleEvent. A missing arm means the event
+// falls through to HandleEvent's `default` and is counted as an
+// "unhandled event kind" drop instead of being persisted — the exact
+// silent-loss failure mode where "metrics say we're ingesting but the
+// tables stay empty".
+//
+// The sibling guards (TestLockstep_ProjectedEventsHavePersistArms,
+// TestLockstep_RegistrySourcesFullyWired) only cover PROJECTED source
+// packages, reached via IsProjectedEvent. This one covers ALL source
+// packages — the non-projected ones too (sdex / external / band /
+// soroswap_router / the five supply observers), which previously had
+// no automated guard tying them to a HandleEvent arm. Adding a new
+// consumer.Event type without wiring the sink now fails CI here rather
+// than silently dropping its rows in production.
+func TestLockstep_EveryConsumerEventHasSinkArm(t *testing.T) {
+	fset := token.NewFileSet()
+	sink := parseFile(t, fset, "sink.go")
+	handle := caseTypeNames(t, funcDecl(t, sink, "HandleEvent"))
+
+	all := allSourceEventTypes(t)
+	for _, full := range sortedKeys(all) {
+		if handle[full] {
+			continue
+		}
+		if _, allowed := notSunkEvents[full]; allowed {
+			continue
+		}
+		t.Errorf("%s implements consumer.Event but sink.go HandleEvent has no persist arm — it falls to the 'unhandled event kind' default and is dropped (pipeline sink type-switch trap, #56). Add a case in HandleEvent (and the tradeFromEvent fast-path if it is trade-shaped), or register it in notSunkEvents with a reason", full)
 	}
 }

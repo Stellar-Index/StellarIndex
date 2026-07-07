@@ -68,6 +68,11 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 		"s3 bucket uppercase":          {func(c *config.Config) { c.Storage.S3BucketArchive = "MyBucket" }, "s3_bucket_archive"},
 		"s3 bucket too short":          {func(c *config.Config) { c.Storage.S3BucketArchive = "ab" }, "s3_bucket_archive"},
 		"s3 bucket underscore":         {func(c *config.Config) { c.Storage.S3BucketArchive = "my_bucket" }, "s3_bucket_archive"},
+		"usd peg empty":                {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{""} }, "usd_pegged_classic_assets"},
+		"usd peg unparseable":          {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{"not an asset"} }, "usd_pegged_classic_assets"},
+		"usd peg native not classic":   {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{"native"} }, "classic"},
+		"usd peg crypto not classic":   {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{"crypto:USDT"} }, "classic"},
+		"usd peg fiat not classic":     {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{"fiat:USD"} }, "classic"},
 	}
 
 	for name, tc := range cases {
@@ -83,6 +88,19 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 				t.Errorf("err = %v; want substring %q", err, tc.errSub)
 			}
 		})
+	}
+}
+
+func TestValidate_USDPeggedClassicAssetsAccepted(t *testing.T) {
+	// A well-formed classic credit asset (CODE-ISSUER, 7-decimal by
+	// protocol) is the only accepted shape for a declared USD peg.
+	c := withBad(func(c *config.Config) {
+		c.Trades.USDPeggedClassicAssets = []string{
+			"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+		}
+	})
+	if err := c.Validate(); err != nil {
+		t.Fatalf("valid classic USD peg rejected: %v", err)
 	}
 }
 
