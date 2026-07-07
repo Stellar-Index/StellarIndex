@@ -24,7 +24,11 @@ against.
   `Liquidation` events are decoded as **scheduled settlements** (not distress — verified
   ~1:1 with statements, single recurring keeper). Explorer-scope; no pricing signal.
   Listed in `/v1/protocols` (category `lending`) with its event kinds + verification page,
-  so the captured events surface on the protocol page rather than being invisible.
+  so the captured events surface on the protocol page rather than being invisible; also
+  added to the explorer's static protocol registry so `/protocols/sorocredit` pre-renders.
+- CI: `lint-protocol-registry-sync` cross-checks the explorer's static protocol registry
+  against the Go source-of-truth (`protocols_registry.go`) — nothing did before, so a
+  Go-registered protocol could silently ship with no pre-rendered explorer page (a 404).
 - `/v1/assets` listing rows carry `unverified_ticker_collision` (bool) so clients can
   distinguish a same-ticker impersonator from the verified asset (OpenAPI 1.2.0 → 1.3.0).
 - Phoenix: decode the new Map-body swap event (single `Symbol("swap")` event, `ScvMap`

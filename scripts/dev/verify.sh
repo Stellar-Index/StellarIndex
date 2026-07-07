@@ -14,6 +14,7 @@ echo "=== Vet ==="           && make vet
 echo "=== Lint ==="          && make lint
 echo "=== Docs ==="          && ./scripts/ci/lint-docs.sh
 echo "=== Imports ==="       && ./scripts/ci/lint-imports.sh
+echo "=== Protocol registry sync ===" && ./scripts/ci/lint-protocol-registry-sync.sh
 echo "=== Lexicon ==="       && ./scripts/ci/lint-lexicon.sh
 echo "=== i128/NUMERIC ===" && ./scripts/ci/lint-i128.sh
 echo "=== Migrations money ===" && ./scripts/ci/lint-migrations.sh
