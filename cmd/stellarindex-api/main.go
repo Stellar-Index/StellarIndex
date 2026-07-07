@@ -941,12 +941,13 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// Protocols pillar (/v1/protocols*): contract registry, 24h
 		// event census, soroswap pair registry. All three optional —
 		// the directory degrades to zeros/empties when absent.
-		ProtocolContracts: store,
-		ProtocolStats:     store,
-		ProtocolActivity:  protocolActivityReader,
-		ProtocolBespoke:   store,
-		SoroswapPairs:     store,
-		NetworkStats:      cachedNetworkStats,
+		ProtocolContracts:  store,
+		ProtocolStats:      store,
+		ProtocolActivity:   protocolActivityReader,
+		ProtocolBespoke:    store,
+		SoroswapPairs:      store,
+		ProtocolPoolTokens: store,
+		NetworkStats:       cachedNetworkStats,
 		// Routers registry + routed-via 24h rollup (/v1/aggregators).
 		// Direct store read: the routed-trades scan rides the partial
 		// routed_via index and the registry is a handful of rows; the

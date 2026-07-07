@@ -5781,6 +5781,15 @@ export interface paths {
                          *             "factory_id": "CCZD6ESMOGMPWH2KRO4O7RGTAPGTUPFWFQBELQSS7ZUK63V3TZWETGAG",
                          *             "first_ledger": 51499915,
                          *             "kind": "instance",
+                         *             "tokens": [
+                         *               "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+                         *               "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+                         *             ],
+                         *             "token_symbols": [
+                         *               "XLM",
+                         *               "USDC"
+                         *             ],
+                         *             "pair": "XLM/USDC",
                          *             "events": 569,
                          *             "last_seen": "2026-07-03T21:40:33Z"
                          *           }
@@ -5845,6 +5854,15 @@ export interface paths {
                                     token0?: string;
                                     /** @description Pair token1 C-strkey (soroswap only). */
                                     token1?: string;
+                                    /** @description Ordered raw token contract C-strkeys the pool holds — 2 for a pair, 3/4 for an Aquarius stableswap, N for a Comet weighted pool, or the reserve-asset set for a lending market (blend). Parallel to token_symbols. Absent for non-pool contracts (factories, oracles). */
+                                    tokens?: string[];
+                                    /** @description Human display symbols for `tokens`, same order (XLM, USDC, AQUA, …). An unresolvable token degrades to a short truncated contract ("CAS3…OWMA") so this stays parallel to `tokens`. */
+                                    token_symbols?: string[];
+                                    /**
+                                     * @description Human roster label — token_symbols joined with "/": "XLM/USDC" for a pair, "XLM/USDC/USDT" for a 3-token stableswap, or the reserve-asset list for a lending market. Absent when no tokens resolve.
+                                     * @example XLM/USDC
+                                     */
+                                    pair?: string;
                                     /**
                                      * @description Role within the protocol — a verified trust-root (factory), a factory-deployed pool/vault/market (instance), or a folded-in sub-module contract that belongs to this protocol but emits on its own address (module — e.g. the Blend Backstop).
                                      * @enum {string}

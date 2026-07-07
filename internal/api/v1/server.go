@@ -115,6 +115,7 @@ type Server struct {
 	protocolFastOnce        sync.Once
 	protocolFastOK          bool
 	protocolBespoke         ProtocolBespokeReader
+	protocolPoolTokens      ProtocolPoolTokensReader
 	// Per-server TTL + single-flight cache for the expensive
 	// /v1/protocols/{name} detail (lazy-init'd — see cachedProtocolDetail).
 	protoDetailMu     sync.Mutex
@@ -554,6 +555,14 @@ type Options struct {
 	// contract list / zero count.
 	SoroswapPairs SoroswapPairsReader
 
+	// ProtocolPoolTokens, when non-nil, maps each pool-based protocol's
+	// contracts to the token contract C-strkeys it holds, so the
+	// /v1/protocols/{name} roster renders a human pair ("XLM/USDC") in place
+	// of raw C-strkeys. Production wiring is timescale.Store (PoolTokens).
+	// Nil serves the roster without the pair label (soroswap still labels
+	// its rows from its own token0/token1).
+	ProtocolPoolTokens ProtocolPoolTokensReader
+
 	// NetworkStats, when non-nil, backs GET /v1/network/stats —
 	// the consolidated home-page aggregate (24h volume, markets,
 	// assets indexed, latest ledger). Production wiring is
@@ -922,6 +931,7 @@ func New(opts Options) *Server {
 		protocolStats:           opts.ProtocolStats,
 		protocolActivity:        opts.ProtocolActivity,
 		protocolBespoke:         opts.ProtocolBespoke,
+		protocolPoolTokens:      opts.ProtocolPoolTokens,
 		soroswapPairs:           opts.SoroswapPairs,
 		networkStats:            opts.NetworkStats,
 		aggregators:             opts.Aggregators,

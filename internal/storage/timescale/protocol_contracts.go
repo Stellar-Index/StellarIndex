@@ -140,9 +140,9 @@ func (s *Store) ListProtocolContracts(ctx context.Context, source string) ([]Pro
 //
 // Aquarius was previously listed as "pair-keyed, no per-contract column" and so
 // its /v1/protocols/aquarius roster read 0 contracts despite being the most
-// active AMM (14.9k events/24h, 300+ pools). The aquarius_reserves hypertable
-// (migration 0089) added this session carries the emitting POOL contract_id, so
-// aquarius now has a per-pool roster source (2026-07-07, #91).
+// active AMM (14.9k events/24h, 300+ pools). aquarius_liquidity (migration 0089)
+// carries the emitting POOL contract_id AND the pool's token identities, so
+// aquarius now has a per-pool roster source that also renders a pair (2026-07-07, #91).
 func projectionContractColumn(source string) (table, column string, ok bool) {
 	switch source {
 	case "defindex":
@@ -156,7 +156,10 @@ func projectionContractColumn(source string) (table, column string, ok bool) {
 	case "comet":
 		return "comet_liquidity", "contract_id", true
 	case "aquarius":
-		return "aquarius_reserves", "contract_id", true
+		// aquarius_liquidity carries the pool's token identities (topics),
+		// so a roster built from it always has a PoolTokens pair to render;
+		// every Aquarius pool emits a deposit at creation, so it is complete.
+		return "aquarius_liquidity", "contract_id", true
 	}
 	return "", "", false
 }
