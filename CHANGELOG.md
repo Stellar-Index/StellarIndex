@@ -107,6 +107,13 @@ against.
   sign routing to the paging vs benign sentinel, and the disjoint
   `genesis(<boundary) ⊕ Soroban(>=boundary)` fold at the exact boundary ledger.
 
+### Security
+- Dashboard-minted API keys: the per-key `monthly_quota` is now clamped at mint to the
+  account's cap (operator `monthly_request_quota_override` if set, else the tier ceiling),
+  and the auth cascade enforces `min(per-key, account-override)` so the operator cap is a
+  hard ceiling the customer can only lower — previously a metered customer could self-mint
+  a key with an arbitrarily large `monthly_quota` and run unmetered.
+
 ## [v0.8.7] — 2026-07-06
 
 ### Added
