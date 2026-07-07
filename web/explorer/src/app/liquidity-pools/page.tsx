@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { NativePoolsPanel } from './NativePoolsPanel';
+
 export const metadata: Metadata = {
   title: 'Native liquidity pools on Stellar (CAP-38)',
   description:
@@ -41,19 +43,21 @@ export default function LiquidityPoolsPage() {
           Pool trades are captured directly from the certified ledger lake and
           appear in the{' '}
           <Link href="/markets" className="text-brand-600 hover:underline">aggregate markets</Link>.
-          Native-pool reserve changes are also captured from the lake, where they
-          feed supply verification for tracked assets — but per-pool reserve views
-          for native pools aren&apos;t served yet.
+          Each pool&apos;s two-sided reserves are read straight from its ledger
+          entry in the lake — shown live below, with a constant-product depth
+          estimate per pool.
         </p>
         <p>
           For Soroban AMMs, live per-pool <strong>reserve and depth</strong> views are
           available for{' '}
           <Link href="/dexes/soroswap" className="text-brand-600 hover:underline">Soroswap</Link>{' '}
-          — currently the only venue whose pool-contract storage layout is verified
-          against the lake. Coverage notes on each DEX page state exactly which
-          venues are and aren&apos;t served.
+          — currently the only Soroban venue whose pool-contract storage layout is
+          verified against the lake. Coverage notes on each DEX page state exactly
+          which venues are and aren&apos;t served.
         </p>
       </section>
+
+      <NativePoolsPanel />
     </div>
   );
 }

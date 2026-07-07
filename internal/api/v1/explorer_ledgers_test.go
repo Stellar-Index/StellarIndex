@@ -32,6 +32,8 @@ type stubExplorerReader struct {
 	wealth         []clickhouse.AccountWealth
 	pairStates     map[string]clickhouse.SoroswapPairState
 	tokenDisplays  map[string]clickhouse.TokenDisplayMeta
+	nativeLPStates map[string]clickhouse.NativeLiquidityPoolState
+	nativeLPRanked []clickhouse.NativeLiquidityPoolState
 	err            error
 }
 
@@ -147,6 +149,21 @@ func (s *stubExplorerReader) SoroswapPairReserves(_ context.Context, _ []string)
 
 func (s *stubExplorerReader) TokenDisplays(_ context.Context, _ []string) (map[string]clickhouse.TokenDisplayMeta, error) {
 	return s.tokenDisplays, s.err
+}
+
+func (s *stubExplorerReader) NativeLiquidityPoolReserves(_ context.Context, _ []string) (map[string]clickhouse.NativeLiquidityPoolState, error) {
+	return s.nativeLPStates, s.err
+}
+
+func (s *stubExplorerReader) NativeLiquidityPoolsRanked(_ context.Context, limit int) ([]clickhouse.NativeLiquidityPoolState, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	out := s.nativeLPRanked
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (s *stubExplorerReader) AccountsByWealth(_ context.Context, _ []string, _ []float64, _ int) ([]clickhouse.AccountWealth, error) {

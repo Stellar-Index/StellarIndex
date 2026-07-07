@@ -120,9 +120,14 @@
   notify: Restart postgres
 
 - name: Add timescaledb to shared_preload_libraries
+  # Value carries a space after the comma to match what Postgres stores
+  # and reports back ("timescaledb, pg_stat_statements"). postgresql_set
+  # string-compares the desired value against the live pg_settings value,
+  # so the spaceless form drifts (reports changed → restart handler) on
+  # every --check run (2026-07-06 drift reconcile).
   community.postgresql.postgresql_set:
     name: shared_preload_libraries
-    value: "timescaledb,pg_stat_statements"
+    value: "timescaledb, pg_stat_statements"
   become_user: postgres
   notify: Restart postgres
 
