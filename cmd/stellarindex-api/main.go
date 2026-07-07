@@ -1535,10 +1535,20 @@ func buildSEP10Validator(cfg config.SEP10Config, rdb redis.UniversalClient) (aut
 	// the full ChallengeTTL window — long enough for an attacker
 	// who steals one signed XDR (e.g. via XSS exfil) to mint a
 	// stream of JWTs after the user closes the tab.
-	var replayGuard sep10.ReplayGuard
-	if rdb != nil {
-		replayGuard = sep10.NewRedisReplayGuard(rdb)
+	//
+	// L2 (audit-2026-07-07): fail LOUD, not open. Reaching this
+	// function means SEP-10 auth is configured (seed_env + jwt_secret_env
+	// are set, checked above). A nil Redis here would leave replayGuard
+	// nil and the validator falls open — issuing JWTs with no replay
+	// protection. Refuse to start so a misconfigured deploy is caught at
+	// boot, not silently exploited for the ChallengeTTL window at runtime.
+	if rdb == nil {
+		return nil, fmt.Errorf(
+			"sep10: %w: SEP-10 auth is configured but Redis is not — the replay guard requires Redis",
+			sep10.ErrReplayGuardUnavailable,
+		)
 	}
+	replayGuard := sep10.NewRedisReplayGuard(rdb)
 
 	v, err := sep10.NewValidator(sep10.Options{
 		ServerSeed:        seed,
