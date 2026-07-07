@@ -290,6 +290,17 @@ type AssetDetail struct {
 	// docs/architecture/multi-network-assets-migration.md.
 	UnverifiedWarning *UnverifiedWarning `json:"unverified_warning,omitempty"`
 
+	// UnverifiedTickerCollision is the LISTING-row trust signal on
+	// /v1/assets: true when this row's (code, issuer) uses a verified
+	// currency's Stellar ticker but is NOT the verified issuer — a
+	// look-alike/impersonator. The listing serves COALESCE(slug, code)
+	// AS slug, so a NULL-slug impersonator emits the verified asset's
+	// CODE as its slug; consumers must AND the verified-slug check with
+	// `!UnverifiedTickerCollision`. False (omitted) for the verified
+	// asset and for codes no verified currency claims. The detail path
+	// carries the richer UnverifiedWarning body instead.
+	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
+
 	// ─── Coin-overlay listing fields (spec'd 2026-07-02, board #33;
 	// populated when the server's CoinsReader is wired) ─────────────
 	Slug             string          `json:"slug,omitempty"`
@@ -343,6 +354,14 @@ type TradeRow struct {
 	BaseAmount  string    `json:"base_amount"`
 	QuoteAmount string    `json:"quote_amount"`
 	Price       string    `json:"price"`
+	// BaseDecimals / QuoteDecimals are the smallest-unit scale for each
+	// side: divide BaseAmount by 10^BaseDecimals (QuoteAmount by
+	// 10^QuoteDecimals) for whole-asset units. 7 for native/classic/fiat;
+	// the token contract's declared decimals() for Soroban tokens.
+	// Populated by [Client.History]; omitted (zero) on the /v1/observations
+	// rows, which carry no per-side scale.
+	BaseDecimals  int `json:"base_decimals,omitempty"`
+	QuoteDecimals int `json:"quote_decimals,omitempty"`
 	// RoutedVia is the router/aggregator whose same-transaction
 	// invocation drove this trade (`routers.name`, e.g.
 	// "soroswap-router" — see [Client.Aggregators]). Empty for

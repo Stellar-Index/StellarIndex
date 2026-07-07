@@ -2,17 +2,22 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"math/big"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/config"
 	"github.com/StellarIndex/stellar-index/internal/obs"
 	"github.com/StellarIndex/stellar-index/internal/obstest"
+	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 	"github.com/StellarIndex/stellar-index/internal/supply"
 )
 
@@ -179,3 +184,125 @@ func (s stubSupplyComputer) Compute(_ context.Context, ledger uint32, observedAt
 type stubSupplyInserter struct{}
 
 func (*stubSupplyInserter) InsertSupply(_ context.Context, _ supply.Supply) error { return nil }
+
+// TestRunSEP41SupplyRollup_AdvancesSeriallyAndRecordsOutcomes drives the
+// migration-0085 rollup worker through one fold pass against a fake
+// advancer and pins the two properties the incident-2026-07-06 fix
+// depends on:
+//
+//  1. Every watched contract is advanced and the (contract_id, outcome)
+//     counter + paired duration histogram record the right outcome
+//     (ok / noop / error).
+//  2. The worker advances contracts ONE AT A TIME. A cold contract's
+//     first fold is a full-history sum; if the worker fanned them out it
+//     would recreate the concurrent full-table scans that saturated
+//     Postgres — so the fake asserts it is never entered re-entrantly.
+func TestRunSEP41SupplyRollup_AdvancesSeriallyAndRecordsOutcomes(t *testing.T) {
+	const (
+		cOK   = "CROLLUPOK00000000000000000000000000000000000000000000000"
+		cNoop = "CROLLUPNOOP000000000000000000000000000000000000000000000"
+		cErr  = "CROLLUPERR0000000000000000000000000000000000000000000000"
+	)
+	contracts := []string{cOK, cNoop, cErr}
+
+	fake := &fakeRollupAdvancer{
+		results: map[string]timescale.SEP41RollupAdvance{
+			cOK:   {ContractID: cOK, FromLedger: 0, ToLedger: 100, Advanced: true},
+			cNoop: {ContractID: cNoop, Advanced: false},
+		},
+		errs: map[string]error{cErr: errors.New("boom")},
+	}
+
+	beforeOK := testutil.ToFloat64(obs.SEP41SupplyRollupAdvancesTotal.WithLabelValues(cOK, "ok"))
+	beforeNoop := testutil.ToFloat64(obs.SEP41SupplyRollupAdvancesTotal.WithLabelValues(cNoop, "noop"))
+	beforeErr := testutil.ToFloat64(obs.SEP41SupplyRollupAdvancesTotal.WithLabelValues(cErr, "error"))
+	beforeHist := obstest.HistogramSampleCount(t, obs.SEP41SupplyRollupAdvanceDurationSeconds, "outcome", "ok")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// Hour cadence: only the immediate first fold runs before we cancel.
+		runSEP41SupplyRollup(ctx, fake, contracts, time.Hour,
+			slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}()
+
+	waitForRollup(t, func() bool { return fake.callCount() >= len(contracts) })
+	cancel()
+	<-done
+
+	if got := fake.maxConcurrent(); got != 1 {
+		t.Fatalf("advancer ran %d-way concurrent; the worker must advance contracts serially", got)
+	}
+	if got := testutil.ToFloat64(obs.SEP41SupplyRollupAdvancesTotal.WithLabelValues(cOK, "ok")); got <= beforeOK {
+		t.Errorf("ok counter for %s did not advance: before=%v after=%v", cOK, beforeOK, got)
+	}
+	if got := testutil.ToFloat64(obs.SEP41SupplyRollupAdvancesTotal.WithLabelValues(cNoop, "noop")); got <= beforeNoop {
+		t.Errorf("noop counter (unadvanced contract) did not record")
+	}
+	if got := testutil.ToFloat64(obs.SEP41SupplyRollupAdvancesTotal.WithLabelValues(cErr, "error")); got <= beforeErr {
+		t.Errorf("error counter (failed advance) did not record")
+	}
+	if got := obstest.HistogramSampleCount(t, obs.SEP41SupplyRollupAdvanceDurationSeconds, "outcome", "ok"); got <= beforeHist {
+		t.Errorf("advance duration histogram (ok) did not advance: before=%d after=%d", beforeHist, got)
+	}
+}
+
+// fakeRollupAdvancer is an in-memory sep41RollupAdvancer that records
+// call count + peak concurrency so the worker test can assert serial
+// execution without a database.
+type fakeRollupAdvancer struct {
+	results map[string]timescale.SEP41RollupAdvance
+	errs    map[string]error
+
+	mu          sync.Mutex
+	calls       int
+	inFlight    int
+	maxInFlight int
+}
+
+func (f *fakeRollupAdvancer) AdvanceSEP41SupplyRollup(_ context.Context, contractID string) (timescale.SEP41RollupAdvance, error) {
+	f.mu.Lock()
+	f.calls++
+	f.inFlight++
+	if f.inFlight > f.maxInFlight {
+		f.maxInFlight = f.inFlight
+	}
+	f.mu.Unlock()
+
+	// Hold briefly so any concurrent entry would overlap and bump the peak.
+	time.Sleep(2 * time.Millisecond)
+
+	f.mu.Lock()
+	f.inFlight--
+	f.mu.Unlock()
+
+	if err := f.errs[contractID]; err != nil {
+		return timescale.SEP41RollupAdvance{}, err
+	}
+	return f.results[contractID], nil
+}
+
+func (f *fakeRollupAdvancer) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func (f *fakeRollupAdvancer) maxConcurrent() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.maxInFlight
+}
+
+func waitForRollup(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("timed out waiting for rollup worker to advance all contracts")
+}

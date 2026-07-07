@@ -111,10 +111,31 @@ because every target uses the same tip in the same cycle.
 Counter, labels `source`, `table`, `outcome`.
 
 Periodic gap-detector cycle outcomes — `ok` on a clean scan,
-`error` on a transient Postgres / timeout failure. Operators
-chart `rate({outcome="ok"}[5m])` to confirm the worker is alive;
-the `stellarindex_ingest_gap_detector_silent` ticket-tier alert
-fires when this rate goes to zero.
+`error` on a Postgres / timeout failure (a non-ok outcome is also
+logged loudly as `gap-detector: scan failed` with `elapsed_s` so a
+timeout is unmistakable). A climbing `{outcome="error"}` rate is the
+diagnostic when the silent-detector alert fires. Do NOT alert on
+`rate({outcome="ok"}) == 0`: the heavy targets scan once per 6h, so
+their ok counter is pinned at 1 within a process life and 1 → 1 across
+a restart is invisible to `rate()` (it only detects a decrease) — that
+false-fired the silent alert for >7h on 2026-07-06. Liveness is keyed
+off `stellarindex_ingest_gap_detector_last_success_unix` instead.
+
+### `stellarindex_ingest_gap_detector_last_success_unix`
+
+Gauge, labels `source`, `table`.
+
+Wall-clock timestamp (Unix seconds) of the most recent SUCCESSFUL
+per-(source, table) scan. This is the reset-proof liveness primitive
+the `stellarindex_ingest_gap_detector_silent` ticket-tier alert keys
+off: it fires on `(time() - gauge) > 8h`. A wall-clock stamp survives
+restarts correctly where a rarely-incrementing counter does not — a
+healthy startup scan re-stamps it to `now()`, clearing staleness
+immediately, while a genuinely wedged target's stamp stops advancing.
+Only advances on a clean scan; an errored/timed-out scan leaves the
+previous stamp untouched so staleness grows. A target that has never
+once succeeded since process start emits no series here (that case is
+covered by the `runs_total{outcome="error"}` rate).
 
 ### `stellarindex_ingest_gap_detector_duration_seconds`
 
@@ -339,6 +360,31 @@ stale by N minutes" expressible as `time() - <gauge>` rather than
 multi-window rate math, which simplifies alerting (see
 `stellarindex_external_poller_stale`).
 
+### `stellarindex_external_fx_last_quote_unix`
+
+Gauge, label `source`.
+
+UNIX-seconds timestamp of the most recent successful `fx_quotes` WRITE
+from the active fiat-FX feed (`massive`, the `internal/sources/forex`
+worker in the API binary). Advances ONLY when `InsertFXQuoteBatch`
+commits a non-empty batch — a failed write or an empty snapshot
+(upstream returned no usable rates) leaves the prior stamp untouched, so
+a wedged-but-erroring worker cannot keep the feed looking fresh.
+
+Deliberately SEPARATE from `stellarindex_external_poller_last_success_unix`:
+`massive` does not run under the `external.Connector` poller framework
+(it writes `fx_quotes` directly, out of band from the poller runner), so
+it emits no `external_poller` series at all. The triangulation
+forex-snap (`Store.FXQuoteAtOrBefore`) reads `fx_quotes` with a **7-day
+lookback** to price every fiat-quoted pair, so a dead feed prices fine
+off a stale row for up to a week before fiat pairs silently break.
+
+When to look: `time() - <gauge>` is the feed's age. Healthy is < 1 h
+(r1's forex worker writes exactly hourly). The
+`stellarindex_external_fx_feed_stale` alert fires at 6 h (well below the
+7-day cliff); the companion `stellarindex_external_fx_feed_absent` fires
+when the series is missing entirely (worker never wrote since startup).
+
 ### `stellarindex_external_dust_dropped_total`
 
 Counter, label `source`.
@@ -386,13 +432,23 @@ records (no-op upsert if already in DB).
 
 ### `stellarindex_source_insert_errors_total`
 
-Counter, labels `source`, `kind` (`trade` / `oracle` / `panic` / `unhandled`).
+Counter, labels `source`, `kind` (`trade` / `oracle` / `panic` /
+`unhandled` / `dropped`).
 
 `unhandled` fires when a source emits an event type the sink's
 type-switch doesn't recognise — usually a half-wired new source
 registered in `buildSources()` without a matching case in
 `handleOneEvent`. Silent drops would otherwise look like "metrics
 say we're ingesting" with empty tables.
+
+`dropped` (2026-07-06 outage / ADR-0041) counts external CEX/FX
+trades genuinely lost when the bounded retry buffer overflowed
+(drop-oldest) or a data fault couldn't be isolated — the
+vendor-refillable path. Infrastructure faults are NOT counted here:
+they retry with backpressure (see
+[`stellarindex_trade_insert_retries_total`](#stellarindex_trade_insert_retries_total)),
+so a firing `insert-errors` alert now means genuine loss (data fault
+or external overflow), not a transient outage.
 
 Events that failed to persist to the store. `panic` kind flags a
 recovered panic in the event-sink handler. A sustained rate signals
@@ -436,6 +492,48 @@ a cursor-replay loop or stuck-tip pattern produces a fast-growing
 `rate({outcome="new"}[5m]) == 0 AND rate({outcome="duplicate"}[5m]) > 0`
 to catch the live r1-2026-05-28 signature (157 SDEX insert
 attempts/min while the hypertable's `max(ts)` was 11 h old).
+
+### `stellarindex_trade_insert_retries_total`
+
+Counter, label `outcome` (`retry` | `recovered` | `abandoned`).
+
+The trade sink's blocking-retry path (2026-07-06 Postgres-outage
+fix, ADR-0041). Before this, an infrastructure fault
+(`connection refused` / PG restarting) made the sink DROP the write
+while the ledger cursor kept advancing; now it retries with
+backpressure instead.
+
+- `retry` — one backoff retry attempt after an infrastructure-
+  classified insert failure. **A sustained nonzero rate means the
+  served-tier write path is blocked and the on-chain ledger cursor is
+  NOT advancing** — data is held safely in memory, not lost. The
+  `trade_insert_backpressure` alert fires on this.
+- `recovered` — a previously-blocked insert (batch or row) landed
+  after ≥ 1 retry. A healthy recovery shows a burst of `retry` then
+  one `recovered`.
+- `abandoned` — a blocked insert gave up because the context was
+  cancelled mid-retry (shutdown). On-chain rows are re-derivable from
+  the CH lake (ADR-0034); the exact ledger range is logged at ERROR.
+
+Genuine drops (permanent data faults + external-buffer overflow) are
+NOT counted here — they land on
+[`stellarindex_source_insert_errors_total`](#stellarindex_source_insert_errors_total)
+(`kind=trade` / `kind=dropped`).
+
+### `stellarindex_trade_insert_buffer_depth`
+
+Gauge (no labels).
+
+Number of external (CEX/FX) trades currently held in the bounded
+in-memory retry buffer, waiting to land after an infrastructure fault
+(ADR-0041). External trades have no ledger cursor and are
+vendor-refillable, so they are buffered and retried asynchronously
+rather than blocking the pipeline; on overflow the OLDEST are dropped
+(counted on `stellarindex_source_insert_errors_total{kind="dropped"}`).
+On-chain trades do NOT use this buffer — they block-and-retry (cursor
+gating) — so this gauge is external-only. A depth that climbs and
+stays high means Postgres has been unreachable long enough that
+external price freshness is degrading.
 
 ### `stellarindex_stream_publish_total`
 
@@ -709,6 +807,75 @@ the 5-minute cadence means sweeps start overlapping their schedule
 and the rollup lag becomes user-visible on the dashboard's "today"
 row.
 
+### `stellarindex_protocol_events_rollup_sweeps_total`
+
+Counter, label `outcome` (`ok` / `refresh_error`).
+
+Per-sweep outcome of the aggregator's protocol-events rollup worker
+(`internal/aggregate/protoeventsrollup`, #43), which folds the
+trailing-24h per-source event census (a UNION ALL count over ~17
+served protocol hypertables) into the `protocol_events_24h` table
+every couple of minutes. That table backs the `events_24h` column on
+`/v1/protocols` and `/v1/protocols/{name}`, so the handler reads a
+keyed-on-PK lookup instead of running the multi-second census per
+request (the 2026-07-06 latency incident).
+
+When to look at it: the explorer's protocol pages show a frozen
+`events_24h`. Sustained `refresh_error` = the census/upsert
+transaction is failing (Postgres unreachable, or migration 0086
+missing on this deployment). The rollup keeps its last-good rows, so
+the column goes stale, not blank. Informational severity: customer
+pricing traffic is unaffected. Alert:
+`stellarindex_protocol_events_rollup_failing`
+(deploy/monitoring/rules/aggregator.yml + configs/prometheus/rules.r1/aggregator.yml).
+
+### `stellarindex_protocol_events_rollup_sweep_duration_seconds`
+
+Histogram, label `outcome` (matches
+`stellarindex_protocol_events_rollup_sweeps_total`). Buckets 10 ms – 30 s.
+
+Wall-clock of one rollup sweep: the trailing-24h UNION ALL census over
+the served protocol hypertables + one upsert + one prune. This is the
+multi-second leg the #43 rollup moved off the `/v1/protocols` request
+path, so watching `ok` p95/p99 here is how an operator learns the
+served-tier census is getting heavier as the protocol tables grow —
+long before it would have shown up as a slow endpoint.
+
+### `stellarindex_asset_volume_rollup_sweeps_total`
+
+Counter, label `outcome` (`ok` / `refresh_error`).
+
+Per-sweep outcome of the aggregator's asset-volume rollup worker
+(`internal/aggregate/assetvolrollup`, #43), which folds the trailing-24h
+per-asset USD-volume SUM over the `prices_1m` continuous aggregate
+(single-sided: each asset as base OR quote) into the `asset_volume_24h`
+table every couple of minutes. That table backs the `volume_24h_usd`
+column on the `/v1/assets` listing, so the listing LEFT JOINs a
+keyed-on-PK lookup instead of the ~256k-row per-request scan the
+2026-07-06 latency incident measured (~4.8s cold).
+
+When to look at it: the explorer's assets list shows a frozen
+24h-volume column or a stale volume-ranked order. Sustained
+`refresh_error` = the sum/upsert transaction is failing (Postgres
+unreachable, or migration 0087 missing on this deployment). The rollup
+keeps its last-good rows, so the column goes stale, not blank.
+Informational severity: customer pricing traffic is unaffected. Alert:
+`stellarindex_asset_volume_rollup_failing`
+(deploy/monitoring/rules/aggregator.yml + configs/prometheus/rules.r1/aggregator.yml).
+
+### `stellarindex_asset_volume_rollup_sweep_duration_seconds`
+
+Histogram, label `outcome` (matches
+`stellarindex_asset_volume_rollup_sweeps_total`). Buckets 50 ms – 60 s.
+
+Wall-clock of one rollup sweep: the trailing-24h base-OR-quote SUM over
+`prices_1m` (all pairs) + one upsert + one prune. This is the heaviest
+of the two #43 rollups and the query the rollup moved off the
+`/v1/assets` request path, so watching `ok` p95/p99 here is how an
+operator learns the served-tier volume scan is getting heavier as the
+prices_1m history grows. If it climbs toward the 2-minute cadence the
+sweeps start overlapping and the rollup lag becomes user-visible.
+
 ### `stellarindex_price_alert_eval_total`
 
 Counter, label `outcome` (`ok` / `list_error` / `partial_error`).
@@ -836,6 +1003,65 @@ the gauge — a flat gauge with zero counter increments means the
 orchestrator stopped invoking the cross-check, not that everything's
 healthy.
 
+### `stellarindex_supply_divergence_ratio`
+
+Gauge, labels `asset` (canonical wire form, e.g. `native`) and
+`reference` (`stellar-dashboard` / `coingecko`).
+
+The absolute relative divergence `|our − reference| / reference`
+between OUR served `circulating_supply` and an EXTERNAL authoritative
+reference's. **Distinct from the `supply_cross_check_*` pair above**:
+that pair is an internal consistency check (two of our own numbers);
+this is our served figure vs the market's.
+
+Look at this when you need to know whether
+`/v1/assets/native` circulating supply still tracks the Stellar Network
+Dashboard. Steady state for XLM is ~0.0003 (the ~0.03% Fee-Pool noise
+floor documented in
+[`docs/methodology/xlm-circulating-supply.md`](../../methodology/xlm-circulating-supply.md)).
+Drives the
+[`stellarindex_supply_divergence_high`](../../operations/runbooks/supply-divergence.md)
+alert when > 0.01 (1%) — a threshold two-plus orders of magnitude above
+that noise floor, so it fires only on a real drift (usually a stale
+SDF-reserve exclusion account list). NOT updated on the `no_reference`
+/ `refresh_error` outcomes: a frozen gauge is the correct behaviour
+when a reference goes dark, so a dead reference never manufactures a
+divergence reading. Emitted only while `[divergence.supply].enabled`
+(off by default; opt in on r1 via ansible).
+
+### `stellarindex_supply_divergence_total`
+
+Counter, label `outcome` (`ok` / `divergent` / `no_reference` /
+`refresh_error`).
+
+One increment per (asset, tick) of the supply cross-check worker.
+`ok` = agreed with every responding reference within the threshold;
+`divergent` = a responding reference disagreed by more than the
+threshold (the ratio gauge carries the magnitude); `no_reference` =
+served figure loaded but every reference was unreachable / didn't
+publish the asset (CoinGecko 429, Dashboard outage) — the
+graceful-degrade "checker running blind" signal, deliberately NOT
+paged so a dead reference isn't a false supply alarm; `refresh_error` =
+our served snapshot couldn't be read (bootstrap, storage error).
+
+Watch a sustained `no_reference` rate to know the check has gone blind;
+watch `divergent` to know a real drift is firing. Pre-seeded to zero
+for all four outcomes so the alert PromQL reads a real zero before the
+first tick.
+
+### `stellarindex_supply_divergence_duration_seconds`
+
+Histogram, label `outcome` (`ok` / `divergent` / `no_reference` /
+`refresh_error`).
+
+Per-(asset, tick) supply cross-check latency including the served read
++ the HTTP fan-out to every reference. Labelled by outcome (matches the
+counter) so operators chart the healthy `ok` path separately from the
+slow-vendor / timeout `no_reference` path. Buckets 10 ms – 30 s: a warm
+served read is single-digit ms; a single slow reference is ~1-10 s; the
+worst case is the per-reference timeout (default 10 s) compounded across
+the reference set.
+
 ### `stellarindex_aggregator_triangulations_total`
 
 Counter, label `outcome` (`ok` / `missing_leg` / `parse_error` /
@@ -908,9 +1134,11 @@ or `write_error` rates indicate the storage layer needs investigation
 ### `stellarindex_aggregator_supply_refresh_total`
 
 Counter, labels `asset_key` + `outcome`. `outcome` ∈ (`ok` /
-`no_ledger` / `no_observation` / `compute_error` / `write_error`).
-`asset_key` is the `supply.AssetKey` form: `XLM`, `CODE:ISSUER`
-for classic credits, the bare contract C-strkey for SEP-41.
+`no_ledger` / `no_observation` / `compute_error` / `write_error` /
+`stale_component` / `missing_freshness` / `dormant` /
+`missing_baseline`). `asset_key` is the `supply.AssetKey` form:
+`XLM`, `CODE:ISSUER` for classic credits, the bare contract
+C-strkey for SEP-41.
 
 Supply-snapshot refresh outcomes per (asset_key, outcome) per
 refresh cycle (ADR-0011, ADR-0021, ADR-0022, ADR-0023). The
@@ -932,6 +1160,12 @@ empty or missing entries — expected briefly post-deploy, alarming
 sustained. `no_ledger` fires before the indexer produces its
 first ingestion cursor; clears as soon as ingest catches up.
 `write_error` indicates the storage layer needs investigation.
+`missing_baseline` is a SEP-41 SAC-wrapper whose pre-Soroban opening
+balance hasn't been seeded — its Soroban-era-only total reads
+Σburn > Σmint (incident 2026-07-06); it is benign (excluded from
+`error_dominant`) and clears after `stellarindex-ops supply
+seed-sep41-genesis`. A negative total AFTER the baseline is seeded
+surfaces as `compute_error` (genuine inconsistency, pages).
 
 The `asset_key` label lets operators chart per-asset bootstrap
 progress + isolate failure modes per asset rather than chasing
@@ -1089,6 +1323,48 @@ a per-component freshness reader fell off its index. Buckets span
 10 ms → 30 s. No alert wired today; the existing
 `stellarindex_supply_snapshot_*` alert family covers freshness
 + never-initialised paths.
+
+### `stellarindex_sep41_supply_rollup_advances_total`
+
+Counter, labels `contract_id` + `outcome` (`ok` / `noop` /
+`error`).
+
+Counts passes of the aggregator's SEP-41 supply rollup worker —
+the incremental maintainer (migration 0085) that keeps the
+Algorithm-3 supply reader off the full-history aggregate. Each
+pass folds a watched contract's newly-SETTLED mint/burn/clawback
+events into a per-contract running checkpoint
+(`sep41_supply_rollup`) so `SEP41KindTotalsAtOrBefore` reads
+`checkpoint + a bounded live delta` instead of re-summing the whole
+per-contract history. Background: on 2026-07-06 the full per-tick
+aggregate over `sep41_supply_events` (grown to hundreds of millions
+of rows by the 2026-07-05 re-derive) took minutes, ran in parallel
+across watched contracts, saturated Postgres IO, and blew up API
+p95/p99. `noop` is the dormant-token steady state (nothing new
+settled). Sustained `error` for a `contract_id` means that
+contract's checkpoint is frozen and the reader silently fell back
+to the slow full sum for it — correlate with a p99 climb on
+`_aggregator_supply_refresh_duration_seconds`.
+
+### `stellarindex_sep41_supply_rollup_advance_duration_seconds`
+
+Histogram, label `outcome` (matches the counter's enum). Pairs
+with `_sep41_supply_rollup_advances_total{contract_id,outcome}` —
+that one tells you which contracts advance + how often; this one
+tells you how long each pass takes.
+
+**Why no `contract_id` label here?** Same cardinality reasoning as
+the supply-refresh histogram — `contract_id × outcome × buckets`
+multiplies fast; per-contract latency is recoverable from the
+worker log line + timestamp.
+
+Steady-state is sub-second (a bounded tail sum on the
+`(contract_id, ledger DESC)` index). The one expected outlier is a
+cold contract's FIRST fold, which sums the whole per-contract
+history once (seconds→minutes on the large table) before every
+later pass goes incremental — buckets extend to 300 s to capture
+it. A sustained high p99 *after* warm-up means the tail delta
+stopped being bounded (worker starved / checkpoint not advancing).
 
 ### `stellarindex_divergence_refresh_duration_seconds`
 
@@ -1289,8 +1565,39 @@ grouping + a few inserts) is sub-second; chart the `ok` p95/p99
 separately from `scan_error` to tell "Postgres scan is slow" from
 "detector is failing fast".
 
+## Decimals-assumption guard (aggregator binary)
+
+### `stellarindex_dex_trade_nonstandard_decimals_total`
+
+Counter, labels `source`, `asset`.
+
+**When to look at this: never — it should be permanently absent/zero.**
+The served price is `Σ(quote_amount)/Σ(base_amount)` on raw smallest-unit
+integers (the `prices_*` continuous aggregates and `aggregate.VWAP`); the
+per-asset decimals cancel in that ratio only when the base and quote share a
+decimals scale. That holds today because every DEX-traded Stellar token is
+7-decimal (SACs are always 7; classic credits are 7; observed pure-SEP-41
+tokens declare 7). The aggregator's `internal/decimalsguard` sweep resolves
+each recently-DEX-traded Soroban token's on-chain `decimals()` from the
+certified lake and increments this counter — once per (`source`, `asset`),
+latched — the first time one is confirmed `!= 7`, i.e. the moment the
+assumption is violated and every served price for a pair involving that
+`asset` is silently skewed by `10^(7−decimals)`. `source` is the DEX
+connector; `asset` is the token's C-strkey contract id. The label set is
+unbounded in principle but near-empty in practice, so it is **not**
+pre-seeded — a series exists only once a real offender is detected, and the
+alert is a bare `> 0`. The exact decimals + skew magnitude are in the guard's
+ERROR log line, not a label. Any non-zero value is a real, silent mispricing
+on a live pair — page-adjacent (P2). Runbook:
+`docs/operations/runbooks/dex-nonstandard-decimals.md`.
+
 ## Changelog
 
+- 2026-07-07 — added `stellarindex_dex_trade_nonstandard_decimals_total`
+  (`source`, `asset`), emitted by the aggregator's decimals-assumption guard
+  (`internal/decimalsguard`). Detection-only signal for the served-price
+  decimals landmine (decoder-correctness audit Finding 2): fires when a DEX
+  trade lands for a Soroban token whose on-chain `decimals()` != 7.
 - 2026-06-18 — added the MEV detection metrics
   (`stellarindex_mev_detect_runs_total`,
   `stellarindex_mev_events_inserted_total`,

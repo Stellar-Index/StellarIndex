@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/StellarIndex/stellar-index/internal/consumer"
@@ -34,13 +33,12 @@ type Observer struct {
 var (
 	ErrEmptyWrapperMap = errors.New("sac_balances: cannot construct Observer with empty SAC wrapper map")
 	ErrNotSACBalance   = errors.New("sac_balances: change is not a SAC balance entry")
-	ErrUnknownValShape = errors.New("sac_balances: balance value is neither i128 nor map-with-amount")
+	// ErrUnknownValShape aliases the shared scval sentinel so callers
+	// (and errors.Is) keep matching the balance-value-shape error after
+	// the balance decode helpers moved to internal/scval (shared with
+	// the lake-seed reader in internal/storage/clickhouse).
+	ErrUnknownValShape = scval.ErrUnknownBalanceValShape
 )
-
-// balanceKeySymbol is the SCVal symbol the SEP-41 contracttype
-// enum encodes for `DataKey::Balance(addr)`. Pre-encoded at init
-// for cheap byte-equality comparison.
-var balanceKeySymbol = scval.MustEncodeSymbol("Balance")
 
 // NewObserver constructs the SAC observer with the supplied
 // contract→asset_key map. Empty input is rejected as a config
@@ -70,14 +68,14 @@ func (o *Observer) Matches(change xdr.LedgerEntryChange) bool {
 	if !ok {
 		return false
 	}
-	contractID, ok := contractIDFromScAddress(cd.Contract)
+	contractID, ok := scval.ContractIDFromScAddress(cd.Contract)
 	if !ok {
 		return false
 	}
 	if _, watched := o.wrappers[contractID]; !watched {
 		return false
 	}
-	return isSEP41BalanceKey(cd.Key)
+	return scval.IsSEP41BalanceKey(cd.Key)
 }
 
 // Decode emits one Observation per matched change.
@@ -86,7 +84,7 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 	if !ok {
 		return nil, ErrNotSACBalance
 	}
-	contractID, ok := contractIDFromScAddress(cd.Contract)
+	contractID, ok := scval.ContractIDFromScAddress(cd.Contract)
 	if !ok {
 		return nil, fmt.Errorf("%w: contract scAddress not a contract id", ErrNotSACBalance)
 	}
@@ -94,7 +92,7 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 	if !watched {
 		return nil, fmt.Errorf("%w: contract %s not in wrapper map", ErrNotSACBalance, contractID)
 	}
-	holder, err := holderFromBalanceKey(cd.Key)
+	holder, err := scval.HolderFromBalanceKey(cd.Key)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +107,7 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 			IsRemoval:  true,
 		}}, nil
 	}
-	balance, err := extractBalanceAmount(cd.Val)
+	balance, err := scval.SEP41BalanceAmount(cd.Val)
 	if err != nil {
 		return nil, err
 	}
@@ -158,86 +156,13 @@ func contractDataFromChange(change xdr.LedgerEntryChange) (cd *xdr.ContractDataE
 	return entry.Data.ContractData, false, entry.Data.ContractData != nil
 }
 
-// contractIDFromScAddress returns the C-strkey form when the
-// scAddress is a Contract variant.
-func contractIDFromScAddress(addr xdr.ScAddress) (string, bool) {
-	if addr.Type != xdr.ScAddressTypeScAddressTypeContract {
-		return "", false
-	}
-	raw := addr.MustContractId()
-	s, err := strkey.Encode(strkey.VersionByteContract, raw[:])
-	if err != nil {
-		return "", false
-	}
-	return s, true
-}
-
-// isSEP41BalanceKey reports whether key matches the
-// `DataKey::Balance(Address)` shape — Vec of length 2 with
-// Symbol("Balance") at index 0.
-func isSEP41BalanceKey(key xdr.ScVal) bool {
-	vec, err := scval.AsVec(key)
-	if err != nil || len(vec) != 2 {
-		return false
-	}
-	if vec[0].Type != xdr.ScValTypeScvSymbol {
-		return false
-	}
-	// Compare the encoded symbol against our pre-encoded Balance
-	// blob — byte-equality is cheap and avoids a string parse on
-	// the hot path.
-	enc, err := scval.EncodeSymbol(string(*vec[0].Sym))
-	if err != nil {
-		return false
-	}
-	return enc == balanceKeySymbol
-}
-
-// holderFromBalanceKey extracts the Address scVal (index 1) from
-// a confirmed-shape balance key, returning the strkey.
-func holderFromBalanceKey(key xdr.ScVal) (string, error) {
-	vec, err := scval.AsVec(key)
-	if err != nil || len(vec) < 2 {
-		return "", errors.New("sac_balances: balance key Vec too short")
-	}
-	addr, err := scval.AsAddressStrkey(vec[1])
-	if err != nil {
-		return "", fmt.Errorf("sac_balances: extract holder: %w", err)
-	}
-	return addr, nil
-}
-
-// extractBalanceAmount returns the i128 amount from a SEP-41
-// balance value. Tries i128 first; falls back to a map with an
-// "amount" symbol field (the native SAC's BalanceValue shape).
-// Returns ErrUnknownValShape on any other shape.
-func extractBalanceAmount(val xdr.ScVal) (*big.Int, error) {
-	if val.Type == xdr.ScValTypeScvI128 {
-		amt, err := scval.AsAmountFromI128(val)
-		if err != nil {
-			return nil, err
-		}
-		return amt.BigInt(), nil
-	}
-	if val.Type == xdr.ScValTypeScvMap {
-		entries, err := scval.AsMap(val)
-		if err != nil {
-			return nil, err
-		}
-		amountVal, ok := scval.MapField(entries, "amount")
-		if !ok {
-			return nil, fmt.Errorf("%w: map has no `amount` field", ErrUnknownValShape)
-		}
-		if amountVal.Type != xdr.ScValTypeScvI128 {
-			return nil, fmt.Errorf("%w: map.amount is %s, want I128", ErrUnknownValShape, amountVal.Type)
-		}
-		amt, err := scval.AsAmountFromI128(amountVal)
-		if err != nil {
-			return nil, err
-		}
-		return amt.BigInt(), nil
-	}
-	return nil, fmt.Errorf("%w: val type %s", ErrUnknownValShape, val.Type)
-}
+// The SEP-41 / SAC balance decode helpers this observer used to define
+// locally — contractID-from-scAddress, the Balance(Address) key
+// predicate, the holder extractor, and the i128-or-map value decoder —
+// now live in internal/scval (scval.ContractIDFromScAddress,
+// IsSEP41BalanceKey, HolderFromBalanceKey, SEP41BalanceAmount). They are
+// shared verbatim with the lake-seed reader in internal/storage/
+// clickhouse so the live observer and the seed recognise + decode
+// exactly the same on-wire shape.
 
 var _ dispatcher.LedgerEntryChangeDecoder = (*Observer)(nil)

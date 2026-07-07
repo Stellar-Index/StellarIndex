@@ -2,7 +2,6 @@ package v1
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -89,7 +88,7 @@ func (c *CachedMarketsReader) DistinctPairsExt(ctx context.Context, cursor strin
 	if c.ttl <= 0 {
 		return c.upstream.DistinctPairsExt(ctx, cursor, limit, order)
 	}
-	key := fmt.Sprintf("DistinctPairsExt|%s|%d|%d", cursor, limit, order)
+	key := newCacheKey("DistinctPairsExt").str(cursor).int(limit).order(int(order)).build()
 	rows, next, err := c.fetchPairs(ctx, "distinct_pairs", key, func(ctx context.Context) ([]Market, string, error) {
 		return c.upstream.DistinctPairsExt(ctx, cursor, limit, order)
 	})
@@ -101,7 +100,7 @@ func (c *CachedMarketsReader) SourceMarkets(ctx context.Context, source, cursor 
 	if c.ttl <= 0 {
 		return c.upstream.SourceMarkets(ctx, source, cursor, limit, order)
 	}
-	key := fmt.Sprintf("SourceMarkets|%s|%s|%d|%d", source, cursor, limit, order)
+	key := newCacheKey("SourceMarkets").str(source).str(cursor).int(limit).order(int(order)).build()
 	rows, next, err := c.fetchPairs(ctx, "source_markets", key, func(ctx context.Context) ([]Market, string, error) {
 		return c.upstream.SourceMarkets(ctx, source, cursor, limit, order)
 	})
@@ -113,23 +112,27 @@ func (c *CachedMarketsReader) AssetMarkets(ctx context.Context, asset, cursor st
 	if c.ttl <= 0 {
 		return c.upstream.AssetMarkets(ctx, asset, cursor, limit, order)
 	}
-	key := fmt.Sprintf("AssetMarkets|%s|%s|%d|%d", asset, cursor, limit, order)
+	key := newCacheKey("AssetMarkets").str(asset).str(cursor).int(limit).order(int(order)).build()
 	rows, next, err := c.fetchPairs(ctx, "asset_markets", key, func(ctx context.Context) ([]Market, string, error) {
 		return c.upstream.AssetMarkets(ctx, asset, cursor, limit, order)
 	})
 	return rows, next, err
 }
 
-// AllPools — cached. Filter struct stringified via fmt for the key.
+// AllPools — cached. The Sources filter is a SET; [cacheKey.strSet]
+// sorts it into the key so the prewarm goroutine and the handler
+// (which build the DEX-source list from the same registry but must
+// not have to agree on element ORDER) always hit the same slot —
+// removing the fragile "handlers upstream sort sources so order is
+// stable" convention the pre-typed key relied on.
 func (c *CachedMarketsReader) AllPools(ctx context.Context, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]Pool, string, error) {
 	if c.ttl <= 0 {
 		return c.upstream.AllPools(ctx, filter, cursor, limit, order)
 	}
-	// Sources is a slice — fmt %v gives a stable repr for
-	// equal-length slices with the same element order. Handlers
-	// upstream sort sources from a registry so order is stable.
-	key := fmt.Sprintf("AllPools|%v|%s|%s|%s|%s|%d|%d",
-		filter.Sources, filter.Base, filter.Quote, filter.Asset, cursor, limit, order)
+	key := newCacheKey("AllPools").
+		strSet(filter.Sources).
+		str(filter.Base).str(filter.Quote).str(filter.Asset).
+		str(cursor).int(limit).order(int(order)).build()
 	rows, next, err := c.fetchPools(ctx, "all_pools", key, func(ctx context.Context) ([]Pool, string, error) {
 		return c.upstream.AllPools(ctx, filter, cursor, limit, order)
 	})

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
 // SoroswapSkimEvent is one soroswap_skim_events row — a single
@@ -86,6 +88,56 @@ func (s *Store) InsertSoroswapSkimEvent(ctx context.Context, e SoroswapSkimEvent
 		return fmt.Errorf("timescale: InsertSoroswapSkimEvent %s@%d: %w", e.ContractID, e.Ledger, err)
 	}
 	return nil
+}
+
+// SoroswapSkimSummary is the windowed Soroswap skim activity summary — the
+// READ side of soroswap_skim_events (migration 0043). Amount0 / Amount1 are
+// the summed token0 / token1 excess claimed above pool reserves, in native
+// token base units (i128/NUMERIC, never int64 — ADR-0003).
+type SoroswapSkimSummary struct {
+	Skims    int64
+	Amount0  canonical.Amount
+	Amount1  canonical.Amount
+	Pairs    int64
+	LatestAt time.Time
+}
+
+// SoroswapSkimWindowStats reads the windowed Soroswap skim summary (count +
+// token0/token1 skimmed excess + distinct pairs) from soroswap_skim_events.
+// Skim is the caller-initiated claim of pool balance above recorded reserves
+// (rare — single-digit rows/day expected); it is not a trade and never feeds
+// VWAP. Amounts are native token base units, preserved as canonical.Amount
+// (ADR-0003).
+//
+// Empty-safe: returns (nil, nil) when no skim exists in the window, so the
+// bespoke KPI is omitted cleanly. windowDays <= 0 is treated as 90.
+func (s *Store) SoroswapSkimWindowStats(ctx context.Context, windowDays int) (*SoroswapSkimSummary, error) {
+	if windowDays <= 0 {
+		windowDays = 90
+	}
+	since := fmt.Sprintf("%d days", windowDays)
+
+	var (
+		out    SoroswapSkimSummary
+		latest sql.NullTime
+	)
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT count(*),
+		       COALESCE(sum(amount_0),0)::text,
+		       COALESCE(sum(amount_1),0)::text,
+		       count(DISTINCT contract_id),
+		       max(ledger_close_time)
+		  FROM soroswap_skim_events WHERE ledger_close_time > now() - $1::interval`, since).
+		Scan(&out.Skims, &out.Amount0, &out.Amount1, &out.Pairs, &latest); err != nil {
+		return nil, fmt.Errorf("timescale: SoroswapSkimWindowStats: %w", err)
+	}
+	if out.Skims == 0 {
+		return nil, nil
+	}
+	if latest.Valid {
+		out.LatestAt = latest.Time.UTC()
+	}
+	return &out, nil
 }
 
 // DecodeSoroswapTxHash maps the SkimEvent.TxHash string (which comes

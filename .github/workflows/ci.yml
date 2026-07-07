@@ -195,6 +195,14 @@ jobs:
         # violations or on stale baseline entries, forcing the
         # baseline to shrink monotonically.
         run: ./scripts/ci/lint-imports.sh
+      - name: lint-protocol-registry-sync
+        # The frontend protocol registry (web/explorer/.../protocols/registry.ts)
+        # mirrors the Go source-of-truth (internal/api/v1/protocols_registry.go)
+        # for the static-export slug set. Nothing cross-checked them, so a
+        # Go-registered protocol could silently ship with no pre-rendered
+        # explorer page (sorocredit, 2026-07-07). This fails on any name-set
+        # drift between the two registries.
+        run: ./scripts/ci/lint-protocol-registry-sync.sh
       - name: lint-i128
         # ADR-0003: reject int64(x.Lo) i128 truncation in Go (fast grep;
         # the deep go/types guard is TestI128TruncationGuard in
@@ -252,6 +260,11 @@ jobs:
       PROM_VERSION: "2.55.1"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - name: structural rule lint (no promtool)
+        # Pure-Python guard that runs even if the promtool install below fails —
+        # catches the mis-indented-rule class (2026-07-06 galexie-archive: alerts
+        # at group level). Also wired into scripts/dev/verify.sh for local dev.
+        run: python3 ./scripts/ci/lint-rule-structure.py
       - name: install promtool
         run: |
           # F-1294 (codex audit-2026-05-13): SHA-verified install.
@@ -482,18 +495,10 @@ jobs:
       - name: Syntax check (secrets stubbed — structure only)
         working-directory: configs/ansible
         run: |
-          # syntax-check loads vars_files, which includes the encrypted
-          # vault — the real password (same secret the ansible-drift
-          # workflow uses) is required; a dummy fails decryption.
-          mkdir -p ~/.ansible
-          echo -n "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > ~/.ansible/r1_vault_pass
-          chmod 600 ~/.ansible/r1_vault_pass
-          # The encrypted vault itself is NOT in the (public) repo —
-          # 2026-07-03 exposure response. Materialize it from the
-          # Actions secret.
-          # NB: this step runs with working-directory: configs/ansible
-          echo "${{ secrets.ANSIBLE_VAULT_FILE_B64 }}" | base64 -d > inventory/r1.secrets.yml
-          ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/archival-node.yml
+          # syntax-check only needs the vars file to exist and parse.
+          # Do not expose production vault material to Dependabot PRs.
+          printf '%s\n' '--- {}' > inventory/ci.syntax-secrets.yml
+          ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/archival-node.yml -e secrets_file=../inventory/ci.syntax-secrets.yml
           ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/monitoring.yml
       - name: ansible-lint (production profile, warnings tolerated)
         working-directory: configs/ansible

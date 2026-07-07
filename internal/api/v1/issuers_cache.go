@@ -2,7 +2,6 @@ package v1
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -105,7 +104,7 @@ func (c *CachedIssuersReader) ListIssuers(ctx context.Context, limit int) ([]tim
 	if c.ttl <= 0 {
 		return c.upstream.ListIssuers(ctx, limit)
 	}
-	key := fmt.Sprintf("ListIssuers|%d", limit)
+	key := newCacheKey("ListIssuers").int(limit).build()
 	return c.fetchList(ctx, "list_issuers", key, func(ctx context.Context) ([]timescale.IssuerSummary, error) {
 		return c.upstream.ListIssuers(ctx, limit)
 	})

@@ -41,6 +41,7 @@ func registerAppMetrics() {
 		IngestGapDetectorTip,
 		IngestGapDetectorRunsTotal,
 		IngestGapDetectorDurationSeconds,
+		IngestGapDetectorLastSuccessUnix,
 		ProjectorLagLedgers,
 		ProjectorRunsTotal,
 		ProjectorEventsDecoded,
@@ -57,6 +58,7 @@ func registerAppMetrics() {
 		SourceOrphanEventsTotal,
 		ExternalPollerPollsTotal,
 		ExternalPollerLastSuccessUnix,
+		ExternalFXLastQuoteUnix,
 		ExternalDustDroppedTotal,
 		CEXStreamDisconnectTotal,
 		DiscoveryDroppedHitsTotal,
@@ -68,6 +70,8 @@ func registerAppMetrics() {
 		DivergenceRefreshTotal,
 		TradeInsertsTotal,
 		TradeInsertOutcomeTotal,
+		TradeInsertRetriesTotal,
+		TradeInsertBufferDepth,
 		StreamPublishTotal,
 
 		PriceStalenessSeconds,
@@ -88,6 +92,8 @@ func registerAppMetrics() {
 
 		SupplyCrossCheckDivergenceStroops,
 		SupplyCrossCheckTotal,
+		SupplyDivergenceRatio,
+		SupplyDivergenceTotal,
 
 		AnomalyFreezeEngagedTotal,
 		AnomalyFreezeRecoveredTotal,
@@ -96,6 +102,7 @@ func registerAppMetrics() {
 		AggregatorFXSnapFallbackTotal,
 		AggregatorBaselineRefreshTotal,
 		AggregatorSupplyRefreshTotal,
+		SEP41SupplyRollupAdvancesTotal,
 		AggregatorConfidenceComputeTotal,
 
 		VerifyArchiveLedgersVerified,
@@ -129,11 +136,19 @@ func registerAppMetricsTail() {
 
 		CustomerWebhookDeliveryDurationSeconds,
 		DivergenceRefreshDurationSeconds,
+		SupplyDivergenceDurationSeconds,
 		AggregatorSupplyRefreshDurationSeconds,
+		SEP41SupplyRollupAdvanceDurationSeconds,
 		AnomalyFreezeRecoverySweepDurationSeconds,
 
 		UsageRollupSweepsTotal,
 		UsageRollupSweepDurationSeconds,
+
+		ProtocolEventsRollupSweepsTotal,
+		ProtocolEventsRollupSweepDurationSeconds,
+
+		AssetVolumeRollupSweepsTotal,
+		AssetVolumeRollupSweepDurationSeconds,
 
 		PriceAlertEvalTotal,
 		PriceAlertEvalDurationSeconds,
@@ -141,6 +156,8 @@ func registerAppMetricsTail() {
 		SignupReaperRunsTotal,
 		SignupReaperRunDurationSeconds,
 		SignupReaperRowsDeletedTotal,
+
+		DEXTradeNonstandardDecimalsTotal,
 	)
 
 	// F-0033 closure: pre-seed zero-valued series for the
@@ -175,11 +192,27 @@ func registerAppMetricsTail() {
 	for _, outcome := range []string{"ok", "scan_error", "sink_error"} {
 		UsageRollupSweepsTotal.WithLabelValues(outcome)
 	}
+	for _, outcome := range []string{"ok", "refresh_error"} {
+		ProtocolEventsRollupSweepsTotal.WithLabelValues(outcome)
+		AssetVolumeRollupSweepsTotal.WithLabelValues(outcome)
+	}
 	for _, outcome := range []string{"ok", "list_error", "partial_error"} {
 		PriceAlertEvalTotal.WithLabelValues(outcome)
 	}
 	for _, outcome := range []string{"ok", "error"} {
 		SignupReaperRunsTotal.WithLabelValues(outcome)
+	}
+	// Bounded outcome set for the 2026-07-06 backpressure retry counter
+	// so the `trade_insert_backpressure` alert's rate() query reads a
+	// real zero (not "no data") before the first outage.
+	for _, outcome := range []string{"retry", "recovered", "abandoned"} {
+		TradeInsertRetriesTotal.WithLabelValues(outcome)
+	}
+	// Supply cross-check outcomes — bounded, well-known label set so the
+	// `no_reference` "checker running blind" query reads a real zero
+	// (not "no data") before the first supply cross-check tick.
+	for _, outcome := range []string{"ok", "divergent", "no_reference", "refresh_error"} {
+		SupplyDivergenceTotal.WithLabelValues(outcome)
 	}
 }
 
@@ -305,11 +338,18 @@ var IngestGapDetectorRunsTotal = prometheus.NewCounterVec(
 
 // IngestSourceDistinctLedgers is the **data-derived covered-
 // ledgers** signal: COUNT(DISTINCT ledger) per (source, table)
-// over [genesis, tip]. Together with `IngestGapMaxSize` powers
-// the ADR-0031 data-derived coverage projection.
+// over the detector's trailing scan window [from, tip]. Together
+// with `IngestGapMaxSize` powers the ADR-0031 data-derived coverage
+// projection.
 //
-// Density = IngestSourceDistinctLedgers / (tip - genesis + 1).
-// Gap-free = 1 - IngestGapMaxSize / (tip - genesis + 1).
+// Density = IngestSourceDistinctLedgers / (tip - from + 1).
+// Gap-free = 1 - IngestGapMaxSize / (tip - from + 1).
+//
+// The `from` lower bound is the trailing window the detector scans
+// (2026-07-06 IO-saturation incident) — steady state ~[last high-
+// water, tip], first run within FirstScanCap of tip, never the full
+// [genesis, tip]. Deep-history coverage is the ADR-0033 completeness
+// verdict's domain, not this gauge.
 //
 // Emitted by the gap detector at the same cadence as the gap
 // gauges (one COUNT query alongside the LAG-over-DISTINCT scan
@@ -324,9 +364,11 @@ var IngestSourceDistinctLedgers = prometheus.NewGaugeVec(
 
 // IngestGapDetectorTip is the live ledgerstream cursor's
 // `last_ledger` value at the most recent gap-detector cycle's
-// start — the upper bound used by every per-target scan. The
-// ADR-0031 coverage consumer subtracts the per-source genesis
-// from this to compute the density denominator.
+// start — the upper bound `tip` used by every per-target scan. The
+// per-target density denominator is `tip - from + 1` where `from`
+// is the target's trailing-window lower bound (2026-07-06 incident),
+// so this gauge alone is no longer sufficient to recompute density;
+// read the persisted source_coverage_snapshots row for that.
 //
 // Single-vector gauge (no `source`/`table` labels) because every
 // target uses the same tip in the same cycle; emitting per-target
@@ -334,7 +376,7 @@ var IngestSourceDistinctLedgers = prometheus.NewGaugeVec(
 var IngestGapDetectorTip = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_ingest_gap_detector_tip_ledger",
-		Help: "Live ledgerstream tip ledger at the most recent gap-detector cycle. Upper bound of the [genesis, tip] window used by ADR-0031's density computation.",
+		Help: "Live ledgerstream tip ledger at the most recent gap-detector cycle. Upper bound of the per-target trailing scan window; the lower bound is per-source (see source_coverage_snapshots).",
 	},
 )
 
@@ -351,6 +393,39 @@ var IngestGapDetectorDurationSeconds = prometheus.NewHistogramVec(
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600},
 	},
 	[]string{"source", "table", "outcome"},
+)
+
+// IngestGapDetectorLastSuccessUnix is the wall-clock timestamp (Unix
+// seconds) of the most recent SUCCESSFUL per-(source, table) gap scan.
+// It is the reset-proof liveness primitive the
+// `stellarindex_ingest_gap_detector_silent` alert keys off, replacing
+// the fragile `rate(runs_total{outcome="ok"}[7h]) == 0` construct.
+//
+// Why a timestamp gauge, not rate() over the counter: the heavy targets
+// (sdex/trades, soroban-events/soroban_events) scan on a 6h
+// ScanCadence, so their `ok` counter increments only once every 6h.
+// When the aggregator restarts more often than that (deploys, incident
+// recoveries), each process life records exactly ONE ok, pinning the
+// counter at 1. Because the value is 1 both before AND after the
+// restart, Prometheus counter-reset detection never triggers (it only
+// fires on a DECREASE), so `rate(...ok[7h])` reads a flat line and
+// evaluates to 0 — the silent alert false-fired for >7h even though
+// every startup scan succeeded (live incident 2026-07-06). A wall-clock
+// gauge is immune: the startup scan re-stamps it to now(), so a healthy
+// restart immediately clears staleness, while a genuinely wedged
+// target's stamp simply stops advancing and `time() - gauge` grows past
+// the alert threshold.
+//
+// Advances ONLY on a clean scan; a scan that errors or times out leaves
+// the previous stamp untouched. A target that has NEVER once succeeded
+// since process start emits no series here — that case is covered by the
+// paired `runs_total{outcome="error"}` rate, not this gauge.
+var IngestGapDetectorLastSuccessUnix = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_ingest_gap_detector_last_success_unix",
+		Help: "Wall-clock timestamp (Unix seconds) of the most recent successful gap-detector scan per (source, table). The silent-detector alert keys off its staleness; reset-proof across restarts, unlike rate() over the once-per-6h runs_total counter.",
+	},
+	[]string{"source", "table"},
 )
 
 // ProjectorLagLedgers is how far behind tip each projector source
@@ -651,6 +726,39 @@ var ExternalPollerLastSuccessUnix = prometheus.NewGaugeVec(
 	[]string{"source"},
 )
 
+// ExternalFXLastQuoteUnix — per-source UNIX-seconds timestamp of the
+// most recent successful fx_quotes WRITE from the active fiat-FX feed
+// (`massive`, the internal/sources/forex worker). Stamped only after
+// InsertFXQuoteBatch commits a NON-EMPTY batch — a failed write or an
+// empty snapshot (upstream returned no usable rates) leaves the prior
+// stamp untouched, so a stuck-but-erroring worker cannot keep the
+// gauge green.
+//
+// Why a SEPARATE gauge from ExternalPollerLastSuccessUnix: the FX feed
+// does NOT run under the external.Connector poller framework — it is
+// the forex worker in the API binary writing the fx_quotes hypertable,
+// which the X2.5 triangulation forex-snap (FXQuoteAtOrBefore) reads
+// with a 7-day lookback for every fiat-quoted pair (XLM/EUR, …). A dry
+// feed is invisible to the poller-staleness alert (massive emits no
+// external_poller series) and to the fx_snap read (a stale-but-present
+// row still prices) until the 7-day lookback finally expires and fiat
+// pairs silently break. This gauge makes "the FX feed VWAP depends on
+// has gone dry" expressible as `time() - <gauge>` and alertable long
+// before that 7-day cliff (see stellarindex_external_fx_feed_stale).
+//
+// Reset-proof across restarts: the worker's startup refresh re-stamps
+// it within seconds of a healthy boot (mirrors the gap-detector
+// last_success gauge, 2026-07-06). A source that has never once
+// written since process start emits no series here — that "never came
+// up" case is covered by the paired absent()-based alert.
+var ExternalFXLastQuoteUnix = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_external_fx_last_quote_unix",
+		Help: "UNIX seconds of the most recent successful fx_quotes write per FX source (currently `massive`). Reset-proof liveness for the active fiat-FX feed the triangulation forex-snap depends on; only advances on a committed non-empty batch.",
+	},
+	[]string{"source"},
+)
+
 // SourceOrphanEventsTotal — per-source counter of events that
 // arrived but never correlated into a complete observation.
 // Soroswap emits one per aged-out half of a swap/sync pair;
@@ -848,6 +956,88 @@ var UsageRollupSweepDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
+// ProtocolEventsRollupSweepsTotal — per-sweep outcome counter for the
+// aggregator's protocol-events rollup worker
+// (internal/aggregate/protoeventsrollup, #43), which folds the
+// trailing-24h per-source event census into the protocol_events_24h
+// table so /v1/protocols' events_24h column reads a keyed-on-PK lookup
+// instead of a multi-table UNION count per request. Labels:
+//
+//   - `ok`            — sweep completed; rollup rows upserted + pruned.
+//   - `refresh_error` — the census/upsert transaction failed (Postgres
+//     unreachable, migration 0086 missing). The rollup keeps its
+//     previous rows; /v1/protocols events_24h goes stale, not blank.
+//
+// A sustained `refresh_error` rate means /v1/protocols' activity
+// counters stop advancing — informational severity (the customer-facing
+// pricing surface is unaffected).
+var ProtocolEventsRollupSweepsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_protocol_events_rollup_sweeps_total",
+		Help: "Protocol-events rollup worker sweep outcomes (ok|refresh_error).",
+	},
+	[]string{"outcome"},
+)
+
+// ProtocolEventsRollupSweepDurationSeconds — latency histogram for one
+// protocol-events rollup sweep (the trailing-24h UNION ALL census over
+// ~17 hypertables + one upsert + one prune), labelled by outcome so
+// operators chart `ok` p95/p99 separately from the fail-fast error path.
+//
+// Buckets span 10 ms → 30 s: the census is the multi-second leg the
+// #43 rollup moved off the request path, so watching its p95 here is
+// how an operator learns the served-tier census is getting heavier.
+var ProtocolEventsRollupSweepDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_protocol_events_rollup_sweep_duration_seconds",
+		Help:    "Protocol-events rollup sweep latency, labelled by outcome (ok|refresh_error).",
+		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	},
+	[]string{"outcome"},
+)
+
+// AssetVolumeRollupSweepsTotal — per-sweep outcome counter for the
+// aggregator's asset-volume rollup worker
+// (internal/aggregate/assetvolrollup, #43), which folds the trailing-24h
+// per-asset USD-volume SUM over prices_1m (single-sided: base OR quote)
+// into the asset_volume_24h table so the /v1/assets listing reads a
+// keyed-on-PK lookup instead of the ~256k-row per-request scan the
+// 2026-07-06 latency incident measured (~4.8s cold). Labels:
+//
+//   - `ok`            — sweep completed; rollup rows upserted + pruned.
+//   - `refresh_error` — the sum/upsert transaction failed (Postgres
+//     unreachable, migration 0087 missing). The rollup keeps its
+//     previous rows; the listing's volume_24h_usd goes stale, not blank.
+//
+// A sustained `refresh_error` rate means /v1/assets 24h volumes stop
+// advancing — informational severity (the customer-facing pricing
+// surface is unaffected).
+var AssetVolumeRollupSweepsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_asset_volume_rollup_sweeps_total",
+		Help: "Asset-volume rollup worker sweep outcomes (ok|refresh_error).",
+	},
+	[]string{"outcome"},
+)
+
+// AssetVolumeRollupSweepDurationSeconds — latency histogram for one
+// asset-volume rollup sweep (the trailing-24h base-OR-quote SUM over
+// prices_1m + one upsert + one prune), labelled by outcome so operators
+// chart `ok` p95/p99 separately from the fail-fast error path.
+//
+// Buckets span 50 ms → 60 s: this is the heaviest of the two #43
+// rollups (an all-asset prices_1m scan), so watching its p95 here is
+// how an operator learns the served-tier volume scan is getting heavier
+// — long before it would have shown up as a slow /v1/assets endpoint.
+var AssetVolumeRollupSweepDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_asset_volume_rollup_sweep_duration_seconds",
+		Help:    "Asset-volume rollup sweep latency, labelled by outcome (ok|refresh_error).",
+		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
+	},
+	[]string{"outcome"},
+)
+
 // PriceAlertEvalTotal — per-sweep outcome counter for the aggregator's
 // price-alert evaluator (internal/pricealerts, BACKLOG #60), which
 // checks every enabled price_alerts row against the latest closed 1m
@@ -1024,6 +1214,56 @@ var TradeInsertOutcomeTotal = prometheus.NewCounterVec(
 		Help: "Trade-insert outcomes per source. outcome=new when a fresh row landed; outcome=duplicate when ON CONFLICT DO NOTHING short-circuited (indicates cursor replay or stuck-tip).",
 	},
 	[]string{"source", "outcome"},
+)
+
+// TradeInsertRetriesTotal — counter of the trade sink's blocking
+// retry loop (2026-07-06 Postgres-outage fix), labelled by `outcome`:
+//
+//   - "retry"     — one backoff retry attempt after an infrastructure-
+//     classified insert failure (connection refused/reset, PG
+//     restarting, too-many-connections). Each attempt increments; a
+//     sustained nonzero rate means the served-tier write path is
+//     blocked and the on-chain ledger cursor is NOT advancing
+//     (backpressure holding, no data lost). The
+//     `trade_insert_backpressure` alert fires on this.
+//   - "recovered" — a previously-blocked insert (batch or row) finally
+//     landed after ≥1 retry. Pairs with "retry": a healthy recovery
+//     shows a burst of "retry" then one "recovered".
+//   - "abandoned" — a blocked insert gave up because the context was
+//     cancelled mid-retry (shutdown). On-chain rows are re-derivable
+//     from the CH lake (ADR-0034); the exact ledger range is logged at
+//     ERROR alongside this bump.
+//
+// Distinct from genuine drops (data-fault skips + external-buffer
+// overflow), which are counted on
+// [SourceInsertErrorsTotal]{kind="trade"|"dropped"} — see ADR-0041.
+var TradeInsertRetriesTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_trade_insert_retries_total",
+		Help: "Trade-sink blocking-retry events by outcome (retry|recovered|abandoned) — the 2026-07-06 Postgres-outage backpressure path.",
+	},
+	[]string{"outcome"},
+)
+
+// TradeInsertBufferDepth — gauge of the number of external
+// (CEX/FX) trades currently held in the bounded in-memory retry
+// buffer, waiting to land after an infrastructure-classified insert
+// failure (ADR-0041 / 2026-07-06 outage fix).
+//
+// External trades have no ledger cursor and are vendor-refillable, so
+// they are NOT allowed to block the pipeline: on an infra fault they
+// are buffered here and retried by a background goroutine. When the
+// buffer's bound is exceeded the OLDEST entry is dropped (counted on
+// [SourceInsertErrorsTotal]{kind="dropped"}). A depth that climbs and
+// stays high means Postgres has been unreachable long enough that
+// external price freshness is degrading. On-chain trades do NOT use
+// this buffer — they block-and-retry instead (cursor gating), so this
+// gauge is external-only.
+var TradeInsertBufferDepth = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_trade_insert_buffer_depth",
+		Help: "External (CEX/FX) trades currently held in the bounded retry buffer pending durable insert (ADR-0041).",
+	},
 )
 
 // StreamPublishTotal — per-stream counter of envelopes the API
@@ -1365,6 +1605,90 @@ var SupplyCrossCheckTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
+// ─── Supply-divergence cross-check metrics ────────────────────────────
+//
+// DISTINCT from the SupplyCrossCheck* pair above: that pair is an
+// INTERNAL consistency check (a classic asset's Algorithm 2 sum vs its
+// SAC-wrapped Algorithm 3 sum — both OUR OWN numbers). The
+// SupplyDivergence* set below cross-checks OUR served circulating
+// supply against an EXTERNAL authoritative reference (the Stellar
+// Network Dashboard for XLM; CoinGecko when a Pro key is configured).
+// It catches a genuinely-stale SDF-reserve exclusion list — the drift
+// that a manual "is our supply right?" investigation is otherwise the
+// only defense against (docs/methodology/xlm-circulating-supply.md).
+//
+// Emitted by `cmd/stellarindex-aggregator/main.go` (obsSupplyDivergenceEmitter,
+// driven by `internal/divergence.SupplyService.Tick`) once per
+// `[divergence.supply].refresh_interval` when the check is enabled.
+
+// SupplyDivergenceRatio — gauge of the absolute relative divergence
+// |our − reference| / reference between OUR served circulating supply
+// and an external reference's, per (asset, reference).
+//
+// The primary alert target: `stellarindex_supply_divergence_high`
+// fires when this exceeds the operator threshold (default 0.01 = 1%,
+// well above the ~0.03% XLM Fee-Pool noise floor —
+// docs/methodology/xlm-circulating-supply.md). Labelled by `asset`
+// (canonical wire form, e.g. "native") and `reference`
+// ("stellar-dashboard" / "coingecko"). Cardinality bound by the tiny
+// flagship check set × reference set (single digits).
+//
+// NOT updated on the no_reference / refresh_error outcomes — a frozen
+// gauge (last-known value) is the correct behaviour when a reference
+// goes dark (the no_reference counter carries that signal), so a dead
+// reference never manufactures a divergence reading.
+var SupplyDivergenceRatio = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_supply_divergence_ratio",
+		Help: "Absolute relative divergence |our − reference| / reference of served circulating supply, per (asset, reference). Alert when > 1% (well above the ~0.03% XLM noise floor).",
+	},
+	[]string{"asset", "reference"},
+)
+
+// SupplyDivergenceTotal — per-outcome counter for the supply
+// cross-check, one increment per (asset, tick):
+//
+//   - `ok`            — served figure agreed with every responding
+//     reference within the threshold.
+//   - `divergent`     — a responding reference disagreed by more than
+//     the threshold. The ratio gauge carries the magnitude.
+//   - `no_reference`  — served figure loaded but every reference was
+//     unreachable / didn't publish the asset (CoinGecko 429, Dashboard
+//     outage). Graceful-degrade — deliberately NOT paged, so a dead
+//     reference isn't a false divergence alarm.
+//   - `refresh_error` — OUR served snapshot couldn't be read
+//     (bootstrap, storage error). Nothing to compare.
+//
+// The `no_reference` rate is the "checker running blind" signal (the
+// CS-088 analogue on the supply path); operators watch it but it does
+// not page.
+var SupplyDivergenceTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_supply_divergence_total",
+		Help: "Supply cross-check evaluations per (asset, tick), labelled by outcome (ok|divergent|no_reference|refresh_error).",
+	},
+	[]string{"outcome"},
+)
+
+// SupplyDivergenceDurationSeconds — latency histogram for one
+// (asset, tick) supply cross-check evaluation, including the served
+// read + the HTTP fan-out to every reference. Labelled by outcome
+// (matches the counter) so operators chart the healthy `ok` path
+// separately from the slow-vendor / timeout `no_reference` path.
+//
+// Buckets span 10 ms → 30 s: a warm served read is single-digit ms;
+// a single slow reference (Dashboard / CoinGecko) is ~1-10 s; the
+// worst case is the per-reference timeout (default 10s) compounded
+// across the reference set.
+var SupplyDivergenceDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_supply_divergence_duration_seconds",
+		Help:    "Per-(asset, tick) supply cross-check latency, labelled by outcome (ok|divergent|no_reference|refresh_error).",
+		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	},
+	[]string{"outcome"},
+)
+
 // ─── verify-archive metrics ───────────────────────────────────────
 //
 // Emitted by `stellarindex-ops verify-archive` when the operator
@@ -1542,6 +1866,52 @@ var AggregatorSupplyRefreshDurationSeconds = prometheus.NewHistogramVec(
 		Name:    "stellarindex_aggregator_supply_refresh_duration_seconds",
 		Help:    "Supply-snapshot refresh tick latency, labelled by outcome. Asset-level granularity available via per-tick log timestamps.",
 		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	},
+	[]string{"outcome"},
+)
+
+// SEP41SupplyRollupAdvancesTotal — counter of sep41_supply_rollup
+// incremental-advance passes (migration 0085, incident 2026-07-06).
+// The rollup is what keeps the SEP-41 Algorithm-3 supply reader cheap:
+// each pass folds a contract's newly-settled mint/burn/clawback events
+// into a per-contract running checkpoint so the reader never re-sums
+// the full per-contract history. One increment per (contract_id, tick);
+// labels:
+//
+//   - contract_id: the watched SEP-41 C-strkey being advanced.
+//   - outcome ∈ {ok, noop, error}. `ok` folded new settled rows;
+//     `noop` ran cleanly with nothing new to settle (steady state for
+//     a dormant token); `error` is a failed advance (Postgres issue).
+//
+// Sustained `error` for a contract means its checkpoint is frozen and
+// the reader is silently back on the slow full-sum fallback for that
+// contract — correlate with a p99 climb on
+// `stellarindex_aggregator_supply_refresh_duration_seconds`.
+var SEP41SupplyRollupAdvancesTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_sep41_supply_rollup_advances_total",
+		Help: "SEP-41 supply rollup incremental-advance passes per (contract_id, outcome). Outcome ∈ {ok, noop, error}.",
+	},
+	[]string{"contract_id", "outcome"},
+)
+
+// SEP41SupplyRollupAdvanceDurationSeconds — latency histogram for one
+// AdvanceSEP41SupplyRollup pass. Pairs with the per-contract counter
+// above; labelled by outcome only (NOT contract_id) to keep cardinality
+// bounded across deployments watching many contracts.
+//
+// Steady-state is sub-second (a bounded tail sum on the
+// (contract_id, ledger DESC) index). The one exception is a cold
+// contract's FIRST fold — that pass sums the whole per-contract history
+// once and can take seconds→minutes on a hundreds-of-millions-row
+// table; every subsequent pass is incremental. A sustained high p99
+// after warm-up means the tail delta stopped being bounded (worker
+// starved / checkpoint not advancing).
+var SEP41SupplyRollupAdvanceDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_sep41_supply_rollup_advance_duration_seconds",
+		Help:    "SEP-41 supply rollup advance-pass latency, labelled by outcome. Steady-state sub-second; the cold first fold is the exception.",
+		Buckets: []float64{0.005, 0.025, 0.1, 0.5, 1, 2.5, 5, 15, 60, 300},
 	},
 	[]string{"outcome"},
 )
@@ -1767,4 +2137,40 @@ var MarketsSkippedRowsTotal = prometheus.NewCounter(
 		Name: "stellarindex_markets_skipped_rows_total",
 		Help: "Count of trades rows skipped by the /v1/markets scanner because base/quote did not parse as canonical asset strings. Non-zero indicates non-pipeline writes; investigate and clean up.",
 	},
+)
+
+// DEXTradeNonstandardDecimalsTotal — the decimals-assumption landmine
+// detector (adversarial-review HIGH-latent, decoder-correctness audit
+// Finding 2). Emitted by the aggregator's decimals-guard sweep
+// (internal/decimalsguard) once per (source, asset) the FIRST time a
+// DEX trade is observed for a Soroban-contract token whose ON-CHAIN
+// decimals() != 7.
+//
+// Why it matters: the served price is Σ(quote_amount)/Σ(base_amount) on
+// RAW smallest-unit integers — in the prices_* continuous aggregates
+// (migrations/0002) and in aggregate.VWAP. The per-asset decimals CANCEL
+// in that ratio ONLY when base and quote share the same scale. Every
+// DEX-traded Stellar token today is 7-decimal (SACs are always 7;
+// pure-SEP-41 tokens observed so far all declare decimals=7), so the
+// ratio is correct. The moment a non-7-decimal SEP-41 token (an
+// 18-decimal bridged asset, a 6-dp token, …) gains DEX liquidity, every
+// served price for a pair involving it silently skews by 10^(7−decimals)
+// with NO other signal. This counter turns that silent landmine into a
+// loud, per-asset signal so the operator can apply the decimals
+// normalization (deferred follow-up — see the runbook) BEFORE customers
+// consume a wrong price.
+//
+// Labels: `source` (the DEX connector that traded it — soroswap /
+// phoenix / aquarius / comet / …) and `asset` (the token's C-strkey
+// contract id). The label set is unbounded in principle but near-empty
+// in practice (offenders should be zero), so it is NOT pre-seeded and a
+// series exists ONLY once a real offender is detected — the alert is a
+// bare `> 0`. The actual decimals value is logged (ERROR) at detection,
+// not carried as a label.
+var DEXTradeNonstandardDecimalsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_dex_trade_nonstandard_decimals_total",
+		Help: "DEX trades observed for a Soroban token whose on-chain decimals() != 7 — the served price for pairs involving this asset is silently skewed by 10^(7-decimals). Labels: source, asset (C-strkey). Any non-zero value is an unmitigated mispricing landmine; see runbook dex-nonstandard-decimals.md.",
+	},
+	[]string{"source", "asset"},
 )
