@@ -18,11 +18,17 @@ import (
 
 // supplyCmd dispatches the supply sub-subcommand: `audit` (read),
 // `snapshot` (write), `seed-observations` (lake-derived ADR-0021
-// bootstrap for dormant reserve accounts). Future modes (e.g.
-// `recompute`, `policy-validate`) plug in here.
+// bootstrap for dormant reserve accounts), `seed-sac-balances`
+// (lake-derived bootstrap for dormant contract-held SAC balances,
+// migration 0014 / incident 2026-07-06), `seed-sep41-genesis`
+// (lake-derived pre-Soroban opening-balance seed for SAC-wrappers,
+// migration 0088 / incident 2026-07-06), `verify-rollup` (the
+// derived-checkpoint reconcile that catches sep41_supply_rollup fold
+// drift, e.g. the KALE 2× double-fold — incident 2026-07-06). Future
+// modes (e.g. `recompute`, `policy-validate`) plug in here.
 func supplyCmd(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: supply <audit|snapshot|seed-observations> [flags]")
+		return errors.New("usage: supply <audit|snapshot|seed-observations|seed-sac-balances|seed-sep41-genesis|verify-rollup> [flags]")
 	}
 	switch args[0] {
 	case "audit":
@@ -31,8 +37,14 @@ func supplyCmd(args []string) error {
 		return supplySnapshot(args[1:])
 	case "seed-observations":
 		return supplySeedObservations(args[1:])
+	case "seed-sac-balances":
+		return supplySeedSACBalances(args[1:])
+	case "seed-sep41-genesis":
+		return supplySeedSEP41Genesis(args[1:])
+	case "verify-rollup":
+		return supplyVerifyRollup(args[1:])
 	default:
-		return fmt.Errorf("unknown supply subcommand %q (expected: audit | snapshot | seed-observations)", args[0])
+		return fmt.Errorf("unknown supply subcommand %q (expected: audit | snapshot | seed-observations | seed-sac-balances | seed-sep41-genesis | verify-rollup)", args[0])
 	}
 }
 

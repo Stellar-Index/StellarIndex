@@ -139,3 +139,81 @@ func (s *Store) InsertCometLiquidity(ctx context.Context, e CometLiquidityEvent)
 	}
 	return nil
 }
+
+// CometTokenFlow is one Comet pool's net liquidity flow for a single token
+// over a window — the added / removed / net (added − removed) triple from
+// comet_liquidity per-event amounts (migration 0042). This is a WINDOW
+// DELTA, NOT an absolute pool reserve: comet_liquidity captures per-event
+// join_pool / exit_pool / deposit / withdraw amounts, and the Comet port
+// emits no post-state reserve snapshot — so a clean pool-reserve / TVL is
+// not derivable here (unlike Aquarius's aquarius_reserves).
+//
+// All amounts are i128/NUMERIC (canonical.Amount, never int64 — ADR-0003);
+// Net can be negative when removals exceed adds in the window.
+type CometTokenFlow struct {
+	ContractID string
+	Token      string
+	Added      canonical.Amount
+	Removed    canonical.Amount
+	Net        canonical.Amount
+	Events     int64
+	LatestAt   time.Time
+}
+
+// LatestCometLiquidityFlows returns per-(pool, token) net liquidity flow
+// over the trailing windowDays, most-active token leg first. Added is the
+// summed add-direction amount (join_pool / deposit), Removed the summed
+// remove-direction amount (exit_pool / withdraw), Net = Added − Removed.
+//
+// This is the READ side of the Comet liquidity-depth signal InsertCometLiquidity
+// captures. Comet has no post-state reserve snapshot and no published price,
+// so the figures are native-token base-unit WINDOW deltas — not absolute
+// reserves or USD TVL. Comet is also the LAST un-gated on-chain source
+// (CS-026): its decoder matches the shared Balancer-v1 ("POOL", …) topic
+// bytes with no contract-identity gate, so these figures are not
+// contract-identity-gated (see docs/protocols/comet.md); callers surface
+// them with that caveat.
+//
+// Empty-safe: returns (nil, nil) when no liquidity events were captured in
+// the window. windowDays <= 0 is treated as 90.
+func (s *Store) LatestCometLiquidityFlows(ctx context.Context, windowDays int) ([]CometTokenFlow, error) {
+	if windowDays <= 0 {
+		windowDays = 90
+	}
+	since := fmt.Sprintf("%d days", windowDays)
+
+	const q = `
+		SELECT contract_id, token,
+		       COALESCE(sum(amount) FILTER (WHERE direction = 'add'),0)::text,
+		       COALESCE(sum(amount) FILTER (WHERE direction = 'remove'),0)::text,
+		       COALESCE(sum(CASE WHEN direction = 'add' THEN amount
+		                         WHEN direction = 'remove' THEN -amount END),0)::text,
+		       count(*),
+		       max(ledger_close_time)
+		  FROM comet_liquidity
+		 WHERE ledger_close_time > now() - $1::interval
+		 GROUP BY contract_id, token
+		 ORDER BY count(*) DESC, contract_id, token`
+	rows, err := s.db.QueryContext(ctx, q, since)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: LatestCometLiquidityFlows: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []CometTokenFlow
+	for rows.Next() {
+		var (
+			f      CometTokenFlow
+			latest time.Time
+		)
+		if err := rows.Scan(&f.ContractID, &f.Token, &f.Added, &f.Removed, &f.Net, &f.Events, &latest); err != nil {
+			return nil, fmt.Errorf("timescale: LatestCometLiquidityFlows scan: %w", err)
+		}
+		f.LatestAt = latest.UTC()
+		out = append(out, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: LatestCometLiquidityFlows rows: %w", err)
+	}
+	return out, nil
+}

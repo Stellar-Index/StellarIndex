@@ -77,20 +77,21 @@ func TestDecoder_Decode_completesAfterEighthField(t *testing.T) {
 	sellToken := makeC(t, 0x20)
 	buyToken := makeC(t, 0x30)
 	sender := makeC(t, 0x10)
-	offer := big.NewInt(1_000_000)
-	received := big.NewInt(2_000_000)
+	offer := big.NewInt(1_000_000)          // base sold (input)
+	returnAmt := big.NewInt(2_000_000)      // buy_token received (output → QuoteAmount)
+	actualReceived := big.NewInt(1_000_000) // == offer: the INPUT the pool received (Q3)
 
-	// Map: fieldTopic → body. SpreadAmount/ReturnAmount/ReferralFee
-	// must be valid i128 even though decodeSwap doesn't read them —
-	// the buffer's Complete() check requires all 8 slots populated.
+	// Map: fieldTopic → body. SpreadAmount/ReferralFee/ActualReceived
+	// must be valid i128 even though decodeSwap doesn't read them for
+	// the amounts — the buffer's Complete() check requires all 8 slots.
 	zeroI128 := i128Body(t, big.NewInt(0))
 	fields := []struct{ topic, body string }{
 		{TopicSymbolSender, addrBody(t, sender)},
 		{TopicSymbolSellToken, addrBody(t, sellToken)},
 		{TopicSymbolOfferAmount, i128Body(t, offer)},
-		{TopicSymbolActualReceived, i128Body(t, received)},
+		{TopicSymbolActualReceived, i128Body(t, actualReceived)},
 		{TopicSymbolBuyToken, addrBody(t, buyToken)},
-		{TopicSymbolReturnAmount, zeroI128},
+		{TopicSymbolReturnAmount, i128Body(t, returnAmt)},
 		{TopicSymbolSpreadAmount, zeroI128},
 		{TopicSymbolReferralFee, zeroI128},
 	}
@@ -117,6 +118,11 @@ func TestDecoder_Decode_completesAfterEighthField(t *testing.T) {
 			}
 			if te.Trade.BaseAmount.BigInt().Cmp(offer) != 0 {
 				t.Errorf("BaseAmount = %s, want %s", te.Trade.BaseAmount, offer)
+			}
+			// QuoteAmount is return_amount (output), NOT actual_received
+			// (== offer). base==quote was the Phoenix pricing bug.
+			if te.Trade.QuoteAmount.BigInt().Cmp(returnAmt) != 0 {
+				t.Errorf("QuoteAmount = %s, want return_amount %s", te.Trade.QuoteAmount, returnAmt)
 			}
 		}
 	}

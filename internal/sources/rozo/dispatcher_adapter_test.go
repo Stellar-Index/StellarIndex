@@ -38,6 +38,40 @@ func paymentEvent(t *testing.T, contractID string) events.Event {
 	}
 }
 
+// paymentEventLongTopic is paymentEvent but with the LIVE long-form
+// topic[0] ScSymbol "payment_event" that the deployed mainnet contract
+// actually emits (the short-form symbol_short!("payment") never fired
+// live — the 2026-07-07 rozo_events=0 bug). Same body shape.
+func paymentEventLongTopic(t *testing.T, contractID string) events.Event {
+	t.Helper()
+	ev := paymentEvent(t, contractID)
+	ev.Topic[0] = TopicSymbolPaymentEvent
+	return ev
+}
+
+// TestClassify_LongFormPaymentEvent is the regression guard for the
+// 2026-07-07 fix: the deployed contract emits topic[0]="payment_event"
+// (full ScSymbol), which the original short-form-only match dropped,
+// leaving rozo_events empty despite 393 lake events.
+func TestClassify_LongFormPaymentEvent(t *testing.T) {
+	t.Parallel()
+	ev := paymentEventLongTopic(t, MainnetPaymentContract)
+
+	if got := Classify(&ev); got != EventPayment {
+		t.Fatalf("Classify(payment_event) = %q, want %q — the live long-form topic must route to the payment decoder", got, EventPayment)
+	}
+	if !NewDecoder().Matches(ev) {
+		t.Fatal("Matches(payment_event from Rozo contract) = false, want true — the live topic was silently dropped before this fix")
+	}
+	out, err := NewDecoder().Decode(ev)
+	if err != nil {
+		t.Fatalf("Decode(payment_event) error = %v, want a valid rozo Event", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("Decode(payment_event) produced %d events, want 1", len(out))
+	}
+}
+
 func TestDecoder_Name(t *testing.T) {
 	t.Parallel()
 	if got := (&Decoder{}).Name(); got != SourceName {

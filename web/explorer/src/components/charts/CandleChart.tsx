@@ -139,8 +139,9 @@ export function CandleChart({ data, height = 360, className, ariaLabel }: Candle
     };
     // `data` is intentionally NOT a dep — the data effect below updates
     // without tearing down the chart. Effect ordering guarantees the
-    // data effect fires after this one on first render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // data effect fires after this one on first render. (This effect
+    // body reads no reactive value beyond `height`, so exhaustive-deps
+    // is already satisfied — no disable needed.)
   }, [height]);
 
   // Push new data on prop changes (and initial mount) without
