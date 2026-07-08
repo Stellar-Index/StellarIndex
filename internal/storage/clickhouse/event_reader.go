@@ -244,8 +244,10 @@ func scanContractEvents(rows driver.Rows, withOpArgs bool, fn func(events.Event)
 			opArgs     []string
 			inSucc     uint8
 		)
-		dest := []any{&ledger, &closeTime, &txHash, &opIndex, &eventIndex,
-			&contractID, &eventType, &topics, &dataXDR}
+		dest := []any{
+			&ledger, &closeTime, &txHash, &opIndex, &eventIndex,
+			&contractID, &eventType, &topics, &dataXDR,
+		}
 		if withOpArgs {
 			dest = append(dest, &opArgs)
 		}
