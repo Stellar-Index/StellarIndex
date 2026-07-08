@@ -12,6 +12,22 @@ title = "stellar-index gitleaks config"
 [extend]
 useDefault = true
 
+# Global path excludes: gitignored local-dev bulk that only exists in
+# working trees, never in a CI checkout — vendored discovery-phase
+# clones, JS deps + Next.js build output, archived pre-launch docs.
+# verify.sh runs `detect --no-git` (working-tree scan, 2026-07-06),
+# which would otherwise red the local gate for any dev with these on
+# disk (32k+ findings from .discovery-repos alone, 2026-07-08). CI
+# scans a clean checkout, so these excludes subtract nothing there.
+[allowlist]
+description = "Gitignored local-dev bulk (working-tree scan only)"
+paths = [
+  '''^\.discovery-repos/''',
+  '''(^|/)node_modules/''',
+  '''^web/[^/]+/(\.next|out)/''',
+  '''^docs/archive/''',
+]
+
 [[rules]]
 id = "generic-api-key"
 [[rules.allowlists]]
