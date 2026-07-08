@@ -328,7 +328,9 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source) {
 		// events.Event, no Reconstruct). No FINAL — small forward window +
 		// idempotent downstream writes absorb any duplicate.
 		err = clickhouse.StreamContractEventsFiltered(cycleCtx, p.chAddr, fromLedger, toLedger,
-			src.ContractIDs, src.Topic0Syms, src.ExcludeTopic0Syms, false, // no FINAL: idempotent writes absorb dups
+			src.ContractIDs, src.Topic0Syms, src.ExcludeTopic0Syms,
+			false, // no FINAL: idempotent writes absorb dups
+			true,  // withOpArgs: the projector routes every source, incl. OpArgs consumers (redstone); windows are BatchLimit-small
 			func(ev events.Event) error {
 				rowsScanned++
 				if ev.Ledger > lastSeenLedger {

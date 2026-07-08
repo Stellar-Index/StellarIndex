@@ -51,6 +51,21 @@ against.
   when a token doesn't resolve. OpenAPI 1.3.0 → 1.4.0; explorer roster renders the pair. (#91)
 
 ### Fixed
+- `compute-completeness -ch` no longer OOM-kills ClickHouse at ANY server memory cap
+  (the sep41 runs died "would use 61G" at a 64G cap and "69G" at 72G — consumption
+  scaled with headroom, so raising caps was never a fix). Two structural changes:
+  the **recognition scan** (`DistinctTopicShapes`) is now a per-partition windowed
+  GROUP BY over the narrow identity columns only, with representative event bytes
+  fetched in a second, batched pass pinned to each shape's max ledger (the old
+  single-query `argMax` over wide `topics_xdr`/`data_xdr` scaled with the post-P23
+  CAP-67 distinct-shape population); and the **projection-reconcile event stream**
+  (`ReconcileEventStreamer`) is windowed 250k ledgers per query and reads the wide
+  `op_args_xdr` column only for the one decoder that consumes `OpArgs` (redstone) —
+  the sep41 decoders decode from topics+data, so their firehose-scale reconcile no
+  longer pulls the whole InvokeContract arg vector per row. Both query classes carry
+  per-query `SETTINGS` (max_threads 2, 8 GiB ceiling, external group-by/sort spill),
+  so lake growth costs time, never an OOM. `ch-rebuild -sep41` inherits the same trim.
+  ADR-0033 semantics unchanged (same counts, same claims, same verdicts).
 - The `stellarindex_galexie_catchup_refused` page alert (built after the 2026-07-05 wedge)
   could never fire: its textfile probe wrote to Debian's `/var/lib/prometheus/node-exporter`
   instead of the node_exporter's configured `/var/lib/node_exporter/textfile_collector`, AND

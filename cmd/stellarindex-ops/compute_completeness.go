@@ -108,11 +108,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		}
 	}
 
-	// CH lake event source for projection re-derive (ADR-0034) when -ch.
-	var chStreamer completeness.EventStreamer
-	if *useCH {
-		chStreamer = clickhouse.ReconcileEventStreamer{Addr: *chAddr}
-	}
+	// The CH lake event source for projection re-derive (ADR-0034) is built
+	// PER SOURCE inside the loop below: the wide op_args_xdr column is read
+	// only for sources whose decoder consumes events.Event.OpArgs (redstone).
 
 	// Warm the factory-anchored gated registries (ADR-0035) so the
 	// recognition dispatcher correctly recognizes real protocol children
@@ -142,10 +140,12 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// event (rozo emitted 393 payment_events over ~2 months, none in a
 		// recent incremental window) would slip through and never flip
 		// recognition_ok — the 2026-07-07 rozo blind spot (BACKLOG #89).
-		// DistinctTopicShapes is a cheap ClickHouse GROUP BY even over the
-		// whole lake (the distinct (contract,topic) set is tiny), so always
-		// scan from genesis regardless of -from — which correctly scopes
-		// only the expensive row-by-row projection reconcile below.
+		// DistinctTopicShapes is bounded-memory at any lake size (windowed
+		// per-partition narrow-column scan + batched exemplar fetch — the
+		// single-query argMax-over-wide-XDR form died at any server memory
+		// cap once P23/CAP-67 grew the distinct set), so always scan from
+		// genesis regardless of -from — which correctly scopes only the
+		// expensive row-by-row projection reconcile below.
 		recGaps, recErr = computeRecognitionGapsCH(ctx, cfg, *chAddr, gatedOpts, uint32(sorobanEraGenesis), tip)
 	default:
 		recGaps, recErr = computeRecognitionGaps(ctx, store, cfg, gatedOpts, tip)
@@ -271,7 +271,8 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		}
 		if *useCH {
 			if srW.Ledger >= projFrom {
-				delta, pdetail, perr := reconcileProjectionAggregate(ctx, store, chStreamer, *chAddr, src, projFrom, srW.Ledger, retentionStart)
+				streamer := clickhouse.ReconcileEventStreamer{Addr: *chAddr, NeedOpArgs: src.needsOpArgs}
+				delta, pdetail, perr := reconcileProjectionAggregate(ctx, store, streamer, *chAddr, src, projFrom, srW.Ledger, retentionStart)
 				if perr != nil {
 					return fmt.Errorf("%s: projection: %w", src.name, perr)
 				}
@@ -289,7 +290,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		} else {
 			// Legacy Postgres path: strict per-ledger projection pins the watermark.
 			if srW.Ledger >= genesis {
-				pgaps, perr := reconcileSourceProjection(ctx, store, chStreamer, src, genesis, srW.Ledger)
+				pgaps, perr := reconcileSourceProjection(ctx, store, nil, src, genesis, srW.Ledger)
 				if perr != nil {
 					return fmt.Errorf("%s: projection: %w", src.name, perr)
 				}
