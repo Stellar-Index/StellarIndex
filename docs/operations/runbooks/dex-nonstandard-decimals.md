@@ -1,6 +1,6 @@
 ---
 title: Runbook — dex-nonstandard-decimals
-last_verified: 2026-07-07
+last_verified: 2026-07-09
 status: ratified
 severity: P2
 ---
@@ -31,6 +31,14 @@ resolves each one's on-chain `decimals()` from the certified lake, and raises
 one is confirmed `!= 7`. This alert turns that silent landmine into a loud
 signal so the mispricing is caught **before** a customer consumes it.
 
+**This stopped being latent on 2026-07-08.** Token
+`CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO` declares
+`decimals()=9` and traded on aquarius against USDC; the served price was
+exactly 100x wrong (`41.32` vs true `~4132`) for 35 trades since
+2026-06-22 before the guard confirmed it. That confirmed incident is why
+this runbook now has a real stop-serving lever (2026-07-09) instead of
+only a detector — see "Mitigation" below.
+
 ## At a glance
 
 | Field | Value |
@@ -38,8 +46,8 @@ signal so the mispricing is caught **before** a customer consumes it.
 | Alert | `stellarindex_dex_nonstandard_decimals_detected` |
 | Severity | P2 |
 | Detected by | Prometheus rule in `deploy/monitoring/rules/aggregator.yml` (and `configs/prometheus/rules.r1/aggregator.yml`) |
-| Typical MTTR | Minutes to suppress serving; the full normalization is a code change + deploy |
-| Impact | A **real, live pair** is being served a price skewed by `10^(7−decimals)`. The `/v1/price`, `/v1/vwap`, `/v1/history`, `/v1/ohlc` values for any pair involving `{asset}` are wrong. |
+| Typical MTTR | Automatic within ~60s of confirmation (the API-side serving guard); the full normalization remains a scheduled code change + deploy |
+| Impact | A **real, live pair** has a leg with confirmed non-7 `decimals()`. As of 2026-07-09, `/v1/price`, `/v1/vwap`, `/v1/history`, `/v1/ohlc` DECLINE (422) any pair involving `{asset}` instead of serving the skewed value — see "Mitigation". Before that date (and for any deployment that hasn't run migration 0093 / doesn't wire `NonstandardDecimals`), those endpoints served the wrong price with no warning. |
 
 ## Symptoms
 
@@ -74,22 +82,49 @@ the served price for those pairs is wrong. Proceed to mitigation.
 
 ## Mitigation (≤ 15 min)
 
-Immediate (stop serving the wrong number):
+Immediate (stop serving the wrong number) — **now mostly automatic**:
 
-- [ ] Suppress the affected pair(s) from the served surface. Remove them from
-      the aggregator pair set (`[aggregate].pairs`) so no closed-bucket
-      `/v1/price` is published, and/or add the asset to the serving denylist
-      the API consults, so `/v1/vwap` + `/v1/history` decline rather than
-      return a skewed number. A declined price is honest; a wrong price is not.
-- [ ] Verification: within one aggregator tick the pair stops publishing; the
-      alert stays latched (expected — it is a "this happened" signal, silence
-      it via the pair suppression, not by waiting for it to clear).
+- [ ] **Nothing to do by default.** The moment `internal/decimalsguard`
+      confirms the offender, it upserts `nonstandard_decimals_assets`
+      (migration 0093) via `UpsertNonstandardDecimalsAsset`. The API's
+      `NonstandardDecimalsCache` (`internal/api/v1`) refreshes that table
+      every `NonstandardDecimalsRefreshInterval` (60s) and, from then on,
+      `/v1/price`, `/v1/vwap`, `/v1/history`, `/v1/ohlc` DECLINE — `422
+      problem+json`, `Cache-Control: no-store` — any pair with `{asset}` on
+      either leg (`declineIfNonstandardDecimals` in
+      `internal/api/v1/nonstandard_decimals_guard.go`). A declined price is
+      honest; a wrong price is not.
+- [ ] Verification: confirm the row exists —
+      `psql "$PG" -c "SELECT * FROM nonstandard_decimals_assets WHERE asset = '<asset>';"`
+      — and confirm the API is actually declining —
+      `curl -s "$API_BASE_URL/v1/price?asset=<asset>&quote=fiat:USD" | jq .status`
+      should show `422` within ~60s of the row appearing. If the row exists
+      but the API still serves 200: check whether this deployment's
+      `cmd/stellarindex-api` binary predates the guard, or whether
+      `NonstandardDecimals` failed to wire (see "Known false-positive
+      patterns" — a nil cache fails OPEN, i.e. serves normally).
+- [ ] The alert stays latched (expected — it is a "this happened" signal,
+      distinct from the API's live decline counter
+      `stellarindex_price_serve_declined_nonstandard_decimals_total{asset}`,
+      which tracks ongoing customer impact and tapers to zero once
+      normalization ships).
+- [ ] Manual fallback (guard not deployed yet, or the automatic path somehow
+      didn't fire): `INSERT INTO nonstandard_decimals_assets (asset,
+      decimals, source, confirmed_at) VALUES ('<asset>', <decimals>,
+      '<source>', now());` — the API cache picks it up on its next refresh,
+      no restart needed. This is the same row shape the guard writes; the
+      table doesn't distinguish operator-inserted rows from guard-confirmed
+      ones.
 
 Durable (the real fix — schedule, do not hot-patch during the incident):
 
 - [ ] Apply the **decimals normalization**: multiply the finalized ratio by
       `10^(dec_base − dec_quote)` at the read layer. See "Root cause analysis"
-      for why this was deferred and what a correct fix must cover.
+      for why this was deferred and what a correct fix must cover. Once
+      normalization ships for `{asset}`, remove its row from
+      `nonstandard_decimals_assets` (or simply stop re-confirming it) — the
+      serving guard is self-clearing: the decline disappears within one
+      cache refresh interval of the row going away.
 
 ## Root cause analysis
 
@@ -125,21 +160,48 @@ skew was live before suppression.
   decimals.
 - A token could legitimately declare non-7 decimals and still be low-value /
   low-volume. Check step 2's volume before deciding urgency — but the served
-  price is still wrong, so suppression is correct regardless.
+  price is still wrong, so declining is correct regardless.
+- **The API-side serving guard fails OPEN, never closed.** A nil
+  `NonstandardDecimalsCache` (not wired in `cmd/stellarindex-api/main.go`), a
+  cold cache (never refreshed yet), or a refresh error (Postgres blip —
+  tracked by `stellarindex_nonstandard_decimals_cache_refresh_failures_total`,
+  which retains the last-good snapshot rather than clearing it) all mean
+  requests serve NORMALLY rather than declining. This is deliberate —
+  availability wins over the guard for infra errors — but it means a
+  confirmed offender can still serve briefly during an API-process restart
+  before the initial cache refresh completes, or indefinitely on a
+  deployment that predates migration 0093 / hasn't wired `NonstandardDecimals`.
 
 ## Related
 
-- Implementation: `internal/decimalsguard/guard.go` (the sweep),
+- Detection: `internal/decimalsguard/guard.go` (the sweep),
   `internal/storage/timescale/soroban_dex_assets.go` (the enumerator),
   `internal/storage/clickhouse/token_decimals_reader.go` (the resolver).
-- Metric: `stellarindex_dex_trade_nonstandard_decimals_total` —
-  `docs/reference/metrics/README.md`.
+- Enforcement (2026-07-09): `internal/api/v1/nonstandard_decimals_guard.go`
+  (`declineIfNonstandardDecimals`, the four call sites in `price.go` /
+  `vwap.go` / `history.go` / `ohlc.go`), `internal/api/v1/nonstandard_decimals_cache.go`
+  (`NonstandardDecimalsCache`), `internal/storage/timescale/nonstandard_decimals_assets.go`
+  (`UpsertNonstandardDecimalsAsset` / `LoadNonstandardDecimalsAssets`),
+  `migrations/0093_create_nonstandard_decimals_assets.up.sql`.
+- Metrics: `stellarindex_dex_trade_nonstandard_decimals_total` (detection),
+  `stellarindex_price_serve_declined_nonstandard_decimals_total` (live
+  enforcement impact), `stellarindex_nonstandard_decimals_cache_refresh_failures_total`
+  (cache infra health) — `docs/reference/metrics/README.md`.
 - The correctness invariant it protects: ADR-0003 (i128/decimals discipline)
   and the "external-source amount scaling is NOT uniform" note in `CLAUDE.md`.
 - Companion serving-sanity guard: `internal/pricingguard` (guards the raw
-  closed-bucket `prices_1m` serving path against a different failure mode).
+  closed-bucket `prices_1m` serving path against a different failure mode —
+  gross single-bucket manipulation, not a per-asset decimals mismatch).
 
 ## Changelog
 
+- 2026-07-09 — added the READ-TIME enforcement half after a confirmed
+  production incident (token `CC2RB…`, 100x-wrong price, 35 trades since
+  2026-06-22): `/v1/price`, `/v1/vwap`, `/v1/history`, `/v1/ohlc` now
+  DECLINE (422) rather than serve a price for a pair with a confirmed
+  non-7-decimals leg. Migration 0093 (`nonstandard_decimals_assets`),
+  `internal/decimalsguard` now upserts on confirmation,
+  `internal/api/v1.NonstandardDecimalsCache` mirrors it API-side. Self-clearing
+  once the durable normalization ships and the row is removed.
 - 2026-07-07 — initial draft alongside the decimals-guard (decoder-correctness
   audit Finding 2).

@@ -73,6 +73,21 @@ type DecimalsResolver interface {
 	TokenDecimals(ctx context.Context, contractID string) (uint32, bool, error)
 }
 
+// DecimalsAssetWriter persists a CONFIRMED non-7 decimals() declaration so
+// the API-side READ-TIME serving guard (internal/api/v1) can decline to
+// serve /v1/price, /v1/vwap, /v1/history, /v1/ohlc for any pair touching
+// the asset — turning this package's detection-only signal into an actual
+// stop-serving lever (docs/operations/runbooks/dex-nonstandard-decimals.md
+// "Mitigation" step). Satisfied by *timescale.Store via
+// UpsertNonstandardDecimalsAsset.
+//
+// Optional: a nil Writer disables persistence — the guard still fires the
+// metric + ERROR log unconditionally, it just leaves the serving-side guard
+// unfed (the pre-2026-07-09 behaviour).
+type DecimalsAssetWriter interface {
+	UpsertNonstandardDecimalsAsset(ctx context.Context, asset string, decimals uint32, source string) error
+}
+
 // Guard periodically sweeps recently-DEX-traded Soroban tokens and raises
 // obs.DEXTradeNonstandardDecimalsTotal for any whose on-chain decimals() is
 // confirmed != 7. It is conservative: it alarms ONLY on a confirmed non-7
@@ -80,6 +95,7 @@ type DecimalsResolver interface {
 type Guard struct {
 	reader   TradeReader
 	resolver DecimalsResolver
+	writer   DecimalsAssetWriter
 	window   time.Duration
 	logger   *slog.Logger
 
@@ -104,6 +120,11 @@ type Options struct {
 	Window time.Duration
 	// Logger; nil => slog.Default().
 	Logger *slog.Logger
+	// Writer, when non-nil, persists each confirmed non-7-decimals asset
+	// into `nonstandard_decimals_assets` (migration 0093) so the API's
+	// read-time serving guard can decline pricing for it. Nil disables
+	// persistence — detection (metric + log) is unaffected.
+	Writer DecimalsAssetWriter
 }
 
 // New builds a Guard.
@@ -119,6 +140,7 @@ func New(reader TradeReader, resolver DecimalsResolver, opts Options) *Guard {
 	return &Guard{
 		reader:   reader,
 		resolver: resolver,
+		writer:   opts.Writer,
 		window:   window,
 		logger:   logger,
 		resolved: make(map[string]uint32),
@@ -168,7 +190,7 @@ func (g *Guard) Sweep(ctx context.Context) error {
 		if !confirmed || decimals == StandardDecimals {
 			continue
 		}
-		g.report(ref, decimals)
+		g.report(ctx, ref, decimals)
 	}
 	return nil
 }
@@ -204,8 +226,11 @@ func (g *Guard) classify(ctx context.Context, asset string) (decimals uint32, co
 }
 
 // report increments the landmine counter (once per source+asset per
-// process) and logs the detail the runbook needs.
-func (g *Guard) report(ref timescale.SorobanDEXTradeRef, decimals uint32) {
+// process), logs the detail the runbook needs, and — when a Writer is
+// wired — persists the confirmation so the API's read-time serving guard
+// picks it up on its next cache refresh (~60s) and declines pricing for
+// pairs touching this asset.
+func (g *Guard) report(ctx context.Context, ref timescale.SorobanDEXTradeRef, decimals uint32) {
 	key := ref.Source + "\x00" + ref.Asset
 	g.mu.Lock()
 	if _, seen := g.fired[key]; seen {
@@ -225,6 +250,18 @@ func (g *Guard) report(ref timescale.SorobanDEXTradeRef, decimals uint32) {
 		"decimals", decimals,
 		"price_skew_decades", skewDecades(decimals),
 	)
+
+	if g.writer == nil {
+		return
+	}
+	if err := g.writer.UpsertNonstandardDecimalsAsset(ctx, ref.Asset, decimals, ref.Source); err != nil {
+		g.logger.Warn(
+			"decimals-guard: failed to persist confirmed nonstandard-decimals asset — "+
+				"the API read-time serving guard will NOT decline this pair until a later "+
+				"sweep succeeds (metric + log alarm above are unaffected)",
+			"source", ref.Source, "asset", ref.Asset, "decimals", decimals, "err", err,
+		)
+	}
 }
 
 // skewDecades is the order-of-magnitude the served ratio is off for a pair

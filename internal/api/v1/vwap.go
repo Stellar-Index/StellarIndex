@@ -67,6 +67,12 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// dex-nonstandard-decimals read-time guard — see
+	// declineIfNonstandardDecimals for the full rationale.
+	if s.declineIfNonstandardDecimals(w, r, base, quote) {
+		return
+	}
+
 	// Clamped to a closed-bucket boundary when `to` defaults to "now"
 	// per ADR-0015 — guarantees cross-region answer agreement.
 	from, to, _, ok := parseFromToClamped(w, r)

@@ -1619,6 +1619,40 @@ ERROR log line, not a label. Any non-zero value is a real, silent mispricing
 on a live pair — page-adjacent (P2). Runbook:
 `docs/operations/runbooks/dex-nonstandard-decimals.md`.
 
+## Nonstandard-decimals serving guard (API binary)
+
+### `stellarindex_price_serve_declined_nonstandard_decimals_total`
+
+Counter, label `asset`.
+
+The READ-TIME enforcement half of the dex-nonstandard-decimals guard — the
+detector above only alarms; this counter tracks the actual mitigation lever.
+Confirmed production bug (2026-07-08): token `CC2RB…` (`decimals()`=9)
+served a price exactly 100x wrong on its aquarius/USDC pair (35 trades)
+because nothing stopped serving once the assumption broke. `internal/api/v1`'s
+`NonstandardDecimalsCache` mirrors `nonstandard_decimals_assets` (migration
+0093, upserted by `internal/decimalsguard` on confirmation) and declines —
+`422 problem+json`, `Cache-Control: no-store` — `/v1/price`, `/v1/vwap`,
+`/v1/history`, `/v1/ohlc` for any pair with a listed leg, instead of serving
+the skewed value. Increments once per declined REQUEST (not latched like
+the detector counter) — chart it to see live customer impact taper to zero
+once the durable decimals normalization ships and the offending row is
+removed. `asset` is the flagged leg's C-strkey contract id. Runbook:
+`docs/operations/runbooks/dex-nonstandard-decimals.md`.
+
+### `stellarindex_nonstandard_decimals_cache_refresh_failures_total`
+
+Counter, no labels.
+
+Failed background refreshes (60s cadence) of the API's in-process mirror of
+`nonstandard_decimals_assets`. The cache is fail-open on a refresh error —
+it keeps serving the previous snapshot rather than clearing it, since
+availability wins over the guard for infra blips — so this is an
+infra-health signal, not a pricing-correctness one: a rising value means
+the cache is coasting on a stale (but still valid) snapshot. No dedicated
+alert; the underlying Postgres-health alerts already cover the infra
+failure this reflects.
+
 ## Changelog
 
 - 2026-07-09 — added `stellarindex_dex_trade_unit_ratio_total`
@@ -1628,6 +1662,12 @@ on a live pair — page-adjacent (P2). Runbook:
   quote_amount` for months, undetected by presence-only completeness
   checks): fires when a source produces a sustained stream of landed
   on-chain trades with an exact 1:1 base/quote ratio.
+- 2026-07-09 — added `stellarindex_price_serve_declined_nonstandard_decimals_total`
+  (`asset`) and `stellarindex_nonstandard_decimals_cache_refresh_failures_total`,
+  the READ-TIME enforcement half of the dex-nonstandard-decimals guard
+  (`internal/api/v1.NonstandardDecimalsCache` + `declineIfNonstandardDecimals`).
+  Turns the 2026-07-07 detector into an actual stop-serving lever after a
+  confirmed production bug (token `CC2RB…`, 100x-wrong price, 35 trades).
 - 2026-07-07 — added `stellarindex_dex_trade_nonstandard_decimals_total`
   (`source`, `asset`), emitted by the aggregator's decimals-assumption guard
   (`internal/decimalsguard`). Detection-only signal for the served-price

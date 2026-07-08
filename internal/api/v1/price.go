@@ -335,6 +335,13 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// dex-nonstandard-decimals read-time guard (before ANY storage read —
+	// window path included): decline rather than serve a price for a pair
+	// with a confirmed non-7-decimals leg. See declineIfNonstandardDecimals.
+	if s.declineIfNonstandardDecimals(w, r, asset, quote) {
+		return
+	}
+
 	// Optional aggregation-window selection (board #43; proposal:
 	// "the window length … can be modified through query"). The
 	// default 60 keeps the existing closed-1m-bucket behavior; the

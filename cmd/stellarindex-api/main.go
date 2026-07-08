@@ -815,6 +815,40 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		}
 	}()
 
+	// Read-time dex-nonstandard-decimals serving guard (confirmed
+	// production bug 2026-07-08 — see docs/operations/runbooks/
+	// dex-nonstandard-decimals.md). Mirrors `nonstandard_decimals_assets`
+	// (migration 0093, upserted by the aggregator's decimals-guard sweep)
+	// in-process so /v1/price, /v1/vwap, /v1/history, /v1/ohlc can decline
+	// a pair with a confirmed-offending leg without a per-request DB
+	// round trip. Table is tiny (offenders should be near-zero), so the
+	// full read is cheap; refresh cadence controls how quickly a fix
+	// (row removed) or a new confirmation propagates.
+	nonstandardDecimalsCache := v1.NewNonstandardDecimalsCache(store, logger.With("component", "nonstandard-decimals-cache"))
+	go func() {
+		const refreshTimeout = 30 * time.Second
+
+		initCtx, initCancel := context.WithTimeout(rootCtx, refreshTimeout)
+		defer initCancel()
+		if err := nonstandardDecimalsCache.Refresh(initCtx); err != nil {
+			logger.Warn("nonstandard-decimals cache initial refresh", "err", err)
+		}
+		tick := time.NewTicker(v1.NonstandardDecimalsRefreshInterval)
+		defer tick.Stop()
+		for {
+			select {
+			case <-rootCtx.Done():
+				return
+			case <-tick.C:
+				refreshCtx, cancel := context.WithTimeout(rootCtx, refreshTimeout)
+				if err := nonstandardDecimalsCache.Refresh(refreshCtx); err != nil {
+					logger.Warn("nonstandard-decimals cache periodic refresh", "err", err)
+				}
+				cancel()
+			}
+		}
+	}()
+
 	// Live per-token supply from the decode-at-ingest supply_flows lake
 	// (ADR-0034) backs GET /v1/assets/{id}/supply. Optional: when ClickHouse
 	// isn't configured, the reader stays nil and the endpoint 503s. A failed
@@ -1019,6 +1053,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		USDPeggedClassics:    usdPegs,
 		VerifiedCurrencies:   verifiedCurrencies,
 		BackfillCoverage:     backfillCoverageCache,
+		NonstandardDecimals:  nonstandardDecimalsCache,
 		GlobalPrice: globalPriceReader{
 			s:   store,
 			tri: redisTriangulatedLooker{rdb: rdb},

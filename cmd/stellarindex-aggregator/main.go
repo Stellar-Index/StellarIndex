@@ -688,6 +688,11 @@ func run(cfgPath string, dryRun bool) error {
 			guard := decimalsguard.New(store, er, decimalsguard.Options{
 				Window: decimalsguard.DefaultWindow,
 				Logger: logger.With("component", "decimals-guard"),
+				// Persists each confirmed offender into
+				// nonstandard_decimals_assets (migration 0093) so the
+				// API's read-time serving guard can decline pricing —
+				// turns detection into an actual stop-serving lever.
+				Writer: store,
 			})
 			refresherWG.Add(1)
 			go func() {

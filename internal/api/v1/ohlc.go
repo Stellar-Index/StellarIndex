@@ -97,6 +97,13 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// dex-nonstandard-decimals read-time guard — covers BOTH the
+	// single-bar and multi-bar series branches below, since both share
+	// this resolved pair. See declineIfNonstandardDecimals.
+	if s.declineIfNonstandardDecimals(w, r, base, quote) {
+		return
+	}
+
 	// Branch to the multi-bar series handler when `interval` is
 	// supplied. Invalid intervals 400 before any other work.
 	if raw := r.URL.Query().Get("interval"); raw != "" {

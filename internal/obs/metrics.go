@@ -159,6 +159,8 @@ func registerAppMetricsTail() {
 		SignupReaperRowsDeletedTotal,
 
 		DEXTradeNonstandardDecimalsTotal,
+		PriceServeDeclinedNonstandardDecimalsTotal,
+		NonstandardDecimalsCacheRefreshFailuresTotal,
 	)
 
 	// F-0033 closure: pre-seed zero-valued series for the
@@ -2218,4 +2220,48 @@ var DEXTradeNonstandardDecimalsTotal = prometheus.NewCounterVec(
 		Help: "DEX trades observed for a Soroban token whose on-chain decimals() != 7 — the served price for pairs involving this asset is silently skewed by 10^(7-decimals). Labels: source, asset (C-strkey). Any non-zero value is an unmitigated mispricing landmine; see runbook dex-nonstandard-decimals.md.",
 	},
 	[]string{"source", "asset"},
+)
+
+// PriceServeDeclinedNonstandardDecimalsTotal — the READ-TIME enforcement
+// half of the dex-nonstandard-decimals guard (API binary; the sweep above
+// is the aggregator-side DETECTION half). Confirmed production bug
+// 2026-07-08: token CC2RB…(decimals()=9) served a price exactly 100x wrong
+// on its aquarius/USDC pair for 35 trades because nothing stopped serving
+// once the assumption broke. `internal/api/v1`'s NonstandardDecimalsCache
+// mirrors `nonstandard_decimals_assets` (migration 0093, upserted by
+// internal/decimalsguard on confirmation) and declines to serve /v1/price,
+// /v1/vwap, /v1/history, /v1/ohlc — 422 problem+json — for any pair with a
+// leg in that table. This counter fires once per DECLINED request (not
+// latched like the detector counter above): it tracks live customer
+// impact, so operators can see it taper to zero once the durable decimals
+// normalization ships and the offending row is removed.
+//
+// Label: `asset` — the flagged leg's C-strkey contract id (whichever of
+// base/quote matched; if both are flagged, the base wins — see
+// nonstandardDecimalsLeg in internal/api/v1). Unbounded in principle,
+// near-empty in practice, so NOT pre-seeded.
+var PriceServeDeclinedNonstandardDecimalsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_price_serve_declined_nonstandard_decimals_total",
+		Help: "Price-surface requests (/v1/price, /v1/vwap, /v1/history, /v1/ohlc) declined because a leg of the requested pair is a confirmed non-7-decimal Soroban asset. Label: asset (C-strkey). Non-zero means real requests are being honestly declined instead of served a wrong price; see runbook dex-nonstandard-decimals.md.",
+	},
+	[]string{"asset"},
+)
+
+// NonstandardDecimalsCacheRefreshFailuresTotal counts failed background
+// refreshes of the API's in-process NonstandardDecimalsCache
+// (internal/api/v1) — the read-time mirror of `nonstandard_decimals_assets`
+// that /v1/price, /v1/vwap, /v1/history, /v1/ohlc consult before serving.
+// The cache is fail-open on a refresh error (serves the last-good snapshot
+// rather than clearing it — availability wins over the guard for infra
+// blips), so a rising value is an infra-health signal, not a pricing-
+// correctness one: it means the cache is coasting on a stale snapshot, not
+// that a wrong price is being served. No dedicated alert — a sustained
+// climb is visible via this counter and the underlying Postgres-health
+// alerts already cover the infra failure itself.
+var NonstandardDecimalsCacheRefreshFailuresTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_nonstandard_decimals_cache_refresh_failures_total",
+		Help: "Failed background refreshes of the API's in-process nonstandard-decimals serving-guard cache. Fail-open: the previous snapshot keeps serving. Infra-health signal, not a pricing-correctness one.",
+	},
 )

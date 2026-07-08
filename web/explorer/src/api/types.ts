@@ -1321,6 +1321,15 @@ export interface paths {
                 };
                 400: components["responses"]["BadRequest"];
                 404: components["responses"]["NotFound"];
+                /** @description Declined: `asset` or `quote` is a confirmed non-7-decimal Soroban token (docs/operations/runbooks/dex-nonstandard-decimals.md). The served price would be silently skewed by 10^(7−decimals), so pricing is declined rather than served wrong. Temporary — self-clears once decimals normalization ships for the asset. */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
                 429: components["responses"]["RateLimited"];
                 500: components["responses"]["InternalError"];
                 503: components["responses"]["ServiceUnavailable"];
@@ -2099,6 +2108,15 @@ export interface paths {
                     };
                 };
                 400: components["responses"]["BadRequest"];
+                /** @description Declined: `base` or `quote` is a confirmed non-7-decimal Soroban token (docs/operations/runbooks/dex-nonstandard-decimals.md). Same guard as `/v1/price`; see that endpoint's 422 for the full rationale. */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
                 429: components["responses"]["RateLimited"];
                 500: components["responses"]["InternalError"];
                 503: components["responses"]["ServiceUnavailable"];
@@ -2530,6 +2548,15 @@ export interface paths {
                         "application/problem+json": components["schemas"]["Problem"];
                     };
                 };
+                /** @description Declined (both modes): `base` or `quote` is a confirmed non-7-decimal Soroban token (docs/operations/runbooks/dex-nonstandard-decimals.md). Same guard as `/v1/price`; see that endpoint's 422 for the full rationale. */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
                 429: components["responses"]["RateLimited"];
                 500: components["responses"]["InternalError"];
                 503: components["responses"]["ServiceUnavailable"];
@@ -2645,7 +2672,7 @@ export interface paths {
                         "application/problem+json": components["schemas"]["Problem"];
                     };
                 };
-                /** @description All trades filtered as outliers. */
+                /** @description Either all trades in the window were filtered as outliers, OR `base`/`quote` is a confirmed non-7-decimal Soroban token (docs/operations/runbooks/dex-nonstandard-decimals.md) — the `type` field on the problem body distinguishes the two. */
                 422: {
                     headers: {
                         [name: string]: unknown;

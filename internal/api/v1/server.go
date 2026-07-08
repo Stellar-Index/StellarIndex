@@ -196,6 +196,13 @@ type Server struct {
 	// powering /v1/diagnostics/ingestion's coverage section. Nil
 	// leaves that section absent. See [CoverageCache].
 	backfillCoverage *CoverageCache
+	// nonstandardDecimals is the read-time serving guard for the
+	// dex-nonstandard-decimals landmine (docs/operations/runbooks/
+	// dex-nonstandard-decimals.md). Nil disables the guard entirely
+	// (declineIfNonstandardDecimals always returns false) — every
+	// price/vwap/history/ohlc request serves normally, the pre-guard
+	// behaviour. See [NonstandardDecimalsCache].
+	nonstandardDecimals *NonstandardDecimalsCache
 	// globalPrice + globalPriceOpts power the /v1/assets/{slug}
 	// global view's three-tier fallback chain (R-018 Phase 1.3a/1.4a).
 	// Nil-safe: handleGlobalAsset returns a view without the price
@@ -870,6 +877,16 @@ type Options struct {
 	// from a request. Nil leaves that section absent from the wire.
 	BackfillCoverage *CoverageCache
 
+	// NonstandardDecimals, when non-nil, backs the read-time
+	// dex-nonstandard-decimals serving guard: /v1/price, /v1/vwap,
+	// /v1/history, /v1/ohlc decline (422) any pair with a leg the
+	// cache has confirmed as non-7-decimal, rather than serve a
+	// price silently skewed by 10^(7-decimals). Nil disables the
+	// guard — every request serves normally, the pre-guard
+	// behaviour. See [NonstandardDecimalsCache] and
+	// docs/operations/runbooks/dex-nonstandard-decimals.md.
+	NonstandardDecimals *NonstandardDecimalsCache
+
 	// GlobalPrice, when non-nil, powers the price block on
 	// `/v1/assets/{slug}` global views via the three-tier fallback
 	// chain (vwap_native → aggregator_avg → triangulated). Nil
@@ -972,6 +989,7 @@ func New(opts Options) *Server {
 		sessionAuth:             opts.SessionAuth,
 		verifiedCurrencies:      opts.VerifiedCurrencies,
 		backfillCoverage:        opts.BackfillCoverage,
+		nonstandardDecimals:     opts.NonstandardDecimals,
 		globalPrice:             opts.GlobalPrice,
 		globalPriceOpts:         globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
 		sacWrappers:             opts.SACWrappers,

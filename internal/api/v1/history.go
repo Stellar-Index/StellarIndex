@@ -215,6 +215,12 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 		return
 	}
 
+	// dex-nonstandard-decimals read-time guard — see
+	// declineIfNonstandardDecimals for the full rationale.
+	if s.declineIfNonstandardDecimals(w, r, base, quote) {
+		return
+	}
+
 	from, to, ok := parseFromTo(w, r)
 	if !ok {
 		return

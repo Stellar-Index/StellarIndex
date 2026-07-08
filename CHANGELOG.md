@@ -91,6 +91,22 @@ against.
   overlapping batches could then take row locks in different orders — the same AB/BA
   cycle the earlier fix was meant to close. `sortTradesByConflictKey` now sorts by
   the full 5-column key.
+- **Confirmed production bug: `/v1/price` served a 100x-wrong price on the CC2RB…/USDC
+  aquarius pair** (35 trades since 2026-06-22; the token declares `decimals()=9`, and the
+  served-price ratio `Σ(quote)/Σ(base)` only cancels correctly when both legs share a
+  decimals scale — see `docs/operations/runbooks/dex-nonstandard-decimals.md`).
+  `internal/decimalsguard` already detected + latched a metric on this but nothing stopped
+  SERVING. Added a read-time serving guard: `/v1/price`, `/v1/vwap`, `/v1/history`, `/v1/ohlc`
+  now DECLINE (`422 problem+json`, `Cache-Control: no-store`) any pair with a confirmed
+  non-7-decimals leg, rather than serve the skewed value. New table
+  `nonstandard_decimals_assets` (migration 0093) — the aggregator's decimals-guard upserts on
+  confirmation; the API's `NonstandardDecimalsCache` mirrors it in-process (60s refresh,
+  fail-open on read error). Self-clearing once the durable decimals normalization ships and
+  the row is removed. New metrics
+  `stellarindex_price_serve_declined_nonstandard_decimals_total{asset}` and
+  `stellarindex_nonstandard_decimals_cache_refresh_failures_total`. OpenAPI 1.4.0 → 1.5.0
+  (documents the new 422 response on the four affected endpoints; wire shape unchanged — the
+  existing `Problem` schema already covered it).
 - The `stellarindex_galexie_catchup_refused` page alert (built after the 2026-07-05 wedge)
   could never fire: its textfile probe wrote to Debian's `/var/lib/prometheus/node-exporter`
   instead of the node_exporter's configured `/var/lib/node_exporter/textfile_collector`, AND
