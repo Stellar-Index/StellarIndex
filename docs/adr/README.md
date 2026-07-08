@@ -79,12 +79,13 @@ See [_template.md](_template.md) for the boilerplate.
 | [0035](0035-factory-anchored-contract-gating.md) | Accepted | Factory-anchored contract gating for Soroban decoders (reverses match-broadly/filter-downstream) | 2026-06-12 |
 | [0038](0038-network-explorer.md) | Accepted | Network explorer (full Stellar + Soroban) over the certified lake | 2026-06-14 |
 | [0039](0039-soroban-contract-state-reader.md) | Accepted | Soroban contract current-state reader — read-time decode from the lake | 2026-06-18 |
-| [0040](0040-completing-contract-gating.md) | Proposed | Completing contract-identity gating: phoenix/defindex curated-set gates, aquarius enumeration, comet WASM-hash gate (closes CS-026) | 2026-07-02 |
-| [0041](0041-ingest-durability-semantics.md) | Proposed | Ingest durability semantics — cursor is a resume hint, verdict is the durability claim; CH sink defaults on; drop alerting | 2026-07-02 |
-| [0042](0042-v1-wire-shape.md) | Proposed | The v1 wire shape — Unit-D collapse pre-flip, /v1/assets/{slug} kind discriminator, v1.0 freeze contract with x-stability tiers | 2026-07-02 |
-| [0043](0043-backup-and-restore-strategy.md) | Proposed | Backup + restore strategy — offsite repo2, CH lake protection via drilled re-derive + tail/DDL push, monthly scratch-restore drills | 2026-07-02 |
+| [0040](0040-completing-contract-gating.md) | Accepted | Completing contract-identity gating: phoenix/defindex curated-set gates, aquarius enumeration, comet WASM-hash gate (closes CS-026) | 2026-07-02 |
+| [0041](0041-ingest-durability-semantics.md) | Accepted | Ingest durability semantics — cursor is a resume hint, verdict is the durability claim; CH sink defaults on; drop alerting | 2026-07-02 |
+| [0042](0042-v1-wire-shape.md) | Accepted | The v1 wire shape — Unit-D collapse pre-flip, /v1/assets/{slug} kind discriminator, v1.0 freeze contract with x-stability tiers | 2026-07-02 |
+| [0043](0043-backup-and-restore-strategy.md) | Accepted | Backup + restore strategy — offsite repo2, CH lake protection via drilled re-derive + tail/DDL push, monthly scratch-restore drills | 2026-07-02 |
 | [0044](0044-explorer-edge-rendering.md) | Accepted | Explorer rendering moves from static export to edge SSR | 2026-07-04 |
-| [0045](0045-sep40-oracle-read-adapter.md) | Proposed | SEP-40 on-chain oracle read adapter — defer generic reader; serve surface already ships | 2026-07-06 |
+| [0045](0045-sep40-oracle-read-adapter.md) | Accepted | SEP-40 on-chain oracle read adapter — defer generic reader; serve surface already ships | 2026-07-06 |
+| [0046](0046-mad-outlier-filter.md) | Proposed | MAD-based outlier filtering for VWAP inputs — log-space modified z-score, shadow-first rollout; thresholds deferred to production traffic | 2026-07-08 |
 
 ## Related
 

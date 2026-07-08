@@ -1,7 +1,7 @@
 ---
 adr: 0045
 title: SEP-40 on-chain oracle read adapter — defer generic reader; serve surface already ships
-status: Proposed
+status: Accepted
 date: 2026-07-06
 supersedes: []
 superseded_by: null
