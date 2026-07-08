@@ -396,13 +396,35 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 	}
 
 	// Deterministic PK order WITHIN the batch (2026-07-05 deadlock
-	// storm, 918 in one afternoon): the indexer's parallel drain
-	// workers submit overlapping batches while catching up a backlog,
-	// and two multi-row INSERT..ON CONFLICT statements that touch the
-	// same keys in different orders take row locks in different orders
-	// — a textbook AB/BA deadlock. Sorting every batch by the conflict
-	// key makes all writers acquire locks in one global order, so
-	// concurrent overlapping batches serialize instead of deadlocking.
+	// storm, 918 in one afternoon; recurred 2026-07-08 as a CEX-specific
+	// storm — ~15 deadlocks/5min, 40P01 2-/3-way ShareLock cycles between
+	// concurrent batch inserts). PersistWorkers fans a single event
+	// channel out to 8 goroutines with NO sharding by source/symbol (see
+	// persistWorker in internal/pipeline/sink.go), so any two workers can
+	// end up holding batches with overlapping trades.PK rows — most
+	// visibly for CEX sources, whose WS reconnect handling can redeliver
+	// the same exchange trade into the shared channel and have it picked
+	// up by two different workers at once. Two multi-row INSERT..ON
+	// CONFLICT statements that touch the same keys in different orders
+	// take row locks in different orders — a textbook AB/BA deadlock.
+	//
+	// The 2026-07-05 fix sorted by (source, ledger, tx_hash, op_index) —
+	// FOUR of the FIVE columns in the actual `ON CONFLICT (source,
+	// ledger, tx_hash, op_index, ts)` target. `ts` was left out, so rows
+	// that tie on those four columns fall back on `sort.Slice`'s
+	// unspecified (non-stable) tie order, which is a function of each
+	// batch's original element order — not guaranteed equal across two
+	// different workers' batches. That reopens exactly the AB/BA window
+	// the sort was meant to close. Sorting by the FULL conflict key
+	// (adding `ts` as the final tiebreaker) gives every writer, in every
+	// caller of BatchInsertTrades, one total, tie-free lock-acquisition
+	// order — implemented here, inside the batch builder, so ALL
+	// callers (the indexer's persistWorker drain, the external retry
+	// buffer, `stellarindex-ops ch-rebuild`) get the fix automatically
+	// rather than each having to remember to pre-sort. The per-row
+	// isolate-on-non-infra-error fallback in
+	// internal/pipeline/trade_sink.go::flushTradeBatch stays as
+	// belt-and-braces for whatever this doesn't catch.
 	sortTradesByConflictKey(trades)
 
 	// Build VALUES placeholders + args slice. Each row has 12 params
@@ -937,9 +959,12 @@ func (s *Store) CountTrades(ctx context.Context) (int64, error) {
 	return n, nil
 }
 
-// sortTradesByConflictKey orders a batch by the trades PK so every
-// writer acquires row locks in one global order (the 2026-07-05
-// deadlock-storm fix; see BatchInsertTrades).
+// sortTradesByConflictKey orders a batch by the FULL trades PK — every
+// column in `ON CONFLICT (source, ledger, tx_hash, op_index, ts)` — so
+// every writer acquires row locks in one global, tie-free order (the
+// 2026-07-05 deadlock-storm fix, extended 2026-07-08 to include `ts`
+// after that four-column version left ties to `sort.Slice`'s
+// unspecified order; see BatchInsertTrades).
 func sortTradesByConflictKey(trades []canonical.Trade) {
 	sort.Slice(trades, func(i, j int) bool {
 		a, b := &trades[i], &trades[j]
@@ -952,6 +977,9 @@ func sortTradesByConflictKey(trades []canonical.Trade) {
 		if a.TxHash != b.TxHash {
 			return a.TxHash < b.TxHash
 		}
-		return a.OpIndex < b.OpIndex
+		if a.OpIndex != b.OpIndex {
+			return a.OpIndex < b.OpIndex
+		}
+		return a.Timestamp.Before(b.Timestamp)
 	})
 }

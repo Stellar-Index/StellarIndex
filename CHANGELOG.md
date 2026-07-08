@@ -74,6 +74,16 @@ against.
   per-query `SETTINGS` (max_threads 2, 8 GiB ceiling, external group-by/sort spill),
   so lake growth costs time, never an OOM. `ch-rebuild -sep41` inherits the same trim.
   ADR-0033 semantics unchanged (same counts, same claims, same verdicts).
+- **CEX batch-insert deadlock storm (2026-07-08, ~15 40P01s/5min)**: the 2026-07-05
+  batch-sort fix (`sortTradesByConflictKey`) ordered rows by only four of the five
+  `ON CONFLICT (source, ledger, tx_hash, op_index, ts)` columns, leaving `ts` ties to
+  `sort.Slice`'s unspecified (non-stable) order — a gap that mostly missed on-chain
+  trades (unique `tx_hash`) but bit CEX rows, which share `ledger=0` and can arrive
+  in two `PersistWorkers` drain goroutines at once via WS-reconnect redelivery (the
+  drain fans out from one shared channel with no per-source/symbol sharding). Two
+  overlapping batches could then take row locks in different orders — the same AB/BA
+  cycle the earlier fix was meant to close. `sortTradesByConflictKey` now sorts by
+  the full 5-column key.
 - The `stellarindex_galexie_catchup_refused` page alert (built after the 2026-07-05 wedge)
   could never fire: its textfile probe wrote to Debian's `/var/lib/prometheus/node-exporter`
   instead of the node_exporter's configured `/var/lib/node_exporter/textfile_collector`, AND
