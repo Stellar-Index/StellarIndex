@@ -1114,6 +1114,29 @@ type SupplyConfig struct {
 	// Empty (the default) leaves the SEP-41 supply pipeline off.
 	WatchedSEP41Contracts []string `toml:"watched_sep41_contracts" doc:"Operator-curated SEP-41 Soroban contract C-strkeys to track for Algorithm 3 supply per ADR-0023. Empty leaves the SEP-41 supply pipeline off." default:"[]"`
 
+	// FullyWrappedSACs is an operator attestation (2026-07-08
+	// decision, BACKLOG #59) that specific SAC-wrapper contracts
+	// (keyed the same way as SACWrappers — SAC contract C-strkey)
+	// represent a classic asset's ENTIRE economic supply, with no
+	// meaningful classic-trustline circulation outside the SAC.
+	//
+	// This is the discriminator for supply.WrapClass: a SAC id listed
+	// here gets supply.WrapClassFull (the aggregator's cross-check
+	// refresher runs the strict ADR-0011 total-vs-total equality
+	// compare for it); every other configured `sac_wrappers` pair
+	// defaults to supply.WrapClassPartial (the subset-bound compare —
+	// see internal/supply.CrossCheckSubsetBound's doc for why total-
+	// vs-total equality is a category error for a partially-wrapped
+	// classic asset).
+	//
+	// Empty (the default) is the safe, honest state — no configured
+	// pair is currently known to be 100% SAC-represented. Flipping an
+	// entry in requires the same evidence-trail discipline as a
+	// WASM-history BackfillSafe flip (docs/operations/wasm-audits/):
+	// don't add a SAC here without confirming its classic-issuer side
+	// genuinely never mints/holds supply outside the SAC.
+	FullyWrappedSACs []string `toml:"fully_wrapped_sacs" doc:"SAC wrapper contract C-strkeys (subset of sac_wrappers' keys) the operator attests are 100% SAC-represented — no classic-trustline supply outside the SAC. Selects the strict ADR-0011 equality cross-check (supply.WrapClassFull) instead of the default subset-bound compare (supply.WrapClassPartial). Empty by default; BACKLOG #59, 2026-07-08." default:"[]"`
+
 	// StrictFreshnessRequired flips the supply Refresher into the
 	// stricter F-1236 wave-60 (codex audit-2026-05-13) posture:
 	// snapshots arriving with `MinComponentLedger == 0` (no
@@ -1164,6 +1187,13 @@ type SupplyConfig struct {
 //     empty strings to catch mistyped TOML before the parser
 //     surfaces a less-obvious error.
 //  4. Every SACWrappers asset_key is non-empty.
+//  5. Every FullyWrappedSACs entry is non-empty AND is a key of
+//     SACWrappers (BACKLOG #59, 2026-07-08) — an attestation about a
+//     SAC id the operator hasn't even declared a wrapper mapping for
+//     is a config typo, not a real classification, and would
+//     silently no-op (buildCrossCheckRefresher only ever looks up
+//     FullyWrappedSACs membership for ids it already pulled from
+//     SACWrappers).
 func (sc SupplyConfig) Validate() error {
 	if len(sc.SDFReserveAccounts) != 0 {
 		for _, acc := range sc.SDFReserveAccounts {
@@ -1191,6 +1221,21 @@ func (sc SupplyConfig) Validate() error {
 	for i, c := range sc.WatchedSEP41Contracts {
 		if c == "" {
 			return fmt.Errorf("supply: watched_sep41_contracts[%d] is empty", i)
+		}
+	}
+	return sc.validateFullyWrappedSACs()
+}
+
+// validateFullyWrappedSACs is check 5 of [SupplyConfig.Validate],
+// split out to keep Validate's cognitive complexity under the
+// gocognit ceiling (BACKLOG #59, 2026-07-08).
+func (sc SupplyConfig) validateFullyWrappedSACs() error {
+	for i, sacID := range sc.FullyWrappedSACs {
+		if sacID == "" {
+			return fmt.Errorf("supply: fully_wrapped_sacs[%d] is empty", i)
+		}
+		if _, ok := sc.SACWrappers[sacID]; !ok {
+			return fmt.Errorf("supply: fully_wrapped_sacs[%d] (%q) is not a key of sac_wrappers", i, sacID)
 		}
 	}
 	return nil
