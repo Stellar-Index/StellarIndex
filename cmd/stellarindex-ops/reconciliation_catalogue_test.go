@@ -103,3 +103,37 @@ func TestBuildSEP41ReconSources_EmptyWatchedSetErrors(t *testing.T) {
 		t.Fatal("expected error for empty [supply] watched_sep41_contracts, got nil")
 	}
 }
+
+// TestCatalogue_OpArgsOnlyForRedstone pins the 2026-07-08 wide-column trim:
+// redstone is the ONLY decoder that consumes events.Event.OpArgs (write_prices
+// feed-id zip, PR 166), so it alone may ask the -ch reconcile to read the wide
+// op_args_xdr column. Every other source — critically the sep41 pair, whose
+// reconcile streams the CAP-67 firehose — must keep needsOpArgs false, or the
+// lake read regrows the memory profile that OOM-killed compute-completeness at
+// any ClickHouse server cap.
+func TestCatalogue_OpArgsOnlyForRedstone(t *testing.T) {
+	cfg := testConfigWithAllSources()
+	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
+
+	cat, _ := buildReconciliationCatalogue(cfg)
+	sepCat, err := buildSEP41ReconSources(cfg)
+	if err != nil {
+		t.Fatalf("buildSEP41ReconSources: %v", err)
+	}
+	sawRedstone := false
+	for _, src := range append(cat, sepCat...) {
+		if src.name == "redstone" {
+			sawRedstone = true
+			if !src.needsOpArgs {
+				t.Error("redstone must set needsOpArgs (its decoder zips feed_ids from op args)")
+			}
+			continue
+		}
+		if src.needsOpArgs {
+			t.Errorf("%s: needsOpArgs set but its decoder never reads events.Event.OpArgs — this re-widens the reconcile's lake read", src.name)
+		}
+	}
+	if !sawRedstone {
+		t.Fatal("catalogue missing redstone (test config sets its adapter contract)")
+	}
+}

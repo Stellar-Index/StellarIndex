@@ -11,17 +11,40 @@ import (
 // completeness package's EventStreamer seam (projection reconciliation sourced
 // from the certified lake, off the serving DB). Satisfies
 // completeness.EventStreamer structurally.
-type ReconcileEventStreamer struct{ Addr string }
+type ReconcileEventStreamer struct {
+	Addr string
+	// NeedOpArgs includes the WIDE op_args_xdr column in the read. Only a
+	// decoder that consumes events.Event.OpArgs needs it (redstone's
+	// write_prices feed-id zip — PR 166); every other decoder works from
+	// topics + data. Reading op_args_xdr across the CAP-67 firehose was one
+	// leg of the 2026-07-08 sep41 completeness OOMs — leave false unless the
+	// source's decoder reads OpArgs.
+	NeedOpArgs bool
+}
+
+// reconcileStreamWindow is the per-query ledger span for the reconcile event
+// stream. A full-history reconcile (sep41: soroban-era genesis → tip, 13M+
+// ledgers of watched-contract CAP-67 traffic) as ONE query kept a wide
+// in-order read open across every partition — buffers scaled with parts ×
+// column width until the server cap killed it. Per-window queries bound the
+// open read to ≤1 partition of parts (250k divides the 1M partition size);
+// history growth adds windows (time), not per-query memory.
+const reconcileStreamWindow = 250_000
 
 // StreamContractEvents streams events.Event for [from,to] narrowed by the
-// source's prefilter. NO FINAL — that forces a full-range merge-on-read and is
-// far too heavy on the shared host. Un-merged ReplacingMergeTree duplicate parts
-// (the re-run partitions 25/45/62) would inflate counts, but the stream is
-// ORDER BY (ledger, tx_hash, op_index, event_index), so duplicates are ADJACENT
-// and the reconcile dedups them by identity in O(1) memory (see
-// ReDeriveOutputCountsByKindFromEvents). Correct + gentle, no OPTIMIZE needed.
+// source's prefilter, in reconcileStreamWindow-sized queries. NO FINAL — that
+// forces a full-range merge-on-read and is far too heavy on the shared host.
+// Un-merged ReplacingMergeTree duplicate parts (the re-run partitions
+// 25/45/62) would inflate counts, but each window streams ORDER BY (ledger,
+// tx_hash, op_index, event_index) and windows are ascending ledger ranges, so
+// duplicates (which share a ledger, hence a window) remain ADJACENT across the
+// whole callback sequence and the reconcile dedups them by identity in O(1)
+// memory (see ReDeriveOutputCountsByKindFromEvents). Correct + gentle, no
+// OPTIMIZE needed.
 func (s ReconcileEventStreamer) StreamContractEvents(ctx context.Context, from, to uint32, contractIDs, topic0Syms []string, fn func(events.Event) error) error {
-	return StreamContractEventsFiltered(ctx, s.Addr, from, to, contractIDs, topic0Syms, nil, false, fn)
+	return forEachLedgerWindow(from, to, reconcileStreamWindow, func(lo, hi uint32) error {
+		return StreamContractEventsFiltered(ctx, s.Addr, lo, hi, contractIDs, topic0Syms, nil, false, s.NeedOpArgs, fn)
+	})
 }
 
 // ContiguousWatermark returns the highest ledger L such that stellar.ledgers

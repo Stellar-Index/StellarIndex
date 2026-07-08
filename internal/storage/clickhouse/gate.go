@@ -72,8 +72,8 @@ func openRead(ctx context.Context, addr string) (driver.Conn, error) {
 			// many wide part streams). Fewer threads = fewer concurrent
 			// wide-part buffers, which is what actually bounds this
 			// class's true footprint. Growth costs time, not failures.
-			"max_memory_usage":   10 * 1024 * 1024 * 1024,
-			"max_threads":        3,
+			"max_memory_usage": 10 * 1024 * 1024 * 1024,
+			"max_threads":      3,
 			// Spill instead of OOM: after the 12→24 GiB raise the sdex
 			// reconcile STILL hit the ceiling — in MergeSortingTransform
 			// (an ORDER BY over the full-range census). Chasing the

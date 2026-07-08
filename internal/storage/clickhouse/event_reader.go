@@ -46,6 +46,56 @@ func sqlQuoteList(ss []string) string {
 	return strings.Join(q, ",")
 }
 
+// sqlQuoteEscaped renders a single-quoted SQL string literal with backslash +
+// quote escaping. For values that come back FROM the lake (contract ids, topic
+// symbols read in a prior query) rather than compile-time constants — they are
+// well-formed in practice (strkeys, ScSymbol charset), but the exemplar fetch
+// inlines them into query text, so escape rather than assume.
+func sqlQuoteEscaped(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `'`, `\'`)
+	return "'" + s + "'"
+}
+
+// boundedScanSettings is the per-QUERY settings clause for the full-history
+// scan class (the recognition shape scan and the completeness reconcile event
+// stream). The connection-level class in openRead already caps tracked
+// per-query memory, but the in-order read pool's wide-column buffers are
+// UNDERTRACKED per query while counted in the SERVER-WIDE total: the
+// 2026-07-08 `compute-completeness -ch -source sep41_transfers` runs died at
+// ANY server cap ("would use 61G" at a 64G cap, "would use 69G" at 72G) —
+// consumption scaled with available memory, so raising caps was not a fix.
+// What bounds this class's true footprint is WORK SHAPE, enforced here:
+// max_threads=2 (at most two concurrent wide part streams hold read buffers),
+// an 8 GiB tracked ceiling, and external group-by/sort spill at 4 GiB so a
+// growing lake costs time (disk spill), never an OOM kill. Values are bytes
+// (8589934592 = 8 GiB, 4294967296 = 4 GiB).
+const boundedScanSettings = "SETTINGS max_threads = 2, max_memory_usage = 8589934592, " +
+	"max_bytes_before_external_group_by = 4294967296, max_bytes_before_external_sort = 4294967296"
+
+// forEachLedgerWindow invokes fn over consecutive [lo,hi] windows covering
+// [from,to] inclusive. Windows end at multiple-of-stride boundaries minus one,
+// so when stride is the lake's partition size (1M) — or divides it evenly —
+// each query touches the minimum number of partitions. A no-op when to < from.
+func forEachLedgerWindow(from, to, stride uint32, fn func(lo, hi uint32) error) error {
+	if to < from || stride == 0 {
+		return nil
+	}
+	for lo := from; ; {
+		hi := to
+		if aligned := (uint64(lo)/uint64(stride)+1)*uint64(stride) - 1; aligned < uint64(to) {
+			hi = uint32(aligned)
+		}
+		if err := fn(lo, hi); err != nil {
+			return err
+		}
+		if hi >= to {
+			return nil
+		}
+		lo = hi + 1
+	}
+}
+
 // StreamContractEvents is the Phase-4 input adapter (ADR-0034): it reads
 // stellar.contract_events for [from,to] inclusive, ordered by
 // (ledger_seq, tx_hash, op_index, event_index) — the dispatcher's natural
@@ -90,13 +140,34 @@ func sqlQuoteList(ss []string) string {
 // completeness reconcile) MUST pass true: without FINAL, un-merged duplicate
 // parts (e.g. the footprint-sample / validation re-run partitions 25/45/62)
 // are double-counted, producing false projection mismatches.
-func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string, useFinal bool, fn func(events.Event) error) error {
+//
+// withOpArgs selects whether the read includes op_args_xdr. Only decoders that
+// consume events.Event.OpArgs need it (redstone zips write_prices feed_ids
+// from the op args — PR 166); every other decoder decodes from topics + data.
+// op_args_xdr is a WIDE column (the whole InvokeContract arg vector per row),
+// and reading it across the CAP-67 classic-token firehose was one of the two
+// legs of the 2026-07-08 sep41 completeness OOMs — pass false unless the
+// consuming decoder actually reads OpArgs.
+func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string, useFinal, withOpArgs bool, fn func(events.Event) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
 
+	q := contractEventsFilteredQuery(contractIDs, topic0Syms, excludeTopic0Syms, useFinal, withOpArgs)
+	rows, err := conn.Query(ctx, q, from, to)
+	if err != nil {
+		return fmt.Errorf("clickhouse: query contract_events filtered [%d,%d]: %w", from, to, err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanContractEvents(rows, withOpArgs, fn)
+}
+
+// contractEventsFilteredQuery builds the StreamContractEventsFiltered query
+// text. Split out so the query shape (column trim, FINAL, prefilters, the
+// bounded-scan SETTINGS) is unit-testable without a ClickHouse server.
+func contractEventsFilteredQuery(contractIDs, topic0Syms, excludeTopic0Syms []string, useFinal, withOpArgs bool) string {
 	where := "WHERE ledger_seq BETWEEN ? AND ?"
 	if len(contractIDs) > 0 {
 		where += " AND contract_id IN (" + sqlQuoteList(contractIDs) + ")"
@@ -111,18 +182,18 @@ func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uin
 	if useFinal {
 		final = "FINAL"
 	}
-	rows, err := conn.Query(ctx, fmt.Sprintf(`
+	opArgsCol := ""
+	if withOpArgs {
+		opArgsCol = " op_args_xdr,"
+	}
+	return fmt.Sprintf(`
 		SELECT ledger_seq, close_time, tx_hash, op_index, event_index,
-		       contract_id, event_type, topics_xdr, data_xdr, op_args_xdr,
+		       contract_id, event_type, topics_xdr, data_xdr,%s
 		       in_successful_call
 		FROM stellar.contract_events %s
 		%s
-		ORDER BY ledger_seq, tx_hash, op_index, event_index`, final, where), from, to)
-	if err != nil {
-		return fmt.Errorf("clickhouse: query contract_events filtered [%d,%d]: %w", from, to, err)
-	}
-	defer func() { _ = rows.Close() }()
-	return scanContractEvents(rows, fn)
+		ORDER BY ledger_seq, tx_hash, op_index, event_index
+		%s`, opArgsCol, final, where, boundedScanSettings)
 }
 
 // excludeTopic0 (nil = no filter) drops events whose topic[0] symbol is in the
@@ -150,13 +221,15 @@ func StreamContractEvents(ctx context.Context, addr string, from, to uint32, exc
 		return fmt.Errorf("clickhouse: query contract_events [%d,%d]: %w", from, to, err)
 	}
 	defer func() { _ = rows.Close() }()
-	return scanContractEvents(rows, fn)
+	return scanContractEvents(rows, true, fn)
 }
 
 // scanContractEvents maps contract_events result rows to events.Event and
-// invokes fn for each. Shared by StreamContractEvents (FINAL, exclude-filter)
-// and StreamContractEventsFiltered (no-FINAL, per-source prefilter).
-func scanContractEvents(rows driver.Rows, fn func(events.Event) error) error {
+// invokes fn for each. Shared by StreamContractEvents (FINAL, exclude-filter,
+// always reads op_args_xdr) and StreamContractEventsFiltered (per-source
+// prefilter; withOpArgs must match the query's column list — false leaves
+// events.Event.OpArgs nil).
+func scanContractEvents(rows driver.Rows, withOpArgs bool, fn func(events.Event) error) error {
 	for rows.Next() {
 		var (
 			ledger     uint32
@@ -171,8 +244,13 @@ func scanContractEvents(rows driver.Rows, fn func(events.Event) error) error {
 			opArgs     []string
 			inSucc     uint8
 		)
-		if err := rows.Scan(&ledger, &closeTime, &txHash, &opIndex, &eventIndex,
-			&contractID, &eventType, &topics, &dataXDR, &opArgs, &inSucc); err != nil {
+		dest := []any{&ledger, &closeTime, &txHash, &opIndex, &eventIndex,
+			&contractID, &eventType, &topics, &dataXDR}
+		if withOpArgs {
+			dest = append(dest, &opArgs)
+		}
+		dest = append(dest, &inSucc)
+		if err := rows.Scan(dest...); err != nil {
 			return fmt.Errorf("clickhouse: scan contract_event: %w", err)
 		}
 		if err := fn(events.Event{

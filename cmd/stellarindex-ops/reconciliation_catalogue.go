@@ -66,6 +66,14 @@ type reconSource struct {
 	callDec      dispatcher.ContractCallDecoder
 	callContract string
 
+	// needsOpArgs marks the one decoder class that consumes
+	// events.Event.OpArgs (redstone zips write_prices feed_ids from the op
+	// args — PR 166). The -ch projection reconcile trims the WIDE
+	// op_args_xdr column from the lake read for every other source; reading
+	// it across the sep41/CAP-67 firehose was one leg of the 2026-07-08
+	// compute-completeness OOMs.
+	needsOpArgs bool
+
 	// aggregateReconcile, when non-empty, makes the -ch projection
 	// reconcile compare WINDOW TOTALS instead of strict per-ledger
 	// counts, and documents why. Per-ledger is the default (CS-084:
@@ -235,7 +243,8 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 		cat = append(cat, reconSource{
 			name:               "redstone",
 			aggregateReconcile: "oracle_updates ledger keying differs across write vintages (legacy backfills keyed by oracle-timestamp ledger; live keys by event ledger) — strict per-ledger would false-flag the vintage boundary; aggregate accepts the CS-084 netting residual on this source", genesis: 58_758_722, dec: redstone.NewDecoder(a), contractIDs: []string{a},
-			targets: []reconTarget{{"oracle_updates", "source = 'redstone'", []string{"redstone.update"}}},
+			needsOpArgs: true, // redstone reads feed_ids from the write_prices op args (events.Event.OpArgs, PR 166)
+			targets:     []reconTarget{{"oracle_updates", "source = 'redstone'", []string{"redstone.update"}}},
 		})
 	}
 
