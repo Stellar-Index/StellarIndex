@@ -25,7 +25,15 @@ against.
   which upserts the curated set with provenance `curated`). ADR-0035 gating is now
   complete across every integrated on-chain source (ADR-0040).
 
+### Added
+- ADR-0046 (Proposed): MAD-based outlier filtering for VWAP inputs — log-space modified
+  z-score replaces the σ-threshold whose masking weakness our own tests document; explicit
+  thin-bucket/MAD==0 policy; shadow-first rollout so thresholds tune against real traffic
+  before any served-price change (BACKLOG #44's "write the ADR now").
+
 ### Changed
+- ADR-0045 (SEP-40 read-adapter deferral) accepted per the 2026-07-08 sign-off; ADR index
+  statuses for 0040-0043 corrected to Accepted (missed in the acceptance commit).
 - ADRs 0040 (contract gating), 0041 (ingest durability, with a non-lake CEX/FX
   backpressure caveat), 0042 (v1 wire shape — all four sign-off boxes accepted) and
   0043 (backup/restore) moved Proposed → **Accepted** (@ash sign-off 2026-07-08).
