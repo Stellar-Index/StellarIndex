@@ -1,5 +1,13 @@
 version: 2
 
+# Grouping policy (2026-07-08): one weekly PR per ecosystem for
+# minor/patch bumps, majors split out per-dependency. Before this,
+# every Go module got its own PR — the aws-sdk-go-v2 family alone
+# spawned 4 interdependent PRs whose merges invalidated each
+# other's go.sum (missing-transitive-entry typecheck failures) and
+# forced a rebase cascade across every open PR. A single grouped
+# PR moves version families together and cuts CI to one run.
+
 updates:
   # Go modules — our direct + transitive deps.
   - package-ecosystem: gomod
@@ -14,19 +22,11 @@ updates:
       - dependencies
       - go
     groups:
-      stellar-ecosystem:
-        patterns:
-          - "github.com/stellar/*"
-          - "github.com/withObsrvr/*"
-      observability:
-        patterns:
-          - "github.com/prometheus/*"
-          - "go.opentelemetry.io/*"
-      storage:
-        patterns:
-          - "github.com/jackc/*"
-          - "github.com/redis/*"
-          - "github.com/minio/*"
+      go-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      # Majors fall through to per-dependency PRs — they need
+      # individual review (API breaks, ADR-pinned deps).
 
   # GitHub Actions versions used in .github/workflows/
   - package-ecosystem: github-actions
@@ -37,6 +37,10 @@ updates:
     labels:
       - dependencies
       - ci
+    groups:
+      actions-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   # Docker base images.
   - package-ecosystem: docker
@@ -46,9 +50,13 @@ updates:
     labels:
       - dependencies
       - docker
+    groups:
+      docker-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   # F-1207 (codex audit-2026-05-12): npm/pnpm ecosystems for the
-  # three Next.js apps. Without these, Dependabot doesn't surface
+  # Next.js apps. Without these, Dependabot doesn't surface
   # next.js / typescript / react security advisories — operators
   # have to run `pnpm audit` manually. The CI gate
   # (`pnpm audit --audit-level high`) catches new advisories on
@@ -58,6 +66,9 @@ updates:
   # whole JS-ecosystem family (npm + yarn + pnpm). It reads
   # pnpm-lock.yaml and opens PRs that update package.json + the
   # lockfile in-step.
+  #
+  # (web/dashboard entry removed 2026-07-08 — the directory does
+  # not exist; dashboard primitives live in internal/platform.)
   - package-ecosystem: npm
     directory: /web/explorer
     schedule:
@@ -68,25 +79,9 @@ updates:
       - dependencies
       - web
     groups:
-      next:
-        patterns: ["next", "@next/*", "react", "react-dom"]
-      tooling:
-        patterns: ["typescript", "eslint*", "@types/*", "tailwindcss", "postcss", "autoprefixer"]
-
-  - package-ecosystem: npm
-    directory: /web/dashboard
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
-    labels:
-      - dependencies
-      - web
-    groups:
-      next:
-        patterns: ["next", "@next/*", "react", "react-dom"]
-      tooling:
-        patterns: ["typescript", "eslint*", "@types/*", "tailwindcss", "postcss", "autoprefixer"]
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: npm
     directory: /web/status
@@ -98,7 +93,6 @@ updates:
       - dependencies
       - web
     groups:
-      next:
-        patterns: ["next", "@next/*", "react", "react-dom"]
-      tooling:
-        patterns: ["typescript", "eslint*", "@types/*", "tailwindcss", "postcss", "autoprefixer"]
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
