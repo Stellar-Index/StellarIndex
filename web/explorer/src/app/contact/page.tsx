@@ -30,9 +30,9 @@ const CHANNELS: Channel[] = [
   },
   {
     icon: KeyRound,
-    title: 'Sales — Pro / Business / Enterprise',
+    title: 'Sales — growth & enterprise',
     blurb:
-      'Need higher than the 1,000 req/min Starter rate-limit, named on-call, dedicated regional capacity, or a Slack channel? Email sales with the tier you need (Pro = 10K rpm, Business = 50K rpm, Enterprise = custom) and your traffic profile.',
+      'Need higher than the 1,000 req/min Starter rate-limit, named on-call, dedicated regional capacity, or a Slack channel? Those plans are announced at GA and aren’t for sale yet — email sales with your traffic profile and we’ll work out an interim arrangement.',
     destination: 'sales@stellarindex.io',
     href: 'mailto:sales@stellarindex.io',
   },

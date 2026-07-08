@@ -1,5 +1,4 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { Check, Minus } from 'lucide-react';
 
 import {
@@ -13,7 +12,7 @@ import {
 export const metadata: Metadata = {
   title: 'Pricing — plans, quotas, SLAs',
   description:
-    'Stellar Index pricing tiers. Free anonymous reads, $0 self-service Starter for higher per-key rate limits, Pro/Business/Enterprise for production volume. Same data on every tier.',
+    'Stellar Index pricing. Free anonymous reads and a $0 self-service Starter tier for higher per-key rate limits are live today. Growth and enterprise plans are announced at GA — talk to us.',
   alternates: { canonical: '/pricing' },
 };
 
@@ -64,55 +63,6 @@ const TIERS: Tier[] = [
     ],
     notFeatures: ['Dedicated SLA', 'Operator-issued tier overrides'],
   },
-  {
-    name: 'Pro',
-    price: 'Contact',
-    priceSubtitle: 'sales',
-    rateLimit: '10,000 req/min per key',
-    cta: { label: 'Talk to sales', href: '/contact' },
-    description:
-      'For wallets and portfolio apps with heavy fan-out. Includes a Slack channel and 24h SLA on incident response.',
-    features: [
-      'Everything in Starter',
-      '10,000 requests / minute per key',
-      'Shared-channel Slack support',
-      '24h SLA on incident response',
-      'Operator-issued tier override',
-    ],
-  },
-  {
-    name: 'Business',
-    price: 'Contact',
-    priceSubtitle: 'sales',
-    rateLimit: '60,000 req/min per key',
-    cta: { label: 'Talk to sales', href: '/contact' },
-    description:
-      'For exchanges and market-data redistributors. Dedicated AlertManager routes, named on-call engineer, 1h SLA on SEV-1.',
-    features: [
-      'Everything in Pro',
-      '60,000 requests / minute per key',
-      'Dedicated AlertManager routes',
-      'Named on-call engineer',
-      '1h SLA on SEV-1 incidents',
-    ],
-  },
-  {
-    name: 'Enterprise',
-    price: 'Custom',
-    priceSubtitle: '',
-    rateLimit: 'Custom',
-    cta: { label: 'Talk to sales', href: '/contact' },
-    description:
-      'Multi-tenant key isolation, custom retention, dedicated regional capacity, named TAM. For market-makers and pricing-redistributor partners.',
-    features: [
-      'Everything in Business',
-      'Multi-tenant key isolation',
-      'Custom retention windows',
-      'Dedicated regional capacity (R1/R2/R3)',
-      'Named technical account manager',
-      'Bespoke SLA',
-    ],
-  },
 ];
 
 export default function PricingPage() {
@@ -126,17 +76,47 @@ export default function PricingPage() {
           Pricing
         </h1>
         <p className="text-lg leading-relaxed text-ink-muted">
-          Same data on every tier. Free reads work without an account; paid
-          plans unlock higher per-key rate limits, usage analytics, and
-          dedicated SLAs.
+          Same data on every tier. Free reads work without an account;
+          the self-service Starter tier unlocks a higher per-key rate
+          limit and usage analytics. Growth and enterprise plans are
+          announced at GA.
         </p>
       </header>
 
-      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
         {TIERS.map((tier) => (
           <TierCard key={tier.name} tier={tier} />
         ))}
       </div>
+
+      <Card className="p-6 sm:p-8">
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-2.5">
+            <Badge tone="brand">Announced at GA</Badge>
+            <h2 className="text-h3 font-semibold text-ink">
+              Growth &amp; enterprise plans
+            </h2>
+            <p className="max-w-2xl text-sm text-ink-muted">
+              Higher per-key throughput, dedicated support channels,
+              and custom SLAs for wallets, exchanges, and
+              redistributors are coming — pricing for those tiers
+              will be announced at GA, once there&apos;s a real
+              billing path behind it. There&apos;s nothing to buy
+              above Starter today. If you need more than Starter&apos;s
+              1,000 req/min ahead of GA, email us with your use-case
+              and scale and we&apos;ll work out an interim
+              arrangement.
+            </p>
+          </div>
+          <ButtonLink
+            href="mailto:sales@stellarindex.io"
+            variant="primary"
+            className="shrink-0"
+          >
+            Talk to us
+          </ButtonLink>
+        </div>
+      </Card>
 
       <Card className="p-6 sm:p-8">
         <h2 className="text-h3 font-semibold text-ink">Honest notes</h2>
@@ -160,20 +140,23 @@ export default function PricingPage() {
             <strong className="text-ink-body">
               No card to sign up Starter.
             </strong>{' '}
-            Magic-link account, mint a key, ship. Rate-limit upgrades
-            beyond Starter route through{' '}
-            <Link href="/contact" className="text-brand-600 hover:underline">
-              /contact
-            </Link>
-            .
+            Magic-link account, mint a key, ship. Starter is the top
+            of what&apos;s actually for sale right now.
           </li>
           <li>
             <strong className="text-ink-body">
-              Pricing is pre-v1.
+              Growth &amp; enterprise pricing isn&apos;t live yet.
             </strong>{' '}
-            We&apos;re shipping the paid surface alongside v1. Concrete
-            numbers for Pro / Business will land here once the
-            commercial paperwork is ready.
+            We&apos;re pre-v1 and there&apos;s no billing path built
+            for those tiers. Concrete numbers land here at GA; until
+            then,{' '}
+            <a
+              href="mailto:sales@stellarindex.io"
+              className="text-brand-600 hover:underline"
+            >
+              sales@stellarindex.io
+            </a>{' '}
+            is the fastest way to figure out an interim arrangement.
           </li>
         </ul>
       </Card>
