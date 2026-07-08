@@ -723,6 +723,14 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 //
 // Takes the narrow [tradeWriter] interface (satisfied by
 // *timescale.Store) so the retry path is unit-testable with a fake.
+//
+// NOT the instrumentation point for the unit-ratio sentinel
+// (stellarindex_dex_trade_unit_ratio_total, 2026-07-07 Phoenix
+// incident): the dispatcher's primary live path routes trades through
+// [flushTradeBatch] → w.BatchInsertTrades, bypassing this function
+// entirely on the success case, so a check here would silently miss
+// the majority of on-chain trades. See
+// timescale.isDexUnitRatioTrade's godoc for the actual choke point.
 func persistTrade(ctx context.Context, logger *slog.Logger, w tradeWriter, t canonical.Trade) {
 	// Check populated-ness BEFORE InsertTrade so the metric counts
 	// every attempt — including the ON CONFLICT DO NOTHING dedupe

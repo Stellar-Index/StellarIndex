@@ -493,6 +493,34 @@ a cursor-replay loop or stuck-tip pattern produces a fast-growing
 to catch the live r1-2026-05-28 signature (157 SDEX insert
 attempts/min while the hypertable's `max(ts)` was 11 h old).
 
+### `stellarindex_dex_trade_unit_ratio_total`
+
+Counter, label `source`.
+
+**When to look at this: when the `dex_trade_unit_ratio_detected` alert
+fires, or never otherwise — steady-state should be flat.** Emitted from
+`internal/storage/timescale`'s `InsertTrade` + `BatchInsertTrades` —
+the seam every landed trade write passes through exactly once,
+regardless of whether it arrived via the dispatcher's live batch path,
+the projector's per-event sink, or a `stellarindex-ops ch-rebuild` /
+backfill re-derive. Bumps once per landed **on-chain** trade
+(`ledger != 0` — CEX/FX trades are excluded because they normalise
+amounts onto a different fixed scale, CLAUDE.md "External-source
+amount scaling is NOT uniform") whose `base_amount` exactly equals its
+`quote_amount`, both nonzero.
+
+Founding incident: on 2026-07-07, a Phoenix decoder field-mapping bug
+swapped/collapsed `base_amount` and `quote_amount`, landing 237k trades
+at an exact 1:1 price for months undetected — ADR-0033 completeness
+checks verify row PRESENCE, not economic PLAUSIBILITY, so a decoder
+that writes a row for every event but gets the numbers wrong sails
+through green. This counter is the cheap plausibility check that class
+of bug needed. A handful of hits is normal (genuine equal-value
+cross-asset fills exist); a sustained stream from one source
+(`increase(...[30m]) > 25`, see `dex_trade_unit_ratio_detected`) is the
+signature of a broken decoder. Runbook:
+`docs/operations/runbooks/dex-trade-unit-ratio.md`.
+
 ### `stellarindex_trade_insert_retries_total`
 
 Counter, label `outcome` (`retry` | `recovered` | `abandoned`).
@@ -1593,6 +1621,13 @@ on a live pair — page-adjacent (P2). Runbook:
 
 ## Changelog
 
+- 2026-07-09 — added `stellarindex_dex_trade_unit_ratio_total`
+  (`source`), emitted by `internal/storage/timescale`'s `InsertTrade` +
+  `BatchInsertTrades`. Sentinel for the 2026-07-07 Phoenix decoder
+  field-mapping bug (237k trades landed with `base_amount ==
+  quote_amount` for months, undetected by presence-only completeness
+  checks): fires when a source produces a sustained stream of landed
+  on-chain trades with an exact 1:1 base/quote ratio.
 - 2026-07-07 — added `stellarindex_dex_trade_nonstandard_decimals_total`
   (`source`, `asset`), emitted by the aggregator's decimals-assumption guard
   (`internal/decimalsguard`). Detection-only signal for the served-price

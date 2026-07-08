@@ -155,6 +155,15 @@ against.
   price ratio assumes uniform 7-dp scale, so this catches a would-be silent mispricing on a
   real pair before it happens. Detection only; the forward normalization is a tracked
   follow-up (the fix must cover both the query-time VWAP and the `prices_*` CAGGs together).
+- Unit-ratio trade sentinel: `stellarindex_dex_trade_unit_ratio_total{source}` (+ alert,
+  both rule trees, a runbook) fires when a source lands a sustained stream of on-chain DEX
+  trades with `base_amount == quote_amount` — the signature of the 2026-07-07 Phoenix
+  decoder field-mapping bug that silently collapsed 237k trades to an exact 1:1 price for
+  months (ADR-0033 completeness checks verify row presence, not economic plausibility).
+  Emitted from `internal/storage/timescale`'s `InsertTrade` + `BatchInsertTrades` — the one
+  seam every landed trade passes through regardless of ingest path. CEX/FX excluded
+  (`ledger == 0`); threshold (`>25`/30 min per source) tolerates occasional legitimate
+  equal-value fills.
 
 - `stellarindex-ops supply seed-sac-balances` + `state-snapshot -scope storage`:
   seed dormant contract-held SAC balances / `contract_data` current-state from the

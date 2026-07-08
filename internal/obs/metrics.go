@@ -70,6 +70,7 @@ func registerAppMetrics() {
 		DivergenceRefreshTotal,
 		TradeInsertsTotal,
 		TradeInsertOutcomeTotal,
+		DexTradeUnitRatioTotal,
 		TradeInsertRetriesTotal,
 		TradeInsertBufferDepth,
 		StreamPublishTotal,
@@ -1214,6 +1215,50 @@ var TradeInsertOutcomeTotal = prometheus.NewCounterVec(
 		Help: "Trade-insert outcomes per source. outcome=new when a fresh row landed; outcome=duplicate when ON CONFLICT DO NOTHING short-circuited (indicates cursor replay or stuck-tip).",
 	},
 	[]string{"source", "outcome"},
+)
+
+// DexTradeUnitRatioTotal — the unit-ratio trade sentinel (2026-07-07
+// Phoenix incident). A decoder field-mapping bug swapped/collapsed
+// base_amount and quote_amount for every Phoenix trade — 237k rows
+// landed with base_amount == quote_amount (an exact 1:1 price) and
+// went unnoticed for MONTHS because completeness checks (ADR-0033)
+// verify presence — a row exists per event — not economic
+// plausibility — whether the row's numbers make sense. This counter
+// is the cheap plausibility check: it bumps per (landed, on-chain)
+// trade whose base_amount exactly equals its quote_amount, both
+// nonzero.
+//
+// Emitted from the STORAGE layer (`internal/storage/timescale`
+// InsertTrade + BatchInsertTrades), not the pipeline sink. See the
+// godoc on isDexUnitRatioTrade for why that's the one seam that sees
+// every landed trade exactly once regardless of which upstream path
+// (dispatcher live batch, projector single-event, or a
+// stellarindex-ops ch-rebuild/backfill re-derive) produced it — same
+// reasoning as the neighbouring TradeInsertOutcomeTotal.
+//
+// Off-chain (CEX/FX) trades are EXCLUDED: those sources normalise
+// amounts onto a fixed integer scale (10^8 for CEX/reference-
+// aggregator sources, 10^6 for the FX pollers — CLAUDE.md
+// "External-source amount scaling is NOT uniform") where a base==quote
+// reading doesn't carry the same "the decoder is broken" signal an
+// on-chain 1:1 does, and an occasional genuine equal-value
+// cross-asset fill is unremarkable. Excluded via ledger==0, the
+// off-chain marker every external connector deliberately stamps
+// (migration 0004_relax_trades_ledger_for_offchain).
+//
+// Label set (`source`) is bounded (one series per registered DEX
+// connector) but NOT pre-seeded — same rationale as
+// DEXTradeNonstandardDecimalsTotal: healthy steady-state is zero
+// trades matching the predicate, the alert is a plain
+// increase()-over-threshold (not an absent()/==0 check), and a
+// series should exist only once a source actually produces a
+// unit-ratio trade.
+var DexTradeUnitRatioTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_dex_trade_unit_ratio_total",
+		Help: "On-chain DEX trades landed with base_amount == quote_amount (both nonzero) — the signature of the 2026-07-07 Phoenix decoder field-mapping bug that silently collapsed 237k trades to a 1:1 price for months. Labels: source. CEX/FX (ledger==0) excluded — they scale amounts differently. A sustained stream from one source (not an occasional hit) indicates a decoder bug; see runbook dex-trade-unit-ratio.md.",
+	},
+	[]string{"source"},
 )
 
 // TradeInsertRetriesTotal — counter of the trade sink's blocking
