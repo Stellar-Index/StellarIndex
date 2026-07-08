@@ -23,9 +23,15 @@ useDefault = true
 description = "Gitignored local-dev bulk (working-tree scan only)"
 paths = [
   '''^\.discovery-repos/''',
+  '''^\.claude/worktrees/''',
   '''(^|/)node_modules/''',
   '''^web/[^/]+/(\.next|out)/''',
   '''^docs/archive/''',
+  # Lake-derived base64-XDR golden fixtures (public on-chain event
+  # bodies, #89b) — ALSO rule-scoped below; duplicated here because
+  # newer gitleaks (8.30 local) does not honor extended-rule
+  # allowlists the way CI's pinned 8.21.2 does.
+  '''internal/sources/cctp/governance_test\.go''',
 ]
 
 [[rules]]
@@ -216,4 +222,10 @@ description = "Test-only token-SAC C-strkey fixtures (e.g. the XLM native SAC CA
 paths = [
   '''internal/api/v1/protocol_pairs_internal_test\.go''',
   '''internal/api/v1/protocols_pairs_test\.go''',
+]
+
+[[rules.allowlists]]
+description = "Base64 XDR event-body golden fixtures pulled from real mainnet lake events (public on-chain data — governance topics ownership_transfer / admin_changed / token_pair_linked etc., ledgers 62146641-62225106) for the cctp governance decoder tests (#89b, 2026-07-09). High-entropy base64 trips the generic-api-key heuristic; same class as the phoenix/aquarius decoder-fixture allowlists."
+paths = [
+  '''internal/sources/cctp/governance_test\.go''',
 ]
