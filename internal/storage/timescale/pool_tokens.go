@@ -38,11 +38,16 @@ func (s *Store) PoolTokens(ctx context.Context, source string) (map[string][]str
 	switch source {
 	case "phoenix":
 		return s.phoenixPoolTokens(ctx)
+	// ORDER BY on the DISTINCT queries below makes the LIMIT
+	// deterministic: without it, which (pool, token) pairs survive a
+	// limit overflow is plan-dependent — a pool could silently lose part
+	// of its token set with no error (review 2026-07-08, finding 4).
 	case "comet":
 		return s.groupedPoolTokens(ctx, "comet", `
 			SELECT DISTINCT contract_id, token
 			  FROM comet_liquidity
 			 WHERE token IS NOT NULL
+			 ORDER BY contract_id, token
 			 LIMIT `+fmt.Sprint(poolTokensRowLimit))
 	case "aquarius":
 		return s.aquariusPoolTokens(ctx)
@@ -51,6 +56,7 @@ func (s *Store) PoolTokens(ctx context.Context, source string) (map[string][]str
 			SELECT DISTINCT pool, asset
 			  FROM blend_positions
 			 WHERE asset IS NOT NULL
+			 ORDER BY pool, asset
 			 LIMIT `+fmt.Sprint(poolTokensRowLimit))
 	}
 	return nil, nil
