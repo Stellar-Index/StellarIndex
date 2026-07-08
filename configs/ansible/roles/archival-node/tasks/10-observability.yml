@@ -279,7 +279,14 @@
     content: |
       #!/usr/bin/env bash
       set -euo pipefail
-      DIR=/var/lib/prometheus/node-exporter
+      # MUST be the --collector.textfile.directory the running
+      # node_exporter reads (the ansible-managed dir above), NOT
+      # Debian's /var/lib/prometheus/node-exporter default. The probe
+      # originally wrote to the Debian dir — the metric never reached
+      # Prometheus and the page alert silently couldn't fire, which is
+      # exactly what happened in the 2026-07-08 P27 catchup-refusal
+      # incident (found + fixed during it).
+      DIR=/var/lib/node_exporter/textfile_collector
       mkdir -p "$DIR"
       N=$(journalctl -u galexie --since "-5min" --no-pager 2>/dev/null | grep -c "Skipping catchup" || true)
       TMP=$(mktemp)
@@ -288,6 +295,10 @@
         echo "# TYPE stellarindex_galexie_catchup_refusals_5m gauge"
         echo "stellarindex_galexie_catchup_refusals_5m $N"
       } > "$TMP"
+      # mktemp creates 0600; node_exporter runs unprivileged and
+      # SILENTLY skips unreadable textfiles (second way this probe
+      # was invisible, 2026-07-08).
+      chmod 644 "$TMP"
       mv "$TMP" "$DIR/galexie_catchup.prom"
 
 - name: galexie catchup-probe service unit
