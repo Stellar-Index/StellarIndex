@@ -45,6 +45,16 @@ func Classify(e *events.Event) string {
 		return EventMessageReceived
 	case TopicSymbolMintAndForward:
 		return EventMintAndForward
+	case TopicSymbolOwnershipTransfer:
+		return EventOwnershipTransfer
+	case TopicSymbolOwnershipTransferCompleted:
+		return EventOwnershipTransferCompleted
+	case TopicSymbolAdminChanged:
+		return EventAdminChanged
+	case TopicSymbolRemoteTokenMessengerAdded:
+		return EventRemoteTokenMessengerAdded
+	case TopicSymbolTokenPairLinked:
+		return EventTokenPairLinked
 	}
 	return ""
 }
@@ -459,5 +469,251 @@ func DecodeMintAndForward(e *events.Event) (MintAndForward, error) {
 		ForwardRecipient: recip,
 		Token:            token,
 		Amount:           amount.String(),
+	}, nil
+}
+
+// DecodeOwnershipTransfer turns one `ownership_transfer` event into
+// the canonical struct. Single-topic event; body ScMap.
+//
+// Body: { live_until_ledger: u32, new_owner: Address, old_owner: Address }.
+func DecodeOwnershipTransfer(e *events.Event) (OwnershipTransfer, error) {
+	if len(e.Topic) < 1 {
+		return OwnershipTransfer{}, fmt.Errorf("%w: ownership_transfer needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return OwnershipTransfer{}, fmt.Errorf("cctp: ownership_transfer body parse: %w", err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return OwnershipTransfer{}, fmt.Errorf("cctp: ownership_transfer body not a map: %w", err)
+	}
+
+	liveUntilSV, err := scval.MustMapField(entries, "live_until_ledger")
+	if err != nil {
+		return OwnershipTransfer{}, fmt.Errorf("%w: missing 'live_until_ledger': %w", ErrMalformedBody, err)
+	}
+	liveUntilLedger, err := scval.AsU32(liveUntilSV)
+	if err != nil {
+		return OwnershipTransfer{}, fmt.Errorf("cctp: ownership_transfer live_until_ledger: %w", err)
+	}
+
+	newOwnerSV, err := scval.MustMapField(entries, "new_owner")
+	if err != nil {
+		return OwnershipTransfer{}, fmt.Errorf("%w: missing 'new_owner': %w", ErrMalformedBody, err)
+	}
+	newOwner, err := scval.AsAddressStrkey(newOwnerSV)
+	if err != nil {
+		return OwnershipTransfer{}, fmt.Errorf("cctp: ownership_transfer new_owner: %w", err)
+	}
+
+	oldOwnerSV, err := scval.MustMapField(entries, "old_owner")
+	if err != nil {
+		return OwnershipTransfer{}, fmt.Errorf("%w: missing 'old_owner': %w", ErrMalformedBody, err)
+	}
+	oldOwner, err := scval.AsAddressOrVoid(oldOwnerSV)
+	if err != nil {
+		return OwnershipTransfer{}, fmt.Errorf("cctp: ownership_transfer old_owner: %w", err)
+	}
+
+	return OwnershipTransfer{
+		Ledger:          e.Ledger,
+		TxHash:          e.TxHash,
+		OpIndex:         e.OperationIndex,
+		ClosedAt:        e.LedgerClosedAt,
+		ContractID:      e.ContractID,
+		LiveUntilLedger: liveUntilLedger,
+		NewOwner:        newOwner,
+		OldOwner:        oldOwner,
+	}, nil
+}
+
+// DecodeOwnershipTransferCompleted turns one
+// `ownership_transfer_completed` event into the canonical struct.
+// Single-topic event; body ScMap.
+//
+// Body: { new_owner: Address }.
+func DecodeOwnershipTransferCompleted(e *events.Event) (OwnershipTransferCompleted, error) {
+	if len(e.Topic) < 1 {
+		return OwnershipTransferCompleted{}, fmt.Errorf("%w: ownership_transfer_completed needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return OwnershipTransferCompleted{}, fmt.Errorf("cctp: ownership_transfer_completed body parse: %w", err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return OwnershipTransferCompleted{}, fmt.Errorf("cctp: ownership_transfer_completed body not a map: %w", err)
+	}
+
+	newOwnerSV, err := scval.MustMapField(entries, "new_owner")
+	if err != nil {
+		return OwnershipTransferCompleted{}, fmt.Errorf("%w: missing 'new_owner': %w", ErrMalformedBody, err)
+	}
+	newOwner, err := scval.AsAddressStrkey(newOwnerSV)
+	if err != nil {
+		return OwnershipTransferCompleted{}, fmt.Errorf("cctp: ownership_transfer_completed new_owner: %w", err)
+	}
+
+	return OwnershipTransferCompleted{
+		Ledger:     e.Ledger,
+		TxHash:     e.TxHash,
+		OpIndex:    e.OperationIndex,
+		ClosedAt:   e.LedgerClosedAt,
+		ContractID: e.ContractID,
+		NewOwner:   newOwner,
+	}, nil
+}
+
+// DecodeAdminChanged turns one `admin_changed` event into the
+// canonical struct. Single-topic event; body ScMap.
+//
+// Body: { new_admin: Address, old_admin: Address | Void }. Verified
+// against real mainnet events (2026-07-08): the bootstrap instance
+// of this event carries `old_admin = Void` — type-tested via
+// [scval.AsAddressOrVoid] rather than assumed to always be an Address.
+func DecodeAdminChanged(e *events.Event) (AdminChanged, error) {
+	if len(e.Topic) < 1 {
+		return AdminChanged{}, fmt.Errorf("%w: admin_changed needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return AdminChanged{}, fmt.Errorf("cctp: admin_changed body parse: %w", err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return AdminChanged{}, fmt.Errorf("cctp: admin_changed body not a map: %w", err)
+	}
+
+	newAdminSV, err := scval.MustMapField(entries, "new_admin")
+	if err != nil {
+		return AdminChanged{}, fmt.Errorf("%w: missing 'new_admin': %w", ErrMalformedBody, err)
+	}
+	newAdmin, err := scval.AsAddressStrkey(newAdminSV)
+	if err != nil {
+		return AdminChanged{}, fmt.Errorf("cctp: admin_changed new_admin: %w", err)
+	}
+
+	oldAdminSV, err := scval.MustMapField(entries, "old_admin")
+	if err != nil {
+		return AdminChanged{}, fmt.Errorf("%w: missing 'old_admin': %w", ErrMalformedBody, err)
+	}
+	oldAdmin, err := scval.AsAddressOrVoid(oldAdminSV)
+	if err != nil {
+		return AdminChanged{}, fmt.Errorf("cctp: admin_changed old_admin: %w", err)
+	}
+
+	return AdminChanged{
+		Ledger:     e.Ledger,
+		TxHash:     e.TxHash,
+		OpIndex:    e.OperationIndex,
+		ClosedAt:   e.LedgerClosedAt,
+		ContractID: e.ContractID,
+		NewAdmin:   newAdmin,
+		OldAdmin:   oldAdmin,
+	}, nil
+}
+
+// DecodeRemoteTokenMessengerAdded turns one
+// `remote_token_messenger_added` event into the canonical struct.
+// Single-topic event; body ScMap. TokenMessengerMinter only.
+//
+// Body: { domain: u32, token_messenger: BytesN<32> }.
+func DecodeRemoteTokenMessengerAdded(e *events.Event) (RemoteTokenMessengerAdded, error) {
+	if len(e.Topic) < 1 {
+		return RemoteTokenMessengerAdded{}, fmt.Errorf("%w: remote_token_messenger_added needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return RemoteTokenMessengerAdded{}, fmt.Errorf("cctp: remote_token_messenger_added body parse: %w", err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return RemoteTokenMessengerAdded{}, fmt.Errorf("cctp: remote_token_messenger_added body not a map: %w", err)
+	}
+
+	domainSV, err := scval.MustMapField(entries, "domain")
+	if err != nil {
+		return RemoteTokenMessengerAdded{}, fmt.Errorf("%w: missing 'domain': %w", ErrMalformedBody, err)
+	}
+	domain, err := scval.AsU32(domainSV)
+	if err != nil {
+		return RemoteTokenMessengerAdded{}, fmt.Errorf("cctp: remote_token_messenger_added domain: %w", err)
+	}
+
+	tokenMessengerSV, err := scval.MustMapField(entries, "token_messenger")
+	if err != nil {
+		return RemoteTokenMessengerAdded{}, fmt.Errorf("%w: missing 'token_messenger': %w", ErrMalformedBody, err)
+	}
+	tokenMessenger, err := scval.AsBytes(tokenMessengerSV)
+	if err != nil {
+		return RemoteTokenMessengerAdded{}, fmt.Errorf("cctp: remote_token_messenger_added token_messenger: %w", err)
+	}
+
+	return RemoteTokenMessengerAdded{
+		Ledger:         e.Ledger,
+		TxHash:         e.TxHash,
+		OpIndex:        e.OperationIndex,
+		ClosedAt:       e.LedgerClosedAt,
+		ContractID:     e.ContractID,
+		Domain:         domain,
+		TokenMessenger: hex.EncodeToString(tokenMessenger),
+	}, nil
+}
+
+// DecodeTokenPairLinked turns one `token_pair_linked` event into the
+// canonical struct. Single-topic event; body ScMap. TokenMessengerMinter
+// only.
+//
+// Body: { local_token: Address, remote_domain: u32, remote_token: BytesN<32> }.
+func DecodeTokenPairLinked(e *events.Event) (TokenPairLinked, error) {
+	if len(e.Topic) < 1 {
+		return TokenPairLinked{}, fmt.Errorf("%w: token_pair_linked needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return TokenPairLinked{}, fmt.Errorf("cctp: token_pair_linked body parse: %w", err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return TokenPairLinked{}, fmt.Errorf("cctp: token_pair_linked body not a map: %w", err)
+	}
+
+	localTokenSV, err := scval.MustMapField(entries, "local_token")
+	if err != nil {
+		return TokenPairLinked{}, fmt.Errorf("%w: missing 'local_token': %w", ErrMalformedBody, err)
+	}
+	localToken, err := scval.AsAddressStrkey(localTokenSV)
+	if err != nil {
+		return TokenPairLinked{}, fmt.Errorf("cctp: token_pair_linked local_token: %w", err)
+	}
+
+	remoteDomainSV, err := scval.MustMapField(entries, "remote_domain")
+	if err != nil {
+		return TokenPairLinked{}, fmt.Errorf("%w: missing 'remote_domain': %w", ErrMalformedBody, err)
+	}
+	remoteDomain, err := scval.AsU32(remoteDomainSV)
+	if err != nil {
+		return TokenPairLinked{}, fmt.Errorf("cctp: token_pair_linked remote_domain: %w", err)
+	}
+
+	remoteTokenSV, err := scval.MustMapField(entries, "remote_token")
+	if err != nil {
+		return TokenPairLinked{}, fmt.Errorf("%w: missing 'remote_token': %w", ErrMalformedBody, err)
+	}
+	remoteToken, err := scval.AsBytes(remoteTokenSV)
+	if err != nil {
+		return TokenPairLinked{}, fmt.Errorf("cctp: token_pair_linked remote_token: %w", err)
+	}
+
+	return TokenPairLinked{
+		Ledger:       e.Ledger,
+		TxHash:       e.TxHash,
+		OpIndex:      e.OperationIndex,
+		ClosedAt:     e.LedgerClosedAt,
+		ContractID:   e.ContractID,
+		LocalToken:   localToken,
+		RemoteDomain: remoteDomain,
+		RemoteToken:  hex.EncodeToString(remoteToken),
 	}, nil
 }

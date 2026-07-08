@@ -9,27 +9,39 @@ import (
 	"time"
 )
 
-// CCTPEventType discriminates the five Circle CCTP v2 event variants.
+// CCTPEventType discriminates the ten Circle CCTP v2 event variants.
 // String values match the cctp_events.event_type CHECK constraint
-// (migration 0038, extended by 0070) and internal/sources/cctp's
+// (migration 0038, extended by 0070 and 0092) and internal/sources/cctp's
 // event-name constants. LESSON (board #31, v0.7.0→v0.7.1): the type
 // is gated in THREE layers — the decoder's Classify, this enum's
 // IsValid, and the SQL CHECK. Adding an event means all three, or
-// rows are rejected at whichever layer was missed.
+// rows are rejected at whichever layer was missed. Re-confirmed
+// 2026-07-08 (ROADMAP #89b) when the 5 governance/admin events were
+// added: this file is easy to miss because InsertCCTPEvent's
+// defensive IsValid rejection fires INSIDE the Go binary, before the
+// SQL CHECK ever sees the row — a mismatch here silently drops every
+// governance event at insert time even though decode + dispatch work.
 type CCTPEventType string
 
 const (
-	CCTPDepositForBurn  CCTPEventType = "deposit_for_burn"
-	CCTPMintAndWithdraw CCTPEventType = "mint_and_withdraw"
-	CCTPMessageSent     CCTPEventType = "message_sent"
-	CCTPMessageReceived CCTPEventType = "message_received"
-	CCTPMintAndForward  CCTPEventType = "mint_and_forward"
+	CCTPDepositForBurn             CCTPEventType = "deposit_for_burn"
+	CCTPMintAndWithdraw            CCTPEventType = "mint_and_withdraw"
+	CCTPMessageSent                CCTPEventType = "message_sent"
+	CCTPMessageReceived            CCTPEventType = "message_received"
+	CCTPMintAndForward             CCTPEventType = "mint_and_forward"
+	CCTPOwnershipTransfer          CCTPEventType = "ownership_transfer"
+	CCTPOwnershipTransferCompleted CCTPEventType = "ownership_transfer_completed"
+	CCTPAdminChanged               CCTPEventType = "admin_changed"
+	CCTPRemoteTokenMessengerAdded  CCTPEventType = "remote_token_messenger_added"
+	CCTPTokenPairLinked            CCTPEventType = "token_pair_linked"
 )
 
-// IsValid reports whether t is one of the five known CCTP events.
+// IsValid reports whether t is one of the ten known CCTP events.
 func (t CCTPEventType) IsValid() bool {
 	switch t {
-	case CCTPDepositForBurn, CCTPMintAndWithdraw, CCTPMessageSent, CCTPMessageReceived, CCTPMintAndForward:
+	case CCTPDepositForBurn, CCTPMintAndWithdraw, CCTPMessageSent, CCTPMessageReceived, CCTPMintAndForward,
+		CCTPOwnershipTransfer, CCTPOwnershipTransferCompleted, CCTPAdminChanged,
+		CCTPRemoteTokenMessengerAdded, CCTPTokenPairLinked:
 		return true
 	}
 	return false

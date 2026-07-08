@@ -145,3 +145,101 @@ func eventFromMintAndForward(m MintAndForward, observedAt time.Time) Event {
 		},
 	}
 }
+
+// eventFromOwnershipTransfer projects a decoded OwnershipTransfer.
+// Governance event: carries no amount/fee/token/domain, so all four
+// promoted columns stay empty/nil and every field lands in Attributes.
+func eventFromOwnershipTransfer(o OwnershipTransfer, observedAt time.Time) Event {
+	return Event{
+		ContractID: o.ContractID,
+		Ledger:     o.Ledger,
+		TxHash:     o.TxHash,
+		OpIndex:    o.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventOwnershipTransfer,
+		Attributes: map[string]any{
+			"live_until_ledger": o.LiveUntilLedger,
+			"new_owner":         o.NewOwner,
+			"old_owner":         o.OldOwner,
+		},
+	}
+}
+
+// eventFromOwnershipTransferCompleted projects a decoded
+// OwnershipTransferCompleted. Governance event: no promoted columns.
+func eventFromOwnershipTransferCompleted(o OwnershipTransferCompleted, observedAt time.Time) Event {
+	return Event{
+		ContractID: o.ContractID,
+		Ledger:     o.Ledger,
+		TxHash:     o.TxHash,
+		OpIndex:    o.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventOwnershipTransferCompleted,
+		Attributes: map[string]any{
+			"new_owner": o.NewOwner,
+		},
+	}
+}
+
+// eventFromAdminChanged projects a decoded AdminChanged. Governance
+// event: no promoted columns. old_admin may be "" (bootstrap — see
+// [DecodeAdminChanged]); the sink still writes it as an empty jsonb
+// string rather than omitting the key, so a query can distinguish
+// "field present but empty" from "field never decoded".
+func eventFromAdminChanged(a AdminChanged, observedAt time.Time) Event {
+	return Event{
+		ContractID: a.ContractID,
+		Ledger:     a.Ledger,
+		TxHash:     a.TxHash,
+		OpIndex:    a.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventAdminChanged,
+		Attributes: map[string]any{
+			"new_admin": a.NewAdmin,
+			"old_admin": a.OldAdmin,
+		},
+	}
+}
+
+// eventFromRemoteTokenMessengerAdded projects a decoded
+// RemoteTokenMessengerAdded. `domain` promotes to CounterpartyDomain
+// (same semantic as deposit_for_burn's destination_domain — the CCTP
+// domain ID of the OTHER chain); token_messenger has no strkey form
+// (it's a raw remote-chain identity) so it stays in Attributes as hex.
+func eventFromRemoteTokenMessengerAdded(r RemoteTokenMessengerAdded, observedAt time.Time) Event {
+	domain := r.Domain
+	return Event{
+		ContractID:         r.ContractID,
+		Ledger:             r.Ledger,
+		TxHash:             r.TxHash,
+		OpIndex:            r.OpIndex,
+		ObservedAt:         observedAt,
+		EventType:          EventRemoteTokenMessengerAdded,
+		CounterpartyDomain: &domain,
+		Attributes: map[string]any{
+			"token_messenger": r.TokenMessenger,
+		},
+	}
+}
+
+// eventFromTokenPairLinked projects a decoded TokenPairLinked.
+// `local_token` promotes to Token (a genuine Stellar Address strkey,
+// same convention as burn_token/mint_token) and `remote_domain`
+// promotes to CounterpartyDomain; remote_token has no strkey form so
+// it stays in Attributes as hex.
+func eventFromTokenPairLinked(l TokenPairLinked, observedAt time.Time) Event {
+	domain := l.RemoteDomain
+	return Event{
+		ContractID:         l.ContractID,
+		Ledger:             l.Ledger,
+		TxHash:             l.TxHash,
+		OpIndex:            l.OpIndex,
+		ObservedAt:         observedAt,
+		EventType:          EventTokenPairLinked,
+		Token:              l.LocalToken,
+		CounterpartyDomain: &domain,
+		Attributes: map[string]any{
+			"remote_token": l.RemoteToken,
+		},
+	}
+}

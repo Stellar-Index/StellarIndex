@@ -12,7 +12,7 @@ Three on-chain contracts (verified mainnet 2026-05-20):
 | MessageTransmitter (v2) | `CACMENFFJPJMSDAJQLX4R7K3SFZIW2LJSE3R2UMLGSWHFHS353FVXAZV` |
 | CctpForwarder | `CBZL2IH7F6BIDAA3WBNXYKIXSATJGMSW7K5P5MJ6STX5RXN47TZJDF5T` |
 
-Four canonical events:
+Transfer-flow events:
 
 - **`deposit_for_burn`** (TokenMessengerMinter) — outbound USDC
   transfer. Topics include `burn_token`, `depositor`,
@@ -24,6 +24,31 @@ Four canonical events:
   with `deposit_for_burn` in the same tx.
 - **`message_received`** (MessageTransmitter) — wire envelope;
   paired with `mint_and_withdraw` in the same tx.
+- **`mint_and_forward`** (CctpForwarder) — inbound mint relayed
+  onward to the final recipient. Body map `{amount: i128,
+  forward_recipient: Address, token: Address}`.
+
+Governance/admin events (emitted by all three contracts; verified
+against real mainnet lake events 2026-07-08, ROADMAP #89b decoder
+topic-match audit):
+
+- **`ownership_transfer`** — 2-step ownership transfer initiated.
+  Body `{live_until_ledger: u32, new_owner: Address, old_owner:
+  Address}`.
+- **`ownership_transfer_completed`** — the new owner accepted a
+  pending transfer. Body `{new_owner: Address}`.
+- **`admin_changed`** — the operational admin role was reassigned.
+  Body `{new_admin: Address, old_admin: Address | Void}` —
+  `old_admin` is `Void` on the bootstrap instance of this event
+  (no previous admin); the decoder type-tests it rather than
+  assuming an Address.
+- **`remote_token_messenger_added`** (TokenMessengerMinter only) —
+  a counterpart TokenMessenger registered on a remote CCTP domain.
+  Body `{domain: u32, token_messenger: BytesN<32>}`.
+- **`token_pair_linked`** (TokenMessengerMinter only) — a local
+  Stellar token linked to its counterpart token on a remote
+  domain. Body `{local_token: Address, remote_domain: u32,
+  remote_token: BytesN<32>}`.
 
 Stellar's CCTP domain ID is `27`. Other notable CCTP domains
 (referenced by `destination_domain` / `source_domain` fields):
@@ -31,10 +56,15 @@ Ethereum=0, Avalanche=1, Arbitrum=3, Solana=7.
 
 ## What this package emits
 
-Four canonical Go types — `DepositForBurn`, `MintAndWithdraw`,
-`MessageSent`, `MessageReceived` — corresponding 1:1 to the
-`#[contractevent]` types in
+Ten canonical Go types, one per event kind — transfer-flow:
+`DepositForBurn`, `MintAndWithdraw`, `MessageSent`,
+`MessageReceived`, `MintAndForward`; governance/admin:
+`OwnershipTransfer`, `OwnershipTransferCompleted`, `AdminChanged`,
+`RemoteTokenMessengerAdded`, `TokenPairLinked` — corresponding 1:1
+to the `#[contractevent]` types in
 [`circlefin/stellar-cctp/contracts/{token-messenger-minter-v2,message-transmitter-v2}/src/lib.rs`](https://github.com/circlefin/stellar-cctp).
+All ten project into the same `cctp_events` row shape (`Event` in
+`consumer.go`), discriminated by `event_type`.
 
 BytesN<32> fields (`mint_recipient`, `destination_token_messenger`,
 `destination_caller`, `nonce`, `sender`, etc.) are emitted as
@@ -95,9 +125,10 @@ This package is **wired into the ingest pipeline** (#40):
 
 ## Tests
 
-`decode_test.go` (16 parallel tests + subtests):
+`decode_test.go` — transfer-flow decode coverage:
 
-- `Classify` — all four event types + unknown-symbol + empty-topic.
+- `Classify` — all four transfer-flow event types + unknown-symbol +
+  empty-topic.
 - `DecodeDepositForBurn` — happy path (covers BytesN<32> roundtrip
   for `mint_recipient` / `destination_token_messenger` /
   `destination_caller` and `hook_data`); ADR-0003 large-i128
@@ -112,6 +143,30 @@ This package is **wired into the ingest pipeline** (#40):
   package-init constants. Drift here would silently break
   `Classify`.
 - `ErrUnknownEvent` sentinel availability for downstream consumers.
+
+`source_test.go` — `DecodeMintAndForward` real-mainnet golden fixture
+(ledger 63098002).
+
+`governance_test.go` — the 5 governance/admin events, each with a
+real-mainnet golden fixture (ledger + tx_hash cited in the test) plus
+a malformed-body reject test:
+
+- `DecodeOwnershipTransfer` / `DecodeOwnershipTransferCompleted` —
+  the 2-step transfer pair, ledgers 62211157/62146641.
+- `DecodeAdminChanged` — BOTH shapes observed on mainnet: the
+  bootstrap instance (`old_admin = Void`, ledger 62146641) and the
+  later real reassignment (`old_admin` populated, ledger 62225106) —
+  the schema-evolution trap this decoder type-tests against.
+- `DecodeRemoteTokenMessengerAdded` / `DecodeTokenPairLinked` —
+  TokenMessengerMinter-only, ledgers 62146653/62146739; the
+  `token_pair_linked` fixture's `remote_token` decodes to Ethereum
+  USDC's real contract address as a cross-check.
+- `TestDecoder_Decode_GovernanceEvents` — end-to-end `Matches` +
+  `Decode` through `dispatcher_adapter.go` for all 5 topics.
+
+`dispatcher_adapter_test.go` — `Decoder.Matches` / `Decode` for the
+transfer-flow events, including the CS-026-style "same topic bytes,
+foreign contract" rejection test.
 
 ## References
 

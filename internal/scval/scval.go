@@ -395,6 +395,22 @@ func AsAddressStrkey(sv xdr.ScVal) (string, error) {
 	}
 }
 
+// AsAddressOrVoid decodes sv as either a Stellar Address strkey or
+// ScvVoid, returning "" for void. Some Soroban admin/governance
+// events carry a field that is normally an Address but is Void the
+// FIRST time the event fires (e.g. an "old admin" before any admin
+// was ever set — observed on Circle's CCTP contracts,
+// internal/sources/cctp). Callers must type-test rather than assume
+// Address (CLAUDE.md "Type-test before MustI128" — the same
+// schema-evolution stance the SEP-41 transfer decoder's
+// `to_muxed_id` field type-test follows).
+func AsAddressOrVoid(sv xdr.ScVal) (string, error) {
+	if sv.Type == xdr.ScValTypeScvVoid {
+		return "", nil
+	}
+	return AsAddressStrkey(sv)
+}
+
 // AsVec returns the elements of an ScVal::Vec. A nil Vec (empty but
 // present) returns an empty slice, not nil — the distinction matters
 // in Go range-over-nil-slice, and we want every caller to see the

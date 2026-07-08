@@ -11,10 +11,11 @@ import (
 
 // Decoder is the dispatcher-facing view of Circle CCTP v2. It is a
 // stateless topic Decoder — unlike Soroswap there is no swap/sync
-// correlation: each of the four CCTP events decodes independently
-// into one cctp_events row. The deposit_for_burn ↔ message_sent
-// pairing the architecture doc describes is a downstream concern,
-// correlatable later by (ledger, tx_hash); the decoder does not buffer.
+// correlation: each CCTP event (transfer-flow or governance/admin)
+// decodes independently into one cctp_events row. The
+// deposit_for_burn ↔ message_sent pairing the architecture doc
+// describes is a downstream concern, correlatable later by (ledger,
+// tx_hash); the decoder does not buffer.
 //
 // Matching is by topic[0] symbol AND contract id. CLAUDE.md ("Comet
 // uses a shared topic") warns that another contract could emit the
@@ -119,6 +120,36 @@ func (*Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 			return nil, err
 		}
 		return []consumer.Event{eventFromMintAndForward(m, observedAt)}, nil
+	case EventOwnershipTransfer:
+		o, err := DecodeOwnershipTransfer(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromOwnershipTransfer(o, observedAt)}, nil
+	case EventOwnershipTransferCompleted:
+		o, err := DecodeOwnershipTransferCompleted(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromOwnershipTransferCompleted(o, observedAt)}, nil
+	case EventAdminChanged:
+		a, err := DecodeAdminChanged(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromAdminChanged(a, observedAt)}, nil
+	case EventRemoteTokenMessengerAdded:
+		r, err := DecodeRemoteTokenMessengerAdded(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromRemoteTokenMessengerAdded(r, observedAt)}, nil
+	case EventTokenPairLinked:
+		l, err := DecodeTokenPairLinked(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromTokenPairLinked(l, observedAt)}, nil
 	}
 	// Unreachable while Classify and this switch stay in lockstep —
 	// Classify already returned non-empty above, and every kind it
