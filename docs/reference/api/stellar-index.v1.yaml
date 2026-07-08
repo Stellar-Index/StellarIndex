@@ -1854,6 +1854,14 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+        "422":
+          description: >-
+            `base`/`quote` is a confirmed non-7-decimal Soroban token —
+            pricing for the pair is declined pending decimals
+            normalization (docs/operations/runbooks/dex-nonstandard-decimals.md).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
