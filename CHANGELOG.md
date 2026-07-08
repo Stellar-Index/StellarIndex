@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+### Changed
+- Projector `BatchLimit` tightened 10 000 → 1 000 ledgers per source per cycle so dense
+  protocol ranges (notably Aquarius reserve updates) finish inside `PerSourceTimeout`;
+  stale comment (it caps a ledger window, not a row count) corrected.
+- Go toolchain bumped to 1.25.12 (clears GO-2026-5856 `crypto/tls` govulncheck finding);
+  every direct Go dep bumped to latest in one commit (aws-sdk-go-v2 family, x/sync 0.22,
+  google.golang.org/api 0.287.1 + grpc 1.82) — supersedes dependabot #1371/#1372, whose
+  isolated per-module bumps left `go.sum` missing sibling-module entries.
+- Dependabot now groups all minor/patch bumps into **one weekly PR per ecosystem** (majors
+  stay per-dependency); dead `web/dashboard` npm entry removed. Ends the per-module PR
+  fan-out whose merges invalidated each other's `go.sum` and forced rebase cascades.
+
 ### Added
 - Protocol pool contracts now display as their human **asset pair** (e.g. `XLM/USDC`) on
   `/v1/protocols/{name}` — `token_symbols` + `pair` resolved from the pool's token contracts,
@@ -23,6 +35,10 @@ against.
   resolve. OpenAPI 1.3.0 → 1.4.0; explorer roster renders the pair. (#91)
 
 ### Fixed
+- verify.sh's gitleaks step (working-tree scan) no longer reds the local gate on gitignored
+  dev bulk — `.discovery-repos/`, `node_modules/`, Next.js build output, `docs/archive/` are
+  globally allowlisted (32k+ false findings, 90s → 6s scan). CI scans a clean checkout, so
+  the excludes subtract nothing there.
 - `/v1/protocols/aquarius` now lists its pool contracts — it read **0** despite being the
   busiest AMM (14.9k events/24h, 300+ pools) because the projection-fallback roster listed
   aquarius as "pair-keyed, no per-contract column." Sourced from `aquarius_liquidity` (which
