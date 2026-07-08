@@ -1011,18 +1011,24 @@ func New(opts Options) *Server {
 		mux:              http.NewServeMux(),
 		started:          time.Now().UTC(),
 	}
-	// Load + cache the embedded incident corpus once at startup;
-	// the data is small (a few markdown files) and ships with the
-	// binary, so re-parsing per-request is wasted work. New
-	// incident posts ship with a redeploy.
+	loadIncidents(s, logger)
+	s.mountRoutes()
+	return s
+}
+
+// loadIncidents loads + caches the embedded incident corpus once at
+// startup; the data is small (a few markdown files) and ships with
+// the binary, so re-parsing per-request is wasted work. New incident
+// posts ship with a redeploy. Split from New for funlen (the Options
+// → Server field copy is the bulk of New and must stay a single
+// auditable literal).
+func loadIncidents(s *Server, logger *slog.Logger) {
 	if loaded, err := incidents.Load(logger); err != nil {
 		logger.Warn("incidents: load failed; /v1/incidents returns empty",
 			"err", err)
 	} else {
 		s.incidents = loaded
 	}
-	s.mountRoutes()
-	return s
 }
 
 func valueOr(s, fallback string) string {

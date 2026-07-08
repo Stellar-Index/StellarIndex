@@ -78,7 +78,7 @@ func (*Decoder) Matches(ev events.Event) bool {
 // doesn't match (the dispatcher already filtered via Matches, but
 // Decode re-checks so a direct caller is safe). A decode error is
 // non-fatal per the dispatcher contract — counted and skipped.
-func (*Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
+func (*Decoder) Decode(ev events.Event) ([]consumer.Event, error) { //nolint:gocognit,gocyclo,cyclop,funlen // one case per CCTP event kind; the flat dispatch table stays auditable against the upstream contract's event list (same exemption as blend's decodeByKind)
 	kind := Classify(&ev)
 	if kind == "" || !IsCCTPContract(ev.ContractID) {
 		return nil, nil
