@@ -64,8 +64,16 @@ func openRead(ctx context.Context, addr string) (driver.Conn, error) {
 			// streams hold buffers concurrently, which is what actually
 			// drives this class's peak.
 			"max_execution_time": 0,
-			"max_memory_usage":   24 * 1024 * 1024 * 1024,
-			"max_threads":        8,
+			// 24G→10G + threads 8→3 (2026-07-08): the sep41 projection
+			// reconcile — streaming the CAP-67 firehose's wide
+			// op_args_xdr/data_xdr columns InOrder — repeatedly drove
+			// CH's SERVER-WIDE 64G OvercommitTracker cap on its own
+			// (per-query tracking undercounts the read-pool buffers of
+			// many wide part streams). Fewer threads = fewer concurrent
+			// wide-part buffers, which is what actually bounds this
+			// class's true footprint. Growth costs time, not failures.
+			"max_memory_usage":   10 * 1024 * 1024 * 1024,
+			"max_threads":        3,
 			// Spill instead of OOM: after the 12→24 GiB raise the sdex
 			// reconcile STILL hit the ceiling — in MergeSortingTransform
 			// (an ORDER BY over the full-range census). Chasing the
