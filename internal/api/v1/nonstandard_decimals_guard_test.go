@@ -191,3 +191,22 @@ func TestOHLC_NonstandardDecimals_Declines(t *testing.T) {
 		}
 	}
 }
+
+// TestTWAP_NonstandardDecimals_Declines proves the guard fires on
+// /v1/twap too — TWAP over mis-scaled trades is exactly as wrong as
+// VWAP over them (integration review 2026-07-09; the original guard
+// omitted /v1/twap only because the founding incident's pair had no
+// TWAP consumers).
+func TestTWAP_NonstandardDecimals_Declines(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	srv := v1.New(v1.Options{
+		History:             &stubHistoryReader{},
+		NonstandardDecimals: cache,
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/twap?base="+flaggedAsset+"&quote=fiat:USD")
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", resp.StatusCode)
+	}
+}

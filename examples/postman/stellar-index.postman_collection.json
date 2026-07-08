@@ -10068,6 +10068,77 @@
               "_postman_previewlanguage": "json"
             },
             {
+              "name": "`base`/`quote` is a confirmed non-7-decimal Soroban token — pricing for the pair is declined pending decimals normalization (docs/operations/runbooks/dex-nonstandard-decimals.md).",
+              "originalRequest": {
+                "url": {
+                  "path": [
+                    "twap"
+                  ],
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "query": [
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "(Required) Canonical asset identifier for the base side of a pair.\nStrict canonical form only — `USDC` / `XLM` are rejected;\nthe full `<code>-<G…>` strkey is required, or `native` for\nXLM. The default example resolves to Centre's USDC issuance,\nwhich is the most-traded base on Stellar.\n",
+                        "type": "text/plain"
+                      },
+                      "key": "base",
+                      "value": "<string>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "(Required) Quote-side asset (REQUIRED on this endpoint). Either a\ncanonical asset identifier (`native`, `<code>-<issuer>`,\ncontract ID) or the `fiat:<ISO-4217>` form (e.g. `fiat:USD`,\n`fiat:EUR`). Unlike the `/price` family, this endpoint does\nNOT default the quote — omitting it returns 400.\n",
+                        "type": "text/plain"
+                      },
+                      "key": "quote",
+                      "value": "<string>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Window start (inclusive), RFC 3339 UTC — e.g.\n`2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.\nWhen omitted the endpoint applies its own default lookback\nfrom `to` (documented per endpoint). Must be before `to`\nor the request 400s.\n",
+                        "type": "text/plain"
+                      },
+                      "key": "from",
+                      "value": "<dateTime>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Window end (exclusive), RFC 3339 UTC. Defaults to now.\nWindows are half-open `[from, to)` — a trade exactly at\n`to` is excluded.\n",
+                        "type": "text/plain"
+                      },
+                      "key": "to",
+                      "value": "<dateTime>"
+                    }
+                  ],
+                  "variable": []
+                },
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/problem+json"
+                  }
+                ],
+                "method": "GET",
+                "body": {}
+              },
+              "status": "Unprocessable Entity (WebDAV) (RFC 4918)",
+              "code": 422,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+              "cookie": [],
+              "_postman_previewlanguage": "json"
+            },
+            {
               "name": "Rate-limit quota exhausted. See `Retry-After` header.",
               "originalRequest": {
                 "url": {

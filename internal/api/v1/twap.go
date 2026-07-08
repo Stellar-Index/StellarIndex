@@ -55,6 +55,14 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// TWAP over mis-scaled trades is exactly as wrong as VWAP over
+	// them — guard this surface too (integration review 2026-07-09;
+	// the guard's original impact list omitted /v1/twap only because
+	// the founding incident's pair had no TWAP consumers).
+	if s.declineIfNonstandardDecimals(w, r, base, quote) {
+		return
+	}
+
 	// Clamped to a closed-bucket boundary when `to` defaults to "now"
 	// per ADR-0015.
 	from, to, _, ok := parseFromToClamped(w, r)
