@@ -6,6 +6,7 @@ import (
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/contractid"
 	"github.com/StellarIndex/stellar-index/internal/events"
 )
 
@@ -36,18 +37,19 @@ func TestDecoder_Name(t *testing.T) {
 func TestDecoder_Matches_TopicShape(t *testing.T) {
 	d := NewDecoder()
 
-	swap := events.Event{Topic: []string{TopicSymbolPool, TopicSymbolSwap}}
+	// Topic shape + registered pool (the in-code curated set).
+	swap := events.Event{ContractID: MainnetBackstopPool, Topic: []string{TopicSymbolPool, TopicSymbolSwap}}
 	if !d.Matches(swap) {
-		t.Error("Matches((POOL, swap)) = false, want true")
+		t.Error("Matches((POOL, swap) from curated pool) = false, want true")
 	}
 
-	// Wrong topic[0]: not a pool event.
-	other := events.Event{Topic: []string{TopicSymbolSwap, TopicSymbolPool}}
+	// Wrong topic[0]: not a pool event, even from the curated pool.
+	other := events.Event{ContractID: MainnetBackstopPool, Topic: []string{TopicSymbolSwap, TopicSymbolPool}}
 	if d.Matches(other) {
 		t.Error("Matches((swap, POOL)) = true, want false (wrong topic order)")
 	}
 
-	empty := events.Event{Topic: nil}
+	empty := events.Event{ContractID: MainnetBackstopPool, Topic: nil}
 	if d.Matches(empty) {
 		t.Error("Matches(empty topic) = true, want false")
 	}
@@ -100,56 +102,56 @@ func TestDecoder_Decode_MalformedBodyReturnsError(t *testing.T) {
 	}
 }
 
-// F-1242 (audit-2026-05-12): Comet's `("POOL", "swap")` topic shape
-// is the Balancer-v1 contract event family, not the Soroban-Balancer
-// contract address. Any future pubnet contract deployed from the same
-// Balancer-v1 WASM (or any contract that mimics the topic + body
-// shape) will match this decoder. CLAUDE.md "Things that will surprise
-// you" calls this out and the operator-side mitigation is downstream
-// filter on `(Trade.Source = "comet", contract_address)` — but the
-// decoder itself does NOT discriminate by contract address. This test
-// makes the contract explicit: a synthetic event from a *different*
-// contract address with the Comet topic + body shape will be decoded
-// to a Comet TradeEvent. Any future change that adds a contract-id
-// allow-list at the decoder layer (rather than downstream) MUST flip
-// this test's expectation.
-func TestDecoder_Decode_NoContractIDDiscrimination(t *testing.T) {
-	d := NewDecoder()
+// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040 (CS-026,
+// closed 2026-07-08 — this is the FLIP of the former
+// TestDecoder_Decode_NoContractIDDiscrimination, whose comment
+// required exactly this inversion): Comet's `("POOL", "swap")` topic
+// shape is the Balancer-v1 contract event family, shared by EVERY
+// deployment of that WASM (F-1242) — forgeable by construction. A
+// perfect swap shape from an unregistered contract must NOT be
+// attributed to comet, while the same event from the curated pool
+// (Blend's backstop) must. Decode itself remains shape-only — the
+// gate lives in Matches, which the dispatcher consults first.
+func TestDecoder_GateRejectsForeignContract(t *testing.T) {
+	d := NewDecoder() // production gate: in-code curated set only
 	caller := accountStrkeyFromSeed(t, 0x10)
 	tokenIn := contractStrkeyFromSeed(t, 0x20)
 	tokenOut := contractStrkeyFromSeed(t, 0x30)
 	body := encodeSwapBody(t, caller, tokenIn, tokenOut,
 		big.NewInt(1_000_000), big.NewInt(2_500_000))
 
-	// Synthetic event from a contract that is NOT the documented Blend
+	// Synthetic event from a contract that is NOT the curated Blend
 	// backstop pool — same topic shape, same body shape, different
 	// emitting contract.
-	otherContract := contractStrkeyFromSeed(t, 0xFF)
-	ev := events.Event{
+	foreign := events.Event{
 		Topic:          []string{TopicSymbolPool, TopicSymbolSwap},
 		Value:          body,
-		ContractID:     otherContract,
+		ContractID:     contractStrkeyFromSeed(t, 0xFF),
 		Ledger:         52_000_000,
 		TxHash:         "non-blend-tx",
 		OperationIndex: 0,
 		LedgerClosedAt: "2026-04-23T12:00:00Z",
 	}
+	if d.Matches(foreign) {
+		t.Fatal("foreign contract with comet-shaped topics matched — the CS-026 injection vector is open")
+	}
 
-	out, err := d.Decode(ev)
-	if err != nil {
-		t.Fatalf("Decode: %v", err)
+	genuine := foreign
+	genuine.ContractID = MainnetBackstopPool
+	if !d.Matches(genuine) {
+		t.Fatal("curated backstop pool failed to match — gate is over-closed")
 	}
-	if len(out) != 1 {
-		t.Fatalf("got %d events, want 1 (decoder matches by topic, not contract)", len(out))
+
+	// The gate composes: a caller-supplied WithSeed (the
+	// protocol_contracts warm — the operator seam for admitting a
+	// future pool without a redeploy) must admit a new pool.
+	admitted := contractStrkeyFromSeed(t, 0xAB)
+	d2 := NewDecoder(contractid.WithSeed([]string{admitted}))
+	ev2 := genuine
+	ev2.ContractID = admitted
+	if !d2.Matches(ev2) {
+		t.Fatal("operator-seeded pool failed to match — the protocol_contracts warm seam is broken")
 	}
-	te := out[0].(TradeEvent)
-	if te.Trade.Source != SourceName {
-		t.Errorf("Trade.Source = %q, want %q", te.Trade.Source, SourceName)
-	}
-	// Operator filter happens DOWNSTREAM (at aggregator class lookup
-	// + per-pair allow-listing); the decoder doesn't carry the
-	// contract identity in the canonical Trade beyond the topic
-	// match. This is the documented contract per CLAUDE.md.
 }
 
 func TestDecoder_Decode_FailsClosedOnMissingClosedAt(t *testing.T) {

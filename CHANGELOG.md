@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+### Security
+- **comet is now contract-identity gated (CS-026 closed — the last ungated source).**
+  `Matches()` requires the emitting contract to be in the curated registry
+  (`comet.MainnetGatedSet`: exactly one mainnet pool, Blend's BLND/USDC backstop) plus the
+  `protocol_contracts` warm; a Balancer-v1 look-alike emitting the shared `("POOL",…)`
+  shape can no longer inject fabricated trades under `source="comet"`. Fail-closed: a
+  future genuine pool must be operator-admitted (`seed-protocol-contracts -source comet`,
+  which upserts the curated set with provenance `curated`). ADR-0035 gating is now
+  complete across every integrated on-chain source (ADR-0040).
+
 ### Changed
 - ADRs 0040 (contract gating), 0041 (ingest durability, with a non-lake CEX/FX
   backpressure caveat), 0042 (v1 wire shape — all four sign-off boxes accepted) and
@@ -35,11 +45,25 @@ against.
 ### Added
 - Protocol pool contracts now display as their human **asset pair** (e.g. `XLM/USDC`) on
   `/v1/protocols/{name}` — `token_symbols` + `pair` resolved from the pool's token contracts,
-  not raw C-strkeys. Populated for soroswap/phoenix/aquarius/comet pools + blend/sorocredit
-  reserve-asset lists, with a graceful fallback to a short contract when a token doesn't
-  resolve. OpenAPI 1.3.0 → 1.4.0; explorer roster renders the pair. (#91)
+  not raw C-strkeys. Populated for soroswap/phoenix/aquarius/comet pools + blend
+  reserve-asset lists (sorocredit's credit-market model has no stable pool→reserve set —
+  documented gap, raw-contract roster only), with a graceful fallback to a short contract
+  when a token doesn't resolve. OpenAPI 1.3.0 → 1.4.0; explorer roster renders the pair. (#91)
 
 ### Fixed
+- The `stellarindex_galexie_catchup_refused` page alert (built after the 2026-07-05 wedge)
+  could never fire: its textfile probe wrote to Debian's `/var/lib/prometheus/node-exporter`
+  instead of the node_exporter's configured `/var/lib/node_exporter/textfile_collector`, AND
+  the mktemp'd file was 0600 (unprivileged node_exporter silently skips unreadable
+  textfiles). Both fixed in ansible + on r1 — found during the 2026-07-08 P27
+  catchup-refusal incident, which was this alert's exact scenario.
+- #91 review tail (2026-07-08 adversarial review): `PoolTokens`' aquarius resolver gets a
+  matching partial covering index (migration 0091 — the `DISTINCT ON` previously forced a
+  full sort of a forever-retained hypertable inside `/v1/protocols/{name}`); the comet/blend
+  token-set queries gain `ORDER BY` so their row `LIMIT` is deterministic (a limit overflow
+  could silently drop part of a pool's token set); the pair-labels CHANGELOG entry no longer
+  claims sorocredit coverage (its credit-market model has no stable pool→reserve set —
+  documented gap in `pool_tokens.go`).
 - verify.sh's gitleaks step (working-tree scan) no longer reds the local gate on gitignored
   dev bulk — `.discovery-repos/`, `node_modules/`, Next.js build output, `docs/archive/` are
   globally allowlisted (32k+ false findings, 90s → 6s scan). CI scans a clean checkout, so

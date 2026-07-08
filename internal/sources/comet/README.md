@@ -26,11 +26,15 @@ uppercase `POOL` symbol, not a per-protocol namespace. Every pubnet
 contract that deploys Balancer-v1 Comet code looks identical on
 the wire.
 
-The decoder dispatches on topic-bytes match (`Topic[0] == "POOL"`
-plus topic[1] ∈ {swap, join_pool, exit_pool, deposit, withdraw}),
-not on contract address. Operators who want narrow coverage (e.g.
-only Blend's backstop) filter downstream by `Trade.Source == "comet"`
-or `LiquidityEvent.ContractID`, not at dispatch time.
+The decoder ROUTES on topic-bytes match (`Topic[0] == "POOL"`
+plus topic[1] ∈ {swap, join_pool, exit_pool, deposit, withdraw}) but
+ATTRIBUTES on contract identity (ADR-0035/0040, since 2026-07-08):
+`Matches()` requires the emitting contract to be in the curated
+registry — `MainnetGatedSet()` (today exactly one pool, Blend's
+BLND/USDC backstop) plus the `protocol_contracts` DB warm. A
+comet-shaped event from an unregistered contract is not attributed;
+it surfaces in the recognition audit instead (fail-closed, CS-026
+closed).
 
 ## Events we handle
 

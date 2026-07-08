@@ -117,9 +117,12 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 			ExcludeTopic0Syms: firehoseExcludeSyms,
 		}, true, nil
 	case comet.SourceName:
+		// ADR-0035/0040: contract-gated (curated set — comet has no
+		// factory namespace). gated[comet] layers the protocol_contracts
+		// warm on the in-code MainnetGatedSet trust root.
 		return Source{
 			Name:              comet.SourceName,
-			Decoder:           comet.NewDecoder(),
+			Decoder:           comet.NewDecoder(gated[comet.SourceName]...),
 			ExcludeTopic0Syms: firehoseExcludeSyms,
 		}, true, nil
 	case blend.SourceName:

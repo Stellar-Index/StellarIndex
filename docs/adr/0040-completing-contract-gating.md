@@ -155,6 +155,10 @@ hashes, team Dune registry): 101/110 emitters verified → curated seed;
 "Verification 2026-07-05". Both gates await their operator halves
 (re-derive + foreign-row cleanup + verdict watch, tracked in
 docs/operations/audit-remediation-operator-actions.md).
-Comet: still open — needs the wasm-audit hash set confirmed first
-(`stellarindex-ops wasm-history` walk exists;
-`docs/operations/wasm-audits/`).
+Comet gate: shipped 2026-07-08 (curated one-pool allowlist — the
+wasm-audit census confirmed exactly ONE mainnet pool, Blend's BLND/USDC
+backstop `CAS3FL6T…`; `comet.MainnetGatedSet` is the in-code trust root,
+`seed-protocol-contracts -source comet` upserts it with provenance
+`curated`, and the WASM-hash sweep is the registered upkeep loop).
+CS-026 closed — every integrated on-chain source now gates `Matches()`
+on contract identity.

@@ -272,18 +272,19 @@ linked design doc has the full detail.
 - **Comet uses a shared `("POOL", <event>)` topic across every pool
   contract**, not a per-protocol namespace. Any pubnet contract that
   deploys Balancer-v1 Comet code will look identical on the wire.
-  **ADR-0035 contract-identity gating: comet is the LAST ungated source.**
+  **ADR-0035 contract-identity gating is COMPLETE (2026-07-08).**
   `soroswap` (pair/factory registry), `blend` (childgate), `phoenix`
   (curated set, 2026-07-02), `aquarius` (router-anchored: the router's
-  `add_pool` events announce exactly the registry-API pool set, 2026-07-05)
-  and `defindex` (curated evidence-verified set — the factory `create`
+  `add_pool` events announce exactly the registry-API pool set, 2026-07-05),
+  `defindex` (curated evidence-verified set — the factory `create`
   event does NOT carry the vault address, so new vaults fail-close until
-  operator-seeded; 2026-07-05) all gate `Matches()` on contract identity.
-  **`comet` still matches on topic bytes alone** — a look-alike contract
-  emitting the shared Balancer-v1 `("POOL",…)` shape can inject fabricated
-  trades under that source (CS-026); it needs a pool allowlist / WASM-hash
-  gate (no factory namespace). Until then, narrow comet coverage is a
-  downstream filter on `Trade.Source = "comet"` + contract address. →
+  operator-seeded; 2026-07-05) and `comet` (curated one-pool allowlist —
+  no factory namespace exists; the only mainnet pool is Blend's BLND/USDC
+  backstop, seeded in-code via `comet.MainnetGatedSet`; 2026-07-08, closes
+  CS-026) all gate `Matches()` on contract identity. A future genuine
+  comet pool must be operator-admitted (`seed-protocol-contracts -source
+  comet` / a `protocol_contracts` row) before its events attribute —
+  fail-closed, visible as an ADR-0033 recognition gap. →
   [docs/adr/0035-factory-anchored-contract-gating.md](docs/adr/0035-factory-anchored-contract-gating.md),
   [docs/adr/0040-completing-contract-gating.md](docs/adr/0040-completing-contract-gating.md)
 - **Reflector v3 has no on-chain `twap` or `x_*` methods.** Some

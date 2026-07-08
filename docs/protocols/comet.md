@@ -8,12 +8,15 @@
 > set of live Comet pool contracts (or point us at a factory / WASM-hash
 > we can enumerate from), we can close that gap.
 >
-> - **Enumeration method:** none yet — the decoder matches on the shared
->   `("POOL", …)` topic bytes, not on a pool set. The only pool we have
->   positively identified on mainnet is Blend's BLND/USDC backstop.
-> - **Last verified:** 2026-07-06 (source: `internal/sources/comet`;
+> - **Enumeration method:** curated allowlist (ADR-0040 §1 mechanism 3) —
+>   the WASM-audit census found exactly ONE Comet pool on mainnet
+>   (Blend's BLND/USDC backstop), and the decoder's `MainnetGatedSet`
+>   seeds it as the trust root. The WASM-hash sweep is the registered
+>   upkeep loop for discovering future byte-identical deployments.
+> - **Last verified:** 2026-07-08 (source: `internal/sources/comet`;
 >   WASM audit `docs/operations/wasm-audits/comet.md`, 2026-05-26).
-> - **Gate status:** ❌ **UNGATED (last remaining ungated source, CS-026)**.
+> - **Gate status:** ✅ **GATED (curated one-pool allowlist, 2026-07-08 —
+>   CS-026 closed; comet was the last ungated source)**.
 
 ## What Comet is
 
@@ -88,30 +91,33 @@ A future Comet upgrade that starts emitting any of these routes to
 and counts them on `source_orphan_events_total{source="comet"}` — the
 signal to extend `classify`.
 
-## Gate status — UNGATED (CS-026)
+## Gate status — GATED (curated allowlist, 2026-07-08; CS-026 closed)
 
-**This is the one integrated on-chain source with no contract-identity
-gate.** `Decoder.Matches` returns true for *any* contract emitting a
-recognised `("POOL", <event>)` topic — it is byte-equality on the topic
-symbols, with no allowlist and no factory fan-out
-(`internal/sources/comet/dispatcher_adapter.go`). Comet has **no factory
-namespace** to anchor an ADR-0035 gate on, so the enumeration methods
-that gate the other AMMs (Soroswap/Blend `new_pair`/`deploy` graphs,
-Aquarius router `add_pool`, Phoenix/DeFindex curated seeds) don't apply.
+`Decoder.Matches` gates on **contract identity** (ADR-0035/0040):
+an event is attributed to comet only when it carries a recognised
+`("POOL", <event>)` topic **and** was emitted by a pool in the curated
+registry — the in-code `comet.MainnetGatedSet()` (today exactly one
+pool, Blend's BLND/USDC backstop `CAS3FL6T…`) plus the
+`protocol_contracts` DB warm. Comet has **no factory namespace** to
+anchor a deploy-graph gate on (the enumeration methods that gate
+Soroswap/Blend/Aquarius don't apply), so this is the ADR-0040 §1
+curated-set mechanism.
 
-**The exposure (CS-026):** a look-alike contract that deploys the shared
-Balancer-v1 Comet code — or merely emits the `("POOL", "swap")` shape —
-can inject **fabricated trades under `Trade.Source = "comet"`**. This is
-the exact injection shape ADR-0035 exists to prevent, and Comet is the
-last source where it remains open.
+**What closed (CS-026):** before 2026-07-08 a look-alike contract that
+deployed the shared Balancer-v1 code — or merely emitted the
+`("POOL", "swap")` shape — could inject **fabricated trades under
+`Trade.Source = "comet"`**. That event now fails `Matches` and lands in
+the recognition audit (ADR-0033 Claim 2a) instead — visible, never
+silently attributed.
 
-**Interim mitigation:** narrow, trustworthy Comet coverage is a
-*downstream filter* on `Trade.Source = "comet"` **AND** the contract
-address (`CAS3FL6T…`, the Blend backstop) — not a claim that everything
-tagged `comet` is genuine. The fix is a pool allowlist or a WASM-hash
-gate; tracked in
-[ADR-0040](../adr/0040-completing-contract-gating.md) as the remaining
-gating work. → also
+**Admitting a future pool:** fail-closed by design. A genuinely new
+Comet pool must be operator-admitted before its events attribute —
+`stellarindex-ops seed-protocol-contracts -source comet` (after adding
+it to the curated set) or a direct `protocol_contracts` row. The
+WASM-hash sweep (ADR-0040 §1 mechanism 3) is the registered upkeep loop
+for spotting byte-identical Balancer-v1 deployments; note the named
+caveat — a byte-identical fork *is* the same code and would be
+attributed as comet once admitted. → also
 [ADR-0035](../adr/0035-factory-anchored-contract-gating.md).
 
 ## Backfill safety
@@ -122,9 +128,9 @@ gating work. → also
 **backfill-safety** (the current decoder is trusted against every WASM
 version that ran over the replay range) is orthogonal to **gating** (which
 contracts are attributed to `comet`). Comet is backfill-safe **and**
-ungated — replaying historical ranges faithfully decodes every
-`("POOL", …)` emitter, which is precisely why the missing identity gate
-matters: an injected historical emitter would replay too.
+gated (2026-07-08) — a historical replay attributes only curated-registry
+emitters; a foreign `("POOL", …)` emitter in the replayed range is
+dropped by the gate and surfaced by the recognition audit.
 
 ## Storage
 
@@ -136,7 +142,7 @@ matters: an injected historical emitter would replay too.
 ## Aggregator treatment
 
 Class `Exchange` / `IncludeInVWAP=true` (`external.Registry`) — Comet
-swaps are genuine executed trades and contribute to VWAP. Because of the
-ungated attribution above, operators concerned about VWAP integrity
-should weigh the CS-026 exposure when deciding whether to keep Comet in
-the exchange class or scope it to the Blend backstop pool.
+swaps are genuine executed trades and contribute to VWAP. With the
+2026-07-08 identity gate, everything attributed to `comet` comes from
+the curated pool set (today: the Blend backstop pool), so the CS-026
+integrity caveat that previously applied here is closed.

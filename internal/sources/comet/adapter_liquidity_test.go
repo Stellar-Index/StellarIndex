@@ -15,7 +15,7 @@ func TestDecoder_Matches_AllFivePoolKinds(t *testing.T) {
 		TopicSymbolSwap, TopicSymbolJoinPool, TopicSymbolExitPool,
 		TopicSymbolDeposit, TopicSymbolWithdraw,
 	} {
-		ev := events.Event{Topic: []string{TopicSymbolPool, topic1}}
+		ev := events.Event{ContractID: MainnetBackstopPool, Topic: []string{TopicSymbolPool, topic1}}
 		if !d.Matches(ev) {
 			t.Errorf("Matches((POOL, %q)) = false, want true", topic1)
 		}

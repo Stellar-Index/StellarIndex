@@ -11,6 +11,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/dispatcher"
 	"github.com/StellarIndex/stellar-index/internal/sources/aquarius"
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
+	"github.com/StellarIndex/stellar-index/internal/sources/comet"
 	"github.com/StellarIndex/stellar-index/internal/sources/defindex"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
@@ -23,25 +24,44 @@ import (
 // factories), and a constructor that builds the source's decoder with
 // contractid (child-gate) options applied.
 type GatedMeta struct {
-	Factories   []string // canonical factory C-strkeys (gate trust roots)
-	CreationSym string   // topic_0_sym of the creation event (e.g. "deploy")
+	Factories   []string // canonical factory C-strkeys (gate trust roots); empty for curated-only sources
+	CreationSym string   // topic_0_sym of the creation event (e.g. "deploy"); empty for curated-only sources
 	Genesis     uint32   // earliest factory deploy ledger; lower bound for the walk
+	// CuratedSet is the in-code curated child set for sources with NO
+	// factory namespace (ADR-0040 §1 mechanism 3 — comet). When
+	// Factories is empty, seed-protocol-contracts upserts this set
+	// directly (provenance factory_id = "curated") instead of walking
+	// creation events that don't exist.
+	CuratedSet []string
 	// NewDecoder builds the source's decoder with the given contractid
 	// options (WithSeed / WithHook). Returned as a dispatcher.Decoder so
 	// the genesis-seed CLI can drive it generically.
 	NewDecoder func(opts ...contractid.Option) dispatcher.Decoder
 }
 
-// gatedSources is the registry of factory-anchored sources. Adding one is
+// gatedSources is the registry of contract-gated sources. Adding one is
 // four edits: an entry here, the decoder's Matches() gate, the NewDecoder
 // call in BuildDispatcher + BuildRegistry (forwarding gated[source]), and
 // the reconcile-catalogue factory/creationSym fields.
 //
 // Soroswap is NOT here — it keeps its richer soroswap_pairs registry (it
 // carries token identities, not just a contract set); see
-// SoroswapPersistenceOptions. Comet is the open case (shared Balancer-v1
-// WASM, no factory namespace — ADR-0035 "Open: Comet").
+// SoroswapPersistenceOptions.
 var gatedSources = map[string]GatedMeta{
+	comet.SourceName: {
+		// Curated-set gate (ADR-0040 §1 mechanism 3, CS-026 closed
+		// 2026-07-08): comet has NO factory namespace — every
+		// Balancer-v1 deployment shares the ("POOL",…) topic family —
+		// so there is no creation event to anchor on. The decoder's
+		// in-code seed (MainnetGatedSet: exactly one pool, Blend's
+		// backstop) is the trust root; this entry adds the
+		// protocol_contracts warm (the operator seam for admitting a
+		// future pool without a redeploy). The WASM-hash sweep is the
+		// registered upkeep loop for discovering byte-identical pools.
+		Genesis:    51_499_546,
+		CuratedSet: comet.MainnetGatedSet(),
+		NewDecoder: func(opts ...contractid.Option) dispatcher.Decoder { return comet.NewDecoder(opts...) },
+	},
 	phoenix.SourceName: {
 		// Curated-set gate (ADR-0040 §1 mechanism 2): the factory's
 		// creation events predate the lake, so the decoder's in-code

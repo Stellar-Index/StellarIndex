@@ -99,7 +99,7 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 		case phoenix.SourceName:
 			decoders = append(decoders, phoenix.NewDecoder(gated[phoenix.SourceName]...))
 		case comet.SourceName:
-			decoders = append(decoders, comet.NewDecoder())
+			decoders = append(decoders, comet.NewDecoder(gated[comet.SourceName]...))
 		case reflector.SourceDEX:
 			if oracle.Reflector.DEXContract == "" {
 				return nil, fmt.Errorf(

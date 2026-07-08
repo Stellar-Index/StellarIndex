@@ -104,10 +104,25 @@ func seedProtocolContracts(args []string) error {
 
 // seedOneGatedSource walks one source's factory creation events and
 // upserts each announced child. Returns the number of children seeded.
+//
+// Curated-only sources (no factory namespace — comet, ADR-0040 §1
+// mechanism 3) have no creation events to walk: their in-code curated
+// set is upserted directly with provenance factory_id = "curated".
 func seedOneGatedSource(ctx context.Context, store *timescale.Store, source string, hi uint32) (int, error) {
 	meta, ok := pipeline.GatedMetaFor(source)
 	if !ok {
 		return 0, fmt.Errorf("%q is not a factory-anchored gated source (one of: %s)", source, strings.Join(sortedGatedNames(), ", "))
+	}
+
+	if len(meta.Factories) == 0 {
+		seeded := 0
+		for _, id := range meta.CuratedSet {
+			if err := store.UpsertProtocolContract(ctx, source, id, "curated", meta.Genesis); err != nil {
+				return seeded, fmt.Errorf("%s: upsert curated contract %s: %w", source, id, err)
+			}
+			seeded++
+		}
+		return seeded, nil
 	}
 
 	// Build the source's decoder with a hook that upserts each newly

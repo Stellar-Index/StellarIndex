@@ -69,6 +69,25 @@ import (
 // package emits. Single source — Comet has no versioned variants.
 const SourceName = "comet"
 
+// MainnetBackstopPool is the single known Comet pool on mainnet —
+// Blend's BLND/USDC backstop. Comet-the-protocol is not run as a
+// standalone DEX on Stellar; it is Blend's backstop library, and the
+// wasm-audit census (docs/operations/wasm-audits/comet.md) found
+// exactly one deployed pool. WASM hash
+// 8abc28913035c07411ed5d134e6bfeab4723d97ddd4d1a22a0605d35c94d1a36.
+const MainnetBackstopPool = "CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM"
+
+// MainnetGatedSet is the curated Comet pool allowlist the decoder
+// seeds — the ADR-0040 gate trust root (curated-set mechanism; comet
+// has NO factory namespace, so there is no deploy event to anchor
+// on). A genuinely new Comet pool must be operator-admitted (a
+// protocol_contracts row via seed-protocol-contracts, or a new entry
+// here) before its events are attributed — fail-closed, surfaced as
+// an ADR-0033 recognition gap rather than silently attributed. The
+// WASM-hash sweep (ADR-0040 §1 mechanism 3) is the registered upkeep
+// loop for discovering byte-identical Balancer-v1 deployments.
+func MainnetGatedSet() []string { return []string{MainnetBackstopPool} }
+
 // cometTopicArity is the topic count on every Comet event:
 // [Symbol("POOL"), Symbol("<event_name>")]. Anything other than 2 is
 // a schema change we don't claim.
