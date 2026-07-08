@@ -1095,19 +1095,42 @@ threshold is mis-tuned.
 
 ### `stellarindex_supply_cross_check_divergence_stroops`
 
-Gauge, label `classic_key` (`CODE:ISSUER`).
+Gauge, labels `classic_key` (`CODE:ISSUER`) and `wrap_class`
+(`partial_wrap` | `full_wrap`).
 
-Absolute stroop difference between a classic asset's Algorithm 2
-total_supply (ledger-entry sum) and its SAC-wrapped Algorithm 3
-total_supply (SEP-41 event sum). Per ADR-0011 the two MUST agree
-within 1 stroop because both algorithms observe the same underlying
-state. Drives the
+Stroop divergence between a classic asset's Algorithm 2 total_supply
+(ledger-entry sum) and its SAC-wrapped Algorithm 3 total_supply
+(SEP-41 event sum). **2026-07-08 fix (BACKLOG #59):** the meaning of
+the value depends on `wrap_class`, not a single fixed equality —
+applying total-vs-total equality unconditionally produced 8 standing
+false positives on partially-wrapped classic assets (e.g. AQUA:
+Algorithm 2 ≈ 86.4B, Algorithm 3 ≈ 0 — a monitoring category error,
+not indexer corruption).
+
+- `wrap_class="partial_wrap"` (the default for every configured
+  `sac_wrappers` pair): value = `max(0, sac_total − classic_total)`.
+  Zero whenever `sac_total ≤ classic_total` — the expected, benign
+  state for a partially-wrapped asset (SACWrapped is one of
+  Algorithm 2's own non-negative addends, so it can never legitimately
+  exceed the classic total). Positive only when the SAC reports MORE
+  than the classic side could possibly back — impossible under
+  correct accounting, a genuine "escrow != minted" violation.
+- `wrap_class="full_wrap"` (operator-attested via
+  `[supply].fully_wrapped_sacs`; none configured as of 2026-07-08):
+  value = `|classic_total − sac_total|` — the ORIGINAL ADR-0011
+  equality compare, for a pair confirmed 100% SAC-represented.
+
+Drives the
 [`stellarindex_supply_cross_check_divergence`](../../operations/runbooks/supply-cross-check-divergence.md)
-alert when > 1.
+alert when > 1. The alert expression is unchanged (`> 1`, no
+`wrap_class` filter needed) — the false positives are fixed in what
+the value MEANS, not in the alert condition.
 
 ### `stellarindex_supply_cross_check_total`
 
-Counter, label `outcome` (`within` / `over`).
+Counter, labels `outcome` (`within` / `over` / `missing_snapshot` /
+`read_error`) and `wrap_class` (`partial_wrap` | `full_wrap` —
+2026-07-08, BACKLOG #59).
 
 Cross-check evaluations classified by whether the divergence stayed
 within tolerance. Drives the alert's rate-of-failure view and

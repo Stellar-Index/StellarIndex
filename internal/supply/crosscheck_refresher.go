@@ -41,6 +41,14 @@ var ErrNoSnapshot = errors.New("supply: no snapshot for asset_key")
 type CrossCheckPair struct {
 	ClassicKey string
 	SACKey     string
+
+	// WrapClass selects which invariant [CrossCheckForClass] checks
+	// for this pair. Zero value ("") normalizes to [WrapClassPartial]
+	// — the safe default — via [normalizeWrapClass], so existing
+	// callers that don't set this field get the corrected
+	// 2026-07-08 behaviour automatically rather than silently
+	// reverting to the pre-fix equality compare.
+	WrapClass WrapClass
 }
 
 // CrossCheckOutcomeKind is the per-pair outcome of one tick. Stable
@@ -96,16 +104,24 @@ type CrossCheckOutcome struct {
 // cmd/stellarindex-aggregator/main.go where the supply package
 // can stay free of the obs dependency.
 type CrossCheckEmitter interface {
-	// Divergence sets the per-asset gauge to the stroop divergence.
-	// Called only on Within / Over outcomes. Negative values are a
-	// caller bug ([CrossCheck] always returns a non-negative
-	// abs-difference).
-	Divergence(classicKey string, stroops float64)
+	// Divergence sets the per-asset gauge to the stroop divergence,
+	// labelled by the pair's WrapClass. Called only on Within / Over
+	// outcomes. Negative values are a caller bug ([CrossCheck] /
+	// [CrossCheckSubsetBound] always return a non-negative value).
+	//
+	// wrapClass is carried through as a metric label (2026-07-08,
+	// BACKLOG #59) so operators can see which invariant produced a
+	// given reading — purely observational: the alert threshold
+	// doesn't need to filter on it, because DivergenceStroops itself
+	// is already zero in the benign partial-wrap case (see
+	// [CrossCheckSubsetBound]).
+	Divergence(classicKey string, wrapClass WrapClass, stroops float64)
 
-	// Outcome increments the per-outcome counter. Called for every
-	// outcome (including Missing / ReadError) so operators see the
-	// "is the cross-checker even running" signal.
-	Outcome(kind CrossCheckOutcomeKind)
+	// Outcome increments the per-outcome counter, labelled by
+	// WrapClass. Called for every outcome (including Missing /
+	// ReadError) so operators see the "is the cross-checker even
+	// running" signal.
+	Outcome(kind CrossCheckOutcomeKind, wrapClass WrapClass)
 }
 
 // CrossCheckRefresher runs one cross-check cycle per [Tick] call.
@@ -174,15 +190,16 @@ func (r *CrossCheckRefresher) Tick(ctx context.Context) []CrossCheckOutcome {
 	}
 	out := make([]CrossCheckOutcome, 0, len(r.pairs))
 	for _, p := range r.pairs {
+		wrapClass := normalizeWrapClass(p.WrapClass)
 		outcome := r.tickOne(ctx, p)
-		r.emitter.Outcome(outcome.Kind)
+		r.emitter.Outcome(outcome.Kind, wrapClass)
 		// Only outcomes with a computed divergence emit the stroops gauge;
 		// Missing / ReadError have no divergence to report.
 		//exhaustive:ignore
 		switch outcome.Kind {
 		case CrossCheckOutcomeWithin, CrossCheckOutcomeOver:
 			stroops, _ := outcome.Result.DivergenceStroops.Float64()
-			r.emitter.Divergence(p.ClassicKey, stroops)
+			r.emitter.Divergence(p.ClassicKey, wrapClass, stroops)
 		}
 		out = append(out, outcome)
 	}
@@ -212,7 +229,7 @@ func (r *CrossCheckRefresher) tickOne(ctx context.Context, p CrossCheckPair) Cro
 			"sac_key", p.SACKey, "err", err)
 		return CrossCheckOutcome{Pair: p, Kind: CrossCheckOutcomeReadError, Err: err}
 	}
-	result, err := CrossCheck(classic, sac)
+	result, err := CrossCheckForClass(classic, sac, p.WrapClass)
 	if err != nil {
 		r.logger.Warn("cross-check: compare failed",
 			"classic_key", p.ClassicKey, "sac_key", p.SACKey, "err", err)
@@ -224,6 +241,7 @@ func (r *CrossCheckRefresher) tickOne(ctx context.Context, p CrossCheckPair) Cro
 	r.logger.Warn("cross-check: divergence over tolerance",
 		"classic_key", p.ClassicKey,
 		"sac_key", p.SACKey,
+		"wrap_class", string(result.WrapClass),
 		"divergence_stroops", result.DivergenceStroops.String())
 	return CrossCheckOutcome{Pair: p, Kind: CrossCheckOutcomeOver, Result: result}
 }

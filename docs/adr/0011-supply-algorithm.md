@@ -9,6 +9,33 @@ superseded_by: null
 
 # ADR-0011: Supply algorithm — total / circulating / max
 
+> **Amendment (2026-07-08, BACKLOG #59).** The "SAC-wrapped classics
+> — both algorithms must agree" §'s "Cross-check: alert when they
+> disagree by more than 1 stroop" is a true invariant ONLY for a
+> classic asset whose entire economic supply is represented through
+> its SAC (a genuinely SAC-issued token). It does NOT hold for the
+> common case — a classic asset that merely HAS a SAC wrapper but is
+> mostly held classically — where Algorithm 2's total and Algorithm
+> 3's total legitimately diverge by ~the whole non-wrapped supply
+> (e.g. AQUA: Algorithm 2 ≈ 86.4B, Algorithm 3 ≈ 0). Applying the
+> equality compare unconditionally produced 8 standing
+> `stellarindex_supply_cross_check_divergence` false positives — a
+> monitoring category error, not indexer corruption; served supply
+> was always correct. `internal/supply.WrapClass` now selects the
+> equality compare only for an operator-attested
+> `WrapClassFull` pair (`[supply].fully_wrapped_sacs`; none configured
+> as of 2026-07-08); every other pair defaults to `WrapClassPartial`,
+> which checks the true subset-bound invariant instead: a SAC's
+> `total_supply` can never exceed its classic asset's `total_supply`
+> (SACWrapped is one of Algorithm 2's own non-negative addends), so
+> only `sac_total > classic_total` fires. The real subset compare
+> (Algorithm 2's `SACWrapped` component vs Algorithm 3's total, which
+> per this ADR's own math IS a true equality) needs new plumbing not
+> yet built — see `internal/supply/crosscheck.go` and
+> `docs/operations/runbooks/supply-cross-check-divergence.md` for the
+> full account. The decision below is preserved as the original
+> record per the immutability rule.
+
 > **Reality note (2026-06-12, F-1354 / D2-03; resolved 2026-07-05,
 > launch-todo P4-2).** For ~3 weeks the SEP-1 `max_supply` precedence
 > step described below was dead code (`supply.Overlay` had zero

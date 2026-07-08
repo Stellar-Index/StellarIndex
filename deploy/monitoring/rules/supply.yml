@@ -3,16 +3,47 @@
 #
 # Cross-check fires when a classic asset's Algorithm 2 total_supply
 # disagrees with its SAC-wrapped Algorithm 3 total_supply by more
-# than 1 stroop. Per ADR-0011 the two MUST agree because both
-# algorithms observe the same underlying ledger entries; disagreement
-# beyond the float-rounding tolerance signals indexer corruption
-# upstream and demands investigation.
+# than 1 stroop. Both algorithms observe the same underlying ledger
+# entries; disagreement beyond the float-rounding tolerance signals
+# indexer corruption upstream and demands investigation.
+#
+# 2026-07-08 amendment (BACKLOG #59): the original ADR-0011
+# total-vs-total EQUALITY compare is only a true invariant for a
+# classic asset whose entire economic supply is SAC-represented. For
+# the common partially-wrapped case (e.g. AQUA: Alg-2 ≈ 86.4B,
+# Alg-3 ≈ 0) it produced 8 standing false positives — a monitoring
+# category error, not indexer corruption. The gauge is now
+# wrap_class-aware (internal/supply.WrapClass); see the alert's
+# comment below and docs/operations/runbooks/supply-cross-check-divergence.md.
 
 groups:
   - name: stellarindex.supply
     interval: 60s
     rules:
 
+      # 2026-07-08 decision (BACKLOG #59): this alert used to compare
+      # Algorithm 2's classic TOTAL supply against Algorithm 3's
+      # SAC-wrapped supply for EQUALITY (1-stroop tolerance) for every
+      # configured pair — a category error for a partially-wrapped
+      # classic asset (most of its supply legitimately lives OUTSIDE
+      # the SAC, e.g. AQUA: Alg-2 ≈ 86.4B, Alg-3 ≈ 0), which fired 8
+      # standing false positives. Served supply was never wrong; only
+      # the comparison was. The metric itself is now wrap_class-aware
+      # (internal/supply.WrapClass — see crosscheck.go):
+      #   - wrap_class="partial_wrap" (the default): the gauge is
+      #     max(0, sac_total − classic_total) — zero in the expected
+      #     benign state, positive only when the SAC reports MORE than
+      #     the classic total could possibly back (impossible under
+      #     correct accounting — a genuine "escrow != minted"
+      #     violation).
+      #   - wrap_class="full_wrap" (operator-attested via
+      #     `[supply].fully_wrapped_sacs`; none configured as of
+      #     2026-07-08): the gauge is the ORIGINAL |classic − sac|
+      #     equality compare.
+      # The expr below is UNCHANGED (`> 1`) and does not need to
+      # filter on wrap_class — the false positives are fixed upstream,
+      # in what the gauge value MEANS, not in the alert condition. A
+      # genuine violation still fires for either class.
       - alert: stellarindex_supply_cross_check_divergence
         expr: |
           stellarindex_supply_cross_check_divergence_stroops > 1
@@ -23,15 +54,20 @@ groups:
           component: supply
           runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/supply-cross-check-divergence.md
         annotations:
-          summary: "Classic vs SAC supply mismatch >1 stroop on {{ $labels.classic_key }} (P3)"
+          summary: "Classic vs SAC supply mismatch >1 stroop on {{ $labels.classic_key }} ({{ $labels.wrap_class }}, P3)"
           description: |
             The cross-check between Algorithm 2 (classic ledger-entry
             sum) and Algorithm 3 (SEP-41 event sum on the SAC contract)
             for {{ $labels.classic_key }} disagrees by
-            {{ $value }} stroops, exceeding the 1-stroop tolerance
-            documented in ADR-0011. Both algorithms observe the same
-            underlying state, so a sustained mismatch means one of
-            the indexers is mis-summing. The asset's
+            {{ $value }} stroops, exceeding the 1-stroop tolerance.
+            wrap_class={{ $labels.wrap_class }}: "partial_wrap" means
+            the SAC reported MORE supply than the classic total could
+            back (impossible under correct accounting); "full_wrap"
+            means the operator-attested fully-SAC-represented asset's
+            totals no longer match exactly. Either way this is a
+            genuine indexer mis-sum, not the expected partial-wrap
+            divergence — see the runbook's "Known false-positive
+            patterns" section before assuming corruption. The asset's
             circulating/total/max_supply on the API will be
             correspondingly wrong until reconciled.
             Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/supply-cross-check-divergence.md

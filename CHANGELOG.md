@@ -123,6 +123,23 @@ against.
   `stellarindex_nonstandard_decimals_cache_refresh_failures_total`. OpenAPI 1.4.0 → 1.5.0
   (documents the new 422 response on the four affected endpoints; wire shape unchanged — the
   existing `Problem` schema already covered it).
+- **`stellarindex_supply_cross_check_divergence` monitoring category error fixed (BACKLOG #59,
+  2026-07-08 decision)** — 8 standing false positives on partially-wrapped classic assets
+  (e.g. AQUA: Algorithm 2 ≈ 86.4B, Algorithm 3 ≈ 0). The alert compared Algorithm 2's classic
+  TOTAL supply against Algorithm 3's SAC-wrapped supply for EQUALITY, which is only a true
+  invariant for a genuinely 100%-SAC-represented asset. Served supply was never wrong; only
+  the comparison was. Now `internal/supply.WrapClass`-aware per pair: the default
+  `WrapClassPartial` checks the true subset bound instead (a SAC's total_supply can never
+  legitimately exceed its classic asset's total_supply — `sac_total > classic_total` still
+  pages as a genuine "escrow != minted" violation; `sac_total ≤ classic_total`, the normal
+  partially-wrapped state, does not). An operator can attest a pair is 100% SAC-represented
+  via the new `[supply].fully_wrapped_sacs` config (none configured) to keep the original
+  equality compare (`WrapClassFull`). Both cross-check metrics
+  (`stellarindex_supply_cross_check_divergence_stroops`,
+  `stellarindex_supply_cross_check_total`) gained a `wrap_class` label; the alert expression
+  is unchanged. The real subset compare (Algorithm 2's `SACWrapped` component vs Algorithm
+  3's total, which IS a true equality) needs new plumbing not yet built — documented as a
+  follow-up in `internal/supply/crosscheck.go` rather than approximated.
 - The `stellarindex_galexie_catchup_refused` page alert (built after the 2026-07-05 wedge)
   could never fire: its textfile probe wrote to Debian's `/var/lib/prometheus/node-exporter`
   instead of the node_exporter's configured `/var/lib/node_exporter/textfile_collector`, AND

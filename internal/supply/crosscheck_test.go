@@ -159,3 +159,188 @@ func TestCrossCheckTolerance_Value(t *testing.T) {
 			supply.CrossCheckTolerance)
 	}
 }
+
+// TestCrossCheck_ResultIsWrapClassFull — [CrossCheck] always tags its
+// result WrapClassFull, since it runs the strict equality invariant.
+func TestCrossCheck_ResultIsWrapClassFull(t *testing.T) {
+	got, err := supply.CrossCheck(
+		supplyWithTotal(usdcClassicKey, 100),
+		supplyWithTotal(usdcSACKey, 100),
+	)
+	if err != nil {
+		t.Fatalf("CrossCheck: %v", err)
+	}
+	if got.WrapClass != supply.WrapClassFull {
+		t.Errorf("WrapClass = %q, want %q", got.WrapClass, supply.WrapClassFull)
+	}
+}
+
+// ─── CrossCheckSubsetBound (2026-07-08 decision, BACKLOG #59) ─────────
+//
+// These tests are the direct regression coverage for the category-
+// error fix: `stellarindex_supply_cross_check_divergence` fired 8
+// false positives because Algorithm 2's classic TOTAL was compared
+// for equality against Algorithm 3's SAC-wrapped total, which is only
+// a true invariant for a fully-SAC-represented asset. The corrected
+// invariant is a subset bound: sac_total can never exceed
+// classic_total (SACWrapped is one of Algorithm 2's own non-negative
+// addends — see ClassicSupplyComponents), so only sac_total >
+// classic_total is a genuine violation; classic_total > sac_total
+// (the AQUA-shaped case) is the expected, unremarkable state for a
+// partially-wrapped asset.
+
+// TestCrossCheckSubsetBound_ClassicExceedsSacIsBenign — the AQUA
+// example from the crosscheck.go package doc: classic total ≈ 86.4B,
+// SAC total ≈ 0. Under the OLD equality compare this fired a false
+// positive; under the subset bound it must report zero divergence.
+func TestCrossCheckSubsetBound_ClassicExceedsSacIsBenign(t *testing.T) {
+	classic := supplyWithTotal(usdcClassicKey, 86_400_000_000_0000000)
+	sac := supplyWithTotal(usdcSACKey, 0)
+
+	got, err := supply.CrossCheckSubsetBound(classic, sac)
+	if err != nil {
+		t.Fatalf("CrossCheckSubsetBound: %v", err)
+	}
+	if got.DivergenceStroops.Sign() != 0 {
+		t.Errorf("DivergenceStroops = %s, want 0 (classic > sac is benign for a partially-wrapped asset)", got.DivergenceStroops)
+	}
+	if !got.WithinTolerance {
+		t.Errorf("WithinTolerance = false, want true — classic > sac must not alert")
+	}
+	if got.WrapClass != supply.WrapClassPartial {
+		t.Errorf("WrapClass = %q, want %q", got.WrapClass, supply.WrapClassPartial)
+	}
+}
+
+// TestCrossCheckSubsetBound_ExactMatchIsWithin — a fully-wrapped
+// asset's totals happening to match exactly is still a benign zero
+// divergence under the subset bound (it's a special case of ≤, not a
+// distinct code path).
+func TestCrossCheckSubsetBound_ExactMatchIsWithin(t *testing.T) {
+	got, err := supply.CrossCheckSubsetBound(
+		supplyWithTotal(usdcClassicKey, 1_000_000_000),
+		supplyWithTotal(usdcSACKey, 1_000_000_000),
+	)
+	if err != nil {
+		t.Fatalf("CrossCheckSubsetBound: %v", err)
+	}
+	if got.DivergenceStroops.Sign() != 0 || !got.WithinTolerance {
+		t.Errorf("exact match: got divergence=%s withinTolerance=%v, want 0/true",
+			got.DivergenceStroops, got.WithinTolerance)
+	}
+}
+
+// TestCrossCheckSubsetBound_OneStroopOvershootTolerated — sac
+// exceeding classic by exactly the documented 1-stroop tolerance must
+// not alert, matching CrossCheck's equality-side tolerance boundary.
+func TestCrossCheckSubsetBound_OneStroopOvershootTolerated(t *testing.T) {
+	got, err := supply.CrossCheckSubsetBound(
+		supplyWithTotal(usdcClassicKey, 1_000_000_000),
+		supplyWithTotal(usdcSACKey, 1_000_000_001),
+	)
+	if err != nil {
+		t.Fatalf("CrossCheckSubsetBound: %v", err)
+	}
+	if got.DivergenceStroops.Cmp(big.NewInt(1)) != 0 {
+		t.Errorf("DivergenceStroops = %s, want 1", got.DivergenceStroops)
+	}
+	if !got.WithinTolerance {
+		t.Errorf("1-stroop overshoot must be tolerated; got WithinTolerance=false")
+	}
+}
+
+// TestCrossCheckSubsetBound_OverMintFires — sac exceeding classic by
+// MORE than tolerance is impossible under correct accounting (the
+// wrapped amount cannot exceed the total it's wrapped from) and MUST
+// fire regardless of wrap fraction — this is the "genuine
+// escrow != minted violation" the 2026-07-08 decision requires to
+// keep working.
+func TestCrossCheckSubsetBound_OverMintFires(t *testing.T) {
+	got, err := supply.CrossCheckSubsetBound(
+		supplyWithTotal(usdcClassicKey, 1_000_000_000),
+		supplyWithTotal(usdcSACKey, 1_000_000_005),
+	)
+	if err != nil {
+		t.Fatalf("CrossCheckSubsetBound: %v", err)
+	}
+	if got.DivergenceStroops.Cmp(big.NewInt(5)) != 0 {
+		t.Errorf("DivergenceStroops = %s, want 5", got.DivergenceStroops)
+	}
+	if got.WithinTolerance {
+		t.Error("5-stroop over-mint must trigger alert")
+	}
+}
+
+// TestCrossCheckSubsetBound_RejectsNilTotalSupply — same defensive
+// contract as CrossCheck.
+func TestCrossCheckSubsetBound_RejectsNilTotalSupply(t *testing.T) {
+	_, err := supply.CrossCheckSubsetBound(
+		supply.Supply{AssetKey: usdcClassicKey},
+		supplyWithTotal(usdcSACKey, 100),
+	)
+	if !errors.Is(err, supply.ErrCrossCheckNilSupply) {
+		t.Errorf("err = %v, want ErrCrossCheckNilSupply", err)
+	}
+}
+
+// TestCrossCheckSubsetBound_DivergenceNeverNegative — even a large
+// classic-exceeds-sac gap must clamp to zero, never go negative
+// (a negative gauge reading would be nonsensical).
+func TestCrossCheckSubsetBound_DivergenceNeverNegative(t *testing.T) {
+	got, err := supply.CrossCheckSubsetBound(
+		supplyWithTotal(usdcClassicKey, 1_000_000_000_000),
+		supplyWithTotal(usdcSACKey, 1),
+	)
+	if err != nil {
+		t.Fatalf("CrossCheckSubsetBound: %v", err)
+	}
+	if got.DivergenceStroops.Sign() < 0 {
+		t.Errorf("DivergenceStroops = %s, must be non-negative", got.DivergenceStroops)
+	}
+	if got.DivergenceStroops.Sign() != 0 {
+		t.Errorf("DivergenceStroops = %s, want 0", got.DivergenceStroops)
+	}
+}
+
+// ─── CrossCheckForClass dispatch ───────────────────────────────────
+
+// TestCrossCheckForClass_Dispatch table-tests every WrapClass input
+// (including the zero value and an unrecognized string) against the
+// same (classic, sac) pair where classic > sac by 2 stroops — a value
+// that is a VIOLATION under WrapClassFull (equality) but BENIGN under
+// WrapClassPartial (subset bound). This is the crux of the fix: which
+// class a pair carries changes whether identical inputs alert.
+func TestCrossCheckForClass_Dispatch(t *testing.T) {
+	classic := supplyWithTotal(usdcClassicKey, 1_000_000_002)
+	sac := supplyWithTotal(usdcSACKey, 1_000_000_000)
+
+	cases := []struct {
+		name           string
+		class          supply.WrapClass
+		wantWithin     bool
+		wantWrapClass  supply.WrapClass
+		wantDivergence int64
+	}{
+		{"full: 2-stroop mismatch fires", supply.WrapClassFull, false, supply.WrapClassFull, 2},
+		{"partial: classic exceeds sac is benign", supply.WrapClassPartial, true, supply.WrapClassPartial, 0},
+		{"zero value normalizes to partial", "", true, supply.WrapClassPartial, 0},
+		{"unrecognized string normalizes to partial", supply.WrapClass("bogus"), true, supply.WrapClassPartial, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := supply.CrossCheckForClass(classic, sac, tc.class)
+			if err != nil {
+				t.Fatalf("CrossCheckForClass: %v", err)
+			}
+			if got.WithinTolerance != tc.wantWithin {
+				t.Errorf("WithinTolerance = %v, want %v", got.WithinTolerance, tc.wantWithin)
+			}
+			if got.WrapClass != tc.wantWrapClass {
+				t.Errorf("WrapClass = %q, want %q", got.WrapClass, tc.wantWrapClass)
+			}
+			if got.DivergenceStroops.Cmp(big.NewInt(tc.wantDivergence)) != 0 {
+				t.Errorf("DivergenceStroops = %s, want %d", got.DivergenceStroops, tc.wantDivergence)
+			}
+		})
+	}
+}

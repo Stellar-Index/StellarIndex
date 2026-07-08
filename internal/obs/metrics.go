@@ -1623,17 +1623,39 @@ var AggregatorDroppedWindowsTotal = prometheus.NewCounterVec(
 
 // ─── Supply-derivation metrics ────────────────────────────────────
 
-// SupplyCrossCheckDivergenceStroops — gauge of the absolute stroop
-// difference between a classic asset's Algorithm 2 supply and its
-// SAC-wrapped Algorithm 3 supply. Per ADR-0011 the two MUST agree
-// within 1 stroop; the alert in
-// deploy/monitoring/rules/supply.yml fires when this exceeds the
-// tolerance.
+// SupplyCrossCheckDivergenceStroops — gauge of the stroop divergence
+// between a classic asset's Algorithm 2 supply and its SAC-wrapped
+// Algorithm 3 supply. The alert in deploy/monitoring/rules/supply.yml
+// fires when this exceeds 1 stroop.
 //
 // Labelled by classic_key (CODE:ISSUER) so a per-asset dashboard +
-// runbook can identify the offending asset without log dive. Cardinality
-// bound by the curated asset set with deployed SAC contracts (low
-// dozens at launch, hundreds at maturity).
+// runbook can identify the offending asset without log dive, AND by
+// wrap_class (2026-07-08 decision, BACKLOG #59 — see
+// internal/supply.WrapClass) so operators can see which invariant
+// produced a given reading:
+//
+//   - wrap_class="full_wrap": the value is the ORIGINAL ADR-0011
+//     equality compare, |classic_total − sac_total|. Only used for a
+//     pair the operator has attested is genuinely 100% SAC-
+//     represented (`[supply].fully_wrapped_sacs`); none configured
+//     as of 2026-07-08.
+//   - wrap_class="partial_wrap" (the default): the value is
+//     max(0, sac_total − classic_total) — zero in the normal,
+//     expected state for a partially-wrapped classic asset (most of
+//     its supply lives outside the SAC), positive only when the SAC
+//     reports MORE than the classic total could possibly back, which
+//     is impossible under correct accounting and is therefore a
+//     genuine corruption signal.
+//
+// The alert threshold (`> 1`) is unchanged and does NOT need to
+// filter on wrap_class: the metric itself is already zero in the
+// benign partial-wrap case (fixing the 8 standing false positives
+// this label was introduced to explain), and still fires on a
+// genuine violation for either class.
+//
+// Cardinality bound by the curated asset set with deployed SAC
+// contracts (low dozens at launch, hundreds at maturity) × the
+// 2-value wrap_class set.
 //
 // Emitted by `cmd/stellarindex-aggregator/main.go::buildCrossCheckRefresher`
 // once per `[supply].aggregator_refresh_cadence` tick when both the
@@ -1644,15 +1666,16 @@ var AggregatorDroppedWindowsTotal = prometheus.NewCounterVec(
 var SupplyCrossCheckDivergenceStroops = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_supply_cross_check_divergence_stroops",
-		Help: "Absolute stroop difference between classic and SAC-wrapped supply for the same asset; alert when > 1 (ADR-0011).",
+		Help: "Stroop divergence between classic and SAC-wrapped supply for the same asset, labelled by wrap_class (full_wrap: |classic-sac| equality; partial_wrap: max(0, sac-classic) subset bound). Alert when > 1.",
 	},
-	[]string{"classic_key"},
+	[]string{"classic_key", "wrap_class"},
 )
 
 // SupplyCrossCheckTotal — counter of cross-check evaluations per
-// outcome (within | over | missing_snapshot | read_error). Drives the
-// alert's rate-of-failure view and gives operators a "is the
-// cross-checker even running" check orthogonal to the gauge.
+// outcome (within | over | missing_snapshot | read_error) and
+// wrap_class (full_wrap | partial_wrap — 2026-07-08, BACKLOG #59).
+// Drives the alert's rate-of-failure view and gives operators a "is
+// the cross-checker even running" check orthogonal to the gauge.
 //
 // `missing_snapshot` is emitted while either side of the pair has no
 // snapshot in `asset_supply_history` yet — the bootstrap state.
@@ -1662,9 +1685,9 @@ var SupplyCrossCheckDivergenceStroops = prometheus.NewGaugeVec(
 var SupplyCrossCheckTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_supply_cross_check_total",
-		Help: "Cross-check evaluations, labelled by outcome (within|over|missing_snapshot|read_error).",
+		Help: "Cross-check evaluations, labelled by outcome (within|over|missing_snapshot|read_error) and wrap_class (full_wrap|partial_wrap).",
 	},
-	[]string{"outcome"},
+	[]string{"outcome", "wrap_class"},
 )
 
 // ─── Supply-divergence cross-check metrics ────────────────────────────

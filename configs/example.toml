@@ -476,6 +476,18 @@ enabled = false
 # [supply.sac_wrappers]
 # "C…SAC-CONTRACT" = "USDC:GA…"
 #
+# fully_wrapped_sacs (BACKLOG #59, 2026-07-08 decision). Cross-check
+# pairs default to a subset-bound compare (supply.WrapClassPartial):
+# the SAC's total_supply can never legitimately exceed the classic
+# asset's total_supply, but the reverse (classic > SAC) is EXPECTED
+# for a partially-wrapped asset and must not page. List a SAC id here
+# ONLY if you've confirmed its classic issuer never mints/holds supply
+# outside the SAC — that flips it to the strict ADR-0011 total-vs-total
+# equality compare (supply.WrapClassFull). Empty by default; none
+# known as of 2026-07-08. Every entry MUST also be a key of
+# [supply.sac_wrappers] above (config-load rejects otherwise).
+# fully_wrapped_sacs = []
+#
 # strict_freshness_required (F-1236, codex audit-2026-05-13).
 # Default false — preserves the legacy permissive interpretation
 # of `MinComponentLedger == 0` ("no freshness signal — let it

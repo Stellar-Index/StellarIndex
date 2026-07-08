@@ -1,6 +1,6 @@
 ---
 title: Supply pipeline — three-algorithm derivation, per-asset refresh
-last_verified: 2026-07-06
+last_verified: 2026-07-08
 status: binding
 ---
 
@@ -210,10 +210,44 @@ flipping to the other to avoid redundant work.
 A SAC-wrapped classic asset's supply is observable two ways: as a
 classic credit (Algorithm 2 — sums trustline + claimable + LP-reserve
 + SAC-wrapped contract balances) and as a SEP-41 token (Algorithm 3 —
-sums mint − burn − clawback events on the SAC contract). Per ADR-0011
-the two MUST agree within 1 stroop because both observe the same
-underlying ledger state through different lenses. Disagreement beyond
-the float-rounding tolerance signals indexer corruption upstream.
+sums mint − burn − clawback events on the SAC contract). Both observe
+the same underlying ledger state through different lenses, but they
+are NOT the same quantity for a partially-wrapped classic asset —
+Algorithm 2's total includes classic-held supply that never touched
+the SAC at all (e.g. AQUA: Algorithm 2 ≈ 86.4B, Algorithm 3 ≈ 0).
+
+**2026-07-08 fix (BACKLOG #59):** applying ADR-0011's original
+"agree within 1 stroop" equality compare unconditionally produced 8
+standing false positives on exactly this shape of asset — a
+monitoring category error, not indexer corruption (served supply was
+always correct). The compare is now `internal/supply.WrapClass`-aware
+per pair:
+
+- **`WrapClassPartial`** (the default): checks a subset bound instead
+  of equality — a SAC's `total_supply` (the wrapped amount) can never
+  legitimately exceed its classic asset's `total_supply`, because
+  `SACWrapped` is one of Algorithm 2's own non-negative addends
+  (`total = Trustline + Claimable + LPReserve + SACWrapped`).
+  `sac_total > classic_total` is impossible under correct accounting
+  and fires; `sac_total ≤ classic_total` (the normal partially-wrapped
+  state) does not.
+- **`WrapClassFull`** (operator-attested via
+  `[supply].fully_wrapped_sacs`; none configured as of 2026-07-08):
+  keeps the ORIGINAL ADR-0011 equality compare, for a pair the
+  operator has confirmed is 100% SAC-represented.
+
+The REAL subset compare — Algorithm 2's `SACWrapped` component
+(`ClassicSupplyComponents.SACWrapped`) vs Algorithm 3's `total_supply`,
+which per ADR-0011/0022's own math IS a true equality (both measure
+the same wrapped amount via independent data paths) — is not available
+at the cross-check compare site today: `ClassicComputer.Compute` folds
+`SACWrapped` into the classic `TotalSupply` before returning a
+`Supply`, and only that folded total reaches `asset_supply_history`.
+Wiring the real subset compare is a follow-up (BACKLOG #59), tracked
+as needing either a persisted `sac_wrapped_stroops` column/`Supply`
+field, or the refresher querying
+`ClassicSupplyStore.SumSACBalancesAtOrBefore` directly instead of the
+persisted snapshot.
 
 The aggregator's `supply.CrossCheckRefresher`
 (`internal/supply/crosscheck_refresher.go`, wired in
@@ -225,17 +259,26 @@ refreshers above. Pairs are derived at boot from the ∩ of:
 - `[supply].watched_classic_assets` (Algorithm 2 watched-set)
 - `[supply].watched_sep41_contracts` (Algorithm 3 watched-set)
 
+...with each pair's `WrapClass` set to `WrapClassFull` when its SAC
+contract id is also listed in `[supply].fully_wrapped_sacs`, else the
+safe default `WrapClassPartial`.
+
 Per tick, for each pair the refresher reads the latest snapshot for
 both the classic and the SAC sides via `Store.LatestSupply`, runs
-`supply.CrossCheck`, and emits:
+`supply.CrossCheckForClass` (dispatches to `supply.CrossCheck` for
+`WrapClassFull` or `supply.CrossCheckSubsetBound` for
+`WrapClassPartial`), and emits:
 
-- `stellarindex_supply_cross_check_divergence_stroops{classic_key}` —
-  gauge holding the absolute stroop divergence on within/over outcomes.
-- `stellarindex_supply_cross_check_total{outcome}` — counter labelled
-  by `within | over | missing_snapshot | read_error`.
+- `stellarindex_supply_cross_check_divergence_stroops{classic_key,wrap_class}` —
+  gauge holding the stroop divergence on within/over outcomes (meaning
+  depends on `wrap_class` — see above).
+- `stellarindex_supply_cross_check_total{outcome,wrap_class}` —
+  counter labelled by `within | over | missing_snapshot | read_error`.
 
 The supply.yml alert (`stellarindex_supply_cross_check_divergence`)
-fires when the gauge stays > 1 for ≥ 5 min. Runbook:
+fires when the gauge stays > 1 for ≥ 5 min — unchanged expression;
+the false positives are fixed in what the gauge value MEANS, not in
+the alert condition. Runbook:
 [`supply-cross-check-divergence`](../operations/runbooks/supply-cross-check-divergence.md).
 
 Empty pair-set is a no-op — operators that haven't declared any
@@ -349,11 +392,14 @@ on-chain-faithful data — but the exact event enumeration is
 capture. `genesis_baseline_ledger` + `genesis_seeded_at` record the
 boundary and capture time so a re-seed is auditable.
 
-The cross-check refresher emits its own per-outcome counter:
+The cross-check refresher emits its own per-outcome counter, also
+labelled by `wrap_class` (`partial_wrap` | `full_wrap` — 2026-07-08,
+BACKLOG #59; see "Cross-check between Algorithm 2 and Algorithm 3"
+above for what each class checks):
 
 | Outcome | Means | Operator action |
 |---------|-------|-----------------|
-| `within` | Both snapshots loaded; divergence ≤ 1 stroop | none — steady state |
+| `within` | Both snapshots loaded; divergence ≤ 1 stroop (`partial_wrap`: `sac_total ≤ classic_total + 1`; `full_wrap`: `\|classic_total − sac_total\| ≤ 1`) | none — steady state |
 | `over` | Both snapshots loaded; divergence > 1 stroop | follow `supply-cross-check-divergence` runbook |
 | `missing_snapshot` | One/both sides have no row in `asset_supply_history` yet | bootstrap window — no action unless sustained past first refresh of each side |
 | `read_error` | Transient storage read failure | check `pg-conns-saturated` / `timescale-primary-down` runbooks |

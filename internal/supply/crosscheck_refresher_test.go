@@ -38,24 +38,30 @@ func (f *fakeSnapshotReader) LatestSupply(_ context.Context, k string) (supply.S
 type captureEmitter struct {
 	mu          sync.Mutex
 	divergences []divergenceCall
-	outcomes    []supply.CrossCheckOutcomeKind
+	outcomes    []outcomeCall
 }
 
 type divergenceCall struct {
 	ClassicKey string
+	WrapClass  supply.WrapClass
 	Stroops    float64
 }
 
-func (c *captureEmitter) Divergence(k string, s float64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.divergences = append(c.divergences, divergenceCall{ClassicKey: k, Stroops: s})
+type outcomeCall struct {
+	Kind      supply.CrossCheckOutcomeKind
+	WrapClass supply.WrapClass
 }
 
-func (c *captureEmitter) Outcome(k supply.CrossCheckOutcomeKind) {
+func (c *captureEmitter) Divergence(k string, wrapClass supply.WrapClass, s float64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.outcomes = append(c.outcomes, k)
+	c.divergences = append(c.divergences, divergenceCall{ClassicKey: k, WrapClass: wrapClass, Stroops: s})
+}
+
+func (c *captureEmitter) Outcome(k supply.CrossCheckOutcomeKind, wrapClass supply.WrapClass) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.outcomes = append(c.outcomes, outcomeCall{Kind: k, WrapClass: wrapClass})
 }
 
 func newSilentLogger() *slog.Logger {
@@ -107,7 +113,10 @@ func TestCrossCheckRefresher_RejectsBadInput(t *testing.T) {
 }
 
 // TestCrossCheckRefresher_WithinTolerance — equal totals → "within"
-// outcome + gauge=0.
+// outcome + gauge=0. Pair's WrapClass is left unset (defaults to
+// [supply.WrapClassPartial]); an exact match is Within under either
+// class, so this doesn't exercise the class-dependent branch — see
+// the WrapClass-specific tests below for that.
 func TestCrossCheckRefresher_WithinTolerance(t *testing.T) {
 	t.Parallel()
 	classic := supply.Supply{
@@ -134,33 +143,65 @@ func TestCrossCheckRefresher_WithinTolerance(t *testing.T) {
 	if len(got) != 1 || got[0].Kind != supply.CrossCheckOutcomeWithin {
 		t.Fatalf("Tick: got %#v, want one Within", got)
 	}
-	if len(emitter.outcomes) != 1 || emitter.outcomes[0] != supply.CrossCheckOutcomeWithin {
+	if len(emitter.outcomes) != 1 || emitter.outcomes[0].Kind != supply.CrossCheckOutcomeWithin {
 		t.Fatalf("outcomes: %v", emitter.outcomes)
+	}
+	if emitter.outcomes[0].WrapClass != supply.WrapClassPartial {
+		t.Fatalf("outcome wrap_class = %q, want %q", emitter.outcomes[0].WrapClass, supply.WrapClassPartial)
 	}
 	if len(emitter.divergences) != 1 || emitter.divergences[0].Stroops != 0 {
 		t.Fatalf("divergence: %v", emitter.divergences)
 	}
 }
 
-// TestCrossCheckRefresher_OverTolerance — 2-stroop divergence → "over"
-// outcome and the gauge gets the absolute value.
-func TestCrossCheckRefresher_OverTolerance(t *testing.T) {
+// TestCrossCheckRefresher_PartialWrapClassicExceedsSacIsBenign is the
+// direct regression test for the 2026-07-08 fix (BACKLOG #59): a pair
+// with the default (partial-wrap) class where classic total vastly
+// exceeds SAC total — the AQUA shape (Alg-2 ≈ 86.4B, Alg-3 ≈ 0) that
+// produced 8 standing false positives under the old equality compare
+// — must land Within with zero divergence, NOT Over.
+func TestCrossCheckRefresher_PartialWrapClassicExceedsSacIsBenign(t *testing.T) {
 	t.Parallel()
-	classic := supply.Supply{
-		AssetKey:    "USDC:G...",
-		TotalSupply: big.NewInt(100_000_000_002),
-	}
-	sac := supply.Supply{
-		AssetKey:    "CCONTRACT",
-		TotalSupply: big.NewInt(100_000_000_000),
-	}
 	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
-		"USDC:G...": classic,
-		"CCONTRACT": sac,
+		"AQUA:G...": {AssetKey: "AQUA:G...", TotalSupply: big.NewInt(86_400_000_000_0000000)},
+		"CAQUASAC":  {AssetKey: "CAQUASAC", TotalSupply: big.NewInt(0)},
 	}}
 	emitter := &captureEmitter{}
 	r, _ := supply.NewCrossCheckRefresher(
-		[]supply.CrossCheckPair{{ClassicKey: "USDC:G...", SACKey: "CCONTRACT"}},
+		// WrapClass intentionally left unset — this is the pre-fix
+		// operator config shape; the fix is safe by default.
+		[]supply.CrossCheckPair{{ClassicKey: "AQUA:G...", SACKey: "CAQUASAC"}},
+		reader, emitter, newSilentLogger(),
+	)
+	got := r.Tick(context.Background())
+	if len(got) != 1 || got[0].Kind != supply.CrossCheckOutcomeWithin {
+		t.Fatalf("Tick: got %#v, want one Within (the AQUA false positive must be fixed)", got)
+	}
+	if got[0].Result.DivergenceStroops.Sign() != 0 {
+		t.Fatalf("divergence stroops: got %s, want 0", got[0].Result.DivergenceStroops)
+	}
+	if len(emitter.divergences) != 1 || emitter.divergences[0].Stroops != 0 {
+		t.Fatalf("emitted divergence: got %v, want 0", emitter.divergences)
+	}
+	if emitter.divergences[0].WrapClass != supply.WrapClassPartial {
+		t.Fatalf("emitted wrap_class: got %q, want %q", emitter.divergences[0].WrapClass, supply.WrapClassPartial)
+	}
+}
+
+// TestCrossCheckRefresher_PartialWrapOverMintFires — the genuine
+// violation direction for a partial-wrap pair: SAC total exceeding
+// classic total is impossible under correct accounting and MUST still
+// fire an Over outcome (2026-07-08 decision: "a genuine
+// escrow != minted violation must still fire").
+func TestCrossCheckRefresher_PartialWrapOverMintFires(t *testing.T) {
+	t.Parallel()
+	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
+		"USDC:G...": {AssetKey: "USDC:G...", TotalSupply: big.NewInt(100_000_000_000)},
+		"CCONTRACT": {AssetKey: "CCONTRACT", TotalSupply: big.NewInt(100_000_000_002)},
+	}}
+	emitter := &captureEmitter{}
+	r, _ := supply.NewCrossCheckRefresher(
+		[]supply.CrossCheckPair{{ClassicKey: "USDC:G...", SACKey: "CCONTRACT", WrapClass: supply.WrapClassPartial}},
 		reader, emitter, newSilentLogger(),
 	)
 	got := r.Tick(context.Background())
@@ -172,6 +213,37 @@ func TestCrossCheckRefresher_OverTolerance(t *testing.T) {
 	}
 	if emitter.divergences[0].Stroops != 2 {
 		t.Fatalf("emitted divergence: got %v, want 2", emitter.divergences[0].Stroops)
+	}
+	if emitter.outcomes[0].WrapClass != supply.WrapClassPartial {
+		t.Fatalf("outcome wrap_class: got %q, want %q", emitter.outcomes[0].WrapClass, supply.WrapClassPartial)
+	}
+}
+
+// TestCrossCheckRefresher_FullWrapStillAlertsOnMismatch — an operator-
+// attested [supply.WrapClassFull] pair keeps the ORIGINAL ADR-0011
+// equality semantics: classic exceeding sac by more than tolerance
+// still fires, exactly as the pre-fix behaviour did. This is the "so
+// fully-wrapped tokens still alert" half of the 2026-07-08 decision.
+func TestCrossCheckRefresher_FullWrapStillAlertsOnMismatch(t *testing.T) {
+	t.Parallel()
+	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
+		"USDC:G...": {AssetKey: "USDC:G...", TotalSupply: big.NewInt(100_000_000_002)},
+		"CCONTRACT": {AssetKey: "CCONTRACT", TotalSupply: big.NewInt(100_000_000_000)},
+	}}
+	emitter := &captureEmitter{}
+	r, _ := supply.NewCrossCheckRefresher(
+		[]supply.CrossCheckPair{{ClassicKey: "USDC:G...", SACKey: "CCONTRACT", WrapClass: supply.WrapClassFull}},
+		reader, emitter, newSilentLogger(),
+	)
+	got := r.Tick(context.Background())
+	if len(got) != 1 || got[0].Kind != supply.CrossCheckOutcomeOver {
+		t.Fatalf("Tick: got %#v, want one Over", got)
+	}
+	if got[0].Result.DivergenceStroops.Cmp(big.NewInt(2)) != 0 {
+		t.Fatalf("divergence stroops: got %s, want 2", got[0].Result.DivergenceStroops)
+	}
+	if emitter.outcomes[0].WrapClass != supply.WrapClassFull {
+		t.Fatalf("outcome wrap_class: got %q, want %q", emitter.outcomes[0].WrapClass, supply.WrapClassFull)
 	}
 }
 

@@ -1450,6 +1450,12 @@ func buildTriangulations(cfg config.AggregateConfig) ([]orchestrator.Triangulati
 //   - For every entry in `sac_wrappers` whose ClassicKey appears in
 //     the watched-classic set AND whose ContractID appears in the
 //     watched-SEP-41 set, derive one [supply.CrossCheckPair].
+//   - The pair's WrapClass is [supply.WrapClassFull] when its SAC
+//     contract id appears in `fully_wrapped_sacs`, else the safe
+//     default [supply.WrapClassPartial] (2026-07-08 decision,
+//     BACKLOG #59 — see [supply.WrapClass]'s doc for the category
+//     error this fixes: total-vs-total equality is a false invariant
+//     for a partially-wrapped classic asset).
 //   - Wire the refresher to read snapshots via timescale's
 //     LatestSupply and emit gauges/counters via obs.
 //
@@ -1477,6 +1483,10 @@ func buildCrossCheckRefresher(cfg config.Config, store *timescale.Store, logger 
 	for _, c := range cfg.Supply.WatchedSEP41Contracts {
 		watchedSEP41[c] = struct{}{}
 	}
+	fullyWrapped := make(map[string]struct{}, len(cfg.Supply.FullyWrappedSACs))
+	for _, sacID := range cfg.Supply.FullyWrappedSACs {
+		fullyWrapped[sacID] = struct{}{}
+	}
 
 	pairs := make([]supply.CrossCheckPair, 0, len(cfg.Supply.SACWrappers))
 	for sacID, classicKey := range cfg.Supply.SACWrappers {
@@ -1486,13 +1496,17 @@ func buildCrossCheckRefresher(cfg config.Config, store *timescale.Store, logger 
 		if _, ok := watchedSEP41[sacID]; !ok {
 			continue
 		}
-		pairs = append(pairs, supply.CrossCheckPair{ClassicKey: classicKey, SACKey: sacID})
+		wrapClass := supply.WrapClassPartial
+		if _, ok := fullyWrapped[sacID]; ok {
+			wrapClass = supply.WrapClassFull
+		}
+		pairs = append(pairs, supply.CrossCheckPair{ClassicKey: classicKey, SACKey: sacID, WrapClass: wrapClass})
 	}
 	if len(pairs) == 0 {
 		return nil, nil
 	}
 
-	logger.Info("cross-check pairs registered", "count", len(pairs))
+	logger.Info("cross-check pairs registered", "count", len(pairs), "fully_wrapped", len(fullyWrapped))
 	return supply.NewCrossCheckRefresher(
 		pairs,
 		supplyAggregatorSnapshotReader{s: store},
@@ -1541,12 +1555,12 @@ func (a supplyAggregatorSnapshotReader) LatestSupply(ctx context.Context, assetK
 // the supply package stays Prometheus-agnostic and unit-testable.
 type obsCrossCheckEmitter struct{}
 
-func (obsCrossCheckEmitter) Divergence(classicKey string, stroops float64) {
-	obs.SupplyCrossCheckDivergenceStroops.WithLabelValues(classicKey).Set(stroops)
+func (obsCrossCheckEmitter) Divergence(classicKey string, wrapClass supply.WrapClass, stroops float64) {
+	obs.SupplyCrossCheckDivergenceStroops.WithLabelValues(classicKey, string(wrapClass)).Set(stroops)
 }
 
-func (obsCrossCheckEmitter) Outcome(kind supply.CrossCheckOutcomeKind) {
-	obs.SupplyCrossCheckTotal.WithLabelValues(string(kind)).Inc()
+func (obsCrossCheckEmitter) Outcome(kind supply.CrossCheckOutcomeKind, wrapClass supply.WrapClass) {
+	obs.SupplyCrossCheckTotal.WithLabelValues(string(kind), string(wrapClass)).Inc()
 }
 
 // ─── Supply-divergence cross-check wiring ────────────────────────────
