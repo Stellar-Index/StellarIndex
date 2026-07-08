@@ -16,6 +16,11 @@ against.
 ## [Unreleased]
 
 ### Changed
+- ADRs 0040 (contract gating), 0041 (ingest durability, with a non-lake CEX/FX
+  backpressure caveat), 0042 (v1 wire shape — all four sign-off boxes accepted) and
+  0043 (backup/restore) moved Proposed → **Accepted** (@ash sign-off 2026-07-08).
+  Unblocks Unit D (#23), Coin→Asset rename (#47), the v1.0 wire freeze (#27) and the
+  ansible backup role.
 - Projector `BatchLimit` tightened 10 000 → 1 000 ledgers per source per cycle so dense
   protocol ranges (notably Aquarius reserve updates) finish inside `PerSourceTimeout`;
   stale comment (it caps a ledger window, not a row count) corrected.
