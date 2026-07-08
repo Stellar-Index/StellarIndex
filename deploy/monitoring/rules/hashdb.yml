@@ -1,0 +1,83 @@
+---
+# ADR-0016 hashdb drift detector (internal/hashdb). Off by default
+# ([hashdb].enabled=false); once an operator opts a region in, the
+# indexer appends sha256(LCM) per ledger on its live ingest loop and
+# periodically re-reads a trailing window from the same bucket to
+# compare. Metrics are declared in internal/obs/metrics.go and only
+# emit non-zero-cardinality series once a region has hashdb enabled —
+# both alerts below are inert (no series, no fire) on a region that
+# hasn't opted in.
+#
+# Alert family:
+#
+#   - `stellarindex_hashdb_drift_detected` — the alert this detector
+#     exists to produce. `stellarindex_hashdb_drift_total` is a
+#     monotonic counter of drifted ledgers found across every verify
+#     sweep since the indexer process started; any nonzero value
+#     means upstream history was rewritten (a previously-fetched
+#     ledger's bytes changed under us) or the copy we're reading now
+#     is locally corrupted. Ticket severity, not page: this is a
+#     brand-new, first-production-exposure detector (2026-07-08
+#     sign-off) and a standing data-integrity concern rather than a
+#     customer-facing outage — but it needs prompt, deliberate
+#     investigation, not a 2am wake-up on an unproven signal.
+#
+#   - `stellarindex_hashdb_verify_failing` — "is the detector alive"
+#     companion, same shape as signup-reaper's failing alert: more
+#     error-outcome sweeps than ok-outcome sweeps over a multi-sweep
+#     window means the periodic verifier itself is broken (bucket
+#     unreachable, hashdb file I/O error), which is a DIFFERENT
+#     failure mode than "found drift" — the detector going blind
+#     rather than the detector finding something.
+
+groups:
+  - name: stellarindex.hashdb
+    interval: 60s
+    rules:
+
+      - alert: stellarindex_hashdb_drift_detected
+        expr: stellarindex_hashdb_drift_total > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: hashdb
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/hashdb-drift-detected.md
+        annotations:
+          summary: "hashdb drift detected — {{ $value }} drifted ledger(s) since indexer start"
+          description: |
+            The periodic hashdb verify sweep re-read a trailing window of
+            ledgers from the galexie bucket and found at least one whose
+            freshly-computed sha256(LCM) does NOT match the value recorded
+            when the indexer first observed it. This means either upstream
+            retroactively rewrote a previously-fetched ledger's bytes, or
+            our local copy of that ledger is corrupted — the founding case
+            was ledger 63332650 (2026-07-08). A chain-link check alone
+            can't catch this: rewritten bytes can still be internally
+            consistent. Check the indexer's log for the "hashdb DRIFT
+            DETECTED" line (names the drifted sequences), then the runbook.
+
+      - alert: stellarindex_hashdb_verify_failing
+        expr: |
+          sum(rate(stellarindex_hashdb_verify_runs_total{outcome="error"}[6h]))
+            >
+          sum(rate(stellarindex_hashdb_verify_runs_total{outcome=~"ok|drift"}[6h]))
+          and
+          sum(rate(stellarindex_hashdb_verify_runs_total{outcome=~"error|ok|drift"}[6h])) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: hashdb
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/hashdb-drift-detected.md
+        annotations:
+          summary: "hashdb periodic verify sweep failing more often than it completes (P3)"
+          description: |
+            More error-outcome sweeps than clean/drift-outcome sweeps over
+            the last 6h for 30+ min sustained. The indexer's periodic hashdb
+            verifier can't complete its window re-read (bucket unreachable,
+            hashdb file I/O error) — the detector has gone blind rather
+            than found anything. Not customer-facing on its own, but it
+            means drift (if any is happening) is going unnoticed. Check the
+            indexer's "hashdb verify sweep failed" WARN log lines, then the
+            runbook.

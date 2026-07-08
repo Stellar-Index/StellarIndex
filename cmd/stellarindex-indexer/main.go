@@ -27,6 +27,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -38,6 +39,7 @@ import (
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/StellarIndex/stellar-index/internal/archivecompleteness"
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/canonical/discovery"
 	"github.com/StellarIndex/stellar-index/internal/config"
@@ -45,6 +47,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/currency"
 	"github.com/StellarIndex/stellar-index/internal/dispatcher"
 	"github.com/StellarIndex/stellar-index/internal/dispatcher/statsflush"
+	"github.com/StellarIndex/stellar-index/internal/hashdb"
 	"github.com/StellarIndex/stellar-index/internal/ledgerstream"
 	"github.com/StellarIndex/stellar-index/internal/obs"
 	"github.com/StellarIndex/stellar-index/internal/pipeline"
@@ -554,6 +557,58 @@ func run(cfgPath string, dryRun bool) error {
 	// degrades to a plain live-only Stream (the historical default).
 	archiveCfg := pipeline.LedgerstreamConfig(cfg, cfg.Storage.S3BucketArchive)
 	liveCfg := pipeline.LedgerstreamConfig(cfg, cfg.Storage.S3BucketLive)
+
+	// ─── HashDB (ADR-0016 drift detector) ───────────────────────
+	// Off by default — opt-in first deploy, 2026-07-08 sign-off. Two
+	// independent *hashdb.DB handles on the SAME file: hashdbAppendDB
+	// is written synchronously from the live LCM read loop below;
+	// hashdbVerifyDB is read from the periodic sweep goroutine.
+	// hashdb.DB is documented "not safe for concurrent use" (its
+	// *os.File isn't guarded by a mutex) — two separate handles on
+	// the same path sidesteps that entirely rather than leaning on
+	// WriteAt/ReadAt's underlying pread/pwrite positional safety,
+	// which the package doesn't promise as part of its contract.
+	var (
+		hashdbAppendDB     *hashdb.DB
+		hashdbLastAppended atomic.Uint32
+	)
+	if cfg.HashDB.Enabled {
+		hashdbAppendDB, err = openOrCreateHashDB(cfg.HashDB.Path, from)
+		if err != nil {
+			return fmt.Errorf("hashdb: open append handle: %w", err)
+		}
+		defer func() {
+			if cerr := hashdbAppendDB.Close(); cerr != nil {
+				logger.Warn("hashdb append handle close", "err", cerr)
+			}
+		}()
+
+		hashdbVerifyDB, verr := hashdb.Open(cfg.HashDB.Path)
+		if verr != nil {
+			return fmt.Errorf("hashdb: open verify handle: %w", verr)
+		}
+		defer func() {
+			if cerr := hashdbVerifyDB.Close(); cerr != nil {
+				logger.Warn("hashdb verify handle close", "err", cerr)
+			}
+		}()
+
+		hashdbVerifyStop, hashdbVerifyDone := startHashDBVerifier(
+			rootCtx, cfg.HashDB, hashdbVerifyDB, liveCfg,
+			&hashdbLastAppended, logger.With("component", "hashdb-verify"),
+		)
+		defer func() {
+			hashdbVerifyStop()
+			<-hashdbVerifyDone
+		}()
+
+		logger.Info("hashdb drift detector enabled",
+			"path", cfg.HashDB.Path,
+			"verify_interval_minutes", cfg.HashDB.VerifyIntervalMinutes,
+			"verify_window_ledgers", cfg.HashDB.VerifyWindowLedgers,
+		)
+	}
+
 	streamErr := make(chan error, 1)
 	go func() {
 		streamErr <- ledgerstream.StreamArchiveThenLive(
@@ -561,6 +616,13 @@ func run(cfgPath string, dryRun bool) error {
 			func(lcm sdkxdr.LedgerCloseMeta) error {
 				if perr := processAndPersistCursor(rootCtx, disp, events, store, logger, lcm, cfg.Stellar.Passphrase()); perr != nil {
 					return perr
+				}
+				// ADR-0016 append: best-effort, never stalls or fails
+				// ingest. See recordHashdb's docstring for why this
+				// runs synchronously rather than fanned out to a
+				// buffered channel.
+				if hashdbAppendDB != nil {
+					recordHashdb(hashdbAppendDB, lcm, logger, &hashdbLastAppended)
 				}
 				// Real-time CH fan-out: push the structural extract (non-blocking;
 				// a slow CH never stalls ingest — drops are backstopped by the
@@ -1460,6 +1522,226 @@ func recordLedgerIngest(
 
 func recordCursorMetric(ledger uint32) {
 	obs.CursorLastLedger.WithLabelValues(cursorSource).Set(float64(ledger))
+}
+
+// ─── HashDB (ADR-0016 drift detector) ───────────────────────────────
+
+// defaultHashDBVerifyInterval / defaultHashDBVerifyWindow are the
+// library fallbacks config.HashDBConfig's zero-value fields defer to
+// — kept here (not in internal/config) because they're specific to
+// how THIS binary schedules the sweep, not a config-schema concern.
+// Mirrors config.Default()'s HashDB values; tested by
+// TestDefault_MatchesStructTags (F-1327) on the config side, so a
+// drift between the two would only show up as "the documented
+// default and the fallback-when-zero disagree" — low stakes (both
+// paths are only reachable via explicit operator opt-in), but kept
+// identical for least-surprise.
+const (
+	defaultHashDBVerifyInterval = 60 * time.Minute
+	defaultHashDBVerifyWindow   = uint32(20000)
+
+	// hashDBVerifySafetyMargin trails the verify window's upper bound
+	// behind the indexer's own last-appended ledger. Not strictly
+	// required for correctness — recordHashdb stores lastAppended
+	// synchronously AFTER hashdb.Append returns, in the same
+	// goroutine, so Load() can never observe a ledger hashdb hasn't
+	// durably recorded yet — but a small margin is cheap defense in
+	// depth against that invariant ever changing, and keeps the sweep
+	// away from the bucket's bleeding edge (galexie's own object
+	// upload can lag the indexer's read by a few ledgers on a
+	// restart/catch-up race).
+	hashDBVerifySafetyMargin = uint32(16)
+)
+
+// openOrCreateHashDB opens the hashdb file at path, creating it
+// (starting at startLedger) if it doesn't exist yet. First-ever-run
+// convenience — an operator flipping cfg.HashDB.Enabled=true on a
+// region shouldn't need a separate bootstrap step before the indexer
+// will start.
+func openOrCreateHashDB(path string, startLedger uint32) (*hashdb.DB, error) {
+	db, err := hashdb.Open(path)
+	if err == nil {
+		return db, nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	return hashdb.Create(path, startLedger)
+}
+
+// recordHashdb appends the ledger's sha256(LCM) into hdb — the
+// append side of ADR-0016's drift detector, called once per ledger
+// from the live LCM read loop.
+//
+// Design choice: this runs SYNCHRONOUSLY on the ingest hot path,
+// unlike e.g. the ClickHouse live-sink fan-out a few lines below
+// (which is explicitly non-blocking, per its own comment, because a
+// slow ClickHouse must never stall ingest). hashdb.Append is a single
+// O(1) positional WriteAt of a fixed 32-byte record — no seek-to-end,
+// no fsync, no network I/O — so its worst realistic latency is a
+// page-cache-resident disk write, several orders of magnitude below
+// the per-ledger budget the rest of this loop already spends on
+// Postgres/ClickHouse round-trips. Fanning it out to a buffered
+// channel (the CH live-sink pattern) would add a goroutine, a channel,
+// and a drop policy for an operation cheap enough that the extra
+// machinery is pure risk with no throughput benefit. If a future
+// profile shows otherwise, revisit — but don't reach for the async
+// pattern preemptively.
+//
+// Failure-tolerant: any error (disk full, permission, an
+// out-of-order seq) logs a WARN + increments
+// HashdbAppendTotal{"error"} and returns without propagating. A
+// hashdb write failure is a diagnostics-side-channel problem, not an
+// ingest problem — it must never stall or fail the pipeline that
+// actually serves customer data.
+func recordHashdb(hdb *hashdb.DB, lcm sdkxdr.LedgerCloseMeta, logger *slog.Logger, lastAppended *atomic.Uint32) {
+	start := time.Now()
+	seq := lcm.LedgerSequence()
+
+	raw, err := lcm.MarshalBinary()
+	if err == nil {
+		err = hdb.Append(seq, hashdb.Hash(raw))
+	}
+	if err != nil {
+		obs.HashdbAppendTotal.WithLabelValues("error").Inc()
+		obs.HashdbAppendDurationSeconds.WithLabelValues("error").Observe(time.Since(start).Seconds())
+		logger.Warn("hashdb append failed — drift detector not recording this ledger", "ledger", seq, "err", err)
+		return
+	}
+	obs.HashdbAppendTotal.WithLabelValues("ok").Inc()
+	obs.HashdbAppendDurationSeconds.WithLabelValues("ok").Observe(time.Since(start).Seconds())
+	// Store AFTER Append succeeds — the periodic verifier's window
+	// must never include a ledger that isn't durably recorded yet.
+	lastAppended.Store(seq)
+}
+
+// startHashDBVerifier runs the periodic half of ADR-0016's drift
+// detector: every cfg.VerifyIntervalMinutes it re-reads a trailing
+// window of cfg.VerifyWindowLedgers ledgers from the SAME bucket the
+// append side reads (lsCfg — the live-tail config) and compares each
+// one's freshly-computed hash against verifyDB via
+// archivecompleteness.HashDBWindowVerifier.
+//
+// Modeled on internal/archivecompleteness's own daily-cron-driven
+// check/verify shape (ADR-0017): bounded window, tally-don't-abort on
+// mismatch, loud logging on drift. Implemented here as an in-process
+// ticker rather than a separate systemd timer + one-shot CLI
+// invocation (archivecompleteness's own scheduling shape) so it can
+// (a) share the indexer's already-live obs.Registry /metrics
+// endpoint instead of needing its own scrape target, (b) reuse the
+// bucket config the indexer already has open, and (c) trail the
+// indexer's OWN live-append edge (lastAppended) rather than needing
+// an externally-supplied upper bound.
+//
+// Known limitation: the window is read from the LIVE bucket
+// (cfg.Storage.S3BucketLive) only. During a large historical catch-up
+// (indexer started far behind the tip), lastAppended can reference
+// ledgers the live bucket doesn't hold yet — the sweep then surfaces
+// as outcome="error" (object not found) rather than silently wrong,
+// and self-heals once the indexer crosses the archive/live seam. The
+// steady-state live-tailing shape (the common deployment, and the
+// one ledger 63332650 motivated this for) is unaffected.
+func startHashDBVerifier(
+	parent context.Context,
+	hcfg config.HashDBConfig,
+	verifyDB *hashdb.DB,
+	lsCfg ledgerstream.Config,
+	lastAppended *atomic.Uint32,
+	logger *slog.Logger,
+) (context.CancelFunc, <-chan struct{}) {
+	interval := time.Duration(hcfg.VerifyIntervalMinutes) * time.Minute
+	if interval <= 0 {
+		interval = defaultHashDBVerifyInterval
+	}
+	window := hcfg.VerifyWindowLedgers
+	if window == 0 {
+		window = defaultHashDBVerifyWindow
+	}
+
+	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				hashDBVerifySweep(ctx, logger, verifyDB, lsCfg, lastAppended, window)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return cancel, done
+}
+
+// hashDBVerifySweep runs one verify pass and records its outcome.
+// Split out of startHashDBVerifier so the ticker-plumbing and the
+// actual-work are independently readable (matches the
+// RunRoutedViaTagger / sweep() split in internal/pipeline/routedvia.go).
+func hashDBVerifySweep(
+	ctx context.Context,
+	logger *slog.Logger,
+	verifyDB *hashdb.DB,
+	lsCfg ledgerstream.Config,
+	lastAppended *atomic.Uint32,
+	window uint32,
+) {
+	tip := lastAppended.Load()
+	if tip <= hashDBVerifySafetyMargin {
+		// Fresh region bring-up, or restart hasn't accumulated enough
+		// new appends yet — nothing durable to check.
+		return
+	}
+	to := tip - hashDBVerifySafetyMargin
+
+	from := verifyDB.StartLedger()
+	if to > window && to-window+1 > from {
+		from = to - window + 1
+	}
+	if from > to {
+		return
+	}
+
+	start := time.Now()
+	verifier := archivecompleteness.NewHashDBWindowVerifier(verifyDB, from, to)
+	streamErr := ledgerstream.Stream(ctx, lsCfg, from, to, func(lcm sdkxdr.LedgerCloseMeta) error {
+		raw, merr := lcm.MarshalBinary()
+		if merr != nil {
+			return fmt.Errorf("marshal ledger %d: %w", lcm.LedgerSequence(), merr)
+		}
+		return verifier.Observe(lcm.LedgerSequence(), hashdb.Hash(raw))
+	})
+	res := verifier.Result()
+	dur := time.Since(start).Seconds()
+
+	switch {
+	case streamErr != nil && !errors.Is(streamErr, context.Canceled):
+		obs.HashdbVerifyRunsTotal.WithLabelValues("error").Inc()
+		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("error").Observe(dur)
+		logger.Warn("hashdb verify sweep failed", "from", from, "to", to, "err", streamErr)
+	case res.AnyDrift():
+		obs.HashdbVerifyRunsTotal.WithLabelValues("drift").Inc()
+		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("drift").Observe(dur)
+		obs.HashdbDriftTotal.Add(float64(res.Drifted))
+		// Loud: this is the ledger-63332650-class incident — see
+		// docs/operations/runbooks/hashdb-drift-detected.md.
+		logger.Error("hashdb DRIFT DETECTED — upstream history rewritten or lake object corrupted",
+			"from", from, "to", to,
+			"verified", res.Verified, "drifted", res.Drifted,
+			"missing", res.Missing, "out_of_range", res.OutOfRange,
+			"drifted_ledgers", res.DriftSeqs,
+		)
+	default:
+		obs.HashdbVerifyRunsTotal.WithLabelValues("ok").Inc()
+		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("ok").Observe(dur)
+		logger.Info("hashdb verify sweep clean",
+			"from", from, "to", to,
+			"verified", res.Verified, "missing", res.Missing, "out_of_range", res.OutOfRange,
+		)
+	}
 }
 
 func startMetricsServer(obsCfg config.ObsConfig, logger *slog.Logger) *http.Server {

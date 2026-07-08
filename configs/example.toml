@@ -518,6 +518,21 @@ enabled = false
 # ]
 
 # ──────────────────────────────────────────────────────────────────
+# HashDB — ADR-0016 drift detector. The indexer's live LCM read loop
+# appends sha256(LCM) per ledger; a periodic sweep re-reads a recent
+# window from the same bucket and compares, catching upstream
+# rewrites of a previously-fetched ledger that a chain-link check
+# alone can't see (both the rewritten AND original bytes can be
+# internally consistent). Off by default — first production exposure
+# 2026-07-08; opt in per region once proven.
+# ──────────────────────────────────────────────────────────────────
+[hashdb]
+enabled                   = false
+path                      = "/var/lib/stellarindex/hashdb.bin"
+verify_interval_minutes   = 60
+verify_window_ledgers     = 20000
+
+# ──────────────────────────────────────────────────────────────────
 # Obs — metrics, logs, traces.
 # ──────────────────────────────────────────────────────────────────
 [obs]

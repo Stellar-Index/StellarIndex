@@ -606,6 +606,91 @@ the per-tick delta.
 - `errored` — failed `Add` / `Flush` operations (CH down, wedged,
   or disk-full). A climb is a CH write-path fault.
 
+### `stellarindex_hashdb_append_total`
+
+Counter, label `outcome` (`ok` / `error`).
+
+Per-ledger outcome of the ADR-0016 hashdb drift detector's append
+side: as the indexer's live LCM read loop reads each ledger, it
+computes `sha256(LCM)` and appends the record to the on-disk hashdb
+file (`internal/hashdb`). Emitted only when `[hashdb].enabled = true`
+(off by default — first production exposure 2026-07-08).
+
+When to look at it: `error` means a hashdb write failed (disk full,
+permission error) — this is failure-tolerant by design (never stalls
+or fails ingest), but a sustained `error` rate means the detector has
+gone silently blind: it's recording nothing, so the periodic verify
+sweep will find `missing`, not `drifted`, even if real drift is
+happening. There's no dedicated alert on this counter alone (a
+disabled detector is a silent no-op, not an incident) — treat a
+climbing `error` rate as "this region's hashdb coverage is a lie" and
+fix the underlying disk/permission issue.
+
+### `stellarindex_hashdb_append_duration_seconds`
+
+Histogram, label `outcome` (matches `stellarindex_hashdb_append_total`).
+Buckets 10 µs – 10 ms.
+
+Latency of the per-ledger `hashdb.Append` call, which runs
+SYNCHRONOUSLY on the ingest hot path (a deliberate choice — see
+`recordHashdb`'s doc comment in `cmd/stellarindex-indexer/main.go`:
+it's a single O(1) positional file write, cheap enough that async
+plumbing would add more risk than it removes). A latency regression
+here directly costs ingest throughput; buckets top out at 10 ms
+because anything reaching that tier already indicates a disk problem
+worth investigating on its own.
+
+### `stellarindex_hashdb_verify_runs_total`
+
+Counter, label `outcome` (`ok` / `drift` / `error`).
+
+Per-sweep outcome of the ADR-0016 hashdb drift detector's periodic
+verify side: every `[hashdb].verify_interval_minutes` (default 60),
+the indexer re-reads a trailing window of `[hashdb].verify_window_ledgers`
+(default 20000) ledgers from the same bucket the append side reads
+and compares each one's freshly-computed hash against the recorded
+value (`internal/archivecompleteness.HashDBWindowVerifier`).
+
+When to look at it: `drift` means the sweep found at least one
+ledger whose current bytes don't match what the indexer originally
+recorded — see `stellarindex_hashdb_drift_total` and the
+`hashdb-drift-detected` runbook, this is the serious case.  `error`
+means the sweep itself couldn't complete (bucket unreachable, hashdb
+file I/O error) — the detector went blind, not "found nothing". A
+healthy, opted-in region should show a steady `ok` rate at roughly
+one observation per verify interval.
+
+### `stellarindex_hashdb_verify_run_duration_seconds`
+
+Histogram, label `outcome` (matches `stellarindex_hashdb_verify_runs_total`).
+Buckets 1 s – 30 min.
+
+Wall-clock of one full verify sweep — re-reading thousands of ledgers
+from S3/MinIO is not cheap, unlike the append side. Chart `ok` p95/p99
+to see whether the window size (`[hashdb].verify_window_ledgers`) is
+still comfortably inside the sweep interval; if `ok` durations
+approach `verify_interval_minutes`, either shrink the window or widen
+the interval so sweeps don't start overlapping.
+
+### `stellarindex_hashdb_drift_total`
+
+Counter, unlabelled (deliberately — the natural label, ledger
+sequence, is unbounded cardinality).
+
+Cumulative count of individual ledgers the periodic verify sweep has
+found drifted (recorded hash != freshly-observed hash) since the
+indexer process started. Any nonzero value means either upstream
+retroactively rewrote a previously-fetched ledger's bytes, or the
+region's local copy of that ledger is corrupted — the founding case
+was ledger 63332650 (2026-07-08). This is the metric
+`stellarindex_hashdb_drift_detected` alerts on
+(`deploy/monitoring/rules/hashdb.yml` +
+`configs/prometheus/rules.r1/hashdb.yml`); the drifted sequences
+themselves are only in the indexer's ERROR-level "hashdb DRIFT
+DETECTED" log line, not on the metric (cardinality). See the
+`hashdb-drift-detected` runbook for the full investigation +
+mitigation path.
+
 ## Oracle layer (indexer binary, reflector + future sources)
 
 ### `stellarindex_oracle_last_update_unix`
@@ -1668,6 +1753,16 @@ failure this reflects.
   (`internal/api/v1.NonstandardDecimalsCache` + `declineIfNonstandardDecimals`).
   Turns the 2026-07-07 detector into an actual stop-serving lever after a
   confirmed production bug (token `CC2RB…`, 100x-wrong price, 35 trades).
+- 2026-07-09 — added the hashdb drift-detector metrics
+  (`stellarindex_hashdb_append_total`,
+  `stellarindex_hashdb_append_duration_seconds`,
+  `stellarindex_hashdb_verify_runs_total`,
+  `stellarindex_hashdb_verify_run_duration_seconds`,
+  `stellarindex_hashdb_drift_total`), emitted by the indexer when
+  `[hashdb].enabled = true` (ADR-0016, off by default). Wires
+  `internal/hashdb` — previously a complete, tested library with zero
+  production callers — into the live ingest loop (append) and a new
+  periodic verify sweep. Founding case: ledger 63332650.
 - 2026-07-07 — added `stellarindex_dex_trade_nonstandard_decimals_total`
   (`source`, `asset`), emitted by the aggregator's decimals-assumption guard
   (`internal/decimalsguard`). Detection-only signal for the served-price

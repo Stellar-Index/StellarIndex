@@ -161,6 +161,12 @@ func registerAppMetricsTail() {
 		DEXTradeNonstandardDecimalsTotal,
 		PriceServeDeclinedNonstandardDecimalsTotal,
 		NonstandardDecimalsCacheRefreshFailuresTotal,
+
+		HashdbAppendTotal,
+		HashdbAppendDurationSeconds,
+		HashdbVerifyRunsTotal,
+		HashdbVerifyRunDurationSeconds,
+		HashdbDriftTotal,
 	)
 
 	// F-0033 closure: pre-seed zero-valued series for the
@@ -217,6 +223,15 @@ func registerAppMetricsTail() {
 	for _, outcome := range []string{"ok", "divergent", "no_reference", "refresh_error"} {
 		SupplyDivergenceTotal.WithLabelValues(outcome)
 	}
+	// hashdb append/verify outcomes — bounded, well-known label sets so
+	// the append-error-rate and verify-run-failure queries read a real
+	// zero (not "no data") on a freshly-enabled region before the first
+	// tick / first ledger.
+	for _, outcome := range []string{"ok", "error"} {
+		HashdbAppendTotal.WithLabelValues(outcome)
+		HashdbVerifyRunsTotal.WithLabelValues(outcome)
+	}
+	HashdbVerifyRunsTotal.WithLabelValues("drift")
 }
 
 // Handler returns an http.Handler that serves Prometheus-formatted
@@ -2263,5 +2278,107 @@ var NonstandardDecimalsCacheRefreshFailuresTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_nonstandard_decimals_cache_refresh_failures_total",
 		Help: "Failed background refreshes of the API's in-process nonstandard-decimals serving-guard cache. Fail-open: the previous snapshot keeps serving. Infra-health signal, not a pricing-correctness one.",
+	},
+)
+
+// ─── hashdb (ADR-0016 drift detector) ───────────────────────────────
+
+// HashdbAppendTotal — per-outcome counter for the indexer's hashdb
+// append call, made once per ledger from the live LCM read loop
+// (cmd/stellarindex-indexer/main.go). Labels:
+//
+//   - `ok`    — hashdb.Append succeeded; the ledger's sha256(LCM) is
+//     durably recorded.
+//   - `error` — hashdb.Append failed (disk full, permission error,
+//     out-of-range seq). Append is deliberately failure-tolerant —
+//     an error here logs + increments this counter and NEVER stalls
+//     or fails ingest (see the recordHashdb docstring). A sustained
+//     `error` rate means hashdb is silently not recording anything —
+//     the periodic verify sweep would then find nothing to compare
+//     against (Missing, not Drifted) rather than catching real
+//     drift, so this counter is the operator's only signal that the
+//     detector has gone blind.
+var HashdbAppendTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_hashdb_append_total",
+		Help: "Indexer hashdb.Append outcomes per ledger, labelled by outcome (ok|error). error means the drift detector is silently not recording — see the hashdb-drift-detected runbook.",
+	},
+	[]string{"outcome"},
+)
+
+// HashdbAppendDurationSeconds — latency histogram for the per-ledger
+// hashdb.Append call. hashdb.Append is a single O(1) positional
+// WriteAt (fixed 32-byte record, no seek-to-end, no fsync) — this
+// runs synchronously on the ingest hot path (see recordHashdb's
+// docstring for why that's an acceptable trade), so a latency
+// regression here (a slow disk, an unexpectedly large hashdb file
+// hitting page-cache pressure) would directly show up as ingest lag.
+// Buckets span 10 µs → 10 ms — generous for a page-cache-resident
+// single-record write; anything reaching the top bucket is worth
+// investigating.
+var HashdbAppendDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_hashdb_append_duration_seconds",
+		Help:    "Per-ledger hashdb.Append latency, labelled by outcome (ok|error). Runs synchronously on the ingest hot path — a regression here is ingest lag.",
+		Buckets: []float64{0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01},
+	},
+	[]string{"outcome"},
+)
+
+// HashdbVerifyRunsTotal — per-outcome counter for the indexer's
+// periodic hashdb verify sweep (re-reads a trailing window from the
+// same galexie bucket and compares against hashdb; see
+// internal/archivecompleteness.HashDBWindowVerifier). Labels:
+//
+//   - `ok`    — the sweep completed with zero drifted ledgers in the
+//     window (Missing/OutOfRange ledgers don't count against this —
+//     they're expected while the window predates hashdb's coverage).
+//   - `drift` — the sweep completed and found at least one drifted
+//     ledger. See HashdbDriftTotal for the per-ledger drift count
+//     this alerts on.
+//   - `error` — the sweep itself failed (datastore read error,
+//     hashdb I/O error) before it could finish comparing the window.
+//     Distinct from `drift`: this means "we don't know", not "we
+//     found a mismatch".
+var HashdbVerifyRunsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_hashdb_verify_runs_total",
+		Help: "Indexer periodic hashdb verify-sweep outcomes, labelled by outcome (ok|drift|error).",
+	},
+	[]string{"outcome"},
+)
+
+// HashdbVerifyRunDurationSeconds — latency histogram for one full
+// verify sweep (re-reads [VerifyWindowLedgers] ledgers from the
+// bucket, one hashdb.Verify call per ledger). Labelled by outcome so
+// operators can chart `ok` p95/p99 (bucket-fetch-bound; the same
+// shape as a bounded backfill walk over the window size) separately
+// from `error` (often a fast-fail on the first missing/unreadable
+// object). Buckets span 1 s → 30 min — a multi-thousand-ledger S3
+// re-read is not cheap, unlike the append side.
+var HashdbVerifyRunDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_hashdb_verify_run_duration_seconds",
+		Help:    "Per-sweep latency of the hashdb periodic verify pass, labelled by outcome (ok|drift|error).",
+		Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600, 1200, 1800},
+	},
+	[]string{"outcome"},
+)
+
+// HashdbDriftTotal is the dedicated alert-driving counter: the total
+// number of DRIFTED LEDGERS (not sweeps) hashdb's periodic verify has
+// found across every sweep since process start. Deliberately a plain
+// (unlabelled) Counter, not a Vec — the natural label candidate
+// (ledger sequence) is unbounded per-region cardinality, which
+// Prometheus labels must never be. `stellarindex_hashdb_drift_total
+// > 0` is the alert condition (see
+// docs/operations/runbooks/hashdb-drift-detected.md); the per-run
+// breakdown lives in HashdbVerifyRunsTotal{outcome="drift"} and the
+// loudly-logged WARN/ERROR line (which does name the drifted
+// sequences) at the point of detection.
+var HashdbDriftTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_hashdb_drift_total",
+		Help: "Cumulative count of ledgers hashdb's periodic verify sweep found drifted (recorded hash != freshly-observed hash). Any nonzero value means upstream history was rewritten or our lake object is corrupted — see the hashdb-drift-detected runbook.",
 	},
 )

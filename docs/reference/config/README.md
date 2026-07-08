@@ -264,6 +264,15 @@ the `env:` column.
 | `signup_reaper.interval_minutes` | `int` | `60` | — | Minutes between reaper sweeps. 0 = library default (60). |
 | `signup_reaper.min_age_minutes` | `int` | `1440` | — | Minimum minutes a suspended orphan must age before the reaper deletes it (safety window). 0 = library default (1440 = 24h). |
 
+### `[hashdb]`
+
+| Key | Type | Default | Env override | Description |
+| --- | ---- | ------- | ------------ | ----------- |
+| `hashdb.enabled` | `bool` | `false` | — | Start the hashdb append-on-ingest + periodic verify sweep in the indexer. Off by default — opt in per region once proven. |
+| `hashdb.path` | `string` | `/var/lib/stellarindex/hashdb.bin` | — | Filesystem path of the hashdb file (ledger_seq -> sha256(LCM)). Created on first run if missing. |
+| `hashdb.verify_interval_minutes` | `int` | `60` | — | Minutes between hashdb verify sweeps. 0 = library default (60). |
+| `hashdb.verify_window_ledgers` | `uint32` | `20000` | — | Trailing ledger count each verify sweep re-checks against hashdb. 0 = library default (20000, ~1 day). |
+
 ### `[obs]`
 
 | Key | Type | Default | Env override | Description |

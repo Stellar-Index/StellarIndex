@@ -63,6 +63,17 @@ against.
   fan-out whose merges invalidated each other's `go.sum` and forced rebase cascades.
 
 ### Added
+- **hashdb (ADR-0016 drift detector) wired into production** — previously a complete,
+  tested library with zero callers, now live in the indexer: the live LCM read loop
+  appends `sha256(LCM)` per ledger on ingest (failure-tolerant, never stalls or fails
+  ingest), and a new periodic sweep re-reads a trailing window from the same bucket and
+  re-verifies against the recorded hashes, catching upstream rewrites of previously-
+  fetched ledger bytes that a chain-link check alone can't see. Off by default
+  (`[hashdb].enabled = false`, opt-in per region); founding case is corrupt ledger
+  63332650. New metrics `stellarindex_hashdb_{append,verify_runs}_total` +
+  `_duration_seconds` + `stellarindex_hashdb_drift_total`, alert
+  `stellarindex_hashdb_drift_detected` in both rule trees, runbook
+  `docs/operations/runbooks/hashdb-drift-detected.md`.
 - Protocol pool contracts now display as their human **asset pair** (e.g. `XLM/USDC`) on
   `/v1/protocols/{name}` — `token_symbols` + `pair` resolved from the pool's token contracts,
   not raw C-strkeys. Populated for soroswap/phoenix/aquarius/comet pools + blend

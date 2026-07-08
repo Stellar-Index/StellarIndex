@@ -33,7 +33,71 @@ type Config struct {
 	Divergence   DivergenceConfig   `toml:"divergence" doc:"Cross-check references the divergence service consults (CoinGecko + Chainlink HTTP, plus the on-chain Reflector/Redstone/Band oracle feeds read from ingested oracle_updates rows). Empty disables; the divergence_warning envelope flag stays unset."`
 	PriceAlerts  PriceAlertsConfig  `toml:"price_alerts" doc:"Customer price-threshold alert evaluator (BACKLOG #60). Off by default; when enabled the aggregator sweeps price_alerts against the latest closed VWAP every tick and enqueues price.alert webhook deliveries."`
 	SignupReaper SignupReaperConfig `toml:"signup_reaper" doc:"F-1255 speculative-account reaper. Deletes orphan accounts left by a lost signup race (Suspended with a 'signup-race:' reason, no user, no key). Runs in the API binary when the dashboard is wired. On by default — the rows are pure garbage."`
+	HashDB       HashDBConfig       `toml:"hashdb" doc:"ADR-0016 drift detector — on-disk (ledger_seq -> sha256(LCM)) record appended by the indexer's live ingest loop and periodically re-verified against a fresh re-read of the same bucket, catching upstream rewrites of previously-fetched ledger bytes. Off by default (opt-in first deploy)."`
 	Obs          ObsConfig          `toml:"obs" doc:"Metrics, logs, traces — exporters + sampling."`
+}
+
+// HashDBConfig gates the ADR-0016 hashdb drift detector
+// (internal/hashdb): an on-disk (ledger_seq → sha256(LCM)) record the
+// indexer appends to as it reads each ledger, plus a periodic
+// verifier that re-reads a recent window from the same bucket and
+// compares. Catches the failure mode Tier A (chain-link) + Tier D
+// (signed-history anchor) checks can't: upstream retroactively
+// rewriting a previously-fetched ledger's bytes while keeping both
+// internal consistency and SDF's signature intact (see
+// internal/hashdb's package doc for the full "Trust model" rationale
+// and ledger 63332650 — the corrupt-upstream-object incident that
+// motivated wiring this in, 2026-07-08).
+//
+// Both the append side and the verify side share this ONE Enabled
+// flag deliberately: appending without ever verifying never detects
+// anything, and verifying a hashdb nothing has appended into is a
+// permanent no-op. There's no legitimate deployment shape that wants
+// exactly one half.
+type HashDBConfig struct {
+	// Enabled starts hashdb.Append in the indexer's live LCM read
+	// loop AND the indexer's periodic verify sweep. Off by default —
+	// this is a brand-new, first-production-exposure capability
+	// (signed off 2026-07-08); operators opt in per region once r1's
+	// rollout is clean.
+	Enabled bool `toml:"enabled" doc:"Start the hashdb append-on-ingest + periodic verify sweep in the indexer. Off by default — opt in per region once proven." default:"false"`
+
+	// Path is the on-disk hashdb file. Default matches the indexer's
+	// existing ReadWritePaths mount (see
+	// configs/ansible/.../stellarindex-indexer.service.j2, which
+	// already grants /var/lib/stellarindex — the same mount
+	// verify-archive's state file uses).
+	Path string `toml:"path" doc:"Filesystem path of the hashdb file (ledger_seq -> sha256(LCM)). Created on first run if missing." default:"/var/lib/stellarindex/hashdb.bin"`
+
+	// VerifyIntervalMinutes is the gap between periodic verify
+	// sweeps. 0 falls back to the library default (60m) rather than
+	// reaching time.NewTicker(0) at runtime.
+	VerifyIntervalMinutes int `toml:"verify_interval_minutes" doc:"Minutes between hashdb verify sweeps. 0 = library default (60)." default:"60"`
+
+	// VerifyWindowLedgers is how many trailing ledgers each sweep
+	// re-reads from the bucket and re-verifies against hashdb. 0
+	// falls back to the library default (20000 — roughly a day of
+	// ledger closes at ~5s/ledger). Kept well below the indexer's
+	// live-append edge (see the SafetyMargin in the verify loop) so
+	// the sweep never races an in-flight Append for the same ledger.
+	VerifyWindowLedgers uint32 `toml:"verify_window_ledgers" doc:"Trailing ledger count each verify sweep re-checks against hashdb. 0 = library default (20000, ~1 day)." default:"20000"`
+}
+
+// validate enforces HashDBConfig's constraints only when Enabled —
+// a disabled block with zero-value fields is fine (nothing consumes
+// them). Same pattern as SignupReaperConfig.validate /
+// PriceAlertsConfig.validate.
+func (hc HashDBConfig) validate() error {
+	if !hc.Enabled {
+		return nil
+	}
+	if hc.Path == "" {
+		return fmt.Errorf("hashdb: path must be set when enabled")
+	}
+	if hc.VerifyIntervalMinutes < 0 {
+		return fmt.Errorf("hashdb: verify_interval_minutes must be >= 0, got %d", hc.VerifyIntervalMinutes)
+	}
+	return nil
 }
 
 // SignupReaperConfig gates the F-1255 speculative-account reaper
@@ -1151,6 +1215,22 @@ type ObsConfig struct {
 // Default returns a Config pre-populated with every field's default
 // value. Used by the docs-config generator to show what operators
 // get out of the box, and as the starting point for config loading.
+// defaultHashDBConfig is split out of Default() to keep that function
+// under the funlen ceiling (same reason as defaultAPIConfig /
+// defaultDivergenceConfig below). Off by default — see HashDBConfig's
+// doc. Non-zero cadence + window so an accidental Enabled=true
+// without overrides doesn't reach time.NewTicker(0) (the G19-02
+// trap). Kept in lockstep with the `default:` struct tags — see
+// TestDefault_MatchesStructTags (F-1327).
+func defaultHashDBConfig() HashDBConfig {
+	return HashDBConfig{
+		Enabled:               false,
+		Path:                  "/var/lib/stellarindex/hashdb.bin",
+		VerifyIntervalMinutes: 60,
+		VerifyWindowLedgers:   20000,
+	}
+}
+
 // defaultAPIConfig is split out of Default() to keep that function under
 // the funlen ceiling; it holds the public-API / auth / dashboard defaults
 // (kept in lockstep with the `default:` struct tags — see
@@ -1326,6 +1406,7 @@ func Default() Config {
 			// it (the validation gap behind G19-02).
 			AggregatorRefreshCadence: 5 * time.Minute,
 		},
+		HashDB: defaultHashDBConfig(),
 		Obs: ObsConfig{
 			MetricsListen: "127.0.0.1:9464",
 			LogLevel:      "info",

@@ -195,6 +195,23 @@ node_exporter textfile_collector reads
 `/var/lib/node_exporter/textfile_collector/galexie_archive_tip_lag.prom`,
 refreshed every 5 min by `galexie-archive-tip-lag.timer`.
 
+## HashDB drift-detector alerts
+
+Per [ADR-0016](../adr/0016-per-region-storage-strategy.md)'s trust
+model: the indexer's live LCM read loop appends sha256(LCM) per
+ledger to an on-disk hashdb (`internal/hashdb`); a periodic sweep
+re-reads a trailing window from the same bucket and compares,
+catching upstream rewrites of a previously-fetched ledger's bytes
+that a chain-link check alone can't see. Off by default
+(`[hashdb].enabled = false`) — first production exposure 2026-07-08,
+opt in per region. Both alerts are inert (no emitted series) on a
+region that hasn't opted in.
+
+| Name | Metric | Condition | Severity | Runbook |
+| ---- | ------ | --------- | -------- | ------- |
+| `stellarindex_hashdb_drift_detected` | `stellarindex_hashdb_drift_total` | > 0 | P3 | [hashdb-drift-detected](runbooks/hashdb-drift-detected.md) |
+| `stellarindex_hashdb_verify_failing` | `rate(stellarindex_hashdb_verify_runs_total{outcome="error"}[6h]) > rate(...{outcome=~"ok\|drift"}[6h])` | sustained 30 min | P3 | [hashdb-drift-detected](runbooks/hashdb-drift-detected.md) |
+
 ## Data-freshness / completeness alerts
 
 The "never get behind" watchdog. `data-freshness.sh` (every 15 min via

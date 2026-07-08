@@ -98,7 +98,7 @@ development. If one does, it's a bug.
 │   ├── aggregate/                VWAP/TWAP/outlier/triangulation
 │   ├── storage/                  TimescaleDB (served tier) + ClickHouse (raw lake, ADR-0034) + Redis. Subpackages only (timescale/ clickhouse/ redisclient/) — NO top-level adapter files. MinIO/lake access is via internal/ledgerstream + go-stellar-sdk datastore, not a storage adapter.
 │   ├── archivecompleteness/      dual-archive completeness daemon (ADR-0017)
-│   ├── hashdb/                   on-disk (ledger_seq → sha256(LCM)) record for drift-detection-vs-upstream-rewrites. LIBRARY ONLY — currently has zero production callers; not yet wired into any binary (the ADR-0033 "feeder" role is aspirational).
+│   ├── hashdb/                   on-disk (ledger_seq → sha256(LCM)) record for drift-detection-vs-upstream-rewrites (ADR-0016). Wired into production 2026-07-09: the indexer's live LCM read loop appends on ingest, a periodic sweep (also in the indexer) re-verifies a trailing window against the same bucket. Off by default (`[hashdb].enabled = false`, opt-in first deploy); founding case is ledger 63332650. Alert `stellarindex_hashdb_drift_detected` + runbook docs/operations/runbooks/hashdb-drift-detected.md. The ADR-0033 "feeder" role is still aspirational.
 │   ├── api/                      REST/SSE handlers (v1)
 │   ├── ratelimit/                Redis-backed token bucket
 │   ├── metadata/                 SEP-1 / stellar.toml resolution
