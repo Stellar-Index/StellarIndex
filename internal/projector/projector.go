@@ -60,12 +60,12 @@ import (
 // per-source tables ~5-10s behind raw; tunable per-deployment.
 const Interval = 5 * time.Second
 
-// BatchLimit caps how many soroban_events rows the projector
-// reads per source per cycle. Without a cap a catch-up after
-// long outage would stream millions of rows in one transaction,
-// blocking other work. 10K rows = ~50 MB at typical size; one
-// batch processes in ~1-3s; subsequent cycles drain the rest.
-const BatchLimit = 10_000
+// BatchLimit caps how many ledgers the projector reads per source
+// per cycle. Without a cap a catch-up after long outage would stream
+// millions of rows in one transaction, blocking other work. Keep this
+// small enough that dense protocol ranges, notably Aquarius reserve
+// updates, finish inside PerSourceTimeout.
+const BatchLimit = 1_000
 
 // PerSourceTimeout caps one source's per-cycle work. A wedged
 // downstream sink can't block other sources past this.
