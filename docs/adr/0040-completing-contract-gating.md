@@ -1,7 +1,7 @@
 ---
 adr: 0040
 title: Completing contract-identity gating (phoenix, defindex, aquarius, comet)
-status: Proposed
+status: Accepted
 date: 2026-07-02
 supersedes: []
 superseded_by: null

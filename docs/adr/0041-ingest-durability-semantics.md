@@ -1,7 +1,7 @@
 ---
 adr: 0041
 title: Ingest durability semantics — cursor advance, lake sink defaults, drop visibility
-status: Proposed
+status: Accepted
 date: 2026-07-02
 supersedes: []
 superseded_by: null
@@ -99,3 +99,8 @@ window. Implementation rides with the reconciliation harness work
   within minutes* (drop alert) instead of at the next verdict run.
 - Operators explicitly opting out of ClickHouse own the consequence
   in their config file, in writing.
+- **Acceptance caveat (2026-07-08):** this ADR's durability story
+  covers lake-backed (on-chain) ingest only — the non-lake CEX/FX
+  sinks do not flow through `soroban_events`/ClickHouse and need
+  their own backpressure/durability treatment (tracked separately;
+  see the trade-insert-backpressure alert lineage).

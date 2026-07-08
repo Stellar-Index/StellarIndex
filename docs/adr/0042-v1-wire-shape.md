@@ -1,7 +1,7 @@
 ---
 adr: 0042
 title: The v1 wire shape — Unit-D collapse, slug-route discriminator, freeze contract
-status: Proposed
+status: Accepted
 date: 2026-07-02
 supersedes: []
 superseded_by: null
@@ -111,7 +111,9 @@ breaks before the flip.
 
 ## Sign-off checklist (@ash)
 
-- [ ] Tier-3 collapse pre-flip (vs §6 freeze fallback)
-- [ ] `kind` discriminator values: `catalogue` / `stellar_asset`
-- [ ] `x-stability: experimental` for the explorer surface at v1.0
-- [ ] Single bundled breaking release
+Signed off 2026-07-08 — all four accepted as recommended.
+
+- [x] Tier-3 collapse pre-flip (vs §6 freeze fallback)
+- [x] `kind` discriminator values: `catalogue` / `stellar_asset`
+- [x] `x-stability: experimental` for the explorer surface at v1.0
+- [x] Single bundled breaking release

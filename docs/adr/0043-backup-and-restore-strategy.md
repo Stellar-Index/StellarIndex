@@ -1,7 +1,7 @@
 ---
 adr: 0043
 title: Backup + restore strategy — offsite repo2, ClickHouse lake protection, drilled restores
-status: Proposed
+status: Accepted
 date: 2026-07-02
 supersedes: []
 superseded_by: null
