@@ -26,6 +26,13 @@ against.
   complete across every integrated on-chain source (ADR-0040).
 
 ### Added
+- cctp now decodes its 5 missing governance/admin topics (`ownership_transfer`,
+  `ownership_transfer_completed`, `admin_changed`, `remote_token_messenger_added`,
+  `token_pair_linked`) — all verified against real mainnet lake events; migration 0092
+  extends the `cctp_events` CHECK; new `scval.AsAddressOrVoid` helper for optional-Address
+  bodies. Closes the cctp arm of the #89b admin-topic audit ("EVERY event" principle);
+  further low-signal admin topics found by the same census are documented as a known gap
+  in docs/protocols/cctp.md.
 - ADR-0046 (Proposed): MAD-based outlier filtering for VWAP inputs — log-space modified
   z-score replaces the σ-threshold whose masking weakness our own tests document; explicit
   thin-bucket/MAD==0 policy; shadow-first rollout so thresholds tune against real traffic

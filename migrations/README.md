@@ -171,6 +171,8 @@ migration lands.
 
 | 0091 | [`0091_aquarius_liquidity_pool_tokens_idx.up.sql`](0091_aquarius_liquidity_pool_tokens_idx.up.sql) | Partial covering index `(contract_id, token_index, ledger_close_time DESC) WHERE token IS NOT NULL` on `aquarius_liquidity` — the `PoolTokens` resolver's `DISTINCT ON (contract_id, token_index) … ORDER BY …` had no matching index prefix, forcing a full materialize-and-sort of a forever-retained hypertable inside the `/v1/protocols/{name}` request path (review 2026-07-08 finding 2; same class as the 2026-06-19 protocol-detail runaway query). Additive, index-only. |
 
+| 0092 | [`0092_cctp_governance_events_check.up.sql`](0092_cctp_governance_events_check.up.sql) | Extends `cctp_events_event_type_check` 5 → 10 values for the governance/admin topics (ownership_transfer, ownership_transfer_completed, admin_changed, remote_token_messenger_added, token_pair_linked) — #89b admin-topic audit. Follows migration 0070's precedent; additive + old-binary-safe (rule 9). |
+
 F-1241 (codex audit-2026-05-12): the table previously stopped at
 0015, leaving 0016..0029 (14 migrations) undocumented even though
 they shipped. Future migrations: continue adding one row per
