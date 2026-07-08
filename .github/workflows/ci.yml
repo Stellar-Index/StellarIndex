@@ -122,7 +122,11 @@ jobs:
           cache: true
       - run: go mod download
       - name: Test with race detector
-        run: go test -race -timeout 2m -coverprofile=coverage.txt -covermode=atomic ./...
+        # TestI128TruncationGuard does a repo-wide go/packages walk and
+        # can legitimately exceed 2m on hosted runners with the race
+        # detector enabled. Keep the guard, but give the unit job enough
+        # headroom that it does not flap on unrelated PRs.
+        run: go test -race -timeout 4m -coverprofile=coverage.txt -covermode=atomic ./...
       - name: Compile integration-tagged tests (no Docker)
         # F-1334: catches build-tag breakage (an interface change that
         # doesn't update an `//go:build integration` test) without
