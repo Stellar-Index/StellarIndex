@@ -39,6 +39,11 @@ against.
   before any served-price change (BACKLOG #44's "write the ADR now").
 
 ### Changed
+- `/pricing` no longer advertises Pro/Business/Enterprise tiers that have no billing path
+  (accepted #26 decision): Free + Starter remain as the real self-service tiers; growth &
+  enterprise plans are "announced at GA — talk to us" (sales@). `/contact` made consistent.
+  (#34's multi-network reframe was verified already fixed on main, cdfbf7f3 — a fresh sweep
+  found zero remaining expansion promises.)
 - ADR-0045 (SEP-40 read-adapter deferral) accepted per the 2026-07-08 sign-off; ADR index
   statuses for 0040-0043 corrected to Accepted (missed in the acceptance commit).
 - ADRs 0040 (contract gating), 0041 (ingest durability, with a non-lake CEX/FX
