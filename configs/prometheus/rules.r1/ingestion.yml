@@ -326,6 +326,47 @@ groups:
 
             Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
 
+      # Unit-ratio trade sentinel (2026-07-07 Phoenix incident). Mirror
+      # of the rule in deploy/monitoring/rules/ingestion.yml; the
+      # wave-96 pair lint requires both copies to stay in sync. A
+      # decoder field-mapping bug swapped/collapsed base_amount and
+      # quote_amount for every Phoenix trade, landing 237k rows at an
+      # exact 1:1 price for MONTHS — ADR-0033 completeness checks
+      # verify presence, not economic plausibility, so nothing caught
+      # it. stellarindex_dex_trade_unit_ratio_total (emitted from
+      # internal/storage/timescale InsertTrade + BatchInsertTrades)
+      # bumps per landed ON-CHAIN trade whose base_amount exactly
+      # equals quote_amount (CEX/FX excluded — they scale amounts
+      # differently). Occasional legitimate 1:1 trades exist
+      # (equal-value cross-asset fills), so the threshold tolerates
+      # noise: >25 in a 30-minute window from a SINGLE source is a
+      # sustained stream, not an occasional coincidence. Ticket, not
+      # page — this is a data-quality signal, not an outage.
+      - alert: stellarindex_dex_trade_unit_ratio_detected
+        expr: |
+          sum by (source) (increase(stellarindex_dex_trade_unit_ratio_total[30m])) > 25
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/dex-trade-unit-ratio.md
+        annotations:
+          summary: "Source {{ $labels.source }} producing a sustained stream of unit-ratio (1:1) trades"
+          description: |
+            Source {{ $labels.source }} has landed > 25 on-chain DEX
+            trades with base_amount == quote_amount in the last 30
+            minutes. An occasional equal-value cross-asset fill is
+            normal; a sustained stream at this rate is the signature
+            of the 2026-07-07 Phoenix decoder field-mapping bug that
+            silently collapsed every trade's price to 1:1 for months.
+
+            Check the source's recent trades ratio distribution, then
+            the decoder's amount field mapping against the contract's
+            event definition.
+
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/dex-trade-unit-ratio.md
+
       # Mirror of source_insert_stale in deploy/monitoring/rules/
       # ingestion.yml — timestamp-shape sibling to duplicate_flood
       # above. wave-96 pair lint requires both copies to stay in

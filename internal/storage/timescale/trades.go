@@ -238,6 +238,58 @@ func quoteIsUSDOrUSDPegged(a canonical.Asset) bool {
 // and surface the fallback via the AggregatorFXSnapFallbackTotal metric.
 var ErrNoFXQuote = errors.New("timescale: no FX quote at or before cutoff")
 
+// isDexUnitRatioTrade reports whether a LANDED trade is the signature
+// of the 2026-07-07 Phoenix decoder incident: an on-chain DEX trade
+// whose base_amount exactly equals its quote_amount (both nonzero) —
+// i.e. the decoder is reporting a 1:1 price, which a field-mapping
+// bug can produce silently while ADR-0033 completeness checks (which
+// verify presence, not plausibility) stay green.
+//
+// Chosen as the instrumentation choke point over the pipeline sink
+// (internal/pipeline/sink.go) deliberately: trades reach `trades`
+// through TWO different call shapes there — persistTrade (single-row,
+// used by HandleEvent for the projector's per-event sink and as the
+// dispatcher batch path's per-row fallback) and flushTradeBatch's
+// bulk w.BatchInsertTrades call (the dispatcher's PRIMARY live path,
+// which never touches persistTrade on the success case). A metric
+// wired into only persistTrade would silently miss the majority of
+// on-chain trades, since the batch path is the common case. InsertTrade
+// and BatchInsertTrades below are the only two functions every trade
+// — dispatcher live batch, projector single-event (via HandleEvent),
+// and stellarindex-ops backfill/ch-rebuild re-derives — funnels
+// through exactly once per landed row. This is the same choke point
+// obs.TradeInsertOutcomeTotal already uses for the analogous
+// new-vs-duplicate signal.
+//
+// ledger == 0 is the off-chain (CEX/FX) marker every external
+// connector deliberately stamps (migration
+// 0004_relax_trades_ledger_for_offchain); those trades are excluded
+// because their amounts are normalised onto a fixed integer scale
+// (CLAUDE.md "External-source amount scaling is NOT uniform") where
+// an equal-value reading doesn't carry the same "decoder is broken"
+// signal an on-chain 1:1 does. canonical.Trade.Validate() already
+// requires both amounts to be strictly positive before a trade can
+// reach either insert path, so the nonzero check here is
+// defence-in-depth, not load-bearing.
+func isDexUnitRatioTrade(ledger uint32, base, quote canonical.Amount) bool {
+	if ledger == 0 {
+		return false
+	}
+	return !base.IsZero() && base.Cmp(quote) == 0
+}
+
+// recordDexTradeUnitRatio bumps obs.DexTradeUnitRatioTotal when t is a
+// landed unit-ratio on-chain trade (see isDexUnitRatioTrade). Split out
+// of InsertTrade's body so trades_unit_ratio_test.go can exercise the
+// record-or-not decision directly, without a live database connection —
+// InsertTrade itself can't be unit-tested that way since it round-trips
+// through *sql.DB.
+func recordDexTradeUnitRatio(t canonical.Trade) {
+	if isDexUnitRatioTrade(t.Ledger, t.BaseAmount, t.QuoteAmount) {
+		obs.DexTradeUnitRatioTotal.WithLabelValues(t.Source).Inc()
+	}
+}
+
 // InsertTrade writes one trade. Returns nil for a successful insert
 // OR a duplicate-key clash (idempotent by storage identity — the
 // current conflict target is source+ledger+tx_hash+op_index+ts).
@@ -338,6 +390,12 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	// events that produce only duplicate inserts. See the metric
 	// godoc + stellarindex_ingestion_duplicate_flood alert.
 	obs.SourceLastInsertUnix.WithLabelValues(t.Source).Set(float64(time.Now().Unix()))
+
+	// Unit-ratio sentinel (2026-07-07 Phoenix incident) — see
+	// isDexUnitRatioTrade's godoc for why this is gated on "landed"
+	// (not every attempt): a replay/backfill re-encountering an
+	// already-stored bad trade must not re-inflate the alert.
+	recordDexTradeUnitRatio(t)
 
 	// Phase 4 (per migration 0023's docblock): auto-register the
 	// classic-asset registry from observed trades. Errors are
@@ -452,12 +510,21 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 	}
 
 	// CTE shape:
-	//   ins → multi-row INSERT, RETURNING source for each row that
-	//         actually landed (i.e. wasn't a duplicate).
+	//   ins → multi-row INSERT, RETURNING source (+ ledger/amounts for
+	//         the unit-ratio sentinel below) for each row that actually
+	//         landed (i.e. wasn't a duplicate).
 	//   bump → aggregate landed rows per source, UPSERT into
 	//          source_entry_counts.
 	// The bump's SELECT … GROUP BY pattern is the multi-source twin
 	// of the single-row variant in InsertTrade.
+	//
+	// The outer SELECT's `unit_ratio` column mirrors isDexUnitRatioTrade
+	// (2026-07-07 Phoenix incident sentinel) as a FILTER over the SAME
+	// `ins` rows the outcome-metric count uses — cheap (no extra I/O,
+	// the RETURNING set is already materialized) and exact: it counts
+	// only rows that actually landed, matching InsertTrade's landed-only
+	// gating. Keep the predicate in sync with isDexUnitRatioTrade's Go
+	// logic if either changes.
 	//nolint:gosec // G201: VALUES placeholders constructed only from compile-time format string.
 	query := fmt.Sprintf(`
         WITH ins AS (
@@ -468,7 +535,7 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
                 maker, taker
             ) VALUES %s
             ON CONFLICT (source, ledger, tx_hash, op_index, ts) DO NOTHING
-            RETURNING source
+            RETURNING source, ledger, base_amount, quote_amount
         ), bump AS (
             INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
             SELECT source, count(*), now() FROM ins GROUP BY source
@@ -476,7 +543,9 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
               SET entry_count = sec.entry_count + EXCLUDED.entry_count,
                   updated_at  = EXCLUDED.updated_at
         )
-        SELECT source, count(*) FROM ins GROUP BY source
+        SELECT source, count(*),
+               count(*) FILTER (WHERE ledger <> 0 AND base_amount = quote_amount AND base_amount <> 0)
+          FROM ins GROUP BY source
     `, strings.Join(valuesParts, ", "))
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -486,15 +555,18 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 	defer func() { _ = rows.Close() }()
 
 	// Counts per source for outcome metrics: how many landed (new) +
-	// how many were absorbed by ON CONFLICT (duplicate).
+	// how many were absorbed by ON CONFLICT (duplicate) + how many of
+	// the landed rows are unit-ratio (base_amount == quote_amount).
 	perSourceNew := make(map[string]int, 4)
+	perSourceUnitRatio := make(map[string]int, 4)
 	for rows.Next() {
 		var source string
-		var n int
-		if err := rows.Scan(&source, &n); err != nil {
+		var n, unitRatio int
+		if err := rows.Scan(&source, &n, &unitRatio); err != nil {
 			return fmt.Errorf("timescale: BatchInsertTrades scan: %w", err)
 		}
 		perSourceNew[source] = n
+		perSourceUnitRatio[source] = unitRatio
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("timescale: BatchInsertTrades rows.Err: %w", err)
@@ -516,6 +588,11 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 		}
 		if duplicate > 0 {
 			obs.TradeInsertOutcomeTotal.WithLabelValues(source, "duplicate").Add(float64(duplicate))
+		}
+	}
+	for source, n := range perSourceUnitRatio {
+		if n > 0 {
+			obs.DexTradeUnitRatioTotal.WithLabelValues(source).Add(float64(n))
 		}
 	}
 
