@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.11.0] — 2026-07-10
+
 ### Added
 - **Upstream-version-lag detection for the installed Stellar toolchain** (core / galexie /
   archivist), closing the gap behind two incidents in one week: the 2026-07-08 Protocol 27
@@ -54,6 +56,15 @@ against.
   `internal/sources/blend_emitter/README.md` and `docs/protocols/blend_emitter.md`.
 
 ### Fixed
+- **CI: `release.yml` cosign pinned back to v3.9.2** (cosign-installer SHA-pinned) after
+  cosign v3 broke the release contract two ways in one week — first a signing-config/
+  service-URL conflict with the explicit `--oidc-issuer` flag, then a default bundle-format
+  change that would have silently altered the published signature artifacts. Migrating to
+  the v3 bundle format is tracked separately (BACKLOG #51b); until then the installer action
+  must not float.
+- **CI: `deploy.yml` stages migrations via ONE tag-tarball fetch** instead of ~180 per-file
+  `gh api contents` calls, which tripped GitHub's secondary rate limit and failed two
+  deploys in a row.
 - **Chaos/k6 harness no longer masks teardown + setup failures** (A20 test-hardening
   backlog). Every best-effort recovery step in the chaos scenarios' `cleanup` traps
   (`docker start`, `docker network connect`, the redis-misconf `redis-cli` recovery
