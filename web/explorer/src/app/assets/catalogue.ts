@@ -46,6 +46,13 @@ async function fetchCatalogue(): Promise<Map<string, GlobalAssetView>> {
   }
   for (const item of rows) {
     map.set(item.slug, {
+      // This is a synthetic, build-time-only GlobalAssetView
+      // projected from the /v1/assets/verified LISTING row (which
+      // has no `kind` field of its own — that endpoint isn't part of
+      // the /v1/assets/{asset_id} dual-shape oneOf). Stamping
+      // "catalogue" here is correct by construction: every value in
+      // this map IS the catalogue-identity shape (ADR-0042 LC-040).
+      kind: 'catalogue',
       ticker: item.ticker,
       slug: item.slug,
       name: item.name,

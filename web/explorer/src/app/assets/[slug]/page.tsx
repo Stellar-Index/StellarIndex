@@ -287,18 +287,25 @@ async function fetchVerifiedSlugsForStaticParams(): Promise<string[]> {
 // Shape discriminator: /v1/assets/{slug} returns TWO different
 // wire shapes (per CLAUDE.md "Things that will surprise you"):
 //   - GlobalAssetView (catalogue slug like "usdc", "us-dollar",
-//     "btc"): keys are ticker/slug/name/class. NO
-//     asset_id, NO code.
+//     "btc"): keys are ticker/slug/name/class, kind="catalogue".
+//     NO asset_id, NO code.
 //   - AssetDetail (canonical asset_id like "USDC-GA5Z...",
-//     "native"): keys are asset_id/code/issuer/...
+//     "native"): keys are asset_id/code/issuer/..., kind="stellar_asset".
 // When the response is a GlobalAssetView shape, return null so the
 // page routes to VerifiedCurrencyView via the !coin branch. The
-// discriminator is `asset_id` being present + truthy.
+// discriminator is `kind` (ADR-0042 LC-040) — replaces the former
+// `asset_id`-truthiness heuristic this comment used to document.
+// `data.kind` is widened to `string` before the comparison: the
+// generated type narrows it to the literal "stellar_asset" (this is
+// the Asset schema), but at runtime this endpoint can hand back a
+// GlobalAssetView payload whose `kind` is actually "catalogue" — the
+// same reason the old check couldn't just trust `asset_id`'s
+// required-string typing either.
 async function fetchCoinDirect(idOrSlug: string): Promise<CoinSummary | null> {
   const data = await buildFetchData<CoinSummary>(
     `/v1/assets/${encodeURIComponent(idOrSlug)}`,
   );
-  if (!data || typeof data.asset_id !== 'string' || !data.asset_id) {
+  if (!data || (data.kind as string) !== 'stellar_asset') {
     return null;
   }
   return data;
