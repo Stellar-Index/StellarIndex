@@ -18,7 +18,7 @@ import (
 //     colon for storage)
 //   - SEP-41 Soroban     → "<contract_id>" (bare C-strkey)
 //
-// Off-chain assets (fiat, crypto-pure) have no on-chain supply we
+// Off-chain assets (fiat, crypto-pure, RWA) have no on-chain supply we
 // publish; AssetKey returns ("", error) for those — the supply
 // package never derives values for them, so the key is meaningless.
 func AssetKey(a canonical.Asset) (string, error) {
@@ -29,7 +29,7 @@ func AssetKey(a canonical.Asset) (string, error) {
 		return a.Code + ":" + a.Issuer, nil
 	case canonical.AssetSoroban:
 		return a.ContractID, nil
-	case canonical.AssetFiat, canonical.AssetCrypto:
+	case canonical.AssetFiat, canonical.AssetCrypto, canonical.AssetRWA:
 		return "", fmt.Errorf("supply: off-chain asset %q has no on-chain supply key", a.String())
 	default:
 		return "", fmt.Errorf("supply: unknown asset type %q", a.Type)

@@ -174,6 +174,30 @@ against.
   aquarius as "pair-keyed, no per-contract column." Sourced from `aquarius_liquidity` (which
   also carries the pool's token identities for the pair label). (#91)
 
+### Added
+- **`canonical.AssetType` exhaustive-switch guard (ROADMAP #48 / ADR-0010's long-standing
+  TODO(#0))** — `internal/canonical/asset_type_exhaustive_guard_test.go`
+  (`TestAssetTypeExhaustiveGuard`) is a go/types AST walk, modeled on the i128-truncation
+  guard's plumbing, that fails any switch tagged on `canonical.AssetType` which neither
+  covers every declared variant nor carries a `default:` clause with a real (non-empty,
+  non-fallthrough-only) body. Chosen over widening the already-enabled golangci-lint
+  `exhaustive` linter because that linter can't be scoped to a single enum type — the
+  2026-07-05 probe documented in `.golangci.yml` found the strict form floods 12 unrelated
+  findings repo-wide — and because it catches something that linter structurally cannot: a
+  present-but-trivial default clause, which `default-signifies-exhaustive: true` treats as
+  fully exhaustive without ever inspecting it. Shares the linter's own `//exhaustive:ignore`
+  escape hatch. Runs as a plain package test, already covered by `make test` / `make verify`.
+  Probe-verified to actually fail on two synthetic regressions (each applied then reverted):
+  a switch with no default and a temporarily-hidden intentional gap, and a switch with a
+  temporarily-emptied default. Sweep found one true gap while building this:
+  `supply.AssetKey`'s `AssetFiat, AssetCrypto` off-chain case was missing `AssetRWA` (a
+  post-ADR-0028 addition), silently returning the generic "unknown asset type" error instead
+  of the more accurate "off-chain asset has no on-chain supply key" — fixed (mechanical,
+  same message the sibling off-chain types already get). No other switch needed a code
+  change; every other non-exhaustive-looking switch already carries either a real default
+  (`asset.go`, `sac.go`, `xdrjson/sac.go`) or the existing `//exhaustive:ignore` marker
+  (`usd_volume_quote_spec.go`).
+
 ## [v0.9.0] — 2026-07-07
 
 ### Added

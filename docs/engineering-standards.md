@@ -632,6 +632,7 @@ mechanism in the codebase.
 | Runbook ↔ alert link | CI bidirectional check | `scripts/ci/check-runbook-links.sh` |
 | Doc freshness | CI scan | `scripts/ci/check-doc-freshness.sh` |
 | Doc-code citation validity | CI scan | `scripts/ci/check-doc-code-links.sh` |
+| `canonical.AssetType` switch exhaustiveness | `go test` (go/types AST walk, scoped to one enum) | `internal/canonical/asset_type_exhaustive_guard_test.go` |
 | Never two sources of truth | Generated-file regen on release | `release.yml` |
 | Generated-file banner | CI scan for banner | `scripts/ci/check-generated-banner.sh` |
 | Agent orientation | `CLAUDE.md` + `doc.go` per package | convention + CI |
