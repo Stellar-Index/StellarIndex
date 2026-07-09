@@ -216,20 +216,19 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # Use `gh api` to read the migrations tree at the exact
-          # tag — guarantees binary ↔ migration set parity even if
-          # main has advanced since the tag.
-          mkdir -p dist/migrations
-          gh api "repos/$REPO/git/trees/$VERSION?recursive=1" \
-            --jq '.tree[] | select(.path | startswith("migrations/")) | .path' \
-            | while read -r path; do
-                rel="${path#migrations/}"
-                if [ -z "$rel" ]; then continue; fi
-                target="dist/migrations/$rel"
-                mkdir -p "$(dirname "$target")"
-                gh api "repos/$REPO/contents/${path}?ref=$VERSION" \
-                  --jq '.content' | base64 -d > "$target"
-              done
+          # ONE tarball fetch of the tag's tree — guarantees binary ↔
+          # migration set parity even if main has advanced since the
+          # tag. Previously this looped `gh api contents` per file
+          # (~180 sequential API calls); on 2026-07-09 that tripped
+          # GitHub's secondary rate limit twice in a row (an HTML
+          # error page mid-loop → "invalid character '<'"), failing
+          # the v0.10.0 deploy before it touched the host. A single
+          # tarball request can't hit the per-request burst limit.
+          mkdir -p dist/migrations tag-tree
+          gh api "repos/$REPO/tarball/$VERSION" > tag.tar.gz
+          tar -xzf tag.tar.gz -C tag-tree --strip-components=1
+          cp -R tag-tree/migrations/. dist/migrations/
+          rm -rf tag-tree tag.tar.gz
           echo "---"
           # `| head` + pipefail interacts badly: head closes early,
           # ls hits SIGPIPE, pipefail fails the step even though
