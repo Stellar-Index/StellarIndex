@@ -33,6 +33,17 @@ against.
   readers agree with no double-count.
 
 ### Fixed
+- **`/v1/protocols/comet`'s liquidity-depth caveat was stale since the 2026-07-08 gating fix.**
+  ROADMAP "orphaned analytics" ground-truth check found all five previously-flagged tables
+  (`comet_liquidity`, `phoenix_liquidity`, `phoenix_stake_events`, `soroswap_skim_events`,
+  `blend_emissions`) already fully wired to their protocol pages since v0.9.0 (#91) — no new
+  readers or endpoints needed. The one genuine gap: `comet_liquidity`'s bespoke Note (and its
+  surrounding Go doc comments) still said Comet was "the LAST un-gated on-chain source" and
+  "NOT contract-identity-gated", left over from before `e118d9bd` shipped the curated one-pool
+  allowlist that closed CS-026. The caveat now says GATED and adds the correct nuance: rows
+  captured before 2026-07-08 predate the gate and were not retroactively re-verified against
+  the curated contract set. Also fixes the matching stale intro blockquote in
+  `docs/protocols/comet.md`, which self-contradicted its own "Gate status: GATED" line.
 - **`internal/decimalsguard` never self-seeded a DORMANT non-7-decimal Soroban token** — the
   periodic sweep only enumerates a 20-minute trailing window, so token `CC2RB…`
   (`decimals()=9`, confirmed 2026-07-09, 35 trades since 2026-06-22, served price 100x wrong)

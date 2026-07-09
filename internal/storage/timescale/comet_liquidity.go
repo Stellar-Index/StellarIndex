@@ -168,11 +168,14 @@ type CometTokenFlow struct {
 // This is the READ side of the Comet liquidity-depth signal InsertCometLiquidity
 // captures. Comet has no post-state reserve snapshot and no published price,
 // so the figures are native-token base-unit WINDOW deltas — not absolute
-// reserves or USD TVL. Comet is also the LAST un-gated on-chain source
-// (CS-026): its decoder matches the shared Balancer-v1 ("POOL", …) topic
-// bytes with no contract-identity gate, so these figures are not
-// contract-identity-gated (see docs/protocols/comet.md); callers surface
-// them with that caveat.
+// reserves or USD TVL. Comet is contract-identity gated as of 2026-07-08
+// (curated one-pool allowlist, CS-026 closed): the decoder's Matches() now
+// requires the emitting contract to be in comet.MainnetGatedSet, so a
+// look-alike Balancer-v1 deployment can no longer land NEW rows. Rows dated
+// before the gate shipped were captured by the prior topic-only-match
+// decoder and were not retroactively re-verified, so historical rows may
+// predate the gate (see docs/protocols/comet.md); callers surface that
+// caveat.
 //
 // Empty-safe: returns (nil, nil) when no liquidity events were captured in
 // the window. windowDays <= 0 is treated as 90.

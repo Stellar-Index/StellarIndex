@@ -164,8 +164,9 @@ type PhoenixPoolFlow struct {
 // InsertPhoenixLiquidityChange captures. Phoenix has no post-state reserve
 // snapshot and no published price, so the figures are native-token
 // base-unit WINDOW deltas, not absolute reserves or USD TVL. (Phoenix is
-// contract-identity gated — the curated-set gate, 2026-07-02 — so unlike
-// Comet these figures carry no un-gated-injection caveat.)
+// contract-identity gated — the curated-set gate, 2026-07-02, earlier than
+// Comet's 2026-07-08 gate — so unlike Comet these figures carry no
+// historical-rows-may-predate-the-gate caveat.)
 //
 // Empty-safe: returns (nil, nil) when no liquidity events were captured in
 // the window. windowDays <= 0 is treated as 90.
