@@ -138,7 +138,7 @@ func TestCachedSourcesStatsReader_ErrorIsNotCached(t *testing.T) {
 // TestCachedSourcesStatsReader_HitMissCounter pins the
 // stellarindex_api_cache_ops_total{cache="sources_stats"} counter
 // for both ops on the wrapper. Same regression-guard rationale as
-// the markets + coins variants — if a future refactor drops the
+// the markets + assetsReader variants — if a future refactor drops the
 // .Inc() on either branch the alert from #1197 silently stops
 // firing for these surfaces.
 func TestCachedSourcesStatsReader_HitMissCounter(t *testing.T) {

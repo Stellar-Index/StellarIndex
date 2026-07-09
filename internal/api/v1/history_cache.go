@@ -34,7 +34,7 @@ import (
 // empty slice — is cached).
 //
 // SWR shape mirrors the proven #22/#23 pattern
-// (coins_cache.go / markets_cache.go) with one deliberate change:
+// (asset_catalogue_cache.go / markets_cache.go) with one deliberate change:
 // the cold fill runs in a **detached** goroutine on its own budget,
 // not the request ctx. The handler's hard 8s ceiling would
 // otherwise fail every cold call before it could populate the cache

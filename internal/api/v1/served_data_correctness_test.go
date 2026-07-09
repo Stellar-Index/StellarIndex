@@ -68,48 +68,48 @@ func TestStampListingCollisionsNilCatalogue(t *testing.T) {
 	}
 }
 
-// TestApplyCoinRowYieldsToCanonicalPrice pins the FIX-2 precedence: the
-// coin-overlay (listing query, which for native mixes SDEX + CEX pairs)
+// TestApplyAssetRowYieldsToCanonicalPrice pins the FIX-2 precedence: the
+// asset-catalogue overlay (listing query, which for native mixes SDEX + CEX pairs)
 // must NOT clobber a PriceUSD already set by the canonical /v1/price
 // reader (F2 populatePriceUSD → lookupUSDPrice, run earlier). It fills
 // only when that canonical value is absent.
-func TestApplyCoinRowYieldsToCanonicalPrice(t *testing.T) {
+func TestApplyAssetRowYieldsToCanonicalPrice(t *testing.T) {
 	s := &Server{}
 	rowPrice := "0.2012011674"
-	row := timescale.CoinRow{AssetID: "native", PriceUSD: &rowPrice}
+	row := timescale.AssetRow{AssetID: "native", PriceUSD: &rowPrice}
 
-	// Canonical price already set — coin-overlay must yield.
+	// Canonical price already set — asset-catalogue overlay must yield.
 	canonicalPrice := "0.20114638079663692765"
 	detail := &AssetDetail{PriceUSD: &canonicalPrice}
-	s.applyCoinRowToDetail(detail, row, nil, "native")
+	s.applyAssetRowToDetail(detail, row, nil, "native")
 	if detail.PriceUSD == nil || *detail.PriceUSD != canonicalPrice {
-		t.Fatalf("coin-overlay overwrote the canonical price: got %v, want %q",
+		t.Fatalf("asset-catalogue overlay overwrote the canonical price: got %v, want %q",
 			detail.PriceUSD, canonicalPrice)
 	}
 
-	// No canonical price — coin-overlay fills the long tail (SHX, AQUA…).
+	// No canonical price — asset-catalogue overlay fills the long tail (SHX, AQUA…).
 	detail2 := &AssetDetail{}
-	s.applyCoinRowToDetail(detail2, row, nil, "native")
+	s.applyAssetRowToDetail(detail2, row, nil, "native")
 	if detail2.PriceUSD == nil || *detail2.PriceUSD != rowPrice {
-		t.Fatalf("coin-overlay did not fill an absent price: got %v, want %q",
+		t.Fatalf("asset-catalogue overlay did not fill an absent price: got %v, want %q",
 			detail2.PriceUSD, rowPrice)
 	}
 }
 
-// fallbackCoins is a CoinsReader stub that prices exactly one asset_id
-// via GetCoinByAssetID and returns a no-price row for everything else.
-type fallbackCoins struct {
-	CoinsReader
+// fallbackAssets is an AssetsReader stub that prices exactly one asset_id
+// via GetAssetByAssetID and returns a no-price row for everything else.
+type fallbackAssets struct {
+	AssetsReader
 	assetID string
 	price   string
 }
 
-func (c *fallbackCoins) GetCoinByAssetID(_ context.Context, assetID string) (timescale.CoinRow, error) {
+func (c *fallbackAssets) GetAssetByAssetID(_ context.Context, assetID string) (timescale.AssetRow, error) {
 	if assetID == c.assetID {
 		p := c.price
-		return timescale.CoinRow{AssetID: assetID, PriceUSD: &p}, nil
+		return timescale.AssetRow{AssetID: assetID, PriceUSD: &p}, nil
 	}
-	return timescale.CoinRow{AssetID: assetID}, nil
+	return timescale.AssetRow{AssetID: assetID}, nil
 }
 
 // TestGlobalAssetViewOnChainFallback pins FIX-3: when the global
@@ -139,7 +139,7 @@ func TestGlobalAssetViewOnChainFallback(t *testing.T) {
 	price := "0.0039386011"
 	s := &Server{
 		verifiedCurrencies: cat,
-		coins:              &fallbackCoins{assetID: stellarID, price: price},
+		assetsReader:       &fallbackAssets{assetID: stellarID, price: price},
 		// globalPrice left nil → the CEX/aggregator tier misses.
 	}
 
@@ -179,7 +179,7 @@ func TestGlobalAssetViewNoFabricationWhenOffChain(t *testing.T) {
 	// assetID mismatch → the stub returns a no-price row for the twin.
 	s := &Server{
 		verifiedCurrencies: cat,
-		coins:              &fallbackCoins{assetID: "SOMETHING-ELSE", price: "1.23"},
+		assetsReader:       &fallbackAssets{assetID: "SOMETHING-ELSE", price: "1.23"},
 	}
 	view := s.buildGlobalAssetView(context.Background(), vc)
 	if view.PriceUSD != nil {

@@ -103,7 +103,7 @@ type Server struct {
 	change24h               Change24hReader
 	priceAt                 PriceAtReader
 	changesum               ChangeSummaryReader
-	coins                   CoinsReader
+	assetsReader            AssetsReader
 	issuers                 IssuersReader
 	sep41Transfers          SEP41TransfersReader
 	cursors                 CursorsReader
@@ -232,11 +232,11 @@ type Server struct {
 	// short TTL (30s by default). Cache hits skip the entire handler
 	// chain — resolveAssetDetail, applySep1Overlay (even on Redis
 	// hit), applyF2Fields (4 uncached DB calls: volume / 2× price /
-	// supply), applyCoinExtensionFields. Drift-safe by construction:
+	// supply), applyAssetExtensionFields. Drift-safe by construction:
 	// the cached entry IS what the handler produces.
 	//
 	// Pre-cache benchmark (rc.63 internal localhost on r1): ~700-900ms
-	// warm. The 7-reader fan-out caches (CachedCoinsReader SWR) are
+	// warm. The 7-reader fan-out caches (CachedAssetsReader SWR) are
 	// hot from prewarmCaches + selfPrewarmAssetEndpoints, so the
 	// remaining cost is in the F2 chain. Wrapping each F2 reader is
 	// 4 new wrapper types; the response-level cache is one type.
@@ -487,14 +487,14 @@ type Options struct {
 	// the explorer. Nil makes the endpoint return 503.
 	ChangeSummary ChangeSummaryReader
 
-	// Coins, when non-nil, supplies the coin-equivalence overlay
+	// AssetsReader, when non-nil, supplies the asset-catalogue overlay
 	// the /v1/assets handlers fan out across (price / volume /
 	// market_cap / sparkline / ATH / top_markets). The standalone
 	// /v1/coins HTTP route was removed in rc.48; this seam stays
 	// because every /v1/assets row sources the same data through
 	// it. Production wiring is timescale.Store directly (implements
-	// ListCoinsExt). Nil makes the affected /v1/assets fields 503.
-	Coins CoinsReader
+	// ListAssetsExt). Nil makes the affected /v1/assets fields 503.
+	AssetsReader AssetsReader
 
 	// Issuers, when non-nil, backs GET /v1/issuers/{g_strkey}.
 	// Production wiring is timescale.Store directly. Nil makes
@@ -938,7 +938,7 @@ func New(opts Options) *Server {
 		change24h:               opts.Change24h,
 		priceAt:                 opts.PriceAt,
 		changesum:               opts.ChangeSummary,
-		coins:                   opts.Coins,
+		assetsReader:            opts.AssetsReader,
 		issuers:                 opts.Issuers,
 		sep41Transfers:          opts.SEP41Transfers,
 		cursors:                 opts.Cursors,

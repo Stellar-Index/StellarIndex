@@ -13,19 +13,19 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
-// fillCoinsStub returns n classic rows and records the options it was
+// fillAssetsStub returns n classic rows and records the options it was
 // called with (so the test can assert Q pass-through).
-type fillCoinsStub struct {
-	CoinsReader // nil — only ListCoinsExt is called on this path
-	n           int
-	lastOpts    timescale.ListCoinsOptions
+type fillAssetsStub struct {
+	AssetsReader // nil — only ListAssetsExt is called on this path
+	n            int
+	lastOpts     timescale.ListAssetsOptions
 }
 
-func (s *fillCoinsStub) ListCoinsExt(_ context.Context, opts timescale.ListCoinsOptions) ([]timescale.CoinRow, error) {
+func (s *fillAssetsStub) ListAssetsExt(_ context.Context, opts timescale.ListAssetsOptions) ([]timescale.AssetRow, error) {
 	s.lastOpts = opts
-	rows := make([]timescale.CoinRow, 0, s.n)
+	rows := make([]timescale.AssetRow, 0, s.n)
 	for i := 0; i < s.n && i < opts.Limit; i++ {
-		rows = append(rows, timescale.CoinRow{AssetID: "TOK" + string(rune('A'+i)) + "-GBASE", Code: "TOK"})
+		rows = append(rows, timescale.AssetRow{AssetID: "TOK" + string(rune('A'+i)) + "-GBASE", Code: "TOK"})
 	}
 	return rows, nil
 }
@@ -34,8 +34,8 @@ func (s *fillCoinsStub) ListCoinsExt(_ context.Context, opts timescale.ListCoins
 // than the requested limit, page 1 fills the remainder from the
 // classic stream instead of returning the catalogue tail alone.
 func TestUnifiedPage1Fill(t *testing.T) {
-	stub := &fillCoinsStub{n: 50}
-	s := &Server{coins: stub}
+	stub := &fillAssetsStub{n: 50}
+	s := &Server{assetsReader: stub}
 	// No verifiedCurrencies wired → catalogue phase empty → the fill
 	// path must still serve `limit` classic rows on page 1.
 	req := httptest.NewRequest(http.MethodGet, "/v1/assets?asset_class=all&limit=25&q=tok", nil)

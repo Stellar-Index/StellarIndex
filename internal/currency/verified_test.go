@@ -425,9 +425,9 @@ func TestSeedFiatEntries_HaveExpectedShape(t *testing.T) {
 		if vc.CirculatingSupply == "" {
 			t.Errorf("fiat entry %q missing circulating_supply", vc.Slug)
 		}
-		if len(vc.Networks) != 0 {
+		if len(vc.Issuance) != 0 {
 			t.Errorf("fiat entry %q has networks (%d); fiat is network-agnostic",
-				vc.Slug, len(vc.Networks))
+				vc.Slug, len(vc.Issuance))
 		}
 		if _, ok := wantPresent[vc.Slug]; ok {
 			wantPresent[vc.Slug] = true
@@ -481,8 +481,8 @@ func TestReferenceOnly_AllowsZeroNetworks(t *testing.T) {
 	if !ok {
 		t.Fatal("ref entry not loaded")
 	}
-	if len(vc.Networks) != 0 {
-		t.Errorf("reference_only entry has %d networks, want 0", len(vc.Networks))
+	if len(vc.Issuance) != 0 {
+		t.Errorf("reference_only entry has %d networks, want 0", len(vc.Issuance))
 	}
 	// Still feeds the reference-price pipeline.
 	if cat.CoinGeckoIDs()["REF"] != "ref-coin" {
@@ -498,10 +498,10 @@ func TestSeedBrowseable_StellarOnlyNetworks(t *testing.T) {
 		t.Fatalf("LoadEmbedded: %v", err)
 	}
 	for _, vc := range cat.All() {
-		if len(vc.Networks) > 1 {
-			t.Errorf("%s has %d network entries; expected at most 1 (stellar)", vc.Ticker, len(vc.Networks))
+		if len(vc.Issuance) > 1 {
+			t.Errorf("%s has %d network entries; expected at most 1 (stellar)", vc.Ticker, len(vc.Issuance))
 		}
-		for _, n := range vc.Networks {
+		for _, n := range vc.Issuance {
 			if n.Network != "stellar" {
 				t.Errorf("%s carries non-Stellar network %q", vc.Ticker, n.Network)
 			}
@@ -532,7 +532,7 @@ func TestSeedDataIntegrity(t *testing.T) {
 		t.Fatalf("LoadEmbedded: %v", err)
 	}
 	for _, vc := range cat.All() {
-		for _, n := range vc.Networks {
+		for _, n := range vc.Issuance {
 			if n.Network != "stellar" {
 				continue
 			}

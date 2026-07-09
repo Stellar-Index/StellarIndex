@@ -630,7 +630,7 @@ func (s *Server) expandSlugToAssetIDs(slug string) []string {
 		seen[s] = struct{}{}
 		out = append(out, s)
 	}
-	for _, n := range vc.Networks {
+	for _, n := range vc.Issuance {
 		if n.AssetID != "" {
 			add(n.AssetID)
 		}

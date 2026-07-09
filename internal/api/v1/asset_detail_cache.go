@@ -13,8 +13,7 @@ import (
 //
 // The cached payload is the full JSON wire bytes (flags already
 // encoded into the envelope by renderAssetDetailEnvelope) plus the
-// time it was cached. Storing post-render avoids re-running the F2
-// chain + coin-overlay + verified-currency overlay on every hit.
+// time it was cached. Storing post-render avoids // chain + asset-catalogue overlay + verified-currency overlay on every hit.
 type assetDetailEntry struct {
 	body     []byte
 	cachedAt time.Time
@@ -28,7 +27,7 @@ type assetDetailEntry struct {
 //
 // Why a response cache instead of per-reader caches: the underlying
 // readers fan out wide (Volume24hUSDForAsset, supply.LatestSupply,
-// lookupUSDPrice × 2, applyCoinExtensionFields 7 readers,
+// lookupUSDPrice × 2, applyAssetExtensionFields 7 readers,
 // applySep1Overlay metadata fetch, ...). Wrapping every reader is
 // 5+ new wrapper types. The handler-level cache is one type and
 // covers every cost.

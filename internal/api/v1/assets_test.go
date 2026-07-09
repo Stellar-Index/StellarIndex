@@ -581,13 +581,13 @@ func TestAssetList_NetworkParamIgnored_DefaultPath(t *testing.T) {
 	}
 }
 
-func TestAssetList_FromCoinsReader_IncludesPrice(t *testing.T) {
-	// When a CoinsReader is wired, the listing endpoint sources from
-	// ListCoinsExt and projects each CoinRow into an AssetDetail
-	// with the coin-overlay fields populated.
+func TestAssetList_FromAssetsReader_IncludesPrice(t *testing.T) {
+	// When an AssetsReader is wired, the listing endpoint sources from
+	// ListAssetsExt and projects each AssetRow into an AssetDetail
+	// with the asset-catalogue overlay fields populated.
 	price := "1.0008"
 	vol := "1131827.32"
-	coinRow := timescale.CoinRow{
+	assetRow := timescale.AssetRow{
 		Slug:             "USDC",
 		AssetID:          "USDC-" + testUSDCIssuer,
 		Code:             "USDC",
@@ -598,12 +598,12 @@ func TestAssetList_FromCoinsReader_IncludesPrice(t *testing.T) {
 		PriceUSD:         &price,
 		Volume24hUSD:     &vol,
 	}
-	coins := &stubCoinsReaderExt{}
-	// stubCoinsReaderExt.ListCoinsExt returns nil — override by
+	assetsReader := &stubAssetsReaderExt{}
+	// stubAssetsReaderExt.ListAssetsExt returns nil — override by
 	// constructing a custom struct inline.
-	listReader := &listingStub{rows: []timescale.CoinRow{coinRow}}
-	srv := v1.New(v1.Options{Coins: listReader, Assets: &stubAssetReader{}})
-	_ = coins
+	listReader := &listingStub{rows: []timescale.AssetRow{assetRow}}
+	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
+	_ = assetsReader
 	ts := httpTestServer(t, srv)
 	resp := mustGet(t, ts.URL+"/v1/assets?limit=10")
 	if resp.StatusCode != http.StatusOK {
@@ -633,53 +633,53 @@ func TestAssetList_FromCoinsReader_IncludesPrice(t *testing.T) {
 	}
 }
 
-func TestAssetList_FromCoinsReader_IssuerFilter(t *testing.T) {
-	// ?issuer=G should pass through to the CoinsReader's Issuer
+func TestAssetList_FromAssetsReader_IssuerFilter(t *testing.T) {
+	// ?issuer=G should pass through to the AssetsReader's Issuer
 	// option. Stub records what was passed.
 	listReader := &listingStub{}
-	srv := v1.New(v1.Options{Coins: listReader, Assets: &stubAssetReader{}})
+	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
 	ts := httpTestServer(t, srv)
 	mustGet(t, ts.URL+"/v1/assets?issuer="+testUSDCIssuer)
 	if listReader.lastOpts.Issuer != testUSDCIssuer {
-		t.Errorf("ListCoinsExt called with Issuer=%q, want %q", listReader.lastOpts.Issuer, testUSDCIssuer)
+		t.Errorf("ListAssetsExt called with Issuer=%q, want %q", listReader.lastOpts.Issuer, testUSDCIssuer)
 	}
 }
 
-func TestAssetList_FromCoinsReader_CodeFilter(t *testing.T) {
-	// ?code=USDC pushes down to the CoinsReader's Code option
+func TestAssetList_FromAssetsReader_CodeFilter(t *testing.T) {
+	// ?code=USDC pushes down to the AssetsReader's Code option
 	// (BACKLOG #54). Stub records what was passed.
 	listReader := &listingStub{}
-	srv := v1.New(v1.Options{Coins: listReader, Assets: &stubAssetReader{}})
+	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
 	ts := httpTestServer(t, srv)
 	mustGet(t, ts.URL+"/v1/assets?code=USDC")
 	if listReader.lastOpts.Code != "USDC" {
-		t.Errorf("ListCoinsExt called with Code=%q, want %q", listReader.lastOpts.Code, "USDC")
+		t.Errorf("ListAssetsExt called with Code=%q, want %q", listReader.lastOpts.Code, "USDC")
 	}
 	if listReader.lastOpts.Issuer != "" {
 		t.Errorf("Issuer must be empty when only code is set; got %q", listReader.lastOpts.Issuer)
 	}
 }
 
-func TestAssetList_FromCoinsReader_IssuerAndCodeCombine(t *testing.T) {
+func TestAssetList_FromAssetsReader_IssuerAndCodeCombine(t *testing.T) {
 	// ?issuer=G&code=USDC — both filters combine (the "pin one
 	// classic asset" case). BACKLOG #54.
 	listReader := &listingStub{}
-	srv := v1.New(v1.Options{Coins: listReader, Assets: &stubAssetReader{}})
+	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
 	ts := httpTestServer(t, srv)
 	mustGet(t, ts.URL+"/v1/assets?issuer="+testUSDCIssuer+"&code=USDC")
 	if listReader.lastOpts.Issuer != testUSDCIssuer || listReader.lastOpts.Code != "USDC" {
-		t.Errorf("ListCoinsExt opts = {Issuer:%q Code:%q}, want {%q USDC}",
+		t.Errorf("ListAssetsExt opts = {Issuer:%q Code:%q}, want {%q USDC}",
 			listReader.lastOpts.Issuer, listReader.lastOpts.Code, testUSDCIssuer)
 	}
 }
 
 func TestAssetList_TypeClassic_PassesThrough(t *testing.T) {
-	// type=classic is a no-op on the classic-only coins listing:
+	// type=classic is a no-op on the classic-only assetsReader listing:
 	// the reader is still called and its rows are returned.
-	listReader := &listingStub{rows: []timescale.CoinRow{{
+	listReader := &listingStub{rows: []timescale.AssetRow{{
 		AssetID: "USDC-" + testUSDCIssuer, Code: "USDC", Slug: "usdc",
 	}}}
-	srv := v1.New(v1.Options{Coins: listReader, Assets: &stubAssetReader{}})
+	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
 	ts := httpTestServer(t, srv)
 	resp := mustGet(t, ts.URL+"/v1/assets?type=classic")
 	if resp.StatusCode != http.StatusOK {
@@ -696,13 +696,13 @@ func TestAssetList_TypeClassic_PassesThrough(t *testing.T) {
 
 func TestAssetList_TypeNative_ShortCircuitsEmpty(t *testing.T) {
 	// type=native (or soroban/fiat) matches nothing on the classic-
-	// only coins listing → empty page WITHOUT hitting the reader
+	// only assetsReader listing → empty page WITHOUT hitting the reader
 	// (BACKLOG #54 type fold). The stub is seeded with a row that
 	// must NOT surface.
-	listReader := &listingStub{rows: []timescale.CoinRow{{
+	listReader := &listingStub{rows: []timescale.AssetRow{{
 		AssetID: "USDC-" + testUSDCIssuer, Code: "USDC", Slug: "usdc",
 	}}}
-	srv := v1.New(v1.Options{Coins: listReader, Assets: &stubAssetReader{}})
+	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
 	ts := httpTestServer(t, srv)
 	resp := mustGet(t, ts.URL+"/v1/assets?type=native")
 	if resp.StatusCode != http.StatusOK {
@@ -717,7 +717,7 @@ func TestAssetList_TypeNative_ShortCircuitsEmpty(t *testing.T) {
 	}
 	// Reader must not have been called at all (lastOpts stays zero).
 	if listReader.lastOpts.Limit != 0 {
-		t.Errorf("type=native must NOT call ListCoinsExt; lastOpts.Limit=%d", listReader.lastOpts.Limit)
+		t.Errorf("type=native must NOT call ListAssetsExt; lastOpts.Limit=%d", listReader.lastOpts.Limit)
 	}
 }
 
@@ -725,7 +725,7 @@ func TestAssetList_InvalidFilters_400(t *testing.T) {
 	// Malformed type / code / issuer 400 up front (BACKLOG #54),
 	// before any backing reader is consulted.
 	listReader := &listingStub{}
-	srv := v1.New(v1.Options{Coins: listReader, Assets: &stubAssetReader{}})
+	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
 	ts := httpTestServer(t, srv)
 	cases := []struct {
 		name  string
@@ -750,10 +750,10 @@ func TestAssetList_InvalidFilters_400(t *testing.T) {
 func TestAssetList_TypeAny_NoFilter(t *testing.T) {
 	// type=any is the documented "disable the filter" value — it must
 	// pass through identically to omitting type.
-	listReader := &listingStub{rows: []timescale.CoinRow{{
+	listReader := &listingStub{rows: []timescale.AssetRow{{
 		AssetID: "USDC-" + testUSDCIssuer, Code: "USDC", Slug: "usdc",
 	}}}
-	srv := v1.New(v1.Options{Coins: listReader, Assets: &stubAssetReader{}})
+	srv := v1.New(v1.Options{AssetsReader: listReader, Assets: &stubAssetReader{}})
 	ts := httpTestServer(t, srv)
 	resp := mustGet(t, ts.URL+"/v1/assets?type=any")
 	if resp.StatusCode != http.StatusOK {
@@ -768,64 +768,64 @@ func TestAssetList_TypeAny_NoFilter(t *testing.T) {
 	}
 }
 
-// listingStub is a tiny CoinsReader implementation tailored to the
+// listingStub is a tiny AssetsReader implementation tailored to the
 // listing-endpoint tests. Each method returns the configured value;
-// recording the most-recent ListCoinsExt opts lets tests assert
+// recording the most-recent ListAssetsExt opts lets tests assert
 // what filter the handler passed through.
 type listingStub struct {
-	rows     []timescale.CoinRow
-	lastOpts timescale.ListCoinsOptions
+	rows     []timescale.AssetRow
+	lastOpts timescale.ListAssetsOptions
 }
 
-func (s *listingStub) ListCoinsExt(_ context.Context, opts timescale.ListCoinsOptions) ([]timescale.CoinRow, error) {
+func (s *listingStub) ListAssetsExt(_ context.Context, opts timescale.ListAssetsOptions) ([]timescale.AssetRow, error) {
 	s.lastOpts = opts
 	return s.rows, nil
 }
 
-func (s *listingStub) GetCoinBySlug(_ context.Context, _ string) (timescale.CoinRow, error) {
-	return timescale.CoinRow{}, nil
+func (s *listingStub) GetAssetBySlug(_ context.Context, _ string) (timescale.AssetRow, error) {
+	return timescale.AssetRow{}, nil
 }
 
-func (s *listingStub) GetCoinByAssetID(_ context.Context, _ string) (timescale.CoinRow, error) {
-	return timescale.CoinRow{}, nil
+func (s *listingStub) GetAssetByAssetID(_ context.Context, _ string) (timescale.AssetRow, error) {
+	return timescale.AssetRow{}, nil
 }
 
-func (s *listingStub) GetNativeCoinRow(_ context.Context) (timescale.CoinRow, error) {
-	return timescale.CoinRow{}, nil
+func (s *listingStub) GetNativeAssetRow(_ context.Context) (timescale.AssetRow, error) {
+	return timescale.AssetRow{}, nil
 }
 
-func (s *listingStub) GetCoinTopMarkets(_ context.Context, _ string, _ int) ([]timescale.CoinTopMarket, error) {
+func (s *listingStub) GetAssetTopMarkets(_ context.Context, _ string, _ int) ([]timescale.AssetTopMarket, error) {
 	return nil, nil
 }
 
-func (s *listingStub) GetCoinPriceHistory24h(_ context.Context, _ string) ([]timescale.CoinPricePoint, error) {
+func (s *listingStub) GetAssetPriceHistory24h(_ context.Context, _ string) ([]timescale.AssetPricePoint, error) {
 	return nil, nil
 }
 
-func (s *listingStub) GetCoinPriceHistory7d(_ context.Context, _ string) ([]timescale.CoinPricePoint, error) {
+func (s *listingStub) GetAssetPriceHistory7d(_ context.Context, _ string) ([]timescale.AssetPricePoint, error) {
 	return nil, nil
 }
 
-func (s *listingStub) GetCoinsPriceHistory24hBatch(_ context.Context, _ []string) (map[string][]timescale.CoinPricePoint, error) {
+func (s *listingStub) GetAssetsPriceHistory24hBatch(_ context.Context, _ []string) (map[string][]timescale.AssetPricePoint, error) {
 	return nil, nil
 }
 
-func (s *listingStub) GetCoinsPriceHistory7dBatch(_ context.Context, _ []string) (map[string][]timescale.CoinPricePoint, error) {
+func (s *listingStub) GetAssetsPriceHistory7dBatch(_ context.Context, _ []string) (map[string][]timescale.AssetPricePoint, error) {
 	return nil, nil
 }
 
-func (s *listingStub) GetCoinMarketsCount(_ context.Context, _ string) (int64, error) {
+func (s *listingStub) GetAssetMarketsCount(_ context.Context, _ string) (int64, error) {
 	return 0, nil
 }
 
-func (s *listingStub) GetCoinATH(_ context.Context, _ string) (*timescale.CoinATH, error) {
+func (s *listingStub) GetAssetATH(_ context.Context, _ string) (*timescale.AssetATH, error) {
 	return nil, nil
 }
 
-func (s *listingStub) GetCoinsATHBatch(_ context.Context, _ []string) (map[string]timescale.CoinATH, error) {
+func (s *listingStub) GetAssetsATHBatch(_ context.Context, _ []string) (map[string]timescale.AssetATH, error) {
 	return nil, nil
 }
 
-func (s *listingStub) GetCoinTradeCount24h(_ context.Context, _ string) (int64, error) {
+func (s *listingStub) GetAssetTradeCount24h(_ context.Context, _ string) (int64, error) {
 	return 0, nil
 }

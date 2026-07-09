@@ -183,13 +183,13 @@ type AssetDetail struct {
 	// fabricating "0%".
 	Change24hPct *string `json:"change_24h_pct,omitempty"`
 
-	// ─── Coin-equivalence extension (R-018 final) ────────────────
+	// ─── Asset-catalogue extension (R-018 final) ────────────────
 	//
-	// Fields lifted from CoinSummary so /v1/assets/{id} is a
+	// Fields lifted from AssetSummary so /v1/assets/{id} is a
 	// superset of /v1/coins/{slug}. Lets the explorer migrate every
 	// /v1/coins consumer to /v1/assets without losing data. Populated
-	// only when a CoinsReader is wired AND the asset has a row in
-	// the coins catalogue (skipped for fiat:* and external:* assets).
+	// only when an AssetsReader is wired AND the asset has a row in
+	// the assetsReader catalogue (skipped for fiat:* and external:* assets).
 
 	// PriceUSD is the latest VWAP/last-trade USD price as a
 	// fixed-precision decimal string. Inlined so wallet UIs
@@ -197,12 +197,12 @@ type AssetDetail struct {
 	// `/v1/price?asset=…&quote=fiat:USD` round-trip on every
 	// asset-detail render (F-1271 audit-2026-05-12). Populated by:
 	//
-	//   1. Coins overlay when a CoinsReader is wired AND the asset
-	//      is in the coins catalogue (richer enrichment path —
-	//      delegates to CoinSummary.PriceUSD).
+	//   1. AssetsReader overlay when an AssetsReader is wired AND the asset
+	//      is in the assetsReader catalogue (richer enrichment path —
+	//      delegates to AssetSummary.PriceUSD).
 	//   2. Direct USD-price lookup in populateMarketCap when the
 	//      overlay didn't populate it (covers fiat:* / external:*
-	//      / SEP-41 not in the coins catalogue / any asset whose
+	//      / SEP-41 not in the assetsReader catalogue / any asset whose
 	//      market_cap path already paid for the price lookup).
 	//
 	// Null only when no USD price can be derived at all (no
@@ -218,17 +218,17 @@ type AssetDetail struct {
 	Change7dPct *string `json:"change_7d_pct,omitempty"`
 
 	// TopMarkets is a preview of the asset's top markets by 24h USD
-	// volume. Up to 5 entries; null when the coin reader doesn't
+	// volume. Up to 5 entries; null when the AssetsReader doesn't
 	// return any.
-	TopMarkets []CoinTopMarket `json:"top_markets,omitempty"`
+	TopMarkets []AssetTopMarket `json:"top_markets,omitempty"`
 
 	// PriceHistory24h / PriceHistory7d are sparkline-grade USD-price
 	// timeseries (24 hourly + 7 daily samples respectively).
-	PriceHistory24h []CoinPricePoint `json:"price_history_24h,omitempty"`
-	PriceHistory7d  []CoinPricePoint `json:"price_history_7d,omitempty"`
+	PriceHistory24h []AssetPricePoint `json:"price_history_24h,omitempty"`
+	PriceHistory7d  []AssetPricePoint `json:"price_history_7d,omitempty"`
 
 	// MarketsCount / TradeCount24h are the trailing-24h activity
-	// counters mirrored from CoinSummary. Pointers so 0 ("silent
+	// counters mirrored from AssetSummary. Pointers so 0 ("silent
 	// 24h") is distinguishable from "not computed" (no reader / lookup
 	// error) in alerting.
 	MarketsCount  *int64 `json:"markets_count,omitempty"`
@@ -236,7 +236,7 @@ type AssetDetail struct {
 
 	// ATH is the asset's all-time-high USD price + the day it was
 	// set. Sourced from prices_1d, USD-quotes only.
-	ATH *CoinATH `json:"ath,omitempty"`
+	ATH *AssetATH `json:"ath,omitempty"`
 
 	// IssuerScamReason is non-empty when this asset's issuer appears
 	// in the curated scam directory. Clients should render a
@@ -246,12 +246,12 @@ type AssetDetail struct {
 	// Slug is the friendly short identifier for the asset (e.g.
 	// "USDC" for the canonical Circle USDC, or the issuer-
 	// disambiguated form like "USDC-GA5Z…" for collisions). Mirror
-	// of CoinSummary.Slug; lets consumers build canonical /assets/
+	// of AssetSummary.Slug; lets consumers build canonical /assets/
 	// URLs without a parallel /v1/coins lookup.
 	Slug string `json:"slug,omitempty"`
 
 	// FirstSeenLedger / LastSeenLedger / ObservationCount are the
-	// trades-hypertable activity metadata. Mirrored from CoinRow so
+	// trades-hypertable activity metadata. Mirrored from AssetRow so
 	// the explorer's asset-detail page can drop its parallel
 	// /v1/coins/{slug} fetch.
 	FirstSeenLedger  *uint32 `json:"first_seen_ledger,omitempty"`
@@ -492,7 +492,7 @@ func isValidClassicCode(s string) bool {
 //   - issuer (optional): a G-strkey (CRC-checked).
 //
 // The filters apply to the default classic-assets listing (the
-// CoinsReader path — `code`/`issuer` push down to the indexed
+// AssetsReader path — `code`/`issuer` push down to the indexed
 // classic_assets columns; `type` folds against the homogeneously-
 // classic backing table). Consistent with how `issuer` already
 // scoped, they are NOT re-applied when `asset_class` dispatches to
@@ -522,7 +522,7 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 
 	// Row filters (type / code / issuer). Validated BEFORE the
 	// asset_class dispatch so malformed input 400s on every path
-	// (BACKLOG #54), not just the coins-backed one.
+	// (BACKLOG #54), not just the assetsReader-backed one.
 	filters, ok := parseAssetListFilters(w, r)
 	if !ok {
 		return
@@ -554,13 +554,13 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Coins-backed listing — when a CoinsReader is wired, source the
-	// listing from the same ListCoinsExt path /v1/coins uses. Gives
+	// AssetsReader-backed listing — when an AssetsReader is wired, source the
+	// listing from the same ListAssetsExt path /v1/coins uses. Gives
 	// each row the price / volume / change / sparkline / ATH fields
 	// (R-018 finish — assets-unification endgame). Falls through to
-	// the lean AssetReader path when no CoinsReader is configured.
-	if s.coins != nil {
-		s.handleAssetListFromCoins(w, r, filters, cursor, limit)
+	// the lean AssetReader path when no AssetsReader is configured.
+	if s.assetsReader != nil {
+		s.handleAssetListFromAssets(w, r, filters, cursor, limit)
 		return
 	}
 
@@ -603,14 +603,15 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, env)
 }
 
-// handleAssetListFromCoins serves /v1/assets when a CoinsReader is
-// wired. Sources rows from ListCoinsExt and projects each CoinRow
-// into an AssetDetail with the coin-overlay fields populated — same
-// shape as /v1/coins listings, just under the /v1/assets URL.
+// handleAssetListFromAssets serves /v1/assets when an AssetsReader is
+// wired. Sources rows from ListAssetsExt and projects each AssetRow
+// into an AssetDetail with the asset-catalogue overlay fields
+// populated — same shape as /v1/coins listings, just under the
+// /v1/assets URL.
 //
 // Honors the type / code / issuer row filters (BACKLOG #54):
 //   - code + issuer push down to the indexed classic_assets columns
-//     via ListCoinsExt.
+//     via ListAssetsExt.
 //   - type folds against the backing table: classic_assets is
 //     homogeneously classic, so a structural type filter that
 //     excludes classic (native / soroban / fiat) matches nothing and
@@ -620,7 +621,7 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 //
 // The default order is observation_count_desc; cursor passes through
 // unchanged.
-func (s *Server) handleAssetListFromCoins(
+func (s *Server) handleAssetListFromAssets(
 	w http.ResponseWriter,
 	r *http.Request,
 	filters assetListFilters,
@@ -637,33 +638,33 @@ func (s *Server) handleAssetListFromCoins(
 	// itself, so len(rows) > limit was never true and /v1/assets never
 	// emitted a next cursor — only the first page of ~440K assets was
 	// reachable).
-	opts := timescale.ListCoinsOptions{
+	opts := timescale.ListAssetsOptions{
 		Limit:  limit + 1,
 		Issuer: filters.issuer,
 		Code:   filters.code,
 		Cursor: cursor,
 	}
-	rows, err := s.coins.ListCoinsExt(r.Context(), opts)
+	rows, err := s.assetsReader.ListAssetsExt(r.Context(), opts)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
 		}
-		s.logger.Error("ListCoinsExt (assets listing) failed", "err", err)
+		s.logger.Error("ListAssetsExt (assets listing) failed", "err", err)
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	// Overfetch-by-one for cursor pagination — same shape as
-	// handleCoins. The +1th row determines whether there's a next
-	// page; it isn't returned to the caller.
+	// Overfetch-by-one for cursor pagination — same shape the
+	// retired /v1/coins handler used. The +1th row determines
+	// whether there's a next page; it isn't returned to the caller.
 	hasMore := len(rows) > limit
 	if hasMore {
 		rows = rows[:limit]
 	}
 	out := make([]AssetDetail, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, assetDetailFromCoinRow(row))
+		out = append(out, assetDetailFromAssetRow(row))
 	}
 	s.stampListingCollisions(out)
 	s.fillMarketCapsFromSupply(r.Context(), out)
@@ -684,13 +685,13 @@ func (s *Server) handleAssetListFromCoins(
 // rather than fabricate (it won't run a per-row supply lookup), so the
 // covered (major) assets showed an empty market-cap column (audit
 // 2026-06-19). This surfaces it for them; coverage grows as the supply
-// pipeline expands. Type-asserted so coins readers without the method
+// pipeline expands. Type-asserted so assetsReader readers without the method
 // (test stubs) simply skip — best-effort, never fails the response.
 func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetail) {
 	// Precise supply — the three-domain pipeline (supply_1d, ~9 assets).
 	// Authoritative (includes claimable + LP-locked holdings); preferred.
 	var precise map[string]string
-	if sr, ok := s.coins.(interface {
+	if sr, ok := s.assetsReader.(interface {
 		LatestCirculatingSupply(context.Context) (map[string]string, error)
 	}); ok {
 		if m, err := sr.LatestCirculatingSupply(ctx); err == nil {
@@ -915,11 +916,11 @@ func (s *Server) fillImagesFromSep1(ctx context.Context, rows []AssetDetail) {
 	}
 }
 
-// assetDetailFromCoinRow projects a storage CoinRow into the
+// assetDetailFromAssetRow projects a storage AssetRow into the
 // AssetDetail wire shape. Mirrors the scalar field population in
-// applyCoinRowToDetail but for listing rows (so the listing endpoint
+// applyAssetRowToDetail but for listing rows (so the listing endpoint
 // returns the same per-row shape /v1/coins users were getting).
-func assetDetailFromCoinRow(row timescale.CoinRow) AssetDetail {
+func assetDetailFromAssetRow(row timescale.AssetRow) AssetDetail {
 	asset, err := canonical.ParseAsset(row.AssetID)
 	d := AssetDetail{
 		Kind:       "stellar_asset",
@@ -951,7 +952,7 @@ func assetDetailFromCoinRow(row timescale.CoinRow) AssetDetail {
 		v := row.ObservationCount
 		d.ObservationCount = &v
 	}
-	// Coin-overlay scalars (price / volume / change percentages).
+	// Asset-catalogue overlay scalars (price / volume / change percentages).
 	if row.PriceUSD != nil {
 		d.PriceUSD = row.PriceUSD
 	}
@@ -1233,10 +1234,10 @@ func (s *Server) catalogueRowPricing(ctx context.Context, vc *currency.VerifiedC
 // (fillGlobalPriceFromOnChain) uses it to price Stellar-only verified
 // tokens (AQUA, yXLM, SHX, …) the global CEX/aggregator tier misses.
 func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) *string {
-	if s.coins == nil || assetID == "" {
+	if s.assetsReader == nil || assetID == "" {
 		return nil
 	}
-	row, err := s.coins.GetCoinByAssetID(ctx, assetID)
+	row, err := s.assetsReader.GetAssetByAssetID(ctx, assetID)
 	if err != nil || row.PriceUSD == nil {
 		return nil
 	}
@@ -1309,15 +1310,15 @@ func bigFloatFromOptionalString(s *string) *big.Float {
 // $18T/…, then crypto + stablecoin catalogue entries which lack
 // supply data today and sort below the fiats). Classic_assets pages
 // follow, ordered by trailing-24h volume_usd desc (the existing
-// CoinsOrderVolume24hUSDDesc path — most-actively-traded Stellar-
+// AssetsOrderVolume24hUSDDesc path — most-actively-traded Stellar-
 // classic rows surface first within their phase).
 //
 // Cursor protocol — phase-prefixed:
 //   - empty cursor             → catalogue phase, offset 0.
 //   - "catalogue:<offset>"     → catalogue phase resumed at offset.
-//   - "classic:<inner_cursor>" → classic phase via ListCoinsExt; the
+//   - "classic:<inner_cursor>" → classic phase via ListAssetsExt; the
 //     inner cursor is whatever
-//     CoinsOrderVolume24hUSDDesc emits.
+//     AssetsOrderVolume24hUSDDesc emits.
 //   - "classic:"               → classic phase fresh start (catalogue
 //     just exhausted; inner cursor empty).
 //
@@ -1381,7 +1382,7 @@ func (s *Server) serveCatalogueUnifiedPage(w http.ResponseWriter, r *http.Reques
 	rows := projectCatalogueRows(entries, caps)
 	sortAssetDetailsByMarketCapDesc(rows)
 	// q= filter over the catalogue phase (S-011). The classic phase
-	// filters server-side via ListCoinsOptions.Q; the catalogue is a
+	// filters server-side via ListAssetsOptions.Q; the catalogue is a
 	// ~30-row in-process slice.
 	rows = filterCatalogueRowsByQuery(rows, r.URL.Query().Get("q"))
 
@@ -1443,7 +1444,7 @@ func (s *Server) serveCatalogueUnifiedPage(w http.ResponseWriter, r *http.Reques
 	writeEnvelope(w, env)
 }
 
-// serveClassicUnifiedPage delegates to the existing CoinsReader
+// serveClassicUnifiedPage delegates to the existing AssetsReader
 // path with Volume24hUSDDesc ordering. The inner cursor is what
 // that path returned on the prior call. Next-cursor gets phase-
 // prefixed before going out the wire.
@@ -1466,28 +1467,28 @@ func (s *Server) serveClassicUnifiedPage(w http.ResponseWriter, r *http.Request,
 // to return just the 11-row catalogue tail regardless of limit,
 // making the curated sliver look like the asset universe).
 func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request, limit int, innerCursor string) ([]AssetDetail, string, bool) {
-	if s.coins == nil {
-		// No coins reader wired → empty terminator.
+	if s.assetsReader == nil {
+		// No AssetsReader wired → empty terminator.
 		writeJSON(w, []AssetDetail{}, Flags{})
 		return nil, "", false
 	}
-	opts := timescale.ListCoinsOptions{
+	opts := timescale.ListAssetsOptions{
 		Cursor: innerCursor,
-		Order:  timescale.CoinsOrderVolume24hUSDDesc,
-		// S-011: the storage layer has supported Q since the coins
+		Order:  timescale.AssetsOrderVolume24hUSDDesc,
+		// S-011: the storage layer has supported Q since the AssetsReader
 		// store landed; the unified path never passed it, so the
 		// explorer's search box round-tripped to the same page.
 		Q: strings.TrimSpace(r.URL.Query().Get("q")),
 	}
-	// Overfetch-by-one (same shape as handleAssetListFromCoins) to
+	// Overfetch-by-one (same shape as handleAssetListFromAssets) to
 	// drive the cursor advance.
 	opts.Limit = limit + 1
-	rows, err := s.coins.ListCoinsExt(r.Context(), opts)
+	rows, err := s.assetsReader.ListAssetsExt(r.Context(), opts)
 	if err != nil {
 		if clientAborted(r, err) {
 			return nil, "", false
 		}
-		s.logger.Error("ListCoinsExt (unified) failed", "err", err)
+		s.logger.Error("ListAssetsExt (unified) failed", "err", err)
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
@@ -1499,7 +1500,7 @@ func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request,
 	}
 	out := make([]AssetDetail, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, assetDetailFromCoinRow(row))
+		out = append(out, assetDetailFromAssetRow(row))
 	}
 	out = s.suppressCatalogueTwins(out)
 	s.stampListingCollisions(out)
@@ -1620,7 +1621,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// entry was produced by this same handler within the last 30s.
 	// Covers the full F2 chain (Volume24hUSDForAsset / supply.LatestSupply
 	// / 2× lookupUSDPrice / fetchSupplySnapshot / populateMarketCap)
-	// plus applySep1Overlay + applyCoinExtensionFields + the verified-
+	// plus applySep1Overlay + applyAssetExtensionFields + the verified-
 	// currency overlay. Each of those costs ~50-200ms warm; together
 	// they dominate the ~700-900ms warm latency observed pre-cache
 	// (rc.63 on r1, 2026-05-21).
@@ -1687,12 +1688,12 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// longer affects the unit math.
 	s.applyF2Fields(r.Context(), &detail, parsed)
 
-	// Coin-equivalence overlay (R-018 final) — lifts price / top_markets
-	// / history / changes / ATH / scam_reason from the coins catalogue
+	// Asset-catalogue overlay (R-018 final) — lifts price / top_markets
+	// / history / changes / ATH / scam_reason from the assetsReader catalogue
 	// so /v1/assets/{id} is a superset of /v1/coins/{slug}. Skipped
-	// for fiat:* (no coin row); a no-op when no coins reader is wired
-	// or the asset has no coin row.
-	s.applyCoinExtensionFields(r.Context(), &detail, parsed)
+	// for fiat:* (no asset-catalogue row); a no-op when no AssetsReader is
+	// wired or the asset has no asset-catalogue row.
+	s.applyAssetExtensionFields(r.Context(), &detail, parsed)
 
 	// Verified-currency overlay (R-018 Phase 1.1) — attaches the
 	// `unverified_warning` body + flips flags.unverified_ticker_collision
@@ -2213,7 +2214,7 @@ func (s *Server) resolveSACToClassic(ctx context.Context, contractID string) (ca
 // the coins→assets dissolution and the server silently ignored it —
 // a dead chart column on every row). One batch read for the page.
 func (s *Server) attachSparkline7dIfRequested(r *http.Request, rows []AssetDetail) {
-	if s.coins == nil || !strings.Contains(r.URL.Query().Get("include"), "sparkline7d") {
+	if s.assetsReader == nil || !strings.Contains(r.URL.Query().Get("include"), "sparkline7d") {
 		return
 	}
 	ids := make([]string, 0, len(rows))
@@ -2225,14 +2226,14 @@ func (s *Server) attachSparkline7dIfRequested(r *http.Request, rows []AssetDetai
 	if len(ids) == 0 {
 		return
 	}
-	hist, err := s.coins.GetCoinsPriceHistory7dBatch(r.Context(), ids)
+	hist, err := s.assetsReader.GetAssetsPriceHistory7dBatch(r.Context(), ids)
 	if err != nil {
 		s.logger.Warn("sparkline7d batch", "err", err)
 		return
 	}
 	for i := range rows {
 		if h, ok := hist[rows[i].AssetID]; ok {
-			rows[i].PriceHistory7d = coinPointsToWire(h)
+			rows[i].PriceHistory7d = assetPointsToWire(h)
 		}
 	}
 }
@@ -2265,7 +2266,7 @@ func (s *Server) suppressCatalogueTwins(rows []AssetDetail) []AssetDetail {
 // column while the same asset's classic row two screens down carried
 // them all). Bounded fan-out, best-effort per row.
 func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDetail) {
-	if s.coins == nil {
+	if s.assetsReader == nil {
 		return
 	}
 	statsCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
@@ -2279,7 +2280,7 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		if entry == nil || entry.AssetID == "" {
 			return
 		}
-		// ListCoinsExt, not GetCoinByAssetID: only the listing query
+		// ListAssetsExt, not GetAssetByAssetID: only the listing query
 		// computes the windowed change columns (the per-asset reader's
 		// row carries nil changes — live-debugged 2026-07-03 when the
 		// deployed enrichment merged nothing). Q= is an exact-enough
@@ -2294,7 +2295,7 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		if twinRow == nil {
 			return
 		}
-		twin := []AssetDetail{assetDetailFromCoinRow(*twinRow)}
+		twin := []AssetDetail{assetDetailFromAssetRow(*twinRow)}
 		// Same supply-derived market-cap fill the classic phase gets —
 		// the raw listing row carries no mcap.
 		s.fillMarketCapsFromSupply(statsCtx, twin)
@@ -2308,9 +2309,9 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 // classic ids (Q substring-matches column VALUES, so a full asset id
 // can never match — the lesson of v0.7.4/v0.7.5). Nil when the twin
 // isn't in the served store.
-func (s *Server) lookupCatalogueTwin(ctx context.Context, assetID string) *timescale.CoinRow {
+func (s *Server) lookupCatalogueTwin(ctx context.Context, assetID string) *timescale.AssetRow {
 	if assetID == "native" {
-		row, err := s.coins.GetNativeCoinRow(ctx)
+		row, err := s.assetsReader.GetNativeAssetRow(ctx)
 		if err != nil {
 			return nil
 		}
@@ -2320,10 +2321,10 @@ func (s *Server) lookupCatalogueTwin(ctx context.Context, assetID string) *times
 	if dashIx < 0 {
 		return nil
 	}
-	rows, err := s.coins.ListCoinsExt(ctx, timescale.ListCoinsOptions{
+	rows, err := s.assetsReader.ListAssetsExt(ctx, timescale.ListAssetsOptions{
 		Limit:  50,
 		Issuer: assetID[dashIx+1:],
-		Order:  timescale.CoinsOrderVolume24hUSDDesc,
+		Order:  timescale.AssetsOrderVolume24hUSDDesc,
 	})
 	if err != nil {
 		return nil

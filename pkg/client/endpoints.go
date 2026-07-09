@@ -677,14 +677,8 @@ func (c *Client) RevokeKey(ctx context.Context, keyID string) error {
 	return c.doJSON(ctx, http.MethodDelete, "/v1/account/keys/"+url.PathEscape(keyID), nil, nil, nil)
 }
 
-// CoinsOptions paginates / filters the classic-asset directory.
-// `Limit` is server-side clamped to [1, 500] (default 100).
-// `Issuer`, when non-empty, restricts the listing to assets minted
-// by that G-strkey. `Cursor` is the keyset cursor returned by a
-// previous response's `next_cursor` field — empty for the first
-// page; iterate while non-empty.
-// IssuersOptions paginates the issuer directory. Same `Limit`
-// semantics as [CoinsOptions].
+// IssuersOptions paginates the issuer directory. `Limit` is
+// server-side clamped to [1, 500] (default 100).
 type IssuersOptions struct {
 	Limit int
 }

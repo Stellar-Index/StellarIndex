@@ -182,7 +182,7 @@ func (s *Server) populateGlobalCryptoPrice(ctx context.Context, view GlobalAsset
 // set. No-op when the price is already set, no per-asset reader is
 // wired, or the catalogue entry has no Stellar issuance.
 func (s *Server) fillGlobalPriceFromOnChain(ctx context.Context, view GlobalAssetView, vc *currency.VerifiedCurrency) GlobalAssetView {
-	if view.PriceUSD != nil || s.coins == nil {
+	if view.PriceUSD != nil || s.assetsReader == nil {
 		return view
 	}
 	se := vc.StellarEntry()

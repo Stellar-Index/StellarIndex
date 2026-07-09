@@ -685,13 +685,13 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// on a 3-month dataset and scales linearly with data depth —
 	// 10min TTL + 5min prewarm cadence means the next refresh
 	// fires well before TTL expiry, and a delayed refresh still
-	// serves a warm entry. Markets/pools/coins are sub-second
+	// serves a warm entry. Markets/pools/assetsReader are sub-second
 	// individually but the prewarm loop runs 12+ variants per
 	// cycle; 2min TTL + 60s prewarm cadence is the same
 	// double-cushion pattern.
 	cachedSourcesStats := v1.NewCachedSourcesStatsReader(store, 10*time.Minute)
 	cachedMarketsReader := v1.NewCachedMarketsReader(marketsReader, 2*time.Minute)
-	cachedCoinsReader := v1.NewCachedCoinsReader(store, 2*time.Minute)
+	cachedAssetsReader := v1.NewCachedAssetsReader(store, 2*time.Minute)
 	// F-0011 (2026-05-26): `/v1/issuers` p95 was ~404ms (over the
 	// 200ms SLO target). EXPLAIN ANALYZE on r1 showed the listing's
 	// HashAggregate-over-58k-issuers + top-N heapsort takes ~196ms
@@ -716,7 +716,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// asset_id prewarming (pre-2026-05-20 the catalogue was loaded
 	// after the goroutine kicked off, so prewarmLight only knew
 	// about native; every other canonical-form asset_id lookup
-	// missed cache and paid the ~3s getCoinBySlugSQL cold cost).
+	// missed cache and paid the ~3s getAssetBySlugSQL cold cost).
 	verifiedCurrencies, err := currency.LoadEmbedded()
 	if err != nil {
 		return fmt.Errorf("load verified-currency catalogue: %w", err)
@@ -725,17 +725,17 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 
 	// Extract the Stellar-network canonical asset_ids the verified-
 	// currency catalogue points at. Each entry feeds an additional
-	// GetCoinByAssetID prewarm call so a programmatic client hitting
+	// GetAssetByAssetID prewarm call so a programmatic client hitting
 	// /v1/assets/USDC-GA5Z…, /v1/assets/EURC-GDH…, etc. lands on a
 	// warm cache instead of cold-filling the heavy
-	// `listCoinsBaseSelect` whole-asset-universe CTE chain on every
+	// `listAssetsBaseSelect` whole-asset-universe CTE chain on every
 	// canonical-form request. Excludes native (already prewarmed by
-	// the GetNativeCoinRow path) and empty AssetIDs (the rare
+	// the GetNativeAssetRow path) and empty AssetIDs (the rare
 	// off-Stellar networks where a verified currency exists but has
 	// no Stellar issuance yet).
 	var verifiedAssetIDs []string
 	for _, vc := range verifiedCurrencies.All() {
-		for _, ne := range vc.Networks {
+		for _, ne := range vc.Issuance {
 			if ne.Network != "stellar" {
 				continue
 			}
@@ -748,7 +748,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	logger.Info("prewarm: verified canonical asset_ids extracted",
 		"count", len(verifiedAssetIDs))
 
-	go prewarmCaches(rootCtx, logger.With("component", "prewarm"), cachedSourcesStats, cachedMarketsReader, cachedCoinsReader, verifiedAssetIDs)
+	go prewarmCaches(rootCtx, logger.With("component", "prewarm"), cachedSourcesStats, cachedMarketsReader, cachedAssetsReader, verifiedAssetIDs)
 
 	// TLS cert expiry self-probe (F-0051, audit-2026-05-26). Public
 	// TLS is fronted by Caddy + Let's Encrypt with auto-renewal 30d
@@ -966,7 +966,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Change24h:            storeChange24hReader{s: store, pegs: usdPegs},
 		PriceAt:              storePriceAtReader{s: store},
 		ChangeSummary:        store,
-		Coins:                cachedCoinsReader,
+		AssetsReader:         cachedAssetsReader,
 		Issuers:              cachedIssuersReader,
 		SEP41Transfers:       store,
 		Cursors:              store,
@@ -1209,7 +1209,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 
 	// #37 full fix: HTTP self-call prewarm. Hits /v1/assets/<id> for
 	// native + every verified currency on a 60s cadence so EVERY
-	// cache the handler touches — not just the 7 CachedCoinsReader
+	// cache the handler touches — not just the 7 CachedAssetsReader
 	// SWR slots warmed by prewarmCaches — stays hot. Covers the F2
 	// path (Volume24hUSDForAsset / LatestSupply / lookupUSDPrice /
 	// populateChange24h) and any downstream readers added in future
@@ -3248,8 +3248,8 @@ func (a *forexAdapter) Latest() *v1.CurrenciesSnapshot {
 // query's cost.
 //
 // Two cadences (R-1209, 2026-05-13: pre-fix every 25s cycle ran
-// the 8s source-stats query AND 12 market/pool variants AND a
-// coins refresh — one Postgres backend at 76% CPU continuously
+// the 8s source-stats query AND 12 market/pool variants AND an
+// assetsReader refresh — one Postgres backend at 76% CPU continuously
 // as trades grew, with knock-on memory pressure from
 // ZFS-ARC-vs-shared_buffers double-caching the working set):
 //
@@ -3258,7 +3258,7 @@ func (a *forexAdapter) Latest() *v1.CurrenciesSnapshot {
 //     scales linearly with data depth. The 24h-window data has
 //     >5min freshness tolerance, so refresh-every-5min is well
 //     within product semantics.
-//   - **Light** (markets/pools/coins): 60s cadence, queries
+//   - **Light** (markets/pools/assetsReader): 60s cadence, queries
 //     individually sub-second under normal load.
 //
 // Errors get logged at debug level — a transient warmup failure
@@ -3268,7 +3268,7 @@ func prewarmCaches(
 	logger *slog.Logger,
 	stats *v1.CachedSourcesStatsReader,
 	markets *v1.CachedMarketsReader,
-	coins *v1.CachedCoinsReader,
+	assetsReader *v1.CachedAssetsReader,
 	verifiedAssetIDs []string,
 ) {
 	heavyCadence := 5 * time.Minute
@@ -3277,7 +3277,7 @@ func prewarmCaches(
 	// Fire both immediately on startup so the first user request
 	// after a binary restart hits a warm cache.
 	prewarmHeavy(ctx, logger, stats)
-	prewarmLight(ctx, logger, markets, coins, verifiedAssetIDs)
+	prewarmLight(ctx, logger, markets, assetsReader, verifiedAssetIDs)
 
 	heavyTick := time.NewTicker(heavyCadence)
 	defer heavyTick.Stop()
@@ -3291,7 +3291,7 @@ func prewarmCaches(
 		case <-heavyTick.C:
 			prewarmHeavy(ctx, logger, stats)
 		case <-lightTick.C:
-			prewarmLight(ctx, logger, markets, coins, verifiedAssetIDs)
+			prewarmLight(ctx, logger, markets, assetsReader, verifiedAssetIDs)
 		}
 	}
 }
@@ -3318,7 +3318,7 @@ func prewarmLight(
 	ctx context.Context,
 	logger *slog.Logger,
 	markets *v1.CachedMarketsReader,
-	coins *v1.CachedCoinsReader,
+	assetsReader *v1.CachedAssetsReader,
 	verifiedAssetIDs []string,
 ) {
 	// 5-min ceiling on the whole prewarm cycle. Pre-2026-05-14 this
@@ -3416,81 +3416,81 @@ func prewarmLight(
 	}
 
 	// /v1/coins?limit=200&include=sparkline backs the unified
-	// currencies listing — single most-trafficked coins read.
+	// currencies listing — single most-trafficked asset-catalogue read.
 	//
 	// Important: the handler's `prependNative` path subtracts one
 	// from `limit` when cursor/issuer/q are all empty (the explorer's
 	// no-filter case) so it can splice the synthetic XLM row at the
 	// top without overshooting the user's requested page size. So a
 	// /v1/coins?limit=200 user request actually calls
-	// `ListCoinsExt(ctx, ListCoinsOptions{Limit: 199, …})` under the
+	// `ListAssetsExt(ctx, ListAssetsOptions{Limit: 199, …})` under the
 	// hood — passing Limit=200 here warms a different cache key than
 	// the one the user request looks up. Mirror the listingLimit the
 	// handler actually uses.
-	coinsCtx, coinsCancel := context.WithTimeout(ctx, 20*time.Second)
-	defer coinsCancel()
-	if _, err := coins.ListCoinsExt(coinsCtx, timescale.ListCoinsOptions{Limit: 199}); err != nil {
-		logger.Debug("prewarm coins listing failed", "err", err)
+	assetsReaderCtx, assetsReaderCancel := context.WithTimeout(ctx, 20*time.Second)
+	defer assetsReaderCancel()
+	if _, err := assetsReader.ListAssetsExt(assetsReaderCtx, timescale.ListAssetsOptions{Limit: 199}); err != nil {
+		logger.Debug("prewarm asset-catalogue listing failed", "err", err)
 	}
 
 	// #37 fix: /v1/assets/native is the most-trafficked single-asset
 	// page (XLM is the explorer's default landing) and its
-	// GetNativeCoinRow hits the heavy `listCoinsBaseSelect`
+	// GetNativeAssetRow hits the heavy `listAssetsBaseSelect`
 	// whole-asset-universe CTE — sub-200ms when cached, ~3s cold.
-	// Pre-fix, prewarmLight only ran ListCoinsExt; native's
-	// GetNativeCoinRow cache key (added by #24's per-asset SWR
+	// Pre-fix, prewarmLight only ran ListAssetsExt; native's
+	// GetNativeAssetRow cache key (added by #24's per-asset SWR
 	// pass) was never touched → every native page-load cold-filled
 	// it (bouncing 1-3s on rapid retries as each #24 SWR entry
 	// fills incrementally). Drift-safe: this is the EXACT method
 	// the /v1/assets/native handler calls
-	// (assets_coin_extension.go GetNativeCoinRow path).
-	if _, err := coins.GetNativeCoinRow(coinsCtx); err != nil {
-		logger.Debug("prewarm native coin row failed", "err", err)
+	// (asset_catalogue_extension.go GetNativeAssetRow path).
+	if _, err := assetsReader.GetNativeAssetRow(assetsReaderCtx); err != nil {
+		logger.Debug("prewarm native asset-catalogue row failed", "err", err)
 	}
 
 	// #37 extension (2026-05-20): every verified-currency canonical
 	// asset_id gets the same warm-cache treatment as native. Without
 	// this, /v1/assets/USDC-GA5Z…, /v1/assets/EURC-GDH…, etc. cold-
-	// fill the heavy `listCoinsBaseSelect` chain on every
+	// fill the heavy `listAssetsBaseSelect` chain on every
 	// canonical-form request — measured 3.3s on r1 for USDC's
 	// canonical form. The slug-form path (/v1/assets/usdc) was
 	// already fast because the explorer happens to fan out to it,
 	// but programmatic clients (and the explorer's drill-out from
 	// market detail) navigate by canonical asset_id, which missed
-	// the warm slot. Drift-safe: GetCoinByAssetID is exactly what
-	// the handler calls (assets_coin_extension.go line 215).
+	// the warm slot. Drift-safe: GetAssetByAssetID is exactly what
+	// the handler calls (asset_catalogue_extension.go line 215).
 	// Errors logged at Debug — a transient miss is fine since the
 	// user request still fronts the cache.
 	for _, assetID := range verifiedAssetIDs {
-		prewarmAssetDetail(coinsCtx, logger, coins, assetID)
+		prewarmAssetDetail(assetsReaderCtx, logger, assetsReader, assetID)
 	}
 	// Native gets the same full fan-out treatment as verified assets.
-	// GetNativeCoinRow above warms the single coin-row SWR slot; this
+	// GetNativeAssetRow above warms the single asset-catalogue-row SWR slot; this
 	// covers the SIX OTHER readers /v1/assets/native fans out to.
-	prewarmAssetDetail(coinsCtx, logger, coins, "native")
+	prewarmAssetDetail(assetsReaderCtx, logger, assetsReader, "native")
 }
 
 // prewarmAssetDetail warms every SWR cache key the
 // /v1/assets/{id} handler fans out to for a single asset.
 //
 // /v1/assets/{id} fires SEVEN SWR-cached reader calls per request
-// (full fan-out at internal/api/v1/assets_coin_extension.go):
+// (full fan-out at internal/api/v1/asset_catalogue_extension.go):
 //
-//	GetCoinByAssetID         — the coin row itself (rc.61 #37 fix)
-//	GetCoinTopMarkets(id, 5) — top 5 markets per asset
-//	GetCoinPriceHistory24h   — 24h sparkline
-//	GetCoinPriceHistory7d    — 7d sparkline
-//	GetCoinMarketsCount      — total markets count
-//	GetCoinTradeCount24h     — 24h trade count
-//	GetCoinATH               — all-time high
+//	GetAssetByAssetID         — the asset-catalogue row itself (rc.61 #37 fix)
+//	GetAssetTopMarkets(id, 5) — top 5 markets per asset
+//	GetAssetPriceHistory24h   — 24h sparkline
+//	GetAssetPriceHistory7d    — 7d sparkline
+//	GetAssetMarketsCount      — total markets count
+//	GetAssetTradeCount24h     — 24h trade count
+//	GetAssetATH               — all-time high
 //
-// Pre-#37 full-deferred: only GetCoinByAssetID was prewarmed; the
+// Pre-#37 full-deferred: only GetAssetByAssetID was prewarmed; the
 // other SIX readers cold-filled on first hit, costing ~2s on
 // /v1/assets/USDC-GA5Z…'s first request post-restart even though
 // subsequent hits served sub-ms warm. Live-measured 2026-05-20.
 //
 // Drift-safe: each call uses the EXACT method the handler calls
-// (per assets_coin_extension.go), so the cache-key shapes match
+// (per asset_catalogue_extension.go), so the cache-key shapes match
 // byte-for-byte. Per the memory `feedback_prewarm_handler_drift`,
 // this is the lock-in that keeps the warm slot landing on the
 // same key the user request hits.
@@ -3499,35 +3499,35 @@ func prewarmLight(
 // user request still fronts the cache (cold-fill happens on the
 // user's request path if prewarm missed).
 //
-// Limit `5` for GetCoinTopMarkets matches the handler's literal
-// (assets_coin_extension.go:77 → `GetCoinTopMarkets(ctx, assetID, 5)`).
+// Limit `5` for GetAssetTopMarkets matches the handler's literal
+// (asset_catalogue_extension.go:77 → `GetAssetTopMarkets(ctx, assetID, 5)`).
 // If the handler later varies the limit (e.g. higher for verified
 // currencies), this prewarm must mirror the new value — drift in
 // limit means a different SWR cache key, same bug class.
-func prewarmAssetDetail(ctx context.Context, logger *slog.Logger, coins *v1.CachedCoinsReader, assetID string) {
+func prewarmAssetDetail(ctx context.Context, logger *slog.Logger, assetsReader *v1.CachedAssetsReader, assetID string) {
 	// Per-reader prewarm. We don't bail on the first failure — each
 	// reader has its own cache slot and a partial prewarm still
 	// helps subsequent reads.
-	prewarmAssetCall(ctx, logger, "GetCoinByAssetID", assetID, func() (any, error) {
-		return coins.GetCoinByAssetID(ctx, assetID)
+	prewarmAssetCall(ctx, logger, "GetAssetByAssetID", assetID, func() (any, error) {
+		return assetsReader.GetAssetByAssetID(ctx, assetID)
 	})
-	prewarmAssetCall(ctx, logger, "GetCoinTopMarkets", assetID, func() (any, error) {
-		return coins.GetCoinTopMarkets(ctx, assetID, 5)
+	prewarmAssetCall(ctx, logger, "GetAssetTopMarkets", assetID, func() (any, error) {
+		return assetsReader.GetAssetTopMarkets(ctx, assetID, 5)
 	})
-	prewarmAssetCall(ctx, logger, "GetCoinPriceHistory24h", assetID, func() (any, error) {
-		return coins.GetCoinPriceHistory24h(ctx, assetID)
+	prewarmAssetCall(ctx, logger, "GetAssetPriceHistory24h", assetID, func() (any, error) {
+		return assetsReader.GetAssetPriceHistory24h(ctx, assetID)
 	})
-	prewarmAssetCall(ctx, logger, "GetCoinPriceHistory7d", assetID, func() (any, error) {
-		return coins.GetCoinPriceHistory7d(ctx, assetID)
+	prewarmAssetCall(ctx, logger, "GetAssetPriceHistory7d", assetID, func() (any, error) {
+		return assetsReader.GetAssetPriceHistory7d(ctx, assetID)
 	})
-	prewarmAssetCall(ctx, logger, "GetCoinMarketsCount", assetID, func() (any, error) {
-		return coins.GetCoinMarketsCount(ctx, assetID)
+	prewarmAssetCall(ctx, logger, "GetAssetMarketsCount", assetID, func() (any, error) {
+		return assetsReader.GetAssetMarketsCount(ctx, assetID)
 	})
-	prewarmAssetCall(ctx, logger, "GetCoinTradeCount24h", assetID, func() (any, error) {
-		return coins.GetCoinTradeCount24h(ctx, assetID)
+	prewarmAssetCall(ctx, logger, "GetAssetTradeCount24h", assetID, func() (any, error) {
+		return assetsReader.GetAssetTradeCount24h(ctx, assetID)
 	})
-	prewarmAssetCall(ctx, logger, "GetCoinATH", assetID, func() (any, error) {
-		return coins.GetCoinATH(ctx, assetID)
+	prewarmAssetCall(ctx, logger, "GetAssetATH", assetID, func() (any, error) {
+		return assetsReader.GetAssetATH(ctx, assetID)
 	})
 }
 
@@ -3545,7 +3545,7 @@ func prewarmAssetCall(ctx context.Context, logger *slog.Logger, name, assetID st
 // selfPrewarmAssetEndpoints loops every 60s and HTTP-GETs
 // /v1/assets/<id> for native + every verified currency, against
 // our own listener. This warms ALL caches the handler touches —
-// not just the 7 CachedCoinsReader SWR slots that prewarmCaches
+// not just the 7 CachedAssetsReader SWR slots that prewarmCaches
 // already covers, but also the F2-path readers (Volume24hUSDForAsset,
 // supply.LatestSupply, lookupUSDPrice, populateChange24h) that
 // prewarmCaches doesn't know about. Drift-safe by construction:

@@ -117,7 +117,7 @@ func (c *CachedOracleReader) LatestOracleStreams(ctx context.Context) ([]canonic
 // waiter-err-pointer safety. Inline cold-miss is fine here because
 // the upstream query is sub-300 ms; if a future r1 measurement
 // shows miss spikes above SLO the swr[T] helper from
-// coins_cache.go drops in.
+// asset_catalogue_cache.go drops in.
 func (c *CachedOracleReader) fetch(
 	ctx context.Context,
 	op, key string,

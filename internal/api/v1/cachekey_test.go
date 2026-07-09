@@ -62,12 +62,12 @@ func TestCacheKey_StrSetDoesNotMutateInput(t *testing.T) {
 // dimension must move the key, or two different queries collide and
 // one serves the other's rows.
 func TestCacheKey_DistinctDimensionsDistinctKeys(t *testing.T) {
-	base := newCacheKey("ListCoinsExt").int(100).str("iss").str("code").
-		str("cur").str("q").order(int(timescale.CoinsOrderObservationCountDesc)).build()
+	base := newCacheKey("ListAssetsExt").int(100).str("iss").str("code").
+		str("cur").str("q").order(int(timescale.AssetsOrderObservationCountDesc)).build()
 	variants := map[string]string{
-		"limit":  newCacheKey("ListCoinsExt").int(101).str("iss").str("code").str("cur").str("q").order(int(timescale.CoinsOrderObservationCountDesc)).build(),
-		"issuer": newCacheKey("ListCoinsExt").int(100).str("OTHER").str("code").str("cur").str("q").order(int(timescale.CoinsOrderObservationCountDesc)).build(),
-		"cursor": newCacheKey("ListCoinsExt").int(100).str("iss").str("code").str("NEXT").str("q").order(int(timescale.CoinsOrderObservationCountDesc)).build(),
+		"limit":  newCacheKey("ListAssetsExt").int(101).str("iss").str("code").str("cur").str("q").order(int(timescale.AssetsOrderObservationCountDesc)).build(),
+		"issuer": newCacheKey("ListAssetsExt").int(100).str("OTHER").str("code").str("cur").str("q").order(int(timescale.AssetsOrderObservationCountDesc)).build(),
+		"cursor": newCacheKey("ListAssetsExt").int(100).str("iss").str("code").str("NEXT").str("q").order(int(timescale.AssetsOrderObservationCountDesc)).build(),
 	}
 	for dim, v := range variants {
 		if v == base {

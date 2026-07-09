@@ -23,7 +23,7 @@ var errNetworkStatsColdFailed = errors.New("network stats: cold fetch failed")
 // SWR contract — serve the cached value instantly, revalidate in a single
 // background flight, never block a request on the slow upstream — keeps it
 // off the request path with no material staleness. Same shape as the
-// coins/markets caches (coins_cache.go), reduced to one key.
+// coins/markets caches (asset_catalogue_cache.go), reduced to one key.
 type CachedNetworkStatsReader struct {
 	upstream NetworkStatsReader
 	ttl      time.Duration

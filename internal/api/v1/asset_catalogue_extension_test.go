@@ -13,82 +13,82 @@ import (
 	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
 )
 
-// stubCoinsReaderExt implements v1.CoinsReader for the coin-extension
+// stubAssetsReaderExt implements v1.AssetsReader for the asset-extension
 // overlay test path. Each method returns the canned value its caller
 // expects; everything else returns sql.ErrNoRows so behaviour
 // degrades cleanly.
-type stubCoinsReaderExt struct {
-	row        timescale.CoinRow
+type stubAssetsReaderExt struct {
+	row        timescale.AssetRow
 	rowErr     error
-	topMarkets []timescale.CoinTopMarket
-	hist24     []timescale.CoinPricePoint
-	hist7d     []timescale.CoinPricePoint
+	topMarkets []timescale.AssetTopMarket
+	hist24     []timescale.AssetPricePoint
+	hist7d     []timescale.AssetPricePoint
 	marketsN   int64
 	tradeN     int64
-	ath        *timescale.CoinATH
+	ath        *timescale.AssetATH
 }
 
-func (s *stubCoinsReaderExt) ListCoinsExt(_ context.Context, _ timescale.ListCoinsOptions) ([]timescale.CoinRow, error) {
+func (s *stubAssetsReaderExt) ListAssetsExt(_ context.Context, _ timescale.ListAssetsOptions) ([]timescale.AssetRow, error) {
 	return nil, nil
 }
 
-func (s *stubCoinsReaderExt) GetCoinBySlug(_ context.Context, _ string) (timescale.CoinRow, error) {
-	return timescale.CoinRow{}, sql.ErrNoRows
+func (s *stubAssetsReaderExt) GetAssetBySlug(_ context.Context, _ string) (timescale.AssetRow, error) {
+	return timescale.AssetRow{}, sql.ErrNoRows
 }
 
-func (s *stubCoinsReaderExt) GetCoinByAssetID(_ context.Context, _ string) (timescale.CoinRow, error) {
+func (s *stubAssetsReaderExt) GetAssetByAssetID(_ context.Context, _ string) (timescale.AssetRow, error) {
 	return s.row, s.rowErr
 }
 
-func (s *stubCoinsReaderExt) GetNativeCoinRow(_ context.Context) (timescale.CoinRow, error) {
+func (s *stubAssetsReaderExt) GetNativeAssetRow(_ context.Context) (timescale.AssetRow, error) {
 	return s.row, s.rowErr
 }
 
-func (s *stubCoinsReaderExt) GetCoinTopMarkets(_ context.Context, _ string, _ int) ([]timescale.CoinTopMarket, error) {
+func (s *stubAssetsReaderExt) GetAssetTopMarkets(_ context.Context, _ string, _ int) ([]timescale.AssetTopMarket, error) {
 	return s.topMarkets, nil
 }
 
-func (s *stubCoinsReaderExt) GetCoinPriceHistory24h(_ context.Context, _ string) ([]timescale.CoinPricePoint, error) {
+func (s *stubAssetsReaderExt) GetAssetPriceHistory24h(_ context.Context, _ string) ([]timescale.AssetPricePoint, error) {
 	return s.hist24, nil
 }
 
-func (s *stubCoinsReaderExt) GetCoinPriceHistory7d(_ context.Context, _ string) ([]timescale.CoinPricePoint, error) {
+func (s *stubAssetsReaderExt) GetAssetPriceHistory7d(_ context.Context, _ string) ([]timescale.AssetPricePoint, error) {
 	return s.hist7d, nil
 }
 
-func (s *stubCoinsReaderExt) GetCoinsPriceHistory24hBatch(_ context.Context, _ []string) (map[string][]timescale.CoinPricePoint, error) {
+func (s *stubAssetsReaderExt) GetAssetsPriceHistory24hBatch(_ context.Context, _ []string) (map[string][]timescale.AssetPricePoint, error) {
 	return nil, nil
 }
 
-func (s *stubCoinsReaderExt) GetCoinsPriceHistory7dBatch(_ context.Context, _ []string) (map[string][]timescale.CoinPricePoint, error) {
+func (s *stubAssetsReaderExt) GetAssetsPriceHistory7dBatch(_ context.Context, _ []string) (map[string][]timescale.AssetPricePoint, error) {
 	return nil, nil
 }
 
-func (s *stubCoinsReaderExt) GetCoinMarketsCount(_ context.Context, _ string) (int64, error) {
+func (s *stubAssetsReaderExt) GetAssetMarketsCount(_ context.Context, _ string) (int64, error) {
 	return s.marketsN, nil
 }
 
-func (s *stubCoinsReaderExt) GetCoinATH(_ context.Context, _ string) (*timescale.CoinATH, error) {
+func (s *stubAssetsReaderExt) GetAssetATH(_ context.Context, _ string) (*timescale.AssetATH, error) {
 	return s.ath, nil
 }
 
-func (s *stubCoinsReaderExt) GetCoinsATHBatch(_ context.Context, _ []string) (map[string]timescale.CoinATH, error) {
+func (s *stubAssetsReaderExt) GetAssetsATHBatch(_ context.Context, _ []string) (map[string]timescale.AssetATH, error) {
 	return nil, nil
 }
 
-func (s *stubCoinsReaderExt) GetCoinTradeCount24h(_ context.Context, _ string) (int64, error) {
+func (s *stubAssetsReaderExt) GetAssetTradeCount24h(_ context.Context, _ string) (int64, error) {
 	return s.tradeN, nil
 }
 
 // ptr is a tiny helper.
 func sptr(s string) *string { return &s }
 
-func TestAssetGet_CoinExtension_Populates(t *testing.T) {
+func TestAssetGet_AssetExtension_Populates(t *testing.T) {
 	price := sptr("1.0008")
 	ch1h := sptr("+0.11")
 	ch7d := sptr("-0.04")
-	coins := &stubCoinsReaderExt{
-		row: timescale.CoinRow{
+	assetsReader := &stubAssetsReaderExt{
+		row: timescale.AssetRow{
 			Slug:        "USDC",
 			AssetID:     "USDC-" + testUSDCIssuer,
 			Code:        "USDC",
@@ -96,14 +96,14 @@ func TestAssetGet_CoinExtension_Populates(t *testing.T) {
 			Change1hPct: ch1h,
 			Change7dPct: ch7d,
 		},
-		topMarkets: []timescale.CoinTopMarket{
+		topMarkets: []timescale.AssetTopMarket{
 			{Counterparty: "native", Side: "quote", Volume24hUSD: sptr("1000.0"), TradeCount24h: 5},
 		},
-		hist24:   []timescale.CoinPricePoint{{T: "2026-05-11T00:00:00Z", P: sptr("1.0001")}},
-		hist7d:   []timescale.CoinPricePoint{{T: "2026-05-05T00:00:00Z", P: sptr("1.0010")}},
+		hist24:   []timescale.AssetPricePoint{{T: "2026-05-11T00:00:00Z", P: sptr("1.0001")}},
+		hist7d:   []timescale.AssetPricePoint{{T: "2026-05-05T00:00:00Z", P: sptr("1.0010")}},
 		marketsN: 12,
 		tradeN:   456,
-		ath:      &timescale.CoinATH{USD: "6.39", At: "2026-05-04T00:00:00Z"},
+		ath:      &timescale.AssetATH{USD: "6.39", At: "2026-05-04T00:00:00Z"},
 	}
 	usdc, err := canonical.NewClassicAsset("USDC", testUSDCIssuer)
 	if err != nil {
@@ -114,7 +114,7 @@ func TestAssetGet_CoinExtension_Populates(t *testing.T) {
 			usdc.String(): {AssetID: usdc.String(), Type: "classic", Code: "USDC"},
 		},
 	}
-	srv := v1.New(v1.Options{Assets: reader, Coins: coins})
+	srv := v1.New(v1.Options{Assets: reader, AssetsReader: assetsReader})
 	ts := httpTestServer(t, srv)
 	resp := mustGet(t, ts.URL+"/v1/assets/"+usdc.String())
 	if resp.StatusCode != http.StatusOK {
@@ -156,8 +156,8 @@ func TestAssetGet_CoinExtension_Populates(t *testing.T) {
 	}
 }
 
-func TestAssetGet_CoinExtension_NoCoinReader_NoOp(t *testing.T) {
-	// No CoinsReader wired — coin-extension fields stay nil; rest
+func TestAssetGet_AssetExtension_NoAssetReader_NoOp(t *testing.T) {
+	// No AssetsReader wired — asset-extension fields stay nil; rest
 	// of the response is unchanged.
 	usdc, _ := canonical.NewClassicAsset("USDC", testUSDCIssuer)
 	reader := &stubAssetReader{
@@ -180,12 +180,12 @@ func TestAssetGet_CoinExtension_NoCoinReader_NoOp(t *testing.T) {
 	}
 }
 
-func TestAssetGet_CoinExtension_FiatAsset_Skipped(t *testing.T) {
-	// fiat:* assets have no coin row; the extension is a no-op even
-	// when a CoinsReader is wired.
-	coins := &stubCoinsReaderExt{
-		row:        timescale.CoinRow{PriceUSD: sptr("999")}, // would leak through if not gated
-		topMarkets: []timescale.CoinTopMarket{{Counterparty: "should_not_appear"}},
+func TestAssetGet_AssetExtension_FiatAsset_Skipped(t *testing.T) {
+	// fiat:* assets have no asset-catalogue row; the extension is a no-op even
+	// when an AssetsReader is wired.
+	assetsReader := &stubAssetsReaderExt{
+		row:        timescale.AssetRow{PriceUSD: sptr("999")}, // would leak through if not gated
+		topMarkets: []timescale.AssetTopMarket{{Counterparty: "should_not_appear"}},
 	}
 	usd, _ := canonical.ParseAsset("fiat:USD")
 	reader := &stubAssetReader{
@@ -193,7 +193,7 @@ func TestAssetGet_CoinExtension_FiatAsset_Skipped(t *testing.T) {
 			usd.String(): {AssetID: "fiat:USD", Type: "fiat", Code: "USD"},
 		},
 	}
-	srv := v1.New(v1.Options{Assets: reader, Coins: coins})
+	srv := v1.New(v1.Options{Assets: reader, AssetsReader: assetsReader})
 	ts := httpTestServer(t, srv)
 	resp := mustGet(t, ts.URL+"/v1/assets/fiat:USD")
 	if resp.StatusCode != http.StatusOK {
@@ -204,7 +204,7 @@ func TestAssetGet_CoinExtension_FiatAsset_Skipped(t *testing.T) {
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&env)
 	if env.Data.PriceUSD != nil {
-		t.Errorf("fiat asset should NOT get coin extension; got price_usd=%v", env.Data.PriceUSD)
+		t.Errorf("fiat asset should NOT get asset extension; got price_usd=%v", env.Data.PriceUSD)
 	}
 	if len(env.Data.TopMarkets) != 0 {
 		t.Errorf("fiat asset should NOT get top_markets; got %+v", env.Data.TopMarkets)

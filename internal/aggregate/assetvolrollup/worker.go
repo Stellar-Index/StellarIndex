@@ -11,7 +11,7 @@
 // workers.
 //
 // See migrations/0087_create_asset_volume_24h_rollup.up.sql for the
-// table and internal/storage/timescale/coins.go for the SUM + upsert
+// table and internal/storage/timescale/asset_catalogue.go for the SUM + upsert
 // SQL.
 package assetvolrollup
 
