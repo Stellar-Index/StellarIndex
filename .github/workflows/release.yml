@@ -223,8 +223,14 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          # cosign v3 (installer v4, dependabot 2026-07-08): an explicit
+          # --oidc-issuer now conflicts with the built-in signing config
+          # ("cannot specify service URLs and use signing config" —
+          # failed the v0.10.0 run). Keyless resolves the ambient GitHub
+          # OIDC issuer from the default signing config; verify-blob's
+          # --certificate-oidc-issuer below is a verification constraint,
+          # not a service URL, and is unaffected.
           cosign sign-blob \
-            --oidc-issuer https://token.actions.githubusercontent.com \
             --output-signature SHA256SUMS.sig \
             --output-certificate SHA256SUMS.pem \
             SHA256SUMS
