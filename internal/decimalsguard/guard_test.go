@@ -13,19 +13,41 @@ import (
 )
 
 // fakeReader returns a fixed set of (source, asset) refs and records how many
-// times it was called.
+// times it was called, plus the `since` it was called with — the latter lets
+// tests prove Backfill and Sweep pass different windows through the same
+// TradeReader seam.
 type fakeReader struct {
-	refs  []timescale.SorobanDEXTradeRef
-	err   error
-	calls int
+	refs      []timescale.SorobanDEXTradeRef
+	err       error
+	calls     int
+	lastSince time.Time
 }
 
-func (f *fakeReader) RecentSorobanDEXTrades(_ context.Context, _ time.Time) ([]timescale.SorobanDEXTradeRef, error) {
+func (f *fakeReader) RecentSorobanDEXTrades(_ context.Context, since time.Time) ([]timescale.SorobanDEXTradeRef, error) {
 	f.calls++
+	f.lastSince = since
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.refs, nil
+}
+
+// dormantReader simulates a trades history where a single trade happened at
+// a fixed point in the past. RecentSorobanDEXTrades only returns the ref
+// when the caller's `since` reaches back far enough to include that trade —
+// mirroring the real time-bounded `ts >= $1` SQL predicate
+// (soroban_dex_assets.go). Used to prove Backfill's wide window catches a
+// token that a Sweep-sized short window cannot see.
+type dormantReader struct {
+	tradedAt time.Time
+	ref      timescale.SorobanDEXTradeRef
+}
+
+func (d *dormantReader) RecentSorobanDEXTrades(_ context.Context, since time.Time) ([]timescale.SorobanDEXTradeRef, error) {
+	if since.After(d.tradedAt) {
+		return nil, nil // the window starts after the trade — invisible.
+	}
+	return []timescale.SorobanDEXTradeRef{d.ref}, nil
 }
 
 // fakeResolver resolves decimals from a static map and counts lookups so we
@@ -266,5 +288,184 @@ func TestSweep_WriterErrorDoesNotBlockDetection(t *testing.T) {
 	}
 	if writer.calls != 1 {
 		t.Fatalf("writer.calls = %d, want 1 (attempted once despite the error)", writer.calls)
+	}
+}
+
+// ─── Backfill (one-time startup self-seed pass) ────────────────────────────
+
+// TestBackfill_DormantOffenderGetsUpserted is the production scenario this
+// change fixes: a non-7-decimals token traded once, went dormant, and
+// stopped appearing in the periodic sweep's short window (the CC2RB… gap,
+// 2026-07-09). It proves (a) Sweep's short window genuinely cannot see a
+// 30-day-old trade, and (b) Backfill's wide window does, and self-seeds
+// nonstandard_decimals_assets through the same classify+report path Sweep
+// uses — without any operator hand-seed.
+func TestBackfill_DormantOffenderGetsUpserted(t *testing.T) {
+	const (
+		src   = "aquarius"
+		asset = "fake-contract-9dp-dormant"
+	)
+	tradedAt := time.Now().Add(-30 * 24 * time.Hour)
+	reader := &dormantReader{tradedAt: tradedAt, ref: timescale.SorobanDEXTradeRef{Source: src, Asset: asset}}
+	resolver := &fakeResolver{decimals: map[string]uint32{asset: 9}}
+	writer := &fakeWriter{}
+	g := New(reader, resolver, Options{
+		Window:           time.Minute, // Sweep's freshness window — far shorter than 30 days.
+		BackfillWindow:   90 * 24 * time.Hour,
+		BackfillThrottle: time.Millisecond,
+		Writer:           writer,
+	})
+
+	// The periodic sweep must NOT see a trade this old — establishes the
+	// gap is real before proving Backfill closes it.
+	if err := g.Sweep(context.Background()); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if writer.calls != 0 {
+		t.Fatalf("writer.calls after Sweep = %d, want 0 (a 30-day-old trade must be invisible to a 1-minute window)", writer.calls)
+	}
+
+	if err := g.Backfill(context.Background()); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if writer.calls != 1 {
+		t.Fatalf("writer.calls after Backfill = %d, want 1", writer.calls)
+	}
+	if writer.last.asset != asset || writer.last.decimals != 9 || writer.last.source != src {
+		t.Fatalf("writer recorded (%s, %d, %s), want (%s, 9, %s)", writer.last.asset, writer.last.decimals, writer.last.source, asset, src)
+	}
+	if got := counterVal(src, asset); got < 1 {
+		t.Fatalf("counter = %v, want >= 1 (Backfill must raise the same detection metric Sweep does)", got)
+	}
+}
+
+// TestBackfill_SilentOnStandardDecimals proves Backfill leaves the 7dp/7dp
+// fast path untouched, same invariant as Sweep.
+func TestBackfill_SilentOnStandardDecimals(t *testing.T) {
+	const src = "phoenix"
+	asset := "fake-contract-7dp-backfill"
+	before := counterVal(src, asset)
+
+	reader := &fakeReader{refs: []timescale.SorobanDEXTradeRef{{Source: src, Asset: asset}}}
+	resolver := &fakeResolver{decimals: map[string]uint32{asset: 7}}
+	writer := &fakeWriter{}
+	g := New(reader, resolver, Options{BackfillThrottle: time.Millisecond, Writer: writer})
+
+	if err := g.Backfill(context.Background()); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	if got := counterVal(src, asset) - before; got != 0 {
+		t.Fatalf("counter delta = %v, want 0", got)
+	}
+	if writer.calls != 0 {
+		t.Fatalf("writer.calls = %d, want 0", writer.calls)
+	}
+}
+
+// TestBackfill_PropagatesEnumerationError mirrors
+// TestSweep_PropagatesEnumerationError: a failed enumeration query must
+// surface, not be swallowed.
+func TestBackfill_PropagatesEnumerationError(t *testing.T) {
+	reader := &fakeReader{err: errors.New("db unreachable")}
+	resolver := &fakeResolver{decimals: map[string]uint32{}}
+	g := New(reader, resolver, Options{})
+
+	if err := g.Backfill(context.Background()); err == nil {
+		t.Fatal("expected enumeration error to propagate")
+	}
+}
+
+// TestBackfill_UsesConfiguredWindow proves Backfill computes `since` from
+// its own BackfillWindow (config-surfaced via
+// internal/config.DecimalsGuardConfig.BackfillWindowDays), independent of
+// Sweep's Window.
+func TestBackfill_UsesConfiguredWindow(t *testing.T) {
+	reader := &fakeReader{}
+	resolver := &fakeResolver{decimals: map[string]uint32{}}
+	window := 45 * 24 * time.Hour
+	g := New(reader, resolver, Options{BackfillWindow: window, BackfillThrottle: time.Millisecond})
+
+	before := time.Now()
+	if err := g.Backfill(context.Background()); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	after := time.Now()
+
+	if reader.calls != 1 {
+		t.Fatalf("reader.calls = %d, want 1", reader.calls)
+	}
+	wantEarliest := before.Add(-window)
+	wantLatest := after.Add(-window)
+	if reader.lastSince.Before(wantEarliest) || reader.lastSince.After(wantLatest) {
+		t.Fatalf("since = %v, want between %v and %v (now - BackfillWindow)", reader.lastSince, wantEarliest, wantLatest)
+	}
+}
+
+// TestBackfill_DefaultsWindowWhenUnset proves an unset BackfillWindow falls
+// back to DefaultBackfillWindow (90 days) — the config-surfaced default.
+func TestBackfill_DefaultsWindowWhenUnset(t *testing.T) {
+	g := New(&fakeReader{}, &fakeResolver{}, Options{})
+	if g.backfillWindow != DefaultBackfillWindow {
+		t.Fatalf("backfillWindow = %v, want %v", g.backfillWindow, DefaultBackfillWindow)
+	}
+}
+
+// TestBackfill_ThrottlesUncachedResolverCalls proves the startup pass paces
+// its ClickHouse decimals() lookups: two DISTINCT uncached assets are each
+// throttled once, but a repeated asset hits the resolved cache and adds no
+// further delay — so a large historical asset set doesn't hammer the lake
+// in a tight loop, without re-throttling assets it has already resolved.
+func TestBackfill_ThrottlesUncachedResolverCalls(t *testing.T) {
+	const src = "soroswap"
+	assetA := "fake-contract-throttle-a"
+	assetB := "fake-contract-throttle-b"
+	throttle := 30 * time.Millisecond
+
+	reader := &fakeReader{refs: []timescale.SorobanDEXTradeRef{
+		{Source: src, Asset: assetA},
+		{Source: src, Asset: assetB},
+		{Source: src, Asset: assetA}, // repeat — must be a cache hit, no extra pacing.
+	}}
+	resolver := &fakeResolver{decimals: map[string]uint32{assetA: 7, assetB: 7}}
+	g := New(reader, resolver, Options{BackfillThrottle: throttle})
+
+	start := time.Now()
+	if err := g.Backfill(context.Background()); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	if elapsed < throttle {
+		t.Fatalf("elapsed = %v, want >= %v (throttle must pace the two distinct uncached lookups)", elapsed, throttle)
+	}
+	if resolver.calls != 2 {
+		t.Fatalf("resolver.calls = %d, want 2 (the repeated asset must be served from the resolved cache, not re-queried)", resolver.calls)
+	}
+}
+
+// TestBackfill_ContextCancelledDuringThrottleReturnsPromptly proves a
+// cancelled context interrupts the throttle wait rather than blocking the
+// full duration — startup shutdown must not hang on a slow backfill pass.
+func TestBackfill_ContextCancelledDuringThrottleReturnsPromptly(t *testing.T) {
+	reader := &fakeReader{refs: []timescale.SorobanDEXTradeRef{
+		{Source: "soroswap", Asset: "fake-contract-cancel-a"},
+		{Source: "soroswap", Asset: "fake-contract-cancel-b"},
+	}}
+	resolver := &fakeResolver{decimals: map[string]uint32{}}
+	g := New(reader, resolver, Options{BackfillThrottle: time.Hour})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- g.Backfill(ctx) }()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Backfill err = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Backfill did not return promptly after context cancellation — throttle wait ignored ctx.Done()")
 	}
 }

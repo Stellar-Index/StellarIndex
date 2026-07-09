@@ -26,6 +26,17 @@
 // applied consistently without rewriting the decade-deep prices_* CAGGs,
 // which is not warranted for a latent, not-yet-firing risk. See the runbook
 // docs/operations/runbooks/dex-nonstandard-decimals.md.
+//
+// The periodic sweep only enumerates a short trailing window (20m
+// default), so it only catches a token that is STILL trading — a token
+// that traded a handful of times and then went dormant is invisible to
+// it forever. Guard.Backfill is the one-time startup self-seed pass that
+// closes that gap: it runs the same classify+report path over a much
+// longer (90d default) historical window once at process start, so a
+// historically-traded-but-now-dormant offender gets upserted into
+// nonstandard_decimals_assets without an operator hand-seeding the row
+// (the gap behind the 2026-07-09 CC2RB… incident — see the runbook's
+// changelog).
 package decimalsguard
 
 import (
@@ -55,6 +66,34 @@ const (
 	DefaultInterval = 15 * time.Minute
 	DefaultWindow   = 20 * time.Minute
 )
+
+// DefaultBackfillWindow bounds the one-time startup self-seed pass
+// (Backfill): how far back it looks for distinct Soroban-legged
+// (source, asset) trade pairs. The periodic sweep's short Window (20m)
+// only catches a token that is STILL trading — a token that traded once
+// and went dormant before the guard ever ran (or before it traded again
+// inside a 20-minute window) is invisible to Sweep forever. That gap is
+// exactly what let token CC2RB… (decimals()=9, confirmed 2026-07-09) go
+// unseeded after the v0.10.0 deploy until an operator hand-inserted the
+// row per the runbook.
+//
+// 90 days is a judgment call, not a derived constant: long enough to
+// catch a token that traded a handful of times and then went quiet,
+// short enough that RecentSorobanDEXTrades stays a sargable index-range
+// scan (see soroban_dex_assets.go) rather than drifting toward "full
+// history". A token dormant for longer than this window is NOT caught by
+// Backfill; the runbook's manual hand-seed step remains the fallback for
+// that residual, long-dormant case. Config-surfaced via
+// internal/config.DecimalsGuardConfig.BackfillWindowDays.
+const DefaultBackfillWindow = 90 * 24 * time.Hour
+
+// DefaultBackfillThrottle paces Backfill's per-asset ClickHouse
+// decimals() lookups so a large distinct-asset set doesn't hammer the
+// lake in a tight loop at process start. Only applied between resolver
+// calls that actually reach ClickHouse — a resolved-cache hit (the same
+// asset seen twice, e.g. traded against two different quote assets)
+// never queries the lake, so it isn't throttled.
+const DefaultBackfillThrottle = 100 * time.Millisecond
 
 // TradeReader enumerates the distinct (source, Soroban-contract-asset)
 // pairs that recently traded in the served tier. Satisfied by
@@ -99,6 +138,11 @@ type Guard struct {
 	window   time.Duration
 	logger   *slog.Logger
 
+	// backfillWindow / backfillThrottle configure the one-time startup
+	// self-seed pass. See Backfill.
+	backfillWindow   time.Duration
+	backfillThrottle time.Duration
+
 	mu sync.Mutex
 	// resolved caches CONFIRMED decimals per contract id (both standard and
 	// non-standard), so repeated sweeps of the same steady token set issue no
@@ -125,6 +169,12 @@ type Options struct {
 	// read-time serving guard can decline pricing for it. Nil disables
 	// persistence — detection (metric + log) is unaffected.
 	Writer DecimalsAssetWriter
+	// BackfillWindow is the trailing lookback for the one-time startup
+	// self-seed pass (Backfill). Zero => DefaultBackfillWindow (90 days).
+	BackfillWindow time.Duration
+	// BackfillThrottle paces Backfill's per-asset ClickHouse decimals()
+	// lookups. Zero => DefaultBackfillThrottle.
+	BackfillThrottle time.Duration
 }
 
 // New builds a Guard.
@@ -133,18 +183,28 @@ func New(reader TradeReader, resolver DecimalsResolver, opts Options) *Guard {
 	if window <= 0 {
 		window = DefaultWindow
 	}
+	backfillWindow := opts.BackfillWindow
+	if backfillWindow <= 0 {
+		backfillWindow = DefaultBackfillWindow
+	}
+	backfillThrottle := opts.BackfillThrottle
+	if backfillThrottle <= 0 {
+		backfillThrottle = DefaultBackfillThrottle
+	}
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Guard{
-		reader:   reader,
-		resolver: resolver,
-		writer:   opts.Writer,
-		window:   window,
-		logger:   logger,
-		resolved: make(map[string]uint32),
-		fired:    make(map[string]struct{}),
+		reader:           reader,
+		resolver:         resolver,
+		writer:           opts.Writer,
+		window:           window,
+		backfillWindow:   backfillWindow,
+		backfillThrottle: backfillThrottle,
+		logger:           logger,
+		resolved:         make(map[string]uint32),
+		fired:            make(map[string]struct{}),
 	}
 }
 
@@ -193,6 +253,82 @@ func (g *Guard) Sweep(ctx context.Context) error {
 		g.report(ctx, ref, decimals)
 	}
 	return nil
+}
+
+// Backfill is the ONE-TIME startup self-seed pass. It enumerates every
+// distinct Soroban-legged (source, asset) pair that traded within the
+// trailing BackfillWindow (default DefaultBackfillWindow, 90 days) and
+// runs each one through the SAME classify+report path Sweep uses — so a
+// token that traded and then went DORMANT before the periodic sweep's
+// short Window (default 20m) ever observed it is still resolved,
+// confirmed, and upserted into nonstandard_decimals_assets at process
+// start, instead of staying invisible until it trades again or an
+// operator hand-seeds the row per the runbook.
+//
+// This closes the gap behind the 2026-07-09 production incident: token
+// CC2RB… traded starting 2026-06-22 but the guard (added later) only
+// enumerates the trailing 20 minutes on each tick, so a token that never
+// happened to trade again inside one of those windows after the guard
+// started was never picked up automatically — an operator had to hand-
+// insert the row.
+//
+// Bounded by design: RecentSorobanDEXTrades is a time-windowed,
+// index-sargable scan (base_asset/quote_asset lead the composite index,
+// ts DESC — see soroban_dex_assets.go). Widening the window to 90 days
+// keeps the same query shape; it does not become the forbidden unbounded
+// full-table DISTINCT. A token that hasn't traded in longer than
+// BackfillWindow is NOT caught by this pass — the runbook's manual
+// hand-seed step remains the fallback for that residual, long-dormant
+// case.
+//
+// Intended to be called once per process, before Run starts its periodic
+// loop — Run's Sweep continues to own ongoing freshness on the short
+// window. Resolution errors and not-yet-confirmable declarations are
+// swallowed exactly like Sweep (a token whose instance is captured later
+// is still checked, next time Backfill or Sweep sees it); Backfill
+// returns an error only if the enumeration query itself fails.
+func (g *Guard) Backfill(ctx context.Context) error {
+	since := time.Now().Add(-g.backfillWindow)
+	refs, err := g.reader.RecentSorobanDEXTrades(ctx, since)
+	if err != nil {
+		return err
+	}
+
+	confirmed := 0
+	for _, ref := range refs {
+		// Throttle only calls that will actually reach the resolver — a
+		// cache hit (the same asset already resolved earlier in this
+		// pass, or by a Sweep tick that ran first) never queries
+		// ClickHouse, so it doesn't need pacing.
+		if g.backfillThrottle > 0 && !g.isCached(ref.Asset) {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(g.backfillThrottle):
+			}
+		}
+
+		decimals, confirmedDecimals := g.classify(ctx, ref.Asset)
+		if !confirmedDecimals || decimals == StandardDecimals {
+			continue
+		}
+		confirmed++
+		g.report(ctx, ref, decimals)
+	}
+
+	g.logger.Info("decimals-guard: startup backfill complete",
+		"window", g.backfillWindow, "scanned_pairs", len(refs), "confirmed_offenders", confirmed)
+	return nil
+}
+
+// isCached reports whether asset's decimals() is already in the resolved
+// cache. Used by Backfill to skip throttling ahead of a call that will
+// hit the cache rather than ClickHouse.
+func (g *Guard) isCached(asset string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	_, ok := g.resolved[asset]
+	return ok
 }
 
 // classify resolves and caches a contract's decimals. confirmed=false when

@@ -216,6 +216,12 @@ the `env:` column.
 | --- | ---- | ------- | ------------ | ----------- |
 | `trades.usd_pegged_classic_assets` | `[]string` | `[]` | — | Classic credit asset_keys (CODE-ISSUER) the operator declares as USD-pegged stablecoins. On-chain DEX trades quoted in these (or their SAC wrappers, transitive via [supply.sac_wrappers]) populate trades.usd_volume at insert time. Empty preserves the off-chain-only default. |
 
+### `[decimals_guard]`
+
+| Key | Type | Default | Env override | Description |
+| --- | ---- | ------- | ------------ | ----------- |
+| `decimals_guard.backfill_window_days` | `int` | `90` | — | How many days of trade history the decimals-guard's one-time startup backfill pass scans for distinct Soroban-legged (source, asset) pairs, to self-seed nonstandard_decimals_assets for tokens that traded and then went dormant. 0 = library default (90). |
+
 ### `[divergence]`
 
 | Key | Type | Default | Env override | Description |
