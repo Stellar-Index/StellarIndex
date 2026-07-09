@@ -1763,6 +1763,23 @@ failure this reflects.
 
 ## Changelog
 
+- 2026-07-09 — added the stellar-stack version-lag textfile-collector
+  probe metrics (`stellarindex_stellar_stack_probe_success`,
+  `stellarindex_stellar_stack_version_lag{component}`,
+  `stellarindex_stellar_stack_installed_info{component,version}`),
+  emitted by `stellar-stack-version-probe.sh` (ansible-managed,
+  `configs/ansible/roles/archival-node/tasks/10-observability.yml`) —
+  NOT Go-declared, so these are not covered by this file's normal
+  round-trip lint (§3 of `scripts/ci/lint-docs.sh` only enforces
+  `internal/obs/metrics.go` → doc; see the `galexie_archive_tip_lag_*`
+  / `stellarindex_galexie_catchup_refusals_5m` family for the same
+  textfile-only convention). Listed here because the probe is a
+  direct response to two incidents in one week (P27 core-freeze
+  2026-07-08, galexie CAP-0071 crash-loop 2026-07-09) both caused by
+  nobody watching whether the installed Stellar toolchain lagged
+  upstream. Full detail:
+  `deploy/monitoring/rules/stellar-stack-version.yml` +
+  `docs/operations/runbooks/stellar-stack-version-lag.md`.
 - 2026-07-09 — added `stellarindex_dex_trade_unit_ratio_total`
   (`source`), emitted by `internal/storage/timescale`'s `InsertTrade` +
   `BatchInsertTrades`. Sentinel for the 2026-07-07 Phoenix decoder

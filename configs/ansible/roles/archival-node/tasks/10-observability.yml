@@ -337,3 +337,260 @@
     enabled: true
     state: started
     daemon_reload: true
+
+# ── Stellar-stack upstream version-lag probe ─────────────────────────
+#
+# Two incidents in ONE week, same root cause: nothing watched whether
+# the installed Stellar toolchain lagged upstream.
+#   - 2026-07-08: mainnet Protocol 27 activated; r1's stellar-core
+#     (26.0.1) had no P27 support and froze ingest for 2.5h until
+#     upgraded.
+#   - 2026-07-09: the hand-installed galexie binary (an April build)
+#     crash-looped on the first ledger carrying CAP-0071 XDR.
+#     galexie-v27.0.0 had been published upstream 2026-06-10 — a
+#     full month of unnoticed lag before it became a 5+ hour ingest
+#     outage.
+#
+# Daily probe, same textfile-collector shape as the galexie catchup
+# probe above (script + oneshot service + timer, all root-owned,
+# writing to the SAME node_exporter textfile dir with the SAME
+# chmod-644-before-mv discipline — see that probe's comments for why
+# both of those matter). Runbook:
+# docs/operations/runbooks/stellar-stack-version-lag.md
+- name: stellar-stack version-lag probe (script)
+  ansible.builtin.copy:
+    dest: /usr/local/sbin/stellar-stack-version-probe.sh
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # stellar-stack-version-probe.sh — daily upstream version-lag
+      # detector for the installed Stellar toolchain (core / galexie /
+      # archivist). See docs/operations/runbooks/stellar-stack-version-lag.md
+      # for the full incident background + remediation recipe.
+      #
+      # Classifies each component's lag:
+      #   0 = current
+      #   1 = a newer version is available (same protocol major — a
+      #       patch/point release; schedule it, not urgent)
+      #   2 = a newer PROTOCOL-MAJOR version is available (a time bomb
+      #       with a network-scheduled fuse)
+      #
+      # Deliberately `set -uo pipefail` WITHOUT `-e`: one component's
+      # check failing (a flaky GitHub API call, a package genuinely not
+      # installed) must not abort the other two.
+      set -uo pipefail
+
+      TEXTFILE_DIR=/var/lib/node_exporter/textfile_collector
+      OUT="$TEXTFILE_DIR/stellar_stack_version.prom"
+      mkdir -p "$TEXTFILE_DIR"
+      TMP="$(mktemp "$OUT.XXXXXX")"
+      trap 'rm -f "$TMP"' EXIT
+
+      # 1 unless a check degrades in a way that means we couldn't
+      # classify a component we KNOW is installed (NOT the same as a
+      # component genuinely not being installed — that's a legitimate
+      # absence: skip the metric, leave this untouched).
+      overall_ok=1
+
+      lag_lines=""
+      info_lines=""
+      emit_lag()  { lag_lines+="stellarindex_stellar_stack_version_lag{component=\"$1\"} $2"$'\n'; }
+      emit_info() { info_lines+="stellarindex_stellar_stack_installed_info{component=\"$1\",version=\"$2\"} 1"$'\n'; }
+
+      # Leading integer run before the first '.', tolerating a leading
+      # 'v' and apt's package-revision suffix (e.g.
+      # "22.0.0-1223.abcdef~noble" -> 22, "v27.0.0" -> 27).
+      major_of() { printf '%s' "$1" | sed -E 's/^v//' | grep -oE '^[0-9]+' || true; }
+
+      # ─── stellar-core: dpkg (installed) vs apt-cache policy (candidate) ──
+      core_installed=$(dpkg-query -W -f='${Version}' stellar-core 2>/dev/null || true)
+      if [ -n "$core_installed" ]; then
+        core_candidate=$(apt-cache policy stellar-core 2>/dev/null | awk -F': ' '/^ *Candidate:/{print $2; exit}')
+        if [ -n "$core_candidate" ] && [ "$core_candidate" != "(none)" ]; then
+          im=$(major_of "$core_installed"); cm=$(major_of "$core_candidate")
+          if [ -n "$im" ] && [ -n "$cm" ]; then
+            if [ "$im" != "$cm" ]; then lag=2
+            elif [ "$core_installed" != "$core_candidate" ]; then lag=1
+            else lag=0
+            fi
+            emit_lag core "$lag"
+          else
+            overall_ok=0   # installed + candidate strings present but unparsable
+          fi
+        else
+          overall_ok=0     # installed but apt has no candidate (repo missing from sources.list?) — can't tell if current
+        fi
+        emit_info core "$core_installed"
+      fi
+      # core_installed empty = stellar-core isn't dpkg-tracked on this
+      # host — absence, not failure; no metric, overall_ok untouched.
+
+      # ─── stellar-archivist: same shape, no protocol-major concept ───
+      arc_installed=$(dpkg-query -W -f='${Version}' stellar-archivist 2>/dev/null || true)
+      if [ -n "$arc_installed" ]; then
+        arc_candidate=$(apt-cache policy stellar-archivist 2>/dev/null | awk -F': ' '/^ *Candidate:/{print $2; exit}')
+        if [ -n "$arc_candidate" ] && [ "$arc_candidate" != "(none)" ]; then
+          if [ "$arc_installed" != "$arc_candidate" ]; then lag=1; else lag=0; fi
+          emit_lag archivist "$lag"
+        else
+          overall_ok=0
+        fi
+        emit_info archivist "$arc_installed"
+      fi
+
+      # ─── stellar-galexie: installed pseudo-version DATE vs GitHub latest ──
+      # `galexie version` ALWAYS reports a Go pseudo-version
+      # (v0.0.0-<date>-<sha>), never the release tag — galexie's
+      # "galexie-vX.Y.Z" tags aren't a Go-modules-recognised semver tag
+      # for this module path, so `go install` (see 07-galexie.yml)
+      # always pins to the tag's COMMIT, reported as a pseudo-version.
+      # That means the installed side can only be compared by DATE, not
+      # by a major-version number — see the runbook for the full
+      # reasoning behind the lag classification below.
+      galexie_raw=$(/usr/local/bin/galexie version 2>/dev/null || true)
+      galexie_date=$(printf '%s' "$galexie_raw" | sed -nE 's/.*v0\.0\.0-([0-9]{14})-[0-9a-f]+.*/\1/p')
+
+      if [ -n "$galexie_date" ]; then
+        galexie_ver_str=$(printf '%s' "$galexie_raw" | awk '{print $NF}')
+        emit_info galexie "$galexie_ver_str"
+
+        have_jq=1
+        command -v jq >/dev/null 2>&1 || have_jq=0
+
+        gh_json=""
+        if [ "$have_jq" -eq 1 ]; then
+          gh_json=$(curl -sS --max-time 10 -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/stellar/stellar-galexie/releases/latest" 2>/dev/null || true)
+        fi
+        latest_tag=$(printf '%s' "$gh_json" | jq -r '.tag_name // empty' 2>/dev/null || true)
+
+        if [ "$have_jq" -eq 1 ] && [ -n "$latest_tag" ] && [ "$latest_tag" != "null" ]; then
+          latest_major=$(major_of "$(printf '%s' "$latest_tag" | sed -E 's/^galexie-v//')")
+          latest_published=$(printf '%s' "$gh_json" | jq -r '.published_at // empty')
+          target_commitish=$(printf '%s' "$gh_json" | jq -r '.target_commitish // empty')
+
+          # Best-effort: the target commit's own date is a closer proxy
+          # to the pseudo-version's embedded commit date than
+          # published_at (a release can be published well after its
+          # commit lands). Falls back to published_at silently on any
+          # failure — one extra cheap GET, not required for correctness.
+          latest_commit_date=""
+          if [ -n "$target_commitish" ]; then
+            commit_json=$(curl -sS --max-time 10 \
+              "https://api.github.com/repos/stellar/stellar-galexie/commits/${target_commitish}" 2>/dev/null || true)
+            latest_commit_date=$(printf '%s' "$commit_json" | jq -r '.commit.committer.date // empty' 2>/dev/null || true)
+          fi
+          ref_date="${latest_commit_date:-$latest_published}"
+          ref_date_compact=$(printf '%s' "$ref_date" | tr -dc '0-9' | cut -c1-14)
+
+          if [ -n "$latest_major" ] && [ "${#ref_date_compact}" -eq 14 ]; then
+            if [ "$galexie_date" -ge "$ref_date_compact" ]; then
+              lag=0
+            else
+              # Behind the latest release. galexie tags map 1:1 to
+              # protocol numbers (each release IS a new protocol
+              # major), so ANY release boundary we're behind is a
+              # protocol-major boundary UNLESS the latest release is a
+              # same-major point/patch of the one immediately before
+              # it. Check the prior release to tell the two apart.
+              prev_json=$(curl -sS --max-time 10 \
+                "https://api.github.com/repos/stellar/stellar-galexie/releases?per_page=2" 2>/dev/null || true)
+              prev_tag=$(printf '%s' "$prev_json" | jq -r '.[1].tag_name // empty' 2>/dev/null || true)
+              prev_major=""
+              if [ -n "$prev_tag" ] && [ "$prev_tag" != "null" ]; then
+                prev_major=$(major_of "$(printf '%s' "$prev_tag" | sed -E 's/^galexie-v//')")
+              fi
+
+              if [ -n "$prev_major" ] && [ "$prev_major" = "$latest_major" ]; then
+                lag=1   # latest is a same-major point release of what preceded it
+              else
+                lag=2   # latest bumped major relative to what preceded it, and we're older than latest
+              fi
+            fi
+            emit_lag galexie "$lag"
+          else
+            overall_ok=0   # got a release but couldn't parse a usable major/date out of it
+          fi
+        else
+          # GitHub API unreachable/rate-limited/no jq — skip the lag
+          # metric entirely rather than guess (no stale zero).
+          # probe-success still reflects this so the gap is visible
+          # without lying about galexie's actual lag.
+          overall_ok=0
+        fi
+      fi
+      # galexie_date empty = /usr/local/bin/galexie missing or `version`
+      # produced unexpected output — absence, not failure; no metric,
+      # overall_ok untouched.
+
+      {
+        echo '# HELP stellarindex_stellar_stack_version_lag Installed-vs-upstream lag per stellar-stack component. 0=current, 1=newer version available, 2=newer PROTOCOL-MAJOR available. Absent (not 0) when this run could not classify a component.'
+        echo '# TYPE stellarindex_stellar_stack_version_lag gauge'
+        printf '%s' "$lag_lines"
+        echo '# HELP stellarindex_stellar_stack_installed_info Info metric (gauge=1); the installed version string per component, for dashboards/joins.'
+        echo '# TYPE stellarindex_stellar_stack_installed_info gauge'
+        printf '%s' "$info_lines"
+        echo '# HELP stellarindex_stellar_stack_probe_success 1 if every installed component this run could reach was successfully classified, 0 if any check degraded (e.g. the GitHub API was unreachable/rate-limited, or apt had no candidate for an installed package). An up-style canary for this probe, not a report of upstream health.'
+        echo '# TYPE stellarindex_stellar_stack_probe_success gauge'
+        echo "stellarindex_stellar_stack_probe_success $overall_ok"
+      } >> "$TMP"
+
+      # node_exporter runs unprivileged — mktemp defaults to 0600, so
+      # make the rendered file world-readable before the atomic swap or
+      # the collector silently skips it (the same textfile-permissions
+      # trap the galexie catchup probe above hit on 2026-07-08).
+      chmod 644 "$TMP"
+      mv "$TMP" "$OUT"
+      trap - EXIT
+
+- name: stellar-stack version-lag probe service unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/stellar-stack-version-probe.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Stellar Index — stellar-stack upstream version-lag probe
+      Documentation=https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/stellar-stack-version-probe.sh
+      TimeoutStartSec=60
+      Nice=10
+  notify: Reload systemd
+
+- name: stellar-stack version-lag probe timer
+  # Daily — the components tracked here (apt-packaged binaries + one
+  # upstream Go project) don't move fast enough to need more frequent
+  # checks; daily is enough to keep the response window for a
+  # protocol-major release well inside the weeks-long runway a network
+  # activation vote gives operators. Slotted at 05:07 UTC, spaced from
+  # the other daily jobs (archive-completeness ~02:17, verify-archive-
+  # tier-a ~03:23, supply-snapshot 04:42).
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/stellar-stack-version-probe.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Run the stellar-stack version-lag probe daily
+      Documentation=https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+      [Timer]
+      OnCalendar=*-*-* 05:07:00 UTC
+      RandomizedDelaySec=300
+      Persistent=true
+      Unit=stellar-stack-version-probe.service
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd
+
+- name: enable the stellar-stack version-lag probe timer
+  ansible.builtin.systemd:
+    name: stellar-stack-version-probe.timer
+    enabled: true
+    state: started
+    daemon_reload: true
