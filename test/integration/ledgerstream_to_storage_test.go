@@ -317,18 +317,19 @@ func TestEndToEnd_LedgerstreamToTimescale(t *testing.T) {
 	t.Run("soroban LCM with comet POOL.swap lands Trade", func(t *testing.T) {
 		dsDir := t.TempDir()
 
-		// Pool contract ID — shape-valid C-strkey built from a seed.
-		// Comet decoder matches on topic bytes, not pool ID, so this
-		// address only needs to be well-formed.
-		poolSeed := [32]byte{0x09, 0xC0, 0xDE, 0x70, 0xF0, 0x01}
-		for i := 6; i < 32; i++ {
-			poolSeed[i] = byte(i)
-		}
-		if _, err := strkey.Encode(strkey.VersionByteContract, poolSeed[:]); err != nil {
-			t.Fatalf("encode pool strkey: %v", err)
+		// Pool contract ID — MUST be the curated backstop pool since the
+		// 2026-07-08 contract-identity gate (ADR-0035/0040, CS-026): comet
+		// Matches() rejects any emitter outside comet.MainnetGatedSet, so a
+		// synthetic well-formed address no longer lands a Trade (this test
+		// caught exactly that on the first post-gate CI run). Using the
+		// production curated pool also makes the e2e truer: the gate itself
+		// is now in the exercised path.
+		poolRaw, err := strkey.Decode(strkey.VersionByteContract, comet.MainnetBackstopPool)
+		if err != nil {
+			t.Fatalf("decode curated pool strkey: %v", err)
 		}
 		var poolID xdr.ContractId
-		copy(poolID[:], poolSeed[:])
+		copy(poolID[:], poolRaw)
 
 		// Two Soroban tokens (base+quote) with deterministic seeds so
 		// NewSorobanAsset succeeds and the canonical.Pair round-trips.
