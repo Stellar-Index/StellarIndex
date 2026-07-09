@@ -1,10 +1,18 @@
 # Stellar-focus refactor plan
 
-> **Status:** Largely shipped (updated 2026-06-30). Units A (explorer UI),
-> B (API `?network=` collapse), and C (`reference_only` flag) are
-> **done + pushed**; Unit D (Tier-3 wire-shape collapse, a SemVer-major
-> change) remains. The original "Proposed, no code yet" header was a
-> stale point-in-time snapshot.
+> **Status:** SHIPPED IN FULL (corrected 2026-07-09). Units A (explorer
+> UI), B (API `?network=` collapse), C (`reference_only` flag) AND
+> **Unit D (Tier-3 wire-shape collapse, T3.1–T3.4)** are all done —
+> Unit D shipped 2026-06-16 in commit `9442d311` (v0.5.0-rc.109; the
+> BREAKING entry sits under that heading in CHANGELOG.md). The
+> 2026-06-30 update incorrectly said Unit D "remains" — verified
+> 2026-07-09: zero `NetworkView`/`PerNetworkAssetView`/`networks[]`
+> occurrences in internal/ or pkg/, no `/assets/{slug}/{network}` route
+> in the spec. What ADR-0042 still leaves open is smaller and different
+> in kind: the `kind` discriminator on `/v1/assets/{asset_id}`'s dual
+> shape, the SDK `AssetLookup` typed union (the remaining pkg/client
+> break), and `x-stability: experimental` annotations — tracked as
+> ADR-0042 follow-through, not as "Unit D".
 > **Date:** 2026-06-16
 > **Author:** cold-audit synthesis (4 parallel auditors: API+wire+SDK,
 > currency+aggregate+storage, explorer UI, docs+branding).
