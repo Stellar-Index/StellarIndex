@@ -18,23 +18,24 @@ import (
 //
 // Adding a field without `doc:` fails `make docs-config`.
 type Config struct {
-	Region       RegionConfig       `toml:"region" doc:"Region identity — ID, display name, home domain."`
-	Stellar      StellarConfig      `toml:"stellar" doc:"Endpoints for stellar-core and stellar-rpc."`
-	Storage      StorageConfig      `toml:"storage" doc:"Postgres/TimescaleDB, Redis, MinIO connection details."`
-	Ingestion    IngestionConfig    `toml:"ingestion" doc:"Source orchestration — which connectors to run, backfill bounds, cursor store."`
-	Oracle       OracleConfig       `toml:"oracle" doc:"On-chain oracle contract addresses (Reflector, Redstone, Band)."`
-	External     ExternalConfig     `toml:"external" doc:"Off-chain connectors — CEX/FX/aggregator sources that run parallel to the on-chain dispatcher."`
-	Aggregate    AggregateConfig    `toml:"aggregate" doc:"VWAP/TWAP windows + outlier thresholds."`
-	Anomaly      AnomalyConfig      `toml:"anomaly" doc:"Per-asset-class anomaly detection thresholds (Phase 1) + Phase-2 freeze thresholds (per-asset MAD-baseline + multi-factor confidence + source count). Both layers run; the orchestrator AND-of-three-signals rule fires ActionFreeze only when both agree (ADR-0019)."`
-	API          APIConfig          `toml:"api" doc:"Public API serving plane — port, auth mode, rate limits, CDN."`
-	Metadata     MetadataConfig     `toml:"metadata" doc:"Asset metadata overlay — SEP-1 issuer→home-domain map, operator overrides."`
-	Supply       SupplyConfig       `toml:"supply" doc:"Supply pipeline config — SDF reserve list, operator-managed reserve balances (fallback when the LCM AccountEntry observer hasn't yet covered the watched set), watched classic + SEP-41 asset lists, SAC wrappers, and aggregator-refresh cadence. ADR-0011 (XLM) + ADR-0022 (classic) + ADR-0023 (SEP-41)."`
-	Trades       TradesConfig       `toml:"trades" doc:"Trade-insert policy — operator-declared USD-pegged stablecoins so on-chain DEX trades populate trades.usd_volume at insert time (launch-readiness L2.2 phase 1)."`
-	Divergence   DivergenceConfig   `toml:"divergence" doc:"Cross-check references the divergence service consults (CoinGecko + Chainlink HTTP, plus the on-chain Reflector/Redstone/Band oracle feeds read from ingested oracle_updates rows). Empty disables; the divergence_warning envelope flag stays unset."`
-	PriceAlerts  PriceAlertsConfig  `toml:"price_alerts" doc:"Customer price-threshold alert evaluator (BACKLOG #60). Off by default; when enabled the aggregator sweeps price_alerts against the latest closed VWAP every tick and enqueues price.alert webhook deliveries."`
-	SignupReaper SignupReaperConfig `toml:"signup_reaper" doc:"F-1255 speculative-account reaper. Deletes orphan accounts left by a lost signup race (Suspended with a 'signup-race:' reason, no user, no key). Runs in the API binary when the dashboard is wired. On by default — the rows are pure garbage."`
-	HashDB       HashDBConfig       `toml:"hashdb" doc:"ADR-0016 drift detector — on-disk (ledger_seq -> sha256(LCM)) record appended by the indexer's live ingest loop and periodically re-verified against a fresh re-read of the same bucket, catching upstream rewrites of previously-fetched ledger bytes. Off by default (opt-in first deploy)."`
-	Obs          ObsConfig          `toml:"obs" doc:"Metrics, logs, traces — exporters + sampling."`
+	Region        RegionConfig        `toml:"region" doc:"Region identity — ID, display name, home domain."`
+	Stellar       StellarConfig       `toml:"stellar" doc:"Endpoints for stellar-core and stellar-rpc."`
+	Storage       StorageConfig       `toml:"storage" doc:"Postgres/TimescaleDB, Redis, MinIO connection details."`
+	Ingestion     IngestionConfig     `toml:"ingestion" doc:"Source orchestration — which connectors to run, backfill bounds, cursor store."`
+	Oracle        OracleConfig        `toml:"oracle" doc:"On-chain oracle contract addresses (Reflector, Redstone, Band)."`
+	External      ExternalConfig      `toml:"external" doc:"Off-chain connectors — CEX/FX/aggregator sources that run parallel to the on-chain dispatcher."`
+	Aggregate     AggregateConfig     `toml:"aggregate" doc:"VWAP/TWAP windows + outlier thresholds."`
+	Anomaly       AnomalyConfig       `toml:"anomaly" doc:"Per-asset-class anomaly detection thresholds (Phase 1) + Phase-2 freeze thresholds (per-asset MAD-baseline + multi-factor confidence + source count). Both layers run; the orchestrator AND-of-three-signals rule fires ActionFreeze only when both agree (ADR-0019)."`
+	API           APIConfig           `toml:"api" doc:"Public API serving plane — port, auth mode, rate limits, CDN."`
+	Metadata      MetadataConfig      `toml:"metadata" doc:"Asset metadata overlay — SEP-1 issuer→home-domain map, operator overrides."`
+	Supply        SupplyConfig        `toml:"supply" doc:"Supply pipeline config — SDF reserve list, operator-managed reserve balances (fallback when the LCM AccountEntry observer hasn't yet covered the watched set), watched classic + SEP-41 asset lists, SAC wrappers, and aggregator-refresh cadence. ADR-0011 (XLM) + ADR-0022 (classic) + ADR-0023 (SEP-41)."`
+	Trades        TradesConfig        `toml:"trades" doc:"Trade-insert policy — operator-declared USD-pegged stablecoins so on-chain DEX trades populate trades.usd_volume at insert time (launch-readiness L2.2 phase 1)."`
+	DecimalsGuard DecimalsGuardConfig `toml:"decimals_guard" doc:"internal/decimalsguard's one-time startup backfill pass — how far back it scans trade history to self-seed nonstandard_decimals_assets for Soroban tokens that traded and then went dormant."`
+	Divergence    DivergenceConfig    `toml:"divergence" doc:"Cross-check references the divergence service consults (CoinGecko + Chainlink HTTP, plus the on-chain Reflector/Redstone/Band oracle feeds read from ingested oracle_updates rows). Empty disables; the divergence_warning envelope flag stays unset."`
+	PriceAlerts   PriceAlertsConfig   `toml:"price_alerts" doc:"Customer price-threshold alert evaluator (BACKLOG #60). Off by default; when enabled the aggregator sweeps price_alerts against the latest closed VWAP every tick and enqueues price.alert webhook deliveries."`
+	SignupReaper  SignupReaperConfig  `toml:"signup_reaper" doc:"F-1255 speculative-account reaper. Deletes orphan accounts left by a lost signup race (Suspended with a 'signup-race:' reason, no user, no key). Runs in the API binary when the dashboard is wired. On by default — the rows are pure garbage."`
+	HashDB        HashDBConfig        `toml:"hashdb" doc:"ADR-0016 drift detector — on-disk (ledger_seq -> sha256(LCM)) record appended by the indexer's live ingest loop and periodically re-verified against a fresh re-read of the same bucket, catching upstream rewrites of previously-fetched ledger bytes. Off by default (opt-in first deploy)."`
+	Obs           ObsConfig           `toml:"obs" doc:"Metrics, logs, traces — exporters + sampling."`
 }
 
 // HashDBConfig gates the ADR-0016 hashdb drift detector
@@ -225,6 +226,37 @@ func (tc TradesConfig) validate() error {
 					"only classic Stellar assets guarantee (got %s)",
 				ErrInvalidConfig, i, raw, asset.Type)
 		}
+	}
+	return nil
+}
+
+// DecimalsGuardConfig configures internal/decimalsguard's one-time
+// startup backfill pass (Guard.Backfill) — the self-seed sweep that
+// catches a non-7-decimal Soroban token which traded and then went
+// DORMANT before the guard's periodic freshness sweep (a short, fixed
+// 20-minute window — not config-surfaced) ever observed it. Added
+// 2026-07-09 after token CC2RB… (decimals()=9) went unseeded for weeks:
+// it traded starting 2026-06-22, but the periodic sweep only enumerates
+// the trailing 20 minutes on each tick, so a token that stopped trading
+// stayed invisible until an operator hand-inserted the
+// `nonstandard_decimals_assets` row per the runbook.
+type DecimalsGuardConfig struct {
+	// BackfillWindowDays bounds how many days of trade history the
+	// startup backfill pass scans for distinct Soroban-legged
+	// (source, asset) pairs. A time-bounded, index-sargable scan (see
+	// internal/storage/timescale/soroban_dex_assets.go) — NOT a full
+	// trades-history DISTINCT. 0 => library default (90,
+	// decimalsguard.DefaultBackfillWindow). A token that hasn't traded in
+	// longer than this window is not caught by the backfill pass; the
+	// dex-nonstandard-decimals runbook's manual hand-seed step remains
+	// the fallback for that residual, long-dormant case.
+	BackfillWindowDays int `toml:"backfill_window_days" doc:"How many days of trade history the decimals-guard's one-time startup backfill pass scans for distinct Soroban-legged (source, asset) pairs, to self-seed nonstandard_decimals_assets for tokens that traded and then went dormant. 0 = library default (90)." default:"90"`
+}
+
+// validate is the sub-validator hook Config.Validate calls.
+func (dc DecimalsGuardConfig) validate() error {
+	if dc.BackfillWindowDays < 0 {
+		return fmt.Errorf("%w: decimals_guard: backfill_window_days must be >= 0, got %d", ErrInvalidConfig, dc.BackfillWindowDays)
 	}
 	return nil
 }
@@ -1428,6 +1460,10 @@ func Default() Config {
 		},
 		API:        defaultAPIConfig(),
 		Divergence: defaultDivergenceConfig(),
+		DecimalsGuard: DecimalsGuardConfig{
+			// 90 days — matches decimalsguard.DefaultBackfillWindow.
+			BackfillWindowDays: 90,
+		},
 		PriceAlerts: PriceAlertsConfig{
 			// Off by default — operator opts in once alerts + webhooks
 			// are wired. Non-zero cadence so an accidental Enabled=true

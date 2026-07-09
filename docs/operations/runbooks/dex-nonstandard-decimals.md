@@ -84,14 +84,21 @@ the served price for those pairs is wrong. Proceed to mitigation.
 
 Immediate (stop serving the wrong number) — **now mostly automatic**:
 
-- [ ] **Nothing to do by default.** The moment `internal/decimalsguard`
-      confirms the offender, it upserts `nonstandard_decimals_assets`
-      (migration 0093) via `UpsertNonstandardDecimalsAsset`. The API's
-      `NonstandardDecimalsCache` (`internal/api/v1`) refreshes that table
-      every `NonstandardDecimalsRefreshInterval` (60s) and, from then on,
-      `/v1/price`, `/v1/vwap`, `/v1/history`, `/v1/ohlc` DECLINE — `422
-      problem+json`, `Cache-Control: no-store` — any pair with `{asset}` on
-      either leg (`declineIfNonstandardDecimals` in
+- [ ] **Nothing to do by default — including for a token that is already
+      DORMANT.** The moment `internal/decimalsguard` confirms an offender,
+      it upserts `nonstandard_decimals_assets` (migration 0093) via
+      `UpsertNonstandardDecimalsAsset`. This now happens two ways: the
+      periodic freshness sweep (20-minute trailing window, catches a token
+      that is STILL trading) and — since 2026-07-09 — a one-time startup
+      `Guard.Backfill` pass that scans a much longer historical window
+      (default 90 days, `[decimals_guard].backfill_window_days`) exactly
+      once when the aggregator process starts, so a token that traded and
+      then went quiet is confirmed and upserted without waiting for it to
+      trade again. The API's `NonstandardDecimalsCache` (`internal/api/v1`)
+      refreshes that table every `NonstandardDecimalsRefreshInterval` (60s)
+      and, from then on, `/v1/price`, `/v1/vwap`, `/v1/history`, `/v1/ohlc`
+      DECLINE — `422 problem+json`, `Cache-Control: no-store` — any pair
+      with `{asset}` on either leg (`declineIfNonstandardDecimals` in
       `internal/api/v1/nonstandard_decimals_guard.go`). A declined price is
       honest; a wrong price is not.
 - [ ] Verification: confirm the row exists —
@@ -102,19 +109,32 @@ Immediate (stop serving the wrong number) — **now mostly automatic**:
       but the API still serves 200: check whether this deployment's
       `cmd/stellarindex-api` binary predates the guard, or whether
       `NonstandardDecimals` failed to wire (see "Known false-positive
-      patterns" — a nil cache fails OPEN, i.e. serves normally).
+      patterns" — a nil cache fails OPEN, i.e. serves normally). If the row
+      is missing for a token you can see traded in `trades` history, check
+      the aggregator log for `decimals-guard: startup backfill complete` —
+      its `scanned_pairs`/`confirmed_offenders` counts confirm the pass
+      actually ran (only runs once per process start, not on every restart
+      loop iteration).
 - [ ] The alert stays latched (expected — it is a "this happened" signal,
       distinct from the API's live decline counter
       `stellarindex_price_serve_declined_nonstandard_decimals_total{asset}`,
       which tracks ongoing customer impact and tapers to zero once
       normalization ships).
-- [ ] Manual fallback (guard not deployed yet, or the automatic path somehow
-      didn't fire): `INSERT INTO nonstandard_decimals_assets (asset,
-      decimals, source, confirmed_at) VALUES ('<asset>', <decimals>,
-      '<source>', now());` — the API cache picks it up on its next refresh,
-      no restart needed. This is the same row shape the guard writes; the
-      table doesn't distinguish operator-inserted rows from guard-confirmed
-      ones.
+- [ ] **Manual hand-seed — now a fallback, not the primary path.** Only
+      needed when: the token's last trade is OLDER than
+      `backfill_window_days` (default 90d, so the startup pass never scans
+      back far enough), the aggregator hasn't restarted since this fix
+      shipped, or ClickHouse was unreachable at the aggregator's last
+      startup (the whole guard — sweep AND backfill — is best-effort and
+      silently disabled without a lake connection). In any of those cases:
+      `INSERT INTO nonstandard_decimals_assets (asset, decimals, source,
+      confirmed_at) VALUES ('<asset>', <decimals>, '<source>', now());` —
+      the API cache picks it up on its next refresh, no restart needed.
+      This is the same row shape the guard writes; the table doesn't
+      distinguish operator-inserted rows from guard-confirmed ones. A
+      faster alternative to a manual INSERT: restart the aggregator — the
+      startup backfill pass runs unconditionally on every boot and will
+      self-seed any historically-traded offender within its window.
 
 Durable (the real fix — schedule, do not hot-patch during the incident):
 
@@ -174,9 +194,15 @@ skew was live before suppression.
 
 ## Related
 
-- Detection: `internal/decimalsguard/guard.go` (the sweep),
-  `internal/storage/timescale/soroban_dex_assets.go` (the enumerator),
+- Detection: `internal/decimalsguard/guard.go` (the periodic sweep,
+  `Guard.Sweep`, AND the one-time startup self-seed pass, `Guard.Backfill`
+  — both share the same classify+report path), `internal/storage/timescale/soroban_dex_assets.go`
+  (the shared time-bounded enumerator both call with different windows),
   `internal/storage/clickhouse/token_decimals_reader.go` (the resolver).
+  Backfill's lookback window is config-surfaced:
+  `internal/config.DecimalsGuardConfig.BackfillWindowDays` (`[decimals_guard]`
+  in `configs/example.toml`), default 90 days
+  (`decimalsguard.DefaultBackfillWindow`).
 - Enforcement (2026-07-09): `internal/api/v1/nonstandard_decimals_guard.go`
   (`declineIfNonstandardDecimals`, the four call sites in `price.go` /
   `vwap.go` / `history.go` / `ohlc.go`), `internal/api/v1/nonstandard_decimals_cache.go`
@@ -195,6 +221,21 @@ skew was live before suppression.
 
 ## Changelog
 
+- 2026-07-09 — closed the DORMANT-token self-seed gap: the guard's periodic
+  sweep only ever enumerated a 20-minute trailing window, so `CC2RB…` (see
+  the previous entry) traded from 2026-06-22 but was never automatically
+  confirmed — it wasn't trading at the moment the guard shipped and never
+  traded inside a 20-minute window again, so it stayed unseeded until an
+  operator hand-inserted the row. Added `Guard.Backfill`: a one-time pass,
+  run once at aggregator startup before the periodic loop begins, that
+  scans a much longer historical window (default 90 days, config-surfaced
+  via `[decimals_guard].backfill_window_days`) through the SAME
+  classify+report path the periodic sweep uses, and logs a
+  `decimals-guard: startup backfill complete` summary
+  (`scanned_pairs`/`confirmed_offenders`). The manual `INSERT` above is now
+  a fallback for the residual case (a token dormant longer than the
+  backfill window, or a process that hasn't restarted since this shipped),
+  not the primary remediation path.
 - 2026-07-09 — added the READ-TIME enforcement half after a confirmed
   production incident (token `CC2RB…`, 100x-wrong price, 35 trades since
   2026-06-22): `/v1/price`, `/v1/vwap`, `/v1/history`, `/v1/ohlc` now

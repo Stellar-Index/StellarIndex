@@ -530,6 +530,20 @@ enabled = false
 # ]
 
 # ──────────────────────────────────────────────────────────────────
+# Decimals guard — internal/decimalsguard's one-time startup backfill
+# pass. The periodic freshness sweep only enumerates a short (20m)
+# trailing window, so a non-7-decimal Soroban token that traded and
+# then went dormant is invisible to it forever; this pass scans a
+# much longer historical window ONCE at process start to self-seed
+# nonstandard_decimals_assets for such tokens (closes the gap behind
+# the 2026-07-09 CC2RB… incident, where an operator had to hand-seed
+# the row). A token dormant for longer than this window still needs
+# the runbook's manual hand-seed fallback.
+# ──────────────────────────────────────────────────────────────────
+[decimals_guard]
+backfill_window_days = 90
+
+# ──────────────────────────────────────────────────────────────────
 # HashDB — ADR-0016 drift detector. The indexer's live LCM read loop
 # appends sha256(LCM) per ledger; a periodic sweep re-reads a recent
 # window from the same bucket and compares, catching upstream

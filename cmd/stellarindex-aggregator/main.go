@@ -685,9 +685,14 @@ func run(cfgPath string, dryRun bool) error {
 				"addr", addr, "err", err)
 		} else {
 			defer func() { _ = er.Close() }()
+			backfillWindow := decimalsguard.DefaultBackfillWindow
+			if days := cfg.DecimalsGuard.BackfillWindowDays; days > 0 {
+				backfillWindow = time.Duration(days) * 24 * time.Hour
+			}
 			guard := decimalsguard.New(store, er, decimalsguard.Options{
-				Window: decimalsguard.DefaultWindow,
-				Logger: logger.With("component", "decimals-guard"),
+				Window:         decimalsguard.DefaultWindow,
+				BackfillWindow: backfillWindow,
+				Logger:         logger.With("component", "decimals-guard"),
 				// Persists each confirmed offender into
 				// nonstandard_decimals_assets (migration 0093) so the
 				// API's read-time serving guard can decline pricing —
@@ -697,6 +702,16 @@ func run(cfgPath string, dryRun bool) error {
 			refresherWG.Add(1)
 			go func() {
 				defer refresherWG.Done()
+				// One-time startup self-seed: catches a non-7-decimal
+				// token that traded and then went DORMANT before the
+				// periodic sweep's short (20m) window ever saw it — the
+				// gap that let CC2RB… go unseeded until an operator
+				// hand-inserted the row (2026-07-09). Runs before Run's
+				// periodic loop starts; a failure here is logged and
+				// does not block the periodic sweep from starting.
+				if err := guard.Backfill(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
+					logger.Error("decimals-guard: startup backfill failed — a dormant nonstandard-decimals token may remain unseeded until the operator hand-seeds it per the runbook", "err", err)
+				}
 				if err := guard.Run(rootCtx, decimalsguard.DefaultInterval); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("decimals-guard exited with error", "err", err)
 				}

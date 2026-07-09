@@ -16,6 +16,21 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **`internal/decimalsguard` never self-seeded a DORMANT non-7-decimal Soroban token** — the
+  periodic sweep only enumerates a 20-minute trailing window, so token `CC2RB…`
+  (`decimals()=9`, confirmed 2026-07-09, 35 trades since 2026-06-22, served price 100x wrong)
+  went unseeded after the v0.10.0 deploy until an operator hand-inserted the
+  `nonstandard_decimals_assets` row per the runbook. Added `Guard.Backfill`: a one-time
+  startup pass, run once before the aggregator's periodic sweep loop starts, that scans a
+  much longer historical window (default 90 days, config-surfaced via
+  `[decimals_guard].backfill_window_days`) through the same resolve+confirm+upsert path the
+  periodic sweep uses, rate-limited against ClickHouse (paces uncached per-asset `decimals()`
+  lookups; a resolved-cache hit is never throttled) and logging a
+  `decimals-guard: startup backfill complete` scanned/confirmed summary. The manual `INSERT`
+  fallback in the runbook now only covers a token dormant longer than the backfill window, or
+  a process that hasn't restarted since this shipped.
+
+### Fixed
 - The residual CEX deadlock vector after the full-conflict-key batch sort: a batch spans
   multiple sources and its `bump` CTE row-locks one `source_entry_counts` row per source in
   `GROUP BY` (unspecified) order — two concurrent batches could lock the counter rows in

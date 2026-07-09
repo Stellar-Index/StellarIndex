@@ -9,8 +9,11 @@ import (
 // SorobanDEXTradeRef is one (source, asset) pair where a DEX trade for a
 // Soroban-contract asset landed in the served `trades` tier. Asset is the
 // token's C-strkey contract id (56 chars). Consumed by the aggregator's
-// decimals-guard sweep (internal/decimalsguard), which resolves each
-// asset's on-chain decimals() and alerts when it is not 7.
+// decimals-guard (internal/decimalsguard) — both its periodic freshness
+// sweep (short window, minutes) and its one-time startup backfill pass
+// (long window, default 90 days) call this same enumerator with a
+// different `since`; both resolve each asset's on-chain decimals() and
+// alert when it is not 7.
 type SorobanDEXTradeRef struct {
 	Source string
 	Asset  string
@@ -29,11 +32,16 @@ type SorobanDEXTradeRef struct {
 //     strkey is exactly 56 chars with no `-`; this rejects a classic credit
 //     whose CODE happens to start with 'C' (e.g. `CATS-G...`).
 //
-// Boundedness: the caller sweeps a SHORT trailing window (minutes) on a
-// periodic cadence — `since` is computed Go-side so the planner prunes chunks
-// at plan time. This is deliberately NOT an unbounded DISTINCT over all
-// `trades` history (the full-sort trap; see the trades-scan discipline). The
-// window's distinct output is a handful of rows.
+// Boundedness: `since` is always computed Go-side so the planner prunes
+// chunks at plan time — this is deliberately NOT an unbounded DISTINCT over
+// all `trades` history (the full-sort trap; see the trades-scan
+// discipline). Two callers use two different windows, but both are bounded:
+// the periodic freshness sweep uses a SHORT trailing window (minutes) on a
+// frequent cadence, and the guard's one-time startup backfill pass uses a
+// LONGER trailing window (default 90 days, config-surfaced) exactly once
+// per process — widening the window changes how much of the sargable
+// base_asset/quote_asset + ts range it scans, not the query's shape. Either
+// way the distinct output is small relative to full trades history.
 func (s *Store) RecentSorobanDEXTrades(ctx context.Context, since time.Time) ([]SorobanDEXTradeRef, error) {
 	const q = `
 SELECT DISTINCT source, base_asset AS asset
