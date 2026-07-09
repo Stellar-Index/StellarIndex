@@ -15,6 +15,14 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- The residual CEX deadlock vector after the full-conflict-key batch sort: a batch spans
+  multiple sources and its `bump` CTE row-locks one `source_entry_counts` row per source in
+  `GROUP BY` (unspecified) order — two concurrent batches could lock the counter rows in
+  opposite orders (a SECOND lock resource the trades-row sort couldn't fix; post-v0.10.0
+  deploy the storm dropped 15→4 deadlocks/5min but not to zero). `ORDER BY source` makes
+  the counter lock order deterministic.
+
 ### Added
 - **cctp event coverage is now COMPLETE — every topic the three mainnet contracts have
   ever emitted decodes** ("EVERY event" principle, closes the #89b census gap): 16 further

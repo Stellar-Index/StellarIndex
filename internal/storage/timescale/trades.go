@@ -538,7 +538,17 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
             RETURNING source, ledger, base_amount, quote_amount
         ), bump AS (
             INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
-            SELECT source, count(*), now() FROM ins GROUP BY source
+            -- ORDER BY source: a batch can span MULTIPLE sources (the
+            -- drain workers batch off one shared channel), and this
+            -- upsert row-locks one source_entry_counts row per source.
+            -- Without a deterministic order, two concurrent batches can
+            -- acquire those counter-row locks in opposite orders — the
+            -- AB/BA cycle that survived the 2026-07-09 full-conflict-key
+            -- batch sort (which fixed only the trades-row lock order;
+            -- the counter rows are a SECOND lock resource). Deadlocks
+            -- post-deploy dropped 15/5min -> 4/5min with the batch sort;
+            -- this closes the remainder.
+            SELECT source, count(*), now() FROM ins GROUP BY source ORDER BY source
             ON CONFLICT (source) DO UPDATE
               SET entry_count = sec.entry_count + EXCLUDED.entry_count,
                   updated_at  = EXCLUDED.updated_at
