@@ -253,6 +253,9 @@ paths = [
 description = "Base64 XDR topic/event-body golden fixtures pulled from the real mainnet ClickHouse lake (public on-chain data — Blend Backstop V1/V2 gulp_emissions, rw_zone, rw_zone_add, withdraw; ledgers 51499926-57072018) for the blend_backstop decoder-bug-fix audit (2026-07-09). High-entropy base64 trips the generic-api-key heuristic; same class as the cctp governance_test.go / full_census_test.go / phoenix / aquarius decoder-fixture allowlists."
 paths = [
   '''internal/sources/blend_backstop/decode_test\.go''',
+]
+
+[[rules.allowlists]]
 description = "Base64 XDR topic/body golden fixtures pulled DIRECTLY from the certified ClickHouse raw lake (public on-chain data — the Blend Emitter contract's distribute/drop/q_swap/swap events, ledgers 51524666-57467292, 2026-07-09) for the blend_emitter decoder tests, plus the Emitter's own C-strkey mainnet address and the backstop/recipient/token C-strkeys those events decode to. High-entropy base64 + bare strkeys trip the generic-api-key heuristic; same class as the cctp/aquarius/phoenix decoder-fixture allowlists above. Deterministic public ledger data, not credentials."
 paths = [
   '''internal/sources/blend_emitter/source_test\.go''',
