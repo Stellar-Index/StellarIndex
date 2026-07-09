@@ -15,21 +15,6 @@ against.
 
 ## [Unreleased]
 
-### Fixed
-- **blend_emitter WASM audit closed; `BackfillSafe` flipped true.** Read-only against the
-  r1 ClickHouse raw lake (HTTP 8123, no `stellarindex-ops wasm-history` / MinIO walk):
-  checked ALL 469 lifetime events the Emitter contract has ever emitted — not a sample —
-  against `internal/sources/blend_emitter`'s decoder expectations. All 465 `distribute`
-  events shape-match exhaustively via a single query; both `drop` events and the one
-  `q_swap`/`swap` pair were individually decoded and confirmed byte-identical in value
-  (the observed `swap` executed exactly what the observed `q_swap` queued). The contract's
-  sole confirmed on-chain WASM hash was extracted from the lake and SHA256-verified
-  byte-for-byte, and contains every symbol the decoder relies on. Also corrects
-  `events.go`'s prior "up to 3 WASM uploads (ledgers 51,351,843 / 51,498,920 / 52,314,704)"
-  claim — the lake shows zero Soroban entry-change activity anywhere on the network at the
-  first two ledgers, and the third resolves to the same single hash already established.
-  See `docs/operations/wasm-audits/blend_emitter.md`.
-
 ## [v0.11.0] — 2026-07-10
 
 ### Added
@@ -71,6 +56,19 @@ against.
   `internal/sources/blend_emitter/README.md` and `docs/protocols/blend_emitter.md`.
 
 ### Fixed
+- **blend_emitter WASM audit closed; `BackfillSafe` flipped true.** Read-only against the
+  r1 ClickHouse raw lake (HTTP 8123, no `stellarindex-ops wasm-history` / MinIO walk):
+  checked ALL 469 lifetime events the Emitter contract has ever emitted — not a sample —
+  against `internal/sources/blend_emitter`'s decoder expectations. All 465 `distribute`
+  events shape-match exhaustively via a single query; both `drop` events and the one
+  `q_swap`/`swap` pair were individually decoded and confirmed byte-identical in value
+  (the observed `swap` executed exactly what the observed `q_swap` queued). The contract's
+  sole confirmed on-chain WASM hash was extracted from the lake and SHA256-verified
+  byte-for-byte, and contains every symbol the decoder relies on. Also corrects
+  `events.go`'s prior "up to 3 WASM uploads (ledgers 51,351,843 / 51,498,920 / 52,314,704)"
+  claim — the lake shows zero Soroban entry-change activity anywhere on the network at the
+  first two ledgers, and the third resolves to the same single hash already established.
+  See `docs/operations/wasm-audits/blend_emitter.md`.
 - **CI: `release.yml` cosign pinned back to v3.9.2** (cosign-installer SHA-pinned) after
   cosign v3 broke the release contract two ways in one week — first a signing-config/
   service-URL conflict with the explicit `--oidc-issuer` flag, then a default bundle-format
