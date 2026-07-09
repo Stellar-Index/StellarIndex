@@ -35,20 +35,55 @@ const SourceName = "rozo"
 const MainnetPaymentContract = "CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWOOSP3IYRL"
 
 // MainnetPaymentContracts is the full set of Rozo bridge-out C
-// contracts on Stellar pubnet. Confirmed by RozoAI 2026-05-21 — all
-// three emit the same PaymentEvent / FlushEvent schemas. The decoder
-// matches PaymentEvent / FlushEvent by topic[0], so adding a contract
-// here is a watchlist concern (cross-validation + scoping), not a
-// decoder-shape change.
+// contracts on Stellar pubnet. The original three were confirmed by
+// RozoAI 2026-05-21 — all emit the same PaymentEvent / FlushEvent
+// schemas. The decoder matches PaymentEvent / FlushEvent by topic[0],
+// so adding a contract here is a watchlist concern (cross-validation
+// + scoping), not a decoder-shape change.
 //
 // User flows: most bridge-out volume flows through C wallets when
 // the user can't supply a memo (memo-less wallets, contract callers).
 // G-wallet relayer flows handle the memo-bearing path — see
 // [MainnetRelayerAccounts].
+//
+// 4th entry (`CAFO6OUZ…`) admitted 2026-07-09 per the §0.7
+// recognition audit — it emitted exactly ONE payment_event (ledger
+// 61522543) and wasn't yet on this list. Evidence, all independently
+// verified against the ClickHouse lake on r1 (read-only: no operator
+// confirmation from RozoAI obtained for this one):
+//
+//   - WASM hash bytewise IDENTICAL to the original three
+//     (`b56aedeaf80c3d4b7c4c2ddf3893ac47c3ecff1a0a6f19152ca993e5bb294414`,
+//     per docs/operations/wasm-audits/rozo.md) — read from its
+//     contract-instance ledger entry at ledger 61522475.
+//   - Instance storage carries the same 3-key init shape as the
+//     others (`dest` Address, `usdc` Address, `init` bool). `dest` =
+//     `GB4CLV3UMXDPFP5OQJQKUCWPRJXPXPJSHTUKZEJLAIZFZR7UHYAQ6EB4` —
+//     an exact match to the second [MainnetRelayerAccounts] entry.
+//     `usdc` = `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`
+//     — the canonical Circle USDC SAC used elsewhere in this repo.
+//   - Its one payment_event's `destination` field independently
+//     resolves to that same relayer account.
+//   - The contract was deployed+initialized at ledger 61522475 and
+//     the payment fired 68 ledgers later with memo "test payment
+//     0.01 USDC" — a deploy-then-smoke-test pattern, not a
+//     spoof/collision (see decode.go's Classify doc for the topic-
+//     collision risk this package guards against; two OTHER
+//     contracts found in the same lake sweep — CDSXS5GK…, CCP6WOKM…
+//     — collide on the legacy `payment` symbol but have unrelated
+//     body schemas and are correctly NOT on this list).
+//
+// Because the WASM hash is bytewise identical to the already-audited
+// hash (docs/operations/wasm-audits/rozo.md, approved 2026-05-26),
+// this contract is covered by that same audit's findings by
+// construction — no separate wasm-history walk needed. This is the
+// doc's own documented re-audit trigger ("a new Rozo deploy beyond
+// MainnetPaymentContracts"); the audit doc records the addition.
 var MainnetPaymentContracts = []string{
 	"CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWOOSP3IYRL",
 	"CCRLTS3CMJHYHFD7MYRBJPNW6R3LCXNDO2B6TK6AS6FSXAHR6GBMGLRE",
 	"CAQPKW5AUPEA4C7OERZRUCBWT5RZDSETO4PR5REVRC5MT4CF3PBSKXQC",
+	"CAFO6OUZAL62SGDVGHHJPSCOOF3HUKXLED3C3FS5RRQI2VBZ4F5HBPXI",
 }
 
 // MainnetRelayerAccounts is the set of CLASSIC Stellar accounts
@@ -109,7 +144,7 @@ var (
 // PaymentEvent emitted by Rozo v1's `pay(from, amount, memo)`
 // function.
 //
-// On-wire shape (from v1/stellar/payment/src/lib.rs):
+// On-wire body shape (from v1/stellar/payment/src/lib.rs):
 //
 //	#[contracttype]
 //	pub struct PaymentEvent {
@@ -119,9 +154,16 @@ var (
 //	    pub memo: String,
 //	}
 //
-//	env.events().publish((PAYMENT, from.clone()), PaymentEvent { … })
-//
-// Topic shape: `(symbol_short!("payment"), from: Address)`.
+// The upstream source's `env.events().publish((PAYMENT,
+// from.clone()), PaymentEvent { … })` call suggests a 2-tuple
+// topic `(symbol_short!("payment"), from: Address)`, but that is
+// NOT what the deployed mainnet contract emits. Verified against
+// 3/3 real lake fixtures (ledgers 61859684, 63147040, 61797898;
+// §0.7 verification, 2026-07-09): every observed payment_event has
+// topic_count=1 — a single Symbol `("payment_event",)`, no
+// second topic element. `from` is carried ONLY in the body ScMap,
+// not duplicated as topic[1]. Do not rely on topic[1] for `from`;
+// decode it via DecodePayment's map lookup like every other field.
 // Body shape: the struct above as a ScMap (Soroban's
 // `#[contracttype]` macro lays out struct fields as a Map).
 //
@@ -140,8 +182,10 @@ type Payment struct {
 	ClosedAt   string // RFC 3339 — caller parses via events.EventClosedAt()
 	ContractID string
 
-	// Payer — `from` field of PaymentEvent. The same address also
-	// appears as topic[1] (the `from.clone()` second tuple slot).
+	// Payer — `from` field of PaymentEvent, read from the body
+	// ScMap. NOT duplicated in the topic: the deployed contract's
+	// topic is a 1-element `(payment_event,)` symbol only (verified
+	// 2026-07-09, see the type doc above) — there is no topic[1].
 	From string
 
 	// Recipient — `destination` from PaymentEvent. Fixed at

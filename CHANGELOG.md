@@ -82,6 +82,18 @@ against.
   when a token doesn't resolve. OpenAPI 1.3.0 → 1.4.0; explorer roster renders the pair. (#91)
 
 ### Fixed
+- **rozo §0.7 recognition gap: 4th v1 Payment contract admitted + topic-shape doc fixed.**
+  `internal/sources/rozo`'s doc comments claimed `payment_event`'s topic is a 2-tuple
+  `(symbol_short!("payment"), from: Address)`; verified against 3/3 real lake fixtures
+  (2026-07-09) every deployed event carries a 1-element topic — `from` is body-only, never
+  a topic element. Separately, contract `CAFO6OUZAL62SGDVGHHJPSCOOF3HUKXLED3C3FS5RRQI2VBZ4F5HBPXI`
+  had emitted one `payment_event` but wasn't gated in `MainnetPaymentContracts`; admitted
+  after read-only lake evidence (bytewise-identical WASM hash to the audited three, matching
+  instance-init shape, `dest` + event `destination` both resolving to a documented
+  `MainnetRelayerAccounts` entry) — not yet RozoAI-confirmed, flagged as such. Two unrelated
+  contracts colliding on the legacy `payment` symbol were investigated and correctly excluded
+  (different body schema entirely). `docs/operations/wasm-audits/rozo.md` +
+  `docs/protocols/rozo.md` updated with the evidence trail.
 - `compute-completeness -ch` no longer OOM-kills ClickHouse at ANY server memory cap
   (the sep41 runs died "would use 61G" at a 64G cap and "69G" at 72G — consumption
   scaled with headroom, so raising caps was never a fix). Two structural changes:
