@@ -37,7 +37,14 @@ chaos_setup
 cleanup() {
     if container_exists "$TIMESCALE_CONTAINER"; then
         log "cleanup: ensuring $TIMESCALE_CONTAINER is up"
-        docker start "$TIMESCALE_CONTAINER" >/dev/null 2>&1 || true
+        # Best-effort: this runs from the EXIT trap and must not itself
+        # abort (that would mask the scenario's real pass/fail exit
+        # code) — but a failed restart leaves Timescale down for the
+        # next scenario/dev session, so warn loudly instead of
+        # swallowing it.
+        if ! docker start "$TIMESCALE_CONTAINER" >/dev/null 2>&1; then
+            warn "cleanup: failed to restart $TIMESCALE_CONTAINER — it may still be down; check manually (docker start $TIMESCALE_CONTAINER)"
+        fi
     fi
 }
 trap cleanup EXIT

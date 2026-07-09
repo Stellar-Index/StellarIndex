@@ -73,9 +73,21 @@ chaos_setup
 cleanup() {
     if container_exists "$REDIS_CONTAINER"; then
         log "cleanup: restoring Redis writeable state"
-        docker exec "$REDIS_CONTAINER" redis-cli CONFIG SET dir /data >/dev/null 2>&1 || true
-        docker exec "$REDIS_CONTAINER" redis-cli BGSAVE >/dev/null 2>&1 || true
-        docker exec "$REDIS_CONTAINER" redis-cli CONFIG SET stop-writes-on-bgsave-error no >/dev/null 2>&1 || true
+        # Best-effort: this runs from the EXIT trap and must not itself
+        # abort (that would skip later steps and mask the scenario's
+        # real pass/fail exit code) — but a failure here leaves the dev
+        # Redis stuck in MISCONF (read-only) for every later scenario
+        # in the run, so warn loudly per-step instead of swallowing it.
+        local heal_failed=0
+        docker exec "$REDIS_CONTAINER" redis-cli CONFIG SET dir /data >/dev/null 2>&1 \
+            || { warn "cleanup: failed to reset Redis dir to /data"; heal_failed=1; }
+        docker exec "$REDIS_CONTAINER" redis-cli BGSAVE >/dev/null 2>&1 \
+            || { warn "cleanup: BGSAVE failed while restoring Redis"; heal_failed=1; }
+        docker exec "$REDIS_CONTAINER" redis-cli CONFIG SET stop-writes-on-bgsave-error no >/dev/null 2>&1 \
+            || { warn "cleanup: failed to clear stop-writes-on-bgsave-error"; heal_failed=1; }
+        if [ "$heal_failed" -eq 1 ]; then
+            warn "cleanup: Redis may still be in MISCONF / read-only state — verify manually: docker exec $REDIS_CONTAINER redis-cli INFO persistence"
+        fi
     fi
 }
 trap cleanup EXIT

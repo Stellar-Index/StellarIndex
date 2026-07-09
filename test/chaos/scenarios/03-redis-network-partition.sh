@@ -33,9 +33,21 @@ chaos_setup
 
 cleanup() {
     log "cleanup: healing partition (no-op if already healed)"
-    heal_partition "$REDIS_CONTAINER" >/dev/null 2>&1 || true
+    # Do NOT redirect heal_partition's own stdout/stderr away — it now
+    # warns internally when a network reconnect fails, and swallowing
+    # that here would defeat the point. `|| true` only guards this
+    # trap against heal_partition's "nothing to heal" no-op return
+    # (status 1 when neither state file exists), which must not abort
+    # the rest of cleanup() under `set -e`.
+    heal_partition "$REDIS_CONTAINER" || true
     if container_exists "$REDIS_CONTAINER"; then
-        docker start "$REDIS_CONTAINER" >/dev/null 2>&1 || true
+        # Best-effort: this runs from the EXIT trap and must not itself
+        # abort (that would mask the scenario's real pass/fail exit
+        # code) — but a failed restart leaves Redis down for the next
+        # scenario/dev session, so warn loudly instead of swallowing it.
+        if ! docker start "$REDIS_CONTAINER" >/dev/null 2>&1; then
+            warn "cleanup: failed to restart $REDIS_CONTAINER — it may still be down; check manually (docker start $REDIS_CONTAINER)"
+        fi
     fi
 }
 trap cleanup EXIT

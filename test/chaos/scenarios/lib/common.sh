@@ -213,17 +213,33 @@ heal_partition() {
     if [ -f "/tmp/chaos-pumba-$name.pid" ]; then
         local pid
         pid="$(cat "/tmp/chaos-pumba-$name.pid")"
+        # A non-zero kill here almost always just means pumba's own
+        # --duration already expired and the process is gone — the
+        # common, expected case, not a cleanup failure worth flagging.
         kill "$pid" 2>/dev/null || true
         rm -f "/tmp/chaos-pumba-$name.pid"
         log "pumba pause cleared for $name"
         return
     fi
     if [ -f "/tmp/chaos-disconnected-$name.nets" ]; then
+        # Unlike the pumba-kill path above, a failed reconnect here is
+        # NOT benign: the container stays cut off from that network
+        # for every later scenario in the run. Track failures instead
+        # of blanket `|| true`-ing them, and don't claim "reconnected"
+        # unless every network actually came back.
+        local reconnect_failed=0
         while read -r net; do
-            docker network connect "$net" "$name" >/dev/null 2>&1 || true
+            if ! docker network connect "$net" "$name" >/dev/null 2>&1; then
+                warn "failed to reconnect $name to network $net — container may still be partitioned; reconnect manually: docker network connect $net $name"
+                reconnect_failed=1
+            fi
         done < "/tmp/chaos-disconnected-$name.nets"
         rm -f "/tmp/chaos-disconnected-$name.nets"
-        log "network reconnected for $name"
+        if [ "$reconnect_failed" -eq 0 ]; then
+            log "network reconnected for $name"
+        else
+            warn "network reconnect for $name completed with failures — see warnings above"
+        fi
     fi
 }
 
