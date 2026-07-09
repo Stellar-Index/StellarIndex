@@ -60,9 +60,9 @@ func TestAPI_RegistryAndCursors(t *testing.T) {
 	}
 
 	srv := v1.New(v1.Options{
-		Coins:   store,
-		Issuers: store,
-		Cursors: store,
+		AssetsReader: store,
+		Issuers:      store,
+		Cursors:      store,
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

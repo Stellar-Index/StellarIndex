@@ -126,7 +126,7 @@ func (s *Server) priceableAssetIDs() []string {
 		if vc.ReferenceOnly {
 			continue
 		}
-		for _, n := range vc.Networks {
+		for _, n := range vc.Issuance {
 			if n.AssetID == "" {
 				continue
 			}

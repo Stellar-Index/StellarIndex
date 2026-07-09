@@ -80,14 +80,14 @@ type VerifiedCurrency struct {
 	// 7 for XLM (stroops → XLM); 0 for fiat (raw dollars / yen /
 	// yuan). Zero default works for fiat.
 	SupplyDecimals int
-	// Networks holds this currency's Stellar issuance identity. After
+	// Issuance holds this currency's Stellar issuance identity. After
 	// the Stellar-focus refactor each browseable entry has at most one
 	// entry — the `stellar` one (code / issuer / asset_id; native XLM
 	// uses asset_id "native"). Fiat + reference_only entries carry no
 	// network entries. Iterated by indexStellarEntries /
 	// LookupByStellarAssetID / StellarCollision to map an asset_id to
 	// its verified currency.
-	Networks []NetworkEntry
+	Issuance []IssuanceEntry
 	// ReferenceOnly marks a non-Stellar entry that exists solely as a
 	// pricing cross-check reference (its coingecko_id / coinmarketcap_id
 	// feed the divergence/aggregator pair set), NOT as a browseable
@@ -98,10 +98,10 @@ type VerifiedCurrency struct {
 	ReferenceOnly bool
 }
 
-// NetworkEntry is the Stellar issuance identity for a verified
+// IssuanceEntry is the Stellar issuance identity for a verified
 // currency. After the Stellar-focus refactor `Network` is always
 // "stellar" for any populated entry.
-type NetworkEntry struct {
+type IssuanceEntry struct {
 	// Network identifier — short, lowercase, stable across versions.
 	// Always "stellar" for browseable entries.
 	Network string
@@ -143,21 +143,21 @@ type rawCatalogue struct {
 }
 
 type rawCurrency struct {
-	Ticker              string       `yaml:"ticker"`
-	Slug                string       `yaml:"slug"`
-	Name                string       `yaml:"name"`
-	Description         string       `yaml:"description"`
-	CoinGeckoID         string       `yaml:"coingecko_id"`
-	CoinMarketCapID     string       `yaml:"coinmarketcap_id"`
-	VerifiedIssuerLabel string       `yaml:"verified_issuer_label"`
-	Class               string       `yaml:"class"`
-	CirculatingSupply   string       `yaml:"circulating_supply"`
-	SupplyDecimals      int          `yaml:"supply_decimals"`
-	Networks            []rawNetwork `yaml:"networks"`
-	ReferenceOnly       bool         `yaml:"reference_only"`
+	Ticker              string        `yaml:"ticker"`
+	Slug                string        `yaml:"slug"`
+	Name                string        `yaml:"name"`
+	Description         string        `yaml:"description"`
+	CoinGeckoID         string        `yaml:"coingecko_id"`
+	CoinMarketCapID     string        `yaml:"coinmarketcap_id"`
+	VerifiedIssuerLabel string        `yaml:"verified_issuer_label"`
+	Class               string        `yaml:"class"`
+	CirculatingSupply   string        `yaml:"circulating_supply"`
+	SupplyDecimals      int           `yaml:"supply_decimals"`
+	Issuance            []rawIssuance `yaml:"networks"`
+	ReferenceOnly       bool          `yaml:"reference_only"`
 }
 
-type rawNetwork struct {
+type rawIssuance struct {
 	Network      string `yaml:"network"`
 	Code         string `yaml:"code"`
 	Issuer       string `yaml:"issuer"`
@@ -236,7 +236,7 @@ func validateRawEntry(i int, rc rawCurrency) error {
 		return fmt.Errorf("currency: entry %d (%s): slug is required", i, rc.Ticker)
 	case rc.Name == "":
 		return fmt.Errorf("currency: entry %d (%s): name is required", i, rc.Ticker)
-	case len(rc.Networks) == 0 && rc.Class != string(ClassFiat) && !rc.ReferenceOnly:
+	case len(rc.Issuance) == 0 && rc.Class != string(ClassFiat) && !rc.ReferenceOnly:
 		// Fiat entries are network-agnostic (sovereign currencies
 		// have no on-chain issuance). reference_only coins (BTC/ETH/…)
 		// have no Stellar issuance — they exist solely as a pricing
@@ -270,13 +270,13 @@ func buildVerifiedCurrency(rc rawCurrency) (*VerifiedCurrency, error) {
 		CirculatingSupply:   rc.CirculatingSupply,
 		SupplyDecimals:      rc.SupplyDecimals,
 		ReferenceOnly:       rc.ReferenceOnly,
-		Networks:            make([]NetworkEntry, 0, len(rc.Networks)),
+		Issuance:            make([]IssuanceEntry, 0, len(rc.Issuance)),
 	}
-	for _, rn := range rc.Networks {
+	for _, rn := range rc.Issuance {
 		if rn.Network == "" {
 			return nil, fmt.Errorf("currency: %s: network entry missing `network`", rc.Ticker)
 		}
-		vc.Networks = append(vc.Networks, NetworkEntry{
+		vc.Issuance = append(vc.Issuance, IssuanceEntry{
 			Network:      strings.ToLower(rn.Network),
 			Code:         rn.Code,
 			Issuer:       rn.Issuer,
@@ -291,7 +291,7 @@ func buildVerifiedCurrency(rc rawCurrency) (*VerifiedCurrency, error) {
 // indexStellarEntries threads every Stellar network entry into the
 // asset_id + code indexes, surfacing collisions as errors.
 func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
-	for _, n := range vc.Networks {
+	for _, n := range vc.Issuance {
 		if n.Network != "stellar" {
 			continue
 		}
@@ -434,7 +434,7 @@ func (c *Catalogue) StellarCollision(code, issuer string) (*VerifiedCurrency, bo
 	if !ok {
 		return nil, false
 	}
-	for _, n := range v.Networks {
+	for _, n := range v.Issuance {
 		if n.Network != "stellar" {
 			continue
 		}
@@ -447,13 +447,13 @@ func (c *Catalogue) StellarCollision(code, issuer string) (*VerifiedCurrency, bo
 
 // StellarEntry returns the Stellar network entry for a verified
 // currency, or nil if the currency has no Stellar issuance.
-func (v *VerifiedCurrency) StellarEntry() *NetworkEntry {
+func (v *VerifiedCurrency) StellarEntry() *IssuanceEntry {
 	if v == nil {
 		return nil
 	}
-	for i := range v.Networks {
-		if v.Networks[i].Network == "stellar" {
-			return &v.Networks[i]
+	for i := range v.Issuance {
+		if v.Issuance[i].Network == "stellar" {
+			return &v.Issuance[i]
 		}
 	}
 	return nil

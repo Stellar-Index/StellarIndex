@@ -309,22 +309,22 @@ type AssetDetail struct {
 	// carries the richer UnverifiedWarning body instead.
 	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
 
-	// ─── Coin-overlay listing fields (spec'd 2026-07-02, board #33;
-	// populated when the server's CoinsReader is wired) ─────────────
-	Slug             string          `json:"slug,omitempty"`
-	Class            string          `json:"class,omitempty"`
-	Change1hPct      *string         `json:"change_1h_pct,omitempty"`
-	Change7dPct      *string         `json:"change_7d_pct,omitempty"`
-	FirstSeenLedger  *int64          `json:"first_seen_ledger,omitempty"`
-	LastSeenLedger   *int64          `json:"last_seen_ledger,omitempty"`
-	ObservationCount *int64          `json:"observation_count,omitempty"`
-	MarketsCount     *int            `json:"markets_count,omitempty"`
-	TradeCount24h    *int            `json:"trade_count_24h,omitempty"`
-	PriceHistory24h  []PricePoint    `json:"price_history_24h,omitempty"`
-	PriceHistory7d   []PricePoint    `json:"price_history_7d,omitempty"`
-	ATH              *ATHPoint       `json:"ath,omitempty"`
-	IssuerScamReason string          `json:"issuer_scam_reason,omitempty"`
-	TopMarkets       []CoinTopMarket `json:"top_markets,omitempty"`
+	// ─── Asset-catalogue overlay listing fields (spec'd 2026-07-02,
+	// board #33; populated when the server's AssetsReader is wired) ──
+	Slug             string           `json:"slug,omitempty"`
+	Class            string           `json:"class,omitempty"`
+	Change1hPct      *string          `json:"change_1h_pct,omitempty"`
+	Change7dPct      *string          `json:"change_7d_pct,omitempty"`
+	FirstSeenLedger  *int64           `json:"first_seen_ledger,omitempty"`
+	LastSeenLedger   *int64           `json:"last_seen_ledger,omitempty"`
+	ObservationCount *int64           `json:"observation_count,omitempty"`
+	MarketsCount     *int             `json:"markets_count,omitempty"`
+	TradeCount24h    *int             `json:"trade_count_24h,omitempty"`
+	PriceHistory24h  []PricePoint     `json:"price_history_24h,omitempty"`
+	PriceHistory7d   []PricePoint     `json:"price_history_7d,omitempty"`
+	ATH              *ATHPoint        `json:"ath,omitempty"`
+	IssuerScamReason string           `json:"issuer_scam_reason,omitempty"`
+	TopMarkets       []AssetTopMarket `json:"top_markets,omitempty"`
 }
 
 // UnverifiedWarning is the warning body attached to AssetDetail
@@ -1066,8 +1066,8 @@ type ATHPoint struct {
 	At  time.Time `json:"at"`
 }
 
-// CoinTopMarket is one row of [AssetDetail].TopMarkets.
-type CoinTopMarket struct {
+// AssetTopMarket is one row of [AssetDetail].TopMarkets.
+type AssetTopMarket struct {
 	Counterparty  string  `json:"counterparty"`
 	Side          string  `json:"side"`
 	Volume24hUSD  *string `json:"volume_24h_usd,omitempty"`

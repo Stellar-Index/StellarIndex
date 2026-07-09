@@ -138,7 +138,7 @@ func TestCachedIssuersReader_DistinctLimitsCacheSeparately(t *testing.T) {
 
 // TestCachedIssuersReader_TTLZeroIsBypass — ttl=0 disables the
 // cache. Every call hits upstream. Mirrors the
-// CachedSourcesStatsReader/CachedCoinsReader knob used in
+// CachedSourcesStatsReader/CachedAssetsReader knob used in
 // integration tests that want the wrapper inert.
 func TestCachedIssuersReader_TTLZeroIsBypass(t *testing.T) {
 	up := &fakeIssuersUpstream{}
@@ -205,7 +205,7 @@ func TestCachedIssuersReader_PassThroughListAssets(t *testing.T) {
 // TestCachedIssuersReader_HitMissCounter pins the
 // stellarindex_api_cache_ops_total{cache="issuers"} counter for the
 // list_issuers op. Same regression-guard rationale as the markets +
-// coins + sources_stats variants — if a future refactor drops the
+// assetsReader + sources_stats variants — if a future refactor drops the
 // .Inc() on either branch the api_cache_miss_rate_high alert
 // silently stops firing for /v1/issuers.
 func TestCachedIssuersReader_HitMissCounter(t *testing.T) {

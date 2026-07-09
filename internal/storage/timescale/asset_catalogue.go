@@ -9,8 +9,8 @@ import (
 	"github.com/lib/pq"
 )
 
-// CoinRow is the read-side projection of one row from the
-// coin-discovery view: classic_assets joined with whatever supply +
+// AssetRow is the read-side projection of one row from the
+// asset-discovery view: classic_assets joined with whatever supply +
 // activity counters we have today. Pure-string fields keep the
 // surface decoupled from the canonical types package.
 //
@@ -18,7 +18,7 @@ import (
 // aggregator hasn't yet computed values for the asset — newly-
 // observed assets, illiquid tokens with no off-chain peg, etc.
 // Pointer types let the wire layer emit `null` cleanly.
-type CoinRow struct {
+type AssetRow struct {
 	Slug             string
 	AssetID          string
 	Code             string
@@ -53,27 +53,27 @@ type CoinRow struct {
 	Change7dPct  *string
 }
 
-// CoinsOrder controls the sort + cursor scheme used by ListCoins.
+// AssetsOrder controls the sort + cursor scheme used by ListAssets.
 // Default ObservationCountDesc preserves the original "rank by
 // activity" semantics; Volume24hUSDDesc is the volume-first view
 // the explorer's /assets table can opt into for live-volume
 // rankings.
-type CoinsOrder int
+type AssetsOrder int
 
 const (
-	// CoinsOrderObservationCountDesc orders by all-time observation
+	// AssetsOrderObservationCountDesc orders by all-time observation
 	// count desc (a cheap activity proxy). Cursor is
 	// `<obs_count>:<asset_id>`.
-	CoinsOrderObservationCountDesc CoinsOrder = iota
-	// CoinsOrderVolume24hUSDDesc orders by trailing-24h USD volume
+	AssetsOrderObservationCountDesc AssetsOrder = iota
+	// AssetsOrderVolume24hUSDDesc orders by trailing-24h USD volume
 	// desc (NULLS LAST), with `<asset_id>` as the tie-breaker.
 	// Cursor is `<vol_or_blank>:<asset_id>`.
-	CoinsOrderVolume24hUSDDesc
+	AssetsOrderVolume24hUSDDesc
 )
 
-// ListCoinsOptions bundles the optional filters / paging
-// parameters for ListCoins. Zero values are the API defaults.
-type ListCoinsOptions struct {
+// ListAssetsOptions bundles the optional filters / paging
+// parameters for ListAssets. Zero values are the API defaults.
+type ListAssetsOptions struct {
 	// Limit clamps to [1, 500]; 0 → 100.
 	Limit int
 	// Issuer, when non-empty, restricts to that G-strkey.
@@ -95,18 +95,18 @@ type ListCoinsOptions struct {
 	Q string
 	// Order controls the sort + cursor scheme. Zero value is
 	// observation_count desc (preserves the historical contract).
-	Order CoinsOrder
+	Order AssetsOrder
 }
 
-// ListCoins returns coin-directory rows ordered by observation
+// ListAssets returns asset-directory rows ordered by observation
 // count desc (a cheap proxy for activity).
 //
 // Pagination uses a keyset cursor: the cursor encodes the
 // (observation_count, asset_id) tuple of the last row from the
 // previous page. Empty cursor means "first page". Cursor format:
 // `<observation_count>:<asset_id>`.
-func (s *Store) ListCoins(ctx context.Context, limit int, issuer, cursor string) ([]CoinRow, error) {
-	return s.ListCoinsExt(ctx, ListCoinsOptions{Limit: limit, Issuer: issuer, Cursor: cursor})
+func (s *Store) ListAssets(ctx context.Context, limit int, issuer, cursor string) ([]AssetRow, error) {
+	return s.ListAssetsExt(ctx, ListAssetsOptions{Limit: limit, Issuer: issuer, Cursor: cursor})
 }
 
 // LatestCirculatingSupply returns the most-recent circulating supply per
@@ -145,11 +145,11 @@ func (s *Store) LatestCirculatingSupply(ctx context.Context) (map[string]string,
 	return out, nil
 }
 
-// ListCoinsExt is ListCoins with the full options bag. ListCoins
+// ListAssetsExt is ListAssets with the full options bag. ListAssets
 // is preserved as the legacy 3-arg call so existing callers
 // (handler, integration tests) compile unchanged; new callers
-// pass ListCoinsOptions to opt into Q.
-func (s *Store) ListCoinsExt(ctx context.Context, opts ListCoinsOptions) ([]CoinRow, error) {
+// pass ListAssetsOptions to opt into Q.
+func (s *Store) ListAssetsExt(ctx context.Context, opts ListAssetsOptions) ([]AssetRow, error) {
 	// Clamp to the documented page size, allowing one extra row for the
 	// caller's overfetch-by-one pagination sentinel (501, not 500).
 	// F-1326/G3-03: the previous `> 500 → 100` reset silently truncated
@@ -162,37 +162,37 @@ func (s *Store) ListCoinsExt(ctx context.Context, opts ListCoinsOptions) ([]Coin
 	case limit > 501:
 		limit = 501
 	}
-	query, args := buildCoinsQuery(limit, opts.Issuer, opts.Code, opts.Cursor, opts.Q, opts.Order)
+	query, args := buildAssetsQuery(limit, opts.Issuer, opts.Code, opts.Cursor, opts.Q, opts.Order)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("timescale: ListCoins: %w", err)
+		return nil, fmt.Errorf("timescale: ListAssets: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	out := make([]CoinRow, 0, limit)
+	out := make([]AssetRow, 0, limit)
 	for rows.Next() {
-		r, err := scanCoinRow(rows)
+		r, err := scanAssetRow(rows)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: ListCoins rows: %w", err)
+		return nil, fmt.Errorf("timescale: ListAssets rows: %w", err)
 	}
 	return out, nil
 }
 
-// scanCoinRow is the row-projection shared by ListCoinsExt and
-// GetCoinBySlug. The two queries return the same column shape, so
+// scanAssetRow is the row-projection shared by ListAssetsExt and
+// GetAssetBySlug. The two queries return the same column shape, so
 // the scan + nullable-string unpack lives in one place. Pulled
-// out of the listing loop so ListCoinsExt stays under the gocognit
+// out of the listing loop so ListAssetsExt stays under the gocognit
 // threshold as the wire shape grows.
-func scanCoinRow(scanner interface {
+func scanAssetRow(scanner interface {
 	Scan(dest ...any) error
 },
-) (CoinRow, error) {
-	var r CoinRow
+) (AssetRow, error) {
+	var r AssetRow
 	var (
 		firstLedger, lastLedger int64
 		priceUSD                sql.NullString
@@ -209,7 +209,7 @@ func scanCoinRow(scanner interface {
 		&priceUSD, &volume24hUSD, &marketCapUSD, &circulatingSupply,
 		&change1hPct, &change24hPct, &change7dPct,
 	); err != nil {
-		return CoinRow{}, fmt.Errorf("timescale: scan coin: %w", err)
+		return AssetRow{}, fmt.Errorf("timescale: scan asset: %w", err)
 	}
 	r.FirstSeenLedger = uint32(firstLedger) //nolint:gosec
 	r.LastSeenLedger = uint32(lastLedger)   //nolint:gosec
@@ -231,9 +231,9 @@ func nullStringPtr(ns sql.NullString) *string {
 	return &s
 }
 
-// listCoinsBaseSelect is the CTE-laden SELECT shared by every
-// permutation of WHERE-clause buildCoinsQuery composes. Pulled
-// out of the function body so buildCoinsQuery stays under the
+// listAssetsBaseSelect is the CTE-laden SELECT shared by every
+// permutation of WHERE-clause buildAssetsQuery composes. Pulled
+// out of the function body so buildAssetsQuery stays under the
 // funlen threshold and the SQL is editable as a single block.
 //
 // Volume aggregation: prices_1m.volume_usd summed across the
@@ -254,7 +254,7 @@ func nullStringPtr(ns sql.NullString) *string {
 // sources (asset_supply_history) aren't running for the long
 // tail of classic assets today, and fabricating values would
 // defeat the "stop lying" rule.
-const listCoinsBaseSelect = `
+const listAssetsBaseSelect = `
 		WITH per_asset_24h_vol AS (
 		  -- #43 (2026-07-06 latency incident): read the trailing-24h
 		  -- per-asset USD volume from the asset_volume_24h rollup
@@ -530,7 +530,7 @@ const listCoinsBaseSelect = `
 		  LEFT JOIN asset_vs_xlm_7d   vs_xlm_7d   ON vs_xlm_7d.asset_id  = ca.asset_id
 `
 
-// listCoinsBaseSelectSQL renders [listCoinsBaseSelect] with optional
+// listAssetsBaseSelectSQL renders [listAssetsBaseSelect] with optional
 // asset-filter pushdown into each per-asset CTE (#27). When
 // pushdownPredicate is empty, the function strips the
 // /*PUSHDOWN_BASE*/ + /*PUSHDOWN_QUOTE*/ marker comments and
@@ -555,15 +555,15 @@ const listCoinsBaseSelect = `
 // pushdownPredicate is the WHERE-expression body for the
 // chosen_assets CTE — e.g. "issuer_g_strkey = $1" or any
 // combination using positional args $N matching the caller's
-// args slice. buildCoinsQuery owns the arg-numbering contract
+// args slice. buildAssetsQuery owns the arg-numbering contract
 // (issuer is $1 when set, so the predicate is the literal
 // string "issuer_g_strkey = $1").
-func listCoinsBaseSelectSQL(pushdownPredicate string) string {
+func listAssetsBaseSelectSQL(pushdownPredicate string) string {
 	if pushdownPredicate == "" {
 		// No pushdown — strip the marker comments. Leaving them
 		// in is harmless (they're valid SQL comments) but stripping
 		// keeps EXPLAIN output and pg_stat_statements normalised.
-		s := strings.ReplaceAll(listCoinsBaseSelect, "/*PUSHDOWN_BASE*/", "")
+		s := strings.ReplaceAll(listAssetsBaseSelect, "/*PUSHDOWN_BASE*/", "")
 		s = strings.ReplaceAll(s, "/*PUSHDOWN_QUOTE*/", "")
 		return s
 	}
@@ -575,7 +575,7 @@ func listCoinsBaseSelectSQL(pushdownPredicate string) string {
 	// "\n\t\tWITH per_asset_24h_vol AS (" — match on the WITH so the
 	// replacement is unambiguous.
 	s := strings.Replace(
-		listCoinsBaseSelect,
+		listAssetsBaseSelect,
 		"\n\t\tWITH per_asset_24h_vol AS (",
 		chosenCTE+"per_asset_24h_vol AS (",
 		1,
@@ -650,12 +650,12 @@ func (s *Store) RefreshAssetVolume24h(ctx context.Context) error {
 	return nil
 }
 
-// buildCoinsQuery composes the WHERE + ORDER + LIMIT around
-// listCoinsBaseSelectSQL, given the limit / issuer-filter /
+// buildAssetsQuery composes the WHERE + ORDER + LIMIT around
+// listAssetsBaseSelectSQL, given the limit / issuer-filter /
 // code-filter / keyset cursor / search query. The combinatorial
 // explosion of (issuer × code × cursor × q) is too painful as a
 // switch; use a slice + numbered placeholders.
-func buildCoinsQuery(limit int, issuer, code, cursor, q string, order CoinsOrder) (string, []any) {
+func buildAssetsQuery(limit int, issuer, code, cursor, q string, order AssetsOrder) (string, []any) {
 	var (
 		conds         []string
 		args          []any
@@ -686,7 +686,7 @@ func buildCoinsQuery(limit int, issuer, code, cursor, q string, order CoinsOrder
 	}
 	// The chosen_assets pushdown predicate ANDs whatever narrowing
 	// filters are active (issuer, code, or both). Empty when neither
-	// is set — listCoinsBaseSelectSQL then skips the CTE entirely.
+	// is set — listAssetsBaseSelectSQL then skips the CTE entirely.
 	pushdownPredicate := strings.Join(pushdownConds, " AND ")
 	if q != "" {
 		args = append(args, "%"+q+"%")
@@ -702,9 +702,9 @@ func buildCoinsQuery(limit int, issuer, code, cursor, q string, order CoinsOrder
 		// q-side chosen_assets variant. For now the SWR cache covers
 		// the small filtered-LIST traffic.
 	}
-	args = append(args, coinsCursorArgs(cursor, order)...)
+	args = append(args, assetsCursorArgs(cursor, order)...)
 	if cursor != "" {
-		conds = append(conds, coinsCursorPredicate(order, len(args)))
+		conds = append(conds, assetsCursorPredicate(order, len(args)))
 	}
 	args = append(args, limit)
 	limitPlaceholder := fmt.Sprintf("$%d", len(args))
@@ -713,28 +713,28 @@ func buildCoinsQuery(limit int, issuer, code, cursor, q string, order CoinsOrder
 	if len(conds) > 0 {
 		where = " WHERE " + strings.Join(conds, " AND ")
 	}
-	return listCoinsBaseSelectSQL(pushdownPredicate) + where + coinsOrderBy(order) + " LIMIT " + limitPlaceholder, args
+	return listAssetsBaseSelectSQL(pushdownPredicate) + where + assetsOrderBy(order) + " LIMIT " + limitPlaceholder, args
 }
 
-// coinsCursorArgs returns the positional args appended for the
+// assetsCursorArgs returns the positional args appended for the
 // active cursor format. Empty cursor → no args.
-func coinsCursorArgs(cursor string, order CoinsOrder) []any {
+func assetsCursorArgs(cursor string, order AssetsOrder) []any {
 	if cursor == "" {
 		return nil
 	}
-	if order == CoinsOrderVolume24hUSDDesc {
+	if order == AssetsOrderVolume24hUSDDesc {
 		vol, assetID := parseVolumeCursor(cursor)
 		return []any{vol, assetID}
 	}
-	obsCount, assetID := parseCoinCursor(cursor)
+	obsCount, assetID := parseAssetCursor(cursor)
 	return []any{obsCount, assetID}
 }
 
-// coinsCursorPredicate returns the WHERE clause that resumes
+// assetsCursorPredicate returns the WHERE clause that resumes
 // pagination strictly past the supplied cursor under the active
 // ordering. `argEnd` is the index of the last cursor placeholder.
-func coinsCursorPredicate(order CoinsOrder, argEnd int) string {
-	if order == CoinsOrderVolume24hUSDDesc {
+func assetsCursorPredicate(order AssetsOrder, argEnd int) string {
+	if order == AssetsOrderVolume24hUSDDesc {
 		// Mixed-direction tuple compare: volume DESC, asset_id ASC.
 		// Encode as `(v < cv) OR (v = cv AND asset_id > cid)`.
 		// COALESCE-to-zero so NULL volumes compare as 0 (sorts last).
@@ -748,8 +748,8 @@ func coinsCursorPredicate(order CoinsOrder, argEnd int) string {
 		argEnd-1, argEnd)
 }
 
-func coinsOrderBy(order CoinsOrder) string {
-	if order == CoinsOrderVolume24hUSDDesc {
+func assetsOrderBy(order AssetsOrder) string {
+	if order == AssetsOrderVolume24hUSDDesc {
 		return " ORDER BY COALESCE(vol.vol_usd, 0) DESC, ca.asset_id ASC"
 	}
 	return " ORDER BY ca.observation_count DESC, ca.asset_id ASC"
@@ -770,17 +770,17 @@ func parseVolumeCursor(cursor string) (vol, assetID string) {
 	return "0", ""
 }
 
-// CoinPricePoint is one hourly USD-price sample in a price-history
+// AssetPricePoint is one hourly USD-price sample in a price-history
 // series. `T` is the bucket end (RFC 3339); `P` is the USD price
 // rounded to 10 dp via the same direct-or-XLM-triangulated path
 // as price_usd. Pointer P so an hour with no trades comes back
 // as null rather than zero.
-type CoinPricePoint struct {
+type AssetPricePoint struct {
 	T string
 	P *string
 }
 
-// GetCoinPriceHistory24h returns up to 24 hourly USD price samples
+// GetAssetPriceHistory24h returns up to 24 hourly USD price samples
 // for the asset, ordered by bucket ASC (oldest first). Each
 // sample uses the same direct-then-XLM-triangulated path as
 // price_usd, but bucketed to the 1-hour grain. Powers a sparkline
@@ -788,7 +788,7 @@ type CoinPricePoint struct {
 //
 // Buckets with no underlying trades produce a null P. Callers can
 // either render a gap or interpolate; we leave that to the UI.
-func (s *Store) GetCoinPriceHistory24h(ctx context.Context, assetID string) ([]CoinPricePoint, error) {
+func (s *Store) GetAssetPriceHistory24h(ctx context.Context, assetID string) ([]AssetPricePoint, error) {
 	const q = `
 		WITH hours AS (
 		  SELECT generate_series(
@@ -849,15 +849,15 @@ func (s *Store) GetCoinPriceHistory24h(ctx context.Context, assetID string) ([]C
 	`
 	rows, err := s.db.QueryContext(ctx, q, assetID)
 	if err != nil {
-		return nil, fmt.Errorf("timescale: GetCoinPriceHistory24h: %w", err)
+		return nil, fmt.Errorf("timescale: GetAssetPriceHistory24h: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	out := make([]CoinPricePoint, 0, 24)
+	out := make([]AssetPricePoint, 0, 24)
 	for rows.Next() {
-		var pt CoinPricePoint
+		var pt AssetPricePoint
 		var p sql.NullString
 		if err := rows.Scan(&pt.T, &p); err != nil {
-			return nil, fmt.Errorf("timescale: GetCoinPriceHistory24h scan: %w", err)
+			return nil, fmt.Errorf("timescale: GetAssetPriceHistory24h scan: %w", err)
 		}
 		if p.Valid && p.String != "" {
 			s := p.String
@@ -866,18 +866,18 @@ func (s *Store) GetCoinPriceHistory24h(ctx context.Context, assetID string) ([]C
 		out = append(out, pt)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: GetCoinPriceHistory24h rows: %w", err)
+		return nil, fmt.Errorf("timescale: GetAssetPriceHistory24h rows: %w", err)
 	}
 	return out, nil
 }
 
-// GetCoinPriceHistory7d returns up to 7 daily USD price samples
+// GetAssetPriceHistory7d returns up to 7 daily USD price samples
 // for the asset, ordered by bucket ASC (oldest first). Same
-// direct-then-XLM-triangulated path as GetCoinPriceHistory24h, but
+// direct-then-XLM-triangulated path as GetAssetPriceHistory24h, but
 // bucketed to the 1-day grain over the last 7 days.
 //
 // Buckets with no underlying trades produce a null P.
-func (s *Store) GetCoinPriceHistory7d(ctx context.Context, assetID string) ([]CoinPricePoint, error) {
+func (s *Store) GetAssetPriceHistory7d(ctx context.Context, assetID string) ([]AssetPricePoint, error) {
 	const q = `
 		WITH days AS (
 		  SELECT generate_series(
@@ -931,15 +931,15 @@ func (s *Store) GetCoinPriceHistory7d(ctx context.Context, assetID string) ([]Co
 	`
 	rows, err := s.db.QueryContext(ctx, q, assetID)
 	if err != nil {
-		return nil, fmt.Errorf("timescale: GetCoinPriceHistory7d: %w", err)
+		return nil, fmt.Errorf("timescale: GetAssetPriceHistory7d: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	out := make([]CoinPricePoint, 0, 7)
+	out := make([]AssetPricePoint, 0, 7)
 	for rows.Next() {
-		var pt CoinPricePoint
+		var pt AssetPricePoint
 		var p sql.NullString
 		if err := rows.Scan(&pt.T, &p); err != nil {
-			return nil, fmt.Errorf("timescale: GetCoinPriceHistory7d scan: %w", err)
+			return nil, fmt.Errorf("timescale: GetAssetPriceHistory7d scan: %w", err)
 		}
 		if p.Valid && p.String != "" {
 			s := p.String
@@ -948,12 +948,12 @@ func (s *Store) GetCoinPriceHistory7d(ctx context.Context, assetID string) ([]Co
 		out = append(out, pt)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: GetCoinPriceHistory7d rows: %w", err)
+		return nil, fmt.Errorf("timescale: GetAssetPriceHistory7d rows: %w", err)
 	}
 	return out, nil
 }
 
-// CoinATH is the asset's all-time-high USD price plus the day
+// AssetATH is the asset's all-time-high USD price plus the day
 // it was observed. Computed across every USD-quoted day-bucket
 // in `prices_1d` (direct USD-stablecoin pairs and `fiat:USD`).
 // Triangulated paths (asset/XLM × XLM/USD) are intentionally
@@ -978,12 +978,12 @@ func (s *Store) GetCoinPriceHistory7d(ctx context.Context, assetID string) ([]Co
 // which fabricated an XLM "ATH" of \.78 on thin Jan-2025 days
 // (volume_usd=0 dust). USD proxies are the verified USDC issuer +
 // fiat:USD only; new proxies require a verified-catalogue entry.
-type CoinATH struct {
+type AssetATH struct {
 	USD string // numeric, fixed-point string (preserves precision)
 	At  string // RFC-3339 day-bucket the high was set
 }
 
-// GetCoinATH returns the asset's all-time-high USD price.
+// GetAssetATH returns the asset's all-time-high USD price.
 //
 // Sources `prices_1d` filtered to USD-denominated quotes — i.e.
 // the canonical USDC issuer, plus the synthetic `fiat:USD`
@@ -994,7 +994,7 @@ type CoinATH struct {
 // so the same query works without a special case. Returns
 // (nil, nil) cleanly when the asset has never had a USD-quoted
 // day with non-null vwap (very thin assets).
-func (s *Store) GetCoinATH(ctx context.Context, assetID string) (*CoinATH, error) {
+func (s *Store) GetAssetATH(ctx context.Context, assetID string) (*AssetATH, error) {
 	const q = `
 		SELECT
 		    vwap::text,
@@ -1009,29 +1009,29 @@ func (s *Store) GetCoinATH(ctx context.Context, assetID string) (*CoinATH, error
 		 ORDER BY vwap DESC
 		 LIMIT 1
 	`
-	var ath CoinATH
+	var ath AssetATH
 	switch err := s.db.QueryRowContext(ctx, q, assetID).Scan(&ath.USD, &ath.At); {
 	case err == sql.ErrNoRows:
 		return nil, nil
 	case err != nil:
-		return nil, fmt.Errorf("timescale: GetCoinATH: %w", err)
+		return nil, fmt.Errorf("timescale: GetAssetATH: %w", err)
 	}
 	return &ath, nil
 }
 
-// GetCoinsATHBatch returns ATH USD price + day for each asset_id
+// GetAssetsATHBatch returns ATH USD price + day for each asset_id
 // in a single round trip. DISTINCT ON picks the (vwap-max,
 // bucket) tuple per base_asset; the same USD-quote allowlist as
-// the per-asset GetCoinATH and the same dust-resistance rationale
-// (see CoinATH docs).
+// the per-asset GetAssetATH and the same dust-resistance rationale
+// (see AssetATH docs).
 //
 // Empty input returns an empty map cleanly. Asset_ids with no
 // USD-quoted history are simply absent from the result map.
 //
 // Powers `?include=ath` on /v1/coins so /assets can show "% from
 // ATH" without N+1 round trips.
-func (s *Store) GetCoinsATHBatch(ctx context.Context, assetIDs []string) (map[string]CoinATH, error) {
-	out := make(map[string]CoinATH, len(assetIDs))
+func (s *Store) GetAssetsATHBatch(ctx context.Context, assetIDs []string) (map[string]AssetATH, error) {
+	out := make(map[string]AssetATH, len(assetIDs))
 	if len(assetIDs) == 0 {
 		return out, nil
 	}
@@ -1051,42 +1051,42 @@ func (s *Store) GetCoinsATHBatch(ctx context.Context, assetIDs []string) (map[st
 	`
 	rows, err := s.db.QueryContext(ctx, q, pq.Array(assetIDs))
 	if err != nil {
-		return nil, fmt.Errorf("timescale: GetCoinsATHBatch: %w", err)
+		return nil, fmt.Errorf("timescale: GetAssetsATHBatch: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var assetID string
-		var ath CoinATH
+		var ath AssetATH
 		if err := rows.Scan(&assetID, &ath.USD, &ath.At); err != nil {
-			return nil, fmt.Errorf("timescale: GetCoinsATHBatch scan: %w", err)
+			return nil, fmt.Errorf("timescale: GetAssetsATHBatch scan: %w", err)
 		}
 		out[assetID] = ath
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: GetCoinsATHBatch rows: %w", err)
+		return nil, fmt.Errorf("timescale: GetAssetsATHBatch rows: %w", err)
 	}
 	return out, nil
 }
 
-// CoinTopMarket is one entry in the top-markets preview returned
-// alongside a single coin lookup. Compact summary suitable for an
+// AssetTopMarket is one entry in the top-markets preview returned
+// alongside a single asset lookup. Compact summary suitable for an
 // asset detail page header — the full markets list lives on
 // /v1/markets.
-type CoinTopMarket struct {
+type AssetTopMarket struct {
 	Counterparty  string  // the OTHER side of the pair (the side that's NOT this asset)
 	Side          string  // "base" if this asset was base, else "quote"
 	Volume24hUSD  *string // trailing-24h USD volume for this pair; nil if no USD-equivalent trades
 	TradeCount24h int64
 }
 
-// GetCoinMarketsCount returns the count of distinct (base, quote)
+// GetAssetMarketsCount returns the count of distinct (base, quote)
 // pairs the asset participated in over the trailing 24h with a
-// non-null prices_1m bucket. Cheaper than GetCoinTopMarkets — no
+// non-null prices_1m bucket. Cheaper than GetAssetTopMarkets — no
 // volume aggregation, no limit, no ordering. Powers the asset
 // detail page's "Markets: 12" header chip.
 //
 // Returns 0 cleanly when the asset has no rows in the window.
-func (s *Store) GetCoinMarketsCount(ctx context.Context, assetID string) (int64, error) {
+func (s *Store) GetAssetMarketsCount(ctx context.Context, assetID string) (int64, error) {
 	const q = `
 		SELECT COUNT(*) FROM (
 		  SELECT DISTINCT base_asset, quote_asset
@@ -1097,16 +1097,16 @@ func (s *Store) GetCoinMarketsCount(ctx context.Context, assetID string) (int64,
 	`
 	var n int64
 	if err := s.db.QueryRowContext(ctx, q, assetID).Scan(&n); err != nil {
-		return 0, fmt.Errorf("timescale: GetCoinMarketsCount: %w", err)
+		return 0, fmt.Errorf("timescale: GetAssetMarketsCount: %w", err)
 	}
 	return n, nil
 }
 
-// GetCoinTradeCount24h returns the count of trades the given asset
+// GetAssetTradeCount24h returns the count of trades the given asset
 // participated in (as base OR quote) over the trailing 24 hours.
 // Reads the `trades` hypertable directly — accurate down to the
 // individual trade rather than the prices_1m bucket aggregation
-// used by GetCoinMarketsCount.
+// used by GetAssetMarketsCount.
 //
 // Powers the asset detail page header — `observation_count` shows
 // the all-time figure, this gives the "what's happening right now"
@@ -1114,7 +1114,7 @@ func (s *Store) GetCoinMarketsCount(ctx context.Context, assetID string) (int64,
 // active or a long tail entry.
 //
 // Returns 0 cleanly when the asset has no trades in the window.
-func (s *Store) GetCoinTradeCount24h(ctx context.Context, assetID string) (int64, error) {
+func (s *Store) GetAssetTradeCount24h(ctx context.Context, assetID string) (int64, error) {
 	const q = `
 		SELECT COUNT(*)
 		  FROM trades
@@ -1123,18 +1123,18 @@ func (s *Store) GetCoinTradeCount24h(ctx context.Context, assetID string) (int64
 	`
 	var n int64
 	if err := s.db.QueryRowContext(ctx, q, assetID).Scan(&n); err != nil {
-		return 0, fmt.Errorf("timescale: GetCoinTradeCount24h: %w", err)
+		return 0, fmt.Errorf("timescale: GetAssetTradeCount24h: %w", err)
 	}
 	return n, nil
 }
 
-// GetCoinTopMarkets returns up to `limit` markets the given asset
+// GetAssetTopMarkets returns up to `limit` markets the given asset
 // participates in (as base OR quote), ordered by trailing-24h USD
 // volume desc. Used by the explorer asset-detail page to show a
 // "Top markets" preview without a separate /v1/markets call.
 //
 // limit clamps to [1, 20]; default 5.
-func (s *Store) GetCoinTopMarkets(ctx context.Context, assetID string, limit int) ([]CoinTopMarket, error) {
+func (s *Store) GetAssetTopMarkets(ctx context.Context, assetID string, limit int) ([]AssetTopMarket, error) {
 	if limit <= 0 || limit > 20 {
 		limit = 5
 	}
@@ -1169,15 +1169,15 @@ func (s *Store) GetCoinTopMarkets(ctx context.Context, assetID string, limit int
 	`
 	rows, err := s.db.QueryContext(ctx, q, assetID, limit)
 	if err != nil {
-		return nil, fmt.Errorf("timescale: GetCoinTopMarkets: %w", err)
+		return nil, fmt.Errorf("timescale: GetAssetTopMarkets: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	out := make([]CoinTopMarket, 0, limit)
+	out := make([]AssetTopMarket, 0, limit)
 	for rows.Next() {
-		var m CoinTopMarket
+		var m AssetTopMarket
 		var vol sql.NullString
 		if err := rows.Scan(&m.Counterparty, &m.Side, &vol, &m.TradeCount24h); err != nil {
-			return nil, fmt.Errorf("timescale: GetCoinTopMarkets scan: %w", err)
+			return nil, fmt.Errorf("timescale: GetAssetTopMarkets scan: %w", err)
 		}
 		if vol.Valid && vol.String != "" && vol.String != "0" {
 			v := vol.String
@@ -1186,23 +1186,23 @@ func (s *Store) GetCoinTopMarkets(ctx context.Context, assetID string, limit int
 		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: GetCoinTopMarkets rows: %w", err)
+		return nil, fmt.Errorf("timescale: GetAssetTopMarkets rows: %w", err)
 	}
 	return out, nil
 }
 
-// GetCoinBySlug returns one row matching the given slug. Returns
+// GetAssetBySlug returns one row matching the given slug. Returns
 // sql.ErrNoRows when the slug doesn't match a known classic asset.
 //
-// Mirrors ListCoins's per-row metric shape (price/volume/market cap/
+// Mirrors ListAssets's per-row metric shape (price/volume/market cap/
 // supply) so the explorer can render an asset detail page from a
 // single endpoint without scanning the top-N listing first.
-// getCoinBySlugSQL is the SQL behind GetCoinBySlug. Hoisted out
-// of the function body to keep GetCoinBySlug under the funlen
+// getAssetBySlugSQL is the SQL behind GetAssetBySlug. Hoisted out
+// of the function body to keep GetAssetBySlug under the funlen
 // threshold; the helpers above already document the chosen-CTE
 // pattern that keeps the volume sum and price triangulation on
 // the same canonical row.
-const getCoinBySlugSQL = `
+const getAssetBySlugSQL = `
 		WITH chosen AS (
 		  -- Three input shapes accepted (in tiebreak preference):
 		  --   1. friendly slug (USDC, AQUA, EURC)        — slug column
@@ -1462,30 +1462,30 @@ const getCoinBySlugSQL = `
 		  LEFT JOIN per_asset_24h_vol vol ON true
 `
 
-// GetCoinBySlug looks up by friendly slug (USDC, AQUA, EURC),
+// GetAssetBySlug looks up by friendly slug (USDC, AQUA, EURC),
 // canonical asset_id (USDC-GA5Z…), OR raw code with case-insensitive
 // retry — see the SQL's WHERE clause + the handler's case-fallback
 // for the full input-shape table.
-func (s *Store) GetCoinBySlug(ctx context.Context, slug string) (CoinRow, error) {
-	r, err := scanCoinRow(s.db.QueryRowContext(ctx, getCoinBySlugSQL, slug))
+func (s *Store) GetAssetBySlug(ctx context.Context, slug string) (AssetRow, error) {
+	r, err := scanAssetRow(s.db.QueryRowContext(ctx, getAssetBySlugSQL, slug))
 	if err != nil {
 		// Surface sql.ErrNoRows unwrapped so handler errors.Is checks
-		// keep matching; scanCoinRow wraps with %w which preserves it.
-		return CoinRow{}, err
+		// keep matching; scanAssetRow wraps with %w which preserves it.
+		return AssetRow{}, err
 	}
 	return r, nil
 }
 
-// GetCoinByAssetID is a thin wrapper kept for clarity at the
+// GetAssetByAssetID is a thin wrapper kept for clarity at the
 // handler layer — the underlying SQL accepts canonical asset_id
 // alongside friendly slug since 2026-05-10, so this just calls
-// GetCoinBySlug. (Pre-fix the canonical form 404'd; see the
-// alerts-catalog row "Coin canonical asset_id 404" for context.)
-func (s *Store) GetCoinByAssetID(ctx context.Context, assetID string) (CoinRow, error) {
-	return s.GetCoinBySlug(ctx, assetID)
+// GetAssetBySlug. (Pre-fix the canonical form 404'd; see the
+// alerts-catalog row "Asset canonical asset_id 404" for context.)
+func (s *Store) GetAssetByAssetID(ctx context.Context, assetID string) (AssetRow, error) {
+	return s.GetAssetBySlug(ctx, assetID)
 }
 
-// GetNativeCoinRow returns the synthetic CoinRow for native XLM.
+// GetNativeAssetRow returns the synthetic AssetRow for native XLM.
 //
 // Native XLM has no row in classic_assets — that table only tracks
 // issued classic assets, by definition. Without a special-case path
@@ -1503,7 +1503,7 @@ func (s *Store) GetCoinByAssetID(ctx context.Context, assetID string) (CoinRow, 
 //   - ObservationCount: total trades touching native in the
 //     hypertable, capped at int64
 //   - PriceUSD + Change*Pct: same xlm_usd / xlm_usd_{1h,24h,7d}
-//     stablecoin-proxy chain used by GetCoinBySlug + the listing
+//     stablecoin-proxy chain used by GetAssetBySlug + the listing
 //     query for non-native assets
 //   - Volume24hUSD: SUM(volume_usd) where the asset is base or quote
 //     in the trailing 24h
@@ -1512,16 +1512,16 @@ func (s *Store) GetCoinByAssetID(ctx context.Context, assetID string) (CoinRow, 
 //
 // Always returns a populated row (no sql.ErrNoRows path) — the
 // underlying CTEs LEFT JOIN out to NULL when there's no data.
-func (s *Store) GetNativeCoinRow(ctx context.Context) (CoinRow, error) {
-	return scanCoinRow(s.db.QueryRowContext(ctx, getNativeCoinSQL))
+func (s *Store) GetNativeAssetRow(ctx context.Context) (AssetRow, error) {
+	return scanAssetRow(s.db.QueryRowContext(ctx, getNativeAssetSQL))
 }
 
-// getNativeCoinSQL is GetNativeCoinRow's query, hoisted to a
+// getNativeAssetSQL is GetNativeAssetRow's query, hoisted to a
 // package constant so the function body stays under the funlen
-// threshold. Returns the same column shape as listCoinsBaseSelect
-// + getCoinBySlugSQL — the shared scanCoinRow projector handles
+// threshold. Returns the same column shape as listAssetsBaseSelect
+// + getAssetBySlugSQL — the shared scanAssetRow projector handles
 // it identically.
-const getNativeCoinSQL = `
+const getNativeAssetSQL = `
 		WITH per_asset_24h_vol AS (
 		  SELECT SUM(volume_usd) AS vol_usd
 		    FROM (
@@ -1656,7 +1656,7 @@ const getNativeCoinSQL = `
 //
 // Always returns nil error for a row that simply has no stats;
 // the LEFT JOINs evaluate to NULL.
-func (s *Store) LatestAssetStats(ctx context.Context, assetID string) (CoinRow, error) {
+func (s *Store) LatestAssetStats(ctx context.Context, assetID string) (AssetRow, error) {
 	const q = `
 		SELECT COALESCE(SUM(volume_usd), 0)::text
 		  FROM (
@@ -1673,16 +1673,16 @@ func (s *Store) LatestAssetStats(ctx context.Context, assetID string) (CoinRow, 
 	`
 	var vol string
 	if err := s.db.QueryRowContext(ctx, q, assetID).Scan(&vol); err != nil {
-		return CoinRow{}, fmt.Errorf("timescale: LatestAssetStats: %w", err)
+		return AssetRow{}, fmt.Errorf("timescale: LatestAssetStats: %w", err)
 	}
-	out := CoinRow{AssetID: assetID}
+	out := AssetRow{AssetID: assetID}
 	if vol != "" && vol != "0" {
 		out.Volume24hUSD = &vol
 	}
 	return out, nil
 }
 
-// ValidateCoinsCursor returns an error if `cursor` is non-empty
+// ValidateAssetsCursor returns an error if `cursor` is non-empty
 // but doesn't match the encoded shape the listing emits for the
 // active order. Empty cursor is always valid (resume from the
 // first page). Callers should reject invalid cursors at the
@@ -1690,7 +1690,7 @@ func (s *Store) LatestAssetStats(ctx context.Context, assetID string) (CoinRow, 
 // truncates the keyset predicate to "(0, \"\")" / "(0, \"\")"
 // which matches no rows under the default order, returning an
 // empty page that looks like end-of-pagination.
-func ValidateCoinsCursor(cursor string, order CoinsOrder) error {
+func ValidateAssetsCursor(cursor string, order AssetsOrder) error {
 	if cursor == "" {
 		return nil
 	}
@@ -1702,7 +1702,7 @@ func ValidateCoinsCursor(cursor string, order CoinsOrder) error {
 	if suffix == "" {
 		return fmt.Errorf("missing asset_id suffix")
 	}
-	if order == CoinsOrderVolume24hUSDDesc {
+	if order == AssetsOrderVolume24hUSDDesc {
 		// Volume prefix may be empty (last row had a null vol_usd)
 		// or a Postgres-style numeric: digits with at most one '.'.
 		if prefix != "" && !isNumericPrefix(prefix) {
@@ -1739,12 +1739,12 @@ func isNumericPrefix(s string) bool {
 	return true
 }
 
-// parseCoinCursor decodes a `<obs_count>:<asset_id>` cursor.
+// parseAssetCursor decodes a `<obs_count>:<asset_id>` cursor.
 // Empty cursor → (0, "") which means "no cursor". Malformed
 // cursors fall through to the same; the handler is responsible
-// for rejecting them via ValidateCoinsCursor before this is
+// for rejecting them via ValidateAssetsCursor before this is
 // reached.
-func parseCoinCursor(cursor string) (obsCount int64, assetID string) {
+func parseAssetCursor(cursor string) (obsCount int64, assetID string) {
 	if cursor == "" {
 		return 0, ""
 	}
@@ -1764,25 +1764,25 @@ func parseCoinCursor(cursor string) (obsCount int64, assetID string) {
 	return 0, ""
 }
 
-// EncodeCoinCursor pairs with parseCoinCursor — the API handler
+// EncodeAssetCursor pairs with parseAssetCursor — the API handler
 // emits the encoded form as the next-page cursor in pagination
-// meta. Exported so v1/coins.go can call it without duplicating.
-func EncodeCoinCursor(obsCount int64, assetID string) string {
+// meta. Exported so v1/asset_catalogue.go can call it without duplicating.
+func EncodeAssetCursor(obsCount int64, assetID string) string {
 	return fmt.Sprintf("%d:%s", obsCount, assetID)
 }
 
-// GetCoinsPriceHistory24hBatch returns 24h hourly USD-price series
+// GetAssetsPriceHistory24hBatch returns 24h hourly USD-price series
 // for many assets in one query. Result is keyed by asset_id; the
 // per-asset slice has up to 24 ordered points (oldest → newest).
 // Assets with no trade history in the window get an empty slice
 // (callers can render that as "no chart").
 //
 // Same direct-then-XLM-triangulated path as the single-asset
-// GetCoinPriceHistory24h; just a single CTE pass over all
+// GetAssetPriceHistory24h; just a single CTE pass over all
 // requested assets at once.
-func (s *Store) GetCoinsPriceHistory24hBatch(ctx context.Context, assetIDs []string) (map[string][]CoinPricePoint, error) {
+func (s *Store) GetAssetsPriceHistory24hBatch(ctx context.Context, assetIDs []string) (map[string][]AssetPricePoint, error) {
 	if len(assetIDs) == 0 {
-		return map[string][]CoinPricePoint{}, nil
+		return map[string][]AssetPricePoint{}, nil
 	}
 	const q = `
 		WITH hours AS (
@@ -1846,16 +1846,16 @@ func (s *Store) GetCoinsPriceHistory24hBatch(ctx context.Context, assetIDs []str
 	`
 	rows, err := s.db.QueryContext(ctx, q, pq.Array(assetIDs))
 	if err != nil {
-		return nil, fmt.Errorf("timescale: GetCoinsPriceHistory24hBatch: %w", err)
+		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory24hBatch: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	out := make(map[string][]CoinPricePoint, len(assetIDs))
+	out := make(map[string][]AssetPricePoint, len(assetIDs))
 	for rows.Next() {
 		var assetID string
-		var pt CoinPricePoint
+		var pt AssetPricePoint
 		var p sql.NullString
 		if err := rows.Scan(&assetID, &pt.T, &p); err != nil {
-			return nil, fmt.Errorf("timescale: GetCoinsPriceHistory24hBatch scan: %w", err)
+			return nil, fmt.Errorf("timescale: GetAssetsPriceHistory24hBatch scan: %w", err)
 		}
 		if p.Valid && p.String != "" {
 			s := p.String
@@ -1864,18 +1864,18 @@ func (s *Store) GetCoinsPriceHistory24hBatch(ctx context.Context, assetIDs []str
 		out[assetID] = append(out[assetID], pt)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: GetCoinsPriceHistory24hBatch rows: %w", err)
+		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory24hBatch rows: %w", err)
 	}
 	return out, nil
 }
 
-// GetCoinsPriceHistory7dBatch returns 7d daily USD-price series for
+// GetAssetsPriceHistory7dBatch returns 7d daily USD-price series for
 // many assets in one query. 7-bucket-deep daily grain, mirroring
-// the per-asset GetCoinPriceHistory7d. Same direct-then-XLM-
+// the per-asset GetAssetPriceHistory7d. Same direct-then-XLM-
 // triangulated path; one query for many asset_ids.
-func (s *Store) GetCoinsPriceHistory7dBatch(ctx context.Context, assetIDs []string) (map[string][]CoinPricePoint, error) {
+func (s *Store) GetAssetsPriceHistory7dBatch(ctx context.Context, assetIDs []string) (map[string][]AssetPricePoint, error) {
 	if len(assetIDs) == 0 {
-		return map[string][]CoinPricePoint{}, nil
+		return map[string][]AssetPricePoint{}, nil
 	}
 	const q = `
 		WITH days AS (
@@ -1939,16 +1939,16 @@ func (s *Store) GetCoinsPriceHistory7dBatch(ctx context.Context, assetIDs []stri
 	`
 	rows, err := s.db.QueryContext(ctx, q, pq.Array(assetIDs))
 	if err != nil {
-		return nil, fmt.Errorf("timescale: GetCoinsPriceHistory7dBatch: %w", err)
+		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory7dBatch: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	out := make(map[string][]CoinPricePoint, len(assetIDs))
+	out := make(map[string][]AssetPricePoint, len(assetIDs))
 	for rows.Next() {
 		var assetID string
-		var pt CoinPricePoint
+		var pt AssetPricePoint
 		var p sql.NullString
 		if err := rows.Scan(&assetID, &pt.T, &p); err != nil {
-			return nil, fmt.Errorf("timescale: GetCoinsPriceHistory7dBatch scan: %w", err)
+			return nil, fmt.Errorf("timescale: GetAssetsPriceHistory7dBatch scan: %w", err)
 		}
 		if p.Valid && p.String != "" {
 			s := p.String
@@ -1957,7 +1957,7 @@ func (s *Store) GetCoinsPriceHistory7dBatch(ctx context.Context, assetIDs []stri
 		out[assetID] = append(out[assetID], pt)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: GetCoinsPriceHistory7dBatch rows: %w", err)
+		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory7dBatch rows: %w", err)
 	}
 	return out, nil
 }

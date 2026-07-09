@@ -115,10 +115,10 @@ func (c *CachedIssuersReader) ListIssuers(ctx context.Context, limit int) ([]tim
 // waiter-err-pointer panic safety). No SWR — the underlying query
 // is ~200ms not multi-second, so a cold-leader inline fetch on
 // expiry is acceptable; we don't need to add the goroutine
-// complexity that coins_cache.go / markets_cache.go ship for
+// complexity that asset_catalogue_cache.go / markets_cache.go ship for
 // their multi-second worst cases. (If r1 measurements show
 // post-cache p95 still spiking on miss, the swr[T] helper from
-// coins_cache.go drops in.)
+// asset_catalogue_cache.go drops in.)
 func (c *CachedIssuersReader) fetchList(
 	ctx context.Context,
 	op, key string,

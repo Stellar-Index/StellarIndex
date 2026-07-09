@@ -11,7 +11,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
-// TestIssuersAndCoinsRegistryReads covers the read paths backing
+// TestIssuersAndAssetsRegistryReads covers the read paths backing
 // /v1/issuers (list + detail), /v1/coins (with and without the
 // ?issuer= filter), and the issuer→assets join used by the
 // showcase /coins/[slug] issuer tab.
@@ -20,7 +20,7 @@ import (
 // observers in production. This test inserts directly so we can
 // exercise the storage queries against a known shape without
 // stitching together an end-to-end ingest harness.
-func TestIssuersAndCoinsRegistryReads(t *testing.T) {
+func TestIssuersAndAssetsRegistryReads(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -108,10 +108,10 @@ func TestIssuersAndCoinsRegistryReads(t *testing.T) {
 		}
 	})
 
-	t.Run("ListCoins no filter", func(t *testing.T) {
-		got, err := store.ListCoins(ctx, 10, "", "")
+	t.Run("ListAssets no filter", func(t *testing.T) {
+		got, err := store.ListAssets(ctx, 10, "", "")
 		if err != nil {
-			t.Fatalf("ListCoins: %v", err)
+			t.Fatalf("ListAssets: %v", err)
 		}
 		if len(got) != 4 {
 			t.Fatalf("got %d coins, want 4", len(got))
@@ -122,10 +122,10 @@ func TestIssuersAndCoinsRegistryReads(t *testing.T) {
 		}
 	})
 
-	t.Run("ListCoins issuer filter", func(t *testing.T) {
-		got, err := store.ListCoins(ctx, 10, issuerC, "")
+	t.Run("ListAssets issuer filter", func(t *testing.T) {
+		got, err := store.ListAssets(ctx, 10, issuerC, "")
 		if err != nil {
-			t.Fatalf("ListCoins by issuer: %v", err)
+			t.Fatalf("ListAssets by issuer: %v", err)
 		}
 		if len(got) != 2 {
 			t.Fatalf("issuerC filter returned %d rows, want 2", len(got))
@@ -143,10 +143,10 @@ func TestIssuersAndCoinsRegistryReads(t *testing.T) {
 		}
 	})
 
-	t.Run("ListCoins issuer filter — no match", func(t *testing.T) {
-		got, err := store.ListCoins(ctx, 10, "GUNKNOWN0000000000000000000000000000000000000000000000XX", "")
+	t.Run("ListAssets issuer filter — no match", func(t *testing.T) {
+		got, err := store.ListAssets(ctx, 10, "GUNKNOWN0000000000000000000000000000000000000000000000XX", "")
 		if err != nil {
-			t.Fatalf("ListCoins unknown issuer: %v", err)
+			t.Fatalf("ListAssets unknown issuer: %v", err)
 		}
 		if len(got) != 0 {
 			t.Errorf("unknown issuer returned %d rows, want 0", len(got))

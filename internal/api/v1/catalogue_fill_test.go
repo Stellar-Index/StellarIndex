@@ -13,15 +13,15 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
-// listingOnlyCoins serves change fields ONLY via ListCoinsExt — the
+// listingOnlyAssets serves change fields ONLY via ListAssetsExt — the
 // production shape (the per-asset reader's row carries nil changes),
 // which the 2026-07-03 live debug proved after the first enrichment
 // deploy merged nothing.
-type listingOnlyCoins struct {
-	CoinsReader
+type listingOnlyAssets struct {
+	AssetsReader
 }
 
-func (s *listingOnlyCoins) ListCoinsExt(_ context.Context, opts timescale.ListCoinsOptions) ([]timescale.CoinRow, error) {
+func (s *listingOnlyAssets) ListAssetsExt(_ context.Context, opts timescale.ListAssetsOptions) ([]timescale.AssetRow, error) {
 	// Mimic the REAL SQL semantics that broke the first two attempts:
 	// Q is a substring match over code/slug/issuer COLUMN VALUES — a
 	// full asset id can never match. Only the exact Issuer filter
@@ -30,7 +30,7 @@ func (s *listingOnlyCoins) ListCoinsExt(_ context.Context, opts timescale.ListCo
 		return nil, nil
 	}
 	ch, vol := "1.23", "42.00"
-	return []timescale.CoinRow{{
+	return []timescale.AssetRow{{
 		AssetID:      "USDC-" + opts.Issuer,
 		Code:         "USDC",
 		Change24hPct: &ch,
@@ -38,8 +38,8 @@ func (s *listingOnlyCoins) ListCoinsExt(_ context.Context, opts timescale.ListCo
 	}}, nil
 }
 
-func (s *listingOnlyCoins) GetCoinByAssetID(_ context.Context, assetID string) (timescale.CoinRow, error) {
-	return timescale.CoinRow{AssetID: assetID}, nil // nil changes — production shape
+func (s *listingOnlyAssets) GetAssetByAssetID(_ context.Context, assetID string) (timescale.AssetRow, error) {
+	return timescale.AssetRow{AssetID: assetID}, nil // nil changes — production shape
 }
 
 // TestCatalogueStatsUseListingReader pins the AM-10 enrichment to the
@@ -49,7 +49,7 @@ func TestCatalogueStatsUseListingReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{coins: &listingOnlyCoins{}, verifiedCurrencies: cat}
+	s := &Server{assetsReader: &listingOnlyAssets{}, verifiedCurrencies: cat}
 	page := []AssetDetail{{Slug: "usdc", Code: "USDC", AssetID: "usdc"}}
 	req := httptest.NewRequest(http.MethodGet, "/v1/assets", nil)
 	s.fillCatalogueStatsForPage(req.Context(), page)

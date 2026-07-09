@@ -5,8 +5,13 @@
 # idiom (docs/engineering-standards.md "Go idioms"):
 #
 #   coin              — Coin* identifiers for what the lexicon calls
-#                       an asset (the Coin*→Asset* rename is pending,
-#                       deferred to @ash; rides other changes).
+#                       an asset. The bulk Coin*→Asset* rename landed
+#                       2026-07-09 (ROADMAP #47/D2); the remaining
+#                       entries are permanent — the entity_type="coin"
+#                       wire vocabulary (/v1/changes/coin/{id}), the
+#                       literal proper name "USD Coin", and the
+#                       reference-only-coin domain term, none of
+#                       which the rename covers.
 #   positional-logger — constructor takes `logger *slog.Logger`
 #                       positionally instead of in the Options struct.
 #   variadic-option   — constructor takes `...Option` functional
@@ -18,17 +23,8 @@
 # and should essentially never happen: new code uses the canonical
 # term/idiom.
 coin cmd/stellarindex-aggregator/change_summary.go
-coin cmd/stellarindex-api/main.go
-coin internal/api/v1/asset_detail_cache.go
 coin internal/api/v1/assets.go
-coin internal/api/v1/assets_coin_extension.go
 coin internal/api/v1/changes.go
-coin internal/api/v1/coins.go
-coin internal/api/v1/coins_cache.go
-coin internal/api/v1/server.go
-coin internal/obs/metrics.go
-coin internal/storage/timescale/coins.go
-coin pkg/client/endpoints.go
 coin pkg/client/types.go
 positional-logger internal/aggregate/baseline/refresh.go
 positional-logger internal/aggregate/changesummary/rollup.go

@@ -9,23 +9,23 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
-// paginatingCoinsReader embeds the full stub and overrides only
-// ListCoinsExt, honouring opts.Limit by returning min(Limit, total)
+// paginatingAssetsReader embeds the full stub and overrides only
+// ListAssetsExt, honouring opts.Limit by returning min(Limit, total)
 // rows so the handler's overfetch-by-one logic is exercised exactly as
 // the real store would drive it.
-type paginatingCoinsReader struct {
-	stubCoinsReaderExt
+type paginatingAssetsReader struct {
+	stubAssetsReaderExt
 	total int
 }
 
-func (p *paginatingCoinsReader) ListCoinsExt(_ context.Context, opts timescale.ListCoinsOptions) ([]timescale.CoinRow, error) {
+func (p *paginatingAssetsReader) ListAssetsExt(_ context.Context, opts timescale.ListAssetsOptions) ([]timescale.AssetRow, error) {
 	n := opts.Limit
 	if n > p.total {
 		n = p.total
 	}
-	rows := make([]timescale.CoinRow, 0, n)
+	rows := make([]timescale.AssetRow, 0, n)
 	for i := 0; i < n; i++ {
-		rows = append(rows, timescale.CoinRow{
+		rows = append(rows, timescale.AssetRow{
 			AssetID:          "USDC-GAAA",
 			Slug:             "usdc",
 			Code:             "USDC",
@@ -35,13 +35,13 @@ func (p *paginatingCoinsReader) ListCoinsExt(_ context.Context, opts timescale.L
 	return rows, nil
 }
 
-// TestAssetList_CoinsPaginationEmitsCursor pins F-1326: when the coins
+// TestAssetList_AssetsPaginationEmitsCursor pins F-1326: when the assetsReader
 // catalogue holds more than `limit` rows, /v1/assets MUST emit a next
 // cursor. The previous handler passed `limit` (not limit+1) to the
 // store, so the overfetch sentinel never appeared and the listing was
 // stuck on its first page over a ~440K-asset directory.
-func TestAssetList_CoinsPaginationEmitsCursor(t *testing.T) {
-	srv := v1.New(v1.Options{Coins: &paginatingCoinsReader{total: 1000}})
+func TestAssetList_AssetsPaginationEmitsCursor(t *testing.T) {
+	srv := v1.New(v1.Options{AssetsReader: &paginatingAssetsReader{total: 1000}})
 	ts := httpTestServer(t, srv)
 
 	resp := mustGet(t, ts.URL+"/v1/assets?limit=50")
@@ -64,10 +64,10 @@ func TestAssetList_CoinsPaginationEmitsCursor(t *testing.T) {
 	}
 }
 
-// TestAssetList_CoinsPaginationLastPageNoCursor confirms the tail page
+// TestAssetList_AssetsPaginationLastPageNoCursor confirms the tail page
 // (rows ≤ limit) correctly omits the cursor.
-func TestAssetList_CoinsPaginationLastPageNoCursor(t *testing.T) {
-	srv := v1.New(v1.Options{Coins: &paginatingCoinsReader{total: 30}})
+func TestAssetList_AssetsPaginationLastPageNoCursor(t *testing.T) {
+	srv := v1.New(v1.Options{AssetsReader: &paginatingAssetsReader{total: 30}})
 	ts := httpTestServer(t, srv)
 
 	resp := mustGet(t, ts.URL+"/v1/assets?limit=50")

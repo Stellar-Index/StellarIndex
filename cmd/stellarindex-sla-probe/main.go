@@ -102,7 +102,7 @@ type endpoint struct {
 // gate would have caught it.
 //
 // Migrated from /coins → /assets in rc.49: the standalone
-// /v1/coins route was removed in rc.48; the coin-equivalence
+// /v1/coins route was removed in rc.48; the asset-catalogue
 // fields it surfaced are now overlay-fields on every /v1/assets
 // row (rc.47 commit 578c4581). Hitting /assets keeps the same
 // read-heavy fan-out coverage with the live URL.

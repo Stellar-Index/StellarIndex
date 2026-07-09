@@ -306,7 +306,7 @@ func (s *Server) buildSACReserveMap() map[string]string {
 		return m
 	}
 	for _, vc := range s.verifiedCurrencies.All() {
-		for _, n := range vc.Networks {
+		for _, n := range vc.Issuance {
 			if n.AssetID == "" {
 				continue
 			}

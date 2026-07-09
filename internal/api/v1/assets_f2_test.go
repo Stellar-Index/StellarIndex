@@ -245,7 +245,7 @@ func TestF2_NativeAssetWithSupplyAndPrice(t *testing.T) {
 	mustContain(t, body, `"fdv_usd":"3500126476.84"`)
 	// F-1271: price_usd is inlined so wallet UIs don't need a
 	// second /v1/price RT. The handler doesn't go through the
-	// coins-overlay path for native (no coin row), so this
+	// asset-catalogue overlay path for native (no asset-catalogue row), so this
 	// exercises the populateMarketCap-side fallback.
 	mustContain(t, body, `"price_usd":"0.07"`)
 }

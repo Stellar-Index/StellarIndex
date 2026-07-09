@@ -5,23 +5,23 @@ import (
 	"testing"
 )
 
-// ValidateCoinsCursor pins the per-shape rejection. Garbage that
+// ValidateAssetsCursor pins the per-shape rejection. Garbage that
 // matched the old loose parser (returns 0, "") would fall through
 // silently and produce an empty page that looked like end-of-
-// pagination — see the package comment on parseCoinCursor.
+// pagination — see the package comment on parseAssetCursor.
 
-func TestValidateCoinsCursor_emptyAlwaysOK(t *testing.T) {
-	for _, order := range []CoinsOrder{
-		CoinsOrderObservationCountDesc,
-		CoinsOrderVolume24hUSDDesc,
+func TestValidateAssetsCursor_emptyAlwaysOK(t *testing.T) {
+	for _, order := range []AssetsOrder{
+		AssetsOrderObservationCountDesc,
+		AssetsOrderVolume24hUSDDesc,
 	} {
-		if err := ValidateCoinsCursor("", order); err != nil {
+		if err := ValidateAssetsCursor("", order); err != nil {
 			t.Errorf("empty cursor must be valid for order %v, got %v", order, err)
 		}
 	}
 }
 
-func TestValidateCoinsCursor_obsCountOrder(t *testing.T) {
+func TestValidateAssetsCursor_obsCountOrder(t *testing.T) {
 	cases := []struct {
 		in        string
 		wantErr   bool
@@ -39,7 +39,7 @@ func TestValidateCoinsCursor_obsCountOrder(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
-			err := ValidateCoinsCursor(tc.in, CoinsOrderObservationCountDesc)
+			err := ValidateAssetsCursor(tc.in, AssetsOrderObservationCountDesc)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got nil")
@@ -56,12 +56,12 @@ func TestValidateCoinsCursor_obsCountOrder(t *testing.T) {
 	}
 }
 
-func TestValidateCoinsCursor_volumeOrder(t *testing.T) {
+func TestValidateAssetsCursor_volumeOrder(t *testing.T) {
 	cases := []struct {
 		in      string
 		wantErr bool
 	}{
-		// Empty volume prefix is what nextCoinCursor emits when the
+		// Empty volume prefix is what nextAssetCursor emits when the
 		// last row had a null vol_usd — must round-trip cleanly.
 		{":USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", false},
 		{"123.45:native", false},
@@ -75,7 +75,7 @@ func TestValidateCoinsCursor_volumeOrder(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
-			err := ValidateCoinsCursor(tc.in, CoinsOrderVolume24hUSDDesc)
+			err := ValidateAssetsCursor(tc.in, AssetsOrderVolume24hUSDDesc)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got nil")

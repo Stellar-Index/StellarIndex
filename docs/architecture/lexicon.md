@@ -1,6 +1,6 @@
 ---
 title: Domain lexicon — one word per concept
-last_verified: 2026-07-05
+last_verified: 2026-07-09
 status: binding
 ---
 
@@ -22,16 +22,24 @@ today (with file:symbol pointers), and the migration rule.
    deviating file is being materially edited anyway, migrate its
    vocabulary in the same PR and delete its
    `scripts/ci/lint-lexicon.baseline` entry.
-3. **The `Coin*`→`Asset*` bulk rename is PENDING and deferred to
-   @ash** (it sweeps the storage read-layer + api read-path in one
-   go; audit rename-map item 1). Until it lands, the deviations below
-   are grandfathered in the lint baseline — frozen, not growing.
+3. **The `Coin*`→`Asset*` bulk rename landed 2026-07-09** (audit
+   rename-map item 1; ROADMAP #47/D2). It swept the storage
+   read-layer (`internal/storage/timescale/asset_catalogue.go`) + the
+   api read-path (`internal/api/v1/asset_catalogue.go`,
+   `asset_catalogue_cache.go`, `asset_catalogue_extension.go`) in one
+   go, plus the `pkg/client` v0.2.0 breaking window (`CoinTopMarket`
+   → `AssetTopMarket`) and the `internal/currency`
+   `NetworkEntry`/`Networks` → `IssuanceEntry`/`Issuance` naming debt
+   that rode with it. The deviations below are what's left —
+   permanent, not pending: the entity_type="coin" wire vocabulary and
+   the literal proper name "USD Coin" don't mean "asset" and are out
+   of scope for this rename.
 
 ## Concept → canonical term
 
 | Concept | Canonical | Deprecated / restricted synonyms | Where the deviations live |
 |---|---|---|---|
-| A tradeable asset (classic, SAC, SEP-41, fiat) | **asset** | **coin** (deprecated — rename pending, deferred to @ash): `internal/storage/timescale/coins.go` (`CoinRow`, `ListCoins`, `ListCoinsExt`, `CoinsOrder`, `GetCoinBySlug`, `GetCoinATH`, `GetCoinsATHBatch`, …), `internal/api/v1/coins.go` (`CoinsReader`), `internal/api/v1/coins_cache.go`, `internal/api/v1/assets_coin_extension.go`, `internal/api/v1/changes.go:62` (wire `entity_type="coin"` on `/v1/changes/coin/{id}`), `pkg/client/endpoints.go:638` (dangling `CoinsOptions` doc comment — the type was removed with `/v1/coins`, the comment and the `[CoinsOptions]` doc-link on `IssuersOptions` were not). **currency** (restricted): allowed ONLY for the verified-currency catalogue domain (`internal/currency/` — the hand-curated trust surface; that is its real name, keep it). Never for a generic asset. |
+| A tradeable asset (classic, SAC, SEP-41, fiat) | **asset** | **coin** (rename landed 2026-07-09 — `Coin*` → `Asset*` throughout `internal/storage/timescale/asset_catalogue.go`, `internal/api/v1/asset_catalogue*.go`, `pkg/client`; the dangling `CoinsOptions` doc comment on `pkg/client/endpoints.go` was deleted along with it). What's left is permanent, not a deviation to migrate: `internal/api/v1/changes.go:62` (wire `entity_type="coin"` on `/v1/changes/coin/{id}` — a fixed four-value wire enum, not our legacy catalogue naming), `cmd/stellarindex-aggregator/change_summary.go` (`seenCoins`/`Type: "coin"`, same wire enum), and the literal proper name `"USD Coin"` wherever a verified currency's real-world name is rendered (`internal/api/v1/assets.go`, `pkg/client/types.go`, test fixtures). **currency** (restricted): allowed ONLY for the verified-currency catalogue domain (`internal/currency/` — the hand-curated trust surface; that is its real name, keep it). Never for a generic asset. |
 | Asset identity (wire + storage) | **dash form**: `CODE-ISSUER`, `native`, `C…`, `fiat:USD` / `crypto:XLM` / `rwa:…` prefixes (`canonical.ParseAsset`) | **colon form** `CODE:ISSUER` + literal `XLM`: `internal/supply/key.go` (`supply.AssetKey`) — a second, deliberate encoding for supply hypertable keys. Net effect: native has three ids (`native`, `XLM`, `crypto:XLM`), every classic asset has two — a standing "why did the join return zero rows" source. Rule: NEVER introduce a third encoding; convert at the seam like `internal/storage/timescale/usd_volume_quote_spec.go` does (normalises `supply.AssetKey` colon form via `canonical.ParseAsset`). Audit rename-map item 2 (converge or rename to `SupplyKey`) is open. |
 | A base/quote trading pair | **pair** (`canonical.Pair`, `/v1/pairs`) | **market** — accepted ONLY as the public wire surface of `/v1/markets` + `/v1/markets/sources` (`internal/api/v1/market_sources.go`). Picking one public noun is an API-version decision (audit rename-map item 4); internally, say pair. |
 | A price value | **price** | **rate** — FX-vendor terminology only, inside the FX pollers (`internal/sources/external/ecb/`, `exchangeratesapi/`, `polygonforex/`). NOTE: `RateLimit*` / `ratelimit` is UNRELATED (request throttling) — never sweep it in a rename. |
@@ -51,7 +59,7 @@ today (with file:symbol pointers), and the migration rule.
 |---|---|---|
 | `Get…` | single keyed read | returns one item or error |
 | `List…` | slice read | plural noun; keyset pagination where applicable |
-| `…Batch` | multi-key read | e.g. `GetCoinsATHBatch` (name aside) |
+| `…Batch` | multi-key read | e.g. `GetAssetsATHBatch` |
 | `New…` | constructor | the universal ctor verb — see engineering-standards "Go idioms" for the signature shape |
 | `Load…` | read embedded/file data | e.g. `currency.LoadEmbedded`, `incidents.Load` |
 

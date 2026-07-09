@@ -303,7 +303,7 @@ func populateSupplyFields(detail *AssetDetail, snap supply.Supply) {
 }
 
 // populatePriceUSD inlines detail.PriceUSD via the lookupUSDPrice
-// path. Idempotent: if the coins-overlay or another caller already
+// path. Idempotent: if the asset-catalogue overlay or another caller already
 // set PriceUSD, this is a no-op (the two paths can't fight). F-1271
 // (audit-2026-05-12).
 func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
@@ -320,7 +320,7 @@ func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asse
 
 // populateMarketCap fills market_cap_usd + fdv_usd from the supply
 // snapshot and the already-populated detail.PriceUSD. Re-uses the
-// inlined price (set by populatePriceUSD or the coins-overlay path)
+// inlined price (set by populatePriceUSD or the asset-catalogue overlay path)
 // to avoid a second prices_1m lookup. Compute failures log at WARN;
 // the field stays nil so the rest of the body still serves cleanly.
 func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, asset canonical.Asset, snap supply.Supply, key string) {

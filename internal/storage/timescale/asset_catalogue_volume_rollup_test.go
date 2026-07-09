@@ -5,29 +5,29 @@ import (
 	"testing"
 )
 
-// TestListCoins_readsAssetVolumeRollup asserts the listing's
+// TestListAssets_readsAssetVolumeRollup asserts the listing's
 // per_asset_24h_vol CTE reads the asset_volume_24h rollup and no longer
 // inlines the trailing-24h SUM(volume_usd) that the 2026-07-06 latency
 // fix (#43) moved to the aggregator worker. If this regresses (someone
 // re-inlines the per-asset SUM) the ~4.8s cold /v1/assets scan returns.
-func TestListCoins_readsAssetVolumeRollup(t *testing.T) {
-	if !strings.Contains(listCoinsBaseSelect, "FROM asset_volume_24h") {
+func TestListAssets_readsAssetVolumeRollup(t *testing.T) {
+	if !strings.Contains(listAssetsBaseSelect, "FROM asset_volume_24h") {
 		t.Errorf("per_asset_24h_vol CTE must read FROM asset_volume_24h")
 	}
 	// The old inline per-asset SUM must be gone from the listing (the
 	// only SUM(volume_usd) in the query was per_asset_24h_vol).
-	if strings.Contains(listCoinsBaseSelect, "SUM(volume_usd)") {
+	if strings.Contains(listAssetsBaseSelect, "SUM(volume_usd)") {
 		t.Errorf("listing must not inline SUM(volume_usd) — that is the rollup worker's job")
 	}
 }
 
-// TestListCoinsBaseSelectSQL_pushdownStillRenders guards the
+// TestListAssetsBaseSelectSQL_pushdownStillRenders guards the
 // strings.Replace anchor: both the unfiltered and issuer-pushdown
 // renderings must still produce a query that reads the rollup, and the
 // pushdown path must still prepend the chosen_assets CTE (used by the
 // price CTEs).
-func TestListCoinsBaseSelectSQL_pushdownStillRenders(t *testing.T) {
-	plain := listCoinsBaseSelectSQL("")
+func TestListAssetsBaseSelectSQL_pushdownStillRenders(t *testing.T) {
+	plain := listAssetsBaseSelectSQL("")
 	if !strings.Contains(plain, "FROM asset_volume_24h") {
 		t.Errorf("unfiltered render lost the rollup read")
 	}
@@ -35,7 +35,7 @@ func TestListCoinsBaseSelectSQL_pushdownStillRenders(t *testing.T) {
 		t.Errorf("unfiltered render should have stripped PUSHDOWN markers")
 	}
 
-	pushed := listCoinsBaseSelectSQL("issuer_g_strkey = $1")
+	pushed := listAssetsBaseSelectSQL("issuer_g_strkey = $1")
 	if !strings.Contains(pushed, "WITH chosen_assets AS") {
 		t.Errorf("pushdown render must prepend chosen_assets CTE")
 	}

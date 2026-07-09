@@ -529,7 +529,7 @@ var HTTPRequestSuccessDuration = prometheus.NewHistogramVec(
 )
 
 // APICacheOpsTotal — every read through an in-memory cache wrapper
-// (`v1.CachedMarketsReader`, `v1.CachedCoinsReader`, …) increments
+// (`v1.CachedMarketsReader`, `v1.CachedAssetsReader`, …) increments
 // this counter. The `result` label is `hit` (returned cached value)
 // or `miss` (called upstream). The `op` label names the cached
 // method (e.g. `all_pools`, `distinct_pairs`, `list_coins`).

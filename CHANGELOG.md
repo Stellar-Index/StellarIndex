@@ -65,6 +65,15 @@ against.
   your call, not a silent pick.** Zero known `pkg/client` consumers today (ADR-0042's own
   finding, re-verified via `git log`/grep at merge time) — no external comms needed per the
   ADR's own contingency.
+- **BREAKING: `pkg/client.CoinTopMarket` renamed to `AssetTopMarket`** (`AssetDetail.TopMarkets
+  []AssetTopMarket`) — rides the same v0.2.0 breaking window as the `AssetLookup` change above
+  rather than forcing a separate major bump (zero known consumers today, same rationale). Part
+  of the `Coin*`→`Asset*` internal rename (ROADMAP #47/D2, next entry); this was the only
+  exported `pkg/client` symbol the sweep touched — checked every other `Coin*` hit in `pkg/client`
+  first (`CoinGeckoID`/`CMCID` are the vendor's own id fields, not ours; the dangling
+  `CoinsOptions` doc comment on `IssuersOptions` and the historical "`Coin` + `CoinsPage` types
+  removed" note don't name live types). No JSON tag changed (`"top_markets"` wire shape is
+  unaffected).
 
 ### Added
 - **Pure-Soroban SEP-41 `usd_volume` now covers the XLM-base pool orientation at INSERT
@@ -161,6 +170,34 @@ against.
   and all 3 `/accounts/{g_strkey}/*` sub-paths are already registered there as the same
   "explorer surface" class, so leaving them out would have immediately made the two lists
   inconsistent.)
+- **`Coin*`→`Asset*` internal rename** (ROADMAP #47/D2; `docs/architecture/lexicon.md`'s
+  `coin` ratchet, deferred by ADR-0042 decision #3 to its own PR). Go-internal only, no wire
+  field renamed: `internal/storage/timescale/coins.go` → `asset_catalogue.go` (`CoinRow` →
+  `AssetRow`, `ListCoinsExt` → `ListAssetsExt`, `CoinsOrder` →
+  `AssetsOrder`, `GetCoinBySlug`/`GetCoinByAssetID`/`GetNativeCoinRow`/`GetCoinATH`/
+  `GetCoinTopMarkets`/`GetCoinsPriceHistory{24h,7d}Batch`/`GetCoinsATHBatch`/
+  `GetCoinMarketsCount`/`GetCoinTradeCount24h` → `GetAsset*`/`GetAssets*`, ~30 identifiers
+  total); `internal/api/v1/coins.go` → `asset_catalogue.go` (`CoinsReader` → `AssetsReader` —
+  named `AssetsReader` rather than the collision-prone bare `AssetReader`/`Assets`, which
+  already name the unrelated basic-asset-identity seam); `internal/api/v1/coins_cache.go` →
+  `asset_catalogue_cache.go` (`CachedCoinsReader` → `CachedAssetsReader`, `Server.coins` field
+  → `assetsReader`, `Options.Coins` → `Options.AssetsReader`); `internal/api/v1/
+  assets_coin_extension.go` → `asset_catalogue_extension.go`. `internal/currency`'s
+  `NetworkEntry`/`VerifiedCurrency.Networks` naming debt rode the same PR per the plan's note
+  (Go-internal, wire-invisible — the old cross-chain `networks[]` JSON array was already
+  removed in the Stellar-focus refactor) → `IssuanceEntry`/`Issuance` (the YAML seed's
+  `networks:` key is unchanged — only the Go field name moved, via the struct tag). Left
+  untouched (verified wire/vendor, not our legacy naming): the `entity_type="coin"` wire enum
+  on `/v1/changes/coin/{id}` and its supporting `changeSummaryCoinCandidates`/`seenCoins`
+  identifiers; every `stellarindex_api_cache_ops_total{cache="coins",op="..."}` Prometheus
+  label (`list_coins`, `coin_by_slug`, `coin_ath`, …); the ledger-header XDR field
+  `total_coins`/`TotalCoins`/`NativeTotalCoins` (Stellar protocol vocabulary, not ours); the
+  `CoinGecko`/`Coinbase`/`CoinMarketCap` vendor names and the CMC poller's own `cmcCoin` wire
+  type; and the literal proper name `"USD Coin"`. `go build`/`go vet`/`go test ./...` all
+  green; `gofmt -l` clean; `scripts/ci/lint-imports.sh` and `scripts/ci/lint-docs.sh` pass;
+  `scripts/ci/lint-lexicon.sh`'s `coin` ratchet shrank from 13 grandfathered files to 4
+  (the 4 remaining are the wire-enum and `"USD Coin"` cases above, which the lexicon doc now
+  documents as permanent, not pending).
 
 ### Fixed
 - The residual CEX deadlock vector after the full-conflict-key batch sort: a batch spans

@@ -144,14 +144,14 @@ func (c *CachedMarketsReader) AllPools(ctx context.Context, filter timescale.Poo
 // stale value) so a generous budget is free; it just has to exceed
 // the worst-case AllPools / DistinctPairs scan (~seconds, contended)
 // so the refresh completes and the cache moves forward. Mirrors
-// coinsRefreshBudget (the proven #22 pattern).
+// assetsRefreshBudget (the proven #22 pattern).
 const marketsRefreshBudget = 30 * time.Second
 
 // fetchPairs is the shared TTL + single-flight + stale-while-
 // revalidate loop for the pair-returning methods. `op` is the
 // metric label (`distinct_pairs` / `source_markets` /
 // `asset_markets`) so the hit/miss/stale counter breaks down per
-// cached method. SWR semantics are identical to coins_cache.go's
+// cached method. SWR semantics are identical to asset_catalogue_cache.go's
 // fetchRows (proven race-clean): an expired entry serves its stale
 // rows IMMEDIATELY and a single background refresh runs off the
 // request path — the AllPools/DistinctPairs scan never lands on a
@@ -252,7 +252,7 @@ func (c *CachedMarketsReader) fetchPairs(
 // swaps pairs+cursor+at under the lock; on failure keeps the stale
 // value and only clears the in-flight marker (retry next request);
 // single-flighted via done/entry.flight. Mirrors
-// coins_cache.go refreshRows.
+// asset_catalogue_cache.go refreshRows.
 func (c *CachedMarketsReader) refreshPairs(
 	op string,
 	entry *marketsCacheEntry,
@@ -364,7 +364,7 @@ func (c *CachedMarketsReader) fetchPools(
 }
 
 // refreshPools is refreshPairs for the Pool return type. Mirrors
-// coins_cache.go refreshRows.
+// asset_catalogue_cache.go refreshRows.
 func (c *CachedMarketsReader) refreshPools(
 	op string,
 	entry *marketsCacheEntry,
