@@ -40,16 +40,19 @@ const MainnetBackstopV1 = blend.MainnetBackstopV1
 const BackstopGenesisLedger uint32 = 56_627_571
 
 // Event names — topic[0] Symbol strings emitted by the backstop
-// contract. The 10 events of the Backstop V2 surface.
+// contract. 12 events across the V1 + V2 Backstop surface (V1 uses
+// `rw_zone` where V2 uses `rw_zone_add`; V2 additionally exposes
+// `rw_zone_remove`, unconfirmed in the lake — see decode.go).
 //
-// SCHEMA PROVENANCE: these field layouts were REVERSE-ENGINEERED from
-// real mainnet lake samples on 2026-06-15 and validated against the
-// promoted-column contract below. They are NOT yet confirmed against
-// the Blend team's published contract source. Until that confirmation
-// lands, this source is LIVE-CAPTURE ONLY — do NOT flip any
-// BackfillSafe flag or run a historical re-derive against these
-// schemas (a schema drift in the reverse-engineering would silently
-// mis-attribute every backfilled row). See README.md §Provenance.
+// SCHEMA PROVENANCE: reverse-engineered from real mainnet lake samples
+// starting 2026-06-15. On 2026-07-09 the V2 shapes were cross-checked
+// against the Blend team's published source
+// (blend-contracts-v2 backstop/src/events.rs) — six decode bugs found
+// there are fixed in decode.go (see its package doc + CHANGELOG). V1
+// has no published source available to us; its arities are pinned
+// against real lake bytes only. Until a full historical replay lands,
+// this source remains LIVE-CAPTURE ONLY for backfill purposes — see
+// README.md §Provenance.
 const (
 	EventDeposit           = "deposit"
 	EventClaim             = "claim"
@@ -61,6 +64,18 @@ const (
 	EventDequeueWithdrawal = "dequeue_withdrawal"
 	EventDraw              = "draw"
 	EventRwZoneAdd         = "rw_zone_add"
+	// EventRwZone is the V1 backstop's reward-zone-update topic — V2
+	// renamed this to `rw_zone_add` (and added the separate
+	// `rw_zone_remove`). Same logical action, different wire symbol;
+	// kept as a distinct EventType so the stored event_kind reflects
+	// exactly what was on the wire. 5 lake events, ledgers
+	// 51.50M-55.18M (2026-07-09 lake census).
+	EventRwZone = "rw_zone"
+	// EventRwZoneRemove: zero lake occurrences as of 2026-07-09 (this
+	// event has never fired on mainnet). Added per the EVERY-event
+	// principle; decode.go documents a doc-comment/code discrepancy in
+	// the upstream source for this one.
+	EventRwZoneRemove = "rw_zone_remove"
 )
 
 // Topic[0] pre-encoded base64 — package-init constants so Classify()
@@ -77,6 +92,8 @@ var (
 	TopicSymbolDequeueWithdrawal = scval.MustEncodeSymbol(EventDequeueWithdrawal)
 	TopicSymbolDraw              = scval.MustEncodeSymbol(EventDraw)
 	TopicSymbolRwZoneAdd         = scval.MustEncodeSymbol(EventRwZoneAdd)
+	TopicSymbolRwZone            = scval.MustEncodeSymbol(EventRwZone)
+	TopicSymbolRwZoneRemove      = scval.MustEncodeSymbol(EventRwZoneRemove)
 )
 
 // Event is the [consumer.Event] the backstop Decoder emits — one per

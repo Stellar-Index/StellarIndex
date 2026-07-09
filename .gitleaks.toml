@@ -33,6 +33,11 @@ paths = [
   # allowlists the way CI's pinned 8.21.2 does.
   '''internal/sources/cctp/governance_test\.go''',
   '''internal/sources/cctp/full_census_test\.go''',
+  # Lake-derived base64-XDR golden fixtures (public on-chain event
+  # bodies) for the blend_backstop decoder-bug-fix audit (2026-07-09).
+  # ALSO rule-scoped below; duplicated for the same reason as the cctp
+  # entries above.
+  '''internal/sources/blend_backstop/decode_test\.go''',
 ]
 
 [[rules]]
@@ -235,4 +240,10 @@ paths = [
 description = "Base64 XDR event-body golden fixtures pulled from real mainnet lake events (public on-chain data — the remaining 16 lower-signal admin/governance topics: admin_change_started, attester_enabled, attester_manager_updated, denylisted/un_denylisted, denylister_changed, fee_recipient_set, max_message_body_size_updated, min_fee_controller_set, pauser_changed, rescuer_changed, set_burn_limit_per_message, set_token_controller, signature_threshold_updated, swap_minter_config_set, token_decimal_config_added; ledgers 62146641-62630067) for the cctp full-census decoder tests (#89c, 2026-07-09). High-entropy base64 trips the generic-api-key heuristic; same class as the governance_test.go / phoenix / aquarius decoder-fixture allowlists."
 paths = [
   '''internal/sources/cctp/full_census_test\.go''',
+]
+
+[[rules.allowlists]]
+description = "Base64 XDR topic/event-body golden fixtures pulled from the real mainnet ClickHouse lake (public on-chain data — Blend Backstop V1/V2 gulp_emissions, rw_zone, rw_zone_add, withdraw; ledgers 51499926-57072018) for the blend_backstop decoder-bug-fix audit (2026-07-09). High-entropy base64 trips the generic-api-key heuristic; same class as the cctp governance_test.go / full_census_test.go / phoenix / aquarius decoder-fixture allowlists."
+paths = [
+  '''internal/sources/blend_backstop/decode_test\.go''',
 ]
