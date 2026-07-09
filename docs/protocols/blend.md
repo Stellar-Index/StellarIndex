@@ -83,12 +83,12 @@ Verified against `blend-contracts-v2` `pool/src/events.rs` /
 
 Like the pool factories, the Backstop was redeployed — V1 + V2 both have
 on-chain activity. Their event surface (different from the pools) is
-decoded by the dedicated **`blend_backstop`** source (migration 0063; 10
-event kinds), gated on the two contract addresses below. Both contracts
-now fold into this protocol page (roster **module** rows + the lake
-event breakdown + `events_24h`) and back the "Backstop volume / events"
-KPIs in the lending analytics block. Lake-verified 2026-06-12;
-independently corroborated by the community Dune dashboards
+decoded by the dedicated **`blend_backstop`** source (migration 0063 +
+0095; 12 event kinds), gated on the two contract addresses below. Both
+contracts now fold into this protocol page (roster **module** rows +
+the lake event breakdown + `events_24h`) and back the "Backstop volume
+/ events" KPIs in the lending analytics block. Lake-verified
+2026-06-12; independently corroborated by the community Dune dashboards
 (mootz12/blend-v2-events shows the V2 backstop's ~92k event rows).
 
 | Backstop | Address | Lake events (top kinds) |
@@ -102,10 +102,27 @@ independently corroborated by the community Dune dashboards
 > decoder would mis-decode. So the contract-id gate (not the topic
 > symbol) disambiguates a backstop event from a pool event, and the
 > backstop lands in its own `blend_backstop_events` table via the
-> `blend_backstop` source. **Provenance caveat:** the 10 event schemas
-> were reverse-engineered from mainnet lake samples (2026-06-15), not yet
-> confirmed against the Blend team's published contract source — so the
-> source is **live-capture only** (no historical backfill / `BackfillSafe`
-> flip until confirmed). **Blend team:** please confirm the V1 backstop
-> address, the event schemas, and whether an Emitter-contract event
-> surface exists that we should also cover.
+> `blend_backstop` source.
+>
+> **Provenance:** the event schemas were originally reverse-engineered
+> from mainnet lake samples (2026-06-15). On **2026-07-09** a read-only
+> lake audit cross-checked the V2 shapes directly against the Blend
+> team's published source (`blend-contracts-v2`
+> `backstop/src/events.rs`) and found + fixed six decode bugs: V1
+> `gulp_emissions` was 100% mis-decoded (wrong topic arity + body
+> shape); the V1 reward-zone topic (`rw_zone`, distinct from V2's
+> `rw_zone_add`) was never classified at all, silently dropping 5 real
+> events; `rw_zone_add`'s second body element is `Option<Address>`, not
+> a `u32` index; `gulp_emissions`' topic[1] is the pool address, not a
+> "token"; and `withdraw`'s body order (`shares, tokens`) is opposite
+> `deposit`'s (`tokens, shares`), which was being promoted
+> positionally. `rw_zone_remove` was added (zero lake occurrences ever)
+> per the EVERY-event principle but remains unverified against real
+> bytes. See `internal/sources/blend_backstop/decode.go` +
+> `CHANGELOG.md` for the full detail. The source remains
+> **live-capture only** (no historical backfill / `BackfillSafe`-style
+> flip) until the required historical replay
+> (`projector-replay -source blend_backstop -from 51499923`) lands —
+> that replay both backfills V1 genesis→now and corrects previously
+> mis-mapped `withdraw` / `gulp_emissions` / `rw_zone_add` rows written
+> under the pre-fix decoder.

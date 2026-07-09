@@ -56,6 +56,51 @@ against.
   lint` / `pnpm build` (CI's `NEXT_PUBLIC_API_BASE_URL=http://api.ci-stub.invalid` stub) all
   green.
 
+- **`internal/sources/blend_backstop`: six decode bugs fixed after a read-only lake audit
+  cross-checked the decoder against the Blend team's published source
+  (`blend-contracts-v2` `backstop/src/events.rs`, 2026-07-09).**
+  (1) V1 `gulp_emissions` was **100% mis-decoded, live**: the decoder hard-required ≥2
+  topics + a 2-element i128 Vec body, but V1 emits `topics=[sym]` only (verified 209/209
+  lake rows have `topic_count=1`) with a bare `i128` body — every V1 row errored
+  `ErrMalformedTopic`. `decodeGulpEmissions` now branches on topic arity: V1 (1 topic, bare
+  i128) leaves `Pool` NULL rather than guessing; V2 (2 topics, 2-i128 Vec) is unchanged in
+  shape but see (5).
+  (2) The V1 reward-zone-update topic is literally `rw_zone`, not V2's `rw_zone_add` —
+  `Classify()` never matched it, silently dropping all 5 real V1 events (ledgers
+  51.50M-55.18M). Added as a new `rw_zone` event kind (migration 0095), decoding
+  `Vec[Address to_add, Address to_remove]` (no `Option` wrapper — V1's body always carries
+  two concrete addresses).
+  (3) V2 `rw_zone_add`'s body is `Vec[to_add: Address, to_remove: Option<Address>]` — the
+  decoder assumed `Vec[Address, u32 index]`, producing a spurious `index_error` attribute on
+  every single row (that field never existed on the wire). Fixed via `scval.AsAddressOrVoid`;
+  all 5 real V2 rows carry `to_remove=void`, so the common case now emits no `to_remove` key
+  at all instead of a fabricated error.
+  (4) Added `rw_zone_remove` (migration 0095) per the EVERY-event principle — zero lake
+  occurrences ever, so this decoder is **synthetic-from-source, unverified against real
+  bytes**. Its shape (`topics=[sym]`; `data=Address`) is taken from the actual
+  `let topics = (...)` / `publish()` call in Blend's source, which **disagrees with that
+  function's own doc comment** (`["rw_zone_remove", pool_address: Address]`) — a
+  doc-comment/code mismatch in Blend's own repo; we trust the code, not the comment (see
+  `decode.go`'s `decodeRwZoneRemove` doc for detail).
+  (5) `gulp_emissions`' `topic[1]` is the **pool address** (the same field every other event
+  promotes), not a "token" — it decoded fine but was mislabeled and stashed in
+  `attributes["token"]` instead of the `Pool` column. Now promoted correctly.
+  (6) `withdraw`'s body is `(shares_burned, tokens_out)` — the **opposite element order**
+  from `deposit`'s `(tokens_in, shares_minted)` — but the decoder promoted `vec[0]` to
+  `Amount` uniformly, so `Amount` silently meant "shares" for withdraw and "tokens" for
+  deposit. `Amount` is now normalized to always mean the **token** quantity (swapped for
+  withdraw: `Amount=tokens_out`, `Amount2=shares_burned`) to match `deposit`'s convention and
+  `protocol_bespoke.go`'s "Backstop volume (token-units)" KPI, which sums `Amount` across all
+  event kinds. **This changes the MEANING of already-stored `withdraw` rows** (pre-fix,
+  `Amount` held shares; post-fix, tokens) — **a historical re-derive is required**:
+  `stellarindex-ops projector-replay -source blend_backstop -from 51499923` (V1 genesis; this
+  same replay also backfills the newly-added `rw_zone`/V1-`gulp_emissions` coverage and heals
+  the V2 5.4% scattered gap). Migration 0095 widens `blend_backstop_events.event_kind`'s
+  CHECK constraint to admit `rw_zone` + `rw_zone_remove` (additive, old-binary-safe). Real
+  ClickHouse-lake-bytes golden tests added for bugs (1)(2)(3)(5)(6);
+  `rw_zone_remove` (4) is synthetic-from-source and marked as such. `docs/protocols/blend.md`
+  + `internal/sources/blend_backstop/README.md` updated.
+
 ### Changed — BREAKING (`pkg/client`)
 - **`Client.Asset()` now returns `*Envelope[AssetLookup]` instead of `*Envelope[AssetDetail]`**
   (ADR-0042 LC-040). `AssetLookup` is a new typed union (`pkg/client/asset_lookup.go`) with

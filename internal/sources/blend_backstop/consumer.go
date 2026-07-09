@@ -50,6 +50,10 @@ func decodeOne(ev *events.Event) (Event, error) { //nolint:gocyclo // dispatch t
 		d, derr = decodeDraw(ev)
 	case EventRwZoneAdd:
 		d, derr = decodeRwZoneAdd(ev)
+	case EventRwZone:
+		d, derr = decodeRwZone(ev)
+	case EventRwZoneRemove:
+		d, derr = decodeRwZoneRemove(ev)
 	default:
 		// Unreachable while Classify and this switch stay in lockstep.
 		return Event{}, fmt.Errorf("%w: %s", ErrUnknownEvent, kind)

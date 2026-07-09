@@ -25,15 +25,21 @@ const (
 	BackstopDequeueWithdrawal BlendBackstopEventType = "dequeue_withdrawal"
 	BackstopDraw              BlendBackstopEventType = "draw"
 	BackstopRwZoneAdd         BlendBackstopEventType = "rw_zone_add"
+	// BackstopRwZone is the V1 backstop's reward-zone-update event —
+	// V2 renamed it to `rw_zone_add`. Added 2026-07-09 (migration
+	// 0095) alongside BackstopRwZoneRemove.
+	BackstopRwZone       BlendBackstopEventType = "rw_zone"
+	BackstopRwZoneRemove BlendBackstopEventType = "rw_zone_remove"
 )
 
-// IsValid reports whether t is one of the ten known backstop events.
+// IsValid reports whether t is one of the twelve known backstop
+// events (migration 0095 widened this from ten).
 func (t BlendBackstopEventType) IsValid() bool {
 	switch t {
 	case BackstopDeposit, BackstopClaim, BackstopDonate,
 		BackstopQueueWithdrawal, BackstopWithdraw, BackstopDistribute,
 		BackstopGulpEmissions, BackstopDequeueWithdrawal, BackstopDraw,
-		BackstopRwZoneAdd:
+		BackstopRwZoneAdd, BackstopRwZone, BackstopRwZoneRemove:
 		return true
 	}
 	return false
