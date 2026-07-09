@@ -85,16 +85,17 @@ attribute — `stellarindex-ops seed-protocol-contracts -source
 blend_emitter` (after adding it to the curated set) or a direct
 `protocol_contracts` row.
 
-## Backfill safety — OPEN wasm-audit item
+## Backfill safety — audited, `BackfillSafe = true`
 
-`BackfillSafe = false` in `internal/sources/external/registry.go`.
-The Emitter's single mainnet address shows **up to 3 WASM uploads**
-(ledgers 51,351,843 / 51,498,920 / 52,314,704) spanning Blend V1→V2.
-Event-schema stability ACROSS those versions has **not yet** been
-confirmed by a `stellarindex-ops wasm-history` audit — live ingest
-works without it; `stellarindex-ops backfill` refuses to run this
-source against a historical range until the audit lands and flips
-the flag.
+`BackfillSafe = true` in `internal/sources/external/registry.go`,
+audited 2026-07-10 read-only against the ClickHouse raw lake (no
+`stellarindex-ops wasm-history` / MinIO walk — see
+`docs/operations/wasm-audits/blend_emitter.md`). All 469 lifetime
+events were checked against the decoder's expected shapes (465/465
+`distribute` exhaustively, not sampled), and the contract's sole
+confirmed on-chain WASM hash SHA256-verifies against the extracted
+bytes. `stellarindex-ops backfill` can now run this source against a
+historical range.
 
 ## Storage
 

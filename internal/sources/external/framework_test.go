@@ -144,6 +144,7 @@ func TestRegistry_BackfillSafePolicy(t *testing.T) {
 		"aquarius",      // audited 2026-04-29 (313 pools enumerated, 3 unique WASMs verified) — see docs/operations/wasm-audits/aquarius.md
 		"comet",         // audited 2026-04-29 (Blend backstop pool only known mainnet deployment; WASM verified) — see docs/operations/wasm-audits/comet.md
 		"blend",         // audited 2026-05-02 (11 contracts, 3 unique WASMs, no mid-life upgrades over 11.79M-ledger walk) — see docs/operations/wasm-audits/blend.md §"Phase 2 results"
+		"blend_emitter", // audited 2026-07-10 (ClickHouse-lake-only; all 469 lifetime events shape-verified, 465/465 distribute exhaustively) — see docs/operations/wasm-audits/blend_emitter.md
 		"binance", "kraken", "bitstamp", "coinbase",
 		"massive", "polygon-forex", "exchangeratesapi",
 		"coingecko", "coinmarketcap", "cryptocompare",
