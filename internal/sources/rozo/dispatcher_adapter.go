@@ -26,8 +26,10 @@ func NewDecoder() *Decoder { return &Decoder{} }
 var _ dispatcher.Decoder = (*Decoder)(nil)
 
 // rozoContracts is the set of v1 Payment contract C-strkeys this
-// decoder claims, built from [MainnetPaymentContracts]. All three
-// deployments emit the identical PaymentEvent / FlushEvent schema.
+// decoder claims, built from [MainnetPaymentContracts]. All
+// deployments emit the identical PaymentEvent / FlushEvent schema
+// (verified by shared WASM hash — see [MainnetPaymentContracts]'s
+// doc comment for the per-contract evidence trail).
 var rozoContracts = func() map[string]struct{} {
 	m := make(map[string]struct{}, len(MainnetPaymentContracts))
 	for _, c := range MainnetPaymentContracts {

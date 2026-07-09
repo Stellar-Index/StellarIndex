@@ -87,7 +87,7 @@ var Registry = map[string]Metadata{
 	// Rozo v1 intent-bridge — same bridge semantics. payment / flush
 	// events from the three live v1 Payment contracts. Audited
 	// 2026-05-26 alongside CCTP — same walk.
-	"rozo": {Class: ClassBridge, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-05-26 via wasm-history walk [60M, 62.64M] across all 3 mainnet payment contracts: zero WASM upgrades observed, ranges=null. Single WASM hash b56aedeaf80c3d4b... shared across all three contracts per stellar.expert (2026-01-18 + 2026-03-24 deploys). See docs/operations/wasm-audits/rozo.md. */},
+	"rozo": {Class: ClassBridge, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-05-26 via wasm-history walk [60M, 62.64M] across the original 3 mainnet payment contracts: zero WASM upgrades observed, ranges=null. Single WASM hash b56aedeaf80c3d4b... shared across all three contracts per stellar.expert (2026-01-18 + 2026-03-24 deploys). A 4th contract admitted 2026-07-09 (internal/sources/rozo.MainnetPaymentContracts) carries the SAME wasm hash per direct lake lookup, so it's covered by this finding without a separate walk. See docs/operations/wasm-audits/rozo.md. */},
 
 	// ─── Off-chain centralised exchanges (this package's scope) ─
 	"binance":  {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, BackfillSafe: true},

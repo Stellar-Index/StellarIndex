@@ -12,10 +12,16 @@ follow-up implementation in
 
 | Variant | Status | Decoder support |
 |---|---|---|
-| v1 Payment (`CAC5SKP5…IYRL`) | mainnet | this package |
+| v1 Payment (4 contracts — see [`MainnetPaymentContracts`](events.go)) | mainnet | this package |
 | v2 Forwarder | design-stage | follow-up |
 | v2 IntentBridge | design-stage | follow-up |
 | rozo-intents (v2.x?) | status unclear | follow-up |
+
+A 4th v1 Payment contract (`CAFO6OUZ…HBPXI`) was admitted 2026-07-09
+per the §0.7 recognition audit — same WASM hash as the original
+three, `dest` init field matching a documented
+[`MainnetRelayerAccounts`](events.go) entry. Full evidence trail is
+in the `MainnetPaymentContracts` doc comment in `events.go`.
 
 ## What this package emits
 
@@ -23,8 +29,11 @@ Two canonical Go types — `Payment` and `Flush` — corresponding
 1:1 to the two `#[contractevent]` types in
 [`v1/stellar/payment/src/lib.rs`](https://github.com/RozoAI/rozo-intents-contracts/blob/main/v1/stellar/payment/src/lib.rs):
 
-- **`Payment`** — emitted on `pay(from, amount, memo)`.
-  Topic `(symbol_short!("payment"), from: Address)`. Body
+- **`Payment`** — emitted on `pay(from, amount, memo)`. Deployed
+  contracts emit a 1-element topic `("payment_event",)` — NOT the
+  2-tuple with `from` as topic[1] the upstream source suggests;
+  verified against 3/3 real lake fixtures 2026-07-09 (see the
+  `Payment` doc comment in `events.go`). Body
   `{ from, destination, amount, memo }`.
 - **`Flush`** — emitted on `flush(token)` (admin sweep).
   Topic `(symbol_short!("flush"),)`. Body

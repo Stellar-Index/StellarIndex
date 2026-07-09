@@ -1,9 +1,9 @@
 ---
 title: Rozo WASM-history audit
-last_verified: 2026-05-24
-status: "in progress — wasm-history walk pending"
+last_verified: 2026-07-09
+status: "approved — 4 contracts (see 2026-07-09 addendum)"
 source: rozo
-backfill_safe: false
+backfill_safe: true
 ---
 
 # Rozo WASM audit
@@ -225,6 +225,64 @@ Because Rozo is `ClassBridge` with `DefaultWeight: 0` and
 the source contributes nothing to VWAP regardless of the
 `BackfillSafe` flag. The flag gates the operator-triggered
 `stellarindex-ops backfill --source=rozo` path only.
+
+## 2026-07-09 addendum — 4th contract admitted + topic-shape correction
+
+Two findings from the §0.7 recognition-audit sweep, both read-only
+against the r1 ClickHouse lake (HTTP 8123; no MinIO / port 9000
+access, no wasm-history walk run):
+
+**Topic shape correction.** This doc's "Decoder expectations" section
+above (written 2026-05-24, pre-dating the 2026-07-07 discovery
+recorded in `events.go`) still describes the upstream source's
+apparent 2-tuple topic `(symbol_short!("payment"), from: Address)`.
+That was already known stale for the SYMBOL (deployed contracts emit
+`payment_event`/`flush_event`, not the short form) but the TOPIC
+ARITY claim was never re-verified until now. Checked against 3/3 real
+lake fixtures (ledgers 61859684, 63147040, 61797898, 2026-07-09):
+every `payment_event` has `topic_count=1` — a single Symbol, no
+`from` topic element. `from` is body-only. See `events.go`'s
+`Payment` doc comment for the corrected wire shape; this doc's
+"Decoder expectations" section is left as the historical (now
+superseded) pre-walk expectation rather than rewritten, per
+docs/engineering-standards.md's "explain why, not what" — the
+correction lives where the code decides, in `events.go`.
+
+**4th contract admitted.** `CAFO6OUZAL62SGDVGHHJPSCOOF3HUKXLED3C3FS5RRQI2VBZ4F5HBPXI`
+emitted exactly one `payment_event` (ledger 61522543) and was not on
+`MainnetPaymentContracts`. Investigated read-only:
+
+- Its contract-instance entry (ledger 61522475, ~68 ledgers before
+  the payment) resolves to WASM hash
+  `b56aedeaf80c3d4b7c4c2ddf3893ac47c3ecff1a0a6f19152ca993e5bb294414`
+  — bytewise IDENTICAL to the hash this audit already covers.
+- Instance storage: `{ dest: Address, usdc: Address, init: bool }` —
+  the same 3-key init shape as the three audited contracts. `dest` =
+  `GB4CLV3UMXDPFP5OQJQKUCWPRJXPXPJSHTUKZEJLAIZFZR7UHYAQ6EB4`, an exact
+  match to the second `MainnetRelayerAccounts` entry. `usdc` =
+  `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`, the
+  canonical Circle USDC SAC.
+- The one `payment_event`'s `destination` field independently
+  resolves to the same relayer account as `dest` above. Memo: "test
+  payment 0.01 USDC" — consistent with a deploy-then-smoke-test, not
+  an attack (an impersonating contract would route to an attacker
+  address, not the real documented relayer).
+- Two OTHER contracts turned up in the same lake sweep colliding on
+  the legacy `payment` short-form symbol (`CDSXS5GK…`, 33 events;
+  `CCP6WOKM…`, 5 events) — both have unrelated body schemas
+  (merchant/royalty fields, `admin`/`feebps`/`token` init storage) and
+  are correctly NOT admitted. Real-world confirmation of the
+  topic-collision risk `Classify`'s doc comment warns about.
+
+Because the 4th contract's WASM hash is bytewise identical to the
+already-audited hash, this is the "new Rozo deploy beyond
+MainnetPaymentContracts" re-audit trigger this doc names below — and
+the trigger resolves by construction (same hash = same audited
+decoder behavior), not by re-running a wasm-history walk. `Registry
+["rozo"].BackfillSafe` stays `true`; `MainnetPaymentContracts` in
+`internal/sources/rozo/events.go` now lists 4 entries. This contract
+has NOT been confirmed by RozoAI (unlike the original three) — flag
+for operator follow-up if RozoAI disputes it.
 
 ## References
 
