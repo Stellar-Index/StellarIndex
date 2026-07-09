@@ -68,6 +68,21 @@ linters:
       # 3 AssetType defaults are correct rejection paths, not missed
       # variants.
       # default-signifies-exhaustive: false
+      #
+      # ROADMAP #48 resolution (2026-07-09): rather than fight this
+      # linter's repo-wide scope, internal/canonical/
+      # asset_type_exhaustive_guard_test.go (TestAssetTypeExhaustiveGuard)
+      # adds a second, narrow guard — a go/types AST walk restricted to
+      # switches tagged on canonical.AssetType specifically, at full
+      # strictness, with zero noise on any other enum. It also catches
+      # something this setting structurally cannot: a `default:` clause
+      # present but empty/fallthrough-only, which this linter counts as
+      # "exhaustive" without ever looking inside it. Shares the same
+      # `//exhaustive:ignore` escape hatch as this linter (see
+      # internal/storage/timescale/usd_volume_quote_spec.go for the one
+      # documented site). Runs as a plain `go test ./internal/canonical/...`
+      # — already covered by `make test` / `make verify`, no separate
+      # wiring needed.
       # Ignore enums we don't own: the go-stellar-sdk `xdr.*` enums have
       # 20+ variants and our decoders intentionally handle a subset (a
       # ManageOffer decoder shouldn't enumerate every OperationType), and
