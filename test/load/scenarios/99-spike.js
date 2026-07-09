@@ -10,10 +10,14 @@
 //   - recovery to baseline p95 within 2 min of spike end.
 //
 // AlertManager silence: the spike WILL legitimately trip
-// `APIHighLatencyP95`. Without a silence, on-call gets paged for
-// a planned spike (design note §6). setup() posts a silence
-// covering the run window; teardown() removes it so a real
-// post-run regression still pages.
+// `stellarindex_api_latency_p95_high` (and possibly p99). Without a
+// silence, on-call gets paged for a planned spike (design note §6).
+// setup() posts a silence covering the run window; teardown() removes
+// it so a real post-run regression still pages. The silence is
+// latency-only by design — error-rate alerts are NOT silenced because
+// this scenario's own `sla.spike` threshold gates the error rate
+// (`http_req_failed: rate<0.005`); see lib/alertmanager.js's header
+// comment for the full rationale and the CI lint that enforces it.
 //
 // Pre-flight requirement: export ALERTMANAGER_URL pointing at the
 // staging AlertManager. If unset, the silence is skipped — k6

@@ -15,6 +15,23 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **k6 99-spike AlertManager silence over-silenced two error-rate alerts, one of them
+  page-severity (SEV-1) — audit-2026-06-14 R-A20-1 follow-up.** The original HIGH finding
+  (default matchers `APIHighLatencyP95`/`APIHighErrorRate` matched no deployed alert, so
+  the silence was a no-op and on-call paged during the planned burst) was fixed 2026-06-15,
+  but the fix over-corrected: it silenced `stellarindex_api_error_rate_high` AND
+  `stellarindex_api_error_rate_critical` in addition to the latency alerts, even though
+  neither the design note (§6: only `stellarindex_api_latency_p95_high` legitimately
+  trips) nor the scenario's own `sla.spike` threshold (`http_req_failed: rate<0.005` —
+  the run FAILS if error rate rises, it isn't "excused" the way latency is) call for
+  silencing error-rate alerts. `error_rate_critical` is `severity: page` — silencing it
+  masked a real SEV-1 for the whole 10-minute run window if the spike genuinely broke
+  something. Default matchers are now latency-only (`_p95_high` + `_p99_high`, both
+  `severity: ticket`); `scripts/ci/lint-docs.sh` §17 re-derives both invariants (matcher
+  resolves to a real alert; no matcher is `severity: page`) from the rule files in CI so
+  neither failure mode (no-op silence or over-broad silence) can silently reopen.
+
 ## [v0.10.0] — 2026-07-09
 
 ### Security

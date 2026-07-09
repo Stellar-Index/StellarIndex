@@ -506,6 +506,67 @@ for hf in web/explorer/public/_headers web/status/public/_headers; do
   fi
 done
 
+# ─── 17. k6 AlertManager-silence matchers must exist and be non-paging ─────
+#
+# test/load/scenarios/lib/alertmanager.js hardcodes the default silence
+# matchers the 99-spike load scenario posts to AlertManager. This is a
+# two-sided drift risk (audit-2026-06-14 R-A20-1 and its follow-up):
+#   (a) an alertname that matches NO deployed alert -> the silence is a
+#       silent no-op and on-call pages during the planned burst (the
+#       original finding: defaults were 'APIHighLatencyP95' when the
+#       real alert is 'stellarindex_api_latency_p95_high').
+#   (b) an alertname that IS deployed but carries `severity: page` ->
+#       the silence masks a real SEV-1 for the run's duration (the
+#       inverse, over-silencing failure — a stray
+#       'alertname=stellarindex_api_error_rate_critical' shipped this
+#       exact bug for several weeks).
+# Both classes are re-derived here from the rule files (the source of
+# truth), not hand-verified once, so a future alert rename or
+# severity bump can't silently reopen either one.
+
+echo "Checking k6 AlertManager-silence matcher targets..."
+AM_JS="test/load/scenarios/lib/alertmanager.js"
+if [ -f "$AM_JS" ]; then
+  # Pull only the alertname=... tokens out of the `const matchers = (...)`
+  # assignment — NOT the amtool dry-run example in the header comment,
+  # which intentionally lists the same names for operator copy-paste.
+  matcher_block=$(awk '/^const matchers = \(ENV\.ALERTMANAGER_SILENCE_MATCHERS/,/\.split\(.,.\);/' "$AM_JS")
+  alertnames=$(echo "$matcher_block" | grep -oE 'alertname=[A-Za-z0-9_]+' | sed 's/alertname=//' | sort -u)
+  if [ -z "$alertnames" ]; then
+    err "$AM_JS: could not extract any default 'alertname=' matcher from the 'const matchers = (...)' assignment — the lint's regex has drifted from the source, update scripts/ci/lint-docs.sh §17"
+  fi
+  for name in $alertnames; do
+    missing=""
+    for dir in deploy/monitoring/rules configs/prometheus/rules.r1; do
+      if ! grep -rq "alert: $name\$" "$dir"/*.yml 2>/dev/null; then
+        missing="$missing $dir"
+      fi
+    done
+    if [ -n "$missing" ]; then
+      err "$AM_JS default matcher 'alertname=$name' does not match any '- alert: $name' rule in:$missing — the 99-spike silence would be a no-op for this alert and on-call pages during the planned burst"
+      continue
+    fi
+    # Extract the alert's own rule block (from its `- alert: NAME` line
+    # up to the next `- alert:`/`- record:` line) and pull `severity:`
+    # from inside it. A fixed -A context window is NOT safe here: a
+    # multi-line `expr: |` block pushes `labels:`/`severity:` past a
+    # small window (e.g. p95_high's severity line is the 7th line after
+    # `alert:`, not the 6th) — an under-sized window makes the lookup
+    # grep match nothing, and under `set -eo pipefail` that silently
+    # aborts the whole lint script instead of just this check.
+    sev=$(awk -v name="$name" '
+      $0 ~ ("alert: " name "$") { infile=1; next }
+      infile && /^ *- (alert|record):/ { exit }
+      infile && /severity:/ {
+        line=$0; sub(/^.*severity:[ \t]*/, "", line); sub(/[ \t]*$/, "", line); print line; exit
+      }
+    ' configs/prometheus/rules.r1/*.yml 2>/dev/null || true)
+    if [ "$sev" = "page" ]; then
+      err "$AM_JS silences '$name', which is severity:page (SEV-1) in configs/prometheus/rules.r1 — a load-test silence must never mask a real page; remove it from the default matcher list (see the SCOPE comment at the top of $AM_JS)"
+    fi
+  done
+fi
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 
 count=$(cat "$ERROR_FILE")
