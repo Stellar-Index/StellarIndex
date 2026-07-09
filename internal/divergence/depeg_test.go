@@ -100,7 +100,7 @@ func TestStablecoinDepeg_DivergenceWorkerFires(t *testing.T) {
 	// Step 6 — assert the safety net fired. Our 0.10 vs reference
 	// 0.0950 is ~5.26% delta, above the 2.5% threshold; with 3
 	// agreeing references and MinSources=2 the warning must fire.
-	body, err := rdb.Get(context.Background(), cachekeys.Divergence(proxied.Pair)).Bytes()
+	body, err := rdb.Get(context.Background(), cachekeys.Divergence(proxied.Pair).String()).Bytes()
 	if err != nil {
 		t.Fatalf("redis get %s: %v", cachekeys.Divergence(proxied.Pair), err)
 	}
@@ -157,7 +157,7 @@ func TestStablecoinPegHolds_DivergenceWorkerStaysQuiet(t *testing.T) {
 	if err := svc.RefreshPair(context.Background(), proxied.Pair, ourPrice, time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
-	body, _ := rdb.Get(context.Background(), cachekeys.Divergence(proxied.Pair)).Bytes()
+	body, _ := rdb.Get(context.Background(), cachekeys.Divergence(proxied.Pair).String()).Bytes()
 	var cached divergence.CachedResult
 	_ = json.Unmarshal(body, &cached)
 	if cached.WarningFired {

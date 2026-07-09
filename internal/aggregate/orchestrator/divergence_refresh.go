@@ -72,7 +72,7 @@ func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) 
 		// near-zero `no_vwap` / `parse_error` paths.
 		start := time.Now()
 		key := cachekeys.VWAP(pair.Base, pair.Quote, shortest)
-		raw, err := o.cache.Get(ctx, key).Result()
+		raw, err := o.cache.Get(ctx, key.String()).Result()
 		if err != nil {
 			// Cache miss is normal-path on the first tick or after
 			// a freeze; log at debug so an operator looking at INFO

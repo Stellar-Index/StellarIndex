@@ -20,6 +20,24 @@
 //     string. Callers who pass a raw string get a compile error,
 //     which is the point.
 //
+//   - Each builder returns a DISTINCT named string type, not a bare
+//     `string` (`Price` returns [PriceKey], `VWAP` returns [VWAPKey],
+//     etc — see keys.go's per-family doc comments). This closes the
+//     other half of the typo-safety story: a bare `string` return
+//     type means every key class is the SAME Go type, so nothing
+//     stops a caller from handing a `VWAPKey` to a reader that wants
+//     a `PriceKey`, or a hand-rolled `fmt.Sprintf("price:%s", ...)`
+//     to anything that "just wants a string" — both type-check
+//     silently. Named types make both a compile error: Go does not
+//     implicitly convert between two distinct named string types (or
+//     between a named type and plain `string`) even when their
+//     underlying type is identical
+//     (https://go.dev/ref/spec#Assignability). Crossing into the
+//     untyped Redis wire protocol — `redis.Cmdable`'s methods only
+//     know `string` — requires an explicit `.String()` call, which is
+//     the one place per call site where "this key left the typed
+//     world" is visible in a diff.
+//
 //   - One TTL helper per key class. Most return a constant; a few
 //     (VWAP, OHLC-open-candle) take a parameter. Caller code reads
 //     clearly: `ttl := cachekeys.PriceTTL`.

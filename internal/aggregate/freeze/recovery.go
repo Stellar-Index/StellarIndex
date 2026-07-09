@@ -152,7 +152,7 @@ func (r *Recovery) tick(ctx context.Context) {
 	var recovered, stillFiring, errs int
 	for _, p := range open {
 		key := cachekeys.Freeze(p.Asset, p.Quote)
-		_, err := r.cache.Get(ctx, key).Bytes()
+		_, err := r.cache.Get(ctx, key.String()).Bytes()
 		switch {
 		case errors.Is(err, redis.Nil):
 			// Marker gone → freeze cleared. Close the durable row.

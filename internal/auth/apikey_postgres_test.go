@@ -275,7 +275,7 @@ func TestPostgresValidator_Invalidate(t *testing.T) {
 	if err := v.InvalidateCachedKey(context.Background(), hexHashOf(plaintext)); err != nil {
 		t.Fatalf("invalidate: %v", err)
 	}
-	if _, err := rdb.Get(context.Background(), cachekeys.APIKey(hexHashOf(plaintext))).Result(); !errors.Is(err, redis.Nil) {
+	if _, err := rdb.Get(context.Background(), cachekeys.APIKey(hexHashOf(plaintext)).String()).Result(); !errors.Is(err, redis.Nil) {
 		t.Errorf("cache entry not removed after invalidate: %v", err)
 	}
 }

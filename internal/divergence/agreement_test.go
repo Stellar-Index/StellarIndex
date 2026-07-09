@@ -141,7 +141,7 @@ func TestRefreshPair_AgreementCountPersisted(t *testing.T) {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 
-	body, err := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t))).Bytes()
+	body, err := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
 	if err != nil {
 		t.Fatalf("redis get: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestRefreshPair_AllReferencesDark_AgreementZeroMeansUnchecked(t *testing.T)
 		t.Fatalf("RefreshPair err = %v, want ErrNoReferenceResponded", err)
 	}
 
-	body, gerr := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t))).Bytes()
+	body, gerr := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
 	if gerr != nil {
 		t.Fatalf("redis get: %v", gerr)
 	}

@@ -55,7 +55,7 @@ func NewCache(resolver *Resolver, rdb redis.Cmdable) *Cache {
 // slot, re-check Redis (another goroutine may have won the race),
 // fetch upstream, SET with [cachekeys.TOMLTTL], return.
 func (c *Cache) Resolve(ctx context.Context, domain string) (*SEP1, error) {
-	key := cachekeys.TOML(domain)
+	key := cachekeys.TOML(domain).String()
 
 	if sep, ok := c.getCached(ctx, key); ok {
 		obs.Sep1CacheOpsTotal.WithLabelValues("hit").Inc()
@@ -144,7 +144,7 @@ func (c *Cache) Invalidate(ctx context.Context, domain string) error {
 	if c.rdb == nil {
 		return nil
 	}
-	if err := c.rdb.Del(ctx, cachekeys.TOML(domain)).Err(); err != nil && !errors.Is(err, redis.Nil) {
+	if err := c.rdb.Del(ctx, cachekeys.TOML(domain).String()).Err(); err != nil && !errors.Is(err, redis.Nil) {
 		return fmt.Errorf("metadata: invalidate %q: %w", domain, err)
 	}
 	return nil

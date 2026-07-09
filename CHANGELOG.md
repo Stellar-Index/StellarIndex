@@ -46,6 +46,22 @@ against.
   `decimals-guard: startup backfill complete` scanned/confirmed summary. The manual `INSERT`
   fallback in the runbook now only covers a token dormant longer than the backfill window, or
   a process that hasn't restarted since this shipped.
+### Changed
+- **`internal/cachekeys` (ADR-0007) keys are now typed, not bare `string`** (guard-debt
+  ROADMAP #48). Each key family (`Price`, `VWAP`, `Confidence`, `Divergence`, `Freeze`,
+  `APIKey`, …) returns its own named string type (`PriceKey`, `VWAPKey`, …) instead of a
+  plain `string`, so a reader for one family can no longer silently accept another
+  family's key — or a hand-rolled `fmt.Sprintf` ad-hoc key — the way a shared `string`
+  return type allowed (the prewarm-cache-key-drift bug class). Crossing into the untyped
+  `redis.Cmdable` wire protocol now requires an explicit `.String()` call at each call
+  site. Found and fixed one live instance of the exact anti-pattern this closes:
+  `cmd/stellarindex-api/main.go`'s pools/markets Redis read-through caches were hand-
+  appending `":order=" + ...` (and further ad-hoc suffixes) onto `cachekeys.MarketsList`'s
+  result — that compiled cleanly against the old `string` return type. Four new canonical
+  sibling builders (`MarketsListOrdered`, `MarketsListBySource`, `MarketsListByAsset`,
+  `MarketsListPools`) replace the concatenation, producing byte-identical wire keys
+  (golden-string tests in `internal/cachekeys/keys_test.go` pin every family's wire
+  shape). Wire-compatible — no cache invalidation on deploy.
 
 ### Fixed
 - The residual CEX deadlock vector after the full-conflict-key batch sort: a batch spans

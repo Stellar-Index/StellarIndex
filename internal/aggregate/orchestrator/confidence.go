@@ -125,7 +125,7 @@ func (o *Orchestrator) cacheConfidence(
 		return
 	}
 	key := cachekeys.Confidence(pair.Base, pair.Quote, window)
-	if err := o.cache.Set(ctx, key, body, confidenceCacheTTL(window)).Err(); err != nil {
+	if err := o.cache.Set(ctx, key.String(), body, confidenceCacheTTL(window)).Err(); err != nil {
 		obs.AggregatorConfidenceComputeTotal.WithLabelValues("write_error").Inc()
 		o.logger.Warn("confidence cache write failed",
 			"pair", pair.String(), "window", window.String(), "err", err)
@@ -174,7 +174,7 @@ var noCrossOracle = crossOracleSignal{divergencePct: -1, agreementCount: -1}
 // Read failures don't propagate; the confidence step continues with
 // the neutral sentinels.
 func (o *Orchestrator) lookupCrossOracle(ctx context.Context, pair canonical.Pair) crossOracleSignal {
-	raw, err := o.cache.Get(ctx, cachekeys.Divergence(pair)).Bytes()
+	raw, err := o.cache.Get(ctx, cachekeys.Divergence(pair).String()).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return noCrossOracle // no cache entry; treat as "no data"
 	}

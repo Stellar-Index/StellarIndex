@@ -1971,7 +1971,7 @@ func (r cachedOracleReader) LatestOracleUpdatesForAssets(ctx context.Context, as
 	}
 	cacheKey := cachekeys.OracleLatest(keys, sourceFilter)
 
-	raw, err := r.rdb.Get(ctx, cacheKey).Bytes()
+	raw, err := r.rdb.Get(ctx, cacheKey.String()).Bytes()
 	switch {
 	case err == nil:
 		var out []canonical.OracleUpdate
@@ -1995,7 +1995,7 @@ func (r cachedOracleReader) LatestOracleUpdatesForAssets(ctx context.Context, as
 		return nil, err
 	}
 	if buf, jerr := json.Marshal(updates); jerr == nil {
-		if serr := r.rdb.Set(ctx, cacheKey, buf, cachekeys.OracleLatestTTL).Err(); serr != nil {
+		if serr := r.rdb.Set(ctx, cacheKey.String(), buf, cachekeys.OracleLatestTTL).Err(); serr != nil {
 			r.log.Warn("oracle cache write failed", "key", cacheKey, "err", serr)
 		}
 	}
@@ -2037,7 +2037,7 @@ func (r cachedAssetReader) ListAssets(ctx context.Context, cursor string, limit 
 		return r.inner.ListAssets(ctx, cursor, limit)
 	}
 	cacheKey := cachekeys.AssetsList(cursor, limit)
-	if raw, err := r.rdb.Get(ctx, cacheKey).Bytes(); err == nil {
+	if raw, err := r.rdb.Get(ctx, cacheKey.String()).Bytes(); err == nil {
 		var p listCachePayload[v1.AssetDetail]
 		if jerr := json.Unmarshal(raw, &p); jerr == nil {
 			return p.Items, p.NextCursor, nil
@@ -2052,7 +2052,7 @@ func (r cachedAssetReader) ListAssets(ctx context.Context, cursor string, limit 
 		return nil, "", err
 	}
 	if buf, jerr := json.Marshal(listCachePayload[v1.AssetDetail]{Items: items, NextCursor: next}); jerr == nil {
-		if serr := r.rdb.Set(ctx, cacheKey, buf, cachekeys.CatalogueListTTL).Err(); serr != nil {
+		if serr := r.rdb.Set(ctx, cacheKey.String(), buf, cachekeys.CatalogueListTTL).Err(); serr != nil {
 			r.log.Warn("assets cache write failed", "key", cacheKey, "err", serr)
 		}
 	}
@@ -2092,9 +2092,8 @@ func (r cachedMarketsReader) AllPools(ctx context.Context, filter timescale.Pool
 	if r.rdb == nil {
 		return r.inner.AllPools(ctx, filter, cursor, limit, order)
 	}
-	srcKey := strings.Join(filter.Sources, ",")
-	cacheKey := cachekeys.MarketsList(cursor, limit) + ":order=" + marketsOrderKey(order) + ":pools=1:src=" + srcKey + ":base=" + filter.Base + ":quote=" + filter.Quote + ":asset=" + filter.Asset
-	if raw, err := r.rdb.Get(ctx, cacheKey).Bytes(); err == nil {
+	cacheKey := cachekeys.MarketsListPools(cursor, limit, marketsOrderKey(order), filter.Sources, filter.Base, filter.Quote, filter.Asset)
+	if raw, err := r.rdb.Get(ctx, cacheKey.String()).Bytes(); err == nil {
 		var p listCachePayload[v1.Pool]
 		if jerr := json.Unmarshal(raw, &p); jerr == nil {
 			return p.Items, p.NextCursor, nil
@@ -2108,7 +2107,7 @@ func (r cachedMarketsReader) AllPools(ctx context.Context, filter timescale.Pool
 		return nil, "", err
 	}
 	if buf, jerr := json.Marshal(listCachePayload[v1.Pool]{Items: items, NextCursor: next}); jerr == nil {
-		if serr := r.rdb.Set(ctx, cacheKey, buf, cachekeys.CatalogueListTTL).Err(); serr != nil {
+		if serr := r.rdb.Set(ctx, cacheKey.String(), buf, cachekeys.CatalogueListTTL).Err(); serr != nil {
 			r.log.Warn("pools cache write failed", "key", cacheKey, "err", serr)
 		}
 	}
@@ -2122,8 +2121,8 @@ func (r cachedMarketsReader) SourceMarkets(ctx context.Context, source, cursor s
 	if r.rdb == nil {
 		return r.inner.SourceMarkets(ctx, source, cursor, limit, order)
 	}
-	cacheKey := cachekeys.MarketsList(cursor, limit) + ":order=" + marketsOrderKey(order) + ":source=" + source
-	if raw, err := r.rdb.Get(ctx, cacheKey).Bytes(); err == nil {
+	cacheKey := cachekeys.MarketsListBySource(cursor, limit, marketsOrderKey(order), source)
+	if raw, err := r.rdb.Get(ctx, cacheKey.String()).Bytes(); err == nil {
 		var p listCachePayload[v1.Market]
 		if jerr := json.Unmarshal(raw, &p); jerr == nil {
 			return p.Items, p.NextCursor, nil
@@ -2138,7 +2137,7 @@ func (r cachedMarketsReader) SourceMarkets(ctx context.Context, source, cursor s
 		return nil, "", err
 	}
 	if buf, jerr := json.Marshal(listCachePayload[v1.Market]{Items: items, NextCursor: next}); jerr == nil {
-		if serr := r.rdb.Set(ctx, cacheKey, buf, cachekeys.CatalogueListTTL).Err(); serr != nil {
+		if serr := r.rdb.Set(ctx, cacheKey.String(), buf, cachekeys.CatalogueListTTL).Err(); serr != nil {
 			r.log.Warn("source-markets cache write failed", "key", cacheKey, "err", serr)
 		}
 	}
@@ -2152,8 +2151,8 @@ func (r cachedMarketsReader) AssetMarkets(ctx context.Context, asset, cursor str
 	if r.rdb == nil {
 		return r.inner.AssetMarkets(ctx, asset, cursor, limit, order)
 	}
-	cacheKey := cachekeys.MarketsList(cursor, limit) + ":order=" + marketsOrderKey(order) + ":asset=" + asset
-	if raw, err := r.rdb.Get(ctx, cacheKey).Bytes(); err == nil {
+	cacheKey := cachekeys.MarketsListByAsset(cursor, limit, marketsOrderKey(order), asset)
+	if raw, err := r.rdb.Get(ctx, cacheKey.String()).Bytes(); err == nil {
 		var p listCachePayload[v1.Market]
 		if jerr := json.Unmarshal(raw, &p); jerr == nil {
 			return p.Items, p.NextCursor, nil
@@ -2168,7 +2167,7 @@ func (r cachedMarketsReader) AssetMarkets(ctx context.Context, asset, cursor str
 		return nil, "", err
 	}
 	if buf, jerr := json.Marshal(listCachePayload[v1.Market]{Items: items, NextCursor: next}); jerr == nil {
-		if serr := r.rdb.Set(ctx, cacheKey, buf, cachekeys.CatalogueListTTL).Err(); serr != nil {
+		if serr := r.rdb.Set(ctx, cacheKey.String(), buf, cachekeys.CatalogueListTTL).Err(); serr != nil {
 			r.log.Warn("asset-markets cache write failed", "key", cacheKey, "err", serr)
 		}
 	}
@@ -2179,8 +2178,8 @@ func (r cachedMarketsReader) DistinctPairsExt(ctx context.Context, cursor string
 	if r.rdb == nil {
 		return r.inner.DistinctPairsExt(ctx, cursor, limit, order)
 	}
-	cacheKey := cachekeys.MarketsList(cursor, limit) + ":order=" + marketsOrderKey(order)
-	if raw, err := r.rdb.Get(ctx, cacheKey).Bytes(); err == nil {
+	cacheKey := cachekeys.MarketsListOrdered(cursor, limit, marketsOrderKey(order))
+	if raw, err := r.rdb.Get(ctx, cacheKey.String()).Bytes(); err == nil {
 		var p listCachePayload[v1.Market]
 		if jerr := json.Unmarshal(raw, &p); jerr == nil {
 			return p.Items, p.NextCursor, nil
@@ -2195,7 +2194,7 @@ func (r cachedMarketsReader) DistinctPairsExt(ctx context.Context, cursor string
 		return nil, "", err
 	}
 	if buf, jerr := json.Marshal(listCachePayload[v1.Market]{Items: items, NextCursor: next}); jerr == nil {
-		if serr := r.rdb.Set(ctx, cacheKey, buf, cachekeys.CatalogueListTTL).Err(); serr != nil {
+		if serr := r.rdb.Set(ctx, cacheKey.String(), buf, cachekeys.CatalogueListTTL).Err(); serr != nil {
 			r.log.Warn("markets cache write failed", "key", cacheKey, "err", serr)
 		}
 	}
@@ -2226,7 +2225,7 @@ func (r redisConfidenceLooker) LookupConfidence(ctx context.Context, asset, quot
 		return v1.PriceSnapshotConfidence{}, false, nil
 	}
 	key := cachekeys.Confidence(asset, quote, window)
-	raw, err := r.rdb.Get(ctx, key).Bytes()
+	raw, err := r.rdb.Get(ctx, key.String()).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return v1.PriceSnapshotConfidence{}, false, nil
 	}
@@ -2276,7 +2275,7 @@ func (r redisTriangulatedLooker) LookupTriangulatedVWAP(
 		return "", false, false, nil
 	}
 	valKey := cachekeys.VWAP(base, quote, window)
-	val, err := r.rdb.Get(ctx, valKey).Result()
+	val, err := r.rdb.Get(ctx, valKey.String()).Result()
 	if errors.Is(err, redis.Nil) {
 		return "", false, false, nil
 	}
@@ -2284,7 +2283,7 @@ func (r redisTriangulatedLooker) LookupTriangulatedVWAP(
 		return "", false, false, fmt.Errorf("vwap cache get %s: %w", valKey, err)
 	}
 	provKey := cachekeys.VWAPProvenance(base, quote, window)
-	prov, err := r.rdb.Get(ctx, provKey).Result()
+	prov, err := r.rdb.Get(ctx, provKey.String()).Result()
 	if errors.Is(err, redis.Nil) {
 		// Value exists but no provenance marker → direct VWAP
 		// (per the marker contract). Return found=true but

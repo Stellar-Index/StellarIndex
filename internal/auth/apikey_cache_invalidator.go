@@ -55,5 +55,5 @@ func (i *RedisKeyCacheInvalidator) InvalidateCachedKey(ctx context.Context, hexH
 	if i == nil || i.cache == nil {
 		return nil
 	}
-	return i.cache.Del(ctx, cachekeys.APIKey(hexHash)).Err()
+	return i.cache.Del(ctx, cachekeys.APIKey(hexHash).String()).Err()
 }

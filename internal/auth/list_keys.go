@@ -34,7 +34,7 @@ func (s *RedisAPIKeyStore) ListKeysForIdentifier(ctx context.Context, identifier
 	}
 
 	var out []APIKeyRecord
-	iter := s.rdb.Scan(ctx, 0, cachekeys.APIKey("*"), 1000).Iterator()
+	iter := s.rdb.Scan(ctx, 0, cachekeys.APIKey("*").String(), 1000).Iterator()
 	for iter.Next(ctx) {
 		k := iter.Val()
 		raw, err := s.rdb.Get(ctx, k).Bytes()
@@ -78,7 +78,7 @@ func (s *RedisAPIKeyStore) RevokeKeyByID(ctx context.Context, identifier, keyID 
 	if keyID == "" {
 		return errors.New("auth: RevokeKeyByID: keyID is required")
 	}
-	iter := s.rdb.Scan(ctx, 0, cachekeys.APIKey("*"), 1000).Iterator()
+	iter := s.rdb.Scan(ctx, 0, cachekeys.APIKey("*").String(), 1000).Iterator()
 	for iter.Next(ctx) {
 		k := iter.Val()
 		raw, err := s.rdb.Get(ctx, k).Bytes()

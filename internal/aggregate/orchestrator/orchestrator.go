@@ -804,7 +804,7 @@ func (o *Orchestrator) refreshPairWindow(
 	value := formatRatFixed(vwap, 12)
 	key := cachekeys.VWAP(pair.Base, pair.Quote, window)
 	ttl := cachekeys.VWAPTTL(window)
-	if err := o.cache.Set(ctx, key, value, ttl).Err(); err != nil {
+	if err := o.cache.Set(ctx, key.String(), value, ttl).Err(); err != nil {
 		// Bump the error counter so operators can alert on
 		// `rate(...vwap_cache_write_errors_total[5m]) > 0`. Without
 		// this counter, the May-10 incident class (Redis BGSAVE
@@ -866,7 +866,7 @@ func (o *Orchestrator) refreshPairWindow(
 // and already happened upstream.
 func (o *Orchestrator) keepFrozenVWAPAlive(ctx context.Context, pair canonical.Pair, window time.Duration) {
 	key := cachekeys.VWAP(pair.Base, pair.Quote, window)
-	if err := o.cache.Expire(ctx, key, cachekeys.FreezeTTL).Err(); err != nil {
+	if err := o.cache.Expire(ctx, key.String(), cachekeys.FreezeTTL).Err(); err != nil {
 		o.logger.Debug("freeze: LKG VWAP TTL refresh failed",
 			"pair", pair.String(), "window", window, "key", key, "err", err)
 	}

@@ -144,8 +144,8 @@ func TestTick_Triangulation_HappyPath(t *testing.T) {
 
 	cache, mr := newTestRedis(t)
 	// Pre-populate leg VWAPs as if the per-pair refresh just ran.
-	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window), "0.080000000000")
-	mr.Set(cachekeys.VWAP(usdEUR.Base, usdEUR.Quote, window), "0.900000000000")
+	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window).String(), "0.080000000000")
+	mr.Set(cachekeys.VWAP(usdEUR.Base, usdEUR.Quote, window).String(), "0.900000000000")
 
 	o := New(nil, cache, Config{
 		Pairs:   []canonical.Pair{}, // no per-pair refresh; just exercise the triangulation pass
@@ -165,7 +165,7 @@ func TestTick_Triangulation_HappyPath(t *testing.T) {
 	}
 
 	// 0.08 × 0.90 = 0.072.
-	got, err := mr.Get(cachekeys.VWAP(xlmEUR.Base, xlmEUR.Quote, window))
+	got, err := mr.Get(cachekeys.VWAP(xlmEUR.Base, xlmEUR.Quote, window).String())
 	if err != nil {
 		t.Fatalf("get target: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestTick_Triangulation_MissingLeg(t *testing.T) {
 
 	cache, mr := newTestRedis(t)
 	// Only first leg cached; second leg absent.
-	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window), "0.080000000000")
+	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window).String(), "0.080000000000")
 
 	o := New(nil, cache, Config{
 		Windows: []time.Duration{window},
@@ -203,7 +203,7 @@ func TestTick_Triangulation_MissingLeg(t *testing.T) {
 		t.Errorf("missing_leg counter delta = %v, want 1", after-before)
 	}
 
-	if mr.Exists(cachekeys.VWAP(xlmEUR.Base, xlmEUR.Quote, window)) {
+	if mr.Exists(cachekeys.VWAP(xlmEUR.Base, xlmEUR.Quote, window).String()) {
 		t.Error("target VWAP should not exist when a leg is missing")
 	}
 }
@@ -218,8 +218,8 @@ func TestTick_Triangulation_ParseError(t *testing.T) {
 	window := 5 * time.Minute
 
 	cache, mr := newTestRedis(t)
-	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window), "0.080000000000")
-	mr.Set(cachekeys.VWAP(usdEUR.Base, usdEUR.Quote, window), "not-a-number")
+	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window).String(), "0.080000000000")
+	mr.Set(cachekeys.VWAP(usdEUR.Base, usdEUR.Quote, window).String(), "not-a-number")
 
 	o := New(nil, cache, Config{
 		Windows: []time.Duration{window},
@@ -270,7 +270,7 @@ func TestTick_Triangulation_FXSnap_HappyPath(t *testing.T) {
 	window := 5 * time.Minute
 
 	cache, mr := newTestRedis(t)
-	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window), "0.080000000000")
+	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window).String(), "0.080000000000")
 	// Note: NO cached VWAP for usdEUR — proves the snap path is what
 	// supplies the FX leg's price.
 
@@ -305,7 +305,7 @@ func TestTick_Triangulation_FXSnap_HappyPath(t *testing.T) {
 	}
 
 	// 0.08 (cached) × 0.90 (snap) = 0.072.
-	got, err := mr.Get(cachekeys.VWAP(xlmEUR.Base, xlmEUR.Quote, window))
+	got, err := mr.Get(cachekeys.VWAP(xlmEUR.Base, xlmEUR.Quote, window).String())
 	if err != nil {
 		t.Fatalf("get target: %v", err)
 	}
@@ -341,8 +341,8 @@ func TestTick_Triangulation_FXSnap_FallbackOnNoQuote(t *testing.T) {
 	window := 5 * time.Minute
 
 	cache, mr := newTestRedis(t)
-	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window), "0.080000000000")
-	mr.Set(cachekeys.VWAP(usdEUR.Base, usdEUR.Quote, window), "0.900000000000")
+	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window).String(), "0.080000000000")
+	mr.Set(cachekeys.VWAP(usdEUR.Base, usdEUR.Quote, window).String(), "0.900000000000")
 
 	fx := &fakeFXStore{} // quote==nil → returns ErrNoFXQuote
 
@@ -369,7 +369,7 @@ func TestTick_Triangulation_FXSnap_FallbackOnNoQuote(t *testing.T) {
 	if afterFB-beforeFB != 1 {
 		t.Errorf("fallback counter delta = %v, want 1", afterFB-beforeFB)
 	}
-	got, err := mr.Get(cachekeys.VWAP(xlmEUR.Base, xlmEUR.Quote, window))
+	got, err := mr.Get(cachekeys.VWAP(xlmEUR.Base, xlmEUR.Quote, window).String())
 	if err != nil {
 		t.Fatalf("get target: %v", err)
 	}
@@ -390,8 +390,8 @@ func TestTick_Triangulation_FXSnap_DBErrorAborts(t *testing.T) {
 	window := 5 * time.Minute
 
 	cache, mr := newTestRedis(t)
-	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window), "0.080000000000")
-	mr.Set(cachekeys.VWAP(usdEUR.Base, usdEUR.Quote, window), "0.900000000000")
+	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window).String(), "0.080000000000")
+	mr.Set(cachekeys.VWAP(usdEUR.Base, usdEUR.Quote, window).String(), "0.900000000000")
 
 	fx := &fakeFXStore{err: errors.New("connection refused")}
 
@@ -418,7 +418,7 @@ func TestTick_Triangulation_FXSnap_DBErrorAborts(t *testing.T) {
 	if afterFB != beforeFB {
 		t.Errorf("fallback counter incremented on hard DB error: %v→%v", beforeFB, afterFB)
 	}
-	if mr.Exists(cachekeys.VWAP(xlmEUR.Base, xlmEUR.Quote, window)) {
+	if mr.Exists(cachekeys.VWAP(xlmEUR.Base, xlmEUR.Quote, window).String()) {
 		t.Error("target VWAP should not exist when FX-store errors")
 	}
 }
@@ -433,8 +433,8 @@ func TestTick_Triangulation_FXStoreNil_LegsUseCachedVWAP(t *testing.T) {
 	window := 5 * time.Minute
 
 	cache, mr := newTestRedis(t)
-	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window), "0.080000000000")
-	mr.Set(cachekeys.VWAP(usdEUR.Base, usdEUR.Quote, window), "0.900000000000")
+	mr.Set(cachekeys.VWAP(xlmUSD.Base, xlmUSD.Quote, window).String(), "0.080000000000")
+	mr.Set(cachekeys.VWAP(usdEUR.Base, usdEUR.Quote, window).String(), "0.900000000000")
 
 	o := New(nil, cache, Config{
 		Windows: []time.Duration{window},
@@ -454,7 +454,7 @@ func TestTick_Triangulation_FXStoreNil_LegsUseCachedVWAP(t *testing.T) {
 	if afterFB != beforeFB {
 		t.Errorf("fallback counter incremented when FXStore is nil: %v→%v", beforeFB, afterFB)
 	}
-	got, err := mr.Get(cachekeys.VWAP(xlmEUR.Base, xlmEUR.Quote, window))
+	got, err := mr.Get(cachekeys.VWAP(xlmEUR.Base, xlmEUR.Quote, window).String())
 	if err != nil {
 		t.Fatalf("get target: %v", err)
 	}

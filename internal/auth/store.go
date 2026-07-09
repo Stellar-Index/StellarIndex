@@ -184,7 +184,7 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 	// No TTL: keys live until explicitly deleted. Expiry +
 	// revocation are encoded in the JSON record so the validator
 	// can return the right sentinel error.
-	if err := s.rdb.Set(ctx, cachekeys.APIKey(hash), body, 0).Err(); err != nil {
+	if err := s.rdb.Set(ctx, cachekeys.APIKey(hash).String(), body, 0).Err(); err != nil {
 		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: redis set: %w", err)
 	}
 	return rec, plaintext, nil

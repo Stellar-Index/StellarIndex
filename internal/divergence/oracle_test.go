@@ -290,7 +290,7 @@ func TestRefreshPair_OnChainOracleReferences(t *testing.T) {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 
-	body, err := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t))).Bytes()
+	body, err := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
 	if err != nil {
 		t.Fatalf("redis get: %v", err)
 	}

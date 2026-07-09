@@ -102,7 +102,7 @@ func TestConfidence_ScoreFlowsToCacheKey(t *testing.T) {
 	}
 
 	confKey := cachekeys.Confidence(pair.Base, pair.Quote, time.Minute)
-	body, err := rdb.Get(context.Background(), confKey).Bytes()
+	body, err := rdb.Get(context.Background(), confKey.String()).Bytes()
 	if err != nil {
 		t.Fatalf("confidence key %q missing from cache: %v", confKey, err)
 	}
@@ -143,7 +143,7 @@ func TestConfidence_SkipsWhenBaselinesNil(t *testing.T) {
 	_ = orch.Tick(context.Background())
 
 	confKey := cachekeys.Confidence(pair.Base, pair.Quote, time.Minute)
-	if exists, _ := rdb.Exists(context.Background(), confKey).Result(); exists != 0 {
+	if exists, _ := rdb.Exists(context.Background(), confKey.String()).Result(); exists != 0 {
 		t.Errorf("confidence key %q present despite nil Baselines", confKey)
 	}
 }
@@ -183,7 +183,7 @@ func TestConfidence_DivergenceWiredFromCache(t *testing.T) {
 				t.Fatalf("seed marshal: %v", err)
 			}
 			if err := rdb.Set(context.Background(),
-				cachekeys.Divergence(pair), body, 5*time.Minute).Err(); err != nil {
+				cachekeys.Divergence(pair).String(), body, 5*time.Minute).Err(); err != nil {
 				t.Fatalf("seed cache set: %v", err)
 			}
 		}
@@ -196,7 +196,7 @@ func TestConfidence_DivergenceWiredFromCache(t *testing.T) {
 		_ = orch.Tick(context.Background())
 		_ = orch.Tick(context.Background())
 		body, err := rdb.Get(context.Background(),
-			cachekeys.Confidence(pair.Base, pair.Quote, time.Minute)).Bytes()
+			cachekeys.Confidence(pair.Base, pair.Quote, time.Minute).String()).Bytes()
 		if err != nil {
 			t.Fatalf("confidence read: %v", err)
 		}
@@ -280,7 +280,7 @@ func TestConfidence_DivergenceLowSuccessCountIgnored(t *testing.T) {
 		AgreementCount: 1,   // must not leak into the served decomposition
 	})
 	if err := rdb.Set(context.Background(),
-		cachekeys.Divergence(pair), body, 5*time.Minute).Err(); err != nil {
+		cachekeys.Divergence(pair).String(), body, 5*time.Minute).Err(); err != nil {
 		t.Fatalf("seed cache set: %v", err)
 	}
 
@@ -294,7 +294,7 @@ func TestConfidence_DivergenceLowSuccessCountIgnored(t *testing.T) {
 	_ = orch.Tick(context.Background())
 
 	scoreBody, err := rdb.Get(context.Background(),
-		cachekeys.Confidence(pair.Base, pair.Quote, time.Minute)).Bytes()
+		cachekeys.Confidence(pair.Base, pair.Quote, time.Minute).String()).Bytes()
 	if err != nil {
 		t.Fatalf("confidence read: %v", err)
 	}
@@ -431,13 +431,13 @@ func TestPhase2Freeze_BlocksVWAPPublish(t *testing.T) {
 		t.Fatalf("tick 1: %v", err)
 	}
 	vwapKey := cachekeys.VWAP(pair.Base, pair.Quote, time.Minute)
-	if exists, _ := rdb.Exists(context.Background(), vwapKey).Result(); exists != 1 {
+	if exists, _ := rdb.Exists(context.Background(), vwapKey.String()).Result(); exists != 1 {
 		t.Fatalf("VWAP key missing after tick 1 — confidence skip shouldn't block tick 1 publish")
 	}
 
 	// Tick 2: huge spike, single source. Phase 2 should fire.
 	// The tick-1 VWAP stays in cache (overwrite suppressed).
-	tick1Value, err := rdb.Get(context.Background(), vwapKey).Result()
+	tick1Value, err := rdb.Get(context.Background(), vwapKey.String()).Result()
 	if err != nil {
 		t.Fatalf("read tick-1 VWAP: %v", err)
 	}
@@ -445,7 +445,7 @@ func TestPhase2Freeze_BlocksVWAPPublish(t *testing.T) {
 	if err := orch.Tick(context.Background()); err != nil {
 		t.Fatalf("tick 2: %v", err)
 	}
-	tick2Value, err := rdb.Get(context.Background(), vwapKey).Result()
+	tick2Value, err := rdb.Get(context.Background(), vwapKey.String()).Result()
 	if err != nil {
 		t.Fatalf("read tick-2 VWAP: %v", err)
 	}
@@ -456,7 +456,7 @@ func TestPhase2Freeze_BlocksVWAPPublish(t *testing.T) {
 
 	// Confidence cache must NOT carry forward the spike's score.
 	confKey := cachekeys.Confidence(pair.Base, pair.Quote, time.Minute)
-	bodyAfter, err := rdb.Get(context.Background(), confKey).Bytes()
+	bodyAfter, err := rdb.Get(context.Background(), confKey.String()).Bytes()
 	if err == nil {
 		// Some entry exists — must be from tick 1 (a fresh tick-1 publish
 		// can write a confidence entry; that's fine). What matters is the
@@ -498,11 +498,11 @@ func TestConfidence_BaselineMissingDoesNotBlockVWAP(t *testing.T) {
 	_ = orch.Tick(context.Background())
 
 	vwapKey := cachekeys.VWAP(pair.Base, pair.Quote, time.Minute)
-	if exists, _ := rdb.Exists(context.Background(), vwapKey).Result(); exists == 0 {
+	if exists, _ := rdb.Exists(context.Background(), vwapKey.String()).Result(); exists == 0 {
 		t.Errorf("VWAP key missing despite baseline-source error: confidence failure must not block VWAP")
 	}
 	confKey := cachekeys.Confidence(pair.Base, pair.Quote, time.Minute)
-	if exists, _ := rdb.Exists(context.Background(), confKey).Result(); exists != 0 {
+	if exists, _ := rdb.Exists(context.Background(), confKey.String()).Result(); exists != 0 {
 		t.Errorf("confidence key present despite baseline error")
 	}
 }
