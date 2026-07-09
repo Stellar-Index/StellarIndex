@@ -250,6 +250,50 @@ func TestAssetGet_readerPopulatesSep1Status(t *testing.T) {
 	}
 }
 
+// TestAssetGet_Kind_SetForReaderPathAndSurvivesResponseCache proves
+// the ADR-0042 LC-040 cache trap is closed. stubAssetReader — like
+// the real storage.timescale AssetReader implementation — has no
+// reason to know about the `kind` wire-shape discriminator, so its
+// fixture row below deliberately carries a zero-value Kind, the same
+// as a not-yet-updated storage layer would. handleAssetGet must stamp
+// Kind AFTER resolveAssetDetail returns but BEFORE renderAssetDetailEnvelope
+// caches the rendered bytes (assets.go's 30s assetDetailCache) — a fix
+// applied only on the FIRST response would leave the cached bytes
+// permanently missing `kind` for the remainder of the TTL window. This
+// test issues the request twice: once to populate the cache, once to
+// hit it, and requires `kind` on both.
+func TestAssetGet_Kind_SetForReaderPathAndSurvivesResponseCache(t *testing.T) {
+	reader := &stubAssetReader{
+		byID: map[string]v1.AssetDetail{
+			"native": {
+				// Kind intentionally left zero-valued — simulates a
+				// storage-layer AssetDetail that doesn't set it.
+				AssetID:    "native",
+				Type:       "native",
+				Code:       "XLM",
+				Decimals:   7,
+				Sep1Status: "not_applicable",
+			},
+		},
+	}
+	srv := v1.New(v1.Options{Assets: reader})
+	ts := httpTestServer(t, srv)
+
+	for i, label := range []string{"first (uncached)", "second (cache hit)"} {
+		resp := mustGet(t, ts.URL+"/v1/assets/native")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: status = %d", label, resp.StatusCode)
+		}
+		var env struct {
+			Data v1.AssetDetail `json:"data"`
+		}
+		mustDecode(t, resp, &env)
+		if env.Data.Kind != "stellar_asset" {
+			t.Errorf("%s request (i=%d): kind = %q, want \"stellar_asset\" — the reader.GetAsset path must have Kind stamped before the response is cached, not left to the (Kind-unaware) storage layer", label, i, env.Data.Kind)
+		}
+	}
+}
+
 // TestAssetMetadata_ReturnsOnlyOverlayFields checks the
 // /v1/assets/{id}/metadata endpoint returns the SEP-1 slice
 // without the canonical core (Code, Decimals, Issuer / ContractID).

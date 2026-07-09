@@ -69,6 +69,9 @@ func TestAssetGet_SlugDispatch_GlobalView(t *testing.T) {
 		Data v1.GlobalAssetView `json:"data"`
 	}
 	mustDecode(t, resp, &env)
+	if env.Data.Kind != "catalogue" {
+		t.Errorf("kind = %q, want \"catalogue\" (ADR-0042 LC-040 wire-shape discriminator)", env.Data.Kind)
+	}
 	if env.Data.Ticker != "USDC" || env.Data.Slug != "usdc" {
 		t.Errorf("wrong identity: %+v", env.Data)
 	}
@@ -137,6 +140,9 @@ func TestAssetGet_SlugDispatch_NoGlobalPriceReader(t *testing.T) {
 		Data v1.GlobalAssetView `json:"data"`
 	}
 	mustDecode(t, resp, &env)
+	if env.Data.Kind != "catalogue" {
+		t.Errorf("kind = %q, want \"catalogue\" (ADR-0042 LC-040 wire-shape discriminator)", env.Data.Kind)
+	}
 	if env.Data.PriceUSD != nil {
 		t.Errorf("price_usd should be nil without a reader, got %v", env.Data.PriceUSD)
 	}
@@ -163,6 +169,9 @@ func TestAssetGet_CanonicalIDStillWorksWithCatalogue(t *testing.T) {
 		Data v1.AssetDetail `json:"data"`
 	}
 	mustDecode(t, resp, &env)
+	if env.Data.Kind != "stellar_asset" {
+		t.Errorf("kind = %q, want \"stellar_asset\" (ADR-0042 LC-040 wire-shape discriminator) — proves the same oneOf route discriminates both branches correctly", env.Data.Kind)
+	}
 	if env.Data.AssetID != "USDC-"+testUSDCIssuer {
 		t.Errorf("canonical id routed wrong; got asset_id = %q", env.Data.AssetID)
 	}

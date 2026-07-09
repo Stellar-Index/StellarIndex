@@ -20,6 +20,11 @@ import (
 // price. Per-issuance Stellar detail (USDC-GA5Z... on Stellar)
 // lives on the canonical `/v1/assets/{asset_id}` surface.
 type GlobalAssetView struct {
+	// Kind is the wire-shape discriminator for the /v1/assets/{asset_id}
+	// oneOf (ADR-0042 LC-040). Always "catalogue" on this struct — see
+	// the contrasting doc comment on AssetDetail.Kind vs AssetDetail.Type.
+	Kind string `json:"kind"`
+
 	// ─── Identity (from the verified-currency catalogue) ──────────
 	Ticker         string `json:"ticker"`
 	Slug           string `json:"slug"`
@@ -69,6 +74,7 @@ type GlobalAssetView struct {
 // wired or all three tiers come up empty.
 func (s *Server) buildGlobalAssetView(ctx context.Context, vc *currency.VerifiedCurrency) GlobalAssetView {
 	view := GlobalAssetView{
+		Kind:           "catalogue",
 		Ticker:         vc.Ticker,
 		Slug:           vc.Slug,
 		Name:           vc.Name,

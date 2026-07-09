@@ -62,6 +62,15 @@ type TokenDecimalsReader interface {
 // AssetDetail is the payload for /v1/assets responses. Matches the
 // shape in docs/reference/api-design.md §5.2.
 type AssetDetail struct {
+	// Kind vs Type: Kind says which WIRE SHAPE this is — always
+	// "stellar_asset" on this struct, the discriminator for the
+	// /v1/assets/{asset_id} oneOf between AssetDetail and the
+	// catalogue-identity GlobalAssetView (ADR-0042 LC-040). Type says
+	// which STELLAR ASSET CLASS this is within that shape (native /
+	// classic / soroban / fiat / global / external — also overloaded
+	// on the plural listing surface, see the Asset schema doc). Don't
+	// conflate them: Kind never varies on this struct; Type does.
+	Kind       string  `json:"kind"`
 	AssetID    string  `json:"asset_id"`
 	Type       string  `json:"type"`
 	Code       string  `json:"code,omitempty"`
@@ -345,6 +354,7 @@ type UnverifiedWarning struct {
 // the existing default.
 func detailFromAsset(a canonical.Asset) AssetDetail {
 	d := AssetDetail{
+		Kind:    "stellar_asset",
 		AssetID: a.String(),
 		Type:    string(a.Type),
 		Code:    a.Code,
@@ -912,6 +922,7 @@ func (s *Server) fillImagesFromSep1(ctx context.Context, rows []AssetDetail) {
 func assetDetailFromCoinRow(row timescale.CoinRow) AssetDetail {
 	asset, err := canonical.ParseAsset(row.AssetID)
 	d := AssetDetail{
+		Kind:       "stellar_asset",
 		AssetID:    row.AssetID,
 		Code:       row.Code,
 		Decimals:   7,
@@ -1239,6 +1250,7 @@ func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) *st
 func projectCatalogueRow(vc *currency.VerifiedCurrency) AssetDetail {
 	name := vc.Name
 	d := AssetDetail{
+		Kind:       "stellar_asset",
 		AssetID:    vc.Slug,
 		Type:       "global",
 		Code:       vc.Ticker,
@@ -1622,6 +1634,21 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	if served {
 		return
 	}
+
+	// ADR-0042 LC-040: stamp the wire-shape discriminator here,
+	// unconditionally, BEFORE renderAssetDetailEnvelope caches the
+	// rendered bytes below. resolveAssetDetail's two branches
+	// (detailFromAsset's canonical echo, and the production
+	// reader.GetAsset path from the storage layer) don't agree on
+	// setting Kind themselves — reader.GetAsset in particular has no
+	// reason to know about a wire-shape discriminator. Setting it late
+	// (e.g. only in detailFromAsset) would mean the 30s response cache
+	// (assetDetailCache.put below) replays bytes with Kind baked in
+	// only for SOME asset_ids depending on which resolution path
+	// served them — a silent, cache-durable inconsistency. This single
+	// assignment point is the one place both branches funnel through
+	// before caching, so it's the only correct place to set it.
+	detail.Kind = "stellar_asset"
 
 	// Real-decimals overlay for Soroban tokens (from the lake's captured
 	// instance METADATA). MUST run before applyF2Fields — the market-cap /

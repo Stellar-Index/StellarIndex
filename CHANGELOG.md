@@ -73,6 +73,19 @@ against.
   `MarketsListPools`) replace the concatenation, producing byte-identical wire keys
   (golden-string tests in `internal/cachekeys/keys_test.go` pin every family's wire
   shape). Wire-compatible — no cache invalidation on deploy.
+- **`GET /v1/assets/{asset_id}` now serves the `kind` wire-shape discriminator** on both
+  branches of its dual response shape (ADR-0042 LC-040, spec-only in the previous entry —
+  this is the handler + generated-artifact follow-through): `"kind": "stellar_asset"` for
+  the per-Stellar-asset detail view, `"kind": "catalogue"` for the verified-currency global
+  view. **Clients should branch on `data.kind` going forward** rather than shape-sniffing a
+  field like `asset_id`'s presence — the two response shapes were previously
+  distinguishable only by prose + ad-hoc heuristics (see the removed shape-sniff sites in
+  the explorer, next entry). Stamped in `handleAssetGet` immediately after
+  `resolveAssetDetail` returns, BEFORE the 30s response-cache render — a late assignment
+  would have baked stale (missing-`kind`) bytes into the cache for whichever asset_ids hit
+  it first, a regression test now guards this
+  (`TestAssetGet_Kind_SetForReaderPathAndSurvivesResponseCache`). `docs-api` / `docs-postman`
+  / `web-generate-api` all regenerated in this commit.
 - **ADR-0042 LC-040: `kind` wire-shape discriminator added to the OpenAPI spec** for
   `/v1/assets/{asset_id}`'s dual response shape — `kind: "stellar_asset"` (required, new)
   on the `Asset` schema, `kind: "catalogue"` (required, new) on `GlobalAssetView`. Spec-only

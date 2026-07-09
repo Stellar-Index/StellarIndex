@@ -887,6 +887,7 @@ export interface paths {
                         /**
                          * @example {
                          *       "data": {
+                         *         "kind": "stellar_asset",
                          *         "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
                          *         "type": "classic",
                          *         "code": "USDC",
@@ -11613,6 +11614,11 @@ export interface components {
             last_seen?: string;
         };
         Asset: {
+            /**
+             * @description Wire-shape discriminator for the /v1/assets/{asset_id} oneOf (ADR-0042). Always "stellar_asset" on this schema. See `Asset.type` for the separate protocol/class discriminator (native/classic/soroban/fiat/global/external) — `kind` says which SHAPE this payload is, `type` says which Stellar asset CLASS within that shape.
+             * @enum {string}
+             */
+            kind: "stellar_asset";
             asset_id: string;
             /**
              * @description `global` = a catalogue-identity listing row (slug id); `external` = a reference-only (non-Stellar-issued) asset. Both appear on listing surfaces (assets.go projectCatalogueRow).
@@ -11831,6 +11837,11 @@ export interface components {
          *     canonical asset_id (e.g. `USDC-GA5Z…`).
          */
         GlobalAssetView: {
+            /**
+             * @description Wire-shape discriminator for the /v1/assets/{asset_id} oneOf (ADR-0042). Always "catalogue" on this schema.
+             * @enum {string}
+             */
+            kind: "catalogue";
             /**
              * @description Asset taxonomy for the catalogue identity. Always present (assets_global.go).
              * @enum {string}
