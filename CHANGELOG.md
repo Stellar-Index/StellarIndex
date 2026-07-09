@@ -54,6 +54,17 @@ against.
   `internal/sources/blend_emitter/README.md` and `docs/protocols/blend_emitter.md`.
 
 ### Fixed
+- **Chaos/k6 harness no longer masks teardown + setup failures** (A20 test-hardening
+  backlog). Every best-effort recovery step in the chaos scenarios' `cleanup` traps
+  (`docker start`, `docker network connect`, the redis-misconf `redis-cli` recovery
+  sequence) previously ran under bare `|| true`, so a failed recovery logged **success**
+  and left the operator's dev stack silently broken; each now emits an explicit `WARN`
+  with a manual-recovery hint (traps still return 0). `03-redis-network-partition.sh`
+  additionally stopped discarding `heal_partition`'s own output. On the k6 side,
+  `test/load/scenarios/lib/warmup.js`'s `tlsWarmup`/`warmPriceCache` (called from every
+  scenario's `setup()`) never checked their HTTP responses — a load run against a dead
+  target "passed" its warmup; `tlsWarmup` now throws on non-2xx `/healthz` (aborting the
+  run) and `warmPriceCache` warns per-pair, throwing only if every pair fails.
 - **Explorer: the three sites that guessed the `/v1/assets/{asset_id}` dual response shape
   now branch on `kind` (ADR-0042 LC-040) instead of shape-sniffing.**
   `assets/[slug]/page.tsx`'s `fetchCoinDirect` — the primary site, previously discriminating
