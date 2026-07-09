@@ -73,6 +73,30 @@ against.
   `MarketsListPools`) replace the concatenation, producing byte-identical wire keys
   (golden-string tests in `internal/cachekeys/keys_test.go` pin every family's wire
   shape). Wire-compatible — no cache invalidation on deploy.
+- **ADR-0042 LC-040: `kind` wire-shape discriminator added to the OpenAPI spec** for
+  `/v1/assets/{asset_id}`'s dual response shape — `kind: "stellar_asset"` (required, new)
+  on the `Asset` schema, `kind: "catalogue"` (required, new) on `GlobalAssetView`. Spec-only
+  in this commit; the Go handlers + `pkg/client` land in follow-up commits. Scalar's
+  rendered-discriminator support for a nested `data.kind` (one level inside the
+  allOf-flattened envelope) could not be verified in this sandboxed, network-restricted
+  environment — `docs/reference/api/index.html` loads the Scalar bundle from a CDN at
+  browser view-time, and no headless-browser tool was available to render it. Per the
+  plan's documented fallback, `GET /assets/{asset_id}`'s `oneOf` ships **without** a formal
+  `discriminator:` block: disambiguation is `kind` in each branch's `required` list plus
+  prose, mirroring how `pkg/client/spec_contract_test.go`'s `envelopeRef` already
+  disambiguates mechanically server-side. Flip to a real `discriminator:` block once
+  someone confirms Scalar resolves the nested property correctly.
+- **`x-stability: experimental` OpenAPI extension** on the explorer/operator-only read
+  surface (ADR-0042 decision #4): `/ledgers` + its 2 sub-paths, `/tx/{hash}`, `/operations`,
+  `/contracts` + its 5 sub-paths (incl. `/transfers`), `/accounts` + its 3 sub-paths,
+  `/search`, `/diagnostics/ingestion`, `/diagnostics/archive` — 18 operations, kept 1:1 with
+  `pkg/client/spec_contract_test.go`'s `uncoveredOperations` "explorer surface" register (a
+  cross-reference comment in the spec ties the two lists together so they don't drift
+  apart). No wire-shape stability promise on this surface yet. (Widened from the plan's
+  "four"/"two" sub-path counts to match `uncoveredOperations` exactly — `/contracts/{id}/transfers`
+  and all 3 `/accounts/{g_strkey}/*` sub-paths are already registered there as the same
+  "explorer surface" class, so leaving them out would have immediately made the two lists
+  inconsistent.)
 
 ### Fixed
 - The residual CEX deadlock vector after the full-conflict-key batch sort: a batch spans
