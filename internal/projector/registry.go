@@ -9,6 +9,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/sources/aquarius"
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
 	blend_backstop "github.com/StellarIndex/stellar-index/internal/sources/blend_backstop"
+	blend_emitter "github.com/StellarIndex/stellar-index/internal/sources/blend_emitter"
 	"github.com/StellarIndex/stellar-index/internal/sources/cctp"
 	"github.com/StellarIndex/stellar-index/internal/sources/comet"
 	"github.com/StellarIndex/stellar-index/internal/sources/defindex"
@@ -140,6 +141,16 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 		return Source{
 			Name:              blend_backstop.SourceName,
 			Decoder:           blend_backstop.NewDecoder(),
+			ExcludeTopic0Syms: firehoseExcludeSyms,
+		}, true, nil
+	case blend_emitter.SourceName:
+		// ADR-0035/0040: contract-gated (curated set — the Emitter has
+		// no factory namespace). gated[blend_emitter] layers the
+		// protocol_contracts warm on the in-code MainnetGatedSet trust
+		// root, same shape as comet.
+		return Source{
+			Name:              blend_emitter.SourceName,
+			Decoder:           blend_emitter.NewDecoder(gated[blend_emitter.SourceName]...),
 			ExcludeTopic0Syms: firehoseExcludeSyms,
 		}, true, nil
 	case cctp.SourceName:

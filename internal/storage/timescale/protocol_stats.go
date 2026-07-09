@@ -25,6 +25,8 @@ import (
 //     (ledger_close_time) + blend_auctions (ts) — summed as 'blend'.
 //   - blend_backstop_events (ledger_close_time) — 'blend_backstop'
 //     (the Backstop insurance module, a separate logical source).
+//   - blend_emitter_events (ledger_close_time) — 'blend_emitter'
+//     (protocol-emissions plumbing, a separate logical source).
 //   - phoenix_liquidity + phoenix_stake_events (ledger_close_time) —
 //     added into 'phoenix' on top of its trades leg.
 //   - comet_liquidity (ledger_close_time) — added into 'comet'.
@@ -57,6 +59,9 @@ const countRecentEventsQuery = `
 	 WHERE ts >= now() - interval '24 hours'
 	UNION ALL
 	SELECT 'blend_backstop', count(*) FROM blend_backstop_events
+	 WHERE ledger_close_time >= now() - interval '24 hours'
+	UNION ALL
+	SELECT 'blend_emitter', count(*) FROM blend_emitter_events
 	 WHERE ledger_close_time >= now() - interval '24 hours'
 	UNION ALL
 	SELECT 'phoenix', count(*) FROM phoenix_liquidity

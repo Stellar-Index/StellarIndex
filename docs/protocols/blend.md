@@ -126,3 +126,17 @@ the lake event breakdown + `events_24h`) and back the "Backstop volume
 > that replay both backfills V1 genesis→now and corrects previously
 > mis-mapped `withdraw` / `gulp_emissions` / `rw_zone_add` rows written
 > under the pre-fix decoder.
+> `blend_backstop` source. **Provenance caveat:** the 10 event schemas
+> were reverse-engineered from mainnet lake samples (2026-06-15), not yet
+> confirmed against the Blend team's published contract source — so the
+> source is **live-capture only** (no historical backfill / `BackfillSafe`
+> flip until confirmed). **Blend team:** please confirm the V1 backstop
+> address, the event schemas, and whether an Emitter-contract event
+> surface exists that we should also cover.
+>
+> **Update 2026-07-09:** yes — the Emitter contract
+> (`CCOQM6S7ICIUWA225O5PSJWUBEMXGFSSW2PQFO6FP4DQEKMS5DASRGRR`) is now
+> covered by the dedicated `blend_emitter` source (`distribute` /
+> `drop` / `q_swap` / `swap`, gated on contract identity — its
+> `distribute` topic collides with this Backstop's own `distribute`
+> event above). See [`docs/protocols/blend_emitter.md`](blend_emitter.md).

@@ -15,6 +15,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/sources/band"
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
 	blend_backstop "github.com/StellarIndex/stellar-index/internal/sources/blend_backstop"
+	blend_emitter "github.com/StellarIndex/stellar-index/internal/sources/blend_emitter"
 	"github.com/StellarIndex/stellar-index/internal/sources/cctp"
 	claimable_balances "github.com/StellarIndex/stellar-index/internal/sources/claimable_balances"
 	"github.com/StellarIndex/stellar-index/internal/sources/comet"
@@ -361,6 +362,7 @@ func IsProjectedEvent(ev consumer.Event) bool {
 		blend.NewAuctionEvent, blend.FillAuctionEvent, blend.DeleteAuctionEvent,
 		blend.PositionEvent, blend.EmissionEvent, blend.AdminEvent,
 		blend_backstop.Event,
+		blend_emitter.DistributeEvent, blend_emitter.DropEvent, blend_emitter.SwapConfigEvent,
 		cctp.Event, rozo.Event,
 		sorocredit.Event,
 		defindex.Event, defindex.VaultEvent,
@@ -677,6 +679,12 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		persistBlendAdminEvent(ctx, logger, store, e)
 	case blend_backstop.Event:
 		persistBlendBackstopEvent(ctx, logger, store, e)
+	case blend_emitter.DistributeEvent:
+		persistBlendEmitterDistribute(ctx, logger, store, e)
+	case blend_emitter.DropEvent:
+		persistBlendEmitterDrop(ctx, logger, store, e)
+	case blend_emitter.SwapConfigEvent:
+		persistBlendEmitterSwapConfig(ctx, logger, store, e)
 	case cctp.Event:
 		persistCCTPEvent(ctx, logger, store, e)
 	case rozo.Event:
@@ -1010,6 +1018,88 @@ func persistBlendBackstopEvent(ctx context.Context, logger *slog.Logger, store *
 	logger.Debug("Blend backstop event ingested",
 		"source", blend_backstop.SourceName, "event_type", e.EventType,
 		"contract_id", e.ContractID, "ledger", e.Ledger, "tx_hash", e.TxHash)
+}
+
+// persistBlendEmitterDistribute writes one `distribute` row (one
+// BLND emission to a backstop) via Store.InsertBlendEmitterDistribute.
+func persistBlendEmitterDistribute(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend_emitter.DistributeEvent) {
+	if err := store.InsertBlendEmitterDistribute(ctx, timescale.BlendEmitterDistributeEvent{
+		ContractID:      e.ContractID,
+		Ledger:          e.Ledger,
+		LedgerCloseTime: e.ObservedAt,
+		TxHash:          e.TxHash,
+		OpIndex:         e.OpIndex,
+		EventIndex:      e.EventIndex,
+		BackstopID:      e.BackstopID,
+		Amount:          e.Amount,
+	}); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(blend_emitter.SourceName, "blend_emitter_distribute").Inc()
+		logger.Error("insert Blend Emitter distribute failed",
+			"contract_id", e.ContractID, "backstop_id", e.BackstopID,
+			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return
+	}
+	bumpEntryCount(ctx, logger, store, blend_emitter.SourceName)
+	logger.Debug("Blend Emitter distribute ingested",
+		"source", blend_emitter.SourceName, "backstop_id", e.BackstopID,
+		"ledger", e.Ledger, "amount", e.Amount.String())
+}
+
+// persistBlendEmitterDrop writes one `drop` event, fanned out to one
+// row per recipient by Store.InsertBlendEmitterDrop (single
+// transaction — see its godoc for why a partial fan-out can't
+// happen).
+func persistBlendEmitterDrop(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend_emitter.DropEvent) {
+	recipients := make([]timescale.BlendEmitterRecipient, len(e.Recipients))
+	for i, r := range e.Recipients {
+		recipients[i] = timescale.BlendEmitterRecipient{Address: r.Address, Amount: r.Amount}
+	}
+	if err := store.InsertBlendEmitterDrop(ctx, timescale.BlendEmitterDropEvent{
+		ContractID:      e.ContractID,
+		Ledger:          e.Ledger,
+		LedgerCloseTime: e.ObservedAt,
+		TxHash:          e.TxHash,
+		OpIndex:         e.OpIndex,
+		EventIndex:      e.EventIndex,
+		Recipients:      recipients,
+	}); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(blend_emitter.SourceName, "blend_emitter_drop").Inc()
+		logger.Error("insert Blend Emitter drop failed",
+			"contract_id", e.ContractID, "recipients", len(e.Recipients),
+			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return
+	}
+	bumpEntryCount(ctx, logger, store, blend_emitter.SourceName)
+	logger.Info("Blend Emitter drop ingested",
+		"source", blend_emitter.SourceName, "recipients", len(e.Recipients),
+		"ledger", e.Ledger, "tx_hash", e.TxHash)
+}
+
+// persistBlendEmitterSwapConfig writes one `q_swap` / `swap` row via
+// Store.InsertBlendEmitterSwapConfig.
+func persistBlendEmitterSwapConfig(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend_emitter.SwapConfigEvent) {
+	if err := store.InsertBlendEmitterSwapConfig(ctx, timescale.BlendEmitterSwapConfigEvent{
+		ContractID:       e.ContractID,
+		Ledger:           e.Ledger,
+		LedgerCloseTime:  e.ObservedAt,
+		TxHash:           e.TxHash,
+		OpIndex:          e.OpIndex,
+		EventIndex:       e.EventIndex,
+		Kind:             timescale.BlendEmitterKind(e.Kind),
+		NewBackstop:      e.NewBackstop,
+		NewBackstopToken: e.NewBackstopToken,
+		UnlockTime:       time.Unix(int64(e.UnlockTime), 0).UTC(), //nolint:gosec // UnlockTime is a Soroban-emitted Unix timestamp, in range.
+	}); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(blend_emitter.SourceName, "blend_emitter_swap_config").Inc()
+		logger.Error("insert Blend Emitter swap config failed",
+			"contract_id", e.ContractID, "kind", e.Kind,
+			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return
+	}
+	bumpEntryCount(ctx, logger, store, blend_emitter.SourceName)
+	logger.Info("Blend Emitter swap config ingested",
+		"source", blend_emitter.SourceName, "kind", e.Kind,
+		"new_backstop", e.NewBackstop, "ledger", e.Ledger)
 }
 
 func persistCCTPEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e cctp.Event) {

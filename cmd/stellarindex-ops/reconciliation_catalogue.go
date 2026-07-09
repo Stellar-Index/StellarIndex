@@ -10,6 +10,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/sources/band"
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
 	blend_backstop "github.com/StellarIndex/stellar-index/internal/sources/blend_backstop"
+	blend_emitter "github.com/StellarIndex/stellar-index/internal/sources/blend_emitter"
 	"github.com/StellarIndex/stellar-index/internal/sources/cctp"
 	"github.com/StellarIndex/stellar-index/internal/sources/comet"
 	"github.com/StellarIndex/stellar-index/internal/sources/defindex"
@@ -144,6 +145,22 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			{"trades", "source = 'comet'", []string{"comet.trade"}},
 			{"comet_liquidity", "", []string{"comet.liquidity"}},
 		}},
+		{
+			// blend_emitter — ADR-0035/0040 contract-gated (curated
+			// one-contract set, same shape as comet/cctp: no factory
+			// namespace exists). contractIDs pins recognition
+			// attribution the same way cctp's does — without it an
+			// unrecognised blend_emitter topic would fall into the
+			// system-wide recognition bucket instead of capping this
+			// source.
+			name: "blend_emitter", genesis: 51_499_914, dec: blend_emitter.NewDecoder(),
+			contractIDs: blend_emitter.MainnetGatedSet(),
+			targets: []reconTarget{
+				{"blend_emitter_events", "", []string{
+					"blend_emitter.distribute", "blend_emitter.drop", "blend_emitter.swap_config",
+				}},
+			},
+		},
 		{
 			name: "cctp", genesis: 62_403_000, dec: cctp.NewDecoder(),
 			// contractIDs pins recognition attribution (board #31):
