@@ -381,10 +381,13 @@ func (s *Store) aquariusReserveBlocks(ctx context.Context, blk *BespokeBlock, wi
 //
 // Depth here is a WINDOW net flow (added − removed over the window), NOT an
 // absolute reserve or USD TVL — Comet emits no post-state reserve snapshot
-// and has no published price. And per CS-026 Comet is the LAST un-gated
-// on-chain source: its decoder matches the shared Balancer-v1 ("POOL", …)
-// topic bytes with no contract-identity gate, so the surfaced flow is NOT
-// contract-identity-gated. Both caveats are appended as Notes.
+// and has no published price. Comet is now contract-identity gated (curated
+// one-pool allowlist, 2026-07-08 — CS-026 closed): the decoder's Matches()
+// requires the emitting contract to be in comet.MainnetGatedSet, so a
+// look-alike Balancer-v1 deployment can no longer land NEW rows here. Rows
+// captured before the gate shipped were written by the prior topic-only-
+// match decoder and are not retroactively re-verified, so historical rows
+// may predate the gate. Both caveats are appended as Notes.
 //
 // Empty-safe: a no-op when no liquidity events were captured, so the block
 // renders cleanly with just the volume KPIs.
@@ -442,7 +445,7 @@ func (s *Store) cometLiquidityBlocks(ctx context.Context, blk *BespokeBlock, win
 
 	blk.Notes = append(blk.Notes,
 		"Net liquidity flow is a WINDOW delta (added − removed) from comet_liquidity per-event amounts (migration 0042) in native token base units (per-asset decimals) — NOT an absolute pool reserve or USD TVL. Comet emits no post-state reserve snapshot and has no independently published price; Net can be negative when removals exceed adds in the window.",
-		"CS-026 caveat: Comet is the LAST un-gated on-chain source — its decoder matches the shared Balancer-v1 (\"POOL\", …) topic bytes with no contract-identity gate (ADR-0035), so a look-alike contract deploying the Comet code can inject fabricated liquidity events (and trades) under source=comet. These depth figures are therefore NOT contract-identity-gated; trust them only scoped to a known pool contract (e.g. the Blend backstop CAS3FL6T…). See docs/protocols/comet.md.",
+		"CS-026 caveat: Comet is contract-identity GATED as of 2026-07-08 (curated one-pool allowlist — comet.MainnetGatedSet, today exactly one pool, the Blend BLND/USDC backstop CAS3FL6T…; ADR-0035/0040) — a look-alike contract emitting the shared Balancer-v1 (\"POOL\", …) topic bytes can no longer land new rows here; a foreign emitter now fails the decoder's contract-identity check and surfaces via the completeness recognition audit instead. Rows dated before the gate shipped were captured by the prior topic-only-match decoder and were NOT retroactively re-verified, so historical rows may predate the gate and include a non-curated emitter. See docs/protocols/comet.md.",
 	)
 	return nil
 }
@@ -455,8 +458,9 @@ func (s *Store) cometLiquidityBlocks(ctx context.Context, blk *BespokeBlock, win
 // Depth here is a WINDOW net flow (provide − withdraw over the window), NOT
 // an absolute reserve or USD TVL — Phoenix pool events carry the moved
 // amounts, not post-state reserves, and Phoenix has no published price.
-// Phoenix IS contract-identity gated (the curated-set gate, 2026-07-02), so
-// unlike Comet there is no un-gated-injection caveat.
+// Phoenix IS contract-identity gated (the curated-set gate, 2026-07-02 —
+// earlier than Comet's 2026-07-08 gate), so unlike Comet there is no
+// historical-rows-may-predate-the-gate caveat here.
 //
 // Empty-safe: a no-op when no liquidity events were captured, so the block
 // renders cleanly with just the volume KPIs.

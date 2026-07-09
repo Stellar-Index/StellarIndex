@@ -1,12 +1,14 @@
 # Comet — contract & event verification
 
 > **For the Comet / Blend teams:** this documents how Stellar Index
-> attributes Comet weighted-AMM trades and liquidity flow, and — bluntly
-> — where the attribution is currently **weakest**. Comet is the one
-> integrated on-chain source that is **not yet gated on contract
-> identity** (see "Gate status" below). If you can send us the complete
-> set of live Comet pool contracts (or point us at a factory / WASM-hash
-> we can enumerate from), we can close that gap.
+> attributes Comet weighted-AMM trades and liquidity flow. As of
+> 2026-07-08 Comet is **gated on contract identity** (a curated
+> one-pool allowlist — see "Gate status" below); before that date it
+> was the one integrated on-chain source not yet gated, and rows
+> captured before the gate shipped were not retroactively re-verified.
+> If you can send us further live Comet pool contracts beyond the
+> known Blend backstop (or point us at a factory / WASM-hash we can
+> enumerate from), we can grow the curated set.
 >
 > - **Enumeration method:** curated allowlist (ADR-0040 §1 mechanism 3) —
 >   the WASM-audit census found exactly ONE Comet pool on mainnet
@@ -16,7 +18,9 @@
 > - **Last verified:** 2026-07-08 (source: `internal/sources/comet`;
 >   WASM audit `docs/operations/wasm-audits/comet.md`, 2026-05-26).
 > - **Gate status:** ✅ **GATED (curated one-pool allowlist, 2026-07-08 —
->   CS-026 closed; comet was the last ungated source)**.
+>   CS-026 closed; comet was the last ungated source). Rows captured
+>   before 2026-07-08 predate the gate and were not retroactively
+>   re-verified.**
 
 ## What Comet is
 
