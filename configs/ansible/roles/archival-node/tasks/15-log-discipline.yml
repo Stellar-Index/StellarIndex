@@ -332,3 +332,28 @@
   # No automatic restart: CH restarts are operator-coordinated (the
   # lake sink tolerates them, but merges/queries in flight die).
   tags: [clickhouse, log-discipline]
+
+- name: ClickHouse merge-memory guard drop-in
+  # 2026-07-09 incident: the contract_events_daily uniqExact(UInt128)
+  # merge's allocation exceeded the KERNEL COMMIT BUDGET
+  # (vm.overcommit_memory=2 — see the tuning drop-in above) and failed
+  # with an allocator ErrnoException inside AggregatingSortedAlgorithm;
+  # the background executor retried in a loop, each attempt starving
+  # queries + the live sink until the server was effectively wedged.
+  # This soft limit makes an oversized merge ABORT CLEANLY
+  # (MEMORY_LIMIT_EXCEEDED) instead of exhausting the commit budget.
+  # It does NOT fix that table's merge — that is parked persistently
+  # via ALTER TABLE stellar.contract_events_daily MODIFY SETTING
+  # max_bytes_to_merge_at_max_space_in_pool = 1 until the MV's
+  # uniqExact state is redesigned (tracked in notes/ROADMAP.md).
+  ansible.builtin.copy:
+    dest: /etc/clickhouse-server/config.d/zz-merge-memory-guard.xml
+    owner: clickhouse
+    group: clickhouse
+    mode: "0644"
+    content: |
+      <clickhouse>
+          <merges_mutations_memory_usage_soft_limit>10737418240</merges_mutations_memory_usage_soft_limit>
+      </clickhouse>
+  # No automatic restart — same operator-coordinated policy as above.
+  tags: [clickhouse, log-discipline]

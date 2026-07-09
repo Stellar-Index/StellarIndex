@@ -152,6 +152,13 @@ against.
   is unchanged. The real subset compare (Algorithm 2's `SACWrapped` component vs Algorithm
   3's total, which IS a true equality) needs new plumbing not yet built — documented as a
   follow-up in `internal/supply/crosscheck.go` rather than approximated.
+- ClickHouse merge-memory guard (ansible drop-in, applied to r1 2026-07-09): the
+  `contract_events_daily` uniqExact(UInt128) merge exceeded the kernel commit budget
+  (`vm.overcommit_memory=2`) and retry-looped, starving queries + the live sink for hours
+  (TOO_MANY_PARTS at 3,000 → bounded-dropped ledgers → server effectively wedged).
+  `merges_mutations_memory_usage_soft_limit=10G` makes oversized merges abort cleanly; the
+  table's large merges are parked persistently (`max_bytes_to_merge_at_max_space_in_pool=1`)
+  pending an MV redesign (the uniqExact state cannot merge within the commit budget).
 - The `stellarindex_galexie_catchup_refused` page alert (built after the 2026-07-05 wedge)
   could never fire: its textfile probe wrote to Debian's `/var/lib/prometheus/node-exporter`
   instead of the node_exporter's configured `/var/lib/node_exporter/textfile_collector`, AND
