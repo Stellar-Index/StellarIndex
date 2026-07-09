@@ -71,12 +71,24 @@ function getAssetIndex(): Promise<AssetIndex> {
 // XLM/native and any AssetDetail response already carry coin.asset_id; a
 // thin GlobalAssetView (catalogue slugs like usdc, aqua) has none, so we
 // resolve it from the listing index by slug.
+//
+// Discriminated on `kind` (ADR-0042 LC-040) rather than `coin.asset_id`
+// truthiness alone: the former shape-sniff would have (in theory) let a
+// GlobalAssetView payload with a stray non-empty asset_id-shaped field
+// short-circuit into the wrong branch. `kind === 'stellar_asset'` is the
+// server's actual contract for "this response carries a real asset_id",
+// so checking it first is the load-bearing condition; `coin.asset_id` is
+// kept as a truthiness guard alongside it (belt-and-braces — an
+// unexpected empty string on the stellar_asset branch still falls
+// through to the index lookup instead of returning "").
 function resolveChartAsset(
   slug: string,
   coin: Coin,
   index: AssetIndex,
 ): string | null {
-  if (coin.asset_id) return coin.asset_id;
+  if ((coin.kind as string) === 'stellar_asset' && coin.asset_id) {
+    return coin.asset_id;
+  }
   const norm = slug.toLowerCase();
   if (norm === 'xlm' || norm === 'native') return 'native';
   return index.byKey.get(norm) ?? null;

@@ -18,6 +18,16 @@ type Params = Promise<{ ticker: string }>;
 // currency (F-1201 migrated this from /v1/currencies/{ticker}).
 // Derived from the generated OpenAPI contract.
 // class is spec'd on GlobalAssetView since board #33.
+//
+// No shape ambiguity here: this route only ever fetches a known
+// fiat ticker, so it decodes straight into GlobalAssetView without
+// checking `kind` (unlike assets/[slug]/page.tsx's fetchCoinDirect
+// and embed/asset/[slug]/page.tsx's resolveChartAsset, which branch
+// on `kind === 'stellar_asset' | 'catalogue'`, ADR-0042 LC-040, since
+// those routes DO see both wire shapes off the same endpoint). If
+// this fetcher is ever generalised to share the dual-shape fetcher
+// those use, GlobalAssetView.kind (now "catalogue") is available for
+// the same discrimination.
 type GlobalAssetView = components['schemas']['GlobalAssetView'];
 
 interface CurrencyDetail {

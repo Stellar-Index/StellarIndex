@@ -15,6 +15,25 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Explorer: the three sites that guessed the `/v1/assets/{asset_id}` dual response shape
+  now branch on `kind` (ADR-0042 LC-040) instead of shape-sniffing.**
+  `assets/[slug]/page.tsx`'s `fetchCoinDirect` — the primary site, previously discriminating
+  on `typeof data.asset_id !== 'string'` — now checks `data.kind !== 'stellar_asset'`.
+  `embed/asset/[slug]/page.tsx`'s `resolveChartAsset` — previously `if (coin.asset_id)` —
+  now requires `coin.kind === 'stellar_asset' && coin.asset_id`, closing a latent case where
+  a truthy-but-wrong `asset_id` could have short-circuited the wrong branch.
+  `embed/currency/[ticker]/page.tsx` needed no logic change (that route only ever fetches a
+  known fiat ticker, so there's no shape ambiguity to resolve) but its JSDoc now notes `kind`
+  is available if that fetcher is ever generalised. One additional site the plan didn't
+  originally name: `assets/catalogue.ts`'s `fetchCatalogue` builds a synthetic
+  `GlobalAssetView` projected from `/v1/assets/verified` listing rows (which have no `kind`
+  of their own) — `tsc --noEmit` caught this as a compile error once `GlobalAssetView.kind`
+  became required, fixed by stamping `kind: 'catalogue'` on the projection (correct by
+  construction: every value in that map IS the catalogue shape). `pnpm typecheck` / `pnpm
+  lint` / `pnpm build` (CI's `NEXT_PUBLIC_API_BASE_URL=http://api.ci-stub.invalid` stub) all
+  green.
+
 ### Changed — BREAKING (`pkg/client`)
 - **`Client.Asset()` now returns `*Envelope[AssetLookup]` instead of `*Envelope[AssetDetail]`**
   (ADR-0042 LC-040). `AssetLookup` is a new typed union (`pkg/client/asset_lookup.go`) with
