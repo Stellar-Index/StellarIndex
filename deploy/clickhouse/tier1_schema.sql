@@ -254,25 +254,58 @@ ORDER BY (contract_id, ledger_seq, tx_hash, op_index, event_index);
 -- without the ~15s raw scan (BACKLOG #43 / page-audit REMAINING). The
 -- source table is ReplacingMergeTree, so a SummingMergeTree MV would
 -- OVERCOUNT on duplicate inserts (live-sink retries, ch-rebuild
--- re-derives re-inserting parts). uniqExactState over the event's
--- natural key (ledger_seq, tx_hash, op_index, event_index) is exact
--- under duplicates by construction.
+-- re-derives re-inserting parts) — the `events` column has to dedup on
+-- the event's natural key (ledger_seq, tx_hash, op_index, event_index),
+-- not just sum row counts.
 --
--- Historical fill (run ONCE after creating, off-peak):
+-- events uses uniqCombined(17), NOT uniqExact (2026-07-09 incident /
+-- docs/architecture/contract-events-daily-redesign.md). uniqExact's state
+-- is a literal hash SET that grows ~16 bytes per distinct event and is
+-- UNBOUNDED for a hot contract+day+event_type+topic group — on r1 this
+-- grew large enough that background merges of the AggregatingMergeTree
+-- exceeded the kernel commit budget (vm.overcommit_memory=2) and
+-- retry-looped, starving the live sink for hours. uniqCombined(17) hashes
+-- the SAME natural key into a bounded HyperLogLog-family sketch (~10-96KB
+-- per state regardless of cardinality — measured, not theoretical; see
+-- the redesign doc), so it (a) still dedupes duplicate/retried natural
+-- keys exactly at the cardinalities this table actually sees, avoiding
+-- the same overcount SummingMergeTree would have caused, while (b)
+-- merging in bounded memory. Accuracy loss is ~0.1-0.5% at the
+-- cardinalities measured (500K-4M uniques/state) — this table is a
+-- dashboard pre-aggregation (explorer's compact-formatted "events · 24h" /
+-- event-breakdown charts), never the ADR-0033 completeness oracle, so the
+-- tradeoff is one-sided: it fixes an active production fuse for
+-- imperceptible display-rounding error. See the redesign doc's reader
+-- survey for the full evidence chain.
+--
+-- Historical fill (run ONCE after creating, off-peak, windowed by
+-- ledger_seq on a large existing lake — see the redesign doc's runbook
+-- for the run-heavy-job-wrapped windowed form):
 --   INSERT INTO stellar.contract_events_daily
 --   SELECT toDate(close_time) AS day, contract_id, event_type,
 --          topic_0_sym, if(topic_0_sym = '', topics_xdr[2], '') AS t1_xdr,
 --          if(topic_0_sym = '', topics_xdr[1], '') AS t0_xdr,
---          uniqExactState(ledger_seq, tx_hash, op_index, event_index)
+--          uniqCombinedState(17)(ledger_seq, tx_hash, op_index, event_index)
 --   FROM stellar.contract_events FINAL
 --   GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
 --
--- Adding t0_xdr to an EXISTING deployment (r1) — the column is in the
--- ORDER BY, so it can't be a bare ADD COLUMN; recreate + re-fill:
+-- Changing the table's shape on an EXISTING deployment (r1) — an
+-- AggregateFunction column's serialized state format is tied to its
+-- declared function+params, so neither the t0_xdr column (2026-06, it's
+-- in the ORDER BY) nor the uniqExact→uniqCombined engine swap
+-- (2026-07-09) can be a bare ALTER; both needed recreate + re-fill:
 --   RENAME TABLE stellar.contract_events_daily TO stellar.contract_events_daily_old;
 --   -- (also drop/recreate the _mv), run this CREATE, then the fill above,
---   -- then DROP the _old table. Until t0_xdr is populated the fast query
---   -- errors and ProtocolEventBreakdown gracefully falls back to the raw scan.
+--   -- then DROP the _old table. Until the new table is populated the fast
+--   -- query errors and ProtocolEventBreakdown/ProtocolDailyActivity
+--   -- gracefully fall back to the raw scan.
+-- The uniqCombined swap ships as a side-by-side v2 build so r1 never runs
+-- with the fast path down — see
+-- deploy/clickhouse/contract_events_daily_v2.sql and
+-- docs/architecture/contract-events-daily-redesign.md for the exact,
+-- tested apply sequence (this file's canonical CREATE below is what a
+-- FRESH deployment gets automatically; r1 needs the v2 runbook because
+-- IF NOT EXISTS is a no-op against its already-existing v1 table).
 CREATE TABLE IF NOT EXISTS stellar.contract_events_daily
 (
     day          Date,
@@ -288,7 +321,7 @@ CREATE TABLE IF NOT EXISTS stellar.contract_events_daily
     -- name but emitted as a non-Symbol scval (Phoenix: [String("swap"),
     -- String("<field>")]). Decoded at read time by effectiveEventName.
     t0_xdr       String,
-    events       AggregateFunction(uniqExact, UInt32, String, UInt32, UInt32)
+    events       AggregateFunction(uniqCombined(17), UInt32, String, UInt32, UInt32)
 )
 ENGINE = AggregatingMergeTree
 ORDER BY (contract_id, day, event_type, topic_0_sym, t1_xdr, t0_xdr);
@@ -302,7 +335,7 @@ SELECT
     topic_0_sym,
     if(topic_0_sym = '', topics_xdr[2], '') AS t1_xdr,
     if(topic_0_sym = '', topics_xdr[1], '') AS t0_xdr,
-    uniqExactState(ledger_seq, tx_hash, op_index, event_index) AS events
+    uniqCombinedState(17)(ledger_seq, tx_hash, op_index, event_index) AS events
 FROM stellar.contract_events
 GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
 

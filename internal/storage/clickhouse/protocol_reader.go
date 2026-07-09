@@ -271,10 +271,15 @@ func (r *ExplorerReader) ProtocolContractActivity(ctx context.Context, contractI
 //
 // The daily pre-aggregation (deploy/clickhouse/tier1_schema.sql,
 // contract_events_daily + its MV) collapses the ~15s raw scans behind
-// /v1/protocols/{name} into millisecond reads over per-day uniqExact
-// states — exact under duplicate inserts by construction (the raw
-// table is ReplacingMergeTree; a Summing MV would overcount on
-// live-sink retries and ch-rebuild re-derives). Callers probe
+// /v1/protocols/{name} into millisecond reads over per-day uniqCombined(17)
+// states (docs/architecture/contract-events-daily-redesign.md — replaced
+// uniqExact 2026-07-09 after its unbounded per-state hash set blew the
+// ClickHouse merge memory budget on r1). uniqCombined still dedups a
+// group's natural key (ledger_seq, tx_hash, op_index, event_index) — so a
+// Summing MV's live-sink-retry / ch-rebuild-re-derive overcount risk is
+// still avoided — but in bounded memory, at the cost of ~0.1-0.5% count
+// error (imperceptible: the explorer only ever renders these numbers
+// compact-formatted, e.g. "1.2M events"). Callers probe
 // DailyActivityAvailable once and fall back to the raw readers when
 // the table hasn't been created/backfilled on a deployment yet.
 
@@ -297,7 +302,7 @@ func (r *ExplorerReader) ProtocolDailyActivityFast(ctx context.Context, contract
 	if len(contractIDs) == 0 {
 		return nil, nil
 	}
-	const q = `SELECT toString(day) AS d, uniqExactMerge(events) AS c
+	const q = `SELECT toString(day) AS d, uniqCombinedMerge(17)(events) AS c
 		FROM stellar.contract_events_daily
 		WHERE contract_id IN (?) AND event_type = 'contract' AND day >= ?
 		GROUP BY day ORDER BY day ASC`
@@ -325,7 +330,7 @@ func (r *ExplorerReader) ProtocolEventBreakdownFast(ctx context.Context, contrac
 	if len(contractIDs) == 0 {
 		return nil, nil
 	}
-	const q = `SELECT topic_0_sym, t1_xdr, t0_xdr, toUInt64(uniqExactMerge(events)) AS c
+	const q = `SELECT topic_0_sym, t1_xdr, t0_xdr, toUInt64(uniqCombinedMerge(17)(events)) AS c
 		FROM stellar.contract_events_daily
 		WHERE contract_id IN (?) AND event_type = 'contract' AND day >= ?
 		GROUP BY topic_0_sym, t1_xdr, t0_xdr ORDER BY c DESC LIMIT 200`
