@@ -57,11 +57,16 @@ var Registry = map[string]Metadata{
 	"blend": {Class: ClassLending, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-05-02; 11 contracts (9 pools + backstop + factory), 3 unique WASMs, no mid-life upgrades observed in 5h4m walk over [50457424, 62249727]. See docs/operations/wasm-audits/blend.md §"Phase 2 results". */},
 	// blend_emitter — protocol-emissions plumbing (mints/distributes
 	// BLND to backstops), same family as `blend`. No published price,
-	// never VWAP. BackfillSafe stays false until a wasm-history audit
-	// confirms event-schema stability across the Emitter's 3 observed
-	// WASM uploads (ledgers 51,351,843 / 51,498,920 / 52,314,704) —
-	// see internal/sources/blend_emitter/README.md "Backfill safety".
-	"blend_emitter": {Class: ClassLending, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: false},
+	// never VWAP. Audited 2026-07-10 directly against the ClickHouse
+	// raw lake (no wasm-history/MinIO walk): all 469 lifetime events
+	// (465/465 `distribute` exhaustively, not sampled, plus both
+	// `drop`s and the one `q_swap`/`swap` individually) decode to the
+	// exact shape the decoder expects; the sole confirmed WASM hash
+	// (438a5528…) is SHA256-verified against the extracted bytes. The
+	// package doc's "3 observed WASM uploads" was NOT corroborated by
+	// the lake for 2 of 3 claimed ledgers — see
+	// docs/operations/wasm-audits/blend_emitter.md.
+	"blend_emitter": {Class: ClassLending, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-07-10; see docs/operations/wasm-audits/blend_emitter.md */},
 	// sorocredit — an unbranded consumer-USDC credit / CDP protocol
 	// (single main contract CCG5EWFY…). Credit positions / statements /
 	// scheduled-settlements — no published price, never VWAP. Its

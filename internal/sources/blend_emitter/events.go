@@ -46,10 +46,20 @@
 // IDENTITY — the emitting contract must be in the curated registry —
 // exactly the comet.MainnetGatedSet() pattern (curated set, no
 // factory namespace to anchor on: the Emitter has a single canonical
-// mainnet instance spanning Blend V1→V2, confirmed via up to 3 WASM
-// uploads at ledgers 51,351,843 / 51,498,920 / 52,314,704 — schema
-// stability ACROSS those versions is an OPEN wasm-audit item, so
-// BackfillSafe starts false; see README.md "Backfill safety").
+// mainnet instance spanning Blend V1→V2).
+//
+// WASM audit CLOSED 2026-07-10 (docs/operations/wasm-audits/blend_emitter.md,
+// ClickHouse-lake-only — no MinIO wasm-history walk): the contract's
+// sole confirmed WASM hash
+// (438a5528cff17ede6fe515f095c43c5f15727af17d006971485e52462e7e7b89)
+// SHA256-verifies against bytes extracted from the lake, and ALL 469
+// lifetime events (465/465 `distribute` exhaustively, not sampled,
+// plus both `drop`s and the one `q_swap`/`swap`) decode to the exact
+// shapes below. The audit did NOT corroborate this comment's earlier
+// claim of "3 WASM uploads at ledgers 51,351,843 / 51,498,920 /
+// 52,314,704" — the lake shows zero Soroban activity anywhere on the
+// network at the first two ledgers, and the third resolves to the
+// same single hash already established. BackfillSafe is now true.
 package blend_emitter
 
 import (
@@ -66,10 +76,10 @@ const SourceName = "blend_emitter"
 // MainnetEmitter is the single canonical Blend Emitter contract on
 // mainnet — one instance spanning Blend V1→V2 (verified against the
 // ClickHouse lake 2026-07-09: 469 total events across its whole
-// history, no address change observed). Up to 3 WASM uploads were
-// observed for this address (ledgers 51,351,843 / 51,498,920 /
-// 52,314,704); event-schema stability across those versions has NOT
-// yet been confirmed by a wasm-history audit (see README.md).
+// history, no address change observed). WASM-audited 2026-07-10
+// (docs/operations/wasm-audits/blend_emitter.md): the contract's sole
+// confirmed on-chain WASM hash SHA256-verifies, and all 469 lifetime
+// events decode to the expected shape — BackfillSafe is true.
 const MainnetEmitter = "CCOQM6S7ICIUWA225O5PSJWUBEMXGFSSW2PQFO6FP4DQEKMS5DASRGRR"
 
 // MainnetGatedSet is the curated Emitter allowlist the decoder seeds

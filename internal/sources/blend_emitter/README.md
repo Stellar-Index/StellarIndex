@@ -95,18 +95,22 @@ Emitter must be operator-admitted before its events attribute; an
 unregistered look-alike surfaces in the ADR-0033 recognition audit
 instead of silently attributing).
 
-## Backfill safety — OPEN wasm-audit item
+## Backfill safety — audited, `BackfillSafe = true`
 
-`BackfillSafe = false` in `internal/sources/external/registry.go`.
-The Emitter's single mainnet address shows **up to 3 WASM uploads**
-(ledgers 51,351,843 / 51,498,920 / 52,314,704) spanning Blend V1→V2.
-Event-schema stability ACROSS those versions has **not yet** been
-confirmed by a `stellarindex-ops wasm-history` audit (CLAUDE.md
-"Soroban DeFi contracts upgrade in place" — a current-version decoder
-cannot be trusted on historical ledgers without one). Live ingest
-works without it; `stellarindex-ops backfill` refuses to run this
-source against a historical range until the audit lands and flips
-the flag (procedure: `docs/operations/wasm-audits/README.md`).
+`BackfillSafe = true` in `internal/sources/external/registry.go`,
+audited 2026-07-10 (`docs/operations/wasm-audits/blend_emitter.md`).
+The audit ran read-only against the r1 ClickHouse raw lake (no
+`stellarindex-ops wasm-history` / MinIO walk) and checked EVERY one
+of the contract's 469 lifetime events — not a sample — against the
+decoder's expected shapes: all 465 `distribute` events match
+exhaustively via a single shape-check query, and both `drop` events
+plus the one `q_swap` and one `swap` were individually decoded. The
+contract's sole confirmed on-chain WASM hash
+(`438a5528cff17ede6fe515f095c43c5f15727af17d006971485e52462e7e7b89`)
+was extracted from the lake and SHA256-verified byte-for-byte, and
+contains every symbol the decoder relies on. The audit did **not**
+corroborate an earlier "up to 3 WASM uploads" hypothesis — see the
+audit doc's "WASM timeline" section for the correction.
 
 ## Files
 
@@ -125,7 +129,7 @@ the flag (procedure: `docs/operations/wasm-audits/README.md`).
 - `internal/pipeline/dispatcher.go` — `BuildDispatcher`: `case blend_emitter.SourceName:` registers `blend_emitter.NewDecoder(gated[blend_emitter.SourceName]...)`.
 - `internal/pipeline/sink.go` — `HandleEvent` persists `DistributeEvent` / `DropEvent` / `SwapConfigEvent`; `IsProjectedEvent` claims all three (this is a projected Soroban source, ADR-0031/0032).
 - `internal/projector/registry.go` — `buildSource` registers the same gated decoder for the projector's catch-up path.
-- `internal/sources/external/registry.go` — `Registry["blend_emitter"]`: `Class: ClassLending` (same family as `blend` — protocol-emissions plumbing, not an independent market), `IncludeInVWAP: false` (never publishes a price), `BackfillSafe: false` (open wasm-audit item above).
+- `internal/sources/external/registry.go` — `Registry["blend_emitter"]`: `Class: ClassLending` (same family as `blend` — protocol-emissions plumbing, not an independent market), `IncludeInVWAP: false` (never publishes a price), `BackfillSafe: true` (audited 2026-07-10, see above).
 - `cmd/stellarindex-ops/reconciliation_catalogue.go` — a `reconSource` entry so the ADR-0033 completeness verdict covers this source (`contractIDs: []string{blend_emitter.MainnetEmitter}`, matching the CCTP/comet precedent for a small curated contract set).
 - Storage: `blend_emitter_events` hypertable, migration
   [`0096_create_blend_emitter_events`](../../../migrations/0096_create_blend_emitter_events.up.sql).

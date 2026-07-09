@@ -1,0 +1,26 @@
+# Symbol presence check -- internal/sources/blend_emitter decoder expectations
+# against the SHA256-verified WASM bytes extracted from stellar.ledger_entry_changes
+# (entry_type=contract_code, key hash 438a5528cff17ede6fe515f095c43c5f15727af17d006971485e52462e7e7b89)
+
+PRESENT  distribute
+PRESENT  q_swap
+PRESENT  swap
+PRESENT  drop
+PRESENT  new_backstop
+PRESENT  new_backstop_token
+PRESENT  unlock_time
+PRESENT  LastDistro
+PRESENT  Dropped
+PRESENT  BackstopBToken
+PRESENT  SwapBLNDTkn
+PRESENT  backstop
+PRESENT  del_swap
+PRESENT  queue_swap_backstop
+PRESENT  cancel_swap_backstop
+PRESENT  swap_backstop
+PRESENT  get_last_distro
+PRESENT  get_backstop
+PRESENT  get_queued_swap
+PRESENT  IsInit
+PRESENT  blnd_token
+PRESENT  initialize
