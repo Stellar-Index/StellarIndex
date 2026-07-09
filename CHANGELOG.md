@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **cctp event coverage is now COMPLETE — every topic the three mainnet contracts have
+  ever emitted decodes** ("EVERY event" principle, closes the #89b census gap): 16 further
+  admin/config topics added (attester/pauser/rescuer/denylister changes, denylist events,
+  burn-limit + fee/min-fee/token-controller/message-body-size config, swap-minter +
+  token-decimal config, admin_change_started) — 26 distinct topics, 9,496 lake events
+  reconciled exactly against a raw count. All real-fixture golden + reject tests; migration
+  0094 extends the `cctp_events` CHECK 10 → 26; `CCTPEventType.IsValid()` (the third gate)
+  extended in step. Two new topic-level `Void`-address schema traps handled via
+  `scval.AsAddressOrVoid`.
+
 ### Fixed
 - **k6 99-spike AlertManager silence over-silenced two error-rate alerts, one of them
   page-severity (SEV-1) — audit-2026-06-14 R-A20-1 follow-up.** The original HIGH finding
