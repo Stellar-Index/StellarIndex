@@ -26,11 +26,17 @@ type Store struct {
 	// usdVolumeFXResolver, when non-nil, is consulted by
 	// [InsertTrade] AFTER [usdVolumeQuoteSpec] has rejected the
 	// trade — i.e. the on-chain quote isn't on the operator's
-	// USD-pegged list, so Phase 1 returns NULL. The resolver returns
-	// a USD rate for the quote asset (typically sourced from the
-	// aggregator's `<asset>/<USD>` VWAP) which [InsertTrade]
+	// USD-pegged list, so Phase 1 returns NULL. [InsertTrade] first
+	// asks the resolver for the QUOTE asset's USD rate (typically
+	// sourced from the aggregator's `<asset>/<USD>` VWAP) and
 	// multiplies through quote_amount to land a non-NULL
-	// `usd_volume` per L2.2 Phase 2.
+	// `usd_volume` per L2.2 Phase 2; when that also declines (the
+	// quote is a pure-Soroban SEP-41 token with no USD-pegged
+	// market), it asks the SAME resolver for XLM's own USD rate and
+	// multiplies through base_amount instead — the L7.6 XLM-base
+	// anchor, for pools that store TOKEN-in-XLM as base=XLM,
+	// quote=TOKEN. See [tradeUSDVolumeViaFX] /
+	// [tradeUSDVolumeViaXLMBaseAnchor].
 	//
 	// Nil keeps the L2.2 Phase 1 behaviour exactly: only off-chain
 	// CEX/FX + operator-allow-listed on-chain DEX trades get a

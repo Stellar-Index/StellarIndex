@@ -57,7 +57,7 @@ type USDVolumeFXResolver interface {
 // converted cleanly. Returning a *string lets the caller pass the
 // value (or sql NULL) straight into the trades.usd_volume column.
 //
-// Three resolution tiers, tried in order:
+// Four resolution tiers, tried in order:
 //
 //  1. Off-chain CEX/FX source AND quote is fiat:USD or a
 //     USD-pegged stablecoin per `aggregate.FiatProxy`
@@ -77,16 +77,37 @@ type USDVolumeFXResolver interface {
 //     through tier 1 also get a tier-3 attempt — covers a CEX
 //     pair quoted in a non-stablecoin (e.g. binance:XLM/BTC).
 //
+//  4. **L7.6** — On-chain DEX source, tier 3 declined (the quote
+//     asset has no direct USD-pegged market — the common case for a
+//     pure-Soroban SEP-41 token whose only liquidity route is
+//     against XLM), AND the trade's BASE asset is native XLM (or
+//     its SAC wrapper). Trades keep the pool's observed orientation
+//     (see [canonical.Trade]'s docstring — we do not re-orient to
+//     canonical.Orient's base/quote choice), so a pool that quotes
+//     TOKEN-in-XLM stores base=XLM, quote=TOKEN — the mirror image
+//     of tier 3's base=TOKEN, quote=XLM case. Valuing the XLM leg
+//     needs no knowledge of TOKEN's decimals: base_amount is
+//     already XLM stroops (decimals=7, the Stellar classic
+//     invariant XLM keeps even wrapped in a Soroban pool), so
+//     usd_volume = base_amount/1e7 × XLM/USD. See
+//     [tradeUSDVolumeViaXLMBaseAnchor].
+//
 // Tiers 1 + 2 trust their pegs at insert time — depeg events
 // are observed separately via the divergence + anomaly paths and
-// do NOT change the inserted usd_volume retroactively. Tier 3 is
-// time-anchored to the trade's timestamp; the resolver MAY return
-// (false) on stale data, in which case the column stays NULL.
+// do NOT change the inserted usd_volume retroactively. Tiers 3 + 4
+// are time-anchored to the trade's timestamp; the resolver MAY
+// return (false) on stale data, in which case the column stays
+// NULL.
 //
-// Everything else returns nil and the column stays NULL — neither
-// over-claiming USD-equivalence on unknown quotes (would mislead
-// downstream sums) nor silently dropping the trade itself (the row
-// still inserts; only the USD column goes NULL).
+// Everything else — including a pure SEP-41/SEP-41 pair where
+// neither leg is XLM nor USD-pegged — returns nil and the column
+// stays NULL — neither over-claiming USD-equivalence on unknown
+// quotes (would mislead downstream sums) nor silently dropping the
+// trade itself (the row still inserts; only the USD column goes
+// NULL). Valuing a pure SEP-41/SEP-41 leg needs a per-token oracle —
+// separate work, matching the boundary
+// [Store.SorobanVolume24hUSDForAsset] documents for its query-time
+// equivalent.
 func tradeUSDVolume(ctx context.Context, t canonical.Trade, quoteSpec *USDVolumeQuoteSpec, fxResolver USDVolumeFXResolver) *string {
 	q := t.QuoteAmount.BigInt()
 	if q == nil || q.Sign() <= 0 {
@@ -114,7 +135,12 @@ func tradeUSDVolume(ctx context.Context, t canonical.Trade, quoteSpec *USDVolume
 	if fxResolver == nil {
 		return nil
 	}
-	return tradeUSDVolumeViaFX(ctx, t, md.Subclass, fxResolver)
+	if v := tradeUSDVolumeViaFX(ctx, t, md.Subclass, fxResolver); v != nil {
+		return v
+	}
+	// Tier 4 (L7.6) — quote-side resolution declined; try the
+	// XLM-base anchor before giving up.
+	return tradeUSDVolumeViaXLMBaseAnchor(ctx, t, md.Subclass, fxResolver)
 }
 
 // tradeUSDVolumeViaFX is the L2.2 Phase 2 multiplication path.
@@ -154,6 +180,79 @@ func tradeUSDVolumeViaFX(ctx context.Context, t canonical.Trade, subclass extern
 	return &rendered
 }
 
+// tradeUSDVolumeViaXLMBaseAnchor is L7.6 (ROADMAP #37): the
+// write-time counterpart of [Store.SorobanVolume24hUSDForAsset]'s
+// query-time `base_asset IN ('native', SAC)` CASE. It fires only
+// when [tradeUSDVolumeViaFX] declined the quote asset — i.e. the
+// trade's quote is a pure-Soroban SEP-41 token with no direct
+// USD-pegged market (or no market against XLM either) — AND the
+// trade's BASE asset is native XLM or its Stellar Asset Contract
+// wrapper.
+//
+// A pool that quotes a pure SEP-41 token in XLM (its primary
+// liquidity route) can store the trade either way round depending
+// on the pool's own token ordering — see [tradeUSDVolume]'s tier 3
+// vs tier 4 split. When the quote leg carries no resolvable USD
+// price but the BASE leg is XLM, this values the trade off the XLM
+// leg instead: base_amount is already XLM stroops at the Stellar
+// classic 10^7 scale regardless of the quote token's own decimals
+// (which we may not even know), so
+//
+//	usd_volume = (base_amount / 1e7) × XLM/USD
+//
+// mirrors exactly the NUMERIC identity [sorobanVolume24hUSDQuery]
+// applies query-time via `(volume / 1e7::numeric) * xlm_usd`. Once
+// this lands at insert time, new pure-SEP41/XLM trades carry a
+// non-NULL `usd_volume` in the `trades` row itself, so every
+// consumer that sums `usd_volume`/`volume_usd` from `trades` or the
+// `prices_*` CAGGs (chart buckets, `/v1/markets`, source stats,
+// routed-via, protocol KPIs, …) picks it up automatically — not
+// just the one asset-detail field the query-time fallback covers.
+// `SorobanVolume24hUSDForAsset`'s `volume_usd > 0` discriminator
+// means a tier-4 hit here is picked up there too, with no
+// double-count.
+//
+// Pure SEP-41/SEP-41 pairs (neither leg XLM nor USD-pegged) still
+// return nil — matching the documented scope boundary (needs a
+// per-token oracle, separate work).
+func tradeUSDVolumeViaXLMBaseAnchor(ctx context.Context, t canonical.Trade, subclass external.Subclass, r USDVolumeFXResolver) *string {
+	if r == nil || subclass != external.SubclassDEX {
+		// Off-chain sources don't have this orientation problem —
+		// externalAmountDecimals is uniform and tier 1 already
+		// covers every USD-pegged quote.
+		return nil
+	}
+	if !isXLMAsset(t.Pair.Base) {
+		return nil
+	}
+	base := t.BaseAmount.BigInt()
+	if base == nil || base.Sign() <= 0 {
+		return nil
+	}
+	usdRateStr, ok, err := r.USDPriceAt(ctx, canonical.NativeAsset(), t.Timestamp)
+	if err != nil || !ok || usdRateStr == "" {
+		return nil
+	}
+	usdRate, ok := new(big.Rat).SetString(usdRateStr)
+	if !ok || usdRate.Sign() <= 0 {
+		return nil
+	}
+	q := new(big.Rat).SetFrac(base, scaleDenominator(stellarClassicDecimals))
+	usdAmount := new(big.Rat).Mul(q, usdRate)
+	rendered := usdAmount.FloatString(8)
+	return &rendered
+}
+
+// isXLMAsset reports whether a is native XLM in either on-chain wire
+// form — the classic `native` type, or the Stellar Asset Contract
+// that wraps it (the form a Soroban pool holds when one leg of its
+// liquidity is XLM). Mirrors [nativeXLMSAC] / [canonOrientSQL]'s
+// SQL-side check of the same two forms.
+func isXLMAsset(a canonical.Asset) bool {
+	return a.Type == canonical.AssetNative ||
+		(a.Type == canonical.AssetSoroban && a.ContractID == nativeXLMSAC)
+}
+
 // stellarClassicDecimals is the smallest-unit-to-display divisor
 // power baked into Stellar classic — XLM, native, every classic
 // credit. SEP-41 contracts publish their own value via decimals();
@@ -167,10 +266,12 @@ const stellarClassicDecimals = 7
 // [USDVolumeFXResolver]. Safe for callers (e.g. the pipeline sink
 // emitting coverage metrics) to invoke before InsertTrade.
 //
-// The predicate runs the full three-tier resolution: Phase 1
+// The predicate runs the full four-tier resolution: Phase 1
 // (off-chain CEX/FX with USD-pegged quote → tier 1; on-chain DEX
-// with operator-allow-listed quote → tier 2) and Phase 2 (any
-// remaining trade with an FX-resolver hit → tier 3).
+// with operator-allow-listed quote → tier 2), Phase 2 (any
+// remaining trade with a quote-side FX-resolver hit → tier 3), and
+// L7.6 (a remaining pure-Soroban SEP-41 quote whose trade's BASE
+// asset is XLM and resolves via the same FX resolver → tier 4).
 //
 // Note: a Phase 2 hit makes a synchronous call into the configured
 // resolver. Production resolvers MUST be cheap enough for the

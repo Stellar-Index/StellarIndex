@@ -431,6 +431,196 @@ func TestTradeUSDVolume_Phase2_ResolverError(t *testing.T) {
 	}
 }
 
+// TestTradeUSDVolume_L76XLMBaseAnchor covers ROADMAP #37 / L7.6:
+// a pure-Soroban SEP-41 token traded against XLM where the pool
+// stores base=XLM, quote=TOKEN — the orientation tier 3 (quote-side
+// FX resolution) can't cover, since TOKEN has no direct USD-pegged
+// market. Tier 4 anchors off the XLM base leg instead.
+func TestTradeUSDVolume_L76XLMBaseAnchor(t *testing.T) {
+	t.Parallel()
+	xlm := canonical.NativeAsset()
+	xlmSAC, err := canonical.NewSorobanAsset(nativeXLMSAC)
+	if err != nil {
+		t.Fatalf("NewSorobanAsset(nativeXLMSAC): %v", err)
+	}
+	pureSEP41, err := canonical.NewSorobanAsset("CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7")
+	if err != nil {
+		t.Fatalf("NewSorobanAsset pureSEP41: %v", err)
+	}
+
+	// XLM/USD anchor: $0.12 per XLM (matches the resolver's native
+	// asset key — same "native" identifier tier 3 uses when XLM
+	// is the trade's quote).
+	resolver := stubFXResolver{prices: map[string]string{
+		xlm.String(): "0.12",
+	}}
+
+	mkTrade := func(source string, base, quote canonical.Asset, baseAmt int64) canonical.Trade {
+		pair, err := canonical.NewPair(base, quote)
+		if err != nil {
+			t.Fatalf("NewPair: %v", err)
+		}
+		return canonical.Trade{
+			Source:      source,
+			Pair:        pair,
+			BaseAmount:  canonical.NewAmount(big.NewInt(baseAmt)),
+			QuoteAmount: canonical.NewAmount(big.NewInt(1)), // pure SEP-41 amount; irrelevant to the anchor math
+		}
+	}
+
+	// 250 XLM (2_500_000_000 stroops) at $0.12/XLM = $30.00.
+	got := tradeUSDVolume(
+		context.Background(),
+		mkTrade("soroswap", xlm, pureSEP41, 2_500_000_000),
+		nil, // no Phase 1 spec
+		resolver,
+	)
+	if got == nil {
+		t.Fatal("L7.6 XLM-base anchor returned nil; want non-nil")
+	}
+	want := "30.00000000"
+	if *got != want {
+		t.Errorf("got %q, want %q", *got, want)
+	}
+
+	// Same math when the pool holds XLM via its SAC wrapper instead
+	// of the plain `native` form.
+	gotSAC := tradeUSDVolume(
+		context.Background(),
+		mkTrade("soroswap", xlmSAC, pureSEP41, 2_500_000_000),
+		nil,
+		resolver,
+	)
+	if gotSAC == nil {
+		t.Fatal("L7.6 XLM-base anchor (SAC form) returned nil; want non-nil")
+	}
+	if *gotSAC != want {
+		t.Errorf("got %q, want %q", *gotSAC, want)
+	}
+}
+
+// TestTradeUSDVolume_L76DoesNotFireWhenQuoteAlreadyResolved proves
+// tier 4 is a fallback, not a double-count: when the quote asset
+// itself resolves (tier 3), the XLM-base anchor is never reached —
+// pinned with a panicking resolver call-count guard would be
+// redundant with TestTradeUSDVolume_Phase1WinsBeforePhase2's style,
+// so instead this asserts the tier-3 numeric result wins even
+// though the trade's base asset would also satisfy tier 4's
+// isXLMAsset check.
+func TestTradeUSDVolume_L76DoesNotFireWhenQuoteAlreadyResolved(t *testing.T) {
+	t.Parallel()
+	xlm := canonical.NativeAsset()
+	aqua, err := canonical.NewClassicAsset("AQUA", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
+	if err != nil {
+		t.Fatalf("NewClassicAsset AQUA: %v", err)
+	}
+
+	// Resolver knows AQUA's USD rate (tier 3 hit) AND XLM's (tier 4
+	// would also hit if reached) — if tier 4 fired instead of tier 3
+	// the base-anchored math (below) would produce a different
+	// number, so a mismatch proves the wrong tier ran.
+	resolver := stubFXResolver{prices: map[string]string{
+		aqua.String(): "0.001",
+		xlm.String():  "0.12",
+	}}
+
+	got := tradeUSDVolume(
+		context.Background(),
+		mkClassicDEXTrade(t, "soroswap", xlm, aqua, 50_000_000_000),
+		nil,
+		resolver,
+	)
+	if got == nil {
+		t.Fatal("expected tier 3 to populate usd_volume")
+	}
+	// Tier 3 (quote=AQUA): 50_000_000_000 stroops / 1e7 = 5_000 AQUA
+	// × $0.001 = $5.00. Tier 4 (base=XLM) would instead compute
+	// 10_000_000 stroops (mkClassicDEXTrade's fixed base) / 1e7 =
+	// 1.0 XLM × $0.12 = $0.12 — a different, wrong number.
+	want := "5.00000000"
+	if *got != want {
+		t.Errorf("got %q, want %q (tier 3 must win over tier 4)", *got, want)
+	}
+}
+
+// TestTradeUSDVolume_L76OutOfScope pins the cases tier 4 must NOT
+// cover.
+func TestTradeUSDVolume_L76OutOfScope(t *testing.T) {
+	t.Parallel()
+	xlm := canonical.NativeAsset()
+	pureSEP41A, _ := canonical.NewSorobanAsset("CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7")
+	pureSEP41B, _ := canonical.NewSorobanAsset("CA6GAFOJCW4MGQQBUCQUSA3CLIH25G4SNKB2JHYKZCVWZTNW5VXMSC4O")
+	binanceXLM, _ := canonical.NewCryptoAsset("XLM")
+
+	resolver := stubFXResolver{prices: map[string]string{
+		xlm.String(): "0.12",
+	}}
+
+	mkTrade := func(source string, base, quote canonical.Asset, baseAmt int64) canonical.Trade {
+		pair, err := canonical.NewPair(base, quote)
+		if err != nil {
+			t.Fatalf("NewPair: %v", err)
+		}
+		return canonical.Trade{
+			Source:      source,
+			Pair:        pair,
+			BaseAmount:  canonical.NewAmount(big.NewInt(baseAmt)),
+			QuoteAmount: canonical.NewAmount(big.NewInt(1)),
+		}
+	}
+
+	cases := []struct {
+		name   string
+		source string
+		base   canonical.Asset
+		quote  canonical.Asset
+	}{
+		{"pure SEP-41/SEP-41 — neither leg is XLM", "soroswap", pureSEP41A, pureSEP41B},
+		{"off-chain source with XLM base — no orientation problem to fix", "binance", binanceXLM, pureSEP41A},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tradeUSDVolume(context.Background(), mkTrade(tc.source, tc.base, tc.quote, 2_500_000_000), nil, resolver)
+			if got != nil {
+				t.Errorf("got %q, want nil", *got)
+			}
+		})
+	}
+}
+
+// TestIsXLMAsset pins the two recognised on-chain wire forms of XLM
+// plus a representative negative.
+func TestIsXLMAsset(t *testing.T) {
+	t.Parallel()
+	xlmSAC, err := canonical.NewSorobanAsset(nativeXLMSAC)
+	if err != nil {
+		t.Fatalf("NewSorobanAsset(nativeXLMSAC): %v", err)
+	}
+	otherSAC, err := canonical.NewSorobanAsset("CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7")
+	if err != nil {
+		t.Fatalf("NewSorobanAsset otherSAC: %v", err)
+	}
+	classicUSDC, _ := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+
+	cases := []struct {
+		name string
+		a    canonical.Asset
+		want bool
+	}{
+		{"native", canonical.NativeAsset(), true},
+		{"SAC wrapper of native", xlmSAC, true},
+		{"unrelated Soroban contract", otherSAC, false},
+		{"classic credit", classicUSDC, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isXLMAsset(tc.a); got != tc.want {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // panicFXResolver fails the test loudly if its USDPriceAt is
 // called. Proves Phase 1 short-circuits before Phase 2 runs.
 type panicFXResolver struct{}

@@ -1,6 +1,6 @@
 ---
 title: SAC wrappers + Soroban USD-volume backfill
-last_verified: 2026-05-08
+last_verified: 2026-07-09
 status: draft
 ---
 
@@ -119,6 +119,46 @@ Then both new and historical trades quoted in USDx (or its SAC
 wrapper) will be priced via `usd_volume = quote_amount / 10^7`.
 Update `scripts/ops/recompute-usd-volume-soroban.sql`'s WHERE
 clause to include the new SAC.
+
+## Pure-Soroban SEP-41 tokens (no USD-pegged quote at all)
+
+The two paths above ("Adding a single SAC mapping" and "Adding a
+new USD-pegged classic") both require the trade's QUOTE asset to
+resolve to a USD-pegged classic — either directly or via a SAC
+wrapper. A pure-Soroban SEP-41 token whose only liquidity route is
+against XLM (no classic counterpart, no fiat-quoted pair) has no
+quote-side USD peg to add, so neither path lights it up.
+
+Two further tiers cover this case (ROADMAP #37 / L7.6), both gated
+on `[trades].usd_pegged_classic_assets` being non-empty (which also
+wires `VWAPUSDFXResolver` — see
+`cmd/stellarindex-indexer/main.go`):
+
+- **Tier 3** (existing, L2.2 Phase 2): fires when the trade's QUOTE
+  asset — including plain `native` XLM — has a recent VWAP against
+  one of the configured USD pegs in `prices_1m`. Covers pools that
+  store the pair as `base=TOKEN, quote=XLM`.
+- **Tier 4** (L7.6): fires when tier 3 declines (the quote is the
+  pure SEP-41 token itself, with no USD-pegged market) AND the
+  trade's BASE asset is `native` XLM or its SAC wrapper. Covers the
+  mirror-image pool orientation, `base=XLM, quote=TOKEN` — `internal/sources`
+  decoders don't re-orient trades to a canonical form, so both
+  orientations occur on-chain depending on which pool token ordering
+  the venue used. Values the trade off the XLM leg —
+  `usd_volume = base_amount/1e7 × XLM/USD` — which needs no
+  knowledge of the SEP-41 token's own decimals.
+
+Both tiers are insert-time only (no retroactive backfill for trades
+that landed before the resolver was wired — same posture as the
+"Backfilling historical USD-volume" section above). A pure
+SEP-41/SEP-41 pair (neither leg XLM nor USD-pegged) stays out of
+scope on every tier — that needs a per-token oracle, not a
+peg-anchor. `internal/storage/timescale/trades.go`'s `tradeUSDVolume`
+docstring is the authoritative reference for the exact four-tier
+order; `Store.SorobanVolume24hUSDForAsset` is the read-side
+equivalent for the one field (`/v1/assets/{id}`'s `volume_24h_usd`)
+that also has a query-time fallback for trades that predate tier 3/4
+being wired.
 
 ## Bulk-resolve helper
 

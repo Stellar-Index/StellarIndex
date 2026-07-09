@@ -15,6 +15,23 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Pure-Soroban SEP-41 `usd_volume` now covers the XLM-base pool orientation at INSERT
+  time (ROADMAP #37 / L7.6).** A prior fix (#37, 2026-07-06) added
+  `Store.SorobanVolume24hUSDForAsset`, a query-time-only anchor scoped to the
+  `/v1/assets/{id}` `volume_24h_usd` field. `trades.usd_volume` itself — and therefore
+  every other consumer that sums it (`/v1/history` chart buckets, `/v1/markets`, source
+  stats, routed-via, protocol KPIs, …) — still went NULL for a pure SEP-41 token traded
+  against XLM whenever the pool stored the pair as `base=XLM, quote=TOKEN` (the mirror
+  image of the already-covered `base=TOKEN, quote=XLM` case). New tier 4 in
+  `tradeUSDVolume`: when the quote-side FX resolver declines and the trade's BASE asset is
+  native XLM (or its SAC wrapper), value the trade off the XLM leg instead —
+  `usd_volume = base_amount/1e7 × XLM/USD` via the same `USDVolumeFXResolver` already
+  wired for tier 3, so no new config surface. NUMERIC-exact (`big.Rat`, no floats).
+  Golden-number unit tests plus a testcontainer integration test proving the anchored
+  value lands in `trades.usd_volume` at insert and both the plain and anchored 24h-volume
+  readers agree with no double-count.
+
 ### Fixed
 - **`internal/decimalsguard` never self-seeded a DORMANT non-7-decimal Soroban token** — the
   periodic sweep only enumerates a 20-minute trailing window, so token `CC2RB…`
