@@ -15,14 +15,32 @@
 //	message_received   (MessageTransmitter)   — wire envelope (inbound)
 //	mint_and_forward   (CctpForwarder)        — inbound mint relayed onward
 //
-// Governance/admin events (all three contracts; verified against
-// real mainnet events 2026-07-08, ROADMAP #89b topic-match audit):
+// Governance/admin events (all three contracts unless noted; verified
+// against real mainnet events 2026-07-08, ROADMAP #89b topic-match
+// audit; the trailing 16 completed the census 2026-07-09, ROADMAP #89c
+// — closing the "EVERY event for EVERY Soroban protocol" gap CLAUDE.md
+// requires):
 //
-//	ownership_transfer            — 2-step ownership transfer initiated
-//	ownership_transfer_completed  — 2-step ownership transfer accepted
-//	admin_changed                 — admin role reassigned
-//	remote_token_messenger_added  (TokenMessengerMinter only) — remote-domain TokenMessenger registered
-//	token_pair_linked             (TokenMessengerMinter only) — local↔remote token link registered
+//	ownership_transfer             — 2-step ownership transfer initiated
+//	ownership_transfer_completed   — 2-step ownership transfer accepted
+//	admin_changed                  — admin role reassigned
+//	admin_change_started           — 2-step admin change initiated
+//	remote_token_messenger_added   (TokenMessengerMinter only) — remote-domain TokenMessenger registered
+//	token_pair_linked              (TokenMessengerMinter only) — local↔remote token link registered
+//	attester_enabled               (MessageTransmitter only) — an attester public key was enabled
+//	attester_manager_updated       (MessageTransmitter only) — the attester-manager role was reassigned
+//	signature_threshold_updated    (MessageTransmitter only) — attestation signature threshold changed
+//	max_message_body_size_updated  (MessageTransmitter only) — message size ceiling changed
+//	pauser_changed                 — the pause-role address was reassigned
+//	rescuer_changed                — the rescue-role address was reassigned
+//	denylisted / un_denylisted     (TokenMessengerMinter only) — an account entered/left the denylist
+//	denylister_changed             (TokenMessengerMinter only) — the denylister role was reassigned
+//	fee_recipient_set              (TokenMessengerMinter only) — the fee-recipient address changed
+//	min_fee_controller_set         (TokenMessengerMinter only) — the min-fee-controller role was reassigned
+//	set_token_controller           (TokenMessengerMinter only) — the token-controller role was reassigned
+//	set_burn_limit_per_message     (TokenMessengerMinter only) — per-message burn ceiling set for a local token
+//	swap_minter_config_set         (TokenMessengerMinter only) — swap-minter config set for a local token
+//	token_decimal_config_added     (TokenMessengerMinter only) — canonical/local decimal mapping added for a local token
 //
 // One outbound `deposit_for_burn` call emits BOTH a DepositForBurn
 // event AND a MessageSent event in the same transaction —
@@ -84,6 +102,30 @@ const (
 	EventAdminChanged               = "admin_changed"                // admin role reassigned (old_admin may be void — bootstrap)
 	EventRemoteTokenMessengerAdded  = "remote_token_messenger_added" // TokenMessengerMinter: a remote-domain TokenMessenger registered
 	EventTokenPairLinked            = "token_pair_linked"            // TokenMessengerMinter: local token linked to a remote-domain token
+
+	// Lower-signal admin/governance events — verified against real
+	// mainnet lake events (2026-07-09, ROADMAP #89c full topic census:
+	// every topic_0_sym the three CCTP contracts have EVER emitted,
+	// cross-checked against topics_xdr for the empty-topic_0_sym trap —
+	// none found; all CCTP topics are Symbols). These close the gap
+	// docs/protocols/cctp.md flagged after the #89b governance-event
+	// pass.
+	EventAdminChangeStarted        = "admin_change_started"          // 2-step admin change initiated (old_admin may be void — bootstrap)
+	EventAttesterEnabled           = "attester_enabled"              // MessageTransmitter: an attester public key was enabled
+	EventAttesterManagerUpdated    = "attester_manager_updated"      // MessageTransmitter: attester-manager role reassigned (old may be void — bootstrap)
+	EventDenylisted                = "denylisted"                    // TokenMessengerMinter: an account entered the denylist
+	EventDenylisterChanged         = "denylister_changed"            // TokenMessengerMinter: denylister role reassigned (old may be void — bootstrap)
+	EventFeeRecipientSet           = "fee_recipient_set"             // TokenMessengerMinter: fee-recipient address changed
+	EventMaxMessageBodySizeUpdated = "max_message_body_size_updated" // MessageTransmitter: message size ceiling changed
+	EventMinFeeControllerSet       = "min_fee_controller_set"        // TokenMessengerMinter: min-fee-controller role reassigned
+	EventPauserChanged             = "pauser_changed"                // pause-role address reassigned
+	EventRescuerChanged            = "rescuer_changed"               // rescue-role address reassigned
+	EventSetBurnLimitPerMessage    = "set_burn_limit_per_message"    // TokenMessengerMinter: per-message burn ceiling set for a local token
+	EventSetTokenController        = "set_token_controller"          // TokenMessengerMinter: token-controller role reassigned
+	EventSignatureThresholdUpdated = "signature_threshold_updated"   // MessageTransmitter: attestation signature threshold changed
+	EventSwapMinterConfigSet       = "swap_minter_config_set"        // TokenMessengerMinter: swap-minter config set for a local token
+	EventTokenDecimalConfigAdded   = "token_decimal_config_added"    // TokenMessengerMinter: canonical/local decimal mapping added for a local token
+	EventUnDenylisted              = "un_denylisted"                 // TokenMessengerMinter: an account left the denylist
 )
 
 // Topic[0] pre-encoded base64 — package-init constants so
@@ -104,6 +146,23 @@ var (
 	TopicSymbolAdminChanged               = scval.MustEncodeSymbol(EventAdminChanged)
 	TopicSymbolRemoteTokenMessengerAdded  = scval.MustEncodeSymbol(EventRemoteTokenMessengerAdded)
 	TopicSymbolTokenPairLinked            = scval.MustEncodeSymbol(EventTokenPairLinked)
+
+	TopicSymbolAdminChangeStarted        = scval.MustEncodeSymbol(EventAdminChangeStarted)
+	TopicSymbolAttesterEnabled           = scval.MustEncodeSymbol(EventAttesterEnabled)
+	TopicSymbolAttesterManagerUpdated    = scval.MustEncodeSymbol(EventAttesterManagerUpdated)
+	TopicSymbolDenylisted                = scval.MustEncodeSymbol(EventDenylisted)
+	TopicSymbolDenylisterChanged         = scval.MustEncodeSymbol(EventDenylisterChanged)
+	TopicSymbolFeeRecipientSet           = scval.MustEncodeSymbol(EventFeeRecipientSet)
+	TopicSymbolMaxMessageBodySizeUpdated = scval.MustEncodeSymbol(EventMaxMessageBodySizeUpdated)
+	TopicSymbolMinFeeControllerSet       = scval.MustEncodeSymbol(EventMinFeeControllerSet)
+	TopicSymbolPauserChanged             = scval.MustEncodeSymbol(EventPauserChanged)
+	TopicSymbolRescuerChanged            = scval.MustEncodeSymbol(EventRescuerChanged)
+	TopicSymbolSetBurnLimitPerMessage    = scval.MustEncodeSymbol(EventSetBurnLimitPerMessage)
+	TopicSymbolSetTokenController        = scval.MustEncodeSymbol(EventSetTokenController)
+	TopicSymbolSignatureThresholdUpdated = scval.MustEncodeSymbol(EventSignatureThresholdUpdated)
+	TopicSymbolSwapMinterConfigSet       = scval.MustEncodeSymbol(EventSwapMinterConfigSet)
+	TopicSymbolTokenDecimalConfigAdded   = scval.MustEncodeSymbol(EventTokenDecimalConfigAdded)
+	TopicSymbolUnDenylisted              = scval.MustEncodeSymbol(EventUnDenylisted)
 )
 
 // DepositForBurn is the canonical projection of one
@@ -395,4 +454,362 @@ type MessageReceived struct {
 	SourceDomain uint32 // CCTP domain ID
 	Sender       string // hex; BytesN<32>
 	MessageBody  string // hex
+}
+
+// ─── Lower-signal admin/governance events (ROADMAP #89c, 2026-07-09) ──
+//
+// The remaining 16 topics found by the #89c full-topic census (every
+// topic_0_sym the three CCTP contracts have EVER emitted on mainnet —
+// 26 distinct topics, 9496 total events, exactly reconciled). All are
+// single-digit-to-low-double-digit occurrence counts; schemas below
+// were reverse-engineered directly from the real lake events (no
+// upstream doc for most of these — `max_message_body_size_updated` is
+// the one exception, previously documented in
+// docs/architecture/cctp-stellar-coverage.md).
+
+// AdminChangeStarted is the canonical projection of one
+// `admin_change_started` event — the 2-step counterpart to
+// `admin_changed`: this fires when an admin change is INITIATED,
+// `admin_changed` fires when it takes effect. Single-topic event; body
+// ScMap. Verified against real mainnet events (2026-07-09): ledgers
+// 62211158 (TokenMessengerMinter), 62211186 (MessageTransmitter),
+// 62211210 (CctpForwarder) — `old_admin` populated in all three
+// observed instances, but type-tested via [scval.AsAddressOrVoid]
+// anyway (same field as `admin_changed`'s `old_admin`, which IS void
+// at bootstrap — CLAUDE.md "Type-test before MustI128").
+//
+// Body: { new_admin: Address, old_admin: Address | Void }.
+type AdminChangeStarted struct {
+	Ledger     uint32
+	TxHash     string
+	OpIndex    int
+	ClosedAt   string
+	ContractID string
+
+	NewAdmin string // Stellar Address strkey
+	OldAdmin string // Stellar Address strkey; "" if void
+}
+
+// AttesterEnabled is the canonical projection of one `attester_enabled`
+// event — MessageTransmitter enabling one attester's signing key.
+// Only ever observed from MessageTransmitter. Verified against real
+// mainnet events (2026-07-09): ledger 62146641 (two occurrences in the
+// same tx, one per attester enabled).
+//
+// Wire shape (2-topic event; body is an empty map):
+//
+//	topics = ["attester_enabled", attester]
+//	body   = {}
+type AttesterEnabled struct {
+	Ledger     uint32
+	TxHash     string
+	OpIndex    int
+	ClosedAt   string
+	ContractID string
+
+	Attester string // hex; BytesN<20> — secp256k1-recovered attester address
+}
+
+// AttesterManagerUpdated is the canonical projection of one
+// `attester_manager_updated` event — the attester-manager role was
+// reassigned. Only ever observed from MessageTransmitter. Verified
+// against real mainnet events (2026-07-09): ledger 62146641 —
+// `old_attester_manager` is `ScValTypeScvVoid` (bootstrap; no prior
+// manager), type-tested via [scval.AsAddressOrVoid] rather than
+// assumed Address (same schema-evolution stance as `admin_changed`'s
+// `old_admin` — the trap here is in a TOPIC field, not the body).
+//
+// Wire shape (3-topic event; body is an empty map):
+//
+//	topics = ["attester_manager_updated", old_attester_manager, new_attester_manager]
+//	body   = {}
+type AttesterManagerUpdated struct {
+	Ledger     uint32
+	TxHash     string
+	OpIndex    int
+	ClosedAt   string
+	ContractID string
+
+	OldAttesterManager string // Stellar Address strkey; "" if void (bootstrap)
+	NewAttesterManager string // Stellar Address strkey
+}
+
+// Denylisted is the canonical projection of one `denylisted` event —
+// an account was added to TokenMessengerMinter's denylist. Only ever
+// observed from TokenMessengerMinter. Verified against real mainnet
+// events (2026-07-09): ledger 62226112.
+//
+// Wire shape (2-topic event; body is an empty map):
+//
+//	topics = ["denylisted", account]
+//	body   = {}
+type Denylisted struct {
+	Ledger     uint32
+	TxHash     string
+	OpIndex    int
+	ClosedAt   string
+	ContractID string
+
+	Account string // Stellar Address strkey
+}
+
+// UnDenylisted is the canonical projection of one `un_denylisted`
+// event — an account was removed from TokenMessengerMinter's
+// denylist. Only ever observed from TokenMessengerMinter. Verified
+// against real mainnet events (2026-07-09): ledger 62226574 — same
+// account as the [Denylisted] fixture, a denylist/un-denylist pair.
+//
+// Wire shape (2-topic event; body is an empty map):
+//
+//	topics = ["un_denylisted", account]
+//	body   = {}
+type UnDenylisted struct {
+	Ledger     uint32
+	TxHash     string
+	OpIndex    int
+	ClosedAt   string
+	ContractID string
+
+	Account string // Stellar Address strkey
+}
+
+// DenylisterChanged is the canonical projection of one
+// `denylister_changed` event — the denylister role was reassigned.
+// Only ever observed from TokenMessengerMinter. Verified against real
+// mainnet events (2026-07-09): ledger 62146653 — `old_denylister` is
+// `ScValTypeScvVoid` (bootstrap), type-tested via
+// [scval.AsAddressOrVoid] (same trap as [AttesterManagerUpdated]'s
+// topic field).
+//
+// Wire shape (3-topic event; body is an empty map):
+//
+//	topics = ["denylister_changed", old_denylister, new_denylister]
+//	body   = {}
+type DenylisterChanged struct {
+	Ledger     uint32
+	TxHash     string
+	OpIndex    int
+	ClosedAt   string
+	ContractID string
+
+	OldDenylister string // Stellar Address strkey; "" if void (bootstrap)
+	NewDenylister string // Stellar Address strkey
+}
+
+// FeeRecipientSet is the canonical projection of one
+// `fee_recipient_set` event — the address that receives collected
+// fees changed. Only ever observed from TokenMessengerMinter. Verified
+// against real mainnet events (2026-07-09): ledger 62146653.
+//
+// Wire shape (single-topic event; body ScMap):
+//
+//	topics = ["fee_recipient_set"]
+//	body   = { fee_recipient: Address }
+type FeeRecipientSet struct {
+	Ledger     uint32
+	TxHash     string
+	OpIndex    int
+	ClosedAt   string
+	ContractID string
+
+	FeeRecipient string // Stellar Address strkey
+}
+
+// MaxMessageBodySizeUpdated is the canonical projection of one
+// `max_message_body_size_updated` event — MessageTransmitter's message
+// size ceiling changed. Only ever observed from MessageTransmitter.
+// Previously documented (design-only) in
+// docs/architecture/cctp-stellar-coverage.md; verified against a real
+// mainnet event 2026-07-09: ledger 62146641 (new value 8192 bytes).
+//
+// Wire shape (single-topic event; body ScMap):
+//
+//	topics = ["max_message_body_size_updated"]
+//	body   = { new_max_message_body_size: u32 }
+type MaxMessageBodySizeUpdated struct {
+	Ledger     uint32
+	TxHash     string
+	OpIndex    int
+	ClosedAt   string
+	ContractID string
+
+	NewMaxMessageBodySize uint32
+}
+
+// MinFeeControllerSet is the canonical projection of one
+// `min_fee_controller_set` event — the min-fee-controller role was
+// reassigned. Only ever observed from TokenMessengerMinter. Verified
+// against real mainnet events (2026-07-09): ledger 62146653.
+//
+// Wire shape (2-topic event; body is an empty map):
+//
+//	topics = ["min_fee_controller_set", min_fee_controller]
+//	body   = {}
+type MinFeeControllerSet struct {
+	Ledger     uint32
+	TxHash     string
+	OpIndex    int
+	ClosedAt   string
+	ContractID string
+
+	MinFeeController string // Stellar Address strkey
+}
+
+// PauserChanged is the canonical projection of one `pauser_changed`
+// event — the pause-role address was reassigned. Observed from all
+// three contracts. Verified against real mainnet events (2026-07-09):
+// ledgers 62146641 (MessageTransmitter), 62146653
+// (TokenMessengerMinter), 62146669 (CctpForwarder). NOTE: the body
+// field is named `new_address`, not `new_pauser` — confirmed against
+// the real event, not assumed from the topic name.
+//
+// Wire shape (single-topic event; body ScMap):
+//
+//	topics = ["pauser_changed"]
+//	body   = { new_address: Address }
+type PauserChanged struct {
+	Ledger     uint32
+	TxHash     string
+	OpIndex    int
+	ClosedAt   string
+	ContractID string
+
+	NewAddress string // Stellar Address strkey
+}
+
+// RescuerChanged is the canonical projection of one `rescuer_changed`
+// event — the rescue-role address was reassigned. Observed from all
+// three contracts. Verified against real mainnet events (2026-07-09):
+// ledgers 62146641 (MessageTransmitter), 62146653
+// (TokenMessengerMinter), 62146669 (CctpForwarder).
+//
+// Wire shape (single-topic event; body ScMap):
+//
+//	topics = ["rescuer_changed"]
+//	body   = { new_rescuer: Address }
+type RescuerChanged struct {
+	Ledger     uint32
+	TxHash     string
+	OpIndex    int
+	ClosedAt   string
+	ContractID string
+
+	NewRescuer string // Stellar Address strkey
+}
+
+// SetTokenController is the canonical projection of one
+// `set_token_controller` event — the token-controller role was
+// reassigned. Only ever observed from TokenMessengerMinter. Verified
+// against real mainnet events (2026-07-09): ledgers 62146653,
+// 62211021.
+//
+// Wire shape (single-topic event; body ScMap):
+//
+//	topics = ["set_token_controller"]
+//	body   = { token_controller: Address }
+type SetTokenController struct {
+	Ledger     uint32
+	TxHash     string
+	OpIndex    int
+	ClosedAt   string
+	ContractID string
+
+	TokenController string // Stellar Address strkey
+}
+
+// SignatureThresholdUpdated is the canonical projection of one
+// `signature_threshold_updated` event — MessageTransmitter's required
+// attestation signature count changed. Only ever observed from
+// MessageTransmitter. Verified against real mainnet events
+// (2026-07-09): ledger 62146641 (0 → 2).
+//
+// Wire shape (single-topic event; body ScMap):
+//
+//	topics = ["signature_threshold_updated"]
+//	body   = { new_signature_threshold: u32, old_signature_threshold: u32 }
+type SignatureThresholdUpdated struct {
+	Ledger     uint32
+	TxHash     string
+	OpIndex    int
+	ClosedAt   string
+	ContractID string
+
+	NewSignatureThreshold uint32
+	OldSignatureThreshold uint32
+}
+
+// SetBurnLimitPerMessage is the canonical projection of one
+// `set_burn_limit_per_message` event — the per-message burn ceiling
+// for one local token was set. Only ever observed from
+// TokenMessengerMinter. Verified against real mainnet events
+// (2026-07-09): ledgers 62146712, 62226618, 62630052, 62630067 —
+// always the same local token (Stellar USDC SAC,
+// CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75, matching
+// [TokenPairLinked]'s `local_token`), with the limit value changed
+// across the 4 calls. `token` is a genuine Stellar Address strkey, so
+// it promotes to [Event.Token] in consumer.go (same convention as
+// `token_pair_linked`'s `local_token`).
+//
+// Wire shape (2-topic event; body ScMap):
+//
+//	topics = ["set_burn_limit_per_message", token]
+//	body   = { burn_limit_per_message: i128 }
+type SetBurnLimitPerMessage struct {
+	Ledger     uint32
+	TxHash     string
+	OpIndex    int
+	ClosedAt   string
+	ContractID string
+
+	Token               string // Stellar Address strkey (contract) — the local SAC
+	BurnLimitPerMessage string // i128 canonical-decimals — a POLICY CEILING, not a movement amount; kept out of Event.Amount (see eventFromSetBurnLimitPerMessage)
+}
+
+// SwapMinterConfigSet is the canonical projection of one
+// `swap_minter_config_set` event — a swap-minter configuration was set
+// for one local token. Only ever observed from TokenMessengerMinter.
+// Verified against real mainnet events (2026-07-09): ledger 62146806.
+// The body's `swap_minter_config` field is a NESTED map — flattened
+// here into two fields.
+//
+// Wire shape (2-topic event; body ScMap):
+//
+//	topics = ["swap_minter_config_set", token]
+//	body   = { swap_minter_config: { allow_asset: Address, swap_minter: Address } }
+type SwapMinterConfigSet struct {
+	Ledger     uint32
+	TxHash     string
+	OpIndex    int
+	ClosedAt   string
+	ContractID string
+
+	Token      string // Stellar Address strkey (contract) — the local SAC
+	AllowAsset string // Stellar Address strkey
+	SwapMinter string // Stellar Address strkey
+}
+
+// TokenDecimalConfigAdded is the canonical projection of one
+// `token_decimal_config_added` event — a canonical/local decimal
+// mapping was registered for one local token (CCTP's canonical
+// decimals for USDC-family assets don't always match a given chain's
+// local decimals; this event records the conversion). Only ever
+// observed from TokenMessengerMinter. Verified against real mainnet
+// events (2026-07-09): ledger 62146699 (canonical=6, local=7). The
+// body's `token_decimal_config` field is a NESTED map — flattened here
+// into two fields.
+//
+// Wire shape (2-topic event; body ScMap):
+//
+//	topics = ["token_decimal_config_added", token]
+//	body   = { token_decimal_config: { canonical_decimals: u32, local_decimals: u32 } }
+type TokenDecimalConfigAdded struct {
+	Ledger     uint32
+	TxHash     string
+	OpIndex    int
+	ClosedAt   string
+	ContractID string
+
+	Token             string // Stellar Address strkey (contract) — the local SAC
+	CanonicalDecimals uint32
+	LocalDecimals     uint32
 }

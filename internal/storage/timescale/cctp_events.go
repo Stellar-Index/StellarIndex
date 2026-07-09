@@ -9,18 +9,20 @@ import (
 	"time"
 )
 
-// CCTPEventType discriminates the ten Circle CCTP v2 event variants.
+// CCTPEventType discriminates the 26 Circle CCTP v2 event variants.
 // String values match the cctp_events.event_type CHECK constraint
-// (migration 0038, extended by 0070 and 0092) and internal/sources/cctp's
-// event-name constants. LESSON (board #31, v0.7.0→v0.7.1): the type
-// is gated in THREE layers — the decoder's Classify, this enum's
-// IsValid, and the SQL CHECK. Adding an event means all three, or
-// rows are rejected at whichever layer was missed. Re-confirmed
-// 2026-07-08 (ROADMAP #89b) when the 5 governance/admin events were
-// added: this file is easy to miss because InsertCCTPEvent's
-// defensive IsValid rejection fires INSIDE the Go binary, before the
-// SQL CHECK ever sees the row — a mismatch here silently drops every
-// governance event at insert time even though decode + dispatch work.
+// (migration 0038, extended by 0070, 0092 and 0094) and
+// internal/sources/cctp's event-name constants. LESSON (board #31,
+// v0.7.0→v0.7.1): the type is gated in THREE layers — the decoder's
+// Classify, this enum's IsValid, and the SQL CHECK. Adding an event
+// means all three, or rows are rejected at whichever layer was
+// missed. Re-confirmed 2026-07-08 (ROADMAP #89b) when the first 5
+// governance/admin events were added, and again 2026-07-09 (#89c)
+// closing the full topic census: this file is easy to miss because
+// InsertCCTPEvent's defensive IsValid rejection fires INSIDE the Go
+// binary, before the SQL CHECK ever sees the row — a mismatch here
+// silently drops every governance event at insert time even though
+// decode + dispatch work.
 type CCTPEventType string
 
 const (
@@ -34,14 +36,38 @@ const (
 	CCTPAdminChanged               CCTPEventType = "admin_changed"
 	CCTPRemoteTokenMessengerAdded  CCTPEventType = "remote_token_messenger_added"
 	CCTPTokenPairLinked            CCTPEventType = "token_pair_linked"
+
+	// Lower-signal admin/governance events — ROADMAP #89c, 2026-07-09.
+	CCTPAdminChangeStarted        CCTPEventType = "admin_change_started"
+	CCTPAttesterEnabled           CCTPEventType = "attester_enabled"
+	CCTPAttesterManagerUpdated    CCTPEventType = "attester_manager_updated"
+	CCTPDenylisted                CCTPEventType = "denylisted"
+	CCTPDenylisterChanged         CCTPEventType = "denylister_changed"
+	CCTPFeeRecipientSet           CCTPEventType = "fee_recipient_set"
+	CCTPMaxMessageBodySizeUpdated CCTPEventType = "max_message_body_size_updated"
+	CCTPMinFeeControllerSet       CCTPEventType = "min_fee_controller_set"
+	CCTPPauserChanged             CCTPEventType = "pauser_changed"
+	CCTPRescuerChanged            CCTPEventType = "rescuer_changed"
+	CCTPSetBurnLimitPerMessage    CCTPEventType = "set_burn_limit_per_message"
+	CCTPSetTokenController        CCTPEventType = "set_token_controller"
+	CCTPSignatureThresholdUpdated CCTPEventType = "signature_threshold_updated"
+	CCTPSwapMinterConfigSet       CCTPEventType = "swap_minter_config_set"
+	CCTPTokenDecimalConfigAdded   CCTPEventType = "token_decimal_config_added"
+	CCTPUnDenylisted              CCTPEventType = "un_denylisted"
 )
 
-// IsValid reports whether t is one of the ten known CCTP events.
+// IsValid reports whether t is one of the 26 known CCTP events.
 func (t CCTPEventType) IsValid() bool {
 	switch t {
 	case CCTPDepositForBurn, CCTPMintAndWithdraw, CCTPMessageSent, CCTPMessageReceived, CCTPMintAndForward,
 		CCTPOwnershipTransfer, CCTPOwnershipTransferCompleted, CCTPAdminChanged,
-		CCTPRemoteTokenMessengerAdded, CCTPTokenPairLinked:
+		CCTPRemoteTokenMessengerAdded, CCTPTokenPairLinked,
+		CCTPAdminChangeStarted, CCTPAttesterEnabled, CCTPAttesterManagerUpdated,
+		CCTPDenylisted, CCTPDenylisterChanged, CCTPFeeRecipientSet,
+		CCTPMaxMessageBodySizeUpdated, CCTPMinFeeControllerSet, CCTPPauserChanged,
+		CCTPRescuerChanged, CCTPSetBurnLimitPerMessage, CCTPSetTokenController,
+		CCTPSignatureThresholdUpdated, CCTPSwapMinterConfigSet, CCTPTokenDecimalConfigAdded,
+		CCTPUnDenylisted:
 		return true
 	}
 	return false

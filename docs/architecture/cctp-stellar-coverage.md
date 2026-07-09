@@ -122,7 +122,12 @@ Emitted by `receive_message`.
 ### `MessageTransmitter` — `MaxMessageBodySizeUpdated`
 
 Admin event, low signal value for our use case but emitted by
-`set_max_message_body_size`. Track for completeness.
+`set_max_message_body_size`. Track for completeness. **Decoded as of
+2026-07-09** (ROADMAP #89c full topic census) — along with the other
+20 governance/admin events this design doc didn't originally enumerate
+(the transfer-flow + first 5 governance events were the 2026-05-22
+scope; see `docs/protocols/cctp.md` for the current, complete
+per-topic list and real-mainnet fixture references).
 
 - **Topics:** `["max_message_body_size_updated"]`
 - **Body:** `{ new_max_message_body_size: u32 }`

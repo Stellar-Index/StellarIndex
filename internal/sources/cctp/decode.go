@@ -30,7 +30,7 @@ var ErrMalformedTopic = errors.New("cctp: malformed event topics")
 // Classify reports which CCTP event the given Event is, or empty
 // string if topic[0] doesn't match. Contract-ID filtering happens
 // DOWNSTREAM.
-func Classify(e *events.Event) string {
+func Classify(e *events.Event) string { //nolint:gocyclo,gocognit,cyclop // one case per CCTP topic (26, the full mainnet census — docs/protocols/cctp.md); flattening keeps the dispatch table auditable against the contract source
 	if len(e.Topic) < 1 {
 		return ""
 	}
@@ -55,6 +55,38 @@ func Classify(e *events.Event) string {
 		return EventRemoteTokenMessengerAdded
 	case TopicSymbolTokenPairLinked:
 		return EventTokenPairLinked
+	case TopicSymbolAdminChangeStarted:
+		return EventAdminChangeStarted
+	case TopicSymbolAttesterEnabled:
+		return EventAttesterEnabled
+	case TopicSymbolAttesterManagerUpdated:
+		return EventAttesterManagerUpdated
+	case TopicSymbolDenylisted:
+		return EventDenylisted
+	case TopicSymbolDenylisterChanged:
+		return EventDenylisterChanged
+	case TopicSymbolFeeRecipientSet:
+		return EventFeeRecipientSet
+	case TopicSymbolMaxMessageBodySizeUpdated:
+		return EventMaxMessageBodySizeUpdated
+	case TopicSymbolMinFeeControllerSet:
+		return EventMinFeeControllerSet
+	case TopicSymbolPauserChanged:
+		return EventPauserChanged
+	case TopicSymbolRescuerChanged:
+		return EventRescuerChanged
+	case TopicSymbolSetBurnLimitPerMessage:
+		return EventSetBurnLimitPerMessage
+	case TopicSymbolSetTokenController:
+		return EventSetTokenController
+	case TopicSymbolSignatureThresholdUpdated:
+		return EventSignatureThresholdUpdated
+	case TopicSymbolSwapMinterConfigSet:
+		return EventSwapMinterConfigSet
+	case TopicSymbolTokenDecimalConfigAdded:
+		return EventTokenDecimalConfigAdded
+	case TopicSymbolUnDenylisted:
+		return EventUnDenylisted
 	}
 	return ""
 }
@@ -715,5 +747,661 @@ func DecodeTokenPairLinked(e *events.Event) (TokenPairLinked, error) {
 		LocalToken:   localToken,
 		RemoteDomain: remoteDomain,
 		RemoteToken:  hex.EncodeToString(remoteToken),
+	}, nil
+}
+
+// ─── Lower-signal admin/governance events (ROADMAP #89c, 2026-07-09) ──
+
+// DecodeAdminChangeStarted turns one `admin_change_started` event into
+// the canonical struct. Single-topic event; body ScMap.
+//
+// Body: { new_admin: Address, old_admin: Address | Void }.
+func DecodeAdminChangeStarted(e *events.Event) (AdminChangeStarted, error) {
+	if len(e.Topic) < 1 {
+		return AdminChangeStarted{}, fmt.Errorf("%w: admin_change_started needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return AdminChangeStarted{}, fmt.Errorf("cctp: admin_change_started body parse: %w", err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return AdminChangeStarted{}, fmt.Errorf("cctp: admin_change_started body not a map: %w", err)
+	}
+
+	newAdminSV, err := scval.MustMapField(entries, "new_admin")
+	if err != nil {
+		return AdminChangeStarted{}, fmt.Errorf("%w: missing 'new_admin': %w", ErrMalformedBody, err)
+	}
+	newAdmin, err := scval.AsAddressStrkey(newAdminSV)
+	if err != nil {
+		return AdminChangeStarted{}, fmt.Errorf("cctp: admin_change_started new_admin: %w", err)
+	}
+
+	oldAdminSV, err := scval.MustMapField(entries, "old_admin")
+	if err != nil {
+		return AdminChangeStarted{}, fmt.Errorf("%w: missing 'old_admin': %w", ErrMalformedBody, err)
+	}
+	oldAdmin, err := scval.AsAddressOrVoid(oldAdminSV)
+	if err != nil {
+		return AdminChangeStarted{}, fmt.Errorf("cctp: admin_change_started old_admin: %w", err)
+	}
+
+	return AdminChangeStarted{
+		Ledger:     e.Ledger,
+		TxHash:     e.TxHash,
+		OpIndex:    e.OperationIndex,
+		ClosedAt:   e.LedgerClosedAt,
+		ContractID: e.ContractID,
+		NewAdmin:   newAdmin,
+		OldAdmin:   oldAdmin,
+	}, nil
+}
+
+// DecodeAttesterEnabled turns one `attester_enabled` event into the
+// canonical struct. 2-topic event; body carries no fields.
+//
+// Topic layout:
+//
+//	topic[0] = Symbol("attester_enabled")
+//	topic[1] = BytesN<20>(attester)
+func DecodeAttesterEnabled(e *events.Event) (AttesterEnabled, error) {
+	if len(e.Topic) < 2 {
+		return AttesterEnabled{}, fmt.Errorf("%w: attester_enabled needs 2 topics, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	attesterSV, err := scval.Parse(e.Topic[1])
+	if err != nil {
+		return AttesterEnabled{}, fmt.Errorf("cctp: attester_enabled topic[1] parse: %w", err)
+	}
+	attester, err := scval.AsBytes(attesterSV)
+	if err != nil {
+		return AttesterEnabled{}, fmt.Errorf("cctp: attester_enabled attester: %w", err)
+	}
+	return AttesterEnabled{
+		Ledger:     e.Ledger,
+		TxHash:     e.TxHash,
+		OpIndex:    e.OperationIndex,
+		ClosedAt:   e.LedgerClosedAt,
+		ContractID: e.ContractID,
+		Attester:   hex.EncodeToString(attester),
+	}, nil
+}
+
+// DecodeAttesterManagerUpdated turns one `attester_manager_updated`
+// event into the canonical struct. 3-topic event; body carries no
+// fields.
+//
+// Topic layout:
+//
+//	topic[0] = Symbol("attester_manager_updated")
+//	topic[1] = Address(old_attester_manager) | Void
+//	topic[2] = Address(new_attester_manager)
+//
+// old_attester_manager is type-tested via [scval.AsAddressOrVoid] — the
+// real mainnet bootstrap instance (ledger 62146641) carries it Void.
+func DecodeAttesterManagerUpdated(e *events.Event) (AttesterManagerUpdated, error) {
+	if len(e.Topic) < 3 {
+		return AttesterManagerUpdated{}, fmt.Errorf("%w: attester_manager_updated needs 3 topics, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	oldSV, err := scval.Parse(e.Topic[1])
+	if err != nil {
+		return AttesterManagerUpdated{}, fmt.Errorf("cctp: attester_manager_updated topic[1] parse: %w", err)
+	}
+	oldMgr, err := scval.AsAddressOrVoid(oldSV)
+	if err != nil {
+		return AttesterManagerUpdated{}, fmt.Errorf("cctp: attester_manager_updated old_attester_manager: %w", err)
+	}
+	newSV, err := scval.Parse(e.Topic[2])
+	if err != nil {
+		return AttesterManagerUpdated{}, fmt.Errorf("cctp: attester_manager_updated topic[2] parse: %w", err)
+	}
+	newMgr, err := scval.AsAddressStrkey(newSV)
+	if err != nil {
+		return AttesterManagerUpdated{}, fmt.Errorf("cctp: attester_manager_updated new_attester_manager: %w", err)
+	}
+	return AttesterManagerUpdated{
+		Ledger:             e.Ledger,
+		TxHash:             e.TxHash,
+		OpIndex:            e.OperationIndex,
+		ClosedAt:           e.LedgerClosedAt,
+		ContractID:         e.ContractID,
+		OldAttesterManager: oldMgr,
+		NewAttesterManager: newMgr,
+	}, nil
+}
+
+// DecodeDenylisted turns one `denylisted` event into the canonical
+// struct. 2-topic event; body carries no fields.
+//
+// Topic layout:
+//
+//	topic[0] = Symbol("denylisted")
+//	topic[1] = Address(account)
+func DecodeDenylisted(e *events.Event) (Denylisted, error) {
+	if len(e.Topic) < 2 {
+		return Denylisted{}, fmt.Errorf("%w: denylisted needs 2 topics, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	accountSV, err := scval.Parse(e.Topic[1])
+	if err != nil {
+		return Denylisted{}, fmt.Errorf("cctp: denylisted topic[1] parse: %w", err)
+	}
+	account, err := scval.AsAddressStrkey(accountSV)
+	if err != nil {
+		return Denylisted{}, fmt.Errorf("cctp: denylisted account: %w", err)
+	}
+	return Denylisted{
+		Ledger:     e.Ledger,
+		TxHash:     e.TxHash,
+		OpIndex:    e.OperationIndex,
+		ClosedAt:   e.LedgerClosedAt,
+		ContractID: e.ContractID,
+		Account:    account,
+	}, nil
+}
+
+// DecodeUnDenylisted turns one `un_denylisted` event into the
+// canonical struct. 2-topic event; body carries no fields. Same shape
+// as [DecodeDenylisted].
+//
+// Topic layout:
+//
+//	topic[0] = Symbol("un_denylisted")
+//	topic[1] = Address(account)
+func DecodeUnDenylisted(e *events.Event) (UnDenylisted, error) {
+	if len(e.Topic) < 2 {
+		return UnDenylisted{}, fmt.Errorf("%w: un_denylisted needs 2 topics, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	accountSV, err := scval.Parse(e.Topic[1])
+	if err != nil {
+		return UnDenylisted{}, fmt.Errorf("cctp: un_denylisted topic[1] parse: %w", err)
+	}
+	account, err := scval.AsAddressStrkey(accountSV)
+	if err != nil {
+		return UnDenylisted{}, fmt.Errorf("cctp: un_denylisted account: %w", err)
+	}
+	return UnDenylisted{
+		Ledger:     e.Ledger,
+		TxHash:     e.TxHash,
+		OpIndex:    e.OperationIndex,
+		ClosedAt:   e.LedgerClosedAt,
+		ContractID: e.ContractID,
+		Account:    account,
+	}, nil
+}
+
+// DecodeDenylisterChanged turns one `denylister_changed` event into
+// the canonical struct. 3-topic event; body carries no fields. Same
+// old|void / new topic shape as [DecodeAttesterManagerUpdated].
+//
+// Topic layout:
+//
+//	topic[0] = Symbol("denylister_changed")
+//	topic[1] = Address(old_denylister) | Void
+//	topic[2] = Address(new_denylister)
+func DecodeDenylisterChanged(e *events.Event) (DenylisterChanged, error) {
+	if len(e.Topic) < 3 {
+		return DenylisterChanged{}, fmt.Errorf("%w: denylister_changed needs 3 topics, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	oldSV, err := scval.Parse(e.Topic[1])
+	if err != nil {
+		return DenylisterChanged{}, fmt.Errorf("cctp: denylister_changed topic[1] parse: %w", err)
+	}
+	oldDenylister, err := scval.AsAddressOrVoid(oldSV)
+	if err != nil {
+		return DenylisterChanged{}, fmt.Errorf("cctp: denylister_changed old_denylister: %w", err)
+	}
+	newSV, err := scval.Parse(e.Topic[2])
+	if err != nil {
+		return DenylisterChanged{}, fmt.Errorf("cctp: denylister_changed topic[2] parse: %w", err)
+	}
+	newDenylister, err := scval.AsAddressStrkey(newSV)
+	if err != nil {
+		return DenylisterChanged{}, fmt.Errorf("cctp: denylister_changed new_denylister: %w", err)
+	}
+	return DenylisterChanged{
+		Ledger:        e.Ledger,
+		TxHash:        e.TxHash,
+		OpIndex:       e.OperationIndex,
+		ClosedAt:      e.LedgerClosedAt,
+		ContractID:    e.ContractID,
+		OldDenylister: oldDenylister,
+		NewDenylister: newDenylister,
+	}, nil
+}
+
+// DecodeFeeRecipientSet turns one `fee_recipient_set` event into the
+// canonical struct. Single-topic event; body ScMap.
+//
+// Body: { fee_recipient: Address }.
+func DecodeFeeRecipientSet(e *events.Event) (FeeRecipientSet, error) {
+	if len(e.Topic) < 1 {
+		return FeeRecipientSet{}, fmt.Errorf("%w: fee_recipient_set needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return FeeRecipientSet{}, fmt.Errorf("cctp: fee_recipient_set body parse: %w", err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return FeeRecipientSet{}, fmt.Errorf("cctp: fee_recipient_set body not a map: %w", err)
+	}
+	feeRecipientSV, err := scval.MustMapField(entries, "fee_recipient")
+	if err != nil {
+		return FeeRecipientSet{}, fmt.Errorf("%w: missing 'fee_recipient': %w", ErrMalformedBody, err)
+	}
+	feeRecipient, err := scval.AsAddressStrkey(feeRecipientSV)
+	if err != nil {
+		return FeeRecipientSet{}, fmt.Errorf("cctp: fee_recipient_set fee_recipient: %w", err)
+	}
+	return FeeRecipientSet{
+		Ledger:       e.Ledger,
+		TxHash:       e.TxHash,
+		OpIndex:      e.OperationIndex,
+		ClosedAt:     e.LedgerClosedAt,
+		ContractID:   e.ContractID,
+		FeeRecipient: feeRecipient,
+	}, nil
+}
+
+// DecodeMaxMessageBodySizeUpdated turns one
+// `max_message_body_size_updated` event into the canonical struct.
+// Single-topic event; body ScMap.
+//
+// Body: { new_max_message_body_size: u32 }.
+func DecodeMaxMessageBodySizeUpdated(e *events.Event) (MaxMessageBodySizeUpdated, error) {
+	if len(e.Topic) < 1 {
+		return MaxMessageBodySizeUpdated{}, fmt.Errorf("%w: max_message_body_size_updated needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return MaxMessageBodySizeUpdated{}, fmt.Errorf("cctp: max_message_body_size_updated body parse: %w", err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return MaxMessageBodySizeUpdated{}, fmt.Errorf("cctp: max_message_body_size_updated body not a map: %w", err)
+	}
+	newSizeSV, err := scval.MustMapField(entries, "new_max_message_body_size")
+	if err != nil {
+		return MaxMessageBodySizeUpdated{}, fmt.Errorf("%w: missing 'new_max_message_body_size': %w", ErrMalformedBody, err)
+	}
+	newSize, err := scval.AsU32(newSizeSV)
+	if err != nil {
+		return MaxMessageBodySizeUpdated{}, fmt.Errorf("cctp: max_message_body_size_updated new_max_message_body_size: %w", err)
+	}
+	return MaxMessageBodySizeUpdated{
+		Ledger:                e.Ledger,
+		TxHash:                e.TxHash,
+		OpIndex:               e.OperationIndex,
+		ClosedAt:              e.LedgerClosedAt,
+		ContractID:            e.ContractID,
+		NewMaxMessageBodySize: newSize,
+	}, nil
+}
+
+// DecodeMinFeeControllerSet turns one `min_fee_controller_set` event
+// into the canonical struct. 2-topic event; body carries no fields.
+//
+// Topic layout:
+//
+//	topic[0] = Symbol("min_fee_controller_set")
+//	topic[1] = Address(min_fee_controller)
+func DecodeMinFeeControllerSet(e *events.Event) (MinFeeControllerSet, error) {
+	if len(e.Topic) < 2 {
+		return MinFeeControllerSet{}, fmt.Errorf("%w: min_fee_controller_set needs 2 topics, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	controllerSV, err := scval.Parse(e.Topic[1])
+	if err != nil {
+		return MinFeeControllerSet{}, fmt.Errorf("cctp: min_fee_controller_set topic[1] parse: %w", err)
+	}
+	controller, err := scval.AsAddressStrkey(controllerSV)
+	if err != nil {
+		return MinFeeControllerSet{}, fmt.Errorf("cctp: min_fee_controller_set min_fee_controller: %w", err)
+	}
+	return MinFeeControllerSet{
+		Ledger:           e.Ledger,
+		TxHash:           e.TxHash,
+		OpIndex:          e.OperationIndex,
+		ClosedAt:         e.LedgerClosedAt,
+		ContractID:       e.ContractID,
+		MinFeeController: controller,
+	}, nil
+}
+
+// DecodePauserChanged turns one `pauser_changed` event into the
+// canonical struct. Single-topic event; body ScMap. NOTE: the body
+// field is named `new_address`, not `new_pauser` — confirmed against
+// the real mainnet event, not assumed from the topic name.
+//
+// Body: { new_address: Address }.
+func DecodePauserChanged(e *events.Event) (PauserChanged, error) {
+	if len(e.Topic) < 1 {
+		return PauserChanged{}, fmt.Errorf("%w: pauser_changed needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return PauserChanged{}, fmt.Errorf("cctp: pauser_changed body parse: %w", err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return PauserChanged{}, fmt.Errorf("cctp: pauser_changed body not a map: %w", err)
+	}
+	newAddrSV, err := scval.MustMapField(entries, "new_address")
+	if err != nil {
+		return PauserChanged{}, fmt.Errorf("%w: missing 'new_address': %w", ErrMalformedBody, err)
+	}
+	newAddr, err := scval.AsAddressStrkey(newAddrSV)
+	if err != nil {
+		return PauserChanged{}, fmt.Errorf("cctp: pauser_changed new_address: %w", err)
+	}
+	return PauserChanged{
+		Ledger:     e.Ledger,
+		TxHash:     e.TxHash,
+		OpIndex:    e.OperationIndex,
+		ClosedAt:   e.LedgerClosedAt,
+		ContractID: e.ContractID,
+		NewAddress: newAddr,
+	}, nil
+}
+
+// DecodeRescuerChanged turns one `rescuer_changed` event into the
+// canonical struct. Single-topic event; body ScMap.
+//
+// Body: { new_rescuer: Address }.
+func DecodeRescuerChanged(e *events.Event) (RescuerChanged, error) {
+	if len(e.Topic) < 1 {
+		return RescuerChanged{}, fmt.Errorf("%w: rescuer_changed needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return RescuerChanged{}, fmt.Errorf("cctp: rescuer_changed body parse: %w", err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return RescuerChanged{}, fmt.Errorf("cctp: rescuer_changed body not a map: %w", err)
+	}
+	newRescuerSV, err := scval.MustMapField(entries, "new_rescuer")
+	if err != nil {
+		return RescuerChanged{}, fmt.Errorf("%w: missing 'new_rescuer': %w", ErrMalformedBody, err)
+	}
+	newRescuer, err := scval.AsAddressStrkey(newRescuerSV)
+	if err != nil {
+		return RescuerChanged{}, fmt.Errorf("cctp: rescuer_changed new_rescuer: %w", err)
+	}
+	return RescuerChanged{
+		Ledger:     e.Ledger,
+		TxHash:     e.TxHash,
+		OpIndex:    e.OperationIndex,
+		ClosedAt:   e.LedgerClosedAt,
+		ContractID: e.ContractID,
+		NewRescuer: newRescuer,
+	}, nil
+}
+
+// DecodeSetTokenController turns one `set_token_controller` event into
+// the canonical struct. Single-topic event; body ScMap.
+//
+// Body: { token_controller: Address }.
+func DecodeSetTokenController(e *events.Event) (SetTokenController, error) {
+	if len(e.Topic) < 1 {
+		return SetTokenController{}, fmt.Errorf("%w: set_token_controller needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return SetTokenController{}, fmt.Errorf("cctp: set_token_controller body parse: %w", err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return SetTokenController{}, fmt.Errorf("cctp: set_token_controller body not a map: %w", err)
+	}
+	controllerSV, err := scval.MustMapField(entries, "token_controller")
+	if err != nil {
+		return SetTokenController{}, fmt.Errorf("%w: missing 'token_controller': %w", ErrMalformedBody, err)
+	}
+	controller, err := scval.AsAddressStrkey(controllerSV)
+	if err != nil {
+		return SetTokenController{}, fmt.Errorf("cctp: set_token_controller token_controller: %w", err)
+	}
+	return SetTokenController{
+		Ledger:          e.Ledger,
+		TxHash:          e.TxHash,
+		OpIndex:         e.OperationIndex,
+		ClosedAt:        e.LedgerClosedAt,
+		ContractID:      e.ContractID,
+		TokenController: controller,
+	}, nil
+}
+
+// DecodeSignatureThresholdUpdated turns one
+// `signature_threshold_updated` event into the canonical struct.
+// Single-topic event; body ScMap.
+//
+// Body: { new_signature_threshold: u32, old_signature_threshold: u32 }.
+func DecodeSignatureThresholdUpdated(e *events.Event) (SignatureThresholdUpdated, error) { //nolint:dupl // parallel to DecodeMaxMessageBodySizeUpdated's shape but a distinct 2-field event; extracting a shared helper would obscure which fields belong to which contract event
+	if len(e.Topic) < 1 {
+		return SignatureThresholdUpdated{}, fmt.Errorf("%w: signature_threshold_updated needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return SignatureThresholdUpdated{}, fmt.Errorf("cctp: signature_threshold_updated body parse: %w", err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return SignatureThresholdUpdated{}, fmt.Errorf("cctp: signature_threshold_updated body not a map: %w", err)
+	}
+	newSV, err := scval.MustMapField(entries, "new_signature_threshold")
+	if err != nil {
+		return SignatureThresholdUpdated{}, fmt.Errorf("%w: missing 'new_signature_threshold': %w", ErrMalformedBody, err)
+	}
+	newThreshold, err := scval.AsU32(newSV)
+	if err != nil {
+		return SignatureThresholdUpdated{}, fmt.Errorf("cctp: signature_threshold_updated new_signature_threshold: %w", err)
+	}
+	oldSV, err := scval.MustMapField(entries, "old_signature_threshold")
+	if err != nil {
+		return SignatureThresholdUpdated{}, fmt.Errorf("%w: missing 'old_signature_threshold': %w", ErrMalformedBody, err)
+	}
+	oldThreshold, err := scval.AsU32(oldSV)
+	if err != nil {
+		return SignatureThresholdUpdated{}, fmt.Errorf("cctp: signature_threshold_updated old_signature_threshold: %w", err)
+	}
+	return SignatureThresholdUpdated{
+		Ledger:                e.Ledger,
+		TxHash:                e.TxHash,
+		OpIndex:               e.OperationIndex,
+		ClosedAt:              e.LedgerClosedAt,
+		ContractID:            e.ContractID,
+		NewSignatureThreshold: newThreshold,
+		OldSignatureThreshold: oldThreshold,
+	}, nil
+}
+
+// DecodeSetBurnLimitPerMessage turns one `set_burn_limit_per_message`
+// event into the canonical struct.
+//
+// Topic layout:
+//
+//	topic[0] = Symbol("set_burn_limit_per_message")
+//	topic[1] = Address(token)
+//
+// Body: { burn_limit_per_message: i128 }.
+func DecodeSetBurnLimitPerMessage(e *events.Event) (SetBurnLimitPerMessage, error) {
+	if len(e.Topic) < 2 {
+		return SetBurnLimitPerMessage{}, fmt.Errorf("%w: set_burn_limit_per_message needs 2 topics, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	tokenSV, err := scval.Parse(e.Topic[1])
+	if err != nil {
+		return SetBurnLimitPerMessage{}, fmt.Errorf("cctp: set_burn_limit_per_message topic[1] parse: %w", err)
+	}
+	token, err := scval.AsAddressStrkey(tokenSV)
+	if err != nil {
+		return SetBurnLimitPerMessage{}, fmt.Errorf("cctp: set_burn_limit_per_message token: %w", err)
+	}
+
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return SetBurnLimitPerMessage{}, fmt.Errorf("cctp: set_burn_limit_per_message body parse: %w", err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return SetBurnLimitPerMessage{}, fmt.Errorf("cctp: set_burn_limit_per_message body not a map: %w", err)
+	}
+	limitSV, err := scval.MustMapField(entries, "burn_limit_per_message")
+	if err != nil {
+		return SetBurnLimitPerMessage{}, fmt.Errorf("%w: missing 'burn_limit_per_message': %w", ErrMalformedBody, err)
+	}
+	limit, err := scval.AsAmountFromI128(limitSV)
+	if err != nil {
+		return SetBurnLimitPerMessage{}, fmt.Errorf("cctp: set_burn_limit_per_message burn_limit_per_message: %w", err)
+	}
+
+	return SetBurnLimitPerMessage{
+		Ledger:              e.Ledger,
+		TxHash:              e.TxHash,
+		OpIndex:             e.OperationIndex,
+		ClosedAt:            e.LedgerClosedAt,
+		ContractID:          e.ContractID,
+		Token:               token,
+		BurnLimitPerMessage: limit.String(),
+	}, nil
+}
+
+// DecodeSwapMinterConfigSet turns one `swap_minter_config_set` event
+// into the canonical struct. The body's `swap_minter_config` field is
+// a NESTED map — flattened into AllowAsset / SwapMinter.
+//
+// Topic layout:
+//
+//	topic[0] = Symbol("swap_minter_config_set")
+//	topic[1] = Address(token)
+//
+// Body: { swap_minter_config: { allow_asset: Address, swap_minter: Address } }.
+func DecodeSwapMinterConfigSet(e *events.Event) (SwapMinterConfigSet, error) { //nolint:dupl // parallel structure to DecodeTokenDecimalConfigAdded's nested-map unwrap but distinct field names/types; a shared helper would obscure which fields belong to which contract event
+	if len(e.Topic) < 2 {
+		return SwapMinterConfigSet{}, fmt.Errorf("%w: swap_minter_config_set needs 2 topics, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	tokenSV, err := scval.Parse(e.Topic[1])
+	if err != nil {
+		return SwapMinterConfigSet{}, fmt.Errorf("cctp: swap_minter_config_set topic[1] parse: %w", err)
+	}
+	token, err := scval.AsAddressStrkey(tokenSV)
+	if err != nil {
+		return SwapMinterConfigSet{}, fmt.Errorf("cctp: swap_minter_config_set token: %w", err)
+	}
+
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return SwapMinterConfigSet{}, fmt.Errorf("cctp: swap_minter_config_set body parse: %w", err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return SwapMinterConfigSet{}, fmt.Errorf("cctp: swap_minter_config_set body not a map: %w", err)
+	}
+	configSV, err := scval.MustMapField(entries, "swap_minter_config")
+	if err != nil {
+		return SwapMinterConfigSet{}, fmt.Errorf("%w: missing 'swap_minter_config': %w", ErrMalformedBody, err)
+	}
+	configEntries, err := scval.AsMap(configSV)
+	if err != nil {
+		return SwapMinterConfigSet{}, fmt.Errorf("cctp: swap_minter_config_set swap_minter_config not a map: %w", err)
+	}
+
+	allowAssetSV, err := scval.MustMapField(configEntries, "allow_asset")
+	if err != nil {
+		return SwapMinterConfigSet{}, fmt.Errorf("%w: missing 'allow_asset': %w", ErrMalformedBody, err)
+	}
+	allowAsset, err := scval.AsAddressStrkey(allowAssetSV)
+	if err != nil {
+		return SwapMinterConfigSet{}, fmt.Errorf("cctp: swap_minter_config_set allow_asset: %w", err)
+	}
+
+	swapMinterSV, err := scval.MustMapField(configEntries, "swap_minter")
+	if err != nil {
+		return SwapMinterConfigSet{}, fmt.Errorf("%w: missing 'swap_minter': %w", ErrMalformedBody, err)
+	}
+	swapMinter, err := scval.AsAddressStrkey(swapMinterSV)
+	if err != nil {
+		return SwapMinterConfigSet{}, fmt.Errorf("cctp: swap_minter_config_set swap_minter: %w", err)
+	}
+
+	return SwapMinterConfigSet{
+		Ledger:     e.Ledger,
+		TxHash:     e.TxHash,
+		OpIndex:    e.OperationIndex,
+		ClosedAt:   e.LedgerClosedAt,
+		ContractID: e.ContractID,
+		Token:      token,
+		AllowAsset: allowAsset,
+		SwapMinter: swapMinter,
+	}, nil
+}
+
+// DecodeTokenDecimalConfigAdded turns one `token_decimal_config_added`
+// event into the canonical struct. The body's `token_decimal_config`
+// field is a NESTED map — flattened into CanonicalDecimals /
+// LocalDecimals.
+//
+// Topic layout:
+//
+//	topic[0] = Symbol("token_decimal_config_added")
+//	topic[1] = Address(token)
+//
+// Body: { token_decimal_config: { canonical_decimals: u32, local_decimals: u32 } }.
+func DecodeTokenDecimalConfigAdded(e *events.Event) (TokenDecimalConfigAdded, error) { //nolint:dupl // parallel structure to DecodeSwapMinterConfigSet's nested-map unwrap but distinct field names/types; a shared helper would obscure which fields belong to which contract event
+	if len(e.Topic) < 2 {
+		return TokenDecimalConfigAdded{}, fmt.Errorf("%w: token_decimal_config_added needs 2 topics, got %d", ErrMalformedTopic, len(e.Topic))
+	}
+	tokenSV, err := scval.Parse(e.Topic[1])
+	if err != nil {
+		return TokenDecimalConfigAdded{}, fmt.Errorf("cctp: token_decimal_config_added topic[1] parse: %w", err)
+	}
+	token, err := scval.AsAddressStrkey(tokenSV)
+	if err != nil {
+		return TokenDecimalConfigAdded{}, fmt.Errorf("cctp: token_decimal_config_added token: %w", err)
+	}
+
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return TokenDecimalConfigAdded{}, fmt.Errorf("cctp: token_decimal_config_added body parse: %w", err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return TokenDecimalConfigAdded{}, fmt.Errorf("cctp: token_decimal_config_added body not a map: %w", err)
+	}
+	configSV, err := scval.MustMapField(entries, "token_decimal_config")
+	if err != nil {
+		return TokenDecimalConfigAdded{}, fmt.Errorf("%w: missing 'token_decimal_config': %w", ErrMalformedBody, err)
+	}
+	configEntries, err := scval.AsMap(configSV)
+	if err != nil {
+		return TokenDecimalConfigAdded{}, fmt.Errorf("cctp: token_decimal_config_added token_decimal_config not a map: %w", err)
+	}
+
+	canonicalSV, err := scval.MustMapField(configEntries, "canonical_decimals")
+	if err != nil {
+		return TokenDecimalConfigAdded{}, fmt.Errorf("%w: missing 'canonical_decimals': %w", ErrMalformedBody, err)
+	}
+	canonical, err := scval.AsU32(canonicalSV)
+	if err != nil {
+		return TokenDecimalConfigAdded{}, fmt.Errorf("cctp: token_decimal_config_added canonical_decimals: %w", err)
+	}
+
+	localSV, err := scval.MustMapField(configEntries, "local_decimals")
+	if err != nil {
+		return TokenDecimalConfigAdded{}, fmt.Errorf("%w: missing 'local_decimals': %w", ErrMalformedBody, err)
+	}
+	local, err := scval.AsU32(localSV)
+	if err != nil {
+		return TokenDecimalConfigAdded{}, fmt.Errorf("cctp: token_decimal_config_added local_decimals: %w", err)
+	}
+
+	return TokenDecimalConfigAdded{
+		Ledger:            e.Ledger,
+		TxHash:            e.TxHash,
+		OpIndex:           e.OperationIndex,
+		ClosedAt:          e.LedgerClosedAt,
+		ContractID:        e.ContractID,
+		Token:             token,
+		CanonicalDecimals: canonical,
+		LocalDecimals:     local,
 	}, nil
 }

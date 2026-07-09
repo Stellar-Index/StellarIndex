@@ -243,3 +243,261 @@ func eventFromTokenPairLinked(l TokenPairLinked, observedAt time.Time) Event {
 		},
 	}
 }
+
+// ─── Lower-signal admin/governance events (ROADMAP #89c, 2026-07-09) ──
+//
+// All 16 are governance/config events: no promoted Amount/Fee, and no
+// CounterpartyDomain (none of them carry a cross-chain domain field).
+// Token promotes only where the field is a genuine local Stellar SAC
+// address (set_burn_limit_per_message / swap_minter_config_set /
+// token_decimal_config_added — matching token_pair_linked's
+// local_token convention); every other address-shaped field (actor
+// roles: admin, owner, pauser, rescuer, controller, denylister,
+// attester manager, denylist target) stays in Attributes, matching
+// ownership_transfer / admin_changed's precedent.
+
+func eventFromAdminChangeStarted(a AdminChangeStarted, observedAt time.Time) Event {
+	return Event{
+		ContractID: a.ContractID,
+		Ledger:     a.Ledger,
+		TxHash:     a.TxHash,
+		OpIndex:    a.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventAdminChangeStarted,
+		Attributes: map[string]any{
+			"new_admin": a.NewAdmin,
+			"old_admin": a.OldAdmin,
+		},
+	}
+}
+
+func eventFromAttesterEnabled(a AttesterEnabled, observedAt time.Time) Event {
+	return Event{
+		ContractID: a.ContractID,
+		Ledger:     a.Ledger,
+		TxHash:     a.TxHash,
+		OpIndex:    a.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventAttesterEnabled,
+		Attributes: map[string]any{
+			"attester": a.Attester,
+		},
+	}
+}
+
+func eventFromAttesterManagerUpdated(a AttesterManagerUpdated, observedAt time.Time) Event {
+	return Event{
+		ContractID: a.ContractID,
+		Ledger:     a.Ledger,
+		TxHash:     a.TxHash,
+		OpIndex:    a.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventAttesterManagerUpdated,
+		Attributes: map[string]any{
+			"old_attester_manager": a.OldAttesterManager,
+			"new_attester_manager": a.NewAttesterManager,
+		},
+	}
+}
+
+func eventFromDenylisted(d Denylisted, observedAt time.Time) Event {
+	return Event{
+		ContractID: d.ContractID,
+		Ledger:     d.Ledger,
+		TxHash:     d.TxHash,
+		OpIndex:    d.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventDenylisted,
+		Attributes: map[string]any{
+			"account": d.Account,
+		},
+	}
+}
+
+func eventFromUnDenylisted(u UnDenylisted, observedAt time.Time) Event {
+	return Event{
+		ContractID: u.ContractID,
+		Ledger:     u.Ledger,
+		TxHash:     u.TxHash,
+		OpIndex:    u.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventUnDenylisted,
+		Attributes: map[string]any{
+			"account": u.Account,
+		},
+	}
+}
+
+func eventFromDenylisterChanged(d DenylisterChanged, observedAt time.Time) Event {
+	return Event{
+		ContractID: d.ContractID,
+		Ledger:     d.Ledger,
+		TxHash:     d.TxHash,
+		OpIndex:    d.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventDenylisterChanged,
+		Attributes: map[string]any{
+			"old_denylister": d.OldDenylister,
+			"new_denylister": d.NewDenylister,
+		},
+	}
+}
+
+func eventFromFeeRecipientSet(f FeeRecipientSet, observedAt time.Time) Event {
+	return Event{
+		ContractID: f.ContractID,
+		Ledger:     f.Ledger,
+		TxHash:     f.TxHash,
+		OpIndex:    f.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventFeeRecipientSet,
+		Attributes: map[string]any{
+			"fee_recipient": f.FeeRecipient,
+		},
+	}
+}
+
+func eventFromMaxMessageBodySizeUpdated(m MaxMessageBodySizeUpdated, observedAt time.Time) Event {
+	return Event{
+		ContractID: m.ContractID,
+		Ledger:     m.Ledger,
+		TxHash:     m.TxHash,
+		OpIndex:    m.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventMaxMessageBodySizeUpdated,
+		Attributes: map[string]any{
+			"new_max_message_body_size": m.NewMaxMessageBodySize,
+		},
+	}
+}
+
+func eventFromMinFeeControllerSet(m MinFeeControllerSet, observedAt time.Time) Event {
+	return Event{
+		ContractID: m.ContractID,
+		Ledger:     m.Ledger,
+		TxHash:     m.TxHash,
+		OpIndex:    m.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventMinFeeControllerSet,
+		Attributes: map[string]any{
+			"min_fee_controller": m.MinFeeController,
+		},
+	}
+}
+
+func eventFromPauserChanged(p PauserChanged, observedAt time.Time) Event {
+	return Event{
+		ContractID: p.ContractID,
+		Ledger:     p.Ledger,
+		TxHash:     p.TxHash,
+		OpIndex:    p.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventPauserChanged,
+		Attributes: map[string]any{
+			"new_address": p.NewAddress,
+		},
+	}
+}
+
+func eventFromRescuerChanged(r RescuerChanged, observedAt time.Time) Event {
+	return Event{
+		ContractID: r.ContractID,
+		Ledger:     r.Ledger,
+		TxHash:     r.TxHash,
+		OpIndex:    r.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventRescuerChanged,
+		Attributes: map[string]any{
+			"new_rescuer": r.NewRescuer,
+		},
+	}
+}
+
+func eventFromSetTokenController(s SetTokenController, observedAt time.Time) Event {
+	return Event{
+		ContractID: s.ContractID,
+		Ledger:     s.Ledger,
+		TxHash:     s.TxHash,
+		OpIndex:    s.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventSetTokenController,
+		Attributes: map[string]any{
+			"token_controller": s.TokenController,
+		},
+	}
+}
+
+func eventFromSignatureThresholdUpdated(s SignatureThresholdUpdated, observedAt time.Time) Event {
+	return Event{
+		ContractID: s.ContractID,
+		Ledger:     s.Ledger,
+		TxHash:     s.TxHash,
+		OpIndex:    s.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventSignatureThresholdUpdated,
+		Attributes: map[string]any{
+			"new_signature_threshold": s.NewSignatureThreshold,
+			"old_signature_threshold": s.OldSignatureThreshold,
+		},
+	}
+}
+
+// eventFromSetBurnLimitPerMessage projects a decoded
+// SetBurnLimitPerMessage. `token` promotes to Token (genuine Stellar
+// SAC address); `burn_limit_per_message` is a POLICY CEILING, not a
+// transfer amount, so it stays in Attributes rather than promoting to
+// Event.Amount (Amount is reserved for movement amounts per the
+// DepositForBurn/MintAndWithdraw convention).
+func eventFromSetBurnLimitPerMessage(s SetBurnLimitPerMessage, observedAt time.Time) Event {
+	return Event{
+		ContractID: s.ContractID,
+		Ledger:     s.Ledger,
+		TxHash:     s.TxHash,
+		OpIndex:    s.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventSetBurnLimitPerMessage,
+		Token:      s.Token,
+		Attributes: map[string]any{
+			"burn_limit_per_message": s.BurnLimitPerMessage,
+		},
+	}
+}
+
+// eventFromSwapMinterConfigSet projects a decoded SwapMinterConfigSet.
+// `token` promotes to Token; the nested config's allow_asset/
+// swap_minter land flattened in Attributes.
+func eventFromSwapMinterConfigSet(s SwapMinterConfigSet, observedAt time.Time) Event {
+	return Event{
+		ContractID: s.ContractID,
+		Ledger:     s.Ledger,
+		TxHash:     s.TxHash,
+		OpIndex:    s.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventSwapMinterConfigSet,
+		Token:      s.Token,
+		Attributes: map[string]any{
+			"allow_asset": s.AllowAsset,
+			"swap_minter": s.SwapMinter,
+		},
+	}
+}
+
+// eventFromTokenDecimalConfigAdded projects a decoded
+// TokenDecimalConfigAdded. `token` promotes to Token; the nested
+// config's canonical_decimals/local_decimals land flattened in
+// Attributes.
+func eventFromTokenDecimalConfigAdded(t TokenDecimalConfigAdded, observedAt time.Time) Event {
+	return Event{
+		ContractID: t.ContractID,
+		Ledger:     t.Ledger,
+		TxHash:     t.TxHash,
+		OpIndex:    t.OpIndex,
+		ObservedAt: observedAt,
+		EventType:  EventTokenDecimalConfigAdded,
+		Token:      t.Token,
+		Attributes: map[string]any{
+			"canonical_decimals": t.CanonicalDecimals,
+			"local_decimals":     t.LocalDecimals,
+		},
+	}
+}

@@ -174,6 +174,8 @@ migration lands.
 
 | 0092 | [`0092_cctp_governance_events_check.up.sql`](0092_cctp_governance_events_check.up.sql) | Extends `cctp_events_event_type_check` 5 → 10 values for the governance/admin topics (ownership_transfer, ownership_transfer_completed, admin_changed, remote_token_messenger_added, token_pair_linked) — #89b admin-topic audit. Follows migration 0070's precedent; additive + old-binary-safe (rule 9). |
 
+| 0094 | [`0094_cctp_full_governance_events_check.up.sql`](0094_cctp_full_governance_events_check.up.sql) | Extends `cctp_events_event_type_check` 10 → 26 values, closing the full topic census (admin_change_started, attester_enabled, attester_manager_updated, denylisted, denylister_changed, fee_recipient_set, max_message_body_size_updated, min_fee_controller_set, pauser_changed, rescuer_changed, set_burn_limit_per_message, set_token_controller, signature_threshold_updated, swap_minter_config_set, token_decimal_config_added, un_denylisted) — #89c full-census audit, retires the docs/protocols/cctp.md known-gap note. Follows migration 0092's precedent; additive + old-binary-safe (rule 9). |
+
 F-1241 (codex audit-2026-05-12): the table previously stopped at
 0015, leaving 0016..0029 (14 migrations) undocumented even though
 they shipped. Future migrations: continue adding one row per

@@ -150,6 +150,102 @@ func (*Decoder) Decode(ev events.Event) ([]consumer.Event, error) { //nolint:goc
 			return nil, err
 		}
 		return []consumer.Event{eventFromTokenPairLinked(l, observedAt)}, nil
+	case EventAdminChangeStarted:
+		a, err := DecodeAdminChangeStarted(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromAdminChangeStarted(a, observedAt)}, nil
+	case EventAttesterEnabled:
+		a, err := DecodeAttesterEnabled(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromAttesterEnabled(a, observedAt)}, nil
+	case EventAttesterManagerUpdated:
+		a, err := DecodeAttesterManagerUpdated(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromAttesterManagerUpdated(a, observedAt)}, nil
+	case EventDenylisted:
+		d, err := DecodeDenylisted(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromDenylisted(d, observedAt)}, nil
+	case EventUnDenylisted:
+		u, err := DecodeUnDenylisted(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromUnDenylisted(u, observedAt)}, nil
+	case EventDenylisterChanged:
+		d, err := DecodeDenylisterChanged(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromDenylisterChanged(d, observedAt)}, nil
+	case EventFeeRecipientSet:
+		f, err := DecodeFeeRecipientSet(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromFeeRecipientSet(f, observedAt)}, nil
+	case EventMaxMessageBodySizeUpdated:
+		m, err := DecodeMaxMessageBodySizeUpdated(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromMaxMessageBodySizeUpdated(m, observedAt)}, nil
+	case EventMinFeeControllerSet:
+		m, err := DecodeMinFeeControllerSet(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromMinFeeControllerSet(m, observedAt)}, nil
+	case EventPauserChanged:
+		p, err := DecodePauserChanged(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromPauserChanged(p, observedAt)}, nil
+	case EventRescuerChanged:
+		r, err := DecodeRescuerChanged(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromRescuerChanged(r, observedAt)}, nil
+	case EventSetTokenController:
+		s, err := DecodeSetTokenController(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromSetTokenController(s, observedAt)}, nil
+	case EventSignatureThresholdUpdated:
+		s, err := DecodeSignatureThresholdUpdated(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromSignatureThresholdUpdated(s, observedAt)}, nil
+	case EventSetBurnLimitPerMessage:
+		s, err := DecodeSetBurnLimitPerMessage(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromSetBurnLimitPerMessage(s, observedAt)}, nil
+	case EventSwapMinterConfigSet:
+		s, err := DecodeSwapMinterConfigSet(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromSwapMinterConfigSet(s, observedAt)}, nil
+	case EventTokenDecimalConfigAdded:
+		t, err := DecodeTokenDecimalConfigAdded(&ev)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{eventFromTokenDecimalConfigAdded(t, observedAt)}, nil
 	}
 	// Unreachable while Classify and this switch stay in lockstep —
 	// Classify already returned non-empty above, and every kind it
