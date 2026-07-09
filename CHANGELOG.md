@@ -15,6 +15,28 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Upstream-version-lag detection for the installed Stellar toolchain** (core / galexie /
+  archivist), closing the gap behind two incidents in one week: the 2026-07-08 Protocol 27
+  activation froze r1 ingest for 2.5h because `stellar-core` (26.0.1) had no P27 support, and
+  the very next day the hand-installed galexie binary crash-looped on the first CAP-0071
+  ledger — `galexie-v27.0.0` had been published upstream 2026-06-10, a full month of
+  unnoticed lag. New daily probe `stellar-stack-version-probe.sh` (ansible-managed,
+  `configs/ansible/roles/archival-node/tasks/10-observability.yml`) compares dpkg-installed
+  vs apt-candidate for `stellar-core`/`stellar-archivist` and the installed pseudo-version
+  date vs GitHub's latest release for `stellar-galexie` (which never reports a clean semver
+  tag — see the runbook), classifying each as current / newer-available /
+  newer-protocol-major-available. Two new alerts in both rule trees:
+  `stellarindex_stellar_stack_lagging` (ticket, any lag sustained 2d) and
+  `stellarindex_stellar_stack_protocol_lag` (page, protocol-major lag sustained 6h — "a time
+  bomb with a network-scheduled fuse"). Also adds a hard ansible drift-guard assert in
+  `07-galexie.yml`: the installed binary's runtime version string must match a pinned
+  `galexie_expected_version_string`, so `ansible-drift.yml` fails loudly the next time
+  someone hand-swaps galexie without codifying it (exactly what happened 2026-07-09). Full
+  coordinated-upgrade checklist (core apt-upgrade, galexie build-from-tag recipe, archivist
+  apt-upgrade, go-stellar-sdk go.mod bump) in
+  `docs/operations/runbooks/stellar-stack-version-lag.md`.
+
 ### Fixed
 - **Explorer: the three sites that guessed the `/v1/assets/{asset_id}` dual response shape
   now branch on `kind` (ADR-0042 LC-040) instead of shape-sniffing.**

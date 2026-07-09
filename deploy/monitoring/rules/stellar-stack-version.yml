@@ -1,0 +1,82 @@
+---
+# Stellar-stack (core / galexie / archivist) upstream version-lag probe.
+#
+# Two incidents in ONE week, same root cause: nothing watched whether
+# the installed Stellar toolchain lagged upstream.
+#   - 2026-07-08: mainnet Protocol 27 activated; r1's stellar-core
+#     (26.0.1) had no P27 support and froze ingest for 2.5h until
+#     upgraded.
+#   - 2026-07-09: the hand-installed galexie binary (an April build)
+#     crash-looped on the first ledger carrying CAP-0071 XDR —
+#     galexie-v27.0.0 had been published upstream a full month
+#     earlier (2026-06-10) and nobody noticed. 5+ hours of on-chain
+#     ingest loss.
+#
+# `stellar-stack-version-probe.sh` (installed by the archival-node
+# role, configs/ansible/roles/archival-node/tasks/10-observability.yml)
+# runs daily and writes
+# /var/lib/node_exporter/textfile_collector/stellar_stack_version.prom:
+#   stellarindex_stellar_stack_probe_success           0/1 — this probe's own up-style canary.
+#   stellarindex_stellar_stack_version_lag{component}  0=current, 1=newer version available, 2=newer PROTOCOL-MAJOR available.
+#   stellarindex_stellar_stack_installed_info{component,version} info gauge=1.
+#
+# component ∈ {core, galexie, archivist}. The lag metric is simply
+# ABSENT (not zero) for any component the probe couldn't classify
+# this run — package not dpkg-tracked on this host, or (for galexie)
+# the GitHub API call failed/rate-limited. See the probe script's own
+# comments and the runbook's "Known false-positive patterns".
+#
+# Runbook: docs/operations/runbooks/stellar-stack-version-lag.md
+
+groups:
+  - name: stellarindex.stellar_stack_version
+    interval: 60s
+    rules:
+
+      - alert: stellarindex_stellar_stack_lagging
+        expr: stellarindex_stellar_stack_version_lag >= 1
+        for: 2d
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: stellar-stack
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+        annotations:
+          summary: "{{ $labels.component }} is lagging upstream (lag={{ $value }}, sustained 2d)"
+          description: |
+            The daily stellar-stack-version-probe has found the
+            installed {{ $labels.component }} behind the latest
+            upstream release for at least 2 days straight. At lag=1
+            this is a same-major point/patch release — not urgent,
+            but should be scheduled. (lag=2 pages separately via
+            stellarindex_stellar_stack_protocol_lag — this alert can
+            also be firing at the same time as that one.) Check
+            stellarindex_stellar_stack_installed_info{component="{{ $labels.component }}"}
+            for the exact installed version string.
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+
+      - alert: stellarindex_stellar_stack_protocol_lag
+        # A protocol-major lag is a time bomb with a network-scheduled
+        # fuse: Stellar protocol upgrades activate on a network-wide
+        # vote, not on our schedule. galexie-v27.0.0 sat unnoticed for
+        # a MONTH (published 2026-06-10, protocol 27 activated
+        # 2026-07-08) before this detector existed. Page well before
+        # the next activation vote, not after ingest freezes/crash-loops.
+        expr: stellarindex_stellar_stack_version_lag >= 2
+        for: 6h
+        labels:
+          severity: page
+          team: stellarindex
+          component: stellar-stack
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+        annotations:
+          summary: "{{ $labels.component }} is a PROTOCOL-MAJOR version behind upstream (P1)"
+          description: |
+            The installed {{ $labels.component }} is behind upstream
+            by a full protocol-major version — the exact precondition
+            for the 2026-07-08 (core) and 2026-07-09 (galexie /
+            CAP-0071) incidents. Schedule the coordinated-upgrade
+            maintenance window NOW, well before any network protocol-
+            activation vote. See the "Remediation" section of the
+            runbook for the exact upgrade recipe per component.
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md

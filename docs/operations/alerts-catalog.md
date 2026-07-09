@@ -165,6 +165,25 @@ for incident-time clarity.
 | `stellarindex_stellar_archive_publish_fail` | `increase(stellarindex_stellar_archive_publish_errors_total[1h])` | > 0 | P3 | [archive-publish](runbooks/archive-publish.md) |
 | `stellarindex_stellar_archive_divergence` | `stellarindex_archive_divergence_total` (cross-region hash check) | > 0 ever | **P1** | [archive-divergence](runbooks/archive-divergence.md) |
 
+## Stellar-stack version-lag alerts
+
+Per the 2026-07-08 (core) and 2026-07-09 (galexie/CAP-0071) protocol-27
+incidents: nothing watched whether the installed Stellar toolchain
+(`stellar-core`, `stellar-galexie`, `stellar-archivist`) lagged
+upstream. `stellar-stack-version-probe.timer` runs
+`stellar-stack-version-probe.sh` daily (installed by
+`configs/ansible/roles/archival-node/tasks/10-observability.yml`),
+writing `stellarindex_stellar_stack_version_lag{component}` (0=current,
+1=newer available, 2=newer PROTOCOL-MAJOR available),
+`stellarindex_stellar_stack_installed_info{component,version}`, and
+`stellarindex_stellar_stack_probe_success` to the node_exporter
+textfile collector.
+
+| Name | Metric | Condition | Severity | Runbook |
+| ---- | ------ | --------- | -------- | ------- |
+| `stellarindex_stellar_stack_lagging` | `stellarindex_stellar_stack_version_lag` per `component` | >= 1 for 2 d | P3 | [stellar-stack-version-lag](runbooks/stellar-stack-version-lag.md) |
+| `stellarindex_stellar_stack_protocol_lag` | same | >= 2 for 6 h | **P1** | [stellar-stack-version-lag](runbooks/stellar-stack-version-lag.md) |
+
 ## Archive completeness alerts
 
 Per [ADR-0017](../adr/0017-archive-completeness-invariants.md). Both

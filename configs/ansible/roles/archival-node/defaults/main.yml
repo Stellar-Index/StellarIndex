@@ -456,6 +456,28 @@ captive_peer_port_backfill:         11727
 #       (S3-compatible, region-local Singapore endpoint).
 # ]
 galexie_version:         "galexie-v26.0.0"   # pinned — update via VERSIONS.md. Tag format: galexie-vX.Y.Z (matches Stellar protocol version).
+# Drift guard (docs/operations/runbooks/stellar-stack-version-lag.md,
+# 2026-07-09). Distinct from `galexie_version` above on purpose:
+# that var is the go-install TAG; this is the literal, verbatim
+# output of `/usr/local/bin/galexie version` on the RUNNING binary —
+# a Go pseudo-version (v0.0.0-<date>-<sha>) that never textually
+# equals the tag (see "Read the installed-galexie tag stamp" below).
+# 07-galexie.yml asserts the live host matches this string; a hand-
+# swapped binary (as happened 2026-07-09, fixing the CAP-0071
+# crash-loop) that never got codified here is exactly the drift
+# ansible-drift.yml exists to catch. Update BOTH this value AND
+# galexie_version in the SAME PR whenever galexie is upgraded.
+galexie_expected_version_string: "stellar-galexie v0.0.0-20260610161848-c97d6484816f"
+# Optional second guard: sha256 of the /usr/local/bin/galexie file
+# itself (belt-and-suspenders alongside the version-string assert
+# above — catches a same-version-string-but-different-bytes swap,
+# e.g. a different build toolchain). Left unset by default because
+# computing it requires shell access to the host
+# (`sha256sum /usr/local/bin/galexie`); the assert task in
+# 07-galexie.yml is skipped entirely while this is unset. Fill in
+# once known and it becomes a hard gate like minio_release_sha256.
+# galexie_expected_binary_sha256: <optional; set in inventory>
+
 galexie_s3_endpoint:     "http://127.0.0.1:9000"
 galexie_s3_bucket:       "galexie-live"
 # Durable full-mirror bucket — the indexer's archive-read path +

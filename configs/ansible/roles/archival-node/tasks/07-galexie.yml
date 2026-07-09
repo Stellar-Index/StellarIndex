@@ -110,6 +110,80 @@
     content: "{{ galexie_version }}"
     mode: "0644"
 
+# Drift guard (docs/operations/runbooks/stellar-stack-version-lag.md).
+# Reads the ACTUAL RUNTIME OUTPUT of the installed binary — the same
+# ground truth stellar-stack-version-probe.sh reads — rather than
+# trusting the .galexie.tag stamp file above, which a hand-installed
+# swap (bypassing ansible entirely, as happened 2026-07-09 fixing the
+# CAP-0071 crash-loop) would never update. Runs unconditionally
+# (not gated on the `when:` above) so it catches drift on every
+# apply, not just ones that also rebuilt galexie.
+- name: Check installed galexie version string (drift guard)
+  ansible.builtin.command: /usr/local/bin/galexie version
+  register: galexie_running_version
+  changed_when: false
+  failed_when: false
+
+- name: Assert galexie matches the ansible-pinned installed-version stamp
+  # A hard assert, not a warning: ansible-drift.yml's entire purpose is
+  # to fail loudly on exactly this class of drift (CLAUDE.md "r1
+  # configuration is ansible-managed — codify every host change"). If
+  # this fires because of a DELIBERATE upgrade, update
+  # galexie_expected_version_string (and galexie_version, and
+  # VERSIONS.md) in the SAME PR that performed it — see the
+  # coordinated-upgrade checklist in the runbook. If it fires
+  # unexpectedly, someone hand-swapped the binary without codifying it.
+  #
+  # NOTE for a from-scratch bootstrap (new region, or a full r1
+  # rebuild): the `go install ...@{{ galexie_version }}` task above
+  # builds whatever `galexie_version` currently points at. If that
+  # tag has fallen behind `galexie_expected_version_string` (as it
+  # does today — `galexie_version` is still pinned at galexie-v26.0.0,
+  # predating the P27 upgrade), this assert will correctly fail on
+  # that fresh build too: it's flagging the SAME staleness this whole
+  # probe exists to catch, just discovered a different way. Fix by
+  # bumping `galexie_version` to a tag whose build matches (or by
+  # re-deriving `galexie_expected_version_string` from a fresh build
+  # at the tag you actually want), not by disabling the assert.
+  ansible.builtin.assert:
+    that:
+      - galexie_running_version.stdout is defined
+      - (galexie_running_version.stdout | trim) == galexie_expected_version_string
+    fail_msg: >-
+      installed galexie reports
+      '{{ galexie_running_version.stdout | default("<command failed: " ~ (galexie_running_version.stderr | default("no such file")) ~ ">") }}'
+      but the ansible-pinned expected stamp (galexie_expected_version_string,
+      defaults/main.yml) is '{{ galexie_expected_version_string }}'. See
+      docs/operations/runbooks/stellar-stack-version-lag.md.
+    success_msg: "installed galexie matches the pinned version stamp."
+  tags: [observability, stellar-stack-version, drift-guard]
+
+# Optional belt-and-suspenders: file-hash check, skipped entirely
+# while galexie_expected_binary_sha256 is unset (see the comment on
+# that var in defaults/main.yml for why it isn't pre-filled).
+- name: Stat the installed galexie binary (drift guard checksum)
+  when: galexie_expected_binary_sha256 is defined
+  ansible.builtin.stat:
+    path: /usr/local/bin/galexie
+    checksum_algorithm: sha256
+  register: galexie_binary_stat
+  tags: [observability, stellar-stack-version, drift-guard]
+
+- name: Assert galexie binary sha256 matches the pinned drift-guard checksum
+  when: galexie_expected_binary_sha256 is defined
+  ansible.builtin.assert:
+    that:
+      - galexie_binary_stat.stat.exists
+      - galexie_binary_stat.stat.checksum == galexie_expected_binary_sha256
+    fail_msg: >-
+      /usr/local/bin/galexie's sha256
+      ({{ galexie_binary_stat.stat.checksum | default('MISSING') }}) does not
+      match the pinned galexie_expected_binary_sha256 — the binary was
+      replaced without codifying it. See
+      docs/operations/runbooks/stellar-stack-version-lag.md.
+    success_msg: "installed galexie binary matches the pinned sha256."
+  tags: [observability, stellar-stack-version, drift-guard]
+
 - name: Ensure /etc/galexie exists
   ansible.builtin.file:
     path: /etc/galexie

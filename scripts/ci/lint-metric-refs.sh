@@ -55,6 +55,15 @@ KNOWN_INERT=(
   # probe timer runs every minute on r1 (14-stellarindex-services /
   # 10-observability, 2026-07-05 captive-core wedge).
   stellarindex_galexie_catchup_refusals_5m
+  # stellar-stack-version.yml — emitted by the ansible-managed
+  # stellar-stack-version-probe.sh (node-exporter textfile collector),
+  # same shape as the galexie-catchup-probe entry above: the script is
+  # an inline `content:` block inside
+  # configs/ansible/roles/archival-node/tasks/10-observability.yml, a
+  # `.yml` file this lint's EMITTER_PATHS grep (*.go/*.sh/*.prom) can't
+  # see. NOT inert: the probe timer runs daily on r1 (2026-07-09,
+  # P27 core-freeze + galexie CAP-0071 crash-loop incidents).
+  stellarindex_stellar_stack_version_lag
   # storage.yml — TimescaleDB job-scheduler state; needs a custom
   # postgres_exporter query or a textfile SQL exporter (not yet built).
   stellarindex_cagg_last_refresh_unix
