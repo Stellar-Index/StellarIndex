@@ -1,7 +1,7 @@
 ---
 adr: 0046
 title: MAD-based outlier filtering for VWAP inputs
-status: Proposed
+status: Accepted
 date: 2026-07-08
 supersedes: []
 superseded_by: null
@@ -115,7 +115,9 @@ config default change plus a CHANGELOG entry, not a code rewrite.
 
 ## Sign-off checklist (@ash)
 
-- [ ] Log-space modified z-score as the mechanism
-- [ ] Degenerate-case policy (§2)
-- [ ] Shadow-first rollout (§4)
-- [ ] Volume-weighted median rejected for v1 (§5)
+Signed off 2026-07-09 — all four accepted.
+
+- [x] Log-space modified z-score as the mechanism
+- [x] Degenerate-case policy (§2)
+- [x] Shadow-first rollout (§4)
+- [x] Volume-weighted median rejected for v1 (§5)

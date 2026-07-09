@@ -85,7 +85,7 @@ See [_template.md](_template.md) for the boilerplate.
 | [0043](0043-backup-and-restore-strategy.md) | Accepted | Backup + restore strategy — offsite repo2, CH lake protection via drilled re-derive + tail/DDL push, monthly scratch-restore drills | 2026-07-02 |
 | [0044](0044-explorer-edge-rendering.md) | Accepted | Explorer rendering moves from static export to edge SSR | 2026-07-04 |
 | [0045](0045-sep40-oracle-read-adapter.md) | Accepted | SEP-40 on-chain oracle read adapter — defer generic reader; serve surface already ships | 2026-07-06 |
-| [0046](0046-mad-outlier-filter.md) | Proposed | MAD-based outlier filtering for VWAP inputs — log-space modified z-score, shadow-first rollout; thresholds deferred to production traffic | 2026-07-08 |
+| [0046](0046-mad-outlier-filter.md) | Accepted | MAD-based outlier filtering for VWAP inputs — log-space modified z-score, shadow-first rollout; thresholds deferred to production traffic | 2026-07-08 |
 
 ## Related
 
