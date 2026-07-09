@@ -92,6 +92,7 @@ func ExampleClient_Asset() {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"data": {
+				"kind": "stellar_asset",
 				"asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
 				"type": "classic",
 				"code": "USDC",
@@ -130,7 +131,15 @@ func ExampleClient_Asset() {
 		return
 	}
 
-	asset := resp.Data
+	// resp.Data is an AssetLookup (ADR-0042): a canonical asset_id
+	// always resolves to the stellar_asset branch. StellarAsset()
+	// returns ok=false for the other branch (a catalogue slug like
+	// "usdc") instead of silently handing back a zero-valued struct.
+	asset, ok := resp.Data.StellarAsset()
+	if !ok {
+		fmt.Println("unexpected kind:", resp.Data.Kind())
+		return
+	}
 	fmt.Printf("%s (%s) — sep1=%s, circulating=%s, market_cap=$%s\n",
 		asset.Code, *asset.Name, asset.Sep1Status,
 		*asset.CirculatingSupply, *asset.MarketCapUSD)

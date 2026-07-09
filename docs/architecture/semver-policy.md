@@ -1,6 +1,6 @@
 ---
 title: SemVer policy for Stellar Index
-last_verified: 2026-05-05
+last_verified: 2026-07-09
 status: ratified
 ---
 
@@ -68,7 +68,13 @@ Any of the following is **patch**-only:
 
 ### Pre-v1.0 (`v0.x`) policy
 
-`pkg/client` is currently `v0.1.0`. Until we tag `v1.0.0`:
+`pkg/client` is currently `v0.2.0` (2026-07-09: `Client.Asset()` return
+type changed `Envelope[AssetDetail]` -> `Envelope[AssetLookup]`,
+ADR-0042 LC-040 — the first breaking change to actually get a
+`pkg/client/vX.Y.Z` tag cut per the mechanics below; no tag was cut
+for the earlier Unit-D wire-collapse break, 9442d311, 2026-06-16,
+which is why this note previously undercounted at `v0.1.0`). Until we
+tag `v1.0.0`:
 
 - Breaking changes are allowed but MUST be called out in `CHANGELOG.md` under the version where they land
 - Each breaking change should bump the *minor* version (`v0.1 → v0.2`), not the major — Go modules treat `v0.x` as inherently unstable per the spec

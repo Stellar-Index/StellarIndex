@@ -16,6 +16,7 @@ import (
 func TestAssetDetail_DecodesFullWirePayload(t *testing.T) {
 	t.Parallel()
 	const body = `{
+	  "kind": "stellar_asset",
 	  "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
 	  "type": "classic",
 	  "code": "USDC",
@@ -48,6 +49,9 @@ func TestAssetDetail_DecodesFullWirePayload(t *testing.T) {
 		t.Fatalf("Unmarshal: %v", err)
 	}
 
+	if got.Kind != "stellar_asset" {
+		t.Errorf("kind = %q, want \"stellar_asset\" (ADR-0042 LC-040)", got.Kind)
+	}
 	if got.AssetID == "" || got.Type != "classic" || got.Code != "USDC" {
 		t.Fatalf("identity fields missing: %+v", got)
 	}
@@ -107,6 +111,7 @@ func TestAssetDetail_DecodesFullWirePayload(t *testing.T) {
 func TestAssetDetail_OmitsNullsOnReencode(t *testing.T) {
 	t.Parallel()
 	in := client.AssetDetail{
+		Kind:       "stellar_asset",
 		AssetID:    "native",
 		Type:       "native",
 		Decimals:   7,
@@ -122,7 +127,7 @@ func TestAssetDetail_OmitsNullsOnReencode(t *testing.T) {
 			t.Errorf("encoded form contains %q for nil pointer; want omitted: %s", missing, got)
 		}
 	}
-	for _, present := range []string{"asset_id", "type", "decimals", "sep1_status"} {
+	for _, present := range []string{"kind", "asset_id", "type", "decimals", "sep1_status"} {
 		if !containsKey(got, present) {
 			t.Errorf("encoded form missing required key %q: %s", present, got)
 		}

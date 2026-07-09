@@ -25,7 +25,16 @@ const DefaultTimeout = 30 * time.Second
 // userAgent is sent on every request so server-side telemetry can
 // distinguish SDK callers from raw HTTP clients. Bump the version
 // in tandem with the SDK module's tag.
-const userAgent = "stellarindex-go-sdk/0.1.0"
+//
+// Bumped 0.1.0 -> 0.2.0 for the Client.Asset() breaking change
+// (ADR-0042 LC-040: return type Envelope[AssetDetail] ->
+// Envelope[AssetLookup]). This is the first time this constant has
+// moved since the package was created — including through the
+// Unit-D wire-collapse breaking change that already shipped
+// (9442d311, 2026-06-16) — because no pkg/client/vX.Y.Z tag has ever
+// actually been cut; see docs/architecture/semver-policy.md's
+// tagging mechanics, which this change is the first real exercise of.
+const userAgent = "stellarindex-go-sdk/0.2.0"
 
 // Options configures a [Client] at construction.
 type Options struct {

@@ -15,6 +15,38 @@ against.
 
 ## [Unreleased]
 
+### Changed — BREAKING (`pkg/client`)
+- **`Client.Asset()` now returns `*Envelope[AssetLookup]` instead of `*Envelope[AssetDetail]`**
+  (ADR-0042 LC-040). `AssetLookup` is a new typed union (`pkg/client/asset_lookup.go`) with
+  `Kind() string`, `StellarAsset() (AssetDetail, bool)`, and `Catalogue() (GlobalAssetView,
+  bool)`. This closes a **live, previously-undetected SDK bug**: `Asset()` used to decode
+  unconditionally into `AssetDetail`, so a verified-currency-slug call (`c.Asset(ctx,
+  "usdc")`) "succeeded" with every `AssetDetail` required field (`AssetID`, `Type`, `Code`,
+  `Decimals`, `Sep1Status`) silently zero-valued — `encoding/json` drops unrecognised keys
+  and never errors on a merely-incomplete struct. `AssetLookup`'s `UnmarshalJSON` peeks
+  `kind` before deciding which struct to populate and returns a hard error on an
+  unrecognised/missing `kind`, and `StellarAsset()`/`Catalogue()` return `ok=false` instead
+  of handing back a lie. Migration for existing callers: `resp, _ := c.Asset(ctx, id);
+  asset, ok := resp.Data.StellarAsset()` (or `.Catalogue()` for the slug branch).
+  `AssetDetail.Kind` and `GlobalAssetView.Kind` (new fields, additive) mirror the server-side
+  discriminator added two commits ago. `userAgent` bumped `stellarindex-go-sdk/0.1.0` ->
+  `0.2.0` (pkg/client/client.go) — **`pkg/client/v0.2.0` should be tagged post-merge**
+  (`git tag pkg/client/v0.2.0 && git push origin pkg/client/v0.2.0` per
+  docs/architecture/semver-policy.md's tagging mechanics); this PR does not create the tag.
+  This is the first breaking `pkg/client` change to actually get a version tag — the
+  earlier Unit-D wire-collapse break (9442d311, 2026-06-16) shipped without one, which is
+  why `semver-policy.md`'s "`pkg/client` is currently v0.1.0" line had gone stale; corrected
+  in the same commit.
+  **@ash: there's a pre-existing wording contradiction between ADR-0042 /
+  stellar-focus-refactor-plan.md's "SemVer-major" framing for the Unit-D break and
+  `semver-policy.md`'s own pre-v1.0 rule ("each breaking change should bump the *minor*
+  version… not the major"). This commit follows the policy doc literally (minor bump,
+  0.1->0.2, matching its own worked example `git tag pkg/client/v0.2.0`) but does not
+  attempt to resolve which framing is authoritative — that predates this work and needs
+  your call, not a silent pick.** Zero known `pkg/client` consumers today (ADR-0042's own
+  finding, re-verified via `git log`/grep at merge time) — no external comms needed per the
+  ADR's own contingency.
+
 ### Added
 - **Pure-Soroban SEP-41 `usd_volume` now covers the XLM-base pool orientation at INSERT
   time (ROADMAP #37 / L7.6).** A prior fix (#37, 2026-07-06) added

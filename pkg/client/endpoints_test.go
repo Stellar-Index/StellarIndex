@@ -154,14 +154,18 @@ func TestAsset_PathEscapesAssetID(t *testing.T) {
 					t.Errorf("path = %q, want %q", r.URL.Path, want)
 				}
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"data": {"asset_id":"` + tc.decoded + `","type":"classic"}, "as_of": "2026-04-28T10:00:00Z", "flags": {}}`))
+				_, _ = w.Write([]byte(`{"data": {"kind":"stellar_asset","asset_id":"` + tc.decoded + `","type":"classic"}, "as_of": "2026-04-28T10:00:00Z", "flags": {}}`))
 			})
 			got, err := c.Asset(context.Background(), tc.raw)
 			if err != nil {
 				t.Fatalf("Asset(%q): %v", tc.raw, err)
 			}
-			if got.Data.AssetID != tc.decoded {
-				t.Errorf("Data.AssetID = %q, want %q", got.Data.AssetID, tc.decoded)
+			asset, ok := got.Data.StellarAsset()
+			if !ok {
+				t.Fatalf("Asset(%q): StellarAsset() ok = false, kind = %q", tc.raw, got.Data.Kind())
+			}
+			if asset.AssetID != tc.decoded {
+				t.Errorf("Data.AssetID = %q, want %q", asset.AssetID, tc.decoded)
 			}
 		})
 	}

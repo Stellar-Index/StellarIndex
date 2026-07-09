@@ -63,7 +63,18 @@ var coveredOperations = []coveredOperation{
 	{"VWAP", "GET", "/vwap", VWAPResult{}, ""},
 	{"TWAP", "GET", "/twap", TWAPResult{}, ""},
 	{"Assets", "GET", "/assets", AssetDetail{}, ""},
-	{sdkMethod: "Asset", method: "GET", path: "/assets/{asset_id}", payload: AssetDetail{}, envelopeRef: "#/components/schemas/AssetEnvelope"},
+	// payload: nil — Asset() returns AssetLookup (ADR-0042 LC-040), a
+	// hand-written dual-shape union with custom UnmarshalJSON/
+	// MarshalJSON, not a struct with static JSON tags the generic
+	// reflection check (jsonTags) can walk. The seen[key] de-dupe in
+	// TestSDKSchemasMatchSpec is also keyed by method+path alone, so a
+	// second entry here for the GlobalAssetEnvelope branch would
+	// silently no-op rather than add coverage. Both branches are
+	// exercised directly instead by TestAssetLookup_UnmarshalJSON_BothBranches
+	// (asset_lookup_test.go), which decodes real kind:"stellar_asset"
+	// and kind:"catalogue" fixtures and asserts every field the two
+	// spec schemas (Asset, GlobalAssetView) document round-trips.
+	{sdkMethod: "Asset", method: "GET", path: "/assets/{asset_id}", payload: nil, envelopeRef: "#/components/schemas/AssetEnvelope"},
 	{"AssetMetadata", "GET", "/assets/{asset_id}/metadata", AssetMetadata{}, ""},
 	{"Sources", "GET", "/sources", Source{}, ""},
 	{"Aggregators", "GET", "/aggregators", AggregatorRow{}, ""},

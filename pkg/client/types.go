@@ -152,9 +152,17 @@ type HistoryPoint struct {
 	VolumeUSD *string   `json:"v_usd,omitempty"`
 }
 
-// AssetDetail is the data shape returned by [Client.Asset] +
-// [Client.Assets].
+// AssetDetail is the data shape returned by [Client.Assets] (listing)
+// and, as one branch of [AssetLookup], by [Client.Asset] (detail).
 type AssetDetail struct {
+	// Kind vs Type: Kind says which WIRE SHAPE this is — always
+	// "stellar_asset" on this struct, the discriminator [AssetLookup]
+	// switches on for the /v1/assets/{asset_id} dual response (ADR-0042
+	// LC-040). Type says which STELLAR ASSET CLASS this is within that
+	// shape (native / classic / soroban / fiat / crypto). Don't conflate
+	// them: Kind never varies on this struct; Type does.
+	Kind string `json:"kind"`
+
 	// Identity
 	AssetID    string  `json:"asset_id"`
 	Type       string  `json:"type"` // "native" / "classic" / "soroban" / "fiat" / "crypto"
@@ -984,11 +992,14 @@ type Pool struct {
 	LastPrice     *string   `json:"last_price,omitempty"`
 }
 
-// GlobalAssetView is the wire shape returned by [Client.Asset]
-// when called with a verified-currency slug ("usdc", "eurc",
-// "aqua"). Distinct from [AssetDetail] which is the per-Stellar-
-// asset view returned for canonical asset_ids.
+// GlobalAssetView is one branch of [AssetLookup], the wire shape
+// [Client.Asset] resolves to when called with a verified-currency
+// slug ("usdc", "eurc", "aqua"). Distinct from [AssetDetail] which
+// is the per-Stellar-asset view returned for canonical asset_ids.
 type GlobalAssetView struct {
+	// Kind is the wire-shape discriminator for the /v1/assets/{asset_id}
+	// oneOf (ADR-0042 LC-040). Always "catalogue" on this struct.
+	Kind        string `json:"kind"`
 	Ticker      string `json:"ticker"`
 	Slug        string `json:"slug"`
 	Name        string `json:"name"`
