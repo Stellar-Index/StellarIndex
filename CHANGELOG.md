@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.10.0] — 2026-07-09
+
 ### Security
 - **comet is now contract-identity gated (CS-026 closed — the last ungated source).**
   `Matches()` requires the emitting contract to be in the curated registry
@@ -33,10 +35,49 @@ against.
   bodies. Closes the cctp arm of the #89b admin-topic audit ("EVERY event" principle);
   further low-signal admin topics found by the same census are documented as a known gap
   in docs/protocols/cctp.md.
-- ADR-0046 (Proposed): MAD-based outlier filtering for VWAP inputs — log-space modified
+- ADR-0046 (Accepted 2026-07-09): MAD-based outlier filtering for VWAP inputs — log-space modified
   z-score replaces the σ-threshold whose masking weakness our own tests document; explicit
   thin-bucket/MAD==0 policy; shadow-first rollout so thresholds tune against real traffic
   before any served-price change (BACKLOG #44's "write the ADR now").
+- **hashdb (ADR-0016 drift detector) wired into production** — previously a complete,
+  tested library with zero callers, now live in the indexer: the live LCM read loop
+  appends `sha256(LCM)` per ledger on ingest (failure-tolerant, never stalls or fails
+  ingest), and a new periodic sweep re-reads a trailing window from the same bucket and
+  re-verifies against the recorded hashes, catching upstream rewrites of previously-
+  fetched ledger bytes that a chain-link check alone can't see. Off by default
+  (`[hashdb].enabled = false`, opt-in per region); founding case is corrupt ledger
+  63332650. New metrics `stellarindex_hashdb_{append,verify_runs}_total` +
+  `_duration_seconds` + `stellarindex_hashdb_drift_total`, alert
+  `stellarindex_hashdb_drift_detected` in both rule trees, runbook
+  `docs/operations/runbooks/hashdb-drift-detected.md`.
+- Protocol pool contracts now display as their human **asset pair** (e.g. `XLM/USDC`) on
+  `/v1/protocols/{name}` — `token_symbols` + `pair` resolved from the pool's token contracts,
+  not raw C-strkeys. Populated for soroswap/phoenix/aquarius/comet pools + blend
+  reserve-asset lists (sorocredit's credit-market model has no stable pool→reserve set —
+  documented gap, raw-contract roster only), with a graceful fallback to a short contract
+  when a token doesn't resolve. OpenAPI 1.3.0 → 1.4.0; explorer roster renders the pair. (#91)
+- **`canonical.AssetType` exhaustive-switch guard (ROADMAP #48 / ADR-0010's long-standing
+  TODO(#0))** — `internal/canonical/asset_type_exhaustive_guard_test.go`
+  (`TestAssetTypeExhaustiveGuard`) is a go/types AST walk, modeled on the i128-truncation
+  guard's plumbing, that fails any switch tagged on `canonical.AssetType` which neither
+  covers every declared variant nor carries a `default:` clause with a real (non-empty,
+  non-fallthrough-only) body. Chosen over widening the already-enabled golangci-lint
+  `exhaustive` linter because that linter can't be scoped to a single enum type — the
+  2026-07-05 probe documented in `.golangci.yml` found the strict form floods 12 unrelated
+  findings repo-wide — and because it catches something that linter structurally cannot: a
+  present-but-trivial default clause, which `default-signifies-exhaustive: true` treats as
+  fully exhaustive without ever inspecting it. Shares the linter's own `//exhaustive:ignore`
+  escape hatch. Runs as a plain package test, already covered by `make test` / `make verify`.
+  Probe-verified to actually fail on two synthetic regressions (each applied then reverted):
+  a switch with no default and a temporarily-hidden intentional gap, and a switch with a
+  temporarily-emptied default. Sweep found one true gap while building this:
+  `supply.AssetKey`'s `AssetFiat, AssetCrypto` off-chain case was missing `AssetRWA` (a
+  post-ADR-0028 addition), silently returning the generic "unknown asset type" error instead
+  of the more accurate "off-chain asset has no on-chain supply key" — fixed (mechanical,
+  same message the sibling off-chain types already get). No other switch needed a code
+  change; every other non-exhaustive-looking switch already carries either a real default
+  (`asset.go`, `sac.go`, `xdrjson/sac.go`) or the existing `//exhaustive:ignore` marker
+  (`usd_volume_quote_spec.go`).
 
 ### Changed
 - `/pricing` no longer advertises Pro/Business/Enterprise tiers that have no billing path
@@ -61,25 +102,6 @@ against.
 - Dependabot now groups all minor/patch bumps into **one weekly PR per ecosystem** (majors
   stay per-dependency); dead `web/dashboard` npm entry removed. Ends the per-module PR
   fan-out whose merges invalidated each other's `go.sum` and forced rebase cascades.
-
-### Added
-- **hashdb (ADR-0016 drift detector) wired into production** — previously a complete,
-  tested library with zero callers, now live in the indexer: the live LCM read loop
-  appends `sha256(LCM)` per ledger on ingest (failure-tolerant, never stalls or fails
-  ingest), and a new periodic sweep re-reads a trailing window from the same bucket and
-  re-verifies against the recorded hashes, catching upstream rewrites of previously-
-  fetched ledger bytes that a chain-link check alone can't see. Off by default
-  (`[hashdb].enabled = false`, opt-in per region); founding case is corrupt ledger
-  63332650. New metrics `stellarindex_hashdb_{append,verify_runs}_total` +
-  `_duration_seconds` + `stellarindex_hashdb_drift_total`, alert
-  `stellarindex_hashdb_drift_detected` in both rule trees, runbook
-  `docs/operations/runbooks/hashdb-drift-detected.md`.
-- Protocol pool contracts now display as their human **asset pair** (e.g. `XLM/USDC`) on
-  `/v1/protocols/{name}` — `token_symbols` + `pair` resolved from the pool's token contracts,
-  not raw C-strkeys. Populated for soroswap/phoenix/aquarius/comet pools + blend
-  reserve-asset lists (sorocredit's credit-market model has no stable pool→reserve set —
-  documented gap, raw-contract roster only), with a graceful fallback to a short contract
-  when a token doesn't resolve. OpenAPI 1.3.0 → 1.4.0; explorer roster renders the pair. (#91)
 
 ### Fixed
 - **rozo §0.7 recognition gap: 4th v1 Payment contract admitted + topic-shape doc fixed.**
@@ -180,30 +202,6 @@ against.
   busiest AMM (14.9k events/24h, 300+ pools) because the projection-fallback roster listed
   aquarius as "pair-keyed, no per-contract column." Sourced from `aquarius_liquidity` (which
   also carries the pool's token identities for the pair label). (#91)
-
-### Added
-- **`canonical.AssetType` exhaustive-switch guard (ROADMAP #48 / ADR-0010's long-standing
-  TODO(#0))** — `internal/canonical/asset_type_exhaustive_guard_test.go`
-  (`TestAssetTypeExhaustiveGuard`) is a go/types AST walk, modeled on the i128-truncation
-  guard's plumbing, that fails any switch tagged on `canonical.AssetType` which neither
-  covers every declared variant nor carries a `default:` clause with a real (non-empty,
-  non-fallthrough-only) body. Chosen over widening the already-enabled golangci-lint
-  `exhaustive` linter because that linter can't be scoped to a single enum type — the
-  2026-07-05 probe documented in `.golangci.yml` found the strict form floods 12 unrelated
-  findings repo-wide — and because it catches something that linter structurally cannot: a
-  present-but-trivial default clause, which `default-signifies-exhaustive: true` treats as
-  fully exhaustive without ever inspecting it. Shares the linter's own `//exhaustive:ignore`
-  escape hatch. Runs as a plain package test, already covered by `make test` / `make verify`.
-  Probe-verified to actually fail on two synthetic regressions (each applied then reverted):
-  a switch with no default and a temporarily-hidden intentional gap, and a switch with a
-  temporarily-emptied default. Sweep found one true gap while building this:
-  `supply.AssetKey`'s `AssetFiat, AssetCrypto` off-chain case was missing `AssetRWA` (a
-  post-ADR-0028 addition), silently returning the generic "unknown asset type" error instead
-  of the more accurate "off-chain asset has no on-chain supply key" — fixed (mechanical,
-  same message the sibling off-chain types already get). No other switch needed a code
-  change; every other non-exhaustive-looking switch already carries either a real default
-  (`asset.go`, `sac.go`, `xdrjson/sac.go`) or the existing `//exhaustive:ignore` marker
-  (`usd_volume_quote_spec.go`).
 
 ## [v0.9.0] — 2026-07-07
 
