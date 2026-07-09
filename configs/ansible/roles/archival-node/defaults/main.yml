@@ -455,7 +455,7 @@ captive_peer_port_backfill:         11727
 #   r3: galexie-live local; galexie-archive on Vultr Object Storage
 #       (S3-compatible, region-local Singapore endpoint).
 # ]
-galexie_version:         "galexie-v26.0.0"   # pinned — update via VERSIONS.md. Tag format: galexie-vX.Y.Z (matches Stellar protocol version).
+galexie_version:         "galexie-v27.0.0"   # pinned — update via VERSIONS.md. Tag format: galexie-vX.Y.Z (matches Stellar protocol version). 2026-07-09: bumped 26→27 with the CAP-0071 SEV fix.
 # Drift guard (docs/operations/runbooks/stellar-stack-version-lag.md,
 # 2026-07-09). Distinct from `galexie_version` above on purpose:
 # that var is the go-install TAG; this is the literal, verbatim
@@ -476,7 +476,10 @@ galexie_expected_version_string: "stellar-galexie v0.0.0-20260610161848-c97d6484
 # (`sha256sum /usr/local/bin/galexie`); the assert task in
 # 07-galexie.yml is skipped entirely while this is unset. Fill in
 # once known and it becomes a hard gate like minio_release_sha256.
-# galexie_expected_binary_sha256: <optional; set in inventory>
+# sha256 of the 2026-07-09 v27.0.0 build installed on r1 (built from
+# tag galexie-v27.0.0, CGO_ENABLED=0 GOOS=linux GOARCH=amd64,
+# go build -trimpath): set here since we know it exactly.
+galexie_expected_binary_sha256: "045caa5f1cfc43b2cc367f1e48155763ef67ef94cecd61f3c3aaa1a77382a270"
 
 galexie_s3_endpoint:     "http://127.0.0.1:9000"
 galexie_s3_bucket:       "galexie-live"
