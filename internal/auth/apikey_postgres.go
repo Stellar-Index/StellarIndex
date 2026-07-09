@@ -210,7 +210,7 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 // Postgres". When hit=true the second return is the sentinel the
 // caller should propagate (or nil for a successful auth).
 func (v *PostgresAPIKeyValidator) cacheLookup(ctx context.Context, hexHash string) (Subject, bool, error) {
-	raw, err := v.cache.Get(ctx, cachekeys.APIKey(hexHash)).Bytes()
+	raw, err := v.cache.Get(ctx, cachekeys.APIKey(hexHash).String()).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return Subject{}, false, nil
 	}
@@ -328,7 +328,7 @@ func (v *PostgresAPIKeyValidator) cacheStore(ctx context.Context, hexHash string
 	if err != nil {
 		return
 	}
-	_ = v.cache.Set(ctx, cachekeys.APIKey(hexHash), body, v.cacheTTL).Err()
+	_ = v.cache.Set(ctx, cachekeys.APIKey(hexHash).String(), body, v.cacheTTL).Err()
 }
 
 // convertPermissionEntries maps platform.KeyPermissionEntry into
@@ -407,7 +407,7 @@ func (v *PostgresAPIKeyValidator) InvalidateCachedKey(ctx context.Context, hexHa
 	if v.cache == nil {
 		return nil
 	}
-	return v.cache.Del(ctx, cachekeys.APIKey(hexHash)).Err()
+	return v.cache.Del(ctx, cachekeys.APIKey(hexHash).String()).Err()
 }
 
 // Compile-time check.

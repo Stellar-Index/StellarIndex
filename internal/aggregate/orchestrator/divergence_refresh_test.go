@@ -108,7 +108,7 @@ func TestRefreshDivergenceAll_HappyPath(t *testing.T) {
 
 	// Pre-populate the shortest window's cache entry.
 	key := cachekeys.VWAP(pair.Base, pair.Quote, windows[0])
-	if err := rdb.Set(context.Background(), key, "0.42", time.Minute).Err(); err != nil {
+	if err := rdb.Set(context.Background(), key.String(), "0.42", time.Minute).Err(); err != nil {
 		t.Fatalf("seed redis: %v", err)
 	}
 
@@ -149,7 +149,7 @@ func TestRefreshDivergenceAll_ParseErrorSkipsCall(t *testing.T) {
 	windows := []time.Duration{5 * time.Minute}
 
 	key := cachekeys.VWAP(pair.Base, pair.Quote, windows[0])
-	if err := rdb.Set(context.Background(), key, "definitely-not-a-float", time.Minute).Err(); err != nil {
+	if err := rdb.Set(context.Background(), key.String(), "definitely-not-a-float", time.Minute).Err(); err != nil {
 		t.Fatalf("seed redis: %v", err)
 	}
 
@@ -183,7 +183,7 @@ func TestRefreshDivergenceAll_RefresherErrorDoesNotAbortOtherPairs(t *testing.T)
 	windows := []time.Duration{5 * time.Minute}
 	for _, p := range []canonical.Pair{pXLMUSD, pXLMEUR} {
 		key := cachekeys.VWAP(p.Base, p.Quote, windows[0])
-		if err := rdb.Set(context.Background(), key, "1.00", time.Minute).Err(); err != nil {
+		if err := rdb.Set(context.Background(), key.String(), "1.00", time.Minute).Err(); err != nil {
 			t.Fatalf("seed redis %s: %v", key, err)
 		}
 	}
@@ -219,7 +219,7 @@ func TestRefreshDivergenceAll_DurationMetricRecorded(t *testing.T) {
 	windows := []time.Duration{5 * time.Minute}
 
 	key := cachekeys.VWAP(pair.Base, pair.Quote, windows[0])
-	if err := rdb.Set(context.Background(), key, "0.42", time.Minute).Err(); err != nil {
+	if err := rdb.Set(context.Background(), key.String(), "0.42", time.Minute).Err(); err != nil {
 		t.Fatalf("seed redis: %v", err)
 	}
 
@@ -257,7 +257,7 @@ func TestRefreshDivergenceAll_MinIntervalSkipsConsecutiveTicks(t *testing.T) {
 	windows := []time.Duration{5 * time.Minute}
 
 	key := cachekeys.VWAP(pair.Base, pair.Quote, windows[0])
-	if err := rdb.Set(context.Background(), key, "0.42", time.Minute).Err(); err != nil {
+	if err := rdb.Set(context.Background(), key.String(), "0.42", time.Minute).Err(); err != nil {
 		t.Fatalf("seed redis: %v", err)
 	}
 
@@ -308,7 +308,7 @@ func TestRefreshDivergenceAll_MinIntervalZeroPreservesLegacy(t *testing.T) {
 	windows := []time.Duration{5 * time.Minute}
 
 	key := cachekeys.VWAP(pair.Base, pair.Quote, windows[0])
-	if err := rdb.Set(context.Background(), key, "0.42", time.Minute).Err(); err != nil {
+	if err := rdb.Set(context.Background(), key.String(), "0.42", time.Minute).Err(); err != nil {
 		t.Fatalf("seed redis: %v", err)
 	}
 

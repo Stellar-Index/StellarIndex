@@ -42,7 +42,7 @@ func (s *RedisAPIKeyStore) MarkEmailVerified(ctx context.Context, keyID string, 
 		at = s.now().UTC()
 	}
 
-	iter := s.rdb.Scan(ctx, 0, cachekeys.APIKey("*"), 1000).Iterator()
+	iter := s.rdb.Scan(ctx, 0, cachekeys.APIKey("*").String(), 1000).Iterator()
 	for iter.Next(ctx) {
 		k := iter.Val()
 		raw, err := s.rdb.Get(ctx, k).Bytes()

@@ -43,7 +43,7 @@ func seedKey(t *testing.T, mr *miniredis.Miniredis, key string, rec APIKeyRecord
 	if err != nil {
 		t.Fatalf("seed marshal: %v", err)
 	}
-	mr.Set(cachekeys.APIKey(hash), string(body))
+	mr.Set(cachekeys.APIKey(hash).String(), string(body))
 }
 
 // TestRedisAPIKey_LookupHappyPath is the everyday allow-path: a
@@ -219,7 +219,7 @@ func TestRedisAPIKey_EmptyKeyRejected(t *testing.T) {
 func TestRedisAPIKey_MalformedRecord(t *testing.T) {
 	v, mr, _ := newTestValidator(t)
 	hash := HashAPIKey("rek_corrupt")
-	mr.Set(cachekeys.APIKey(hash), "{not-json")
+	mr.Set(cachekeys.APIKey(hash).String(), "{not-json")
 
 	_, err := v.Lookup(context.Background(), "rek_corrupt")
 	if err == nil {

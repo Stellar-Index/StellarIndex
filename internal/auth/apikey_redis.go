@@ -195,7 +195,7 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 		return Subject{}, ErrUnauthorized
 	}
 	hash := hashAPIKey(key)
-	raw, err := v.rdb.Get(ctx, cachekeys.APIKey(hash)).Bytes()
+	raw, err := v.rdb.Get(ctx, cachekeys.APIKey(hash).String()).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return Subject{}, ErrUnauthorized
 	}

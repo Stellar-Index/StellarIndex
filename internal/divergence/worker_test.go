@@ -69,7 +69,7 @@ func TestRefreshPair_HappyPath(t *testing.T) {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 
-	body, err := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t))).Bytes()
+	body, err := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
 	if err != nil {
 		t.Fatalf("redis get: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestRefreshPair_FiresWarning(t *testing.T) {
 		t.Fatalf("RefreshPair: %v", err)
 	}
 
-	body, err := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t))).Bytes()
+	body, err := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
 	if err != nil {
 		t.Fatalf("redis get: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestRefreshPair_BelowMinSourcesNoWarning(t *testing.T) {
 	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.50, time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
-	body, _ := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t))).Bytes()
+	body, _ := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
 	var cached divergence.CachedResult
 	_ = json.Unmarshal(body, &cached)
 	if cached.WarningFired {
@@ -201,7 +201,7 @@ func TestRefreshPair_TTLApplied(t *testing.T) {
 	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
-	ttl := mr.TTL(cachekeys.Divergence(xlmUSD(t)))
+	ttl := mr.TTL(cachekeys.Divergence(xlmUSD(t)).String())
 	if ttl == 0 || ttl > cachekeys.DivergenceTTL {
 		t.Errorf("TTL = %v, want ≤ %v and > 0", ttl, cachekeys.DivergenceTTL)
 	}
@@ -395,7 +395,7 @@ func TestRefreshPair_DefaultsApplied(t *testing.T) {
 	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.04, time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
-	body, _ := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t))).Bytes()
+	body, _ := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
 	var cached divergence.CachedResult
 	_ = json.Unmarshal(body, &cached)
 	if cached.WarningFired {
@@ -406,7 +406,7 @@ func TestRefreshPair_DefaultsApplied(t *testing.T) {
 	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.06, time.Now()); err != nil {
 		t.Fatalf("RefreshPair: %v", err)
 	}
-	body, _ = rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t))).Bytes()
+	body, _ = rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
 	_ = json.Unmarshal(body, &cached)
 	if !cached.WarningFired {
 		t.Errorf("6%% deviation should fire under default 5%% threshold")

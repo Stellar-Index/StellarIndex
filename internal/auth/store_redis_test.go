@@ -150,7 +150,7 @@ func TestRedisAPIKeyStore_CreateWritesUnderHashedKey(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	hash := HashAPIKey(plaintext)
-	body, err := mr.Get(cachekeys.APIKey(hash))
+	body, err := mr.Get(cachekeys.APIKey(hash).String())
 	if err != nil {
 		t.Fatalf("expected record at %s: %v", cachekeys.APIKey(hash), err)
 	}

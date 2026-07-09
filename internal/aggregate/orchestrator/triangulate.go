@@ -136,7 +136,7 @@ func (o *Orchestrator) triangulateOne(ctx context.Context, chain TriangulationCh
 	value := formatRatFixed(implied, 12)
 	key := cachekeys.VWAP(chain.Target.Base, chain.Target.Quote, window)
 	ttl := cachekeys.VWAPTTL(window)
-	if err := o.cache.Set(ctx, key, value, ttl).Err(); err != nil {
+	if err := o.cache.Set(ctx, key.String(), value, ttl).Err(); err != nil {
 		o.logger.Warn("triangulation: cache set failed",
 			"chain", chain.Target.String(),
 			"err", err)
@@ -150,7 +150,7 @@ func (o *Orchestrator) triangulateOne(ctx context.Context, chain TriangulationCh
 	// write: the value is correct either way, and the flag has a
 	// safe default of false.
 	provKey := cachekeys.VWAPProvenance(chain.Target.Base, chain.Target.Quote, window)
-	if err := o.cache.Set(ctx, provKey, cachekeys.VWAPProvenanceTriangulated, ttl).Err(); err != nil {
+	if err := o.cache.Set(ctx, provKey.String(), cachekeys.VWAPProvenanceTriangulated, ttl).Err(); err != nil {
 		o.logger.Warn("triangulation: provenance marker set failed",
 			"chain", chain.Target.String(),
 			"err", err)
@@ -214,7 +214,7 @@ func (o *Orchestrator) legPriceFromCache(
 	window time.Duration,
 ) (*big.Rat, string) {
 	key := cachekeys.VWAP(leg.Base, leg.Quote, window)
-	raw, err := o.cache.Get(ctx, key).Result()
+	raw, err := o.cache.Get(ctx, key.String()).Result()
 	switch {
 	case errors.Is(err, redis.Nil):
 		return nil, "missing_leg"

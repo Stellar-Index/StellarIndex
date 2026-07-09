@@ -958,7 +958,7 @@ func TestTick_AnomalyFreeze_RefreshesLKGTTL(t *testing.T) {
 	cacheKey := cachekeys.VWAP(pair.Base, pair.Quote, 5*time.Minute)
 	// Pre-write the LKG with a near-expiry 10-second TTL — the freeze
 	// must rescue it.
-	cache.Set(context.Background(), cacheKey, "1.000000000000", 10*time.Second)
+	cache.Set(context.Background(), cacheKey.String(), "1.000000000000", 10*time.Second)
 
 	o.store = &mockStore{
 		trades: []canonical.Trade{
@@ -973,7 +973,7 @@ func TestTick_AnomalyFreeze_RefreshesLKGTTL(t *testing.T) {
 		t.Fatalf("freeze should have fired once; Mark called %d times", len(marker.marks))
 	}
 
-	ttl := mr.TTL(cacheKey)
+	ttl := mr.TTL(cacheKey.String())
 	if ttl <= 10*time.Second {
 		t.Errorf("LKG VWAP TTL = %v; freeze did not extend the near-expiry key", ttl)
 	}
@@ -981,7 +981,7 @@ func TestTick_AnomalyFreeze_RefreshesLKGTTL(t *testing.T) {
 		t.Errorf("LKG VWAP TTL = %v; want ≤ FreezeTTL %v", ttl, cachekeys.FreezeTTL)
 	}
 	// Value must still be intact (not overwritten by the frozen tick).
-	got, err := mr.Get(cacheKey)
+	got, err := mr.Get(cacheKey.String())
 	if err != nil {
 		t.Fatalf("LKG value Get: %v", err)
 	}

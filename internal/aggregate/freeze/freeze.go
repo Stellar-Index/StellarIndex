@@ -169,7 +169,7 @@ func (w *Writer) Mark(ctx context.Context, asset, quote canonical.Asset, frozenV
 		return fmt.Errorf("freeze: marshal marker: %w", err)
 	}
 	key := cachekeys.Freeze(asset, quote)
-	if err := w.cache.Set(ctx, key, body, w.ttl).Err(); err != nil {
+	if err := w.cache.Set(ctx, key.String(), body, w.ttl).Err(); err != nil {
 		return fmt.Errorf("freeze: cache set %s: %w", key, err)
 	}
 
@@ -220,7 +220,7 @@ func NewLooker(cache RedisCache) (*Looker, error) {
 // Implements the contract of [internal/api/v1.FrozenLooker].
 func (l *Looker) FrozenForPair(ctx context.Context, asset, quote canonical.Asset) (bool, error) {
 	key := cachekeys.Freeze(asset, quote)
-	_, err := l.cache.Get(ctx, key).Bytes()
+	_, err := l.cache.Get(ctx, key.String()).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return false, nil
 	}

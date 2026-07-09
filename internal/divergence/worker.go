@@ -295,7 +295,7 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 	// asset's divergence verdict. The per-pair key keeps each pair's
 	// result independent; the by-asset reader (LookupCached) ORs them.
 	key := cachekeys.Divergence(pair)
-	if err := s.cache.Set(ctx, key, body, cachekeys.DivergenceTTL).Err(); err != nil {
+	if err := s.cache.Set(ctx, key.String(), body, cachekeys.DivergenceTTL).Err(); err != nil {
 		return fmt.Errorf("divergence: cache set %s: %w", key, err)
 	}
 
@@ -306,10 +306,10 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 	// refreshing loses its index after DivergenceTTL rather than
 	// pinning dead quote members forever).
 	idxKey := cachekeys.DivergenceBaseIndex(pair.Base)
-	if err := s.cache.SAdd(ctx, idxKey, pair.Quote.String()).Err(); err != nil {
+	if err := s.cache.SAdd(ctx, idxKey.String(), pair.Quote.String()).Err(); err != nil {
 		return fmt.Errorf("divergence: index sadd %s: %w", idxKey, err)
 	}
-	if err := s.cache.Expire(ctx, idxKey, cachekeys.DivergenceTTL).Err(); err != nil {
+	if err := s.cache.Expire(ctx, idxKey.String(), cachekeys.DivergenceTTL).Err(); err != nil {
 		return fmt.Errorf("divergence: index expire %s: %w", idxKey, err)
 	}
 
@@ -426,7 +426,7 @@ func absFloat(f float64) float64 {
 // flag value (or fail-open).
 func (s *Service) LookupCached(ctx context.Context, asset canonical.Asset) (CachedResult, bool, error) {
 	idxKey := cachekeys.DivergenceBaseIndex(asset)
-	quotes, err := s.cache.SMembers(ctx, idxKey).Result()
+	quotes, err := s.cache.SMembers(ctx, idxKey.String()).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return CachedResult{}, false, fmt.Errorf("divergence: index smembers %s: %w", idxKey, err)
 	}
@@ -452,7 +452,7 @@ func (s *Service) LookupCached(ctx context.Context, asset canonical.Asset) (Cach
 		}
 		pair := canonical.Pair{Base: asset, Quote: quote}
 		key := cachekeys.Divergence(pair)
-		raw, gerr := s.cache.Get(ctx, key).Bytes()
+		raw, gerr := s.cache.Get(ctx, key.String()).Bytes()
 		if errors.Is(gerr, redis.Nil) {
 			// Value expired but the index member lingered (the set's
 			// own TTL hasn't fired yet). Treat as "no contribution".

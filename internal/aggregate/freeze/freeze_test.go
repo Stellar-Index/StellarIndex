@@ -64,7 +64,7 @@ func TestWriter_MarkRoundTrip(t *testing.T) {
 	}
 
 	key := cachekeys.Freeze(asset, quote)
-	raw, err := rdb.Get(context.Background(), key).Bytes()
+	raw, err := rdb.Get(context.Background(), key.String()).Bytes()
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestWriter_MarkRoundTrip(t *testing.T) {
 		t.Error("FrozenAt is zero")
 	}
 
-	ttl := mr.TTL(key)
+	ttl := mr.TTL(key.String())
 	if ttl == 0 || ttl > cachekeys.FreezeTTL {
 		t.Errorf("TTL = %v, want ≤ %v and > 0", ttl, cachekeys.FreezeTTL)
 	}
@@ -112,7 +112,7 @@ func TestWriter_MarkRefreshesTTL(t *testing.T) {
 	}
 
 	key := cachekeys.Freeze(asset, quote)
-	if ttl := mr.TTL(key); ttl <= 10*time.Second {
+	if ttl := mr.TTL(key.String()); ttl <= 10*time.Second {
 		t.Errorf("TTL after refresh = %v, want > 10s (refresh extended it)", ttl)
 	}
 }

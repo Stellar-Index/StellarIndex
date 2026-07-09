@@ -44,7 +44,7 @@ func (s *RedisAPIKeyStore) UpdateRateLimit(ctx context.Context, keyID string, ne
 		return APIKeyRecord{}, fmt.Errorf("auth: UpdateRateLimit: rate-limit %d must be >= 0 (zero means tier default)", newRateLimitPerMin)
 	}
 
-	iter := s.rdb.Scan(ctx, 0, cachekeys.APIKey("*"), 1000).Iterator()
+	iter := s.rdb.Scan(ctx, 0, cachekeys.APIKey("*").String(), 1000).Iterator()
 	for iter.Next(ctx) {
 		k := iter.Val()
 		raw, err := s.rdb.Get(ctx, k).Bytes()
