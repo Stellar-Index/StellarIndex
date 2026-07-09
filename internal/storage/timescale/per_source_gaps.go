@@ -158,6 +158,15 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// gaps showed 17 natural gaps across cascade-era data with max
 	// 7826 ledgers (~11h of natural pool silence). 50K threshold.
 	{Source: "comet-liquidity", Table: "comet_liquidity", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 50000},
+	// blend-emitter: protocol-emissions plumbing (distribute / drop /
+	// q_swap / swap). 2026-07-09 lake measurement: 465 lifetime
+	// `distribute` events (the dominant kind — 99% of the table's
+	// rows) across [51,524,666, 63,380,088] have a max natural gap of
+	// 107,826 ledgers (~7.5 days), avg ~26K. The other three kinds
+	// (drop ×2, q_swap ×1, swap ×1 — one-off admin actions) sit inside
+	// that same span. 200K sits above the observed envelope, matching
+	// cctp's threshold for a similarly sparse per-protocol table.
+	{Source: "blend-emitter", Table: "blend_emitter_events", LedgerColumn: "ledger", Genesis: 51_499_914, MinGapSizeOverride: 200000},
 	// soroswap-skim: a pair skim() is a manually-triggered, uncommon
 	// operation (excess-balance sweep) — 21 lifetime events on r1, last
 	// at L61,962,034. ADR-0033 has soroswap complete=t / coverage 1.0

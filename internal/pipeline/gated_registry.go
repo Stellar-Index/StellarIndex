@@ -11,6 +11,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/dispatcher"
 	"github.com/StellarIndex/stellar-index/internal/sources/aquarius"
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
+	blend_emitter "github.com/StellarIndex/stellar-index/internal/sources/blend_emitter"
 	"github.com/StellarIndex/stellar-index/internal/sources/comet"
 	"github.com/StellarIndex/stellar-index/internal/sources/defindex"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
@@ -61,6 +62,21 @@ var gatedSources = map[string]GatedMeta{
 		Genesis:    51_499_546,
 		CuratedSet: comet.MainnetGatedSet(),
 		NewDecoder: func(opts ...contractid.Option) dispatcher.Decoder { return comet.NewDecoder(opts...) },
+	},
+	blend_emitter.SourceName: {
+		// Curated-set gate (ADR-0040 §1 mechanism 3), same shape as
+		// comet: the Emitter has NO factory namespace — a single
+		// canonical mainnet instance spanning Blend V1→V2, no
+		// creation event to anchor on. The decoder's in-code seed
+		// (MainnetGatedSet: exactly the one known mainnet Emitter)
+		// is the trust root; this entry adds the protocol_contracts
+		// warm (the operator seam for admitting a future instance
+		// without a redeploy). Genesis is the earliest observed
+		// Emitter event on the lake (the ledger-51,499,914 `drop`
+		// airdrop).
+		Genesis:    51_499_914,
+		CuratedSet: blend_emitter.MainnetGatedSet(),
+		NewDecoder: func(opts ...contractid.Option) dispatcher.Decoder { return blend_emitter.NewDecoder(opts...) },
 	},
 	phoenix.SourceName: {
 		// Curated-set gate (ADR-0040 §1 mechanism 2): the factory's

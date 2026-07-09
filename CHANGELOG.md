@@ -36,6 +36,22 @@ against.
   coordinated-upgrade checklist (core apt-upgrade, galexie build-from-tag recipe, archivist
   apt-upgrade, go-stellar-sdk go.mod bump) in
   `docs/operations/runbooks/stellar-stack-version-lag.md`.
+- **New on-chain source: Blend Emitter (`blend_emitter`).** Decodes the four events the
+  Emitter contract (`CCOQM6S7ICIUWA225O5PSJWUBEMXGFSSW2PQFO6FP4DQEKMS5DASRGRR`, one canonical
+  mainnet instance spanning Blend V1→V2) has ever emitted — verified directly against the
+  ClickHouse raw lake (2026-07-09, 469 events, 4 topics, all single-topic): `distribute`
+  (recurring BLND emission to a backstop, 465 occurrences), `drop` (one-shot airdrop to a
+  variable-length recipient list, 2 occurrences — fanned out one row per recipient via a
+  `recipient_index` discriminator, same lesson as `aquarius_reserves`' `token_index`), and
+  `q_swap`/`swap` (backstop-swap timelock queue/execute, 1 occurrence each). Gated on contract
+  identity (ADR-0035/0040, curated one-contract set — no factory namespace exists): its
+  `distribute` topic COLLIDES with `blend_backstop`'s own `distribute` event (different body
+  shape, same symbol), so topic-only matching would misattribute. New `blend_emitter_events`
+  hypertable (migration 0096). `Class: ClassLending`, `IncludeInVWAP: false` — the Emitter
+  publishes no price. `BackfillSafe: false` pending a wasm-history audit across the Emitter's 3
+  observed WASM uploads (ledgers 51,351,843 / 51,498,920 / 52,314,704). Closes the open question
+  `docs/protocols/blend.md`'s Backstop section raised about an Emitter-contract event surface. See
+  `internal/sources/blend_emitter/README.md` and `docs/protocols/blend_emitter.md`.
 
 ### Fixed
 - **Explorer: the three sites that guessed the `/v1/assets/{asset_id}` dual response shape

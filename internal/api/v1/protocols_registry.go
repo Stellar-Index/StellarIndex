@@ -4,6 +4,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/sources/aquarius"
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
 	blend_backstop "github.com/StellarIndex/stellar-index/internal/sources/blend_backstop"
+	blend_emitter "github.com/StellarIndex/stellar-index/internal/sources/blend_emitter"
 	"github.com/StellarIndex/stellar-index/internal/sources/sorocredit"
 	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
 )
@@ -114,14 +115,19 @@ var protocolRegistry = []ProtocolMeta{
 			// the Blend protocol page: its deposit/withdraw/draw/claim/… events
 			// land under blend_backstop.event, on the Backstop contracts below.
 			blend_backstop.Event{}.EventKind(),
+			// The Emitter (blend_emitter source) also folds in — protocol-
+			// emissions plumbing, its own contract + own distribute/drop/
+			// q_swap/swap vocabulary, but logically part of Blend.
+			"blend_emitter.distribute", "blend_emitter.drop", "blend_emitter.swap_config",
 		},
 		VerificationPage: "docs/protocols/blend.md",
-		// The two mainnet Backstop deployments — a separate event surface
-		// (own contracts, own 10-event vocabulary) but part of the Blend
-		// protocol. Folding them here surfaces the backstop on /v1/protocols/blend
-		// (roster + lake analytics + event count) instead of being invisible.
-		ExtraContracts:    []string{blend_backstop.MainnetBackstopV1, blend_backstop.MainnetBackstopV2},
-		ExtraEventSources: []string{blend_backstop.SourceName},
+		// The two mainnet Backstop deployments plus the single Emitter
+		// deployment — separate event surfaces (own contracts, own event
+		// vocabularies) but part of the Blend protocol. Folding them here
+		// surfaces both on /v1/protocols/blend (roster + lake analytics +
+		// event count) instead of being invisible.
+		ExtraContracts:    []string{blend_backstop.MainnetBackstopV1, blend_backstop.MainnetBackstopV2, blend_emitter.MainnetEmitter},
+		ExtraEventSources: []string{blend_backstop.SourceName, blend_emitter.SourceName},
 	},
 	{
 		Name:          "sorocredit",

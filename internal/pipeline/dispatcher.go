@@ -36,6 +36,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/sources/band"
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
 	blend_backstop "github.com/StellarIndex/stellar-index/internal/sources/blend_backstop"
+	blend_emitter "github.com/StellarIndex/stellar-index/internal/sources/blend_emitter"
 	"github.com/StellarIndex/stellar-index/internal/sources/cctp"
 	"github.com/StellarIndex/stellar-index/internal/sources/claimable_balances"
 	"github.com/StellarIndex/stellar-index/internal/sources/comet"
@@ -178,6 +179,18 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 			// 2026-06-15, pending Blend-team confirmation — live-capture
 			// only. See internal/sources/blend_backstop/README.md.
 			decoders = append(decoders, blend_backstop.NewDecoder())
+		case blend_emitter.SourceName:
+			// Blend Emitter — protocol-emissions plumbing (distribute
+			// / drop / q_swap / swap), gated on contract identity
+			// (ADR-0035/0040): its `distribute` topic COLLIDES with
+			// blend_backstop's own `distribute` event (different body
+			// shape, same symbol — see
+			// internal/sources/blend_emitter/README.md). The pool
+			// registry is warmed from protocol_contracts via
+			// gated[blend_emitter] (empty when this path doesn't warm
+			// — e.g. backfill, where the output is dropped by
+			// IsProjectedEvent anyway).
+			decoders = append(decoders, blend_emitter.NewDecoder(gated[blend_emitter.SourceName]...))
 		case cctp.SourceName:
 			// Circle CCTP v2 — stateless topic Decoder, gated on the
 			// three known CCTP contracts (deposit_for_burn /

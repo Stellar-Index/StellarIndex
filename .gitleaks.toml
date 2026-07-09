@@ -38,6 +38,7 @@ paths = [
   # ALSO rule-scoped below; duplicated for the same reason as the cctp
   # entries above.
   '''internal/sources/blend_backstop/decode_test\.go''',
+  '''internal/sources/blend_emitter/source_test\.go''',
 ]
 
 [[rules]]
@@ -163,6 +164,12 @@ paths = [
 ]
 
 [[rules.allowlists]]
+description = "Blend Emitter mainnet contract ID (the single canonical Emitter C-strkey spanning Blend V1→V2), verified directly against the certified ClickHouse raw lake (2026-07-09). Public Soroban contract address (deterministic ledger entry), not a credential — the entropy heuristic trips on the 56-char base32 strkey. Same rationale as the cctp/events.go allowlist above."
+paths = [
+  '''internal/sources/blend_emitter/events\.go''',
+]
+
+[[rules.allowlists]]
 description = "Test-only base64-encoded XDR fixtures (ScVal Address/Symbol/Vec bodies for real Aquarius update_reserves / deposit_liquidity / withdraw_liquidity events, captured from the lake) + Stellar C-strkey token/pool contract-id fixtures, used by the aquarius liquidity/reserves decoder golden tests AND the timescale storage integration test. These are XDR-encoded public ledger data / deterministic public contract IDs (i128 amounts), not credentials — the base64 blobs + strkeys trip gitleaks' generic-api-key entropy heuristic. Same rationale as the other decoder-fixture allowlists above."
 paths = [
   '''internal/sources/aquarius/liquidity_decode_test\.go''',
@@ -246,4 +253,7 @@ paths = [
 description = "Base64 XDR topic/event-body golden fixtures pulled from the real mainnet ClickHouse lake (public on-chain data — Blend Backstop V1/V2 gulp_emissions, rw_zone, rw_zone_add, withdraw; ledgers 51499926-57072018) for the blend_backstop decoder-bug-fix audit (2026-07-09). High-entropy base64 trips the generic-api-key heuristic; same class as the cctp governance_test.go / full_census_test.go / phoenix / aquarius decoder-fixture allowlists."
 paths = [
   '''internal/sources/blend_backstop/decode_test\.go''',
+description = "Base64 XDR topic/body golden fixtures pulled DIRECTLY from the certified ClickHouse raw lake (public on-chain data — the Blend Emitter contract's distribute/drop/q_swap/swap events, ledgers 51524666-57467292, 2026-07-09) for the blend_emitter decoder tests, plus the Emitter's own C-strkey mainnet address and the backstop/recipient/token C-strkeys those events decode to. High-entropy base64 + bare strkeys trip the generic-api-key heuristic; same class as the cctp/aquarius/phoenix decoder-fixture allowlists above. Deterministic public ledger data, not credentials."
+paths = [
+  '''internal/sources/blend_emitter/source_test\.go''',
 ]
