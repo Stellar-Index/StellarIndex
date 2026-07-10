@@ -1,6 +1,7 @@
 package classicmovements
 
 import (
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"time"
@@ -16,14 +17,19 @@ import (
 // stellar.operations.op_type string form (xdr.OperationType.String())
 // — the exact set clickhouse.StreamClassicOps should be called with
 // for that surface. Grows with each phase: Phase 1 (CreateAccount,
-// Payment), Phase 2 adds PathPaymentStrictReceive/Send. See
-// recognition_test.go for the guard that pins this list.
+// Payment), Phase 2 adds PathPaymentStrictReceive/Send, Phase 3 adds
+// the ClaimableBalance trio + Clawback. See recognition_test.go for
+// the guard that pins this list.
 func SupportedOpTypes() []string {
 	return []string{
 		xdr.OperationTypeCreateAccount.String(),
 		xdr.OperationTypePayment.String(),
 		xdr.OperationTypePathPaymentStrictReceive.String(),
 		xdr.OperationTypePathPaymentStrictSend.String(),
+		xdr.OperationTypeCreateClaimableBalance.String(),
+		xdr.OperationTypeClaimClaimableBalance.String(),
+		xdr.OperationTypeClawbackClaimableBalance.String(),
+		xdr.OperationTypeClawback.String(),
 	}
 }
 
@@ -35,7 +41,9 @@ func SupportedOpTypes() []string {
 func matchesSupportedOp(op xdr.Operation) bool {
 	switch op.Body.Type {
 	case xdr.OperationTypeCreateAccount, xdr.OperationTypePayment,
-		xdr.OperationTypePathPaymentStrictReceive, xdr.OperationTypePathPaymentStrictSend:
+		xdr.OperationTypePathPaymentStrictReceive, xdr.OperationTypePathPaymentStrictSend,
+		xdr.OperationTypeCreateClaimableBalance, xdr.OperationTypeClaimClaimableBalance,
+		xdr.OperationTypeClawbackClaimableBalance, xdr.OperationTypeClawback:
 		return true
 	}
 	return false
@@ -46,10 +54,16 @@ func matchesSupportedOp(op xdr.Operation) bool {
 // movements is not an error — a failed op (result.Code != OpInner,
 // or the operation's own result-union arm isn't the Success case)
 // simply never happened and moved nothing (D1's "success-code-
-// filtered" rule). An out-of-scope op type — one matchesSupportedOp
-// would reject — is a loud ErrUnsupportedOpType instead of a silent
-// zero-movements return; see that sentinel's doc comment for why.
-func decodeOp(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, op xdr.Operation, result xdr.OperationResult) ([]Movement, error) {
+// filtered" rule); a claim/clawback whose create can't (yet) be
+// resolved is ALSO zero movements, not an error — see
+// d.decodeClaimClaimableBalance / d.decodeClawbackClaimableBalance.
+// An out-of-scope op type — one matchesSupportedOp would reject — is
+// a loud ErrUnsupportedOpType instead of a silent zero-movements
+// return; see that sentinel's doc comment for why. A method (not a
+// free function, unlike Phase 1-2's arms) because the ClaimableBalance
+// claim/clawback arms need read/write access to d's in-run BalanceId
+// index.
+func (d *Decoder) decodeOp(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, op xdr.Operation, result xdr.OperationResult) ([]Movement, error) {
 	switch op.Body.Type {
 	case xdr.OperationTypeCreateAccount:
 		return decodeCreateAccount(ledger, closedAt, txHash, opIndex, fromAddr, op, result)
@@ -59,6 +73,14 @@ func decodeOp(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, 
 		return decodePathPaymentStrictReceive(ledger, closedAt, txHash, opIndex, fromAddr, op, result)
 	case xdr.OperationTypePathPaymentStrictSend:
 		return decodePathPaymentStrictSend(ledger, closedAt, txHash, opIndex, fromAddr, op, result)
+	case xdr.OperationTypeCreateClaimableBalance:
+		return decodeCreateClaimableBalance(ledger, closedAt, txHash, opIndex, fromAddr, op, result)
+	case xdr.OperationTypeClaimClaimableBalance:
+		return d.decodeClaimClaimableBalance(ledger, closedAt, txHash, opIndex, fromAddr, op, result)
+	case xdr.OperationTypeClawbackClaimableBalance:
+		return d.decodeClawbackClaimableBalance(ledger, closedAt, txHash, opIndex, fromAddr, op, result)
+	case xdr.OperationTypeClawback:
+		return decodeClawback(ledger, closedAt, txHash, opIndex, fromAddr, op, result)
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedOpType, op.Body.Type)
 	}
@@ -376,4 +398,293 @@ func claimAtomBoughtSide(atom xdr.ClaimAtom) (xdr.Asset, xdr.Int64, bool) {
 	default:
 		return xdr.Asset{}, 0, false
 	}
+}
+
+// ─── Phase 3: ClaimableBalance create/claim/clawback + Clawback ───
+//
+// ADR-0047 D3 Phase 3. Four op types, three reconstruction paths:
+//   - CreateClaimableBalance: path (a) — the CREATED BalanceId comes
+//     back in the result (research §2), everything else from the
+//     body. No correlation needed for this op itself.
+//   - ClaimClaimableBalance / ClawbackClaimableBalance: path
+//     (b+own-index) — neither op's body nor result carries an
+//     asset/amount, only a BalanceId. Resolved against the create
+//     row's own previously-derived Asset/Amount via Decoder's in-run
+//     index (dispatcher_adapter.go), falling back to a Postgres
+//     lookup for creates outside this run — see that file's Decoder
+//     doc for the full design + memory-scaling caveat.
+//   - Clawback (the plain op, not the claimable-balance variant):
+//     path (a) — asset/amount/holder all in the body.
+//
+// Row cardinality: every Phase 3 kind is exactly one row per op
+// (leg_index always 0) — none of these ops have a second asset leg.
+
+// decodeCreateClaimableBalance reconstructs a
+// 'claimable_balance_create' movement: source account -> escrow.
+// ToAddress is deliberately empty (NULL) — the funds go to a
+// Claimants list, not one address, until claimed (migration 0105's
+// column comment). Attributes carries the generated balance_id (hex,
+// same convention as internal/sources/claimable_balances'
+// claimableIDHex: hex of just the V0 hash bytes, no type-discriminant
+// prefix) and a claimants list (destination addresses only — the
+// full ClaimPredicate tree, e.g. time-bound/AND/OR conditions, is
+// not modelled here; a reader needing exact claim conditions should
+// consult the raw op body via stellar.operations, not this table).
+func decodeCreateClaimableBalance(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, op xdr.Operation, result xdr.OperationResult) ([]Movement, error) {
+	if !opSucceeded(result) {
+		return nil, nil
+	}
+	tr, ok := result.GetTr()
+	if !ok {
+		return nil, nil
+	}
+	r, ok := tr.GetCreateClaimableBalanceResult()
+	if !ok || r.Code != xdr.CreateClaimableBalanceResultCodeCreateClaimableBalanceSuccess {
+		return nil, nil
+	}
+	if r.BalanceId == nil {
+		return nil, fmt.Errorf("%w: success result but nil BalanceId (ledger %d tx %s op %d)",
+			ErrMalformedMovement, ledger, txHash, opIndex)
+	}
+	balanceIDHex, err := claimableBalanceIDHex(*r.BalanceId)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w (ledger %d tx %s op %d)", ErrMalformedMovement, err, ledger, txHash, opIndex)
+	}
+
+	body, ok := op.Body.GetCreateClaimableBalanceOp()
+	if !ok {
+		return nil, fmt.Errorf("%w: op type CreateClaimableBalance but body has no CreateClaimableBalanceOp (ledger %d tx %s op %d)",
+			ErrMalformedMovement, ledger, txHash, opIndex)
+	}
+	if body.Amount <= 0 {
+		return nil, fmt.Errorf("%w: non-positive Amount %d (ledger %d tx %s op %d)",
+			ErrMalformedMovement, body.Amount, ledger, txHash, opIndex)
+	}
+
+	claimants := make([]string, 0, len(body.Claimants))
+	for _, c := range body.Claimants {
+		if c.V0 != nil {
+			claimants = append(claimants, c.V0.Destination.Address())
+		}
+	}
+
+	return []Movement{{
+		Kind:            KindClaimableBalanceCreate,
+		Provenance:      ProvenanceClassicDerived,
+		Ledger:          ledger,
+		LedgerCloseTime: closedAt,
+		TxHash:          txHash,
+		OpIndex:         opIndex,
+		LegIndex:        0,
+		Asset:           xdrjson.AssetID(body.Asset),
+		Amount:          canonical.NewAmount(big.NewInt(int64(body.Amount))),
+		FromAddress:     fromAddr,
+		ToAddress:       "",
+		Attributes: map[string]any{
+			"balance_id": balanceIDHex,
+			"claimants":  claimants,
+		},
+	}}, nil
+}
+
+// decodeClaimClaimableBalance reconstructs a
+// 'claimable_balance_claim' movement: escrow -> claiming account
+// (fromAddr, i.e. ctx.TxSource — the op has no separate claimant
+// field, the claimer IS the op's source). FromAddress is
+// deliberately empty (NULL): the escrow has no G-address. Asset/
+// Amount are resolved via d's BalanceId index; if unresolved, this
+// returns zero movements (not an error) and records a
+// PendingClaimableBalanceRef for the caller's second pass.
+func (d *Decoder) decodeClaimClaimableBalance(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, op xdr.Operation, result xdr.OperationResult) ([]Movement, error) {
+	if !opSucceeded(result) {
+		return nil, nil
+	}
+	tr, ok := result.GetTr()
+	if !ok {
+		return nil, nil
+	}
+	r, ok := tr.GetClaimClaimableBalanceResult()
+	if !ok || r.Code != xdr.ClaimClaimableBalanceResultCodeClaimClaimableBalanceSuccess {
+		return nil, nil
+	}
+
+	body, ok := op.Body.GetClaimClaimableBalanceOp()
+	if !ok {
+		return nil, fmt.Errorf("%w: op type ClaimClaimableBalance but body has no ClaimClaimableBalanceOp (ledger %d tx %s op %d)",
+			ErrMalformedMovement, ledger, txHash, opIndex)
+	}
+	balanceIDHex, err := claimableBalanceIDHex(body.BalanceId)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w (ledger %d tx %s op %d)", ErrMalformedMovement, err, ledger, txHash, opIndex)
+	}
+
+	info, found := d.lookupClaimableBalance(balanceIDHex)
+	if !found {
+		d.recordPending(PendingClaimableBalanceRef{
+			Kind:            KindClaimableBalanceClaim,
+			BalanceIDHex:    balanceIDHex,
+			Ledger:          ledger,
+			LedgerCloseTime: closedAt,
+			TxHash:          txHash,
+			OpIndex:         opIndex,
+			FromAddress:     "",
+			ToAddress:       fromAddr,
+		})
+		return nil, nil
+	}
+
+	return []Movement{{
+		Kind:            KindClaimableBalanceClaim,
+		Provenance:      ProvenanceClassicDerived,
+		Ledger:          ledger,
+		LedgerCloseTime: closedAt,
+		TxHash:          txHash,
+		OpIndex:         opIndex,
+		LegIndex:        0,
+		Asset:           info.Asset,
+		Amount:          info.Amount,
+		FromAddress:     "",
+		ToAddress:       fromAddr,
+		Attributes: map[string]any{
+			"balance_id": balanceIDHex,
+			"created_by": info.CreatedBy,
+		},
+	}}, nil
+}
+
+// decodeClawbackClaimableBalance reconstructs a
+// 'claimable_balance_clawback' movement: escrow -> destroyed. Mirrors
+// decodeClaimClaimableBalance's correlation shape exactly (same
+// BalanceId-only body, same index/pending split) but the "receiving"
+// side is the issuer performing the clawback (fromAddr, i.e.
+// ctx.TxSource — a Clawback-family op's effective source must be the
+// asset's issuer) rather than an arbitrary claimer, matching plain
+// Clawback's from-holder/to-issuer framing below.
+func (d *Decoder) decodeClawbackClaimableBalance(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, op xdr.Operation, result xdr.OperationResult) ([]Movement, error) {
+	if !opSucceeded(result) {
+		return nil, nil
+	}
+	tr, ok := result.GetTr()
+	if !ok {
+		return nil, nil
+	}
+	r, ok := tr.GetClawbackClaimableBalanceResult()
+	if !ok || r.Code != xdr.ClawbackClaimableBalanceResultCodeClawbackClaimableBalanceSuccess {
+		return nil, nil
+	}
+
+	body, ok := op.Body.GetClawbackClaimableBalanceOp()
+	if !ok {
+		return nil, fmt.Errorf("%w: op type ClawbackClaimableBalance but body has no ClawbackClaimableBalanceOp (ledger %d tx %s op %d)",
+			ErrMalformedMovement, ledger, txHash, opIndex)
+	}
+	balanceIDHex, err := claimableBalanceIDHex(body.BalanceId)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w (ledger %d tx %s op %d)", ErrMalformedMovement, err, ledger, txHash, opIndex)
+	}
+
+	info, found := d.lookupClaimableBalance(balanceIDHex)
+	if !found {
+		d.recordPending(PendingClaimableBalanceRef{
+			Kind:            KindClaimableBalanceClawback,
+			BalanceIDHex:    balanceIDHex,
+			Ledger:          ledger,
+			LedgerCloseTime: closedAt,
+			TxHash:          txHash,
+			OpIndex:         opIndex,
+			FromAddress:     "",
+			ToAddress:       fromAddr,
+		})
+		return nil, nil
+	}
+
+	return []Movement{{
+		Kind:            KindClaimableBalanceClawback,
+		Provenance:      ProvenanceClassicDerived,
+		Ledger:          ledger,
+		LedgerCloseTime: closedAt,
+		TxHash:          txHash,
+		OpIndex:         opIndex,
+		LegIndex:        0,
+		Asset:           info.Asset,
+		Amount:          info.Amount,
+		FromAddress:     "",
+		ToAddress:       fromAddr,
+		Attributes: map[string]any{
+			"balance_id": balanceIDHex,
+			"created_by": info.CreatedBy,
+		},
+	}}, nil
+}
+
+// decodeClawback reconstructs a 'clawback' movement for the plain
+// Clawback op (NOT ClawbackClaimableBalance, handled above): holder
+// -> issuer, asset destroyed (research §2 path (a) — Asset/From/
+// Amount are all in the body; ClawbackResult is a bare code).
+//
+// FromAddress is body.From (the holder whose asset is clawed back) —
+// NOT fromAddr/ctx.TxSource. ToAddress is fromAddr/ctx.TxSource (the
+// clawback MUST be submitted by the asset's issuer; protocol enforces
+// this via AUTH_CLAWBACK_ENABLED). Confirmed against real mainnet
+// data: real_bytes_test.go's TestRealBytes_clawback_success has
+// From=GCFROB3…(the holder) while the op's own resolved source
+// account is GBBKUUT…(the issuer) — a DIFFERENT address, the reverse
+// of every other Phase 1-3 kind where fromAddr IS the movement's
+// FromAddress.
+func decodeClawback(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, op xdr.Operation, result xdr.OperationResult) ([]Movement, error) {
+	if !opSucceeded(result) {
+		return nil, nil
+	}
+	tr, ok := result.GetTr()
+	if !ok {
+		return nil, nil
+	}
+	r, ok := tr.GetClawbackResult()
+	if !ok || r.Code != xdr.ClawbackResultCodeClawbackSuccess {
+		return nil, nil
+	}
+
+	body, ok := op.Body.GetClawbackOp()
+	if !ok {
+		return nil, fmt.Errorf("%w: op type Clawback but body has no ClawbackOp (ledger %d tx %s op %d)",
+			ErrMalformedMovement, ledger, txHash, opIndex)
+	}
+	if body.Amount <= 0 {
+		return nil, fmt.Errorf("%w: non-positive Amount %d (ledger %d tx %s op %d)",
+			ErrMalformedMovement, body.Amount, ledger, txHash, opIndex)
+	}
+	holderMuxed := body.From
+	holderAddr, herr := holderMuxed.GetAddress()
+	if herr != nil {
+		return nil, fmt.Errorf("%w: unresolvable From: %w (ledger %d tx %s op %d)",
+			ErrMalformedMovement, herr, ledger, txHash, opIndex)
+	}
+
+	return []Movement{{
+		Kind:            KindClawback,
+		Provenance:      ProvenanceClassicDerived,
+		Ledger:          ledger,
+		LedgerCloseTime: closedAt,
+		TxHash:          txHash,
+		OpIndex:         opIndex,
+		LegIndex:        0,
+		Asset:           xdrjson.AssetID(body.Asset),
+		Amount:          canonical.NewAmount(big.NewInt(int64(body.Amount))),
+		FromAddress:     holderAddr,
+		ToAddress:       fromAddr,
+	}}, nil
+}
+
+// claimableBalanceIDHex encodes a ClaimableBalanceId to a hex
+// string. Only the V0 variant is defined in current XDR; a future
+// variant would extend this switch. Same convention as
+// internal/sources/claimable_balances' claimableIDHex (hex of just
+// the V0 hash bytes, no type-discriminant prefix) — kept as an
+// independent copy rather than an import since that package's helper
+// is unexported and the two packages have no other coupling.
+func claimableBalanceIDHex(id xdr.ClaimableBalanceId) (string, error) {
+	if id.V0 == nil {
+		return "", fmt.Errorf("ClaimableBalanceId variant %d has no V0 hash", id.Type)
+	}
+	return hex.EncodeToString(id.V0[:]), nil
 }

@@ -7,26 +7,33 @@
 // full decision and docs/architecture/pre-p23-classic-movements-research.md
 // for the evidence base.
 //
-// # Phase 1 + 2 scope (op-only decode surface)
+// # Phase 1-3 scope (op-only decode surface)
 //
-// This package currently decodes four classic operation types via
+// This package currently decodes eight classic operation types via
 // its op-only decode surface (Matches / decodeOp / Decoder.Decode):
 // Payment and CreateAccount (ADR-0047 D3 Phase 1, both reconstruct
 // from the operation BODY alone once the operation result's success
-// code is confirmed — research §2 path (a)), and
-// PathPaymentStrictReceive / PathPaymentStrictSend (Phase 2,
-// reconstructed from the operation RESULT — research §2 path (b):
-// the destination leg is result.Success.Last.{Asset,Amount} for both
-// op types uniformly; the source leg is body.SendAmount (exact) for
-// StrictSend, or derived from the result's Offers for StrictReceive
-// since SendMax is only a ceiling — see decode.go's
-// pathPaymentStrictReceiveSourceAmount doc comment for the exact
-// hop-order derivation, verified against real multi-hop mainnet data
-// in real_bytes_test.go). Neither phase needs ledger_entry_changes.
-// SupportedOpTypes, matchesSupportedOp, and decodeOp's switch all
-// cover exactly these four types; recognition_test.go pins that
-// coverage so a future phase's author must extend all three
-// deliberately (ADR-0047 D4.2).
+// code is confirmed — research §2 path (a)); PathPaymentStrictReceive
+// / PathPaymentStrictSend (Phase 2, reconstructed from the operation
+// RESULT — research §2 path (b): the destination leg is
+// result.Success.Last.{Asset,Amount} for both op types uniformly; the
+// source leg is body.SendAmount (exact) for StrictSend, or derived
+// from the result's Offers for StrictReceive since SendMax is only a
+// ceiling — see decode.go's pathPaymentStrictReceiveSourceAmount doc
+// comment for the exact hop-order derivation, verified against real
+// multi-hop mainnet data in real_bytes_test.go); and
+// CreateClaimableBalance / ClaimClaimableBalance /
+// ClawbackClaimableBalance / Clawback (Phase 3 — CreateClaimableBalance
+// and Clawback are path (a); Claim/ClawbackClaimableBalance are path
+// (b+own-index): neither op carries an asset or amount, only a
+// BalanceId, resolved against Decoder's in-run index of previously-
+// decoded creates — see dispatcher_adapter.go's Decoder doc for the
+// full correlation design, including the Postgres second-pass
+// fallback and its memory-scaling caveat). None of Phase 1-3 needs
+// ledger_entry_changes. SupportedOpTypes, matchesSupportedOp, and
+// decodeOp's switch all cover exactly these eight types;
+// recognition_test.go pins that coverage so a future phase's author
+// must extend all three deliberately (ADR-0047 D4.2).
 //
 // A path payment emits exactly ONE 'path_payment' row per op
 // (leg_index always 0) — never a row per hop; the per-hop ClaimAtoms
@@ -34,12 +41,12 @@
 // deliberately NOT duplicated here. The row's primary Asset/Amount
 // columns hold the destination leg; Movement.Attributes carries the
 // source leg (send_asset/send_amount) since the schema has one
-// asset per row.
+// asset per row. Every Phase 1-3 kind is one row per op (leg_index
+// always 0) — none of these ops have a second asset leg.
 //
-// Later phases (claimable-balance create/claim/clawback + Clawback,
-// Phase 3; account merge + liquidity-pool deposit/withdraw + the
-// CAP-0038 revocation edge case, Phase 4) are NOT implemented here
-// yet. Adding an op-only-surface kind means: a new decodeXxx
+// Later phases (account merge + liquidity-pool deposit/withdraw +
+// the CAP-0038 revocation edge case, Phase 4) are NOT implemented
+// here yet. Adding an op-only-surface kind means: a new decodeXxx
 // function, a case in decodeOp's switch, an addition to
 // matchesSupportedOp and to SupportedOpTypes, and an update to
 // recognition_test.go's expected set. LiquidityPoolDeposit/Withdraw

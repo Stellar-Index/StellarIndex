@@ -2,6 +2,7 @@ package timescale
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -195,6 +196,51 @@ func (s *Store) BatchInsertClassicMovements(ctx context.Context, rows []ClassicM
 		return 0, fmt.Errorf("timescale: BatchInsertClassicMovements: %w", err)
 	}
 	return landed, nil
+}
+
+// FindClaimableBalanceCreate looks up a previously-written
+// 'claimable_balance_create' row's asset/amount/creator by its
+// balance_id (matched against `attributes->>'balance_id'`) — ADR-0047
+// Phase 3's second-pass correlation fallback for a
+// classicmovements.Decoder whose in-run BalanceId index didn't have
+// the create (see that package's Decoder doc: most commonly, the
+// create landed in an earlier, already-completed backfill
+// invocation over a different ledger range).
+//
+// found=false, err=nil means "no matching create row exists in
+// classic_movements" — a genuine ADR-0047 D4 recognizable-
+// incompleteness signal (the create may be outside the range this
+// table has been backfilled over yet, or — rarely — same-ledger
+// ordering noise per classicmovements/doc.go), NOT a query failure.
+// Callers must count + log this, never guess an amount.
+//
+// No index currently backs `attributes->>'balance_id'` — this scans
+// the claimable_balance_create subset of classic_movements (cheap
+// relative to the whole table via the movement_kind check, but not
+// O(1)). Acceptable for a rare fallback path; if it becomes a hot
+// path in production (a WARNING-level unresolved-count spike), add a
+// partial expression index in a follow-up migration rather than
+// pre-optimizing here.
+func (s *Store) FindClaimableBalanceCreate(ctx context.Context, balanceIDHex string) (asset string, amount canonical.Amount, createdBy string, found bool, err error) {
+	if balanceIDHex == "" {
+		return "", canonical.Amount{}, "", false, errors.New("timescale: FindClaimableBalanceCreate: balanceIDHex is empty")
+	}
+	const q = `
+        SELECT asset, amount, COALESCE(from_address, '')
+        FROM classic_movements
+        WHERE movement_kind = 'claimable_balance_create'
+          AND attributes ->> 'balance_id' = $1
+        LIMIT 1
+    `
+	row := s.db.QueryRowContext(ctx, q, balanceIDHex)
+	var amt canonical.Amount
+	if scanErr := row.Scan(&asset, &amt, &createdBy); scanErr != nil {
+		if errors.Is(scanErr, sql.ErrNoRows) {
+			return "", canonical.Amount{}, "", false, nil
+		}
+		return "", canonical.Amount{}, "", false, fmt.Errorf("timescale: FindClaimableBalanceCreate: %w", scanErr)
+	}
+	return asset, amt, createdBy, true, nil
 }
 
 // marshalClassicMovementAttributes renders m.Attributes as the jsonb
