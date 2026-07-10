@@ -11243,6 +11243,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/{g_strkey}/positions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * "Enter an address, see all your DeFi positions" — folded per-protocol net positions.
+         * @description Folds six ADR-0035-gated on-chain protocols' event tables into
+         *     one per-(venue, position_kind) net-position list for the
+         *     address: Blend money-market (lending_supply / lending_borrow),
+         *     Blend Backstop (backstop_shares), Phoenix stake
+         *     (stake), DeFindex vault shares (vault_shares), sorocredit
+         *     (credit), and Aquarius rewards-gauge (gauge). Not paginated —
+         *     each protocol's venue fan-out for one address is bounded server-
+         *     side (500 venues), far past any realistic user.
+         *
+         *     HONESTY CONTRACT: this is raw on-chain quantities only — no
+         *     USD/asset valuation is applied (see the top-level `note`, always
+         *     present). Every position also carries `amount_semantics`
+         *     (exactly what the number IS — see the schema) and `basis`
+         *     (`event_derived`: a sum of this fold's own historical event
+         *     amounts, computed here, that does NOT model interest/fees/
+         *     exchange-rate accrual since each event; or `stateful`: read
+         *     straight from the protocol's own most-recently-published figure,
+         *     not derived by summing events — currently only sorocredit).
+         *
+         *     NET-ZERO / CLOSED positions are excluded by default (what
+         *     "net-zero" means is protocol-specific — see each `position_kind`
+         *     below); `?include_closed=true` includes them.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Include net-zero / closed positions (excluded by default). */
+                    include_closed?: boolean;
+                };
+                header?: never;
+                path: {
+                    /** @description G-strkey account id. */
+                    g_strkey: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The account's folded DeFi positions. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *         "positions": [
+                         *           {
+                         *             "protocol": "blend",
+                         *             "position_kind": "lending_supply",
+                         *             "venue": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+                         *             "venue_label": "USDC/XLM",
+                         *             "assets": [
+                         *               "USDC"
+                         *             ],
+                         *             "amount": "600000000",
+                         *             "amount_semantics": "net_underlying_at_event_time",
+                         *             "last_activity": {
+                         *               "ledger": 63316200,
+                         *               "time": "2026-07-10T21:02:29Z"
+                         *             },
+                         *             "basis": "event_derived"
+                         *           },
+                         *           {
+                         *             "protocol": "sorocredit",
+                         *             "position_kind": "credit",
+                         *             "venue": "CCG5EWFY2KCWWYYEIUMIRG6WSAQFLDR5QE5FMCWY25N36XA5GYTCPQWR",
+                         *             "assets": [
+                         *               "USDC"
+                         *             ],
+                         *             "amount": "480000000",
+                         *             "amount_semantics": "stateful_current",
+                         *             "last_activity": {
+                         *               "ledger": 63316350,
+                         *               "time": "2026-07-10T21:40:11Z"
+                         *             },
+                         *             "basis": "stateful"
+                         *           }
+                         *         ],
+                         *         "include_closed": false,
+                         *         "note": "Amounts are on-chain quantities only — no USD or other valuation is applied. event_derived positions are a sum of historical per-event amounts and do NOT model interest, fees, or exchange-rate accrual since each event; see each position's amount_semantics for exactly what the number represents, and basis for whether it was derived here or read from the protocol's own published state."
+                         *       },
+                         *       "as_of": "2026-07-10T22:39:31.01258567Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
+                        "application/json": {
+                            data?: components["schemas"]["AccountPositions"];
+                        };
+                    };
+                };
+                400: components["responses"]["BadRequest"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/search": {
         parameters: {
             query?: never;
@@ -11516,6 +11636,98 @@ export interface components {
              *     Absent = both sides contributed to this response.
              */
             coverage_note?: string;
+        };
+        /** @description One folded DeFi position — a net position in a single venue for a single protocol. */
+        AccountPosition: {
+            /** @enum {string} */
+            protocol: "blend" | "phoenix" | "defindex" | "sorocredit" | "aquarius";
+            /**
+             * @description lending_supply/lending_borrow: Blend money-market, independent
+             *     supply-side and borrow-side legs of the same (pool, asset).
+             *     backstop_shares: Blend Backstop LP-share stake. stake: Phoenix
+             *     per-pool LP-share bond. vault_shares: DeFindex vault df-token
+             *     share. credit: sorocredit CDP-style credit position. gauge:
+             *     Aquarius rewards-gauge staked position.
+             * @enum {string}
+             */
+            position_kind: "lending_supply" | "lending_borrow" | "backstop_shares" | "stake" | "vault_shares" | "credit" | "gauge";
+            /** @description The pool / vault / stake-contract / collateral-position contract C-strkey this position is held in. */
+            venue: string;
+            /**
+             * @description Best-effort human label for `venue` (e.g. "USDC/XLM" for a
+             *     Blend pool's reserve set, resolved via the same pool-tokens
+             *     machinery the /v1/protocols/{name} roster's pair labels use).
+             *     Absent when no label could be resolved — never a guess.
+             */
+            venue_label?: string;
+            /**
+             * @description Best-effort resolved asset display code(s) held in this
+             *     position (e.g. "USDC", "XLM"). Absent when the underlying
+             *     table carries no resolvable asset identity for this
+             *     position_kind (documented per-protocol in
+             *     internal/api/v1/explorer/positions.go).
+             */
+            assets?: string[];
+            /** @description Decimal string (ADR-0003) — see amount_semantics for exactly what this number represents. */
+            amount: string;
+            /**
+             * @description REQUIRED documentation of what `amount` IS — determined per
+             *     source by reading the decoder's own semantics, never
+             *     guessed:
+             *       - net_underlying_at_event_time: a sum of historical
+             *         UNDERLYING-asset amounts observed at each contributing
+             *         event (Blend supply/borrow). Does NOT reflect interest
+             *         accrued since each event, and is NOT the b/d-token
+             *         amount.
+             *       - shares: an exact current count of a protocol's own
+             *         share/LP token, minted/burned 1:1 with the summed events
+             *         (Blend Backstop, Phoenix stake, DeFindex vault shares).
+             *       - stateful_current: the protocol's own most-recently
+             *         PUBLISHED figure (sorocredit's latest statement amount),
+             *         not a delta sum this endpoint computed.
+             *       - signed_delta_sum_unconfirmed_unit: a sum of signed
+             *         per-event deltas whose unit is not contract-source-
+             *         confirmed (Aquarius gauge position_update — see
+             *         internal/sources/aquarius/decode_rewards.go's
+             *         best-effort field-mapping doc comment).
+             * @enum {string}
+             */
+            amount_semantics: "net_underlying_at_event_time" | "shares" | "stateful_current" | "signed_delta_sum_unconfirmed_unit";
+            /** @description The most recent contributing event's ledger + close time. */
+            last_activity: {
+                ledger: number;
+                /** Format: date-time */
+                time?: string;
+            };
+            /**
+             * @description event_derived: computed by this endpoint by summing the
+             *     fold's own event log. stateful: read from a field the
+             *     protocol itself last published, not derived by summing
+             *     events (sorocredit only, today).
+             * @enum {string}
+             */
+            basis: "event_derived" | "stateful";
+        };
+        /**
+         * @description An account's folded DeFi positions across every ADR-0035-gated
+         *     on-chain protocol this endpoint reads. Not paginated (see the
+         *     operation description for the venue-cardinality bound). Always
+         *     carries `note` — the valuation/accrual honesty contract applies
+         *     even to an empty result.
+         */
+        AccountPositions: {
+            /** @description The G-strkey this listing is for. */
+            account: string;
+            positions: components["schemas"]["AccountPosition"][];
+            /** @description Echoes the ?include_closed= request parameter. */
+            include_closed: boolean;
+            /**
+             * @description Always present. States plainly that amounts are raw on-chain
+             *     quantities with no valuation applied, and that event_derived
+             *     positions do not model interest/fee/exchange-rate accrual —
+             *     see each position's amount_semantics / basis for specifics.
+             */
+            note: string;
         };
         /**
          * @description Dashboard view of an API key. Plaintext is NEVER on this

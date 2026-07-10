@@ -970,6 +970,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Issuers:              cachedIssuersReader,
 		SEP41Transfers:       store,
 		SEP41Movements:       store,
+		Positions:            store,
 		Cursors:              store,
 		CoverageReader:       store,
 		CompletenessReader:   store,

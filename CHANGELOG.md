@@ -15,6 +15,39 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **"DeFi positions" view: `GET /v1/accounts/{g_strkey}/positions`** (spec
+  1.9.0, x-stability: experimental, sibling of `/movements`). "Enter an
+  address, see all your DeFi positions" — folds six ADR-0035-gated
+  on-chain protocols' event tables into one per-(venue, position_kind)
+  net-position list: Blend money-market (`lending_supply`/`lending_borrow`,
+  net of `token_amount` — the UNDERLYING amount, never the b/d-token —
+  `flash_loan` excluded as a same-tx transient draw), Blend Backstop
+  (`backstop_shares`, net of `amount2` — verified "shares" on both
+  deposit and withdraw; `queue_withdrawal`/`dequeue_withdrawal` excluded
+  as intent-only), Phoenix stake (`stake`, net bond/unbond), DeFindex
+  vault shares (`vault_shares`, net df-tokens, VAULT layer only), sorocredit
+  (`credit`, the position's own most-recently-PUBLISHED statement amount —
+  `basis: stateful`, the one non-delta-summed protocol here since
+  `credit_positions` carries no per-event amount at all), and Aquarius
+  rewards-gauge (`gauge`, signed `position_update.delta` sum — unit
+  BEST-EFFORT per the decoder's own doc comment, `amount_semantics:
+  signed_delta_sum_unconfirmed_unit`). Every position carries a REQUIRED
+  `amount_semantics` string documenting exactly what the number is, plus
+  `basis` (`event_derived` vs `stateful`); a top-level `note` states
+  plainly that no valuation is applied and `event_derived` positions
+  don't model interest/fee/accrual. Net-zero/closed positions excluded by
+  default (`?include_closed=true` to include). Venue human labels
+  best-effort reuse the #91 pool-tokens/pair-label machinery
+  (`internal/api/v1/protocol_pairs.go`'s `PoolTokens` reader); asset
+  labels reuse `resolveSEP41MovementAsset` from the movements endpoint.
+  Two new sargable user-leading partial indexes
+  (`blend_positions_user_ts_idx`, `blend_backstop_events_user_ts_idx`,
+  migration 0107) — the other four source tables already had one. Six
+  fold queries live in `internal/storage/timescale/positions.go`; the
+  handler + wire mapping in `internal/api/v1/explorer/positions.go`;
+  explorer UI panel `web/explorer/src/app/accounts/AccountDefiPositions.tsx`.
+
 ### Fixed
 - **Explorer static builds no longer fail on stale Cloudflare cache entries.** Two builds
   in one evening failed fail-hard on edge rows that disagreed with sibling fresh-cache

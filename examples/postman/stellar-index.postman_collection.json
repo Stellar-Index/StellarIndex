@@ -33409,6 +33409,241 @@
                   }
                 }
               ]
+            },
+            {
+              "name": "positions",
+              "description": "",
+              "item": [
+                {
+                  "name": "\"Enter an address, see all your DeFi positions\" — folded per-protocol net positions.",
+                  "request": {
+                    "name": "\"Enter an address, see all your DeFi positions\" — folded per-protocol net positions.",
+                    "description": {
+                      "content": "Folds six ADR-0035-gated on-chain protocols' event tables into\none per-(venue, position_kind) net-position list for the\naddress: Blend money-market (lending_supply / lending_borrow),\nBlend Backstop (backstop_shares), Phoenix stake\n(stake), DeFindex vault shares (vault_shares), sorocredit\n(credit), and Aquarius rewards-gauge (gauge). Not paginated —\neach protocol's venue fan-out for one address is bounded server-\nside (500 venues), far past any realistic user.\n\nHONESTY CONTRACT: this is raw on-chain quantities only — no\nUSD/asset valuation is applied (see the top-level `note`, always\npresent). Every position also carries `amount_semantics`\n(exactly what the number IS — see the schema) and `basis`\n(`event_derived`: a sum of this fold's own historical event\namounts, computed here, that does NOT model interest/fees/\nexchange-rate accrual since each event; or `stateful`: read\nstraight from the protocol's own most-recently-published figure,\nnot derived by summing events — currently only sorocredit).\n\nNET-ZERO / CLOSED positions are excluded by default (what\n\"net-zero\" means is protocol-specific — see each `position_kind`\nbelow); `?include_closed=true` includes them.\n",
+                      "type": "text/plain"
+                    },
+                    "url": {
+                      "path": [
+                        "accounts",
+                        ":g_strkey",
+                        "positions"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Include net-zero / closed positions (excluded by default).",
+                            "type": "text/plain"
+                          },
+                          "key": "include_closed",
+                          "value": "false"
+                        }
+                      ],
+                      "variable": [
+                        {
+                          "type": "any",
+                          "value": "<string>",
+                          "key": "g_strkey",
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) G-strkey account id.",
+                            "type": "text/plain"
+                          }
+                        }
+                      ]
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {},
+                    "auth": null
+                  },
+                  "response": [
+                    {
+                      "name": "The account's folded DeFi positions.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "positions"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Include net-zero / closed positions (excluded by default).",
+                                "type": "text/plain"
+                              },
+                              "key": "include_closed",
+                              "value": "false"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) G-strkey account id.",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "OK",
+                      "code": 200,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/json"
+                        }
+                      ],
+                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"positions\": [\n      {\n        \"protocol\": \"blend\",\n        \"position_kind\": \"stake\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"shares\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"event_derived\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ]\n      },\n      {\n        \"protocol\": \"sorocredit\",\n        \"position_kind\": \"lending_borrow\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"signed_delta_sum_unconfirmed_unit\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"stateful\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ]\n      }\n    ],\n    \"include_closed\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Client-supplied parameters didn't validate.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "positions"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Include net-zero / closed positions (excluded by default).",
+                                "type": "text/plain"
+                              },
+                              "key": "include_closed",
+                              "value": "false"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) G-strkey account id.",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "Bad Request",
+                      "code": 400,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "positions"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Include net-zero / closed positions (excluded by default).",
+                                "type": "text/plain"
+                              },
+                              "key": "include_closed",
+                              "value": "false"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) G-strkey account id.",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "Service Unavailable",
+                      "code": 503,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    }
+                  ],
+                  "event": [],
+                  "protocolProfileBehavior": {
+                    "disableBodyPruning": true
+                  }
+                }
+              ]
             }
           ]
         }
@@ -33497,7 +33732,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"ledger\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"asset\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },

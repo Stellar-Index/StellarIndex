@@ -10,6 +10,7 @@ import { AssetLink } from '@/components/AssetLink';
 import { Breadcrumbs } from '@/components/ui';
 import { AccountPositions } from './AccountPositions';
 import { AccountMovementsPanel } from './AccountMovements';
+import { AccountDefiPositionsPanel } from './AccountDefiPositions';
 import { useIssuers } from '@/api/hooks';
 import { apiGet, asExample } from '@/api/client';
 import {
@@ -191,6 +192,8 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
       <AccountStatePanel id={id} state={stateQ.data} isLoading={stateQ.isLoading} isError={stateQ.isError} />
 
       <AccountMovementsPanel id={id} />
+
+      <AccountDefiPositionsPanel id={id} />
 
       <TransactionsPanel
         id={id}

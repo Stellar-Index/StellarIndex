@@ -640,6 +640,15 @@ type Options struct {
 	// hard dependency for that route, this is a soft one.
 	SEP41Movements explorerpkg.SEP41MovementsReader
 
+	// Positions, when non-nil, backs GET /v1/accounts/{g}/positions
+	// (the "DeFi positions" view) — six per-protocol Postgres folds
+	// (blend money-market, blend backstop, phoenix stake, defindex
+	// vault shares, sorocredit, aquarius gauge). timescale.Store
+	// satisfies it. Nil 503s the endpoint. Venue human labels reuse
+	// ProtocolPoolTokens (below) — the same reader the #91 protocol-
+	// roster pair-label work already wired.
+	Positions explorerpkg.PositionsReader
+
 	// FXHistory, when non-nil, lets /v1/chart serve fiat:fiat pairs
 	// from the fx_quotes hypertable for ranges beyond 7d. Leave nil
 	// to keep /v1/chart fiat:fiat in 7d-only mode.
@@ -1285,6 +1294,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/transactions", s.explorerHandler.AccountTransactions)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/operations", s.explorerHandler.AccountOperations)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/movements", s.explorerHandler.AccountMovements)
+	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/positions", s.explorerHandler.AccountPositions)
 
 	s.mux.HandleFunc("GET /v1/incidents", s.handleIncidents)
 	s.mux.HandleFunc("GET /v1/incidents.atom", s.handleIncidentsAtom)

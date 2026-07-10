@@ -108,6 +108,18 @@ type Handler struct {
 	// alone, with an honest coverage_note — see movements.go.
 	SEP41Movements SEP41MovementsReader
 
+	// Positions, when non-nil, backs GET /v1/accounts/{g}/positions
+	// (the "DeFi positions" view) — six per-protocol Postgres folds.
+	// Nil 503s the endpoint (positions.go).
+	Positions PositionsReader
+
+	// PoolTokens, when non-nil, best-effort resolves a pool-based
+	// protocol's venue to a human asset-pair label on the positions
+	// endpoint (blend / aquarius; see positions.go's poolTokensFor).
+	// Nil / a read error just omits venue_label — never fails the
+	// request.
+	PoolTokens PoolTokensReader
+
 	LookupUSDPrice  func(ctx context.Context, asset canonical.Asset) (string, bool)
 	IsKnownSAC      func(contractID string) bool
 	LakeWatermark   func(ctx context.Context) (ledger uint32, stale bool, ok bool)
