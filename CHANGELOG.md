@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Explorer static builds no longer fail on stale Cloudflare cache entries.** Two builds
+  in one evening failed fail-hard on edge rows that disagreed with sibling fresh-cache
+  responses inside the same build: a pre-v0.11 `/v1/assets/{id}` entry lacking the `kind`
+  discriminator, and a pre-enable `/v1/sources` entry missing `blend_emitter`. Fixes: (1)
+  `buildFetch` appends a per-build nonce query param so every build request reads the
+  ORIGIN's current truth (the in-process memo still dedupes, so origin load per build is
+  unchanged); (2) the two `kind`-branching resolvers (`fetchCoinDirect`,
+  `resolveChartAsset`) tolerate a MISSING `kind` when `asset_id` is present — an
+  unambiguous stellar_asset shape — as a dated transition tolerance (remove ~2026-07-17),
+  while still strictly rejecting a present-but-wrong `kind`.
+
 ### Added
 - **Aquarius rewards-gauge + governance analytics surface.** The v0.12
   decoders backfilled `aquarius_rewards_events` (migration 0099) and

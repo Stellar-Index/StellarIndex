@@ -86,7 +86,13 @@ function resolveChartAsset(
   coin: Coin,
   index: AssetIndex,
 ): string | null {
-  if ((coin.kind as string) === 'stellar_asset' && coin.asset_id) {
+  // Same edge-cache transition tolerance as fetchCoinDirect (2026-07-10,
+  // remove after ~2026-07-17): a stale pre-v0.11 cache entry lacks
+  // `kind`; asset_id present is unambiguously the stellar_asset shape.
+  if (
+    (coin.kind === undefined || (coin.kind as string) === 'stellar_asset') &&
+    coin.asset_id
+  ) {
     return coin.asset_id;
   }
   const norm = slug.toLowerCase();

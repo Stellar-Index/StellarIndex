@@ -305,7 +305,22 @@ async function fetchCoinDirect(idOrSlug: string): Promise<CoinSummary | null> {
   const data = await buildFetchData<CoinSummary>(
     `/v1/assets/${encodeURIComponent(idOrSlug)}`,
   );
-  if (!data || (data.kind as string) !== 'stellar_asset') {
+  if (!data) {
+    return null;
+  }
+  // EDGE-CACHE TRANSITION TOLERANCE (2026-07-10, remove after ~2026-07-17):
+  // long-tail /v1/assets/{asset_id} responses can still be served from
+  // Cloudflare cache entries baked BEFORE v0.11 added the `kind`
+  // discriminator. A missing `kind` alongside a present `asset_id` is
+  // unambiguously the stellar_asset shape (the catalogue shape has no
+  // asset_id and always postdates `kind`), so accept it instead of
+  // failing the whole static export on a stale cache entry. A PRESENT
+  // but non-stellar_asset kind is still rejected strictly.
+  const kind = (data as { kind?: string }).kind;
+  if (kind === undefined) {
+    return (data as { asset_id?: string }).asset_id ? data : null;
+  }
+  if (kind !== 'stellar_asset') {
     return null;
   }
   return data;

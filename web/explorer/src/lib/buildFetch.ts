@@ -84,6 +84,9 @@ const MAX_ATTEMPTS = 5;
 // `next build` worker, which is exactly the scope we want.
 const memo = new Map<string, Promise<unknown>>();
 
+// One nonce per build process — see the edge-cache bypass note below.
+const BUILD_NONCE = Date.now().toString(36);
+
 /**
  * buildFetchData GETs `${API_BASE_URL}${path}`, unwraps the standard
  * `{data: T}` envelope, and memoises the result by URL for the whole
@@ -106,7 +109,17 @@ export function buildFetchData<T>(
   opts?: { timeoutMs?: number; attempts?: number; softFail?: boolean },
 ): Promise<T | null> {
   if (isCIStub) return Promise.resolve(null);
-  const url = `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
+  const base = `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
+  // EDGE-CACHE BYPASS (2026-07-10): static-export builds must read the
+  // ORIGIN's current truth, not whatever mix of Cloudflare cache entries
+  // happens to be resident — two builds in one evening failed on stale
+  // edge rows (a pre-v0.11 /v1/assets/{id} without `kind`; a pre-enable
+  // /v1/sources without blend_emitter) that disagreed with sibling
+  // fresh-cache responses INSIDE THE SAME BUILD. A per-build nonce query
+  // param makes every build URL cache-unique, so requests go straight to
+  // origin; the in-process memo still dedupes within the build, so
+  // origin load per build is unchanged (one request per distinct path).
+  const url = `${base}${base.includes('?') ? '&' : '?'}b=${BUILD_NONCE}`;
   const hit = memo.get(url);
   if (hit) return hit as Promise<T | null>;
   const p = fetchWithRetry<T>(url, {
