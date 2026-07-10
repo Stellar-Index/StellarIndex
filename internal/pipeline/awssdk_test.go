@@ -41,6 +41,20 @@ func TestFilteringForwarder(t *testing.T) {
 			input:   "single line no newline",
 			wantOut: "single line no newline\n",
 		},
+		{
+			// Regression: 2026-07-10 indexer seizure. A single line
+			// larger than the old bufio.Scanner 1 MiB cap made Scan()
+			// return false, the drain goroutine exited, the stderr
+			// pipe lost its only reader, and every logger in the
+			// process blocked once the 64 KiB pipe filled. The drain
+			// must survive arbitrarily long lines (forwarding them
+			// verbatim) and keep filtering afterwards.
+			name: "giant line does not kill the drain",
+			input: strings.Repeat("x", 3*1024*1024) + "\n" +
+				"SDK WARN Response has no supported checksum. dropped\n" +
+				"after giant\n",
+			wantOut: strings.Repeat("x", 3*1024*1024) + "\nafter giant\n",
+		},
 	}
 
 	for _, tc := range cases {

@@ -167,3 +167,17 @@
     name: "pg_stat_statements"
     state: present
   become_user: postgres
+
+- name: Disable JIT on the stellarindex db (2026-07-10 incident)
+  # PG15's LLVM JIT allocates large per-query chunks; under
+  # vm.overcommit_memory=2 two concurrent JIT-compiled chart queries
+  # blew the kernel commit budget ("FATAL: out of memory / while in
+  # LLVM"), poisoning unrelated backends — the aquarius replay's
+  # InsertTrade batches all failed for ~15s (dropped rows, re-replayed)
+  # and the resulting error-log flood seized the indexer via the fd-2
+  # wrap. Timescale workloads see no JIT benefit; keep it off.
+  community.postgresql.postgresql_query:
+    login_db: "{{ postgres_db_stellarindex }}"
+    query: "ALTER DATABASE {{ postgres_db_stellarindex }} SET jit = off"
+  become_user: postgres
+  changed_when: false

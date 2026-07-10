@@ -15,6 +15,26 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **The stderr fd-2 wrap can no longer seize the entire binary on an oversized log line**
+  (2026-07-10 indexer-seizure incident, ~28 min of frozen ingest). The wrap
+  (`internal/pipeline.SilenceSDKChecksumWarnings`) drains a pipe installed over fd 2; its
+  drain loop used `bufio.Scanner` with a 1 MiB line cap, and any line beyond the cap (or any
+  scanner error) made the drain goroutine exit — permanently orphaning the pipe, so once the
+  64 KiB pipe buffer filled, EVERY stderr write in the process blocked forever: logging,
+  cursor updates, the metrics listener, even SIGQUIT's traceback. Trigger chain on r1:
+  Postgres 15's LLVM JIT blew the kernel commit budget (`vm.overcommit_memory=2`) under two
+  concurrent JIT-compiled chart queries → `FATAL: out of memory (while in LLVM)` poisoned the
+  aquarius replay's `InsertTrade` backends → the resulting ERROR flood hit the wrap. The
+  drain loop now uses `bufio.Reader.ReadSlice` and forwards oversized lines verbatim in
+  chunks — it exits ONLY on pipe EOF/error (i.e. flush closed the writer). Regression test
+  feeds a 3 MiB line and asserts the drain survives and keeps filtering. Operational halves
+  of the fix (applied live + codified in `configs/ansible/.../05-postgres.yml`): `ALTER
+  DATABASE stellarindex SET jit = off` — TimescaleDB workloads get no JIT benefit and the
+  per-query LLVM allocations are exactly what a strict-overcommit host can't absorb. The
+  replay window whose inserts were dropped during the flood (ledgers ~56.567M–56.582M) was
+  re-covered by an immediate cursor rewind.
+
 ### Changed
 - **`cmd/stellarindex-ops` split into `internal/ops/{ingest,archive,discovery,supply,
   diagnostics,chops}` + a shared `internal/ops/opsutil`; `internal/api/v1/explorer_*`
