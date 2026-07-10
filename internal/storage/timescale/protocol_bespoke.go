@@ -274,7 +274,10 @@ func (s *Store) bespokeDEX(ctx context.Context, source string, windowDays int) (
 func (s *Store) dexSourceAugments(ctx context.Context, blk *BespokeBlock, source string, windowDays int) error {
 	switch source {
 	case "aquarius":
-		return s.aquariusReserveBlocks(ctx, blk, windowDays)
+		if err := s.aquariusReserveBlocks(ctx, blk, windowDays); err != nil {
+			return err
+		}
+		return s.aquariusRewardsBlocks(ctx, blk, windowDays)
 	case "comet":
 		return s.cometLiquidityBlocks(ctx, blk, windowDays)
 	case "phoenix":
@@ -371,6 +374,139 @@ func (s *Store) aquariusReserveBlocks(ctx context.Context, blk *BespokeBlock, wi
 	blk.Notes = append(blk.Notes,
 		"Pool liquidity depth is the latest per-pool POST-STATE reserve vector (aquarius_reserves, migration 0089) in native token base units (per-asset decimals) — NOT USD. Aquarius pools have no independently published price and update_reserves carries positional reserves with no token address, so a clean USD TVL is not computed; the token address is resolved positionally from the pool's most recent deposit/withdraw and shows '—' when none was observed in the window.",
 	)
+	return nil
+}
+
+// aquariusRewardsBlocks augments the Aquarius DEX block with the rewards-
+// gauge / governance surface added in v0.12 (aquarius_rewards_events,
+// migration 0099; aquarius_admin, migration 0100) — full-history
+// backfilled on r1 (7.3M+ events) but previously served nowhere. Adds:
+//
+//   - lifetime + windowed KPIs: total rewards-gauge events (lifetime), 30d
+//     claim_reward count/volume/distinct claimants, and governance events
+//     (lifetime).
+//   - a lifetime per-kind breakdown table (all 12 rewards-gauge kinds).
+//   - a recent-governance-events table (kind/contract/admin/target/ledger,
+//     newest first, across all 8 admin kinds) — mirrors
+//     lendingAuctionBlocks' "Recent auctions" shape.
+//   - a daily claim_reward series, alongside bespokeDEX's own "Daily USD
+//     volume" series (the "small time-series" the sibling lending/DEX
+//     augments carry — see lendingPositionBlocks' "Daily position events").
+//
+// The claim_reward drill-down is fixed at 30 days regardless of the
+// caller's windowDays (the block's headline metric on a fixed, comparable
+// window); the per-kind breakdown and governance total are unwindowed
+// lifetime figures; the daily series follows the caller's windowDays like
+// its DEX-block siblings.
+//
+// Empty-safe: a no-op (leaves the rest of the block as is) when neither
+// rewards-gauge nor governance events have been captured, so the panel
+// renders cleanly pre-backfill; each KPI/table/series within also degrades
+// independently on an empty result.
+func (s *Store) aquariusRewardsBlocks(ctx context.Context, blk *BespokeBlock, windowDays int) error {
+	byKind, err := s.AquariusRewardsLifetimeByKind(ctx)
+	if err != nil {
+		return fmt.Errorf("timescale: bespokeDEX aquarius rewards lifetime: %w", err)
+	}
+	var rewardsLifetime int64
+	for _, k := range byKind {
+		rewardsLifetime += k.Events
+	}
+
+	adminLifetime, err := s.AquariusAdminLifetimeTotal(ctx)
+	if err != nil {
+		return fmt.Errorf("timescale: bespokeDEX aquarius admin lifetime: %w", err)
+	}
+
+	if rewardsLifetime == 0 && adminLifetime == 0 {
+		return nil // nothing backfilled/captured yet — leave the rest of the block as is
+	}
+
+	claims, err := s.AquariusRewardsClaimWindow(ctx, 30)
+	if err != nil {
+		return fmt.Errorf("timescale: bespokeDEX aquarius rewards claims: %w", err)
+	}
+
+	if rewardsLifetime > 0 {
+		blk.KPIs = append(blk.KPIs, BespokeKPI{
+			Label: "Rewards-gauge events (lifetime)",
+			Value: strconv.FormatInt(rewardsLifetime, 10),
+			Hint:  "sum of all 12 rewards-gauge event kinds, all-time (aquarius_rewards_events, migration 0099)",
+		})
+	}
+	if claims != nil {
+		blk.KPIs = append(blk.KPIs,
+			BespokeKPI{Label: "Reward claims (30d)", Value: strconv.FormatInt(claims.Events, 10), Hint: "claim_reward events in the trailing 30 days"},
+			BespokeKPI{Label: "Reward volume (30d)", Value: claims.Amount.String(), Unit: "token-units", Hint: "summed claim_reward amount over 30d, reward-token base units — Aquarius reward tokens have no published price at this layer, so this is NOT USD"},
+			BespokeKPI{Label: "Distinct claimants (30d)", Value: strconv.FormatInt(claims.DistinctClaimants, 10), Hint: "distinct user addresses claiming a reward in the trailing 30 days"},
+		)
+	}
+	if adminLifetime > 0 {
+		blk.KPIs = append(blk.KPIs, BespokeKPI{
+			Label: "Governance events (lifetime)",
+			Value: strconv.FormatInt(adminLifetime, 10),
+			Hint:  "sum of all 8 governance/upgrade kinds, all-time (aquarius_admin, migration 0100)",
+		})
+	}
+
+	if rewardsLifetime > 0 {
+		tbl := BespokeTable{Title: "Rewards events by kind (lifetime)", Columns: []string{"Kind", "Events", "Amount (token-units)"}}
+		for _, k := range byKind {
+			if k.Events == 0 {
+				continue
+			}
+			tbl.Rows = append(tbl.Rows, []string{string(k.Kind), strconv.FormatInt(k.Events, 10), k.Amount.String()})
+		}
+		if len(tbl.Rows) > 0 {
+			blk.Tables = append(blk.Tables, tbl)
+		}
+	}
+
+	if err := s.aquariusGovernanceTable(ctx, blk); err != nil {
+		return err
+	}
+
+	series, err := s.AquariusRewardsDailyClaimSeries(ctx, windowDays)
+	if err != nil {
+		return fmt.Errorf("timescale: bespokeDEX aquarius rewards series: %w", err)
+	}
+	if len(series) > 0 {
+		blk.Series = append(blk.Series, BespokeSeries{Name: "Daily reward claims", Unit: "claims", Points: series})
+	}
+
+	blk.Notes = append(blk.Notes,
+		"Rewards-gauge + governance figures are from the v0.12 full-history backfill (aquarius_rewards_events, migration 0099; aquarius_admin, migration 0100). Amounts are reward-token base units (per-asset decimals) — Aquarius has no published price for reward tokens at this layer, so these are never USD and never feed VWAP. Fields marked '(lifetime)' are unwindowed all-time totals; the claim_reward drill-down is a fixed trailing-30-day window regardless of the page's overall analytics window; the daily series follows the page's overall window.",
+	)
+	return nil
+}
+
+// aquariusGovernanceTable adds the "Recent governance events" table
+// (kind/contract/admin/target/ledger, newest first) from aquarius_admin.
+// Split out of aquariusRewardsBlocks to keep that function's cognitive
+// complexity down (same reasoning as dexSourceAugments's own split).
+func (s *Store) aquariusGovernanceTable(ctx context.Context, blk *BespokeBlock) error {
+	events, err := s.LatestAquariusAdminEvents(ctx, 25)
+	if err != nil {
+		return fmt.Errorf("timescale: bespokeDEX aquarius admin recent: %w", err)
+	}
+	if len(events) == 0 {
+		return nil
+	}
+	tbl := BespokeTable{Title: "Recent governance events", Columns: []string{"When", "Kind", "Contract", "Admin", "Target", "Ledger"}}
+	for _, e := range events {
+		admin, target := e.Admin, e.Target
+		if admin == "" {
+			admin = "—"
+		}
+		if target == "" {
+			target = "—"
+		}
+		tbl.Rows = append(tbl.Rows, []string{
+			e.LedgerCloseTime.Format("2006-01-02 15:04"), string(e.Kind), e.ContractID, admin, target,
+			strconv.FormatUint(uint64(e.Ledger), 10),
+		})
+	}
+	blk.Tables = append(blk.Tables, tbl)
 	return nil
 }
 

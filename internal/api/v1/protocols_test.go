@@ -438,3 +438,122 @@ func TestHandleProtocolDetail_ProjectionFallback(t *testing.T) {
 		t.Errorf("contract[0] = %q, want CVAULT1", body.Data.Contracts[0].ContractID)
 	}
 }
+
+// stubProtocolBespokeReader is a fake bespoke-block builder for the
+// per-protocol page's bespoke-section test — records call count so the
+// TTL-cache test can assert the build only runs once per cache window.
+type stubProtocolBespokeReader struct {
+	blocks map[string]*timescale.BespokeBlock
+	calls  int
+}
+
+func (s *stubProtocolBespokeReader) BuildProtocolBespoke(_ context.Context, source, _ string, _ int) (*timescale.BespokeBlock, error) {
+	s.calls++
+	return s.blocks[source], nil
+}
+
+// TestHandleProtocolDetail_AquariusRewardsBespoke verifies the aquarius
+// rewards-gauge + governance bespoke section (protocol_bespoke.go's
+// aquariusRewardsBlocks) reaches the wire unmodified: the generic
+// ProtocolBespoke KPI/table/series shapes carry the rewards content
+// (lifetime totals, the 30d claim_reward drill-down, the per-kind
+// breakdown table, the recent-governance table, and the daily claim
+// series), and the TTL-cached detail view (protocolDetailTTL,
+// cachedProtocolDetail) serves the SAME bespoke content on a cache hit —
+// every field (including Bespoke) is populated inside the cached build()
+// closure BEFORE the entry is written to s.protoDetailCache, so a cache
+// hit can never serve a partially-populated bespoke block (the
+// AssetLookup kind-discriminator class of cache bug this repo has hit
+// before).
+func TestHandleProtocolDetail_AquariusRewardsBespoke(t *testing.T) {
+	bespoke := &stubProtocolBespokeReader{blocks: map[string]*timescale.BespokeBlock{
+		"aquarius": {
+			Category: "dex",
+			KPIs: []timescale.BespokeKPI{
+				{Label: "Rewards-gauge events (lifetime)", Value: "676977", Hint: "sum of all 12 rewards-gauge event kinds, all-time"},
+				{Label: "Reward claims (30d)", Value: "412"},
+				{Label: "Reward volume (30d)", Value: "9000000", Unit: "token-units"},
+				{Label: "Distinct claimants (30d)", Value: "88"},
+				{Label: "Governance events (lifetime)", Value: "1781"},
+			},
+			Tables: []timescale.BespokeTable{
+				{Title: "Rewards events by kind (lifetime)", Columns: []string{"Kind", "Events", "Amount (token-units)"}, Rows: [][]string{{"claim_reward", "263673", "9000000"}}},
+				{Title: "Recent governance events", Columns: []string{"When", "Kind", "Contract", "Admin", "Target", "Ledger"}, Rows: [][]string{{"2026-07-10 12:00", "apply_upgrade", "CBQD...", "GA5Z...", "d0d1...", "63500000"}}},
+			},
+			Series: []timescale.BespokeSeries{
+				{Name: "Daily reward claims", Unit: "claims", Points: []timescale.BespokeSeriesPt{{Date: "2026-07-09", Value: "12"}}},
+			},
+			Notes: []string{"Rewards-gauge + governance figures are from the v0.12 full-history backfill"},
+		},
+	}}
+	srv := v1.New(v1.Options{ProtocolBespoke: bespoke})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/protocols/aquarius")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.ProtocolDetailView `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	d := env.Data
+	if d.Bespoke == nil {
+		t.Fatal("bespoke block absent")
+	}
+
+	var gotLifetime, gotClaims, gotVolume, gotClaimants, gotGov bool
+	for _, k := range d.Bespoke.KPIs {
+		switch k.Label {
+		case "Rewards-gauge events (lifetime)":
+			gotLifetime = k.Value == "676977"
+		case "Reward claims (30d)":
+			gotClaims = k.Value == "412"
+		case "Reward volume (30d)":
+			gotVolume = k.Value == "9000000" && k.Unit == "token-units"
+		case "Distinct claimants (30d)":
+			gotClaimants = k.Value == "88"
+		case "Governance events (lifetime)":
+			gotGov = k.Value == "1781"
+		}
+	}
+	if !gotLifetime || !gotClaims || !gotVolume || !gotClaimants || !gotGov {
+		t.Errorf("aquarius rewards KPIs missing/wrong: %+v", d.Bespoke.KPIs)
+	}
+
+	var hasKindTable, hasGovTable, hasSeries bool
+	for _, tb := range d.Bespoke.Tables {
+		if tb.Title == "Rewards events by kind (lifetime)" {
+			hasKindTable = true
+		}
+		if tb.Title == "Recent governance events" {
+			hasGovTable = true
+		}
+	}
+	for _, s := range d.Bespoke.Series {
+		if s.Name == "Daily reward claims" {
+			hasSeries = true
+		}
+	}
+	if !hasKindTable || !hasGovTable || !hasSeries {
+		t.Errorf("aquarius rewards tables/series missing: tables=%+v series=%+v", d.Bespoke.Tables, d.Bespoke.Series)
+	}
+
+	// Cache-safety: an immediate second request must hit the 60s TTL cache
+	// (build() runs at most once) and still serve the SAME bespoke content.
+	resp2 := mustGet(t, ts.URL+"/v1/protocols/aquarius")
+	var env2 struct {
+		Data v1.ProtocolDetailView `json:"data"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&env2); err != nil {
+		t.Fatalf("decode (2nd): %v", err)
+	}
+	if env2.Data.Bespoke == nil || len(env2.Data.Bespoke.KPIs) != len(d.Bespoke.KPIs) {
+		t.Errorf("2nd request bespoke content diverged from 1st: %+v vs %+v", env2.Data.Bespoke, d.Bespoke)
+	}
+	if bespoke.calls != 1 {
+		t.Errorf("BuildProtocolBespoke called %d times, want 1 (TTL cache should collapse the 2nd request)", bespoke.calls)
+	}
+}

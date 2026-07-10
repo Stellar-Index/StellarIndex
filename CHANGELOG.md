@@ -15,6 +15,26 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Aquarius rewards-gauge + governance analytics surface.** The v0.12
+  decoders backfilled `aquarius_rewards_events` (migration 0099) and
+  `aquarius_admin` (migration 0100) with 7.3M+ historical events on r1 but
+  nothing served them — `GET /v1/protocols/aquarius`'s `bespoke` block now
+  carries lifetime + 30d-windowed rewards KPIs, a per-kind lifetime
+  breakdown table, a recent-governance-events table (kind/admin/target/
+  ledger, newest first), and a daily `claim_reward` series, alongside the
+  existing trade-volume and reserve-depth content
+  (`internal/storage/timescale/aquarius_rewards.go`,
+  `internal/storage/timescale/aquarius_admin.go`,
+  `internal/storage/timescale/protocol_bespoke.go`). Every reader query is
+  indexed and bounded — the two lifetime aggregates LATERAL-join each known
+  event kind against the compound `(event_kind, ledger_close_time)` index
+  rather than scanning the whole hypertable. No explorer or OpenAPI-spec
+  change was needed: `bespoke` is documented free-form (board #33) and
+  `BespokeSection.tsx` renders new KPIs/tables/series generically. See
+  `docs/protocols/aquarius.md` "Rewards + governance analytics surface —
+  served".
+
 ## [v0.15.0] — 2026-07-10
 
 ### Removed

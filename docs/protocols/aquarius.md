@@ -77,6 +77,67 @@ hypertables, `aquarius_rewards_events` (0099) and `aquarius_admin`
 below is reverse-engineered from real lake bytes, not a cloned Rust
 source): `internal/sources/aquarius/README.md`.
 
+## ✅ Rewards + governance analytics surface — served (2026-07-10)
+
+The decoders above landed the full-history backfill on r1 (7.3M+ events
+across `aquarius_rewards_events` + `aquarius_admin`) but nothing served it
+— this closes that gap. `GET /v1/protocols/aquarius`'s `bespoke` block
+(category `amm`, `internal/api/v1/protocols.go` `ProtocolBespoke` — a
+generic KPI/series/table container, documented free-form in the OpenAPI
+spec per board #33 / ADR-0042 `x-stability: experimental`) now carries,
+alongside the pre-existing trade-volume and reserve-depth content:
+
+- **KPIs:** `Rewards-gauge events (lifetime)` (sum of all 12 kinds,
+  all-time), `Reward claims (30d)` / `Reward volume (30d)` / `Distinct
+  claimants (30d)` (the `claim_reward` drill-down, fixed at a trailing 30
+  days regardless of the page's overall analytics window), and
+  `Governance events (lifetime)` (sum of all 8 `aquarius_admin` kinds).
+- **`Rewards events by kind (lifetime)` table:** all 12 rewards-gauge
+  kinds with a nonzero lifetime count, in migration-0099 census order
+  (busiest first) — kind / event count / summed amount (reward-token base
+  units).
+- **`Recent governance events` table:** the most recent 25 rows across all
+  8 `aquarius_admin` kinds — when / kind / contract / admin / target /
+  ledger, newest first, unwindowed (governance actions are rare enough
+  that a trailing-window bound could render empty between them).
+- **`Daily reward claims` series:** daily `claim_reward` event count over
+  the page's overall analytics window (matches the reserve-depth block's
+  own series convention).
+
+**Reader design** (`internal/storage/timescale/aquarius_rewards.go` +
+`aquarius_admin.go`, wired in `protocol_bespoke.go`'s
+`aquariusRewardsBlocks`): every query is indexed and bounded — never an
+unqualified scan of the two multi-million-row hypertables.
+
+- The two "lifetime" (all-time, unwindowed) aggregates
+  (`AquariusRewardsLifetimeByKind`, `AquariusAdminLifetimeTotal`) LATERAL-
+  join each known kind literal against its table, forcing Postgres to plan
+  one `event_kind = <literal>` index scan per kind against
+  `aquarius_rewards_events_kind_ts_idx` / `aquarius_admin_kind_ts_idx`
+  (migrations 0099/0100) rather than a `GROUP BY event_kind` that would
+  visit every row regardless of index. Both tables compress with
+  `compress_segmentby = 'contract_id, event_kind'`, so on compressed
+  chunks the same per-kind predicate also lets TimescaleDB skip whole
+  non-matching segments — the per-kind filter is the physically cheap
+  access path, not just a workaround.
+- The windowed `claim_reward` drill-down (`AquariusRewardsClaimWindow`,
+  `AquariusRewardsDailyClaimSeries`) filters on `event_kind = 'claim_reward'
+  AND ledger_close_time > now() - <interval>` — a single sargable
+  predicate against the same compound kind index (no function wraps the
+  indexed column itself, per the price-latency sargable-WHERE lesson).
+- `LatestAquariusAdminEvents` is deliberately **un**windowed —
+  `ORDER BY ledger_close_time DESC LIMIT 25` — because governance actions
+  are too rare (~1.8K lifetime rows across all 8 kinds) for a trailing-
+  window bound to reliably show anything; it stays indexed via
+  `ledger_close_time` being the leading column of `aquarius_admin`'s
+  primary-key index (a backward index scan capped by `LIMIT`, not a
+  full-table scan).
+
+No explorer code change was needed: `BespokeSection.tsx` renders every
+`bespoke.kpis` / `.series` / `.tables` entry generically, so the new
+content appears on `/protocols/aquarius` automatically once the server
+populates it.
+
 ## ✅ Pool enumeration — answered (2026-06-12, lake-derived)
 
 The Dune community dashboard (claw, "Aquarius Base Metrics") revealed the
