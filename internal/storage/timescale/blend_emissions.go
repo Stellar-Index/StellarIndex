@@ -130,9 +130,10 @@ func buildEmissionAttributes(e domain.BlendEmissionEvent) map[string]any {
 	return attrs
 }
 
-// isBlendEmissionKind reports whether kind is one of the six
-// emission / credit-risk event kinds. Mirrors the CHECK constraint
-// in migration 0042.
+// isBlendEmissionKind reports whether kind is one of the emission /
+// credit-risk event kinds. Mirrors the CHECK constraint in migration
+// 0042, widened by migration 0097 to admit the V1 pool-factory's
+// update_emissions.
 func isBlendEmissionKind(kind string) bool {
 	switch kind {
 	case domain.BlendEventGulp,
@@ -140,7 +141,8 @@ func isBlendEmissionKind(kind string) bool {
 		domain.BlendEventReserveEmissions,
 		domain.BlendEventGulpEmissions,
 		domain.BlendEventBadDebt,
-		domain.BlendEventDefaultedDebt:
+		domain.BlendEventDefaultedDebt,
+		domain.BlendEventUpdateEmissions:
 		return true
 	}
 	return false

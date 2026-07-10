@@ -113,6 +113,21 @@ const (
 	EventRBManager = "rbmanager"
 	EventDFees     = "dfees"
 	EventRebalance = "rebalance"
+	// EventNWasm — ROADMAP #89 residual (2026-07-10): a read-only lake
+	// topic census against the gated vault set found 2 real n_wasm
+	// events classifyVault didn't recognize. Likely a WASM-upgrade
+	// announcement ("new wasm"), matching the n_receiver/n_manager/
+	// n_emanager "new-X" naming convention among the vault's other
+	// admin topics — but that reading is inferred from the name, not
+	// from a captured body (2 lake occurrences was too small a count
+	// to justify the ClickHouse scan cost to pull them: several
+	// contract_id + array-index-filtered queries against the raw
+	// 233M-row contract_events table each timed out past 400s without
+	// a supporting skip index on non-contract_id predicates). Recognised
+	// so classifyVault's drop-counter doesn't file it as "unmatched
+	// topic" (EVERY-event policy) — no decoder/flow yet, same as the
+	// other 9 admin topics below.
+	EventNWasm = "n_wasm"
 	// Factory-layer events. `create` fires once per vault spawn
 	// (body holds roles / vault_fee / assets but NOT the new vault
 	// address — see audit doc "Surprising gotcha #2"); `n_fee`
@@ -145,6 +160,7 @@ var (
 	TopicSymbolRBManager = scval.MustEncodeSymbol(EventRBManager)
 	TopicSymbolDFees     = scval.MustEncodeSymbol(EventDFees)
 	TopicSymbolRebalance = scval.MustEncodeSymbol(EventRebalance)
+	TopicSymbolNWasm     = scval.MustEncodeSymbol(EventNWasm)
 	TopicSymbolCreate    = scval.MustEncodeSymbol(EventCreate)
 	TopicSymbolNFee      = scval.MustEncodeSymbol(EventNFee)
 )

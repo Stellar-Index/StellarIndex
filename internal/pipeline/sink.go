@@ -1427,6 +1427,14 @@ func persistPhoenixLiquidity(ctx context.Context, logger *slog.Logger, store *ti
 
 func persistPhoenixStake(ctx context.Context, logger *slog.Logger, store *timescale.Store, e phoenix.StakeEvent) {
 	c := e.Change
+	amountStr := ""
+	// bond/unbond always carry an amount; withdraw_rewards /
+	// distribute_rewards don't emit one on the event itself (see
+	// phoenix/events.go doc) — leave the column NULL rather than
+	// writing the zero-value "0" (canonical.Amount{}.String() == "0").
+	if c.Action == phoenix.EventActionBond || c.Action == phoenix.EventActionUnbond {
+		amountStr = c.Amount.String()
+	}
 	if err := store.InsertPhoenixStakeEvent(ctx, timescale.PhoenixStakeEvent{
 		StakeContract: c.Contract,
 		Ledger:        c.Ledger,
@@ -1437,7 +1445,7 @@ func persistPhoenixStake(ctx context.Context, logger *slog.Logger, store *timesc
 		Action:        timescale.PhoenixStakeAction(c.Action),
 		User:          c.User,
 		LPToken:       c.LPToken,
-		Amount:        c.Amount.String(),
+		Amount:        amountStr,
 	}); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(phoenix.SourceName, "phoenix_stake").Inc()
 		logger.Error("insert phoenix stake event failed",

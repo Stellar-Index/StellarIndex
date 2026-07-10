@@ -90,6 +90,14 @@ const (
 	// Pool-factory event — observed at the factory contract, used
 	// for runtime pool enumeration.
 	EventDeploy = domain.BlendEventDeploy
+
+	// V1 pool-factory (CCZD6ESM…) events — ROADMAP #89 residual,
+	// 2026-07-10. See domain.BlendEventUpdateEmissions /
+	// domain.BlendEventNewLiquidationAuction doc + this package's
+	// README "Known gap" for the evidence trail.
+	EventUpdateEmissions          = domain.BlendEventUpdateEmissions
+	EventNewLiquidationAuction    = domain.BlendEventNewLiquidationAuction
+	EventDeleteLiquidationAuction = domain.BlendEventDeleteLiquidationAuction
 )
 
 // Mainnet V2 contract addresses — verified 2026-04-22 via
@@ -182,6 +190,11 @@ var (
 
 	// Pool factory.
 	TopicSymbolDeploy = scval.MustEncodeSymbol(EventDeploy)
+
+	// V1 pool-factory events.
+	TopicSymbolUpdateEmissions          = scval.MustEncodeSymbol(EventUpdateEmissions)
+	TopicSymbolNewLiquidationAuction    = scval.MustEncodeSymbol(EventNewLiquidationAuction)
+	TopicSymbolDeleteLiquidationAuction = scval.MustEncodeSymbol(EventDeleteLiquidationAuction)
 )
 
 // AuctionType discriminator — verified against

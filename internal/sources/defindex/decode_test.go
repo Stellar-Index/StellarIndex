@@ -221,6 +221,18 @@ func TestClassifyVault_depositWithdraw(t *testing.T) {
 		{name: "vault rbmanager", topic: []string{TopicPrefixVault, TopicSymbolRBManager}, wantClass: EventRBManager},
 		{name: "vault dfees", topic: []string{TopicPrefixVault, TopicSymbolDFees}, wantClass: EventDFees},
 		{name: "vault rebalance (multiplexed body)", topic: []string{TopicPrefixVault, TopicSymbolRebalance}, wantClass: EventRebalance},
+		// ROADMAP #89 residual (2026-07-10): n_wasm — a read-only lake
+		// topic census found 2 real occurrences classifyVault didn't
+		// recognize. Classification-only (no decoder), same as the
+		// other 9 admin topics above — the topic encoding itself is
+		// verified (scval.MustEncodeSymbol, same mechanism the whole
+		// package relies on), but a real-lake-bytes body sample was not
+		// pulled: three separate ClickHouse queries (contract-scoped,
+		// ledger-range-scoped, and topic-only) each timed out past
+		// 400s against the raw 233M-row contract_events table without
+		// a skip index on non-contract_id predicates — see
+		// internal/sources/defindex/events.go's EventNWasm doc.
+		{name: "vault n_wasm", topic: []string{TopicPrefixVault, TopicSymbolNWasm}, wantClass: EventNWasm},
 		{
 			name:      "single-element topic",
 			topic:     []string{TopicPrefixVault},

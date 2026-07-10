@@ -126,6 +126,41 @@ const (
 	StakeFieldCount  = 3
 )
 
+// ─── Reward actions ──────────────────────────────────────────────
+//
+// ROADMAP #89 residual (2026-07-10): a read-only lake topic census
+// against the gated stake-contract set found two more stake-contract
+// actions classifyAny didn't recognize. Real-lake-bytes confirmed the
+// exact field sets (ledgers 53587626 / 53588319, stake contracts
+// CBRGNWGAC25… / CAF3UJ45ZQJ…):
+//
+//	withdraw_rewards   (2 events): user, reward_token
+//	distribute_rewards (1 event):  asset
+//
+// Neither event carries an amount. The paid-out / distributed amount
+// surfaces on the reward token's own SEP-41 `transfer` event emitted
+// in the SAME op (event_index+1, verified on both real samples) — a
+// SAC contract event, not a stake-contract field-event, so it is NOT
+// correlated here (would require cross-decoder joins on tx_hash+
+// op_index against sep41_transfers, out of scope for this pass). The
+// events are stored with a NULL amount rather than a misleading "0"
+// (see phoenix_stake_events.amount, migration 0098).
+//
+// distribute_rewards is a POOL-WIDE announcement — it carries no user
+// field on the wire (verified: every real sample across 3 stake
+// contracts omits it) — so it is decoded directly from its single
+// event rather than through the correlation buffer.
+const (
+	EventActionWithdrawRewards   = "withdraw_rewards"
+	EventActionDistributeRewards = "distribute_rewards"
+
+	FieldWRUser               = "user"
+	FieldWRRewardToken        = "reward_token"
+	WithdrawRewardsFieldCount = 2
+
+	FieldDRAsset = "asset"
+)
+
 // Mainnet contract addresses — Phase-1 verified against
 // Phoenix-Protocol-Group/phoenix-contracts `scripts/*.sh`.
 const (
@@ -264,6 +299,13 @@ var (
 	TopicSymbolStakeUser   = scval.MustEncodeString(FieldStakeUser)
 	TopicSymbolStakeToken  = scval.MustEncodeString(FieldStakeToken)
 	TopicSymbolStakeAmount = scval.MustEncodeString(FieldStakeAmount)
+
+	// withdraw_rewards / distribute_rewards topic[0] + topic[1] variants.
+	TopicSymbolWithdrawRewards   = scval.MustEncodeString(EventActionWithdrawRewards)   // topic[0]
+	TopicSymbolDistributeRewards = scval.MustEncodeString(EventActionDistributeRewards) // topic[0]
+	TopicSymbolWRUser            = scval.MustEncodeString(FieldWRUser)
+	TopicSymbolWRRewardToken     = scval.MustEncodeString(FieldWRRewardToken)
+	TopicSymbolDRAsset           = scval.MustEncodeString(FieldDRAsset)
 )
 
 // Errors returned by the decode path.

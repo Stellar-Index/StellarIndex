@@ -219,21 +219,44 @@ audit only enumerates the 8 swap-field strings; we need to confirm
 both WASM hashes also include the literal `provide_liquidity` /
 `withdraw_liquidity` / `bond` / `unbond` symbols.
 
-## ⚠️ Known gap — `withdraw_rewards` / `distribute_rewards` undecoded (ROADMAP #89, 2026-07-10)
+## `withdraw_rewards` / `distribute_rewards` — HANDLED (ROADMAP #89, 2026-07-10)
 
 A read-only lake topic census against the gated pool + stake-contract
-set found two real topic[0] action names `classifyAny` doesn't
-recognize: `withdraw_rewards` (40 events, topic[1] field names
-`reward_token` / `user`) and `distribute_rewards` (18 events, field
-name `asset`). Small counts, but a genuine rewards-distribution
-concept distinct from the `bond`/`unbond` stake actions this package
-already decodes — closer kin to `phoenix_stake_events` than a new
-table. Real ledger fixtures were not pulled in this pass (low
-priority given the count); `classifyAny`'s `actionAdmin` /
-`actionInitialize` catch-all pattern is the template for adding these
-without inventing a new mechanism. Not implemented this session per
-ROADMAP #89's "document, don't implement, when it needs new
-decode-family work" guidance.
+set found two real topic[0] action names `classifyAny` didn't
+recognize: `withdraw_rewards` (40 events) and `distribute_rewards`
+(18 events) — a rewards-distribution surface distinct from
+`bond`/`unbond`, closer kin to `phoenix_stake_events` than a new
+table. Real-lake-bytes verified (ledgers 53588319 / 53587626, stake
+contracts `CBRGNWGAC25…` / `CAF3UJ45ZQJ…`):
+
+- `withdraw_rewards` — a **2-field-event** action (unlike the census's
+  initial guess, no `amount` field was ever missing from the sample —
+  every real instance across 10+ occurrences carries exactly `user` +
+  `reward_token`, no amount): `("withdraw_rewards","user")` → Address
+  (claimant), `("withdraw_rewards","reward_token")` → Address (the
+  reward SAC). Decoded via a 2-field correlation buffer
+  (`RawWithdrawRewards`, same pattern as `RawStake`).
+- `distribute_rewards` — a **single-field, pool-wide** announcement:
+  `("distribute_rewards","asset")` → Address (the distributed reward
+  SAC). No `user` field on the wire (verified across every real
+  sample) — decoded directly from the one event, no buffer needed.
+
+Neither event carries an amount. The paid-out / distributed amount
+surfaces on the reward token's own SEP-41 `transfer` event, emitted
+as a **separate event in the same op** (verified on both real
+samples: `event_index+1` immediately after the stake-contract
+field-events) — a SAC contract event, not a stake-contract
+field-event, so correlating it is out of scope here (would need a
+cross-decoder join against `sep41_transfers` on `tx_hash`+`op_index`).
+
+Both land in `phoenix_stake_events` (reusing the table, not adding
+one): `lp_token` is REPURPOSED to carry the reward-token /
+distributed-asset address (not an LP share token, for these two
+actions); `user_addr` is NULL for `distribute_rewards`; `amount` is
+NULL for both (migration 0098 dropped the two columns' `NOT NULL` and
+widened the `action` CHECK — additive, old-binary-safe). Decoders:
+`decodeWithdrawRewards` / `decodeDistributeRewards` in `decode.go`.
+Real-lake-bytes golden tests: `rewards_test.go`.
 
 Separately: a handful of rows in the same census showed an empty
 decoded topic[0] alongside a populated topic[1] field name (`user`,

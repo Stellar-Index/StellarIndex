@@ -181,6 +181,14 @@ func classifyAny(e *events.Event) string { //nolint:gocyclo,cyclop // one case p
 	case TopicSymbolDeploy:
 		return EventDeploy
 
+	// V1 pool-factory events (ROADMAP #89 residual).
+	case TopicSymbolUpdateEmissions:
+		return EventUpdateEmissions
+	case TopicSymbolNewLiquidationAuction:
+		return EventNewLiquidationAuction
+	case TopicSymbolDeleteLiquidationAuction:
+		return EventDeleteLiquidationAuction
+
 	default:
 		return ""
 	}
@@ -745,6 +753,145 @@ func decodeDeploy(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 		OpIndex:    uint32(e.OperationIndex),
 		Timestamp:  closedAt,
 	}, nil
+}
+
+// ─── V1 pool-factory decoders (ROADMAP #89 residual) ───────────
+//
+// The V1 pool-factory (CCZD6ESM…) emits three topics not present in
+// blend-contracts-v2's pool/src/events.rs — verified against real
+// ClickHouse-lake bytes 2026-07-10 (see README.md "Known gap"):
+//
+//	update_emissions:           1 topic  [Symbol]           body i128 (bare)
+//	new_liquidation_auction:    2 topics [Symbol, Address]   body Map{bid,lot,block}
+//	delete_liquidation_auction: 2 topics [Symbol, Address]   body ScvVoid
+//
+// update_emissions lands in blend_emissions (a pool-wide emissions
+// total, distinct from V2's per-reserve reserve_emission_update). The
+// two liquidation-auction events land in blend_admin, NOT
+// blend_auctions — the V1 body carries the identical {bid, lot,
+// block} Map shape decodeAuctionData already parses for V2, but there
+// is no auction_type topic to classify it against blend_auctions'
+// UserLiquidation/BadDebt/Interest taxonomy (auction_type is NOT NULL
+// there), so inventing one would attach unverified provenance to a
+// verified-data table. blend_admin already models heterogeneous
+// per-kind extras via its jsonb attributes column (queue_set_reserve
+// does the same for ReserveConfig), so bid/lot/block ride there
+// instead.
+
+// decodeUpdateEmissions parses a V1 `update_emissions` event.
+//
+//	topics: [Symbol("update_emissions")]
+//	body:   i128 (bare — a pool-wide emissions total)
+//
+// Real-lake sample: ledger 51,524,668, pool CDVQVKOY…, amount
+// 447798000000.
+func decodeUpdateEmissions(e *events.Event, closedAt time.Time) (EmissionEvent, error) {
+	if len(e.Topic) != 1 {
+		return EmissionEvent{}, fmt.Errorf("%w: update_emissions expected 1 topic, got %d",
+			ErrMalformedPayload, len(e.Topic))
+	}
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return EmissionEvent{}, fmt.Errorf("%w: parse body: %w", ErrMalformedPayload, err)
+	}
+	amt, err := scval.AsAmountFromI128(body)
+	if err != nil {
+		return EmissionEvent{}, fmt.Errorf("%w: update_emissions amount: %w", ErrMalformedPayload, err)
+	}
+	return EmissionEvent{
+		Pool:      e.ContractID,
+		Kind:      EventUpdateEmissions,
+		Amount:    amt.BigInt(),
+		Ledger:    e.Ledger,
+		TxHash:    e.TxHash,
+		OpIndex:   uint32(e.OperationIndex),
+		Timestamp: closedAt,
+	}, nil
+}
+
+// decodeNewLiquidationAuctionV1 parses a V1 `new_liquidation_auction`
+// event.
+//
+//	topics: [Symbol("new_liquidation_auction"), Address(user)]
+//	body:   AuctionData Map{bid, lot, block} — same shape decodeAuctionData
+//	        parses for V2's new_auction/fill_auction, but with no
+//	        auction_type topic and no percent field.
+//
+// Real-lake sample: ledger 51,611,821, pool CDVQVKOY…, user
+// GDTZSZTG…, bid=[CCW67TSZ…:1080028495], lot=[CAS3J7GY…:11654137475],
+// block=51611822.
+func decodeNewLiquidationAuctionV1(e *events.Event, closedAt time.Time) (AdminEvent, error) {
+	if len(e.Topic) != 2 {
+		return AdminEvent{}, fmt.Errorf("%w: new_liquidation_auction expected 2 topics, got %d",
+			ErrMalformedPayload, len(e.Topic))
+	}
+	user, err := decodeAddressTopic(e.Topic[1])
+	if err != nil {
+		return AdminEvent{}, fmt.Errorf("%w: user: %w", ErrMalformedPayload, err)
+	}
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return AdminEvent{}, fmt.Errorf("%w: parse body: %w", ErrMalformedPayload, err)
+	}
+	data, err := decodeAuctionData(body)
+	if err != nil {
+		return AdminEvent{}, fmt.Errorf("%w: auction_data: %w", ErrMalformedPayload, err)
+	}
+	return AdminEvent{
+		ContractID:   e.ContractID,
+		Kind:         EventNewLiquidationAuction,
+		Target:       user,
+		AuctionBid:   toDomainAssetAmounts(data.Bid),
+		AuctionLot:   toDomainAssetAmounts(data.Lot),
+		AuctionBlock: data.Block,
+		Ledger:       e.Ledger,
+		TxHash:       e.TxHash,
+		OpIndex:      uint32(e.OperationIndex),
+		Timestamp:    closedAt,
+	}, nil
+}
+
+// decodeDeleteLiquidationAuctionV1 parses a V1
+// `delete_liquidation_auction` event. Body is ScvVoid (verified
+// real-lake, ledger 54,890,906) — like V2's delete_auction, only the
+// topic-derived fields matter, so the body is not parsed.
+//
+//	topics: [Symbol("delete_liquidation_auction"), Address(user)]
+//	body:   ScvVoid
+func decodeDeleteLiquidationAuctionV1(e *events.Event, closedAt time.Time) (AdminEvent, error) {
+	if len(e.Topic) != 2 {
+		return AdminEvent{}, fmt.Errorf("%w: delete_liquidation_auction expected 2 topics, got %d",
+			ErrMalformedPayload, len(e.Topic))
+	}
+	user, err := decodeAddressTopic(e.Topic[1])
+	if err != nil {
+		return AdminEvent{}, fmt.Errorf("%w: user: %w", ErrMalformedPayload, err)
+	}
+	return AdminEvent{
+		ContractID: e.ContractID,
+		Kind:       EventDeleteLiquidationAuction,
+		Target:     user,
+		Ledger:     e.Ledger,
+		TxHash:     e.TxHash,
+		OpIndex:    uint32(e.OperationIndex),
+		Timestamp:  closedAt,
+	}, nil
+}
+
+// toDomainAssetAmounts converts the blend package's []AssetAmount
+// (used by the shared V1/V2 decodeAuctionData helper) into the
+// domain package's []BlendAssetAmount — the primitive-only mirror
+// BlendAdminEvent carries (domain cannot import this package; see
+// domain.BlendAssetAmount doc).
+func toDomainAssetAmounts(in []AssetAmount) []domain.BlendAssetAmount {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]domain.BlendAssetAmount, len(in))
+	for i, a := range in {
+		out[i] = domain.BlendAssetAmount{Asset: a.Asset.String(), Amount: a.Amount}
+	}
+	return out
 }
 
 // ─── ReserveConfig decoder helper ──────────────────────────────

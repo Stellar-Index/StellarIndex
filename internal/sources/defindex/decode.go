@@ -83,6 +83,8 @@ func classifyVault(e *events.Event) string {
 		return EventDFees
 	case TopicSymbolRebalance:
 		return EventRebalance
+	case TopicSymbolNWasm:
+		return EventNWasm
 	}
 	return ""
 }

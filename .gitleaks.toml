@@ -39,6 +39,11 @@ paths = [
   # entries above.
   '''internal/sources/blend_backstop/decode_test\.go''',
   '''internal/sources/blend_emitter/source_test\.go''',
+  # Lake-derived base64-XDR golden fixtures (public on-chain event
+  # bodies) for the Phoenix rewards-topics decoder (ROADMAP #89,
+  # 2026-07-10). ALSO rule-scoped below; duplicated for the same
+  # reason as the cctp/blend_backstop/blend_emitter entries above.
+  '''internal/sources/phoenix/rewards_test\.go''',
 ]
 
 [[rules]]
@@ -259,4 +264,10 @@ paths = [
 description = "Base64 XDR topic/body golden fixtures pulled DIRECTLY from the certified ClickHouse raw lake (public on-chain data — the Blend Emitter contract's distribute/drop/q_swap/swap events, ledgers 51524666-57467292, 2026-07-09) for the blend_emitter decoder tests, plus the Emitter's own C-strkey mainnet address and the backstop/recipient/token C-strkeys those events decode to. High-entropy base64 + bare strkeys trip the generic-api-key heuristic; same class as the cctp/aquarius/phoenix decoder-fixture allowlists above. Deterministic public ledger data, not credentials."
 paths = [
   '''internal/sources/blend_emitter/source_test\.go''',
+]
+
+[[rules.allowlists]]
+description = "Base64 XDR topic/body golden fixtures pulled DIRECTLY from the certified ClickHouse raw lake (public on-chain data — Phoenix stake-contract withdraw_rewards/distribute_rewards events, ledgers 53587626/53588319/53589647, 2026-07-10) for the ROADMAP #89 rewards-topics decoder tests, plus the reward-token/asset SAC C-strkey (CBZ7M5B3…) those events decode to. High-entropy base64 + a bare strkey trip the generic-api-key heuristic; same class as the mapswap_test.go / source_test.go phoenix decoder-fixture allowlist above. Deterministic public ledger data, not credentials."
+paths = [
+  '''internal/sources/phoenix/rewards_test\.go''',
 ]

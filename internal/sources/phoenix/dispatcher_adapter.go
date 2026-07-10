@@ -117,6 +117,10 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		return d.decodeStakeEvent(&ev, fieldTopic, closedAt, true)
 	case actionUnbond:
 		return d.decodeStakeEvent(&ev, fieldTopic, closedAt, false)
+	case actionWithdrawRewards:
+		return d.decodeWithdrawRewardsEvent(&ev, fieldTopic, closedAt)
+	case actionDistributeRewards:
+		return d.decodeDistributeRewardsEvent(&ev, closedAt)
 	case actionUnknown, actionAdmin, actionInitialize:
 		// Non-trade Phoenix actions (admin/init/unrecognised) — recognised
 		// so the dispatcher doesn't file them as unmatched, but they emit no
@@ -203,6 +207,32 @@ func (d *Decoder) decodeStakeEvent(ev *events.Event, fieldTopic string, closedAt
 		return nil, nil
 	}
 	change, err := decodeStake(completed)
+	if err != nil {
+		return nil, err
+	}
+	return []consumer.Event{StakeEvent{Change: change}}, nil
+}
+
+func (d *Decoder) decodeWithdrawRewardsEvent(ev *events.Event, fieldTopic string, closedAt time.Time) ([]consumer.Event, error) {
+	completed, evicted, err := d.buf.absorbWithdrawRewards(ev, fieldTopic, closedAt)
+	d.evictedOrphans += evicted
+	if err != nil {
+		return nil, err
+	}
+	if completed == nil {
+		return nil, nil
+	}
+	change, err := decodeWithdrawRewards(completed)
+	if err != nil {
+		return nil, err
+	}
+	return []consumer.Event{StakeEvent{Change: change}}, nil
+}
+
+// decodeDistributeRewardsEvent handles a distribute_rewards event directly
+// (no correlation buffer — the action is a single field, see decode.go).
+func (d *Decoder) decodeDistributeRewardsEvent(ev *events.Event, closedAt time.Time) ([]consumer.Event, error) {
+	change, err := decodeDistributeRewards(ev, closedAt)
 	if err != nil {
 		return nil, err
 	}

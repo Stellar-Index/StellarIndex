@@ -9,6 +9,21 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/domain"
 )
 
+// toAssetAmountRows converts a V1 new_liquidation_auction's decoded
+// bid/lot into blendAssetAmountRow (blend_auctions.go, same package —
+// the JSONB {asset, amount} element shape) for the blend_admin.attributes
+// column. amount is stringified for full i128 precision (ADR-0003).
+func toAssetAmountRows(in []domain.BlendAssetAmount) []blendAssetAmountRow {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]blendAssetAmountRow, len(in))
+	for i, a := range in {
+		out[i] = blendAssetAmountRow{Asset: a.Asset, Amount: bigIntOrEmpty(a.Amount)}
+	}
+	return out
+}
+
 // InsertBlendAdminEvent appends one Blend admin / pool-config /
 // pool-factory lifecycle event (set_admin / update_pool /
 // queue_set_reserve / cancel_set_reserve / set_reserve / set_status
@@ -85,13 +100,22 @@ func buildAdminAttributes(e domain.BlendAdminEvent) map[string]any {
 	case domain.BlendEventSetStatus:
 		attrs["status"] = e.NewStatus
 		attrs["by_admin"] = e.ByAdmin
+	case domain.BlendEventNewLiquidationAuction:
+		if len(e.AuctionBid) > 0 {
+			attrs["bid"] = toAssetAmountRows(e.AuctionBid)
+		}
+		if len(e.AuctionLot) > 0 {
+			attrs["lot"] = toAssetAmountRows(e.AuctionLot)
+		}
+		attrs["block"] = e.AuctionBlock
 	}
 	return attrs
 }
 
-// isBlendAdminKind reports whether kind is one of the seven admin
-// event kinds (including the pool-factory `deploy`). Mirrors the
-// CHECK constraint in migration 0042.
+// isBlendAdminKind reports whether kind is one of the admin event
+// kinds (including the pool-factory `deploy` and the V1-pool-factory
+// liquidation-auction pair). Mirrors the CHECK constraint in
+// migration 0042, widened by migration 0097.
 func isBlendAdminKind(kind string) bool {
 	switch kind {
 	case domain.BlendEventSetAdmin,
@@ -100,7 +124,9 @@ func isBlendAdminKind(kind string) bool {
 		domain.BlendEventCancelSetReserve,
 		domain.BlendEventSetReserve,
 		domain.BlendEventSetStatus,
-		domain.BlendEventDeploy:
+		domain.BlendEventDeploy,
+		domain.BlendEventNewLiquidationAuction,
+		domain.BlendEventDeleteLiquidationAuction:
 		return true
 	}
 	return false
