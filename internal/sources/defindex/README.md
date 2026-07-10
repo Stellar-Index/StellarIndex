@@ -48,8 +48,8 @@ set. (The previous revision filtered on a mislabeled 3-contract
 
 ```
 events.go              — source name, topic prefix bytes, event symbols, StrategyFlow
-decode.go              — classify() + decodeFlow() → StrategyFlow
-dispatcher_adapter.go  — implements dispatcher.Decoder (topic-matched)
+decode.go              — classify() + decodeFlow() → StrategyFlow, decodeFactoryCreateStrategies() → strategy fan-out
+dispatcher_adapter.go  — implements dispatcher.Decoder (topic-matched + contract-identity gated)
 README.md              — this file
 ```
 
@@ -61,11 +61,24 @@ layers.
 ## Current scope (shipped)
 
 - Decode `("BlendStrategy","deposit"|"withdraw")` across all
-  emitters → `StrategyFlow`, plus the user-facing vault flows →
-  `VaultFlow`; both persist to `defindex_flows`.
+  registered emitters → `StrategyFlow`, plus the user-facing vault
+  flows → `VaultFlow`; both persist to `defindex_flows`.
 - `BackfillSafe` is `true` (audited 2026-05-19 against the real
   deployed hash `11329c24…988`; see
   `docs/operations/wasm-audits/defindex.md`).
+- **Factory `create` → strategy fan-out (2026-07-10, ROADMAP #7).**
+  A `("DeFindexFactory","create")` event's body carries, per asset, a
+  `strategies` Vec of `{address, name, paused}` — `decodeFactoryCreateStrategies`
+  extracts every `address` and `Decoder.Decode` seeds it into the
+  contract-identity registry (`contractid.Registry.Seed`), the same
+  live-upsert path Blend/Soroswap/Aquarius use. Verified against
+  every create-shaped body in the r1 lake (all 3 create-emitting
+  factories, 2026-07-10): mechanical extraction reproduces
+  `MainnetStrategies` exactly (16/16). **This does NOT extend to
+  vaults** — no create body has ever been observed to carry the new
+  vault's own address (see "Open question" in
+  `docs/protocols/defindex.md`), so `MainnetVaults` remains
+  curated-set only.
 
 ## Phase B follow-ups
 
@@ -128,3 +141,11 @@ the same caveat on a sibling source.
 - Deployed WASM: `11329c2469455f5a3815af1383c0cdddb69215b1668a17ef097516cde85da988`
   (Blend strategy code; walk-confirmed single hash, zero upgrades).
 - WASM audit: `docs/operations/wasm-audits/defindex.md`.
+- Factory `create` body shape (the `assets[].strategies[].address`
+  fan-out field): **real lake bytes**, ClickHouse HTTP `:8123` against
+  r1's certified raw lake (2026-07-10), contract-scoped to all 3
+  create-emitting `DeFindexFactory` instances, cross-ledger
+  (55,484,403 → 57,147,588) to confirm the schema is stable across the
+  full factory-era history. Golden test constants:
+  `decode_test.go`'s `createBodyTwoStrategies` /
+  `createBodyZeroStrategies` / `createBodyEarliestFactory`.

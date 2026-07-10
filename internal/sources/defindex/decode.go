@@ -97,11 +97,14 @@ func classifyVault(e *events.Event) string {
 //
 // We recognise factory events so the dispatcher's drop-counter
 // doesn't file them as "unmatched topic" — EVERY-event policy
-// (project_every_event_principle). Body decode is Phase C; today
-// classifyFactory returning non-empty just means "we own this
-// event, no decode needed yet." Decoder.Decode returns no
-// consumer.Event on a factory match (drops cleanly without
-// counting against ErrUnknownEvent).
+// (project_every_event_principle). A `create` match's BODY is now
+// decoded (decodeFactoryCreateStrategies, ROADMAP #7 residual
+// 2026-07-10) purely for its BlendStrategy fan-out side effect — see
+// that function's doc for the evidence. `n_fee`'s body is still not
+// decoded (no registry fan-out to do — protocol-fee-recipient
+// governance, not a creation announcement). Neither ever produces a
+// consumer.Event: Decoder.Decode returns no Event on a factory match
+// (drops cleanly without counting against ErrUnknownEvent).
 func classifyFactory(e *events.Event) string {
 	if len(e.Topic) < 2 {
 		return ""
@@ -321,4 +324,116 @@ func DecodeRebalanceMethod(e *events.Event) (RebalanceMethod, error) {
 		return "", fmt.Errorf("%w: rebalance.%s: %w", ErrMalformedPayload, RebalanceMethodField, err)
 	}
 	return RebalanceMethod(sym), nil
+}
+
+// decodeFactoryCreateStrategies extracts every BlendStrategy contract
+// address a DeFindexFactory `create` event announces — the
+// factory-anchored fan-out seam for the STRATEGY layer (ADR-0035/0040,
+// ROADMAP #7 residual 2026-07-10).
+//
+// Unlike the new VAULT's own address — which the create body has
+// never been observed to carry (docs/protocols/defindex.md's
+// structural gap; vaults remain curated-set only) — the body's
+// top-level `assets` Vec carries, per asset, a `strategies` Vec of
+// `{address, name, paused}` entries. Verified against every
+// create/n_fee-shaped body from all 3 create-emitting factories in
+// the r1 lake (2026-07-10, 117 bodies): mechanically extracting this
+// field reproduces the evidence-verified MainnetStrategies set
+// EXACTLY — 16/16, zero extra, zero missing. The 6 flagged
+// no-proof-B strategy emitters are correctly absent (2 predate the
+// earliest factory create event — pre-factory dev/rehearsal
+// deployments that cannot carry this proof by definition; the other 4
+// were never referenced by any vault config in any create body — orphaned
+// deployments a vault never adopted). Schema is stable across the
+// full factory-era history (55,484,403 → current): confirmed
+// byte-identical field names on the earliest (CAVP2QLP…) and current
+// (CDKFHFJI…) factories.
+//
+// A `create` event that names ZERO strategies for an asset is a
+// legitimate, observed shape (e.g. lake ledger 57,147,588) — it
+// yields no address for that asset, not an error. Only a
+// missing/malformed top-level `assets` field is ErrMalformedPayload;
+// a malformed per-asset `strategies` field is skipped rather than
+// failing the whole event, so one odd asset entry can't block
+// registering strategies announced by OTHER assets in the same
+// create.
+//
+// Callers Seed() each returned address into the contractid.Registry
+// (Decoder.Decode) — the SAME live-upsert path Blend/Soroswap/
+// Aquarius use for their fan-out, so a restart resumes with a
+// complete strategy set via the protocol_contracts warm. The vault
+// side of the gate is unaffected: this function never touches
+// vault identity.
+func decodeFactoryCreateStrategies(e *events.Event) ([]string, error) {
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return nil, fmt.Errorf("%w: create body: %w", ErrMalformedPayload, err)
+	}
+	entries, err := scval.AsMap(body)
+	if err != nil {
+		return nil, fmt.Errorf("%w: create body not a Map: %w", ErrMalformedPayload, err)
+	}
+	assetsSv, err := scval.MustMapField(entries, "assets")
+	if err != nil {
+		return nil, fmt.Errorf("%w: create.assets: %w", ErrMalformedPayload, err)
+	}
+	assets, err := scval.AsVec(assetsSv)
+	if err != nil {
+		return nil, fmt.Errorf("%w: create.assets not a Vec: %w", ErrMalformedPayload, err)
+	}
+
+	var strategies []string
+	for _, asset := range assets {
+		strategies = append(strategies, assetStrategyAddresses(asset)...)
+	}
+	return strategies, nil
+}
+
+// assetStrategyAddresses extracts the `address` field of every entry
+// in one `assets[i].strategies` Vec (see decodeFactoryCreateStrategies
+// for the shape). Lenient by design: any malformed shape at this
+// level (missing/wrong-typed `strategies` field, a malformed
+// strategy entry) yields fewer addresses for THIS asset, not an
+// error — a single odd asset entry must not block registering
+// strategies announced by other assets in the same create event.
+func assetStrategyAddresses(asset scval.ScVal) []string {
+	assetEntries, err := scval.AsMap(asset)
+	if err != nil {
+		return nil
+	}
+	stratsSv, err := scval.MustMapField(assetEntries, "strategies")
+	if err != nil {
+		return nil // no strategies field on this asset — nothing to register
+	}
+	strats, err := scval.AsVec(stratsSv)
+	if err != nil {
+		return nil
+	}
+
+	var out []string
+	for _, s := range strats {
+		if addr, ok := strategyAddress(s); ok {
+			out = append(out, addr)
+		}
+	}
+	return out
+}
+
+// strategyAddress extracts the `address` field from one
+// `{address, name, paused}` strategy entry. Returns ok=false (not an
+// error) for any malformed entry — see assetStrategyAddresses.
+func strategyAddress(s scval.ScVal) (string, bool) {
+	entries, err := scval.AsMap(s)
+	if err != nil {
+		return "", false
+	}
+	addrSv, err := scval.MustMapField(entries, "address")
+	if err != nil {
+		return "", false
+	}
+	addr, err := scval.AsAddressStrkey(addrSv)
+	if err != nil {
+		return "", false
+	}
+	return addr, true
 }

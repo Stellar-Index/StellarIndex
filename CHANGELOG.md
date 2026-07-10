@@ -15,6 +15,30 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **DeFindex BlendStrategy factory-anchored fan-out** (ROADMAP #7 residual,
+  2026-07-10). The `("DeFindexFactory","create")` event body carries each
+  asset's assigned strategy address(es) (`assets[].strategies[].address`) —
+  verified against every create-shaped body in the r1 lake (all 3
+  create-emitting factories) to reproduce `defindex.MainnetStrategies`
+  exactly. `Decoder.Decode` now extracts and `Seed`s these live, the same
+  factory-anchored fan-out path Blend/Soroswap/Aquarius use, so a new
+  BlendStrategy deployment self-registers with no operator step and no
+  code change. The VAULT side of the gate is unchanged (structurally
+  undecodable — no create body has ever carried the new vault's own
+  address); `MainnetVaults` remains curated-set only. No schema change.
+
+### Fixed
+- **`docs/protocols/defindex.md`'s "19 no-event Dune vaults" claim was
+  stale.** Re-investigated from the raw lake (ROADMAP #7): all 19 vaults
+  flagged in the 2026-06-12 Dune cross-check now emit real
+  `DeFindexVault` events (confirmed via ClickHouse HTTP `:8123`
+  contract-scoped sampling), are already members of the gated
+  `MainnetVaults` set, and already have deposit/withdraw rows in
+  `defindex_flows` — the 2026-06-12 snapshot simply predated their
+  first `DeFindexVault` emission (lake emitters grew 34→88 by
+  2026-07-05). No decoder change was needed; the doc is corrected.
+
 ## [v0.12.1] — 2026-07-10
 
 ### Fixed

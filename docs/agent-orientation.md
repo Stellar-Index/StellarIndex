@@ -276,9 +276,12 @@ linked design doc has the full detail.
   `soroswap` (pair/factory registry), `blend` (childgate), `phoenix`
   (curated set, 2026-07-02), `aquarius` (router-anchored: the router's
   `add_pool` events announce exactly the registry-API pool set, 2026-07-05),
-  `defindex` (curated evidence-verified set — the factory `create`
-  event does NOT carry the vault address, so new vaults fail-close until
-  operator-seeded; 2026-07-05) and `comet` (curated one-pool allowlist —
+  `defindex` (mixed: the factory `create` event does NOT carry the
+  VAULT'S OWN address, so new vaults still fail-close until
+  operator-seeded — curated evidence-verified set, 2026-07-05; but the
+  same event's body DOES carry each asset's assigned BlendStrategy
+  address, so strategies self-register live off it since 2026-07-10 —
+  docs/protocols/defindex.md) and `comet` (curated one-pool allowlist —
   no factory namespace exists; the only mainnet pool is Blend's BLND/USDC
   backstop, seeded in-code via `comet.MainnetGatedSet`; 2026-07-08, closes
   CS-026) all gate `Matches()` on contract identity. A future genuine
