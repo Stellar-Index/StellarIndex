@@ -50,8 +50,9 @@ const (
 	BasisSEP1DeclaredMax Basis = "sep1_declared_max"
 
 	// BasisSEP41LakeFlows — Algorithm 3, lake-derived: a SEP-41 token's raw
-	// on-chain total (Σmint−Σburn−Σclawback) summed over the certified
-	// ClickHouse lake (ch-supply's token_supply). Used when no LCM observer
+	// on-chain total (Σmint−Σburn−Σclawback) summed live over the certified
+	// ClickHouse lake's stellar.supply_flows (no rollup refresh needed — see
+	// internal/storage/clickhouse/supply_flows.go). Used when no LCM observer
 	// snapshot exists — i.e. for SEP-41 tokens not on an operator watch-list,
 	// which is the vast majority. NOT admin-excluded (that needs per-contract
 	// admin tracking the flow sum doesn't carry); total == circulating here.

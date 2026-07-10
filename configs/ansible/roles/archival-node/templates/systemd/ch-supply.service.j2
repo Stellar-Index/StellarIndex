@@ -37,8 +37,8 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 
-# First run catches up [62.94M, tip] (the seed gap) + a full aggregate; cap
-# generously. Steady-state runs seed one day + re-aggregate in minutes.
+# First run catches up [62.94M, tip] (the seed gap); cap generously.
+# Steady-state runs seed one day of flows in minutes.
 TimeoutStartSec=240min
 
 [Install]

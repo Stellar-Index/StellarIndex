@@ -20,13 +20,20 @@ import (
 //
 // (ADR-0034 + docs/architecture/clickhouse-supply-from-ch.md.) The contract_id
 // is the asset's SAC (classic) or token (SEP-41) contract — a unique per-token
-// key. This is the read/aggregate proof; -write to persist is a follow-up
-// (the snapshot shape + classic↔SAC asset_key mapping + XLM total_coins).
+// key.
 //
 // Defaults to a report (top-N contracts by supply + coverage count). Window
 // [from,to] per partition for the full-history run; a single all-history pass
 // holds one in-memory map (thousands of contracts — bounded).
-func chSupply(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse, stream+accumulate, optional write, report; splitting hurts clarity.
+//
+// NB: this used to have a -write flag that persisted the per-token rollup to
+// a materialized `stellar.token_supply` CH table. That table + writer were
+// removed (ROADMAP #66, 2026-07-10): nothing has read `stellar.token_supply`
+// since the serving path moved to summing `stellar.supply_flows` live
+// (internal/storage/clickhouse/supply_flows.go SupplyReader.TokenSupply —
+// "no rollup refresh" by design). -seed-flows below is the still-live
+// mechanism that keeps supply_flows itself complete.
+func chSupply(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse, stream+accumulate, optional seed, report; splitting hurts clarity.
 	fs := flag.NewFlagSet("ch-supply", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	from := fs.Uint("from", 0, "first ledger sequence (inclusive, required)")
@@ -34,7 +41,6 @@ func chSupply(args []string) error { //nolint:gocognit,gocyclo,funlen // linear:
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	topN := fs.Int("top", 25, "print the top-N contracts by absolute supply")
 	useFinal := fs.Bool("final", true, "FINAL-dedup reads (correct but ~40x slower over all history; -final=false for a fast all-token estimate)")
-	write := fs.Bool("write", false, "persist the per-token rollup to the stellar.token_supply CH table")
 	seedFlows := fs.Bool("seed-flows", false, "seed stellar.supply_flows: write one decoded row per mint/burn/clawback event (the decode-at-ingest history backfill; idempotent)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -89,7 +95,7 @@ func chSupply(args []string) error { //nolint:gocognit,gocyclo,funlen // linear:
 		return nil
 	}
 
-	fmt.Fprintf(os.Stderr, "ch-supply: summing mint/burn/clawback flows for [%d,%d] from %s (final=%v write=%v seed-flows=%v)\n", lo, hi, *chAddr, *useFinal, *write, *seedFlows)
+	fmt.Fprintf(os.Stderr, "ch-supply: summing mint/burn/clawback flows for [%d,%d] from %s (final=%v seed-flows=%v)\n", lo, hi, *chAddr, *useFinal, *seedFlows)
 	err := clickhouse.StreamMintBurnFlows(ctx, *chAddr, lo, hi, *useFinal, func(f clickhouse.MintBurnFlow) error {
 		flows++
 		v, skipType, ok := clickhouse.DecodeSupplyAmountXDR(f.DataXDR)
@@ -156,47 +162,6 @@ func chSupply(args []string) error { //nolint:gocognit,gocyclo,funlen // linear:
 		n.Sub(n, a.burn)
 		n.Sub(n, a.clawback)
 		return n
-	}
-
-	// ─── write (optional) ─────────────────────────────────────────────────
-	if *write {
-		if eerr := clickhouse.EnsureTokenSupplyTable(ctx, *chAddr); eerr != nil {
-			return fmt.Errorf("ch-supply: ensure table: %w", eerr)
-		}
-		const batchN = 5000
-		rows := make([]clickhouse.TokenSupplyRow, 0, batchN)
-		var wrote int
-		flushRows := func() error {
-			if len(rows) == 0 {
-				return nil
-			}
-			if werr := clickhouse.WriteTokenSupplies(ctx, *chAddr, rows); werr != nil {
-				return werr
-			}
-			wrote += len(rows)
-			rows = rows[:0]
-			return nil
-		}
-		for cid, a := range tokens {
-			rows = append(rows, clickhouse.TokenSupplyRow{
-				ContractID:    cid,
-				TotalSupply:   net(a).String(),
-				MintTotal:     a.mint.String(),
-				BurnTotal:     a.burn.String(),
-				ClawbackTotal: a.clawback.String(),
-				FlowCount:     a.flows,
-				LastLedger:    a.lastLedger,
-			})
-			if len(rows) >= batchN {
-				if ferr := flushRows(); ferr != nil {
-					return fmt.Errorf("ch-supply: write: %w", ferr)
-				}
-			}
-		}
-		if ferr := flushRows(); ferr != nil {
-			return fmt.Errorf("ch-supply: write: %w", ferr)
-		}
-		fmt.Fprintf(os.Stderr, "ch-supply: wrote %d token supplies to stellar.token_supply\n", wrote)
 	}
 
 	// ─── report ──────────────────────────────────────────────────────────
