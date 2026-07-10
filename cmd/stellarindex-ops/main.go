@@ -32,7 +32,7 @@
 //     `ch-txindex-backfill`, `ch-participant-backfill`,
 //     `ch-recognition`, `verify-recognition`, `verify-reconciliation`,
 //     `compute-completeness`, `verify-served-values`,
-//     `sdex-claim-audit`.
+//     `sdex-claim-audit`, `classic-movements-backfill`.
 //   - Doc generation: `docs-config` (regenerates the config
 //     reference from struct tags; called by `make docs-config`).
 //
@@ -144,6 +144,8 @@ var subcommands = map[string]func(args []string) error{
 	"compute-completeness":    chops.Run,
 	"verify-served-values":    chops.Run,
 	"sdex-claim-audit":        chops.Run,
+
+	"classic-movements-backfill": chops.Run,
 }
 
 func realMain() int {
@@ -629,6 +631,27 @@ Subcommands:
                           resumable (idempotent ReplacingMergeTree), prints a
                           resume point per window. -dry-run counts what WOULD
                           be written. Run under run-heavy-job.sh on r1.
+  classic-movements-backfill -config PATH -from N -to N [-window N] [-ch-addr H:P] [-resume] [-write]
+                          ADR-0047 Phase 1: reconstruct pre-P23 classic
+                          Payment + CreateAccount movements from the
+                          ClickHouse lake (stellar.operations join
+                          operation_results) into the classic_movements
+                          hypertable. HISTORICAL-ONLY — -to is HARD-CLAMPED
+                          below the P23 boundary (ledger 58762517,
+                          2025-09-03) regardless of what is passed, since
+                          every ledger from P23 onward already emits a
+                          unified CAP-67 event via sep41_transfers.
+                          Windowed (-window, default 500000 ledgers) and
+                          resumable (-resume, default true; checkpoints
+                          into ingestion_cursors per window). Idempotent
+                          (ON CONFLICT DO NOTHING) — safe to re-run over an
+                          already-written range. Defaults to DRY-RUN (count
+                          only); pass -write to persist. Run under
+                          run-heavy-job.sh on r1. Example:
+                            stellarindex-ops classic-movements-backfill \
+                              -config /etc/stellarindex.toml \
+                              -from 2 -to 58762516 \
+                              -write
   verify-recognition -config PATH -from N -to N
                           ADR-0033 Claim 2a: pull every distinct
                           (contract, topic[0]) shape from soroban_events
