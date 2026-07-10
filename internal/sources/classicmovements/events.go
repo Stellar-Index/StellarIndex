@@ -1,0 +1,141 @@
+package classicmovements
+
+import (
+	"errors"
+	"time"
+
+	"github.com/StellarIndex/stellar-index/internal/canonical"
+)
+
+// SourceName is the canonical identifier for classic-movement rows.
+// Stamped as MovementEvent.Source() and as the ClassicMovementRow's
+// implicit writer identity — the classic_movements table itself has
+// no `source` column (unlike `trades`) because it has exactly one
+// writer (ADR-0031 "one writer per domain"; ADR-0047 D2), so nothing
+// needs to discriminate rows by writer.
+const SourceName = "classic-movements"
+
+// Kind discriminates a movement's semantic type. The ten values
+// match migration 0103's movement_kind CHECK constraint — ALL TEN
+// are admitted by the schema from Phase 1 on (ADR-0047 D1), even
+// though this package's Decode only ever emits KindPayment /
+// KindCreateAccount today. Phases 2-4 add the remaining decode
+// arms; see recognition_test.go for the guard that forces each
+// phase's author to extend this deliberately.
+type Kind string
+
+// The ten ADR-0047 D1 movement kinds, in the same order as the
+// migration 0103 CHECK constraint.
+const (
+	KindPayment                  Kind = "payment"
+	KindCreateAccount            Kind = "create_account"
+	KindPathPayment              Kind = "path_payment"
+	KindAccountMerge             Kind = "account_merge"
+	KindClawback                 Kind = "clawback"
+	KindClaimableBalanceCreate   Kind = "claimable_balance_create"
+	KindClaimableBalanceClaim    Kind = "claimable_balance_claim"
+	KindClaimableBalanceClawback Kind = "claimable_balance_clawback"
+	KindLiquidityPoolDeposit     Kind = "liquidity_pool_deposit"
+	KindLiquidityPoolWithdraw    Kind = "liquidity_pool_withdraw"
+)
+
+// IsValid reports whether k is one of the ten known movement kinds.
+// Mirrors the CHECK constraint in migration 0103.
+func (k Kind) IsValid() bool {
+	switch k {
+	case KindPayment, KindCreateAccount, KindPathPayment, KindAccountMerge,
+		KindClawback, KindClaimableBalanceCreate, KindClaimableBalanceClaim,
+		KindClaimableBalanceClawback, KindLiquidityPoolDeposit, KindLiquidityPoolWithdraw:
+		return true
+	}
+	return false
+}
+
+// Provenance discriminates how a movement row was derived.
+type Provenance string
+
+const (
+	// ProvenanceClassicDerived is every row this package has ever
+	// written — reconstructed from the ClickHouse lake per ADR-0047.
+	ProvenanceClassicDerived Provenance = "classic_derived"
+
+	// ProvenanceCAP67Event is RESERVED (ADR-0047 D1) for a possible
+	// future normalization of post-P23 sep41_transfers 'transfer'
+	// rows into classic_movements. No writer emits it today —
+	// present here only so callers building attributes maps have
+	// the exact wire value on hand if that normalization ever
+	// lands.
+	ProvenanceCAP67Event Provenance = "cap67_event"
+)
+
+// IsValid reports whether p is one of the two known provenance
+// values. Mirrors the CHECK constraint in migration 0103.
+func (p Provenance) IsValid() bool {
+	switch p {
+	case ProvenanceClassicDerived, ProvenanceCAP67Event:
+		return true
+	}
+	return false
+}
+
+// Movement is one reconstructed two-party classic-asset movement —
+// the decode-time shape of a classic_movements row (ADR-0047 D1).
+// LegIndex disambiguates multiple rows produced by the SAME op
+// (e.g. a future liquidity-pool deposit's two asset legs); Phase 1's
+// two kinds are always single-leg, so it is always 0 here.
+type Movement struct {
+	Kind            Kind
+	Provenance      Provenance
+	Ledger          uint32
+	LedgerCloseTime time.Time
+	TxHash          string
+	OpIndex         uint32
+	LegIndex        uint32
+	Asset           string // canonical asset_id: "native" or "CODE-ISSUER"
+	Amount          canonical.Amount
+	FromAddress     string
+	ToAddress       string
+}
+
+// MovementEvent is the consumer.Event this package emits — the
+// same "wrap the canonical row in a thin Source()/EventKind()
+// shell" pattern as sdex.TradeEvent.
+//
+// This type deliberately has NO persist arm in internal/pipeline/
+// sink.go's HandleEvent: classic_movements is historical-only
+// (ADR-0047 D2) and is written by its own dedicated
+// `stellarindex-ops classic-movements-backfill` batch writer, never
+// through the live dispatcher / pipeline.HandleEvent path. See
+// internal/pipeline/lockstep_ast_test.go's notSunkEvents entry for
+// "classicmovements.MovementEvent" — that registration is this
+// design decision made mechanically enforceable.
+type MovementEvent struct {
+	Movement Movement
+}
+
+// EventKind implements consumer.Event.
+func (MovementEvent) EventKind() string { return "classicmovements.movement" }
+
+// Source implements consumer.Event.
+func (MovementEvent) Source() string { return SourceName }
+
+// Errors returned by the decode path.
+var (
+	// ErrUnsupportedOpType is returned by Decode when handed an
+	// operation type outside the current phase's scope. Matches()
+	// gates the op type BEFORE Decode is ever called in the normal
+	// backfill loop, so this should never fire there — its only job
+	// is the ADR-0047 D4.2 recognition guard: it forces a future
+	// phase's author to extend Matches AND the Decode switch
+	// together, rather than let an unhandled op type silently
+	// produce zero rows. See recognition_test.go.
+	ErrUnsupportedOpType = errors.New("classicmovements: unsupported op type for this phase")
+
+	// ErrMalformedMovement — a decoded field failed validation
+	// (non-positive amount, unresolvable address, unrecognized
+	// asset shape). Indicates a protocol assumption this package
+	// hasn't audited, not routine "op failed" — a failed op is
+	// filtered out earlier via the result's success code and never
+	// reaches this error path.
+	ErrMalformedMovement = errors.New("classicmovements: malformed movement")
+)

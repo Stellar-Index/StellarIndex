@@ -46,6 +46,30 @@ against.
   (`migrations/0101_soroswap_router_swaps_call_path.up.sql`). Spec + all
   three generated artifacts regenerated; `pkg/client.AggregatorRow`
   gains `Notes`.
+- **Pre-P23 classic-movement reconstruction, Phase 1: Payment +
+  CreateAccount** (ADR-0047, migration 0103). The new
+  `internal/sources/classicmovements` decoder reconstructs classic
+  Stellar `Payment`/`CreateAccount` operations from the ClickHouse raw
+  lake (`stellar.operations`/`operation_results`) into the new
+  `classic_movements` hypertable — never Horizon (ADR-0001), never a
+  MinIO walk. Historical-only by design: the decoder is never wired
+  into the live dispatcher (post-P23 movements already arrive as
+  unified CAP-67 events via `sep41_transfers`); its sole writer is the
+  new `stellarindex-ops classic-movements-backfill` subcommand, which
+  streams windowed, resumable ranges and hard-clamps `-to` below the
+  P23 boundary (ledger 58,762,517) regardless of what's requested.
+  `movement_kind`/`provenance` admit all ten ADR-0047 D1 kinds up
+  front so Phases 2-4 (path payments; claimable balances + clawback;
+  account merge + liquidity-pool deposit/withdraw) add rows, not
+  schema churn. A static recognition test
+  (`recognition_test.go`) pins op-type coverage to exactly this
+  phase's scope across the full closed 27-value `xdr.OperationType`
+  enum, and real pre-P23 mainnet bytes (pulled read-only from r1's
+  ClickHouse lake) golden-test the decoder byte-for-byte, including a
+  real failed-payment negative case. Write-path only for now — no
+  `/v1/accounts/{g}/movements` endpoint yet; served-tier retention is
+  deliberately deferred until the first real backfill sizes actual
+  row bytes.
 - **Full-history SAC balance seed — closes the BLND/EURC/KALE/PHO supply
   cross-check residual** (migration 0102, ROADMAP #14 / incident
   2026-07-06 "PHO/BLND VERDICT" follow-up). `supply seed-sac-balances`

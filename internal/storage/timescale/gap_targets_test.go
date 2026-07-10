@@ -82,6 +82,22 @@ var excludedFromGapDetector = map[string]string{
 	"freeze_events":    "system-state table, not per-source ingest. Populated on demand by /v1/admin/freeze handler; no continuous-coverage invariant.",
 	"mev_events":       "MEV detection sidecar — populated only when an op's effects suggest sandwich/frontrun. Sparse-by-design, not a coverage signal.",
 	"api_usage_events": "HTTP-request usage logging for the platform API, not Stellar-network ingest. No coverage invariant.",
+	// classic_movements (migration 0105, ADR-0047) doesn't match
+	// perSourcePattern's suffix list (it ends in "_movements", not
+	// "_events"/etc.), so this entry isn't mechanically required by
+	// the regex walk below — added anyway as an explicit, documented
+	// decision for anyone who greps this map wondering why a real
+	// per-source hypertable isn't a live target. classic_movements
+	// has NO live writer at all (ADR-0047 D2: historical-only,
+	// written solely by the bounded `classic-movements-backfill`
+	// command below the P23 ledger boundary) — a "coverage vs
+	// current tip" gauge would be structurally meaningless, since
+	// tip is always far past where this source stops. Coverage
+	// verification instead follows ADR-0047 D4: a static recognition
+	// test (internal/sources/classicmovements/recognition_test.go)
+	// plus, from Phase 4 onward, an ADR-0033-style projection
+	// reconcile against ledger_entry_changes.
+	"classic_movements": "historical-only, no live writer (ADR-0047 D2) — see the comment above this map entry.",
 }
 
 // inferSourceName guesses the canonical source-label slug for a
