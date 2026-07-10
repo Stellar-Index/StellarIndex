@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.15.0] — 2026-07-10
+
 ### Removed
 - **Obsolete `stellar.token_supply` CH rollup + its refresh driver (ROADMAP #66).**
   Nothing has read `stellar.token_supply` since the SEP-41 supply serving path
