@@ -142,6 +142,31 @@ against.
   `_skipped_hits_total` metrics and `discovery-drops` runbook/alert
   now cover all three sniffers (one shared async sink, unlabeled
   counters — not split per sniffer).
+- **Per-op response examples for the remaining POST/SSE surfaces —
+  closes the ROADMAP #37 API-polish tail.** The 2026-07-03 sweep
+  (`bfe8acf8`) added a 200 example to every GET operation and explicitly
+  deferred SSE streams and non-GET operations; this pass covers those 19
+  deferred operations: the four SSE streams (`/v1/price/tip/stream`,
+  `/v1/observations/stream`, `/v1/price/stream`, `/v1/ledger/stream` —
+  literal `id:`/`event:`/`data:` frames matching `streaming.WriteFrame`'s
+  actual wire format and each handler's real `*_update` event type +
+  payload struct, not invented) and 15 POST/PATCH mutation endpoints
+  across the account/admin/dashboard/auth surfaces (`/v1/account/keys`,
+  `/v1/admin/keys`, `/v1/admin/accounts/{id}`,
+  `/v1/admin/status-notices(/{id}/resolve)`, `/v1/webhooks/stripe`,
+  `/v1/dashboard/{keys,webhooks,price-alerts}`,
+  `/v1/auth/{login,verify-code,sep10/token}`, plus `POST /v1/price/batch`
+  which just reuses the GET form's example). The four `DELETE` endpoints
+  that return a bare 204 are correctly left without a body example.
+  Writing the `/v1/webhooks/stripe` example surfaced a real spec/handler
+  mismatch: its 200 schema was missing the `EnvelopeMeta`
+  (`data`/`as_of`/`flags`) wrapper that `writeJSON` always applies —
+  fixed the schema to match the handler instead of documenting a shape
+  the API never actually sends. No `info.version` bump: `bfe8acf8`
+  (the GET-examples sweep this completes) landed as a pure docs change
+  with no version increment, and this pass is the same kind of change.
+  All three generated artifacts refreshed (`make docs-api`,
+  `make docs-postman`, `make web-generate-api`).
 
 ### Changed
 - **BREAKING for anyone verifying release signatures: `release.yml` migrated
@@ -175,6 +200,33 @@ against.
   the artifact shape again.
 
 ### Fixed
+- **`/v1/assets` listing now populates `image` for catalogue-sourced rows
+  — closes the BACKLOG #37b listing-image residual.** The 2026-07-06
+  SEP-1 logo overlay (`b8d817f0`) wired `fillImagesFromSep1` into the two
+  classic_assets-backed listing paths (`handleAssetListFromAssets`,
+  `fetchClassicUnifiedRows`) but not the verified-currency catalogue rows
+  (`asset_class=fiat|stablecoin|crypto`, the catalogue phase of
+  `asset_class=all`, and `/v1/external/assets`) — so the highest-
+  market-cap rows (XLM, USDC, …) that lead the unified "All" listing kept
+  rendering fallback avatars. Investigated the cost before touching the
+  hot listing query: the catalogue source is a ~45-row in-memory table
+  loaded once at startup (`internal/currency`), not a DB round-trip, so
+  neither a JOIN into the listing SQL nor a per-page batched lookup was
+  needed — `projectCatalogueRows` now overlays the SAME cached
+  CODE-ISSUER logo map (`cachedSep1Images`: 10-min TTL + single-flight,
+  already warmed by classic-listing traffic) keyed off each catalogue
+  entry's Stellar issuance identity, i.e. a map lookup per row with zero
+  new queries and no measurable cost on the listing hot path. Fiat /
+  reference-only entries (no Stellar issuer to have published a
+  stellar.toml) correctly stay imageless, unchanged from before. No
+  prewarm changes needed: the catalogue iteration was never a prewarm
+  target (it's in-memory) and `cachedSep1Images` is unchanged — same
+  self-warming TTL cache the classic listing paths already relied on.
+  Regression tests: `TestProjectCatalogueRows_Sep1ImageOverlay` (unit)
+  and `TestHandleAssetListFromCatalogue_Sep1ImageOverlay` (handler-level,
+  against the real embedded verified-currency catalogue, mirroring
+  `TestCatalogueStatsUseListingReader`'s pattern so a future revert to
+  the un-overlaid `projectCatalogueRows` call is caught by CI).
 - **`docs/protocols/defindex.md`'s "19 no-event Dune vaults" claim was
   stale.** Re-investigated from the raw lake (ROADMAP #7): all 19 vaults
   flagged in the 2026-06-12 Dune cross-check now emit real

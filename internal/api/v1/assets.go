@@ -1027,7 +1027,7 @@ func (s *Server) handleAssetListFromCatalogue(w http.ResponseWriter, r *http.Req
 	// /v1/external/assets); stablecoin/crypto yield only Stellar-issued rows.
 	matched := filterCatalogueByClass(s.verifiedCurrencies.StellarIssued(), currency.AssetClass(class))
 	caps := s.computeCatalogueMarketCaps(r.Context(), matched, class)
-	rows := projectCatalogueRows(matched, caps)
+	rows := s.projectCatalogueRows(r.Context(), matched, caps)
 	sortAssetDetailsByMarketCapDesc(rows)
 	s.writeCataloguePage(w, r, rows, limit, cursor)
 }
@@ -1063,7 +1063,7 @@ func (s *Server) handleExternalAssetList(w http.ResponseWriter, r *http.Request)
 		entries = filterCatalogueByClass(entries, currency.AssetClass(class))
 	}
 	caps := s.computeAllCatalogueMarketCaps(r.Context(), entries)
-	rows := projectCatalogueRows(entries, caps)
+	rows := s.projectCatalogueRows(r.Context(), entries, caps)
 	sortAssetDetailsByMarketCapDesc(rows)
 	s.writeCataloguePage(w, r, rows, limit, cursor)
 }
@@ -1108,8 +1108,20 @@ func (s *Server) computeCatalogueMarketCaps(ctx context.Context, matched []*curr
 }
 
 // projectCatalogueRows applies projectCatalogueRow + the parallel
-// market_cap slice to produce the wire shape.
-func projectCatalogueRows(matched []*currency.VerifiedCurrency, caps []string) []AssetDetail {
+// market_cap slice to produce the wire shape, then overlays each row's
+// SEP-1 [[CURRENCIES]] logo (BACKLOG #37b) from the SAME cached
+// CODE-ISSUER map fillImagesFromSep1 already uses for the classic
+// listing paths — a map lookup per row, not a query or a JOIN into
+// the catalogue's (already tiny, ~45-row, in-memory) source data.
+// Before this, only the classic_assets-backed listing rows
+// (handleAssetListFromAssets / fetchClassicUnifiedRows) got the
+// overlay; the catalogue-sourced rows (asset_class=fiat|stablecoin|
+// crypto, the catalogue phase of asset_class=all, and
+// /v1/external/assets) never did, so the highest-market-cap rows
+// (XLM, USDC, …) that lead the unified "All" listing kept showing
+// fallback avatars even after b8d817f0.
+func (s *Server) projectCatalogueRows(ctx context.Context, matched []*currency.VerifiedCurrency, caps []string) []AssetDetail {
+	images := s.cachedSep1Images(ctx)
 	rows := make([]AssetDetail, len(matched))
 	for i, vc := range matched {
 		rows[i] = projectCatalogueRow(vc)
@@ -1117,8 +1129,29 @@ func projectCatalogueRows(matched []*currency.VerifiedCurrency, caps []string) [
 			c := caps[i]
 			rows[i].MarketCapUSD = &c
 		}
+		if img := catalogueRowImage(vc, images); img != "" {
+			v := img
+			rows[i].Image = &v
+		}
 	}
 	return rows
+}
+
+// catalogueRowImage resolves vc's SEP-1 logo from the shared cached
+// CODE-ISSUER image map, keyed off the catalogue entry's Stellar
+// issuance identity. Returns "" for fiat / reference-only entries
+// (StellarEntry() == nil — no on-chain issuer to have published a
+// stellar.toml [[CURRENCIES]] image) and for entries whose issuer
+// hasn't verified one, exactly as before this change.
+func catalogueRowImage(vc *currency.VerifiedCurrency, images map[string]string) string {
+	if len(images) == 0 {
+		return ""
+	}
+	se := vc.StellarEntry()
+	if se == nil || se.Code == "" || se.Issuer == "" {
+		return ""
+	}
+	return images[sep1ImageKey(se.Code, se.Issuer)]
 }
 
 // parseOffsetCursor parses an offset-style pagination cursor. The
@@ -1379,7 +1412,7 @@ func (s *Server) serveCatalogueUnifiedPage(w http.ResponseWriter, r *http.Reques
 	// /v1/external/assets. classic_assets (the classic phase) are all Stellar.
 	entries := s.verifiedCurrencies.StellarIssued()
 	caps := s.computeAllCatalogueMarketCaps(r.Context(), entries)
-	rows := projectCatalogueRows(entries, caps)
+	rows := s.projectCatalogueRows(r.Context(), entries, caps)
 	sortAssetDetailsByMarketCapDesc(rows)
 	// q= filter over the catalogue phase (S-011). The classic phase
 	// filters server-side via ListAssetsOptions.Q; the catalogue is a

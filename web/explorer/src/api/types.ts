@@ -1549,6 +1549,17 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example id: 0198a41f2b3c0001
+                         *     event: tip_update
+                         *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.2042667348","price_type":"vwap","observed_at":"2026-07-03T22:37:33.044745387Z","window_seconds":30},"as_of":"2026-07-03T22:37:33.045908618Z","sources":["coinbase","bitstamp"],"flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false,"divergence_checked":false}}
+                         *
+                         *     :keepalive
+                         *
+                         *     id: 0198a41f2b3c0002
+                         *     event: tip_update
+                         *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.2042701122","price_type":"vwap","observed_at":"2026-07-03T22:37:38.051902614Z","window_seconds":30},"as_of":"2026-07-03T22:37:38.052918217Z","sources":["coinbase","bitstamp"],"flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false,"divergence_checked":false}}
+                         */
                         "text/event-stream": string;
                     };
                 };
@@ -1690,6 +1701,40 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": [
+                         *         {
+                         *           "asset_id": "crypto:XLM",
+                         *           "quote": "fiat:USD",
+                         *           "price": "0.20401200646499857404",
+                         *           "price_type": "vwap",
+                         *           "observed_at": "2026-07-03T22:36:00Z",
+                         *           "window_seconds": 60,
+                         *           "change_24h_pct": "+3.62"
+                         *         },
+                         *         {
+                         *           "asset_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *           "quote": "fiat:USD",
+                         *           "price": "1.000000000000",
+                         *           "price_type": "peg",
+                         *           "observed_at": "2026-07-03T22:37:34.197270411Z"
+                         *         }
+                         *       ],
+                         *       "as_of": "2026-07-03T22:37:34.248518093Z",
+                         *       "sources": [
+                         *         "bitstamp",
+                         *         "coinbase"
+                         *       ],
+                         *       "flags": {
+                         *         "stale": true,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": true,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["PriceBatchEnvelope"];
                     };
                 };
@@ -1890,6 +1935,17 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example id: 0198a41f6d900001
+                         *     event: observations_update
+                         *     data: {"data":[{"source":"sdex","ledger":63316220,"tx_hash":"825ede3a206341add5b365d22023de7843b098f710b014de56aa99d29fe7e27b","op_index":1025,"ts":"2026-07-03T22:42:17Z","base_asset":"native","quote_asset":"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN","base_amount":"55653","quote_amount":"11363","price":"0.2041758755"}],"as_of":"2026-07-03T22:42:26.862812578Z","sources":["sdex"],"flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false,"divergence_checked":false,"single_source":true}}
+                         *
+                         *     :keepalive
+                         *
+                         *     id: 0198a41f6d900002
+                         *     event: observations_update
+                         *     data: {"data":[],"as_of":"2026-07-03T22:42:31.870004112Z","sources":[],"flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false,"divergence_checked":false,"single_source":false}}
+                         */
                         "text/event-stream": string;
                     };
                 };
@@ -1969,6 +2025,17 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example id: 0198a4203f100001
+                         *     event: price_update
+                         *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159608357106","price_type":"vwap","observed_at":"2026-05-05T14:35:00Z","window_seconds":300},"as_of":"2026-05-05T14:35:42.881Z","flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false}}
+                         *
+                         *     :keepalive
+                         *
+                         *     id: 0198a4203f100002
+                         *     event: price_update
+                         *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159701882234","price_type":"vwap","observed_at":"2026-05-05T14:36:00Z","window_seconds":300},"as_of":"2026-05-05T14:36:00.417Z","flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false}}
+                         */
                         "text/event-stream": string;
                     };
                 };
@@ -6069,6 +6136,17 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example id: 0198a4214a900001
+                         *     event: ledger_update
+                         *     data: {"data":{"latest_ledger":63316183,"ingested_at":"2026-07-03T22:38:47.833071Z","lag_seconds":2},"as_of":"2026-07-03T22:38:50.194761237Z"}
+                         *
+                         *     :keepalive
+                         *
+                         *     id: 0198a4214a900002
+                         *     event: ledger_update
+                         *     data: {"data":{"latest_ledger":63316184,"ingested_at":"2026-07-03T22:38:52.611403Z","lag_seconds":2},"as_of":"2026-07-03T22:38:52.812009481Z"}
+                         */
                         "text/event-stream": string;
                     };
                 };
@@ -7415,6 +7493,27 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "key_id": "kid_7f3a2c1b9e7d4f6a",
+                         *         "plaintext": "sip_7f3a2c1b9e7d4f6a8b3c2d1e9f8a7b6c5d4e3f2c1b9a8f7e6d5c4b3a2f1e9d8c",
+                         *         "key_prefix": "sip_7f3a2c1b",
+                         *         "label": "production-api-1",
+                         *         "scopes": [
+                         *           "read"
+                         *         ]
+                         *       },
+                         *       "as_of": "2026-07-03T22:44:12.611403Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["KeyCreatedEnvelope"];
                     };
                 };
@@ -7565,6 +7664,28 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "key_id": "kid_2c9e6f4a1b8d3c7e",
+                         *         "plaintext": "sip_2c9e6f4a1b8d3c7e5a9f8b2d1c6e4f7a3b9c8d2e1f6a5b4c3d2e1f9a8b7c6d5e",
+                         *         "key_prefix": "sip_2c9e6f4a",
+                         *         "label": "partner-integration-key",
+                         *         "scopes": [
+                         *           "read",
+                         *           "account"
+                         *         ]
+                         *       },
+                         *       "as_of": "2026-07-03T22:44:30.117209Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["KeyCreatedEnvelope"];
                     };
                 };
@@ -7698,6 +7819,29 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "id": "3d8f1a6c-9e2b-4c7d-8a5f-1b6e3d9c2a4f",
+                         *         "name": "Acme Trading Desk",
+                         *         "slug": "acme-trading-desk",
+                         *         "tier": "business",
+                         *         "status": "active",
+                         *         "billing_email": "ops@acme.example.com",
+                         *         "created_at": "2026-04-12T09:15:00Z",
+                         *         "rate_limit_per_min_override": 60000,
+                         *         "monthly_request_quota_override": 50000000
+                         *       },
+                         *       "as_of": "2026-07-03T22:44:41.902317Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["AdminAccountEnvelope"];
                     };
                 };
@@ -7804,6 +7948,27 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "id": "6a1d9e3c-7f2b-4a8d-9c5e-3b1f6a2d8e4c",
+                         *         "title": "Delayed price freshness on r1",
+                         *         "body": "We're investigating elevated /v1/price latency on r1 (EU). No data loss; freshness is degraded up to ~2 minutes. Updates here as we learn more.",
+                         *         "severity": "minor",
+                         *         "status": "active",
+                         *         "created_at": "2026-07-03T22:45:02.004811Z",
+                         *         "updated_at": "2026-07-03T22:45:02.004811Z"
+                         *       },
+                         *       "as_of": "2026-07-03T22:45:02.004811Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["StatusNoticeEnvelope"];
                     };
                 };
@@ -7866,6 +8031,28 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "id": "6a1d9e3c-7f2b-4a8d-9c5e-3b1f6a2d8e4c",
+                         *         "title": "Delayed price freshness on r1",
+                         *         "body": "We're investigating elevated /v1/price latency on r1 (EU). No data loss; freshness is degraded up to ~2 minutes. Updates here as we learn more.",
+                         *         "severity": "minor",
+                         *         "status": "resolved",
+                         *         "created_at": "2026-07-03T22:45:02.004811Z",
+                         *         "updated_at": "2026-07-03T23:12:47.331098Z",
+                         *         "resolved_at": "2026-07-03T23:12:47.331098Z"
+                         *       },
+                         *       "as_of": "2026-07-03T23:12:47.331098Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["StatusNoticeEnvelope"];
                     };
                 };
@@ -7956,15 +8143,35 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": {
-                            ok?: boolean;
-                            /** @description Keys upgraded to the new rate limit. */
-                            upgraded?: number;
-                            /** @description Total keys belonging to the identifier. */
-                            keys_total?: number;
-                            rate_limit_per_min?: number;
-                            /** @description Set when an event was acknowledged but not acted on (wrong type, unpaid). */
-                            ignored?: string;
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "ok": true,
+                         *         "upgraded": 2,
+                         *         "keys_total": 2,
+                         *         "rate_limit_per_min": 10000
+                         *       },
+                         *       "as_of": "2026-07-03T22:45:19.771408Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
+                        "application/json": components["schemas"]["EnvelopeMeta"] & {
+                            data: {
+                                ok?: boolean;
+                                /** @description Keys upgraded to the new rate limit. */
+                                upgraded?: number;
+                                /** @description Total keys belonging to the identifier. */
+                                keys_total?: number;
+                                rate_limit_per_min?: number;
+                                /** @description Set when an event was acknowledged but not acted on (wrong type, unpaid). */
+                                ignored?: string;
+                            };
                         };
                     };
                 };
@@ -8326,6 +8533,22 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "plaintext": "sip_9d4c8b2a6f1e3d7c5a8b9e2f4d1c6a3b8e5f7d2c9a1b4e6f3d8c5a2b9e7f1d4c",
+                         *       "key": {
+                         *         "id": "7d9f2a54-4f0e-4c1a-9b3d-2f6c8e1a0b5c",
+                         *         "name": "production",
+                         *         "description": "main backend key",
+                         *         "key_prefix": "sip_9d4c8b2a",
+                         *         "tier": "apikey",
+                         *         "rate_limit_per_min": 300,
+                         *         "monthly_quota": 1000000,
+                         *         "usage_alert_threshold_pct": 80,
+                         *         "created_at": "2026-07-03T22:45:31.006204Z"
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["CreateKeyResponse"];
                     };
                 };
@@ -8527,6 +8750,23 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "webhook": {
+                         *         "id": "0b6a3f2e-9c1d-4e7a-8f5b-6d2c4a1e9b0f",
+                         *         "name": "ops-alerts",
+                         *         "url": "https://ops.example.com/hooks/stellarindex",
+                         *         "events": [
+                         *           "incident.sev1",
+                         *           "incident.resolved"
+                         *         ],
+                         *         "enabled": true,
+                         *         "created_at": "2026-07-03T22:45:47.220981Z",
+                         *         "updated_at": "2026-07-03T22:45:47.220981Z"
+                         *       },
+                         *       "secret": "wsec_3f8a1c6d9e2b4f7a5c8d1e6b9f2a4c7d3e8b1f6a9c2d4e7f5a8b3c1d6e9f2a4c"
+                         *     }
+                         */
                         "application/json": components["schemas"]["CreateWebhookResponse"];
                     };
                 };
@@ -8639,6 +8879,19 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "id": "0b6a3f2e-9c1d-4e7a-8f5b-6d2c4a1e9b0f",
+                         *       "name": "ops-alerts-critical-only",
+                         *       "url": "https://ops.example.com/hooks/stellarindex",
+                         *       "events": [
+                         *         "incident.sev1"
+                         *       ],
+                         *       "enabled": true,
+                         *       "created_at": "2026-06-20T10:00:00Z",
+                         *       "updated_at": "2026-07-03T22:46:03.558112Z"
+                         *     }
+                         */
                         "application/json": components["schemas"]["DashboardWebhook"];
                     };
                 };
@@ -8835,6 +9088,19 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "id": "2f1c8e0a-9b3d-4e7a-8f5b-6d2c4a1e9b0f",
+                         *       "base_asset": "native",
+                         *       "quote_asset": "fiat:USD",
+                         *       "condition": "above",
+                         *       "threshold": "0.15",
+                         *       "cooldown_seconds": 300,
+                         *       "enabled": true,
+                         *       "created_at": "2026-07-03T22:46:14.882091Z",
+                         *       "updated_at": "2026-07-03T22:46:14.882091Z"
+                         *     }
+                         */
                         "application/json": components["schemas"]["DashboardPriceAlert"];
                     };
                 };
@@ -8958,6 +9224,20 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "id": "2f1c8e0a-9b3d-4e7a-8f5b-6d2c4a1e9b0f",
+                         *       "base_asset": "native",
+                         *       "quote_asset": "fiat:USD",
+                         *       "condition": "above",
+                         *       "threshold": "0.18",
+                         *       "cooldown_seconds": 300,
+                         *       "enabled": true,
+                         *       "last_fired_at": "2026-07-02T16:04:11Z",
+                         *       "created_at": "2026-07-03T22:46:14.882091Z",
+                         *       "updated_at": "2026-07-03T22:47:02.114873Z"
+                         *     }
+                         */
                         "application/json": components["schemas"]["DashboardPriceAlert"];
                     };
                 };
@@ -9039,6 +9319,11 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "status": "sent"
+                         *     }
+                         */
                         "application/json": {
                             /** @enum {string} */
                             status: "sent";
@@ -9183,6 +9468,11 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "status": "ok"
+                         *     }
+                         */
                         "application/json": {
                             /** @enum {string} */
                             status: "ok";
@@ -9353,6 +9643,23 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "token": "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJHQjNZM0FMS0FQ...",
+                         *         "expires_at": "2026-07-03T23:45:19.000000Z",
+                         *         "account": "GB3Y3ALKAPYFMBEDS5G4KDDQBFV5FVJVGXWL4RPUCV3GTMOENIVXFAHW"
+                         *       },
+                         *       "as_of": "2026-07-03T22:45:19.000000Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
                         "application/json": components["schemas"]["EnvelopeMeta"] & {
                             data: components["schemas"]["SEP10Token"];
                         };

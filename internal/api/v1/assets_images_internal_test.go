@@ -3,10 +3,14 @@ package v1
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/StellarIndex/stellar-index/internal/currency"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
@@ -130,4 +134,105 @@ type plainSep1Cache struct{}
 
 func (plainSep1Cache) GetIssuerSep1Cached(context.Context, string) (*timescale.IssuerSep1Cached, error) {
 	return nil, sql.ErrNoRows
+}
+
+// TestProjectCatalogueRows_Sep1ImageOverlay pins BACKLOG #37b: catalogue-
+// sourced listing rows (asset_class=fiat|stablecoin|crypto,
+// /v1/external/assets, and the catalogue phase of asset_class=all) must
+// gain the same SEP-1 logo overlay the classic_assets-backed listing rows
+// already got in b8d817f0. Before this change projectCatalogueRows never
+// touched Image at all, regardless of what the SEP-1 cache held.
+func TestProjectCatalogueRows_Sep1ImageOverlay(t *testing.T) {
+	stub := &stubSep1ImagesReader{imgs: []timescale.Sep1Image{
+		{Code: "USDC", Issuer: imgIssuerUSDC, Image: "https://circle.com/usdc.svg"},
+	}}
+	s := discardServer(stub)
+
+	matched := []*currency.VerifiedCurrency{
+		{
+			Ticker: "USDC",
+			Slug:   "usdc",
+			Name:   "USD Coin",
+			Class:  currency.ClassStablecoin,
+			Issuance: []currency.IssuanceEntry{
+				{Network: "stellar", Code: "USDC", Issuer: imgIssuerUSDC, AssetID: "USDC-" + imgIssuerUSDC},
+			},
+		},
+		{
+			// Fiat entry: StellarEntry() == nil (no on-chain issuer to have
+			// published a stellar.toml) — must stay imageless, not panic.
+			Ticker: "USD",
+			Slug:   "us-dollar",
+			Name:   "US Dollar",
+			Class:  currency.ClassFiat,
+		},
+		{
+			// Stellar issuance present but no matching SEP-1 cache entry.
+			Ticker: "AQUA",
+			Slug:   "aqua",
+			Name:   "Aquarius",
+			Class:  currency.ClassCrypto,
+			Issuance: []currency.IssuanceEntry{
+				{Network: "stellar", Code: "AQUA", Issuer: "GUNVERIFIEDXXX", AssetID: "AQUA-GUNVERIFIEDXXX"},
+			},
+		},
+	}
+	caps := make([]string, len(matched))
+
+	rows := s.projectCatalogueRows(context.Background(), matched, caps)
+
+	if rows[0].Image == nil || *rows[0].Image != "https://circle.com/usdc.svg" {
+		t.Errorf("catalogue USDC row image = %v, want circle logo", rows[0].Image)
+	}
+	if rows[1].Image != nil {
+		t.Errorf("fiat row (no Stellar issuance) should have no image: %v", rows[1].Image)
+	}
+	if rows[2].Image != nil {
+		t.Errorf("catalogue row with no SEP-1 cache match should have no image: %v", rows[2].Image)
+	}
+}
+
+// TestHandleAssetListFromCatalogue_Sep1ImageOverlay is the handler-level
+// regression: /v1/assets?asset_class=stablecoin must serve USDC's real
+// SEP-1 logo end to end, using the actual embedded verified-currency
+// catalogue (same pattern as TestCatalogueStatsUseListingReader) so a
+// future wiring regression (e.g. someone reverting to the bare
+// projectCatalogueRows(matched, caps) call) is caught by CI.
+func TestHandleAssetListFromCatalogue_Sep1ImageOverlay(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := &stubSep1ImagesReader{imgs: []timescale.Sep1Image{
+		{Code: "USDC", Issuer: imgIssuerUSDC, Image: "https://circle.com/usdc.svg"},
+	}}
+	s := discardServer(stub)
+	s.verifiedCurrencies = cat
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/assets?asset_class=stablecoin", nil)
+	w := httptest.NewRecorder()
+	s.handleAssetListFromCatalogue(w, req, "stablecoin", 100, "")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var env struct {
+		Data []AssetDetail `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode response: %v (body=%s)", err, w.Body.String())
+	}
+	var found bool
+	for _, row := range env.Data {
+		if row.Slug != "usdc" {
+			continue
+		}
+		found = true
+		if row.Image == nil || *row.Image != "https://circle.com/usdc.svg" {
+			t.Errorf("usdc listing row image = %v, want circle logo", row.Image)
+		}
+	}
+	if !found {
+		t.Fatal("usdc row not found in asset_class=stablecoin listing")
+	}
 }
