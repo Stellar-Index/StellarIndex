@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.12.1] — 2026-07-10
+
 ### Fixed
 - **v0.12.0 hotfix: `config_rewards` aquarius events were rejected at insert** — the
   twelfth rewards-gauge kind was present in migration 0099's CHECK constraint and emitted
