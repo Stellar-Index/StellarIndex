@@ -1,6 +1,6 @@
 ---
 title: Runbook — projector-replay
-last_verified: 2026-06-12
+last_verified: 2026-07-10
 status: ratified
 severity: P3
 ---
@@ -16,6 +16,20 @@ severity: P3
 | Typical wall time | ≤ 5 s SQL + projector catch-up (≈ 1 min per 100k ledgers per source) |
 | Impact | None — the projector tails `soroban_events` (ADR-0029); replay just rewinds a cursor. `ON CONFLICT DO NOTHING` makes re-writes idempotent. |
 
+## Before you start: is this the right tool?
+
+`projector-replay` is bound by the live projector's own tick cadence
+(5s `Interval`) and 60s `PerSourceTimeout` per cycle — roughly a
+720k-ledger/hour ceiling. For a rewind bigger than about **1M
+ledgers**, use **`stellarindex-ops projected-rebuild`** instead
+(ADR-0048 D3) — parallel workers, no per-cycle deadline, 10-20x the
+throughput, same decoders + same idempotent writes. See
+[docs/architecture/ingest-pipeline.md](../../architecture/ingest-pipeline.md#binding-rules)'s
+"Projected-source catch-up" section for the full comparison, and
+`internal/ops/chops/projected_rebuild.go`'s doc comment for the
+one-writer contract between the two tools (they must never run
+concurrently against overlapping history for the same source).
+
 ## Why this exists
 
 ADR-0032 Phase 5 (rc.97) **deleted** the family of `*-backfill`
@@ -23,8 +37,9 @@ operator subcommands (`cctp-backfill`, `rozo-backfill`,
 `soroswap-skim-backfill`, `comet-liquidity-backfill`,
 `phoenix-backfill`, `blend-backfill`, `sep41-transfers-backfill`,
 `drain-cascade-window`). They no longer exist. `projector-replay`
-is the **only** catch-up path for projected (Soroban-derived)
-sources — one cursor-rewind:
+is the primary catch-up path for SMALL projected-source rewinds
+(bigger ones use `projected-rebuild` — see above) — one
+cursor-rewind:
 
 ```sh
 stellarindex-ops projector-replay -config /etc/stellarindex.toml \
@@ -101,12 +116,19 @@ replay is caught up to the live tip.
 
 - ADR-0032 — per-source tables as projections.
 - ADR-0029 — soroban_events raw-event landing zone.
+- ADR-0048 D3 — the `projected-rebuild` bulk catch-up path for
+  rewinds too big for this tool's cadence.
 - `internal/projector/` — the projector implementation.
+- `internal/ops/chops/projected_rebuild.go` — the `projected-rebuild`
+  implementation + one-writer contract doc comment.
 - [projector-lag](projector-lag.md) — companion runbook for
   the lag alerts.
 
 ## Changelog
 
+- 2026-07-10 — ADR-0048 D3: added `projected-rebuild` as the
+  catch-up path for rewinds beyond ~1M ledgers; this runbook now
+  covers only the small-rewind case.
 - 2026-06-12 — F-1330: fix diagnosis SQL (`ingestion_cursors` not
   `source_cursors`; `last_updated` not `updated_at`); normalise flag
   form to single-dash to match the binary.

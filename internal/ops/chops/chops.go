@@ -8,14 +8,15 @@
 // `ch-txindex-backfill`, `ch-participant-backfill`, `ch-recognition`,
 // `verify-recognition`, `verify-reconciliation`, `compute-completeness`,
 // `verify-served-values`, `sdex-claim-audit`,
-// `classic-movements-backfill` — ADR-0033/ADR-0034 completeness +
-// reconciliation checks, the ADR-0034 Phase 2-4 lake backfill/gate/
-// reproject/rebuild tools, and the ADR-0047 pre-P23 classic-movement
-// reconstruction backfill, which is why reconciliation_catalogue.go
-// and gated_recon_seed.go (shared re-derivation source-set +
-// factory-child preseed helpers used by ch-rebuild, ch-reproject,
-// compute-completeness, and verify-reconciliation) live here too
-// rather than in a 7th package.
+// `classic-movements-backfill`, `projected-rebuild` — ADR-0033/ADR-0034
+// completeness + reconciliation checks, the ADR-0034 Phase 2-4 lake
+// backfill/gate/reproject/rebuild tools, the ADR-0047 pre-P23
+// classic-movement reconstruction backfill, and the ADR-0048 D3 bulk
+// catch-up path for projected sources, which is why
+// reconciliation_catalogue.go and gated_recon_seed.go (shared
+// re-derivation source-set + factory-child preseed helpers used by
+// ch-rebuild, ch-reproject, compute-completeness, and
+// verify-reconciliation) live here too rather than in a 7th package.
 //
 // Extracted from cmd/stellarindex-ops (maintainability audit
 // 2026-07-01, D1 finding M1-5); main.go's dispatch table calls Run
@@ -60,6 +61,8 @@ func Run(args []string) error {
 		return sdexClaimAudit(args[1:])
 	case "classic-movements-backfill":
 		return classicMovementsBackfill(args[1:])
+	case "projected-rebuild":
+		return projectedRebuild(args[1:])
 	default:
 		return fmt.Errorf("internal/ops/chops: unknown subcommand %q", args[0])
 	}

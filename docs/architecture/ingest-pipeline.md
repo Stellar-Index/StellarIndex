@@ -1,6 +1,6 @@
 ---
 title: Ingest pipeline — the one canonical data path
-last_verified: 2026-06-12
+last_verified: 2026-07-10
 status: binding
 ---
 
@@ -48,7 +48,9 @@ internal/pipeline/sink.go  ← fans each decoded item to its destination:
     │   internal/projector/  ← the ONE writer for Soroban-derived per-source
     │     │   tables (trades, blend_*, phoenix_*, comet_*, soroswap_skim,
     │     │   cctp_events, rozo_events, sep41_*, reflector/redstone oracle_updates).
-    │     │   ADR-0031/0032. Catch-up = `projector-replay -source <n> -from <l>`.
+    │     │   ADR-0031/0032. Catch-up = `projector-replay -source <n> -from <l>`
+    │     │   for small rewinds, `projected-rebuild -source <n> -from <l>` for
+    │     │   anything bigger (ADR-0048 D3 — see below).
     │     ▼
     └─► dispatcher events-goroutine sink ── NON-projected events write here
           directly (sdex, external CEX/FX, band, supply observers). These do
@@ -67,10 +69,42 @@ internal/pipeline/sink.go  ← fans each decoded item to its destination:
 re-derives from the lake, not a fresh MinIO walk.** Live tail is
 `internal/ledgerstream.Stream(ctx, from, 0)` (unbounded). Decoder
 backfills re-derive from the certified ClickHouse lake (SQL /
-`ch-rebuild`); projected-source catch-up is `projector-replay`. There
-are no separate `BackfillRange` / `StreamLive` methods on sources, and
-no per-source `<source>-backfill` subcommands (the whole family was
+`ch-rebuild`); projected-source catch-up is `projector-replay` or
+`projected-rebuild`, depending on size (see below). There are no
+separate `BackfillRange` / `StreamLive` methods on sources, and no
+per-source `<source>-backfill` subcommands (the whole family was
 deleted in rc.97 / ADR-0032 Phase 5).
+
+**Projected-source catch-up: `projector-replay` vs `projected-rebuild`
+(ADR-0048 D3).** Both rewind/refill a projected source's per-source
+tables from the same certified lake, through the same decoders, into
+the same idempotent (`ON CONFLICT DO NOTHING`) writes — they differ
+only in mechanism and throughput ceiling:
+
+- **`projector-replay -source <name> -from <ledger>`** rewinds the
+  LIVE projector's own cursor and lets its normal tick-cadence
+  catch-up walk the range — bound by `Interval` (5s) and
+  `PerSourceTimeout` (60s per cycle), roughly a 720k-ledger/hour
+  ceiling. Use it for small rewinds (rule of thumb: under ~1M
+  ledgers) — a post-decoder-fix re-walk, a short outage backfill.
+- **`stellarindex-ops projected-rebuild -source <name> -from <ledger>
+  [-to <ledger>] [-workers K]`** runs K parallel ledger-window workers
+  with NO per-cycle deadline, each streaming the ClickHouse lake
+  through the SAME registry-built decoder + the SAME sink
+  (`pipeline.HandleEvent`) the live projector uses. Roughly 10-20x the
+  `projector-replay` rate — the r1 2026-07 held jobs (blend_backstop,
+  blend_emitter, aquarius rewards; ~11-12M ledgers each) are the
+  motivating case. One-writer discipline is enforced by a live-cursor
+  guard: it refuses to run if the live projector's cursor for that
+  source is still inside the requested range (two writers racing the
+  same range — row-safe via `ON CONFLICT DO NOTHING`, but wasteful and
+  confusing to operate), unless the operator passes
+  `-allow-live-overlap`. It never touches the live projector's own
+  cursor — the live tail keeps running at tip throughout; the bulk job
+  only fills history strictly behind it. See
+  `internal/ops/chops/projected_rebuild.go`'s doc comment and
+  [docs/operations/runbooks/projector-replay.md](../operations/runbooks/projector-replay.md)
+  for the full operator procedure.
 
 ---
 

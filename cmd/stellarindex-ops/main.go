@@ -32,7 +32,8 @@
 //     `ch-txindex-backfill`, `ch-participant-backfill`,
 //     `ch-recognition`, `verify-recognition`, `verify-reconciliation`,
 //     `compute-completeness`, `verify-served-values`,
-//     `sdex-claim-audit`, `classic-movements-backfill`.
+//     `sdex-claim-audit`, `classic-movements-backfill`,
+//     `projected-rebuild`.
 //   - Doc generation: `docs-config` (regenerates the config
 //     reference from struct tags; called by `make docs-config`).
 //
@@ -146,6 +147,7 @@ var subcommands = map[string]func(args []string) error{
 	"sdex-claim-audit":        chops.Run,
 
 	"classic-movements-backfill": chops.Run,
+	"projected-rebuild":          chops.Run,
 }
 
 func realMain() int {
@@ -669,6 +671,50 @@ Subcommands:
                               -config /etc/stellarindex.toml \
                               -from 2 -to 58762516 \
                               -write
+  projected-rebuild -config PATH -source NAME -from N [-to N] [-workers K] [-window N] [-resume] [-write] [-ch-addr H:P] [-allow-live-overlap]
+                          ADR-0048 D3: bulk catch-up for a projected
+                          (Soroban-derived) source, replacing
+                          projector-replay for any rewind beyond
+                          roughly 1M ledgers. projector-replay rewinds
+                          the LIVE projector's cursor and is bound by
+                          its tick cadence + 60s per-cycle deadline
+                          (~720k ledgers/hour ceiling); this tool runs
+                          -workers (default 4, soft-capped 8) parallel
+                          ledger-window goroutines with NO per-cycle
+                          deadline, each streaming the ClickHouse lake
+                          through the SAME decoder + sink
+                          (pipeline.HandleEvent) the live projector
+                          uses, at roughly 10-20x the projector-replay
+                          rate. -to defaults to the live projector
+                          cursor's current position (fill exactly the
+                          history behind the live tail). One-writer
+                          contract: REFUSES to run if the live
+                          projector's cursor for -source is still
+                          inside [-from,-to] (would mean two writers
+                          racing the same range) unless
+                          -allow-live-overlap is passed; never touches
+                          the live projector's own cursor. Windowed
+                          (-window, default 50000 ledgers — controls
+                          checkpoint/scheduling granularity only; this
+                          tool streams, never buffers a window) and
+                          resumable (-resume, default true;
+                          checkpoints into ingestion_cursors as
+                          source="projected-rebuild",
+                          sub_source="<name>:<wlo>-<whi>" per window).
+                          Idempotent (every per-source table's ON
+                          CONFLICT DO NOTHING) — safe to re-run or to
+                          overlap with a retried window. Defaults to
+                          DRY-RUN (count + report only); pass -write to
+                          persist. Prints per-topic emitted counts on
+                          completion for an operator eyeball-check
+                          against the census tables — the ADR-0033
+                          compute-completeness verdict remains
+                          authoritative. Run under run-heavy-job.sh on
+                          r1. Example:
+                            stellarindex-ops projected-rebuild \
+                              -config /etc/stellarindex.toml \
+                              -source blend_backstop -from 51499546 \
+                              -workers 6 -write
   verify-recognition -config PATH -from N -to N
                           ADR-0033 Claim 2a: pull every distinct
                           (contract, topic[0]) shape from soroban_events

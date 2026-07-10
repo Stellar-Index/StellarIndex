@@ -15,6 +15,32 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **`stellarindex-ops projected-rebuild` — bulk catch-up for projected sources (ADR-0048 D3).**
+  `projector-replay` rewinds the live projector's cursor and lets its own tick cadence
+  (5s `Interval`, 60s `PerSourceTimeout` per cycle) walk the range — roughly a
+  720k-ledger/hour ceiling, hopeless for the held r1 jobs (blend_backstop from ledger
+  51.5M, blend_emitter from 51.5M, aquarius rewards from 52.7M — each ~11-12M ledgers).
+  `projected-rebuild -source NAME -from N [-to N] [-workers K] [-window N] [-resume]
+  [-write]` runs K parallel ledger-window workers (default 4, soft-capped 8) with NO
+  per-cycle deadline against a shared work queue (`windowScheduler`, an atomic index —
+  not a static per-worker split — so uneven density like aquarius rewards doesn't strand
+  one worker), each streaming the ClickHouse lake (`StreamContractEventsFiltered`)
+  through the exact same registry-built decoder + sink (`pipeline.HandleEvent`) the live
+  projector uses, at roughly 10-20x the `projector-replay` rate. One-writer contract:
+  refuses to run if the live projector's cursor for `-source` is inside `[-from,-to]`
+  (`-allow-live-overlap` overrides); never touches the live projector's own cursor —
+  checkpoints into its own `ingestion_cursors` rows
+  (`source="projected-rebuild"`, `sub_source="<name>:<wlo>-<whi>"`) per window instead,
+  giving `-resume` fine-grained, worker-order-independent restart. Streams rather than
+  buffers a window (safe under `run-heavy-job.sh`'s memory ceiling on r1). Defaults to
+  dry-run; prints per-topic emitted counts on completion for an operator cross-check
+  against the census tables (`compute-completeness` remains the authoritative verdict).
+  See `internal/ops/chops/projected_rebuild.go` and
+  [docs/architecture/ingest-pipeline.md](docs/architecture/ingest-pipeline.md)'s
+  "Projected-source catch-up" section for the full `projector-replay` vs
+  `projected-rebuild` comparison.
+
 ## [v0.13.0] — 2026-07-10
 
 ### Fixed
