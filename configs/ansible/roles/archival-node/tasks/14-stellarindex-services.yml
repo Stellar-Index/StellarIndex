@@ -96,6 +96,16 @@
       - "--exclude=.DS_Store"
 
 - name: Run pending migrations against the stellarindex database
+  # OPT-IN since 2026-07-10: deploy.yml is the canonical migration
+  # applier (stages migrations FROM THE TAG, guaranteeing
+  # binary<->migration parity). This task syncs from the OPERATOR'S
+  # LOCAL CHECKOUT, so running it by default applied an UNRELEASED
+  # migration (0101) to production during a plain config apply — and
+  # it failed on an ownership drift, leaving schema_migrations dirty
+  # and the play aborted before the config template it was invoked
+  # for. Set stellarindex_apply_migrations=true explicitly (greenfield
+  # bringup / deliberate out-of-band apply) to run it.
+  when: stellarindex_apply_migrations | default(false) | bool
   ansible.builtin.command:
     argv:
       - /usr/local/bin/stellarindex-migrate
