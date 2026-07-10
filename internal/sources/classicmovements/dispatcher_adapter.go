@@ -27,8 +27,8 @@ import (
 // same-run claims/clawbacks for free; pending collects the ones this
 // index can't resolve (create out of this run's range, or landed in
 // a not-yet-visited window — see doc.go's ordering caveat) for the
-// caller to resolve via a second-pass Postgres lookup
-// (timescale.Store.FindClaimableBalanceCreate) — see
+// caller to resolve via a second-pass ClickHouse lookup (ADR-0048 D2;
+// previously Postgres) — see
 // TakePendingClaimableBalances / ResolvePendingClaimableBalance.
 //
 // The in-memory index has NO eviction — it grows with the ledger
@@ -39,7 +39,7 @@ import (
 // backfilling Phase 3 MUST chunk `-from`/`-to` into multi-million-
 // ledger invocations (same heavy-job discipline as every other
 // backfill in this repo) rather than one genesis-to-P23 call — the
-// Postgres fallback is what keeps chunked, resumed invocations
+// ClickHouse fallback is what keeps chunked, resumed invocations
 // correct despite each invocation starting with an empty index.
 //
 // Not safe for concurrent Decode calls — sequential caller only,
@@ -138,7 +138,7 @@ func (d *Decoder) recordPending(ref PendingClaimableBalanceRef) {
 // ResolveBalance re-checks the in-run BalanceId index for
 // balanceIDHex — exported so a caller draining
 // TakePendingClaimableBalances after a whole window can retry the
-// FREE in-memory path before falling back to Postgres. This closes
+// FREE in-memory path before falling back to ClickHouse. This closes
 // the one same-window gap the index has: StreamClassicOps orders ops
 // by (ledger_seq, tx_hash, op_index), so a claim whose tx_hash sorts
 // lexicographically BEFORE its own create's tx_hash in the SAME
@@ -146,7 +146,7 @@ func (d *Decoder) recordPending(ref PendingClaimableBalanceRef) {
 // create is indexed moments later in that same window's loop. By the
 // time the whole window has been decoded, the index has caught up —
 // re-checking here resolves that case for free instead of spending a
-// Postgres round trip (or, worse, a false "unresolved" count) on
+// ClickHouse round trip (or, worse, a false "unresolved" count) on
 // same-window data that was there all along.
 func (d *Decoder) ResolveBalance(balanceIDHex string) (asset string, amount canonical.Amount, createdBy string, found bool) {
 	info, ok := d.lookupClaimableBalance(balanceIDHex)
@@ -160,9 +160,10 @@ func (d *Decoder) ResolveBalance(balanceIDHex string) (asset string, amount cano
 // Decoder's in-run index has been unable to resolve since the last
 // call (or since construction), and clears its internal buffer. The
 // caller (classic-movements-backfill) is expected to drain this
-// after each streamed window and attempt a Postgres-backed second
-// pass (timescale.Store.FindClaimableBalanceCreate) for each entry —
-// see ResolvePendingClaimableBalance. An entry that still can't be
+// after each streamed window and attempt a ClickHouse-backed second
+// pass (clickhouse.FindClaimableBalanceCreate — ADR-0048 D2;
+// previously Postgres) for each entry — see
+// ResolvePendingClaimableBalance. An entry that still can't be
 // resolved there is a genuine ADR-0047 D4 recognizable-incompleteness
 // signal: count it, log a summary, never guess an amount.
 func (d *Decoder) TakePendingClaimableBalances() []PendingClaimableBalanceRef {

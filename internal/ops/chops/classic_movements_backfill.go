@@ -9,12 +9,11 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarIndex/stellar-index/internal/config"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/dispatcher"
 	"github.com/StellarIndex/stellar-index/internal/ops/opsutil"
 	"github.com/StellarIndex/stellar-index/internal/sources/classicmovements"
 	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
 // classicMovementOpKey identifies one classic operation for
@@ -39,17 +38,24 @@ type classicMovementOpKey struct {
 const classicMovementsP23StartLedger uint32 = 58_762_517
 
 // classicMovementsDefaultWindow is the per-window ledger span this
-// command streams from ClickHouse + writes to Postgres before
-// checkpointing. Bounds memory (each window's decoded batch, not the
+// command streams from ClickHouse + writes to ClickHouse before
+// moving on. Bounds memory (each window's decoded batch, not the
 // whole invocation, is held in-process) the same way ch-rebuild's
 // maxBufferedRange guard does, and gives a resume point every window
 // rather than only at the end of a multi-day run.
 const classicMovementsDefaultWindow = 500_000
 
 // classicMovementsBackfill is the ADR-0047 write path for ALL FOUR
-// phases: stellarindex-ops classic-movements-backfill -config PATH
-// -from N -to N [-window N] [-resume] [-write]. Each window streams
-// TWO decode surfaces from ClickHouse:
+// phases, RETARGETED by ADR-0048 D2 to write ClickHouse's
+// stellar.account_movements instead of Postgres' classic_movements
+// (migration 0105 stays applied but UNPOPULATED — see
+// migrations/README.md's 0105 row): stellarindex-ops
+// classic-movements-backfill -ch-addr ADDR -from N -to N [-window N]
+// [-resume] [-write] [-verify]. Lake-in, lake-out — no Postgres
+// anywhere in this command's loop (ADR-0048 D2's explicit
+// requirement), unlike the pre-0048 version this replaces.
+//
+// Each window streams TWO decode surfaces from ClickHouse:
 //   - the op-only surface (classicmovements.SupportedOpTypes /
 //     Decoder.Decode) — Phases 1-3 plus Phase 4's AccountMerge;
 //   - the entry-changes-correlated surface
@@ -62,18 +68,21 @@ const classicMovementsDefaultWindow = 500_000
 //     window (see entrychanges.go's package doc for why this can't
 //     go through Decoder.Decode).
 //
-// Both surfaces write into the SAME per-window batch via
-// timescale.Store.BatchInsertClassicMovements.
+// Both surfaces write into the SAME per-window batch, fanned out
+// (one classicmovements.Movement -> 1-2 stellar.account_movements
+// rows, ADR-0048 D2's direction discriminator) and batch-inserted via
+// clickhouse.InsertAccountMovements.
 //
 // Phase 3's ClaimableBalance claim/clawback correlation (research
 // §2's "b+own-index" path) resolves in three tiers per window:
-// Decoder's free in-memory BalanceId index first, a Postgres lookup
-// (timescale.Store.FindClaimableBalanceCreate) second for creates
-// outside this run, and an explicit unresolved count — never a
-// guessed amount — for anything neither finds. See
-// classicmovements/dispatcher_adapter.go's Decoder doc for the
-// memory-scaling reason operators should chunk `-from`/`-to` into
-// multi-million-ledger invocations once Phase 3 volume is in play.
+// Decoder's free in-memory BalanceId index first, a ClickHouse lookup
+// (clickhouse.FindClaimableBalanceCreate, scanning what THIS command
+// has itself already written to stellar.account_movements) second for
+// creates outside this run, and an explicit unresolved count — never
+// a guessed amount — for anything neither finds. See
+// classicmovements/dispatcher_adapter.go's Decoder doc for the memory-
+// scaling reason operators should chunk `-from`/`-to` into multi-
+// million-ledger invocations once Phase 3 volume is in play.
 //
 // Phase 4's entry-changes surface runs a cheap per-window fidelity
 // probe (clickhouse.CountOpScopedEntryChanges) before deciding how to
@@ -101,33 +110,47 @@ const classicMovementsDefaultWindow = 500_000
 // notSunkEvents entry) — this command is its own dedicated,
 // self-contained writer.
 //
-// Defaults to DRY-RUN (count only); pass -write to persist. Windowed
-// + resumable: checkpoints into ingestion_cursors as
-// (source="classic-movements-backfill", sub_source="<from>-<to>")
-// after each window's write commits, same pattern as
-// `stellarindex-ops census-backfill`. Idempotent either way — the
-// classic_movements PK's ON CONFLICT DO NOTHING makes re-running an
-// already-written window a no-op.
+// Defaults to DRY-RUN (count only); pass -write to persist.
+// Windowed + resumable, but — per ADR-0048 D2's "no Postgres in the
+// loop" — resume is now DATA-DERIVED rather than cursor-persisted:
+// -resume (default true) queries clickhouse.MaxAccountMovementLedger
+// for the highest ledger already written in [-from,-to] and restarts
+// FROM that ledger (not past it — a deliberate one-ledger overlap so
+// a crash mid-window can never silently skip a partially-written
+// ledger; ReplacingMergeTree absorbs the resulting duplicate insert
+// for free). This mirrors ch-participant-backfill / ch-txindex-
+// backfill's "the data IS the checkpoint" convention rather than a
+// separate ingestion_cursors row. Idempotent either way — ClickHouse
+// re-inserting an already-written window collapses at merge time.
+//
+// -verify (default false) recounts each window from
+// stellar.account_movements right after it's processed (whether or
+// not -write persisted anything new this run) and compares per-
+// movement_kind counts against what THIS run's decode produced for
+// that window — a cheap, window-scoped reconciliation (ADR-0047 D4
+// applied to the CH write target), not full ADR-0033 machinery.
+// Mismatches are logged loudly but non-fatal; the final summary
+// reports the total.
 //
 // -to is HARD-CLAMPED below classicMovementsP23StartLedger regardless
 // of what the operator passes — loudly, via a stderr warning, never
 // silently. This is the one enforcement point for ADR-0047 D2's
 // "historical-only" invariant; nothing upstream (the decoder, the CH
 // reader) knows about the P23 boundary at all.
-func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse+clamp, resume, windowed stream+decode+write loop, checkpoint, report.
+func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse+clamp, resume, windowed stream+decode+write+verify loop, report.
 	fs := flag.NewFlagSet("classic-movements-backfill", flag.ContinueOnError)
-	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	from := fs.Uint("from", 0, "first ledger sequence (inclusive, required)")
 	to := fs.Uint("to", 0, "last ledger sequence (inclusive, required) — HARD-CLAMPED below the P23 boundary (58762517) regardless of what is passed here (ADR-0047 D2: this source is historical-only)")
-	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
-	window := fs.Uint("window", classicMovementsDefaultWindow, "ledger-window size per streamed ClickHouse read + Postgres batch commit; bounds memory and gives a resumable checkpoint every window")
-	resume := fs.Bool("resume", true, "resume from the saved cursor if a checkpoint exists for this from/to pair")
-	write := fs.Bool("write", false, "actually write to Postgres (default: dry-run, count only)")
+	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address — both the read (lake) and write (stellar.account_movements, ADR-0048 D2) target; no Postgres connection is opened by this command")
+	window := fs.Uint("window", classicMovementsDefaultWindow, "ledger-window size per streamed ClickHouse read + ClickHouse batch write; bounds memory and gives a resumable checkpoint every window")
+	resume := fs.Bool("resume", true, "resume from the highest ledger already written to stellar.account_movements in [-from,-to], if any (data-derived — see doc comment)")
+	write := fs.Bool("write", false, "actually write to ClickHouse (default: dry-run, count only)")
+	verify := fs.Bool("verify", false, "after each window, recount stellar.account_movements and compare against this run's decode-time per-kind counts (cheap reconciliation, not full ADR-0033 machinery)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *cfgPath == "" || *from == 0 || *to == 0 || *to < *from {
-		return fmt.Errorf("-config, -from, -to are required; -to must be >= -from")
+	if *from == 0 || *to == 0 || *to < *from {
+		return fmt.Errorf("-from, -to are required; -to must be >= -from")
 	}
 
 	clampedTo := uint32(*to) //nolint:gosec // flag.Uint values here are ledger sequences, always in uint32 range for real usage.
@@ -143,36 +166,21 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 			*from, classicMovementsP23StartLedger, clampedTo)
 	}
 
-	cfg, err := config.LoadWithEnv(*cfgPath)
-	if err != nil {
-		return err
-	}
-
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
-	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
-	if err != nil {
-		return fmt.Errorf("storage open: %w", err)
+	if err := clickhouse.EnsureAccountMovementsTable(ctx, *chAddr); err != nil {
+		return fmt.Errorf("classic-movements-backfill: %w", err)
 	}
-	defer func() { _ = store.Close() }()
 
-	const cursorSrc = "classic-movements-backfill"
-	cursorSub := fmt.Sprintf("%d-%d", *from, clampedTo)
 	if *resume {
-		prior, gerr := store.GetCursor(ctx, cursorSrc, cursorSub)
-		if gerr == nil && prior.LastLedger >= startLedger {
-			startLedger = prior.LastLedger + 1
-			fmt.Fprintf(os.Stderr, "classic-movements-backfill: resuming at ledger %d (prior last_ledger=%d)\n",
-				startLedger, prior.LastLedger)
-		} else if gerr != nil && !errors.Is(gerr, timescale.ErrNotFound) {
-			fmt.Fprintf(os.Stderr, "classic-movements-backfill: read prior cursor failed (%v) — starting from -from\n", gerr)
+		maxLedger, found, merr := clickhouse.MaxAccountMovementLedger(ctx, *chAddr, startLedger, clampedTo)
+		if merr != nil {
+			fmt.Fprintf(os.Stderr, "classic-movements-backfill: resume lookup failed (%v) — starting from -from\n", merr)
+		} else if found && maxLedger >= startLedger {
+			fmt.Fprintf(os.Stderr, "classic-movements-backfill: resuming at ledger %d (highest ledger already in stellar.account_movements for this range; that ledger is deliberately re-processed, not skipped)\n", maxLedger)
+			startLedger = maxLedger
 		}
-	}
-	if startLedger > clampedTo {
-		fmt.Fprintf(os.Stderr, "classic-movements-backfill: cursor already at or past -to (%d >= %d) — nothing to do\n",
-			startLedger, clampedTo)
-		return nil
 	}
 
 	mode := "DRY-RUN (count only)"
@@ -183,16 +191,17 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 	if windowSize == 0 {
 		windowSize = classicMovementsDefaultWindow
 	}
-	fmt.Fprintf(os.Stderr, "classic-movements-backfill: [%d,%d] mode=%s window=%d ch=%s\n",
-		startLedger, clampedTo, mode, windowSize, *chAddr)
+	fmt.Fprintf(os.Stderr, "classic-movements-backfill: [%d,%d] mode=%s window=%d ch=%s verify=%v\n",
+		startLedger, clampedTo, mode, windowSize, *chAddr, *verify)
 
 	dec := classicmovements.NewDecoder()
 	opTypes := classicmovements.SupportedOpTypes()
 	entryChangeOpTypes := classicmovements.EntryChangeOpTypes()
 	counts := map[classicmovements.Kind]int64{}
-	var totalRead, totalDecoded, totalLanded int64
-	var totalResolvedIndex, totalResolvedPG, totalUnresolved int64
+	var totalRead, totalDecoded, totalWritten int64
+	var totalResolvedIndex, totalResolvedCH, totalUnresolved int64
 	var totalLPUnavailable, totalCAP0038Checked, totalCAP0038Skipped, totalCAP0038Liquidations int64
+	var totalVerifyMismatches int64
 
 	for wlo := startLedger; wlo <= clampedTo; {
 		whi := wlo + windowSize - 1
@@ -200,7 +209,8 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 			whi = clampedTo
 		}
 
-		var batch []timescale.ClassicMovementRow
+		var batch []clickhouse.AccountMovement
+		windowCounts := map[classicmovements.Kind]int64{}
 		var windowRead, windowDecoded int64
 		werr := clickhouse.StreamClassicOps(ctx, *chAddr, wlo, whi, opTypes, func(op clickhouse.ClassicOp) error {
 			windowRead++
@@ -229,7 +239,8 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 				}
 				windowDecoded++
 				counts[me.Movement.Kind]++
-				batch = append(batch, classicMovementRowOf(me.Movement))
+				windowCounts[me.Movement.Kind]++
+				batch = append(batch, accountMovementOf(me.Movement))
 			}
 			return nil
 		})
@@ -248,22 +259,24 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 		// earlier in this window (dec.decodeOp records these instead of
 		// failing). Try the free in-memory re-check first (closes the
 		// same-window tx_hash-ordering gap — see Decoder.ResolveBalance's
-		// doc comment), then fall back to Postgres for creates outside
-		// this run's range entirely. Still-unresolved entries are a
-		// genuine ADR-0047 D4 recognizable-incompleteness signal: counted
-		// and logged, never guessed.
+		// doc comment), then fall back to ClickHouse for creates outside
+		// this run's range entirely (ADR-0048 D2: previously a Postgres
+		// lookup). Still-unresolved entries are a genuine ADR-0047 D4
+		// recognizable-incompleteness signal: counted and logged, never
+		// guessed.
 		pending := dec.TakePendingClaimableBalances()
-		var windowResolvedIndex, windowResolvedPG, windowUnresolved int64
+		var windowResolvedIndex, windowResolvedCH, windowUnresolved int64
 		for _, ref := range pending {
 			if asset, amount, createdBy, ok := dec.ResolveBalance(ref.BalanceIDHex); ok {
 				windowResolvedIndex++
 				windowDecoded++
 				m := classicmovements.ResolvePendingClaimableBalance(ref, asset, amount, createdBy)
 				counts[m.Kind]++
-				batch = append(batch, classicMovementRowOf(m))
+				windowCounts[m.Kind]++
+				batch = append(batch, accountMovementOf(m))
 				continue
 			}
-			asset, amount, createdBy, found, ferr := store.FindClaimableBalanceCreate(ctx, ref.BalanceIDHex)
+			asset, amountBig, createdBy, found, ferr := clickhouse.FindClaimableBalanceCreate(ctx, *chAddr, ref.BalanceIDHex)
 			if ferr != nil {
 				fmt.Fprintf(os.Stderr, "classic-movements-backfill: FindClaimableBalanceCreate(%s) failed: %v — counting as unresolved\n",
 					ref.BalanceIDHex, ferr)
@@ -272,22 +285,23 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 			}
 			if !found {
 				windowUnresolved++
-				fmt.Fprintf(os.Stderr, "classic-movements-backfill: unresolved %s balance_id=%s ledger=%d tx=%s op=%d — no create row found (in-memory index or Postgres); skipping, not guessing\n",
+				fmt.Fprintf(os.Stderr, "classic-movements-backfill: unresolved %s balance_id=%s ledger=%d tx=%s op=%d — no create row found (in-memory index or ClickHouse); skipping, not guessing\n",
 					ref.Kind, ref.BalanceIDHex, ref.Ledger, ref.TxHash, ref.OpIndex)
 				continue
 			}
-			windowResolvedPG++
+			windowResolvedCH++
 			windowDecoded++
-			m := classicmovements.ResolvePendingClaimableBalance(ref, asset, amount, createdBy)
+			m := classicmovements.ResolvePendingClaimableBalance(ref, asset, canonical.NewAmount(amountBig), createdBy)
 			counts[m.Kind]++
-			batch = append(batch, classicMovementRowOf(m))
+			windowCounts[m.Kind]++
+			batch = append(batch, accountMovementOf(m))
 		}
 		totalResolvedIndex += windowResolvedIndex
-		totalResolvedPG += windowResolvedPG
+		totalResolvedCH += windowResolvedCH
 		totalUnresolved += windowUnresolved
 		if len(pending) > 0 {
-			fmt.Fprintf(os.Stderr, "classic-movements-backfill: window [%d,%d] claimable-balance correlation — %d resolved (index), %d resolved (postgres), %d unresolved\n",
-				wlo, whi, windowResolvedIndex, windowResolvedPG, windowUnresolved)
+			fmt.Fprintf(os.Stderr, "classic-movements-backfill: window [%d,%d] claimable-balance correlation — %d resolved (index), %d resolved (clickhouse), %d unresolved\n",
+				wlo, whi, windowResolvedIndex, windowResolvedCH, windowUnresolved)
 		}
 
 		// ADR-0047 Phase 4 entry-changes-correlated surface:
@@ -353,7 +367,8 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 				for _, m := range movements {
 					windowEntryChangeDecoded++
 					counts[m.Kind]++
-					batch = append(batch, classicMovementRowOf(m))
+					windowCounts[m.Kind]++
+					batch = append(batch, accountMovementOf(m))
 				}
 			case xdr.OperationTypeAllowTrust, xdr.OperationTypeSetTrustLineFlags:
 				if !fidelityPresent {
@@ -375,7 +390,8 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 				for _, m := range movements {
 					windowEntryChangeDecoded++
 					counts[m.Kind]++
-					batch = append(batch, classicMovementRowOf(m))
+					windowCounts[m.Kind]++
+					batch = append(batch, accountMovementOf(m))
 				}
 			}
 			return nil
@@ -398,21 +414,23 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 				wlo, whi, fidelityPresent, windowLPUnavailable, windowCAP0038Checked, windowCAP0038Skipped, windowCAP0038Liquidations)
 		}
 
-		if *write {
-			if len(batch) > 0 {
-				landed, ierr := store.BatchInsertClassicMovements(ctx, batch)
-				if ierr != nil {
-					return fmt.Errorf("classic-movements-backfill: write [%d,%d]: %w", wlo, whi, ierr)
-				}
-				totalLanded += landed
+		if *write && len(batch) > 0 {
+			written, ierr := clickhouse.InsertAccountMovements(ctx, *chAddr, batch)
+			if ierr != nil {
+				return fmt.Errorf("classic-movements-backfill: write [%d,%d]: %w", wlo, whi, ierr)
 			}
-			if cerr := store.UpsertCursor(ctx, cursorSrc, cursorSub, whi); cerr != nil {
-				fmt.Fprintf(os.Stderr, "classic-movements-backfill: checkpoint at %d failed: %v\n", whi, cerr)
-			}
+			totalWritten += written
 		}
 
-		fmt.Fprintf(os.Stderr, "classic-movements-backfill: window [%d,%d] done — %d ops read, %d movements decoded (running totals: read=%d decoded=%d landed=%d)\n",
-			wlo, whi, windowRead, windowDecoded, totalRead, totalDecoded, totalLanded)
+		if *verify {
+			mismatches := verifyWindowCounts(wlo, whi, windowCounts, func() (clickhouse.AccountMovementVerifyCounts, error) {
+				return clickhouse.VerifyAccountMovementsWindow(ctx, *chAddr, wlo, whi)
+			})
+			totalVerifyMismatches += mismatches
+		}
+
+		fmt.Fprintf(os.Stderr, "classic-movements-backfill: window [%d,%d] done — %d ops read, %d movements decoded (running totals: read=%d decoded=%d written=%d) — resume point -from %d\n",
+			wlo, whi, windowRead, windowDecoded, totalRead, totalDecoded, totalWritten, whi)
 
 		if whi == clampedTo {
 			break
@@ -435,43 +453,87 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 	fmt.Printf("%-24s %14d\n", "TOTAL ops read", totalRead)
 	fmt.Printf("%-24s %14d\n", "TOTAL decoded", totalDecoded)
 	fmt.Printf("%-24s %14d\n", "CB resolved (index)", totalResolvedIndex)
-	fmt.Printf("%-24s %14d\n", "CB resolved (postgres)", totalResolvedPG)
+	fmt.Printf("%-24s %14d\n", "CB resolved (clickhouse)", totalResolvedCH)
 	fmt.Printf("%-24s %14d\n", "CB UNRESOLVED", totalUnresolved)
 	fmt.Printf("%-24s %14d\n", "LP entry-changes N/A", totalLPUnavailable)
 	fmt.Printf("%-24s %14d\n", "CAP-0038 checked", totalCAP0038Checked)
 	fmt.Printf("%-24s %14d\n", "CAP-0038 skipped (fidelity)", totalCAP0038Skipped)
 	fmt.Printf("%-24s %14d\n", "CAP-0038 liquidations", totalCAP0038Liquidations)
 	if *write {
-		fmt.Printf("%-24s %14d\n", "TOTAL landed (new)", totalLanded)
+		fmt.Printf("%-24s %14d\n", "TOTAL rows written", totalWritten)
+		fmt.Println("(rows, post-fan-out — 1-2 rows per movement; not deduped, ReplacingMergeTree resolves at merge time)")
 	} else {
-		fmt.Println("\n(dry-run — re-run with -write to persist to Postgres)")
+		fmt.Println("\n(dry-run — re-run with -write to persist to ClickHouse)")
+	}
+	if *verify {
+		fmt.Printf("%-24s %14d\n", "verify mismatches", totalVerifyMismatches)
 	}
 	if totalUnresolved > 0 {
-		fmt.Printf("\nNOTE: %d claim/clawback ops had no resolvable create row (recognizable ADR-0047 D4 incompleteness — see stderr for the per-op log). Re-running once the create's own range has been backfilled resolves these on a subsequent pass; the PK's ON CONFLICT DO NOTHING makes that safe.\n", totalUnresolved)
+		fmt.Printf("\nNOTE: %d claim/clawback ops had no resolvable create row (recognizable ADR-0047 D4 incompleteness — see stderr for the per-op log). Re-running once the create's own range has been backfilled resolves these on a subsequent pass; ClickHouse's ReplacingMergeTree makes that safe.\n", totalUnresolved)
 	}
 	if totalLPUnavailable > 0 || totalCAP0038Skipped > 0 {
-		fmt.Printf("\nNOTE: %d LiquidityPoolDeposit/Withdraw ops and %d AllowTrust/SetTrustLineFlags checks were skipped for lack of ledger_entry_changes fidelity in this range (research §3.2 — Phase 0's ch-backfill hasn't reached it yet). Re-running this same range after Phase 0 backfills it resolves these; the PK's ON CONFLICT DO NOTHING makes that safe.\n",
+		fmt.Printf("\nNOTE: %d LiquidityPoolDeposit/Withdraw ops and %d AllowTrust/SetTrustLineFlags checks were skipped for lack of ledger_entry_changes fidelity in this range (research §3.2 — Phase 0's ch-backfill hasn't reached it yet). Re-running this same range after Phase 0 backfills it resolves these; ClickHouse's ReplacingMergeTree makes that safe.\n",
 			totalLPUnavailable, totalCAP0038Skipped)
+	}
+	if totalVerifyMismatches > 0 {
+		fmt.Printf("\nWARNING: %d window(s) had a movement_kind count mismatch between this run's decode and stellar.account_movements — see stderr for the per-window detail. Common benign causes: a concurrent write to the SAME range from another invocation, or un-merged ReplacingMergeTree parts still settling; a persistent mismatch after a quiet re-run warrants investigation.\n", totalVerifyMismatches)
 	}
 	return nil
 }
 
-// classicMovementRowOf converts a decode-time classicmovements.Movement
-// into its timescale.ClassicMovementRow storage shape. Kept local to
-// this command (not internal/pipeline) since classic-movements-backfill
-// is the ONLY caller — unlike SEP41TransferRowOf/SEP41SupplyRowOf,
-// which pipeline.HandleEvent's live path also needs.
-func classicMovementRowOf(m classicmovements.Movement) timescale.ClassicMovementRow {
-	return timescale.ClassicMovementRow{
-		Kind:            timescale.ClassicMovementKind(m.Kind),
-		Provenance:      timescale.ClassicMovementProvenance(m.Provenance),
+// verifyWindowCounts recounts a window from ClickHouse (via query,
+// injected so this stays testable without a live connection) and
+// compares per-movement_kind counts against decoded — this run's own
+// windowCounts. Logs every mismatch to stderr; returns the number of
+// kinds that disagreed (0 = clean). Never fatal — see the doc comment
+// on classicMovementsBackfill's -verify flag.
+func verifyWindowCounts(wlo, whi uint32, decoded map[classicmovements.Kind]int64, query func() (clickhouse.AccountMovementVerifyCounts, error)) int64 {
+	observed, err := query()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "classic-movements-backfill: verify window [%d,%d] failed: %v\n", wlo, whi, err)
+		return 1
+	}
+	var mismatches int64
+	seen := map[string]bool{}
+	for kind, want := range decoded {
+		seen[string(kind)] = true
+		got := int64(observed[string(kind)]) //nolint:gosec // movement counts are always small relative to int64
+		if got != want {
+			mismatches++
+			fmt.Fprintf(os.Stderr, "classic-movements-backfill: VERIFY MISMATCH window [%d,%d] kind=%s decoded=%d clickhouse=%d\n",
+				wlo, whi, kind, want, got)
+		}
+	}
+	for kind, got := range observed {
+		if seen[kind] {
+			continue
+		}
+		if got > 0 {
+			mismatches++
+			fmt.Fprintf(os.Stderr, "classic-movements-backfill: VERIFY MISMATCH window [%d,%d] kind=%s decoded=0 clickhouse=%d (unexpected kind in ClickHouse for this window)\n",
+				wlo, whi, kind, got)
+		}
+	}
+	return mismatches
+}
+
+// accountMovementOf converts a decode-time classicmovements.Movement
+// into its clickhouse.AccountMovement storage shape — the pre-fan-out
+// input to clickhouse.InsertAccountMovements. Kept local to this
+// command (not internal/pipeline), like the retired
+// classicMovementRowOf it replaces: classic-movements-backfill is the
+// ONLY caller.
+func accountMovementOf(m classicmovements.Movement) clickhouse.AccountMovement {
+	return clickhouse.AccountMovement{
+		MovementKind:    string(m.Kind),
+		Provenance:      string(m.Provenance),
 		Ledger:          m.Ledger,
 		LedgerCloseTime: m.LedgerCloseTime,
 		TxHash:          m.TxHash,
 		OpIndex:         m.OpIndex,
 		LegIndex:        m.LegIndex,
 		Asset:           m.Asset,
-		Amount:          m.Amount,
+		Amount:          m.Amount.BigInt(),
 		FromAddress:     m.FromAddress,
 		ToAddress:       m.ToAddress,
 		Attributes:      m.Attributes,

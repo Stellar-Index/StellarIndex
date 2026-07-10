@@ -40,6 +40,25 @@ against.
   [docs/architecture/ingest-pipeline.md](docs/architecture/ingest-pipeline.md)'s
   "Projected-source catch-up" section for the full `projector-replay` vs
   `projected-rebuild` comparison.
+- **`stellar.account_movements` — the ClickHouse-native account-movement archive
+  (ADR-0048 D2).** Amends ADR-0047 D1: the pre-P23 classic-movement archive is
+  now served from ClickHouse, not Postgres. New DDL
+  (`deploy/clickhouse/tier1_schema.sql`, ReplacingMergeTree, ORDER BY
+  `(address, ledger, tx_hash, op_index, leg_index, direction)`) plus a new
+  `internal/storage/clickhouse/account_movements.go` — `FanOutAccountMovement`
+  (one reconstructed movement -> 1-2 feed rows, one per participant, with the
+  `sent`/`received`/`self` direction discriminator), `InsertAccountMovements`
+  (fat-batch, chunked, retry-safe writer), `MaxAccountMovementLedger`
+  (data-derived resume point), `FindClaimableBalanceCreate` (the ClickHouse
+  replacement for the retired Postgres claim/clawback correlation fallback),
+  and `VerifyAccountMovementsWindow` (the new `-verify` mode's cheap
+  per-window reconciliation). `stellarindex-ops classic-movements-backfill`
+  is retargeted end to end: it opens no Postgres connection at all ("no
+  Postgres in the loop"), resumes from ClickHouse data instead of an
+  `ingestion_cursors` row, and gains a `-verify` flag. The decode layer
+  (`internal/sources/classicmovements`) is unchanged — only the write target
+  moved. Postgres migration 0105 (`classic_movements`) stays applied but is
+  now intentionally UNPOPULATED — see `migrations/README.md`'s 0105 row.
 
 ## [v0.13.0] — 2026-07-10
 

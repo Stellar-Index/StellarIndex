@@ -154,8 +154,9 @@ type PendingClaimableBalanceRef struct {
 
 // ResolvePendingClaimableBalance builds the Movement for a
 // previously-pending claim/clawback now that its create row's
-// asset/amount/creator have been found — typically via a Postgres
-// second-pass lookup (timescale.Store.FindClaimableBalanceCreate)
+// asset/amount/creator have been found — typically via a ClickHouse
+// second-pass lookup (clickhouse.FindClaimableBalanceCreate —
+// ADR-0048 D2; previously Postgres)
 // run by the caller after Decoder.TakePendingClaimableBalances,
 // since this package stays storage-agnostic (mirrors
 // internal/sources/sdex never importing a storage package).
@@ -175,7 +176,7 @@ func ResolvePendingClaimableBalance(ref PendingClaimableBalanceRef, asset string
 		Attributes: map[string]any{
 			"balance_id":   ref.BalanceIDHex,
 			"created_by":   createdBy,
-			"resolved_via": "postgres_second_pass",
+			"resolved_via": "ch_second_pass",
 		},
 	}
 }
