@@ -16,6 +16,29 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Full-history SAC balance seed — closes the BLND/EURC/KALE/PHO supply
+  cross-check residual** (migration 0102, ROADMAP #14 / incident
+  2026-07-06 "PHO/BLND VERDICT" follow-up). `supply seed-sac-balances`
+  gains `-full-history`, reading `stellar.ledger_entry_changes` (the
+  certified append-log, complete to genesis per ADR-0034) via the new
+  `clickhouse.StreamSACBalanceSeedsFullHistory` instead of the default
+  `stellar.ledger_entries_current` (a materialized view with a ~ledger
+  62,000,000 coverage floor — it never processed rows ch-backfilled
+  before the MV existed). BLND/EURC/KALE/PHO's largest holders are
+  Phoenix/Blend pool contracts that received the SAC-wrapped token years
+  before that floor and have been dormant since, so the default seed
+  (and the live observer) never saw them — Algorithm 2's classic total
+  under-counted, tripping `supply_cross_check_divergence` in the
+  `sac_total > classic_total` direction even after the 2026-07-08
+  subset-bound fix. No new observer or protocol-specific pool-state
+  reader was needed: the balances are ordinary
+  `Vec(Symbol("Balance"), Address(pool))` entries on the SAC's own
+  storage (the exact shape `sac_balance_observations` already models),
+  superseding an earlier hypothesis that they lived in pool-internal
+  custom storage. New `sac_balance_seed_provenance` table records each
+  pass's `source` / `holders_seeded` / ledger bounds as an audit trail.
+  See docs/architecture/supply-pipeline.md "Dormant contract-held SAC
+  balances" for the operator verification recipe.
 - **DeFindex BlendStrategy factory-anchored fan-out** (ROADMAP #7 residual,
   2026-07-10). The `("DeFindexFactory","create")` event body carries each
   asset's assigned strategy address(es) (`assets[].strategies[].address`) —

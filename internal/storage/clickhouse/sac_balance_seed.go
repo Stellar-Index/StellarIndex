@@ -109,6 +109,103 @@ func StreamSACBalanceSeeds(ctx context.Context, addr string, watched map[string]
 	return rows.Err()
 }
 
+// StreamSACBalanceSeedsFullHistory is the full-raw-history counterpart to
+// [StreamSACBalanceSeeds]. It scans stellar.ledger_entry_changes — the
+// certified append-log (ADR-0034), not the ledger_entries_current
+// current-state projection — and reduces to the latest write per
+// (entry_type, key_xdr) with a server-side `ORDER BY … LIMIT 1 BY key_xdr`,
+// reproducing exactly what ledger_entries_current's ReplacingMergeTree
+// would hold if it had been backfilled for this key.
+//
+// Why this exists (PHO/BLND VERDICT, incident 2026-07-06 — see
+// docs/architecture/supply-pipeline.md "Dormant contract-held SAC balances").
+// ledger_entries_current is fed by a ClickHouse MATERIALIZED VIEW
+// (`stellar.ledger_entries_current_mv`) that only processes rows INSERTed
+// into ledger_entry_changes AFTER the MV was created — standard ClickHouse
+// MV semantics, not a bug in the MV itself. Rows that were ch-backfilled
+// into ledger_entry_changes for ledgers before the MV existed (~ledger
+// 62,000,000) never triggered the MV, so ledger_entries_current has a
+// coverage FLOOR: a Balance(Address) entry whose last write predates that
+// floor and hasn't changed since (dormant) is invisible to
+// [StreamSACBalanceSeeds] even though ledger_entry_changes has always had
+// it — the raw substrate is complete (ADR-0034 "100% coverage"; ledgers
+// contiguous + hash-chained to genesis), only the current-state PROJECTION
+// of it is incomplete below the floor.
+//
+// The final 2026-07-06 investigation confirmed this is EXACTLY the PHO/BLND
+// (and, per the 2026-07-09 residual set, EURC/KALE) gap: their biggest
+// holders are Phoenix/Blend POOL CONTRACTS that acquired the SAC-wrapped
+// token via an ordinary SEP-41 `transfer` years before the current-state MV
+// existed and have been dormant (no further Balance-key writes) since — a
+// ContractData `Vec(Symbol("Balance"), Address(pool))` entry on the SAC's
+// OWN storage, the identical shape [StreamSACBalanceSeeds] already handles
+// for every other holder. An earlier hypothesis in this repo's operational
+// notes guessed the balances instead lived in Phoenix/Blend's PRIVATE
+// internal-accounting contract_data keys (candidate mechanism (b) — reading
+// pool-internal storage, which would need protocol-specific, upgrade-brittle
+// decoders); that hypothesis was superseded by the final verdict once
+// rollup-vs-lake reconciliation proved Algorithm-3 (SAC lifetime
+// Σmint−burn−clawback) correct to the stroop and traced the Algorithm-2 gap
+// to this current-state-floor bootstrap issue instead. No new observer, no
+// pool-internal reader — mechanism (a) (the SAC's own Balance(Address)
+// entries) was already the right one; this function only widens WHERE it
+// reads them from.
+//
+// Cost. ledger_entry_changes holds every historical write, not just the
+// latest per key — this scan is substantially heavier than
+// [StreamSACBalanceSeeds]'s current-state read and MUST run under
+// run-heavy-job.sh on r1 (CLAUDE.md heavy-job doctrine), same discipline as
+// the existing seed. It is intended for the small `[supply.sac_wrappers]`
+// watched-set (a handful of contracts), never a routine/scheduled job.
+func StreamSACBalanceSeedsFullHistory(ctx context.Context, addr string, watched map[string]string, fn func(SACBalanceSeed) error) error {
+	if len(watched) == 0 {
+		return errors.New("clickhouse: StreamSACBalanceSeedsFullHistory: empty watched SAC-wrapper set")
+	}
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+
+	// LIMIT 1 BY key_xdr, ordered by ledger_seq DESC within each key group,
+	// keeps only the highest-ledger row per unique storage key — the same
+	// "latest write wins" reduction ledger_entries_current's
+	// ReplacingMergeTree(ledger_seq) performs, computed directly over the
+	// full append-log instead of the (floor-limited) projection.
+	const q = `SELECT key_xdr, entry_xdr, change_type, ledger_seq, close_time
+		FROM stellar.ledger_entry_changes
+		WHERE entry_type = 'contract_data'
+		ORDER BY key_xdr, ledger_seq DESC
+		LIMIT 1 BY key_xdr`
+	rows, err := conn.Query(ctx, q)
+	if err != nil {
+		return fmt.Errorf("clickhouse: scan contract_data full history: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var (
+			keyXDR, entryXDR, changeType string
+			ledgerSeq                    uint32
+			closeTime                    time.Time
+		)
+		if err := rows.Scan(&keyXDR, &entryXDR, &changeType, &ledgerSeq, &closeTime); err != nil {
+			return fmt.Errorf("clickhouse: scan contract_data full-history row: %w", err)
+		}
+		seed, matched, err := sacBalanceSeedFromRow(keyXDR, entryXDR, changeType, ledgerSeq, closeTime, watched)
+		if err != nil {
+			return err
+		}
+		if !matched {
+			continue
+		}
+		if err := fn(seed); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
 // sacBalanceSeedFromRow decodes one ledger_entries_current contract_data
 // row into a SACBalanceSeed. Split from the query for testability
 // (mirrors accountSeedFromRow).

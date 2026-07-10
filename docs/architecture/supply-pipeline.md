@@ -1,6 +1,6 @@
 ---
 title: Supply pipeline — three-algorithm derivation, per-asset refresh
-last_verified: 2026-07-08
+last_verified: 2026-07-10
 status: binding
 ---
 
@@ -285,6 +285,139 @@ Empty pair-set is a no-op — operators that haven't declared any
 SAC-wrapper pairs (e.g. an SEP-41-only deployment with no classic
 side) get no gauge updates and no alerting noise.
 
+### Dormant contract-held SAC balances (the current-state coverage floor)
+
+**2026-07-10 fix.** Even after the `WrapClassPartial` subset-bound fix
+above, four pairs kept alerting `over` in the `sac_total > classic_total`
+direction: **BLND, EURC, KALE, PHO**. Per the subset-bound invariant that
+is impossible under correct accounting — `SACWrapped` is one of
+Algorithm 2's own non-negative addends — so it meant Algorithm 2's
+`SumSACBalancesAtOrBefore` component really was under-counting these
+four assets' true SAC-wrapped total, not a monitoring artefact.
+
+**Root cause (incident 2026-07-06, "PHO/BLND VERDICT").** Algorithm 3
+(SAC lifetime Σmint−burn−clawback) was independently verified correct to
+the stroop for both assets against the raw ClickHouse lake and
+stellar.expert. The gap was 100% on the Algorithm 2 side:
+`sac_balance_observations` (migration 0014) never captured a Balance
+entry for these assets' largest holders — Phoenix / Blend **pool
+contracts** that received the SAC-wrapped token via an ordinary SEP-41
+`transfer` long before either (a) the live `sac_balances` observer's
+watch window opened, or (b) the ClickHouse `ledger_entries_current`
+current-state projection existed to backstop it via
+`supply seed-sac-balances`. The pool's balance entry has been dormant
+(no further writes to that storage key) ever since, so nothing ever told
+either the live observer or the current-state-backed seed it was there.
+
+An earlier hypothesis (see the git history on this file / on
+`internal/supply/crosscheck.go`) guessed these balances instead lived in
+Phoenix/Blend's own **internal accounting** — non-standard
+`contract_data` keys private to the pool contract, needing a new,
+protocol-specific, upgrade-brittle reader (candidate mechanism (b) in
+the original investigation). That hypothesis did not survive the final
+verdict: rollup-vs-lake reconciliation traced the shortfall to ordinary
+`Vec(Symbol("Balance"), Address(pool))` entries on the **SAC's own**
+storage — mechanism (a), the exact shape `sac_balance_observations`
+already models for every other holder. No pool-internal reader was
+needed.
+
+**Why the existing bootstrap seed wasn't enough.** `supply
+seed-sac-balances`'s default read is
+`clickhouse.StreamSACBalanceSeeds`, which scans
+`stellar.ledger_entries_current` — a ClickHouse MATERIALIZED VIEW fed by
+`stellar.ledger_entries_current_mv`. Standard ClickHouse MV semantics: a
+materialized view only processes rows INSERTed into its source table
+(`ledger_entry_changes`) **after the MV was created**. Rows that were
+ch-backfilled into `ledger_entry_changes` for ledgers before the MV
+existed (~ledger 62,000,000) never triggered it, so
+`ledger_entries_current` has a coverage floor — the current-state
+**projection** is incomplete below ~62M even though the raw append-log
+substrate (`ledger_entry_changes`) is complete to genesis per ADR-0034's
+"100% coverage" guarantee (ledgers contiguous + hash-chained). A Balance
+entry dormant since before the floor is invisible to the default seed
+for the same reason it's invisible to the live observer.
+
+**The fix: `clickhouse.StreamSACBalanceSeedsFullHistory`.** A second
+reader (`internal/storage/clickhouse/sac_balance_seed.go`) queries
+`stellar.ledger_entry_changes` directly with
+`ORDER BY key_xdr, ledger_seq DESC LIMIT 1 BY key_xdr` — a server-side
+reduction to "latest write per storage key" computed over the complete
+append-log, reproducing exactly what `ledger_entries_current` would hold
+if it had been backfilled for that key. It reuses the same row decoder
+(`sacBalanceSeedFromRow`) as the current-state path, so the two sources
+are byte-identical in what they extract — only WHERE they read from
+differs. Because `ledger_entry_changes` holds every historical write
+(not just latest-per-key), this scan is substantially heavier than the
+default and **MUST run under `run-heavy-job.sh` on r1**, reserved for
+the small `[supply.sac_wrappers]` watched set — never a routine job.
+
+Operator surface: `stellarindex-ops supply seed-sac-balances
+-config PATH -full-history` (add `-dry-run` first, per the existing
+convention). Output rows are unchanged in shape (`SEED  <contract>
+<asset_key>  holders=N  sum=<stroops>`) but `sum` now includes the
+recovered pool-held balances, so `total_supply` / `circulating_supply`
+in the next Algorithm 2 refresher tick — and hence the next
+`supply_cross_check_divergence` gauge sample — reflects them
+immediately once `sac_balance_observations` is repopulated; no code
+path between the hypertable and the served API needed to change.
+
+**Provenance (`sac_balance_seed_provenance`, migration 0102).** Every
+non-dry-run pass upserts one row per watched contract recording `source`
+(`current_state` | `full_history`), `holders_seeded`, and
+`min_ledger_seen` / `max_ledger_seen` — the ledger range of the holders'
+own last-modified ledgers, not the ledger the scan ran at. A
+`full_history` row with `min_ledger_seen` well below 62,000,000 is
+direct evidence the floor gap was actually reached for that contract,
+not just a source-label claim. This table is a pure audit trail — it is
+never read by `ClassicSupplyAt` / `SumSACBalancesAtOrBefore` / the
+computed `Supply` — its purpose is letting an operator (or a future
+`supply_cross_check_divergence` downgrade decision, see
+`notes/ROADMAP.md` §2 "Supply cross-check downgrade") distinguish "this
+pair's divergence is expected — never full-history seeded" from
+"actually anomalous — already full-history seeded and still diverging".
+
+**Operator post-deploy verification.**
+
+```sql
+-- 1. Confirm the full-history pass reached below the current-state
+--    floor for each of the four affected contracts (min_ledger_seen
+--    should be well under 62,000,000 for at least the dominant holder).
+SELECT contract_id, asset_key, source, holders_seeded,
+       min_ledger_seen, max_ledger_seen, seeded_at
+  FROM sac_balance_seed_provenance
+ WHERE asset_key LIKE 'BLND:%' OR asset_key LIKE 'EURC:%'
+    OR asset_key LIKE 'KALE:%' OR asset_key LIKE 'PHO:%'
+ ORDER BY asset_key;
+
+-- 2. Confirm Algorithm 2's SAC component now covers the pool-held
+--    balance (compare against the pre-seed sum from `supply
+--    seed-sac-balances -full-history -dry-run`'s printed summary).
+SELECT asset_key, count(DISTINCT holder) AS holders,
+       sum(balance_stroops) AS sac_wrapped_stroops
+  FROM sac_balance_observations
+ WHERE asset_key LIKE 'BLND:%' OR asset_key LIKE 'EURC:%'
+    OR asset_key LIKE 'KALE:%' OR asset_key LIKE 'PHO:%'
+ GROUP BY asset_key;
+```
+
+```sh
+# 3. Confirm the cross-check converges — run per asset once the
+#    aggregator's next refresher tick has written a fresh Algorithm 2
+#    snapshot (aggregator_refresh_cadence, default 5m):
+stellarindex-ops supply audit BLND-GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E3JF6MQ5EZYY \
+  -config PATH -cross-check CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY
+# repeat for EURC / KALE / PHO's own classic/SAC pair. "status: WITHIN
+# TOLERANCE" (or, if not yet migrated to CrossCheckForClass in this CLI,
+# a divergence within the pair's true wrap fraction rather than the
+# pool-held delta) confirms the fix landed.
+```
+
+```
+# 4. Confirm the alert clears (or the gauge drops to the expected
+#    residual, if any wrap fraction remains genuinely partial):
+stellarindex_supply_cross_check_divergence_stroops{classic_key=~"BLND.*|EURC.*|KALE.*|PHO.*"}
+```
+
 ## Per-class storage tables (live-data side)
 
 | Table | Migration | Identity | Holders columns |
@@ -301,6 +434,13 @@ All hypertables on `observed_at`, 7-day chunks, compression
 segment-by the most-common reader-query column. PK convention
 drags `observed_at` into the key per Timescale's partition-
 column-in-PK rule.
+
+`sac_balance_seed_provenance` (migration 0102) is NOT a hypertable — a
+small one-row-per-watched-contract audit table (PK `contract_id`,
+mirrors `sep41_supply_rollup`'s shape) recording each
+`supply seed-sac-balances` pass's `source` / `holders_seeded` /
+`min_ledger_seen` / `max_ledger_seen`. See "Dormant contract-held SAC
+balances" above.
 
 ## Reader contracts
 

@@ -77,16 +77,35 @@ const (
 	// BACKLOG #59 — not implemented here to avoid faking the subset
 	// with an approximation.
 	//
-	// KNOWN LIMITATION: this inequality assumes Algorithm 2's total
-	// is not itself an undercount. PHO/BLND are a documented,
-	// separate case where Algorithm 2 undercounts pool-internal SAC
-	// balances held in non-standard `contract_data` keys (not SEP-41
-	// Balance entries) — see docs/architecture/supply-pipeline.md.
-	// If such an undercounted pair is ever added to `sac_wrappers`,
-	// this check could false-positive in the sac_total > classic_total
-	// direction. Not a regression introduced here (the OLD equality
-	// check was already broken for such a pair too) but worth naming
-	// so a future operator doesn't mistake it for corruption.
+	// KNOWN LIMITATION (2026-07-10 update — see
+	// docs/architecture/supply-pipeline.md "Dormant contract-held SAC
+	// balances" for the full trail): this inequality assumes Algorithm
+	// 2's total is not itself an undercount. BLND/EURC/KALE/PHO were a
+	// documented case where it was: their largest holders are Phoenix/
+	// Blend POOL CONTRACTS that acquired the SAC-wrapped token years
+	// before the ClickHouse current-state projection's ~62M coverage
+	// floor existed and have been dormant (no further Balance-key
+	// writes) since, so `supply seed-sac-balances`'s default
+	// current-state read never saw them. An earlier hypothesis here
+	// guessed the balances instead lived in pool-internal, non-SEP-41
+	// `contract_data` keys (needing protocol-specific decoders); the
+	// 2026-07-06 final verdict superseded that — they ARE ordinary
+	// `Vec(Symbol("Balance"), Address(pool))` entries on the SAC's OWN
+	// storage, identical in shape to every other holder. The fix is
+	// `supply seed-sac-balances -full-history`
+	// (clickhouse.StreamSACBalanceSeedsFullHistory), which reads
+	// stellar.ledger_entry_changes — complete to genesis (ADR-0034) —
+	// instead of the floor-limited current-state projection; per-contract
+	// seed provenance (source + holder count + ledger bounds) is recorded
+	// in `sac_balance_seed_provenance` (migration 0102) so an operator
+	// can see whether a residual divergence for a pair is "expected,
+	// never full-history seeded" or "actually anomalous, already
+	// full-history seeded". Until a pair IS full-history seeded, this
+	// check can still false-positive in the sac_total > classic_total
+	// direction for it — not a regression introduced here (the OLD
+	// equality check was already broken for such a pair too) but worth
+	// naming so an operator doesn't mistake a not-yet-seeded pair's
+	// divergence for corruption.
 	WrapClassPartial WrapClass = "partial_wrap"
 
 	// WrapClassFull is an operator attestation that a classic asset's
