@@ -9,6 +9,7 @@ import { Panel } from '@/components/reveal';
 import { AssetLink } from '@/components/AssetLink';
 import { Breadcrumbs } from '@/components/ui';
 import { AccountPositions } from './AccountPositions';
+import { AccountMovementsPanel } from './AccountMovements';
 import { useIssuers } from '@/api/hooks';
 import { apiGet, asExample } from '@/api/client';
 import {
@@ -188,6 +189,8 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
       <AccountPositions id={id} />
 
       <AccountStatePanel id={id} state={stateQ.data} isLoading={stateQ.isLoading} isError={stateQ.isError} />
+
+      <AccountMovementsPanel id={id} />
 
       <TransactionsPanel
         id={id}

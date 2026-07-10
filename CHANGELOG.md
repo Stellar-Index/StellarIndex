@@ -34,6 +34,23 @@ against.
   `BespokeSection.tsx` renders new KPIs/tables/series generically. See
   `docs/protocols/aquarius.md` "Rewards + governance analytics surface —
   served".
+- **Explorer: account-activity feed UI for GET /v1/accounts/{g_strkey}/movements
+  (ADR-0048 D5).** New `AccountMovementsPanel` on the `/accounts/{g}` page
+  renders the unified pre-P23/post-P23 movement feed — time, kind badge,
+  sent/received/self direction badge, linked asset + counterparty + tx hash,
+  and an exact (BigInt, ADR-0003) amount — with client-side `kind`/`direction`
+  filters re-fetched as the endpoint's own query params, and keyset
+  pagination via `next_cursor`. The endpoint's `coverage_note` (present when
+  the response isn't the full ClickHouse+Postgres merge — e.g. the pre-P23
+  archive's operator-run backfill hasn't landed on this deployment yet) is
+  surfaced as a visible `Callout`, never hidden. Fixed a related `AssetLink`/
+  `shortAssetText` gap (`web/explorer/src/components/AssetLink.tsx`): the
+  movements endpoint's post-P23 tail resolves a SAC's asset name from its
+  on-chain CAP-67 metadata, which Stellar encodes in the colon form
+  (`CODE:GISSUER`) rather than the site's usual dash form — confirmed against
+  the live API. `AssetLabel` already normalised this (site-audit S-014) for
+  display; `assetSlug`/`shortAssetText` did not, so movement rows rendered
+  correctly but linked nowhere. Both now share the same normalisation.
 
 ## [v0.15.0] — 2026-07-10
 
