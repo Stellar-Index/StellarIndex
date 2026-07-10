@@ -76,25 +76,36 @@ Verified against `blend-contracts-v2` `pool/src/events.rs` /
 | `deploy` (factory) | registers the new pool (pool registry) |
 | `new_auction`, `fill_auction`, `delete_auction` | `blend_auctions` |
 | `supply`, `withdraw`, `supply_collateral`, `withdraw_collateral`, `borrow`, `repay`, `flash_loan` | `blend_positions` |
-| `gulp`, `claim`, `reserve_emission_update`, `gulp_emissions`, `bad_debt`, `defaulted_debt` | `blend_emissions` |
-| `set_admin`, `update_pool`, `queue_set_reserve`, `cancel_set_reserve`, `set_reserve`, `set_status` | `blend_admin` |
+| `gulp`, `claim`, `reserve_emission_update`, `gulp_emissions`, `bad_debt`, `defaulted_debt`, `update_emissions` (V1) | `blend_emissions` |
+| `set_admin`, `update_pool`, `queue_set_reserve`, `cancel_set_reserve`, `set_reserve`, `set_status`, `new_liquidation_auction` (V1), `delete_liquidation_auction` (V1) | `blend_admin` |
 
-## ⚠️ Known gap — V1 factory emits 3 undecoded topics (ROADMAP #89, 2026-07-10)
+## V1 pool-factory's 3 extra topics — HANDLED (ROADMAP #89, 2026-07-10)
 
 A read-only topic census against the 27 gated pools + 2 factories
 found 778 real events (0.14% of this source's lake volume) across
-3 topics `classifyAny` doesn't recognize: `update_emissions` (543,
-bare-i128 body, no `reserve_emission_update`-style map),
-`new_liquidation_auction` (234, 2-topic — no `auction_type`, `bid`/
-`lot` as `Map<Address,i128>` not `Vec<AssetAmount>`), and
-`delete_liquidation_auction` (1, `ScvVoid` body). These are V1
-pool-factory (`CCZD6ESM…`)-only topics, a simpler/different schema
-than the V2 events this page documents — the same schema-divergence
-bug class the 2026-07-09/10 `blend_backstop` V1/V2 audit fixed in
-that sibling source, not yet applied here. Exact shapes (with real
-ledger citations) are in `internal/sources/blend/README.md`'s
-"Known gap" section. Not implemented this session (needs new decode
-functions + a migration, not a mechanical fix).
+3 topics `classifyAny` didn't recognize, all specific to the V1
+pool-factory (`CCZD6ESM…`)'s simpler/different vocabulary — real-lake-
+bytes verified at ledgers 51,524,668 / 51,611,821 / 54,890,906:
+
+- `update_emissions` (543 events) — 1 topic, bare-i128 body (a
+  pool-wide emissions total, not V2's per-reserve
+  `reserve_emission_update` map) → `blend_emissions`.
+- `new_liquidation_auction` (234 events) — 2 topics (no
+  `auction_type`), body `Map{bid, lot, block}` — the SAME
+  `AuctionData` shape `decodeAuctionData` already parses for V2's
+  `new_auction`, just missing the `auction_type` topic + `percent`
+  field. Lands in `blend_admin` (not `blend_auctions`, which requires
+  a non-null `auction_type`) — `Target`=user, `attributes`={bid, lot,
+  block}.
+- `delete_liquidation_auction` (1 event) — 2 topics, `ScvVoid` body →
+  `blend_admin`.
+
+Migration 0097 widened `blend_emissions.event_kind` /
+`blend_admin.event_kind`. Full evidence trail + golden tests:
+`internal/sources/blend/README.md` + `v1_pool_factory_test.go`.
+Historical replay from the V1 factory's genesis (51,499,915) is a
+`projector-replay -source blend -from 51499915` follow-up, not done
+this pass.
 
 ## Backstop singletons (2 — decoded by the `blend_backstop` source)
 

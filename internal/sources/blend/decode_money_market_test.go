@@ -92,6 +92,9 @@ func TestClassifyAny(t *testing.T) {
 		{"set_reserve", TopicSymbolSetReserve, EventSetReserve},
 		{"set_status", TopicSymbolSetStatus, EventSetStatus},
 		{"deploy", TopicSymbolDeploy, EventDeploy},
+		{"update_emissions (V1)", TopicSymbolUpdateEmissions, EventUpdateEmissions},
+		{"new_liquidation_auction (V1)", TopicSymbolNewLiquidationAuction, EventNewLiquidationAuction},
+		{"delete_liquidation_auction (V1)", TopicSymbolDeleteLiquidationAuction, EventDeleteLiquidationAuction},
 		{"empty", "", ""},
 	}
 	for _, tc := range cases {

@@ -141,24 +141,26 @@ var _ consumer.Event = StakeEvent{}
 const defaultOrphanMaxAge = 5 * time.Minute
 
 type buffer struct {
-	m      map[groupKey]*RawSwap
-	pl     map[groupKey]*RawProvideLiquidity
-	wl     map[groupKey]*RawWithdrawLiquidity
-	bond   map[groupKey]*RawStake
-	unbond map[groupKey]*RawStake
-	maxAge time.Duration
-	nowFn  func() time.Time
+	m               map[groupKey]*RawSwap
+	pl              map[groupKey]*RawProvideLiquidity
+	wl              map[groupKey]*RawWithdrawLiquidity
+	bond            map[groupKey]*RawStake
+	unbond          map[groupKey]*RawStake
+	withdrawRewards map[groupKey]*RawWithdrawRewards
+	maxAge          time.Duration
+	nowFn           func() time.Time
 }
 
 func newBuffer() *buffer {
 	return &buffer{
-		m:      map[groupKey]*RawSwap{},
-		pl:     map[groupKey]*RawProvideLiquidity{},
-		wl:     map[groupKey]*RawWithdrawLiquidity{},
-		bond:   map[groupKey]*RawStake{},
-		unbond: map[groupKey]*RawStake{},
-		maxAge: defaultOrphanMaxAge,
-		nowFn:  time.Now,
+		m:               map[groupKey]*RawSwap{},
+		pl:              map[groupKey]*RawProvideLiquidity{},
+		wl:              map[groupKey]*RawWithdrawLiquidity{},
+		bond:            map[groupKey]*RawStake{},
+		unbond:          map[groupKey]*RawStake{},
+		withdrawRewards: map[groupKey]*RawWithdrawRewards{},
+		maxAge:          defaultOrphanMaxAge,
+		nowFn:           time.Now,
 	}
 }
 
@@ -317,6 +319,28 @@ func (b *buffer) absorbStake(e *events.Event, fieldTopic string, closedAt time.T
 	return nil, evicted, nil
 }
 
+func (b *buffer) absorbWithdrawRewards(e *events.Event, fieldTopic string, closedAt time.Time) (*RawWithdrawRewards, int, error) {
+	evicted := b.sweepStaleAll(closedAt)
+	k := keyOf(e)
+	r, ok := b.withdrawRewards[k]
+	if !ok {
+		r = &RawWithdrawRewards{
+			Ledger: e.Ledger, TxHash: e.TxHash, OpIndex: uint32(e.OperationIndex),
+			EventIndex: e.EventIndex,
+			Contract:   e.ContractID, ClosedAt: closedAt,
+		}
+		b.withdrawRewards[k] = r
+	}
+	if err := r.assign(e, fieldTopic); err != nil {
+		return nil, evicted, err
+	}
+	if r.Complete() {
+		delete(b.withdrawRewards, k)
+		return r, evicted, nil
+	}
+	return nil, evicted, nil
+}
+
 // sweepStaleAll runs the age-out across every per-action map and
 // returns the TOTAL count evicted. The swap buffer's sweep keeps
 // its existing typed return (used by the existing test surface);
@@ -353,6 +377,12 @@ func (b *buffer) sweepStaleAll(ref time.Time) int {
 		if r.ClosedAt.Before(cutoff) {
 			n++
 			delete(b.unbond, k)
+		}
+	}
+	for k, r := range b.withdrawRewards {
+		if r.ClosedAt.Before(cutoff) {
+			n++
+			delete(b.withdrawRewards, k)
 		}
 	}
 	return n

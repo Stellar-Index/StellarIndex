@@ -83,19 +83,43 @@ layers.
    product-taxonomy decision deferred so registry / genesis /
    status-page keys stay stable for now.
 
-## Known gap — `n_wasm` (ROADMAP #89, 2026-07-10)
+## `n_wasm` — HANDLED as classify-only (ROADMAP #89, 2026-07-10)
 
 A read-only lake topic census against the gated vault set found 2
 real `n_wasm` events (vault-layer topic[1]) that `classifyVault`
-doesn't recognize — alongside the 11 topics it does (`deposit`,
+didn't recognize — alongside the 11 topics it does (`deposit`,
 `withdraw`, `rescue`, `paused`, `unpaused`, `nreceiver`, `nmanager`,
-`nemanager`, `rbmanager`, `dfees`, `rebalance`). Count is too small
-(2 events) to prioritize a real-bytes pull this pass; noted for a
-future census re-run. The same pass also saw ambiguous rows with an
-empty decoded topic[0] but a populated topic[1] — likely a
-`contract_events_daily` 2-topic-only census artifact, not asserted
-as a distinct gap; see `internal/sources/phoenix/README.md`'s
-"Known gap" section for the same caveat on a sibling source.
+`nemanager`, `rbmanager`, `dfees`, `rebalance`). `n_wasm` is now
+classified (`EventNWasm`, `events.go`) the same way as the other 9
+admin topics — recognised so `classifyVault`'s drop-counter doesn't
+file it as "unmatched topic" (EVERY-event policy), no flow modelled
+(the name suggests a WASM-upgrade announcement — "new wasm" — matching
+the `n_receiver`/`n_manager`/`n_emanager` "new-X" naming convention
+among the vault's other admin topics, but that reading is inferred
+from the name, not from a captured body).
+
+A real-lake-bytes body sample was NOT pulled — three separate
+ClickHouse queries against the raw lake (`stellar.contract_events`,
+233M+ rows) each timed out past 400s server-side: a contract-scoped
+query (85 gated vault addresses via `contract_id IN (…)`), a
+ledger-range-scoped query (`ledger_seq >= 55000000`), and a
+topic-only query (`topic_count = 2 AND topics_xdr[2] = …`) — none of
+the predicates besides `contract_id` (whose bloom-filter index only
+covers newer parts per the schema comment) let ClickHouse skip
+granules on this table, and 2 real occurrences in 233M+ rows isn't
+worth a heavier operator-run query. Classification is verified (the
+topic's symbol encoding was computed via `scval.MustEncodeSymbol`,
+the same mechanism the whole package's topic matching relies on) —
+`decode_test.go`'s `TestClassifyVault_depositWithdraw/vault n_wasm`
+case. A future census re-run (or an operator-run heavy query via
+`run-heavy-job.sh`) can pull the real body if a decoder is ever
+warranted.
+
+The same pass also saw ambiguous rows with an empty decoded topic[0]
+but a populated topic[1] — likely a `contract_events_daily`
+2-topic-only census artifact, not asserted as a distinct gap; see
+`internal/sources/phoenix/README.md`'s rewards-topics section for
+the same caveat on a sibling source.
 
 ## Sources
 

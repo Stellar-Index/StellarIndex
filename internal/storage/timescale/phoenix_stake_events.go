@@ -9,33 +9,52 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
-// PhoenixStakeAction discriminates the two stake-contract actions.
+// PhoenixStakeAction discriminates the stake-contract actions.
 // String values match the phoenix_stake_events.action CHECK
-// constraint (migration 0044) and internal/sources/phoenix's
-// EventActionBond / EventActionUnbond constants.
+// constraint (migration 0044, widened by migration 0097) and
+// internal/sources/phoenix's EventActionBond / EventActionUnbond /
+// EventActionWithdrawRewards / EventActionDistributeRewards
+// constants.
 type PhoenixStakeAction string
 
 const (
 	PhoenixBond   PhoenixStakeAction = "bond"
 	PhoenixUnbond PhoenixStakeAction = "unbond"
+	// PhoenixWithdrawRewards / PhoenixDistributeRewards — the stake
+	// contract's reward-claim surface (ROADMAP #89 residual, migration
+	// 0097). Neither carries an amount on the wire (see
+	// internal/sources/phoenix/events.go); distribute_rewards is
+	// pool-wide and carries no user either.
+	PhoenixWithdrawRewards   PhoenixStakeAction = "withdraw_rewards"
+	PhoenixDistributeRewards PhoenixStakeAction = "distribute_rewards"
 )
 
-// IsValid reports whether a is one of the two known actions.
+// IsValid reports whether a is one of the known actions.
 func (a PhoenixStakeAction) IsValid() bool {
 	switch a {
-	case PhoenixBond, PhoenixUnbond:
+	case PhoenixBond, PhoenixUnbond, PhoenixWithdrawRewards, PhoenixDistributeRewards:
 		return true
 	}
 	return false
 }
 
 // PhoenixStakeEvent is one phoenix_stake_events row — a single
-// observed bond / unbond event from a Phoenix per-pool stake
-// contract. Mirrors the migration-0044 columns.
+// observed bond / unbond / withdraw_rewards / distribute_rewards
+// event from a Phoenix per-pool stake contract. Mirrors the
+// migration-0044 columns (widened by migration 0097).
 //
 // Amount is a decimal-string numeric (per ADR-0003 i128 ->
 // *big.Int -> string), always positive — the action discriminator
-// carries the direction.
+// carries the direction. Empty for withdraw_rewards /
+// distribute_rewards (NULL column, migration 0097) — neither event
+// carries an amount on the wire.
+//
+// LPToken holds the LP share-token address on bond/unbond, and is
+// REPURPOSED to the reward-token / distributed-asset address on
+// withdraw_rewards / distribute_rewards — same column, different
+// per-action meaning, per the "reuse existing columns" preference
+// (see phoenix/events.go doc). User is empty for distribute_rewards
+// (a pool-wide announcement with no per-user attribution).
 type PhoenixStakeEvent struct {
 	StakeContract string
 	Ledger        uint32
@@ -49,7 +68,7 @@ type PhoenixStakeEvent struct {
 	Action     PhoenixStakeAction
 	User       string
 	LPToken    string
-	Amount     string // decimal i128
+	Amount     string // decimal i128; empty for reward actions (NULL column)
 }
 
 // InsertPhoenixStakeEvent appends one phoenix_stake_events row,
@@ -60,8 +79,13 @@ type PhoenixStakeEvent struct {
 // a backfill writes the same rows; ON CONFLICT DO NOTHING makes the
 // replay a no-op.
 //
-// Defensive: rejects empty StakeContract / TxHash / User / LPToken,
-// an invalid Action, and an empty Amount before touching the DB.
+// Defensive: rejects empty StakeContract / TxHash / LPToken and an
+// invalid Action before touching the DB. User is required for every
+// action except distribute_rewards (pool-wide, no per-user
+// attribution on the wire). Amount is required only for bond/unbond
+// — withdraw_rewards / distribute_rewards carry no amount on the
+// event itself (migration 0097 made the column nullable for exactly
+// this reason).
 func (s *Store) InsertPhoenixStakeEvent(ctx context.Context, e PhoenixStakeEvent) error {
 	if e.StakeContract == "" {
 		return errors.New("timescale: InsertPhoenixStakeEvent: StakeContract is empty")
@@ -69,16 +93,16 @@ func (s *Store) InsertPhoenixStakeEvent(ctx context.Context, e PhoenixStakeEvent
 	if e.TxHash == "" {
 		return errors.New("timescale: InsertPhoenixStakeEvent: TxHash is empty")
 	}
-	if e.User == "" {
+	if !e.Action.IsValid() {
+		return fmt.Errorf("timescale: InsertPhoenixStakeEvent: invalid Action %q", e.Action)
+	}
+	if e.User == "" && e.Action != PhoenixDistributeRewards {
 		return errors.New("timescale: InsertPhoenixStakeEvent: User is empty")
 	}
 	if e.LPToken == "" {
 		return errors.New("timescale: InsertPhoenixStakeEvent: LPToken is empty")
 	}
-	if !e.Action.IsValid() {
-		return fmt.Errorf("timescale: InsertPhoenixStakeEvent: invalid Action %q", e.Action)
-	}
-	if e.Amount == "" {
+	if e.Amount == "" && (e.Action == PhoenixBond || e.Action == PhoenixUnbond) {
 		return fmt.Errorf("timescale: InsertPhoenixStakeEvent: Amount required (contract=%s tx=%s)",
 			e.StakeContract, e.TxHash)
 	}
@@ -95,7 +119,7 @@ func (s *Store) InsertPhoenixStakeEvent(ctx context.Context, e PhoenixStakeEvent
     `
 	_, err := s.db.ExecContext(ctx, q,
 		e.StakeContract, int(e.Ledger), e.ObservedAt.UTC(), e.TxHash, int(e.OpIndex),
-		string(e.Action), int(e.EventIndex), e.User, e.LPToken, e.Amount,
+		string(e.Action), int(e.EventIndex), nullString(e.User), e.LPToken, nullNumeric(e.Amount),
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertPhoenixStakeEvent %s@%d: %w",

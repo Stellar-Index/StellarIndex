@@ -261,6 +261,29 @@ against.
     (2,286,665 vs 4,035,808 on the identical contract set) — looks like an incomplete
     one-time historical backfill (see the table's own DDL comment in
     `deploy/clickhouse/tier1_schema.sql`), not a bug introduced this session.
+- **ROADMAP #89 residuals closed: `blend` V1 pool-factory's 3 extra topics, `phoenix`
+  rewards, `defindex` `n_wasm`** — the three SMALL follow-ups the census above
+  documented-but-deferred. Real-lake-bytes verified for `blend` (ledgers 51,524,668 /
+  51,611,821 / 54,890,906) and `phoenix` (ledgers 53,588,319 / 53,587,626); `defindex`
+  `n_wasm` is classify-only (three ClickHouse queries against the raw lake each timed out
+  past 400s pulling its 2 real occurrences — see `internal/sources/defindex/README.md`).
+  - `blend`: `update_emissions` (543 events, bare-i128 pool-wide emissions total) →
+    `blend_emissions`; `new_liquidation_auction` (234 events) / `delete_liquidation_auction`
+    (1 event) → `blend_admin` (`target`=user, `attributes`={bid,lot,block} — reuses
+    `decodeAuctionData`, the same `AuctionData` Map shape V2's `new_auction` already parses).
+    Migration `0097` widens `blend_emissions.event_kind` / `blend_admin.event_kind`.
+  - `phoenix`: `withdraw_rewards` (40 events, 2-field: `user`+`reward_token`) /
+    `distribute_rewards` (18 events, 1-field pool-wide: `asset`) → `phoenix_stake_events`
+    (reused, not a new table — `lp_token` repurposed to the reward-token/asset address,
+    `user_addr`/`amount` made nullable). Neither event carries an amount; it surfaces on the
+    reward token's own SEP-41 `transfer` event in the same op, not correlated (out of scope).
+    Migration `0098` widens `phoenix_stake_events.action` + drops the two `NOT NULL`s.
+  - `defindex`: `n_wasm` (2 events, vault-layer topic[1], likely a WASM-upgrade
+    announcement) added to `classifyVault` — recognised, no flow modelled, same treatment as
+    the other 9 admin topics. No migration (not persisted).
+  - Real-lake-bytes golden tests: `internal/sources/blend/v1_pool_factory_test.go`,
+    `internal/sources/phoenix/rewards_test.go`; `defindex`'s classify-only case lives in the
+    existing `decode_test.go`.
 
 ## [v0.11.0] — 2026-07-10
 

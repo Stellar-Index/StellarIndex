@@ -77,8 +77,17 @@ allowlist)?
 | Layer (topic[0]) | topic[1] examples | Where it lands |
 |---|---|---|
 | `DeFindexFactory` | `create`, `n_fee` | registers the vault |
-| `DeFindexVault` | `deposit`, `withdraw`, `rebalance`, … | `defindex_flows` (vault layer) |
+| `DeFindexVault` | `deposit`, `withdraw`, `rebalance`, `n_wasm`, … | `defindex_flows` (vault layer) |
 | `BlendStrategy` | `deposit`, `withdraw`, `harvest` | `defindex_flows` (strategy layer) |
+
+`n_wasm` (vault-layer topic[1], likely a WASM-upgrade announcement —
+"new wasm") was added to `classifyVault` 2026-07-10 (ROADMAP #89
+residual): a read-only lake census found 2 real occurrences with no
+decoder, the same classification-only treatment as `rescue` /
+`paused` / `nreceiver` / … above — recognised so the drop-counter
+doesn't file it as "unmatched topic", no flow modelled yet (count too
+small to justify the ClickHouse scan cost; see
+`internal/sources/defindex/events.go`'s `EventNWasm` doc).
 
 
 ## Vault enumeration (53 — from the team's own Dune registry, 2026-06-12)

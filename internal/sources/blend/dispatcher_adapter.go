@@ -200,6 +200,12 @@ func (d *Decoder) decodeByKind(ev events.Event) ([]consumer.Event, error) { //no
 			return nil, err
 		}
 		return []consumer.Event{out}, nil
+	case EventUpdateEmissions:
+		out, err := decodeUpdateEmissions(&ev, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{out}, nil
 	case EventBadDebt:
 		out, err := decodeBadDebt(&ev, closedAt)
 		if err != nil {
@@ -252,6 +258,20 @@ func (d *Decoder) decodeByKind(ev events.Event) ([]consumer.Event, error) { //no
 		return []consumer.Event{out}, nil
 	case EventDeploy:
 		out, err := decodeDeploy(&ev, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{out}, nil
+
+	// ─── V1 pool-factory events (blend_admin) ──────────────────
+	case EventNewLiquidationAuction:
+		out, err := decodeNewLiquidationAuctionV1(&ev, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{out}, nil
+	case EventDeleteLiquidationAuction:
+		out, err := decodeDeleteLiquidationAuctionV1(&ev, closedAt)
 		if err != nil {
 			return nil, err
 		}

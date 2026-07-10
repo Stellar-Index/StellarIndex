@@ -148,6 +148,11 @@ const (
 	// these action enum values.
 	actionAdmin
 	actionInitialize
+	// actionWithdrawRewards / actionDistributeRewards — the stake
+	// contract's reward-claim surface (ROADMAP #89 residual). Modelled
+	// into StakeChange / phoenix_stake_events same as bond/unbond.
+	actionWithdrawRewards
+	actionDistributeRewards
 )
 
 // classifyAny is the union of classify + liquidity / stake topic
@@ -184,6 +189,10 @@ func classifyAny(e *events.Event) (action, string) {
 		return actionBond, e.Topic[1]
 	case TopicSymbolUnbond:
 		return actionUnbond, e.Topic[1]
+	case TopicSymbolWithdrawRewards:
+		return actionWithdrawRewards, e.Topic[1]
+	case TopicSymbolDistributeRewards:
+		return actionDistributeRewards, e.Topic[1]
 	case TopicSymbolAdmin:
 		return actionAdmin, e.Topic[1]
 	case TopicSymbolInitialize:
@@ -586,6 +595,53 @@ func (r *RawStake) assign(e *events.Event, fieldTopic string) error {
 	return nil
 }
 
+// RawWithdrawRewards is the partial set of 2 fields observed for one
+// withdraw_rewards call from the stake contract. Real-lake bytes
+// (2026-07-10, ledgers 53588319 / 53589647, stake contracts
+// CBRGNWGAC25… / CAF3UJ45ZQJ…) confirm exactly two fields — user +
+// reward_token — no amount field on this event (see events.go's
+// package doc for where the amount actually surfaces).
+type RawWithdrawRewards struct {
+	Ledger  uint32
+	TxHash  string
+	OpIndex uint32
+	// EventIndex — per-event discriminator (phoenix_stake_events PK,
+	// migration 0060 / F-1324); first field-event's in-op index.
+	EventIndex int
+	Contract   string
+	ClosedAt   time.Time
+
+	User        *events.Event
+	RewardToken *events.Event
+}
+
+// Complete reports whether both slots are populated.
+func (r *RawWithdrawRewards) Complete() bool {
+	return r.User != nil && r.RewardToken != nil
+}
+
+func (r *RawWithdrawRewards) fieldsPresent() int {
+	n := 0
+	for _, p := range [...]*events.Event{r.User, r.RewardToken} {
+		if p != nil {
+			n++
+		}
+	}
+	return n
+}
+
+func (r *RawWithdrawRewards) assign(e *events.Event, fieldTopic string) error {
+	switch fieldTopic {
+	case TopicSymbolWRUser:
+		r.User = e
+	case TopicSymbolWRRewardToken:
+		r.RewardToken = e
+	default:
+		return fmt.Errorf("%w: %q", ErrUnknownField, fieldTopic)
+	}
+	return nil
+}
+
 // ─── Finalisers ─────────────────────────────────────────────────
 
 // decodeProvideLiquidity turns a complete RawProvideLiquidity into
@@ -709,5 +765,58 @@ func decodeStake(r *RawStake) (StakeChange, error) {
 		User:       user,
 		LPToken:    token,
 		Amount:     amount,
+	}, nil
+}
+
+// decodeWithdrawRewards turns a complete RawWithdrawRewards into a
+// StakeChange. Reuses the StakeChange/phoenix_stake_events shape:
+// LPToken holds the reward-token address (not an LP share token —
+// see events.go doc). Amount is left at its zero value; the sink
+// (internal/pipeline/sink.go::persistPhoenixStake) writes NULL rather
+// than the zero-value "0" string for reward actions.
+func decodeWithdrawRewards(r *RawWithdrawRewards) (StakeChange, error) {
+	if !r.Complete() {
+		return StakeChange{}, fmt.Errorf("%w: withdraw_rewards have %d/%d fields",
+			ErrIncompleteStake, r.fieldsPresent(), WithdrawRewardsFieldCount)
+	}
+	user, err := decodeAddress(r.User.Value)
+	if err != nil {
+		return StakeChange{}, fmt.Errorf("withdraw_rewards user: %w", err)
+	}
+	rewardToken, err := decodeAddress(r.RewardToken.Value)
+	if err != nil {
+		return StakeChange{}, fmt.Errorf("withdraw_rewards reward_token: %w", err)
+	}
+	return StakeChange{
+		Action:     EventActionWithdrawRewards,
+		Contract:   r.Contract,
+		Ledger:     r.Ledger,
+		TxHash:     r.TxHash,
+		OpIndex:    int(r.OpIndex),
+		EventIndex: r.EventIndex,
+		ClosedAt:   r.ClosedAt,
+		User:       user,
+		LPToken:    rewardToken,
+	}, nil
+}
+
+// decodeDistributeRewards decodes a single distribute_rewards event
+// directly — no correlation buffer needed, the action carries exactly
+// one field (asset) per real-lake confirmation. Pool-wide: User stays
+// empty (the wire carries no user field for this action).
+func decodeDistributeRewards(ev *events.Event, closedAt time.Time) (StakeChange, error) {
+	asset, err := decodeAddress(ev.Value)
+	if err != nil {
+		return StakeChange{}, fmt.Errorf("distribute_rewards asset: %w", err)
+	}
+	return StakeChange{
+		Action:     EventActionDistributeRewards,
+		Contract:   ev.ContractID,
+		Ledger:     ev.Ledger,
+		TxHash:     ev.TxHash,
+		OpIndex:    ev.OperationIndex,
+		EventIndex: ev.EventIndex,
+		ClosedAt:   closedAt,
+		LPToken:    asset,
 	}, nil
 }

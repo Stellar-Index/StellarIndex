@@ -180,38 +180,45 @@ The decoder is fail-loud per event:
 5. **i128 type drift** — `scval.AsAmountFromI128` is strict; any
    type-tag change errors out.
 
-## Known gap — V1 pool-factory (`CCZD6ESM…`) emits 3 topics `classifyAny` doesn't recognize
+## V1 pool-factory (`CCZD6ESM…`) 3-topic gap — HANDLED (ROADMAP #89, 2026-07-10)
 
-ROADMAP #89 residual (2026-07-10): a read-only ClickHouse-lake topic
-census scoped to the 27 gated pools + 2 factories found **778 real
-events across 3 topics** that `classifyAny` (decode_money_market.go)
-does not classify — they are dropped before reaching any decoder,
-the same bug CLASS the 2026-07-09 `blend_backstop` V1/V2 audit found
-and fixed in that sibling package (CHANGELOG 2026-07-10,
-`fix(blend_backstop): six decode bugs`). This package has **not**
-had the equivalent V1-vs-V2 pass yet:
+A read-only ClickHouse-lake topic census scoped to the 27 gated pools
++ 2 factories found **778 real events across 3 topics** that
+`classifyAny` (decode_money_market.go) did not classify — the same
+bug CLASS the 2026-07-09 `blend_backstop` V1/V2 audit found in that
+sibling package. Real-lake-bytes shapes (cited ledgers) confirmed and
+decoded:
 
-| Topic | Count | Emitting pools (of the 17 `CCZD6ESM…`-deployed pools sampled) | Real shape (ledger cited) |
-| --- | ---: | --- | --- |
-| `update_emissions` | 543 | e.g. `CDVQVKOY…` | 1 topic `(sym,)`; body is a **bare `i128`** (ledger 51,524,668: `447798000000`) — NOT V2's `reserve_emission_update` structured `{res_token_id, emissions_per_sec, expiration}` map. Looks like a pool-wide emissions total, a different concept from V2's per-reserve update. |
-| `new_liquidation_auction` | 234 | e.g. `CDVQVKOY…` | 2 topics `(sym, user: Address)` — **no `auction_type` topic**, unlike V2 `new_auction`'s 3-topic `(sym, u32, Address)`. Body (ledger 51,611,821) is `Map{bid: Map<Address,i128>, block: u32, lot: Map<Address,i128>}` — `bid`/`lot` render as **Maps keyed by asset address**, not V2's documented `Vec<AssetAmount>` shape; no `percent` field. |
-| `delete_liquidation_auction` | 1 | `CBP7NO6F…` | 2 topics `(sym, user: Address)` (ledger 54,890,906) — body is `ScvVoid`, not V2's bare `()`/no-body `delete_auction`. |
+| Topic | Count | Emitting pools (sampled) | Real shape (ledger cited) | Lands in |
+| --- | ---: | --- | --- | --- |
+| `update_emissions` | 543 | e.g. `CDVQVKOY…` | 1 topic `(sym,)`; body is a **bare `i128`** (ledger 51,524,668: `447798000000`) — NOT V2's `reserve_emission_update` structured `{res_token_id, emissions_per_sec, expiration}` map. A pool-wide emissions total, a different concept from V2's per-reserve update. | `blend_emissions`, `event_kind='update_emissions'` |
+| `new_liquidation_auction` | 234 | e.g. `CDVQVKOY…` | 2 topics `(sym, user: Address)` — **no `auction_type` topic**, unlike V2 `new_auction`'s 3-topic `(sym, u32, Address)`. Body (ledger 51,611,821) is `Map{bid: Map<Address,i128>, block: u32, lot: Map<Address,i128>}` — **the SAME shape** `decodeAuctionData` already parses for V2 (bid/lot ARE `Map<Address,i128>` on both, per `auction_data.go`); the actual differences are the missing `auction_type` topic and no `percent` field. | `blend_admin`, `event_kind='new_liquidation_auction'`, `target`=user, `attributes`={bid,lot,block} |
+| `delete_liquidation_auction` | 1 | `CBP7NO6F…` | 2 topics `(sym, user: Address)` (ledger 54,890,906) — body is `ScvVoid`, not V2's bare `()`/no-body `delete_auction`. Body is not parsed (same convention as V2's `decodeDeleteAuction`). | `blend_admin`, `event_kind='delete_liquidation_auction'`, `target`=user |
 
-These are near-certainly the V1 pool-factory's own liquidation-auction
-+ emissions vocabulary — a **different, simpler schema** than the V2
-pool events this package currently decodes (topic arity differs,
-`bid`/`lot` shape differs, no `auction_type` discriminator). This is
-NOT a "small mechanical" fix per the branch-on-arity pattern
-`blend_backstop` established for its V1 `gulp_emissions` — it needs:
-new `Classify`/`classifyAny` cases, new decode functions (topic-arity-
-branched, mirroring `blend_backstop`'s V1/V2 split), a decision on
-which table/`EventKind` these land under (extend `blend_auctions` +
-`blend_emissions`'s CHECK constraints, likely a new migration), and a
-historical `projector-replay` from the V1 factory's genesis
-(51,499,915) once shipped. Deliberately **not implemented this
-session** — documented per ROADMAP #89's "if a source needs deep
-work, document precisely what's needed" carve-out. 778 events is
-0.14% of this source's ~570k total lake volume.
+**Why `blend_admin`, not `blend_auctions`, for the two liquidation-auction
+kinds:** `blend_auctions.auction_type` is `NOT NULL` with a `CHECK
+BETWEEN 0 AND 2` against V2's `UserLiquidation`/`BadDebt`/`Interest`
+taxonomy. The V1 body carries no `auction_type` topic to classify
+against that set, and synthesizing one (e.g. guessing
+`UserLiquidation` from the topic name) would attach unverified
+provenance to a table whose entire purpose is verified per-protocol
+data. `blend_admin` already models heterogeneous per-kind extras via
+its `attributes` jsonb column (`queue_set_reserve`'s `ReserveConfig`
+does the same), so `bid`/`lot`/`block` ride there instead — no new
+columns, `event_kind` CHECK-constraint-only change (migration 0097).
+
+Decoders: `decodeUpdateEmissions` / `decodeNewLiquidationAuctionV1` /
+`decodeDeleteLiquidationAuctionV1` in `decode_money_market.go`.
+`decodeNewLiquidationAuctionV1` reuses `decodeAuctionData` (the same
+helper V2's `new_auction`/`fill_auction` use) since the `AuctionData`
+Map shape is identical. Real-lake-bytes golden tests:
+`v1_pool_factory_test.go`.
+
+Historical replay from the V1 factory's genesis (51,499,915) via
+`projector-replay -source blend -from 51499915` is a follow-up, not
+done this pass (778 events is 0.14% of this source's ~570k total lake
+volume — live ingest captures every new V1 event going forward
+regardless).
 
 Full per-topic real-lake counts (all 29 gated contracts, contiguous
 with the table above): every OTHER topic this census turned up

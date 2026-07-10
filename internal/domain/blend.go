@@ -44,6 +44,28 @@ const (
 
 	// Pool-factory event.
 	BlendEventDeploy = "deploy"
+
+	// V1 pool-factory (CCZD6ESM…) events — ROADMAP #89 residual
+	// (2026-07-10). The V1 factory's pools speak a simpler,
+	// different vocabulary than the V2 events above (no auction_type
+	// discriminator, no percent field); real-lake-bytes verified at
+	// ledgers 51,524,668 / 51,611,821 / 54,890,906. See
+	// internal/sources/blend/README.md "Known gap" for the full
+	// evidence trail.
+	//
+	// BlendEventUpdateEmissions lands in blend_emissions — a
+	// pool-wide emissions total (bare i128 body), a different concept
+	// from V2's per-reserve reserve_emission_update.
+	BlendEventUpdateEmissions = "update_emissions"
+	// BlendEventNewLiquidationAuction / BlendEventDeleteLiquidationAuction
+	// land in blend_admin (not blend_auctions) — the V1 body carries the
+	// same AuctionData {bid, lot, block} Map shape as V2's AuctionData,
+	// but WITHOUT an auction_type topic to classify it against the V2
+	// UserLiquidation/BadDebt/Interest taxonomy, so it is stored as an
+	// admin/lifecycle event (Target=user, attributes={bid,lot,block})
+	// rather than guessing an auction_type for the blend_auctions CHECK.
+	BlendEventNewLiquidationAuction    = "new_liquidation_auction"
+	BlendEventDeleteLiquidationAuction = "delete_liquidation_auction"
 )
 
 // BlendPositionEvent is the decoded shape of every money-market event
@@ -100,8 +122,8 @@ type BlendEmissionEvent struct {
 // BlendAdminEvent is the decoded shape of every pool-config / admin /
 // pool-factory lifecycle event: set_admin, update_pool,
 // queue_set_reserve, cancel_set_reserve, set_reserve, set_status,
-// deploy. Canonical home of internal/sources/blend.AdminEvent — see
-// doc.go.
+// deploy, new_liquidation_auction, delete_liquidation_auction.
+// Canonical home of internal/sources/blend.AdminEvent — see doc.go.
 type BlendAdminEvent struct {
 	ContractID string
 	Kind       string
@@ -128,9 +150,29 @@ type BlendAdminEvent struct {
 	// carry a ReserveConfig.
 	ReserveConfig map[string]any
 
+	// new_liquidation_auction body fields (V1 pool-factory only — see
+	// BlendEventNewLiquidationAuction doc). Same {bid, lot, block}
+	// shape as V2's AuctionData; Target carries the user (topic[1]).
+	// Nil/zero for every other event kind, including
+	// delete_liquidation_auction (empty body on the wire).
+	AuctionBid   []BlendAssetAmount
+	AuctionLot   []BlendAssetAmount
+	AuctionBlock uint32
+
 	Ledger     uint32
 	TxHash     string
 	OpIndex    uint32
 	EventIndex uint32
 	Timestamp  time.Time
+}
+
+// BlendAssetAmount is one (asset, amount) pair from a V1
+// new_liquidation_auction's bid/lot map. Domain-level mirror of
+// internal/sources/blend.AssetAmount — declared separately here
+// (rather than shared) because domain sits BENEATH internal/sources/
+// blend in the import graph and cannot import it (see BlendAdminEvent
+// M0-1 doc / PositionEvent doc for the same pattern).
+type BlendAssetAmount struct {
+	Asset  string
+	Amount *big.Int // i128 per ADR-0003
 }
