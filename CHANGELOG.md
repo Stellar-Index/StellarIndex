@@ -28,6 +28,37 @@ against.
   undecodable — no create body has ever carried the new vault's own
   address); `MainnetVaults` remains curated-set only. No schema change.
 
+### Changed
+- **BREAKING for anyone verifying release signatures: `release.yml` migrated
+  to cosign v3 and the published artifact contract changed** (BACKLOG #51b,
+  the deliberate follow-up to the 2026-07-09 cosign v3 pin-back —
+  cbcd9326 / 18338540). **If you verify Stellar Index release signatures,
+  you need cosign v3** (`brew install cosign`; v2 cannot read the new
+  format at all — no `--bundle` flag). The durable artifact going forward
+  is a Sigstore bundle, `SHA256SUMS.sigstore.json`, replacing the separate
+  `SHA256SUMS.sig` + `SHA256SUMS.pem` pair:
+  ```sh
+  cosign verify-blob \
+    --bundle SHA256SUMS.sigstore.json \
+    --certificate-identity-regexp \
+      '^https://github.com/StellarIndex/stellar-index/\.github/workflows/release\.yml@.*$' \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    SHA256SUMS
+  ```
+  **This release publishes BOTH shapes** (dual-publish transition
+  courtesy) — `SHA256SUMS.sig`/`SHA256SUMS.pem` are still attached, verifiable
+  with cosign v2 exactly as before, but they are **deprecated and will be
+  dropped from the NEXT release**. Do not build new tooling against them.
+  Full verify recipes (new contract + the old-contract fallback for releases
+  cut before this one) are in
+  `docs/operations/release-process.md` under "Verify the release." Root
+  causes of the two 2026-07-09 failures are fixed rather than
+  papered over: no explicit `--oidc-issuer` (cosign v3's own signing
+  config resolves the ambient GitHub OIDC issuer; the explicit flag is
+  what conflicted with it), and `--bundle` is now pinned explicitly in
+  the workflow so a future cosign default change can't silently alter
+  the artifact shape again.
+
 ### Fixed
 - **`docs/protocols/defindex.md`'s "19 no-event Dune vaults" claim was
   stale.** Re-investigated from the raw lake (ROADMAP #7): all 19 vaults

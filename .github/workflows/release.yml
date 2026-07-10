@@ -2,7 +2,12 @@ name: release
 
 # Triggered by pushing a v*.*.* tag to the repo. Cuts a GitHub
 # Release containing cross-compiled Linux binaries (+ SHA256SUMS,
-# keyless-signed via cosign: SHA256SUMS.sig + SHA256SUMS.pem).
+# keyless-signed via cosign v3: SHA256SUMS.sigstore.json is the
+# durable artifact (sigstore bundle format, BACKLOG #51b). This
+# release ALSO publishes the retiring SHA256SUMS.sig / SHA256SUMS.pem
+# pair for exactly one transition release — remove that block in the
+# release after next; see docs/operations/release-process.md
+# "Verify the release".
 #
 # Tag conventions per docs/architecture/semver-policy.md:
 #   v0.1.0          — release
@@ -195,33 +200,61 @@ jobs:
           cat SHA256SUMS
 
       - name: Install cosign
-        # PINNED BACK to v3.9.2 (cosign v2): the v4 installer ships cosign v3,
-        # which (a) rejects explicit --oidc-issuer under its signing config and
-        # (b) defaults sign-blob to the new bundle format, breaking the
-        # published .sig/.pem artifact contract + documented verify recipe.
-        # Failed the v0.10.0 release twice (2026-07-09). Migrating to the
-        # bundle format is a deliberate follow-up (ROADMAP #51b), not a
-        # release-blocking scramble.
-        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159  # v3.9.2
+        # cosign v3 (BACKLOG #51b, deliberate migration): the v3.9.2 pin-back
+        # on 2026-07-09 was a stop-the-bleed revert after cosign v3 (shipped
+        # only via installer v4+) broke the release twice in one day — see
+        # commits cbcd9326 and 18338540. Both root causes are fixed below,
+        # not worked around: no explicit --oidc-issuer (v3's own signing
+        # config resolves the ambient GitHub OIDC issuer; an explicit flag
+        # conflicts with it) and an explicit --bundle output (the artifact
+        # contract is pinned in the workflow instead of riding whatever
+        # cosign defaults to next). cosign-release pins the exact cosign
+        # version installed — v4.1.2's own default (v3.0.6) is not relied
+        # upon, so a future installer bump can't silently change the cosign
+        # version either.
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+        with:
+          cosign-release: 'v3.1.1'
 
-      # Keyless signing over the checksum manifest: signing
-      # SHA256SUMS transitively covers every binary in the release
-      # (a tampered binary fails the sha256sum -c step of any
-      # verifier). Keyless = no long-lived private key to store or
-      # rotate — cosign exchanges this job's GitHub OIDC identity
-      # (see the job-level `id-token: write` grant above) for a
-      # short-lived Fulcio cert, and the signature is transparency-
-      # logged in Rekor. Verify a download with:
+      # Keyless signing over the checksum manifest: signing SHA256SUMS
+      # transitively covers every binary in the release (a tampered binary
+      # fails the sha256sum -c step of any verifier). Keyless = no
+      # long-lived private key to store or rotate — cosign exchanges this
+      # job's GitHub OIDC identity (see the job-level `id-token: write`
+      # grant above) for a short-lived Fulcio cert, and the signature is
+      # transparency-logged in Rekor.
+      #
+      # ARTIFACT CONTRACT (cosign v3, BACKLOG #51b): the durable, going-
+      # forward artifact is the Sigstore bundle SHA256SUMS.sigstore.json —
+      # cosign v3 made --bundle the primary structured-output path and
+      # removed --output-signature/--output-certificate from sign-blob
+      # entirely (confirmed against the installed v3.1.1 binary's own
+      # --help: no flag-flip fallback exists). Verify a download with:
       #
       #   cosign verify-blob \
-      #     --signature SHA256SUMS.sig \
-      #     --certificate SHA256SUMS.pem \
+      #     --bundle SHA256SUMS.sigstore.json \
       #     --certificate-identity-regexp \
       #       '^https://github.com/StellarIndex/stellar-index/\.github/workflows/release\.yml@.*$' \
       #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
       #     SHA256SUMS
       #   sha256sum -c SHA256SUMS
-      - name: Sign SHA256SUMS (cosign keyless)
+      #
+      # TRANSITION DUAL-PUBLISH (drop after this release ships — see the
+      # CHANGELOG [Unreleased] deprecation note and docs/operations/
+      # release-process.md): SHA256SUMS.sig / SHA256SUMS.pem are also
+      # published for one release so scripts still on the old contract
+      # don't break without warning. cosign itself no longer has a flag
+      # that emits that shape, so they're deterministically extracted
+      # from the one bundle produced (and self-verified) above:
+      # messageSignature.signature is byte-identical to what
+      # --output-signature used to write (base64 ASN.1-DER ECDSA sig —
+      # verified locally against a cosign-produced bundle), and
+      # verificationMaterial.certificate.rawBytes is the same X.509
+      # certificate DER-encoded, just not yet PEM-wrapped the way
+      # --output-certificate used to leave it (verified locally against a
+      # generic X.509 cert; the DER->PEM step is a pure encoding
+      # transform, not cosign/Fulcio-specific).
+      - name: Sign SHA256SUMS (cosign keyless, sigstore bundle format)
         working-directory: dist
         env:
           # Non-interactive: acknowledge the Rekor transparency-log
@@ -231,20 +264,26 @@ jobs:
         run: |
           set -euo pipefail
           cosign sign-blob \
-            --oidc-issuer https://token.actions.githubusercontent.com \
-            --output-signature SHA256SUMS.sig \
-            --output-certificate SHA256SUMS.pem \
+            --bundle SHA256SUMS.sigstore.json \
             SHA256SUMS
-          # Self-check before publishing: the sig/cert pair must
-          # verify against this repo's workflow identity. Catches a
-          # malformed cert/sig at release time instead of at the
-          # first downstream verification.
+          # Self-check before publishing: the bundle must verify against
+          # this repo's workflow identity. Catches a malformed bundle at
+          # release time instead of at the first downstream verification.
           cosign verify-blob \
-            --signature SHA256SUMS.sig \
-            --certificate SHA256SUMS.pem \
+            --bundle SHA256SUMS.sigstore.json \
             --certificate-identity-regexp "^https://github.com/${REPO}/" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             SHA256SUMS
+
+          # --- BEGIN transition dual-publish; drop this block once this
+          # release has shipped (BACKLOG #51b) — do not carry it into the
+          # release after next. ---
+          jq -r '.messageSignature.signature' SHA256SUMS.sigstore.json \
+            > SHA256SUMS.sig
+          jq -r '.verificationMaterial.certificate.rawBytes' SHA256SUMS.sigstore.json \
+            | base64 -d | openssl x509 -inform DER -outform PEM > SHA256SUMS.pem
+          # --- END transition dual-publish. ---
+
           ls -la SHA256SUMS*
 
       # Pull just this version's CHANGELOG block. The release-notes

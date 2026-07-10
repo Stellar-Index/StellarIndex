@@ -1,6 +1,6 @@
 ---
 title: Release process — cutting a Stellar Index binary release
-last_verified: 2026-05-05
+last_verified: 2026-07-10
 status: living doc
 ---
 
@@ -110,6 +110,46 @@ mid-release wastes a tag and forces a `.N+1` cut.
    /tmp/v.bin --version 2>&1 | head -3   # version line should show vX.Y.Z
    sha256sum /tmp/v.bin                  # cross-check against SHA256SUMS
    ```
+
+   **Verify the cosign signature.** `SHA256SUMS` transitively covers every
+   binary in the release (a tampered binary fails the `sha256sum -c` step
+   above), so verifying the one manifest signature verifies the whole
+   release. As of the first release cut after 2026-07-10 (BACKLOG #51b),
+   the durable artifact contract is a **Sigstore bundle** —
+   `SHA256SUMS.sigstore.json`, containing the signature, Fulcio
+   certificate, and Rekor transparency-log proof in one file:
+   ```sh
+   gh release download vX.Y.Z -p SHA256SUMS -p SHA256SUMS.sigstore.json
+   cosign verify-blob \
+     --bundle SHA256SUMS.sigstore.json \
+     --certificate-identity-regexp \
+       '^https://github.com/StellarIndex/stellar-index/\.github/workflows/release\.yml@.*$' \
+     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+     SHA256SUMS
+   ```
+   Requires **cosign v3** (`brew install cosign`, or a binary from
+   <https://github.com/sigstore/cosign/releases> — see
+   <https://docs.sigstore.dev/cosign/system_config/installation/>).
+   cosign v2 cannot read the bundle format at all (no `--bundle` flag).
+
+   **Old-contract releases (cut before 2026-07-10) only published
+   `SHA256SUMS.sig` / `SHA256SUMS.pem`** and need **cosign v2** to verify —
+   cosign v3 removed `verify-blob --signature`/`--certificate` entirely,
+   so a v3-only install cannot check them:
+   ```sh
+   gh release download vX.Y.Z -p SHA256SUMS -p SHA256SUMS.sig -p SHA256SUMS.pem
+   cosign verify-blob \
+     --signature SHA256SUMS.sig \
+     --certificate SHA256SUMS.pem \
+     --certificate-identity-regexp \
+       '^https://github.com/StellarIndex/stellar-index/\.github/workflows/release\.yml@.*$' \
+     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+     SHA256SUMS
+   ```
+   The first post-migration release publishes **both** shapes as a
+   one-release transition courtesy (dual-publish) — don't rely on
+   `.sig`/`.pem` still being there on the *next* tag; see the CHANGELOG
+   `[Unreleased]` entry for the deprecation note.
 6. **Optional manual edits to the Release page.** The auto-generated
    notes pull from the CHANGELOG block. Add the "Tested against
    protocol XX" line manually if the workflow couldn't infer it
