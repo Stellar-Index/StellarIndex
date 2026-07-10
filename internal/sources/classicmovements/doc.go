@@ -28,8 +28,9 @@
 // (b+own-index): neither op carries an asset or amount, only a
 // BalanceId, resolved against Decoder's in-run index of previously-
 // decoded creates — see dispatcher_adapter.go's Decoder doc for the
-// full correlation design, including the Postgres second-pass
-// fallback and its memory-scaling caveat). None of Phase 1-3 needs
+// full correlation design, including the ClickHouse second-pass
+// fallback (ADR-0048 D2; previously Postgres) and its memory-scaling
+// caveat). None of Phase 1-3 needs
 // ledger_entry_changes. SupportedOpTypes, matchesSupportedOp, and
 // decodeOp's switch all cover exactly these eight types (plus
 // AccountMerge below, for nine); recognition_test.go pins that
@@ -103,28 +104,39 @@
 // Phase 4 entry-changes surface only), and hard-clamps its ledger
 // range below the P23 boundary regardless of what an operator
 // requests — see that command's flag help for the exact clamp
-// behavior.
+// behavior. Per ADR-0048 D2 (2026-07-10), that command writes
+// ClickHouse's stellar.account_movements — a lake-in/lake-out job
+// with NO Postgres connection at all; see
+// internal/storage/clickhouse/account_movements.go.
+//
+// # Storage target — amended by ADR-0048 (2026-07-10)
+//
+// The rest of this doc comment (and migration 0105's row/README)
+// describe ADR-0047 D1's ORIGINAL plan: a Postgres `classic_movements`
+// hypertable. ADR-0048 D2 amended that: the archive is
+// `stellar.account_movements` in ClickHouse, feed-shaped (two rows
+// per movement, one per participant, direction discriminator),
+// populated by the same backfill command above. Migration 0105 stays
+// applied but UNPOPULATED — see migrations/README.md's 0105 row. The
+// decode layer this package provides (everything above this section)
+// is unaffected: only the write target moved.
 //
 // # Serving — write-path only
 //
-// No read endpoint serves classic_movements yet. ADR-0047 D1's
-// account-activity read surface (a future merged read across
-// classic_movements and sep41_transfers' post-P23 'transfer' rows,
-// e.g. /v1/accounts/{g}/movements) is deliberately deferred to a
-// later unit, once more phases exist to make a merged feed
+// No read endpoint serves stellar.account_movements yet. ADR-0048
+// D5's account-activity read surface (a future merged read across
+// stellar.account_movements and sep41_transfers' post-P23 'transfer'
+// rows, e.g. /v1/accounts/{g}/movements) is deliberately deferred to
+// a later unit, once more phases exist to make a merged feed
 // worthwhile. Neither table knows about the other at write time.
 //
 // # Retention — deferred
 //
-// The served-tier retention question for classic_movements (serve
-// every row forever vs. a recent window backed by the lake for deep
-// history, per ADR-0034's lake/served split) is deliberately NOT
-// decided by this package or by migration 0105. ADR-0047's
+// The retention question for stellar.account_movements (serve every
+// row forever vs. a recent window, per ADR-0034's lake/served split
+// applied to a CH-native serving table) is deliberately NOT decided
+// by this package or by deploy/clickhouse/tier1_schema.sql. ADR-0047's
 // consequences section sizes the eventual row count at the order of
-// 10-11B across all four phases; the retention call is deferred
-// until the first real Phase-1 backfill measures actual row bytes
-// on disk. No `drop_after` policy exists on this table; if one
-// appears later without a documented sizing pass behind it, that's
-// drift (see CLAUDE.md's ADR-0034 invariant on this exact pattern
-// for `trades`).
+// 10-11B across all four phases; the retention call is deferred until
+// the first real Phase-1 backfill measures actual row bytes on disk.
 package classicmovements

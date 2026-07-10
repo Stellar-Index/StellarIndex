@@ -1,3 +1,17 @@
+// classic_movements.go: SUPERSEDED-BY-ADR-0048.
+//
+// ADR-0048 D2 (2026-07-10) amended ADR-0047 D1's storage target: the
+// pre-P23 classic-movement archive is now ClickHouse-native
+// (stellar.account_movements, internal/storage/clickhouse/
+// account_movements.go), not this Postgres classic_movements table.
+// Migration 0105 (which creates the table this file writes) stays
+// APPLIED but intentionally UNPOPULATED — see migrations/README.md's
+// 0105 row. `stellarindex-ops classic-movements-backfill` no longer
+// calls anything in this file; it opens no Postgres connection at
+// all (ADR-0048 D2: "no Postgres in the loop"). This file is kept
+// in-tree, not deleted, pending a later cleanup migration that drops
+// the table once the ClickHouse path is proven (ADR-0048 D2's own
+// wording) — do NOT wire a new writer to it.
 package timescale
 
 import (
@@ -18,6 +32,10 @@ import (
 // writes ClassicMovementPayment / ClassicMovementCreateAccount only;
 // the other eight are admitted by the schema from day one so Phases
 // 2-4 need no migration churn — see migration 0105's header.
+//
+// SUPERSEDED BY ADR-0048 (2026-07-10): see this file's package doc
+// comment. Kept for reference / the eventual down-migration; no
+// writer calls into this file anymore.
 type ClassicMovementKind string
 
 // The ten ADR-0047 D1 movement kinds, in the same order as migration

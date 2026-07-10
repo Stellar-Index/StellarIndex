@@ -5,7 +5,20 @@ ClickHouse raw lake (ADR-0047). Not Horizon (ADR-0001), not a MinIO
 walk (ADR-0034) — reads `stellar.operations` / `operation_results`
 (and, from a later phase, `ledger_entry_changes`).
 
-See [docs/adr/0047-pre-p23-classic-movement-reconstruction.md](../../../docs/adr/0047-pre-p23-classic-movement-reconstruction.md)
+**Write target (ADR-0048 D2, 2026-07-10):** this package's decode
+layer is unchanged, but the archive it feeds is now
+**ClickHouse-native** — `stellar.account_movements`
+(`deploy/clickhouse/tier1_schema.sql`,
+`internal/storage/clickhouse/account_movements.go`), feed-shaped (TWO
+rows per movement, one per participant, a `direction` discriminator).
+ADR-0047 D1's original Postgres `classic_movements` hypertable
+(migration 0105) stays applied but **UNPOPULATED** — see
+`migrations/README.md`'s 0105 row. `stellarindex-ops
+classic-movements-backfill` opens no Postgres connection at all
+("no Postgres in the loop," ADR-0048 D2).
+
+See [docs/adr/0047-pre-p23-classic-movement-reconstruction.md](../../../docs/adr/0047-pre-p23-classic-movement-reconstruction.md),
+[docs/adr/0048-serve-by-query-shape.md](../../../docs/adr/0048-serve-by-query-shape.md),
 and [docs/architecture/pre-p23-classic-movements-research.md](../../../docs/architecture/pre-p23-classic-movements-research.md)
 for the full decision + evidence base.
 
@@ -131,7 +144,7 @@ the clawback (protocol-enforced: only the asset's issuer can submit
 these ops). Confirmed against real mainnet data in
 `real_bytes_test.go`'s `TestRealBytes_clawback_success`.
 
-### Q5 — ClaimableBalance claim/clawback correlation: in-run index + Postgres fallback
+### Q5 — ClaimableBalance claim/clawback correlation: in-run index + ClickHouse fallback
 
 Neither `ClaimClaimableBalance` nor `ClawbackClaimableBalance` carries
 an asset or amount — only a `BalanceId`. `Decoder` keeps an in-memory
@@ -151,14 +164,16 @@ whose tx_hash sorts before its own create's tx_hash in
 `StreamClassicOps`' `(ledger_seq, tx_hash, op_index)` order is decoded
 first, landing in pending, even though the create is indexed moments
 later in the SAME window — re-checking after the whole window is done
-catches this without Postgres); (2)
-`timescale.Store.FindClaimableBalanceCreate`, a real Postgres query
-against previously-written `claimable_balance_create` rows (matches
-on `attributes ->> 'balance_id'`); (3) if neither resolves it, the
-op is counted as **unresolved** and logged — never a guessed amount.
-This is the "in-window index with a PG-lookup fallback" design named
-in ADR-0047's Phase 3 scope, not a full second pass over the whole
-range.
+catches this without a ClickHouse round trip); (2)
+`clickhouse.FindClaimableBalanceCreate` (ADR-0048 D2; previously
+`timescale.Store.FindClaimableBalanceCreate` against Postgres) — a
+ClickHouse query against previously-written `claimable_balance_create`
+rows in `stellar.account_movements` (matches on
+`JSONExtractString(attributes, 'balance_id')`); (3) if neither
+resolves it, the op is counted as **unresolved** and logged — never a
+guessed amount. This is the "in-window index with a lookup fallback"
+design named in ADR-0047's Phase 3 scope, not a full second pass over
+the whole range.
 
 **Memory-scaling caveat**: the in-run index has no eviction and grows
 with the ledger range one command invocation processes — a
@@ -166,9 +181,9 @@ genesis-to-P23 run in a single invocation risks accumulating on the
 order of the full `CreateClaimableBalance` row count (research §5:
 ~1.5B) in memory. Operators MUST chunk `-from`/`-to` into
 multi-million-ledger invocations for Phase 3 ranges, same discipline
-as any other heavy job; the Postgres fallback is what keeps chunked,
-resumed invocations correct despite each invocation starting with an
-empty index.
+as any other heavy job; the ClickHouse fallback is what keeps
+chunked, resumed invocations correct despite each invocation starting
+with an empty index.
 
 ### Q6 — Phase 4's entry-changes surface: a second, parallel decode path
 
@@ -221,8 +236,8 @@ over real r1 ClickHouse data during implementation. Phase 0's
 separate, operator-scheduled `ch-backfill` over `[38115806,
 61999000]` is the prerequisite that flips this; once it lands, the
 SAME code correctly derives real amounts with no further changes —
-re-running an already-processed range is safe (`ON CONFLICT DO
-NOTHING`).
+re-running an already-processed range is safe (ClickHouse's
+ReplacingMergeTree absorbs the duplicate insert).
 
 ## Files
 
@@ -248,16 +263,21 @@ consumer of its own; its only caller is the backfill command.)
   applies (that flag gates Soroban WASM-upgrade risk; classic
   operation semantics don't change across a protocol version the way
   a Soroban contract's bytecode does).
-- **Backfill**: `stellarindex-ops classic-movements-backfill -config
-  PATH -from N -to N [-window N] [-resume] [-write]`. Windowed,
-  resumable, idempotent (PK's `ON CONFLICT DO NOTHING`). Always run
-  under `/usr/local/sbin/run-heavy-job.sh` for anything beyond a
-  small range (CLAUDE.md heavy-job doctrine).
+- **Backfill**: `stellarindex-ops classic-movements-backfill -from N
+  -to N [-window N] [-ch-addr H:P] [-resume] [-write] [-verify]`.
+  Windowed, resumable (data-derived — the highest ledger already in
+  `stellar.account_movements`, no Postgres cursor), idempotent
+  (ReplacingMergeTree). No `-config` flag — this command opens no
+  Postgres connection at all (ADR-0048 D2). Always run under
+  `/usr/local/sbin/run-heavy-job.sh` for anything beyond a small range
+  (CLAUDE.md heavy-job doctrine).
 - **Serving**: none yet — write-path only (see `doc.go`).
 
 ## References
 
 - ADR-0001 — "Horizon is not in our architecture."
 - ADR-0034 — ClickHouse raw lake / Postgres served tier split.
+- ADR-0048 — "Serve by query shape": the account-movement archive
+  (`stellar.account_movements`) is ClickHouse-native, not Postgres.
 - Related source: [`sdex`](../sdex/README.md) — the precedent for a
   classic-op decoder living outside the projector.

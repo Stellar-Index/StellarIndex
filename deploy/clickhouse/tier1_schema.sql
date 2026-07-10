@@ -341,3 +341,97 @@ ORDER BY tx_hash;
 CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.tx_hash_index_mv
 TO stellar.tx_hash_index AS
 SELECT tx_hash, ledger_seq, tx_index FROM stellar.transactions;
+
+-- ── account_movements — ADR-0048 D2 feed-shaped account-activity archive ──
+-- Amends ADR-0047 D1 (which planned a Postgres `classic_movements` hypertable,
+-- migration 0105 — applied but left UNPOPULATED, see that migration's row in
+-- migrations/README.md): "serve by query shape, not by data age." The one
+-- genuinely archive-scale story here — "enter an address, see everything it
+-- has ever done" — is `WHERE address = X ORDER BY ledger` over what will
+-- become 10-20B immutable rows; that is a ClickHouse-shaped read, not a
+-- Postgres one (ADR-0048 §Context). This table is NOT a raw-lake table (it is
+-- decoder-DERIVED, unlike every table above it in this file) — it is a
+-- dedicated SERVING table per ADR-0048 D1, populated by
+-- `stellarindex-ops classic-movements-backfill` (internal/sources/
+-- classicmovements decodes `stellar.operations`/`operation_results`/
+-- `ledger_entry_changes` above; internal/storage/clickhouse's
+-- FanOutAccountMovement + InsertAccountMovements write here). Never written by
+-- the dual-sink / live extractor.
+--
+-- Feed-shaped: TWO rows per movement (one per participant), with a
+-- `direction` discriminator (sent/received/self) rather than one row with
+-- from/to columns — so a single-address query needs no OR / UNION. Row
+-- cardinality per movement_kind (mirrors internal/sources/classicmovements'
+-- exact FromAddress/ToAddress decode semantics — see that package's doc.go
+-- and README.md for the full per-op derivation):
+--   payment / create_account / path_payment / clawback / account_merge
+--     -> 2 rows (from_address != to_address, both known: one 'sent' row for
+--        the source, one 'received' row for the destination)
+--   payment, degenerate self-payment (from_address == to_address)
+--     -> 1 row, direction='self' (never sent+received for the same address —
+--        see FanOutAccountMovement's doc)
+--   claimable_balance_create
+--     -> 1 row (creator known, claimant unset at creation time — a create can
+--        name zero, one, or many eventual claimants; direction='sent',
+--        counterparty='')
+--   claimable_balance_claim / claimable_balance_clawback
+--     -> 1 row (the claimant/issuer performing the action is known; the
+--        other side is the escrow, not a G-account; direction='received',
+--        counterparty='')
+--   liquidity_pool_deposit / liquidity_pool_withdraw
+--     -> 2 rows per op (1 row per pool-asset leg x 2 legs; the other side of
+--        every leg is always the pool itself, which has no G-account address)
+--   liquidity_pool_withdraw (CAP-0038 auto-liquidation edge, Phase 4,
+--   attributes.revocation=true)
+--     -> 1 row per created ClaimableBalanceEntry (trustor known, destination
+--        escrow unknown) -- 2 for a real liquidation (every classic AMM pool
+--        has exactly two assets)
+--
+-- Engine: ReplacingMergeTree(ingested_at), same idempotent-re-derivation
+-- convention as every table above (see this file's header) — re-running an
+-- already-written classic-movements-backfill window is a safe no-op once
+-- merges settle.
+--
+-- ORDER BY (address, ledger, tx_hash, op_index, leg_index, direction) is
+-- ADR-0048 D2's exact key: `address` first makes a per-account read a
+-- contiguous primary-key range scan (the entire point of this table existing
+-- instead of a Postgres `WHERE address = ?` over an unindexed-at-that-scale
+-- hypertable); the remainder is the row's natural unique identity within one
+-- account's feed. `direction` is the LAST key column deliberately: the
+-- sent/received pair from one movement lands at two DIFFERENT `address`
+-- values (no collision risk from direction there), so it exists purely to
+-- keep a 'self' row from colliding with the address's own past/future
+-- sent/received rows at the same (ledger, tx_hash, op_index, leg_index).
+--
+-- amount: Int128, matching stellar.supply_flows' sibling convention. Classic
+-- amounts are int64-stroop-scale and are NOT special-cased (ADR-0047 D1) —
+-- Int128 costs nothing extra per row and keeps every amount column in the
+-- lake/serving tier uniformly wide, avoiding a second amount-typing
+-- convention for one table.
+--
+-- attributes: JSON-as-String (not a native JSON/Map type), mirroring
+-- migration 0105's `attributes jsonb` remainder 1:1 (balance_id, claimants,
+-- send_asset/send_amount, pool_id, revocation, …) — read via
+-- JSONExtractString/JSONExtract at query time, never a SQL predicate target
+-- in the hot path here (FindClaimableBalanceCreate's balance_id lookup is the
+-- one exception, explicitly documented there as a rare, unindexed fallback).
+CREATE TABLE IF NOT EXISTS stellar.account_movements
+(
+    address           String,
+    ledger            UInt32,
+    ledger_close_time DateTime64(0, 'UTC'),
+    tx_hash           String,
+    op_index          UInt32,
+    leg_index         UInt32,
+    direction         LowCardinality(String),
+    movement_kind     LowCardinality(String),
+    provenance        LowCardinality(String),
+    asset             String,
+    counterparty      String DEFAULT '',
+    amount            Int128,
+    attributes        String DEFAULT '{}',
+    ingested_at       DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY intDiv(ledger, 1000000)
+ORDER BY (address, ledger, tx_hash, op_index, leg_index, direction);

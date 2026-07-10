@@ -363,3 +363,206 @@ func breakdownCount(rows []chstore.ProtocolEventTypeCount, name string) uint64 {
 	}
 	return 0
 }
+
+// TestClickHouseAccountMovementsRoundTrip is the ADR-0048 D2 write->read
+// proof for stellar.account_movements: FanOutAccountMovement's direction
+// rules (two-participant sent+received, self, single-participant "acting
+// side") survive a real ClickHouse INSERT/SELECT round trip, a duplicate
+// insert collapses under the table's ReplacingMergeTree engine (observed via
+// VerifyAccountMovementsWindow's uniqExact, which — like the table's own
+// dedup story — doesn't require FINAL to be correct), MaxAccountMovementLedger
+// resolves the right resume point, and FindClaimableBalanceCreate's
+// balance_id lookup (the ClickHouse replacement for the retired Postgres
+// fallback) resolves a previously-written create.
+func TestClickHouseAccountMovementsRoundTrip(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	if err := chstore.EnsureAccountMovementsTable(ctx, addr); err != nil {
+		t.Fatalf("ensure account_movements table: %v", err)
+	}
+
+	const (
+		ledger  = uint32(59_000_001) // pre-P23, arbitrary
+		alice   = "GALICEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+		bob     = "GBOBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+		selfG   = "GSELFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+		creator = "GCREATORAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	)
+	closeTime := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	balanceID := "deadbeef00112233"
+
+	movements := []chstore.AccountMovement{
+		{ // two-participant: payment Alice -> Bob
+			MovementKind: "payment", Provenance: "classic_derived",
+			Ledger: ledger, LedgerCloseTime: closeTime, TxHash: "tx_payment", OpIndex: 0,
+			Asset: "native", Amount: big.NewInt(500), FromAddress: alice, ToAddress: bob,
+		},
+		{ // self-payment: must collapse to ONE 'self' row, not sent+received
+			MovementKind: "payment", Provenance: "classic_derived",
+			Ledger: ledger, LedgerCloseTime: closeTime, TxHash: "tx_self", OpIndex: 0,
+			Asset: "native", Amount: big.NewInt(1), FromAddress: selfG, ToAddress: selfG,
+		},
+		{ // single-participant: claimable_balance_create (creator known, no claimant yet)
+			MovementKind: "claimable_balance_create", Provenance: "classic_derived",
+			Ledger: ledger, LedgerCloseTime: closeTime, TxHash: "tx_cb_create", OpIndex: 0,
+			Asset: "native", Amount: big.NewInt(250), FromAddress: creator, ToAddress: "",
+			Attributes: map[string]any{"balance_id": balanceID, "claimants": []string{bob}},
+		},
+	}
+
+	// i128-scale amount that overflows int64, proving the Int128 column
+	// round-trips without truncation (ADR-0003) even though classic amounts
+	// in practice fit int64 — the column type is uniform across the lake.
+	bigAmt, _ := new(big.Int).SetString("170141183460469231731687303715884105727", 10) // max int128
+	movements = append(movements, chstore.AccountMovement{
+		MovementKind: "payment", Provenance: "classic_derived",
+		Ledger: ledger, LedgerCloseTime: closeTime, TxHash: "tx_i128", OpIndex: 0,
+		Asset: "native", Amount: bigAmt, FromAddress: alice, ToAddress: bob,
+	})
+
+	written, err := chstore.InsertAccountMovements(ctx, addr, movements)
+	if err != nil {
+		t.Fatalf("InsertAccountMovements: %v", err)
+	}
+	// payment(2) + self(1) + claimable_balance_create(1) + i128 payment(2) = 6 rows.
+	if written != 6 {
+		t.Fatalf("written = %d, want 6 (post-fan-out row count)", written)
+	}
+
+	conn := dialClickHouse(t, ctx, "stellar")
+
+	// ── Two-participant fan-out: sent + received rows, correct counterparty ──
+	rows, err := conn.Query(ctx, `SELECT address, direction, counterparty, amount FROM stellar.account_movements WHERE tx_hash = 'tx_payment' ORDER BY direction`)
+	if err != nil {
+		t.Fatalf("query tx_payment: %v", err)
+	}
+	var gotRows int
+	for rows.Next() {
+		var gotAddr, gotDir, gotCounterparty string
+		var gotAmt *big.Int
+		if err := rows.Scan(&gotAddr, &gotDir, &gotCounterparty, &gotAmt); err != nil {
+			t.Fatalf("scan tx_payment row: %v", err)
+		}
+		gotRows++
+		switch gotDir {
+		case "received":
+			if gotAddr != bob || gotCounterparty != alice {
+				t.Errorf("received row = address=%s counterparty=%s, want address=%s counterparty=%s", gotAddr, gotCounterparty, bob, alice)
+			}
+		case "sent":
+			if gotAddr != alice || gotCounterparty != bob {
+				t.Errorf("sent row = address=%s counterparty=%s, want address=%s counterparty=%s", gotAddr, gotCounterparty, alice, bob)
+			}
+		default:
+			t.Errorf("unexpected direction %q", gotDir)
+		}
+		if gotAmt == nil || gotAmt.Cmp(big.NewInt(500)) != 0 {
+			t.Errorf("amount = %v, want 500", gotAmt)
+		}
+	}
+	_ = rows.Close()
+	if gotRows != 2 {
+		t.Fatalf("tx_payment produced %d rows, want 2", gotRows)
+	}
+
+	// ── Self-payment: exactly one 'self' row, no sent/received duplicate ──
+	var selfCount uint64
+	if err := conn.QueryRow(ctx, `SELECT count() FROM stellar.account_movements WHERE tx_hash = 'tx_self'`).Scan(&selfCount); err != nil {
+		t.Fatalf("count tx_self: %v", err)
+	}
+	if selfCount != 1 {
+		t.Fatalf("tx_self row count = %d, want 1", selfCount)
+	}
+	var selfDirection string
+	if err := conn.QueryRow(ctx, `SELECT direction FROM stellar.account_movements WHERE tx_hash = 'tx_self'`).Scan(&selfDirection); err != nil {
+		t.Fatalf("direction tx_self: %v", err)
+	}
+	if selfDirection != "self" {
+		t.Fatalf("tx_self direction = %q, want self", selfDirection)
+	}
+
+	// ── i128 fidelity: the amount survives the round trip untruncated ──
+	var i128Amt *big.Int
+	if err := conn.QueryRow(ctx, `SELECT amount FROM stellar.account_movements WHERE tx_hash = 'tx_i128' AND direction = 'sent'`).Scan(&i128Amt); err != nil {
+		t.Fatalf("query tx_i128: %v", err)
+	}
+	if i128Amt == nil || i128Amt.Cmp(bigAmt) != 0 {
+		t.Fatalf("i128 amount = %v, want %v (must not truncate, ADR-0003)", i128Amt, bigAmt)
+	}
+
+	// ── Per-account ordered range read: the whole point of ORDER BY address ──
+	var aliceCount uint64
+	if err := conn.QueryRow(ctx, `SELECT count() FROM stellar.account_movements WHERE address = ?`, alice).Scan(&aliceCount); err != nil {
+		t.Fatalf("count alice: %v", err)
+	}
+	if aliceCount != 2 { // tx_payment (sent) + tx_i128 (sent)
+		t.Fatalf("alice row count = %d, want 2", aliceCount)
+	}
+
+	// ── MaxAccountMovementLedger: the data-derived resume point ──
+	maxLedger, found, err := chstore.MaxAccountMovementLedger(ctx, addr, ledger, ledger)
+	if err != nil {
+		t.Fatalf("MaxAccountMovementLedger: %v", err)
+	}
+	if !found || maxLedger != ledger {
+		t.Fatalf("MaxAccountMovementLedger = (%d, %v), want (%d, true)", maxLedger, found, ledger)
+	}
+	if _, found, err := chstore.MaxAccountMovementLedger(ctx, addr, ledger+1, ledger+1000); err != nil {
+		t.Fatalf("MaxAccountMovementLedger (empty range): %v", err)
+	} else if found {
+		t.Fatalf("MaxAccountMovementLedger (empty range) found=true, want false")
+	}
+
+	// ── FindClaimableBalanceCreate: the ClickHouse Phase-3 fallback lookup ──
+	asset, amt, createdBy, found, err := chstore.FindClaimableBalanceCreate(ctx, addr, balanceID)
+	if err != nil {
+		t.Fatalf("FindClaimableBalanceCreate: %v", err)
+	}
+	if !found {
+		t.Fatal("FindClaimableBalanceCreate: found=false, want true")
+	}
+	if asset != "native" || amt == nil || amt.Cmp(big.NewInt(250)) != 0 || createdBy != creator {
+		t.Errorf("FindClaimableBalanceCreate = asset=%s amount=%v createdBy=%s, want native/250/%s", asset, amt, createdBy, creator)
+	}
+	if _, _, _, found, err := chstore.FindClaimableBalanceCreate(ctx, addr, "nonexistent"); err != nil {
+		t.Fatalf("FindClaimableBalanceCreate (miss): %v", err)
+	} else if found {
+		t.Fatal("FindClaimableBalanceCreate (miss): found=true, want false")
+	}
+
+	// ── VerifyAccountMovementsWindow: uniqExact collapses the fan-out back
+	// to per-movement counts (not per-row), matching what -verify compares
+	// against the backfill command's own decode-time counts.
+	verifyCounts, err := chstore.VerifyAccountMovementsWindow(ctx, addr, ledger, ledger)
+	if err != nil {
+		t.Fatalf("VerifyAccountMovementsWindow: %v", err)
+	}
+	if verifyCounts["payment"] != 3 { // tx_payment + tx_self + tx_i128
+		t.Errorf("verifyCounts[payment] = %d, want 3", verifyCounts["payment"])
+	}
+	if verifyCounts["claimable_balance_create"] != 1 {
+		t.Errorf("verifyCounts[claimable_balance_create] = %d, want 1", verifyCounts["claimable_balance_create"])
+	}
+
+	// ── Re-insert the IDENTICAL batch: ReplacingMergeTree dedup ──
+	// (idempotent re-derivation, ADR-0048 D2's retry-safe write contract).
+	// uniqExact is exact under un-merged duplicate parts (no FINAL needed —
+	// see VerifyAccountMovementsWindow's doc comment), so the distinct
+	// movement counts must be UNCHANGED by the duplicate insert even though
+	// raw row counts may temporarily double until merges settle.
+	if _, err := chstore.InsertAccountMovements(ctx, addr, movements); err != nil {
+		t.Fatalf("InsertAccountMovements (duplicate): %v", err)
+	}
+	verifyCountsAfterDup, err := chstore.VerifyAccountMovementsWindow(ctx, addr, ledger, ledger)
+	if err != nil {
+		t.Fatalf("VerifyAccountMovementsWindow (after duplicate): %v", err)
+	}
+	if verifyCountsAfterDup["payment"] != 3 {
+		t.Errorf("verifyCounts[payment] after duplicate insert = %d, want 3 (uniqExact must not double-count)", verifyCountsAfterDup["payment"])
+	}
+	if verifyCountsAfterDup["claimable_balance_create"] != 1 {
+		t.Errorf("verifyCounts[claimable_balance_create] after duplicate insert = %d, want 1", verifyCountsAfterDup["claimable_balance_create"])
+	}
+}

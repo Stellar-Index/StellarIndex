@@ -854,7 +854,7 @@ func TestDecoder_clawback_roundTrip(t *testing.T) {
 // even though the claim was decoded BEFORE its create (simulating
 // StreamClassicOps' tx_hash-lexicographic order putting the claim's
 // tx ahead of the create's tx within the same window), ResolveBalance
-// finds it once the create HAS been indexed, no Postgres needed.
+// finds it once the create HAS been indexed, no ClickHouse round trip needed.
 func TestDecoder_ResolveBalance_sameWindowOutOfOrder(t *testing.T) {
 	creatorAddr, _ := mkAccount(t, 0x84)
 	claimerAddr, _ := mkAccount(t, 0x85)
@@ -891,7 +891,7 @@ func TestDecoder_ResolveBalance_sameWindowOutOfOrder(t *testing.T) {
 
 	// The caller (chops) re-checks the pending ref via ResolveBalance
 	// AFTER the whole window has been decoded — this must now succeed
-	// without touching Postgres.
+	// without touching ClickHouse.
 	asset, amount, createdBy, ok := d.ResolveBalance(pending[0].BalanceIDHex)
 	if !ok {
 		t.Fatal("ResolveBalance = false, want true (create was indexed later in the same window)")

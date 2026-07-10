@@ -633,13 +633,21 @@ Subcommands:
                           resumable (idempotent ReplacingMergeTree), prints a
                           resume point per window. -dry-run counts what WOULD
                           be written. Run under run-heavy-job.sh on r1.
-  classic-movements-backfill -config PATH -from N -to N [-window N] [-ch-addr H:P] [-resume] [-write]
-                          ADR-0047, all four phases: reconstruct pre-P23
-                          classic movements from the ClickHouse lake into
-                          the classic_movements hypertable. Op-only surface
-                          (stellar.operations join operation_results):
-                          Payment, CreateAccount, PathPaymentStrictReceive/
-                          Send, CreateClaimableBalance, ClaimClaimableBalance,
+  classic-movements-backfill -from N -to N [-window N] [-ch-addr H:P] [-resume] [-write] [-verify]
+                          ADR-0047, all four phases, RETARGETED by ADR-0048
+                          D2 to ClickHouse: reconstruct pre-P23 classic
+                          movements from the lake into
+                          stellar.account_movements (feed-shaped, two rows
+                          per movement — see that table's DDL header in
+                          deploy/clickhouse/tier1_schema.sql for the full
+                          row-cardinality table). No Postgres connection —
+                          the Postgres classic_movements hypertable
+                          (migration 0105) stays applied but UNPOPULATED;
+                          see migrations/README.md's 0105 row. Op-only
+                          surface (stellar.operations join
+                          operation_results): Payment, CreateAccount,
+                          PathPaymentStrictReceive/Send,
+                          CreateClaimableBalance, ClaimClaimableBalance,
                           ClawbackClaimableBalance, Clawback, AccountMerge.
                           Entry-changes-correlated surface (also needs
                           ledger_entry_changes — see ADR-0047 Phase 0):
@@ -652,25 +660,33 @@ Subcommands:
                           fidelity gap for this range. ClaimClaimableBalance/
                           ClawbackClaimableBalance correlate against their
                           own CreateClaimableBalance row via an in-run index
-                          + a Postgres fallback; unresolved ones are counted
-                          + logged, never guessed. HISTORICAL-ONLY — -to is
-                          HARD-CLAMPED below the P23 boundary (ledger
-                          58762517, 2025-09-03) regardless of what is
-                          passed, since every ledger from P23 onward already
-                          emits a unified CAP-67 event via sep41_transfers.
+                          + a ClickHouse fallback (previously Postgres);
+                          unresolved ones are counted + logged, never
+                          guessed. HISTORICAL-ONLY — -to is HARD-CLAMPED
+                          below the P23 boundary (ledger 58762517,
+                          2025-09-03) regardless of what is passed, since
+                          every ledger from P23 onward already emits a
+                          unified CAP-67 event via sep41_transfers.
                           Windowed (-window, default 500000 ledgers) and
-                          resumable (-resume, default true; checkpoints
-                          into ingestion_cursors per window). Idempotent
-                          (ON CONFLICT DO NOTHING) — safe to re-run over an
+                          resumable (-resume, default true; DATA-DERIVED —
+                          queries the highest ledger already in
+                          stellar.account_movements for [-from,-to] and
+                          re-processes it, no ingestion_cursors row
+                          involved, per ADR-0048's "no Postgres in the
+                          loop"). -verify recounts each window from
+                          ClickHouse and compares against this run's
+                          decode-time counts (cheap reconciliation, not
+                          full ADR-0033 machinery). Idempotent
+                          (ReplacingMergeTree) — safe to re-run over an
                           already-written range (re-running after Phase 0
                           lands resolves anything reported
                           entry-changes-unavailable on a prior pass).
                           Defaults to DRY-RUN (count only); pass -write to
                           persist. Run under run-heavy-job.sh on r1. Example:
                             stellarindex-ops classic-movements-backfill \
-                              -config /etc/stellarindex.toml \
+                              -ch-addr 127.0.0.1:9300 \
                               -from 2 -to 58762516 \
-                              -write
+                              -write -verify
   projected-rebuild -config PATH -source NAME -from N [-to N] [-workers K] [-window N] [-resume] [-write] [-ch-addr H:P] [-allow-live-overlap]
                           ADR-0048 D3: bulk catch-up for a projected
                           (Soroban-derived) source, replacing

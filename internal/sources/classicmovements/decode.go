@@ -418,9 +418,10 @@ func claimAtomBoughtSide(atom xdr.ClaimAtom) (xdr.Asset, xdr.Int64, bool) {
 //     (b+own-index) — neither op's body nor result carries an
 //     asset/amount, only a BalanceId. Resolved against the create
 //     row's own previously-derived Asset/Amount via Decoder's in-run
-//     index (dispatcher_adapter.go), falling back to a Postgres
-//     lookup for creates outside this run — see that file's Decoder
-//     doc for the full design + memory-scaling caveat.
+//     index (dispatcher_adapter.go), falling back to a ClickHouse
+//     lookup (ADR-0048 D2; previously Postgres) for creates outside
+//     this run — see that file's Decoder doc for the full design +
+//     memory-scaling caveat.
 //   - Clawback (the plain op, not the claimable-balance variant):
 //     path (a) — asset/amount/holder all in the body.
 //
