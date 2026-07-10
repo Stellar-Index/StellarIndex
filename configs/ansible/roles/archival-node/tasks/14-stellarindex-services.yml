@@ -354,10 +354,14 @@
     group: root
     mode: "0755"
 
-- name: Install run-ch-supply.sh driver (lake-derived token_supply refresh)
-  # ch-supply.service runs this: seeds supply_flows for the gap from the CH lake
-  # then re-aggregates token_supply — the lake-derived per-token supply that
-  # backs /v1/assets SEP-41 supply. Seed is chunked + memory-guarded.
+- name: Install run-ch-supply.sh driver (supply_flows forward gap-fill)
+  # ch-supply.service runs this: a defensive re-seed of stellar.supply_flows
+  # for [last-seeded+1, tip] from the certified CH lake, in case the indexer's
+  # live decode-at-ingest writer ever falls behind (normally a no-op).
+  # supply_flows is what backs /v1/assets SEP-41 supply — summed live on
+  # every request (no materialized rollup; the old stellar.token_supply
+  # rollup + its -write refresh were retired, ROADMAP #66, 2026-07-10). Seed
+  # is chunked + memory-guarded.
   ansible.builtin.copy:
     src: run-ch-supply.sh
     dest: /usr/local/sbin/run-ch-supply.sh

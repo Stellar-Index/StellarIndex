@@ -173,12 +173,13 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// SEP-41 fallback: a Soroban token has no LCM observer snapshot unless its
 	// contract is on the operator watch-list — impractical at 10k+ tokens, so
 	// the watch-list is empty and Algorithm 3 produces nothing here. Fall back
-	// to the lake-derived per-token supply (ch-supply's token_supply,
-	// Σmint−Σburn−Σclawback over the certified ClickHouse lake) so EVERY SEP-41
-	// token's total_supply is served + complete from the full archive — the same
-	// source GET /v1/assets/{id}/supply already uses. Only fires when no observer
-	// snapshot exists (classic assets keep their Algorithm-2 snapshot), so it
-	// adds a CH read only for Soroban tokens.
+	// to the lake-derived per-token supply (stellar.supply_flows, summed live —
+	// Σmint−Σburn−Σclawback over the certified ClickHouse lake, no rollup
+	// refresh needed) so EVERY SEP-41 token's total_supply is served + complete
+	// from the full archive — the same source GET /v1/assets/{id}/supply
+	// already uses. Only fires when no observer snapshot exists (classic assets
+	// keep their Algorithm-2 snapshot), so it adds a CH read only for Soroban
+	// tokens.
 	if !haveSnap && s.tokenSupply != nil && asset.Type == canonical.AssetSoroban && asset.ContractID != "" {
 		if ts, terr := s.tokenSupply.TokenSupply(ctx, asset.ContractID); terr == nil && ts.Total != nil {
 			snap = supply.Supply{

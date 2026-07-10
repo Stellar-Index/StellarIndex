@@ -1,6 +1,6 @@
 ---
 title: Supply derivation from the ClickHouse lake (every token)
-last_verified: 2026-06-08
+last_verified: 2026-07-10
 status: design
 ---
 
@@ -100,38 +100,60 @@ ADR-0034 plan §10a ("drop + rebuild supply tables from CH") is now achievable
 - Reconcile the rolled-forward number against the live tier at cutover (they
   must agree at `t0`), then serve.
 
-## 7. Implemented (2026-06-08) — `ch-supply` + `stellar.token_supply`
+## 7. Implemented (2026-06-08), superseded (2026-06-30 / 2026-07-10)
 
-Supply-for-every-token is **derived + materialized**:
+Supply-for-every-token was originally **derived + materialized**, then moved
+to **derived + summed live** once `stellar.supply_flows` (decode-at-ingest,
+§7a) landed:
 
-- **`stellarindex-ops ch-supply`** (`cmd/stellarindex-ops/ch_supply.go` +
-  `internal/storage/clickhouse/{supply_reader,token_supply}.go`) streams the
-  lake's mint/burn/clawback flows (`StreamMintBurnFlows`: `topic_0_sym IN
+- **`stellarindex-ops ch-supply`** (`internal/ops/chops/ch_supply.go` +
+  `internal/storage/clickhouse/supply_flows.go`) streams the lake's
+  mint/burn/clawback flows (`StreamMintBurnFlows`: `topic_0_sym IN
   ('mint','burn','clawback')`), decodes the amount (bare i128 **or** the
   SEP-41/CAP-67 map-variant `amount` field — type-tested), and sums
   `total = Σmint − Σburn − Σclawback` per `contract_id`.
-- **`-write`** persists to a CH `ReplacingMergeTree` table
+- **`-seed-flows`** persists one decoded row per flow event into
+  `stellar.supply_flows` (idempotent, ReplacingMergeTree by event identity).
+  The API's `SupplyReader.TokenSupply()` then sums that table **live** with
+  `FINAL` on every request — no materialized rollup, so it's always current
+  with zero refresh lag. This is the path served today.
+- **Retired (ROADMAP #66, 2026-07-10):** the original design also had a
+  **`-write`** flag that persisted a materialized `ReplacingMergeTree` table,
   **`stellar.token_supply`** (`contract_id`, `total_supply`, mint/burn/clawback
-  components, `flow_count`, `last_ledger`; amounts as decimal strings per
-  ADR-0003). The explorer queries this table; per-token decimals are applied at
-  display.
-- **Result (2026-06-08):** 401,502 tokens, all history, current to the live tip
-  (the indexer's real-time CH dual-sink keeps `contract_events` fresh — #18).
-  ~99.997% of flows decode; the rest are odd edge bodies (U32/Vec/Void).
+  components, `flow_count`, `last_ledger`). That flag, its writer
+  (`internal/storage/clickhouse/token_supply.go`), the standalone
+  `ch-supply-refresh.sh` driver + `ch-supply-refresh.{service,timer}` systemd
+  units, and the `stellar.token_supply` table itself are all gone — nothing
+  had read that table since the live-sum path shipped
+  (`internal/storage/clickhouse/supply_flows.go`'s doc comment says so
+  explicitly: "always current ... no rollup refresh"). The r1 table's
+  `computed_at` hadn't advanced past 2026-06-08 by the time this was noticed,
+  confirming it was already dead. Operator follow-up: drop the orphaned CH
+  table on r1 (see the CHANGELOG entry / commit for the exact command).
+- **Result (2026-06-08, historical):** the last `-write` populate covered
+  401,502 tokens, all history, current to the live tip at that time. ~99.997%
+  of flows decode; the rest are odd edge bodies (U32/Vec/Void) — this
+  decode-coverage number still applies to the live-sum path.
 - **Keying:** `contract_id` (SAC for classic, token contract for SEP-41) — a
   unique per-token identity; classic↔CODE-ISSUER mapping is a display concern.
-- **Correctness caveat:** the v1 populate ran `-final=false` (fast/light). The
-  three sample/validation re-run partitions (25/45/62) are still duplicated
-  (ledger dup ≈ 88 k; a full `FINAL` over `contract_events` is ~10 h, and
-  `uniqExact`-dedup OOMs at CH's memory cap), so tokens active in those ledger
-  ranges (25 M / 45 M / 62.7 M) are supply-inflated — ≲0.14 % for tokens active
-  across history, more for tokens concentrated there. **Correct refresh:** once
-  those partitions are deduped (a one-time `OPTIMIZE … PARTITION FINAL`
-  off-hours, or as part of the §10 decommission cleanup), re-run `ch-supply
-  -write`.
-- **Freshness:** the table is a snapshot from the `-write` run; a periodic
-  refresh (a `ch-supply -write` timer, sibling to `ch-live-catchup`) keeps it
-  current, or — once the extractor decodes the amount/asset into a CH column —
-  a `MATERIALIZED VIEW` could maintain it incrementally + real-time.
+- **Correctness caveat (still open):** the sample/validation re-run partitions
+  (25/45/62) are still duplicated in `contract_events` (ledger dup ≈ 88 k; a
+  full `FINAL` over `contract_events` is ~10 h, and `uniqExact`-dedup OOMs at
+  CH's memory cap), so tokens active in those ledger ranges (25 M / 45 M /
+  62.7 M) are supply-inflated — ≲0.14 % for tokens active across history, more
+  for tokens concentrated there. This is unaffected by the `token_supply`
+  retirement (it's a `contract_events`/`supply_flows` dedup issue, not a
+  rollup-freshness issue); tracked separately (ROADMAP #66's CH
+  `OPTIMIZE FINAL` item).
 - **XLM** (native): total from `ledgers.total_coins`; not part of the
   mint/burn flows (still to wire).
+
+### 7a. `stellar.supply_flows` — the live path (2026-06-30)
+
+`run-ch-supply.sh` (ansible-managed `ch-supply.timer`, every ~24h on r1) is
+the **defensive forward gap-filler** for `supply_flows`: `supply_flows` is
+written live by the indexer's decode-at-ingest CH sink, and this timer only
+re-seeds `[last-seeded+1, tip]` from the certified lake if the live writer
+ever falls behind (normally a no-op). This is a *different, still-live*
+mechanism from the retired `token_supply` rollup above — do not confuse the
+two `ch-supply` subcommand flags (`-seed-flows`, live; `-write`, retired).

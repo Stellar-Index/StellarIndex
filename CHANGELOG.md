@@ -15,6 +15,41 @@ against.
 
 ## [Unreleased]
 
+### Removed
+- **Obsolete `stellar.token_supply` CH rollup + its refresh driver (ROADMAP #66).**
+  Nothing has read `stellar.token_supply` since the SEP-41 supply serving path
+  moved (2026-06-30) to summing `stellar.supply_flows` live on every request
+  (`SupplyReader.TokenSupply`, no rollup refresh needed) — confirmed on r1:
+  the table's `computed_at` hadn't advanced past 2026-06-08. Removed the dead
+  writer (`internal/storage/clickhouse/token_supply.go`), the `-write` flag +
+  branch from `stellarindex-ops ch-supply` (`internal/ops/chops/ch_supply.go`),
+  and the standalone `ch-supply-refresh.sh` driver +
+  `ch-supply-refresh.{service,timer}` systemd units (`scripts/ops/`,
+  `deploy/systemd/`) — none of which were ever installed on r1. **Not touched:**
+  the ansible-managed `ch-supply.timer`/`run-ch-supply.sh` (`-seed-flows`) is a
+  *different*, still-live mechanism — a defensive forward-gap-fill for
+  `stellar.supply_flows` itself, unrelated to the retired rollup; despite the
+  similar name it must stay. Updated stale comments that described the retired
+  `-write`/aggregate step as still happening
+  (`configs/ansible/roles/archival-node/{tasks/14-stellarindex-services.yml,
+  files/run-ch-supply.sh, templates/systemd/ch-supply.service.j2}`,
+  `internal/supply/supply.go`, `internal/api/v1/assets_f2.go`,
+  `docs/architecture/clickhouse-supply-from-ch.md`). **Operator follow-up on
+  r1** (not done here — read-only investigation only): drop the orphaned CH
+  table and disable/remove the never-installed old units if present on any
+  other host:
+  ```sh
+  # r1 (or any host): confirm nothing reads it, then drop
+  curl -sS http://localhost:8123/ --data-binary \
+    "SELECT max(computed_at), count() FROM stellar.token_supply"
+  curl -sS http://localhost:8123/ --data-binary "DROP TABLE stellar.token_supply"
+  # only if ever present — r1 does not have these installed:
+  systemctl disable --now ch-supply-refresh.timer 2>/dev/null || true
+  rm -f /etc/systemd/system/ch-supply-refresh.{service,timer} \
+        /usr/local/bin/ch-supply-refresh.sh
+  systemctl daemon-reload
+  ```
+
 ## [v0.14.0] — 2026-07-10
 
 ### Added
