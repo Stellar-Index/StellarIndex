@@ -132,6 +132,41 @@ against.
   entries added — `scripts/ci/lint-baseline-growth.sh` sees a pure-removal diff).
 
 ### Fixed
+- **Aggregator `min_usd_volume` anti-manipulation floor extended to classic- and
+  Soroban-quoted pairs; soroswap_router structurally proven never priced.** Two
+  aggregator-policy guards (2026-07-10):
+  - **`min_usd_volume` scope gap (Guard 1).** The floor previously applied ONLY to
+    fiat:USD-quoted target pairs — a directly-configured classic- or Soroban-quoted
+    pair (e.g. `native/<SAC-USDC contract>`) served VWAP completely unguarded at any
+    window volume, so a single dust trade could set the price. `usdQuoteDecimals`
+    (`internal/aggregate/orchestrator`) now unifies the "can we value this pair's
+    quote in USD" question the valuation path and the floor's applicability check
+    both need, closing the drift between them: a classic peg on
+    `usd_pegged_classic_assets` was already valuable but the floor never consulted
+    it; a new `USDPeggedSorobanAssets` list (derived at the binary boundary from
+    `[supply].sac_wrappers` ∩ `[trades].usd_pegged_classic_assets` — no new TOML
+    knob) extends the same recognition to SAC-wrapped classic pegs. A target pair
+    whose on-chain quote has no recognised peg (rare — e.g. a raw Soroban/Soroban
+    pair) is NOT fail-closed: enumerating every configured pair set (the built-in
+    default + every checked-in TOML, including r1's live config) shows none would
+    hit that branch today, but fail-closing on principle would silently blackout
+    any future legitimate pair the moment an operator enables the floor. It instead
+    passes through unguarded exactly as before, but now observably — a WARN log
+    plus the new `stellarindex_aggregator_min_usd_volume_unvaluable_total{pair}`
+    counter (dashboard-only, no alert wired). Non-USD fiat pairs (EUR/GBP/…) remain
+    silently exempt, a separate pre-existing scope boundary (no live FX rate to
+    convert against).
+  - **soroswap_router price guard (Guard 2).** Verified structurally impossible for
+    a soroswap_router row to ever be priced: `internal/pipeline/sink.go`'s
+    `soroswap_router.Event` case writes only to the `soroswap_router_swaps`
+    hypertable, never `trades` (the aggregator's sole VWAP input table); and even a
+    future regression that got one into `trades` would still be dropped by
+    `filterForVWAP`, since `external.Registry["soroswap-router"]` is
+    `Class=ClassRouter` with `IncludeInVWAP=false`. No new filtering code added
+    (would have been dead code) — added regression tests instead
+    (`TestFilterForVWAP_ExcludesSoroswapRouter`,
+    `TestTick_SoroswapRouterTradeNeverContributesToVWAP`) that fail loudly if either
+    guard layer ever regresses.
 - **blend_emitter WASM audit closed; `BackfillSafe` flipped true.** Read-only against the
   r1 ClickHouse raw lake (HTTP 8123, no `stellarindex-ops wasm-history` / MinIO walk):
   checked ALL 469 lifetime events the Emitter contract has ever emitted — not a sample —

@@ -1084,27 +1084,62 @@ func TestDistinctSourceCount(t *testing.T) {
 	}
 }
 
-// TestMinUSDVolumeApplies — only fiat:USD-quoted pairs are in scope
-// for the MinUSDVolume threshold; everything else is exempt because
-// the cross-decimal arithmetic across mixed sources doesn't reduce
-// to a clean USD figure for non-USD-quoted pairs.
-func TestMinUSDVolumeApplies(t *testing.T) {
-	xlm, _ := canonical.NewCryptoAsset("XLM")
+// TestUSDQuoteDecimals — the shared classification both
+// usdVolumeForPairPerTrade (valuation) and dropForMinUSDVolume
+// (MinUSDVolume applicability) delegate to. fiat:USD is always
+// valuable; classic/Soroban quotes are valuable ONLY when on the
+// operator's respective peg list (Guard 1, 2026-07-10 — before this,
+// classic/Soroban pegs were recognised for valuation but NEVER
+// consulted by the applicability gate, which checked fiat:USD only).
+// Non-USD fiat and un-pegged classic/Soroban/crypto/RWA quotes are
+// unvaluable by this package (no live price lookup here).
+func TestUSDQuoteDecimals(t *testing.T) {
 	usd, _ := canonical.NewFiatAsset("USD")
 	eur, _ := canonical.NewFiatAsset("EUR")
 	usdt, _ := canonical.NewCryptoAsset("USDT")
 
-	xlmUSD, _ := canonical.NewPair(xlm, usd)
-	xlmEUR, _ := canonical.NewPair(xlm, eur)
-	xlmUSDT, _ := canonical.NewPair(xlm, usdt)
-	if !minUSDVolumeApplies(xlmUSD) {
-		t.Error("minUSDVolumeApplies(XLM/fiat:USD) = false, want true")
+	classicUSDC, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
 	}
-	if minUSDVolumeApplies(xlmEUR) {
-		t.Error("minUSDVolumeApplies(XLM/fiat:EUR) = true, want false")
+	classicUnpegged, err := canonical.NewClassicAsset("YXLM", "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5")
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
 	}
-	if minUSDVolumeApplies(xlmUSDT) {
-		t.Error("minUSDVolumeApplies(XLM/USDT) = true, want false (crypto:USDT, not fiat:USD)")
+	sacUSDC, err := canonical.NewSorobanAsset("CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75")
+	if err != nil {
+		t.Fatalf("NewSorobanAsset: %v", err)
+	}
+	sacUnpegged, err := canonical.NewSorobanAsset("CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7")
+	if err != nil {
+		t.Fatalf("NewSorobanAsset: %v", err)
+	}
+
+	classicPegs := []canonical.Asset{classicUSDC}
+	sorobanPegs := []canonical.Asset{sacUSDC}
+
+	tests := []struct {
+		name        string
+		quote       canonical.Asset
+		wantDecimal int
+		wantOK      bool
+	}{
+		{"fiat:USD always valuable", usd, 8, true},
+		{"fiat:EUR unvaluable (non-USD fiat)", eur, 0, false},
+		{"crypto:USDT unvaluable (abstract ticker, not on-chain)", usdt, 0, false},
+		{"classic pegged USDC valuable", classicUSDC, 7, true},
+		{"classic un-pegged asset unvaluable", classicUnpegged, 0, false},
+		{"Soroban SAC pegged USDC valuable", sacUSDC, 7, true},
+		{"Soroban SAC un-pegged contract unvaluable", sacUnpegged, 0, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dec, ok := usdQuoteDecimals(tc.quote, classicPegs, sorobanPegs)
+			if ok != tc.wantOK || dec != tc.wantDecimal {
+				t.Errorf("usdQuoteDecimals(%s) = (%d, %v), want (%d, %v)",
+					tc.quote.String(), dec, ok, tc.wantDecimal, tc.wantOK)
+			}
+		})
 	}
 }
 
@@ -1375,6 +1410,203 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 			t.Errorf("key %q exists after rejection", key)
 		}
 	})
+}
+
+// TestTick_MinUSDVolumeFilter_SorobanQuotedPair — Guard 1 (2026-07-10):
+// before this fix, a DIRECTLY-configured Soroban-quoted target pair
+// (e.g. "native/<SAC-USDC>") served VWAP completely unguarded — the
+// applicability check only recognised fiat:USD. These cases prove
+// the floor now applies once the SAC's underlying classic asset is on
+// USDPeggedClassicAssets and the SAC contract itself is resolved into
+// USDPeggedSorobanAssets (mirroring how cmd/stellarindex-aggregator's
+// resolveUSDPeggedSorobanAssets derives it from
+// [supply].sac_wrappers + [trades].usd_pegged_classic_assets).
+func TestTick_MinUSDVolumeFilter_SorobanQuotedPair(t *testing.T) {
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	classicUSDC, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+	sacUSDC, err := canonical.NewSorobanAsset("CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75")
+	if err != nil {
+		t.Fatalf("NewSorobanAsset: %v", err)
+	}
+	pair, err := canonical.NewPair(xlm, sacUSDC)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+
+	// SAC quote_amount is at the 7-decimal classic invariant, same as
+	// the classic USDC test above. $9,999.99999 — just under $10k.
+	mkTrade := func(q *big.Int) canonical.Trade {
+		return canonical.Trade{
+			Source:      "soroswap", // ClassExchange + IncludeInVWAP=true
+			Ledger:      52_500_000,
+			TxHash:      "0000000000000000000000000000000000000000000000000000000000000000",
+			Timestamp:   time.Now(),
+			Pair:        pair,
+			BaseAmount:  canonical.NewAmount(big.NewInt(1_000_000_000_000)),
+			QuoteAmount: canonical.NewAmount(q),
+		}
+	}
+
+	t.Run("sub-floor SAC-quoted trade: no VWAP served", func(t *testing.T) {
+		store := &mockStore{trades: []canonical.Trade{mkTrade(big.NewInt(99_999_990_000))}} // $9,999.999
+		rdb, mr := newTestRedis(t)
+		orch := New(store, rdb, Config{
+			Pairs:                  []canonical.Pair{pair},
+			Windows:                []time.Duration{5 * time.Minute},
+			MinUSDVolume:           10_000,
+			USDPeggedClassicAssets: []canonical.Asset{classicUSDC},
+			USDPeggedSorobanAssets: []canonical.Asset{sacUSDC},
+		})
+
+		before := testutil.ToFloat64(obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume"))
+		if err := orch.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		after := testutil.ToFloat64(obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume"))
+		if after-before != 1 {
+			t.Errorf("min_usd_volume drop counter delta = %v, want 1 — SAC-quoted dust window must now be gated", after-before)
+		}
+		if orch.Stats().VWAPWrites != 0 {
+			t.Errorf("VWAPWrites = %d, want 0 (sub-floor SAC-quoted window must be rejected)", orch.Stats().VWAPWrites)
+		}
+		key := "vwap:" + xlm.String() + ":" + sacUSDC.String() + ":300"
+		if mr.Exists(key) {
+			t.Errorf("key %q exists — sub-floor SAC-quoted window must not publish", key)
+		}
+	})
+
+	t.Run("above-floor SAC-quoted trade: VWAP served", func(t *testing.T) {
+		store := &mockStore{trades: []canonical.Trade{mkTrade(big.NewInt(100_000_000_000))}} // exactly $10,000
+		rdb, mr := newTestRedis(t)
+		orch := New(store, rdb, Config{
+			Pairs:                  []canonical.Pair{pair},
+			Windows:                []time.Duration{5 * time.Minute},
+			MinUSDVolume:           10_000,
+			USDPeggedClassicAssets: []canonical.Asset{classicUSDC},
+			USDPeggedSorobanAssets: []canonical.Asset{sacUSDC},
+		})
+
+		if err := orch.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		if orch.Stats().VWAPWrites != 1 {
+			t.Errorf("VWAPWrites = %d, want 1 (at-floor SAC-quoted window should publish)", orch.Stats().VWAPWrites)
+		}
+		key := "vwap:" + xlm.String() + ":" + sacUSDC.String() + ":300"
+		if !mr.Exists(key) {
+			t.Errorf("key %q missing — at-floor SAC-quoted window should publish", key)
+		}
+	})
+
+	t.Run("SAC contract NOT on USDPeggedSorobanAssets: unvaluable, passes through with WARN metric", func(t *testing.T) {
+		// Same dust-level trade as the "sub-floor" case above, but the
+		// orchestrator has no USDPeggedSorobanAssets entry for this SAC
+		// — pre-2026-07-10 behaviour: unguarded, but now OBSERVABLE via
+		// AggregatorMinUSDVolumeUnvaluableTotal instead of silent.
+		store := &mockStore{trades: []canonical.Trade{mkTrade(big.NewInt(99_999_990_000))}}
+		rdb, mr := newTestRedis(t)
+		orch := New(store, rdb, Config{
+			Pairs:        []canonical.Pair{pair},
+			Windows:      []time.Duration{5 * time.Minute},
+			MinUSDVolume: 10_000,
+			// USDPeggedClassicAssets / USDPeggedSorobanAssets left empty —
+			// this SAC has no recognised USD peg.
+		})
+
+		before := testutil.ToFloat64(obs.AggregatorMinUSDVolumeUnvaluableTotal.WithLabelValues(pair.String()))
+		if err := orch.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		after := testutil.ToFloat64(obs.AggregatorMinUSDVolumeUnvaluableTotal.WithLabelValues(pair.String()))
+		if after-before != 1 {
+			t.Errorf("AggregatorMinUSDVolumeUnvaluableTotal delta = %v, want 1", after-before)
+		}
+		if orch.Stats().VWAPWrites != 1 {
+			t.Errorf("VWAPWrites = %d, want 1 — unvaluable on-chain quote must pass through, not fail-closed", orch.Stats().VWAPWrites)
+		}
+		key := "vwap:" + xlm.String() + ":" + sacUSDC.String() + ":300"
+		if !mr.Exists(key) {
+			t.Errorf("key %q missing — unvaluable pair should still publish (pass-through, not fail-closed)", key)
+		}
+	})
+}
+
+// TestFilterForVWAP_ExcludesSoroswapRouter — Guard 2 (2026-07-10):
+// soroswap_router rows mix realized + limit values in AmountIn/Out
+// and must NEVER be priced. This is already double-guarded
+// structurally, so this test proves the guard rather than adding a
+// new filter:
+//
+//  1. internal/pipeline/sink.go's `case soroswap_router.Event` calls
+//     ONLY store.InsertSoroswapRouterSwap (the soroswap_router_swaps
+//     hypertable) — never persistTrade / InsertTrade. A
+//     soroswap-router row therefore never exists in the `trades`
+//     table that internal/storage/timescale.Store.TradesInRange (the
+//     orchestrator's sole VWAP input query) selects from. Verified by
+//     code reading (internal/pipeline/sink.go case soroswap_router.Event,
+//     2026-07-10) — there's no unit-testable SQL surface for "this
+//     table is never joined into that one" without a live Postgres.
+//  2. Even if a future regression ever got a Source="soroswap-router"
+//     row into `trades`, external.Registry classifies "soroswap-router"
+//     as Class=ClassRouter (not ClassExchange) with IncludeInVWAP=false,
+//     so filterForVWAP already drops it — this is what the test below
+//     exercises directly.
+func TestFilterForVWAP_ExcludesSoroswapRouter(t *testing.T) {
+	now := time.Now()
+	trades := []canonical.Trade{
+		buildTradeFrom(t, "soroswap-router", big.NewInt(1), big.NewInt(1), now),
+		buildTradeFrom(t, "binance", big.NewInt(2), big.NewInt(2), now),
+	}
+	got := filterForVWAP(append([]canonical.Trade(nil), trades...))
+	if len(got) != 1 || got[0].Source != "binance" {
+		t.Fatalf("filterForVWAP with a soroswap-router row = %v, want only [binance]", got)
+	}
+}
+
+// TestTick_SoroswapRouterTradeNeverContributesToVWAP — end-to-end
+// version of the guard above: even if a soroswap-router-sourced row
+// somehow reached the orchestrator's fetched trade set (it can't in
+// production — see TestFilterForVWAP_ExcludesSoroswapRouter's doc),
+// the published VWAP reflects ONLY the genuine exchange trade. The
+// router row is seeded at a wildly different price (100.0 vs 0.20);
+// if it contributed even partially the VWAP would land far from 0.20.
+func TestTick_SoroswapRouterTradeNeverContributesToVWAP(t *testing.T) {
+	now := time.Now()
+	store := &mockStore{
+		trades: []canonical.Trade{
+			// binance (exchange): 1 XLM @ 0.20 USDT — the only row that
+			// should ever contribute.
+			buildTradeFrom(t, "binance",
+				big.NewInt(100_000_000), big.NewInt(20_000_000), now.Add(-1*time.Minute)),
+			// soroswap-router: mixes realized + limit AmountIn/Out and
+			// must never price — even seeded at a wild 100.0 to make any
+			// contribution obvious.
+			buildTradeFrom(t, "soroswap-router",
+				big.NewInt(100_000_000), big.NewInt(10_000_000_000), now.Add(-30*time.Second)),
+		},
+	}
+	rdb, mr := newTestRedis(t)
+	orch := New(store, rdb, Config{
+		Pairs:   []canonical.Pair{xlmUsdtPair(t)},
+		Windows: []time.Duration{5 * time.Minute},
+	})
+	if err := orch.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usdt, _ := canonical.NewCryptoAsset("USDT")
+	key := "vwap:" + xlm.String() + ":" + usdt.String() + ":300"
+	val, err := mr.Get(key)
+	if err != nil {
+		t.Fatalf("miniredis Get %q: %v", key, err)
+	}
+	if val[:4] != "0.20" {
+		t.Errorf("VWAP = %q, want prefix 0.20 (binance only) — a soroswap-router row must never contribute", val)
+	}
 }
 
 // recordingStreamPublisher captures PublishClosedBucket calls for

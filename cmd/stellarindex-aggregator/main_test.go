@@ -54,6 +54,79 @@ func TestDefaultPairs_IncludesBothXLMForms(t *testing.T) {
 	}
 }
 
+// TestResolveUSDPeggedSorobanAssets — Guard 1 (2026-07-10): the SAC
+// twin of parseUSDPeggedClassicAssets. A SAC contract inherits a USD
+// peg ONLY when BOTH: its underlying classic ("CODE:ISSUER"/
+// "CODE-ISSUER") is on the operator's usd_pegged_classic_assets list
+// AND it's registered in [supply].sac_wrappers. No new TOML knob —
+// this derives entirely from the two existing operator inputs.
+func TestResolveUSDPeggedSorobanAssets(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	const usdcClassic = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	const usdcSAC = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+	const otherClassic = "YXLM-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+	const otherSAC = "CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7"
+
+	t.Run("empty inputs yield nil", func(t *testing.T) {
+		if got := resolveUSDPeggedSorobanAssets(nil, nil, logger); got != nil {
+			t.Errorf("got %v, want nil", got)
+		}
+		if got := resolveUSDPeggedSorobanAssets([]string{usdcClassic}, nil, logger); got != nil {
+			t.Errorf("got %v, want nil (no sac_wrappers configured)", got)
+		}
+		if got := resolveUSDPeggedSorobanAssets(nil, map[string]string{usdcSAC: usdcClassic}, logger); got != nil {
+			t.Errorf("got %v, want nil (no usd_pegged_classic_assets configured)", got)
+		}
+	})
+
+	t.Run("SAC wrapping a declared USD peg resolves", func(t *testing.T) {
+		got := resolveUSDPeggedSorobanAssets(
+			[]string{usdcClassic},
+			map[string]string{usdcSAC: usdcClassic},
+			logger,
+		)
+		if len(got) != 1 || got[0].Type != canonical.AssetSoroban || got[0].ContractID != usdcSAC {
+			t.Fatalf("got %v, want [{Soroban %s}]", got, usdcSAC)
+		}
+	})
+
+	t.Run("SAC wrapping a NON-declared classic is excluded", func(t *testing.T) {
+		got := resolveUSDPeggedSorobanAssets(
+			[]string{usdcClassic}, // declared peg is USDC, not the "other" classic
+			map[string]string{otherSAC: otherClassic},
+			logger,
+		)
+		if len(got) != 0 {
+			t.Errorf("got %v, want empty — sac_wrappers entry's classic isn't a declared USD peg", got)
+		}
+	})
+
+	t.Run("mixed sac_wrappers: only the pegged one resolves", func(t *testing.T) {
+		got := resolveUSDPeggedSorobanAssets(
+			[]string{usdcClassic},
+			map[string]string{
+				usdcSAC:  usdcClassic,
+				otherSAC: otherClassic,
+			},
+			logger,
+		)
+		if len(got) != 1 || got[0].ContractID != usdcSAC {
+			t.Fatalf("got %v, want exactly [{Soroban %s}]", got, usdcSAC)
+		}
+	})
+
+	t.Run("malformed sac_wrappers value is skipped, not fatal", func(t *testing.T) {
+		got := resolveUSDPeggedSorobanAssets(
+			[]string{usdcClassic},
+			map[string]string{usdcSAC: "not-a-valid-asset-key"},
+			logger,
+		)
+		if len(got) != 0 {
+			t.Errorf("got %v, want empty — malformed sac_wrappers value must be skipped, not panic", got)
+		}
+	})
+}
+
 // TestBuildTriangulations_RespectsTriangulationEnabled pins down the
 // aggregate.triangulation_enabled master switch — pre-2026-05-02 the
 // field existed but no production code consulted it, so an operator

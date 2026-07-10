@@ -90,6 +90,7 @@ func registerAppMetrics() {
 		CustomerWebhookDeliveryAttemptsTotal,
 		AggregatorDroppedTradesTotal,
 		AggregatorDroppedWindowsTotal,
+		AggregatorMinUSDVolumeUnvaluableTotal,
 
 		SupplyCrossCheckDivergenceStroops,
 		SupplyCrossCheckTotal,
@@ -1619,6 +1620,32 @@ var AggregatorDroppedWindowsTotal = prometheus.NewCounterVec(
 		Help: "Windows the orchestrator suppressed at the window-level filter step, labelled by reason (min_usd_volume).",
 	},
 	[]string{"reason"},
+)
+
+// AggregatorMinUSDVolumeUnvaluableTotal — count of (pair, window)
+// refreshes where `aggregate.min_usd_volume` is configured (> 0) but
+// the target pair's on-chain quote asset (classic or Soroban) has no
+// operator-recognised USD peg, so the manipulation-floor check could
+// not be evaluated and the window published WITHOUT the floor
+// applied — the same exposure the floor exists to close. Labelled by
+// `pair` (bounded — operators configure a small, curated
+// aggregate.pairs allow-list; see PriceStalenessSeconds for the same
+// cardinality reasoning).
+//
+// Guard 1 (2026-07-10): before this metric existed, an unvaluable
+// on-chain quote pair passed through unguarded SILENTLY — the same
+// code path minted no signal either way. A non-zero rate here means
+// an operator has a directly-configured Soroban- or classic-quoted
+// pair whose quote asset isn't on usd_pegged_classic_assets /
+// sac_wrappers; the fix is adding the missing peg, not alerting (no
+// rule wired — see docs/reference/metrics/README.md for why this one
+// is dashboard-only).
+var AggregatorMinUSDVolumeUnvaluableTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_aggregator_min_usd_volume_unvaluable_total",
+		Help: "Windows published WITHOUT the min_usd_volume floor because the target pair's on-chain quote asset has no recognised USD peg, labelled by pair.",
+	},
+	[]string{"pair"},
 )
 
 // ─── Supply-derivation metrics ────────────────────────────────────

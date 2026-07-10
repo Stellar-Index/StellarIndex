@@ -1084,12 +1084,38 @@ Counter, label `reason` (`min_usd_volume`).
 Windows the orchestrator suppressed at the window-level filter step
 — distinct from `dropped_trades_total` (per-trade) and
 `empty_windows_total` (zero trades to begin with). `min_usd_volume`
-fires when a fiat:USD-quoted pair's post-class + post-outlier window
-has less total USD volume than `aggregate.min_usd_volume` (closes
-launch-readiness L2.1). Operators alert on a sustained
-fraction-of-ticks dropping for `min_usd_volume` as a sign that a
-configured pair has thinned out beyond the threshold or the
+fires when a target pair whose quote leg the orchestrator can value
+in USD (fiat:USD directly, a classic asset on
+`trades.usd_pegged_classic_assets`, or a Soroban SAC wrapper of one
+— see `usdQuoteDecimals` in `internal/aggregate/orchestrator`) has a
+post-class + post-outlier window with less total USD volume than
+`aggregate.min_usd_volume` (closes launch-readiness L2.1; extended to
+classic/Soroban-quoted pairs 2026-07-10, Guard 1). Operators alert on
+a sustained fraction-of-ticks dropping for `min_usd_volume` as a sign
+that a configured pair has thinned out beyond the threshold or the
 threshold is mis-tuned.
+
+### `stellarindex_aggregator_min_usd_volume_unvaluable_total`
+
+Counter, label `pair`.
+
+Fires once per (pair, window) refresh where `aggregate.min_usd_volume`
+is configured (> 0) but the target pair's quote is an on-chain asset
+(classic or Soroban) with NO recognised USD peg — the orchestrator
+can't compute a USD volume to compare against the threshold, so the
+window publishes WITHOUT the manipulation floor applied. Not
+alert-wired: this is a "know your exposure" dashboard signal, not a
+health failure — a directly-configured Soroban- or classic-quoted
+pair whose peg isn't declared is a deliberate operator-visible gap
+(add the missing entry to `trades.usd_pegged_classic_assets` / the
+matching `supply.sac_wrappers` row to close it), not an incident.
+Zero on every deployment today (2026-07-10): the built-in default
+pair set and every checked-in TOML, including r1's, are entirely
+fiat:USD/EUR/GBP-quoted, so no live pair currently hits this branch.
+Fiat pairs quoted in a non-USD currency (EUR, GBP, …) do NOT increment
+this counter — that's a separate, pre-existing, already-understood
+scope boundary (see `Config.MinUSDVolume`'s doc), not the gap this
+metric watches for.
 
 ## Supply derivation (aggregator binary)
 
