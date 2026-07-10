@@ -1,11 +1,17 @@
+---
+adr: 0047
+title: Pre-P23 classic-movement reconstruction from the lake
+status: Proposed
+date: 2026-07-10
+supersedes: []
+superseded_by: null
+---
+
 # ADR-0047: Pre-P23 classic-movement reconstruction from the lake
 
-- Status: Proposed
-- Date: 2026-07-10
-- Deciders: @ash
-- Research basis: [docs/architecture/pre-p23-classic-movements-research.md](../architecture/pre-p23-classic-movements-research.md)
-  (2026-07-10; all factual claims below — lake sufficiency, XDR field
-  availability, volume estimates — are evidenced there, not repeated here)
+Research basis: [docs/architecture/pre-p23-classic-movements-research.md](../architecture/pre-p23-classic-movements-research.md)
+(2026-07-10; all factual claims below — lake sufficiency, XDR field
+availability, volume estimates — are evidenced there, not repeated here).
 
 ## Context
 
