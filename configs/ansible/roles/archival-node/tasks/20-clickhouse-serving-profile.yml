@@ -1,0 +1,153 @@
+---
+# ClickHouse serving-query isolation (ADR-0048 D4) — a dedicated
+# settings profile + user for the API's public-serving ClickHouse
+# reads (GET /v1/ledgers, /v1/tx, /v1/accounts/* — including ADR-0048
+# D5's GET /v1/accounts/{g}/movements, the read that made this a hard
+# prerequisite: see ADR-0048's Consequences section), isolated from
+# every OTHER ClickHouse connection this repo makes (the indexer's
+# real-time dual-sink, the aggregator's own explorer reader,
+# stellarindex-ops backfills / ch-rebuild / gates / replays) — all of
+# which keep authenticating as CH's unauthenticated `default` user,
+# unbounded, unchanged by this task.
+#
+# NOT applied to r1 by the PR that added this file — codify-only, per
+# CLAUDE.md's ansible-drift rule ("any config change on r1 lands in
+# configs/ansible/ in the same PR" — the CODIFICATION is the same PR;
+# the APPLY is a separate, deliberate operator step). Operator apply
+# command (run --check --diff FIRST):
+#
+#   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+#     --tags clickhouse-serving-profile --check --diff
+#   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+#     --tags clickhouse-serving-profile
+#
+# Provisioning the CH-side user (this file) does nothing on its own —
+# the API only authenticates as it once storage.clickhouse_serving_user
+# is also set in stellarindex.toml (internal/config/config.go's
+# StorageConfig.ClickHouseServingUser; templated below from
+# clickhouse_serving_user, default "api_serving") AND the indexer/api
+# services are restarted to pick up the new config + env — a SEPARATE,
+# coordinated step (14-stellarindex-services.yml's existing tags),
+# deliberately not folded into this task file.
+
+- name: Assert ClickHouse serving-profile password is set (ADR-0048 D4)
+  ansible.builtin.assert:
+    that:
+      - clickhouse_serving_password | default('') | length > 0
+    fail_msg: >-
+      clickhouse_serving_password is not set. Generate a strong
+      password, `ansible-vault edit inventory/r1.secrets.yml` and add
+      `vault_clickhouse_serving_password: "<generated>"` (mirrors
+      vault_stellarindex_reader_secret_key's pattern — see
+      defaults/main.yml's clickhouse_serving_password for the wiring),
+      then re-run with --tags clickhouse-serving-profile. Never commit
+      the plaintext password.
+  when: clickhouse_serving_profile_enabled | bool
+  tags: [clickhouse, clickhouse-serving-profile]
+
+- name: Install the api_serving ClickHouse profile + user (ADR-0048 D4)
+  ansible.builtin.copy:
+    dest: /etc/clickhouse-server/users.d/api-serving.xml
+    owner: clickhouse
+    group: clickhouse
+    mode: "0640"       # password_sha256_hex is a secret at rest
+    content: |
+      <clickhouse>
+          <!-- Managed by ansible (archival-node /
+               20-clickhouse-serving-profile.yml). ADR-0048 D4: an
+               isolated settings profile + user for the API's
+               public-serving ClickHouse reads, so a burst of public
+               API traffic can never queue behind — or get starved
+               by — a classic-movements-backfill / ch-rebuild
+               derivation job, nor collide with the log-fill /
+               merge-memory guards in zz-ratesengine.xml /
+               zz-merge-memory-guard.xml (15-log-discipline.yml).
+
+               Settings chosen (research notes, ADR-0048 D4):
+                 max_threads / max_memory_usage / max_execution_time —
+                 a serving read is a bounded keyset range scan over a
+                 sorted-by-address(/ledger) table (ADR-0048 D2's
+                 stellar.account_movements ORDER BY, or the explorer
+                 lake reads' own bounded LIMITs); if a query needs
+                 more than this it is BY DEFINITION not a serving
+                 query and should fail fast rather than accumulate
+                 threads/memory on a host that also runs backfills and
+                 merges. 2 threads / 2 GiB / 10s are conservative
+                 relative to what a real page actually costs.
+                 max_concurrent_queries_for_user bounds the profile's
+                 total footprint even under a traffic spike — N
+                 concurrent bounded scans stays well inside the host's
+                 72G CH server cap (zz-ratesengine.xml) at these
+                 per-query limits.
+                 priority=1 is CH's per-query PRIORITY QUEUE knob:
+                 lower number = higher priority, 0 = "opted out of
+                 prioritization" (CH's default for every OTHER
+                 connection this repo makes — none of them set
+                 `priority`). A priority=1 serving query is preferred
+                 CPU time over any query that hasn't opted in; no
+                 corresponding demotion of the backfill/ops path is
+                 needed for this to take effect.
+                 os_thread_priority=-5 is the setting that actually
+                 reaches BACKGROUND MERGES: `priority` only orders
+                 CH's query scheduler among QUERY threads — background
+                 merges/mutations run in a separate thread pool it
+                 does not touch. os_thread_priority sets the Linux
+                 `nice` value (-20..19, lower = higher OS scheduling
+                 priority) on the query's OWN execution threads via
+                 CAP_SYS_NICE (the clickhouse-server package grants
+                 this capability at install time, so no extra
+                 ansible capability grant is needed here) — -5 gives
+                 serving-query threads a real CPU edge over CH's
+                 background merge/mutation pool (which runs at the OS
+                 default, nice 0) under contention, without going to
+                 an extreme (-20) that could starve merges outright
+                 and let compaction fall permanently behind.
+                 readonly=1 — this user only ever SELECTs (the
+                 explorer read path is 100% read-only); defense in
+                 depth so a leaked credential can't INSERT/ALTER/DROP
+                 even if the network ACL below is ever loosened.
+
+               Password: SHA-256 hex digest of
+               clickhouse_serving_password (ansible-vault —
+               vault_clickhouse_serving_password in
+               inventory/r1.secrets.yml). The plaintext never touches
+               disk outside the vault; ansible's `hash` filter
+               computes the digest at render time, so it's the ONLY
+               secret material this file embeds. -->
+          <profiles>
+              <api_serving>
+                  <max_threads>{{ clickhouse_serving_max_threads }}</max_threads>
+                  <max_memory_usage>{{ clickhouse_serving_max_memory_usage_bytes }}</max_memory_usage>
+                  <max_execution_time>{{ clickhouse_serving_max_execution_time_s }}</max_execution_time>
+                  <max_concurrent_queries_for_user>{{ clickhouse_serving_max_concurrent_queries }}</max_concurrent_queries_for_user>
+                  <priority>1</priority>
+                  <os_thread_priority>-5</os_thread_priority>
+                  <readonly>1</readonly>
+              </api_serving>
+          </profiles>
+          <users>
+              <{{ clickhouse_serving_user }}>
+                  <password_sha256_hex>{{ clickhouse_serving_password | hash('sha256') }}</password_sha256_hex>
+                  <networks>
+                      <ip>127.0.0.1</ip>
+                      <ip>::1</ip>
+                  </networks>
+                  <profile>api_serving</profile>
+                  <quota>default</quota>
+                  <access_management>0</access_management>
+                  <!-- Legacy XML access control (this deployment isn't
+                       SQL-driven-access-control): restricts this user
+                       to the `stellar` database (the Tier-1 lake +
+                       ADR-0048 D2's account_movements serving table)
+                       — it has no business touching `system` writes
+                       or any other database on this host. -->
+                  <allow_databases>
+                      <database>stellar</database>
+                  </allow_databases>
+              </{{ clickhouse_serving_user }}>
+          </users>
+      </clickhouse>
+  when: clickhouse_serving_profile_enabled | bool
+  no_log: true   # content embeds the password's SHA-256 digest
+  notify: Restart clickhouse-server
+  tags: [clickhouse, clickhouse-serving-profile]

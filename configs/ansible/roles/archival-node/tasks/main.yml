@@ -99,3 +99,7 @@
 - name: "Log discipline (rsyslog cap + journald cap)"
   ansible.builtin.import_tasks: 15-log-discipline.yml
   tags: [log-discipline, logrotate, journald]
+
+- name: "ClickHouse serving-query isolation (ADR-0048 D4)"
+  ansible.builtin.import_tasks: 20-clickhouse-serving-profile.yml
+  tags: [clickhouse, clickhouse-serving-profile]

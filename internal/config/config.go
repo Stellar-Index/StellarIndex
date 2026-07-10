@@ -759,6 +759,28 @@ type StorageConfig struct {
 	// decommissioned. Requires the dual-sink (ClickHouseLiveSink) so CH is
 	// authoritative for forward events. Off by default.
 	ClickHouseProjectorSource bool `toml:"clickhouse_projector_source" doc:"Feed-switch: the projector reads forward events from the ClickHouse lake (contract_events) instead of Postgres soroban_events, enabling soroban_events decommission. Requires clickhouse_live_sink. ON by default (ADR-0041), matching the production topology." default:"true"`
+
+	// ClickHouse serving-query isolation (ADR-0048 D4). The API's
+	// per-request CH reads (internal/storage/clickhouse's
+	// NewExplorerReaderAuth / NewSupplyReaderAuth) authenticate as this
+	// user when set, so they run under the dedicated `api_serving`
+	// settings profile (bounded threads/memory/execution-time, CH
+	// query-priority + OS nice edge over merges and backfill inserts —
+	// see configs/ansible/roles/archival-node/tasks/20-clickhouse-serving-profile.yml)
+	// instead of CH's unauthenticated `default` user, which every OTHER
+	// CH connection in this repo (the indexer's dual-sink, the
+	// aggregator's explorer reader, stellarindex-ops backfills/gates)
+	// keeps using unchanged. Both empty (the default) preserves the
+	// pre-D4 behavior exactly: connect as `default`, no password — safe
+	// to leave unset on any deployment that hasn't provisioned the CH
+	// profile yet (docs/operations/self-hosting.md's ClickHouse section
+	// is entirely unaffected either way).
+	ClickHouseServingUser string `toml:"clickhouse_serving_user" doc:"ClickHouse username the API's serving reads (explorer endpoints, incl. GET /v1/accounts/{g}/movements) authenticate as (ADR-0048 D4). Empty (default) uses ClickHouse's default user, unchanged from pre-D4 behavior." default:""`
+	// ClickHouseServingPassword holds the resolved password, not an
+	// env-var NAME (the direct-value `env:` convention, same as
+	// RedisPassword — see that field's doc comment — NOT the
+	// name-of-env-var convention S3AccessKeyEnv uses).
+	ClickHouseServingPassword string `toml:"clickhouse_serving_password_env" doc:"Env var holding the ClickHouse serving user's password (reference, not the password itself). Empty (default) uses no password, matching an empty clickhouse_serving_user." env:"STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD" default:""`
 }
 
 // ColdTieringEnabled reports whether the cold-tier read path

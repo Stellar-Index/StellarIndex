@@ -183,11 +183,23 @@ type SupplyReader struct {
 	conn driver.Conn
 }
 
-// NewSupplyReader dials ClickHouse with a request-sized pool and pings it.
+// NewSupplyReader dials ClickHouse with a request-sized pool and pings it,
+// authenticating as CH's unauthenticated `default` user — the pre-ADR-0048-D4
+// behavior. Non-API callers keep using this constructor unchanged.
 func NewSupplyReader(ctx context.Context, addr string) (*SupplyReader, error) {
+	return NewSupplyReaderAuth(ctx, addr, "", "")
+}
+
+// NewSupplyReaderAuth is [NewSupplyReader] with an explicit CH
+// username/password — ADR-0048 D4's serving-isolation profile, same
+// rationale as clickhouse.NewExplorerReaderAuth (see that function's doc
+// comment). The API binary wires GET /v1/assets/{id}/supply's reader through
+// this constructor with `storage.clickhouse_serving_user` /
+// `clickhouse_serving_password_env`.
+func NewSupplyReaderAuth(ctx context.Context, addr, username, password string) (*SupplyReader, error) {
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr:            []string{addr},
-		Auth:            clickhouse.Auth{Database: "stellar"},
+		Auth:            clickhouse.Auth{Database: "stellar", Username: username, Password: password},
 		Settings:        clickhouse.Settings{"max_execution_time": 30},
 		DialTimeout:     10 * time.Second,
 		ReadTimeout:     30 * time.Second,

@@ -628,6 +628,18 @@ type Options struct {
 	// *clickhouse.ExplorerReader satisfies it. Nil → those routes 503.
 	Explorer ExplorerReader
 
+	// SEP41Movements, when non-nil, backs the Postgres "recent tail"
+	// half of GET /v1/accounts/{g_strkey}/movements' merge (ADR-0048
+	// D5) — timescale.Store satisfies it via
+	// ListSEP41TransfersByAddress. A SEPARATE seam from SEP41Transfers
+	// above (that one is contract-scoped, for
+	// /v1/contracts/{id}/transfers; this one is address-scoped, across
+	// every contract). Nil degrades the movements endpoint to serving
+	// the ClickHouse pre-P23 archive alone, with an honest
+	// coverage_note, rather than 503ing outright — Explorer is the
+	// hard dependency for that route, this is a soft one.
+	SEP41Movements explorerpkg.SEP41MovementsReader
+
 	// FXHistory, when non-nil, lets /v1/chart serve fiat:fiat pairs
 	// from the fx_quotes hypertable for ranges beyond 7d. Leave nil
 	// to keep /v1/chart fiat:fiat in 7d-only mode.
@@ -1272,6 +1284,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}", s.explorerHandler.AccountState)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/transactions", s.explorerHandler.AccountTransactions)
 	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/operations", s.explorerHandler.AccountOperations)
+	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/movements", s.explorerHandler.AccountMovements)
 
 	s.mux.HandleFunc("GET /v1/incidents", s.handleIncidents)
 	s.mux.HandleFunc("GET /v1/incidents.atom", s.handleIncidentsAtom)

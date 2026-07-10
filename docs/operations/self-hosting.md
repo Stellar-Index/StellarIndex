@@ -1,6 +1,6 @@
 ---
 title: Self-hosting Stellar Index — end-to-end operator guide
-last_verified: 2026-07-05
+last_verified: 2026-07-10
 status: living doc
 ---
 
@@ -315,6 +315,21 @@ If you skip ClickHouse, set `storage.clickhouse_live_sink = false`
 and `ingestion.clickhouse_projector_source = false`; the pricing path
 (trades → VWAP → API) is unaffected, you just don't get the raw-lake
 completeness verdict or lake-derived supply figures.
+
+**Serving-query isolation (ADR-0048 D4, optional).** By default the
+API authenticates to ClickHouse as the unauthenticated `default` user
+— the same connection every other CH client in this repo uses, fine
+for a single-operator or low-traffic deployment. Once explorer traffic
+matters (public GET /v1/accounts/{g}/movements and friends), provision
+a dedicated bounded settings profile + user so a burst of public reads
+can never queue behind a heavy backfill or a background merge on the
+same box: `configs/ansible/roles/archival-node/tasks/20-clickhouse-serving-profile.yml`
+is the reference (ansible-managed on r1; hand-apply the equivalent
+`users.d` XML drop-in — see that file's comments for the exact
+settings + rationale — on a non-ansible deployment). Then set
+`storage.clickhouse_serving_user` / the
+`STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD` env var to point the API at
+it; both empty (the default) is the unauthenticated pre-D4 behavior.
 
 ### 4.6 Migrations
 

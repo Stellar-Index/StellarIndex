@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -477,6 +478,119 @@ func VerifyAccountMovementsWindow(ctx context.Context, addr string, from, to uin
 			return nil, fmt.Errorf("clickhouse: scan verify row [%d,%d]: %w", from, to, err)
 		}
 		out[kind] = n
+	}
+	return out, rows.Err()
+}
+
+// AccountMovementFilter narrows an AccountMovements read (ADR-0048
+// D5's GET /v1/accounts/{g}/movements). Zero-value fields mean "no
+// filter" on that dimension.
+type AccountMovementFilter struct {
+	Kind      string                   // movement_kind exact match; "" = any
+	Direction AccountMovementDirection // exact match; "" = any
+	Asset     string                   // canonical asset id exact match; "" = any
+}
+
+// AccountMovementCursor is the keyset position for AccountMovements
+// pagination (ADR-0048 D5) — descending (ledger, tx_hash, op_index,
+// leg_index), the table's ORDER BY suffix after the fixed `address`
+// equality filter. Zero value (Ledger==0) means "from the newest"
+// (first page) — same IsSet/Ledger==0 sentinel convention as
+// ExplorerCursor above.
+type AccountMovementCursor struct {
+	Ledger   uint32
+	TxHash   string
+	OpIndex  uint32
+	LegIndex uint32
+}
+
+// IsSet reports whether the cursor points past the newest row (a
+// continuation page, not the first).
+func (c AccountMovementCursor) IsSet() bool { return c.Ledger > 0 }
+
+const accountMovementCols = `ledger, ledger_close_time, tx_hash, op_index, leg_index, direction,
+	movement_kind, provenance, asset, counterparty, amount, attributes`
+
+// AccountMovements returns one address's movement feed from
+// stellar.account_movements (ADR-0048 D2/D5), newest first, keyset-
+// paged by the composite (ledger, tx_hash, op_index, leg_index)
+// cursor. `address` is an equality filter on the table's ORDER BY
+// PREFIX, so this is a single contiguous primary-key range scan — the
+// exact property ADR-0048 D1 designed this table for (unlike
+// AccountTransactions/AccountOperations above, which UNION two arms
+// against the raw lake's source_account/participant split, this needs
+// no UNION).
+//
+// internal/api/v1/explorer/movements.go merges this CH-native
+// pre-P23 archive with timescale.Store.ListSEP41TransfersByAddress's
+// post-P23 Postgres tail to serve the full GET
+// /v1/accounts/{g}/movements feed (ADR-0048 D5).
+//
+// No FINAL: same acceptable-eventual-consistency posture as
+// AccountOperations/AccountTransactions above — a duplicate row from
+// an in-flight re-derive merge is a rare, benign visual repeat (it
+// disappears on the next background ReplacingMergeTree merge), not a
+// correctness issue, and FINAL's read-time dedup cost isn't worth
+// paying on every paginated request.
+func (r *ExplorerReader) AccountMovements(ctx context.Context, address string, limit int, cur AccountMovementCursor, filter AccountMovementFilter) ([]AccountMovementRow, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 25
+	}
+	var sb strings.Builder
+	sb.WriteString("SELECT " + accountMovementCols + " FROM stellar.account_movements WHERE address = ?")
+	args := []any{address}
+	if filter.Kind != "" {
+		sb.WriteString(" AND movement_kind = ?")
+		args = append(args, filter.Kind)
+	}
+	if filter.Direction != "" {
+		sb.WriteString(" AND direction = ?")
+		args = append(args, string(filter.Direction))
+	}
+	if filter.Asset != "" {
+		sb.WriteString(" AND asset = ?")
+		args = append(args, filter.Asset)
+	}
+	if cur.IsSet() {
+		sb.WriteString(" AND (ledger, tx_hash, op_index, leg_index) < (?, ?, ?, ?)")
+		args = append(args, cur.Ledger, cur.TxHash, cur.OpIndex, cur.LegIndex)
+	}
+	sb.WriteString(" ORDER BY ledger DESC, tx_hash DESC, op_index DESC, leg_index DESC LIMIT ?")
+	args = append(args, limit)
+
+	rows, err := r.conn.Query(ctx, sb.String(), args...)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: account %s movements: %w", address, err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanAccountMovementRows(rows, address)
+}
+
+// scanAccountMovementRows scans accountMovementCols rows into
+// AccountMovementRow values, stamping Address (not itself selected —
+// every row already matches the query's address filter).
+func scanAccountMovementRows(rows driver.Rows, address string) ([]AccountMovementRow, error) {
+	var out []AccountMovementRow
+	for rows.Next() {
+		var row AccountMovementRow
+		var direction, attrs string
+		var amt *big.Int
+		if err := rows.Scan(
+			&row.Ledger, &row.LedgerCloseTime, &row.TxHash, &row.OpIndex, &row.LegIndex,
+			&direction, &row.MovementKind, &row.Provenance, &row.Asset, &row.Counterparty,
+			&amt, &attrs,
+		); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan account movement row: %w", err)
+		}
+		row.Address = address
+		row.Direction = AccountMovementDirection(direction)
+		row.Amount = amt
+		if attrs != "" && attrs != "{}" {
+			if uerr := json.Unmarshal([]byte(attrs), &row.Attributes); uerr != nil {
+				return nil, fmt.Errorf("clickhouse: unmarshal account movement attributes: %w", uerr)
+			}
+		}
+		out = append(out, row)
 	}
 	return out, rows.Err()
 }

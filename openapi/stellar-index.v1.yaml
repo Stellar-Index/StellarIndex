@@ -18,7 +18,7 @@
 openapi: 3.1.0
 info:
   title: Stellar Index API
-  version: "1.7.0"
+  version: "1.8.0"
   summary: Aggregated Stellar asset pricing — real-time and historical.
   description: |
     The Stellar Index API exposes normalised, VWAP-aggregated pricing
@@ -7632,6 +7632,91 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /accounts/{g_strkey}/movements:
+    get:
+      x-stability: experimental
+      tags: [explorer]
+      summary: Unified account-activity feed (pre-P23 archive + post-P23 tail), newest first.
+      description: |
+        ADR-0048 D5: the ClickHouse `stellar.account_movements` pre-P23
+        classic-movement archive (ADR-0047/0048 D2) merged, at read time,
+        with the Postgres `sep41_transfers` post-P23 "recent tail" — the
+        one feed spanning an address's ENTIRE classic-asset movement
+        history, not just its recent SEP-41 activity. Newest first,
+        keyset-paged with `?cursor=<opaque>` (echo back `next_cursor`); the
+        cursor is the composite `(ledger, tx_hash, op_index, leg_index)`.
+
+        MERGE SEAM: the two stores' ledger ranges never overlap by
+        construction — the ClickHouse archive's only writer
+        (`classic-movements-backfill`) hard-clamps below the P23 boundary
+        (ledger 58,762,517, Whisk/CAP-67, 2025-09-03); the Postgres tail
+        query floors at-or-above it. The server asserts this invariant on
+        every request (logs an error if ever violated) rather than only
+        documenting it.
+
+        SCOPE GAP (documented, not a bug): the Postgres tail only surfaces
+        `sep41_transfers` rows with `event_kind = 'transfer'` — a pure
+        Soroban-native SEP-41 token transfer that happened BEFORE the P23
+        boundary is real on-chain activity this feed does not (yet)
+        surface; only CLASSIC-asset movements are covered end-to-end.
+
+        HONEST EMPTY STATE: `classic-movements-backfill` is an
+        operator-run historical job (never live-wired) — on a fresh
+        deployment `stellar.account_movements` is EMPTY until an operator
+        runs it, so this endpoint may serve the Postgres tail alone. See
+        `coverage_note` on the response.
+
+        `?asset=` FILTER ASYMMETRY (documented): on ClickHouse archive rows
+        it matches the canonical asset id exactly (`CODE-ISSUER` /
+        `native` / `pool:<hex>`); on the Postgres tail it matches against
+        the RESOLVED display value (the classic-asset name for a SAC
+        wrapper, else the raw token contract_id) — resolved and filtered
+        client-request-side, not in SQL, so a page may return fewer than
+        `limit` Postgres-tail rows even when more matching rows exist
+        further back. An accepted limitation of this experimental
+        endpoint's Postgres half.
+      parameters:
+        - { name: g_strkey, in: path, required: true, description: G-strkey account id., schema: { type: string } }
+        - { name: limit, in: query, description: "Maximum rows to return (1-200, default 25). Out-of-range values return 400.", schema: { type: integer, minimum: 1, maximum: 200, default: 25 } }
+        - { name: cursor, in: query, description: Opaque keyset cursor from a prior response's next_cursor., schema: { type: string } }
+        - { name: kind, in: query, description: "Filter by movement_kind exact match (e.g. payment, transfer, liquidity_pool_deposit). Omitted = any kind.", schema: { type: string } }
+        - { name: direction, in: query, description: Filter by direction., schema: { type: string, enum: [sent, received, self] } }
+        - { name: asset, in: query, description: "Filter by asset — see this operation's description for the matching asymmetry between the ClickHouse archive and the Postgres tail.", schema: { type: string } }
+      responses:
+        "200":
+          description: The account's unified movement feed.
+          content:
+            application/json:
+              example:
+                data:
+                  account: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                  movements:
+                  - ledger: 60123456
+                    ledger_close_time: '2026-07-03T21:02:29Z'
+                    tx_hash: be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36
+                    op_index: 0
+                    leg_index: 0
+                    movement_kind: transfer
+                    direction: sent
+                    asset: USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                    amount: '1000000000000'
+                    counterparty: GDSQAEHJLE2ZZMQZ47YWLP3O2HVPYQ4QCFWTHUKMKF6RIX2ZJJDDMK4N
+                    provenance: cap67_event
+                  next_cursor: '60123456.be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36.0.0'
+                as_of: '2026-07-10T22:39:31.01258567Z'
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/AccountMovements" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /search:
     get:
       x-stability: experimental
@@ -8090,6 +8175,90 @@ components:
         operations: { type: array, items: { $ref: "#/components/schemas/Operation" } }
         next_cursor: { type: string, description: "Opaque composite cursor (ledger.tx_index.op_index) for the next older page; absent on the last page." }
         scope: { type: string, enum: [all], description: "Activity scope. \"all\" = the account sourced the op OR is a non-source participant in it." }
+    AccountMovement:
+      type: object
+      description: One row in an account's movement feed (ADR-0048 D5).
+      properties:
+        ledger: { type: integer }
+        ledger_close_time: { type: string, format: date-time }
+        tx_hash: { type: string }
+        op_index: { type: integer }
+        leg_index:
+          type: integer
+          description: |
+            Sub-index within the op — one movement can fan out to more than
+            one row sharing (ledger, tx_hash, op_index) — e.g. each leg of a
+            liquidity-pool deposit/withdraw (2 rows), or the two
+            claimable-balance rows an auto-liquidation creates.
+        movement_kind:
+          type: string
+          description: |
+            payment, create_account, path_payment, clawback, account_merge,
+            claimable_balance_create, claimable_balance_claim,
+            claimable_balance_clawback, liquidity_pool_deposit, or
+            liquidity_pool_withdraw on ClickHouse pre-P23 archive rows
+            (`provenance: classic_derived`); transfer on Postgres post-P23
+            tail rows (`provenance: cap67_event`).
+        direction: { type: string, enum: [sent, received, self] }
+        asset:
+          type: string
+          description: |
+            Canonical asset id (`CODE-ISSUER` / `native` / `pool:<hex>`) on
+            pre-P23 rows. On post-P23 rows: the resolved classic-asset name
+            when the SEP-41 token is a SAC wrapper, else the raw Soroban
+            token contract_id (a genuine Soroban-native token has no
+            classic-asset name to resolve to) — see this operation's
+            description for the ?asset= filter's matching asymmetry between
+            the two sides.
+        amount: { type: string, description: "Decimal string (ADR-0003) at the asset's native smallest-unit scale." }
+        counterparty:
+          type: string
+          description: |
+            The other side's address, when known. Empty for a claimable-
+            balance escrow or a liquidity-pool leg (neither is a real
+            G-account) — see stellar.account_movements' DDL comment
+            (deploy/clickhouse/tier1_schema.sql) for the full per-kind
+            cardinality table.
+        provenance:
+          type: string
+          enum: [classic_derived, cap67_event]
+          description: |
+            classic_derived = reconstructed from the ClickHouse pre-P23 lake
+            (ADR-0047); cap67_event = a post-P23 CAP-67 unified event read
+            from the Postgres sep41_transfers "recent tail" (ADR-0048 D5).
+        attributes:
+          type: object
+          additionalProperties: true
+          description: Kind-specific remainder (balance_id, claimants, pool_id, revocation, …). Empty/absent on transfer rows.
+      required: [ledger, ledger_close_time, tx_hash, op_index, leg_index, movement_kind, direction, asset, amount, provenance]
+    AccountMovements:
+      type: object
+      description: |
+        An account's unified movement feed (ADR-0048 D5) — the ClickHouse
+        pre-P23 classic-movement archive (stellar.account_movements)
+        merged, at read time, with the Postgres sep41_transfers post-P23
+        "recent tail". Newest first, keyset-paged. See coverage_note for
+        the endpoint's honest-degrade contract.
+      properties:
+        account: { type: string, description: The G-strkey this listing is for. }
+        movements: { type: array, items: { $ref: "#/components/schemas/AccountMovement" } }
+        next_cursor: { type: string, description: "Opaque composite cursor (ledger.tx_hash.op_index.leg_index) for the next older page; absent on the last page." }
+        coverage_note:
+          type: string
+          description: |
+            Honest-degrade signal (mirrors the routed_via/aggregators
+            coverage-note pattern), present ONLY when this response is
+            NOT the full ADR-0048 D5 merge:
+              - the ClickHouse pre-P23 archive is populated by an
+                operator-run historical backfill
+                (`stellarindex-ops classic-movements-backfill`) and is
+                EMPTY on a fresh deployment until that job runs — a
+                response may therefore be Postgres-tail-only;
+              - the Postgres tail reader isn't wired on this deployment,
+                or the read errored for this request — a response may
+                therefore be ClickHouse-archive-only.
+            Absent = both sides contributed to this response.
+      required: [account, movements]
     DashboardKey:
       type: object
       description: |

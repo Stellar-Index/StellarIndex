@@ -230,6 +230,181 @@ func (s *Store) ListSEP41Transfers(ctx context.Context, contractID, fromAddr, to
 	return out, rows.Err()
 }
 
+// SEP41MovementsFloorLedger is ADR-0048 D5's non-overlap boundary for
+// the /v1/accounts/{g}/movements merge: ClickHouse's
+// stellar.account_movements (the pre-P23 classic-movement archive,
+// internal/storage/clickhouse/account_movements.go) is hard-clamped
+// BELOW this ledger by its only writer
+// (`stellarindex-ops classic-movements-backfill`); ListSEP41TransfersByAddress
+// floors its own query at-or-above it, so the two stores' contributions
+// to the merged feed can never overlap.
+//
+// Same VALUE as internal/sources/classicmovements.P23StartLedger, not
+// the same CONSTANT: internal/storage sits below internal/sources in
+// the repo's import direction (scripts/ci/lint-imports.sh's
+// L/storage-below-compute rule forbids a storage->sources edge, test
+// files included), so this package can't import that one to avoid
+// duplicating the literal. internal/api/v1/explorer/movements_test.go's
+// TestP23BoundaryConstantsAgree is the executable assertion that keeps
+// the two from silently drifting — it CAN import both (api sits above
+// both layers).
+const SEP41MovementsFloorLedger uint32 = 58_762_517
+
+// SEP41TransferCursor is the keyset position for
+// ListSEP41TransfersByAddress pagination (ADR-0048 D5) — descending
+// (ledger, tx_hash, op_index, event_index), generalizing
+// ListSEP41Transfers' per-contract natural-key order across contracts
+// for the address-scoped read. Zero value (Ledger==0) means "from the
+// newest" (first page) — same IsSet/Ledger==0 sentinel convention as
+// clickhouse.ExplorerCursor / clickhouse.AccountMovementCursor.
+type SEP41TransferCursor struct {
+	Ledger     uint32
+	TxHash     string
+	OpIndex    uint32
+	EventIndex uint32
+}
+
+// IsSet reports whether the cursor points past the newest row (a
+// continuation page, not the first).
+func (c SEP41TransferCursor) IsSet() bool { return c.Ledger > 0 }
+
+// ListSEP41TransfersByAddress returns one address's SEP-41 'transfer'
+// history — both sides (from_addr = address OR to_addr = address) —
+// newest first, keyset-paged by the composite (ledger, tx_hash,
+// op_index, event_index) cursor. ADR-0048 D5: this is the Postgres
+// "recent tail" half of the unified GET /v1/accounts/{g}/movements
+// feed; internal/api/v1/explorer/movements.go merges it with
+// ClickHouse's stellar.account_movements (the pre-P23 archive) —
+// SEP41MovementsFloorLedger's doc comment has the non-overlap
+// argument.
+//
+// Scope, deliberately narrower than ListSEP41Transfers:
+//   - event_kind = 'transfer' only — approve/set_admin/set_authorized
+//     don't move an asset amount, so they aren't "movements".
+//   - ledger >= SEP41MovementsFloorLedger. Below the P23 boundary, any
+//     transfer of a CLASSIC asset already has a
+//     stellar.account_movements row (ADR-0047); a pure Soroban-native
+//     SEP-41 token transfer below the boundary is real activity this
+//     scope doesn't surface via this feed yet — a documented gap (see
+//     the OpenAPI description for GET /accounts/{g_strkey}/movements),
+//     not a bug.
+//
+// direction, when non-empty, must be "sent"/"received"/"self"
+// (mirroring clickhouse.AccountMovementDirection, which this package
+// can't import — see SEP41MovementsFloorLedger's doc comment on the
+// import-direction rule) and is evaluated against `address`: "sent" =
+// from_addr=address (and to_addr != address), "received" = the
+// reverse, "self" = from_addr=address AND to_addr=address. No
+// per-contract asset filter here — resolving a token contract_id to
+// the CANONICAL asset id CH's account_movements.asset column holds is
+// a per-row lookup the caller (movements.go) already does for
+// display, so it applies any ?asset= filter itself, POST-fetch, on
+// the resolved name; this keeps the two merge-side queries' asset
+// semantics honestly asymmetric (documented) rather than silently
+// wrong.
+//
+//nolint:gocognit,gocyclo // linear query-build (four optional clauses) + row-scan loop, same shape as ListSEP41Transfers.
+func (s *Store) ListSEP41TransfersByAddress(ctx context.Context, address string, limit int, cur SEP41TransferCursor, direction string) ([]SEP41TransferRow, error) {
+	if address == "" {
+		return nil, errors.New("timescale: ListSEP41TransfersByAddress: empty address")
+	}
+	if limit <= 0 {
+		limit = 25
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	var sb strings.Builder
+	sb.WriteString(`
+        SELECT
+            ledger_close_time, ledger, tx_hash, op_index, event_index,
+            contract_id, event_kind,
+            from_addr, to_addr,
+            amount::text, live_until_ledger, authorized
+        FROM sep41_transfers
+        WHERE event_kind = 'transfer'
+          AND ledger >= $1
+          AND (from_addr = $2 OR to_addr = $2)
+    `)
+	args := []any{int64(SEP41MovementsFloorLedger), address}
+	switch direction {
+	case "sent":
+		sb.WriteString(" AND from_addr = $2 AND (to_addr IS DISTINCT FROM $2)")
+	case "received":
+		sb.WriteString(" AND to_addr = $2 AND (from_addr IS DISTINCT FROM $2)")
+	case "self":
+		sb.WriteString(" AND from_addr = $2 AND to_addr = $2")
+	case "":
+		// no direction filter
+	default:
+		return nil, fmt.Errorf("timescale: ListSEP41TransfersByAddress: invalid direction %q", direction)
+	}
+	if cur.IsSet() {
+		args = append(args, int64(cur.Ledger), cur.TxHash, int16(cur.OpIndex), int16(cur.EventIndex))
+		fmt.Fprintf(&sb, " AND (ledger, tx_hash, op_index, event_index) < ($%d, $%d, $%d, $%d)",
+			len(args)-3, len(args)-2, len(args)-1, len(args))
+	}
+	args = append(args, limit)
+	fmt.Fprintf(&sb, " ORDER BY ledger DESC, tx_hash DESC, op_index DESC, event_index DESC LIMIT $%d", len(args))
+
+	rows, err := s.db.QueryContext(ctx, sb.String(), args...)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: ListSEP41TransfersByAddress(%s): %w", address, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []SEP41TransferRow
+	for rows.Next() {
+		var (
+			r          SEP41TransferRow
+			ledger     int64
+			opIdx      int16
+			eventIdx   int16
+			kind       string
+			fromNull   sql.NullString
+			toNull     sql.NullString
+			amountStr  sql.NullString
+			liveNull   sql.NullInt32
+			authorized sql.NullBool
+		)
+		if err := rows.Scan(
+			&r.ObservedAt, &ledger, &r.TxHash, &opIdx, &eventIdx,
+			&r.ContractID, &kind,
+			&fromNull, &toNull,
+			&amountStr, &liveNull, &authorized,
+		); err != nil {
+			return nil, fmt.Errorf("timescale: ListSEP41TransfersByAddress scan: %w", err)
+		}
+		r.Ledger = uint32(ledger)
+		r.OpIndex = uint32(opIdx)
+		r.EventIndex = uint32(eventIdx)
+		r.Kind = SEP41TransferKind(kind)
+		if fromNull.Valid {
+			r.FromAddr = fromNull.String
+		}
+		if toNull.Valid {
+			r.ToAddr = toNull.String
+		}
+		if amountStr.Valid {
+			v, ok := new(big.Int).SetString(amountStr.String, 10)
+			if !ok {
+				return nil, fmt.Errorf("timescale: ListSEP41TransfersByAddress: parse amount %q", amountStr.String)
+			}
+			r.Amount = v
+		}
+		if liveNull.Valid {
+			r.LiveUntilLedger = uint32(liveNull.Int32)
+		}
+		if authorized.Valid {
+			b := authorized.Bool
+			r.Authorized = &b
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // CountSEP41TransfersInRange returns the row count in [from, to].
 func (s *Store) CountSEP41TransfersInRange(ctx context.Context, from, to uint32) (int64, error) {
 	if to < from {

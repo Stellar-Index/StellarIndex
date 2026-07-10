@@ -15,6 +15,26 @@ import (
 // needs to discriminate rows by writer.
 const SourceName = "classic-movements"
 
+// P23StartLedger is ADR-0047 D2's hard upper bound: the first ledger
+// of Protocol 23 (Whisk, mainnet 2025-09-03), from which every
+// classic-asset movement already emits a unified CAP-67 event
+// (internal/sources/sep41_transfers) — this package's pre-P23
+// reconstruction has nothing to do at or beyond this ledger.
+// docs/architecture/pre-p23-classic-movements-research.md §1's
+// ledger-boundary table confirms this exact value against
+// stellar.ledgers on r1 — NOT an approximation.
+//
+// The canonical, exported home for this value: internal/ops/chops's
+// classic-movements-backfill clamp and ADR-0048 D5's
+// /v1/accounts/{g}/movements merge (internal/api/v1/explorer/movements.go,
+// timescale.SEP41MovementsFloorLedger) both key off it — the latter
+// via a same-VALUE constant rather than an import, since
+// internal/storage sits below internal/sources in the repo's import
+// direction (scripts/ci/lint-imports.sh's L/storage-below-compute
+// rule); TestP23BoundaryConstantsAgree (internal/api/v1/explorer/movements_test.go)
+// pins the two together so they can't silently drift.
+const P23StartLedger uint32 = 58_762_517
+
 // Kind discriminates a movement's semantic type. The ten values
 // match migration 0103's movement_kind CHECK constraint — ALL TEN
 // are admitted by the schema from Phase 1 on (ADR-0047 D1), even

@@ -855,7 +855,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// dial is non-fatal — the rest of the API still serves.
 	var tokenSupplyReader v1.TokenSupplyReader
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
-		sr, err := clickhouse.NewSupplyReader(rootCtx, addr)
+		sr, err := clickhouse.NewSupplyReaderAuth(rootCtx, addr, cfg.Storage.ClickHouseServingUser, cfg.Storage.ClickHouseServingPassword)
 		if err != nil {
 			logger.Warn("token supply reader unavailable; /v1/assets/{id}/supply will 503", "addr", addr, "err", err)
 		} else {
@@ -880,7 +880,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	var lakeWatermarkReader v1.LakeWatermarkReader
 	var tokenDecimalsReader v1.TokenDecimalsReader
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
-		er, err := clickhouse.NewExplorerReader(rootCtx, addr)
+		er, err := clickhouse.NewExplorerReaderAuth(rootCtx, addr, cfg.Storage.ClickHouseServingUser, cfg.Storage.ClickHouseServingPassword)
 		if err != nil {
 			logger.Warn("explorer reader unavailable; /v1/ledgers etc. will 503", "addr", addr, "err", err)
 		} else {
@@ -969,6 +969,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		AssetsReader:         cachedAssetsReader,
 		Issuers:              cachedIssuersReader,
 		SEP41Transfers:       store,
+		SEP41Movements:       store,
 		Cursors:              store,
 		CoverageReader:       store,
 		CompletenessReader:   store,

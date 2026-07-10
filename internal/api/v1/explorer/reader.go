@@ -69,6 +69,7 @@ type ExplorerReader interface {
 	SACClassicAssetName(ctx context.Context, contractID string) (string, bool, error)
 	SACAssetFromEvents(ctx context.Context, contractID string) (string, bool, error)
 	AccountsUnspendable(ctx context.Context, accountIDs []string) (map[string]bool, error)
+	AccountMovements(ctx context.Context, address string, limit int, cur clickhouse.AccountMovementCursor, filter clickhouse.AccountMovementFilter) ([]clickhouse.AccountMovementRow, error)
 }
 
 // ContractsReader is the narrow read seam onto the protocol_contracts
@@ -101,6 +102,11 @@ type Handler struct {
 	// endpoint (GET /v1/accounts) needs a priced asset set and 503s
 	// without one, independent of whether the lake reader is wired.
 	PricingEnabled bool
+	// SEP41Movements, when non-nil, backs the Postgres "recent tail"
+	// half of GET /v1/accounts/{g}/movements' merge (ADR-0048 D5). Nil
+	// degrades that endpoint to serving the ClickHouse pre-P23 archive
+	// alone, with an honest coverage_note — see movements.go.
+	SEP41Movements SEP41MovementsReader
 
 	LookupUSDPrice  func(ctx context.Context, asset canonical.Asset) (string, bool)
 	IsKnownSAC      func(contractID string) bool

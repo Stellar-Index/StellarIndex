@@ -34,6 +34,7 @@ type stubExplorerReader struct {
 	tokenDisplays  map[string]clickhouse.TokenDisplayMeta
 	nativeLPStates map[string]clickhouse.NativeLiquidityPoolState
 	nativeLPRanked []clickhouse.NativeLiquidityPoolState
+	movements      []clickhouse.AccountMovementRow
 	err            error
 }
 
@@ -176,6 +177,10 @@ func (s *stubExplorerReader) AccountTransactions(_ context.Context, _ string, _ 
 
 func (s *stubExplorerReader) AccountOperations(_ context.Context, _ string, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error) {
 	return s.ops, s.err
+}
+
+func (s *stubExplorerReader) AccountMovements(_ context.Context, _ string, _ int, _ clickhouse.AccountMovementCursor, _ clickhouse.AccountMovementFilter) ([]clickhouse.AccountMovementRow, error) {
+	return s.movements, s.err
 }
 
 func explorerTestServer(t *testing.T, r v1.ExplorerReader) string {

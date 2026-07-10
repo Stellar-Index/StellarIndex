@@ -72,6 +72,9 @@ func (c *Config) ApplyEnvOverrides() {
 	if v := os.Getenv("STELLARINDEX_REDIS_PASSWORD"); v != "" {
 		c.Storage.RedisPassword = v
 	}
+	if v := os.Getenv("STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD"); v != "" {
+		c.Storage.ClickHouseServingPassword = v
+	}
 	// NOTE: STELLARINDEX_S3_ACCESS_KEY / STELLARINDEX_S3_SECRET_KEY are
 	// deliberately NOT overridden here. StorageConfig.S3AccessKeyEnv holds the
 	// NAME of the env var, not its value; buildS3Client resolves it via

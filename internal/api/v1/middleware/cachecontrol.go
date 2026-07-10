@@ -253,6 +253,21 @@ func policyForPath(path string, cdnEnabled bool) string {
 		}
 		return "public, max-age=60"
 
+	// ─── Explorer account surface — same private, no-store as its
+	// siblings ───────────────────────────────────────────────────
+	// GET /v1/accounts, /v1/accounts/{g}, /v1/accounts/{g}/transactions,
+	// /v1/accounts/{g}/operations, and /v1/accounts/{g}/movements
+	// (ADR-0048 D5) never had an explicit case here — they've always
+	// fallen through to the conservative default below. Made EXPLICIT
+	// (still private, no-store, no behavior change) when D5 added
+	// /movements, so a future reviewer can see the account-surface
+	// policy is a deliberate match to /v1/account/* (singular,
+	// auth-tied) rather than an oversight: per-account listings are
+	// keyset-paginated over the current lake tip, and an address is a
+	// poor shared-CDN cache key regardless.
+	case path == "/v1/accounts", strings.HasPrefix(path, "/v1/accounts/"):
+		return "private, no-store"
+
 	// ─── Default — be conservative ──────────────────────────────
 	// Unknown path: don't accidentally let the CDN cache something
 	// that turns out to be auth-tied later. Matches /v1/account/*

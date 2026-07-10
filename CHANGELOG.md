@@ -49,6 +49,40 @@ against.
         /usr/local/bin/ch-supply-refresh.sh
   systemctl daemon-reload
   ```
+### Added
+- **`GET /v1/accounts/{g_strkey}/movements` — unified account-activity feed (ADR-0048 D5).**
+  Merges, at read time, ClickHouse's `stellar.account_movements` pre-P23 classic-movement
+  archive (ADR-0047/0048 D2) with Postgres `sep41_transfers`' post-P23 CAP-67 "recent tail"
+  (`timescale.Store.ListSEP41TransfersByAddress`, backed by two new partial indexes,
+  migration 0106) into one newest-first, keyset-paged feed — `?cursor=` is the opaque
+  composite `(ledger, tx_hash, op_index, leg_index)`. Optional `?kind=`/`?direction=`/`?asset=`
+  filters. The two stores' ledger ranges never overlap by construction (the ClickHouse
+  archive's only writer hard-clamps below the P23 boundary, ledger 58,762,517; the Postgres
+  query floors at-or-above it) — `assertP23NonOverlap` checks that invariant on every
+  request, and `internal/sources/classicmovements.P23StartLedger` is now an EXPORTED
+  constant (`internal/api/v1/explorer/movements_test.go`'s `TestP23BoundaryConstantsAgree`
+  pins it against the Postgres side's `timescale.SEP41MovementsFloorLedger`). Honest
+  empty-state: a `coverage_note` field fires when the response isn't the full merge (the
+  ClickHouse archive is populated by an operator-run historical backfill and starts empty on
+  a fresh deployment; the Postgres tail reader may be unwired or erroring). `x-stability:
+  experimental` (explorer surface, ADR-0042 convention); intentionally excluded from
+  `pkg/client` (`uncoveredOperations`, matching every other explorer-surface endpoint — "SDK
+  is pricing-first"). OpenAPI spec bumped to 1.8.0 (additive).
+- **ClickHouse serving-query isolation (ADR-0048 D4), codified ansible + wired, not applied
+  to r1.** A dedicated `api_serving` ClickHouse settings profile + user
+  (`configs/ansible/roles/archival-node/tasks/20-clickhouse-serving-profile.yml`): bounded
+  `max_threads`/`max_memory_usage`/`max_execution_time`/`max_concurrent_queries_for_user`,
+  CH query `priority=1` (preferred over the unprioritized `default` user every other CH
+  connection in this repo still uses), and `os_thread_priority=-5` — the setting that
+  actually reaches background merges/mutations, which CH's `priority` queue does not touch.
+  `internal/storage/clickhouse.NewExplorerReaderAuth` / `NewSupplyReaderAuth` (existing
+  `NewExplorerReader`/`NewSupplyReader` now thin wrappers with empty credentials, unchanged
+  behavior for every non-API caller) let `cmd/stellarindex-api` authenticate as this user via
+  two new config fields, `storage.clickhouse_serving_user` /
+  `clickhouse_serving_password_env` (`STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD`), both empty
+  by default — preserves the pre-D4 unauthenticated `default`-user behavior exactly until an
+  operator opts in on both the CH side (`--tags clickhouse-serving-profile`) and the API-config
+  side (`stellarindex_clickhouse_serving_enabled: true`), a deliberate two-step activation.
 
 ## [v0.14.0] — 2026-07-10
 

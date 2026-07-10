@@ -34,11 +34,30 @@ type ExplorerReader struct {
 }
 
 // NewExplorerReader dials ClickHouse (native protocol) with a request-sized
-// pool and pings it.
+// pool and pings it, authenticating as CH's unauthenticated `default` user
+// (empty username/password) — the pre-ADR-0048-D4 behavior. Every non-API
+// caller (the aggregator's explorer reader, stellarindex-ops issuer-enrich /
+// supply-seed) keeps calling this constructor unchanged.
 func NewExplorerReader(ctx context.Context, addr string) (*ExplorerReader, error) {
+	return NewExplorerReaderAuth(ctx, addr, "", "")
+}
+
+// NewExplorerReaderAuth is [NewExplorerReader] with an explicit CH
+// username/password — ADR-0048 D4's serving-isolation profile. The API
+// binary calls this with `storage.clickhouse_serving_user` /
+// `clickhouse_serving_password_env` (internal/config's StorageConfig) so
+// its per-request explorer reads (including GET /v1/accounts/{g}/movements,
+// ADR-0048 D5) run under the dedicated `api_serving` CH settings profile
+// (bounded threads/memory/execution-time, priority above merges and
+// backfill inserts — configs/ansible/roles/archival-node/tasks/
+// 20-clickhouse-serving-profile.yml) instead of the unbounded `default`
+// user every other CH connection in this repo still uses. Both args empty
+// is byte-for-byte the old NewExplorerReader behavior (clickhouse-go
+// treats an empty Auth.Username as CH's `default` user).
+func NewExplorerReaderAuth(ctx context.Context, addr, username, password string) (*ExplorerReader, error) {
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr:            []string{addr},
-		Auth:            clickhouse.Auth{Database: "stellar"},
+		Auth:            clickhouse.Auth{Database: "stellar", Username: username, Password: password},
 		Settings:        clickhouse.Settings{"max_execution_time": 30},
 		DialTimeout:     10 * time.Second,
 		ReadTimeout:     30 * time.Second,

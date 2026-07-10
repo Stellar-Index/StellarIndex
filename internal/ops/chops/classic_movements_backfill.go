@@ -26,16 +26,14 @@ type classicMovementOpKey struct {
 	OpIndex int32
 }
 
-// classicMovementsP23StartLedger is ADR-0047 D2's hard upper bound:
-// the first ledger of P23 (Whisk, 2025-09-03), from which every
-// classic movement already emits a unified CAP-67 event
-// (internal/sources/sep41_transfers). Pre-P23 reconstruction has
-// nothing to do at or beyond this ledger.
-//
-// docs/architecture/pre-p23-classic-movements-research.md §1's
-// ledger-boundary table confirms this exact value against
-// stellar.ledgers on r1 — NOT an approximation.
-const classicMovementsP23StartLedger uint32 = 58_762_517
+// classicMovementsP23StartLedger re-exports classicmovements.P23StartLedger
+// under this file's existing local name (ADR-0048 D5 promoted the
+// value to an exported constant so internal/api/v1/explorer's account-
+// movements merge can pin against it without duplicating the literal —
+// see that constant's doc comment for the full rationale). Kept as an
+// alias, not a straight replace-in-place, to avoid touching every call
+// site in this file for a pure rename.
+const classicMovementsP23StartLedger uint32 = classicmovements.P23StartLedger
 
 // classicMovementsDefaultWindow is the per-window ledger span this
 // command streams from ClickHouse + writes to ClickHouse before

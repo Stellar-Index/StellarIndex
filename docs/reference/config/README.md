@@ -62,6 +62,8 @@ the `env:` column.
 | `storage.clickhouse_addr` | `string` | `127.0.0.1:9300` | — | ClickHouse native address host:port for the Tier-1 lake (ADR-0034); used by the indexer real-time dual-sink. |
 | `storage.clickhouse_live_sink` | `bool` | `true` | — | Enable the real-time ClickHouse dual-sink: the indexer writes each ledger's structural extract to CH inline (non-blocking), keeping the lake within ~seconds of the chain. ON by default (ADR-0041): the certified-lake substrate backs the coverage claim, the CH completeness path, and lake-derived supply — opt out only on deployments that cannot run ClickHouse, accepting the loss of all three. |
 | `storage.clickhouse_projector_source` | `bool` | `true` | — | Feed-switch: the projector reads forward events from the ClickHouse lake (contract_events) instead of Postgres soroban_events, enabling soroban_events decommission. Requires clickhouse_live_sink. ON by default (ADR-0041), matching the production topology. |
+| `storage.clickhouse_serving_user` | `string` | _(required)_ | — | ClickHouse username the API's serving reads (explorer endpoints, incl. GET /v1/accounts/{g}/movements) authenticate as (ADR-0048 D4). Empty (default) uses ClickHouse's default user, unchanged from pre-D4 behavior. |
+| `storage.clickhouse_serving_password_env` | `string` | _(required)_ | `STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD` | Env var holding the ClickHouse serving user's password (reference, not the password itself). Empty (default) uses no password, matching an empty clickhouse_serving_user. |
 
 ### `[ingestion]`
 

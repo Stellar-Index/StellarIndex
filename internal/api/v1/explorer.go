@@ -36,6 +36,8 @@ type (
 	AssetHolderV             = explorerpkg.AssetHolderV
 	AccountTransactionsView  = explorerpkg.AccountTransactionsView
 	AccountOperationsView    = explorerpkg.AccountOperationsView
+	AccountMovementsView     = explorerpkg.AccountMovementsView
+	AccountMovementEntry     = explorerpkg.AccountMovementEntry
 	ContractEventView        = explorerpkg.ContractEventView
 	ContractDetailView       = explorerpkg.ContractDetailView
 	ContractDirectoryEntry   = explorerpkg.ContractDirectoryEntry
@@ -105,6 +107,7 @@ func explorerHandlerFor(s *Server, opts Options, logger *slog.Logger) *explorerp
 		VerifiedCurrencies: opts.VerifiedCurrencies,
 		ProtocolContracts:  opts.ProtocolContracts,
 		PricingEnabled:     opts.Prices != nil,
+		SEP41Movements:     opts.SEP41Movements,
 		LookupUSDPrice:     s.lookupUSDPrice,
 		IsKnownSAC:         s.isKnownSAC,
 		LakeWatermark:      s.lakeWatermark,

@@ -33030,6 +33030,385 @@
                   }
                 }
               ]
+            },
+            {
+              "name": "movements",
+              "description": "",
+              "item": [
+                {
+                  "name": "Unified account-activity feed (pre-P23 archive + post-P23 tail), newest first.",
+                  "request": {
+                    "name": "Unified account-activity feed (pre-P23 archive + post-P23 tail), newest first.",
+                    "description": {
+                      "content": "ADR-0048 D5: the ClickHouse `stellar.account_movements` pre-P23\nclassic-movement archive (ADR-0047/0048 D2) merged, at read time,\nwith the Postgres `sep41_transfers` post-P23 \"recent tail\" — the\none feed spanning an address's ENTIRE classic-asset movement\nhistory, not just its recent SEP-41 activity. Newest first,\nkeyset-paged with `?cursor=<opaque>` (echo back `next_cursor`); the\ncursor is the composite `(ledger, tx_hash, op_index, leg_index)`.\n\nMERGE SEAM: the two stores' ledger ranges never overlap by\nconstruction — the ClickHouse archive's only writer\n(`classic-movements-backfill`) hard-clamps below the P23 boundary\n(ledger 58,762,517, Whisk/CAP-67, 2025-09-03); the Postgres tail\nquery floors at-or-above it. The server asserts this invariant on\nevery request (logs an error if ever violated) rather than only\ndocumenting it.\n\nSCOPE GAP (documented, not a bug): the Postgres tail only surfaces\n`sep41_transfers` rows with `event_kind = 'transfer'` — a pure\nSoroban-native SEP-41 token transfer that happened BEFORE the P23\nboundary is real on-chain activity this feed does not (yet)\nsurface; only CLASSIC-asset movements are covered end-to-end.\n\nHONEST EMPTY STATE: `classic-movements-backfill` is an\noperator-run historical job (never live-wired) — on a fresh\ndeployment `stellar.account_movements` is EMPTY until an operator\nruns it, so this endpoint may serve the Postgres tail alone. See\n`coverage_note` on the response.\n\n`?asset=` FILTER ASYMMETRY (documented): on ClickHouse archive rows\nit matches the canonical asset id exactly (`CODE-ISSUER` /\n`native` / `pool:<hex>`); on the Postgres tail it matches against\nthe RESOLVED display value (the classic-asset name for a SAC\nwrapper, else the raw token contract_id) — resolved and filtered\nclient-request-side, not in SQL, so a page may return fewer than\n`limit` Postgres-tail rows even when more matching rows exist\nfurther back. An accepted limitation of this experimental\nendpoint's Postgres half.\n",
+                      "type": "text/plain"
+                    },
+                    "url": {
+                      "path": [
+                        "accounts",
+                        ":g_strkey",
+                        "movements"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Maximum rows to return (1-200, default 25). Out-of-range values return 400.",
+                            "type": "text/plain"
+                          },
+                          "key": "limit",
+                          "value": "25"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Opaque keyset cursor from a prior response's next_cursor.",
+                            "type": "text/plain"
+                          },
+                          "key": "cursor",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Filter by movement_kind exact match (e.g. payment, transfer, liquidity_pool_deposit). Omitted = any kind.",
+                            "type": "text/plain"
+                          },
+                          "key": "kind",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Filter by direction. (This can only be one of sent,received,self)",
+                            "type": "text/plain"
+                          },
+                          "key": "direction",
+                          "value": "self"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Filter by asset — see this operation's description for the matching asymmetry between the ClickHouse archive and the Postgres tail.",
+                            "type": "text/plain"
+                          },
+                          "key": "asset",
+                          "value": "<string>"
+                        }
+                      ],
+                      "variable": [
+                        {
+                          "type": "any",
+                          "value": "<string>",
+                          "key": "g_strkey",
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) G-strkey account id.",
+                            "type": "text/plain"
+                          }
+                        }
+                      ]
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {},
+                    "auth": null
+                  },
+                  "response": [
+                    {
+                      "name": "The account's unified movement feed.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "movements"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Maximum rows to return (1-200, default 25). Out-of-range values return 400.",
+                                "type": "text/plain"
+                              },
+                              "key": "limit",
+                              "value": "25"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Opaque keyset cursor from a prior response's next_cursor.",
+                                "type": "text/plain"
+                              },
+                              "key": "cursor",
+                              "value": "<string>"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Filter by movement_kind exact match (e.g. payment, transfer, liquidity_pool_deposit). Omitted = any kind.",
+                                "type": "text/plain"
+                              },
+                              "key": "kind",
+                              "value": "<string>"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Filter by direction. (This can only be one of sent,received,self)",
+                                "type": "text/plain"
+                              },
+                              "key": "direction",
+                              "value": "self"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Filter by asset — see this operation's description for the matching asymmetry between the ClickHouse archive and the Postgres tail.",
+                                "type": "text/plain"
+                              },
+                              "key": "asset",
+                              "value": "<string>"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) G-strkey account id.",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "OK",
+                      "code": 200,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/json"
+                        }
+                      ],
+                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"movements\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"leg_index\": \"<integer>\",\n        \"movement_kind\": \"<string>\",\n        \"direction\": \"received\",\n        \"asset\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"provenance\": \"classic_derived\",\n        \"counterparty\": \"<string>\",\n        \"attributes\": {\n          \"key_0\": true\n        }\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"leg_index\": \"<integer>\",\n        \"movement_kind\": \"<string>\",\n        \"direction\": \"sent\",\n        \"asset\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"provenance\": \"cap67_event\",\n        \"counterparty\": \"<string>\",\n        \"attributes\": {\n          \"key_0\": 7297\n        }\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Client-supplied parameters didn't validate.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "movements"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Maximum rows to return (1-200, default 25). Out-of-range values return 400.",
+                                "type": "text/plain"
+                              },
+                              "key": "limit",
+                              "value": "25"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Opaque keyset cursor from a prior response's next_cursor.",
+                                "type": "text/plain"
+                              },
+                              "key": "cursor",
+                              "value": "<string>"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Filter by movement_kind exact match (e.g. payment, transfer, liquidity_pool_deposit). Omitted = any kind.",
+                                "type": "text/plain"
+                              },
+                              "key": "kind",
+                              "value": "<string>"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Filter by direction. (This can only be one of sent,received,self)",
+                                "type": "text/plain"
+                              },
+                              "key": "direction",
+                              "value": "self"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Filter by asset — see this operation's description for the matching asymmetry between the ClickHouse archive and the Postgres tail.",
+                                "type": "text/plain"
+                              },
+                              "key": "asset",
+                              "value": "<string>"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) G-strkey account id.",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "Bad Request",
+                      "code": 400,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Server is degraded (dependency outage, startup, shutdown).",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "movements"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Maximum rows to return (1-200, default 25). Out-of-range values return 400.",
+                                "type": "text/plain"
+                              },
+                              "key": "limit",
+                              "value": "25"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Opaque keyset cursor from a prior response's next_cursor.",
+                                "type": "text/plain"
+                              },
+                              "key": "cursor",
+                              "value": "<string>"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Filter by movement_kind exact match (e.g. payment, transfer, liquidity_pool_deposit). Omitted = any kind.",
+                                "type": "text/plain"
+                              },
+                              "key": "kind",
+                              "value": "<string>"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Filter by direction. (This can only be one of sent,received,self)",
+                                "type": "text/plain"
+                              },
+                              "key": "direction",
+                              "value": "self"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Filter by asset — see this operation's description for the matching asymmetry between the ClickHouse archive and the Postgres tail.",
+                                "type": "text/plain"
+                              },
+                              "key": "asset",
+                              "value": "<string>"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) G-strkey account id.",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "Service Unavailable",
+                      "code": 503,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    }
+                  ],
+                  "event": [],
+                  "protocolProfileBehavior": {
+                    "disableBodyPruning": true
+                  }
+                }
+              ]
             }
           ]
         }
@@ -33118,7 +33497,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"account\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"ledger\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },

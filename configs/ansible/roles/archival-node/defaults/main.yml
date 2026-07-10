@@ -222,6 +222,53 @@ postgres_db_stellarindex:    "stellarindex"
 postgres_user_stellarindex:  "stellarindex"
 # postgres_pass_stellarindex ← set in ansible-vault secrets file
 
+# ───── ClickHouse serving-query isolation (ADR-0048 D4) ───────────────
+# A dedicated ClickHouse settings profile + user for the API's
+# per-request explorer reads (GET /v1/ledgers, /v1/tx, /v1/accounts/*
+# incl. the ADR-0048 D5 movements feed, …), separate from the
+# unauthenticated `default` user every OTHER ClickHouse connection in
+# this repo still uses (the indexer's dual-sink, the aggregator's
+# explorer reader, stellarindex-ops backfills/gates/replays). Bounded
+# so a burst of public API traffic fails fast and cheap instead of
+# queuing behind — or getting starved by — a heavy backfill scan or a
+# background merge on the same host. See
+# 20-clickhouse-serving-profile.yml for the exact settings + rationale
+# per knob (max_threads/max_memory_usage/max_execution_time/priority/
+# os_thread_priority/max_concurrent_queries_for_user).
+#
+# clickhouse_serving_profile_enabled defaults true so a fresh apply of
+# this role provisions the profile+user by default; the API config
+# side (storage.clickhouse_serving_user in stellarindex.toml.j2 below)
+# is a SEPARATE opt-in — provisioning the CH-side user does nothing
+# until the API is also told to authenticate as it. This intentional
+# two-step activation matches how clickhouse_live_sink itself was
+# rolled out (ADR-0041) and lets an operator provision the CH side
+# ahead of a coordinated API-config flip.
+clickhouse_serving_profile_enabled: true
+clickhouse_serving_user: "api_serving"
+clickhouse_serving_max_threads: 2
+clickhouse_serving_max_memory_usage_bytes: 2147483648   # 2 GiB
+clickhouse_serving_max_execution_time_s: 10
+clickhouse_serving_max_concurrent_queries: 20
+# clickhouse_serving_password ← set in ansible-vault secrets file as
+# vault_clickhouse_serving_password (mirrors postgres_pass_stellarindex
+# / vault_stellarindex_reader_secret_key's pattern — see
+# inventory/r1.example.yml for the operator-facing wiring). The
+# plaintext is hashed (SHA-256) into the ClickHouse users.d drop-in at
+# render time and separately injected into
+# STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD in stellarindex.env.j2 for
+# the API process to authenticate with — it never lands on disk
+# outside the vault + those two rendered, root-only-readable files.
+clickhouse_serving_password: "{{ vault_clickhouse_serving_password | default('') }}"
+
+# The API-side activation flip (stellarindex.toml.j2's
+# clickhouse_serving_user), SEPARATE from clickhouse_serving_profile_enabled
+# above (the CH-side provisioning). false until an operator has
+# confirmed the CH-side profile+user is live — see
+# 20-clickhouse-serving-profile.yml's header for the two-step
+# sequencing rationale.
+stellarindex_clickhouse_serving_enabled: false
+
 # ───── stellarindex-indexer / aggregator / api services ───────────────
 run_stellarindex: true
 
