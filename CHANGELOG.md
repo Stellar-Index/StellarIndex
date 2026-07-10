@@ -50,6 +50,44 @@ against.
   code change. The VAULT side of the gate is unchanged (structurally
   undecodable — no create body has ever carried the new vault's own
   address); `MainnetVaults` remains curated-set only. No schema change.
+- **Generic oracle/SEP discovery broadening — closes two blind spots
+  identified in the 2026-07-10 investigation** (option (b),
+  docs/architecture/generic-oracle-sep-onboarding.md §3(b); migration
+  0103). `internal/canonical/discovery` gains two new sniffers
+  alongside the existing SEP-41 one, reusing `discovered_assets`
+  (new `discovery_kind` column: `sep41` \| `oracle_event` \|
+  `oracle_call`) rather than a parallel storage surface — same
+  sighting-only, fail-closed, operator-triage discipline (ADR-0035:
+  discovery is not attribution) as the SEP-41 sniffer has had in
+  production since its original ship date:
+  - `SniffOracleEvent` widens the event-path topic[0] watch beyond
+    the four SEP-41 symbols to the oracle-suggestive set from the
+    investigation's ClickHouse lake census (`price`, `prices`,
+    `lastprice`, `oracle`/`Oracle`/`ORACLE`, `REFLECTOR`, `REDSTONE`,
+    `StandardReference`, `relay`, … — 29 symbols total), so a NEW
+    oracle deploying tomorrow gets flagged for operator review
+    instead of silently missed.
+  - `SniffOracleCall` adds a symmetric hook on the
+    `ContractCallContext` path (`dispatchContractCall`) for
+    event-less oracles — the Band pattern (`relay`/`force_relay`
+    update storage without publishing an event), which was
+    structurally invisible to every topic-based census mechanism in
+    the repo. Matches `(contract_id, function_name)` against a
+    curated allow-list (`lastprice`, `price`, `prices`, `relay`,
+    `force_relay`, `write_prices`, `x_last_price`) — a cheap map
+    lookup, no arg decoding. The dispatcher's InvokeContract
+    call-tree walk (previously gated behind
+    `len(contractCallDecoders) > 0`, i.e. implicitly dependent on
+    Band being registered) now also activates whenever a discovery
+    sink is installed, so a future Band-alike is sighted even in a
+    deployment that doesn't enable `band`.
+  Both sniffers are pure observation: no decoding, no attribution, no
+  gating changes. `stellarindex-ops discovery list` gains `KIND` /
+  `FIRST_SYMBOL` columns; the existing
+  `stellarindex_discovery_dropped_hits_total` /
+  `_skipped_hits_total` metrics and `discovery-drops` runbook/alert
+  now cover all three sniffers (one shared async sink, unlabeled
+  counters — not split per sniffer).
 
 ### Changed
 - **BREAKING for anyone verifying release signatures: `release.yml` migrated

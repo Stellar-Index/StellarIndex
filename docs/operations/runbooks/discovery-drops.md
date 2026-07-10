@@ -1,6 +1,6 @@
 ---
 title: Runbook — discovery-drops
-last_verified: 2026-05-03
+last_verified: 2026-07-10
 status: draft
 severity: P3
 ---
@@ -15,7 +15,7 @@ severity: P3
 | Severity | P3 (informational) |
 | Detected by | `deploy/monitoring/rules/ingestion.yml` |
 | Typical MTTR | minutes-to-hours |
-| Impact | SEP-41 discovery coverage is degrading. The main ingest path keeps running, but some discovery hits are being dropped before they reach Postgres. |
+| Impact | Discovery coverage is degrading — SEP-41 token sightings AND the oracle-suggestive event/call sightings added per docs/architecture/generic-oracle-sep-onboarding.md §3(b) share one sink. The main ingest path keeps running, but some discovery hits are being dropped before they reach Postgres. |
 
 ## Symptoms
 

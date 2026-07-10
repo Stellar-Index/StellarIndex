@@ -99,8 +99,8 @@ func (s *AsyncSink) Start() {
 }
 
 // Push enqueues a Hit. Non-blocking. Behaviour:
-//   - Already-enqueued (ContractID, EventType) → silently skipped,
-//     SkippedCount incremented.
+//   - Already-enqueued (ContractID, Kind, EventType, Symbol) →
+//     silently skipped, SkippedCount incremented.
 //   - Channel full → dropped, DroppedCount incremented.
 //   - Otherwise → marked seen and enqueued.
 //
@@ -108,7 +108,16 @@ func (s *AsyncSink) Start() {
 // import means dispatcher declares its own interface and this method
 // satisfies it).
 func (s *AsyncSink) Push(hit Hit) {
-	key := hit.ContractID + "\x00" + string(hit.EventType)
+	// Dedup key combines Kind + both symbol-carrying fields rather
+	// than just EventType: KindSEP41 hits (from [Sniff]) populate
+	// EventType; KindOracleEvent/KindOracleCall hits (from
+	// [SniffOracleEvent]/[SniffOracleCall]) populate only Symbol.
+	// Concatenating both keeps the legacy SEP-41 dedup key byte-for-
+	// byte unchanged (Kind/Symbol are empty on any hand-built Hit
+	// that only sets EventType, e.g. existing tests) while still
+	// giving every (contract, kind, symbol) tuple its own key for the
+	// two new lanes.
+	key := hit.ContractID + "\x00" + string(hit.Kind) + "\x00" + string(hit.EventType) + "\x00" + hit.Symbol
 
 	s.mu.Lock()
 	if _, ok := s.seen[key]; ok {

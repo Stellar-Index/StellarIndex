@@ -406,29 +406,39 @@ disconnect counter.
 
 Counter, no labels.
 
-Discovery hits dropped because the async SEP-41 discovery sink buffer
-was full. Emitted by the live indexer from periodic `DroppedCount`
-sampling, not only at shutdown, so operators can alert on sustained
-loss while the process is still running. Any non-zero increase means
-discovery coverage is degrading under recorder pressure; this is
-best-effort data loss, not a backpressure signal on the main ingest
-path. With in-process dedup (per `stellarindex_discovery_skipped_hits_total`)
-healthy steady-state should never drop — a non-zero rate typically
-means a Postgres outage or cold-start burst.
+Discovery hits dropped because the async discovery sink buffer was
+full. Covers all three sniffers sharing the one sink — SEP-41 token
+sightings ([internal/canonical/discovery.Sniff]) plus the broader
+oracle-suggestive event and event-less-call sightings added per
+docs/architecture/generic-oracle-sep-onboarding.md §3(b)
+(`SniffOracleEvent` / `SniffOracleCall`) — the counter is not
+labeled per-sniffer, so a spike doesn't distinguish which lane
+dropped; check `stellarindex-ops discovery list`'s `KIND` column
+after resolving the underlying pressure if that matters. Emitted by
+the live indexer from periodic `DroppedCount` sampling, not only at
+shutdown, so operators can alert on sustained loss while the process
+is still running. Any non-zero increase means discovery coverage is
+degrading under recorder pressure; this is best-effort data loss, not
+a backpressure signal on the main ingest path. With in-process dedup
+(per `stellarindex_discovery_skipped_hits_total`) healthy
+steady-state should never drop — a non-zero rate typically means a
+Postgres outage or cold-start burst.
 
 ### `stellarindex_discovery_skipped_hits_total`
 
 Counter, no labels.
 
-Discovery hits skipped because their `(contract_id, event_type)` had
-already been enqueued in this process and the recorder upserts on the
-same key — re-enqueue is wasted work. Emitted by the live indexer from
-periodic `SkippedCount` sampling. A high ratio of Skipped to
-(Skipped + Recorded) is expected and healthy: most contract events are
-duplicates from already-discovered contracts. Tracked for
-capacity-planning visibility, not for alerting. A process restart
-resets the dedup set; the first push for any key after restart still
-records (no-op upsert if already in DB).
+Discovery hits skipped because their dedup key (contract_id + kind +
+symbol) had already been enqueued in this process and the recorder
+upserts on the same key — re-enqueue is wasted work. Same shared
+sink as `stellarindex_discovery_dropped_hits_total` (SEP-41 +
+oracle-suggestive event/call sightings). Emitted by the live indexer
+from periodic `SkippedCount` sampling. A high ratio of Skipped to
+(Skipped + Recorded) is expected and healthy: most contract
+events/calls are duplicates from already-discovered contracts.
+Tracked for capacity-planning visibility, not for alerting. A process
+restart resets the dedup set; the first push for any key after
+restart still records (no-op upsert if already in DB).
 
 ### `stellarindex_source_insert_errors_total`
 

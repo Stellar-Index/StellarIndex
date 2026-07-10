@@ -33,6 +33,15 @@
 // comment. Adding a new source is registering against whichever
 // seam fits the venue's wire shape; the dispatcher itself stays
 // unchanged.
+//
+// Two of the three seams also carry a discovery hook (sighting-only,
+// never attribution — internal/canonical/discovery,
+// docs/architecture/generic-oracle-sep-onboarding.md): the event
+// seam sniffs topic[0] against both the SEP-41 and a broader
+// oracle-suggestive symbol set; the ContractCallDecoder seam sniffs
+// (contract_id, function_name) against an oracle-suggestive call
+// allow-list, so an event-less oracle in the Band shape gets flagged
+// even before any decoder for it exists.
 package dispatcher
 
 import (
@@ -373,9 +382,13 @@ func (d *Dispatcher) AddDecoder(dec Decoder) {
 }
 
 // DiscoverySink is the side-effect interface the dispatcher uses to
-// notify the auto-discovery layer about SEP-41-shaped events. Push
-// is called once per event whose topic[0] decodes to one of the
-// SEP-41 event symbols (transfer / mint / burn / clawback). Push
+// notify the auto-discovery layer about watched-shape sightings.
+// Push is called once per hit from any of three sniffers:
+// [discovery.Sniff] (topic[0] is one of the four SEP-41 event
+// symbols), [discovery.SniffOracleEvent] (topic[0] is in the broader
+// oracle-suggestive symbol set), or [discovery.SniffOracleCall]
+// (an InvokeContract call's function name is in the oracle-suggestive
+// call allow-list — the event-less-oracle / Band-alike case). Push
 // MUST be non-blocking — the dispatcher runs on the ingest hot
 // path and a slow Push would back-pressure the entire pipeline.
 //
@@ -384,13 +397,17 @@ func (d *Dispatcher) AddDecoder(dec Decoder) {
 // discovery.Recorder.Record against the storage layer. See
 // internal/canonical/discovery for the Recorder contract +
 // in-memory variant; the binary-side async adapter wires the two.
+// One sink instance serves all three sniffers — there is no
+// parallel discovery storage/reporting surface.
 type DiscoverySink interface {
 	Push(hit discovery.Hit)
 }
 
 // SetDiscoverySink installs the sink the dispatcher calls on every
-// SEP-41-shaped event. Nil disables the hook. Not safe concurrent
-// with ProcessLedger; called once at startup.
+// watched-shape sighting (event-path SEP-41 / oracle-event, and
+// call-path oracle-call — see [DiscoverySink]). Nil disables all
+// three hooks. Not safe concurrent with ProcessLedger; called once
+// at startup.
 func (d *Dispatcher) SetDiscoverySink(sink DiscoverySink) {
 	d.discoverySink = sink
 }
@@ -625,7 +642,7 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 		// the node's position. Decoders are stateless w.r.t. tree
 		// position — they care only about (contract_id,
 		// function_name, args).
-		if len(d.contractCallDecoders) > 0 {
+		if d.contractCallPathActive() {
 			callTrees := extractInvokeContractCallTrees(ops)
 			for opIdx, calls := range callTrees {
 				if len(calls) == 0 {
@@ -807,9 +824,47 @@ func (d *Dispatcher) bumpUnmatched() {
 	d.statsMu.Unlock()
 }
 
+// contractCallPathActive reports whether ProcessLedger needs to walk
+// each op's full InvokeContract auth tree at all. True when at least
+// one ContractCallDecoder is registered (the pre-existing condition)
+// OR a discovery sink is installed (docs/architecture/generic-oracle-sep-onboarding.md
+// §3(b)(2)) — the oracle-call discovery hook lives in
+// dispatchContractCall, which is only ever invoked from inside that
+// walk, so without this widened condition an event-less-oracle
+// sighting would silently depend on Band (or some other
+// ContractCallDecoder) happening to be registered in the running
+// binary. False for both means the walk is skipped entirely — the
+// "cheap prefilter first" property: zero per-op overhead when
+// neither consumer wants call-tree data.
+func (d *Dispatcher) contractCallPathActive() bool {
+	return len(d.contractCallDecoders) > 0 || d.discoverySink != nil
+}
+
 // dispatchContractCall runs one InvokeContract op through the
 // contract-call decoder chain. First matching decoder owns it.
+//
+// Discovery hook (docs/architecture/generic-oracle-sep-onboarding.md
+// §3(b)(2)): BEFORE the decoder pass, every call is run through
+// [discovery.SniffOracleCall] — a cheap map lookup on FunctionName,
+// no arg decoding. This is the event-less-oracle symmetric hook to
+// dispatchOne's event-path discovery: Band's relay()/force_relay()
+// update storage without publishing an event, so a topic-only
+// sniffer can never see a Band-alike. Runs regardless of whether any
+// ContractCallDecoder ultimately matches — same "record a sighting
+// even if nothing downstream claims it" discipline as the event
+// path — see the widened gate in ProcessLedger that keeps this hook
+// live even when zero ContractCallDecoders are registered.
 func (d *Dispatcher) dispatchContractCall(ctx ContractCallContext) ([]consumer.Event, error) {
+	if d.discoverySink != nil {
+		if hit, ok := discovery.SniffOracleCall(discovery.OracleCallInput{
+			ContractID:        ctx.ContractID,
+			FunctionName:      ctx.FunctionName,
+			Ledger:            ctx.Ledger,
+			ObservedAtRFC3339: ctx.ClosedAt.UTC().Format(time.RFC3339),
+		}); ok {
+			d.discoverySink.Push(hit)
+		}
+	}
 	for _, ccd := range d.contractCallDecoders {
 		if !ccd.Matches(ctx.ContractID, ctx.FunctionName) {
 			continue
@@ -899,23 +954,29 @@ func (d *Dispatcher) Route(ev events.Event) ([]consumer.Event, error) {
 // fails Decode — mismatch is silent (events not claimed by any
 // decoder are counted and dropped).
 //
-// Discovery hook: BEFORE the decoder pass, every event is run
-// through [discovery.Sniff]. SEP-41-shaped events are forwarded to
-// the configured [DiscoverySink] (when set). Discovery runs first
-// so even events a decoder later rejects (e.g. malformed body)
-// still appear in discovered_assets — operators want to see every
-// contract emitting SEP-41 events, not just ones we successfully
-// decode.
+// Discovery hooks: BEFORE the decoder pass, every event is run
+// through [discovery.Sniff] (SEP-41-shaped) AND
+// [discovery.SniffOracleEvent] (broader oracle-suggestive topic
+// set — docs/architecture/generic-oracle-sep-onboarding.md §3(b)(1)).
+// Either hit is forwarded to the configured [DiscoverySink] (when
+// set); an event can trip at most one of the two (the symbol sets
+// are disjoint). Discovery runs first so even events a decoder later
+// rejects (e.g. malformed body) still appear in discovered_assets —
+// operators want to see every contract emitting a watched event,
+// not just ones we successfully decode.
 //
 // Raw-event hook (ADR-0029): every event is also forwarded to the
 // configured [RawEventSink] (when set). Runs BEFORE the decoder
-// pass for the same reason as the discovery hook — and ALSO
-// regardless of whether topic[0] decodes to a SEP-41 symbol (this
+// pass for the same reason as the discovery hooks — and ALSO
+// regardless of whether topic[0] decodes to a watched symbol (this
 // hook is the catch-all for every Soroban contract event,
 // powering the `soroban_events` raw-event landing zone).
 func (d *Dispatcher) dispatchOne(ev events.Event) ([]consumer.Event, error) {
 	if d.discoverySink != nil {
 		if hit, ok := discovery.Sniff(ev); ok {
+			d.discoverySink.Push(hit)
+		}
+		if hit, ok := discovery.SniffOracleEvent(ev); ok {
 			d.discoverySink.Push(hit)
 		}
 	}

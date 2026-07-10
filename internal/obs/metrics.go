@@ -795,10 +795,14 @@ var SourceOrphanEventsTotal = prometheus.NewCounterVec(
 	[]string{"source"},
 )
 
-// DiscoveryDroppedHitsTotal — count of SEP-41 discovery hits that
-// were dropped because the async sink buffer was full. Discovery is
-// intentionally best-effort, but operators still need a live signal
-// when the buffer starts shedding records under write pressure.
+// DiscoveryDroppedHitsTotal — count of discovery hits (SEP-41 token
+// sightings AND the broader oracle-suggestive event/call sightings
+// added per docs/architecture/generic-oracle-sep-onboarding.md
+// §3(b) — internal/canonical/discovery.Sniff / SniffOracleEvent /
+// SniffOracleCall all share the one sink) that were dropped because
+// the async sink buffer was full. Discovery is intentionally
+// best-effort, but operators still need a live signal when the
+// buffer starts shedding records under write pressure.
 var DiscoveryDroppedHitsTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_discovery_dropped_hits_total",
@@ -806,9 +810,10 @@ var DiscoveryDroppedHitsTotal = prometheus.NewCounter(
 	},
 )
 
-// DiscoverySkippedHitsTotal — count of SEP-41 discovery hits whose
-// (contract_id, event_type) had already been enqueued in this
-// process and were therefore deduplicated before reaching the
+// DiscoverySkippedHitsTotal — count of discovery hits (same shared
+// sink as [DiscoveryDroppedHitsTotal] — SEP-41 + oracle-suggestive
+// event/call sightings) whose dedup key had already been enqueued in
+// this process and were therefore deduplicated before reaching the
 // async sink buffer. A high ratio of Skipped to (Skipped + Recorded)
 // is expected and healthy — most events for already-discovered
 // contracts are noise. Tracked for capacity-planning visibility, not

@@ -210,3 +210,183 @@ func TestInMemoryRecorder_RejectsEmptyContractID(t *testing.T) {
 		t.Error("expected error on empty-ContractID Hit; got nil")
 	}
 }
+
+// ─── SniffOracleEvent ──────────────────────────────────────────────
+//
+// Exercises the broader oracle-suggestive topic[0] sniffer added per
+// docs/architecture/generic-oracle-sep-onboarding.md §3(b)(1).
+
+// TestSniffOracleEvent_RecognisesEveryOracleSuggestiveSymbol — the
+// exact symbol set from the investigation's 2026-07-10 ClickHouse
+// census must all trip SniffOracleEvent with Kind=KindOracleEvent
+// and Symbol == the matched string.
+func TestSniffOracleEvent_RecognisesEveryOracleSuggestiveSymbol(t *testing.T) {
+	symbols := []string{
+		"price", "prices", "lastprice", "last_price", "x_last_price",
+		"set_price", "update_price", "price_update", "new_price",
+		"oracle", "Oracle", "ORACLE", "feed", "PriceData", "resolution",
+		"write_prices", "relay", "force_relay", "REFLECTOR", "REDSTONE",
+		"rate", "rates", "set_rate", "symbol_rates", "StandardReference",
+		"update", "base", "decimals", "assets",
+	}
+	for _, sym := range symbols {
+		t.Run(sym, func(t *testing.T) {
+			ev := makeEvent(t, sym, validContractID)
+			hit, ok := discovery.SniffOracleEvent(ev)
+			if !ok {
+				t.Fatalf("SniffOracleEvent returned ok=false for %q", sym)
+			}
+			if hit.Kind != discovery.KindOracleEvent {
+				t.Errorf("Kind = %q, want %q", hit.Kind, discovery.KindOracleEvent)
+			}
+			if hit.Symbol != sym {
+				t.Errorf("Symbol = %q, want %q", hit.Symbol, sym)
+			}
+			if hit.ContractID != validContractID {
+				t.Errorf("ContractID = %q, want %q", hit.ContractID, validContractID)
+			}
+			if hit.Ledger != 50_000_000 {
+				t.Errorf("Ledger = %d, want 50_000_000", hit.Ledger)
+			}
+			if hit.ObservedAtRFC3339 != "2026-04-28T12:00:00Z" {
+				t.Errorf("ObservedAtRFC3339 = %q", hit.ObservedAtRFC3339)
+			}
+		})
+	}
+}
+
+// TestSniffOracleEvent_RejectsNonOracleSymbols — SEP-41 symbols
+// (transfer/mint/burn/clawback) and arbitrary DEX symbols must NOT
+// trip the oracle-event sniffer. This is the negative case proving
+// the two event-path sniffers are disjoint.
+func TestSniffOracleEvent_RejectsNonOracleSymbols(t *testing.T) {
+	for _, sym := range []string{"transfer", "mint", "burn", "clawback", "swap", "sync", "deposit", "withdraw", "rebalance", "POOL"} {
+		t.Run(sym, func(t *testing.T) {
+			ev := makeEvent(t, sym, validContractID)
+			if _, ok := discovery.SniffOracleEvent(ev); ok {
+				t.Errorf("SniffOracleEvent returned ok=true for non-oracle symbol %q", sym)
+			}
+		})
+	}
+}
+
+// TestSniffOracleEvent_RejectsNonContractEvents — same defensive
+// guard as Sniff: non-contract event types never match.
+func TestSniffOracleEvent_RejectsNonContractEvents(t *testing.T) {
+	for _, eventType := range []string{"system", "diagnostic", ""} {
+		t.Run("type="+eventType, func(t *testing.T) {
+			ev := makeEvent(t, "oracle", validContractID)
+			ev.Type = eventType
+			if _, ok := discovery.SniffOracleEvent(ev); ok {
+				t.Errorf("SniffOracleEvent accepted Type=%q event", eventType)
+			}
+		})
+	}
+}
+
+// TestSniffOracleEvent_RejectsEmptyContractIDOrTopic — defensive
+// guards mirror Sniff's.
+func TestSniffOracleEvent_RejectsEmptyContractIDOrTopic(t *testing.T) {
+	ev := makeEvent(t, "oracle", validContractID)
+	ev.ContractID = ""
+	if _, ok := discovery.SniffOracleEvent(ev); ok {
+		t.Error("SniffOracleEvent accepted event with empty ContractID")
+	}
+
+	ev2 := makeEvent(t, "oracle", validContractID)
+	ev2.Topic = nil
+	if _, ok := discovery.SniffOracleEvent(ev2); ok {
+		t.Error("SniffOracleEvent accepted event with nil Topic")
+	}
+}
+
+// ─── SniffOracleCall ───────────────────────────────────────────────
+//
+// Exercises the event-less-oracle ContractCallContext-path sniffer
+// added per docs/architecture/generic-oracle-sep-onboarding.md
+// §3(b)(2) — the Band pattern generalized.
+
+// TestSniffOracleCall_RecognisesEveryCallCandidate — the exact
+// function-name allow-list the investigation named for the call
+// path.
+func TestSniffOracleCall_RecognisesEveryCallCandidate(t *testing.T) {
+	fns := []string{"lastprice", "price", "prices", "relay", "force_relay", "write_prices", "x_last_price"}
+	for _, fn := range fns {
+		t.Run(fn, func(t *testing.T) {
+			hit, ok := discovery.SniffOracleCall(discovery.OracleCallInput{
+				ContractID:        validContractID,
+				FunctionName:      fn,
+				Ledger:            50_000_000,
+				ObservedAtRFC3339: "2026-04-28T12:00:00Z",
+			})
+			if !ok {
+				t.Fatalf("SniffOracleCall returned ok=false for %q", fn)
+			}
+			if hit.Kind != discovery.KindOracleCall {
+				t.Errorf("Kind = %q, want %q", hit.Kind, discovery.KindOracleCall)
+			}
+			if hit.Symbol != fn {
+				t.Errorf("Symbol = %q, want %q", hit.Symbol, fn)
+			}
+			if hit.ContractID != validContractID {
+				t.Errorf("ContractID = %q, want %q", hit.ContractID, validContractID)
+			}
+			if hit.Ledger != 50_000_000 {
+				t.Errorf("Ledger = %d, want 50_000_000", hit.Ledger)
+			}
+			if hit.ObservedAtRFC3339 != "2026-04-28T12:00:00Z" {
+				t.Errorf("ObservedAtRFC3339 = %q", hit.ObservedAtRFC3339)
+			}
+		})
+	}
+}
+
+// TestSniffOracleCall_RejectsNonOracleFunctionNames — negative case:
+// DEX / unrelated function names (swap, transfer, deposit, …) must
+// NOT trip the call-path sniffer.
+func TestSniffOracleCall_RejectsNonOracleFunctionNames(t *testing.T) {
+	for _, fn := range []string{"swap", "transfer", "deposit", "withdraw", "mint", "claim", ""} {
+		t.Run("fn="+fn, func(t *testing.T) {
+			_, ok := discovery.SniffOracleCall(discovery.OracleCallInput{
+				ContractID:   validContractID,
+				FunctionName: fn,
+			})
+			if ok {
+				t.Errorf("SniffOracleCall returned ok=true for non-oracle function %q", fn)
+			}
+		})
+	}
+}
+
+// TestSniffOracleCall_RejectsEmptyContractID — defensive: a call
+// without a resolvable contract id is malformed; surface as
+// ok=false so the recorder never sees an empty key.
+func TestSniffOracleCall_RejectsEmptyContractID(t *testing.T) {
+	_, ok := discovery.SniffOracleCall(discovery.OracleCallInput{
+		ContractID:   "",
+		FunctionName: "relay",
+	})
+	if ok {
+		t.Error("SniffOracleCall accepted empty ContractID")
+	}
+}
+
+// ─── Sniff (KindSEP41) now also sets Kind + Symbol ────────────────
+
+// TestSniff_SetsKindAndSymbol — the broadened Hit shape: Sniff must
+// still classify exactly as before AND now also stamp
+// Kind=KindSEP41 and Symbol==string(EventType), so a single Recorder
+// code path can read "what got sighted" without branching.
+func TestSniff_SetsKindAndSymbol(t *testing.T) {
+	ev := makeEvent(t, "mint", validContractID)
+	hit, ok := discovery.Sniff(ev)
+	if !ok {
+		t.Fatal("Sniff returned ok=false")
+	}
+	if hit.Kind != discovery.KindSEP41 {
+		t.Errorf("Kind = %q, want %q", hit.Kind, discovery.KindSEP41)
+	}
+	if hit.Symbol != string(discovery.EventMint) {
+		t.Errorf("Symbol = %q, want %q", hit.Symbol, discovery.EventMint)
+	}
+}

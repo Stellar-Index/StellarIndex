@@ -208,6 +208,61 @@ func TestAsyncSink_StopIsIdempotent(t *testing.T) {
 	wg.Wait() // must not deadlock or panic
 }
 
+// TestAsyncSink_DedupsAcrossKindsIndependently — the widened dedup
+// key (ContractID + Kind + EventType + Symbol) must treat a
+// KindOracleEvent hit and a KindOracleCall hit on the SAME contract
+// with DIFFERENT symbols as distinct records, while still
+// deduplicating repeats of the identical (Kind, Symbol) pair. Guards
+// the sink.go change that generalized the legacy
+// ContractID+EventType key.
+func TestAsyncSink_DedupsAcrossKindsIndependently(t *testing.T) {
+	rec := &fakeRecorder{}
+	sink := discovery.NewAsyncSink(rec, discovery.AsyncSinkOptions{BufferSize: 16})
+	sink.Start()
+
+	// Same contract, two different oracle-event symbols: 2 records.
+	sink.Push(discovery.Hit{ContractID: "C-oracle", Kind: discovery.KindOracleEvent, Symbol: "price_update"})
+	sink.Push(discovery.Hit{ContractID: "C-oracle", Kind: discovery.KindOracleEvent, Symbol: "oracle"})
+	// Repeat of the first — must dedup, not a 3rd record.
+	sink.Push(discovery.Hit{ContractID: "C-oracle", Kind: discovery.KindOracleEvent, Symbol: "price_update"})
+	// Same contract, same symbol string, but KindOracleCall instead of
+	// KindOracleEvent — a distinct sighting (event vs call path), not
+	// a dedup of the KindOracleEvent "oracle" hit above (different
+	// symbol anyway, but this also proves Kind alone disambiguates).
+	sink.Push(discovery.Hit{ContractID: "C-oracle", Kind: discovery.KindOracleCall, Symbol: "relay"})
+
+	sink.Stop()
+
+	if got := rec.records.Load(); got != 3 {
+		t.Errorf("Recorder.Record called %d times, want 3 (2 oracle_event symbols + 1 oracle_call, repeat deduped)", got)
+	}
+	if got := sink.SkippedCount(); got != 1 {
+		t.Errorf("SkippedCount = %d, want 1 (the repeated price_update push)", got)
+	}
+}
+
+// TestAsyncSink_LegacySEP41DedupKeyUnchanged — a Hit built the old
+// way (only ContractID + EventType, no Kind/Symbol — e.g. from a
+// caller compiled before this change) must still dedup exactly as
+// before: two Hits with the SAME EventType collapse to one record,
+// two Hits with DIFFERENT EventTypes on the same contract stay
+// distinct.
+func TestAsyncSink_LegacySEP41DedupKeyUnchanged(t *testing.T) {
+	rec := &fakeRecorder{}
+	sink := discovery.NewAsyncSink(rec, discovery.AsyncSinkOptions{BufferSize: 16})
+	sink.Start()
+
+	sink.Push(discovery.Hit{ContractID: "C-legacy", EventType: discovery.EventTransfer})
+	sink.Push(discovery.Hit{ContractID: "C-legacy", EventType: discovery.EventTransfer})
+	sink.Push(discovery.Hit{ContractID: "C-legacy", EventType: discovery.EventMint})
+
+	sink.Stop()
+
+	if got := rec.records.Load(); got != 2 {
+		t.Errorf("Recorder.Record called %d times, want 2 (transfer deduped, mint distinct)", got)
+	}
+}
+
 // TestAsyncSink_DefaultBufferAndTimeout — zero-value options apply
 // sensible defaults rather than producing a 0-buffer (would always
 // drop) or 0-timeout sink.

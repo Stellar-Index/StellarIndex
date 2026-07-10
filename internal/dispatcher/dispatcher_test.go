@@ -358,6 +358,63 @@ func TestDispatch_DiscoveryHook_NilSinkIsNoop(t *testing.T) {
 	}
 }
 
+// TestDispatch_DiscoveryHook_FiresOnOracleSuggestiveEvent — the
+// broader oracle-event sniffer (docs/architecture/generic-oracle-sep-onboarding.md
+// §3(b)(1)) must also push, independent of whether any Decoder
+// claims the event (no decoder registered here at all).
+func TestDispatch_DiscoveryHook_FiresOnOracleSuggestiveEvent(t *testing.T) {
+	sink := &recordingSink{}
+	disp := New()
+	disp.SetDiscoverySink(sink)
+
+	ev := events.Event{
+		Type:           "contract",
+		ContractID:     "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+		Ledger:         60_000_000,
+		LedgerClosedAt: "2026-07-10T12:00:00Z",
+		Topic:          []string{scval.MustEncodeSymbol("price_update")},
+	}
+	if _, err := disp.dispatchOne(ev); err != nil {
+		t.Fatalf("dispatchOne: %v", err)
+	}
+
+	if len(sink.hits) != 1 {
+		t.Fatalf("sink received %d hits, want 1", len(sink.hits))
+	}
+	if sink.hits[0].Kind != discovery.KindOracleEvent {
+		t.Errorf("Kind = %q, want %q", sink.hits[0].Kind, discovery.KindOracleEvent)
+	}
+	if sink.hits[0].Symbol != "price_update" {
+		t.Errorf("Symbol = %q, want %q", sink.hits[0].Symbol, "price_update")
+	}
+}
+
+// TestDispatch_DiscoveryHook_EventTripsAtMostOneSniffer — a SEP-41
+// event pushes exactly one Hit (KindSEP41), not two — the two
+// event-path symbol sets are disjoint by construction.
+func TestDispatch_DiscoveryHook_EventTripsAtMostOneSniffer(t *testing.T) {
+	sink := &recordingSink{}
+	disp := New()
+	disp.SetDiscoverySink(sink)
+
+	ev := events.Event{
+		Type:           "contract",
+		ContractID:     "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+		Ledger:         60_000_000,
+		LedgerClosedAt: "2026-07-10T12:00:00Z",
+		Topic:          []string{scval.MustEncodeSymbol("transfer")},
+	}
+	if _, err := disp.dispatchOne(ev); err != nil {
+		t.Fatalf("dispatchOne: %v", err)
+	}
+	if len(sink.hits) != 1 {
+		t.Fatalf("sink received %d hits, want 1 (SEP-41 and oracle-event sniffers must be disjoint)", len(sink.hits))
+	}
+	if sink.hits[0].Kind != discovery.KindSEP41 {
+		t.Errorf("Kind = %q, want %q", sink.hits[0].Kind, discovery.KindSEP41)
+	}
+}
+
 // ─── Raw-event hook (ADR-0029) ───────────────────────────────────
 
 // recordingRawSink captures every PushEvent for assertion.

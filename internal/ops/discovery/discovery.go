@@ -56,7 +56,10 @@ func discoveryCmd(args []string) error {
 //
 // Output is a tab-separated columnar dump that aligns sensibly when
 // piped through `column -t`. Stable column order so log-scrapers can
-// build automation around it.
+// build automation around it. KIND distinguishes which sniffer
+// produced the sighting (sep41 | oracle_event | oracle_call — see
+// internal/canonical/discovery); FIRST_SYMBOL is the matched topic
+// symbol or function name (e.g. transfer, price_update, relay).
 func discoveryList(args []string) error {
 	fs := flag.NewFlagSet("discovery list", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -108,12 +111,13 @@ func discoveryList(args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "CONTRACT_ID\tFIRST_SEEN_AT\tFIRST_EVENT\tLAST_LEDGER\tEVENT_COUNT"); err != nil {
+	if _, err := fmt.Fprintln(w, "CONTRACT_ID\tKIND\tFIRST_SEEN_AT\tFIRST_SYMBOL\tLAST_LEDGER\tEVENT_COUNT"); err != nil {
 		return fmt.Errorf("write header: %w", err)
 	}
 	for _, r := range rows {
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\n",
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%d\n",
 			r.ContractID,
+			r.DiscoveryKind,
 			r.FirstSeenAt.UTC().Format(time.RFC3339),
 			r.FirstSeenEvent,
 			r.LastSeenLedger,
