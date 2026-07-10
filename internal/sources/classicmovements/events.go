@@ -81,8 +81,8 @@ func (p Provenance) IsValid() bool {
 // Movement is one reconstructed two-party classic-asset movement —
 // the decode-time shape of a classic_movements row (ADR-0047 D1).
 // LegIndex disambiguates multiple rows produced by the SAME op
-// (e.g. a future liquidity-pool deposit's two asset legs); Phase 1's
-// two kinds are always single-leg, so it is always 0 here.
+// (e.g. a liquidity-pool deposit's two asset legs, Phase 4); Phase
+// 1's two kinds are always single-leg, so it is always 0 there.
 type Movement struct {
 	Kind            Kind
 	Provenance      Provenance
@@ -95,6 +95,20 @@ type Movement struct {
 	Amount          canonical.Amount
 	FromAddress     string
 	ToAddress       string
+
+	// Attributes is the kind-specific remainder, written straight to
+	// migration 0105's `attributes jsonb` column (empty/nil marshals
+	// to '{}', matching the column DEFAULT). Phase 1's two kinds
+	// never populate it. From Phase 2 on: path_payment carries the
+	// source leg (send_asset/send_amount) here since Asset/Amount
+	// above hold the DESTINATION leg (ADR-0047 Phase 2); claimable
+	// balance kinds carry balance_id (+ a claimants summary on
+	// create); the CAP-0038 liquidity_pool_withdraw revocation edge
+	// case (Phase 4) marks its provenance here. Values are strings
+	// (decimal amounts, hex ids, asset ids) or simple slices thereof
+	// — never a raw i128, per ADR-0003's "decimal string, not a JSON
+	// number" rule applied uniformly.
+	Attributes map[string]any
 }
 
 // MovementEvent is the consumer.Event this package emits — the

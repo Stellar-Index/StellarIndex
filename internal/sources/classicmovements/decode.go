@@ -11,38 +11,42 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/xdrjson"
 )
 
-// SupportedOpTypes returns this phase's op-type scope in
+// SupportedOpTypes returns this package's op-only decode scope (the
+// Decoder.Decode / matchesSupportedOp / decodeOp surface) in
 // stellar.operations.op_type string form (xdr.OperationType.String())
-// — the exact set clickhouse.StreamClassicOps should be called with,
-// and the exact set matchesPhase1Op / decodeOp's switches cover.
-// Phase 2 adds PathPaymentStrictReceive/Send here (and to
-// matchesPhase1Op and decodeOp) when it lands; see recognition_test.go
-// for the guard that pins this list.
+// — the exact set clickhouse.StreamClassicOps should be called with
+// for that surface. Grows with each phase: Phase 1 (CreateAccount,
+// Payment), Phase 2 adds PathPaymentStrictReceive/Send. See
+// recognition_test.go for the guard that pins this list.
 func SupportedOpTypes() []string {
 	return []string{
 		xdr.OperationTypeCreateAccount.String(),
 		xdr.OperationTypePayment.String(),
+		xdr.OperationTypePathPaymentStrictReceive.String(),
+		xdr.OperationTypePathPaymentStrictSend.String(),
 	}
 }
 
-// matchesPhase1Op reports whether op is one of Phase 1's two
-// in-scope classic operation types. See recognition_test.go for the
-// exhaustive-enum guard that pins this switch to exactly
-// {CreateAccount, Payment} — the ADR-0047 D4.2 recognition check.
-func matchesPhase1Op(op xdr.Operation) bool {
+// matchesSupportedOp reports whether op is one of this package's
+// op-only in-scope classic operation types (was matchesPhase1Op
+// through Phase 1; renamed once Phase 2 made "Phase1" inaccurate —
+// see doc.go). See recognition_test.go for the exhaustive-enum guard
+// that pins this switch.
+func matchesSupportedOp(op xdr.Operation) bool {
 	switch op.Body.Type {
-	case xdr.OperationTypeCreateAccount, xdr.OperationTypePayment:
+	case xdr.OperationTypeCreateAccount, xdr.OperationTypePayment,
+		xdr.OperationTypePathPaymentStrictReceive, xdr.OperationTypePathPaymentStrictSend:
 		return true
 	}
 	return false
 }
 
-// decodeOp is the phase op-type dispatch: given one classic op + its
-// result + tx-level context, emit zero or one Movement. Zero
+// decodeOp is the op-only-surface dispatch: given one classic op +
+// its result + tx-level context, emit zero or more Movements. Zero
 // movements is not an error — a failed op (result.Code != OpInner,
 // or the operation's own result-union arm isn't the Success case)
 // simply never happened and moved nothing (D1's "success-code-
-// filtered" rule). An out-of-scope op type — one matchesPhase1Op
+// filtered" rule). An out-of-scope op type — one matchesSupportedOp
 // would reject — is a loud ErrUnsupportedOpType instead of a silent
 // zero-movements return; see that sentinel's doc comment for why.
 func decodeOp(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, op xdr.Operation, result xdr.OperationResult) ([]Movement, error) {
@@ -51,6 +55,10 @@ func decodeOp(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, 
 		return decodeCreateAccount(ledger, closedAt, txHash, opIndex, fromAddr, op, result)
 	case xdr.OperationTypePayment:
 		return decodePayment(ledger, closedAt, txHash, opIndex, fromAddr, op, result)
+	case xdr.OperationTypePathPaymentStrictReceive:
+		return decodePathPaymentStrictReceive(ledger, closedAt, txHash, opIndex, fromAddr, op, result)
+	case xdr.OperationTypePathPaymentStrictSend:
+		return decodePathPaymentStrictSend(ledger, closedAt, txHash, opIndex, fromAddr, op, result)
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedOpType, op.Body.Type)
 	}
@@ -161,4 +169,211 @@ func decodePayment(ledger uint32, closedAt time.Time, txHash string, opIndex uin
 // "no Tr()" causes for a reader.
 func opSucceeded(result xdr.OperationResult) bool {
 	return result.Code == xdr.OperationResultCodeOpInner
+}
+
+// ─── Phase 2: PathPaymentStrictReceive / PathPaymentStrictSend ────
+//
+// ADR-0047 D3 Phase 2 / research §2 path (b): both path-payment op
+// types emit ONE 'path_payment' movement per op, keyed
+// (ledger, tx_hash, op_index, leg_index=0) — never two rows, and
+// never a row per hop (the per-hop ClaimAtoms already live in
+// `trades` via internal/sources/sdex; duplicating them here would
+// double-count the same on-chain event under a different table).
+//
+// The primary Asset/Amount columns hold the DESTINATION leg —
+// result.Success.Last.{Asset,Amount} — for BOTH op types uniformly,
+// never a body field: PathPaymentStrictReceiveOp.DestAmount and
+// PathPaymentStrictSendOp.DestMin are exact/floor respectively in
+// the body, but reading the amount that ACTUALLY reached the
+// destination from the result's SimplePaymentResult is correct
+// either way and needs no per-type branching (research §2's
+// PathPaymentStrictReceive/Send table rows). Attributes carries the
+// SOURCE leg (send_asset / send_amount) since the schema's Asset/
+// Amount columns hold exactly one asset per row (migration 0105).
+//
+// Source-leg amount derivation is the one place the two op types
+// genuinely differ:
+//   - StrictSend: body.SendAmount is exact by protocol definition
+//     ("sends an exact amount") — no result inspection needed.
+//   - StrictReceive: body.SendMax is only a ceiling; the amount
+//     actually consumed is derived from the result's Offers —
+//     pathPaymentStrictReceiveSourceAmount below, verified against
+//     real pre-P23 mainnet multi-hop data (see real_bytes_test.go's
+//     TestRealBytes_pathPaymentStrictReceive_twoHop, ledger 40000003
+//     tx 49203432…, which round-trips a genuine 2-hop
+//     native→SHIB→native path exactly).
+
+// decodePathPaymentStrictReceive reconstructs a 'path_payment'
+// movement for a successful PathPaymentStrictReceive op.
+func decodePathPaymentStrictReceive(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, op xdr.Operation, result xdr.OperationResult) ([]Movement, error) {
+	if !opSucceeded(result) {
+		return nil, nil
+	}
+	tr, ok := result.GetTr()
+	if !ok {
+		return nil, nil
+	}
+	r, ok := tr.GetPathPaymentStrictReceiveResult()
+	if !ok || r.Code != xdr.PathPaymentStrictReceiveResultCodePathPaymentStrictReceiveSuccess {
+		return nil, nil
+	}
+	succ := r.MustSuccess()
+
+	body, ok := op.Body.GetPathPaymentStrictReceiveOp()
+	if !ok {
+		return nil, fmt.Errorf("%w: op type PathPaymentStrictReceive but body has no PathPaymentStrictReceiveOp (ledger %d tx %s op %d)",
+			ErrMalformedMovement, ledger, txHash, opIndex)
+	}
+
+	sourceAmount, err := pathPaymentStrictReceiveSourceAmount(body.SendAsset, succ.Offers, succ.Last.Amount)
+	if err != nil {
+		return nil, fmt.Errorf("%w: ledger %d tx %s op %d: %w", ErrMalformedMovement, ledger, txHash, opIndex, err)
+	}
+
+	return buildPathPaymentMovement(ledger, closedAt, txHash, opIndex, fromAddr,
+		body.SendAsset, sourceAmount, succ.Last)
+}
+
+// decodePathPaymentStrictSend reconstructs a 'path_payment' movement
+// for a successful PathPaymentStrictSend op. Unlike StrictReceive,
+// the source amount is exact in the body (SendAmount) — no Offers
+// derivation needed.
+func decodePathPaymentStrictSend(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, op xdr.Operation, result xdr.OperationResult) ([]Movement, error) {
+	if !opSucceeded(result) {
+		return nil, nil
+	}
+	tr, ok := result.GetTr()
+	if !ok {
+		return nil, nil
+	}
+	r, ok := tr.GetPathPaymentStrictSendResult()
+	if !ok || r.Code != xdr.PathPaymentStrictSendResultCodePathPaymentStrictSendSuccess {
+		return nil, nil
+	}
+	succ := r.MustSuccess()
+
+	body, ok := op.Body.GetPathPaymentStrictSendOp()
+	if !ok {
+		return nil, fmt.Errorf("%w: op type PathPaymentStrictSend but body has no PathPaymentStrictSendOp (ledger %d tx %s op %d)",
+			ErrMalformedMovement, ledger, txHash, opIndex)
+	}
+	if body.SendAmount <= 0 {
+		return nil, fmt.Errorf("%w: non-positive SendAmount %d (ledger %d tx %s op %d)",
+			ErrMalformedMovement, body.SendAmount, ledger, txHash, opIndex)
+	}
+
+	return buildPathPaymentMovement(ledger, closedAt, txHash, opIndex, fromAddr,
+		body.SendAsset, body.SendAmount, succ.Last)
+}
+
+// buildPathPaymentMovement assembles the single 'path_payment' row
+// shared by both StrictReceive and StrictSend once each has resolved
+// its own source amount: primary Asset/Amount = the destination leg
+// (last.Asset / last.Amount, exact from the result for both types);
+// Attributes.send_asset / send_amount = the source leg.
+func buildPathPaymentMovement(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, sendAsset xdr.Asset, sendAmount xdr.Int64, last xdr.SimplePaymentResult) ([]Movement, error) {
+	if last.Amount <= 0 {
+		return nil, fmt.Errorf("%w: non-positive dest Amount %d (ledger %d tx %s op %d)",
+			ErrMalformedMovement, last.Amount, ledger, txHash, opIndex)
+	}
+	if sendAmount <= 0 {
+		return nil, fmt.Errorf("%w: non-positive derived source amount %d (ledger %d tx %s op %d)",
+			ErrMalformedMovement, sendAmount, ledger, txHash, opIndex)
+	}
+	destMuxed := last.Destination.ToMuxedAccount()
+	destAddr, derr := destMuxed.GetAddress()
+	if derr != nil {
+		return nil, fmt.Errorf("%w: unresolvable destination: %w (ledger %d tx %s op %d)",
+			ErrMalformedMovement, derr, ledger, txHash, opIndex)
+	}
+
+	return []Movement{{
+		Kind:            KindPathPayment,
+		Provenance:      ProvenanceClassicDerived,
+		Ledger:          ledger,
+		LedgerCloseTime: closedAt,
+		TxHash:          txHash,
+		OpIndex:         opIndex,
+		LegIndex:        0,
+		Asset:           xdrjson.AssetID(last.Asset),
+		Amount:          canonical.NewAmount(big.NewInt(int64(last.Amount))),
+		FromAddress:     fromAddr,
+		ToAddress:       destAddr,
+		Attributes: map[string]any{
+			"send_asset":  xdrjson.AssetID(sendAsset),
+			"send_amount": canonical.NewAmount(big.NewInt(int64(sendAmount))).String(),
+		},
+	}}, nil
+}
+
+// pathPaymentStrictReceiveSourceAmount derives the exact amount of
+// sendAsset the taker actually paid for a successful
+// PathPaymentStrictReceive — NOT available directly in the body
+// (SendMax is only a ceiling) or as a single result field the way
+// StrictSend's SendAmount is.
+//
+// Verified against real multi-hop mainnet data (real_bytes_test.go):
+// stellar-core appends offers to Success.Offers in STRICT hop order,
+// first hop first — a real 2-hop native→SHIB→native path payment
+// showed Offers[0] = {AssetSold: SHIB, AssetBought: native} (hop 0:
+// pay native, receive SHIB) followed by Offers[1] =
+// {AssetSold: native, AssetBought: SHIB} (hop 1: pay SHIB, receive
+// native) — i.e. Offers[0].AmountBought is exactly the taker's
+// SendAsset spend, and later offers' AssetBought no longer matches
+// SendAsset once the path has moved past the first hop. A single hop
+// filled across multiple offers (order-book depth) keeps ALL of its
+// claims at the front of Offers with AssetBought == SendAsset — this
+// sums the full contiguous prefix, not just Offers[0], to cover that
+// case too.
+//
+// Empty Offers means the op crossed no order book / pool at all —
+// only possible when SendAsset == DestAsset (a path payment used as
+// a plain, same-asset transfer with slippage-protection semantics).
+// In that case nothing was converted, so the amount consumed equals
+// exactly what was delivered: lastAmount.
+func pathPaymentStrictReceiveSourceAmount(sendAsset xdr.Asset, offers []xdr.ClaimAtom, lastAmount xdr.Int64) (xdr.Int64, error) {
+	if len(offers) == 0 {
+		return lastAmount, nil
+	}
+	var total xdr.Int64
+	for i, atom := range offers {
+		boughtAsset, boughtAmount, ok := claimAtomBoughtSide(atom)
+		if !ok {
+			return 0, fmt.Errorf("claim atom %d: unrecognized ClaimAtomType %d", i, atom.Type)
+		}
+		if !boughtAsset.Equals(sendAsset) {
+			if i == 0 {
+				return 0, fmt.Errorf("first offer's AssetBought does not match SendAsset — hop-order assumption violated")
+			}
+			break // past the first hop; later offers convert a different asset pair
+		}
+		total += boughtAmount
+	}
+	if total <= 0 {
+		return 0, fmt.Errorf("derived source amount is non-positive: %d", total)
+	}
+	return total, nil
+}
+
+// claimAtomBoughtSide extracts (AssetBought, AmountBought) from a
+// ClaimAtom regardless of its concrete variant (OrderBook,
+// LiquidityPool, or the legacy pre-CAP-27 V0 shape) — the "what did
+// the taker pay into this offer" side, mirroring
+// internal/sources/sdex/decode.go's decodeClaimAtom field mapping
+// (AssetSold/AmountSold is what the taker RECEIVED; AssetBought/
+// AmountBought is what the taker PAID).
+func claimAtomBoughtSide(atom xdr.ClaimAtom) (xdr.Asset, xdr.Int64, bool) {
+	switch atom.Type {
+	case xdr.ClaimAtomTypeClaimAtomTypeOrderBook:
+		ob := atom.MustOrderBook()
+		return ob.AssetBought, ob.AmountBought, true
+	case xdr.ClaimAtomTypeClaimAtomTypeLiquidityPool:
+		lp := atom.MustLiquidityPool()
+		return lp.AssetBought, lp.AmountBought, true
+	case xdr.ClaimAtomTypeClaimAtomTypeV0:
+		v0 := atom.MustV0()
+		return v0.AssetBought, v0.AmountBought, true
+	default:
+		return xdr.Asset{}, 0, false
+	}
 }

@@ -178,6 +178,115 @@ func TestRealBytes_resultCodeIsOpNoAccount(t *testing.T) {
 	}
 }
 
+// ─── Phase 2: PathPaymentStrictReceive / PathPaymentStrictSend ────
+
+// TestRealBytes_pathPaymentStrictReceive_singleHop is a real
+// pre-P23 mainnet PathPaymentStrictReceive: source spends native
+// through ONE order-book offer to deliver an exact SONY amount.
+// Confirms the destination leg (Asset/Amount) is read from the
+// result's Last, not the body's DestAsset/DestAmount (though they
+// agree here, as they always should for a successful op), and that
+// the source leg is the single offer's AmountBought.
+func TestRealBytes_pathPaymentStrictReceive_singleHop(t *testing.T) {
+	// ledger 40000001, tx 32696e52909644d21ff1e36afbb6379cb8a555cbf658e8c7ae66a0c9c5b417b0, op_index 0.
+	// source GALHA4OVKNZ555C7VJFIXVXM4F2R7PPJNO7IZHIYE2SMKFYY5U7V254G pays
+	// native (SendMax=12120000) through one order-book offer to receive
+	// exactly 900000000000000 stroops of SONY at its own account.
+	const (
+		bodyB64   = "AAAAAgAAAAAAAAAAALjvwAAAAAAWcHHVU3Pe9F+qSovW7OF1H73pa76MnRgmpMUXGO0/XQAAAAFTT05ZAAAAALsLcXbIOISuH+pMVlQ3U/ziOgkUcfkQQHnKR+iFALP4AAMyi5RMQAAAAAAA"
+		resultB64 = "AAAAAAAAAAIAAAAAAAAAAQAAAAEAAAAAtBJMX3t5P0oPc7eVIwj3MXMLwgQZNa6roDUwTYg44x8AAAAAOJxqdAAAAAFTT05ZAAAAALsLcXbIOISuH+pMVlQ3U/ziOgkUcfkQQHnKR+iFALP4AAMyi5RMQAAAAAAAAAAAAAC3GwAAAAAAFnBx1VNz3vRfqkqL1uzhdR+96Wu+jJ0YJqTFFxjtP10AAAABU09OWQAAAAC7C3F2yDiErh/qTFZUN1P84joJFHH5EEB5ykfohQCz+AADMouUTEAA"
+	)
+	movements := decodeRealBytes(t, bodyB64, resultB64, 40_000_001,
+		"32696e52909644d21ff1e36afbb6379cb8a555cbf658e8c7ae66a0c9c5b417b0", 0,
+		"GALHA4OVKNZ555C7VJFIXVXM4F2R7PPJNO7IZHIYE2SMKFYY5U7V254G",
+		time.Date(2022, 3, 12, 19, 33, 2, 0, time.UTC))
+
+	if len(movements) != 1 {
+		t.Fatalf("got %d movements, want 1", len(movements))
+	}
+	m := movements[0]
+	if m.Kind != KindPathPayment {
+		t.Errorf("Kind = %q, want %q", m.Kind, KindPathPayment)
+	}
+	wantDestAsset := "SONY-GC5QW4LWZA4IJLQ75JGFMVBXKP6OEOQJCRY7SECAPHFEP2EFACZ7QZW5"
+	if m.Asset != wantDestAsset || m.Amount.String() != "900000000000000" {
+		t.Errorf("dest leg = %s %s, want %s 900000000000000", m.Amount.String(), m.Asset, wantDestAsset)
+	}
+	if m.FromAddress != "GALHA4OVKNZ555C7VJFIXVXM4F2R7PPJNO7IZHIYE2SMKFYY5U7V254G" {
+		t.Errorf("FromAddress = %q", m.FromAddress)
+	}
+	if m.ToAddress != "GALHA4OVKNZ555C7VJFIXVXM4F2R7PPJNO7IZHIYE2SMKFYY5U7V254G" {
+		t.Errorf("ToAddress = %q, want same as FromAddress (self-pay via path)", m.ToAddress)
+	}
+	if m.Attributes["send_asset"] != "native" || m.Attributes["send_amount"] != "12000000" {
+		t.Errorf("Attributes = %+v, want send_asset=native send_amount=12000000", m.Attributes)
+	}
+}
+
+// TestRealBytes_pathPaymentStrictReceive_twoHop is a real pre-P23
+// mainnet PathPaymentStrictReceive routed native→SHIB→native (an
+// arbitrage-shaped path with SendAsset==DestAsset but two real
+// hops) — the fixture pathPaymentStrictReceiveSourceAmount's doc
+// comment cites directly. Confirms the derivation sums ONLY the
+// first hop (Offers[0], AssetBought==native) and stops before the
+// second hop (Offers[1], AssetBought==SHIB) even though both offers
+// are present in the result.
+func TestRealBytes_pathPaymentStrictReceive_twoHop(t *testing.T) {
+	// ledger 40000003, tx 49203432aa0b5da1a3f621e093cdde6a116064f969efe6f3b6162691d1afb84b, op_index 0.
+	const (
+		bodyB64   = "AAAAAgAAAAAAAAAABPtnBgAAAAAYyCYed5ULPCCZ1wtggxYUtoK6Hu5uyhKp0+DNkFyZ1gAAAAAAAAAABPtuGAAAAAEAAAABU0hJQgAAAABa7upQ7YJtt/jfTu+F1mmJZbUiSrjeJ9cNliPnYMns5w=="
+		resultB64 = "AAAAAAAAAAIAAAAAAAAAAgAAAAEAAAAAbaHTfp0wRYC9BeJP51OYornphxPI+aozmlv3trm4KbAAAAAAOKJmcAAAAAFTSElCAAAAAFru6lDtgm23+N9O74XWaYlltSJKuN4n1w2WI+dgyeznAAAAjC6sEZoAAAAAAAAAAAT7J2kAAAACd3xyt7p6rXDgES6e0Vie5PU5pKZvgUqA2rAbTcL4mHEAAAAAAAAAAAT7bhgAAAABU0hJQgAAAABa7upQ7YJtt/jfTu+F1mmJZbUiSrjeJ9cNliPnYMns5wAAAIwurBGaAAAAABjIJh53lQs8IJnXC2CDFhS2groe7m7KEqnT4M2QXJnWAAAAAAAAAAAE+24Y"
+	)
+	movements := decodeRealBytes(t, bodyB64, resultB64, 40_000_003,
+		"49203432aa0b5da1a3f621e093cdde6a116064f969efe6f3b6162691d1afb84b", 0,
+		"GAMMQJQ6O6KQWPBATHLQWYEDCYKLNAV2D3XG5SQSVHJ6BTMQLSM5MSLE",
+		time.Date(2022, 3, 12, 19, 33, 16, 0, time.UTC))
+
+	if len(movements) != 1 {
+		t.Fatalf("got %d movements, want 1", len(movements))
+	}
+	m := movements[0]
+	if m.Asset != "native" || m.Amount.String() != "83586584" {
+		t.Errorf("dest leg = %s %s, want native 83586584", m.Amount.String(), m.Asset)
+	}
+	// The hop-0-only source amount (83568489), NOT SendMax (83584774)
+	// and NOT the hop-1 leg amount (83586584) — this is the whole
+	// point of the fixture.
+	if m.Attributes["send_asset"] != "native" || m.Attributes["send_amount"] != "83568489" {
+		t.Errorf("Attributes = %+v, want send_asset=native send_amount=83568489", m.Attributes)
+	}
+}
+
+// TestRealBytes_pathPaymentStrictSend_success is a real pre-P23
+// mainnet PathPaymentStrictSend: exact aiXDOGE SendAmount from the
+// body, AQUA delivered per the result's Last (below DestMin's floor
+// check, already enforced by core — Last.Amount is what actually
+// landed).
+func TestRealBytes_pathPaymentStrictSend_success(t *testing.T) {
+	// ledger 40000000, tx 04f7f85101dd3d9c3d370f65ddeb619b93058f5d8d55d1499932fdf8747a6a40, op_index 2.
+	const (
+		bodyB64   = "AAAADQAAAAJhaVhET0dFAAAAAAAAAAAAHmZ99WHIvNYnad6AHqEYtIx8rynNCdIrpMMan93+ee8AAAAAC+vCAAAAAAAbwSApPmwboWhG14u1quvJh4f0t3hW09pLOIa1MPeGVwAAAAFBUVVBAAAAAFuULlOsM8j9CoDMfBsahdfYOKnEGXeq0Ys68Ff44z3wAAAAAAAAbpIAAAABAAAAAA=="
+		resultB64 = "AAAAAAAAAA0AAAAAAAAAAgAAAAEAAAAAQJzSfng2B5F/ARo1w+R7fYQ1nuZE0ILRfdDZNwTNIh8AAAAAOK4wUAAAAAAAAAAAAAAETAAAAAJhaVhET0dFAAAAAAAAAAAAHmZ99WHIvNYnad6AHqEYtIx8rynNCdIrpMMan93+ee8AAAAAC+vCAAAAAAEAAAAAQ5f/457bn13BXKa5Mccm5n80F2Y9HiOh0k2x4c4FIV4AAAAAOK47NAAAAAFBUVVBAAAAAFuULlOsM8j9CoDMfBsahdfYOKnEGXeq0Ys68Ff44z3wAAAAAAAA+DkAAAAAAAAAAAAABEwAAAAAG8EgKT5sG6FoRteLtarryYeH9Ld4VtPaSziGtTD3hlcAAAABQVFVQQAAAABblC5TrDPI/QqAzHwbGoXX2DipxBl3qtGLOvBX+OM98AAAAAAAAPg5"
+	)
+	movements := decodeRealBytes(t, bodyB64, resultB64, 40_000_000,
+		"04f7f85101dd3d9c3d370f65ddeb619b93058f5d8d55d1499932fdf8747a6a40", 2,
+		"GAN4CIBJHZWBXILII3LYXNNK5PEYPB7UW54FNU62JM4INNJQ66DFPWWG",
+		time.Date(2022, 3, 12, 19, 32, 55, 0, time.UTC))
+
+	if len(movements) != 1 {
+		t.Fatalf("got %d movements, want 1", len(movements))
+	}
+	m := movements[0]
+	wantDestAsset := "AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+	if m.Asset != wantDestAsset || m.Amount.String() != "63545" {
+		t.Errorf("dest leg = %s %s, want %s 63545", m.Amount.String(), m.Asset, wantDestAsset)
+	}
+	wantSendAsset := "aiXDOGE-GAPGM7PVMHELZVRHNHPIAHVBDC2IY7FPFHGQTURLUTBRVH657Z466RAI"
+	if m.Attributes["send_asset"] != wantSendAsset || m.Attributes["send_amount"] != "200000000" {
+		t.Errorf("Attributes = %+v, want send_asset=%s send_amount=200000000", m.Attributes, wantSendAsset)
+	}
+}
+
 // ─── helpers ──────────────────────────────────────────────────────
 
 // decodeRealBytes unmarshals real op body/result XDR (base64, exactly

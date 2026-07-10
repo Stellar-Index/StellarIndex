@@ -257,6 +257,299 @@ func TestDecoder_malformedAmount_errorsLoudly(t *testing.T) {
 	}
 }
 
+// ─── Phase 2: PathPaymentStrictReceive / PathPaymentStrictSend ────
+
+func mkOrderBookClaimAtom(t *testing.T, sellerSeed byte, soldAsset xdr.Asset, soldAmount int64, boughtAsset xdr.Asset, boughtAmount int64) xdr.ClaimAtom {
+	t.Helper()
+	_, seller := mkAccount(t, sellerSeed)
+	return xdr.ClaimAtom{
+		Type: xdr.ClaimAtomTypeClaimAtomTypeOrderBook,
+		OrderBook: &xdr.ClaimOfferAtom{
+			SellerId:     seller,
+			OfferId:      1,
+			AssetSold:    soldAsset,
+			AmountSold:   xdr.Int64(soldAmount),
+			AssetBought:  boughtAsset,
+			AmountBought: xdr.Int64(boughtAmount),
+		},
+	}
+}
+
+func mkPathPaymentStrictReceiveOp(t *testing.T, sendAsset xdr.Asset, sendMax int64, destSeed byte, destAsset xdr.Asset, destAmount int64) xdr.Operation {
+	t.Helper()
+	_, dest := mkAccount(t, destSeed)
+	return xdr.Operation{
+		Body: xdr.OperationBody{
+			Type: xdr.OperationTypePathPaymentStrictReceive,
+			PathPaymentStrictReceiveOp: &xdr.PathPaymentStrictReceiveOp{
+				SendAsset:   sendAsset,
+				SendMax:     xdr.Int64(sendMax),
+				Destination: xdr.MuxedAccount{Type: xdr.CryptoKeyTypeKeyTypeEd25519, Ed25519: dest.Ed25519},
+				DestAsset:   destAsset,
+				DestAmount:  xdr.Int64(destAmount),
+			},
+		},
+	}
+}
+
+func mkPathPaymentStrictReceiveSuccessResult(t *testing.T, destSeed byte, destAsset xdr.Asset, destAmount int64, offers []xdr.ClaimAtom) xdr.OperationResult {
+	t.Helper()
+	_, dest := mkAccount(t, destSeed)
+	return xdr.OperationResult{
+		Code: xdr.OperationResultCodeOpInner,
+		Tr: &xdr.OperationResultTr{
+			Type: xdr.OperationTypePathPaymentStrictReceive,
+			PathPaymentStrictReceiveResult: &xdr.PathPaymentStrictReceiveResult{
+				Code: xdr.PathPaymentStrictReceiveResultCodePathPaymentStrictReceiveSuccess,
+				Success: &xdr.PathPaymentStrictReceiveResultSuccess{
+					Offers: offers,
+					Last: xdr.SimplePaymentResult{
+						Destination: dest,
+						Asset:       destAsset,
+						Amount:      xdr.Int64(destAmount),
+					},
+				},
+			},
+		},
+	}
+}
+
+func mkPathPaymentStrictSendOp(t *testing.T, sendAsset xdr.Asset, sendAmount int64, destSeed byte, destAsset xdr.Asset, destMin int64) xdr.Operation {
+	t.Helper()
+	_, dest := mkAccount(t, destSeed)
+	return xdr.Operation{
+		Body: xdr.OperationBody{
+			Type: xdr.OperationTypePathPaymentStrictSend,
+			PathPaymentStrictSendOp: &xdr.PathPaymentStrictSendOp{
+				SendAsset:   sendAsset,
+				SendAmount:  xdr.Int64(sendAmount),
+				Destination: xdr.MuxedAccount{Type: xdr.CryptoKeyTypeKeyTypeEd25519, Ed25519: dest.Ed25519},
+				DestAsset:   destAsset,
+				DestMin:     xdr.Int64(destMin),
+			},
+		},
+	}
+}
+
+func mkPathPaymentStrictSendSuccessResult(t *testing.T, destSeed byte, destAsset xdr.Asset, destAmount int64, offers []xdr.ClaimAtom) xdr.OperationResult {
+	t.Helper()
+	_, dest := mkAccount(t, destSeed)
+	return xdr.OperationResult{
+		Code: xdr.OperationResultCodeOpInner,
+		Tr: &xdr.OperationResultTr{
+			Type: xdr.OperationTypePathPaymentStrictSend,
+			PathPaymentStrictSendResult: &xdr.PathPaymentStrictSendResult{
+				Code: xdr.PathPaymentStrictSendResultCodePathPaymentStrictSendSuccess,
+				Success: &xdr.PathPaymentStrictSendResultSuccess{
+					Offers: offers,
+					Last: xdr.SimplePaymentResult{
+						Destination: dest,
+						Asset:       destAsset,
+						Amount:      xdr.Int64(destAmount),
+					},
+				},
+			},
+		},
+	}
+}
+
+// TestDecoder_pathPaymentStrictReceive_direct_noOffers covers the
+// degenerate SendAsset==DestAsset case: no order book / pool
+// crossed, so the source amount consumed equals exactly what was
+// delivered (research §2 path (b), the len(Offers)==0 branch).
+func TestDecoder_pathPaymentStrictReceive_direct_noOffers(t *testing.T) {
+	fromAddr, _ := mkAccount(t, 0x50)
+	destAddr, _ := mkAccount(t, 0x51)
+	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	op := mkPathPaymentStrictReceiveOp(t, native, 100, 0x51, native, 100)
+	result := mkPathPaymentStrictReceiveSuccessResult(t, 0x51, native, 100, nil)
+
+	outs, err := NewDecoder().Decode(dispatcher.OpContext{
+		Ledger: 40_000_000, TxHash: "txpp1", TxSource: fromAddr, OpIndex: 0,
+		Op: op, OpResult: result,
+	})
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(outs) != 1 {
+		t.Fatalf("got %d outputs, want 1", len(outs))
+	}
+	m := outs[0].(MovementEvent).Movement
+	if m.Kind != KindPathPayment {
+		t.Errorf("Kind = %q, want %q", m.Kind, KindPathPayment)
+	}
+	if m.Asset != "native" || m.Amount.String() != "100" {
+		t.Errorf("dest leg = %s %s, want native 100", m.Amount.String(), m.Asset)
+	}
+	if m.FromAddress != fromAddr || m.ToAddress != destAddr {
+		t.Errorf("From/To = %q/%q, want %q/%q", m.FromAddress, m.ToAddress, fromAddr, destAddr)
+	}
+	if m.Attributes["send_asset"] != "native" || m.Attributes["send_amount"] != "100" {
+		t.Errorf("Attributes = %+v, want send_asset=native send_amount=100", m.Attributes)
+	}
+}
+
+// TestDecoder_pathPaymentStrictReceive_singleHop mirrors real mainnet
+// shape (real_bytes_test.go's pp1/pp3/pp4): one offer, AssetBought ==
+// SendAsset — source amount = that offer's AmountBought.
+func TestDecoder_pathPaymentStrictReceive_singleHop(t *testing.T) {
+	fromAddr, _ := mkAccount(t, 0x52)
+	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	sony := mkAlphanum4Asset(t, "SONY", 0x53)
+	offers := []xdr.ClaimAtom{
+		mkOrderBookClaimAtom(t, 0x54, sony, 900000000000, native, 12_000000),
+	}
+	op := mkPathPaymentStrictReceiveOp(t, native, 12_120000, 0x55, sony, 900000000000)
+	result := mkPathPaymentStrictReceiveSuccessResult(t, 0x55, sony, 900000000000, offers)
+
+	outs, err := NewDecoder().Decode(dispatcher.OpContext{
+		Op: op, OpResult: result, TxSource: fromAddr, TxHash: "txpp2",
+	})
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	m := outs[0].(MovementEvent).Movement
+	if m.Amount.String() != "900000000000" {
+		t.Errorf("dest amount = %s, want 900000000000", m.Amount.String())
+	}
+	if m.Attributes["send_amount"] != "12000000" {
+		t.Errorf("send_amount = %v, want 12000000", m.Attributes["send_amount"])
+	}
+}
+
+// TestDecoder_pathPaymentStrictReceive_multiHop is the synthetic
+// version of real_bytes_test.go's two-hop native→SHIB→native fixture
+// — Offers[0] converts SendAsset (native) to the intermediate asset,
+// Offers[1] converts the intermediate back to native (a distinct
+// asset pair). The derivation must sum only the contiguous prefix
+// matching SendAsset (i.e. just Offers[0]), not all offers.
+func TestDecoder_pathPaymentStrictReceive_multiHop(t *testing.T) {
+	fromAddr, _ := mkAccount(t, 0x56)
+	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	shib := mkAlphanum4Asset(t, "SHIB", 0x57)
+	offers := []xdr.ClaimAtom{
+		mkOrderBookClaimAtom(t, 0x58, shib, 602078450074, native, 83568489), // hop0: pay native, get SHIB
+		mkOrderBookClaimAtom(t, 0x59, native, 83586584, shib, 602078450074), // hop1: pay SHIB, get native
+	}
+	op := mkPathPaymentStrictReceiveOp(t, native, 83584774, 0x5A, native, 83586584)
+	result := mkPathPaymentStrictReceiveSuccessResult(t, 0x5A, native, 83586584, offers)
+
+	outs, err := NewDecoder().Decode(dispatcher.OpContext{
+		Op: op, OpResult: result, TxSource: fromAddr, TxHash: "txpp3",
+	})
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	m := outs[0].(MovementEvent).Movement
+	if m.Asset != "native" || m.Amount.String() != "83586584" {
+		t.Errorf("dest leg = %s %s, want native 83586584", m.Amount.String(), m.Asset)
+	}
+	if m.Attributes["send_asset"] != "native" || m.Attributes["send_amount"] != "83568489" {
+		t.Errorf("Attributes = %+v, want send_asset=native send_amount=83568489 (hop0 only, not the 83586584 hop1 leg)", m.Attributes)
+	}
+}
+
+// TestDecoder_pathPaymentStrictReceive_multiOfferSameHop covers order
+// book depth: the first hop fills across TWO offers before the path
+// moves to the next asset — both must be summed since both have
+// AssetBought == SendAsset.
+func TestDecoder_pathPaymentStrictReceive_multiOfferSameHop(t *testing.T) {
+	fromAddr, _ := mkAccount(t, 0x5B)
+	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	usdc := mkAlphanum4Asset(t, "USDC", 0x5C)
+	offers := []xdr.ClaimAtom{
+		mkOrderBookClaimAtom(t, 0x5D, usdc, 400_0000000, native, 40_000000),
+		mkOrderBookClaimAtom(t, 0x5E, usdc, 100_0000000, native, 10_000000),
+	}
+	op := mkPathPaymentStrictReceiveOp(t, native, 50_000000, 0x5F, usdc, 500_0000000)
+	result := mkPathPaymentStrictReceiveSuccessResult(t, 0x5F, usdc, 500_0000000, offers)
+
+	outs, err := NewDecoder().Decode(dispatcher.OpContext{
+		Op: op, OpResult: result, TxSource: fromAddr, TxHash: "txpp4",
+	})
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	m := outs[0].(MovementEvent).Movement
+	if m.Attributes["send_amount"] != "50000000" {
+		t.Errorf("send_amount = %v, want 50000000 (sum of both offers)", m.Attributes["send_amount"])
+	}
+}
+
+// TestDecoder_pathPaymentStrictReceive_hopOrderViolation_errorsLoudly
+// pins the defensive path: if the FIRST offer's AssetBought doesn't
+// match SendAsset, the hop-order assumption this package's derivation
+// relies on is violated — fail loudly rather than silently deriving
+// a wrong amount.
+func TestDecoder_pathPaymentStrictReceive_hopOrderViolation_errorsLoudly(t *testing.T) {
+	fromAddr, _ := mkAccount(t, 0x60)
+	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	usdc := mkAlphanum4Asset(t, "USDC", 0x61)
+	shib := mkAlphanum4Asset(t, "SHIB", 0x62)
+	// First offer's AssetBought is usdc, but SendAsset is native — violates the hop-order assumption.
+	offers := []xdr.ClaimAtom{
+		mkOrderBookClaimAtom(t, 0x63, shib, 1000, usdc, 500),
+	}
+	op := mkPathPaymentStrictReceiveOp(t, native, 1000, 0x64, shib, 1000)
+	result := mkPathPaymentStrictReceiveSuccessResult(t, 0x64, shib, 1000, offers)
+
+	_, err := NewDecoder().Decode(dispatcher.OpContext{Op: op, OpResult: result, TxSource: fromAddr, TxHash: "txpp5"})
+	if !errors.Is(err, ErrMalformedMovement) {
+		t.Errorf("err = %v, want errors.Is(err, ErrMalformedMovement)", err)
+	}
+}
+
+// TestDecoder_pathPaymentStrictSend_success pins StrictSend's simpler
+// path: SendAmount is exact in the body, no Offers derivation.
+func TestDecoder_pathPaymentStrictSend_success(t *testing.T) {
+	fromAddr, _ := mkAccount(t, 0x65)
+	destAddr, _ := mkAccount(t, 0x66)
+	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	aqua := mkAlphanum4Asset(t, "AQUA", 0x67)
+	offers := []xdr.ClaimAtom{
+		mkOrderBookClaimAtom(t, 0x68, aqua, 63545, native, 1100),
+	}
+	op := mkPathPaymentStrictSendOp(t, native, 1100, 0x66, aqua, 60000)
+	result := mkPathPaymentStrictSendSuccessResult(t, 0x66, aqua, 63545, offers)
+
+	outs, err := NewDecoder().Decode(dispatcher.OpContext{
+		Op: op, OpResult: result, TxSource: fromAddr, TxHash: "txpp6",
+	})
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	m := outs[0].(MovementEvent).Movement
+	if m.Kind != KindPathPayment {
+		t.Errorf("Kind = %q, want %q", m.Kind, KindPathPayment)
+	}
+	if m.Asset != "AQUA-"+aqua.MustAlphaNum4().Issuer.Address() || m.Amount.String() != "63545" {
+		t.Errorf("dest leg = %s %s", m.Amount.String(), m.Asset)
+	}
+	if m.Attributes["send_asset"] != "native" || m.Attributes["send_amount"] != "1100" {
+		t.Errorf("Attributes = %+v, want send_asset=native send_amount=1100", m.Attributes)
+	}
+	if m.ToAddress != destAddr {
+		t.Errorf("ToAddress = %q, want %q", m.ToAddress, destAddr)
+	}
+}
+
+// TestDecoder_pathPayment_failedOp_emitsNothing covers both op types'
+// failure path (bare outer code, e.g. PATH_PAYMENT_STRICT_RECEIVE
+// never reaching its own result union).
+func TestDecoder_pathPayment_failedOp_emitsNothing(t *testing.T) {
+	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	op := mkPathPaymentStrictReceiveOp(t, native, 100, 0x69, native, 100)
+	result := xdr.OperationResult{Code: xdr.OperationResultCodeOpNoAccount}
+
+	outs, err := NewDecoder().Decode(dispatcher.OpContext{Op: op, OpResult: result, TxSource: "GTEST"})
+	if err != nil {
+		t.Fatalf("Decode on failed op: %v", err)
+	}
+	if len(outs) != 0 {
+		t.Errorf("got %d outputs from a failed op, want 0", len(outs))
+	}
+}
+
 func TestKind_IsValid(t *testing.T) {
 	valid := []Kind{
 		KindPayment, KindCreateAccount, KindPathPayment, KindAccountMerge,

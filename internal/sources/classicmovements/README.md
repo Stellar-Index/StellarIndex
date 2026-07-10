@@ -9,27 +9,38 @@ See [docs/adr/0047-pre-p23-classic-movement-reconstruction.md](../../../docs/adr
 and [docs/architecture/pre-p23-classic-movements-research.md](../../../docs/architecture/pre-p23-classic-movements-research.md)
 for the full decision + evidence base.
 
-## What this ingests (Phase 1)
+## What this ingests (Phases 1-2)
 
-| Operation | Op type code | Movement kind |
-| --- | --- | --- |
-| `Payment` | `OperationTypePayment` | `payment` |
-| `CreateAccount` | `OperationTypeCreateAccount` | `create_account` |
+| Operation | Op type code | Movement kind | Row cardinality |
+| --- | --- | --- | --- |
+| `Payment` | `OperationTypePayment` | `payment` | 1 row/op |
+| `CreateAccount` | `OperationTypeCreateAccount` | `create_account` | 1 row/op |
+| `PathPaymentStrictReceive` | `OperationTypePathPaymentStrictReceive` | `path_payment` | 1 row/op (leg_index always 0) |
+| `PathPaymentStrictSend` | `OperationTypePathPaymentStrictSend` | `path_payment` | 1 row/op (leg_index always 0) |
 
-Both reconstruct from the operation **body** alone once the
-operation **result**'s success code is confirmed (research §2 path
-(a)) — neither needs `ledger_entry_changes`. A failed op (bare
-result code that never reached the op's own result union, OR an
-inner union whose own code is a failure) decodes to **zero**
-movements, never an error.
+`Payment`/`CreateAccount` reconstruct from the operation **body**
+alone once the operation **result**'s success code is confirmed
+(research §2 path (a)) — neither needs `ledger_entry_changes`. The
+two path-payment types reconstruct from the operation **result**
+(path (b)): the row's `asset`/`amount` columns hold the
+**destination** leg (`result.Success.Last.{Asset,Amount}`, exact for
+both types); `attributes.send_asset`/`attributes.send_amount` hold
+the **source** leg — exact from the body (`SendAmount`) for
+StrictSend, derived from the result's `Offers` for StrictReceive
+(`SendMax` is only a ceiling — see `decode.go`'s
+`pathPaymentStrictReceiveSourceAmount` for the hop-order derivation).
+A path payment is always exactly one row per op; the per-hop
+`ClaimAtom` trade legs stay in `trades` via `internal/sources/sdex`
+and are never duplicated here. A failed op (bare result code that
+never reached the op's own result union, OR an inner union whose own
+code is a failure) decodes to **zero** movements, never an error.
 
-Later phases (not yet implemented) add: path payments (Phase 2);
-claimable-balance create/claim/clawback + `Clawback` (Phase 3);
-account merge + liquidity-pool deposit/withdraw + the CAP-0038
-trustline-revocation edge case (Phase 4, gated on the
-`ledger_entry_changes` backfill). Migration 0105's schema already
-admits all ten `movement_kind` values, so none of that needs a new
-migration — see `doc.go`.
+Later phases (not yet implemented) add: claimable-balance
+create/claim/clawback + `Clawback` (Phase 3); account merge +
+liquidity-pool deposit/withdraw + the CAP-0038 trustline-revocation
+edge case (Phase 4, gated on the `ledger_entry_changes` backfill).
+Migration 0105's schema already admits all ten `movement_kind`
+values, so none of that needs a new migration — see `doc.go`.
 
 ## Quirks
 
@@ -54,13 +65,14 @@ P23 boundary (58,762,517) regardless of what an operator requests.
 ### Q3 — The `Kind`/`Provenance` enums are wider than what's decoded
 
 Migration 0105's `movement_kind` CHECK admits all ten ADR-0047 D1
-kinds and both `provenance` values from day one, so Phases 2-4 add
+kinds and both `provenance` values from day one, so Phases 3-4 add
 decode arms, not schema churn. `recognition_test.go` pins
 `Matches()` / `SupportedOpTypes()` / `decodeOp`'s switch to exactly
-Phase 1's two kinds and asserts every other value in the closed
-27-value `xdr.OperationType` enum is rejected loudly
-(`ErrUnsupportedOpType`) rather than silently producing zero rows —
-the forcing function for a future phase's author.
+this package's op-only in-scope kinds (Phases 1-2 today) and asserts
+every other value in the closed 27-value `xdr.OperationType` enum is
+rejected loudly (`ErrUnsupportedOpType`) rather than silently
+producing zero rows — the forcing function for a future phase's
+author.
 
 ### Q4 — Op-level source resolution happens upstream
 
@@ -79,7 +91,7 @@ therefore reads `ctx.TxSource` directly as the movement's
 | --- | --- |
 | [`doc.go`](doc.go) | Package overview: phase scope, historical-only rationale, serving + retention deferrals |
 | [`events.go`](events.go) | `SourceName`, `Kind`/`Provenance` enums, `Movement`, `MovementEvent`, decode error sentinels |
-| [`decode.go`](decode.go) | `SupportedOpTypes` / `matchesPhase1Op` / `decodeOp` / per-kind decoders |
+| [`decode.go`](decode.go) | `SupportedOpTypes` / `matchesSupportedOp` / `decodeOp` / per-kind decoders |
 | [`decode_test.go`](decode_test.go) | Synthetic-fixture unit tests (success, both failure shapes, malformed-amount defensive path) |
 | [`real_bytes_test.go`](real_bytes_test.go) | Real pre-P23 mainnet bytes pulled from r1's ClickHouse lake, byte-for-byte golden assertions, incl. a real failed-payment negative case |
 | [`recognition_test.go`](recognition_test.go) | ADR-0047 D4.2 recognition guard: exhaustive closed-enum switch-coverage test |

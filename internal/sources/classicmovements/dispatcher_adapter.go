@@ -28,11 +28,11 @@ func NewDecoder() *Decoder { return &Decoder{} }
 // Name implements dispatcher.OpDecoder.
 func (*Decoder) Name() string { return SourceName }
 
-// Matches implements dispatcher.OpDecoder. True for exactly Phase
-// 1's in-scope op types (CreateAccount, Payment) — see
-// matchesPhase1Op and recognition_test.go.
+// Matches implements dispatcher.OpDecoder. True for exactly this
+// package's op-only in-scope types — see matchesSupportedOp and
+// recognition_test.go.
 func (*Decoder) Matches(op xdr.Operation) bool {
-	return matchesPhase1Op(op)
+	return matchesSupportedOp(op)
 }
 
 // Decode implements dispatcher.OpDecoder. ctx.TxSource is used

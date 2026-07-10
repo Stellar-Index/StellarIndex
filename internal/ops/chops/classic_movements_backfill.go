@@ -34,7 +34,12 @@ const classicMovementsP23StartLedger uint32 = 58_762_517
 // rather than only at the end of a multi-day run.
 const classicMovementsDefaultWindow = 500_000
 
-// classicMovementsBackfill is the ADR-0047 Phase 1 write path:
+// classicMovementsBackfill is the ADR-0047 op-only-surface write
+// path (Phases 1-2 today; Phase 3 adds the ClaimableBalance trio +
+// Clawback, Phase 4 adds AccountMerge, all through this SAME
+// SupportedOpTypes()-driven loop — Phase 4's LiquidityPoolDeposit/
+// Withdraw + the CAP-0038 edge case are a separate entry-changes-
+// correlated write path, not yet wired into this command):
 // stellarindex-ops classic-movements-backfill -config PATH -from N
 // -to N [-window N] [-resume] [-write]. Streams
 // clickhouse.StreamClassicOps over windowed ledger ranges, decodes
@@ -211,7 +216,10 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 
 	fmt.Printf("\n=== classic-movements-backfill [%d,%d] %s ===\n", startLedger, clampedTo, mode)
 	fmt.Printf("%-24s %14s\n", "movement_kind", "count")
-	for _, k := range []classicmovements.Kind{classicmovements.KindPayment, classicmovements.KindCreateAccount} {
+	for _, k := range []classicmovements.Kind{
+		classicmovements.KindPayment, classicmovements.KindCreateAccount,
+		classicmovements.KindPathPayment,
+	} {
 		fmt.Printf("%-24s %14d\n", k, counts[k])
 	}
 	fmt.Printf("%-24s %14d\n", "TOTAL ops read", totalRead)
@@ -242,5 +250,6 @@ func classicMovementRowOf(m classicmovements.Movement) timescale.ClassicMovement
 		Amount:          m.Amount,
 		FromAddress:     m.FromAddress,
 		ToAddress:       m.ToAddress,
+		Attributes:      m.Attributes,
 	}
 }

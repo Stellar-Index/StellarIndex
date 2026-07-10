@@ -7,26 +7,48 @@
 // full decision and docs/architecture/pre-p23-classic-movements-research.md
 // for the evidence base.
 //
-// # Phase 1 scope
+// # Phase 1 + 2 scope (op-only decode surface)
 //
-// This package currently decodes exactly two classic operation
-// types: Payment and CreateAccount (ADR-0047 D3 Phase 1). Both
-// reconstruct from the operation body alone once the operation
-// result's success code is confirmed — neither needs
-// ledger_entry_changes. SupportedOpTypes, matchesPhase1Op, and
-// decodeOp's switch all cover exactly this pair; recognition_test.go
-// pins that coverage so a future phase's author must extend all
-// three deliberately (ADR-0047 D4.2).
+// This package currently decodes four classic operation types via
+// its op-only decode surface (Matches / decodeOp / Decoder.Decode):
+// Payment and CreateAccount (ADR-0047 D3 Phase 1, both reconstruct
+// from the operation BODY alone once the operation result's success
+// code is confirmed — research §2 path (a)), and
+// PathPaymentStrictReceive / PathPaymentStrictSend (Phase 2,
+// reconstructed from the operation RESULT — research §2 path (b):
+// the destination leg is result.Success.Last.{Asset,Amount} for both
+// op types uniformly; the source leg is body.SendAmount (exact) for
+// StrictSend, or derived from the result's Offers for StrictReceive
+// since SendMax is only a ceiling — see decode.go's
+// pathPaymentStrictReceiveSourceAmount doc comment for the exact
+// hop-order derivation, verified against real multi-hop mainnet data
+// in real_bytes_test.go). Neither phase needs ledger_entry_changes.
+// SupportedOpTypes, matchesSupportedOp, and decodeOp's switch all
+// cover exactly these four types; recognition_test.go pins that
+// coverage so a future phase's author must extend all three
+// deliberately (ADR-0047 D4.2).
 //
-// Later phases (path payments; claimable-balance create/claim/
-// clawback + Clawback; account merge + liquidity-pool deposit/
-// withdraw) are NOT implemented here yet. Adding one means: a new
-// decodeXxx function, a case in decodeOp's switch, an addition to
-// matchesPhase1Op (rename it — it stops being Phase-1-only) and to
-// SupportedOpTypes, and an update to recognition_test.go's expected
-// set. The migration 0105 schema already admits all ten
-// movement_kind values and both provenance values, so no schema
-// change is needed for any of this.
+// A path payment emits exactly ONE 'path_payment' row per op
+// (leg_index always 0) — never a row per hop; the per-hop ClaimAtoms
+// already live in `trades` via internal/sources/sdex and are
+// deliberately NOT duplicated here. The row's primary Asset/Amount
+// columns hold the destination leg; Movement.Attributes carries the
+// source leg (send_asset/send_amount) since the schema has one
+// asset per row.
+//
+// Later phases (claimable-balance create/claim/clawback + Clawback,
+// Phase 3; account merge + liquidity-pool deposit/withdraw + the
+// CAP-0038 revocation edge case, Phase 4) are NOT implemented here
+// yet. Adding an op-only-surface kind means: a new decodeXxx
+// function, a case in decodeOp's switch, an addition to
+// matchesSupportedOp and to SupportedOpTypes, and an update to
+// recognition_test.go's expected set. LiquidityPoolDeposit/Withdraw
+// and the CAP-0038 edge case will need a SEPARATE, entry-changes-
+// correlated decode surface (dispatcher.OpContext has no room for a
+// correlated ledger_entry_changes group) — see the Phase 4
+// implementation notes once they land. The migration 0105 schema
+// already admits all ten movement_kind values and both provenance
+// values, so no schema change is needed for any of this.
 //
 // # Historical-only — never live-wired (ADR-0047 D2)
 //

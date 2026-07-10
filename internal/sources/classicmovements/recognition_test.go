@@ -33,51 +33,63 @@ func allClassicOpTypes(t *testing.T) []xdr.OperationType {
 	return out
 }
 
-// phase1InScope is the authoritative expected set for THIS phase —
+// opOnlyInScope is the authoritative expected set for this package's
+// op-only decode surface (Matches / decodeOp / Decoder.Decode) —
 // deliberately hand-written (not derived from SupportedOpTypes) so
-// this test fails if SupportedOpTypes / matchesPhase1Op / decodeOp
-// drift from each other, not just from themselves.
-var phase1InScope = map[xdr.OperationType]bool{
-	xdr.OperationTypeCreateAccount: true,
-	xdr.OperationTypePayment:       true,
+// this test fails if SupportedOpTypes / matchesSupportedOp / decodeOp
+// drift from each other, not just from themselves. Named
+// "phase1InScope" through Phase 1; renamed once Phase 2 added
+// PathPaymentStrictReceive/Send made "Phase1" inaccurate. Grows again
+// in Phase 3 (ClaimableBalance trio + Clawback) and Phase 4
+// (AccountMerge only — LiquidityPoolDeposit/Withdraw and the
+// CAP-0038 AllowTrust/SetTrustLineFlags edge case are a SEPARATE
+// entry-changes-correlated decode surface with its own exhaustive
+// guard, entrychanges_test.go's TestRecognition_EntryChangeOpTypes*).
+var opOnlyInScope = map[xdr.OperationType]bool{
+	xdr.OperationTypeCreateAccount:            true,
+	xdr.OperationTypePayment:                  true,
+	xdr.OperationTypePathPaymentStrictReceive: true,
+	xdr.OperationTypePathPaymentStrictSend:    true,
 }
 
-// TestRecognition_MatchesCoversExactlyPhase1 is the ADR-0047 D4.2
-// recognition guard: Matches() must return true for exactly Phase
-// 1's two in-scope op types and false for every other value in the
-// closed 27-value enum — including the ones later phases will add
-// (PathPaymentStrict{Receive,Send}, ClaimableBalance*, Clawback*,
-// AccountMerge, LiquidityPool{Deposit,Withdraw}). A future phase
-// that flips one of those to true without also touching this test's
-// phase1InScope map fails CI here, forcing a deliberate update
-// rather than a silent scope creep.
-func TestRecognition_MatchesCoversExactlyPhase1(t *testing.T) {
+// TestRecognition_MatchesCoversExactlyOpOnlyScope is the ADR-0047
+// D4.2 recognition guard: Matches() must return true for exactly this
+// package's op-only in-scope op types and false for every other
+// value in the closed 27-value enum — including the ones later
+// phases will add to opOnlyInScope or to the separate entry-changes
+// surface (ClaimableBalance*, Clawback*, AccountMerge,
+// LiquidityPool{Deposit,Withdraw}, AllowTrust, SetTrustLineFlags). A
+// future phase that flips one of those to true without also touching
+// this test's opOnlyInScope map fails CI here, forcing a deliberate
+// update rather than a silent scope creep.
+func TestRecognition_MatchesCoversExactlyOpOnlyScope(t *testing.T) {
 	d := NewDecoder()
 	for _, typ := range allClassicOpTypes(t) {
 		op := xdr.Operation{Body: xdr.OperationBody{Type: typ}}
 		got := d.Matches(op)
-		want := phase1InScope[typ]
+		want := opOnlyInScope[typ]
 		if got != want {
 			t.Errorf("Matches(%s) = %v, want %v", typ, got, want)
 		}
 	}
 }
 
-// TestRecognition_SupportedOpTypesMatchesPhase1InScope pins
+// TestRecognition_SupportedOpTypesMatchesOpOnlyInScope pins
 // SupportedOpTypes() (the string-form list StreamClassicOps is
-// called with) to the same set Matches() and decodeOp cover — three
-// independent lists that must never drift from each other.
-func TestRecognition_SupportedOpTypesMatchesPhase1InScope(t *testing.T) {
+// called with for the op-only surface) to the same set Matches() and
+// decodeOp cover — three independent lists that must never drift
+// from each other.
+func TestRecognition_SupportedOpTypesMatchesOpOnlyInScope(t *testing.T) {
 	got := map[string]bool{}
 	for _, s := range SupportedOpTypes() {
 		got[s] = true
 	}
-	if len(got) != len(phase1InScope) {
-		t.Fatalf("SupportedOpTypes() has %d entries, phase1InScope has %d", len(got), len(phase1InScope))
+	if len(got) != len(opOnlyInScope) {
+		t.Fatalf("SupportedOpTypes() has %d entries, opOnlyInScope has %d", len(got), len(opOnlyInScope))
 	}
-	for typ := range phase1InScope {
+	for typ := range opOnlyInScope {
 		if !got[typ.String()] {
-			t.Errorf("SupportedOpTypes() is missing %s, which phase1InScope (and Matches) expects in-scope", typ)
+			t.Errorf("SupportedOpTypes() is missing %s, which opOnlyInScope (and Matches) expects in-scope", typ)
 		}
 	}
 }
@@ -87,16 +99,16 @@ func TestRecognition_SupportedOpTypesMatchesPhase1InScope(t *testing.T) {
 // fail LOUDLY (ErrUnsupportedOpType), never silently return zero
 // movements. This is what forces a future phase's author to extend
 // decodeOp's switch deliberately instead of the type quietly falling
-// through to "no rows" forever. Every non-Phase-1 type in the closed
-// enum is exercised, plus a corroborating in-scope control (Matches
-// == true implies Decode must NOT hit this error path for a merely-
-// out-of-scope reason, though it may still error for other reasons
-// on a zero-value op body — see decode_test.go for the success
-// path).
+// through to "no rows" forever. Every op-only-out-of-scope type in
+// the closed enum is exercised, plus a corroborating in-scope control
+// (Matches == true implies Decode must NOT hit this error path for a
+// merely-out-of-scope reason, though it may still error for other
+// reasons on a zero-value op body — see decode_test.go for the
+// success path).
 func TestRecognition_DecodeRejectsOutOfScopeTypesLoudly(t *testing.T) {
 	d := NewDecoder()
 	for _, typ := range allClassicOpTypes(t) {
-		if phase1InScope[typ] {
+		if opOnlyInScope[typ] {
 			continue // in-scope types are covered by decode_test.go's success/failure cases
 		}
 		t.Run(typ.String(), func(t *testing.T) {

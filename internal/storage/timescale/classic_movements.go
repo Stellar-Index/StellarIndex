@@ -2,6 +2,7 @@ package timescale
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -85,6 +86,12 @@ type ClassicMovementRow struct {
 	Amount          canonical.Amount
 	FromAddress     string // "" -> NULL
 	ToAddress       string // "" -> NULL
+
+	// Attributes is the kind-specific jsonb remainder (migration
+	// 0105's `attributes` column, DEFAULT '{}'::jsonb). nil/empty
+	// marshals to '{}' — same convention as cctp_events.Attributes /
+	// aquarius_rewards.Attributes.
+	Attributes map[string]any
 }
 
 // InsertClassicMovement appends one row to classic_movements.
@@ -99,13 +106,18 @@ func (s *Store) InsertClassicMovement(ctx context.Context, m ClassicMovementRow)
 	if provenance == "" {
 		provenance = ClassicMovementClassicDerived
 	}
+	attrs, aerr := marshalClassicMovementAttributes(m.Attributes)
+	if aerr != nil {
+		return fmt.Errorf("timescale: InsertClassicMovement: %w", aerr)
+	}
 
 	const q = `
         INSERT INTO classic_movements (
             movement_kind, provenance, ledger, ledger_close_time, tx_hash,
-            op_index, leg_index, asset, amount, from_address, to_address
+            op_index, leg_index, asset, amount, from_address, to_address,
+            attributes
         ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
         )
         ON CONFLICT (ledger_close_time, ledger, tx_hash, op_index, leg_index) DO NOTHING
     `
@@ -113,6 +125,7 @@ func (s *Store) InsertClassicMovement(ctx context.Context, m ClassicMovementRow)
 		string(m.Kind), string(provenance), int(m.Ledger), m.LedgerCloseTime.UTC(), m.TxHash,
 		int(m.OpIndex), int(m.LegIndex), m.Asset, m.Amount,
 		nullString(m.FromAddress), nullString(m.ToAddress),
+		attrs,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertClassicMovement %s@%d tx=%s op=%d: %w",
@@ -142,19 +155,24 @@ func (s *Store) BatchInsertClassicMovements(ctx context.Context, rows []ClassicM
 	}
 	sortClassicMovementsByConflictKey(rows)
 
-	const colsPerRow = 11
+	const colsPerRow = 12
 	args := make([]any, 0, len(rows)*colsPerRow)
 	valuesParts := make([]string, 0, len(rows))
 	for i, m := range rows {
 		base := i*colsPerRow + 1
 		valuesParts = append(valuesParts, fmt.Sprintf(
-			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-			base, base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10,
+			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+			base, base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11,
 		))
+		attrs, aerr := marshalClassicMovementAttributes(m.Attributes)
+		if aerr != nil {
+			return 0, fmt.Errorf("timescale: BatchInsertClassicMovements: row %d: %w", i, aerr)
+		}
 		args = append(args,
 			string(m.Kind), string(m.Provenance), int(m.Ledger), m.LedgerCloseTime.UTC(), m.TxHash,
 			int(m.OpIndex), int(m.LegIndex), m.Asset, m.Amount,
 			nullString(m.FromAddress), nullString(m.ToAddress),
+			attrs,
 		)
 	}
 
@@ -163,7 +181,8 @@ func (s *Store) BatchInsertClassicMovements(ctx context.Context, rows []ClassicM
         WITH ins AS (
             INSERT INTO classic_movements (
                 movement_kind, provenance, ledger, ledger_close_time, tx_hash,
-                op_index, leg_index, asset, amount, from_address, to_address
+                op_index, leg_index, asset, amount, from_address, to_address,
+                attributes
             ) VALUES %s
             ON CONFLICT (ledger_close_time, ledger, tx_hash, op_index, leg_index) DO NOTHING
             RETURNING 1
@@ -176,6 +195,21 @@ func (s *Store) BatchInsertClassicMovements(ctx context.Context, rows []ClassicM
 		return 0, fmt.Errorf("timescale: BatchInsertClassicMovements: %w", err)
 	}
 	return landed, nil
+}
+
+// marshalClassicMovementAttributes renders m.Attributes as the jsonb
+// bytes to pass through to the driver — '{}' for nil/empty (matching
+// the column DEFAULT), json.Marshal's output otherwise. Same
+// convention as cctp_events.go / aquarius_rewards.go.
+func marshalClassicMovementAttributes(attrs map[string]any) ([]byte, error) {
+	if len(attrs) == 0 {
+		return []byte("{}"), nil
+	}
+	marshaled, err := json.Marshal(attrs)
+	if err != nil {
+		return nil, fmt.Errorf("marshal attributes: %w", err)
+	}
+	return marshaled, nil
 }
 
 // validateClassicMovementRow rejects rows that would violate

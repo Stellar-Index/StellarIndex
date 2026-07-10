@@ -70,6 +70,23 @@ against.
   `/v1/accounts/{g}/movements` endpoint yet; served-tier retention is
   deliberately deferred until the first real backfill sizes actual
   row bytes.
+- **Pre-P23 classic-movement reconstruction, Phase 2: path payments**
+  (ADR-0047). `internal/sources/classicmovements` now also decodes
+  `PathPaymentStrictReceive`/`PathPaymentStrictSend` into one
+  `path_payment` row per op (never a row per hop — the per-hop
+  `ClaimAtom` trade legs stay in `trades` via `internal/sources/sdex`
+  and are not duplicated). The row's `asset`/`amount` hold the
+  destination leg (`result.Success.Last`, exact for both op types);
+  the new `attributes` jsonb column carries the source leg
+  (`send_asset`/`send_amount`) — exact from the body for StrictSend,
+  derived from the result's `Offers` for StrictReceive since
+  `SendMax` is only a ceiling (see `decode.go`'s
+  `pathPaymentStrictReceiveSourceAmount`, verified against a real
+  two-hop native→SHIB→native mainnet path payment). `classicmovements.Movement`,
+  `timescale.ClassicMovementRow`, and the `classic_movements` insert
+  paths all gain `Attributes map[string]any` (no migration needed —
+  0105 already has the `attributes` column). Recognition test and
+  real-bytes golden tests extended accordingly.
 - **Full-history SAC balance seed — closes the BLND/EURC/KALE/PHO supply
   cross-check residual** (migration 0102, ROADMAP #14 / incident
   2026-07-06 "PHO/BLND VERDICT" follow-up). `supply seed-sac-balances`
