@@ -187,3 +187,32 @@ func TestBuildRegistry_IncludesInScopeSources(t *testing.T) {
 		}
 	}
 }
+
+// TestAdaptiveWindow pins the shrink/recover arithmetic for the
+// 2026-07-10 dense-window stall: deadline-exceeded halves toward
+// MinBatchLimit and never below; success doubles back to BatchLimit.
+func TestAdaptiveWindow(t *testing.T) {
+	w := uint32(BatchLimit)
+	for i := 0; i < 20; i++ {
+		next, shrunk := shrinkWindow(w, context.DeadlineExceeded)
+		if w > MinBatchLimit && !shrunk {
+			t.Fatalf("expected shrink at window %d", w)
+		}
+		if w <= MinBatchLimit && shrunk {
+			t.Fatalf("shrunk below floor from %d", w)
+		}
+		w = next
+	}
+	if w != MinBatchLimit {
+		t.Fatalf("converged to %d, want %d", w, MinBatchLimit)
+	}
+	if _, shrunk := shrinkWindow(BatchLimit, errors.New("boom")); shrunk {
+		t.Fatal("non-deadline error must not shrink")
+	}
+	for i := 0; i < 20 && w < BatchLimit; i++ {
+		w = recoverWindow(w)
+	}
+	if w != BatchLimit {
+		t.Fatalf("recovered to %d, want %d", w, BatchLimit)
+	}
+}

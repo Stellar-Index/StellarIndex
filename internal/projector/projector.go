@@ -67,6 +67,16 @@ const Interval = 5 * time.Second
 // updates, finish inside PerSourceTimeout.
 const BatchLimit = 1_000
 
+// MinBatchLimit is the floor for the adaptive per-source window (see
+// cycleOneSource): when a cycle exceeds PerSourceTimeout the window
+// halves down to this floor. 25 dense mainnet ledgers decode + insert
+// comfortably inside the timeout even for the heaviest sources
+// (2026-07-10 incident: a maximally-dense aquarius rewards window at
+// BatchLimit could NOT finish inside PerSourceTimeout, so the fixed
+// window retried the identical range forever — a permanent stall the
+// operator could only see as "lag stopped falling").
+const MinBatchLimit = 25
+
 // PerSourceTimeout caps one source's per-cycle work. A wedged
 // downstream sink can't block other sources past this.
 const PerSourceTimeout = 60 * time.Second
@@ -234,15 +244,19 @@ func processEventSafely(src Source, ev events.Event, sink func(consumer.Event), 
 func (p *Projector) runOneSource(ctx context.Context, src Source) {
 	t := time.NewTicker(Interval)
 	defer t.Stop()
+	// Adaptive window, owned by this goroutine (one per source): starts
+	// at BatchLimit, halves on a deadline-exceeded cycle, doubles back
+	// on success. See cycleOneSource.
+	window := uint32(BatchLimit)
 	// First cycle runs immediately so a fresh deploy starts
 	// catching up without waiting Interval.
-	p.cycleOneSource(ctx, src)
+	p.cycleOneSource(ctx, src, &window)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			p.cycleOneSource(ctx, src)
+			p.cycleOneSource(ctx, src, &window)
 		}
 	}
 }
@@ -254,7 +268,7 @@ func (p *Projector) runOneSource(ctx context.Context, src Source) {
 // repeats).
 //
 //nolint:gocognit,funlen // linear cycle (cursor read → tip → scan → cursor write) with a source branch (soroban_events vs CH); splitting into helpers would scatter the cycle's success/failure metric emissions and make the control flow harder to audit.
-func (p *Projector) cycleOneSource(ctx context.Context, src Source) {
+func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint32) {
 	start := time.Now()
 	cycleCtx, cancel := context.WithTimeout(ctx, PerSourceTimeout)
 	defer cancel()
@@ -300,8 +314,8 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source) {
 	}
 
 	toLedger := tip
-	if toLedger-fromLedger > BatchLimit {
-		toLedger = fromLedger + BatchLimit
+	if toLedger-fromLedger > *window {
+		toLedger = fromLedger + *window
 	}
 
 	var (
@@ -360,7 +374,18 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source) {
 			})
 	}
 	if err != nil {
-		p.logger.Warn("projector: stream failed", "source", src.Name, "err", err, "from", fromLedger, "to", toLedger)
+		// Adaptive shrink (2026-07-10 incident): a window too dense to
+		// finish inside PerSourceTimeout would otherwise retry the
+		// IDENTICAL range every cycle forever. Halve down to
+		// MinBatchLimit so the retry converges; the success path below
+		// doubles back toward BatchLimit once past the dense stretch.
+		if next, shrunk := shrinkWindow(*window, err); shrunk {
+			*window = next
+			p.logger.Warn("projector: cycle exceeded deadline — shrinking window",
+				"source", src.Name, "from", fromLedger, "to", toLedger, "next_window", *window)
+		} else {
+			p.logger.Warn("projector: stream failed", "source", src.Name, "err", err, "from", fromLedger, "to", toLedger)
+		}
 		obs.ProjectorRunsTotal.WithLabelValues(src.Name, "error").Inc()
 		return
 	}
@@ -374,6 +399,11 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source) {
 		obs.ProjectorRunsTotal.WithLabelValues(src.Name, "error").Inc()
 		return
 	}
+
+	// Window recovery: a successful cycle doubles back toward
+	// BatchLimit so a one-off dense stretch doesn't permanently slow
+	// the replay.
+	*window = recoverWindow(*window)
 
 	obs.ProjectorLagLedgers.WithLabelValues(src.Name).Set(float64(tip - toLedger))
 	obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "ok").Add(float64(eventsEmitted))
@@ -394,6 +424,34 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source) {
 			"elapsed", time.Since(start).Round(time.Millisecond),
 		)
 	}
+}
+
+// shrinkWindow halves the adaptive per-source window when a cycle
+// failed on a deadline (floor MinBatchLimit). Returns (next, true)
+// when a shrink should apply; (current, false) for non-deadline
+// errors or when already at the floor.
+func shrinkWindow(current uint32, err error) (uint32, bool) {
+	if !errors.Is(err, context.DeadlineExceeded) || current <= MinBatchLimit {
+		return current, false
+	}
+	next := current / 2
+	if next < MinBatchLimit {
+		next = MinBatchLimit
+	}
+	return next, true
+}
+
+// recoverWindow doubles the adaptive window back toward BatchLimit
+// after a successful cycle.
+func recoverWindow(current uint32) uint32 {
+	if current >= BatchLimit {
+		return BatchLimit
+	}
+	next := current * 2
+	if next > BatchLimit {
+		next = BatchLimit
+	}
+	return next
 }
 
 // resolveTip returns the upper scan bound for one cycle. The base
