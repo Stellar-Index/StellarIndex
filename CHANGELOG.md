@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.14.0] — 2026-07-10
+
 ### Added
 - **`stellarindex-ops projected-rebuild` — bulk catch-up for projected sources (ADR-0048 D3).**
   `projector-replay` rewinds the live projector's cursor and lets its own tick cadence
