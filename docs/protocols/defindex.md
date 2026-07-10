@@ -2,22 +2,27 @@
 
 > **For the DeFindex team:** this is the set of DeFindex factories, vaults,
 > and strategy contracts Stellar Index ingests. Please confirm the four
-> factories and help us with the **open question below** about how vaults
-> and strategies relate (so we attribute strategy events correctly).
+> factories and help with the one **remaining open question** below (the
+> vault self-registration gap — the strategy side is now resolved, see
+> "Resolved 2026-07-10").
 >
 > - **Enumeration method:** ADR-0040 §3 multi-proof classification — every
 >   lake emitter cross-checked against (A) creation-transaction
 >   correlation, (B) factory create-event bodies, (C) your published WASM
 >   hashes (`mainnet.contracts.json`), (D) your Dune vault registry. See
 >   "Verification 2026-07-05".
-> - **Last verified:** 2026-07-05 (r1 lake, tip ledger 63,343,398).
+> - **Last verified:** 2026-07-10 (r1 lake) — re-confirms 2026-07-05's
+>   census is still current (ROADMAP #7: zero new emitters since 2026-07-05)
+>   and additionally resolves the two items below. See "Resolved 2026-07-10".
 > - **Gate status:** ✅ GATED (ADR-0035/0040, shipped 2026-07-05): curated
 >   evidence-verified set — 85 vaults + 16 strategies in-code
 >   (`defindex.MainnetGatedSet`), 4 factory trust roots; **9 no-proof
->   emitters excluded + flagged below**. New vaults do NOT self-register
->   (the create event omits the child address — the open question below
->   still stands): they fail-close into recognition gaps until verified and
->   seeded via `protocol_contracts` (no redeploy needed).
+>   emitters excluded + flagged below**. VAULTS do NOT self-register (the
+>   create event omits the vault's own address — this remains the one open
+>   question); they fail-close into recognition gaps until verified and
+>   seeded via `protocol_contracts` (no redeploy needed). STRATEGIES now DO
+>   self-register (2026-07-10): the same create event's body carries each
+>   asset's assigned strategy address(es), decoded live.
 
 ## Factories (4)
 
@@ -68,6 +73,15 @@ And separately: are the **7 `BlendStrategy`** contracts **created by their
 vaults** (fan-out), or **shared / independently deployed** (need their own
 allowlist)?
 
+> **✅ ANSWERED 2026-07-10** (see "Resolved 2026-07-10 — BlendStrategy
+> factory-anchoring" below): strategies are **independently deployed and
+> referenced by vault configs**, not vault-created. The `create` event's
+> body carries each asset's assigned strategy address(es) directly
+> (`assets[].strategies[].address`) — this IS decodable, and the decoder
+> now extracts it live to self-register new strategies. The vault's own
+> address remains NOT decodable (the paragraph above is otherwise
+> unchanged) — that structural gap is the one still-open question.
+
 > **Note:** DeFindex topics are namespaced (`DeFindexVault`,
 > `BlendStrategy`), so collision risk is low and the urgency is lower than
 > for Blend/Soroswap (whose generic `supply`/`swap` topics collide widely).
@@ -93,13 +107,35 @@ small to justify the ClickHouse scan cost; see
 ## Vault enumeration (53 — from the team's own Dune registry, 2026-06-12)
 
 Cross-checked via the paltalabs Dune dashboard pipeline (query 5926821,
-"DeFindex Latest Vaults Data") — the team's own registry. **All 34 of our
-lake `DeFindexVault`-event emitters appear in it; the registry has 19
-MORE vaults we have never seen emit a `DeFindexVault` event** (they carry
-TVL, and lake-probing shows only SEP-41 `burn` events from them) — i.e. a
-vault WASM version exists whose business events are not the namespaced
-`DeFindexVault` kind we decode. ~36%% of vaults are currently invisible
-to `defindex_flows`.
+"DeFindex Latest Vaults Data") — the team's own registry. **At the time of
+this 2026-06-12 census, all 34 of our lake `DeFindexVault`-event emitters
+appeared in it; the registry had 19 MORE vaults we had never seen emit a
+`DeFindexVault` event** (they carried TVL, and lake-probing showed only
+SEP-41 `burn` events from them) — ~36% of vaults were invisible to
+`defindex_flows` at that time.
+>
+> **✅ RESOLVED 2026-07-10 — the 19 were a STALE snapshot, not a decoder
+> gap.** Between the 2026-06-12 Dune cross-check and the 2026-07-05
+> multi-proof census, the count of lake `DeFindexVault` emitters grew from
+> 34 to 88 (see "Verification 2026-07-05" below) — these vaults simply
+> hadn't started emitting `DeFindexVault` events yet as of 2026-06-12
+> (their WASM had presumably not yet processed a deposit through that
+> code path, or the accounts were newly funded). Re-investigated from the
+> raw lake 2026-07-10 (ClickHouse HTTP `:8123`, contract-scoped,
+> `topic_0_sym = ''` — remember `topic_0_sym` is EMPTY for String-typed
+> topics like `"DeFindexVault"`, NOT just Symbol-typed ones): **all 19
+> now emit real `("DeFindexVault","deposit"|"withdraw")` events** (plus
+> `rebalance`/`rescue`/`dfees`/`nmanager` admin topics on some), decoded
+> by base64-XDR-verified sample bytes against `TopicPrefixVault` +
+> `TopicSymbolDeposit`/`TopicSymbolWithdraw`. All 19 are already members
+> of `defindex.MainnetVaults` (the curated gate — confirmed via grep) and
+> the projector-replay already ran (per ROADMAP #7's 2026-07-05 operator
+> rollout): a read-only `defindex_flows` spot-check on r1 for 3 of the 19
+> (`CCDRFMZ7…`, `CDIHXKZ4…`, `CAVL4BSHM…`) shows 240/3/48 deposit rows and
+> 202/3/43 withdraw rows already persisted — matching the lake counts
+> (small deltas are `in_successful_call` filtering, not missing data). No
+> decoder change was needed; only this stale claim needed correcting. The
+> per-vault table below is annotated inline.
 
 | Vault | Name | USD TVL | Our lake coverage |
 |---|---|---:|---|
@@ -112,61 +148,67 @@ to `defindex_flows`.
 | `CD4B5WJDJQ6G5K6MVC3VHTBI2PNLWJBWLXHV75S245Q3PIQWC262UZ4C` | Greep Vault - CD4..Z4C | $14,610 | emits DeFindexVault events |
 | `CBUJZL5QAD5TOPD7JMCBQ3RHR6RZWY34A4QF7UHILTDH2JF2Z3VJGY2Y` | Hana USDC - CBU..Y2Y | $6,745 | emits DeFindexVault events |
 | `CD4JGS6BB5NZVSNKRNI43GUC6E3OBYLCLBQZJVTZLDVHQ5KDAOHVOIQF` | xPortal - CD4..IQF | $4,760 | emits DeFindexVault events |
-| `CCDRFMZ7CH364ATQ5YSVTEJ3G3KPNFVM6TTC6N4T5REHWJS6LGVFP7MY` | Rozo - CCD..7MY | $4,715 | **NO DeFindexVault events in lake** |
-| `CCKTLDG6I2MMJCKFWXXBXMA42LJ3XN2IOW6M7TK6EWNPJTS736ETFF2N` | EURC Soroswap Earn - CCK..F2N | $3,680 | **NO DeFindexVault events in lake** |
+| `CCDRFMZ7CH364ATQ5YSVTEJ3G3KPNFVM6TTC6N4T5REHWJS6LGVFP7MY` | Rozo - CCD..7MY | $4,715 | ~~NO DeFindexVault events in lake~~ — ✅ now emits (2026-07-10, see below) |
+| `CCKTLDG6I2MMJCKFWXXBXMA42LJ3XN2IOW6M7TK6EWNPJTS736ETFF2N` | EURC Soroswap Earn - CCK..F2N | $3,680 | ~~NO DeFindexVault events in lake~~ — ✅ now emits (2026-07-10, see below) |
 | `CD455S6D4A2G36TXWSYUQNDX4YJBFJJSFRSXBSU7H6TVM6FC67ZMIFGQ` | EbioroUsdcVault - CD4..FGQ | $3,528 | emits DeFindexVault events |
 | `CC767WIU5QGJMXYHDDYJAJEF2YWPHOXOZDWD3UUAZVS4KQPRXCKPT2YZ` | SeevVault - CC7..2YZ | $2,156 | emits DeFindexVault events |
 | `CAB4JOLSCNELJVDQKZLVGHKWJCLXFDBZZMITJAFL4GBGTHIKWO47PYFH` | Peridot USDC Vault - CAB..YFH | $1,101 | emits DeFindexVault events |
 | `CDI7QVDTNDFEHB25VFQGMNFALGCXXKAWUSHOTQR2D4O44CATQJ5ZQMN6` | USTRY Soroswap Earn - CDI..MN6 | $1,025 | emits DeFindexVault events |
 | `CC24OISYJHWXZIFZBRJHFLVO5CNN3PQSKZE5BBBZLSSI5Z23TKC6GQY2` | CETES Soroswap Earn - CC2..QY2 | $496 | emits DeFindexVault events |
 | `CBP2R5KYAWJCOCVDTSNTEVL3O6JBTWOOH7SZOX7DX5DLGVZCAMLBDZM3` | Peridot EURC Vault - CBP..ZM3 | $386 | emits DeFindexVault events |
-| `CDIHXKZ4PFKAIONK52JAR6ZNMP62F3UP7XTIBSJTQLMLHQ44PQ5Q2H3J` | OduroVault - CDI..H3J | $201 | **NO DeFindexVault events in lake** |
+| `CDIHXKZ4PFKAIONK52JAR6ZNMP62F3UP7XTIBSJTQLMLHQ44PQ5Q2H3J` | OduroVault - CDI..H3J | $201 | ~~NO DeFindexVault events in lake~~ — ✅ now emits (2026-07-10, see below) |
 | `CBMERS7MJHO6TGKUVWWU34ZSKWCFOWPG2ZCIRIT75IC3YDWBIPBMV5LB` | Neko TESOURO - CBM..5LB | $150 | emits DeFindexVault events |
 | `CANBU7T77SCJOOAU6VQAOGR7DN36JBQFUN56XS2WA2VPJYUSRUBIPYDS` | Neko Cetes - CAN..YDS | $141 | emits DeFindexVault events |
-| `CCPKQH3K5XUGP5GXCT6WTABS7TGXRR745BJ4MEFSGNATB7AOBRL4VEOT` | Neko USDC - CCP..EOT | $108 | **NO DeFindexVault events in lake** |
+| `CCPKQH3K5XUGP5GXCT6WTABS7TGXRR745BJ4MEFSGNATB7AOBRL4VEOT` | Neko USDC - CCP..EOT | $108 | ~~NO DeFindexVault events in lake~~ — ✅ now emits (2026-07-10, see below) |
 | `CB3FUMFGCF6DHSFK6N2TOKHRMYXS34HFKQR45UKVORCRUM35AF3ES7WQ` | Neko EURC - CB3..7WQ | $108 | emits DeFindexVault events |
 | `CCB2AR5X3KP4WQKE7HNSUSDS7SHFMC2WPVSZ2ZXJ6DHXOKHFFKOZE6GK` | Peridot XLM Vault - CCB..6GK | $63 | emits DeFindexVault events |
 | `CDTCSXSKRIFYLDMMF3UABU63LEXSAR2CRCJVSL2PUJGVLNCQWU7XGWCN` | CodeLn USDC - CDT..WCN | $42 | emits DeFindexVault events |
 | `CCIRVAW3IZVAYLHR7YYMZFOQVYEW67OKFFXR3J6ZR2T6YJC5V7GTSNQ5` | Neko USTRY - CCI..NQ5 | $40 | emits DeFindexVault events |
 | `CAHGILQRWEGTAWIYGLVFKFPRPNH4NN6KZIDBGHMWABIWZZLW2ZHLHQOG` | CashAbroadUSDC - CAH..QOG | $35 | emits DeFindexVault events |
-| `CDRSZ4OGRVUU5ONTI6C6UNF5QFJ3OGGQCNTC5UXXTZQFVRTILJFSVG5D` | CASHBRD USDC PROD - CDR..G5D | $32 | **NO DeFindexVault events in lake** |
-| `CBGE43WF5GBDCHMN2XPKIAC7TYMWCR6FOJTVFMBR6QQM6WKZB7BM23LL` | xPortal - CBG..3LL | $31 | **NO DeFindexVault events in lake** |
-| `CBDZ2L4HHEPPL4ABHPORQC72E5S2GLNRPJ467XV3CW5FDWICUNH6SF4B` | test - CBD..F4B | $30 | **NO DeFindexVault events in lake** |
+| `CDRSZ4OGRVUU5ONTI6C6UNF5QFJ3OGGQCNTC5UXXTZQFVRTILJFSVG5D` | CASHBRD USDC PROD - CDR..G5D | $32 | ~~NO DeFindexVault events in lake~~ — ✅ now emits (2026-07-10, see below) |
+| `CBGE43WF5GBDCHMN2XPKIAC7TYMWCR6FOJTVFMBR6QQM6WKZB7BM23LL` | xPortal - CBG..3LL | $31 | ~~NO DeFindexVault events in lake~~ — ✅ now emits (2026-07-10, see below) |
+| `CBDZ2L4HHEPPL4ABHPORQC72E5S2GLNRPJ467XV3CW5FDWICUNH6SF4B` | test - CBD..F4B | $30 | ~~NO DeFindexVault events in lake~~ — ✅ now emits (2026-07-10, see below) |
 | `CD7T34Y5SZ6MBEZDMXDIQWQ6JICO7TYH7E6DKZJ7BHXOMR2EQ65WYSZG` | boostAPY - CD7..SZG | $21 | emits DeFindexVault events |
 | `CB5YXWIDBQAOTTPEQE3SRNUFM2PTOXFHKGUWCBJJSF2GPW37DN725FDA` | controlAPY - CB5..FDA | $21 | emits DeFindexVault events |
 | `CAEPJIHET2TBI2VCLJZI6QHMN366KUGNK4AOKE3YY7AOKMU4KX4RDRGB` | targetAPY - CAE..RGB | $20 | emits DeFindexVault events |
 | `CD3HR7WNGPDUGK5ITNMZSRM36O2IFJF3N4RFHOITP4DCXMVGHMANN3XR` | variableAPY - CD3..3XR | $20 | emits DeFindexVault events |
 | `CBBAH2OAJ6N3UBJGXNFYH4QF6C6OWO4RHGGOOGDER3IJB7SGLR3Y56JO` | Decaf Vault USDC - CBB..6JO | $18 | emits DeFindexVault events |
-| `CBDZYJVQJQT7QJ7ZTMGNGZ7RR3DF32LERLZ26A2HLW5FNJ4OOZCLI3OG` | BeansStgUsdc - CBD..3OG | $16 | **NO DeFindexVault events in lake** |
-| `CAVL4BSHMU5ECWZCB6ETYSBV4EWTRMHAGMVUEJ5PXM3P3E3AOJPX2TLU` | BeansStgEurc - CAV..TLU | $13 | **NO DeFindexVault events in lake** |
-| `CAGERKFCDHHCES64L43EU242KIVQMPYAL37CFYIGMLBGJIQTYWXFRWIT` | Decaf USDC - CAG..WIT | $12 | **NO DeFindexVault events in lake** |
+| `CBDZYJVQJQT7QJ7ZTMGNGZ7RR3DF32LERLZ26A2HLW5FNJ4OOZCLI3OG` | BeansStgUsdc - CBD..3OG | $16 | ~~NO DeFindexVault events in lake~~ — ✅ now emits (2026-07-10, see below) |
+| `CAVL4BSHMU5ECWZCB6ETYSBV4EWTRMHAGMVUEJ5PXM3P3E3AOJPX2TLU` | BeansStgEurc - CAV..TLU | $13 | ~~NO DeFindexVault events in lake~~ — ✅ now emits (2026-07-10, see below) |
+| `CAGERKFCDHHCES64L43EU242KIVQMPYAL37CFYIGMLBGJIQTYWXFRWIT` | Decaf USDC - CAG..WIT | $12 | ~~NO DeFindexVault events in lake~~ — ✅ now emits (2026-07-10, see below) |
 | `CDSM6RP3GP6MSV7PXN7OSXCJ5EGMSLGLYFJ4QEPPMQWABD5JU5UPAOZM` | XLM xPortal - CDS..OZM | $11 | emits DeFindexVault events |
 | `CCM3CKJI7BBMZ357644KLAE6NH4D7JQ6MUJHSV4UBRWJY7IMGHBJRNGR` | Neko USDC - CCM..NGR | $8 | emits DeFindexVault events |
-| `CAQ6PAG4X6L7LJVGOKSQ6RU2LADWK4EQXRJGMUWL7SECS7LXUEQLM5U7` | Demo vault - CAQ..5U7 | $8 | **NO DeFindexVault events in lake** |
+| `CAQ6PAG4X6L7LJVGOKSQ6RU2LADWK4EQXRJGMUWL7SECS7LXUEQLM5U7` | Demo vault - CAQ..5U7 | $8 | ~~NO DeFindexVault events in lake~~ — ✅ now emits (2026-07-10, see below) |
 | `CBYTDU4JKTMFG5CNIUYJTOVMNIN5ADU2PDG4QWIUVT6SSVK3VTXYTF4K` | Neko - CBY..F4K | $7 | emits DeFindexVault events |
 | `CD65RR656FIX5LRC7M5RP46IE2MQFK5OEWRM6L6KLIJVUU222U3PFUAP` | Cofrinho PigFy - CD6..UAP | $6 | emits DeFindexVault events |
 | `CDI2ZW5CKT4OIHX3IGMVJ4VGOH6Z64N2M3URKATYJIX7JRITJFQJPFD7` | Neko Cetes - CDI..FD7 | $5 | emits DeFindexVault events |
-| `CAXRLUOSI7DL3SYNZW5UGRIPVNRKKSZTW35OX5DWKZSJ4PFEVA2VEFCQ` | Neko TESOURO - CAX..FCQ | $5 | **NO DeFindexVault events in lake** |
+| `CAXRLUOSI7DL3SYNZW5UGRIPVNRKKSZTW35OX5DWKZSJ4PFEVA2VEFCQ` | Neko TESOURO - CAX..FCQ | $5 | ~~NO DeFindexVault events in lake~~ — ✅ now emits (2026-07-10, see below) |
 | `CD6GVZTGH7L6NELM2YFCMBF7QAI6DFR25GPOQFKKAZQHVRLB5ZP46CYM` | TurboTestVaultNN - CD6..CYM | $4 | emits DeFindexVault events |
-| `CDKNDBBVLTSO2DSLTZOIF2A4NJWPXTGHD3WYSWBHYBJDKAX4JCKEFMHT` | TurboTestVaultNN - CDK..MHT | $3 | **NO DeFindexVault events in lake** |
+| `CDKNDBBVLTSO2DSLTZOIF2A4NJWPXTGHD3WYSWBHYBJDKAX4JCKEFMHT` | TurboTestVaultNN - CDK..MHT | $3 | ~~NO DeFindexVault events in lake~~ — ✅ now emits (2026-07-10, see below) |
 | `CAARFNLSJSACT7OWWJP6H5KFFD7T4BWL67OT5K3RRULHGW3C5DZP6Y6D` | TurboTestVaultNN - CAA..Y6D | $2 | emits DeFindexVault events |
-| `CAIFV6BSPN2UHGDSOJK7RLOEVBLQX6EAGIVJWVWSEI7ROLUGI3U2XDTP` | MultiAssetTestVault - CAI..DTP | $2 | **NO DeFindexVault events in lake** |
-| `CDPJEMZOYZLITC4MRLGJQHPMNCIB3TZ4R42J6M37PWP5Q2FGO4WFIXAD` | MultiAssetTestVault - CDP..XAD | $2 | **NO DeFindexVault events in lake** |
-| `CCFWKCD52JNSQLN5OS4F7EG6BPDT4IRJV6KODIEIZLWPM35IKHOKT6S2` | Palta Vault - CCF..6S2 | $1 | **NO DeFindexVault events in lake** |
-| `CDONBLOOTYZ7QN62ZLJFHK7CT3JCP3JEZDCRSG3VLGAP73QAXS7HF6HU` | XLM Boring - CDO..6HU | $1 | **NO DeFindexVault events in lake** |
-| `CA25XTGHKQ6PUMFJ4SDNRFMUABIFX46U7VAZBFDZKAOX5C3KZXUAR2KQ` | TurboTestVaultD2 - CA2..2KQ | $0 | **NO DeFindexVault events in lake** |
-| `CBHB2G4TMSVWE4YFDTFYRYNCP5KUT6RQVWQGIM4LQO2IKKHVDB7N5JJQ` | CETES Soroswap Earn - CBH..JJQ | $0 | **NO DeFindexVault events in lake** |
+| `CAIFV6BSPN2UHGDSOJK7RLOEVBLQX6EAGIVJWVWSEI7ROLUGI3U2XDTP` | MultiAssetTestVault - CAI..DTP | $2 | ~~NO DeFindexVault events in lake~~ — ✅ now emits (2026-07-10, see below) |
+| `CDPJEMZOYZLITC4MRLGJQHPMNCIB3TZ4R42J6M37PWP5Q2FGO4WFIXAD` | MultiAssetTestVault - CDP..XAD | $2 | ~~NO DeFindexVault events in lake~~ — ✅ now emits (2026-07-10, see below) |
+| `CCFWKCD52JNSQLN5OS4F7EG6BPDT4IRJV6KODIEIZLWPM35IKHOKT6S2` | Palta Vault - CCF..6S2 | $1 | ~~NO DeFindexVault events in lake~~ — ✅ now emits (2026-07-10, see below) |
+| `CDONBLOOTYZ7QN62ZLJFHK7CT3JCP3JEZDCRSG3VLGAP73QAXS7HF6HU` | XLM Boring - CDO..6HU | $1 | ~~NO DeFindexVault events in lake~~ — ✅ now emits (2026-07-10, see below) |
+| `CA25XTGHKQ6PUMFJ4SDNRFMUABIFX46U7VAZBFDZKAOX5C3KZXUAR2KQ` | TurboTestVaultD2 - CA2..2KQ | $0 | ~~NO DeFindexVault events in lake~~ — ✅ now emits (2026-07-10, see below) |
+| `CBHB2G4TMSVWE4YFDTFYRYNCP5KUT6RQVWQGIM4LQO2IKKHVDB7N5JJQ` | CETES Soroswap Earn - CBH..JJQ | $0 | ~~NO DeFindexVault events in lake~~ — ✅ now emits (2026-07-10, see below) |
 
 ## ⚠️ Updated questions for the DeFindex team
 
-1. The 19 no-event vaults: **which vault WASM versions emit the
-   `DeFindexVault` events, and what do the others emit** (if anything)
-   for deposit/withdraw/rebalance? We need per-version event schemas to
-   decode them (contract-schema-evolution).
-2. (Still open) Are the `BlendStrategy` contracts vault-created or
-   shared/independent?
+1. ~~The 19 no-event vaults: which vault WASM versions emit the
+   `DeFindexVault` events, and what do the others emit?~~ **✅ RESOLVED
+   2026-07-10** — all 19 now emit real `DeFindexVault` events; the
+   2026-06-12 snapshot was simply early (see "Vault enumeration" above).
+   No answer needed from the team.
+2. ~~Are the `BlendStrategy` contracts vault-created or
+   shared/independent?~~ **✅ ANSWERED 2026-07-10** — independently
+   deployed, referenced by vault configs (see "Resolved 2026-07-10 —
+   BlendStrategy factory-anchoring" below). No answer needed from the
+   team.
 3. Is the Dune registry (53 vaults) the complete authoritative set, and
-   how is it maintained — factory `create` call parsing?
+   how is it maintained — factory `create` call parsing? (Still open —
+   the structural vault-address gap below is now the only remaining
+   question.)
 
 ## ✅ Verification 2026-07-05 — gate evidence (lake tip 63,343,398)
 
@@ -335,10 +377,16 @@ extension) + `projector-replay`.
 
 ### Operator rollout (ADR-0040 §2 — deploy preconditions)
 
-1. Deploy the gated build (the in-code seed is the trust root;
-   `seed-protocol-contracts -source defindex` is a no-op today since the
-   factories' create events announce no children — install it anyway for
-   the day a factory WASM starts announcing them).
+1. Deploy the gated build (the in-code seed is the trust root for BOTH
+   vaults and strategies).
+   `seed-protocol-contracts -source defindex` walks the factories'
+   `create` events and, **as of 2026-07-10, is no longer a no-op**: the
+   body's `assets[].strategies[].address` field self-registers every
+   strategy into `protocol_contracts` (verified to exactly reproduce
+   `MainnetStrategies`, 16/16). It remains a no-op for VAULTS — their own
+   address still isn't in the body — so re-running it is safe (idempotent
+   upsert) but won't discover new vaults; that's still the curated-seed /
+   `protocol_contracts` manual path.
 2. Re-derive: `projector-replay -source defindex -from 57056338` (under
    `run-heavy-job.sh`). Replay is upsert-only, so ALSO delete the flagged
    contracts' rows:
@@ -360,12 +408,79 @@ extension) + `projector-replay`.
    aquarius `trades` cleanup this is a direct per-contract delete.)
 3. Verdict watch: one green `compute-completeness -ch` cycle for defindex.
 
-### Updated asks for the DeFindex team (2026-07-05)
+### Updated asks for the DeFindex team (2026-07-05, revised 2026-07-10)
 
-1. (Unchanged, still the structural gap) Can the vault address be
+1. (Unchanged, still the structural gap) Can the VAULT's own address be
    recovered from the `create` event or a factory view? Until then, every
-   new vault needs manual verification + seeding on our side.
+   new vault needs manual verification + seeding on our side. (The
+   strategy side of this question is answered — see below — a factory
+   view function for vaults would close the one remaining gap.)
 2. Please confirm or disown the 9 flagged emitters above — especially
    `CBGCGVKHVA4TG6MGQ3XTOEHEJXK4DYLOKTMR4UT4PZFPTQKLYXYRF6KV`.
-3. (Unchanged) The 19 Dune-registry vaults that never emit
-   `DeFindexVault` events: which WASM versions emit what?
+3. ~~The 19 Dune-registry vaults that never emit `DeFindexVault`
+   events: which WASM versions emit what?~~ **Withdrawn 2026-07-10** —
+   all 19 now emit `DeFindexVault` events; the 2026-06-12 snapshot was
+   simply early. No answer needed.
+
+## ✅ Resolved 2026-07-10 — BlendStrategy factory-anchoring
+
+**Question:** are `BlendStrategy` contracts created by their vaults
+(fan-out, Blend-pool-style) or shared/independently deployed?
+
+**Answer, from the raw lake:** independently deployed, and referenced
+by the vault's `create`-event CONFIG — not vault-created. Decoding the
+`create` event body (ClickHouse HTTP `:8123`, contract-scoped, all 3
+create-emitting factories, 2026-07-10) shows the shape:
+
+```
+Map {
+  assets: Vec<Map{
+    address: Address              # the basket asset (e.g. USDC SAC)
+    strategies: Vec<Map{
+      address: Address            # ← the BlendStrategy contract
+      name: String                # e.g. "blend_autocompound_fixed"
+      paused: Bool
+    }>
+  }>,
+  roles: Map<u32, Address>,
+  vault_fee: u32
+}
+```
+
+This is the SAME field proof B already relied on ("the contract address
+appears in a factory create event body") — what's new 2026-07-10 is
+confirming it MECHANICALLY, not just as a manual cross-check: extracting
+`assets[].strategies[].address` from all 117 create/n_fee-shaped bodies
+across the 3 create-emitting factories (`CDKFHFJI…`, `CAVP2QLP…`,
+`CDOIC724…`) reproduces `defindex.MainnetStrategies` **exactly — 16/16,
+zero extra, zero missing**. The 6 flagged no-proof-B strategies are
+correctly absent (2 predate the earliest factory create event at
+55,484,403 — pre-factory dev/rehearsal deployments that structurally
+cannot carry this proof; the other 4 postdate it but were never
+referenced by any vault's create body — orphaned deployments no vault
+adopted). The schema is byte-identical on the earliest factory
+(`CAVP2QLP…`, ledger 55,484,403) and the current one (`CDKFHFJI…`),
+confirming it hasn't changed across the protocol's history.
+
+**Gate wiring shipped 2026-07-10** (`internal/sources/defindex/decode.go`
+`decodeFactoryCreateStrategies`, wired in `dispatcher_adapter.go`
+`Decode`): a `create` event from a canonical factory now Seeds every
+strategy address its body announces into the `contractid.Registry` —
+the same live-upsert path Blend/Soroswap/Aquarius use for their
+factory-anchored fan-out. A new BlendStrategy deployment self-registers
+in the same tx it's created, with NO operator step and NO code change —
+closing that half of ADR-0040's "curated-set gate" classification for
+defindex to a genuine factory-anchored gate. **The vault side is
+unaffected and unchanged**: no create body has ever been observed to
+carry the new vault's own address (confirmed again in this same
+117-body sweep), so `MainnetVaults` remains curated-set only per the
+"Open question" above — this is a permanent architectural fact about
+the DeFindex factory contract, not a temporary gap pending more
+evidence, unless the team can point to a decodable source for it
+(factory view function, salt/deployer derivation, or the authoritative
+list per the three-way ask above).
+
+Golden real-lake-bytes tests: `internal/sources/defindex/decode_test.go`
+`TestDecode_factoryCreate_seedsStrategiesFromRealLakeBytes` (3 cases —
+two-strategy body, zero-strategy body, and the earliest-factory body) and
+`TestDecode_factoryCreate_malformedBodyErrors`.

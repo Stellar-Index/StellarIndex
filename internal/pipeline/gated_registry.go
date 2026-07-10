@@ -111,14 +111,22 @@ var gatedSources = map[string]GatedMeta{
 		NewDecoder:  func(opts ...contractid.Option) dispatcher.Decoder { return aquarius.NewDecoder(opts...) },
 	},
 	defindex.SourceName: {
-		// Curated-set gate (ADR-0040 §1 mechanism 2): the factory
-		// `create` event does NOT carry the new vault's address, so
-		// the deploy-graph cannot self-register children — the
-		// decoder's in-code evidence-verified seed (MainnetGatedSet)
-		// is the trust root. This entry adds the protocol_contracts
-		// warm (the operator seam for admitting newly verified
-		// vaults WITHOUT a redeploy) + the live-upsert hook (a no-op
-		// unless a future factory WASM announces children decodably).
+		// Mixed gate (ADR-0035/0040, ROADMAP #7 residual 2026-07-10):
+		// the factory `create` event does NOT carry the new VAULT's
+		// address, so the deploy-graph cannot self-register vaults —
+		// the decoder's in-code evidence-verified seed (MainnetVaults)
+		// remains the trust root for that half of the set. STRATEGIES
+		// are different: the same `create` body DOES carry each
+		// asset's assigned BlendStrategy address(es)
+		// (defindex.decodeFactoryCreateStrategies), so this entry's
+		// live-upsert hook is an ACTIVE fan-out for strategies (no
+		// longer the "no-op unless a future WASM announces children"
+		// case other curated-set sources are in) — a new strategy
+		// self-registers the same tx it's created in, converging with
+		// MainnetStrategies at the next seed-protocol-contracts /
+		// restart. The protocol_contracts warm still exists for BOTH
+		// halves (it's the operator seam for admitting a newly
+		// verified VAULT without a redeploy).
 		Factories:   defindex.MainnetFactories,
 		CreationSym: "create",
 		Genesis:     55_484_403, // earliest factory create event (CAVP2QLP…)

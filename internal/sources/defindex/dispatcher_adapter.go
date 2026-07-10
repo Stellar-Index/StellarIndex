@@ -25,22 +25,30 @@ import (
 type Decoder struct {
 	// reg gates Matches() on contract identity. The factory trust
 	// roots (MainnetFactories) gate factory events; children come
-	// from the curated in-code seed + the protocol_contracts warm.
-	// NOTE: unlike blend, the factory `create` event does NOT carry
-	// the new vault's address, so there is no live fan-out — a new
-	// vault fail-closes into a recognition gap until it is verified
-	// and seeded (docs/protocols/defindex.md).
+	// from the curated in-code seed + the protocol_contracts warm,
+	// PLUS live fan-out for the strategy layer only (ROADMAP #7
+	// residual 2026-07-10): a factory `create` event's body carries
+	// each asset's assigned BlendStrategy address(es)
+	// (decodeFactoryCreateStrategies), so Decode Seeds them the same
+	// way Blend/Soroswap/Aquarius self-register their children. The
+	// VAULT'S OWN address is never carried by any observed create
+	// body — that structural gap is unchanged; a new vault still
+	// fail-closes into a recognition gap until it is verified and
+	// seeded (docs/protocols/defindex.md).
 	reg *contractid.Registry
 }
 
 // NewDecoder constructs a defindex Decoder. Contract-identity gating
 // (ADR-0035/0040): the curated mainnet set (vault wrappers +
-// strategies, docs/protocols/defindex.md) is ALWAYS seeded — the
-// deploy-graph cannot be reconstructed from creation events (they
-// omit the vault address), so the in-code evidence-verified seed is
-// the trust root. Caller opts layer the protocol_contracts DB warm +
-// live-upsert hook on top (the hook only fires if a future factory
-// WASM ever announces children in a decodable way).
+// strategies, docs/protocols/defindex.md) is ALWAYS seeded — this is
+// still the trust root for VAULTS (the deploy-graph cannot be
+// reconstructed from creation events for them; they omit the vault
+// address) and the safety net for strategies on a cold start /
+// pre-replay boot. Caller opts layer the protocol_contracts DB warm +
+// live-upsert hook on top; live strategy fan-out
+// (decodeFactoryCreateStrategies) keeps the strategy half of the set
+// current across restarts via that same hook, no code change needed
+// for a future BlendStrategy deployment.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{
 		contractid.WithFactories(MainnetFactories),
@@ -62,12 +70,15 @@ func (d *Decoder) Name() string { return SourceName }
 //     ([], nil) for them — recognised for EVERY-event-policy
 //     completeness, not decoded into a flow.
 //
-// COVERAGE NOTE (ADR-0035): an un-seeded real vault fail-closes into
+// COVERAGE NOTE (ADR-0035): an un-seeded real VAULT fail-closes into
 // an ADR-0033 recognition gap — visible, never silently
-// mis-attributed. Because the create event omits the child address,
-// closing such a gap is an operator step (verify provenance, then
-// seed protocol_contracts / extend the in-code set) rather than
-// automatic fan-out.
+// mis-attributed. Because the create event omits the vault's own
+// address, closing such a gap is an operator step (verify
+// provenance, then seed protocol_contracts / extend the in-code set)
+// rather than automatic fan-out. A new STRATEGY, by contrast,
+// self-registers: its address IS carried in the create event body
+// (decodeFactoryCreateStrategies), so Decode seeds it automatically
+// the same tx it's created in — no operator step needed.
 func (d *Decoder) Matches(ev events.Event) bool {
 	if classify(&ev) != "" || classifyVault(&ev) != "" {
 		return d.reg.Has(ev.ContractID)
@@ -79,13 +90,14 @@ func (d *Decoder) Matches(ev events.Event) bool {
 // matched flow — Event (strategy layer) or VaultEvent (vault
 // wrapper layer) — for the deposit/withdraw events we model. Every
 // OTHER recognised topic (strategy harvest; vault rebalance + the
-// eight admin events; factory create / n_fee) drops cleanly with
-// (nil, nil): "match, nothing to emit". Returning an ERROR is a
-// "skip + count-as-decode-error" signal, reserved for genuinely
-// malformed deposit/withdraw bodies — NOT for topics we recognise
-// but intentionally don't model yet (BACKLOG #58). Filing those as
-// decode errors would inflate the source's decode-error counter for
-// normal upstream traffic.
+// eight admin events; factory `n_fee`) drops cleanly with (nil, nil):
+// "match, nothing to emit". Returning an ERROR is a "skip +
+// count-as-decode-error" signal, reserved for genuinely malformed
+// deposit/withdraw bodies (and, as of ROADMAP #7, genuinely malformed
+// `create` bodies — see decodeFactoryCreateStrategies) — NOT for
+// topics we recognise but intentionally don't model yet (BACKLOG
+// #58). Filing those as decode errors would inflate the source's
+// decode-error counter for normal upstream traffic.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	if kind := classify(&ev); kind != "" {
 		return d.decodeStrategy(&ev, kind)
@@ -93,12 +105,27 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	if kind := classifyVault(&ev); kind != "" {
 		return d.decodeVault(&ev, kind)
 	}
-	if classifyFactory(&ev) != "" {
-		// Factory create / n_fee — recognised so the dispatcher's
-		// drop-counter doesn't file them as "unmatched topic", but
-		// no consumer.Event yet (body decode is Phase C; the body
-		// does NOT carry the new vault's address, so there is no
-		// registry fan-out to do here either).
+	if kind := classifyFactory(&ev); kind != "" {
+		if kind == EventCreate {
+			// A create event never produces a consumer.Event, but its
+			// body DOES carry the new BlendStrategy address(es)
+			// (decodeFactoryCreateStrategies) — Seed them into the
+			// registry (fan-out, ROADMAP #7 residual 2026-07-10) the
+			// same way Blend/Soroswap/Aquarius self-register. Matches()
+			// already guaranteed ev.ContractID is a canonical factory
+			// (trust root), so every extracted address is genuine
+			// DeFindex-strategy provenance.
+			strategies, err := decodeFactoryCreateStrategies(&ev)
+			if err != nil {
+				return nil, err
+			}
+			for _, strategy := range strategies {
+				d.reg.Seed(strategy, ev.ContractID, ev.Ledger)
+			}
+		}
+		// create / n_fee — recognised so the dispatcher's drop-counter
+		// doesn't file them as "unmatched topic"; neither is itself a
+		// consumer.Event.
 		return nil, nil
 	}
 	// Defensive — Matches should have filtered.

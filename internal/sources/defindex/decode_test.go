@@ -313,23 +313,154 @@ func TestClassifyFactory_createNfee(t *testing.T) {
 // `ErrUnknownEvent` sentinel — for a factory match. This is the
 // closed-loop completeness check: Matches() returns true → Decode()
 // returns no error and no events, the event is consumed cleanly
-// rather than recorded as an unmatched-topic drop.
+// rather than recorded as an unmatched-topic drop. Uses `n_fee`
+// (never body-decoded, so a bare Value is fine) — the `create` path's
+// body decode is covered separately by
+// TestDecode_factoryCreate_seedsStrategiesFromRealLakeBytes since
+// ROADMAP #7 (2026-07-10) made `create` parse its body.
 func TestDecode_factoryEvent_isClassifiedButEmits0Events(t *testing.T) {
 	t.Parallel()
 	d := NewDecoder()
 	// The gate (ADR-0035/0040) only honours factory events from the
 	// canonical trust roots — a create from a foreign contract is
 	// rejected (TestDecoder_GateRejectsForeignContract).
-	ev := events.Event{ContractID: MainnetFactories[0], Topic: []string{TopicPrefixFactory, TopicSymbolCreate}}
+	ev := events.Event{ContractID: MainnetFactories[0], Topic: []string{TopicPrefixFactory, TopicSymbolNFee}}
 	if !d.Matches(ev) {
-		t.Fatal("Matches(factory create) = false, want true")
+		t.Fatal("Matches(factory n_fee) = false, want true")
 	}
 	out, err := d.Decode(ev)
 	if err != nil {
-		t.Errorf("Decode(factory create) err = %v, want nil", err)
+		t.Errorf("Decode(factory n_fee) err = %v, want nil", err)
 	}
 	if len(out) != 0 {
-		t.Errorf("Decode(factory create) emitted %d events, want 0", len(out))
+		t.Errorf("Decode(factory n_fee) emitted %d events, want 0", len(out))
+	}
+}
+
+// ─── Factory `create` → strategy fan-out (ROADMAP #7, 2026-07-10) ──
+//
+// Real lake bytes (data_xdr) captured 2026-07-10 via ClickHouse HTTP
+// against r1's certified raw lake, contract-scoped to the 3
+// create-emitting DeFindexFactory instances. Each constant is one
+// full `("DeFindexFactory","create")` event body, byte-identical to
+// what the contract emitted on-chain.
+const (
+	// createBodyTwoStrategies — CDKFHFJI… (current factory), ledger
+	// 57,057,068. One asset with TWO strategies:
+	// CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP
+	// ("blend_autocompound_fixed") and
+	// CCSRX5E4337QMCMC3KO3RDFYI57T5NZV5XB3W3TWE4USCASKGL5URKJL
+	// ("blend_autocompound_yieldblox") — both members of
+	// MainnetStrategies.
+	createBodyTwoStrategies = "AAAAEQAAAAEAAAADAAAADwAAAAZhc3NldHMAAAAAABAAAAABAAAAAQAAABEAAAABAAAAAgAAAA8AAAAHYWRkcmVzcwAAAAASAAAAAa3vzlmu5Slo92Bh1JTCUlt1ZZ+kKWpl9JnvKeVkd+SWAAAADwAAAApzdHJhdGVnaWVzAAAAAAAQAAAAAQAAAAIAAAARAAAAAQAAAAMAAAAPAAAAB2FkZHJlc3MAAAAAEgAAAAHDqzFQg2uWEDj8Pmz0XyfQAsmsz8xqj9ZUxEsr93IBXAAAAA8AAAAEbmFtZQAAAA4AAAAYYmxlbmRfYXV0b2NvbXBvdW5kX2ZpeGVkAAAADwAAAAZwYXVzZWQAAAAAAAAAAAAAAAAAEQAAAAEAAAADAAAADwAAAAdhZGRyZXNzAAAAABIAAAABpRv0nN7/BgmC2p24jLhHfz63Ne3Du252JykhAkoy+0gAAAAPAAAABG5hbWUAAAAOAAAAHGJsZW5kX2F1dG9jb21wb3VuZF95aWVsZGJsb3gAAAAPAAAABnBhdXNlZAAAAAAAAAAAAAAAAAAPAAAABXJvbGVzAAAAAAAAEQAAAAEAAAAEAAAAAwAAAAAAAAASAAAAAAAAAAA/yG0JmrdjpOcWUQkJHLRLd1OhvkvZDYFcHc7gVBDUmQAAAAMAAAABAAAAEgAAAAAAAAAAixJCFtWLc+peA9dQXbhNguV6nHi4456Q+b2VWsg3JIUAAAADAAAAAgAAABIAAAAAAAAAAJ8DBa6Ko1Zw7Uo5qB28HTW2ZtZrKsggNIY4eX8/F0FiAAAAAwAAAAMAAAASAAAAAAAAAAANx5WIC2/uT2FiHgSp7KMg/li5+cX+rFbIaNgZKoQ7ygAAAA8AAAAJdmF1bHRfZmVlAAAAAAAAAwAAB9A="
+
+	// createBodyZeroStrategies — CDKFHFJI…, ledger 57,147,588. One
+	// asset with an EMPTY strategies Vec — a legitimate, observed
+	// on-chain shape (a vault created with no strategy attached yet),
+	// not malformed.
+	createBodyZeroStrategies = "AAAAEQAAAAEAAAADAAAADwAAAAZhc3NldHMAAAAAABAAAAABAAAAAQAAABEAAAABAAAAAgAAAA8AAAAHYWRkcmVzcwAAAAASAAAAASAi1W4KumRRb25iYE0pYjK+hk/9+4TVhhPnQjys4CsoAAAADwAAAApzdHJhdGVnaWVzAAAAAAAQAAAAAQAAAAAAAAAPAAAABXJvbGVzAAAAAAAAEQAAAAEAAAAEAAAAAwAAAAAAAAASAAAAAAAAAABuCGdDDiAqa8Ozjwj2jTBN1K57+trQBkkwYN0L5b4o6AAAAAMAAAABAAAAEgAAAAAAAAAAbghnQw4gKmvDs48I9o0wTdSue/ra0AZJMGDdC+W+KOgAAAADAAAAAgAAABIAAAAAAAAAAG4IZ0MOICprw7OPCPaNME3Urnv62tAGSTBg3QvlvijoAAAAAwAAAAMAAAASAAAAAAAAAABuCGdDDiAqa8Ozjwj2jTBN1K57+trQBkkwYN0L5b4o6AAAAA8AAAAJdmF1bHRfZmVlAAAAAAAAAwAAB9A="
+
+	// createBodyEarliestFactory — CAVP2QLP… (the earliest of the 4
+	// factories), ledger 55,484,403. One asset with ONE strategy:
+	// CBTX63BX2I6E2VG2SMFQXDHLAPDOANUWBTMXQNWBV2FT6DIMVQPCSOBW
+	// ("Blend Strategy") — confirms the field layout is
+	// byte-identical across the factory-era history, not just on the
+	// current factory.
+	createBodyEarliestFactory = "AAAAEQAAAAEAAAADAAAADwAAAAZhc3NldHMAAAAAABAAAAABAAAAAQAAABEAAAABAAAAAgAAAA8AAAAHYWRkcmVzcwAAAAASAAAAASW0/NhZrsL6Y0hDjEibPDwQyYttIb5P08swy2iVPvl3AAAADwAAAApzdHJhdGVnaWVzAAAAAAAQAAAAAQAAAAEAAAARAAAAAQAAAAMAAAAPAAAAB2FkZHJlc3MAAAAAEgAAAAFnf2w30jxNVNqTCwuM6wPG4DaWDNl4NsGuiz8NDKweKQAAAA8AAAAEbmFtZQAAAA4AAAAOQmxlbmQgU3RyYXRlZ3kAAAAAAA8AAAAGcGF1c2VkAAAAAAAAAAAAAAAAAA8AAAAFcm9sZXMAAAAAAAARAAAAAQAAAAQAAAADAAAAAAAAABIAAAAAAAAAAI/sKanankkaQEGC08WiRi97yjWn3C73URmgU+eSxFGvAAAAAwAAAAEAAAASAAAAAAAAAACP7Cmp2p5JGkBBgtPFokYve8o1p9wu91EZoFPnksRRrwAAAAMAAAACAAAAEgAAAAAAAAAAj+wpqdqeSRpAQYLTxaJGL3vKNafcLvdRGaBT55LEUa8AAAADAAAAAwAAABIAAAAAAAAAAI/sKanankkaQEGC08WiRi97yjWn3C73URmgU+eSxFGvAAAADwAAAAl2YXVsdF9mZWUAAAAAAAADAAAAZA=="
+)
+
+// TestDecode_factoryCreate_seedsStrategiesFromRealLakeBytes pins the
+// live strategy fan-out (ROADMAP #7, 2026-07-10): a `create` event
+// from a canonical factory trust root Seeds every strategy address
+// its body announces, and the strategy immediately passes Matches()
+// for its own BlendStrategy flow topics — no operator step, no code
+// change, matching the Blend/Soroswap/Aquarius fan-out pattern.
+func TestDecode_factoryCreate_seedsStrategiesFromRealLakeBytes(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		factory    string
+		body       string
+		wantSeeded []string
+	}{
+		{
+			name:    "two strategies (current factory)",
+			factory: "CDKFHFJIET3A73A2YN4KV7NSV32S6YGQMUFH3DNJXLBWL4SKEGVRNFKI",
+			body:    createBodyTwoStrategies,
+			wantSeeded: []string{
+				"CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP",
+				"CCSRX5E4337QMCMC3KO3RDFYI57T5NZV5XB3W3TWE4USCASKGL5URKJL",
+			},
+		},
+		{
+			name:       "zero strategies is legitimate, not malformed",
+			factory:    "CDKFHFJIET3A73A2YN4KV7NSV32S6YGQMUFH3DNJXLBWL4SKEGVRNFKI",
+			body:       createBodyZeroStrategies,
+			wantSeeded: nil,
+		},
+		{
+			name:       "earliest factory — same field layout",
+			factory:    "CAVP2QLPIG7FQNHI57KXF7KS6NIAAUQKHZZDM3AGVADE64WHFBC5YURX",
+			body:       createBodyEarliestFactory,
+			wantSeeded: []string{"CBTX63BX2I6E2VG2SMFQXDHLAPDOANUWBTMXQNWBV2FT6DIMVQPCSOBW"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := NewDecoder() // fresh registry per case — curated set already contains these, so use a bare (unseeded) child gate to prove the SEED, not the curated fallback
+			d.reg = contractid.New(contractid.WithFactories(MainnetFactories))
+
+			ev := events.Event{
+				Ledger:     60_000_000,
+				ContractID: tc.factory,
+				Topic:      []string{TopicPrefixFactory, TopicSymbolCreate},
+				Value:      tc.body,
+			}
+			if !d.Matches(ev) {
+				t.Fatal("Matches(create) = false, want true (canonical factory)")
+			}
+			out, err := d.Decode(ev)
+			if err != nil {
+				t.Fatalf("Decode(create) err = %v, want nil", err)
+			}
+			if len(out) != 0 {
+				t.Errorf("Decode(create) emitted %d consumer.Event(s), want 0", len(out))
+			}
+			for _, want := range tc.wantSeeded {
+				if !d.reg.Has(want) {
+					t.Errorf("strategy %s not seeded after Decode(create)", want)
+				}
+				// The newly-seeded strategy must now pass its own
+				// BlendStrategy flow gate — the whole point of fan-out.
+				flowEv := events.Event{ContractID: want, Topic: []string{TopicPrefixStrategy, TopicSymbolDeposit}}
+				if !d.Matches(flowEv) {
+					t.Errorf("strategy %s seeded but its own deposit topic still fails to match", want)
+				}
+			}
+		})
+	}
+}
+
+// TestDecode_factoryCreate_malformedBodyErrors pins that a `create`
+// event whose body doesn't have the expected top-level `assets` Map
+// field is a genuine decode error (ErrMalformedPayload) — unlike
+// harvest/rebalance/admin topics, which are recognised-but-unmodelled
+// and must NOT error (BACKLOG #58 policy).
+func TestDecode_factoryCreate_malformedBodyErrors(t *testing.T) {
+	t.Parallel()
+	d := NewDecoder()
+	ev := events.Event{
+		ContractID: MainnetFactories[0],
+		Topic:      []string{TopicPrefixFactory, TopicSymbolCreate},
+		Value:      mustB64(t, i128SCVal(big.NewInt(1))), // not a Map at all
+	}
+	if !d.Matches(ev) {
+		t.Fatal("Matches(create) = false, want true")
+	}
+	_, err := d.Decode(ev)
+	if !errors.Is(err, ErrMalformedPayload) {
+		t.Errorf("Decode(malformed create) err = %v, want ErrMalformedPayload", err)
 	}
 }
 
