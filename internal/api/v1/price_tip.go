@@ -332,6 +332,20 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 		return PriceSnapshot{}, nil, false
 	}
 
+	// dex-nonstandard-decimals forward normalization. /v1/price/tip (and
+	// its SSE sibling /v1/price/tip/stream, which shares this function)
+	// had NO decline guard at all — declineIfNonstandardDecimals's
+	// original four-endpoint list omitted the tip surface, so a confirmed
+	// non-7-decimals asset's skewed price was reaching customers here
+	// live and unguarded even after the 2026-07-09 guard shipped. Scaling
+	// the ratio below closes that gap directly rather than adding a
+	// decline (the compute is query-time-only here, same as VWAP/TWAP/
+	// OHLC single-bar, so normalizing is safe). No-op for any pair with
+	// no confirmed non-7-decimals leg.
+	price = aggregate.AdjustPrice(price,
+		aggregate.ResolveDecimals(s.nonstandardDecimals, asset),
+		aggregate.ResolveDecimals(s.nonstandardDecimals, quote))
+
 	sources := distinctTradeSources(trades)
 	return PriceSnapshot{
 		AssetID:       asset.String(),

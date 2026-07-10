@@ -97,18 +97,21 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// dex-nonstandard-decimals read-time guard — covers BOTH the
-	// single-bar and multi-bar series branches below, since both share
-	// this resolved pair. See declineIfNonstandardDecimals.
-	if s.declineIfNonstandardDecimals(w, r, base, quote) {
-		return
-	}
-
 	// Branch to the multi-bar series handler when `interval` is
 	// supplied. Invalid intervals 400 before any other work.
 	if raw := r.URL.Query().Get("interval"); raw != "" {
 		interval, ok := parseOHLCInterval(w, r, raw)
 		if !ok {
+			return
+		}
+		// dex-nonstandard-decimals read-time guard — series mode reads
+		// the prices_<n> continuous aggregates (migration 0002), which
+		// remain raw (unnormalized) for a confirmed non-7-decimals leg;
+		// see declineIfNonstandardDecimals and docs/operations/runbooks/
+		// dex-nonstandard-decimals.md "Root cause analysis". The
+		// single-bar branch below does NOT need this guard — it computes
+		// from raw trades at query time and is normalized directly.
+		if s.declineIfNonstandardDecimals(w, r, base, quote) {
 			return
 		}
 		s.handleOHLCSeries(w, r, pair, interval)
@@ -173,6 +176,18 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
+
+	// dex-nonstandard-decimals forward normalization: ComputeOHLC derives
+	// every one of Open/High/Low/Close from the same raw quote/base ratio
+	// VWAP uses, so the SAME per-pair scalar factor corrects all four —
+	// see aggregate.AdjustPrice's doc comment for why a post-hoc multiply
+	// is exact here. No-op for a pair with no confirmed non-7-decimals leg.
+	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, base)
+	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, quote)
+	bar.Open = aggregate.AdjustPrice(bar.Open, baseDec, quoteDec)
+	bar.High = aggregate.AdjustPrice(bar.High, baseDec, quoteDec)
+	bar.Low = aggregate.AdjustPrice(bar.Low, baseDec, quoteDec)
+	bar.Close = aggregate.AdjustPrice(bar.Close, baseDec, quoteDec)
 
 	writeJSON(w, OHLCBar{
 		From:        from,

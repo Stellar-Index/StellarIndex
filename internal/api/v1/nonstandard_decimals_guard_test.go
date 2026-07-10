@@ -2,12 +2,14 @@ package v1_test
 
 import (
 	"context"
+	"math/big"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
 
@@ -131,30 +133,80 @@ func TestPrice_NonstandardDecimals_NoCacheWired_ServesNormally(t *testing.T) {
 	}
 }
 
-// TestVWAP_NonstandardDecimals_Declines proves the same guard fires on
-// /v1/vwap's choke point (base/quote resolved via parseBaseQuote).
-func TestVWAP_NonstandardDecimals_Declines(t *testing.T) {
+// TestVWAP_NonstandardDecimals_Normalizes proves /v1/vwap no longer
+// declines a confirmed non-7-decimals pair — since 2026-07-10 it computes
+// entirely from raw trades at query time, so the fix is to serve the
+// CORRECTED price (aggregate.AdjustPrice) rather than 422. See
+// docs/operations/runbooks/dex-nonstandard-decimals.md "Root cause
+// analysis". flaggedAsset is declared decimals()=18 here; base_amount =
+// 2.5*10^18, quote_amount = 1.242*10^7 (USDC, 7dp) → true price 0.4968,
+// the SAME golden case as internal/aggregate's TestAdjustPrice_Golden18DecimalToken.
+func TestVWAP_NonstandardDecimals_Normalizes(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 18)
+	baseAmount, ok := new(big.Int).SetString("2500000000000000000", 10)
+	if !ok {
+		t.Fatal("bad big.Int literal")
+	}
+	xlmUSD, err := canonical.ParseAsset(flaggedAsset)
+	if err != nil {
+		t.Fatalf("ParseAsset: %v", err)
+	}
+	usd, _ := canonical.ParseAsset("fiat:USD")
+	pair, err := canonical.NewPair(xlmUSD, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	trade := canonical.Trade{
+		Source:      "aquarius",
+		Ledger:      1,
+		TxHash:      "0000000000000000000000000000000000000000000000000000000000000001",
+		Timestamp:   time.Unix(1_772_000_000, 0).UTC(),
+		Pair:        pair,
+		BaseAmount:  canonical.NewAmount(baseAmount),
+		QuoteAmount: canonical.NewAmount(big.NewInt(12_420_000)),
+	}
 	srv := v1.New(v1.Options{
-		History:             &stubHistoryReader{}, // must never be reached
+		History:             &stubHistoryReader{trades: []canonical.Trade{trade}},
 		NonstandardDecimals: cache,
 	})
 	ts := startHTTPTest(t, srv.Handler())
 
 	resp := mustGet(t, ts.URL+"/v1/vwap?base="+flaggedAsset+"&quote=fiat:USD")
-	if resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d, want 422", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (query-time compute is normalized, not declined)", resp.StatusCode)
 	}
-	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
-		t.Errorf("Cache-Control = %q, want no-store", got)
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"price":"0.4968000000"`) {
+		t.Errorf("body missing normalized price 0.4968000000: %s", body)
 	}
 }
 
-// TestHistory_NonstandardDecimals_Declines proves the guard fires on
-// /v1/history before TradesInRangeAfter is ever called.
-func TestHistory_NonstandardDecimals_Declines(t *testing.T) {
+// TestHistory_NonstandardDecimals_Normalizes proves /v1/history no longer
+// declines — it reads exclusively from raw trades (TradesInRangeAfter),
+// so the per-row Price field is corrected instead.
+func TestHistory_NonstandardDecimals_Normalizes(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
-	reader := &stubHistoryReader{}
+	xlmUSD, err := canonical.ParseAsset(flaggedAsset)
+	if err != nil {
+		t.Fatalf("ParseAsset: %v", err)
+	}
+	usd, _ := canonical.ParseAsset("fiat:USD")
+	pair, err := canonical.NewPair(xlmUSD, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	// base 100 * 10^9 (9dp), quote 250 * 10^7 (7dp fiat) → true price
+	// 250/100 = 2.5.
+	trade := canonical.Trade{
+		Source:      "aquarius",
+		Ledger:      1,
+		TxHash:      "0000000000000000000000000000000000000000000000000000000000000001",
+		Timestamp:   time.Unix(1_772_000_000, 0).UTC(),
+		Pair:        pair,
+		BaseAmount:  canonical.NewAmount(big.NewInt(100_000_000_000)),
+		QuoteAmount: canonical.NewAmount(big.NewInt(2_500_000_000)),
+	}
+	reader := &stubHistoryReader{trades: []canonical.Trade{trade}}
 	srv := v1.New(v1.Options{
 		History:             reader,
 		NonstandardDecimals: cache,
@@ -162,51 +214,93 @@ func TestHistory_NonstandardDecimals_Declines(t *testing.T) {
 	ts := startHTTPTest(t, srv.Handler())
 
 	resp := mustGet(t, ts.URL+"/v1/history?base="+flaggedAsset+"&quote=fiat:USD")
-	if resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d, want 422", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (raw-trade path is normalized, not declined)", resp.StatusCode)
 	}
-	if reader.lastCall.limit != 0 {
-		t.Error("TradesInRangeAfter appears to have been called — the guard must short-circuit before any storage read")
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"price":"2.5000000000"`) {
+		t.Errorf("body missing normalized price 2.5000000000: %s", body)
 	}
 }
 
-// TestOHLC_NonstandardDecimals_Declines proves the guard fires on
-// /v1/ohlc for both the single-bar and interval=series modes (same
-// resolved pair, same call site).
-func TestOHLC_NonstandardDecimals_Declines(t *testing.T) {
+// TestOHLC_NonstandardDecimals proves the split behaviour: single-bar
+// mode (raw trades, query-time) normalizes and serves 200; interval=
+// series mode (prices_<n> CAGG, still unnormalized) keeps declining.
+func TestOHLC_NonstandardDecimals(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	xlmUSD, err := canonical.ParseAsset(flaggedAsset)
+	if err != nil {
+		t.Fatalf("ParseAsset: %v", err)
+	}
+	usd, _ := canonical.ParseAsset("fiat:USD")
+	pair, err := canonical.NewPair(xlmUSD, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	trade := canonical.Trade{
+		Source:      "aquarius",
+		Ledger:      1,
+		TxHash:      "0000000000000000000000000000000000000000000000000000000000000001",
+		Timestamp:   time.Unix(1_772_000_000, 0).UTC(),
+		Pair:        pair,
+		BaseAmount:  canonical.NewAmount(big.NewInt(100_000_000_000)),
+		QuoteAmount: canonical.NewAmount(big.NewInt(2_500_000_000)),
+	}
 	srv := v1.New(v1.Options{
-		History:             &stubHistoryReader{},
+		History:             &stubHistoryReader{trades: []canonical.Trade{trade}},
 		NonstandardDecimals: cache,
 	})
 	ts := startHTTPTest(t, srv.Handler())
 
-	for _, url := range []string{
-		ts.URL + "/v1/ohlc?base=" + flaggedAsset + "&quote=fiat:USD",
-		ts.URL + "/v1/ohlc?base=" + flaggedAsset + "&quote=fiat:USD&interval=1h",
-	} {
-		resp := mustGet(t, url)
-		if resp.StatusCode != http.StatusUnprocessableEntity {
-			t.Errorf("%s: status = %d, want 422", url, resp.StatusCode)
-		}
+	resp := mustGet(t, ts.URL+"/v1/ohlc?base="+flaggedAsset+"&quote=fiat:USD")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("single-bar: status = %d, want 200 (normalized, not declined)", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"open":"2.5000000000"`) {
+		t.Errorf("single-bar body missing normalized open 2.5000000000: %s", body)
+	}
+
+	resp = mustGet(t, ts.URL+"/v1/ohlc?base="+flaggedAsset+"&quote=fiat:USD&interval=1h")
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("series mode: status = %d, want 422 (still CAGG-backed, still declined)", resp.StatusCode)
 	}
 }
 
-// TestTWAP_NonstandardDecimals_Declines proves the guard fires on
-// /v1/twap too — TWAP over mis-scaled trades is exactly as wrong as
-// VWAP over them (integration review 2026-07-09; the original guard
-// omitted /v1/twap only because the founding incident's pair had no
-// TWAP consumers).
-func TestTWAP_NonstandardDecimals_Declines(t *testing.T) {
+// TestTWAP_NonstandardDecimals_Normalizes proves /v1/twap no longer
+// declines — same rationale as /v1/vwap.
+func TestTWAP_NonstandardDecimals_Normalizes(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	xlmUSD, err := canonical.ParseAsset(flaggedAsset)
+	if err != nil {
+		t.Fatalf("ParseAsset: %v", err)
+	}
+	usd, _ := canonical.ParseAsset("fiat:USD")
+	pair, err := canonical.NewPair(xlmUSD, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	trade := canonical.Trade{
+		Source:      "aquarius",
+		Ledger:      1,
+		TxHash:      "0000000000000000000000000000000000000000000000000000000000000001",
+		Timestamp:   time.Now().Add(-time.Minute),
+		Pair:        pair,
+		BaseAmount:  canonical.NewAmount(big.NewInt(100_000_000_000)),
+		QuoteAmount: canonical.NewAmount(big.NewInt(2_500_000_000)),
+	}
 	srv := v1.New(v1.Options{
-		History:             &stubHistoryReader{},
+		History:             &stubHistoryReader{trades: []canonical.Trade{trade}},
 		NonstandardDecimals: cache,
 	})
 	ts := startHTTPTest(t, srv.Handler())
 
 	resp := mustGet(t, ts.URL+"/v1/twap?base="+flaggedAsset+"&quote=fiat:USD")
-	if resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d, want 422", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (query-time compute is normalized, not declined)", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"price":"2.5000000000"`) {
+		t.Errorf("body missing normalized price 2.5000000000: %s", body)
 	}
 }

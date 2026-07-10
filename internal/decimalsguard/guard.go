@@ -21,11 +21,16 @@
 // Soroban token from the certified lake and raises
 // obs.DEXTradeNonstandardDecimalsTotal the moment one is != 7 — turning a
 // silent landmine into a loud, per-asset signal (the analogue of the
-// FX-freshness alert). The forward-looking NORMALIZATION (dividing the
-// ratio by 10^(dec_base−dec_quote)) is a deferred follow-up: it cannot be
-// applied consistently without rewriting the decade-deep prices_* CAGGs,
-// which is not warranted for a latent, not-yet-firing risk. See the runbook
-// docs/operations/runbooks/dex-nonstandard-decimals.md.
+// FX-freshness alert), and (via Writer/UpsertNonstandardDecimalsAsset)
+// the confirmed source of truth other packages consume. The forward-
+// looking NORMALIZATION (internal/aggregate.AdjustPrice, a read-time
+// 10^(dec_base−dec_quote) scalar) shipped 2026-07-10 for every query-time
+// serving path — see the runbook
+// docs/operations/runbooks/dex-nonstandard-decimals.md for exactly what's
+// covered and what remains a documented follow-up (the two CAGG-backed
+// paths, /v1/price and /v1/ohlc's series mode). This package's own
+// detection logic is unchanged by that work — it remains the sole writer
+// of nonstandard_decimals_assets; normalization is a pure consumer.
 //
 // The periodic sweep only enumerates a short trailing window (20m
 // default), so it only catches a token that is STILL trading — a token

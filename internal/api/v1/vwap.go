@@ -67,11 +67,12 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// dex-nonstandard-decimals read-time guard — see
-	// declineIfNonstandardDecimals for the full rationale.
-	if s.declineIfNonstandardDecimals(w, r, base, quote) {
-		return
-	}
+	// dex-nonstandard-decimals: /v1/vwap computes entirely from raw
+	// trades at query time (no CAGG involved), so — unlike /v1/price and
+	// /v1/ohlc's multi-bar series mode — it no longer needs the decline
+	// guard. The price is normalized below via aggregate.AdjustPrice
+	// instead of declined. See docs/operations/runbooks/
+	// dex-nonstandard-decimals.md "Root cause analysis".
 
 	// Clamped to a closed-bucket boundary when `to` defaults to "now"
 	// per ADR-0015 — guarantees cross-region answer agreement.
@@ -140,6 +141,14 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
+
+	// dex-nonstandard-decimals forward normalization: scale the raw
+	// Σquote/Σbase ratio by the confirmed per-leg decimals factor. A nil
+	// s.nonstandardDecimals or an unflagged pair resolves both legs to
+	// aggregate.StandardDecimals, making this an exact no-op.
+	price = aggregate.AdjustPrice(price,
+		aggregate.ResolveDecimals(s.nonstandardDecimals, base),
+		aggregate.ResolveDecimals(s.nonstandardDecimals, quote))
 
 	writeJSON(w, VWAPResult{
 		From:             from,

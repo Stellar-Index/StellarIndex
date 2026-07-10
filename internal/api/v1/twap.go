@@ -55,13 +55,9 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TWAP over mis-scaled trades is exactly as wrong as VWAP over
-	// them — guard this surface too (integration review 2026-07-09;
-	// the guard's original impact list omitted /v1/twap only because
-	// the founding incident's pair had no TWAP consumers).
-	if s.declineIfNonstandardDecimals(w, r, base, quote) {
-		return
-	}
+	// dex-nonstandard-decimals: like /v1/vwap, /v1/twap computes entirely
+	// from raw trades at query time (no CAGG involved), so the price is
+	// normalized below via aggregate.AdjustPrice instead of declined.
 
 	// Clamped to a closed-bucket boundary when `to` defaults to "now"
 	// per ADR-0015.
@@ -100,6 +96,12 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
+
+	// dex-nonstandard-decimals forward normalization — see handleVWAP's
+	// equivalent comment.
+	price = aggregate.AdjustPrice(price,
+		aggregate.ResolveDecimals(s.nonstandardDecimals, base),
+		aggregate.ResolveDecimals(s.nonstandardDecimals, quote))
 
 	writeJSON(w, TWAPResult{
 		From:       from,

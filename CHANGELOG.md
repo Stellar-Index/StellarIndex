@@ -167,6 +167,34 @@ against.
     (`TestFilterForVWAP_ExcludesSoroswapRouter`,
     `TestTick_SoroswapRouterTradeNeverContributesToVWAP`) that fail loudly if either
     guard layer ever regresses.
+- **dex-nonstandard-decimals: forward normalization for every query-time
+  serving path (P2).** The served price `Σ(quote_amount)/Σ(base_amount)`
+  only equals the true price when both legs share a decimals scale; a
+  non-7-decimals Soroban token (5 now confirmed via `internal/decimalsguard`,
+  trading via aquarius: one 6dp, one 9dp, three 18dp) silently skews it by
+  `10^(7−decimals)`. `internal/aggregate.AdjustPrice` (new) applies an
+  exact read-time `10^(dec_base−dec_quote)` scalar — resolved per-request
+  from `nonstandard_decimals_assets`, byte-identical no-op for every
+  7dp/7dp pair — to the finished VWAP/TWAP/OHLC ratio. Wired into
+  `internal/aggregate/orchestrator` (the aggregator's served/Redis-cached
+  VWAP — previously the actual unguarded live leak: it feeds
+  `/v1/price/stream` and had no decline in front of it), `/v1/vwap`,
+  `/v1/twap`, `/v1/history`, `/v1/ohlc` (single-bar mode), and
+  `/v1/price/tip` (+ its SSE sibling — also found unguarded during this
+  work, serving the skewed value live). `declineIfNonstandardDecimals`
+  (the 2026-07-09 422 tourniquet) was removed from those five endpoints'
+  call sites — they now serve a correct price instead of declining — and
+  remains only on `/v1/price`'s closed-1m-CAGG-bucket path and
+  `/v1/ohlc?interval=` series mode, which still read the raw, unnormalized
+  `prices_*` continuous aggregates. No migration: decimals is an immutable
+  per-asset fact, so a pure read-time correction is exact for both new and
+  already-stored historical trades — no backfill or trades-table schema
+  change needed. Golden-number regression:
+  `internal/aggregate.TestAdjustPrice_Golden18DecimalToken` (an 18dp trade
+  priced correctly vs. the 10^11 error the old code path produced).
+  See `docs/operations/runbooks/dex-nonstandard-decimals.md` ("Root cause
+  analysis") for the deferred CAGG-read follow-up and why it's cheap, and
+  `docs/methodology/vwap-aggregation.md` for the public-facing note.
 - **blend_emitter WASM audit closed; `BackfillSafe` flipped true.** Read-only against the
   r1 ClickHouse raw lake (HTTP 8123, no `stellarindex-ops wasm-history` / MinIO walk):
   checked ALL 469 lifetime events the Emitter contract has ever emitted — not a sample —

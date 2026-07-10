@@ -394,11 +394,28 @@ func run(cfgPath string, dryRun bool) error {
 	logger.Info("closed-bucket stream publisher wired",
 		"channel", streamPub.Channel())
 
+	// ─── Decimals-normalization lookup (dex-nonstandard-decimals) ──
+	// Mirrors `nonstandard_decimals_assets` (migration 0093) in-process so
+	// the orchestrator can scale a window's raw VWAP by the correct
+	// 10^(base_decimals-quote_decimals) factor before publishing — see
+	// aggregate.AdjustPrice and docs/operations/runbooks/
+	// dex-nonstandard-decimals.md. One blocking best-effort refresh here
+	// so the very first Tick (fired synchronously by orchestrator.Run,
+	// before this cache's own background loop gets a chance to run) isn't
+	// working from an empty snapshot; failure just means a confirmed
+	// offender's normalization phases in on the first background refresh
+	// instead of immediately — never fatal to startup.
+	decimalsLookup := newDecimalsCache(store, logger.With("component", "decimals-cache"))
+	if err := decimalsLookup.Refresh(rootCtx); err != nil {
+		logger.Warn("decimals-cache: initial refresh failed — VWAP normalization starts from an empty snapshot", "err", err)
+	}
+
 	orch := orchestrator.New(store, rdb, orchestrator.Config{
 		Pairs:              pairs,
 		Windows:            windows, // nil → orchestrator.DefaultWindows
 		Interval:           time.Duration(cfg.Aggregate.IntervalSeconds) * time.Second,
 		MaxTradesPerWindow: cfg.Aggregate.MaxTradesPerWindow,
+		DecimalsLookup:     decimalsLookup,
 		Anomaly:            checker,
 		FreezeWriter:       freezeWriter,
 		Triangulations:     triangulations,
@@ -666,20 +683,37 @@ func run(cfgPath string, dryRun bool) error {
 		}
 	}()
 
+	// ─── Decimals-normalization cache background refresh ───────────
+	// Keeps decimalsLookup (wired into orchestrator.Config.DecimalsLookup
+	// above) current with `nonstandard_decimals_assets` so a newly-
+	// confirmed offender's VWAP normalization phases in within one
+	// interval, and so a token's row being removed (should normalization
+	// ever need a manual correction) stops being applied just as
+	// promptly. Independent of — and does not gate — the decimals-guard
+	// detection sweep below.
+	refresherWG.Add(1)
+	go func() {
+		defer refresherWG.Done()
+		decimalsLookup.run(rootCtx)
+	}()
+
 	// ─── Decimals-assumption guard (decoder-correctness audit F2) ─
 	// The served price is Σ(quote)/Σ(base) on RAW smallest-unit
 	// integers (prices_* CAGGs + aggregate.VWAP); the per-asset
 	// decimals cancel ONLY when base and quote share a scale. That
-	// holds today because every DEX-traded token is 7-decimal, but a
-	// non-7-decimal SEP-41 token getting DEX liquidity would silently
-	// skew every served price on its pairs by 10^(7-decimals) with no
-	// other alarm. This sweep resolves each recently-DEX-traded
-	// Soroban token's on-chain decimals() from the lake and raises
+	// holds for every 7-decimal token, but a non-7-decimal SEP-41
+	// token getting DEX liquidity silently skews every served price on
+	// its pairs by 10^(7-decimals) with no other alarm. This sweep
+	// resolves each recently-DEX-traded Soroban token's on-chain
+	// decimals() from the lake and raises
 	// stellarindex_dex_trade_nonstandard_decimals_total the moment one
-	// is != 7 — detection only; the forward normalization is a
-	// deferred follow-up (a consistent fix would rewrite the decade-
-	// deep CAGGs). Best-effort: needs the lake for decimals(), so it's
-	// off when ClickHouse is unreachable (like the MEV order resolver).
+	// is != 7 — detection AND confirmation: Writer below persists into
+	// nonstandard_decimals_assets, which decimalsLookup (wired into
+	// orchestrator.Config.DecimalsLookup above) consumes to apply the
+	// forward normalization to this binary's own published VWAP. This
+	// guard's own logic is detection-only; it does not normalize.
+	// Best-effort: needs the lake for decimals(), so it's off when
+	// ClickHouse is unreachable (like the MEV order resolver).
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
 		if er, err := clickhouse.NewExplorerReader(rootCtx, addr); err != nil {
 			logger.Warn("decimals-guard: ClickHouse decimals resolver unavailable — non-7-decimal DEX-token detection disabled",

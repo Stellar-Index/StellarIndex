@@ -10,7 +10,8 @@ import (
 
 // declineIfNonstandardDecimals is the READ-TIME enforcement point for the
 // dex-nonstandard-decimals guard
-// (docs/operations/runbooks/dex-nonstandard-decimals.md).
+// (docs/operations/runbooks/dex-nonstandard-decimals.md), for the serving
+// paths that STILL read a raw, unnormalized ratio.
 //
 // Confirmed production bug (2026-07-08): the served price is
 // Σ(quote_amount)/Σ(base_amount) on raw smallest-unit integers, in both the
@@ -18,21 +19,24 @@ import (
 // cancel in that ratio ONLY when base and quote share a decimals scale.
 // Token CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO declares
 // decimals()=9, so its aquarius/USDC pair served exactly 100x wrong (41.32
-// vs true ~4132) for 35 trades. `internal/decimalsguard` (aggregator)
-// already detects + latches a metric on this; nothing stopped SERVING.
-// This function is that missing stop: it declines rather than serves a
-// pair with a confirmed-offending leg, self-clearing once the durable
-// decimals normalization ships and the offending row is removed from
-// `nonstandard_decimals_assets` (migration 0093).
+// vs true ~4132) for 35 trades.
 //
-// Called by every raw-ratio serving path that resolves a (base, quote)
-// pair before querying — /v1/price, /v1/vwap, /v1/history, /v1/ohlc (the
-// four surfaces the runbook's "Impact" row names) — immediately after
-// asset/quote parsing, before any storage read. Returns true when it wrote
-// a 422 problem+json decline; the caller MUST return immediately without
-// serving any price. Nil-safe: a deployment with no NonstandardDecimalsCache
-// wired (s.nonstandardDecimals == nil) always returns false — the guard is
-// opt-in and fails open by construction (see [NonstandardDecimalsCache.Lookup]).
+// Forward normalization (2026-07-10, docs/operations/runbooks/
+// dex-nonstandard-decimals.md "Root cause analysis") replaced the decline
+// with a real corrected price on every QUERY-TIME (raw-trade) serving
+// path — /v1/vwap, /v1/twap, /v1/history, /v1/price/tip, and /v1/ohlc's
+// single-bar mode all call [aggregate.AdjustPrice] instead of this
+// function now. What remains gated here are the paths that read a
+// `prices_*` / `twap_*` continuous aggregate — a materialized, ALREADY-
+// unnormalized ratio that this fix deliberately did not rewrite (CAGG
+// rebuild risk; see the runbook) — namely /v1/price (its closed-1m-bucket
+// path) and /v1/ohlc's multi-bar `interval=` series mode. Both are called
+// immediately after asset/quote parsing, before any storage read. Returns
+// true when it wrote a 422 problem+json decline; the caller MUST return
+// immediately without serving any price. Nil-safe: a deployment with no
+// NonstandardDecimalsCache wired (s.nonstandardDecimals == nil) always
+// returns false — the guard is opt-in and fails open by construction (see
+// [NonstandardDecimalsCache.Lookup]).
 func (s *Server) declineIfNonstandardDecimals(w http.ResponseWriter, r *http.Request, base, quote canonical.Asset) bool {
 	if s.nonstandardDecimals == nil {
 		return false

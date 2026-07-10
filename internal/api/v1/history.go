@@ -5,11 +5,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/StellarIndex/stellar-index/internal/aggregate"
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
@@ -215,11 +217,11 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 		return
 	}
 
-	// dex-nonstandard-decimals read-time guard — see
-	// declineIfNonstandardDecimals for the full rationale.
-	if s.declineIfNonstandardDecimals(w, r, base, quote) {
-		return
-	}
+	// dex-nonstandard-decimals: /v1/history reads exclusively from raw
+	// trades via TradesInRangeAfter below (no CAGG involved — that's a
+	// different reader method, HistoryPoints, used by /v1/chart), so it
+	// no longer needs the decline guard. The per-row Price field is
+	// normalized after decimals are resolved further down.
 
 	from, to, ok := parseFromTo(w, r)
 	if !ok {
@@ -303,11 +305,30 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	// for Soroban tokens that declare a different scale.
 	baseDec := s.resolveAssetDecimals(hCtx, base)
 	quoteDec := s.resolveAssetDecimals(hCtx, quote)
+	// dex-nonstandard-decimals forward normalization: tradeRowFrom's Price
+	// is the raw quote_amount/base_amount ratio (shared with
+	// /v1/observations, which is intentionally left alone here — it has
+	// no per-side decimals context and isn't guard-covered). Resolved
+	// from the SAME `nonstandard_decimals_assets` source of truth every
+	// other normalized endpoint uses (s.nonstandardDecimals), not the
+	// broader live-contract baseDec/quoteDec resolved above for the
+	// BaseDecimals/QuoteDecimals metadata fields — those two resolvers
+	// can legitimately disagree (the live resolver covers any Soroban
+	// token; the guard table is the curated confirmed-offender list this
+	// fix targets) and mixing them here would make Price disagree with
+	// what /v1/vwap serves for the identical pair. No-op (byte-identical)
+	// when both legs resolve to aggregate.StandardDecimals.
+	priceBaseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, base)
+	priceQuoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, quote)
 	rows := make([]TradeRow, len(trades))
 	for i, t := range trades {
 		rows[i] = tradeRowFrom(t, 10)
 		rows[i].BaseDecimals = baseDec
 		rows[i].QuoteDecimals = quoteDec
+		if priceBaseDec != priceQuoteDec {
+			raw := new(big.Rat).SetFrac(t.QuoteAmount.BigInt(), t.BaseAmount.BigInt())
+			rows[i].Price = ratToDecimal(aggregate.AdjustPrice(raw, priceBaseDec, priceQuoteDec), 10)
+		}
 	}
 
 	// If the page is full, emit a next-cursor pointing at the last

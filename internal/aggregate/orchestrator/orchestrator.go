@@ -431,6 +431,28 @@ type Config struct {
 	// docs/architecture/explorer-implementation-plan.md.
 	ContributionSink ContributionSink
 
+	// DecimalsLookup, when non-nil, is consulted immediately after each
+	// window's raw VWAP computes to correct for a non-7-decimal leg —
+	// see aggregate.AdjustPrice / docs/operations/runbooks/
+	// dex-nonstandard-decimals.md. This is the ORCHESTRATOR's own
+	// published VWAP (Redis-cached, feeds /v1/price's Redis fallback,
+	// the confidence/anomaly/freeze chain, the contribution sink, AND
+	// the `/v1/price/stream` SSE fan-out) — none of those downstream
+	// consumers pass through internal/api/v1's per-endpoint
+	// declineIfNonstandardDecimals guard, so this is the one place a
+	// confirmed non-7-decimals asset was still silently leaking a wrong
+	// price to real subscribers even after that guard shipped
+	// (2026-07-09).
+	//
+	// Nil (the default — every deployment before this field existed,
+	// and every existing test) means [aggregate.ResolveDecimals] always
+	// returns [aggregate.StandardDecimals] for both legs, so the
+	// adjustment factor is exactly 1 and refreshPairWindow's published
+	// VWAP is byte-identical to pre-normalization behaviour. Production
+	// wiring is a small in-process cache over `nonstandard_decimals_assets`
+	// (migration 0093) — see cmd/stellarindex-aggregator/decimals_cache.go.
+	DecimalsLookup aggregate.DecimalsLookup
+
 	// Logger is the structured logger. If nil, slog.Default() is
 	// used.
 	Logger *slog.Logger
@@ -798,7 +820,7 @@ func (o *Orchestrator) refreshPairWindow(
 		return nil
 	}
 
-	vwap, err := aggregate.VWAP(trades)
+	vwap, err := o.computeNormalizedVWAP(trades, pair)
 	if err != nil {
 		if errors.Is(err, aggregate.ErrNoTrades) {
 			o.mu.Lock()
@@ -890,6 +912,28 @@ func (o *Orchestrator) refreshPairWindow(
 
 	o.publishToStream(ctx, pair, window, value, now)
 	return nil
+}
+
+// computeNormalizedVWAP computes VWAP over trades and applies the
+// dex-nonstandard-decimals forward normalization in the same step:
+// aggregate.VWAP sums raw smallest-unit trades.QuoteAmount/
+// trades.BaseAmount with no per-asset decimals adjustment, which is
+// correct only when both legs of pair share a decimals scale. A nil
+// o.cfg.DecimalsLookup (or a pair with no confirmed non-7-decimals leg)
+// resolves both sides to aggregate.StandardDecimals, making the
+// normalization an exact no-op — see aggregate.AdjustPrice /
+// docs/operations/runbooks/dex-nonstandard-decimals.md. Doing both here
+// (rather than a separate call site in refreshPairWindow) means every
+// downstream consumer of the returned value sees the SAME corrected
+// number, and keeps refreshPairWindow under the funlen ceiling.
+func (o *Orchestrator) computeNormalizedVWAP(trades []canonical.Trade, pair canonical.Pair) (*big.Rat, error) {
+	vwap, err := aggregate.VWAP(trades)
+	if err != nil {
+		return nil, err
+	}
+	return aggregate.AdjustPrice(vwap,
+		aggregate.ResolveDecimals(o.cfg.DecimalsLookup, pair.Base),
+		aggregate.ResolveDecimals(o.cfg.DecimalsLookup, pair.Quote)), nil
 }
 
 // keepFrozenVWAPAlive extends the TTL of the last-known-good VWAP

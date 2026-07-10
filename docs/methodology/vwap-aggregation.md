@@ -1,6 +1,6 @@
 ---
 title: VWAP & price-aggregation methodology
-last_verified: 2026-07-06
+last_verified: 2026-07-10
 status: current
 ---
 
@@ -225,6 +225,22 @@ The direct-read path serves the `prices_*` continuous aggregates
   `twap_1h` / `twap_1d` aggregates (`migrations/0081…`), which
   `/v1/twap` and `/v1/history` read; nothing reads `prices_*.twap`. Treat
   that column as a legacy equal-weight mean.
+- **Every column above assumes both legs are 7-decimal.** `quote_amount`
+  and `base_amount` are smallest-unit integers; the ratio only equals the
+  true price when both assets share a decimals scale. As of 2026-07-10
+  every QUERY-TIME path (`/v1/vwap`, `/v1/twap`, `/v1/history`, `/v1/ohlc`
+  single-bar mode, `/v1/price/tip`, and the aggregator's own published
+  VWAP behind `/v1/price/stream`) corrects for a confirmed non-7-decimals
+  leg via a read-time `10^(dec_base−dec_quote)` scalar
+  (`internal/aggregate.AdjustPrice`) — see
+  `docs/operations/runbooks/dex-nonstandard-decimals.md`. The `prices_*`
+  CAGG columns documented above remain RAW: `/v1/price`'s closed-1m-bucket
+  read and `/v1/ohlc?interval=` series mode still DECLINE (422) for a
+  pair with a confirmed offending leg rather than serve the unnormalized
+  ratio; `/v1/chart` and the pools/markets listing are not gated at all
+  and are the residual known-wrong surfaces. As of this writing 5
+  confirmed non-7-decimals Soroban tokens exist (one 6dp, one 9dp, three
+  18dp), all trading via aquarius.
 
 ## Freshness — two honest contracts
 

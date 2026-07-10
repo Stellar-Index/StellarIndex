@@ -450,3 +450,59 @@ func TestPriceTip_DefaultWindowIs5s(t *testing.T) {
 		t.Errorf("TradesInRange window = %v, want ~5s", delta)
 	}
 }
+
+// TestPriceTip_NonstandardDecimals_Normalizes proves /v1/price/tip — the
+// ADR-0018 "SLA surface" — correctly scales a confirmed non-7-decimals
+// leg's window VWAP. Before 2026-07-10 this endpoint had NO decline guard
+// at all (declineIfNonstandardDecimals's four-endpoint list omitted the
+// tip surface), so it was serving the RAW skewed ratio live and unguarded;
+// this is the regression test for that gap. Same golden shape as
+// internal/aggregate's TestAdjustPrice_Golden18DecimalToken: 18dp base
+// token, 7dp USDC quote, true price 0.4968.
+func TestPriceTip_NonstandardDecimals_Normalizes(t *testing.T) {
+	const flaggedAsset = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 18)
+
+	token, err := canonical.ParseAsset(flaggedAsset)
+	if err != nil {
+		t.Fatalf("ParseAsset: %v", err)
+	}
+	usdc, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatalf("ParseAsset: %v", err)
+	}
+	pair, err := canonical.NewPair(token, usdc)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	baseAmount, ok := new(big.Int).SetString("2500000000000000000", 10)
+	if !ok {
+		t.Fatal("bad big.Int literal")
+	}
+	now := time.Now().UTC()
+	trade := canonical.Trade{
+		Source:      "aquarius",
+		Ledger:      1,
+		TxHash:      "0000000000000000000000000000000000000000000000000000000000000001",
+		Timestamp:   now.Add(-1 * time.Second),
+		Pair:        pair,
+		BaseAmount:  canonical.NewAmount(baseAmount),
+		QuoteAmount: canonical.NewAmount(big.NewInt(12_420_000)),
+	}
+	hist := &stubHistoryReader{trades: []canonical.Trade{trade}}
+	srv := v1.New(v1.Options{
+		Prices:              &stubPriceReader{},
+		History:             hist,
+		NonstandardDecimals: cache,
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price/tip?asset="+flaggedAsset+"&quote=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN&window_seconds=5")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"price":"0.4968000000"`) {
+		t.Errorf("body missing normalized price 0.4968000000 (unnormalized would be ~10^-11 of that): %s", body)
+	}
+}
