@@ -16,7 +16,8 @@
 #      docs/architecture/ingest-pipeline.md.
 #      Allowed in:
 #        - internal/stellarrpc/           (the package itself)
-#        - cmd/stellarindex-ops/           (`rpc-probe` diag)
+#        - internal/ops/                  (stellarindex-ops subcommand
+#                                          packages, e.g. `rpc-probe`)
 #        - scripts/dev/                   (fixture-capture scripts)
 #        - internal/sources/*/decode.go   (imports `Event` type
 #                                          only; type moves to a
@@ -96,7 +97,7 @@ RULES = [
         ],
         "allow": [
             "internal/stellarrpc/",             # the package itself
-            "cmd/stellarindex-ops/",             # rpc-probe diag
+            "internal/ops/",                    # stellarindex-ops subcommand packages (rpc-probe diag; D1 M1-5 split moved these out of cmd/stellarindex-ops/)
             "scripts/dev/",                     # fixture-capture
             "/decode.go",                       # source decode.go — uses Event type only (PR 165b will move)
             "/factory_seed.go",                 # cold-start factory state via simulateTransaction (PR 14) — not a runtime decoder
@@ -131,7 +132,7 @@ RULES = [
             "internal/sources/sep41_supply/",   # SEP-41 supply observer reads xdr.ScVal Value/Type discriminants (ADR-0023)
             "internal/sources/sep41_transfers/", # SEP-41 audit-trail decoder reads xdr.ScVal Value/Type discriminants (F-0021)
             "cmd/stellarindex-indexer/",         # glue: wires ledgerstream → dispatcher (PR 165d)
-            "cmd/stellarindex-ops/",             # verify-decoders mirrors the indexer's ledger plumbing
+            "internal/ops/",                    # verify-decoders mirrors the indexer's ledger plumbing (D1 M1-5 split moved stellarindex-ops subcommands out of cmd/stellarindex-ops/)
             "internal/stellarrpc/",             # builds TransactionEnvelope XDR for simulateTransaction (not SCVal)
             "scripts/dev/",                     # diagnostic helpers (decode-scval pretty-prints raw XDR)
             "_test.go",                         # fixture construction

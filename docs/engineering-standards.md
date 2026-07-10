@@ -897,7 +897,7 @@ for writes whose error genuinely has no consumer — `w.Write` on an
 HTTP response after the status is committed, `fmt.Fprintln` to an
 operator tabwriter. *Why:* the reader sees "considered and
 discarded", not "forgot". Example: `internal/api/v1/server.go:1603`,
-`cmd/stellarindex-ops/list_cursors.go`. **Lint-enforced**
+`internal/ops/ingest/list_cursors.go`. **Lint-enforced**
 (`errcheck` forces the choice); the justification is review-enforced.
 
 ### 14.6. Concurrency: WaitGroup for workers, errgroup for batches
@@ -908,8 +908,8 @@ exit". Bounded one-shot parallel jobs that want first-error abort use
 `golang.org/x/sync/errgroup`. *Why:* the primitive encodes the
 shutdown semantics. Examples: worker shape throughout
 `internal/sources/external/`; errgroup in
-`cmd/stellarindex-ops/ch_backfill.go` +
-`verify_archive_chunks.go`. **Review-enforced.**
+`internal/ops/chops/ch_backfill.go` +
+`internal/ops/archive/verify_archive_chunks.go`. **Review-enforced.**
 
 ### 14.7. The validate-on-copy trap
 

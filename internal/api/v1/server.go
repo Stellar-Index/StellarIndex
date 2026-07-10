@@ -12,6 +12,7 @@ import (
 
 	"github.com/StellarIndex/stellar-index/internal/aggregate"
 	"github.com/StellarIndex/stellar-index/internal/api/streaming"
+	explorerpkg "github.com/StellarIndex/stellar-index/internal/api/v1/explorer"
 	"github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
 	"github.com/StellarIndex/stellar-index/internal/auth"
 	"github.com/StellarIndex/stellar-index/internal/canonical"
@@ -149,7 +150,7 @@ type Server struct {
 	divergences          DivergenceReader
 	currencies           CurrenciesReader
 	explorer             ExplorerReader
-	opsDir               opsDirCache // short-TTL cache for the /v1/operations directory first page
+	explorerHandler      *explorerpkg.Handler // network-explorer endpoints (ADR-0038); see explorer.go
 	fxHistory            FXHistoryReader
 	sessionPeeker        SessionPeeker
 	incidents            []incidents.Incident
@@ -1011,6 +1012,7 @@ func New(opts Options) *Server {
 		mux:              http.NewServeMux(),
 		started:          time.Now().UTC(),
 	}
+	s.explorerHandler = explorerHandlerFor(s, opts, logger)
 	loadIncidents(s, logger)
 	s.mountRoutes()
 	return s
@@ -1248,26 +1250,28 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/ledger/stream", s.handleLedgerStream)
 
 	// Network explorer (ADR-0038) — read the certified ClickHouse lake.
-	s.mux.HandleFunc("GET /v1/ledgers", s.handleLedgersList)
-	s.mux.HandleFunc("GET /v1/ledgers/{seq}", s.handleLedgerDetail)
-	s.mux.HandleFunc("GET /v1/ledgers/{seq}/transactions", s.handleLedgerTransactions)
-	s.mux.HandleFunc("GET /v1/operations", s.handleOperations)
-	s.mux.HandleFunc("GET /v1/tx/{hash}", s.handleTxDetail)
-	s.mux.HandleFunc("GET /v1/search", s.handleSearch)
-	s.mux.HandleFunc("GET /v1/contracts", s.handleContractsList)
-	s.mux.HandleFunc("GET /v1/contracts/{contract_id}", s.handleContractDetail)
-	s.mux.HandleFunc("GET /v1/contracts/{contract_id}/wasm", s.handleContractWasm)
-	s.mux.HandleFunc("GET /v1/contracts/{contract_id}/interactions", s.handleContractInteractions)
-	s.mux.HandleFunc("GET /v1/contracts/{contract_id}/code-history", s.handleContractCodeHistory)
-	s.mux.HandleFunc("GET /v1/accounts", s.handleAccountsList)
-	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}", s.handleAccountState)
-	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/transactions", s.handleAccountTransactions)
-	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/operations", s.handleAccountOperations)
+	// Handler implementations live in internal/api/v1/explorer (D1 M1-7
+	// extraction); this is still the sole place they're mounted.
+	s.mux.HandleFunc("GET /v1/ledgers", s.explorerHandler.LedgersList)
+	s.mux.HandleFunc("GET /v1/ledgers/{seq}", s.explorerHandler.LedgerDetail)
+	s.mux.HandleFunc("GET /v1/ledgers/{seq}/transactions", s.explorerHandler.LedgerTransactions)
+	s.mux.HandleFunc("GET /v1/operations", s.explorerHandler.Operations)
+	s.mux.HandleFunc("GET /v1/tx/{hash}", s.explorerHandler.TxDetail)
+	s.mux.HandleFunc("GET /v1/search", s.explorerHandler.Search)
+	s.mux.HandleFunc("GET /v1/contracts", s.explorerHandler.ContractsList)
+	s.mux.HandleFunc("GET /v1/contracts/{contract_id}", s.explorerHandler.ContractDetail)
+	s.mux.HandleFunc("GET /v1/contracts/{contract_id}/wasm", s.explorerHandler.ContractWasm)
+	s.mux.HandleFunc("GET /v1/contracts/{contract_id}/interactions", s.explorerHandler.ContractInteractions)
+	s.mux.HandleFunc("GET /v1/contracts/{contract_id}/code-history", s.explorerHandler.ContractCodeHistory)
+	s.mux.HandleFunc("GET /v1/accounts", s.explorerHandler.AccountsList)
+	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}", s.explorerHandler.AccountState)
+	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/transactions", s.explorerHandler.AccountTransactions)
+	s.mux.HandleFunc("GET /v1/accounts/{g_strkey}/operations", s.explorerHandler.AccountOperations)
 
 	s.mux.HandleFunc("GET /v1/incidents", s.handleIncidents)
 	s.mux.HandleFunc("GET /v1/incidents.atom", s.handleIncidentsAtom)
 	s.mux.HandleFunc("GET /v1/network/stats", s.handleNetworkStats)
-	s.mux.HandleFunc("GET /v1/network/throughput", s.handleNetworkThroughput)
+	s.mux.HandleFunc("GET /v1/network/throughput", s.explorerHandler.NetworkThroughput)
 	s.mux.HandleFunc("GET /v1/healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /v1/readyz", s.handleReadyz)
 	s.mux.HandleFunc("GET /v1/version", s.handleVersion)
@@ -1310,7 +1314,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// Live per-token supply from the decode-at-ingest supply_flows lake
 	// (ADR-0034).
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}/supply", s.handleAssetSupply)
-	s.mux.HandleFunc("GET /v1/assets/{asset_id}/holders", s.handleAssetHolders)
+	s.mux.HandleFunc("GET /v1/assets/{asset_id}/holders", s.explorerHandler.AssetHolders)
 
 	// Current price — last-trade fallback today; VWAP path when
 	// the aggregator ships.

@@ -23,7 +23,7 @@ These are **NOT** dispatcher sources and do **NOT** go in `KnownSources` / `enab
       `ClassExchange` contributes to VWAP.
 - [ ] `internal/config/config.go` → a `<Venue>` field with `default:"false"` + a default entry.
 - [ ] `cmd/stellarindex-indexer/main.go` → `buildExternal`: `if cfg.<Venue>.Enabled { … }`.
-- [ ] `cmd/stellarindex-ops/main.go` → the **parallel** block + the backfill switch if `Backfiller`.
+- [ ] `internal/ops/ingest/backfill_external.go` → the **parallel** block + the backfill switch if `Backfiller`.
 
 ## Reuse, don't rebuild
 `external.Runner` (`runner.go`) owns dust-drop/teardown/metrics; `external/wsclient` owns

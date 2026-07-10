@@ -1,54 +1,67 @@
 package v1
 
 import (
-	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/blend"
-	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
+	explorerpkg "github.com/StellarIndex/stellar-index/internal/api/v1/explorer"
 )
 
-// ExplorerReader is the seam the network-explorer endpoints (ADR-0038) read
-// through: the certified Tier-1 ClickHouse lake (the full chain to genesis —
-// ledgers / transactions / operations / contract events). *clickhouse.ExplorerReader
-// satisfies it. Nil disables the explorer endpoints (503). The interface grows
-// per ADR-0038 phase (A: ledgers/tx/ops/contracts; B: account history; C: state).
-type ExplorerReader interface {
-	RecentLedgers(ctx context.Context, limit int, beforeSeq uint32) ([]clickhouse.LedgerHeader, error)
-	LedgerBySeq(ctx context.Context, seq uint32) (clickhouse.LedgerHeader, bool, error)
-	LedgerTransactions(ctx context.Context, seq uint32, limit int) ([]clickhouse.TxSummary, error)
-	OperationsByLedger(ctx context.Context, seq uint32, limit int) ([]clickhouse.OpRow, error)
-	RecentOperations(ctx context.Context, limit int, cur clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error)
-	OperationTypeStats(ctx context.Context, windowLedgers uint32) ([]clickhouse.OpTypeCount, error)
-	NetworkThroughput(ctx context.Context, windowDays int) ([]clickhouse.ThroughputBucket, error)
-	BlendPoolReserves(ctx context.Context, pool string, assets []string, configs map[string]blend.ReserveConfig) ([]clickhouse.BlendReserveState, error)
-	TransactionByHash(ctx context.Context, hash string) (clickhouse.TxSummary, bool, error)
-	OperationsByTx(ctx context.Context, seq uint32, hash string) ([]clickhouse.OpRow, error)
-	OperationResultsByTx(ctx context.Context, seq uint32, hash string) (map[uint32]int32, error)
-	EventsByTx(ctx context.Context, seq uint32, hash string) ([]clickhouse.EventSummary, error)
-	ContractEventsRecent(ctx context.Context, contractID string, limit int, cur clickhouse.ExplorerCursor) ([]clickhouse.ContractActivityRow, error)
-	ContractWasm(ctx context.Context, contractID string) (clickhouse.ContractWasmInfo, error)
-	RecentContracts(ctx context.Context, limit int, sinceLedger uint32) ([]clickhouse.ContractDirectoryRow, error)
-	ContractInteractions(ctx context.Context, contractID string, limit int, sinceLedger uint32) ([]clickhouse.ContractEdgeRow, error)
-	ContractCodeHistory(ctx context.Context, contractID string) ([]clickhouse.ContractCodeVersion, error)
-	AccountTransactions(ctx context.Context, account string, limit int, cur clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, error)
-	AccountOperations(ctx context.Context, account string, limit int, cur clickhouse.ExplorerCursor) ([]clickhouse.OpRow, error)
-	AccountState(ctx context.Context, account string) (clickhouse.AccountState, error)
-	AssetHolders(ctx context.Context, asset string, limit int) ([]clickhouse.AssetHolder, int64, error)
-	AccountsByWealth(ctx context.Context, assets []string, prices []float64, limit int) ([]clickhouse.AccountWealth, error)
-	SoroswapPairReserves(ctx context.Context, pairs []string) (map[string]clickhouse.SoroswapPairState, error)
-	NativeLiquidityPoolReserves(ctx context.Context, poolIDs []string) (map[string]clickhouse.NativeLiquidityPoolState, error)
-	NativeLiquidityPoolsRanked(ctx context.Context, limit int) ([]clickhouse.NativeLiquidityPoolState, error)
-	TokenDisplays(ctx context.Context, tokens []string) (map[string]clickhouse.TokenDisplayMeta, error)
-	SACClassicAssetName(ctx context.Context, contractID string) (string, bool, error)
-	SACAssetFromEvents(ctx context.Context, contractID string) (string, bool, error)
-	AccountsUnspendable(ctx context.Context, accountIDs []string) (map[string]bool, error)
-}
+// The network-explorer endpoint implementations (ADR-0038) live in
+// internal/api/v1/explorer (maintainability audit 2026-07-01, D1
+// finding M1-7). This file only wires that package's *Handler into
+// Server (see server.go's Handler construction + mountRoutes) and
+// keeps type aliases for every type explorer_*.go used to export
+// directly from package v1, so the existing (pre-extraction)
+// explorer_*_test.go files keep compiling completely unchanged —
+// they still write `v1.LedgersListView` etc.
+//
+// ExplorerReader is also the read seam behind a few v1 handlers
+// OUTSIDE the explorer package (asset SAC resolution in assets.go,
+// lending TVL, liquidity-pool + pool-reserve reads) — those keep
+// referring to the bare `ExplorerReader` name in package v1
+// unchanged via this alias.
+type ExplorerReader = explorerpkg.ExplorerReader
+
+type (
+	AccountsListView         = explorerpkg.AccountsListView
+	AccountWealthRow         = explorerpkg.AccountWealthRow
+	AccountStateView         = explorerpkg.AccountStateView
+	AccountThresholds        = explorerpkg.AccountThresholds
+	AccountSignerV           = explorerpkg.AccountSignerV
+	TrustlineV               = explorerpkg.TrustlineV
+	OfferV                   = explorerpkg.OfferV
+	AssetHoldersView         = explorerpkg.AssetHoldersView
+	AssetHolderV             = explorerpkg.AssetHolderV
+	AccountTransactionsView  = explorerpkg.AccountTransactionsView
+	AccountOperationsView    = explorerpkg.AccountOperationsView
+	ContractEventView        = explorerpkg.ContractEventView
+	ContractDetailView       = explorerpkg.ContractDetailView
+	ContractDirectoryEntry   = explorerpkg.ContractDirectoryEntry
+	ContractsDirectoryView   = explorerpkg.ContractsDirectoryView
+	ContractEdge             = explorerpkg.ContractEdge
+	ContractInteractionsView = explorerpkg.ContractInteractionsView
+	ContractCodeVersionV     = explorerpkg.ContractCodeVersionV
+	ContractCodeHistoryView  = explorerpkg.ContractCodeHistoryView
+	LedgerView               = explorerpkg.LedgerView
+	TxSummaryView            = explorerpkg.TxSummaryView
+	LedgersListView          = explorerpkg.LedgersListView
+	LedgerTransactionsView   = explorerpkg.LedgerTransactionsView
+	SearchResultView         = explorerpkg.SearchResultView
+	TxEventView              = explorerpkg.TxEventView
+	TxDetailView             = explorerpkg.TxDetailView
+	WasmExportView           = explorerpkg.WasmExportView
+	ContractWasmView         = explorerpkg.ContractWasmView
+)
 
 // explorerUnavailable writes the standard 503 when no explorer reader is wired
-// (deployment without ClickHouse, or ClickHouse unreachable at startup).
+// (deployment without ClickHouse, or ClickHouse unreachable at startup). Kept
+// in package v1 (rather than moved into internal/api/v1/explorer) because
+// three non-explorer-cluster handlers — lending TVL, liquidity-pool reserves,
+// and pool-reserves — also read through the same ExplorerReader seam and call
+// this directly; explorer.Handler has its own equivalent (unavailable) so
+// this package doesn't need to import that package's unexported method.
 func (s *Server) explorerUnavailable(w http.ResponseWriter, r *http.Request) {
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/explorer-unavailable",
@@ -58,6 +71,10 @@ func (s *Server) explorerUnavailable(w http.ResponseWriter, r *http.Request) {
 
 // parseExplorerLimit parses ?limit= with a default and an inclusive cap.
 // ok=false (after writing a problem+json) on parse error / out of range.
+// Kept in package v1 (rather than moved) because anomalies.go, mev.go, and
+// liquidity_pools.go also call it directly; explorer.Handler receives it as
+// the injected ParseLimit func (see explorerHandlerFor below) so the moved
+// endpoints share the exact same limit-parsing behavior.
 func parseExplorerLimit(w http.ResponseWriter, r *http.Request, def, maxN int) (int, bool) {
 	raw := r.URL.Query().Get("limit")
 	if raw == "" {
@@ -73,69 +90,30 @@ func parseExplorerLimit(w http.ResponseWriter, r *http.Request, def, maxN int) (
 	return n, true
 }
 
-// parseUint32Query parses an optional uint32 query param (e.g. ?before=).
-// Returns 0 when absent. ok=false (after a problem+json) on a malformed value.
-func parseUint32Query(w http.ResponseWriter, r *http.Request, name string) (uint32, bool) {
-	raw := r.URL.Query().Get(name)
-	if raw == "" {
-		return 0, true
+// explorerHandlerFor constructs the explorer package's *Handler from a
+// fully-initialized Server + its constructor Options, wiring the small
+// set of cross-cutting seams (logger, USD pricing, SAC detection, the
+// lake watermark cache, and the shared response-writing helpers) as
+// injected function values — the explorer package must not import
+// package v1 (Server already imports explorer to register routes;
+// the reverse import would cycle), so these seams cross the boundary
+// as plain funcs/interfaces instead of *Server itself.
+func explorerHandlerFor(s *Server, opts Options, logger *slog.Logger) *explorerpkg.Handler {
+	return &explorerpkg.Handler{
+		Reader:             opts.Explorer,
+		Logger:             logger,
+		VerifiedCurrencies: opts.VerifiedCurrencies,
+		ProtocolContracts:  opts.ProtocolContracts,
+		PricingEnabled:     opts.Prices != nil,
+		LookupUSDPrice:     s.lookupUSDPrice,
+		IsKnownSAC:         s.isKnownSAC,
+		LakeWatermark:      s.lakeWatermark,
+		ParseLimit:         parseExplorerLimit,
+		ParseWindowDays:    parseWindowDays,
+		WriteProblem:       writeProblem,
+		ClientAborted:      clientAborted,
+		WriteJSON: func(w http.ResponseWriter, data any, stale bool) {
+			writeJSON(w, data, Flags{Stale: stale})
+		},
 	}
-	n, err := strconv.ParseUint(raw, 10, 32)
-	if err != nil {
-		writeProblem(w, r, "https://api.stellarindex.io/errors/invalid-parameter",
-			"Invalid parameter", http.StatusBadRequest,
-			name+" must be a non-negative 32-bit integer")
-		return 0, false
-	}
-	return uint32(n), true
-}
-
-// encodeCursor renders a composite keyset position as an opaque dotted-decimal
-// cursor string ("63000000.4.7") for ?cursor=. The component count matches the
-// listing's ORDER BY arity (2 for account txs, 3 for account ops + contract
-// events). Clients treat it as opaque and echo it back verbatim.
-func encodeCursor(parts ...uint32) string {
-	ss := make([]string, len(parts))
-	for i, p := range parts {
-		ss[i] = strconv.FormatUint(uint64(p), 10)
-	}
-	return strings.Join(ss, ".")
-}
-
-// parseExplorerCursor reads the optional ?cursor= opaque keyset cursor and
-// decodes it into an ExplorerCursor with exactly `parts` components (2 → account
-// txs; 3 → account ops + contract events). Absent → zero cursor (first page).
-// ok=false (after a problem+json) on a malformed value or a zero ledger (a real
-// cursor always points past an actual row).
-func parseExplorerCursor(w http.ResponseWriter, r *http.Request, parts int) (clickhouse.ExplorerCursor, bool) {
-	raw := r.URL.Query().Get("cursor")
-	if raw == "" {
-		return clickhouse.ExplorerCursor{}, true
-	}
-	bad := func() (clickhouse.ExplorerCursor, bool) {
-		writeProblem(w, r, "https://api.stellarindex.io/errors/invalid-cursor",
-			"Invalid cursor", http.StatusBadRequest,
-			"cursor must be an opaque value returned in a prior next_cursor")
-		return clickhouse.ExplorerCursor{}, false
-	}
-	segs := strings.Split(raw, ".")
-	if len(segs) != parts {
-		return bad()
-	}
-	vals := make([]uint32, parts)
-	for i, s := range segs {
-		n, err := strconv.ParseUint(s, 10, 32)
-		if err != nil {
-			return bad()
-		}
-		vals[i] = uint32(n)
-	}
-	if vals[0] == 0 {
-		return bad()
-	}
-	cur := clickhouse.ExplorerCursor{Ledger: vals[0], A: vals[1]}
-	if parts == 3 {
-		cur.B = vals[2]
-	}
-	return cur, true
 }
