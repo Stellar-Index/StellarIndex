@@ -96,3 +96,117 @@ func TestSACBalanceSeedSupersedeAndNumeric(t *testing.T) {
 		t.Errorf("at-or-before seed ledger = %s, want %s", got, dormant)
 	}
 }
+
+// TestSACBalanceSeedProvenanceRoundTrip exercises the sac_balance_seed_
+// provenance audit table (migration 0102): a fresh contract has no row,
+// the first upsert creates one, and a second upsert with different
+// stats OVERWRITES it (one row per contract, not an append log) — the
+// same "most recent pass" shape as sep41_supply_rollup's genesis-baseline
+// columns (migration 0088).
+func TestSACBalanceSeedProvenanceRoundTrip(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const contractID = "CBZ7M5B3Y4WWBZ5XK5UZCAFOEZ23KSSZXYECYX3IXM6E2JOLQC52DK32"
+	const assetKey = "PHO:GAX5TXB5RYJNLBUR477PEXM4X75APK2PGMTN6KEFQSESGWFXEAKFSXJO"
+
+	// Never seeded: absent, not an error.
+	_, ok, err := store.SACBalanceSeedProvenanceFor(ctx, contractID)
+	if err != nil {
+		t.Fatalf("SACBalanceSeedProvenanceFor (never seeded): %v", err)
+	}
+	if ok {
+		t.Fatal("ok=true for a never-seeded contract, want false")
+	}
+
+	// First pass: the default current-state source, 16 holders found.
+	minL1, maxL1 := uint32(65_000_000), uint32(70_000_000)
+	if err := store.UpsertSACBalanceSeedProvenance(ctx, timescale.SACBalanceSeedProvenance{
+		ContractID:    contractID,
+		AssetKey:      assetKey,
+		Source:        timescale.SACBalanceSeedSourceCurrentState,
+		HoldersSeeded: 16,
+		MinLedgerSeen: &minL1,
+		MaxLedgerSeen: &maxL1,
+	}); err != nil {
+		t.Fatalf("UpsertSACBalanceSeedProvenance (current_state): %v", err)
+	}
+	got, ok, err := store.SACBalanceSeedProvenanceFor(ctx, contractID)
+	if err != nil {
+		t.Fatalf("SACBalanceSeedProvenanceFor (after current_state seed): %v", err)
+	}
+	if !ok {
+		t.Fatal("ok=false after an upsert, want true")
+	}
+	if got.Source != timescale.SACBalanceSeedSourceCurrentState || got.HoldersSeeded != 16 {
+		t.Errorf("got=%+v, want source=current_state holders=16", got)
+	}
+	if got.MinLedgerSeen == nil || *got.MinLedgerSeen != 65_000_000 {
+		t.Errorf("MinLedgerSeen = %v, want 65000000", got.MinLedgerSeen)
+	}
+
+	// Second pass: -full-history, reaching well below the ~62M floor —
+	// OVERWRITES the row (one row per contract), evidencing the floor
+	// was actually reached via a min_ledger_seen far below 62,000,000.
+	minL2, maxL2 := uint32(41_500_000), uint32(70_000_000)
+	if err := store.UpsertSACBalanceSeedProvenance(ctx, timescale.SACBalanceSeedProvenance{
+		ContractID:    contractID,
+		AssetKey:      assetKey,
+		Source:        timescale.SACBalanceSeedSourceFullHistory,
+		HoldersSeeded: 40,
+		MinLedgerSeen: &minL2,
+		MaxLedgerSeen: &maxL2,
+	}); err != nil {
+		t.Fatalf("UpsertSACBalanceSeedProvenance (full_history): %v", err)
+	}
+	got, ok, err = store.SACBalanceSeedProvenanceFor(ctx, contractID)
+	if err != nil {
+		t.Fatalf("SACBalanceSeedProvenanceFor (after full_history seed): %v", err)
+	}
+	if !ok {
+		t.Fatal("ok=false after the second upsert, want true")
+	}
+	if got.Source != timescale.SACBalanceSeedSourceFullHistory {
+		t.Errorf("Source = %q, want full_history (the second upsert should overwrite, not append)", got.Source)
+	}
+	if got.HoldersSeeded != 40 {
+		t.Errorf("HoldersSeeded = %d, want 40", got.HoldersSeeded)
+	}
+	if got.MinLedgerSeen == nil || *got.MinLedgerSeen >= 62_000_000 {
+		t.Errorf("MinLedgerSeen = %v, want < 62,000,000 (evidence the full-history pass reached below the current-state floor)", got.MinLedgerSeen)
+	}
+
+	// A wrapper with zero holders found this pass gets nil ledger bounds,
+	// not a zero-valued (and misleading — ledger 0 is a real ledger)
+	// min/max pair.
+	const emptyContract = "CEMPTYWRAPPERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	if err := store.UpsertSACBalanceSeedProvenance(ctx, timescale.SACBalanceSeedProvenance{
+		ContractID: emptyContract,
+		AssetKey:   "NOPE:GISSUER",
+		Source:     timescale.SACBalanceSeedSourceFullHistory,
+	}); err != nil {
+		t.Fatalf("UpsertSACBalanceSeedProvenance (zero holders): %v", err)
+	}
+	got, ok, err = store.SACBalanceSeedProvenanceFor(ctx, emptyContract)
+	if err != nil {
+		t.Fatalf("SACBalanceSeedProvenanceFor (zero holders): %v", err)
+	}
+	if !ok {
+		t.Fatal("ok=false for the zero-holders row, want true (we DID seed, just found nothing)")
+	}
+	if got.HoldersSeeded != 0 {
+		t.Errorf("HoldersSeeded = %d, want 0", got.HoldersSeeded)
+	}
+	if got.MinLedgerSeen != nil || got.MaxLedgerSeen != nil {
+		t.Errorf("MinLedgerSeen=%v MaxLedgerSeen=%v, want both nil for a zero-holder pass", got.MinLedgerSeen, got.MaxLedgerSeen)
+	}
+}

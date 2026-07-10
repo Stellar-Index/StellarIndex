@@ -47,17 +47,38 @@ import (
 // id lives inside key_xdr, so the watched-set filter runs in Go, not
 // SQL) — it is READ-HEAVY and MUST run under run-heavy-job.sh on r1.
 //
+// -full-history (incident 2026-07-06 PHO/BLND VERDICT follow-up, ROADMAP
+// #14). The default source, stellar.ledger_entries_current, is fed by a
+// ClickHouse materialized view that only processes rows inserted AFTER
+// the MV was created (~ledger 62,000,000) — a Balance entry dormant
+// since before that floor is invisible to it even though it has always
+// existed in the certified lake. PHO/BLND/EURC/KALE's largest holders
+// are Phoenix/Blend pool contracts that acquired the SAC token via an
+// ordinary transfer years before the floor and have been dormant since —
+// exactly this shape. Passing -full-history switches the read to
+// clickhouse.StreamSACBalanceSeedsFullHistory (stellar.ledger_entry_changes,
+// the append-log, complete to genesis per ADR-0034) to recover them. It
+// is substantially heavier than the default scan (every historical
+// write, not just current state) — reserve it for the small watched set
+// that's known to have the floor problem, always under run-heavy-job.sh,
+// never as a routine re-run.
+//
 // Flags:
 //
-//	-config PATH   Required. Operator TOML config (provides
-//	               [supply.sac_wrappers] + the Postgres DSN).
-//	-ch-addr ADDR  ClickHouse native address (default 127.0.0.1:9300).
-//	-dry-run       Read + print per-contract holder count + summed
-//	               balance without writing.
+//	-config PATH     Required. Operator TOML config (provides
+//	                 [supply.sac_wrappers] + the Postgres DSN).
+//	-ch-addr ADDR    ClickHouse native address (default 127.0.0.1:9300).
+//	-full-history    Read from stellar.ledger_entry_changes (complete to
+//	                 genesis) instead of the floor-limited
+//	                 stellar.ledger_entries_current. Heavier; closes the
+//	                 ~62M current-state coverage floor.
+//	-dry-run         Read + print per-contract holder count + summed
+//	                 balance without writing.
 func supplySeedSACBalances(args []string) error {
 	fs := flag.NewFlagSet("supply seed-sac-balances", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
+	fullHistory := fs.Bool("full-history", false, "Read stellar.ledger_entry_changes (complete to genesis) instead of the floor-limited stellar.ledger_entries_current — closes the ~62M current-state coverage floor (heavier; run-heavy-job.sh only)")
 	dryRun := fs.Bool("dry-run", false, "Read + print per-contract holder count + summed balance without writing to sac_balance_observations")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -91,9 +112,16 @@ func supplySeedSACBalances(args []string) error {
 		defer func() { _ = store.Close() }()
 	}
 
+	stream := clickhouse.StreamSACBalanceSeeds
+	source := timescale.SACBalanceSeedSourceCurrentState
+	if *fullHistory {
+		stream = clickhouse.StreamSACBalanceSeedsFullHistory
+		source = timescale.SACBalanceSeedSourceFullHistory
+	}
+
 	tallies := make(map[string]*sacSeedTally, len(watched))
 	var total int
-	err = clickhouse.StreamSACBalanceSeeds(ctx, *chAddr, watched, func(seed clickhouse.SACBalanceSeed) error {
+	err = stream(ctx, *chAddr, watched, func(seed clickhouse.SACBalanceSeed) error {
 		t := tallies[seed.ContractID]
 		if t == nil {
 			t = &sacSeedTally{sum: big.NewInt(0)}
@@ -101,6 +129,7 @@ func supplySeedSACBalances(args []string) error {
 		}
 		t.holders++
 		t.sum.Add(t.sum, seed.Balance)
+		t.observe(seed.LedgerSeq)
 		total++
 		if *dryRun {
 			return nil
@@ -119,13 +148,70 @@ func supplySeedSACBalances(args []string) error {
 	}
 
 	printSACSeedSummary(watched, tallies, total, *dryRun)
+
+	if !*dryRun {
+		if err := writeSACSeedProvenance(ctx, store, watched, tallies, source); err != nil {
+			return fmt.Errorf("write seed provenance: %w", err)
+		}
+	}
 	return nil
 }
 
-// sacSeedTally is a per-contract running tally for the seed summary.
+// sacSeedTally is a per-contract running tally for the seed summary +
+// provenance record.
 type sacSeedTally struct {
-	holders int
-	sum     *big.Int
+	holders          int
+	sum              *big.Int
+	minLedger        uint32
+	maxLedger        uint32
+	haveLedgerBounds bool
+}
+
+// observe folds one seeded entry's ledger into the tally's [min, max]
+// bound, used to populate sac_balance_seed_provenance.min_ledger_seen /
+// max_ledger_seen — the evidence that a -full-history pass actually
+// reached below the current-state floor, not just a source-label claim.
+func (t *sacSeedTally) observe(ledger uint32) {
+	if !t.haveLedgerBounds {
+		t.minLedger, t.maxLedger, t.haveLedgerBounds = ledger, ledger, true
+		return
+	}
+	if ledger < t.minLedger {
+		t.minLedger = ledger
+	}
+	if ledger > t.maxLedger {
+		t.maxLedger = ledger
+	}
+}
+
+// writeSACSeedProvenance upserts one sac_balance_seed_provenance row per
+// watched contract (migration 0102) — including wrappers with zero
+// holders found this pass, so an operator can see "we looked, found
+// nothing" distinctly from "never seeded". Best-effort per contract: a
+// provenance write failure is reported but does not unwind the
+// observations already committed above (the audit trail is secondary to
+// the supply data itself).
+func writeSACSeedProvenance(ctx context.Context, store *timescale.Store, watched map[string]string, tallies map[string]*sacSeedTally, source timescale.SACBalanceSeedSource) error {
+	var firstErr error
+	for cid, ak := range watched {
+		t := tallies[cid]
+		p := timescale.SACBalanceSeedProvenance{
+			ContractID: cid,
+			AssetKey:   ak,
+			Source:     source,
+		}
+		if t != nil {
+			p.HoldersSeeded = t.holders
+			if t.haveLedgerBounds {
+				minL, maxL := t.minLedger, t.maxLedger
+				p.MinLedgerSeen, p.MaxLedgerSeen = &minL, &maxL
+			}
+		}
+		if err := store.UpsertSACBalanceSeedProvenance(ctx, p); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // printSACSeedSummary prints one stable line per watched wrapper
