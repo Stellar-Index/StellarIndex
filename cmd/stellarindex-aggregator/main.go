@@ -412,6 +412,7 @@ func run(cfgPath string, dryRun bool) error {
 		DisableClassFilter:        cfg.Aggregate.DisableClassFilter,
 		EnableStablecoinFiatProxy: cfg.Aggregate.EnableStablecoinFiatProxy,
 		USDPeggedClassicAssets:    parseUSDPeggedClassicAssets(cfg.Trades.USDPeggedClassicAssets, logger),
+		USDPeggedSorobanAssets:    resolveUSDPeggedSorobanAssets(cfg.Trades.USDPeggedClassicAssets, cfg.Supply.SACWrappers, logger),
 		OutlierSigmaThreshold:     cfg.Aggregate.OutlierSigmaThreshold,
 		MinUSDVolume:              cfg.Aggregate.MinUSDVolume,
 		DivergenceRefresher:       divRefresher,
@@ -1287,6 +1288,57 @@ func parseUSDPeggedClassicAssets(raws []string, logger *slog.Logger) []canonical
 			continue
 		}
 		out = append(out, asset)
+	}
+	return out
+}
+
+// resolveUSDPeggedSorobanAssets derives the Soroban SAC-wrapper
+// contracts that inherit a USD peg transitively from
+// `[trades].usd_pegged_classic_assets` via `[supply].sac_wrappers`
+// (SAC contract id → "CODE:ISSUER" or "CODE-ISSUER" asset key —
+// same two operator-declared inputs
+// internal/storage/timescale.NewUSDVolumeQuoteSpec already combines
+// to recognise a SAC-wrapped peg for trades.usd_volume at insert
+// time). No new operator-facing TOML knob: an operator who has
+// already declared a classic USD peg AND registered its SAC wrapper
+// (both already required for the supply cross-check + the ingest-time
+// usd_volume pipeline) gets the aggregator's min_usd_volume floor
+// applied to that SAC-quoted pair for free (Guard 1, 2026-07-10).
+//
+// Soft-fails like its sibling parseUSDPeggedClassicAssets: a
+// malformed classic-peg entry or a sac_wrappers value that doesn't
+// parse as a classic asset_key is skipped rather than aborting
+// startup — TradesConfig.validate() / SupplyConfig.Validate() at
+// config load already reject those shapes, so on a well-formed
+// config neither skip path fires.
+func resolveUSDPeggedSorobanAssets(classicPegRaws []string, sacWrappers map[string]string, logger *slog.Logger) []canonical.Asset {
+	if len(classicPegRaws) == 0 || len(sacWrappers) == 0 {
+		return nil
+	}
+	pegged := make(map[string]struct{}, len(classicPegRaws))
+	for _, raw := range classicPegRaws {
+		asset, err := canonical.ParseAsset(raw)
+		if err != nil || asset.Type != canonical.AssetClassic {
+			continue // already validated + logged by parseUSDPeggedClassicAssets
+		}
+		pegged[asset.Code+"-"+asset.Issuer] = struct{}{}
+	}
+	var out []canonical.Asset
+	for sacID, supplyKey := range sacWrappers {
+		classic, err := canonical.ParseAsset(supplyKey)
+		if err != nil || classic.Type != canonical.AssetClassic {
+			continue // SupplyConfig.Validate() already enforces asset_key shape
+		}
+		if _, ok := pegged[classic.Code+"-"+classic.Issuer]; !ok {
+			continue // this SAC's underlying classic isn't a declared USD peg
+		}
+		soroban, err := canonical.NewSorobanAsset(sacID)
+		if err != nil {
+			logger.Warn("usd_pegged_soroban_assets: skipping malformed sac_wrappers key",
+				"sac_id", sacID, "err", err)
+			continue
+		}
+		out = append(out, soroban)
 	}
 	return out
 }

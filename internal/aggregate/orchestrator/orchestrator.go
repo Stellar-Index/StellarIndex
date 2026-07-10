@@ -190,16 +190,63 @@ type Config struct {
 	// target pair's quote is fiat:USD.
 	USDPeggedClassicAssets []canonical.Asset
 
+	// USDPeggedSorobanAssets is the operator's resolved allow-list of
+	// Soroban Stellar-Asset-Contract (SAC) wrappers that inherit a
+	// USD peg transitively from USDPeggedClassicAssets — e.g. the SAC
+	// contract that wraps Circle's classic USDC. Each entry is
+	// Type=AssetSoroban with ContractID set to the SAC's C-strkey.
+	//
+	// Unlike USDPeggedClassicAssets there is no dedicated TOML knob
+	// for this list: it's derived at the binary boundary by
+	// resolving `[supply].sac_wrappers` (SAC contract id →
+	// "CODE:ISSUER") against `[trades].usd_pegged_classic_assets`,
+	// the SAME two operator-declared inputs
+	// internal/storage/timescale.NewUSDVolumeQuoteSpec already
+	// combines to recognise a SAC-wrapped peg for trades.usd_volume
+	// at insert time (see resolveUSDPeggedSorobanAssets in
+	// cmd/stellarindex-aggregator/main.go). A SAC always shares its
+	// wrapped classic's 7-decimal scale, so no separate decimals
+	// input is needed.
+	//
+	// Used by [usdQuoteDecimals] to extend the MinUSDVolume floor to
+	// directly-configured Soroban-quoted target pairs (e.g.
+	// "native/CCW6…" — a SAC-USDC-quoted pair), closing the gap where
+	// such pairs served VWAP completely unguarded regardless of
+	// window volume. Empty = no Soroban pair gets a recognised USD
+	// peg; those pairs fall into [usdQuoteDecimals]'s unvaluable
+	// branch (pass-through + WARN + metric, not fail-closed — see
+	// dropForMinUSDVolume).
+	USDPeggedSorobanAssets []canonical.Asset
+
 	// MinUSDVolume, when > 0, requires a window's total USD volume
 	// (post-class, post-outlier) to meet the threshold before its
-	// VWAP publishes. Applied only for fiat:USD-quoted pairs — for
-	// those pairs every contributing trade originates off-chain
-	// (CEX/FX) at the uniform 10^8 quote-decimal convention, so the
-	// sum/1e8 → USD conversion is exact. Non-USD-quoted pairs are
-	// exempt because cross-decimal arithmetic across mixed sources
-	// (Stellar 7-decimal vs Soroban variable vs external 1e8) has no
-	// clean single-USD interpretation; the dominant launch case is
-	// XLM/USD which IS in scope.
+	// VWAP publishes.
+	//
+	// Applies to every target pair whose quote leg [usdQuoteDecimals]
+	// can resolve to a USD value: fiat:USD directly (every
+	// contributing trade originates off-chain at the uniform 10^8
+	// quote-decimal convention, so sum/1e8 is exact), a classic asset
+	// on USDPeggedClassicAssets (7-decimal Stellar-classic
+	// invariant), or a Soroban SAC wrapper on USDPeggedSorobanAssets
+	// (same 7-decimal invariant, transitively). Before 2026-07-10 the
+	// floor applied ONLY to fiat:USD-quoted pairs — a directly-
+	// configured Soroban- or classic-quoted target pair (e.g.
+	// "native/CCW6…", a SAC-USDC-quoted pair) served VWAP unguarded
+	// at any volume, so a single dust trade could set the price. The
+	// stablecoin-fiat-proxy expansion path (EnableStablecoinFiatProxy)
+	// was never affected by that gap — it rewrites fetched trades onto
+	// the fiat:USD target BEFORE this gate runs, so the target pair
+	// the gate sees was always fiat:USD on that path.
+	//
+	// Non-USD fiat pairs (fiat:EUR, fiat:GBP, …) remain exempt — the
+	// $10k-style threshold is a USD figure and converting a EUR- or
+	// GBP-denominated window into USD needs a live FX rate this gate
+	// doesn't have (a distinct, still-open question from the
+	// Soroban/classic gap above). A quote asset this package can't
+	// value in USD by any of the three tiers above (e.g. a pure
+	// Soroban/Soroban pair with no declared peg) also stays exempt —
+	// see dropForMinUSDVolume's unvaluable branch for why that's a
+	// deliberate pass-through rather than fail-closed.
 	//
 	// Default 0 = filter off. Production deployments stamp 10_000
 	// (== $10k in window) per the AggregateConfig default, matching
@@ -1048,7 +1095,7 @@ func (o *Orchestrator) fetchForTarget(
 		if err != nil {
 			return nil, 0, nil, err
 		}
-		total, perTrade := usdVolumeForPairPerTrade(target, t, o.cfg.USDPeggedClassicAssets)
+		total, perTrade := usdVolumeForPairPerTrade(target, t, o.cfg.USDPeggedClassicAssets, o.cfg.USDPeggedSorobanAssets)
 		return t, total, perTrade, nil
 	}
 
@@ -1073,7 +1120,7 @@ func (o *Orchestrator) fetchForTarget(
 		// Per-trade USD value against the SOURCE pair's quote-decimal
 		// convention — captured BEFORE the rewrite below blurs the
 		// original 7-vs-8 decimal.
-		batchTotal, batchPerTrade := usdVolumeForPairPerTrade(src, batch, o.cfg.USDPeggedClassicAssets)
+		batchTotal, batchPerTrade := usdVolumeForPairPerTrade(src, batch, o.cfg.USDPeggedClassicAssets, o.cfg.USDPeggedSorobanAssets)
 		sumUSD += batchTotal
 		for id, v := range batchPerTrade {
 			tradeUSD[id] = v
@@ -1095,8 +1142,8 @@ func (o *Orchestrator) fetchForTarget(
 // which exposes the per-trade map needed for F-1242 post-filter
 // per-source attribution. Kept here as a documentation pointer;
 // the implementation lives in usdVolumeForPairPerTrade.
-func usdVolumeForPair(pair canonical.Pair, batch []canonical.Trade, classicUSDPegs []canonical.Asset) float64 {
-	total, _ := usdVolumeForPairPerTrade(pair, batch, classicUSDPegs)
+func usdVolumeForPair(pair canonical.Pair, batch []canonical.Trade, classicUSDPegs, sorobanUSDPegs []canonical.Asset) float64 {
+	total, _ := usdVolumeForPairPerTrade(pair, batch, classicUSDPegs, sorobanUSDPegs)
 	return total
 }
 
@@ -1113,19 +1160,18 @@ var _ = usdVolumeForPair
 //
 // Returns (0, nil) when the pair's quote isn't a recognised USD
 // surface — the contribution sink stamps NULL `volume_usd` in
-// that case, matching the prior all-NULL posture for non-USD
-// targets.
-func usdVolumeForPairPerTrade(pair canonical.Pair, batch []canonical.Trade, classicUSDPegs []canonical.Asset) (float64, map[string]float64) {
+// that case, matching the prior all-NULL posture for unrecognised
+// quotes. Decimal-scale resolution is delegated to
+// [usdQuoteDecimals] — the SAME classification [dropForMinUSDVolume]
+// uses to decide whether the MinUSDVolume floor applies to a given
+// target pair, so the two can never disagree about which quote
+// shapes are USD-valuable (Guard 1, 2026-07-10).
+func usdVolumeForPairPerTrade(pair canonical.Pair, batch []canonical.Trade, classicUSDPegs, sorobanUSDPegs []canonical.Asset) (float64, map[string]float64) {
 	if len(batch) == 0 {
 		return 0, nil
 	}
-	var decimals int
-	switch {
-	case pair.Quote.Type == canonical.AssetFiat && pair.Quote.Code == "USD":
-		decimals = 8
-	case pair.Quote.Type == canonical.AssetClassic && isUSDPeggedClassic(pair.Quote, classicUSDPegs):
-		decimals = 7
-	default:
+	decimals, ok := usdQuoteDecimals(pair.Quote, classicUSDPegs, sorobanUSDPegs)
+	if !ok {
 		return 0, nil
 	}
 	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
@@ -1144,6 +1190,50 @@ func usdVolumeForPairPerTrade(pair canonical.Pair, batch []canonical.Trade, clas
 	return total, perTrade
 }
 
+// usdQuoteDecimals resolves the fixed-point decimal scale needed to
+// read a trade's QuoteAmount as a USD figure, for a pair whose quote
+// leg is one of the three shapes this package can value in USD
+// without a live price lookup:
+//
+//  1. fiat:USD directly — decimals 8 (the uniform off-chain
+//     CEX/FX external-source convention).
+//  2. A classic Stellar credit on `classicUSDPegs` — decimals 7
+//     (the Stellar-classic invariant).
+//  3. A Soroban SAC wrapper on `sorobanUSDPegs` — decimals 7 (a SAC
+//     always mirrors the 7-decimal scale of the classic asset it
+//     wraps; Guard 1, 2026-07-10).
+//
+// ok=false means none of the three tiers apply — the quote asset has
+// no USD valuation this package can compute cleanly. That covers
+// non-USD fiat (fiat:EUR, fiat:GBP, …; would need a live FX rate),
+// an un-pegged classic/Soroban quote (would need a live price
+// lookup — "rare" per the Guard 1 finding, and deliberately NOT
+// built here; see dropForMinUSDVolume's unvaluable branch), and any
+// crypto/RWA/native quote shape.
+//
+// Both [usdVolumeForPairPerTrade] (valuation) and
+// [dropForMinUSDVolume] (MinUSDVolume applicability) call this so
+// the two questions — "can we value this pair's USD volume" and
+// "does the manipulation floor apply to this pair" — are answered by
+// exactly one classification, not two that can drift apart. Before
+// 2026-07-10 they WERE two separate checks (minUSDVolumeApplies
+// tested only fiat:USD; this switch also recognised classic pegs)
+// and had drifted: a directly-configured classic- or Soroban-quoted
+// target pair could be valued here but the floor never consulted
+// that value.
+func usdQuoteDecimals(quote canonical.Asset, classicUSDPegs, sorobanUSDPegs []canonical.Asset) (decimals int, ok bool) {
+	switch {
+	case quote.Type == canonical.AssetFiat && quote.Code == "USD":
+		return 8, true
+	case quote.Type == canonical.AssetClassic && isUSDPeggedClassic(quote, classicUSDPegs):
+		return 7, true
+	case quote.Type == canonical.AssetSoroban && isUSDPeggedSoroban(quote, sorobanUSDPegs):
+		return 7, true
+	default:
+		return 0, false
+	}
+}
+
 // isUSDPeggedClassic reports whether `asset` is one of the
 // operator-declared classic USD-pegged credits. Matched by exact
 // (code, issuer) equality — the same shape the orchestrator's
@@ -1154,6 +1244,22 @@ func isUSDPeggedClassic(asset canonical.Asset, pegs []canonical.Asset) bool {
 			continue
 		}
 		if p.Code == asset.Code && p.Issuer == asset.Issuer {
+			return true
+		}
+	}
+	return false
+}
+
+// isUSDPeggedSoroban reports whether `asset` is one of the
+// operator-resolved Soroban SAC-wrapper USD-pegged assets (see
+// [Config.USDPeggedSorobanAssets]). Matched by exact ContractID
+// equality — the Soroban twin of [isUSDPeggedClassic].
+func isUSDPeggedSoroban(asset canonical.Asset, pegs []canonical.Asset) bool {
+	for _, p := range pegs {
+		if p.Type != canonical.AssetSoroban {
+			continue
+		}
+		if p.ContractID == asset.ContractID {
 			return true
 		}
 	}
@@ -1200,10 +1306,50 @@ func survivorUSDVolume(trades []canonical.Trade, tradeUSD map[string]float64) fl
 // passed in the pre-filter total, which let thin windows publish
 // above MinUSDVolume on volume the filter had already discarded.
 //
-// See [Config.MinUSDVolume] for the threshold semantics.
+// Applicability is [usdQuoteDecimals] — the SAME classification
+// [usdVolumeForPairPerTrade] uses to compute `usdVolume` in the
+// first place, so "can we value this pair" and "does the floor
+// apply" can't drift apart (Guard 1, 2026-07-10). Three outcomes:
+//
+//   - Quote is USD-valuable (fiat:USD / classic peg / Soroban SAC
+//     peg): floor applies — this is the normal gate path below.
+//   - Quote is on-chain (classic or Soroban) but NOT a recognised
+//     peg: unvaluable WITHOUT a live price lookup this package
+//     deliberately doesn't build (see [Config.MinUSDVolume]). Before
+//     2026-07-10 this shape (e.g. a directly-configured Soroban- or
+//     classic-quoted target pair) served VWAP with NO floor at all —
+//     silently. Enumerating the pairs actually configured today
+//     (cmd/stellarindex-aggregator's defaultPairs() and every
+//     checked-in TOML, including r1's live template) shows every one
+//     is fiat:USD/EUR/GBP-quoted — none would hit this branch as
+//     deployed. But failing closed here (treating "can't value" as
+//     "below floor") would permanently blackout ANY future operator
+//     who configures a legitimate but not-yet-pegged on-chain quote
+//     pair once MinUSDVolume>0 — trading one silent gap for another.
+//     So this branch passes the window through UNGUARDED, same as
+//     before, but no longer SILENTLY: it logs a WARN and increments
+//     AggregatorMinUSDVolumeUnvaluableTotal so operators can see the
+//     exposure and either add the missing peg (usd_pegged_classic_assets
+//     / sac_wrappers) or knowingly accept it.
+//   - Quote is fiat but not USD (EUR, GBP, …): exempt, no WARN — a
+//     distinct, pre-existing, already-understood scope boundary (the
+//     threshold is a USD figure; converting a EUR/GBP window needs a
+//     live FX rate, same "no live lookup" limit as above, but this
+//     shape isn't new and isn't a manipulation-guard regression, so
+//     it doesn't need the same loud surfacing).
+//
+// See [Config.MinUSDVolume] for the full threshold semantics.
 func (o *Orchestrator) dropForMinUSDVolume(pair canonical.Pair, trades []canonical.Trade, usdVolume float64) bool {
 	_ = trades // retained for tracing dimensions if future gates want it
-	if o.cfg.MinUSDVolume <= 0 || !minUSDVolumeApplies(pair) {
+	if o.cfg.MinUSDVolume <= 0 {
+		return false
+	}
+	if _, valuable := usdQuoteDecimals(pair.Quote, o.cfg.USDPeggedClassicAssets, o.cfg.USDPeggedSorobanAssets); !valuable {
+		if pair.Quote.Type == canonical.AssetClassic || pair.Quote.Type == canonical.AssetSoroban {
+			obs.AggregatorMinUSDVolumeUnvaluableTotal.WithLabelValues(pair.String()).Inc()
+			o.logger.Warn("min_usd_volume floor skipped: on-chain quote asset has no recognised USD peg — this pair is NOT gated against dust-trade manipulation",
+				"pair", pair.String())
+		}
 		return false
 	}
 	if usdVolume >= o.cfg.MinUSDVolume {
@@ -1215,16 +1361,6 @@ func (o *Orchestrator) dropForMinUSDVolume(pair canonical.Pair, trades []canonic
 	o.mu.Unlock()
 	obs.AggregatorEmptyWindowsTotal.Inc()
 	return true
-}
-
-// minUSDVolumeApplies reports whether the per-pair USD-volume
-// threshold should be enforced for `pair`. True iff the quote asset
-// is fiat:USD — the only case where every contributing trade comes
-// from off-chain CEX/FX feeds at the uniform 10^8 quote-decimal
-// convention. Non-USD-quoted pairs are exempt; see
-// [Config.MinUSDVolume] for the rationale.
-func minUSDVolumeApplies(pair canonical.Pair) bool {
-	return pair.Quote.Type == canonical.AssetFiat && pair.Quote.Code == "USD"
 }
 
 // windowUSDVolume sums quote_amount across the supplied trades and
