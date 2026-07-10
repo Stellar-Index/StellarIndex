@@ -15,6 +15,19 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Projector: adaptive per-source window — a too-dense ledger window can no longer stall a
+  replay forever.** `cycleOneSource` scanned a fixed `BatchLimit` (1,000) ledgers per cycle
+  under a fixed 60s `PerSourceTimeout`; a window dense enough to exceed the deadline (hit
+  2026-07-10 at aquarius ledgers [63,191,828, 63,192,828] once the v0.12 rewards decoder
+  added its volume) failed, left the cursor untouched, and retried the IDENTICAL range every
+  cycle — an infinite loop whose only external symptom was "lag stopped falling" (plus, after
+  a few hours, a 21 GB heap / GC-thrash secondary that starved every other client of its
+  deadlines). The window now halves on `context.DeadlineExceeded` (floor `MinBatchLimit`=25)
+  and doubles back to `BatchLimit` on success (`shrinkWindow`/`recoverWindow`, regression
+  test `TestAdaptiveWindow`). Abandoned inserts in the wedge window self-heal on the
+  converged retry (the cursor never advanced past them).
+
 ### Added
 - **Router attribution now uses call-path evidence to name the specific
   aggregator wrapper, not just the plain router** (migration 0104,
