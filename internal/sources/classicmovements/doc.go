@@ -7,9 +7,9 @@
 // full decision and docs/architecture/pre-p23-classic-movements-research.md
 // for the evidence base.
 //
-// # Phase 1-3 scope (op-only decode surface)
+// # Phase 1-4 scope (op-only decode surface)
 //
-// This package currently decodes eight classic operation types via
+// This package currently decodes nine classic operation types via
 // its op-only decode surface (Matches / decodeOp / Decoder.Decode):
 // Payment and CreateAccount (ADR-0047 D3 Phase 1, both reconstruct
 // from the operation BODY alone once the operation result's success
@@ -31,9 +31,10 @@
 // full correlation design, including the Postgres second-pass
 // fallback and its memory-scaling caveat). None of Phase 1-3 needs
 // ledger_entry_changes. SupportedOpTypes, matchesSupportedOp, and
-// decodeOp's switch all cover exactly these eight types;
-// recognition_test.go pins that coverage so a future phase's author
-// must extend all three deliberately (ADR-0047 D4.2).
+// decodeOp's switch all cover exactly these eight types (plus
+// AccountMerge below, for nine); recognition_test.go pins that
+// coverage so a future phase's author must extend all three
+// deliberately (ADR-0047 D4.2).
 //
 // A path payment emits exactly ONE 'path_payment' row per op
 // (leg_index always 0) — never a row per hop; the per-hop ClaimAtoms
@@ -44,18 +45,44 @@
 // asset per row. Every Phase 1-3 kind is one row per op (leg_index
 // always 0) — none of these ops have a second asset leg.
 //
-// Later phases (account merge + liquidity-pool deposit/withdraw +
-// the CAP-0038 revocation edge case, Phase 4) are NOT implemented
-// here yet. Adding an op-only-surface kind means: a new decodeXxx
-// function, a case in decodeOp's switch, an addition to
-// matchesSupportedOp and to SupportedOpTypes, and an update to
-// recognition_test.go's expected set. LiquidityPoolDeposit/Withdraw
-// and the CAP-0038 edge case will need a SEPARATE, entry-changes-
-// correlated decode surface (dispatcher.OpContext has no room for a
-// correlated ledger_entry_changes group) — see the Phase 4
-// implementation notes once they land. The migration 0105 schema
-// already admits all ten movement_kind values and both provenance
-// values, so no schema change is needed for any of this.
+// Phase 4 adds AccountMerge to this op-only surface (research §2 path
+// (b): the exact amount is AccountMergeResult.SourceAccountBalance,
+// never derivable from the body, which carries only the destination)
+// — the NINTH and last op-only-surface type.
+//
+// # Phase 4 entry-changes-correlated decode surface
+//
+// LiquidityPoolDeposit/Withdraw and the CAP-0038 AllowTrust/
+// SetTrustLineFlags trustline-revocation auto-liquidation edge case
+// (research §2 path (c)) are a SEPARATE decode surface —
+// EntryChangeOpTypes / DecodeLiquidityPoolOp /
+// DecodeCAP0038Revocation in entrychanges.go — because their results
+// are bare success codes with zero data fields; the only ground
+// truth is the pool's LiquidityPoolEntryConstantProduct
+// ReserveA/ReserveB before vs. after the op (or, for CAP-0038, the
+// created ClaimableBalanceEntry rows the revocation side-effect
+// produces), which lives ONLY in ledger_entry_changes.
+// dispatcher.OpContext (the op-only surface's input) has no room for
+// a correlated ledger_entry_changes group, so these are plain
+// functions the caller (classic-movements-backfill) invokes
+// directly after correlating clickhouse.StreamEntryChanges output by
+// (ledger, tx_hash, op_index) itself — see entrychanges.go's package
+// doc for the full design, including why an empty entry-changes
+// group means something DIFFERENT for LP deposit/withdraw
+// (ErrEntryChangesUnavailable, always) than for AllowTrust/
+// SetTrustLineFlags (zero movements is the expected common case; the
+// caller must run its own window-level fidelity probe before trusting
+// that as "no liquidation" rather than "can't tell yet").
+//
+// LiquidityPoolDeposit/Withdraw emit TWO rows per op (leg_index 0/1,
+// one per pool asset); a CAP-0038 liquidation emits one row per
+// created ClaimableBalanceEntry (always two for a real event, since
+// every classic AMM pool has exactly two assets) — both are the only
+// Phase 1-4 kinds with more than one row per op.
+//
+// The migration 0105 schema already admits all ten movement_kind
+// values and both provenance values, so no schema change was needed
+// for any phase.
 //
 // # Historical-only — never live-wired (ADR-0047 D2)
 //
@@ -71,9 +98,12 @@
 // internal/pipeline/lockstep_ast_test.go notSunkEvents entry). The
 // only writer is `stellarindex-ops classic-movements-backfill`
 // (internal/ops/chops), which streams clickhouse.ClassicOp values
-// via clickhouse.StreamClassicOps and hard-clamps its ledger range
-// below the P23 boundary regardless of what an operator requests —
-// see that command's flag help for the exact clamp behavior.
+// via clickhouse.StreamClassicOps (both decode surfaces) plus
+// clickhouse.EntryChange via clickhouse.StreamEntryChanges (the
+// Phase 4 entry-changes surface only), and hard-clamps its ledger
+// range below the P23 boundary regardless of what an operator
+// requests — see that command's flag help for the exact clamp
+// behavior.
 //
 // # Serving — write-path only
 //

@@ -451,6 +451,108 @@ func TestRealBytes_clawbackClaimableBalance_failed(t *testing.T) {
 	}
 }
 
+// ─── Phase 4 (op-only half): AccountMerge ──────────────────────────
+
+// TestRealBytes_accountMerge_success is a real pre-P23 mainnet
+// AccountMerge: pins the exact XLM amount from
+// AccountMergeResult.SourceAccountBalance (249999900 — NOT derivable
+// from the body, which carries only the destination).
+func TestRealBytes_accountMerge_success(t *testing.T) {
+	// ledger 40000173, tx 8503c256346c2cd6c6864d4c33f8e502f87ec3f1413688210017563e4e0b2117, op_index 0.
+	const (
+		bodyB64   = "AAAACAAAAAA0/LLInLnVygX6rN/I+sRIih1i5JrUYv0elzaRi/8EBg=="
+		resultB64 = "AAAAAAAAAAgAAAAAAAAAAA7mshw="
+	)
+	movements := decodeRealBytes(t, bodyB64, resultB64, 40_000_173,
+		"8503c256346c2cd6c6864d4c33f8e502f87ec3f1413688210017563e4e0b2117", 0,
+		"GDICQTPPKCM7WABLJS2UGZIYF3BFET4MGQLN2GB4BKDKAGSXYYAPVO46",
+		time.Date(2022, 3, 12, 19, 50, 15, 0, time.UTC))
+
+	if len(movements) != 1 {
+		t.Fatalf("got %d movements, want 1", len(movements))
+	}
+	m := movements[0]
+	if m.Kind != KindAccountMerge {
+		t.Errorf("Kind = %q, want %q", m.Kind, KindAccountMerge)
+	}
+	if m.Asset != "native" || m.Amount.String() != "249999900" {
+		t.Errorf("asset/amount = %s %s, want native 249999900", m.Amount.String(), m.Asset)
+	}
+	if m.FromAddress != "GDICQTPPKCM7WABLJS2UGZIYF3BFET4MGQLN2GB4BKDKAGSXYYAPVO46" {
+		t.Errorf("FromAddress = %q", m.FromAddress)
+	}
+	if m.ToAddress != "GA2PZMWITS45LSQF7KWN7SH2YREIUHLC4SNNIYX5D2LTNEML74CANJMO" {
+		t.Errorf("ToAddress = %q", m.ToAddress)
+	}
+}
+
+// ─── Phase 4 (entry-changes half): LiquidityPoolDeposit/Withdraw ──
+//
+// Real pre-P23 mainnet LP deposit/withdraw op bodies (ledger
+// ~50,000,000, well below the P23 boundary AND below
+// ledger_entry_changes' current per-op fidelity floor of
+// ~61,996,000 — research §3.2). This is exactly the "fidelity
+// absent" era every classic-movements-backfill invocation runs in
+// TODAY: StreamEntryChanges returns zero rows for these ops, not
+// because nothing happened but because Phase 0's ch-backfill hasn't
+// reached this range yet. Confirming that DecodeLiquidityPoolOp
+// returns ErrEntryChangesUnavailable (never an error, never a
+// guessed amount) against REAL op bytes — not just a synthetic empty
+// slice — is the strongest evidence the skip-honestly path is wired
+// correctly end to end.
+
+func TestRealBytes_liquidityPoolDeposit_entryChangesUnavailable(t *testing.T) {
+	// ledger 50000031, tx 294abbd9b62ed717abb6e7008cf86ba7b99c9e5a6a20444350fc418bf2d00071, op_index 0.
+	const bodyB64 = "AAAAFkH5xtzrmGR6mhOv/Bea3A1DOfxi8oi0KKH3nNu93YOAAAAAABiEdFwAAAAAAQJiEwAJLHkAAGGoB0/PTwBMS0A="
+	const resultB64 = "AAAAAAAAABYAAAAA"
+
+	var body xdr.OperationBody
+	if err := xdr.SafeUnmarshalBase64(bodyB64, &body); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	var result xdr.OperationResult
+	if err := xdr.SafeUnmarshalBase64(resultB64, &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if body.Type != xdr.OperationTypeLiquidityPoolDeposit {
+		t.Fatalf("op type = %s, want OperationTypeLiquidityPoolDeposit", body.Type)
+	}
+
+	_, err := DecodeLiquidityPoolOp(50_000_031, time.Date(2024, 1, 20, 9, 12, 38, 0, time.UTC),
+		"294abbd9b62ed717abb6e7008cf86ba7b99c9e5a6a20444350fc418bf2d00071", 0,
+		"GDCTMYJBFGEEBN75GW3ECN2V3QS4LFLIIRGRXYSJJQMMAIIPDCVCOU3T",
+		xdr.Operation{Body: body}, result, nil) // nil changes: what StreamEntryChanges actually returns today for this ledger.
+	if !errors.Is(err, ErrEntryChangesUnavailable) {
+		t.Errorf("err = %v, want errors.Is(err, ErrEntryChangesUnavailable) — this is the real pre-fidelity-floor era every backfill invocation runs in today", err)
+	}
+}
+
+func TestRealBytes_liquidityPoolWithdraw_entryChangesUnavailable(t *testing.T) {
+	// ledger 50000096, tx 9985aa0dce7f8e92b5f8d9bba385375eb3bb19e521c6be33e67420d99cd9ab9f, op_index 0.
+	const bodyB64 = "AAAAF0H5xtzrmGR6mhOv/Bea3A1DOfxi8oi0KKH3nNu93YOAAAAAAAAK1OoAAAAAAJcTvgAAAAAABjgq"
+	const resultB64 = "AAAAAAAAABcAAAAA"
+
+	var body xdr.OperationBody
+	if err := xdr.SafeUnmarshalBase64(bodyB64, &body); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	var result xdr.OperationResult
+	if err := xdr.SafeUnmarshalBase64(resultB64, &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if body.Type != xdr.OperationTypeLiquidityPoolWithdraw {
+		t.Fatalf("op type = %s, want OperationTypeLiquidityPoolWithdraw", body.Type)
+	}
+
+	_, err := DecodeLiquidityPoolOp(50_000_096, time.Date(2024, 1, 20, 9, 18, 50, 0, time.UTC),
+		"9985aa0dce7f8e92b5f8d9bba385375eb3bb19e521c6be33e67420d99cd9ab9f", 0,
+		"GDJTIX3XYRZFQZCES5TI6Z5ZWZZFHUP7KQVTTIFM2Y6M7M6L6RM2WR4B",
+		xdr.Operation{Body: body}, result, nil)
+	if !errors.Is(err, ErrEntryChangesUnavailable) {
+		t.Errorf("err = %v, want errors.Is(err, ErrEntryChangesUnavailable)", err)
+	}
+}
+
 // ─── helpers ──────────────────────────────────────────────────────
 
 // decodeRealBytes unmarshals real op body/result XDR (base64, exactly

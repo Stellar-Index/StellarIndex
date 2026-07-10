@@ -908,8 +908,10 @@ func TestDecoder_claimableBalance_failedOps_emitNothing(t *testing.T) {
 		op     xdr.Operation
 		result xdr.OperationResult
 	}{
-		{"create_bareCode", mkCreateClaimableBalanceOp(t, xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}, 100, mkClaimant(t, 0x82)),
-			xdr.OperationResult{Code: xdr.OperationResultCodeOpNoAccount}},
+		{
+			"create_bareCode", mkCreateClaimableBalanceOp(t, xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}, 100, mkClaimant(t, 0x82)),
+			xdr.OperationResult{Code: xdr.OperationResultCodeOpNoAccount},
+		},
 		{"claim_bareCode", mkClaimClaimableBalanceOp(bid), xdr.OperationResult{Code: xdr.OperationResultCodeOpNoAccount}},
 		{"clawback_bareCode", mkClawbackClaimableBalanceOp(bid), xdr.OperationResult{Code: xdr.OperationResultCodeOpNoAccount}},
 		{"clawbackOp_bareCode", mkClawbackOp(t, xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}, 0x83, 100), xdr.OperationResult{Code: xdr.OperationResultCodeOpNoAccount}},

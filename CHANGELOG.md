@@ -110,6 +110,45 @@ against.
   synthetic unit tests, real-bytes golden tests (incl. a real failed
   `ClawbackClaimableBalance`), and a new TimescaleDB integration test
   (`test/integration/classic_movements_storage_test.go`) all extended.
+- **Pre-P23 classic-movement reconstruction, Phase 4 (final phase):
+  AccountMerge + liquidity-pool deposit/withdraw + the CAP-0038
+  revocation edge case** (ADR-0047).
+  `internal/sources/classicmovements` now also decodes
+  `AccountMerge` (exact amount from
+  `AccountMergeResult.SourceAccountBalance`, never derivable from the
+  body) through the existing op-only surface, and gains a SECOND,
+  parallel decode surface (`entrychanges.go`:
+  `EntryChangeOpTypes`/`DecodeLiquidityPoolOp`/`DecodeCAP0038Revocation`)
+  for `LiquidityPoolDeposit`/`Withdraw` and the CAP-0038
+  `AllowTrust`/`SetTrustLineFlags` trustline-revocation
+  auto-liquidation edge case — both need a correlated
+  `ledger_entry_changes` before/after group that
+  `dispatcher.OpContext` has no room for, since their results are
+  bare success codes with zero data fields. LP deposit/withdraw emit
+  two rows per op (one per pool asset); a CAP-0038 liquidation emits
+  `movement_kind='liquidity_pool_withdraw'` rows tagged
+  `attributes.revocation=true`.
+  New `internal/storage/clickhouse/entry_change_reader.go`
+  (`StreamEntryChanges` + `CountOpScopedEntryChanges`, the
+  window-level fidelity probe) and `classic-movements-backfill` gains
+  a second `clickhouse.StreamClassicOps` pass for this surface,
+  correlating by `(ledger, tx_hash, op_index)`. Detect-and-skip-
+  honestly discipline throughout: `ErrEntryChangesUnavailable` for
+  LP ops when no correlated entry changes exist (unconditionally,
+  since a real deposit/withdraw always mutates the pool); the
+  CAP-0038 check is SKIPPED entirely for a window when the fidelity
+  probe finds zero — never silently reported as "no liquidation."
+  Verified against real pre-P23 mainnet `AccountMerge` bytes and
+  real `LiquidityPoolDeposit`/`Withdraw` bytes proving the
+  entry-changes-unavailable path fires correctly on real production
+  data (`ledger_entry_changes`' real per-op fidelity currently starts
+  post-P23, ~ledger 61,996,000 — every window this command can
+  address today reports 100% LP-unavailable / 100% CAP-0038-skipped
+  by design, until the separate, operator-scheduled Phase 0
+  `ch-backfill` closes that gap). A live end-to-end dry run against
+  real r1 ClickHouse during implementation caught and fixed a
+  ClickHouse driver type mismatch (`count()` must scan into
+  `uint64`, not `int64`).
 - **Full-history SAC balance seed — closes the BLND/EURC/KALE/PHO supply
   cross-check residual** (migration 0102, ROADMAP #14 / incident
   2026-07-06 "PHO/BLND VERDICT" follow-up). `supply seed-sac-balances`

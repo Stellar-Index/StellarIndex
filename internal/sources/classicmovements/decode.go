@@ -18,8 +18,12 @@ import (
 // — the exact set clickhouse.StreamClassicOps should be called with
 // for that surface. Grows with each phase: Phase 1 (CreateAccount,
 // Payment), Phase 2 adds PathPaymentStrictReceive/Send, Phase 3 adds
-// the ClaimableBalance trio + Clawback. See recognition_test.go for
-// the guard that pins this list.
+// the ClaimableBalance trio + Clawback, Phase 4 adds AccountMerge —
+// the LAST op-only-surface type; LiquidityPoolDeposit/Withdraw and
+// the CAP-0038 AllowTrust/SetTrustLineFlags edge case are a SEPARATE
+// entry-changes-correlated surface (see EntryChangeOpTypes in
+// entrychanges.go). See recognition_test.go for the guard that pins
+// this list.
 func SupportedOpTypes() []string {
 	return []string{
 		xdr.OperationTypeCreateAccount.String(),
@@ -30,6 +34,7 @@ func SupportedOpTypes() []string {
 		xdr.OperationTypeClaimClaimableBalance.String(),
 		xdr.OperationTypeClawbackClaimableBalance.String(),
 		xdr.OperationTypeClawback.String(),
+		xdr.OperationTypeAccountMerge.String(),
 	}
 }
 
@@ -43,7 +48,8 @@ func matchesSupportedOp(op xdr.Operation) bool {
 	case xdr.OperationTypeCreateAccount, xdr.OperationTypePayment,
 		xdr.OperationTypePathPaymentStrictReceive, xdr.OperationTypePathPaymentStrictSend,
 		xdr.OperationTypeCreateClaimableBalance, xdr.OperationTypeClaimClaimableBalance,
-		xdr.OperationTypeClawbackClaimableBalance, xdr.OperationTypeClawback:
+		xdr.OperationTypeClawbackClaimableBalance, xdr.OperationTypeClawback,
+		xdr.OperationTypeAccountMerge:
 		return true
 	}
 	return false
@@ -81,6 +87,8 @@ func (d *Decoder) decodeOp(ledger uint32, closedAt time.Time, txHash string, opI
 		return d.decodeClawbackClaimableBalance(ledger, closedAt, txHash, opIndex, fromAddr, op, result)
 	case xdr.OperationTypeClawback:
 		return decodeClawback(ledger, closedAt, txHash, opIndex, fromAddr, op, result)
+	case xdr.OperationTypeAccountMerge:
+		return decodeAccountMerge(ledger, closedAt, txHash, opIndex, fromAddr, op, result)
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedOpType, op.Body.Type)
 	}
@@ -629,8 +637,8 @@ func (d *Decoder) decodeClawbackClaimableBalance(ledger uint32, closedAt time.Ti
 // data: real_bytes_test.go's TestRealBytes_clawback_success has
 // From=GCFROB3…(the holder) while the op's own resolved source
 // account is GBBKUUT…(the issuer) — a DIFFERENT address, the reverse
-// of every other Phase 1-3 kind where fromAddr IS the movement's
-// FromAddress.
+// of every other op-only-surface kind (including AccountMerge) where
+// fromAddr IS the movement's FromAddress.
 func decodeClawback(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, op xdr.Operation, result xdr.OperationResult) ([]Movement, error) {
 	if !opSucceeded(result) {
 		return nil, nil
@@ -687,4 +695,69 @@ func claimableBalanceIDHex(id xdr.ClaimableBalanceId) (string, error) {
 		return "", fmt.Errorf("ClaimableBalanceId variant %d has no V0 hash", id.Type)
 	}
 	return hex.EncodeToString(id.V0[:]), nil
+}
+
+// ─── Phase 4 (op-only half): AccountMerge ──────────────────────────
+//
+// ADR-0047 D3 Phase 4. AccountMerge doesn't need ledger_entry_changes
+// (research §2 path (b)): the exact amount merged is in the RESULT,
+// not the body — AccountMergeOp carries no amount field at all, only
+// the destination; core computes and reports the source account's
+// full native balance at merge time via
+// AccountMergeResult.SourceAccountBalance. One row per op (leg_index
+// always 0), asset always native (only XLM balance is transferable
+// this way — any non-native trustlines must be removed/zero before
+// merge succeeds).
+
+// decodeAccountMerge reconstructs an 'account_merge' movement: the
+// merging (source) account -> the destination account, for the
+// account's FULL native balance (research §2 path (b): the amount is
+// in AccountMergeResult.SourceAccountBalance, never derivable from
+// the body).
+func decodeAccountMerge(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, op xdr.Operation, result xdr.OperationResult) ([]Movement, error) {
+	if !opSucceeded(result) {
+		return nil, nil
+	}
+	tr, ok := result.GetTr()
+	if !ok {
+		return nil, nil
+	}
+	r, ok := tr.GetAccountMergeResult()
+	if !ok || r.Code != xdr.AccountMergeResultCodeAccountMergeSuccess {
+		return nil, nil
+	}
+	bal, ok := r.GetSourceAccountBalance()
+	if !ok {
+		return nil, fmt.Errorf("%w: success result but no SourceAccountBalance (ledger %d tx %s op %d)",
+			ErrMalformedMovement, ledger, txHash, opIndex)
+	}
+	if bal <= 0 {
+		return nil, fmt.Errorf("%w: non-positive SourceAccountBalance %d (ledger %d tx %s op %d)",
+			ErrMalformedMovement, bal, ledger, txHash, opIndex)
+	}
+
+	destMuxed, ok := op.Body.GetDestination()
+	if !ok {
+		return nil, fmt.Errorf("%w: op type AccountMerge but body has no Destination (ledger %d tx %s op %d)",
+			ErrMalformedMovement, ledger, txHash, opIndex)
+	}
+	destAddr, derr := destMuxed.GetAddress()
+	if derr != nil {
+		return nil, fmt.Errorf("%w: unresolvable destination: %w (ledger %d tx %s op %d)",
+			ErrMalformedMovement, derr, ledger, txHash, opIndex)
+	}
+
+	return []Movement{{
+		Kind:            KindAccountMerge,
+		Provenance:      ProvenanceClassicDerived,
+		Ledger:          ledger,
+		LedgerCloseTime: closedAt,
+		TxHash:          txHash,
+		OpIndex:         opIndex,
+		LegIndex:        0,
+		Asset:           "native",
+		Amount:          canonical.NewAmount(big.NewInt(int64(bal))),
+		FromAddress:     fromAddr,
+		ToAddress:       destAddr,
+	}}, nil
 }
