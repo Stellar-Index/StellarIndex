@@ -61,7 +61,7 @@ groups:
             indexer host lost outbound HTTPS to ECB, or the poller
             goroutine deadlocked.
 
-      # Active fiat-FX feed (`massive`, the internal/sources/forex
+      # Active fiat-FX feed (`massive`, the internal/sources/external/forex
       # worker) has gone dry. Distinct from the poller-staleness alert
       # above: `massive` does NOT run under the external.Connector
       # poller framework — it writes the fx_quotes hypertable directly
@@ -93,7 +93,7 @@ groups:
           description: |
             The freshest stellarindex_external_fx_last_quote_unix across
             all FX sources is > 6 h stale for > 15 min. The active feed
-            (`massive`, the internal/sources/forex worker in the API
+            (`massive`, the internal/sources/external/forex worker in the API
             binary) has stopped committing fx_quotes rows. Every
             fiat-quoted pair (XLM/EUR, XLM/GBP, …) is still priced off the
             last-good fx_quotes row via the 7-day forex-snap lookback, so

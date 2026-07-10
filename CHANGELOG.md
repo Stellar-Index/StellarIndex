@@ -15,6 +15,44 @@ against.
 
 ## [Unreleased]
 
+### Changed
+- **FX-into-external fold: `internal/sources/{forex,frankfurter}` moved under
+  `internal/sources/external/`** (maintainability-audit-2026-07-01 D1 M0-1, ROADMAP #47).
+  Go-internal only, no wire/config/metric-name change: `internal/sources/forex` →
+  `internal/sources/external/forex` (import sites updated in `cmd/stellarindex-api/main.go`);
+  `internal/sources/frankfurter` → `internal/sources/external/frankfurter` (import site
+  updated in `scripts/ops/fx-history-backfill/main.go`). `//go:embed circulation_data.csv`
+  moved with its package (embed paths are file-relative, unaffected). Neither package changes
+  behavior or starts implementing `external.Connector` — `forex` keeps its bespoke
+  `Worker`/`FXQuoteWriter` seam (still wired into the **API** binary, not the indexer) and
+  `frankfurter` keeps its one-shot historical-backfill `Client` (still invoked only from
+  `scripts/ops/fx-history-backfill`); the `external.Registry` `"massive"` entry (`AmountDecimals:
+  6`, `SubclassFX`) is untouched. This closes D1's M1-3 finding ("`internal/sources/` is a
+  grab-bag... only `external/` is sub-grouped") for the FX feeds specifically — it does **not**
+  unify the two FX code paths onto one framework (D1 M0-1's "reconcile with `ecb`" is addressed
+  as a documentation cross-reference in the moved packages' doc comments, not a framework merge;
+  `ecb`/`polygonforex`/`exchangeratesapi` remain separate `Connector`-framework pollers,
+  currently disabled by default, that overlap `forex`/`frankfurter`'s ECB-backed upstream via an
+  independent code path — a known, accepted duplication per the audit). `scripts/ci/lint-lexicon.baseline`'s
+  `positional-logger internal/sources/forex/worker.go` entry renamed to the new path (same
+  grandfathered deviation, not a new one). `go build`/`go vet`/`go test ./...` green;
+  `scripts/ci/lint-imports.sh` and `scripts/ci/lint-lexicon.sh` pass with zero new entries.
+
+### Fixed
+- **blend_emitter WASM audit closed; `BackfillSafe` flipped true.** Read-only against the
+  r1 ClickHouse raw lake (HTTP 8123, no `stellarindex-ops wasm-history` / MinIO walk):
+  checked ALL 469 lifetime events the Emitter contract has ever emitted — not a sample —
+  against `internal/sources/blend_emitter`'s decoder expectations. All 465 `distribute`
+  events shape-match exhaustively via a single query; both `drop` events and the one
+  `q_swap`/`swap` pair were individually decoded and confirmed byte-identical in value
+  (the observed `swap` executed exactly what the observed `q_swap` queued). The contract's
+  sole confirmed on-chain WASM hash was extracted from the lake and SHA256-verified
+  byte-for-byte, and contains every symbol the decoder relies on. Also corrects
+  `events.go`'s prior "up to 3 WASM uploads (ledgers 51,351,843 / 51,498,920 / 52,314,704)"
+  claim — the lake shows zero Soroban entry-change activity anywhere on the network at the
+  first two ledgers, and the third resolves to the same single hash already established.
+  See `docs/operations/wasm-audits/blend_emitter.md`.
+
 ## [v0.11.0] — 2026-07-10
 
 ### Added

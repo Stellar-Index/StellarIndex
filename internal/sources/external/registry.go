@@ -109,7 +109,7 @@ var Registry = map[string]Metadata{
 
 	// ─── Institutional FX feeds ──────────────────────────────────
 	// `massive` is the ACTIVE fiat-FX feed (massive.com = Polygon's backend).
-	// It runs as the internal/sources/forex worker in the API binary and
+	// It runs as the internal/sources/external/forex worker in the API binary and
 	// writes hourly fiat rates to the `fx_quotes` table — the USD-anchor
 	// reference behind /v1/currencies + per-trade usd_volume. It is an
 	// off-chain vendor feed (not a Stellar source), hence registered here so

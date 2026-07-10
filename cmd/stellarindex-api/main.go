@@ -84,7 +84,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/ratelimit"
 	"github.com/StellarIndex/stellar-index/internal/signupreaper"
 	"github.com/StellarIndex/stellar-index/internal/sources/external"
-	"github.com/StellarIndex/stellar-index/internal/sources/forex"
+	"github.com/StellarIndex/stellar-index/internal/sources/external/forex"
 	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
 	"github.com/StellarIndex/stellar-index/internal/storage/redisclient"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
@@ -3188,8 +3188,8 @@ func (sessionPeekerAdapter) SessionFromContext(ctx context.Context) (v1.SessionI
 
 // forexAdapter bridges the forex.Cache (raw snapshot type) to
 // v1.CurrenciesReader (wire-shape projection). The v1 package
-// can't import internal/sources/forex without inverting the
-// dependency direction; the adapter lives here so main.go owns
+// can't import internal/sources/external/forex without inverting
+// the dependency direction; the adapter lives here so main.go owns
 // the conversion.
 type forexAdapter struct{ cache *forex.Cache }
 

@@ -365,7 +365,7 @@ multi-window rate math, which simplifies alerting (see
 Gauge, label `source`.
 
 UNIX-seconds timestamp of the most recent successful `fx_quotes` WRITE
-from the active fiat-FX feed (`massive`, the `internal/sources/forex`
+from the active fiat-FX feed (`massive`, the `internal/sources/external/forex`
 worker in the API binary). Advances ONLY when `InsertFXQuoteBatch`
 commits a non-empty batch — a failed write or an empty snapshot
 (upstream returned no usable rates) leaves the prior stamp untouched, so

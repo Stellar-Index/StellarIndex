@@ -1036,7 +1036,7 @@ func (s *Store) TradesInRangeAfter(
 // Read order (BACKLOG #42 — the unified FX read path):
 //
 //  1. `fx_quotes` — the table the ACTIVE FX feed (`massive`, the
-//     internal/sources/forex worker) writes. Consulted only when
+//     internal/sources/external/forex worker) writes. Consulted only when
 //     `fxSources` admits that feed (contains [fxQuotesSourceLabel]) and
 //     both pair sides are fiat. The most recent daily row per needed
 //     ticker within [fxQuotesSnapLookback] wins; USD legs are exact 1

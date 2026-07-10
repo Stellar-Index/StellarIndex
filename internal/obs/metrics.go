@@ -746,7 +746,7 @@ var ExternalPollerLastSuccessUnix = prometheus.NewGaugeVec(
 
 // ExternalFXLastQuoteUnix — per-source UNIX-seconds timestamp of the
 // most recent successful fx_quotes WRITE from the active fiat-FX feed
-// (`massive`, the internal/sources/forex worker). Stamped only after
+// (`massive`, the internal/sources/external/forex worker). Stamped only after
 // InsertFXQuoteBatch commits a NON-EMPTY batch — a failed write or an
 // empty snapshot (upstream returned no usable rates) leaves the prior
 // stamp untouched, so a stuck-but-erroring worker cannot keep the

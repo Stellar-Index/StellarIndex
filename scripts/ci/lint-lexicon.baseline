@@ -33,7 +33,7 @@ positional-logger internal/api/streampublish/publisher.go
 positional-logger internal/customerwebhook/fanout.go
 positional-logger internal/dispatcher/statsflush/flusher.go
 positional-logger internal/projector/projector.go
-positional-logger internal/sources/forex/worker.go
+positional-logger internal/sources/external/forex/worker.go
 positional-logger internal/supply/crosscheck_refresher.go
 positional-logger internal/supply/refresher.go
 positional-logger internal/usage/rollup.go

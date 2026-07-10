@@ -47,7 +47,7 @@ type Worker struct {
 // cache fresh across operator restarts.
 //
 // The curated monetary-base CSV is loaded once at construction
-// (lives in internal/sources/forex/circulation_data.csv). Parse
+// (lives in internal/sources/external/forex/circulation_data.csv). Parse
 // errors per row are non-fatal: rows that parse install, the
 // rest are logged as a warning. The map is then attached to
 // every snapshot built by refreshOnce.

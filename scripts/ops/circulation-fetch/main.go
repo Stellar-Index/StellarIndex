@@ -2,7 +2,7 @@
 //
 // Queries the World Bank Indicator API (FM.LBL.BMNY.CN — broad
 // money in current LCU) for the currencies missing from
-// internal/sources/forex/circulation_data.csv and emits append-
+// internal/sources/external/forex/circulation_data.csv and emits append-
 // ready CSV rows to stdout.
 //
 // Usage:

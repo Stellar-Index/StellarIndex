@@ -41,6 +41,14 @@
 //	Asset = <currency>, Quote = EUR, Price = 1 / rate
 //
 // So for USD at rate=1.0825: Asset=USD, Quote=EUR, Price=0.9238.
+//
+// Overlap note (maintainability-audit-2026-07-01 D1 M0-1): sibling
+// package internal/sources/external/frankfurter also wraps an
+// ECB-backed feed (the Frankfurter API), but as a one-shot historical
+// client for scripts/ops/fx-history-backfill rather than a live
+// Connector poller — see frankfurter's package doc. Two code paths
+// onto the same upstream, kept as a known/accepted duplication rather
+// than unified (unifying them would be a behavior change, not a move).
 package ecb
 
 import (

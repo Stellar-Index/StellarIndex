@@ -106,7 +106,7 @@ func (s *Store) ListFXHistory(ctx context.Context, ticker string, from, to time.
 // read the `trades` hypertable filtered by external.FXSources() — the
 // connector-path FX sources (polygon-forex / exchangeratesapi / ecb)
 // which are DISABLED in production. The ACTIVE FX feed (`massive`, the
-// internal/sources/forex worker) writes the `fx_quotes` hypertable
+// internal/sources/external/forex worker) writes the `fx_quotes` hypertable
 // instead, so the snap always soft-fell-back to cached VWAP while fresh
 // quotes sat one table over. The helpers below are the fx_quotes-first
 // leg of the unified read path; the trades read survives only as the

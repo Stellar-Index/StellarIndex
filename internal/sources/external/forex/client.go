@@ -13,6 +13,23 @@
 // exposes the same Snapshot / History7d / Currency / HistoryPoint
 // types, so swapping providers later is a one-package change with
 // no API or schema migrations.
+//
+// Relationship to the other FX packages under internal/sources/external/
+// (maintainability-audit-2026-07-01 D1 M0-1, "FX-into-external fold",
+// BACKLOG #47): this package and its sibling [frankfurter] predate the
+// [external.Connector] framework and keep their own bespoke worker /
+// FXQuoteWriter seam rather than implementing Streamer/Poller/Backfiller.
+// forex ("massive" in [external.Registry]) is the ACTIVE feed, run as a
+// goroutine in the API binary (not the indexer) — see
+// docs/operations/runbooks/fx-feed-stale.md. [ecb] and [polygonforex] /
+// [exchangeratesapi] ARE Connector-framework poller implementations,
+// wired into the indexer, and currently disabled by default. ecb is
+// ALSO ECB-backed like [frankfurter], so both packages read the same
+// upstream data through two independent code paths — a known, accepted
+// duplication (not yet unified into one framework; that would be a
+// behavior change, not a move). Folded from internal/sources/{forex,
+// frankfurter}/ into internal/sources/external/{forex,frankfurter}/ so
+// every off-chain FX/CEX source lives under one directory (D1 M1-3).
 package forex
 
 import (

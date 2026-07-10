@@ -20,7 +20,7 @@ severity: P2
 ## Why this exists
 
 The active fiat-FX feed is `massive` (massive.com = Polygon's FX
-backend), running as the `internal/sources/forex` worker in the **API**
+backend), running as the `internal/sources/external/forex` worker in the **API**
 binary. It fetches USD rates hourly and writes them to the `fx_quotes`
 hypertable. The X2.5 triangulation forex-snap
 (`Store.FXQuoteAtOrBefore`) reads `fx_quotes` with a **7-day lookback**
@@ -154,7 +154,7 @@ per ticker (`SELECT ticker, MAX(bucket) FROM fx_quotes GROUP BY ticker`).
   failure: the upstream fetch succeeds but the DB persist fails every
   tick (missing `fx_quotes` migration). Different signal (a
   `forex: fx_quotes persist failed` log), same feed.
-- Implementation: `internal/sources/forex/worker.go`
+- Implementation: `internal/sources/external/forex/worker.go`
   (`persistSnapshot` — the gauge stamp point), the metric in
   `internal/obs/metrics.go` (`ExternalFXLastQuoteUnix`), and the
   forex-snap read path in `internal/storage/timescale/fx_quotes.go`
