@@ -51,8 +51,10 @@ The two questions this page used to carry are answered by the lake itself:
 | pool `trade` | `trades` (source=aquarius) |
 | pool `deposit` / `withdraw` / `update_reserves` / `reserves_sync` | liquidity / reserves tracking |
 | router `add_pool` | pool registration (gate fan-out — registers the pool in the contract-identity registry; emits no flow/trade row) |
+| pool rewards-gauge (12 kinds, incl. router-side `config_rewards`) | `aquarius_rewards_events` (migration 0099) |
+| router/pool governance + upgrade (8 kinds) | `aquarius_admin` (migration 0100) |
 
-## ⚠️ Known gap — rewards-gauge + governance topics (ROADMAP #89, 2026-07-10)
+## ✅ Rewards-gauge + governance topics — decoded (ROADMAP #89, closed 2026-07-10)
 
 A full topic census against the gated set (332 pools + router) found
 **20 real, distinct topics with no decoder** — a rewards-gauge
@@ -66,9 +68,14 @@ surface (`apply_upgrade` 706 · `commit_upgrade` 705 ·
 `commit_transfer_ownership` 48 · `enable_emergency_mode` 35 ·
 `disable_emergency_mode` 35 · `pool_gauge_switch_token` 31). `transfer`
 / `approve` / `mint` / `burn` are the SEP-41 token layer, correctly
-out of scope. Full detail + the exact per-topic evidence:
-`internal/sources/aquarius/README.md`. This is new-table-scale work,
-not implemented in this pass.
+out of scope. All 20 (plus a 12th rewards-family bonus, the
+router-side `config_rewards` this page already listed at line 23
+above but which had no decoder either) are now decoded into two new
+hypertables, `aquarius_rewards_events` (0099) and `aquarius_admin`
+(0100). Full per-topic wire shapes, gating, and provenance caveats
+(AquaToken's contract-source repo is no longer public — every field
+below is reverse-engineered from real lake bytes, not a cloned Rust
+source): `internal/sources/aquarius/README.md`.
 
 ## ✅ Pool enumeration — answered (2026-06-12, lake-derived)
 

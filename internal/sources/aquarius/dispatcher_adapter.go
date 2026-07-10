@@ -61,14 +61,31 @@ func (*Decoder) Name() string { return SourceName }
 // pool is announced by one) plus the curated seed for history.
 func (d *Decoder) Matches(ev events.Event) bool {
 	switch classify(&ev) {
-	case EventTrade, EventUpdateReserves, EventDepositLiquidity, EventWithdrawLiquidity:
-		// Pool flow events (trade + liquidity/reserves) are gated
-		// IDENTICALLY on contract identity: they match ONLY when
-		// emitted by a REGISTERED Aquarius pool. The bare topic
-		// symbols are forgeable — a look-alike must not be able to
-		// inject fabricated reserves/liquidity any more than it could
-		// inject fabricated trades (CS-026).
+	case EventTrade, EventUpdateReserves, EventDepositLiquidity, EventWithdrawLiquidity,
+		EventPoolState, EventClaimReward, EventSetRewardsConfig, EventPositionUpdate,
+		EventGaugeDeposit, EventClaimFees, EventRewardsGaugeClaim, EventGaugeClaim,
+		EventRewardsGaugeScheduleReward, EventSetRewardsState, EventRewardsGaugeAdd:
+		// Pool flow events (trade + liquidity/reserves + the
+		// rewards-gauge surface, ROADMAP #89) are gated IDENTICALLY on
+		// contract identity: they match ONLY when emitted by a
+		// REGISTERED Aquarius pool. The bare topic symbols are
+		// forgeable — a look-alike must not be able to inject
+		// fabricated reserves/liquidity/rewards any more than it
+		// could inject fabricated trades (CS-026).
 		return d.reg.Has(ev.ContractID)
+	case EventConfigRewards, EventApplyUpgrade, EventCommitUpgrade, EventSetPrivilegedAddrs,
+		EventApplyTransferOwnership, EventCommitTransferOwnership,
+		EventEnableEmergencyMode, EventDisableEmergencyMode, EventPoolGaugeSwitchToken:
+		// Router-scoped governance/upgrade surface (ROADMAP #89):
+		// gated on the canonical router trust root ONLY. Real lake
+		// bytes show a small family of unidentified non-pool,
+		// non-router contracts also emitting several of these kinds
+		// (co-occurring with the FLAGGED parallel router deployment —
+		// see decode_admin.go's package doc) — those fail-closed here
+		// exactly like CA7RQDMM's trade events already do, a visible
+		// ADR-0033 recognition gap pending Aquarius-team confirmation,
+		// not a silent mis-attribution.
+		return d.reg.IsFactory(ev.ContractID)
 	}
 	return isAddPool(&ev) && d.reg.IsFactory(ev.ContractID)
 }
@@ -102,7 +119,8 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	if err != nil {
 		return nil, err
 	}
-	switch classify(&ev) {
+	kind := classify(&ev)
+	switch kind {
 	case EventUpdateReserves:
 		rv, err := decodeReserves(&ev, closedAt)
 		if err != nil {
@@ -121,6 +139,23 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 			return nil, err
 		}
 		return []consumer.Event{lq}, nil
+	case EventPoolState, EventClaimReward, EventSetRewardsConfig, EventPositionUpdate,
+		EventGaugeDeposit, EventClaimFees, EventRewardsGaugeClaim, EventGaugeClaim,
+		EventRewardsGaugeScheduleReward, EventSetRewardsState, EventRewardsGaugeAdd,
+		EventConfigRewards:
+		rv, err := decodeRewardsEvent(&ev, kind, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{rv}, nil
+	case EventApplyUpgrade, EventCommitUpgrade, EventSetPrivilegedAddrs,
+		EventApplyTransferOwnership, EventCommitTransferOwnership,
+		EventEnableEmergencyMode, EventDisableEmergencyMode, EventPoolGaugeSwitchToken:
+		av, err := decodeAdminEvent(&ev, kind, closedAt)
+		if err != nil {
+			return nil, err
+		}
+		return []consumer.Event{av}, nil
 	default:
 		// EventTrade (and, defensively, anything Matches() let
 		// through) decodes as a trade.

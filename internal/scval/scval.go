@@ -269,6 +269,16 @@ func AsU32(sv xdr.ScVal) (uint32, error) {
 	return uint32(*sv.U32), nil
 }
 
+// AsI32 returns the int32 value from sv. Used for signed 32-bit
+// event body fields (e.g. Aquarius rewards-gauge pool_state /
+// position_update range/checkpoint indices — internal/sources/aquarius).
+func AsI32(sv xdr.ScVal) (int32, error) {
+	if sv.Type != xdr.ScValTypeScvI32 {
+		return 0, fmt.Errorf("%w: want I32, got %s", ErrScValType, sv.Type.String())
+	}
+	return int32(*sv.I32), nil
+}
+
 // AsBytes returns the raw []byte value from sv. Used by decoders
 // whose event body is a Bytes-wrapped XDR-encoded struct (e.g.
 // Redstone: the adapter's Rust contract does `self.to_xdr(env).to_val()`
@@ -290,6 +300,13 @@ func AsBool(sv xdr.ScVal) (bool, error) {
 		return false, fmt.Errorf("%w: want Bool, got %s", ErrScValType, sv.Type.String())
 	}
 	return bool(*sv.B), nil
+}
+
+// IsVoid reports whether sv is ScvVoid — the empty-body shape some
+// bare marker events use (e.g. Aquarius's enable_emergency_mode /
+// disable_emergency_mode, internal/sources/aquarius).
+func IsVoid(sv xdr.ScVal) bool {
+	return sv.Type == xdr.ScValTypeScvVoid
 }
 
 // NewU32 builds an ScVal wrapping a uint32, suitable for passing as
