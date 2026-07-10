@@ -69,6 +69,19 @@ Rust source's `publish((PAYMENT, from.clone()), …)` call suggests):
 Amounts are `i128` → `*big.Int` (ADR-0003; the decoder locks the
 large-i128 round-trip in tests against the int64-truncation bug class).
 
+**Body verification (ROADMAP #89 residual, 2026-07-10):** the
+`payment_event` BODY decode (as opposed to the topic SHAPE, verified
+2026-07-09 above) had never been checked against real on-chain bytes.
+A read-only ClickHouse-lake pull of 5 real `payment_event` rows across
+both the original and 4th-contract deployments confirmed the decoder
+is **verified correct**: alphabetical `{amount, destination, from,
+memo}` ScMap, `from`/`destination` both ACCOUNT (G-strkey) addresses,
+i128 amount, free-form memo. No decoder change required; a real-bytes
+golden test now pins this (`internal/sources/rozo/decode_test.go`
+`TestGolden_Payment_LakeBytes`). `flush_event` has **zero real
+occurrences** across all 4 gated contracts as of the same census —
+`DecodeFlush` remains verified only against synthetic fixtures.
+
 ## Aggregator treatment — not counted
 
 Class `Bridge` / `IncludeInVWAP=false`, `DefaultWeight=0`

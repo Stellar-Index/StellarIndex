@@ -180,6 +180,48 @@ The decoder is fail-loud per event:
 5. **i128 type drift** — `scval.AsAmountFromI128` is strict; any
    type-tag change errors out.
 
+## Known gap — V1 pool-factory (`CCZD6ESM…`) emits 3 topics `classifyAny` doesn't recognize
+
+ROADMAP #89 residual (2026-07-10): a read-only ClickHouse-lake topic
+census scoped to the 27 gated pools + 2 factories found **778 real
+events across 3 topics** that `classifyAny` (decode_money_market.go)
+does not classify — they are dropped before reaching any decoder,
+the same bug CLASS the 2026-07-09 `blend_backstop` V1/V2 audit found
+and fixed in that sibling package (CHANGELOG 2026-07-10,
+`fix(blend_backstop): six decode bugs`). This package has **not**
+had the equivalent V1-vs-V2 pass yet:
+
+| Topic | Count | Emitting pools (of the 17 `CCZD6ESM…`-deployed pools sampled) | Real shape (ledger cited) |
+| --- | ---: | --- | --- |
+| `update_emissions` | 543 | e.g. `CDVQVKOY…` | 1 topic `(sym,)`; body is a **bare `i128`** (ledger 51,524,668: `447798000000`) — NOT V2's `reserve_emission_update` structured `{res_token_id, emissions_per_sec, expiration}` map. Looks like a pool-wide emissions total, a different concept from V2's per-reserve update. |
+| `new_liquidation_auction` | 234 | e.g. `CDVQVKOY…` | 2 topics `(sym, user: Address)` — **no `auction_type` topic**, unlike V2 `new_auction`'s 3-topic `(sym, u32, Address)`. Body (ledger 51,611,821) is `Map{bid: Map<Address,i128>, block: u32, lot: Map<Address,i128>}` — `bid`/`lot` render as **Maps keyed by asset address**, not V2's documented `Vec<AssetAmount>` shape; no `percent` field. |
+| `delete_liquidation_auction` | 1 | `CBP7NO6F…` | 2 topics `(sym, user: Address)` (ledger 54,890,906) — body is `ScvVoid`, not V2's bare `()`/no-body `delete_auction`. |
+
+These are near-certainly the V1 pool-factory's own liquidation-auction
++ emissions vocabulary — a **different, simpler schema** than the V2
+pool events this package currently decodes (topic arity differs,
+`bid`/`lot` shape differs, no `auction_type` discriminator). This is
+NOT a "small mechanical" fix per the branch-on-arity pattern
+`blend_backstop` established for its V1 `gulp_emissions` — it needs:
+new `Classify`/`classifyAny` cases, new decode functions (topic-arity-
+branched, mirroring `blend_backstop`'s V1/V2 split), a decision on
+which table/`EventKind` these land under (extend `blend_auctions` +
+`blend_emissions`'s CHECK constraints, likely a new migration), and a
+historical `projector-replay` from the V1 factory's genesis
+(51,499,915) once shipped. Deliberately **not implemented this
+session** — documented per ROADMAP #89's "if a source needs deep
+work, document precisely what's needed" carve-out. 778 events is
+0.14% of this source's ~570k total lake volume.
+
+Full per-topic real-lake counts (all 29 gated contracts, contiguous
+with the table above): every OTHER topic this census turned up
+(`withdraw_collateral`, `supply_collateral`, `supply`, `withdraw`,
+`claim`, `repay`, `borrow`, `reserve_emission_update`, `fill_auction`,
+`new_auction`, `flash_loan`, `gulp_emissions`, `queue_set_reserve`,
+`set_reserve`, `set_status`, `bad_debt`, `deploy`, `set_admin`,
+`defaulted_debt`, `update_pool`, `cancel_set_reserve`, `delete_auction`)
+IS handled by `classifyAny` — no other gap found.
+
 ## References
 
 - Protocol verification page: [`docs/protocols/blend.md`](../../../docs/protocols/blend.md)

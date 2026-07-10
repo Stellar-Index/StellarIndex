@@ -87,6 +87,22 @@ widening this package; see the architecture doc §Decoder design.
 - Topic-symbol encoding stability — re-encoded bytes match the
   package-init constants. Drift here means `scval.MustEncodeSymbol`
   changed and every `Classify` call would silently miss matches.
+- `TestGolden_Payment_LakeBytes` (ROADMAP #89 residual, 2026-07-10) —
+  `DecodePayment` against 3 real `payment_event` rows pulled read-only
+  from the ClickHouse lake (`stellar.contract_events`, scoped to the
+  4 `MainnetPaymentContracts`), spanning both original+4th-contract
+  deployments and both observed memo naming conventions
+  (`payment_<ts>` / `memo_<ts>`). **Verdict: verified correct** — the
+  body decode had never been checked against real bytes before (only
+  the topic SHAPE — 1-element `(payment_event,)` — was lake-verified
+  2026-07-09); the alphabetical `{amount, destination, from, memo}`
+  ScMap, both address fields as ACCOUNT (G-strkey) strkeys, and the
+  i128 amount all decode exactly as documented. No decoder change was
+  required. `flush_event` has **zero real occurrences** across all 4
+  gated contracts as of the same census — `DecodeFlush` remains
+  verified only against synthetic fixtures
+  (`TestGolden_FlushEvent_NeverObserved` documents this explicitly,
+  mirroring the `blend_backstop` `rw_zone_remove` precedent).
 
 ## References
 

@@ -75,6 +75,15 @@ opt a single oracle into VWAP per-source via config, but the default is
 excluded (mixing an oracle's methodology into our market-trade average
 would double-impose their aggregation on our output).
 
+## Topic census re-confirmation (ROADMAP #89, 2026-07-10)
+
+A read-only lake topic census against all three configured contracts
+found only the `REFLECTOR` topic[0] (46,045 events across the three)
+— consistent with "one event, N updates" above. `topic[1]` breakdown
+(always `update`) isn't visible from the fast pre-aggregated census
+path for Symbol-namespaced protocols; no ambiguity given there is
+only one documented event shape.
+
 ## Backfill safety
 
 `BackfillSafe = true` (audited 2026-04-29; v2 disassembly confirms

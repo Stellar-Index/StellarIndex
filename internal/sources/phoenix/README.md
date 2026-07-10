@@ -218,3 +218,29 @@ being extended to cover the liquidity + stake field sets — current
 audit only enumerates the 8 swap-field strings; we need to confirm
 both WASM hashes also include the literal `provide_liquidity` /
 `withdraw_liquidity` / `bond` / `unbond` symbols.
+
+## ⚠️ Known gap — `withdraw_rewards` / `distribute_rewards` undecoded (ROADMAP #89, 2026-07-10)
+
+A read-only lake topic census against the gated pool + stake-contract
+set found two real topic[0] action names `classifyAny` doesn't
+recognize: `withdraw_rewards` (40 events, topic[1] field names
+`reward_token` / `user`) and `distribute_rewards` (18 events, field
+name `asset`). Small counts, but a genuine rewards-distribution
+concept distinct from the `bond`/`unbond` stake actions this package
+already decodes — closer kin to `phoenix_stake_events` than a new
+table. Real ledger fixtures were not pulled in this pass (low
+priority given the count); `classifyAny`'s `actionAdmin` /
+`actionInitialize` catch-all pattern is the template for adding these
+without inventing a new mechanism. Not implemented this session per
+ROADMAP #89's "document, don't implement, when it needs new
+decode-family work" guidance.
+
+Separately: a handful of rows in the same census showed an empty
+decoded topic[0] alongside a populated topic[1] field name (`user`,
+`reward_token`, `token_a`/`token_b`, `amount`, `token`, `asset`,
+`shares_amount`, `return_amount_a`/`return_amount_b`, and three
+migration-log strings) at non-trivial counts (up to ~5,300). This
+looks like either a `contract_events_daily` 2-topic-only census
+artifact or a genuinely wider topic arity (index > 2) this pass
+didn't decode — flagged as ambiguous rather than asserted as a new
+gap; a raw-table, multi-topic-index pull would resolve it.

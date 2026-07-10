@@ -79,6 +79,23 @@ Verified against `blend-contracts-v2` `pool/src/events.rs` /
 | `gulp`, `claim`, `reserve_emission_update`, `gulp_emissions`, `bad_debt`, `defaulted_debt` | `blend_emissions` |
 | `set_admin`, `update_pool`, `queue_set_reserve`, `cancel_set_reserve`, `set_reserve`, `set_status` | `blend_admin` |
 
+## ⚠️ Known gap — V1 factory emits 3 undecoded topics (ROADMAP #89, 2026-07-10)
+
+A read-only topic census against the 27 gated pools + 2 factories
+found 778 real events (0.14% of this source's lake volume) across
+3 topics `classifyAny` doesn't recognize: `update_emissions` (543,
+bare-i128 body, no `reserve_emission_update`-style map),
+`new_liquidation_auction` (234, 2-topic — no `auction_type`, `bid`/
+`lot` as `Map<Address,i128>` not `Vec<AssetAmount>`), and
+`delete_liquidation_auction` (1, `ScvVoid` body). These are V1
+pool-factory (`CCZD6ESM…`)-only topics, a simpler/different schema
+than the V2 events this page documents — the same schema-divergence
+bug class the 2026-07-09/10 `blend_backstop` V1/V2 audit fixed in
+that sibling source, not yet applied here. Exact shapes (with real
+ledger citations) are in `internal/sources/blend/README.md`'s
+"Known gap" section. Not implemented this session (needs new decode
+functions + a migration, not a mechanical fix).
+
 ## Backstop singletons (2 — decoded by the `blend_backstop` source)
 
 Like the pool factories, the Backstop was redeployed — V1 + V2 both have

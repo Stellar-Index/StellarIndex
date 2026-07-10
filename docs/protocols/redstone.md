@@ -89,6 +89,12 @@ Class `Oracle` / `IncludeInVWAP=false` (`external.Registry`). Surfaced on
 already-aggregated derived prices under its own methodology). RWA feeds
 are additionally never eligible for market VWAP.
 
+## Topic census re-confirmation (ROADMAP #89, 2026-07-10)
+
+A read-only lake topic census against the Adapter contract found
+only the `REDSTONE` topic[0] (153,763 events) — no other topic
+emitted. Consistent with "one batch event, N feed updates" above.
+
 ## Backfill safety
 
 `BackfillSafe = true` (audited 2026-04-29). The Adapter's events are

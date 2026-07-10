@@ -83,3 +83,11 @@ correlate by `(ledger, tx_hash, op_index)` into one trade.
 | `swap` | `trades` (source=phoenix) |
 | `provide_liquidity`, `withdraw_liquidity` | `phoenix_liquidity` |
 | `bond`, `unbond` | `phoenix_stake_events` |
+
+## ⚠️ Known gap — rewards topics (ROADMAP #89, 2026-07-10)
+
+A topic census found `withdraw_rewards` (40 events) and
+`distribute_rewards` (18 events) with no decoder — a small
+rewards-distribution surface distinct from `bond`/`unbond`. See
+`internal/sources/phoenix/README.md` for detail. Not implemented
+this session (low volume, deferred).

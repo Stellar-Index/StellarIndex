@@ -347,3 +347,137 @@ func TestTopicSymbolFlush_StableEncoding(t *testing.T) {
 		t.Errorf("TopicSymbolFlush drift: pkg = %q, re-encoded = %q", TopicSymbolFlush, want)
 	}
 }
+
+// ─── real-lake golden frames (base64 SCVal) ──────────────────────
+//
+// ROADMAP #89 residual: payment_event's BODY decode had never been
+// verified against real on-chain bytes (only the topic SHAPE —
+// topic_count=1 — was lake-verified on 2026-07-09; see the Payment
+// doc comment in events.go). Captured read-only from the ClickHouse
+// raw lake (stellar.contract_events) on r1, scoped to the four
+// MainnetPaymentContracts, topic_0_sym = 'payment_event'
+// (2026-07-10). Same base64-capture convention as
+// internal/sources/blend_backstop/decode_test.go's goldenFrames.
+//
+// Verdict: DecodePayment agrees with the real wire shape exactly —
+// alphabetical ScMap {amount, destination, from, memo}, all four
+// fields present, i128 amount, both from/destination as ACCOUNT
+// (G-strkey) addresses. No decoder change was needed; this locks
+// the verified-correct shape against regression.
+var rozoGoldenPaymentFrames = map[string]struct {
+	contractID string
+	ledger     uint32
+	txHash     string
+	topic0     string
+	data       string
+	wantFrom   string
+	wantDest   string
+	wantAmount string
+	wantMemo   string
+}{
+	// Ledger 60829397 — destination is a bridge-out address that is
+	// NOT one of the documented MainnetRelayerAccounts (pay() can
+	// target any G-address the caller supplies).
+	"ledger_60829397": {
+		contractID: "CCRLTS3CMJHYHFD7MYRBJPNW6R3LCXNDO2B6TK6AS6FSXAHR6GBMGLRE",
+		ledger:     60_829_397,
+		txHash:     "e73744c150314a8618ece9b6ac0f49f2af6cf8ac3c634a7ae98bf8d1d3efa4c6",
+		topic0:     "AAAADwAAAA1wYXltZW50X2V2ZW50AAAA",
+		data:       "AAAAEQAAAAEAAAAEAAAADwAAAAZhbW91bnQAAAAAAAoAAAAAAAAAAAAAAAAAD0JAAAAADwAAAAtkZXN0aW5hdGlvbgAAAAASAAAAAAAAAAC74NxNJZfkyMo49xT06YtUUiYd2PeMbkwfrq/h40f6GAAAAA8AAAAEZnJvbQAAABIAAAAAAAAAAPVMuB2JbIWeb4L8Ic1on67yGzC6b8baAv5p8YiXV1soAAAADwAAAARtZW1vAAAADgAAABVwYXltZW50XzE3Njg3NTQ1NDMyMTIAAAA=",
+		wantFrom:   "GD2UZOA5RFWILHTPQL6CDTLIT6XPEGZQXJX4NWQC7ZU7DCEXK5NSQ2GH",
+		wantDest:   "GC56BXCNEWL6JSGKHD3RJ5HJRNKFEJQ53D3YY3SMD6XK7YPDI75BQ7FD",
+		wantAmount: "1000000",
+		wantMemo:   "payment_1768754543212",
+	},
+	// Ledger 60829399 — same `from` (a relayer-fed source account),
+	// destination IS the first MainnetRelayerAccounts entry.
+	"ledger_60829399": {
+		contractID: "CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWOOSP3IYRL",
+		ledger:     60_829_399,
+		txHash:     "d3193380289f82bc29c538e6a0289268336bdd663862ef2ea87987990da186ae",
+		topic0:     "AAAADwAAAA1wYXltZW50X2V2ZW50AAAA",
+		data:       "AAAAEQAAAAEAAAAEAAAADwAAAAZhbW91bnQAAAAAAAoAAAAAAAAAAAAAAAAAD0JAAAAADwAAAAtkZXN0aW5hdGlvbgAAAAASAAAAAAAAAAAGNGBVjrPj89i2Sd2tAn99kLSUpPUAG5A8rVRgnOHl+wAAAA8AAAAEZnJvbQAAABIAAAAAAAAAAPVMuB2JbIWeb4L8Ic1on67yGzC6b8baAv5p8YiXV1soAAAADwAAAARtZW1vAAAADgAAABVwYXltZW50XzE3Njg3NTQ1NDMyMTIAAAA=",
+		wantFrom:   "GD2UZOA5RFWILHTPQL6CDTLIT6XPEGZQXJX4NWQC7ZU7DCEXK5NSQ2GH",
+		wantDest:   "GADDIYCVR2Z6H46YWZE53LICP56ZBNEUUT2QAG4QHSWVIYE44HS7W3XY",
+		wantAmount: "1000000",
+		wantMemo:   "payment_1768754543212",
+	},
+	// Ledger 60837217 — a smaller amount + a distinct "memo_<ts>"
+	// tag shape (vs. the "payment_<ts>" shape above), exercising a
+	// different real memo pattern.
+	"ledger_60837217": {
+		contractID: "CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWOOSP3IYRL",
+		ledger:     60_837_217,
+		txHash:     "e4114983c577e6f8ae8047fb02508b36857d5a2881b49283561e84bff5a5c41a",
+		topic0:     "AAAADwAAAA1wYXltZW50X2V2ZW50AAAA",
+		data:       "AAAAEQAAAAEAAAAEAAAADwAAAAZhbW91bnQAAAAAAAoAAAAAAAAAAAAAAAAAB6EgAAAADwAAAAtkZXN0aW5hdGlvbgAAAAASAAAAAAAAAAAGNGBVjrPj89i2Sd2tAn99kLSUpPUAG5A8rVRgnOHl+wAAAA8AAAAEZnJvbQAAABIAAAAAAAAAAPVMuB2JbIWeb4L8Ic1on67yGzC6b8baAv5p8YiXV1soAAAADwAAAARtZW1vAAAADgAAABJtZW1vXzE3Njg3OTg1OTk4MjkAAA==",
+		wantFrom:   "GD2UZOA5RFWILHTPQL6CDTLIT6XPEGZQXJX4NWQC7ZU7DCEXK5NSQ2GH",
+		wantDest:   "GADDIYCVR2Z6H46YWZE53LICP56ZBNEUUT2QAG4QHSWVIYE44HS7W3XY",
+		wantAmount: "500000",
+		wantMemo:   "memo_1768798599829",
+	},
+}
+
+// TestGolden_Payment_LakeBytes pins DecodePayment against real
+// mainnet lake bytes across both the original and the 2026-07-09-
+// admitted 4th contract's sibling deployments, and across both
+// observed memo naming conventions. This is the ROADMAP #89 residual
+// verification: prior to this test, the body field-name mapping
+// (amount/destination/from/memo) was documented from the contract
+// source but never round-tripped against a captured real event.
+func TestGolden_Payment_LakeBytes(t *testing.T) {
+	t.Parallel()
+	for name, f := range rozoGoldenPaymentFrames {
+		f := f
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			e := &events.Event{
+				Type:           "contract",
+				ContractID:     f.contractID,
+				Ledger:         f.ledger,
+				LedgerClosedAt: "2026-05-27T00:00:00Z",
+				TxHash:         f.txHash,
+				Topic:          []string{f.topic0},
+				Value:          f.data,
+			}
+			got, err := DecodePayment(e)
+			if err != nil {
+				t.Fatalf("DecodePayment: %v", err)
+			}
+			if got.From != f.wantFrom {
+				t.Errorf("From = %q, want %q", got.From, f.wantFrom)
+			}
+			if got.Destination != f.wantDest {
+				t.Errorf("Destination = %q, want %q", got.Destination, f.wantDest)
+			}
+			if got.Amount != f.wantAmount {
+				t.Errorf("Amount = %q, want %q", got.Amount, f.wantAmount)
+			}
+			if got.Memo != f.wantMemo {
+				t.Errorf("Memo = %q, want %q", got.Memo, f.wantMemo)
+			}
+			// Also drive the dispatcher-facing Classify() + envelope
+			// path so the golden bytes exercise the same route
+			// production ingest takes.
+			if kind := Classify(e); kind != EventPayment {
+				t.Errorf("Classify = %q, want %q", kind, EventPayment)
+			}
+		})
+	}
+}
+
+// TestGolden_FlushEvent_NeverObserved documents that flush_event
+// (the admin sweep path) has never fired on mainnet across any of
+// the four gated v1 Payment contracts as of the 2026-07-10 lake
+// census (topic_0_sym = 'flush_event' returns zero rows) — so
+// DecodeFlush's body shape remains UNVERIFIED against real bytes,
+// unlike DecodePayment above. This is the honest counterpart to the
+// blend_backstop precedent (rw_zone_remove: synthetic-from-source,
+// unverified) rather than a silent gap.
+func TestGolden_FlushEvent_NeverObserved(t *testing.T) {
+	t.Parallel()
+	t.Log("flush_event: 0 real occurrences across all 4 MainnetPaymentContracts " +
+		"as of the 2026-07-10 ClickHouse lake census (ROADMAP #89) — DecodeFlush " +
+		"is exercised only by the synthetic fixtures in TestDecodeFlush_HappyPath / " +
+		"TestDecodeFlush_MissingField above, not real lake bytes")
+}
