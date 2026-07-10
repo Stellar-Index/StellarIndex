@@ -50,6 +50,10 @@ var opOnlyInScope = map[xdr.OperationType]bool{
 	xdr.OperationTypePayment:                  true,
 	xdr.OperationTypePathPaymentStrictReceive: true,
 	xdr.OperationTypePathPaymentStrictSend:    true,
+	xdr.OperationTypeCreateClaimableBalance:   true,
+	xdr.OperationTypeClaimClaimableBalance:    true,
+	xdr.OperationTypeClawbackClaimableBalance: true,
+	xdr.OperationTypeClawback:                 true,
 }
 
 // TestRecognition_MatchesCoversExactlyOpOnlyScope is the ADR-0047

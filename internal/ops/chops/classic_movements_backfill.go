@@ -35,8 +35,7 @@ const classicMovementsP23StartLedger uint32 = 58_762_517
 const classicMovementsDefaultWindow = 500_000
 
 // classicMovementsBackfill is the ADR-0047 op-only-surface write
-// path (Phases 1-2 today; Phase 3 adds the ClaimableBalance trio +
-// Clawback, Phase 4 adds AccountMerge, all through this SAME
+// path (Phases 1-3 today; Phase 4 adds AccountMerge through this SAME
 // SupportedOpTypes()-driven loop — Phase 4's LiquidityPoolDeposit/
 // Withdraw + the CAP-0038 edge case are a separate entry-changes-
 // correlated write path, not yet wired into this command):
@@ -45,6 +44,16 @@ const classicMovementsDefaultWindow = 500_000
 // clickhouse.StreamClassicOps over windowed ledger ranges, decodes
 // via classicmovements.Decoder, and batch-writes into
 // classic_movements via timescale.Store.BatchInsertClassicMovements.
+//
+// Phase 3's ClaimableBalance claim/clawback correlation (research
+// §2's "b+own-index" path) resolves in three tiers per window:
+// Decoder's free in-memory BalanceId index first, a Postgres lookup
+// (timescale.Store.FindClaimableBalanceCreate) second for creates
+// outside this run, and an explicit unresolved count — never a
+// guessed amount — for anything neither finds. See
+// classicmovements/dispatcher_adapter.go's Decoder doc for the
+// memory-scaling reason operators should chunk `-from`/`-to` into
+// multi-million-ledger invocations once Phase 3 volume is in play.
 //
 // Deliberately does NOT reuse ch-rebuild's generic
 // pipeline.HandleEvent write path: classicmovements.MovementEvent is
@@ -142,6 +151,7 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 	opTypes := classicmovements.SupportedOpTypes()
 	counts := map[classicmovements.Kind]int64{}
 	var totalRead, totalDecoded, totalLanded int64
+	var totalResolvedIndex, totalResolvedPG, totalUnresolved int64
 
 	for wlo := startLedger; wlo <= clampedTo; {
 		whi := wlo + windowSize - 1
@@ -192,6 +202,53 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 		totalRead += windowRead
 		totalDecoded += windowDecoded
 
+		// ADR-0047 Phase 3 second pass: resolve claim/clawback rows the
+		// main decode loop couldn't correlate against a create seen
+		// earlier in this window (dec.decodeOp records these instead of
+		// failing). Try the free in-memory re-check first (closes the
+		// same-window tx_hash-ordering gap — see Decoder.ResolveBalance's
+		// doc comment), then fall back to Postgres for creates outside
+		// this run's range entirely. Still-unresolved entries are a
+		// genuine ADR-0047 D4 recognizable-incompleteness signal: counted
+		// and logged, never guessed.
+		pending := dec.TakePendingClaimableBalances()
+		var windowResolvedIndex, windowResolvedPG, windowUnresolved int64
+		for _, ref := range pending {
+			if asset, amount, createdBy, ok := dec.ResolveBalance(ref.BalanceIDHex); ok {
+				windowResolvedIndex++
+				windowDecoded++
+				m := classicmovements.ResolvePendingClaimableBalance(ref, asset, amount, createdBy)
+				counts[m.Kind]++
+				batch = append(batch, classicMovementRowOf(m))
+				continue
+			}
+			asset, amount, createdBy, found, ferr := store.FindClaimableBalanceCreate(ctx, ref.BalanceIDHex)
+			if ferr != nil {
+				fmt.Fprintf(os.Stderr, "classic-movements-backfill: FindClaimableBalanceCreate(%s) failed: %v — counting as unresolved\n",
+					ref.BalanceIDHex, ferr)
+				windowUnresolved++
+				continue
+			}
+			if !found {
+				windowUnresolved++
+				fmt.Fprintf(os.Stderr, "classic-movements-backfill: unresolved %s balance_id=%s ledger=%d tx=%s op=%d — no create row found (in-memory index or Postgres); skipping, not guessing\n",
+					ref.Kind, ref.BalanceIDHex, ref.Ledger, ref.TxHash, ref.OpIndex)
+				continue
+			}
+			windowResolvedPG++
+			windowDecoded++
+			m := classicmovements.ResolvePendingClaimableBalance(ref, asset, amount, createdBy)
+			counts[m.Kind]++
+			batch = append(batch, classicMovementRowOf(m))
+		}
+		totalResolvedIndex += windowResolvedIndex
+		totalResolvedPG += windowResolvedPG
+		totalUnresolved += windowUnresolved
+		if len(pending) > 0 {
+			fmt.Fprintf(os.Stderr, "classic-movements-backfill: window [%d,%d] claimable-balance correlation — %d resolved (index), %d resolved (postgres), %d unresolved\n",
+				wlo, whi, windowResolvedIndex, windowResolvedPG, windowUnresolved)
+		}
+
 		if *write {
 			if len(batch) > 0 {
 				landed, ierr := store.BatchInsertClassicMovements(ctx, batch)
@@ -219,15 +276,23 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 	for _, k := range []classicmovements.Kind{
 		classicmovements.KindPayment, classicmovements.KindCreateAccount,
 		classicmovements.KindPathPayment,
+		classicmovements.KindClaimableBalanceCreate, classicmovements.KindClaimableBalanceClaim,
+		classicmovements.KindClaimableBalanceClawback, classicmovements.KindClawback,
 	} {
 		fmt.Printf("%-24s %14d\n", k, counts[k])
 	}
 	fmt.Printf("%-24s %14d\n", "TOTAL ops read", totalRead)
 	fmt.Printf("%-24s %14d\n", "TOTAL decoded", totalDecoded)
+	fmt.Printf("%-24s %14d\n", "CB resolved (index)", totalResolvedIndex)
+	fmt.Printf("%-24s %14d\n", "CB resolved (postgres)", totalResolvedPG)
+	fmt.Printf("%-24s %14d\n", "CB UNRESOLVED", totalUnresolved)
 	if *write {
 		fmt.Printf("%-24s %14d\n", "TOTAL landed (new)", totalLanded)
 	} else {
 		fmt.Println("\n(dry-run — re-run with -write to persist to Postgres)")
+	}
+	if totalUnresolved > 0 {
+		fmt.Printf("\nNOTE: %d claim/clawback ops had no resolvable create row (recognizable ADR-0047 D4 incompleteness — see stderr for the per-op log). Re-running once the create's own range has been backfilled resolves these on a subsequent pass; the PK's ON CONFLICT DO NOTHING makes that safe.\n", totalUnresolved)
 	}
 	return nil
 }

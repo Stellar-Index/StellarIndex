@@ -550,6 +550,383 @@ func TestDecoder_pathPayment_failedOp_emitsNothing(t *testing.T) {
 	}
 }
 
+// ─── Phase 3: ClaimableBalance create/claim/clawback + Clawback ───
+
+func mkClaimant(t *testing.T, destSeed byte) xdr.Claimant {
+	t.Helper()
+	_, dest := mkAccount(t, destSeed)
+	return xdr.Claimant{
+		Type: xdr.ClaimantTypeClaimantTypeV0,
+		V0:   &xdr.ClaimantV0{Destination: dest, Predicate: xdr.ClaimPredicate{Type: xdr.ClaimPredicateTypeClaimPredicateUnconditional}},
+	}
+}
+
+func mkCreateClaimableBalanceOp(t *testing.T, asset xdr.Asset, amount int64, claimants ...xdr.Claimant) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{
+		Body: xdr.OperationBody{
+			Type: xdr.OperationTypeCreateClaimableBalance,
+			CreateClaimableBalanceOp: &xdr.CreateClaimableBalanceOp{
+				Asset: asset, Amount: xdr.Int64(amount), Claimants: claimants,
+			},
+		},
+	}
+}
+
+func mkBalanceID(seed byte) xdr.ClaimableBalanceId {
+	var h xdr.Hash
+	h[0] = seed
+	return xdr.ClaimableBalanceId{Type: xdr.ClaimableBalanceIdTypeClaimableBalanceIdTypeV0, V0: &h}
+}
+
+func mkCreateClaimableBalanceSuccessResult(t *testing.T, bid xdr.ClaimableBalanceId) xdr.OperationResult {
+	t.Helper()
+	return xdr.OperationResult{
+		Code: xdr.OperationResultCodeOpInner,
+		Tr: &xdr.OperationResultTr{
+			Type: xdr.OperationTypeCreateClaimableBalance,
+			CreateClaimableBalanceResult: &xdr.CreateClaimableBalanceResult{
+				Code:      xdr.CreateClaimableBalanceResultCodeCreateClaimableBalanceSuccess,
+				BalanceId: &bid,
+			},
+		},
+	}
+}
+
+func mkClaimClaimableBalanceOp(bid xdr.ClaimableBalanceId) xdr.Operation {
+	return xdr.Operation{
+		Body: xdr.OperationBody{
+			Type:                    xdr.OperationTypeClaimClaimableBalance,
+			ClaimClaimableBalanceOp: &xdr.ClaimClaimableBalanceOp{BalanceId: bid},
+		},
+	}
+}
+
+func mkClaimClaimableBalanceSuccessResult() xdr.OperationResult {
+	return xdr.OperationResult{
+		Code: xdr.OperationResultCodeOpInner,
+		Tr: &xdr.OperationResultTr{
+			Type:                        xdr.OperationTypeClaimClaimableBalance,
+			ClaimClaimableBalanceResult: &xdr.ClaimClaimableBalanceResult{Code: xdr.ClaimClaimableBalanceResultCodeClaimClaimableBalanceSuccess},
+		},
+	}
+}
+
+func mkClawbackClaimableBalanceOp(bid xdr.ClaimableBalanceId) xdr.Operation {
+	return xdr.Operation{
+		Body: xdr.OperationBody{
+			Type:                       xdr.OperationTypeClawbackClaimableBalance,
+			ClawbackClaimableBalanceOp: &xdr.ClawbackClaimableBalanceOp{BalanceId: bid},
+		},
+	}
+}
+
+func mkClawbackClaimableBalanceSuccessResult() xdr.OperationResult {
+	return xdr.OperationResult{
+		Code: xdr.OperationResultCodeOpInner,
+		Tr: &xdr.OperationResultTr{
+			Type: xdr.OperationTypeClawbackClaimableBalance,
+			ClawbackClaimableBalanceResult: &xdr.ClawbackClaimableBalanceResult{
+				Code: xdr.ClawbackClaimableBalanceResultCodeClawbackClaimableBalanceSuccess,
+			},
+		},
+	}
+}
+
+func mkClawbackOp(t *testing.T, asset xdr.Asset, holderSeed byte, amount int64) xdr.Operation {
+	t.Helper()
+	_, holder := mkAccount(t, holderSeed)
+	return xdr.Operation{
+		Body: xdr.OperationBody{
+			Type: xdr.OperationTypeClawback,
+			ClawbackOp: &xdr.ClawbackOp{
+				Asset:  asset,
+				From:   xdr.MuxedAccount{Type: xdr.CryptoKeyTypeKeyTypeEd25519, Ed25519: holder.Ed25519},
+				Amount: xdr.Int64(amount),
+			},
+		},
+	}
+}
+
+func mkClawbackSuccessResult() xdr.OperationResult {
+	return xdr.OperationResult{
+		Code: xdr.OperationResultCodeOpInner,
+		Tr: &xdr.OperationResultTr{
+			Type:           xdr.OperationTypeClawback,
+			ClawbackResult: &xdr.ClawbackResult{Code: xdr.ClawbackResultCodeClawbackSuccess},
+		},
+	}
+}
+
+func TestDecoder_createClaimableBalance_roundTrip(t *testing.T) {
+	fromAddr, _ := mkAccount(t, 0x70)
+	claimantAddr, _ := mkAccount(t, 0x71)
+	usdc := mkAlphanum4Asset(t, "USDC", 0x72)
+	bid := mkBalanceID(0x73)
+	op := mkCreateClaimableBalanceOp(t, usdc, 100_0000000, mkClaimant(t, 0x71))
+	result := mkCreateClaimableBalanceSuccessResult(t, bid)
+
+	outs, err := NewDecoder().Decode(dispatcher.OpContext{
+		Op: op, OpResult: result, TxSource: fromAddr, TxHash: "txcb1", Ledger: 40_000_000,
+	})
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(outs) != 1 {
+		t.Fatalf("got %d outputs, want 1", len(outs))
+	}
+	m := outs[0].(MovementEvent).Movement
+	if m.Kind != KindClaimableBalanceCreate {
+		t.Errorf("Kind = %q, want %q", m.Kind, KindClaimableBalanceCreate)
+	}
+	if m.Amount.String() != "1000000000" {
+		t.Errorf("Amount = %q, want 1000000000", m.Amount.String())
+	}
+	if m.FromAddress != fromAddr || m.ToAddress != "" {
+		t.Errorf("From/To = %q/%q, want %q/\"\"", m.FromAddress, m.ToAddress, fromAddr)
+	}
+	wantID := "7300000000000000000000000000000000000000000000000000000000000000"
+	if m.Attributes["balance_id"] != wantID {
+		t.Errorf("balance_id = %v, want %v", m.Attributes["balance_id"], wantID)
+	}
+	claimants, ok := m.Attributes["claimants"].([]string)
+	if !ok || len(claimants) != 1 || claimants[0] != claimantAddr {
+		t.Errorf("claimants = %v, want [%s]", m.Attributes["claimants"], claimantAddr)
+	}
+}
+
+// TestDecoder_claimClaimableBalance_resolvedFromSameRunIndex proves
+// the in-run correlation: a create decoded through the SAME Decoder
+// instance earlier makes the later claim resolve immediately, with
+// no pending entry recorded.
+func TestDecoder_claimClaimableBalance_resolvedFromSameRunIndex(t *testing.T) {
+	creatorAddr, _ := mkAccount(t, 0x74)
+	claimerAddr, _ := mkAccount(t, 0x75)
+	usdc := mkAlphanum4Asset(t, "USDC", 0x76)
+	bid := mkBalanceID(0x77)
+	d := NewDecoder()
+
+	_, err := d.Decode(dispatcher.OpContext{
+		Op:       mkCreateClaimableBalanceOp(t, usdc, 500_0000000, mkClaimant(t, 0x75)),
+		OpResult: mkCreateClaimableBalanceSuccessResult(t, bid),
+		TxSource: creatorAddr, TxHash: "txcb2", Ledger: 40_000_000,
+	})
+	if err != nil {
+		t.Fatalf("Decode(create): %v", err)
+	}
+
+	outs, err := d.Decode(dispatcher.OpContext{
+		Op:       mkClaimClaimableBalanceOp(bid),
+		OpResult: mkClaimClaimableBalanceSuccessResult(),
+		TxSource: claimerAddr, TxHash: "txcb3", Ledger: 40_000_005,
+	})
+	if err != nil {
+		t.Fatalf("Decode(claim): %v", err)
+	}
+	if len(outs) != 1 {
+		t.Fatalf("got %d outputs, want 1", len(outs))
+	}
+	m := outs[0].(MovementEvent).Movement
+	if m.Kind != KindClaimableBalanceClaim {
+		t.Errorf("Kind = %q, want %q", m.Kind, KindClaimableBalanceClaim)
+	}
+	if m.Asset != "USDC-"+usdc.MustAlphaNum4().Issuer.Address() || m.Amount.String() != "5000000000" {
+		t.Errorf("asset/amount = %s %s, want the create's USDC 5000000000", m.Amount.String(), m.Asset)
+	}
+	if m.FromAddress != "" || m.ToAddress != claimerAddr {
+		t.Errorf("From/To = %q/%q, want \"\"/%q", m.FromAddress, m.ToAddress, claimerAddr)
+	}
+	if m.Attributes["created_by"] != creatorAddr {
+		t.Errorf("created_by = %v, want %q", m.Attributes["created_by"], creatorAddr)
+	}
+	if pending := d.TakePendingClaimableBalances(); len(pending) != 0 {
+		t.Errorf("got %d pending refs, want 0 (resolved from in-run index)", len(pending))
+	}
+}
+
+// TestDecoder_claimClaimableBalance_unresolved_recordsPending covers
+// the "create wasn't seen in this run" path: zero movements emitted,
+// a PendingClaimableBalanceRef recorded for the caller's second pass
+// — never a guessed amount.
+func TestDecoder_claimClaimableBalance_unresolved_recordsPending(t *testing.T) {
+	claimerAddr, _ := mkAccount(t, 0x78)
+	bid := mkBalanceID(0x79)
+	d := NewDecoder()
+
+	outs, err := d.Decode(dispatcher.OpContext{
+		Op:       mkClaimClaimableBalanceOp(bid),
+		OpResult: mkClaimClaimableBalanceSuccessResult(),
+		TxSource: claimerAddr, TxHash: "txcb4", Ledger: 40_000_000,
+	})
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(outs) != 0 {
+		t.Fatalf("got %d outputs, want 0 (unresolved)", len(outs))
+	}
+	pending := d.TakePendingClaimableBalances()
+	if len(pending) != 1 {
+		t.Fatalf("got %d pending refs, want 1", len(pending))
+	}
+	if pending[0].Kind != KindClaimableBalanceClaim || pending[0].ToAddress != claimerAddr {
+		t.Errorf("pending[0] = %+v", pending[0])
+	}
+	// TakePendingClaimableBalances drains the buffer.
+	if again := d.TakePendingClaimableBalances(); len(again) != 0 {
+		t.Errorf("second TakePendingClaimableBalances() = %d, want 0 (already drained)", len(again))
+	}
+}
+
+func TestDecoder_clawbackClaimableBalance_resolvedFromSameRunIndex(t *testing.T) {
+	creatorAddr, _ := mkAccount(t, 0x7A)
+	issuerAddr, _ := mkAccount(t, 0x7B)
+	eurc := mkAlphanum4Asset(t, "EURC", 0x7C)
+	bid := mkBalanceID(0x7D)
+	d := NewDecoder()
+
+	_, err := d.Decode(dispatcher.OpContext{
+		Op:       mkCreateClaimableBalanceOp(t, eurc, 42_0000000, mkClaimant(t, 0x7B)),
+		OpResult: mkCreateClaimableBalanceSuccessResult(t, bid),
+		TxSource: creatorAddr, TxHash: "txcb5", Ledger: 40_000_000,
+	})
+	if err != nil {
+		t.Fatalf("Decode(create): %v", err)
+	}
+
+	outs, err := d.Decode(dispatcher.OpContext{
+		Op:       mkClawbackClaimableBalanceOp(bid),
+		OpResult: mkClawbackClaimableBalanceSuccessResult(),
+		TxSource: issuerAddr, TxHash: "txcb6", Ledger: 40_000_010,
+	})
+	if err != nil {
+		t.Fatalf("Decode(clawback): %v", err)
+	}
+	if len(outs) != 1 {
+		t.Fatalf("got %d outputs, want 1", len(outs))
+	}
+	m := outs[0].(MovementEvent).Movement
+	if m.Kind != KindClaimableBalanceClawback {
+		t.Errorf("Kind = %q, want %q", m.Kind, KindClaimableBalanceClawback)
+	}
+	if m.Amount.String() != "420000000" {
+		t.Errorf("Amount = %q, want 420000000", m.Amount.String())
+	}
+	if m.FromAddress != "" || m.ToAddress != issuerAddr {
+		t.Errorf("From/To = %q/%q, want \"\"/%q", m.FromAddress, m.ToAddress, issuerAddr)
+	}
+}
+
+func TestDecoder_clawback_roundTrip(t *testing.T) {
+	issuerAddr, _ := mkAccount(t, 0x7E)
+	holderAddr, _ := mkAccount(t, 0x7F)
+	gala := mkAlphanum4Asset(t, "GALA", 0x80)
+	op := mkClawbackOp(t, gala, 0x7F, 387000)
+	result := mkClawbackSuccessResult()
+
+	outs, err := NewDecoder().Decode(dispatcher.OpContext{
+		Op: op, OpResult: result, TxSource: issuerAddr, TxHash: "txclaw1", Ledger: 40_000_000,
+	})
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(outs) != 1 {
+		t.Fatalf("got %d outputs, want 1", len(outs))
+	}
+	m := outs[0].(MovementEvent).Movement
+	if m.Kind != KindClawback {
+		t.Errorf("Kind = %q, want %q", m.Kind, KindClawback)
+	}
+	if m.Amount.String() != "387000" {
+		t.Errorf("Amount = %q, want 387000", m.Amount.String())
+	}
+	// FromAddress is the HOLDER (body.From), NOT ctx.TxSource; ToAddress
+	// is the issuer (ctx.TxSource) — the reverse of every other kind.
+	if m.FromAddress != holderAddr {
+		t.Errorf("FromAddress = %q, want holder %q", m.FromAddress, holderAddr)
+	}
+	if m.ToAddress != issuerAddr {
+		t.Errorf("ToAddress = %q, want issuer %q", m.ToAddress, issuerAddr)
+	}
+}
+
+// TestDecoder_ResolveBalance_sameWindowOutOfOrder proves the
+// re-check path chops uses after draining a window's pending list:
+// even though the claim was decoded BEFORE its create (simulating
+// StreamClassicOps' tx_hash-lexicographic order putting the claim's
+// tx ahead of the create's tx within the same window), ResolveBalance
+// finds it once the create HAS been indexed, no Postgres needed.
+func TestDecoder_ResolveBalance_sameWindowOutOfOrder(t *testing.T) {
+	creatorAddr, _ := mkAccount(t, 0x84)
+	claimerAddr, _ := mkAccount(t, 0x85)
+	usdc := mkAlphanum4Asset(t, "USDC", 0x86)
+	bid := mkBalanceID(0x87)
+	d := NewDecoder()
+
+	// Claim decoded FIRST (its tx_hash sorts earlier) — unresolved at
+	// this point, since the create hasn't been seen yet.
+	outs, err := d.Decode(dispatcher.OpContext{
+		Op: mkClaimClaimableBalanceOp(bid), OpResult: mkClaimClaimableBalanceSuccessResult(),
+		TxSource: claimerAddr, TxHash: "a_claim_tx", Ledger: 40_000_000,
+	})
+	if err != nil {
+		t.Fatalf("Decode(claim): %v", err)
+	}
+	if len(outs) != 0 {
+		t.Fatalf("got %d outputs, want 0 (not yet resolved)", len(outs))
+	}
+	pending := d.TakePendingClaimableBalances()
+	if len(pending) != 1 {
+		t.Fatalf("got %d pending refs, want 1", len(pending))
+	}
+
+	// Create decoded SECOND, same window — indexes the balance.
+	_, err = d.Decode(dispatcher.OpContext{
+		Op:       mkCreateClaimableBalanceOp(t, usdc, 250_0000000, mkClaimant(t, 0x85)),
+		OpResult: mkCreateClaimableBalanceSuccessResult(t, bid),
+		TxSource: creatorAddr, TxHash: "z_create_tx", Ledger: 40_000_000,
+	})
+	if err != nil {
+		t.Fatalf("Decode(create): %v", err)
+	}
+
+	// The caller (chops) re-checks the pending ref via ResolveBalance
+	// AFTER the whole window has been decoded — this must now succeed
+	// without touching Postgres.
+	asset, amount, createdBy, ok := d.ResolveBalance(pending[0].BalanceIDHex)
+	if !ok {
+		t.Fatal("ResolveBalance = false, want true (create was indexed later in the same window)")
+	}
+	if asset != "USDC-"+usdc.MustAlphaNum4().Issuer.Address() || amount.String() != "2500000000" || createdBy != creatorAddr {
+		t.Errorf("got asset=%s amount=%s createdBy=%s", asset, amount.String(), createdBy)
+	}
+}
+
+func TestDecoder_claimableBalance_failedOps_emitNothing(t *testing.T) {
+	bid := mkBalanceID(0x81)
+	cases := []struct {
+		name   string
+		op     xdr.Operation
+		result xdr.OperationResult
+	}{
+		{"create_bareCode", mkCreateClaimableBalanceOp(t, xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}, 100, mkClaimant(t, 0x82)),
+			xdr.OperationResult{Code: xdr.OperationResultCodeOpNoAccount}},
+		{"claim_bareCode", mkClaimClaimableBalanceOp(bid), xdr.OperationResult{Code: xdr.OperationResultCodeOpNoAccount}},
+		{"clawback_bareCode", mkClawbackClaimableBalanceOp(bid), xdr.OperationResult{Code: xdr.OperationResultCodeOpNoAccount}},
+		{"clawbackOp_bareCode", mkClawbackOp(t, xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}, 0x83, 100), xdr.OperationResult{Code: xdr.OperationResultCodeOpNoAccount}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			outs, err := NewDecoder().Decode(dispatcher.OpContext{Op: tc.op, OpResult: tc.result, TxSource: "GTEST"})
+			if err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+			if len(outs) != 0 {
+				t.Errorf("got %d outputs, want 0", len(outs))
+			}
+		})
+	}
+}
+
 func TestKind_IsValid(t *testing.T) {
 	valid := []Kind{
 		KindPayment, KindCreateAccount, KindPathPayment, KindAccountMerge,

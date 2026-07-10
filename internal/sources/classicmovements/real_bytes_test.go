@@ -287,6 +287,170 @@ func TestRealBytes_pathPaymentStrictSend_success(t *testing.T) {
 	}
 }
 
+// ─── Phase 3: ClaimableBalance create/claim/clawback + Clawback ───
+
+// TestRealBytes_createClaimableBalance_success is a real pre-P23
+// mainnet CreateClaimableBalance: GALA funded into escrow with two
+// claimants. Pins the generated BalanceId (from the RESULT, not
+// derivable from the body) and the claimants list.
+func TestRealBytes_createClaimableBalance_success(t *testing.T) {
+	// ledger 40000000, tx 05fd6eea40b036204d6817d4ba945663e3071e2331385de78f38a9b9bed661cc, op_index 0.
+	const (
+		bodyB64   = "AAAADgAAAAFHQUxBAAAAADV6FeHCtmgz8V4u/kE1liwByrbw7SK8T5xatMG3j16DAAAAAAAF57gAAAACAAAAAAAAAACEKCUFXS4fGHiDDkqG2fsp03cR+Rd9bRJKybyy/rBgjgAAAAMAAAABAAAABAAAAABiLPP5AAAAAAAAAAA+CSgxOgl5fsc6se+nt2OaXHhgjaBK88g+wvrbZ7xZUgAAAAUAAAAAAAk6gA=="
+		resultB64 = "AAAAAAAAAA4AAAAAAAAAAAZiRenTfqxyI9zYHNhROvZuqvaj0+hcn77xY+YUzgCd"
+	)
+	movements := decodeRealBytes(t, bodyB64, resultB64, 40_000_000,
+		"05fd6eea40b036204d6817d4ba945663e3071e2331385de78f38a9b9bed661cc", 0,
+		"GCCCQJIFLUXB6GDYQMHEVBWZ7MU5G5YR7ELX23ISJLE3ZMX6WBQI4HFW",
+		time.Date(2022, 3, 12, 19, 32, 55, 0, time.UTC))
+
+	if len(movements) != 1 {
+		t.Fatalf("got %d movements, want 1", len(movements))
+	}
+	m := movements[0]
+	if m.Kind != KindClaimableBalanceCreate {
+		t.Errorf("Kind = %q, want %q", m.Kind, KindClaimableBalanceCreate)
+	}
+	wantAsset := "GALA-GA2XUFPBYK3GQM7RLYXP4QJVSYWADSVW6DWSFPCPTRNLJQNXR5PIGALA"
+	if m.Asset != wantAsset || m.Amount.String() != "387000" {
+		t.Errorf("asset/amount = %s %s, want %s 387000", m.Amount.String(), m.Asset, wantAsset)
+	}
+	if m.FromAddress != "GCCCQJIFLUXB6GDYQMHEVBWZ7MU5G5YR7ELX23ISJLE3ZMX6WBQI4HFW" || m.ToAddress != "" {
+		t.Errorf("From/To = %q/%q, want the source / empty", m.FromAddress, m.ToAddress)
+	}
+	wantID := "066245e9d37eac7223dcd81cd8513af66eaaf6a3d3e85c9fbef163e614ce009d"
+	if m.Attributes["balance_id"] != wantID {
+		t.Errorf("balance_id = %v, want %v", m.Attributes["balance_id"], wantID)
+	}
+	claimants, ok := m.Attributes["claimants"].([]string)
+	if !ok || len(claimants) != 2 {
+		t.Fatalf("claimants = %v, want a 2-element []string", m.Attributes["claimants"])
+	}
+	if claimants[0] != "GCCCQJIFLUXB6GDYQMHEVBWZ7MU5G5YR7ELX23ISJLE3ZMX6WBQI4HFW" ||
+		claimants[1] != "GA7ASKBRHIEXS7WHHKY67J5XMONFY6DARWQEV46IH3BPVW3HXRMVFIOP" {
+		t.Errorf("claimants = %v", claimants)
+	}
+}
+
+// TestRealBytes_claimClaimableBalance_success is a real pre-P23
+// mainnet ClaimClaimableBalance. Its create is NOT in this test's
+// window, so the in-run index can't resolve it — this decodes to
+// zero movements plus one PendingClaimableBalanceRef, exercising the
+// exact "create outside this run" path production traffic hits
+// constantly (§ decode.go's Decoder doc).
+func TestRealBytes_claimClaimableBalance_unresolved(t *testing.T) {
+	// ledger 40000000, tx 04f7f85101dd3d9c3d370f65ddeb619b93058f5d8d55d1499932fdf8747a6a40, op_index 1.
+	const (
+		bodyB64   = "AAAADwAAAAD5qm+e1LhKIbwH2WwTRW1z21a8SyVBB6JhPsbYJ17Asg=="
+		resultB64 = "AAAAAAAAAA8AAAAA"
+	)
+	d := NewDecoder()
+	var body xdr.OperationBody
+	if err := xdr.SafeUnmarshalBase64(bodyB64, &body); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	var result xdr.OperationResult
+	if err := xdr.SafeUnmarshalBase64(resultB64, &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	op := xdr.Operation{Body: body}
+	outs, err := d.Decode(dispatcher.OpContext{
+		Ledger:   40_000_000,
+		TxHash:   "04f7f85101dd3d9c3d370f65ddeb619b93058f5d8d55d1499932fdf8747a6a40",
+		TxSource: "GAN4CIBJHZWBXILII3LYXNNK5PEYPB7UW54FNU62JM4INNJQ66DFPWWG",
+		OpIndex:  1, Op: op, OpResult: result,
+	})
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(outs) != 0 {
+		t.Fatalf("got %d movements, want 0 (unresolved create)", len(outs))
+	}
+	pending := d.TakePendingClaimableBalances()
+	if len(pending) != 1 {
+		t.Fatalf("got %d pending refs, want 1", len(pending))
+	}
+	if pending[0].Kind != KindClaimableBalanceClaim {
+		t.Errorf("Kind = %q, want %q", pending[0].Kind, KindClaimableBalanceClaim)
+	}
+	if pending[0].ToAddress != "GAN4CIBJHZWBXILII3LYXNNK5PEYPB7UW54FNU62JM4INNJQ66DFPWWG" {
+		t.Errorf("ToAddress = %q", pending[0].ToAddress)
+	}
+	wantID := "f9aa6f9ed4b84a21bc07d96c13456d73db56bc4b254107a2613ec6d8275ec0b2"
+	if pending[0].BalanceIDHex != wantID {
+		t.Errorf("BalanceIDHex = %q, want %q", pending[0].BalanceIDHex, wantID)
+	}
+}
+
+// TestRealBytes_clawback_success is a real pre-P23 mainnet Clawback:
+// the holder (op.From) and the issuer (the op's resolved source
+// account) are DIFFERENT real addresses — confirms FromAddress /
+// ToAddress are not accidentally swapped or both set to the same
+// value.
+func TestRealBytes_clawback_success(t *testing.T) {
+	// ledger 45000001, tx 9a3e58558762d50ba9b90a0d1ce934325fc9f1af1c2b4e646e1a4368890bfe84, op_index 2.
+	const (
+		bodyB64   = "AAAAEwAAAAJJcmFxaURpbmFyAAAAAAAAQqpSc3O4BsnF00z3DCgHZslFSsG9q8vhnVv8SUCYlBIAAAAAixcHcr3R/h+JDHbDxqHVbjXTcvfNj79TgUAVVq6QOfwAAAAFpDh1gA=="
+		resultB64 = "AAAAAAAAABMAAAAA"
+	)
+	movements := decodeRealBytes(t, bodyB64, resultB64, 45_000_001,
+		"9a3e58558762d50ba9b90a0d1ce934325fc9f1af1c2b4e646e1a4368890bfe84", 2,
+		"GBBKUUTTOO4ANSOF2NGPODBIA5TMSRKKYG62XS7BTVN7YSKATCKBFTCW",
+		time.Date(2023, 2, 18, 7, 3, 24, 0, time.UTC))
+
+	if len(movements) != 1 {
+		t.Fatalf("got %d movements, want 1", len(movements))
+	}
+	m := movements[0]
+	if m.Kind != KindClawback {
+		t.Errorf("Kind = %q, want %q", m.Kind, KindClawback)
+	}
+	if m.Amount.String() != "24230000000" {
+		t.Errorf("Amount = %q, want 24230000000", m.Amount.String())
+	}
+	if m.FromAddress != "GCFROB3SXXI74H4JBR3MHRVB2VXDLU3S67GY7P2TQFABKVVOSA47Z6CS" {
+		t.Errorf("FromAddress (holder) = %q", m.FromAddress)
+	}
+	if m.ToAddress != "GBBKUUTTOO4ANSOF2NGPODBIA5TMSRKKYG62XS7BTVN7YSKATCKBFTCW" {
+		t.Errorf("ToAddress (issuer) = %q", m.ToAddress)
+	}
+}
+
+// TestRealBytes_clawbackClaimableBalance_failed pins a REAL failed
+// ClawbackClaimableBalance (ClawbackClaimableBalanceNotClawbackEnabled)
+// — zero movements, no pending ref recorded (the op never resolved
+// to a real value-moving attempt, so there's nothing to correlate).
+func TestRealBytes_clawbackClaimableBalance_failed(t *testing.T) {
+	// ledger 40086192, tx 5a1b65b21d6a2db081eb57e2e3075089553bdd36ad78f7dc8fdacaaff5b2ed2b, op_index 0.
+	const (
+		bodyB64   = "AAAAFAAAAAAndivT9qSWT2XUT+ui1Gnkzi+2ve7uG05Gx6EErpxlWw=="
+		resultB64 = "AAAAAAAAABT////9"
+	)
+	d := NewDecoder()
+	var body xdr.OperationBody
+	if err := xdr.SafeUnmarshalBase64(bodyB64, &body); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	var result xdr.OperationResult
+	if err := xdr.SafeUnmarshalBase64(resultB64, &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	outs, err := d.Decode(dispatcher.OpContext{
+		Ledger: 40_086_192, TxHash: "5a1b65b21d6a2db081eb57e2e3075089553bdd36ad78f7dc8fdacaaff5b2ed2b",
+		TxSource: "GAOGRZQLNAD7GJAEBJ6AC6LA3X5I3Y5DP2LJWZWFT6KLLQU3YGATY5TF", OpIndex: 0,
+		Op: xdr.Operation{Body: body}, OpResult: result,
+	})
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(outs) != 0 {
+		t.Errorf("got %d movements from a failed clawback-claimable-balance, want 0", len(outs))
+	}
+	if pending := d.TakePendingClaimableBalances(); len(pending) != 0 {
+		t.Errorf("got %d pending refs from a failed op, want 0", len(pending))
+	}
+}
+
 // ─── helpers ──────────────────────────────────────────────────────
 
 // decodeRealBytes unmarshals real op body/result XDR (base64, exactly

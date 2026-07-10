@@ -87,6 +87,29 @@ against.
   paths all gain `Attributes map[string]any` (no migration needed —
   0105 already has the `attributes` column). Recognition test and
   real-bytes golden tests extended accordingly.
+- **Pre-P23 classic-movement reconstruction, Phase 3: claimable
+  balances + Clawback** (ADR-0047). `internal/sources/classicmovements`
+  now also decodes `CreateClaimableBalance` (body-only, `BalanceId`
+  from the result, claimants recorded in `attributes`),
+  `ClaimClaimableBalance`/`ClawbackClaimableBalance` (neither op
+  carries an asset/amount — resolved against the
+  `CreateClaimableBalance` row this package itself derived, via a new
+  in-run `BalanceId` index on `Decoder` with a Postgres second-pass
+  fallback, `timescale.Store.FindClaimableBalanceCreate`, for creates
+  outside the current backfill invocation's range — an unresolved
+  claim/clawback is counted and logged, never guessed), and the plain
+  `Clawback` op (`FromAddress`/`ToAddress` intentionally flip here:
+  the holder — `body.From` — is `FromAddress`, the issuer —
+  `ctx.TxSource` — is `ToAddress`, confirmed against real mainnet
+  data where the two are different addresses).
+  `classic-movements-backfill` drains pending claim/clawback refs
+  once per streamed window, resolving each via the free in-memory
+  re-check first (closes a same-window `tx_hash`-ordering gap), then
+  Postgres, then counts genuinely unresolved ones — three-tier report
+  now printed alongside the per-kind counts. Recognition test,
+  synthetic unit tests, real-bytes golden tests (incl. a real failed
+  `ClawbackClaimableBalance`), and a new TimescaleDB integration test
+  (`test/integration/classic_movements_storage_test.go`) all extended.
 - **Full-history SAC balance seed — closes the BLND/EURC/KALE/PHO supply
   cross-check residual** (migration 0102, ROADMAP #14 / incident
   2026-07-06 "PHO/BLND VERDICT" follow-up). `supply seed-sac-balances`

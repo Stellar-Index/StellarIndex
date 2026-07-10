@@ -133,6 +133,53 @@ func (MovementEvent) EventKind() string { return "classicmovements.movement" }
 // Source implements consumer.Event.
 func (MovementEvent) Source() string { return SourceName }
 
+// PendingClaimableBalanceRef is a ClaimClaimableBalance /
+// ClawbackClaimableBalance op whose asset/amount couldn't be
+// resolved from Decoder's in-run BalanceId index — see
+// dispatcher_adapter.go's Decoder doc and
+// Decoder.TakePendingClaimableBalances. FromAddress/ToAddress are
+// already resolved (they don't depend on the correlated create row);
+// only Asset/Amount/Provenance/Attributes remain to be filled in by
+// ResolvePendingClaimableBalance once the create is found.
+type PendingClaimableBalanceRef struct {
+	Kind            Kind // KindClaimableBalanceClaim or KindClaimableBalanceClawback
+	BalanceIDHex    string
+	Ledger          uint32
+	LedgerCloseTime time.Time
+	TxHash          string
+	OpIndex         uint32
+	FromAddress     string
+	ToAddress       string
+}
+
+// ResolvePendingClaimableBalance builds the Movement for a
+// previously-pending claim/clawback now that its create row's
+// asset/amount/creator have been found — typically via a Postgres
+// second-pass lookup (timescale.Store.FindClaimableBalanceCreate)
+// run by the caller after Decoder.TakePendingClaimableBalances,
+// since this package stays storage-agnostic (mirrors
+// internal/sources/sdex never importing a storage package).
+func ResolvePendingClaimableBalance(ref PendingClaimableBalanceRef, asset string, amount canonical.Amount, createdBy string) Movement {
+	return Movement{
+		Kind:            ref.Kind,
+		Provenance:      ProvenanceClassicDerived,
+		Ledger:          ref.Ledger,
+		LedgerCloseTime: ref.LedgerCloseTime,
+		TxHash:          ref.TxHash,
+		OpIndex:         ref.OpIndex,
+		LegIndex:        0,
+		Asset:           asset,
+		Amount:          amount,
+		FromAddress:     ref.FromAddress,
+		ToAddress:       ref.ToAddress,
+		Attributes: map[string]any{
+			"balance_id":   ref.BalanceIDHex,
+			"created_by":   createdBy,
+			"resolved_via": "postgres_second_pass",
+		},
+	}
+}
+
 // Errors returned by the decode path.
 var (
 	// ErrUnsupportedOpType is returned by Decode when handed an
