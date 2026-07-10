@@ -52,6 +52,24 @@ The two questions this page used to carry are answered by the lake itself:
 | pool `deposit` / `withdraw` / `update_reserves` / `reserves_sync` | liquidity / reserves tracking |
 | router `add_pool` | pool registration (gate fan-out — registers the pool in the contract-identity registry; emits no flow/trade row) |
 
+## ⚠️ Known gap — rewards-gauge + governance topics (ROADMAP #89, 2026-07-10)
+
+A full topic census against the gated set (332 pools + router) found
+**20 real, distinct topics with no decoder** — a rewards-gauge
+subsystem (`pool_state` 339,712 · `claim_reward` 263,673 ·
+`set_rewards_config` 47,530 · `position_update` 12,403 · bare
+`deposit` 7,213 · `claim_fees` 5,056 · `rewards_gauge_claim` 1,121 ·
+bare `claim` 168 · `rewards_gauge_schedule_reward` 64 ·
+`set_rewards_state` 25 · `rewards_gauge_add` 12) and a governance
+surface (`apply_upgrade` 706 · `commit_upgrade` 705 ·
+`set_privileged_addrs` 173 · `apply_transfer_ownership` 48 ·
+`commit_transfer_ownership` 48 · `enable_emergency_mode` 35 ·
+`disable_emergency_mode` 35 · `pool_gauge_switch_token` 31). `transfer`
+/ `approve` / `mint` / `burn` are the SEP-41 token layer, correctly
+out of scope. Full detail + the exact per-topic evidence:
+`internal/sources/aquarius/README.md`. This is new-table-scale work,
+not implemented in this pass.
+
 ## ✅ Pool enumeration — answered (2026-06-12, lake-derived)
 
 The Dune community dashboard (claw, "Aquarius Base Metrics") revealed the

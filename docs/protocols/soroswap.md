@@ -48,3 +48,14 @@ Verified against `soroswap-core` `pair/src/event.rs` /
 | `("SoroswapPair","swap")` + `("SoroswapPair","sync")` | `trades` (source=soroswap) |
 | `("SoroswapPair","skim")` | `soroswap_skim_events` |
 | `("SoroswapPair","deposit"/"withdraw")` | matched (registered pair) — no trade output |
+
+## ⚠️ Known gap — Router topics undecoded (ROADMAP #89, 2026-07-10)
+
+The Router (`CAG5LRYQ…`) emits its own contract events, currently
+100% undecoded by `internal/sources/soroswap`: `swap` (168,557),
+`add` (1,057), `remove` (219), `init` (1); the factory contracts
+also emit `init` (4, distinct from `new_pair`). Not silently
+mis-attributed (the decoder's `classify()` simply doesn't match
+these topics), but not yet acknowledged with real counts either.
+See `internal/sources/soroswap/README.md` for detail. Not
+implemented this session.

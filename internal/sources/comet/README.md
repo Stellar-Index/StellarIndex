@@ -209,6 +209,23 @@ new pattern. The liquidity-event tables now give us per-pool LP
 flow visibility (depth changes, LP-user behaviour) on top of the
 already-captured swap volume.
 
+## Topic census note (ROADMAP #89, 2026-07-10)
+
+A read-only ClickHouse-lake sweep against the one gated pool
+confirms 77,467 `("POOL", *)` events (plus SEP-41 `transfer`/`burn`/
+`approve` on the pool's own token, correctly out of scope per this
+README's "Events NOT decoded" section). `stellar.contract_events_daily`
+(the fast pre-aggregated path) does not carry topic[1] granularity
+for Symbol-namespaced protocols like this one — the census can
+confirm the total `POOL` count but not break it down by
+`swap`/`join_pool`/`exit_pool`/`deposit`/`withdraw`, so it neither
+confirms nor contradicts the "all five kinds" claim above (which
+rests on the 2026-05-26 source-code verification, a stronger check
+than lake sampling). `source_orphan_events_total{source="comet"}`
+is the live signal to watch for a genuinely new sixth kind; a raw-
+table topic[1] pull would close this gap in the audit methodology
+if ever needed.
+
 ## References
 
 - WASM audit: [`docs/operations/wasm-audits/comet.md`](../../../docs/operations/wasm-audits/comet.md)

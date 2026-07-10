@@ -229,6 +229,39 @@ against.
   first two ledgers, and the third resolves to the same single hash already established.
   See `docs/operations/wasm-audits/blend_emitter.md`.
 
+### Added
+- **ROADMAP #89 residuals: rozo `payment_event` body verified against real lake bytes;
+  per-source admin/governance topic census for every other gated Soroban source.**
+  `internal/sources/rozo`'s `DecodePayment` body decode (the `{amount, destination, from,
+  memo}` ScMap field mapping) had never been checked against real on-chain bytes — only the
+  topic SHAPE was lake-verified on 2026-07-09. Pulled 5 real `payment_event` rows read-only
+  from the ClickHouse lake (`stellar.contract_events`, scoped to the 4 gated contracts) and
+  round-tripped them through `DecodePayment`: **verified correct**, no decoder change
+  needed. `flush_event` has zero real occurrences across all 4 contracts. A real-bytes
+  golden test (`TestGolden_Payment_LakeBytes`, 3 fixtures across both contract deployments
+  and both observed memo naming conventions) now pins this.
+  - **Full topic census** (`soroswap`, `phoenix`, `aquarius`, `blend`, `blend_backstop`,
+    `comet`, `defindex`, `sorocredit`, `reflector` ×3, `redstone`; `band`/`cctp`/`rozo`
+    skipped per the task scope — band emits no events, cctp + rozo already closed) against
+    each source's gated contract set. **Confirmed fully covered, no gap:** `blend_backstop`
+    (re-confirms the 2026-07-09/10 six-bug fix), `sorocredit`, `reflector`, `redstone`.
+    **Real gaps found and documented** (not implemented — each needs new decode functions,
+    new tables, or both, past this pass's "small mechanical fix" bar): `blend` (778 events /
+    3 topics — a V1 pool-factory liquidation-auction + emissions vocabulary the 2026-07-09
+    `blend_backstop` V1/V2 audit pattern hasn't been applied to yet); `aquarius` (20 topics —
+    an entirely undecoded rewards-gauge subsystem plus a governance/admin surface, the
+    largest gap found); `soroswap` (the Router contract's own `swap`/`add`/`remove`/`init`
+    events, ~169k total, currently unobserved by any decoder); `phoenix` (`withdraw_rewards`
+    / `distribute_rewards`, 58 events); `defindex` (`n_wasm`, 2 events). Every finding is
+    documented with real ledger-cited counts in the relevant `internal/sources/*/README.md`
+    and `docs/protocols/*.md`.
+  - **Operational finding (out of scope, flagged for follow-up):** `stellar.contract_events_daily`
+    (the fast pre-aggregated path `/v1/protocols/{name}` reads) undercounts by ~43% relative
+    to the raw `stellar.contract_events` table for at least the aquarius `trade` topic
+    (2,286,665 vs 4,035,808 on the identical contract set) — looks like an incomplete
+    one-time historical backfill (see the table's own DDL comment in
+    `deploy/clickhouse/tier1_schema.sql`), not a bug introduced this session.
+
 ## [v0.11.0] — 2026-07-10
 
 ### Added

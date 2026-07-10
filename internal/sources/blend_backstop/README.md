@@ -48,6 +48,18 @@ ADR-0035 factory-anchored gating model + the "Comet uses a shared
 topic" trap in CLAUDE.md: a look-alike symbol from a non-backstop
 contract must never mint a backstop row.
 
+## Topic census re-confirmation (ROADMAP #89, 2026-07-10)
+
+A read-only lake topic census against both gated backstop contracts
+(V1 + V2) found no topic outside the 12 `Classify()` already handles
+— `deposit` (31,466), `claim` (26,359), `donate` (2,672),
+`queue_withdrawal` (1,990), `withdraw` (1,423), `gulp_emissions`
+(504), `dequeue_withdrawal` (225), `distribute` (135), `draw` (15),
+`rw_zone` (4), `rw_zone_add` (3); `rw_zone_remove` remains at 0
+real occurrences, consistent with the 2026-07-09/10 audit that added
+it synthetic-from-source. Coverage confirmed complete as of this
+census — the six-bug fix landed the same week is holding.
+
 ## Robustness
 
 Per CLAUDE.md "EVERY-event" + "decode by field, degrade gracefully":

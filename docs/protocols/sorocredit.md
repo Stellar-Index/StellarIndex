@@ -1,6 +1,6 @@
 ---
 title: sorocredit (consumer-USDC credit) — contract & event verification
-last_verified: 2026-07-07
+last_verified: 2026-07-10
 status: current
 ---
 
@@ -51,6 +51,13 @@ the identity gate — `sorocredit` is scoped to the single main contract.
 
 Every event is decoded (EVERY-event invariant). No event contributes to
 pricing / VWAP — this is explorer coverage only.
+
+**Topic census re-confirmation (ROADMAP #89, 2026-07-10):** a
+read-only lake topic census against the gated main contract found
+no topic outside the 7 above — `Liquidation` (105,275),
+`StatementPublished` (104,451), `NewCollateralContract` (18,245),
+`Withdrawal` (10,769), `BeaconUpdated` (1), `CollateralHashUpdated`
+(1), `SupportedAssetAdded` (1). Coverage confirmed complete.
 
 ## ⚠️ `Liquidation` is a SCHEDULED SETTLEMENT, not distress
 
