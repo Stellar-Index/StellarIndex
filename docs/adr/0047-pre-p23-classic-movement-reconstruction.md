@@ -4,7 +4,7 @@ title: Pre-P23 classic-movement reconstruction from the lake
 status: Accepted
 date: 2026-07-10
 supersedes: []
-superseded_by: null
+superseded_by: null  # D1's Postgres storage target amended by ADR-0048 (CH-native archive); decode/phasing/verification unchanged
 ---
 
 # ADR-0047: Pre-P23 classic-movement reconstruction from the lake
@@ -42,6 +42,13 @@ Reconstruct pre-P23 classic movements **from the ClickHouse lake**
 never a MinIO walk and never Horizon-derived code, phased as below.
 
 ### D1 — Storage: a new `classic_movements` table, unified at read time
+
+> **AMENDED by [ADR-0048](0048-serve-by-query-shape.md) (2026-07-10):**
+> the movement archive is ClickHouse-native (`account_movements`,
+> feed-shaped, two rows per movement). The Postgres `classic_movements`
+> table (migration 0105) was applied but never populated and is
+> superseded. Everything below D1's storage target — the decode layer,
+> phasing, verification model, precedent hygiene — stands unchanged.
 
 A new hypertable purpose-built for two-party asset movements, NOT a
 write into `sep41_transfers` (whose schema is Soroban-shaped and whose
