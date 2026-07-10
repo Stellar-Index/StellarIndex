@@ -133,6 +133,10 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 			AmountIn:        ev.Swap.AmountIn.String(),
 			AmountOut:       ev.Swap.AmountOut.String(),
 			CallSig:         ev.Swap.CallSig(),
+			// ROADMAP #11 tree-position columns (migration 0101).
+			CallPath:  ev.Swap.CallPath,
+			CallDepth: ev.Swap.CallDepth,
+			CallKind:  ev.Swap.CallKind,
 		}
 		if !ev.Swap.DeadlineTs.IsZero() {
 			row.DeadlineTS = &ev.Swap.DeadlineTs

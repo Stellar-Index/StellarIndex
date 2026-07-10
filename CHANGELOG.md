@@ -38,6 +38,30 @@ against.
   `defindex_flows` — the 2026-06-12 snapshot simply predated their
   first `DeFindexVault` emission (lake emitters grew 34→88 by
   2026-07-05). No decoder change was needed; the doc is corrected.
+- **Soroswap-router sub-invocation tree position: `call_path` / `call_depth` /
+  `call_kind`** (ROADMAP #11, migration 0101). The dispatcher's task-#48
+  auth-tree walk already captured router calls nested inside aggregator
+  contracts (the 8,729×-undercount fix), but every captured row looked
+  identical regardless of where in the tx's call tree the router was invoked.
+  The dispatcher now threads the ordered ancestor contract chain
+  (`ContractCallContext.CallPathContracts`, built by the same
+  `walkAuthTree` pre-order traversal) to every `ContractCallDecoder`, and the
+  soroswap-router decoder records it per row: `call_path` (top-level contract
+  → … → router), `call_depth`, and a `top_level` / `sub_invocation`
+  discriminator. Golden tests decode two unmodified op bodies from the
+  certified lake — a direct router call (ledger 62,000,296) and an
+  aggregator-wrapped call two levels deep (ledger 62,029,020) — and a
+  regression test pins that tree position stays OUT of the `call_sig` PK hash
+  (auth-tree duplicates of the same call must still dedup). Rows written
+  before 0101 carry NULLs; historical fill is the queued r1 heavy job
+  (`DELETE FROM soroswap_router_swaps` + `ch-rebuild -sources soroswap-router
+  -contract-calls -write -from 50746272 -to <tip>` under `run-heavy-job.sh`).
+  Router rows remain excluded from pricing (ClassRouter / IncludeInVWAP=false;
+  regression tests extended with the #11 rationale — aggregators routinely
+  pass `amount_out_min=0`, so the guard is load-bearing). Deliberately
+  excluded surface (documented in the source README): router `add_liquidity`
+  / `remove_liquidity` (arg shape doesn't fit `soroswap_router_swaps`) and
+  the router's own emitted event topics (ROADMAP #89 follow-up).
 
 ## [v0.12.1] — 2026-07-10
 

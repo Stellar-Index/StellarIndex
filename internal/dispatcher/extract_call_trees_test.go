@@ -85,6 +85,10 @@ func TestExtractCallTrees_topLevelOnlyNoAuth(t *testing.T) {
 	if len(calls[0].CallPath) != 0 {
 		t.Errorf("CallPath = %v, want empty (top-level)", calls[0].CallPath)
 	}
+	wantChain := []string{calls[0].ContractID}
+	if !equalStringSlices(calls[0].CallPathContracts, wantChain) {
+		t.Errorf("CallPathContracts = %v, want %v (top-level: self only)", calls[0].CallPathContracts, wantChain)
+	}
 }
 
 // TestExtractCallTrees_authRootOnly — auth tree present with just a
@@ -141,10 +145,11 @@ func TestExtractCallTrees_aggregatorWrappingRouter(t *testing.T) {
 		fn       string
 		pathLen  int
 		pathLast int
+		chain    []string
 	}{
-		{"yeet", 0, -1},
-		{"swap_exact_tokens_for_tokens", 1, 0},
-		{"swap", 2, 0},
+		{"yeet", 0, -1, []string{calls[0].ContractID}},
+		{"swap_exact_tokens_for_tokens", 1, 0, []string{calls[0].ContractID, calls[1].ContractID}},
+		{"swap", 2, 0, []string{calls[0].ContractID, calls[1].ContractID, calls[2].ContractID}},
 	}
 	for i, w := range want {
 		if calls[i].FunctionName != w.fn {
@@ -157,7 +162,33 @@ func TestExtractCallTrees_aggregatorWrappingRouter(t *testing.T) {
 		if w.pathLen > 0 && calls[i].CallPath[len(calls[i].CallPath)-1] != w.pathLast {
 			t.Errorf("call[%d].CallPath last = %d, want %d (path=%v)", i, calls[i].CallPath[len(calls[i].CallPath)-1], w.pathLast, calls[i].CallPath)
 		}
+		if !equalStringSlices(calls[i].CallPathContracts, w.chain) {
+			t.Errorf("call[%d].CallPathContracts = %v, want %v (aggregator wraps router wraps pair — the #11 ordered contract chain)", i, calls[i].CallPathContracts, w.chain)
+		}
 	}
+	// The router node specifically: chain must end in its own
+	// ContractID and start with the outermost aggregator — this is
+	// the exact shape internal/sources/soroswap_router persists as
+	// RouterSwap.CallPath (ROADMAP #11).
+	routerCall := calls[1]
+	if routerCall.CallPathContracts[len(routerCall.CallPathContracts)-1] != routerCall.ContractID {
+		t.Errorf("router call chain must end in its own ContractID: chain=%v contractID=%s",
+			routerCall.CallPathContracts, routerCall.ContractID)
+	}
+}
+
+// equalStringSlices is a small local helper (no testify dependency in
+// this package) for CallPathContracts comparisons.
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // TestExtractCallTrees_multipleAuthEntries — multi-user co-signed tx

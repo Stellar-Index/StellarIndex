@@ -59,6 +59,7 @@ func decodeRouterArgs(
 	opIndex int,
 	opSource, txSource string,
 	closedAt time.Time,
+	callPath []string,
 ) (*RouterSwap, error) {
 	if fnName != FnSwapExactTokensForTokens && fnName != FnSwapTokensForExactTokens {
 		return nil, ErrUnknownFunction
@@ -144,6 +145,8 @@ func decodeRouterArgs(
 		amountIn, amountOut = a1, a0
 	}
 
+	callDepth, callKind := callPosition(callPath)
+
 	return &RouterSwap{
 		Source:     SourceName,
 		Ledger:     ledger,
@@ -159,7 +162,28 @@ func decodeRouterArgs(
 		AmountIn:   amountIn,
 		AmountOut:  amountOut,
 		DeadlineTs: deadlineTs,
+		CallPath:   callPath,
+		CallDepth:  callDepth,
+		CallKind:   callKind,
 	}, nil
+}
+
+// callPosition derives (CallDepth, CallKind) from the ordered
+// ancestor+self contract chain. callPath always ends in this call's
+// own contract (dispatcher.ContractCallContext.CallPathContracts
+// convention), so a top-level call carries callPath == [contractID]
+// (len 1, depth 0). A caller that doesn't supply callPath (e.g. an
+// older/defensive call site) is treated as top-level rather than
+// producing a negative depth.
+func callPosition(callPath []string) (int, string) {
+	depth := 0
+	if n := len(callPath); n > 1 {
+		depth = n - 1
+	}
+	if depth > 0 {
+		return depth, CallKindSubInvocation
+	}
+	return depth, CallKindTopLevel
 }
 
 // parseI128 wraps the (Parse → AsAmountFromI128) chain so the

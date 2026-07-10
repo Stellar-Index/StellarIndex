@@ -58,6 +58,7 @@ func (d *Decoder) Decode(ctx dispatcher.ContractCallContext) ([]consumer.Event, 
 		ctx.OpIndex,
 		ctx.OpSource, ctx.TxSource,
 		ctx.ClosedAt,
+		ctx.CallPathContracts,
 	)
 	if err != nil {
 		return nil, err

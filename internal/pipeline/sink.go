@@ -603,6 +603,11 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 			AmountIn:        e.Swap.AmountIn.String(),
 			AmountOut:       e.Swap.AmountOut.String(),
 			CallSig:         e.Swap.CallSig(),
+			// ROADMAP #11 tree-position columns (migration 0101):
+			// where in the tx's auth tree the router was invoked.
+			CallPath:  e.Swap.CallPath,
+			CallDepth: e.Swap.CallDepth,
+			CallKind:  e.Swap.CallKind,
 		}
 		if !e.Swap.DeadlineTs.IsZero() {
 			row.DeadlineTS = &e.Swap.DeadlineTs

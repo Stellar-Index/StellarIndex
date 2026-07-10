@@ -47,6 +47,18 @@ type SoroswapRouterSwap struct {
 	// hash from RouterSwap.CallSig(). Distinguishes multiple distinct router
 	// swaps in one op (aggregator / batch) while deduping auth-tree duplicates.
 	CallSig string
+
+	// CallPath / CallDepth / CallKind (migration 0101, ROADMAP #11) record
+	// WHERE in the tx's Soroban auth tree the router call was observed:
+	// CallPath is the ordered contract C-strkey chain from the top-level
+	// invocation down to the router (always ends in ContractID), CallDepth
+	// = len(CallPath)-1, CallKind is 'top_level' | 'sub_invocation'.
+	// An empty CallKind writes SQL NULLs for all three (the pre-#11 legacy
+	// row shape) — set all three together or none; the migration's CHECK
+	// rejects partial combinations.
+	CallPath  []string
+	CallDepth int
+	CallKind  string
 }
 
 // InsertSoroswapRouterSwap appends one soroswap_router_swaps row,
@@ -79,6 +91,21 @@ func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSw
 		return errors.New("timescale: InsertSoroswapRouterSwap: CallSig (PK discriminator) is empty")
 	}
 
+	if e.CallKind != "" {
+		// Guard the migration-0101 CHECK at the writer so a malformed
+		// event surfaces as a loud Go error rather than a per-row
+		// SQLSTATE 23514 in the sink's warn-and-continue path.
+		if e.CallKind != "top_level" && e.CallKind != "sub_invocation" {
+			return fmt.Errorf("timescale: InsertSoroswapRouterSwap: CallKind %q invalid (want top_level|sub_invocation)", e.CallKind)
+		}
+		if len(e.CallPath) != e.CallDepth+1 {
+			return fmt.Errorf("timescale: InsertSoroswapRouterSwap: CallPath len %d != CallDepth+1 (%d)", len(e.CallPath), e.CallDepth+1)
+		}
+		if e.CallPath[len(e.CallPath)-1] != e.ContractID {
+			return fmt.Errorf("timescale: InsertSoroswapRouterSwap: CallPath must end in ContractID (%s), got %v", e.ContractID, e.CallPath)
+		}
+	}
+
 	const q = `
         INSERT INTO soroswap_router_swaps (
             ledger, ledger_close_time, tx_hash, op_index,
@@ -86,14 +113,16 @@ func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSw
             op_source, tx_source,
             recipient, path,
             amount_in, amount_out, deadline_ts,
-            call_sig
+            call_sig,
+            call_path, call_depth, call_kind
         ) VALUES (
             $1, $2, $3, $4,
             $5, $6,
             $7, $8,
             $9, $10,
             $11, $12, $13,
-            $14
+            $14,
+            $15, $16, $17
         )
         ON CONFLICT (ledger_close_time, ledger, tx_hash, op_index, call_sig) DO NOTHING
     `
@@ -108,6 +137,18 @@ func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSw
 	if e.DeadlineTS != nil && pgTimestamptzRepresentable(*e.DeadlineTS) {
 		deadline = e.DeadlineTS.UTC()
 	}
+	// call_path/call_depth/call_kind land together or all NULL —
+	// migration 0101's CHECK enforces the same at the DB layer.
+	var (
+		callPath  interface{}
+		callDepth interface{}
+		callKind  interface{}
+	)
+	if e.CallKind != "" {
+		callPath = pq.Array(e.CallPath)
+		callDepth = e.CallDepth
+		callKind = e.CallKind
+	}
 	_, err := s.db.ExecContext(ctx, q,
 		int(e.Ledger), e.LedgerCloseTime.UTC(), e.TxHash, int(e.OpIndex),
 		e.ContractID, e.FunctionName,
@@ -115,6 +156,7 @@ func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSw
 		e.Recipient, pq.Array(e.Path),
 		e.AmountIn, e.AmountOut, deadline,
 		e.CallSig,
+		callPath, callDepth, callKind,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertSoroswapRouterSwap %s@%d: %w", e.TxHash, e.Ledger, err)

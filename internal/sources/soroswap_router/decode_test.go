@@ -39,6 +39,7 @@ func TestDecodeRouterArgs_swapExactTokensForTokens(t *testing.T) {
 		7, // op_index
 		"GAOPSOURCE...", "GATXSOURCE...",
 		time.Date(2024, 12, 1, 0, 0, 0, 0, time.UTC),
+		[]string{MainnetRouter}, // top-level: chain is just the router itself
 	)
 	if err != nil {
 		t.Fatalf("decodeRouterArgs: %v", err)
@@ -64,6 +65,15 @@ func TestDecodeRouterArgs_swapExactTokensForTokens(t *testing.T) {
 	if swap.Recipient == "" {
 		t.Errorf("Recipient empty")
 	}
+	if got, want := swap.CallDepth, 0; got != want {
+		t.Errorf("CallDepth = %d, want %d (top-level)", got, want)
+	}
+	if got, want := swap.CallKind, CallKindTopLevel; got != want {
+		t.Errorf("CallKind = %q, want %q", got, want)
+	}
+	if got, want := swap.CallPath, []string{MainnetRouter}; len(got) != len(want) || got[0] != want[0] {
+		t.Errorf("CallPath = %v, want %v", got, want)
+	}
 }
 
 // TestDecodeRouterArgs_swapTokensForExactTokens covers the
@@ -84,6 +94,14 @@ func TestDecodeRouterArgs_swapTokensForExactTokens(t *testing.T) {
 		mustB64(t, u64SCVal(1735689600)),
 	}
 
+	// Sub-invocation this time — an aggregator wrapping the router one
+	// level deep — to cover the CallDepth/CallKind derivation for the
+	// non-top-level case too (the real-bytes equivalent lives in
+	// real_bytes_test.go against an actual captured aggregator tx).
+	// The exact strkey doesn't matter here — decodeRouterArgs only
+	// cares about CallPath's length, not the caller identities — so a
+	// synthetic placeholder is fine for this pure-decode unit test.
+	const aggregatorStrkey = "CAGGREGATORPLACEHOLDER0000000000000000000000000000000000000"
 	swap, err := decodeRouterArgs(
 		FnSwapTokensForExactTokens, args,
 		MainnetRouter,
@@ -92,6 +110,7 @@ func TestDecodeRouterArgs_swapTokensForExactTokens(t *testing.T) {
 		3,
 		"GAOPSOURCE...", "GATXSOURCE...",
 		time.Date(2024, 12, 1, 0, 0, 0, 0, time.UTC),
+		[]string{aggregatorStrkey, MainnetRouter},
 	)
 	if err != nil {
 		t.Fatalf("decodeRouterArgs: %v", err)
@@ -103,6 +122,15 @@ func TestDecodeRouterArgs_swapTokensForExactTokens(t *testing.T) {
 	if got, want := swap.AmountOut.String(), "50000000"; got != want {
 		t.Errorf("AmountOut = %q, want %q (a0 = exact-out)", got, want)
 	}
+	if got, want := swap.CallDepth, 1; got != want {
+		t.Errorf("CallDepth = %d, want %d (one aggregator layer)", got, want)
+	}
+	if got, want := swap.CallKind, CallKindSubInvocation; got != want {
+		t.Errorf("CallKind = %q, want %q", got, want)
+	}
+	if len(swap.CallPath) != 2 || swap.CallPath[1] != MainnetRouter {
+		t.Errorf("CallPath = %v, want [<aggregator>, %s]", swap.CallPath, MainnetRouter)
+	}
 }
 
 // TestDecodeRouterArgs_unknownFunction defends the dispatcher's
@@ -110,7 +138,7 @@ func TestDecodeRouterArgs_swapTokensForExactTokens(t *testing.T) {
 // ErrUnknownFunction (not a panic, not silent acceptance).
 func TestDecodeRouterArgs_unknownFunction(t *testing.T) {
 	t.Parallel()
-	_, err := decodeRouterArgs("init", nil, MainnetRouter, 0, "", 0, "", "", time.Time{})
+	_, err := decodeRouterArgs("init", nil, MainnetRouter, 0, "", 0, "", "", time.Time{}, nil)
 	if !errors.Is(err, ErrUnknownFunction) {
 		t.Errorf("err = %v, want ErrUnknownFunction", err)
 	}
@@ -124,7 +152,7 @@ func TestDecodeRouterArgs_shortArgs(t *testing.T) {
 	_, err := decodeRouterArgs(
 		FnSwapExactTokensForTokens,
 		[]string{"only", "two", "args"}, // need 5
-		MainnetRouter, 0, "", 0, "", "", time.Time{},
+		MainnetRouter, 0, "", 0, "", "", time.Time{}, nil,
 	)
 	if !errors.Is(err, ErrMalformedArgs) {
 		t.Errorf("err = %v, want ErrMalformedArgs", err)
@@ -150,7 +178,7 @@ func TestDecodeRouterArgs_pathTooShort(t *testing.T) {
 	}
 	_, err := decodeRouterArgs(
 		FnSwapExactTokensForTokens, args,
-		MainnetRouter, 0, "", 0, "", "", time.Time{},
+		MainnetRouter, 0, "", 0, "", "", time.Time{}, nil,
 	)
 	if !errors.Is(err, ErrMalformedArgs) {
 		t.Errorf("err = %v, want ErrMalformedArgs (path too short)", err)
@@ -178,6 +206,7 @@ func TestDecodeRouterArgs_zeroDeadlineYieldsZeroTime(t *testing.T) {
 		FnSwapExactTokensForTokens, args,
 		MainnetRouter, 0, "tx", 0, "", "",
 		time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		[]string{MainnetRouter},
 	)
 	if err != nil {
 		t.Fatalf("decodeRouterArgs: %v", err)

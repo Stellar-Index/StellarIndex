@@ -726,16 +726,17 @@ func forEachContractCallEvent(ctx context.Context, chAddr, contractStrkey string
 					continue
 				}
 				evs, derr := dec.Decode(dispatcher.ContractCallContext{
-					Ledger:       op.Ledger,
-					ClosedAt:     op.ClosedAt,
-					TxHash:       op.TxHash,
-					TxSource:     op.Source,
-					OpSource:     op.Source,
-					OpIndex:      int(op.OpIndex),
-					ContractID:   call.ContractID,
-					FunctionName: call.FunctionName,
-					Args:         call.Args,
-					CallPath:     call.CallPath,
+					Ledger:            op.Ledger,
+					ClosedAt:          op.ClosedAt,
+					TxHash:            op.TxHash,
+					TxSource:          op.Source,
+					OpSource:          op.Source,
+					OpIndex:           int(op.OpIndex),
+					ContractID:        call.ContractID,
+					FunctionName:      call.FunctionName,
+					Args:              call.Args,
+					CallPath:          call.CallPath,
+					CallPathContracts: call.CallPathContracts,
 				})
 				if derr != nil {
 					continue // malformed call: skip per the decoder contract

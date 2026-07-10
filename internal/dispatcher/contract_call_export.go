@@ -19,6 +19,10 @@ type ContractCall struct {
 	FunctionName string
 	Args         []string
 	CallPath     []int
+	// CallPathContracts is the ordered ancestor+self contract chain —
+	// see ContractCallContext.CallPathContracts. Always ends in
+	// ContractID.
+	CallPathContracts []string
 }
 
 // ExtractContractCallTree returns every InvokeContract call reachable from a
@@ -36,10 +40,11 @@ func ExtractContractCallTree(op xdr.Operation) []ContractCall {
 	out := make([]ContractCall, 0, len(trees[0]))
 	for _, c := range trees[0] {
 		out = append(out, ContractCall{
-			ContractID:   c.ContractID,
-			FunctionName: c.FunctionName,
-			Args:         c.Args,
-			CallPath:     c.CallPath,
+			ContractID:        c.ContractID,
+			FunctionName:      c.FunctionName,
+			Args:              c.Args,
+			CallPath:          c.CallPath,
+			CallPathContracts: c.CallPathContracts,
 		})
 	}
 	return out

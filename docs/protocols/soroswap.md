@@ -27,6 +27,16 @@ are launch-era deployments.
 Also tracked: **Router** `CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH`
 (orchestration only — its swap calls delegate to the pair contracts, which
 emit the events; observed via the router's InvokeContract op for the census).
+Router swap-intent calls land in `soroswap_router_swaps` via the dispatcher's
+full **auth-tree walk** — the router is captured whether invoked directly or
+as a **sub-invocation** of an aggregator contract (the dominant real-world
+shape; a top-level-only walk undercounted ~8,729×). Since migration 0101
+each captured call records `call_path` (the ordered contract chain from the
+top-level invocation down to the router), `call_depth`, and a
+`top_level`/`sub_invocation` discriminator (ROADMAP #11;
+`internal/sources/soroswap_router/README.md`). Historical rows carry NULL
+tree-position columns until the queued r1 re-derive
+(`ch-rebuild -sources soroswap-router -contract-calls -write`) runs.
 
 ## Pairs
 

@@ -1554,6 +1554,15 @@ func TestTick_MinUSDVolumeFilter_SorobanQuotedPair(t *testing.T) {
 //     as Class=ClassRouter (not ClassExchange) with IncludeInVWAP=false,
 //     so filterForVWAP already drops it — this is what the test below
 //     exercises directly.
+//
+// ROADMAP #11 (2026-07-10): the sub-invocation walk (call_path /
+// call_depth / call_kind, migration 0101) rides the SAME single-table
+// sink case — sub-invocation-captured router rows add NO new path into
+// `trades`, so both guards above cover them unchanged. Sub-invocation
+// rows are also the stronger argument for this guard: aggregator
+// wrappers routinely pass amount_out_min=0 (they enforce slippage
+// themselves — see soroswap_router's real-bytes fixture), so a priced
+// router row would not merely be imprecise, it would be zero-priced.
 func TestFilterForVWAP_ExcludesSoroswapRouter(t *testing.T) {
 	now := time.Now()
 	trades := []canonical.Trade{

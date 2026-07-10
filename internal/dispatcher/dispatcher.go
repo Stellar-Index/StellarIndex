@@ -179,6 +179,19 @@ type ContractCallContext struct {
 	// Decoders that need to dedup overlapping calls in the same tx
 	// (rare) can build a stable identifier as (TxHash, OpIndex, CallPath).
 	CallPath []int
+	// CallPathContracts is the ordered chain of contract C-strkeys
+	// from the top-level invocation down to and including THIS call
+	// (index-aligned with CallPath's depth: length 1 for a top-level
+	// call — CallPathContracts == [ContractID] — length N+1 for a
+	// call N levels deep). CallPathContracts[0] is the outermost
+	// invoked contract (e.g. an aggregator); CallPathContracts[len-1]
+	// always equals ContractID. Built by the same auth-tree walk as
+	// CallPath (walkAuthTree) — see ROADMAP #11 / the
+	// contract-call-coverage-audit.md "sequencing" note: the walk
+	// itself shipped as task #48 Phase 1; this field is the ancestor-
+	// identity enrichment that lets a decoder record WHO wrapped the
+	// call, not just at what tree depth.
+	CallPathContracts []string
 }
 
 // LedgerEntryChangeDecoder is the contract for decoders that
@@ -624,16 +637,17 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 				}
 				for _, call := range calls {
 					ccCtx := ContractCallContext{
-						Ledger:       ledgerSeq,
-						ClosedAt:     parsedClosedAt,
-						TxHash:       txHash,
-						TxSource:     txSource,
-						OpSource:     opSource,
-						OpIndex:      opIdx,
-						CallPath:     call.CallPath,
-						ContractID:   call.ContractID,
-						FunctionName: call.FunctionName,
-						Args:         call.Args,
+						Ledger:            ledgerSeq,
+						ClosedAt:          parsedClosedAt,
+						TxHash:            txHash,
+						TxSource:          txSource,
+						OpSource:          opSource,
+						OpIndex:           opIdx,
+						CallPath:          call.CallPath,
+						CallPathContracts: call.CallPathContracts,
+						ContractID:        call.ContractID,
+						FunctionName:      call.FunctionName,
+						Args:              call.Args,
 					}
 					outs, err := d.dispatchContractCall(ccCtx)
 					if err != nil {
@@ -1018,6 +1032,11 @@ type invokeCall struct {
 	FunctionName string
 	Args         []string
 	CallPath     []int // empty for top-level; pre-order path for sub-invocations
+	// CallPathContracts is the ordered ancestor+self contract chain —
+	// see ContractCallContext.CallPathContracts for the full contract.
+	// Always length >= 1 (this call's own ContractID is always the
+	// last element) when non-nil.
+	CallPathContracts []string
 }
 
 // buildInvokeCallFromArgs projects an [xdr.InvokeContractArgs]
@@ -1029,8 +1048,12 @@ type invokeCall struct {
 // extractInvokeContractCalls switch).
 //
 // `path` is copied into the returned struct so the caller can
-// safely reuse the slice across recursive walks.
-func buildInvokeCallFromArgs(ic *xdr.InvokeContractArgs, path []int) *invokeCall {
+// safely reuse the slice across recursive walks. `ancestorChain` is
+// the ordered contract C-strkeys of every ancestor ABOVE this node
+// (outermost first); this call's own contract is appended to form
+// the returned invokeCall's CallPathContracts, so the caller passes
+// the SAME slice it received (not one it has already extended).
+func buildInvokeCallFromArgs(ic *xdr.InvokeContractArgs, path []int, ancestorChain []string) *invokeCall {
 	contractStrkey := ""
 	switch ic.ContractAddress.Type {
 	case xdr.ScAddressTypeScAddressTypeContract:
@@ -1064,36 +1087,52 @@ func buildInvokeCallFromArgs(ic *xdr.InvokeContractArgs, path []int) *invokeCall
 		copyPath = make([]int, len(path))
 		copy(copyPath, path)
 	}
+	chain := make([]string, len(ancestorChain)+1)
+	copy(chain, ancestorChain)
+	chain[len(ancestorChain)] = contractStrkey
 	return &invokeCall{
-		ContractID:   contractStrkey,
-		FunctionName: string(ic.FunctionName),
-		Args:         args,
-		CallPath:     copyPath,
+		ContractID:        contractStrkey,
+		FunctionName:      string(ic.FunctionName),
+		Args:              args,
+		CallPath:          copyPath,
+		CallPathContracts: chain,
 	}
 }
 
 // walkAuthTree appends every InvokeContract call reachable from
 // `node` (the node itself + every transitively-nested sub-invocation)
 // to `out`, in pre-order depth-first traversal. `path` is the
-// CallPath to this node; each recursive call extends it with the
-// child index.
+// CallPath to this node; `ancestorChain` is the ordered contract
+// C-strkeys of every ContractFn ancestor above this node (outermost
+// first) — each recursive call extends `path` with the child index
+// and, for ContractFn nodes, extends `ancestorChain` with this
+// node's own contract so descendants can report the full chain down
+// to themselves (ContractCallContext.CallPathContracts).
 //
-// CreateContract / CreateContractV2 nodes are skipped — they don't
-// represent ContractCallDecoder-relevant call shapes (no function
-// name to match). Only SOROBAN_AUTHORIZED_FUNCTION_TYPE_CONTRACT_FN
-// entries become invokeCalls.
-func walkAuthTree(node *xdr.SorobanAuthorizedInvocation, path []int, out *[]*invokeCall) {
+// CreateContract / CreateContractV2 nodes are skipped as invokeCalls
+// — they don't represent ContractCallDecoder-relevant call shapes
+// (no function name to match) — but their SubInvocations are still
+// walked with the ancestorChain UNCHANGED: a contract-creation node
+// has no "contract being invoked" identity to add to the chain, so a
+// ContractCallDecoder-relevant call nested beneath one (e.g. a
+// constructor invoking another contract) reports the chain as it was
+// immediately above the creation node. Only
+// SOROBAN_AUTHORIZED_FUNCTION_TYPE_CONTRACT_FN entries become
+// invokeCalls or extend the chain.
+func walkAuthTree(node *xdr.SorobanAuthorizedInvocation, path []int, ancestorChain []string, out *[]*invokeCall) {
+	childChain := ancestorChain
 	if node.Function.Type == xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn {
 		ic := node.Function.MustContractFn()
-		if call := buildInvokeCallFromArgs(&ic, path); call != nil {
+		if call := buildInvokeCallFromArgs(&ic, path, ancestorChain); call != nil {
 			*out = append(*out, call)
+			childChain = call.CallPathContracts
 		}
 	}
 	for i := range node.SubInvocations {
 		childPath := make([]int, len(path)+1)
 		copy(childPath, path)
 		childPath[len(path)] = i
-		walkAuthTree(&node.SubInvocations[i], childPath, out)
+		walkAuthTree(&node.SubInvocations[i], childPath, childChain, out)
 	}
 }
 
@@ -1146,9 +1185,11 @@ func extractInvokeContractCallTrees(ops []xdr.Operation) [][]*invokeCall { //nol
 		if len(ihf.Auth) > 0 {
 			// Auth tree is the canonical source. Walk every entry's
 			// root; each root represents the start of one user's
-			// authorized call subtree.
+			// authorized call subtree. ancestorChain starts nil — the
+			// root IS the top-level call, so its own CallPathContracts
+			// comes out as exactly [rootContractID].
 			for j := range ihf.Auth {
-				walkAuthTree(&ihf.Auth[j].RootInvocation, nil, &calls)
+				walkAuthTree(&ihf.Auth[j].RootInvocation, nil, nil, &calls)
 			}
 		} else {
 			// No auth array — the op didn't need user auth for any
@@ -1156,7 +1197,7 @@ func extractInvokeContractCallTrees(ops []xdr.Operation) [][]*invokeCall { //nol
 			// by the protocol). Fall back to the top-level call alone,
 			// matching the pre-#48 baseline.
 			topIC := ihf.HostFunction.MustInvokeContract()
-			if call := buildInvokeCallFromArgs(&topIC, nil); call != nil {
+			if call := buildInvokeCallFromArgs(&topIC, nil, nil); call != nil {
 				calls = append(calls, call)
 			}
 		}
