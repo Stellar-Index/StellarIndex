@@ -691,13 +691,11 @@ mc_version: "RELEASE.2025-08-13T08-35-41Z"
 # observers skipped, which is how r1 silently captured nothing
 # until 2026-07-05) and the ch-rebuild -sep41 re-derive.
 stellarindex_watched_sep41_contracts:
-  # FxDAO stablecoin family (2026-07-10 residual-DeFi census,
-  # docs/architecture/residual-defi-census-2026-07.md §2): USDx /
-  # EURx / GBPx / FXG — ~1.74M lifetime token events, ~$2.3M USDx
-  # supply, previously entirely untracked.
-  - CDIKURWHYS4FFTR5KOQK6MBFZA2K3E26WGBQI6PXBYWZ4XIOPJHDFJKP # FxDAO USDx
-  - CBN3NCJSMOQTC6SPEYK3A44NU4VS3IPKTARJLI3Y77OH27EWBY36TP7U # FxDAO EURx
-  - CBCO65UOWXY2GR66GOCMCN6IU3Y45TXCPBY3FLUNL4AOUMOCKVIVV6JC # FxDAO GBPx
+  # FxDAO FXG governance token (2026-07-10 residual-DeFi census,
+  # docs/architecture/residual-defi-census-2026-07.md §2). The other
+  # three FxDAO stablecoins (USDx/EURx/GBPx) were ALREADY watched —
+  # the census's "entirely untracked" claim was wrong on those three;
+  # FXG was the only genuinely missing member of the family.
   - CDBR4FMYL5WPUDBIXTBEBU2AFEYTDLXVOTRZHXS3JC575C7ZQRKYZQ55 # FxDAO FXG (governance)
   - CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75
   - CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY
