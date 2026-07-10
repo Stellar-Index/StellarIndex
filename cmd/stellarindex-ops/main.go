@@ -1,24 +1,46 @@
 // Binary stellarindex-ops is the admin CLI for operational tasks
-// that don't belong in the long-running binaries. Subcommands fall
-// into a few rough buckets:
+// that don't belong in the long-running binaries. Subcommand
+// implementations live in internal/ops/{ingest,archive,discovery,
+// supply,diagnostics,chops} (one package per rough bucket; chops
+// covers the ADR-0033/ADR-0034 ClickHouse-lake tools — named chops,
+// not clickhouse, to avoid shadowing internal/storage/clickhouse in
+// every file there) plus internal/ops/opsutil (helpers shared across
+// more than one of those packages). main.go is only the dispatch
+// table + the handful of subcommands too small or too miscellaneous
+// to warrant their own package (docs-config, mint-key, upgrade-key,
+// emit-incident).
 //
-//   - Ingest / backfill: `backfill`, `backfill-external`,
-//     `detect-gaps`, `list-cursors`.
-//   - Archive integrity: `verify-archive`, `archive-completeness`,
-//     `cross-region-check`, `cross-region-monitor`.
-//   - Soroban discovery / WASM tracking: `discovery`, `wasm-history`,
+//   - Ingest / backfill (internal/ops/ingest): `backfill`,
+//     `backfill-external`, `backfill-chainlink`, `backfill-router`,
+//     `detect-gaps`, `list-cursors`, `resume-stalled`,
+//     `find-data-gaps`, `census-backfill`, `tag-routed-via`,
+//     `seed-soroswap-pairs`, `seed-protocol-contracts`,
+//     `seed-entry-counts`, `projector-replay`, `scan-soroban-events`,
+//     `state-snapshot`, `issuer-enrich`, `sep1-refresh`.
+//   - Archive integrity + WASM tracking (internal/ops/archive):
+//     `verify-archive`, `archive-completeness`, `cross-region-check`,
+//     `cross-region-monitor`, `trim-galexie-archive`,
+//     `rehydrate-galexie-archive`, `wasm-history`,
 //     `wasm-history-merge-jsonl`, `extract-wasm-from-galexie`.
-//   - Supply: `supply`.
-//   - Diagnostics: `rpc-probe`, `verify-decoders`, `verify-external`,
-//     `hubble-check`, `hubble-soroban-events`.
+//   - Soroban discovery (internal/ops/discovery): `discovery`.
+//   - Supply (internal/ops/supply): `supply`.
+//   - Diagnostics (internal/ops/diagnostics): `rpc-probe`,
+//     `verify-decoders`, `verify-external`, `hubble-check`,
+//     `hubble-soroban-events`.
+//   - ClickHouse lake (internal/ops/chops): `ch-backfill`, `ch-gate`,
+//     `ch-reproject`, `ch-rebuild`, `ch-supply`,
+//     `ch-txindex-backfill`, `ch-participant-backfill`,
+//     `ch-recognition`, `verify-recognition`, `verify-reconciliation`,
+//     `compute-completeness`, `verify-served-values`,
+//     `sdex-claim-audit`.
 //   - Doc generation: `docs-config` (regenerates the config
 //     reference from struct tags; called by `make docs-config`).
 //
-// Each subcommand's implementation lives in its own file in this
-// package (one file per subcommand, e.g. verify_archive.go,
-// wasm_history.go); main.go is only the dispatch table. The
-// canonical list is the `subcommands` map in main.go and the
-// `stellarindex-ops --help` output.
+// This split (maintainability audit 2026-07-01, D1 finding M1-5) is
+// mechanical, not a behavior change: every subcommand keeps its exact
+// name, flags, defaults, and exit codes — only the Go package holding
+// its implementation moved. The canonical subcommand list is the
+// `subcommands` map below + the `stellarindex-ops --help` output.
 package main
 
 import (
@@ -27,17 +49,16 @@ import (
 	"os"
 
 	"github.com/StellarIndex/stellar-index/internal/config"
+	"github.com/StellarIndex/stellar-index/internal/ops/archive"
+	"github.com/StellarIndex/stellar-index/internal/ops/chops"
+	"github.com/StellarIndex/stellar-index/internal/ops/diagnostics"
+	"github.com/StellarIndex/stellar-index/internal/ops/discovery"
+	"github.com/StellarIndex/stellar-index/internal/ops/ingest"
+	"github.com/StellarIndex/stellar-index/internal/ops/opsutil"
+	"github.com/StellarIndex/stellar-index/internal/ops/supply"
 	"github.com/StellarIndex/stellar-index/internal/pipeline"
 	"github.com/StellarIndex/stellar-index/internal/version"
 )
-
-// errExitSilently is a sentinel error subcommand handlers return
-// when they want the binary to exit 1 *without* the switch-case
-// wrapper printing an extra "subcommand: <err>" prefix line — they
-// already printed a more specific message themselves. Used to
-// replace bare os.Exit(1) calls inside subcommand handlers so they
-// drain the fd 2 filter via realMain's defer before exit.
-var errExitSilently = errors.New("exit silently")
 
 // main is a thin shim over realMain so deferred functions (notably
 // the SilenceSDKChecksumWarnings flush) execute on every exit
@@ -50,74 +71,79 @@ func main() {
 	os.Exit(realMain())
 }
 
-// subcommands maps each subcommand name to its handler. Handlers
-// receive os.Args[2:] (everything after the subcommand name) and
-// return an error to exit 1; realMain prints the "name: err" prefix
-// uniformly. Handlers that have already printed a specific message
-// return errExitSilently to suppress the prefix. The canonical
-// subcommand list is this table + the usageBody help text.
+// subcommands maps each subcommand name to its handler package's Run
+// function (or, for the handful of subcommands too small to warrant
+// their own package, a leaf closure right here). Handlers receive the
+// FULL argv starting at the subcommand name itself (args[0] == the
+// map key that reached it, args[1:] its own flags) — each internal/ops/*
+// package's Run does its own args[0] dispatch, which is what lets
+// several map keys below point at the same package.Run reference.
+// Handlers return an error to exit 1; realMain prints the "name: err"
+// prefix uniformly. Handlers that have already printed a specific
+// message return opsutil.ErrExitSilently to suppress the prefix. The
+// canonical subcommand list is this table + the usageBody help text.
 //
 // Subcommands the usageBody flags as still-planned (cache-prime,
 // verify-invariants) land via their feature PRs and add their own
 // entry here.
 var subcommands = map[string]func(args []string) error{
-	"docs-config": func([]string) error { return config.EmitMarkdown(os.Stdout) },
-	"rpc-probe": func(args []string) error {
-		endpoint := "http://127.0.0.1:8000"
-		if len(args) > 0 {
-			endpoint = args[0]
-		}
-		return rpcProbe(endpoint)
-	},
-	"list-cursors":              listCursors,
-	"detect-gaps":               detectGaps,
-	"backfill-external":         backfillExternal,
-	"backfill-chainlink":        backfillChainlink,
-	"verify-decoders":           verifyDecoders,
-	"scan-soroban-events":       scanSorobanEvents,
-	"state-snapshot":            stateSnapshot,
-	"issuer-enrich":             issuerEnrich,
-	"projector-replay":          projectorReplay,
-	"backfill-router":           backfillRouter,
-	"tag-routed-via":            tagRoutedVia,
-	"census-backfill":           censusBackfill,
-	"ch-backfill":               chBackfill,
-	"ch-gate":                   chGate,
-	"ch-reproject":              chReproject,
-	"ch-rebuild":                chRebuild,
-	"ch-supply":                 chSupply,
-	"ch-txindex-backfill":       chTxIndexBackfill,
-	"ch-participant-backfill":   chParticipantBackfill,
-	"ch-recognition":            chRecognition,
-	"sdex-claim-audit":          sdexClaimAudit,
-	"verify-recognition":        verifyRecognition,
-	"verify-reconciliation":     verifyReconciliation,
-	"compute-completeness":      computeCompleteness,
-	"verify-served-values":      verifyServedValues,
-	"verify-external":           verifyExternal,
-	"verify-archive":            verifyArchive,
-	"archive-completeness":      archiveCompleteness,
-	"discovery":                 discoveryCmd,
-	"supply":                    supplyCmd,
-	"sep1-refresh":              sep1RefreshCmd,
-	"wasm-history":              wasmHistory,
-	"wasm-history-merge-jsonl":  wasmHistoryMergeJSONL,
-	"extract-wasm-from-galexie": extractWasmFromGalexie,
-	"cross-region-check":        crossRegionCheck,
-	"cross-region-monitor":      crossRegionMonitor,
-	"backfill":                  backfill,
-	"resume-stalled":            resumeStalled,
-	"find-data-gaps":            findDataGaps,
-	"rehydrate-galexie-archive": rehydrateGalexieArchive,
-	"trim-galexie-archive":      trimGalexieArchive,
-	"seed-soroswap-pairs":       seedSoroswapPairs,
-	"seed-protocol-contracts":   seedProtocolContracts,
-	"seed-entry-counts":         seedEntryCounts,
-	"hubble-check":              hubbleCheck,
-	"hubble-soroban-events":     hubbleSorobanEvents,
-	"mint-key":                  mintKey,
-	"upgrade-key":               upgradeKey,
-	"emit-incident":             emitIncident,
+	"docs-config":   func([]string) error { return config.EmitMarkdown(os.Stdout) },
+	"mint-key":      mintKey,
+	"upgrade-key":   upgradeKey,
+	"emit-incident": emitIncident,
+
+	"rpc-probe":             diagnostics.Run,
+	"verify-decoders":       diagnostics.Run,
+	"verify-external":       diagnostics.Run,
+	"hubble-check":          diagnostics.Run,
+	"hubble-soroban-events": diagnostics.Run,
+
+	"backfill":                ingest.Run,
+	"backfill-external":       ingest.Run,
+	"backfill-chainlink":      ingest.Run,
+	"backfill-router":         ingest.Run,
+	"detect-gaps":             ingest.Run,
+	"list-cursors":            ingest.Run,
+	"resume-stalled":          ingest.Run,
+	"find-data-gaps":          ingest.Run,
+	"census-backfill":         ingest.Run,
+	"tag-routed-via":          ingest.Run,
+	"seed-soroswap-pairs":     ingest.Run,
+	"seed-protocol-contracts": ingest.Run,
+	"seed-entry-counts":       ingest.Run,
+	"projector-replay":        ingest.Run,
+	"scan-soroban-events":     ingest.Run,
+	"state-snapshot":          ingest.Run,
+	"issuer-enrich":           ingest.Run,
+	"sep1-refresh":            ingest.Run,
+
+	"verify-archive":            archive.Run,
+	"archive-completeness":      archive.Run,
+	"cross-region-check":        archive.Run,
+	"cross-region-monitor":      archive.Run,
+	"trim-galexie-archive":      archive.Run,
+	"rehydrate-galexie-archive": archive.Run,
+	"wasm-history":              archive.Run,
+	"wasm-history-merge-jsonl":  archive.Run,
+	"extract-wasm-from-galexie": archive.Run,
+
+	"discovery": discovery.Run,
+
+	"supply": supply.Run,
+
+	"ch-backfill":             chops.Run,
+	"ch-gate":                 chops.Run,
+	"ch-reproject":            chops.Run,
+	"ch-rebuild":              chops.Run,
+	"ch-supply":               chops.Run,
+	"ch-txindex-backfill":     chops.Run,
+	"ch-participant-backfill": chops.Run,
+	"ch-recognition":          chops.Run,
+	"verify-recognition":      chops.Run,
+	"verify-reconciliation":   chops.Run,
+	"compute-completeness":    chops.Run,
+	"verify-served-values":    chops.Run,
+	"sdex-claim-audit":        chops.Run,
 }
 
 func realMain() int {
@@ -156,8 +182,8 @@ func realMain() int {
 		printUsage()
 		return 2
 	}
-	if err := run(args[1:]); err != nil {
-		if !errors.Is(err, errExitSilently) {
+	if err := run(args); err != nil {
+		if !errors.Is(err, opsutil.ErrExitSilently) {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", args[0], err)
 		}
 		return 1

@@ -1,0 +1,62 @@
+// Copyright 2026 Stellar Index contributors
+// SPDX-License-Identifier: Apache-2.0
+
+// Package chops holds the stellarindex-ops ClickHouse-lake
+// subcommands (named chops, not clickhouse, to avoid a same-named
+// import shadowing internal/storage/clickhouse in every file here):
+// `ch-backfill`, `ch-gate`, `ch-reproject`, `ch-rebuild`, `ch-supply`,
+// `ch-txindex-backfill`, `ch-participant-backfill`, `ch-recognition`,
+// `verify-recognition`, `verify-reconciliation`, `compute-completeness`,
+// `verify-served-values`, `sdex-claim-audit` — ADR-0033/ADR-0034
+// completeness + reconciliation checks and the ADR-0034 Phase 2-4
+// lake backfill/gate/reproject/rebuild tools, which is why
+// reconciliation_catalogue.go and gated_recon_seed.go (shared
+// re-derivation source-set + factory-child preseed helpers used by
+// ch-rebuild, ch-reproject, compute-completeness, and
+// verify-reconciliation) live here too rather than in a 7th package.
+//
+// Extracted from cmd/stellarindex-ops (maintainability audit
+// 2026-07-01, D1 finding M1-5); main.go's dispatch table calls Run
+// below.
+package chops
+
+import (
+	"fmt"
+)
+
+// Run is the internal/ops/chops package's entry point — see
+// discovery.Run's doc comment for the calling convention shared by
+// every internal/ops/* package post-split. args[0] is the subcommand
+// verb (one of the thirteen this package owns); args[1:] are its flags.
+func Run(args []string) error {
+	switch args[0] {
+	case "ch-backfill":
+		return chBackfill(args[1:])
+	case "ch-gate":
+		return chGate(args[1:])
+	case "ch-reproject":
+		return chReproject(args[1:])
+	case "ch-rebuild":
+		return chRebuild(args[1:])
+	case "ch-supply":
+		return chSupply(args[1:])
+	case "ch-txindex-backfill":
+		return chTxIndexBackfill(args[1:])
+	case "ch-participant-backfill":
+		return chParticipantBackfill(args[1:])
+	case "ch-recognition":
+		return chRecognition(args[1:])
+	case "verify-recognition":
+		return verifyRecognition(args[1:])
+	case "verify-reconciliation":
+		return verifyReconciliation(args[1:])
+	case "compute-completeness":
+		return computeCompleteness(args[1:])
+	case "verify-served-values":
+		return verifyServedValues(args[1:])
+	case "sdex-claim-audit":
+		return sdexClaimAudit(args[1:])
+	default:
+		return fmt.Errorf("internal/ops/chops: unknown subcommand %q", args[0])
+	}
+}

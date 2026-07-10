@@ -42,7 +42,7 @@
 //     `cmd/stellarindex-indexer/main.go` adapts the Store to the
 //     interface.
 //   - Ops command: `stellarindex-ops discovery` (see
-//     `cmd/stellarindex-ops/discovery.go`) — list, recent-window,
+//     `internal/ops/discovery/discovery.go`) — list, recent-window,
 //     per-source counts.
 //   - Alert metric: `stellarindex_ingestion_discovery_drops` per
 //     `deploy/monitoring/rules/ingestion.yml` — fires when

@@ -16,6 +16,67 @@ against.
 ## [Unreleased]
 
 ### Changed
+- **`cmd/stellarindex-ops` split into `internal/ops/{ingest,archive,discovery,supply,
+  diagnostics,chops}` + a shared `internal/ops/opsutil`; `internal/api/v1/explorer_*`
+  extracted to `internal/api/v1/explorer`** (maintainability-audit-2026-07-01 D1 M1-5 +
+  M1-7, ROADMAP #47 — the two items left after the FX fold + Coin→Asset rename). Purely
+  mechanical: every CLI subcommand keeps its exact name, flags, defaults, help text, and
+  exit code (`diff`-verified byte-identical `stellarindex-ops -h` output and subcommand-key
+  set against `main`), and every `/v1` explorer route keeps its exact path, method, and JSON
+  response shape.
+  - **ops-CLI split.** `cmd/stellarindex-ops`'s 83 flat sibling files (41 at the time of the
+    audit) move into six `internal/ops/*` packages by rough concern, each exposing one
+    `Run(args []string) error` entry point (`args[0]` is the subcommand verb, mirroring the
+    calling convention `main.go`'s dispatch table used internally before the split — a
+    `context.Context` parameter was deliberately NOT added: none of the 46 underlying
+    subcommand functions accept one today, and `contextcheck` [golangci-lint] correctly
+    flags a `Run(ctx, args)` that never forwards `ctx` anywhere as dead plumbing); `main.go`
+    shrinks to the dispatch table + `docs-config`/`mint-key`/
+    `upgrade-key`/`emit-incident` (four leaf subcommands with no clean bucket). `chops`
+    (not `clickhouse`) avoids a same-named import shadowing `internal/storage/clickhouse` in
+    every file there. `wasm-history`/`wasm-history-merge-jsonl`/`extract-wasm-from-galexie`
+    land in `archive`, not `discovery` as the audit's illustrative grouping suggested —
+    `verify_archive.go` declares the wasm-history JSON output types and
+    `wasm_history.go`'s range-splitter is what verify-archive's chunked walker uses, a real
+    bidirectional coupling a `discovery` split would have turned into an import cycle;
+    `discovery` ends up holding just the `discovery` (auto-discovered SEP-41 contracts)
+    subcommand. `internal/ops/opsutil` holds six helpers actually shared across more than
+    one bucket (`SignalContext`, `SplitCSV`, `Truncate`, `MkBackfillLogger`, `RangeChunk`/
+    `SplitRange`, `NewBoundedLedgerStreamConfig`, `ErrExitSilently`) that a naive per-bucket
+    split would have either duplicated or forced into an awkward cross-bucket import;
+    `chops.ch-rebuild` imports `ingest.ResolveFindDataGapsTargets` directly for the one
+    gap-detector-target lookup it reuses (business logic, not general-purpose enough for
+    opsutil). `scripts/ci/lint-imports.sh`'s `A/no-rpc-in-ingest` and `B/xdr-scoped-to-scval`
+    rules had an explicit `cmd/stellarindex-ops/` allowlist entry each (rpc-probe's
+    stellar-rpc use; verify-decoders' ledger-meta xdr use) — both renamed to `internal/ops/`
+    (rule-file edit, not a `lint-imports.baseline` addition; the baseline's 15 entries,
+    all pre-existing `L/storage-below-compute`, are untouched).
+  - **explorer extraction.** The eight `explorer_*.go` handler files (ledgers/tx/operations/
+    contracts/accounts/search/wasm-view; ~2,600 lines) move to
+    `internal/api/v1/explorer` as an exported `Handler` struct whose methods replace the
+    old `*Server` methods 1:1. `ExplorerReader` (the interface) moves with them, since it's
+    the type the handlers dispatch through; `v1.ExplorerReader` and every explorer response
+    type (`LedgersListView`, `AccountStateView`, `ContractWasmView`, …) become Go type
+    aliases to the new package's definitions, so the pre-existing `explorer_*_test.go` files
+    (which construct `v1.Options{Explorer: stub}` and hit real HTTP routes — true black-box
+    tests) compile and pass completely unchanged; only one internal (non-black-box) test file
+    (`TestOpsDirCache`, exercising the unexported `/v1/operations` directory cache) moved
+    alongside its implementation. `Handler` receives five Server-side seams as injected
+    fields (`Logger`, `VerifiedCurrencies`, `ProtocolContracts` — a narrow structurally-typed
+    interface `v1.ProtocolContractsReader` already satisfies — `LookupUSDPrice`,
+    `IsKnownSAC`, `LakeWatermark`, plus the response-writing trio `WriteJSON`/`WriteProblem`/
+    `ClientAborted`) rather than importing package `v1`, because `v1.Server` itself holds a
+    `*explorer.Handler` — the reverse import would cycle. `writeProblem`/`clientAborted`
+    have no `v1`-specific types in their signatures and are assigned to the `Handler` struct
+    directly; `writeJSON`'s `Flags` parameter narrows to a `stale bool` at the injection
+    boundary (the `v1`-side closure builds the real `Flags{Stale: stale}` so the wire shape —
+    including the five non-`omitempty` `Flags` fields — is untouched). `ExplorerReader` and
+    `parseExplorerLimit`/`explorerUnavailable` stay in `v1` (assigned into `Handler` as
+    injected values) rather than moving, because three non-explorer handlers (lending TVL,
+    liquidity-pool reserves, pool-reserves) read through the same `ExplorerReader` seam and
+    call `explorerUnavailable`/`parseExplorerLimit` directly.
+  - `go build`/`go vet`/`go test ./...` green (including `-tags integration` build);
+    `scripts/ci/lint-imports.sh` passes with the baseline unchanged at 15 entries.
 - **FX-into-external fold: `internal/sources/{forex,frankfurter}` moved under
   `internal/sources/external/`** (maintainability-audit-2026-07-01 D1 M0-1, ROADMAP #47).
   Go-internal only, no wire/config/metric-name change: `internal/sources/forex` →

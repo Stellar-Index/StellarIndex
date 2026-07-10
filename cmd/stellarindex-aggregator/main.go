@@ -1028,7 +1028,7 @@ func runSupplyRefresh(ctx context.Context, r *supply.Refresher, cadence time.Dur
 // supplyAggregatorLedgers adapts *timescale.Store to
 // supply.LedgerLookup. Resolves the latest known chain ledger as
 // the max last_ledger across every ingestion cursor — same shape
-// as cmd/stellarindex-ops/supply.go::resolveSnapshotLedger but
+// as internal/ops/supply/supply.go::resolveSnapshotLedger but
 // inlined here so the aggregator path stays self-contained.
 //
 // F-1236 (codex audit-2026-05-12) — KNOWN: this stamps the
@@ -1064,7 +1064,7 @@ func (a supplyAggregatorLedgers) LatestKnownLedger(ctx context.Context) (uint32,
 
 // supplyAggregatorStoreLookup adapts *timescale.Store to
 // supply.AccountObservationLookup. Mirrors
-// cmd/stellarindex-ops/supply.go::supplyStoreLookup.
+// internal/ops/supply/supply.go::supplyStoreLookup.
 type supplyAggregatorStoreLookup struct{ s *timescale.Store }
 
 func (a supplyAggregatorStoreLookup) LatestAccountObservationAtOrBefore(ctx context.Context, accountID string, asOfLedger uint32) (supply.AccountObservationRow, error) {
@@ -1080,7 +1080,7 @@ func (a supplyAggregatorStoreLookup) LatestAccountObservationAtOrBefore(ctx cont
 }
 
 // supplyAggregatorChainReader is the same chained-fallback reader
-// pattern from cmd/stellarindex-ops/supply.go::supplyChainReader.
+// pattern from internal/ops/supply/supply.go::supplyChainReader.
 // Inlined here because the aggregator is its own binary and we
 // don't want to lift the helper into a shared package — the
 // indirection cost outweighs the duplication for a 20-line struct.
