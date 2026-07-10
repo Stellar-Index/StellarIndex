@@ -11,7 +11,7 @@ import (
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
-// AquariusRewardsKind discriminates the eleven rewards-gauge event
+// AquariusRewardsKind discriminates the twelve rewards-gauge event
 // kinds (migration 0099). String values match the
 // aquarius_rewards_events.event_kind CHECK constraint and the
 // RewardsAction constants in internal/sources/aquarius/consumer.go.
@@ -32,23 +32,24 @@ const (
 	AquariusRewardsGaugeScheduleReward AquariusRewardsKind = "rewards_gauge_schedule_reward"
 	AquariusRewardsSetRewardsState     AquariusRewardsKind = "set_rewards_state"
 	AquariusRewardsGaugeAdd            AquariusRewardsKind = "rewards_gauge_add"
+	AquariusRewardsConfigRewards       AquariusRewardsKind = "config_rewards"
 )
 
-// IsValid reports whether k is one of the eleven known rewards-gauge
+// IsValid reports whether k is one of the twelve known rewards-gauge
 // kinds. Mirrors the CHECK constraint in migration 0099.
 func (k AquariusRewardsKind) IsValid() bool {
 	switch k {
 	case AquariusRewardsPoolState, AquariusRewardsClaimReward, AquariusRewardsSetRewardsConfig,
 		AquariusRewardsPositionUpdate, AquariusRewardsDeposit, AquariusRewardsClaimFees,
 		AquariusRewardsGaugeClaim, AquariusRewardsClaim, AquariusRewardsGaugeScheduleReward,
-		AquariusRewardsSetRewardsState, AquariusRewardsGaugeAdd:
+		AquariusRewardsSetRewardsState, AquariusRewardsGaugeAdd, AquariusRewardsConfigRewards:
 		return true
 	}
 	return false
 }
 
 // AquariusRewardsEvent is one observed rewards-gauge event (any of
-// the eleven kinds). UserAddress / Amount are universal promoted
+// the twelve kinds). UserAddress / Amount are universal promoted
 // columns, NULL when the kind doesn't carry them; Attributes holds
 // the kind-specific remainder (i128 fields as decimal strings —
 // NUMERIC inside jsonb is lossy per ADR-0003).

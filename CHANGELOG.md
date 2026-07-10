@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **v0.12.0 hotfix: `config_rewards` aquarius events were rejected at insert** — the
+  twelfth rewards-gauge kind was present in migration 0099's CHECK constraint and emitted
+  by the decoder, but missing from the Go-side `AquariusRewardsKind.IsValid()` switch, so
+  every `config_rewards` insert failed client-side (`invalid Kind`) and the events were
+  silently dropped (visible as an ERROR flood during the aquarius replay — which the
+  v0.12.0-hardened fd-2 wrap survived, proving that fix live). Added the constant + a
+  parity regression test that parses the migration's CHECK list and asserts both sets
+  match, so the Go validator and the SQL constraint can never drift again. The replay
+  window that dropped `config_rewards` rows (~57.77M–58.5M) is re-covered by a cursor
+  rewind after this deploys.
+
 ## [v0.12.0] — 2026-07-10
 
 ### Added
