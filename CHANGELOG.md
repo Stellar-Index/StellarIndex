@@ -83,6 +83,27 @@ against.
   by default — preserves the pre-D4 unauthenticated `default`-user behavior exactly until an
   operator opts in on both the CH side (`--tags clickhouse-serving-profile`) and the API-config
   side (`stellarindex_clickhouse_serving_enabled: true`), a deliberate two-step activation.
+### Changed
+- **`contract_events_daily` MV redesigned `uniqExact` → `uniqCombined(17)`** (closes the
+  2026-07-09 merge-memory incident's ~2-week fuse — `notes/BACKLOG.md` / the
+  `merges_mutations_memory_usage_soft_limit` ansible drop-in, `adeaef46`, was the stopgap).
+  `uniqExact`'s per-state hash set grows unboundedly with cardinality (~16B/distinct event;
+  measured up to ~68.7MB for a 4M-event group) and its background merges exceeded the
+  kernel commit budget (`vm.overcommit_memory=2`), retry-looping and starving the live
+  sink. `uniqCombined(17)` hashes the same natural key into a bounded sketch (measured
+  ~10-96KB/state regardless of cardinality) while still deduping duplicate/retried inserts
+  exactly at the cardinalities this table sees (~0.1-0.5% error, measured) — a reader
+  survey found nothing downstream needs exact counts (`/v1/protocols/{name}`'s daily-series
+  + event-breakdown charts render compact-rounded; the raw-scan fallback already runs a
+  plain non-deduped `count()`; ADR-0033 completeness never reads this table). Code-complete:
+  `tier1_schema.sql`'s canonical DDL (fresh deployments), the Go readers
+  (`uniqCombinedMerge(17)`), and the r1 side-by-side rebuild artifact +
+  tested step-by-step runbook (`deploy/clickhouse/contract_events_daily_v2.sql`,
+  `docs/architecture/contract-events-daily-redesign.md`) all ship in this change. The r1
+  apply itself is an operator step (parked merges + ~180 parts/day accumulating against the
+  3,000-part ceiling in the meantime; not yet at risk) — **this branch deliberately does not
+  merge to main until the r1 apply runs**, since the reader change breaks against the live
+  uniqExact table until then.
 
 ## [v0.14.0] — 2026-07-10
 

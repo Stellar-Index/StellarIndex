@@ -566,3 +566,110 @@ func TestClickHouseAccountMovementsRoundTrip(t *testing.T) {
 		t.Errorf("verifyCounts[claimable_balance_create] after duplicate insert = %d, want 1", verifyCountsAfterDup["claimable_balance_create"])
 	}
 }
+
+// TestClickHouseProtocolDailyActivityDedup is a regression test for the
+// contract_events_daily uniqExact→uniqCombined(17) redesign
+// (docs/architecture/contract-events-daily-redesign.md, 2026-07-09
+// incident): the whole point of using a uniq*-family aggregate (rather than
+// a plain SummingMergeTree / countState()) is that a duplicate insert of the
+// SAME natural key (ledger_seq, tx_hash, op_index, event_index) — a
+// live-sink retry or a ch-rebuild re-derive re-inserting a range — does NOT
+// inflate the count. This seeds 3 DISTINCT contract events plus a duplicate
+// re-insert of one of them (identical natural key), then asserts both fast
+// readers report exactly 3, not 4, proving uniqCombinedMerge(17) still
+// dedups on the natural key rather than summing raw rows.
+func TestClickHouseProtocolDailyActivityDedup(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	const (
+		baseLedger = uint32(72_000_001)
+		contractID = "CTEST_DAILY_DEDUP_CCCCCCCCCCCCCCCCCCCCCCCCCCC"
+	)
+	closeTime := time.Date(2026, 5, 20, 10, 0, 0, 0, time.UTC)
+
+	newEvent := func(ledgerOffset uint32, txHash string) chstore.ContractEventRow {
+		return chstore.ContractEventRow{
+			LedgerSeq:        baseLedger + ledgerOffset,
+			CloseTime:        closeTime,
+			TxHash:           txHash,
+			OpIndex:          0,
+			EventIndex:       0,
+			ContractID:       contractID,
+			EventType:        "contract",
+			TopicCount:       1,
+			Topic0Sym:        "swap",
+			TopicsXDR:        []string{scval.MustEncodeSymbol("swap")},
+			DataXDR:          scval.MustEncodeString("body"),
+			OpArgsXDR:        []string{},
+			InSuccessfulCall: 1,
+		}
+	}
+
+	sink, err := chstore.Open(ctx, addr, 1000)
+	if err != nil {
+		t.Fatalf("open sink: %v", err)
+	}
+	t.Cleanup(func() { _ = sink.Close(ctx) })
+
+	// 3 distinct events (different ledger_seq/tx_hash each).
+	evts := []chstore.ContractEventRow{
+		newEvent(0, "dedup_tx_0000000000000000000000000000000000000000000000000000000000"),
+		newEvent(1, "dedup_tx_1111111111111111111111111111111111111111111111111111111111"),
+		newEvent(2, "dedup_tx_2222222222222222222222222222222222222222222222222222222222"),
+	}
+	for _, e := range evts {
+		ext := chstore.LedgerExtract{
+			Ledger: chstore.LedgerRow{LedgerSeq: e.LedgerSeq, CloseTime: closeTime, ProtocolVersion: 22, SorobanEventCount: 1},
+			Events: []chstore.ContractEventRow{e},
+		}
+		if err := sink.Add(ctx, ext); err != nil {
+			t.Fatalf("sink add: %v", err)
+		}
+	}
+	// Duplicate re-insert of the FIRST event — identical natural key
+	// (ledger_seq, tx_hash, op_index, event_index) — simulating a live-sink
+	// retry. Must NOT be counted twice.
+	dupExt := chstore.LedgerExtract{
+		Ledger: chstore.LedgerRow{LedgerSeq: evts[0].LedgerSeq, CloseTime: closeTime, ProtocolVersion: 22, SorobanEventCount: 1},
+		Events: []chstore.ContractEventRow{evts[0]},
+	}
+	if err := sink.Add(ctx, dupExt); err != nil {
+		t.Fatalf("sink add (duplicate): %v", err)
+	}
+	if err := sink.Flush(ctx); err != nil {
+		t.Fatalf("sink flush: %v", err)
+	}
+
+	er, err := chstore.NewExplorerReader(ctx, addr)
+	if err != nil {
+		t.Fatalf("new explorer reader: %v", err)
+	}
+	t.Cleanup(func() { _ = er.Close() })
+
+	if !er.DailyActivityAvailable(ctx) {
+		t.Fatal("DailyActivityAvailable = false after insert — contract_events_daily MV did not populate")
+	}
+
+	sinceDay := closeTime.AddDate(0, 0, -1)
+	series, err := er.ProtocolDailyActivityFast(ctx, []string{contractID}, sinceDay)
+	if err != nil {
+		t.Fatalf("ProtocolDailyActivityFast: %v", err)
+	}
+	var total uint64
+	for _, p := range series {
+		total += p.Events
+	}
+	if total != 3 {
+		t.Fatalf("ProtocolDailyActivityFast total = %d, want 3 — uniqCombinedMerge(17) counted the duplicate insert as a distinct event (dedup regression)", total)
+	}
+
+	breakdown, err := er.ProtocolEventBreakdownFast(ctx, []string{contractID}, sinceDay)
+	if err != nil {
+		t.Fatalf("ProtocolEventBreakdownFast: %v", err)
+	}
+	if got := breakdownCount(breakdown, "swap"); got != 3 {
+		t.Fatalf("ProtocolEventBreakdownFast swap count = %d (rows=%v), want 3 — dedup regression", got, breakdown)
+	}
+}
