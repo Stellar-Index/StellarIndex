@@ -1,7 +1,7 @@
 ---
 adr: 0047
 title: Pre-P23 classic-movement reconstruction from the lake
-status: Proposed
+status: Accepted
 date: 2026-07-10
 supersedes: []
 superseded_by: null
