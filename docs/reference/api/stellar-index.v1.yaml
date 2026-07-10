@@ -18,7 +18,7 @@
 openapi: 3.1.0
 info:
   title: Stellar Index API
-  version: "1.5.0"
+  version: "1.6.0"
   summary: Aggregated Stellar asset pricing — real-time and historical.
   description: |
     The Stellar Index API exposes normalised, VWAP-aggregated pricing
@@ -924,17 +924,6 @@ paths:
                   divergence_warning: false
         "400":        { $ref: "#/components/responses/BadRequest" }
         "404":        { $ref: "#/components/responses/NotFound" }
-        "422":
-          description: >-
-            Declined: `asset` or `quote` is a confirmed non-7-decimal
-            Soroban token (docs/operations/runbooks/dex-nonstandard-decimals.md).
-            The served price would be silently skewed by
-            10^(7−decimals), so pricing is declined rather than served
-            wrong. Temporary — self-clears once decimals normalization
-            ships for the asset.
-          content:
-            application/problem+json:
-              schema: { $ref: "#/components/schemas/Problem" }
         "429":        { $ref: "#/components/responses/RateLimited" }
         "500":        { $ref: "#/components/responses/InternalError" }
         "503":        { $ref: "#/components/responses/ServiceUnavailable" }
@@ -1508,15 +1497,6 @@ paths:
                   next: MTc4MzAzNjgyMzAwMDAwMDAwMDo2MzMwMjExMTpzZGV4OjM3NzE2OTY1OTE4YjgxNzI2NzVhYzVhMTBkOGIxMzA4MT…
               schema: { $ref: "#/components/schemas/TradeHistoryEnvelope" }
         "400": { $ref: "#/components/responses/BadRequest" }
-        "422":
-          description: >-
-            Declined: `base` or `quote` is a confirmed non-7-decimal
-            Soroban token (docs/operations/runbooks/dex-nonstandard-decimals.md).
-            Same guard as `/v1/price`; see that endpoint's 422 for the
-            full rationale.
-          content:
-            application/problem+json:
-              schema: { $ref: "#/components/schemas/Problem" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -1754,16 +1734,6 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
-        "422":
-          description: >-
-            Declined (both modes): `base` or `quote` is a confirmed
-            non-7-decimal Soroban token
-            (docs/operations/runbooks/dex-nonstandard-decimals.md).
-            Same guard as `/v1/price`; see that endpoint's 422 for the
-            full rationale.
-          content:
-            application/problem+json:
-              schema: { $ref: "#/components/schemas/Problem" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -1820,10 +1790,8 @@ paths:
               schema: { $ref: "#/components/schemas/Problem" }
         "422":
           description: >-
-            Either all trades in the window were filtered as outliers, OR
-            `base`/`quote` is a confirmed non-7-decimal Soroban token
-            (docs/operations/runbooks/dex-nonstandard-decimals.md) — the
-            `type` field on the problem body distinguishes the two.
+            All trades in the window were filtered as outliers by the
+            requested `outlier_sigma`; relax the threshold or omit it.
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -1869,14 +1837,6 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "404":
           description: No trades in window.
-          content:
-            application/problem+json:
-              schema: { $ref: "#/components/schemas/Problem" }
-        "422":
-          description: >-
-            `base`/`quote` is a confirmed non-7-decimal Soroban token —
-            pricing for the pair is declined pending decimals
-            normalization (docs/operations/runbooks/dex-nonstandard-decimals.md).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }

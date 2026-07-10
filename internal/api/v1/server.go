@@ -197,12 +197,14 @@ type Server struct {
 	// powering /v1/diagnostics/ingestion's coverage section. Nil
 	// leaves that section absent. See [CoverageCache].
 	backfillCoverage *CoverageCache
-	// nonstandardDecimals is the read-time serving guard for the
-	// dex-nonstandard-decimals landmine (docs/operations/runbooks/
-	// dex-nonstandard-decimals.md). Nil disables the guard entirely
-	// (declineIfNonstandardDecimals always returns false) — every
-	// price/vwap/history/ohlc request serves normally, the pre-guard
-	// behaviour. See [NonstandardDecimalsCache].
+	// nonstandardDecimals backs the read-time dex-nonstandard-decimals
+	// forward normalization (docs/operations/runbooks/
+	// dex-nonstandard-decimals.md): every price-shaped serving path
+	// resolves per-leg decimals through it (aggregate.ResolveDecimals)
+	// and scales the finished ratio via aggregate.AdjustPrice. Nil
+	// disables normalization entirely — every asset resolves to the
+	// 7dp default and all prices serve raw, the pre-guard behaviour.
+	// See [NonstandardDecimalsCache].
 	nonstandardDecimals *NonstandardDecimalsCache
 	// globalPrice + globalPriceOpts power the /v1/assets/{slug}
 	// global view's three-tier fallback chain (R-018 Phase 1.3a/1.4a).
@@ -879,12 +881,15 @@ type Options struct {
 	BackfillCoverage *CoverageCache
 
 	// NonstandardDecimals, when non-nil, backs the read-time
-	// dex-nonstandard-decimals serving guard: /v1/price, /v1/vwap,
-	// /v1/history, /v1/ohlc decline (422) any pair with a leg the
-	// cache has confirmed as non-7-decimal, rather than serve a
-	// price silently skewed by 10^(7-decimals). Nil disables the
-	// guard — every request serves normally, the pre-guard
-	// behaviour. See [NonstandardDecimalsCache] and
+	// dex-nonstandard-decimals forward normalization: every
+	// price-shaped surface (/v1/price incl. batch/windowed, /v1/vwap,
+	// /v1/twap, /v1/history, /v1/ohlc single-bar + series, /v1/chart,
+	// /v1/price/tip + SSE, the SEP-40 oracle passthroughs, and the
+	// markets/pools/pairs last_price fields) scales its served ratio
+	// by 10^(dec_base-dec_quote) for any pair with a leg the cache
+	// has confirmed as non-7-decimal (aggregate.AdjustPrice). Nil
+	// disables normalization — every request serves the raw ratio,
+	// the pre-guard behaviour. See [NonstandardDecimalsCache] and
 	// docs/operations/runbooks/dex-nonstandard-decimals.md.
 	NonstandardDecimals *NonstandardDecimalsCache
 

@@ -335,13 +335,6 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// dex-nonstandard-decimals read-time guard (before ANY storage read —
-	// window path included): decline rather than serve a price for a pair
-	// with a confirmed non-7-decimals leg. See declineIfNonstandardDecimals.
-	if s.declineIfNonstandardDecimals(w, r, asset, quote) {
-		return
-	}
-
 	// Optional aggregation-window selection (board #43; proposal:
 	// "the window length … can be modified through query"). The
 	// default 60 keeps the existing closed-1m-bucket behavior; the
@@ -365,8 +358,16 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	// gauge but not the price-read path. ADR-0010 + F-1308.
 	snapshot, sources, stale, err := s.readPriceWithAliases(r.Context(), reader, asset, quote)
 	triangulated := false
+	// viaFallback tracks whether the served snapshot came from
+	// priceFallback (Redis VWAP cache / stablecoin peg / fiat cross-rate)
+	// rather than readPriceWithAliases's direct closed-1m-bucket read.
+	// Controls whether normalizeRawPriceSnapshot below needs to run — see
+	// its doc comment for why applying it to a priceFallback result would
+	// double-normalize an already-corrected value.
+	viaFallback := false
 	if errors.Is(err, ErrPriceNotFound) {
 		var ok bool
+		viaFallback = true
 		snapshot, sources, triangulated, ok = s.priceFallback(r.Context(), asset, quote)
 		// F-1254 (audit-2026-05-12): when the closed-bucket VWAP read
 		// returned ErrPriceNotFound and we degraded to one of the
@@ -402,6 +403,18 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
+	}
+
+	// dex-nonstandard-decimals forward normalization (2026-07-10, closing
+	// the deferred CAGG-reading tail from docs/operations/runbooks/
+	// dex-nonstandard-decimals.md): only when the snapshot came from the
+	// RAW closed-1m prices_1m bucket read (or its raw last-trade
+	// fallback inside LatestPrice) — not from priceFallback, whose Redis-
+	// VWAP branch is already normalized upstream by the orchestrator
+	// (internal/aggregate/orchestrator.go computeNormalizedVWAP) and
+	// whose peg/cross-rate branches never touch a flagged Soroban leg.
+	if !viaFallback {
+		s.normalizeRawPriceSnapshot(&snapshot, asset, quote)
 	}
 
 	// Intentionally do NOT emit obs.PriceStalenessSeconds here —
@@ -624,6 +637,43 @@ func (s *Server) readPriceWithAliases(ctx context.Context, reader PriceReader, a
 	// errors.Is(err, ErrPriceNotFound) branch still triggers
 	// priceFallback as before.
 	return PriceSnapshot{}, nil, false, firstErr
+}
+
+// normalizeRawPriceSnapshot applies the dex-nonstandard-decimals forward
+// normalization (aggregate.AdjustPrice) to a [PriceSnapshot] sourced from
+// a RAW, unnormalized quote/base ratio — the closed-1m prices_1m CAGG read
+// (storePriceReader.LatestPrice's primary branch) or its last-trade
+// fallback (LastTradeToSnapshot, which formats the same raw ratio at a
+// fixed digit count — no decimals correction of its own). This is the
+// deferred CAGG-reading tail closed 2026-07-10; see
+// docs/operations/runbooks/dex-nonstandard-decimals.md "Root cause
+// analysis" for why a post-hoc scalar multiply on the finished ratio is
+// exact here, same as the query-time paths normalized on 2026-07-09.
+//
+// Callers MUST NOT invoke this on a snapshot sourced from priceFallback —
+// its Redis-VWAP branch is already normalized upstream by the aggregator
+// orchestrator (computeNormalizedVWAP) before publishing, and its
+// stablecoin-peg / fiat-cross-rate branches are either a literal "1.0" or
+// never touch a flagged Soroban leg; re-applying AdjustPrice there would
+// double-correct an already-correct value.
+//
+// No-op — snap.Price left byte-identical, no parse/reformat round-trip —
+// when baseDecimals == quoteDecimals (every pair without a confirmed
+// non-7-decimals leg, i.e. the overwhelming common case). This matters
+// because the CAGG's raw NUMERIC::text formatting doesn't match
+// [ratToDecimal]'s fixed 10-digit rendering; reformatting unconditionally
+// would change the wire bytes for every already-correct 7dp pair.
+func (s *Server) normalizeRawPriceSnapshot(snap *PriceSnapshot, base, quote canonical.Asset) {
+	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, base)
+	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, quote)
+	if baseDec == quoteDec {
+		return
+	}
+	raw := ratFromDecimal(snap.Price)
+	if raw == nil {
+		return
+	}
+	snap.Price = ratToDecimal(aggregate.AdjustPrice(raw, baseDec, quoteDec), ohlcPriceDigits)
 }
 
 // priceFallback runs the post-Timescale-miss fallback chain for
@@ -1190,6 +1240,14 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 			title:  "Internal error",
 		}}
 	}
+	// dex-nonstandard-decimals forward normalization: this branch is the
+	// raw closed-1m-bucket read (readPriceWithAliases succeeded directly,
+	// no priceFallback involved) — same raw-ratio shape /v1/price's
+	// primary path serves, so it needs the same correction. See
+	// normalizeRawPriceSnapshot's doc comment for why the priceFallback
+	// branch above (already normalized / peg / fiat cross-rate) must NOT
+	// go through this again.
+	s.normalizeRawPriceSnapshot(&snap, asset, quote)
 	snap.Change24hPct = s.batchChange24h(ctx, asset, quote, snap.Price)
 	return batchRowResult{
 		snap: snap, sources: sources, stale: stale, asset: asset, ok: true,

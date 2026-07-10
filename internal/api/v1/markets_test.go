@@ -65,6 +65,7 @@ func (r *stubMarketsReader) AllPools(_ context.Context, _ timescale.PoolsFilter,
 			LastTradeAt:   m.LastTradeAt,
 			TradeCount24h: m.TradeCount24h,
 			Volume24hUSD:  m.Volume24hUSD,
+			LastPrice:     m.LastPrice,
 		}
 	}
 	return out, r.nextCur, nil

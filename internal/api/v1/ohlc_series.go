@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/StellarIndex/stellar-index/internal/aggregate"
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 )
 
@@ -218,6 +219,25 @@ func (s *Server) handleOHLCSeries(
 		return
 	}
 
+	// dex-nonstandard-decimals forward normalization (2026-07-10, closing
+	// the deferred CAGG-reading tail from docs/operations/runbooks/
+	// dex-nonstandard-decimals.md): the SAME per-pair scalar factor that
+	// corrects a single-bar OHLC's open/high/low/close corrects every bar
+	// here too — K = 10^(baseDec-quoteDec) is a constant for the whole
+	// requested pair, so applying it once to the FINISHED series (rather
+	// than to each underlying prices_<n> CAGG row before this point) is
+	// exact, including across ohlcSeriesFiatCombined's combined bars
+	// (every constituent shares the same base token and a 7dp quote
+	// peg, so K is identical for each — see AdjustPrice's doc comment).
+	// No-op (bars returned untouched, byte-identical) for a pair without
+	// a confirmed non-7-decimals leg. base_volume/quote_volume are NOT
+	// touched — they're raw smallest-unit sums of the asset's own
+	// decimals, correct regardless of the decimals value (same
+	// precedent as the single-bar OHLC path in ohlc.go).
+	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Base)
+	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Quote)
+	bars = adjustOHLCSeriesBars(bars, baseDec, quoteDec)
+
 	// Series mode returns 200 + empty `intervals: []` when there are
 	// no closed buckets — distinct from the single-bar /v1/ohlc which
 	// 404s. Series clients (charts, dashboards) expect a stable shape
@@ -330,4 +350,46 @@ func (s *Server) ohlcSeriesWithAliases(
 		}
 	}
 	return nil, nil
+}
+
+// adjustOHLCSeriesBars applies the dex-nonstandard-decimals forward
+// normalization to every bar's open/high/low/close — see the call site
+// in [Server.handleOHLCSeries] for the full rationale.
+//
+// Returns bars UNCHANGED (same slice, no allocation) when
+// baseDecimals == quoteDecimals — every pair without a confirmed
+// non-7-decimals leg. This matters for byte-identical wire output: the
+// prices_<n> CAGG's raw NUMERIC::text formatting doesn't match
+// [ratToDecimal]'s fixed 10-digit rendering, so reformatting
+// unconditionally would change the wire bytes for every already-correct
+// 7dp pair — the overwhelming common case.
+func adjustOHLCSeriesBars(bars []OHLCSeriesBar, baseDecimals, quoteDecimals int) []OHLCSeriesBar {
+	if baseDecimals == quoteDecimals || len(bars) == 0 {
+		return bars
+	}
+	out := make([]OHLCSeriesBar, len(bars))
+	for i, b := range bars {
+		out[i] = b
+		out[i].O = adjustOHLCPriceString(b.O, baseDecimals, quoteDecimals)
+		out[i].H = adjustOHLCPriceString(b.H, baseDecimals, quoteDecimals)
+		out[i].L = adjustOHLCPriceString(b.L, baseDecimals, quoteDecimals)
+		out[i].C = adjustOHLCPriceString(b.C, baseDecimals, quoteDecimals)
+		// VBase / VQuote intentionally untouched — raw smallest-unit
+		// sums of the asset's own decimals, correct regardless of the
+		// decimals value (same precedent as aggregate.ComputeOHLC's
+		// BaseVolume/QuoteVolume in the single-bar path).
+	}
+	return out
+}
+
+// adjustOHLCPriceString parses a NUMERIC decimal price string, applies
+// [aggregate.AdjustPrice], and reformats at [ohlcPriceDigits]. Returns
+// the input unchanged when it doesn't parse (defensive — an empty or
+// malformed CAGG string should pass through rather than vanish).
+func adjustOHLCPriceString(s string, baseDecimals, quoteDecimals int) string {
+	raw := ratFromDecimal(s)
+	if raw == nil {
+		return s
+	}
+	return ratToDecimal(aggregate.AdjustPrice(raw, baseDecimals, quoteDecimals), ohlcPriceDigits)
 }

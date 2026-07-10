@@ -46,8 +46,8 @@ only a detector — see "Mitigation" below.
 | Alert | `stellarindex_dex_nonstandard_decimals_detected` |
 | Severity | P2 |
 | Detected by | Prometheus rule in `deploy/monitoring/rules/aggregator.yml` (and `configs/prometheus/rules.r1/aggregator.yml`) |
-| Typical MTTR | Automatic within ~60s of confirmation (query-time paths are normalized live; CAGG-backed paths still decline) |
-| Impact | A **real, live pair** has a leg with confirmed non-7 `decimals()`. As of 2026-07-10: `/v1/vwap`, `/v1/twap`, `/v1/history`, `/v1/ohlc` (single-bar mode), `/v1/price/tip` (+ its SSE sibling), and the aggregator's own published VWAP (feeds `/v1/price/stream` + `/v1/price`'s Redis fallback) all serve a **decimals-corrected price** — see "Root cause analysis" below. `/v1/price`'s closed-1m-bucket path and `/v1/ohlc?interval=` (multi-bar series mode) still read the raw, unnormalized `prices_*` CAGG and DECLINE (422) rather than serve it wrong. Before 2026-07-09 (and for any deployment that hasn't run migration 0093 / doesn't wire `NonstandardDecimals`), every one of these endpoints served the wrong price with no warning — and `/v1/price/tip` had NO guard at all until 2026-07-10, meaning it was serving the skewed value live and unguarded even during the 2026-07-09→2026-07-10 window. |
+| Typical MTTR | Automatic within ~60s of confirmation (every serving path is normalized live) |
+| Impact | A **real, live pair** has a leg with confirmed non-7 `decimals()`. As of 2026-07-10 (second wave), **every serving path is decimals-corrected**: `/v1/vwap`, `/v1/twap`, `/v1/history`, `/v1/ohlc` (BOTH single-bar and `interval=` series modes), `/v1/price` (closed-1m CAGG bucket, batch, and windowed), `/v1/price/tip` (+ SSE), `/v1/chart` (vwap/twap/market-cap price legs), `/v1/markets` / `/v1/pools` / `/v1/pairs` `last_price`, the SEP-40 oracle passthroughs (`/v1/oracle/lastprice`, `/v1/oracle/prices`), and the aggregator's own published VWAP (feeds `/v1/price/stream` + the Redis fallback). Nothing declines anymore — the 422 guard was removed once every path served the corrected value. For any deployment that hasn't run migration 0093 / doesn't wire `NonstandardDecimals`, every path still serves the raw (wrong) ratio with no warning — normalization fails OPEN to 7dp. |
 
 ## Symptoms
 
@@ -96,30 +96,32 @@ Immediate (stop serving the wrong number) — **now mostly automatic**:
       then went quiet is confirmed and upserted without waiting for it to
       trade again. The API's `NonstandardDecimalsCache` (`internal/api/v1`)
       refreshes that table every `NonstandardDecimalsRefreshInterval` (60s)
-      and, from then on, `/v1/price`, `/v1/vwap`, `/v1/history`, `/v1/ohlc`
-      DECLINE — `422 problem+json`, `Cache-Control: no-store` — any pair
-      with `{asset}` on either leg (`declineIfNonstandardDecimals` in
-      `internal/api/v1/nonstandard_decimals_guard.go`). A declined price is
-      honest; a wrong price is not.
+      and, from then on, every price-shaped serving path NORMALIZES the
+      served value by `10^(dec_base − dec_quote)` for any pair with
+      `{asset}` on either leg (`aggregate.ResolveDecimals` +
+      `aggregate.AdjustPrice`). The next request/tick after the cache
+      refresh serves the CORRECT price — no decline, no re-derive, no
+      backfill.
 - [ ] Verification: confirm the row exists —
       `psql "$PG" -c "SELECT * FROM nonstandard_decimals_assets WHERE asset = '<asset>';"`
-      — and confirm the API is actually declining —
-      `curl -s "$API_BASE_URL/v1/price?asset=<asset>&quote=fiat:USD" | jq .status`
-      should show `422` within ~60s of the row appearing. If the row exists
-      but the API still serves 200: check whether this deployment's
-      `cmd/stellarindex-api` binary predates the guard, or whether
+      — and confirm the API is serving the CORRECTED price —
+      `curl -s "$API_BASE_URL/v1/price?asset=<asset>&quote=fiat:USD" | jq .data.price`
+      should show the decimals-corrected value (raw × 10^(decimals−7) for
+      a flagged base leg) within ~60s of the row appearing. If the API
+      still serves the raw skewed value: check whether this deployment's
+      `cmd/stellarindex-api` binary predates the fix, or whether
       `NonstandardDecimals` failed to wire (see "Known false-positive
-      patterns" — a nil cache fails OPEN, i.e. serves normally). If the row
+      patterns" — a nil cache fails OPEN, i.e. serves raw). If the row
       is missing for a token you can see traded in `trades` history, check
       the aggregator log for `decimals-guard: startup backfill complete` —
       its `scanned_pairs`/`confirmed_offenders` counts confirm the pass
       actually ran (only runs once per process start, not on every restart
       loop iteration).
-- [ ] The alert stays latched (expected — it is a "this happened" signal,
-      distinct from the API's live decline counter
-      `stellarindex_price_serve_declined_nonstandard_decimals_total{asset}`,
-      which tracks ongoing customer impact and tapers to zero once
-      normalization ships).
+- [ ] The alert stays latched (expected — it is a "this happened" signal.
+      The old live decline counter
+      `stellarindex_price_serve_declined_nonstandard_decimals_total{asset}`
+      is HISTORICAL since 2026-07-10 — the decline path it counted was
+      replaced by normalization, so it is permanently zero).
 - [ ] **Manual hand-seed — now a fallback, not the primary path.** Only
       needed when: the token's last trade is OLDER than
       `backfill_window_days` (default 90d, so the startup pass never scans
@@ -136,8 +138,8 @@ Immediate (stop serving the wrong number) — **now mostly automatic**:
       startup backfill pass runs unconditionally on every boot and will
       self-seed any historically-traded offender within its window.
 
-Durable (**shipped 2026-07-10** — the query-time half; the CAGG half remains
-a documented follow-up):
+Durable (**shipped in full** — query-time half 2026-07-10 (v0.12.0), CAGG-
+reading tail later the same day):
 
 - [x] Applied the **decimals normalization** as a READ-TIME scalar multiply:
       `aggregate.AdjustPrice(raw, baseDecimals, quoteDecimals)` scales a
@@ -145,28 +147,48 @@ a documented follow-up):
       `10^(dec_base − dec_quote)`, resolved per-request from
       `nonstandard_decimals_assets` via `aggregate.ResolveDecimals` (nil
       lookup or an unflagged asset ⇒ `StandardDecimals=7` ⇒ exact no-op).
-      Covers: `internal/aggregate/orchestrator` (the SERVED VWAP behind
-      `/v1/price/stream` and `/v1/price`'s Redis fallback — this had NO
-      decline guard, so it was the actual live leak), `/v1/vwap`,
-      `/v1/twap`, `/v1/history` (the per-row `price` field), `/v1/ohlc`
-      single-bar mode, and `/v1/price/tip` (+ its SSE sibling — also
-      previously unguarded). `declineIfNonstandardDecimals` was REMOVED
-      from those endpoints' call sites (they no longer need it — the price
-      they serve is correct) and now only gates `/v1/price` (closed-1m
-      CAGG) and `/v1/ohlc?interval=` (multi-bar series, CAGG-backed).
-      Once `{asset}` is confirmed, the next request/tick to ANY normalized
-      endpoint serves the corrected price immediately — no re-derive, no
-      backfill, no cache-clear needed (see "Root cause analysis").
-- [ ] **Residual (deferred, tracked here):** `/v1/price`'s closed-1m-bucket
-      path and `/v1/ohlc?interval=` still read the raw `prices_*` /
-      `pools_per_source_1h` CAGGs and DECLINE for `{asset}` rather than
-      serve wrong. `/v1/chart` (`HistoryPointsInRange` / `TWAPPointsInRange`
-      / `OHLCSeries`) and the pools/markets listing (`/v1/markets`,
-      `internal/storage/timescale/markets.go`'s `last(quote_amount/
-      base_amount, ts)` over `pools_per_source_1h`, migration 0036) are
-      **not gated at all** and remain genuinely unnormalized for `{asset}` —
-      a gap this fix did not close. See "Root cause analysis" for the
-      recommended (cheap) fix and why it wasn't done in the same change.
+      Covers (first wave, v0.12.0): `internal/aggregate/orchestrator` (the
+      SERVED VWAP behind `/v1/price/stream` and `/v1/price`'s Redis
+      fallback — this had NO decline guard, so it was the actual live
+      leak), `/v1/vwap`, `/v1/twap`, `/v1/history` (the per-row `price`
+      field), `/v1/ohlc` single-bar mode, and `/v1/price/tip` (+ its SSE
+      sibling — also previously unguarded).
+- [x] **CAGG-reading tail (shipped 2026-07-10, same AdjustPrice recipe):**
+      `/v1/price`'s closed-1m-bucket path (incl. the batch endpoint's
+      direct read and the last-trade fallback inside `LatestPrice`),
+      `/v1/ohlc?interval=` series mode (incl. the fiat-combined series),
+      `/v1/chart` (`HistoryPointsInRange` / `TWAPPointsInRange` + the
+      market-cap price leg), the `last_price` field on `/v1/markets` /
+      `/v1/pools` / `/v1/pairs` (`pools_per_source_1h`'s
+      `last(quote_amount/base_amount, ts)`, migration 0036), and the
+      SEP-40 oracle passthroughs (`/v1/oracle/lastprice`,
+      `/v1/oracle/prices` — found unnormalized during this work, same raw
+      `prices_1m` read). Each applies `AdjustPrice` to the CAGG-read value
+      at serve time; the CAGGs themselves are untouched (see "Root cause
+      analysis" for why that is exact). Volume fields are deliberately NOT
+      scaled: OHLC `v_base`/`v_quote` are raw smallest-unit sums in each
+      asset's OWN declared decimals (the wire contract — matching
+      `/v1/history`, which serves raw amounts + `base_decimals`/
+      `quote_decimals` metadata), and chart `v_usd` is already
+      USD-anchored (`Σ usd_volume`). With no path left declining,
+      `declineIfNonstandardDecimals` was deleted and its 422 responses
+      removed from the OpenAPI spec (v1.6.0);
+      `stellarindex_price_serve_declined_nonstandard_decimals_total` is
+      retained but permanently zero. Once `{asset}` is confirmed, the next
+      request/tick to ANY endpoint serves the corrected price immediately
+      — no re-derive, no backfill, no cache-clear needed.
+- [ ] **Residual (known, accepted):** consumers reading `prices_*` /
+      `trades` directly via SQL (bypassing the Go API layer) still see the
+      raw unnormalized ratio — apply `10^(dec_base − dec_quote)` by hand
+      (see "Quick diagnosis"). The `/v1/markets`/`/v1/pools` listing
+      caches (Redis + in-process, ~2 min TTL) can serve a pre-confirmation
+      raw `last_price` for up to one TTL after a new confirmation, because
+      normalization is applied per-request AFTER the cache read — bounded
+      by the same ~60s+TTL window as the old decline guard. And
+      `pools_per_source_1h`'s XLM-fallback USD-volume estimate hardcodes
+      `/1e7` for the XLM leg — XLM is genuinely 7dp, so this is correct,
+      but a non-XLM fallback leg would need the same treatment if ever
+      added.
 
 ## Root cause analysis
 
@@ -184,27 +206,25 @@ ships: `aggregate.AdjustPrice` applied immediately after
 `internal/aggregate/orchestrator.refreshPairWindow` right after the
 window's VWAP computes (the served/cached path).
 
-**Why the CAGG-backed paths (`/v1/price`, `/v1/ohlc?interval=`) were left
-declining rather than also fixed the same way:** nothing stops the exact
-same `AdjustPrice(raw_cagg_value, dec_base, dec_quote)` recipe from being
-applied to a value READ OUT of `prices_1m`/`prices_1h`/etc. — the same "one
-constant factor per pair" argument holds whether the raw ratio came from a
-live trade scan or a pre-materialized bucket. This is a materially CHEAPER
-fix than the "rewrite a decade of materialized history" plan an earlier
-draft of this runbook assumed necessary — it needs zero migration, zero
-CAGG redefinition, and zero re-materialization risk. It was deferred here
-purely on time/scope grounds for this change (`/v1/price` in particular has
-several fallback branches — `GuardServedVWAP`, the Redis-VWAP fallback,
-`LastTradeToSnapshot` — that need auditing so the SAME asset resolves the
-SAME decimals-corrected number on every branch), not because it's
-architecturally hard. **Recommended follow-up:** apply `AdjustPrice` at the
-`prices_1m`-bucket read in `internal/api/v1/price.go` and at each CAGG-
-sourced row in `HistoryPointsInRange`/`TWAPPointsInRange`/`OHLCSeries`
-(`internal/api/v1/chart.go`, `ohlc_series.go`, `ohlc_fiat_combine.go`) and
-the pools listing (`internal/storage/timescale/markets.go`), then drop the
-now-redundant decline for those two endpoints. Each of those reads already
-resolves `(base, quote)` before querying, so the decimals lookup is a
-one-line addition per call site — no CAGG change required.
+**Why the CAGG-backed paths could be fixed WITHOUT touching the CAGGs
+(the follow-up shipped 2026-07-10):** the exact same
+`AdjustPrice(raw_cagg_value, dec_base, dec_quote)` recipe applies to a
+value READ OUT of `prices_1m`/`prices_1h`/etc. — the same "one constant
+factor per pair" argument holds whether the raw ratio came from a live
+trade scan or a pre-materialized bucket. This is materially CHEAPER than
+the "rewrite a decade of materialized history" plan an earlier draft of
+this runbook assumed necessary — zero migration, zero CAGG redefinition,
+zero re-materialization risk. The one audit it required (`/v1/price`'s
+several fallback branches) resolved as: the primary closed-1m read + its
+last-trade fallback are RAW and get `AdjustPrice`
+(`normalizeRawPriceSnapshot` in `internal/api/v1/price.go`); the
+`priceFallback` chain does NOT (its Redis-VWAP branch is already
+normalized upstream by the orchestrator's `computeNormalizedVWAP`, and
+its peg / fiat-cross-rate branches never carry a flagged Soroban leg) —
+double-applying there would re-skew an already-correct value. The same
+per-call-site treatment landed in `ohlc_series.go`
+(`adjustOHLCSeriesBars`), `chart.go` (`adjustHistoryPointPrices`),
+`markets.go`/`pairs.go` (`adjustListingPrice`), and `oracle_sep40.go`.
 
 **Why NOT insert-time decimals stamping (a `trades.base_decimals` /
 `quote_decimals` column, populated at insert):** considered and rejected in
@@ -216,7 +236,7 @@ same correction factor. That means there is no "late-confirmed decimals
 corrupts an already-mixed bucket" risk to defend against, and therefore no
 backfill/re-derive/catch-up SQL is needed: the moment
 `nonstandard_decimals_assets` gets a confirmed row, the VERY NEXT read
-(query-time call, or — once the follow-up above ships — CAGG read) is
+(query-time call or CAGG read) is
 correct, for both new AND already-stored historical trades. Insert-time
 stamping would have added a migration + a new not-old-binary-trivial write
 path for zero additional correctness, so it was not pursued. The one
@@ -241,17 +261,18 @@ skew was live before normalization/suppression.
   decimals.
 - A token could legitimately declare non-7 decimals and still be low-value /
   low-volume. Check step 2's volume before deciding urgency — but the served
-  price is still wrong, so declining is correct regardless.
-- **The API-side serving guard fails OPEN, never closed.** A nil
+  price is wrong until the row lands, so confirmation is correct regardless.
+- **The API-side normalization fails OPEN, never closed.** A nil
   `NonstandardDecimalsCache` (not wired in `cmd/stellarindex-api/main.go`), a
   cold cache (never refreshed yet), or a refresh error (Postgres blip —
   tracked by `stellarindex_nonstandard_decimals_cache_refresh_failures_total`,
   which retains the last-good snapshot rather than clearing it) all mean
-  requests serve NORMALLY rather than declining. This is deliberate —
-  availability wins over the guard for infra errors — but it means a
-  confirmed offender can still serve briefly during an API-process restart
-  before the initial cache refresh completes, or indefinitely on a
-  deployment that predates migration 0093 / hasn't wired `NonstandardDecimals`.
+  every asset resolves to the 7dp default and prices serve RAW rather than
+  corrected. This is deliberate — availability wins over the guard for
+  infra errors — but it means a confirmed offender can still serve its raw
+  (skewed) value briefly during an API-process restart before the initial
+  cache refresh completes, or indefinitely on a deployment that predates
+  migration 0093 / hasn't wired `NonstandardDecimals`.
 
 ## Related
 
@@ -264,9 +285,10 @@ skew was live before normalization/suppression.
   `internal/config.DecimalsGuardConfig.BackfillWindowDays` (`[decimals_guard]`
   in `configs/example.toml`), default 90 days
   (`decimalsguard.DefaultBackfillWindow`).
-- Enforcement (declining, 2026-07-09): `internal/api/v1/nonstandard_decimals_guard.go`
-  (`declineIfNonstandardDecimals`, now called only from `price.go` and
-  `ohlc.go`'s series branch — the two remaining CAGG-backed paths),
+- Enforcement (historical — the 422 decline, 2026-07-09 → 2026-07-10):
+  `internal/api/v1/nonstandard_decimals_guard.go` was DELETED on
+  2026-07-10 when the last declining paths gained normalization; the
+  cache it consulted remains the live source of truth:
   `internal/api/v1/nonstandard_decimals_cache.go` (`NonstandardDecimalsCache`),
   `internal/storage/timescale/nonstandard_decimals_assets.go`
   (`UpsertNonstandardDecimalsAsset` / `LoadNonstandardDecimalsAssets`),
@@ -278,7 +300,12 @@ skew was live before normalization/suppression.
   (the aggregator binary's own mirror of `nonstandard_decimals_assets`),
   `internal/api/v1/vwap.go` / `twap.go` / `ohlc.go` (single-bar mode) /
   `history.go` / `price_tip.go` (each applies `AdjustPrice` after computing
-  from raw trades).
+  from raw trades), and — CAGG-reading tail, 2026-07-10 —
+  `internal/api/v1/price.go` (`normalizeRawPriceSnapshot`: closed-1m
+  bucket + batch + last-trade fallback), `ohlc_series.go`
+  (`adjustOHLCSeriesBars`), `chart.go` (`adjustHistoryPointPrices`),
+  `markets.go` / `pairs.go` (`adjustListingPrice` on `last_price`),
+  `oracle_sep40.go` (SEP-40 passthroughs).
 - Metrics: `stellarindex_dex_trade_nonstandard_decimals_total` (detection),
   `stellarindex_price_serve_declined_nonstandard_decimals_total` (live
   enforcement impact), `stellarindex_nonstandard_decimals_cache_refresh_failures_total`
@@ -291,6 +318,21 @@ skew was live before normalization/suppression.
 
 ## Changelog
 
+- 2026-07-10 (second wave) — **the deferred CAGG-reading tail shipped**,
+  completing normalization for every serving path: `/v1/price`'s
+  closed-1m-bucket read (+ batch + last-trade fallback + windowed via the
+  already-normalized orchestrator cache), `/v1/ohlc?interval=` series
+  mode (incl. fiat-combined), `/v1/chart` (vwap/twap/market-cap price
+  legs), `last_price` on `/v1/markets` / `/v1/pools` / `/v1/pairs`, and
+  the SEP-40 oracle passthroughs (found unnormalized during this work).
+  Volume fields deliberately untouched: OHLC `v_base`/`v_quote` are raw
+  smallest-unit sums per the wire contract (matching `/v1/history`'s
+  raw amounts + decimals metadata); chart `v_usd` is already
+  USD-anchored. With nothing left declining, the 422 guard
+  (`declineIfNonstandardDecimals`) was deleted, its 422 responses removed
+  from the OpenAPI spec (v1.6.0), and
+  `stellarindex_price_serve_declined_nonstandard_decimals_total` became
+  permanently zero (retained one release for dashboard continuity).
 - 2026-07-10 — **forward normalization shipped** for every query-time
   serving path: `internal/aggregate.AdjustPrice` (a per-pair
   `10^(dec_base−dec_quote)` scalar applied to the finished VWAP/TWAP/OHLC

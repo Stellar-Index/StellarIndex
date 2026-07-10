@@ -228,19 +228,23 @@ The direct-read path serves the `prices_*` continuous aggregates
 - **Every column above assumes both legs are 7-decimal.** `quote_amount`
   and `base_amount` are smallest-unit integers; the ratio only equals the
   true price when both assets share a decimals scale. As of 2026-07-10
-  every QUERY-TIME path (`/v1/vwap`, `/v1/twap`, `/v1/history`, `/v1/ohlc`
-  single-bar mode, `/v1/price/tip`, and the aggregator's own published
-  VWAP behind `/v1/price/stream`) corrects for a confirmed non-7-decimals
-  leg via a read-time `10^(dec_base−dec_quote)` scalar
-  (`internal/aggregate.AdjustPrice`) — see
-  `docs/operations/runbooks/dex-nonstandard-decimals.md`. The `prices_*`
-  CAGG columns documented above remain RAW: `/v1/price`'s closed-1m-bucket
-  read and `/v1/ohlc?interval=` series mode still DECLINE (422) for a
-  pair with a confirmed offending leg rather than serve the unnormalized
-  ratio; `/v1/chart` and the pools/markets listing are not gated at all
-  and are the residual known-wrong surfaces. As of this writing 5
-  confirmed non-7-decimals Soroban tokens exist (one 6dp, one 9dp, three
-  18dp), all trading via aquarius.
+  EVERY serving path — the query-time computations (`/v1/vwap`,
+  `/v1/twap`, `/v1/history`, `/v1/ohlc` single-bar mode, `/v1/price/tip`,
+  the aggregator's published VWAP behind `/v1/price/stream`) AND every
+  CAGG-reading path (`/v1/price`'s closed-1m bucket, `/v1/ohlc?interval=`
+  series, `/v1/chart`, the `last_price` on `/v1/markets` / `/v1/pools` /
+  `/v1/pairs`, and the SEP-40 oracle passthroughs) — corrects for a
+  confirmed non-7-decimals leg via a read-time `10^(dec_base−dec_quote)`
+  scalar (`internal/aggregate.AdjustPrice`) applied to the finished
+  ratio at serve time; nothing declines anymore — see
+  `docs/operations/runbooks/dex-nonstandard-decimals.md`. The stored
+  `prices_*` CAGG columns documented above remain RAW — a consumer
+  querying them directly via SQL must apply the same factor by hand.
+  Volume columns are NOT price-corrected: OHLC base/quote volumes are
+  raw smallest-unit sums in each asset's own declared decimals (the
+  documented wire contract), and `volume_usd` is already USD-anchored.
+  As of this writing 5 confirmed non-7-decimals Soroban tokens exist
+  (one 6dp, one 9dp, three 18dp), all trading via aquarius.
 
 ## Freshness — two honest contracts
 

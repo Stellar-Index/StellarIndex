@@ -62,6 +62,31 @@ against.
   excluded surface (documented in the source README): router `add_liquidity`
   / `remove_liquidity` (arg shape doesn't fit `soroswap_router_swaps`) and
   the router's own emitted event topics (ROADMAP #89 follow-up).
+### Fixed
+- **Non-7-decimals normalization now covers every serving path — the deferred
+  CAGG-reading tail of the v0.12.0 fix** (runbook dex-nonstandard-decimals.md).
+  The same read-time `aggregate.AdjustPrice` scalar (`10^(dec_base−dec_quote)`,
+  exact `big.Rat`, resolved per-request from `nonstandard_decimals_assets`)
+  now corrects the values read from the raw `prices_*` /
+  `pools_per_source_1h` continuous aggregates: `/v1/price`'s closed-1m-bucket
+  path (+ the batch endpoint's direct read and the last-trade fallback),
+  `/v1/ohlc?interval=` series mode (incl. the fiat-combined series),
+  `/v1/chart` (vwap/twap/market-cap price legs), `last_price` on
+  `/v1/markets` / `/v1/pools` / `/v1/pairs`, and the SEP-40 oracle
+  passthroughs `/v1/oracle/lastprice` + `/v1/oracle/prices` (found
+  unnormalized during this work — same raw `prices_1m` read). Volume fields
+  are deliberately NOT scaled: OHLC `v_base`/`v_quote` are raw smallest-unit
+  sums in each asset's own declared decimals per the wire contract (matching
+  `/v1/history`'s raw amounts + per-side decimals metadata), and chart
+  `v_usd` is already USD-anchored (`Σ usd_volume`). Golden tests pin both
+  the corrected values and byte-identical output for 7dp pairs. With no
+  path left declining, the 422 guard (`declineIfNonstandardDecimals`) is
+  deleted, the documented 422 responses are removed from the OpenAPI spec
+  (`/v1/price`, `/v1/history`, `/v1/ohlc`, `/v1/twap`; `/v1/vwap`'s 422 now
+  documents only the all-trades-filtered case — spec 1.5.0 → 1.6.0, all
+  three generated artifacts refreshed), and
+  `stellarindex_price_serve_declined_nonstandard_decimals_total` is
+  permanently zero (retained one release for dashboard continuity).
 
 ## [v0.12.1] — 2026-07-10
 

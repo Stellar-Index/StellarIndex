@@ -149,6 +149,16 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// dex-nonstandard-decimals forward normalization (2026-07-10, closing
+	// the deferred CAGG-reading tail from docs/operations/runbooks/
+	// dex-nonstandard-decimals.md): /v1/chart was never guarded at all —
+	// it read the same raw prices_<gran> CAGG ratio /v1/price's
+	// closed-1m-bucket path does, just at coarser grains. See
+	// adjustHistoryPointPrices for the byte-identical-on-7dp contract.
+	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Base)
+	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Quote)
+	points = adjustHistoryPointPrices(points, baseDec, quoteDec)
+
 	wire := make([]HistoryPointWire, len(points))
 	for i, p := range points {
 		wire[i] = HistoryPointWire{T: p.Bucket, P: p.VWAP, VUSD: p.VolumeUSD}
@@ -297,6 +307,13 @@ func (s *Server) handleChartTWAP(
 			triangulated = true
 		}
 	}
+
+	// dex-nonstandard-decimals forward normalization — see handleChart's
+	// equivalent comment. twap_1h/twap_1d carry the same raw
+	// quote/base ratio shape as prices_<gran>.
+	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Base)
+	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Quote)
+	points = adjustHistoryPointPrices(points, baseDec, quoteDec)
 
 	wire := make([]HistoryPointWire, len(points))
 	for i, p := range points {
@@ -657,6 +674,35 @@ func (s *Server) chartVWAPReader(gran string, from time.Time) func(context.Conte
 	}
 }
 
+// adjustHistoryPointPrices applies the dex-nonstandard-decimals forward
+// normalization to every point's VWAP field — see the call sites in
+// handleChart / handleChartTWAP / handleChartMarketCapCrypto for the full
+// rationale (docs/operations/runbooks/dex-nonstandard-decimals.md).
+//
+// VolumeUSD is intentionally NOT touched — prices_<gran>'s volume_usd
+// column is already USD-denominated (Σ usd_volume, computed upstream at
+// trade-valuation time), invariant to the base/quote decimals split. Only
+// the raw quote/base price ratio needs the correction.
+//
+// Returns points UNCHANGED (same slice, no allocation) when
+// baseDecimals == quoteDecimals — every pair without a confirmed
+// non-7-decimals leg. This matters for byte-identical wire output: the
+// CAGG's raw NUMERIC::text formatting doesn't match [ratToDecimal]'s
+// fixed 10-digit rendering, so reformatting unconditionally would change
+// the wire bytes for every already-correct 7dp pair — the overwhelming
+// common case.
+func adjustHistoryPointPrices(points []HistoryPoint, baseDecimals, quoteDecimals int) []HistoryPoint {
+	if baseDecimals == quoteDecimals || len(points) == 0 {
+		return points
+	}
+	out := make([]HistoryPoint, len(points))
+	for i, p := range points {
+		out[i] = p
+		out[i].VWAP = adjustOHLCPriceString(p.VWAP, baseDecimals, quoteDecimals)
+	}
+	return out
+}
+
 // parseChartPair builds the canonical Pair from query params,
 // rejecting identity pairs. ok=false on any error (problem written).
 func parseChartPair(w http.ResponseWriter, r *http.Request) (canonical.Pair, bool) {
@@ -948,6 +994,14 @@ func (s *Server) handleChartMarketCapCrypto(
 			triangulated = true
 		}
 	}
+
+	// dex-nonstandard-decimals forward normalization on the USD price
+	// leg — see handleChart's equivalent comment. (The supply leg's own
+	// decimals scaling — marketCapDecimals — is a separate, already-
+	// acknowledged follow-up; not touched here.)
+	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Base)
+	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Quote)
+	pricePts = adjustHistoryPointPrices(pricePts, baseDec, quoteDec)
 
 	// Daily circulating supply (forward-filled via the carry-in row).
 	to := time.Now().UTC().Truncate(24 * time.Hour)
