@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.12.0] — 2026-07-10
+
 ### Added
 - **Aquarius rewards-gauge + governance/upgrade event decoding** (ROADMAP #89,
   2026-07-10 topic census). The census found 20 real, distinct Aquarius topics
