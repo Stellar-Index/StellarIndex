@@ -16,6 +16,36 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Router attribution now uses call-path evidence to name the specific
+  aggregator wrapper, not just the plain router** (migration 0104,
+  ROADMAP #11 follow-on / #29, `/aggregators` spec 1.7.0). Migration 0101
+  started recording `call_path`/`call_depth`/`call_kind` on
+  `soroswap_router_swaps` — a router call observed as a
+  `sub_invocation` now carries the full wrapping chain, with the
+  OUTERMOST contract at `call_path[0]`. `TagTradesRoutedVia` (the shared
+  primitive behind both the live 1-minute sweeper and
+  `stellarindex-ops tag-routed-via`) now attributes such a trade to that
+  outer contract's `routers.name` when it's a registered `router`-kind
+  entry, instead of always tagging `soroswap-router`. Migration 0104
+  seeds the one evidence-verified case in the repo:
+  `CD45PQFH…JRZH` (`exec()`), observed wrapping the router two levels
+  deep in a real captured mainnet tx
+  (`internal/sources/soroswap_router/real_bytes_test.go`). Its protocol
+  identity is NOT vendor- or WASM-audit-confirmed — seeded with
+  `auto_discovered = true` per migration 0025's documented "flagged but
+  unverified" semantics, fail-closed on anything the repo doesn't have
+  evidence for (the middle-layer adapter contract in the same call chain
+  is deliberately NOT seeded).
+  `/v1/aggregators` rows gain a `notes` array: every `router`-kind row
+  now says its count can't distinguish direct calls, unregistered-
+  wrapper calls, and pre-migration-0101 legacy rows; `auto_discovered`
+  rows additionally note that only call-path-tagged trades (live since
+  2026-07-10) are counted, so a low/zero `routed_trades_24h` there means
+  "not yet attributed", not "little volume" — the full historical
+  back-tag is a queued r1 `ch-rebuild -contract-calls` re-derive
+  (`migrations/0101_soroswap_router_swaps_call_path.up.sql`). Spec + all
+  three generated artifacts regenerated; `pkg/client.AggregatorRow`
+  gains `Notes`.
 - **Full-history SAC balance seed — closes the BLND/EURC/KALE/PHO supply
   cross-check residual** (migration 0102, ROADMAP #14 / incident
   2026-07-06 "PHO/BLND VERDICT" follow-up). `supply seed-sac-balances`

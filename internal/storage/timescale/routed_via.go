@@ -33,6 +33,25 @@ import (
 //     routedViaTsSlack to survive any second-vs-millisecond
 //     precision skew; correctness comes from the exact
 //     (ledger, tx_hash) equality, the ts bound is pruning only.
+//   - CALL-PATH ATTRIBUTED (migration 0101 / 0103, ROADMAP #11 + #29).
+//     A router swap observed as a sub-invocation records the full
+//     wrapping chain in call_path — call_path[1] (Postgres 1-indexed;
+//     Go CallPath[0]) is the OUTERMOST invoking contract. When that
+//     contract is itself a registered 'router'-kind entry (e.g. the
+//     0103 aggregator-exec seed), the trade is tagged with THAT
+//     entry's name instead of the bare routerName argument — so
+//     /v1/aggregators can report volume routed via the specific
+//     wrapper, not just "via soroswap-router" for everything. Falls
+//     back to routerName (the caller's default, e.g.
+//     soroswap_router.SourceName) for: direct top-level calls,
+//     sub-invocations wrapped by an unregistered contract, and
+//     legacy rows written before migration 0101 (call_path IS NULL —
+//     those predate call-path tracking entirely and cannot be told
+//     apart from a direct call). This keeps the fallback bucket
+//     honest — it never claims a SPECIFIC wrapper it doesn't have
+//     evidence for — at the cost of conflating three cases that all
+//     read the same from the API today. See
+//     docs/architecture/contract-call-coverage-audit.md.
 
 // routedViaTsSlack widens the trades.ts chunk-pruning bound relative
 // to the router-swap window. Generous (well beyond any close-time
@@ -45,12 +64,14 @@ const routedViaTsSlack = 5 * time.Minute
 // whose ledger_close_time is in [from, to). Returns the number of
 // trades rows tagged.
 //
-// routerName is the value written into routed_via (routers.name,
-// e.g. soroswap_router.SourceName). tradeSource scopes which trades
-// are eligible (see the source-scoped policy above). Both the live
-// sweeper (internal/pipeline/routedvia.go) and the historical
-// `stellarindex-ops tag-routed-via` pass call through here, so the
-// tagging predicate cannot drift between the two.
+// routerName is the FALLBACK value written into routed_via
+// (routers.name, e.g. soroswap_router.SourceName) — used whenever
+// the router swap can't be attributed to a more specific registered
+// wrapper (see the CALL-PATH ATTRIBUTED policy above). tradeSource
+// scopes which trades are eligible (see the source-scoped policy
+// above). Both the live sweeper (internal/pipeline/routedvia.go) and
+// the historical `stellarindex-ops tag-routed-via` pass call through
+// here, so the tagging predicate cannot drift between the two.
 //
 // NOTE for historical passes: an UPDATE into compressed trades
 // chunks (older than the 7-day compression horizon) decompresses the
@@ -68,8 +89,13 @@ func (s *Store) TagTradesRoutedVia(ctx context.Context, routerName, tradeSource 
 	}
 	const q = `
         UPDATE trades t
-           SET routed_via = $1
+           SET routed_via = COALESCE(wrapper.name, $1)
           FROM soroswap_router_swaps r
+          LEFT JOIN routers wrapper
+            ON wrapper.kind        = 'router'
+           AND r.call_kind         = 'sub_invocation'
+           AND r.call_path         IS NOT NULL
+           AND wrapper.contract_id = r.call_path[1]
          WHERE r.ledger_close_time >= $3
            AND r.ledger_close_time <  $4
            AND t.ts >= $5

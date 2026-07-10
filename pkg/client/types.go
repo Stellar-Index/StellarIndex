@@ -380,14 +380,21 @@ type TradeRow struct {
 
 // AggregatorRow is the data shape returned by [Client.Aggregators]
 // — one routers-registry entry (a per-tx router like the Soroswap
-// router, or an aggregator vault like DeFindex) with its routed-via
-// attribution rollup over the trailing 24 hours.
+// router, an aggregator contract OBSERVED WRAPPING it, or an
+// aggregator vault like DeFindex) with its routed-via attribution
+// rollup over the trailing 24 hours.
 //
 // RoutedVolume24hUSD is a decimal string (ADR-0003); nil when none
 // of the window's routed trades carried a USD valuation — distinct
 // from a zero-trade router, which reports RoutedTrades24h == 0.
 // Vault-kind entries always report zero routed trades: per-tx
 // routed_via tagging applies to Kind == "router" only.
+//
+// A router call observed as a sub-invocation is attributed to its
+// outermost wrapping contract when that contract is itself a
+// registered "router"-kind entry (falling back to the plain router
+// otherwise) — see Notes for the honest-degrade caveats this implies
+// per row, present for kind == "router" rows only.
 type AggregatorRow struct {
 	ContractID     string `json:"contract_id"`
 	Name           string `json:"name"`
@@ -398,6 +405,10 @@ type AggregatorRow struct {
 	RoutedTrades24h    int64      `json:"routed_trades_24h"`
 	RoutedVolume24hUSD *string    `json:"routed_volume_24h_usd"`
 	LastRoutedAt       *time.Time `json:"last_routed_at"`
+
+	// Notes are coverage caveats for this row's stats; nil for
+	// kind == "aggregator-vault" rows, which need none.
+	Notes []string `json:"notes,omitempty"`
 }
 
 // OHLCBar is the data shape returned by [Client.OHLC] — a single

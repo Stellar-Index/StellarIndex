@@ -18,7 +18,7 @@
 openapi: 3.1.0
 info:
   title: Stellar Index API
-  version: "1.6.0"
+  version: "1.7.0"
   summary: Aggregated Stellar asset pricing — real-time and historical.
   description: |
     The Stellar Index API exposes normalised, VWAP-aggregated pricing
@@ -4672,17 +4672,31 @@ paths:
       summary: Router / aggregator-vault registry with routed-via 24h rollup.
       description: |
         Lists the routers registry — entry contracts that route
-        per-tx into underlying venues (Soroswap router) and
+        per-tx into underlying venues (Soroswap router, plus any
+        aggregator contract OBSERVED WRAPPING it — see below) and
         aggregator vaults that hold persistent capital (DeFindex) —
         each with its routed-via attribution over the trailing 24
         hours: how many `trades` rows (and how much USD volume)
-        arrived at the underlying DEX via that router. Attribution
-        is stamped on trades as `routed_via` (also visible per-row
-        on `/v1/history`) by joining same-transaction router
-        invocations; the tag is first-wins and applies to
+        arrived at the underlying DEX via that router or wrapper.
+        Attribution is stamped on trades as `routed_via` (also
+        visible per-row on `/v1/history`) by joining same-transaction
+        router invocations; the tag is first-wins and applies to
         `kind=router` entries only — vault entries always report
         zero routed trades (their capital state lives on the
         protocol surfaces, not per-tx flow).
+
+        A router call observed as a SUB-INVOCATION (some other
+        contract called the router as part of its own authorized
+        call tree — the common real-world shape, per
+        `docs/architecture/contract-call-coverage-audit.md`) is
+        attributed to the OUTERMOST wrapping contract when that
+        contract is itself a registered `router`-kind entry, instead
+        of being lumped into the plain router's count. See each
+        row's `notes` for the honest-degrade caveats this implies —
+        `auto_discovered: true` rows are evidence-observed, not
+        vendor-verified, and their count only reflects router calls
+        recorded with call-path data (live since 2026-07-10); a full
+        historical back-tag is a queued r1 re-derive.
 
         The window is a rolling observation recomputed per request
         (like `/v1/network/stats`), not a closed-bucket series.
@@ -4701,6 +4715,26 @@ paths:
                   routed_trades_24h: 342
                   routed_volume_24h_usd: '18211.4052710000000000'
                   last_routed_at: '2026-07-04T21:58:11Z'
+                  notes:
+                  - routed_trades_24h combines direct calls to this router, calls
+                    wrapped by an aggregator this registry doesn't recognise, and
+                    legacy rows recorded before call-path tracking (2026-07-10) —
+                    those three cases can't be told apart yet.
+                - contract_id: CD45PQFHSIUMIC4MVZXCQ2RD6REKXJMEHWRN56TWT3C4DV2U4DHVJRZH
+                  name: soroswap-router-aggregator-exec
+                  kind: router
+                  protocol: unattributed
+                  auto_discovered: true
+                  routed_trades_24h: 11
+                  routed_volume_24h_usd: '640.1100000000000000'
+                  last_routed_at: '2026-07-10T09:12:47Z'
+                  notes:
+                  - Evidence-observed contract, not vendor- or WASM-audit-verified
+                    (see the registry seed migration's notes).
+                  - routed_trades_24h only counts router calls recorded with call_path
+                    data (live since 2026-07-10); earlier activity through this wrapper
+                    is not yet attributed pending a queued historical re-derive — a low
+                    or zero count does not mean this router carried little volume.
                 - contract_id: CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP
                   name: defindex-vault-usdc-autocompound
                   kind: aggregator-vault
@@ -9180,6 +9214,23 @@ components:
           format: date-time
           nullable: true
           description: ts of the most recent routed trade in the window; null when none.
+        notes:
+          type: array
+          items: { type: string }
+          description: |
+            Honest coverage caveats for THIS row's stats, present for
+            `kind: router` rows only (omitted — not an empty array —
+            when a row has none, i.e. every `aggregator-vault` row
+            today). Two cases: every router row's count conflates
+            direct calls, calls wrapped by an unregistered contract,
+            and legacy rows recorded before call-path tracking
+            (migration 0101, 2026-07-10) — those three are
+            indistinguishable today; `auto_discovered: true` rows
+            (evidence-observed wrapper contracts, not vendor- or
+            WASM-audit-verified — see the registry seed migration)
+            additionally only count trades whose router call carried
+            call_path data, so a low or zero count there means
+            "not yet attributed", not "little volume".
       required: [contract_id, name, kind, protocol, auto_discovered, routed_trades_24h, routed_volume_24h_usd, last_routed_at]
 
     AggregatorsEnvelope:
