@@ -1,6 +1,6 @@
 ---
 title: contract_events_daily MV redesign — uniqExact → uniqCombined(17)
-last_verified: 2026-07-09
+last_verified: 2026-07-10
 status: accepted
 ---
 
