@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.13.0] — 2026-07-10
+
 ### Fixed
 - **Projector: adaptive per-source window — a too-dense ledger window can no longer stall a
   replay forever.** `cycleOneSource` scanned a fixed `BatchLimit` (1,000) ledgers per cycle
