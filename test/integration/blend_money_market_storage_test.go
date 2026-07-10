@@ -11,6 +11,7 @@ import (
 
 	_ "github.com/lib/pq"
 
+	"github.com/StellarIndex/stellar-index/internal/domain"
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
@@ -71,11 +72,11 @@ func TestBlendPositionsRoundTrip(t *testing.T) {
 		if kind == blend.EventFlashLoan {
 			ev.Counterparty = contract
 		}
-		if err := store.InsertBlendPositionEvent(ctx, ev); err != nil {
+		if err := store.InsertBlendPositionEvent(ctx, domain.BlendPositionEvent(ev)); err != nil {
 			t.Fatalf("InsertBlendPositionEvent (%s): %v", kind, err)
 		}
 		// Idempotent re-insert — same PK is a no-op.
-		if err := store.InsertBlendPositionEvent(ctx, ev); err != nil {
+		if err := store.InsertBlendPositionEvent(ctx, domain.BlendPositionEvent(ev)); err != nil {
 			t.Fatalf("InsertBlendPositionEvent (%s dup): %v", kind, err)
 		}
 	}
@@ -150,7 +151,7 @@ func TestBlendPositionsLargeI128(t *testing.T) {
 		OpIndex:     0,
 		Timestamp:   time.Now().UTC(),
 	}
-	if err := store.InsertBlendPositionEvent(ctx, ev); err != nil {
+	if err := store.InsertBlendPositionEvent(ctx, domain.BlendPositionEvent(ev)); err != nil {
 		t.Fatalf("InsertBlendPositionEvent: %v", err)
 	}
 
@@ -225,7 +226,7 @@ func TestBlendEmissionsRoundTrip(t *testing.T) {
 		},
 	}
 	for _, ev := range rows {
-		if err := store.InsertBlendEmissionEvent(ctx, ev); err != nil {
+		if err := store.InsertBlendEmissionEvent(ctx, domain.BlendEmissionEvent(ev)); err != nil {
 			t.Fatalf("InsertBlendEmissionEvent (%s): %v", ev.Kind, err)
 		}
 	}
@@ -339,7 +340,7 @@ func TestBlendAdminRoundTrip(t *testing.T) {
 		},
 	}
 	for _, ev := range rows {
-		if err := store.InsertBlendAdminEvent(ctx, ev); err != nil {
+		if err := store.InsertBlendAdminEvent(ctx, domain.BlendAdminEvent(ev)); err != nil {
 			t.Fatalf("InsertBlendAdminEvent (%s): %v", ev.Kind, err)
 		}
 	}

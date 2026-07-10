@@ -55,10 +55,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 
+	"github.com/StellarIndex/stellar-index/internal/domain"
 	"github.com/StellarIndex/stellar-index/internal/events"
 	"github.com/StellarIndex/stellar-index/internal/scval"
 )
@@ -73,37 +73,12 @@ const SourceName = "soroban-events"
 // Row is one captured soroban_events row, ready for batched insert.
 // Fields map 1:1 to the columns in migration 0041; *string / *[]byte
 // represent nullable columns.
-type Row struct {
-	Ledger          uint32
-	LedgerCloseTime time.Time
-	TxHash          []byte // 32-byte raw
-	OpIndex         int16
-	EventIndex      int16
-
-	ContractID    string // C-strkey
-	ContractIDHex []byte // 32-byte raw
-
-	TopicCount int16
-
-	// Topic0Sym is the decoded Symbol/String of topic[0] when it's
-	// of one of those types; "" otherwise (sink writes SQL NULL).
-	Topic0Sym string
-
-	// Topic0XDR is always populated; Topic1XDR..Topic3XDR are nil
-	// when the event has fewer topics.
-	Topic0XDR []byte
-	Topic1XDR []byte
-	Topic2XDR []byte
-	Topic3XDR []byte
-
-	// BodyXDR is the raw XDR of the event body SCVal.
-	BodyXDR []byte
-
-	// OpArgsXDR is the XDR-marshalled ScVec of the originating
-	// InvokeContract op's args, or nil when the event didn't come
-	// from an InvokeContract op.
-	OpArgsXDR []byte
-}
+//
+// Canonical definition lives in [domain.SorobanEventRow] (D8 M0-1:
+// internal/storage/timescale reads/writes this shape and must not
+// import upward into this package to do so); this is a transparent
+// alias so every existing caller of sorobanevents.Row is unaffected.
+type Row = domain.SorobanEventRow
 
 // ErrSkip is returned by [Capture] for events the soroban_events
 // table never stores (non-"contract" types: system / diagnostic, or

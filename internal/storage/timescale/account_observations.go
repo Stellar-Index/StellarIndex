@@ -9,13 +9,16 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/accounts"
+	"github.com/StellarIndex/stellar-index/internal/domain"
 )
 
-// InsertAccountObservation appends one [accounts.Observation] to
-// `account_observations`. Per the migration, identity is
-// (account_id, ledger, observed_at) — the partition column is
-// dragged into the PK because Timescale requires it.
+// InsertAccountObservation appends one [domain.AccountObservation]
+// (the persisted shape of internal/sources/accounts.Observation — see
+// domain's doc.go for why storage takes the domain type rather than
+// importing the accounts package, D8 M0-1) to `account_observations`.
+// Per the migration, identity is (account_id, ledger, observed_at) —
+// the partition column is dragged into the PK because Timescale
+// requires it.
 //
 // Last-writer-wins on conflict: an account touched multiple times
 // in the same ledger (e.g. fee + op + op) writes successive rows
@@ -30,7 +33,7 @@ import (
 // upstream (the observer always populates both) but a misbehaving
 // caller would otherwise hit a NOT NULL violation deeper in the
 // stack with a less-obvious error message.
-func (s *Store) InsertAccountObservation(ctx context.Context, o accounts.Observation) error {
+func (s *Store) InsertAccountObservation(ctx context.Context, o domain.AccountObservation) error {
 	if o.AccountID == "" {
 		return errors.New("timescale: InsertAccountObservation: AccountID is empty")
 	}

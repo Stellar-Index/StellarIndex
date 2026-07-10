@@ -11,6 +11,7 @@ import (
 	"time"
 
 	c "github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/domain"
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
@@ -391,7 +392,7 @@ func TestSourceEntryCounts_GappedNonTradeSinksReconcile(t *testing.T) {
 
 	insertBlendPosition := func() {
 		t.Helper()
-		if err := store.InsertBlendPositionEvent(ctx, blend.PositionEvent{
+		if err := store.InsertBlendPositionEvent(ctx, domain.BlendPositionEvent{
 			Pool: poolID, Kind: blend.EventSupply, Asset: contractID, User: userAddr,
 			TokenAmount: big.NewInt(1_000_000), BOrDAmount: big.NewInt(990_000),
 			Ledger: 2001, TxHash: pad64("e", 1), OpIndex: 0, Timestamp: ts,
@@ -402,7 +403,7 @@ func TestSourceEntryCounts_GappedNonTradeSinksReconcile(t *testing.T) {
 	}
 	insertBlendEmission := func() {
 		t.Helper()
-		if err := store.InsertBlendEmissionEvent(ctx, blend.EmissionEvent{
+		if err := store.InsertBlendEmissionEvent(ctx, domain.BlendEmissionEvent{
 			Pool: poolID, Kind: blend.EventGulp, Asset: contractID, Amount: big.NewInt(100),
 			Ledger: 2002, TxHash: pad64("f", 2), OpIndex: 0, Timestamp: ts,
 		}); err != nil {
@@ -412,7 +413,7 @@ func TestSourceEntryCounts_GappedNonTradeSinksReconcile(t *testing.T) {
 	}
 	insertBlendAdmin := func() {
 		t.Helper()
-		if err := store.InsertBlendAdminEvent(ctx, blend.AdminEvent{
+		if err := store.InsertBlendAdminEvent(ctx, domain.BlendAdminEvent{
 			ContractID: poolID, Kind: blend.EventSetAdmin, Admin: userAddr, Target: userAddr,
 			Ledger: 2003, TxHash: pad64("a", 3), OpIndex: 0, Timestamp: ts,
 		}); err != nil {

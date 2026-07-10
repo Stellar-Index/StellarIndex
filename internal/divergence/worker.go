@@ -13,6 +13,7 @@ import (
 
 	"github.com/StellarIndex/stellar-index/internal/cachekeys"
 	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/domain"
 )
 
 // Cache is the Redis subset the [Service] needs. Declared as an
@@ -104,15 +105,13 @@ type ObservationSink interface {
 // ObservationRecord is the per-(pair, reference) observation passed
 // to ObservationSink. Decoupled from the internal CachedResult shape
 // so the sink can evolve without the Service changing.
-type ObservationRecord struct {
-	Pair       canonical.Pair
-	Reference  string
-	OurPrice   float64
-	RefPrice   float64
-	DeltaPct   float64
-	Firing     bool
-	ObservedAt time.Time
-}
+//
+// Canonical definition lives in [domain.DivergenceObservationRecord]
+// (D8 M0-1: internal/storage/timescale reads/writes this shape and
+// must not import upward into this package to do so); this is a
+// transparent alias so every existing caller of
+// divergence.ObservationRecord is unaffected.
+type ObservationRecord = domain.DivergenceObservationRecord
 
 // ServiceOptions configures a [Service].
 type ServiceOptions struct {

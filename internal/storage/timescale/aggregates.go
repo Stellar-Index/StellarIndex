@@ -8,8 +8,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/aggregate/baseline"
 	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/domain"
 )
 
 // HistoryPoint is a single bucket's worth of aggregated price +
@@ -982,7 +982,7 @@ func (s *Store) latestClosedVWAP1m(ctx context.Context, p canonical.Pair, since 
 // The bucket-end timestamp is the bucket's start + 1 minute (CAGG
 // stores the start; the API surface uses the end). Empty slice +
 // nil error when the pair has no closed buckets in the window.
-func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from, to time.Time) ([]baseline.TimedVWAP, error) {
+func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from, to time.Time) ([]domain.BaselineTimedVWAP, error) {
 	if !to.After(from) {
 		return nil, fmt.Errorf("timescale: TimedVWAPsForPair1m: to %v <= from %v", to, from)
 	}
@@ -1016,9 +1016,9 @@ func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from,
 	}
 	defer func() { _ = rows.Close() }()
 
-	out := make([]baseline.TimedVWAP, 0, 256)
+	out := make([]domain.BaselineTimedVWAP, 0, 256)
 	for rows.Next() {
-		var t baseline.TimedVWAP
+		var t domain.BaselineTimedVWAP
 		if err := rows.Scan(&t.VWAP, &t.BucketEnd); err != nil {
 			return nil, fmt.Errorf("timescale: TimedVWAPsForPair1m scan: %w", err)
 		}

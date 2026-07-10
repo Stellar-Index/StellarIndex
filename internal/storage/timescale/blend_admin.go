@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/blend"
+	"github.com/StellarIndex/stellar-index/internal/domain"
 )
 
 // InsertBlendAdminEvent appends one Blend admin / pool-config /
@@ -27,7 +27,7 @@ import (
 // are decimal strings inside jsonb per ADR-0003 — NUMERIC inside
 // jsonb is lossy, but a decimal string round-trips at full
 // precision.
-func (s *Store) InsertBlendAdminEvent(ctx context.Context, e blend.AdminEvent) error {
+func (s *Store) InsertBlendAdminEvent(ctx context.Context, e domain.BlendAdminEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertBlendAdminEvent: ContractID is empty")
 	}
@@ -69,20 +69,20 @@ func (s *Store) InsertBlendAdminEvent(ctx context.Context, e blend.AdminEvent) e
 }
 
 // buildAdminAttributes builds the jsonb payload per event kind.
-func buildAdminAttributes(e blend.AdminEvent) map[string]any {
+func buildAdminAttributes(e domain.BlendAdminEvent) map[string]any {
 	attrs := map[string]any{}
 	switch e.Kind {
-	case blend.EventUpdatePool:
+	case domain.BlendEventUpdatePool:
 		attrs["backstop_take_rate"] = e.BackstopTakeRate
 		attrs["max_positions"] = e.MaxPositions
 		attrs["min_collateral"] = bigIntOrEmpty(e.MinCollateral)
-	case blend.EventQueueSetReserve:
+	case domain.BlendEventQueueSetReserve:
 		if e.ReserveConfig != nil {
 			attrs["metadata"] = e.ReserveConfig
 		}
-	case blend.EventSetReserve:
+	case domain.BlendEventSetReserve:
 		attrs["index"] = e.ReserveIndex
-	case blend.EventSetStatus:
+	case domain.BlendEventSetStatus:
 		attrs["status"] = e.NewStatus
 		attrs["by_admin"] = e.ByAdmin
 	}
@@ -94,13 +94,13 @@ func buildAdminAttributes(e blend.AdminEvent) map[string]any {
 // CHECK constraint in migration 0042.
 func isBlendAdminKind(kind string) bool {
 	switch kind {
-	case blend.EventSetAdmin,
-		blend.EventUpdatePool,
-		blend.EventQueueSetReserve,
-		blend.EventCancelSetReserve,
-		blend.EventSetReserve,
-		blend.EventSetStatus,
-		blend.EventDeploy:
+	case domain.BlendEventSetAdmin,
+		domain.BlendEventUpdatePool,
+		domain.BlendEventQueueSetReserve,
+		domain.BlendEventCancelSetReserve,
+		domain.BlendEventSetReserve,
+		domain.BlendEventSetStatus,
+		domain.BlendEventDeploy:
 		return true
 	}
 	return false

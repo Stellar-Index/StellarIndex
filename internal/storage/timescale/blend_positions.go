@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/blend"
+	"github.com/StellarIndex/stellar-index/internal/domain"
 )
 
 // InsertBlendPositionEvent appends one money-market position-change
@@ -26,7 +26,7 @@ import (
 // surfaces in the row — the decoder should never produce one,
 // but stamping zero here is more useful than failing the insert
 // on a defaulted struct value.
-func (s *Store) InsertBlendPositionEvent(ctx context.Context, e blend.PositionEvent) error {
+func (s *Store) InsertBlendPositionEvent(ctx context.Context, e domain.BlendPositionEvent) error {
 	if e.Pool == "" {
 		return errors.New("timescale: InsertBlendPositionEvent: Pool is empty")
 	}
@@ -72,13 +72,13 @@ func (s *Store) InsertBlendPositionEvent(ctx context.Context, e blend.PositionEv
 // in migration 0042.
 func isBlendPositionKind(kind string) bool {
 	switch kind {
-	case blend.EventSupply,
-		blend.EventWithdraw,
-		blend.EventSupplyCollateral,
-		blend.EventWithdrawCollateral,
-		blend.EventBorrow,
-		blend.EventRepay,
-		blend.EventFlashLoan:
+	case domain.BlendEventSupply,
+		domain.BlendEventWithdraw,
+		domain.BlendEventSupplyCollateral,
+		domain.BlendEventWithdrawCollateral,
+		domain.BlendEventBorrow,
+		domain.BlendEventRepay,
+		domain.BlendEventFlashLoan:
 		return true
 	}
 	return false

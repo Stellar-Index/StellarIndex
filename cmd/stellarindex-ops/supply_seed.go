@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/config"
+	"github.com/StellarIndex/stellar-index/internal/domain"
 	"github.com/StellarIndex/stellar-index/internal/sources/accounts"
 	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
@@ -112,7 +113,7 @@ func supplySeedObservations(args []string) error {
 			Flags:      seed.Flags,
 			SeqNum:     seed.SeqNum,
 		}
-		if err := store.InsertAccountObservation(ctx, obs); err != nil {
+		if err := store.InsertAccountObservation(ctx, domain.AccountObservation(obs)); err != nil {
 			return fmt.Errorf("insert observation for %s: %w", seed.AccountID, err)
 		}
 		seeded++

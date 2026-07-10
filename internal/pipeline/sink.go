@@ -9,6 +9,7 @@ import (
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/StellarIndex/stellar-index/internal/domain"
 	"github.com/StellarIndex/stellar-index/internal/obs"
 	"github.com/StellarIndex/stellar-index/internal/sources/accounts"
 	"github.com/StellarIndex/stellar-index/internal/sources/aquarius"
@@ -944,7 +945,7 @@ func persistAquariusLiquidity(ctx context.Context, logger *slog.Logger, store *t
 // (supply / withdraw / supply_collateral / withdraw_collateral /
 // borrow / repay / flash_loan) to the blend_positions hypertable.
 func persistBlendPositionEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend.PositionEvent) {
-	if err := store.InsertBlendPositionEvent(ctx, e); err != nil {
+	if err := store.InsertBlendPositionEvent(ctx, domain.BlendPositionEvent(e)); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(blend.SourceName, "blend_position").Inc()
 		logger.Error("insert blend position event failed",
 			"pool", e.Pool, "kind", e.Kind, "user", e.User, "asset", e.Asset,
@@ -961,7 +962,7 @@ func persistBlendPositionEvent(ctx context.Context, logger *slog.Logger, store *
 // (gulp / claim / reserve_emission_update / gulp_emissions /
 // bad_debt / defaulted_debt) to the blend_emissions hypertable.
 func persistBlendEmissionEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend.EmissionEvent) {
-	if err := store.InsertBlendEmissionEvent(ctx, e); err != nil {
+	if err := store.InsertBlendEmissionEvent(ctx, domain.BlendEmissionEvent(e)); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(blend.SourceName, "blend_emission").Inc()
 		logger.Error("insert blend emission event failed",
 			"pool", e.Pool, "kind", e.Kind,
@@ -979,7 +980,7 @@ func persistBlendEmissionEvent(ctx context.Context, logger *slog.Logger, store *
 // / deploy) to the blend_admin hypertable. The deploy event from
 // the pool-factory drives runtime pool enumeration.
 func persistBlendAdminEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend.AdminEvent) {
-	if err := store.InsertBlendAdminEvent(ctx, e); err != nil {
+	if err := store.InsertBlendAdminEvent(ctx, domain.BlendAdminEvent(e)); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(blend.SourceName, "blend_admin").Inc()
 		logger.Error("insert blend admin event failed",
 			"contract_id", e.ContractID, "kind", e.Kind,
@@ -1259,7 +1260,7 @@ func bumpEntryCount(ctx context.Context, logger *slog.Logger, store *timescale.S
 }
 
 func persistAccountObservation(ctx context.Context, logger *slog.Logger, store *timescale.Store, o accounts.Observation) {
-	if err := store.InsertAccountObservation(ctx, o); err != nil {
+	if err := store.InsertAccountObservation(ctx, domain.AccountObservation(o)); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(accounts.SourceName, "account_observation").Inc()
 		logger.Error("insert account observation failed",
 			"account_id", o.AccountID, "ledger", o.Ledger,

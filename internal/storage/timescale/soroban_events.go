@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/sorobanevents"
+	"github.com/StellarIndex/stellar-index/internal/domain"
 )
 
 // InsertSorobanEventsBatch persists a slice of raw Soroban event
@@ -30,7 +30,7 @@ import (
 // batch would abort the whole transaction on COMMIT — surfacing
 // the validation here keeps one rogue event from sinking 999 good
 // ones.
-func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []sorobanevents.Row) error {
+func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []domain.SorobanEventRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -137,7 +137,7 @@ func (s *Store) StreamSorobanEvents(
 	contractIDs []string,
 	topic0Syms []string,
 	excludeTopic0Syms []string,
-	fn func(sorobanevents.Row) error,
+	fn func(domain.SorobanEventRow) error,
 ) error {
 	if to < from {
 		return errors.New("timescale: StreamSorobanEvents: to < from")
@@ -201,7 +201,7 @@ func (s *Store) StreamSorobanEvents(
 
 	for rows.Next() {
 		var (
-			r                      sorobanevents.Row
+			r                      domain.SorobanEventRow
 			ledger                 int64
 			opIdx                  int16
 			eventIdx               int16

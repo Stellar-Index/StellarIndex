@@ -37,6 +37,38 @@ against.
   `positional-logger internal/sources/forex/worker.go` entry renamed to the new path (same
   grandfathered deviation, not a new one). `go build`/`go vet`/`go test ./...` green;
   `scripts/ci/lint-imports.sh` and `scripts/ci/lint-lexicon.sh` pass with zero new entries.
+- **Storage-layering move: new `internal/domain` package for persisted structs**
+  (maintainability-audit-2026-07-01 D8 M0-1, ROADMAP #47). `internal/storage/timescale`
+  imported UPWARD into compute/source packages purely to reference plain data shapes it
+  reads/writes (`mev.StoredEvent`, `accounts.Observation`, `blend.PositionEvent`, …), making
+  the `scripts/ci/lint-imports.sh` `L/storage-below-compute` rule's grandfathered
+  `lint-imports.baseline` list the load-bearing guard instead of the rule itself. Moved the
+  plain persisted shapes into a new dependency-light `internal/domain` (only
+  `internal/canonical` + stdlib) and had storage import that instead: zero-method shapes
+  (`mev.{OracleRef,AuctionFill,StoredEvent}`, `divergence.ObservationRecord`,
+  `sorobanevents.Row`, `aggregate/baseline.TimedVWAP`) re-export as transparent Go type
+  aliases in their origin package, so every other caller is unaffected; the shapes that
+  double as `consumer.Event` (`accounts.Observation`,
+  `blend.{PositionEvent,EmissionEvent,AdminEvent}` — EventKind()/Source() methods, which Go
+  forbids on a type alias to a foreign type) are re-declared as locally-defined types over
+  the domain shape instead, with an explicit `domain.X(value)` conversion at the handful of
+  call sites that hand a value across the storage boundary (`internal/pipeline/sink.go`,
+  `cmd/stellarindex-ops/supply_seed.go`, the affected `test/integration/*.go` cases) — the
+  compiler enforces every one. The 20 Blend money-market/credit-risk/admin event-kind
+  constants storage validates `Kind` against moved the same way (plain untyped-string
+  aliases). This clears **9 of the 15** `L/storage-below-compute` baseline entries:
+  `account_observations.go`, `aggregates.go`, `blend_admin.go`, `blend_emissions.go`,
+  `blend_positions.go`, `divergence_observations.go`, `mev.go`, `soroban_events.go`,
+  `topic_samples.go`. The remaining 6 (`blend_pool_state_reader.go`, `blend_auctions.go`,
+  `baseline.go`, `freeze_events.go`, `supply.go`, `trades.go`) pull in actual compute/policy
+  logic (scval-based decoders, `aggregate.FiatProxy`/`external.Lookup` aggregator policy,
+  `anomaly.Decision`'s classification fields, methods used across many construction sites)
+  rather than a flat persisted struct, so they stay grandfathered — see the updated
+  `lint-imports.baseline` comment for the itemised reasoning per file. No signature changes
+  beyond what the move mechanically required; no wire/metric/config changes.
+  `go build`/`go vet`/`go test ./...` green (incl. `-tags integration` build);
+  `scripts/ci/lint-imports.sh` passes with the baseline **shrunk** (15 → 6 entries, zero new
+  entries added — `scripts/ci/lint-baseline-growth.sh` sees a pure-removal diff).
 
 ### Fixed
 - **blend_emitter WASM audit closed; `BackfillSafe` flipped true.** Read-only against the

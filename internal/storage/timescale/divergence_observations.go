@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/divergence"
+	"github.com/StellarIndex/stellar-index/internal/domain"
 )
 
 // LedgerProvider is defined by freeze_events.go (#560 landed first).
@@ -57,7 +57,7 @@ func WithDivergenceLedgerProvider(p LedgerProvider) DivergenceSinkOption {
 // microsecond a no-op via ON CONFLICT — but since we control the
 // observed_at upstream (the worker sets it) collisions are rare in
 // practice.
-func (s *DivergenceSink) RecordObservation(ctx context.Context, obs divergence.ObservationRecord) error {
+func (s *DivergenceSink) RecordObservation(ctx context.Context, obs domain.DivergenceObservationRecord) error {
 	var ledger uint32
 	if s.getLedger != nil {
 		ledger = s.getLedger.LatestLedger()

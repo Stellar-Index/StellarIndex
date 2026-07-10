@@ -7,8 +7,8 @@ import (
 
 	"github.com/lib/pq"
 
-	"github.com/StellarIndex/stellar-index/internal/aggregate/mev"
 	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/domain"
 )
 
 // TradesForArbScan returns recent ON-CHAIN trades (ledger > 0, with a
@@ -116,7 +116,7 @@ func (s *Store) TradesForArbScan(ctx context.Context, since time.Time, limit int
 // (ledger > 0) published after `since`, ascending by ledger, capped
 // at `limit`. Satisfies mev.OracleScanner — the input for the
 // oracle_sandwich + liquidation_cascade detectors.
-func (s *Store) OracleUpdatesForMEVScan(ctx context.Context, since time.Time, limit int) ([]mev.OracleRef, error) {
+func (s *Store) OracleUpdatesForMEVScan(ctx context.Context, since time.Time, limit int) ([]domain.MEVOracleRef, error) {
 	if limit <= 0 {
 		limit = 50_000
 	}
@@ -135,9 +135,9 @@ func (s *Store) OracleUpdatesForMEVScan(ctx context.Context, since time.Time, li
 	}
 	defer func() { _ = rows.Close() }()
 
-	var out []mev.OracleRef
+	var out []domain.MEVOracleRef
 	for rows.Next() {
-		var o mev.OracleRef
+		var o domain.MEVOracleRef
 		if err := rows.Scan(
 			&o.Source, &o.ContractID, &o.Ledger, &o.TxHash, &o.OpIndex,
 			&o.Asset, &o.Quote, &o.Timestamp,
@@ -157,7 +157,7 @@ func (s *Store) OracleUpdatesForMEVScan(ctx context.Context, since time.Time, li
 // 1=BadDebt — Interest auctions aren't liquidations) after `since`,
 // ascending by ledger, capped at `limit`. Satisfies
 // mev.AuctionScanner.
-func (s *Store) BlendFillsForMEVScan(ctx context.Context, since time.Time, limit int) ([]mev.AuctionFill, error) {
+func (s *Store) BlendFillsForMEVScan(ctx context.Context, since time.Time, limit int) ([]domain.MEVAuctionFill, error) {
 	if limit <= 0 {
 		limit = 50_000
 	}
@@ -177,9 +177,9 @@ func (s *Store) BlendFillsForMEVScan(ctx context.Context, since time.Time, limit
 	}
 	defer func() { _ = rows.Close() }()
 
-	var out []mev.AuctionFill
+	var out []domain.MEVAuctionFill
 	for rows.Next() {
-		var f mev.AuctionFill
+		var f domain.MEVAuctionFill
 		if err := rows.Scan(
 			&f.Pool, &f.User, &f.Filler, &f.AuctionType,
 			&f.Ledger, &f.TxHash, &f.OpIndex, &f.Timestamp,
@@ -197,7 +197,7 @@ func (s *Store) BlendFillsForMEVScan(ctx context.Context, since time.Time, limit
 // InsertMEVEvent persists a detected MEV event, idempotent on
 // dedup_key (ON CONFLICT DO NOTHING). Returns inserted=false when the
 // event already existed. Satisfies mev.Sink.
-func (s *Store) InsertMEVEvent(ctx context.Context, e mev.StoredEvent) (bool, error) {
+func (s *Store) InsertMEVEvent(ctx context.Context, e domain.MEVStoredEvent) (bool, error) {
 	const q = `
         INSERT INTO mev_events (
             detected_at, detected_at_ledger, kind,

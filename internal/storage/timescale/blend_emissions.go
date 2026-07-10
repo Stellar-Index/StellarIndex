@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/sources/blend"
+	"github.com/StellarIndex/stellar-index/internal/domain"
 )
 
 // InsertBlendEmissionEvent appends one Blend emission / credit-
@@ -26,7 +26,7 @@ import (
 // attributes jsonb column rather than promoted to typed columns —
 // they're per-kind specific and don't warrant a dedicated column
 // each (same shape as cctp_events / migration 0038).
-func (s *Store) InsertBlendEmissionEvent(ctx context.Context, e blend.EmissionEvent) error {
+func (s *Store) InsertBlendEmissionEvent(ctx context.Context, e domain.BlendEmissionEvent) error {
 	if e.Pool == "" {
 		return errors.New("timescale: InsertBlendEmissionEvent: Pool is empty")
 	}
@@ -115,14 +115,14 @@ func (s *Store) BlendEmissionWindowStats(ctx context.Context, windowDays int) (*
 // buildEmissionAttributes builds the jsonb payload for the
 // attributes column on a per-kind basis. Empty (i.e. {}) for
 // kinds whose fields are all promoted to typed columns.
-func buildEmissionAttributes(e blend.EmissionEvent) map[string]any {
+func buildEmissionAttributes(e domain.BlendEmissionEvent) map[string]any {
 	attrs := map[string]any{}
 	switch e.Kind {
-	case blend.EventReserveEmissions:
+	case domain.BlendEventReserveEmissions:
 		attrs["res_token_id"] = e.ResTokenID
 		attrs["eps"] = e.EmissionsPerSec
 		attrs["expiration"] = e.Expiration
-	case blend.EventClaim:
+	case domain.BlendEventClaim:
 		if len(e.ReserveTokenIDs) > 0 {
 			attrs["reserve_token_ids"] = e.ReserveTokenIDs
 		}
@@ -135,12 +135,12 @@ func buildEmissionAttributes(e blend.EmissionEvent) map[string]any {
 // in migration 0042.
 func isBlendEmissionKind(kind string) bool {
 	switch kind {
-	case blend.EventGulp,
-		blend.EventClaim,
-		blend.EventReserveEmissions,
-		blend.EventGulpEmissions,
-		blend.EventBadDebt,
-		blend.EventDefaultedDebt:
+	case domain.BlendEventGulp,
+		domain.BlendEventClaim,
+		domain.BlendEventReserveEmissions,
+		domain.BlendEventGulpEmissions,
+		domain.BlendEventBadDebt,
+		domain.BlendEventDefaultedDebt:
 		return true
 	}
 	return false

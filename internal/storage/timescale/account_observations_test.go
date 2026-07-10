@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/accounts"
+	"github.com/StellarIndex/stellar-index/internal/domain"
 )
 
 // TestInsertAccountObservation_RejectsEmptyAccountID — the
@@ -17,7 +17,7 @@ import (
 func TestInsertAccountObservation_RejectsEmptyAccountID(t *testing.T) {
 	// nil *sql.DB — the validation guard fires before any DB call.
 	s := &Store{}
-	err := s.InsertAccountObservation(context.Background(), accounts.Observation{
+	err := s.InsertAccountObservation(context.Background(), domain.AccountObservation{
 		Balance: big.NewInt(0),
 	})
 	if err == nil {
@@ -33,7 +33,7 @@ func TestInsertAccountObservation_RejectsEmptyAccountID(t *testing.T) {
 // values to readers. Reject loudly.
 func TestInsertAccountObservation_RejectsNilBalance(t *testing.T) {
 	s := &Store{}
-	err := s.InsertAccountObservation(context.Background(), accounts.Observation{
+	err := s.InsertAccountObservation(context.Background(), domain.AccountObservation{
 		AccountID: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
 	})
 	if err == nil {

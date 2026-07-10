@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/StellarIndex/stellar-index/internal/domain"
 	"github.com/StellarIndex/stellar-index/internal/sources/blend"
 	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
 )
@@ -52,7 +53,7 @@ func TestBlendEmissionWindowStatsAndBespoke(t *testing.T) {
 		{Pool: blendEmPool, Kind: blend.EventDefaultedDebt, Asset: blendEmAsset, Amount: big.NewInt(250), Ledger: 61_000_003, TxHash: pad64("h", 3), OpIndex: 0, EventIndex: 0, Timestamp: t0.Add(3 * time.Minute)},
 	}
 	for _, e := range rows {
-		if err := store.InsertBlendEmissionEvent(ctx, e); err != nil {
+		if err := store.InsertBlendEmissionEvent(ctx, domain.BlendEmissionEvent(e)); err != nil {
 			t.Fatalf("InsertBlendEmissionEvent %s: %v", e.Kind, err)
 		}
 	}

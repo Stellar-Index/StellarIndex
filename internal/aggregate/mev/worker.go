@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/domain"
 )
 
 // TradeScanner supplies the recent on-chain trades the detector scans.
@@ -54,17 +55,10 @@ type TxOrderResolver interface {
 // StoredEvent is the persistence-ready form of a Candidate — the shape
 // the mev_events row is built from. DetailJSON is the row's `detail`
 // jsonb (assets / sources / legs / notional as evidence).
-type StoredEvent struct {
-	Kind             string
-	Ledger           uint32
-	DetectedAtLedger uint32
-	Timestamp        time.Time
-	TxHashes         []string
-	Accounts         []string
-	NotionalUSD      string // "" → stored NULL
-	DedupKey         string
-	DetailJSON       []byte
-}
+//
+// Canonical definition lives in [domain.MEVStoredEvent] — see the
+// [OracleRef] doc (inputs.go) for why this is an alias.
+type StoredEvent = domain.MEVStoredEvent
 
 // arbDetail is the JSON shape persisted to mev_events.detail for an
 // arbitrage event — the evidence a reader needs to verify the cycle.

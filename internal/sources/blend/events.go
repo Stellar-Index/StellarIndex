@@ -32,6 +32,7 @@ package blend
 import (
 	"errors"
 
+	"github.com/StellarIndex/stellar-index/internal/domain"
 	"github.com/StellarIndex/stellar-index/internal/scval"
 )
 
@@ -42,6 +43,19 @@ const SourceName = "blend"
 // Event names — topic[0] of every Blend pool / pool-factory event,
 // as a Soroban Symbol on the wire. Verified 2026-04-22 against
 // blend-contracts-v2 commit c19abee5b9be4f49e0cda9057e87d343e5dcc095.
+//
+// The money-market / credit-risk / admin / pool-factory kinds (all
+// but the three auction ones) are also the persisted `event_kind`
+// column value in blend_positions / blend_emissions / blend_admin,
+// so their canonical definition lives in [domain.BlendEventSupply]
+// and its siblings (D8 M0-1: internal/storage/timescale validates
+// against these values and must not import upward into this package
+// to do so); the const names below are aliases so every existing
+// caller of blend.EventSupply etc. is unaffected. The three auction
+// consts have no storage-side validation switch (blend_auctions.go
+// keeps its blend import regardless, for
+// blend.ParseReserveConfigMetadata + the API-shared blend.ReserveConfig
+// — see internal/domain/blend.go), so they stay defined here only.
 const (
 	// Auction events (PRIMARY — directional price signals).
 	EventNewAuction    = "new_auction"
@@ -49,33 +63,33 @@ const (
 	EventDeleteAuction = "delete_auction"
 
 	// Money-market events (SECONDARY — supply/borrow tallies).
-	EventSupply             = "supply"
-	EventWithdraw           = "withdraw"
-	EventSupplyCollateral   = "supply_collateral"
-	EventWithdrawCollateral = "withdraw_collateral"
-	EventBorrow             = "borrow"
-	EventRepay              = "repay"
-	EventFlashLoan          = "flash_loan"
-	EventGulp               = "gulp"
-	EventClaim              = "claim"
+	EventSupply             = domain.BlendEventSupply
+	EventWithdraw           = domain.BlendEventWithdraw
+	EventSupplyCollateral   = domain.BlendEventSupplyCollateral
+	EventWithdrawCollateral = domain.BlendEventWithdrawCollateral
+	EventBorrow             = domain.BlendEventBorrow
+	EventRepay              = domain.BlendEventRepay
+	EventFlashLoan          = domain.BlendEventFlashLoan
+	EventGulp               = domain.BlendEventGulp
+	EventClaim              = domain.BlendEventClaim
 
 	// Credit-risk + emissions events.
-	EventBadDebt          = "bad_debt"
-	EventDefaultedDebt    = "defaulted_debt"
-	EventReserveEmissions = "reserve_emission_update"
-	EventGulpEmissions    = "gulp_emissions"
+	EventBadDebt          = domain.BlendEventBadDebt
+	EventDefaultedDebt    = domain.BlendEventDefaultedDebt
+	EventReserveEmissions = domain.BlendEventReserveEmissions
+	EventGulpEmissions    = domain.BlendEventGulpEmissions
 
 	// Admin / status events.
-	EventSetAdmin         = "set_admin"
-	EventUpdatePool       = "update_pool"
-	EventQueueSetReserve  = "queue_set_reserve"
-	EventCancelSetReserve = "cancel_set_reserve"
-	EventSetReserve       = "set_reserve"
-	EventSetStatus        = "set_status"
+	EventSetAdmin         = domain.BlendEventSetAdmin
+	EventUpdatePool       = domain.BlendEventUpdatePool
+	EventQueueSetReserve  = domain.BlendEventQueueSetReserve
+	EventCancelSetReserve = domain.BlendEventCancelSetReserve
+	EventSetReserve       = domain.BlendEventSetReserve
+	EventSetStatus        = domain.BlendEventSetStatus
 
 	// Pool-factory event — observed at the factory contract, used
 	// for runtime pool enumeration.
-	EventDeploy = "deploy"
+	EventDeploy = domain.BlendEventDeploy
 )
 
 // Mainnet V2 contract addresses — verified 2026-04-22 via

@@ -2,9 +2,9 @@ package blend
 
 import (
 	"fmt"
-	"math/big"
 	"time"
 
+	"github.com/StellarIndex/stellar-index/internal/domain"
 	"github.com/StellarIndex/stellar-index/internal/events"
 	"github.com/StellarIndex/stellar-index/internal/scval"
 )
@@ -46,23 +46,21 @@ import (
 // TokenAmount + BOrDAmount are *big.Int — i128 amounts per
 // ADR-0003; the storage layer writes them as NUMERIC, the JSON
 // wire shape as a decimal string.
-type PositionEvent struct {
-	Pool string // emitting pool contract C-strkey
-	Kind string // one of the seven money-market Event* constants
-
-	Asset        string // topic[1] asset Address (G or C)
-	User         string // topic[2] from / user Address (G or C)
-	Counterparty string // flash_loan only: topic[3] borrowing contract; "" otherwise
-
-	TokenAmount *big.Int // body[0]: tokens_in / tokens_out i128
-	BOrDAmount  *big.Int // body[1]: b_or_d_tokens minted / burnt i128
-
-	Ledger     uint32
-	TxHash     string
-	OpIndex    uint32
-	EventIndex uint32 // distinguishes multiple same-(asset,user,kind) position events in one op (PK component, migration 0054)
-	Timestamp  time.Time
-}
+// Field-for-field identical to [domain.BlendPositionEvent] — the
+// canonical, persisted-shape definition (D8 M0-1:
+// internal/storage/timescale reads/writes this shape and must not
+// import upward into this package to do so). PositionEvent is
+// declared as its OWN named type (not a `= domain.BlendPositionEvent`
+// alias) because it carries the EventKind()/Source() methods
+// (consumer.go) that satisfy consumer.Event — Go permits methods on
+// any type declared in this package, even one whose underlying type
+// comes from elsewhere, but NOT on a type alias to a foreign type.
+// The one consequence: the call site that hands a PositionEvent
+// across the storage boundary (internal/pipeline/sink.go) converts
+// explicitly via domain.BlendPositionEvent(e) — legal because the
+// underlying struct shape is identical, and the compiler catches
+// every site.
+type PositionEvent domain.BlendPositionEvent
 
 // EmissionEvent is the decoded shape of the four emission /
 // credit-risk events (gulp / claim / reserve_emission_update /
@@ -73,37 +71,20 @@ type PositionEvent struct {
 // EventKind discriminates which — one of: EventGulp, EventClaim,
 // EventReserveEmissions, EventGulpEmissions, EventBadDebt,
 // EventDefaultedDebt.
-type EmissionEvent struct {
-	Pool string
-	Kind string
-
-	// Promoted typed fields. Populated per event kind:
-	//   gulp:                    Asset, Amount(=token_delta)
-	//   claim:                   User(=from), Amount(=amount_claimed),
-	//                            ReserveTokenIDs (from body)
-	//   reserve_emission_update: ResTokenID, EmissionsPerSec, Expiration
-	//   gulp_emissions:          Amount
-	//   bad_debt:                User, Asset, Amount(=d_tokens)
-	//   defaulted_debt:          Asset, Amount(=d_tokens_burnt)
-	Asset string
-	User  string
-
-	Amount *big.Int // primary i128 amount (see per-kind mapping above)
-
-	// reserve_emission_update extras (NULL for everything else).
-	ResTokenID      uint32
-	EmissionsPerSec uint64
-	Expiration      uint64
-
-	// claim extras (NULL for everything else).
-	ReserveTokenIDs []uint32
-
-	Ledger     uint32
-	TxHash     string
-	OpIndex    uint32
-	EventIndex uint32 // distinguishes multiple same-kind emission events in one op (PK component)
-	Timestamp  time.Time
-}
+// Promoted typed fields. Populated per event kind:
+//
+//	gulp:                    Asset, Amount(=token_delta)
+//	claim:                   User(=from), Amount(=amount_claimed),
+//	                         ReserveTokenIDs (from body)
+//	reserve_emission_update: ResTokenID, EmissionsPerSec, Expiration
+//	gulp_emissions:          Amount
+//	bad_debt:                User, Asset, Amount(=d_tokens)
+//	defaulted_debt:          Asset, Amount(=d_tokens_burnt)
+//
+// Field-for-field identical to [domain.BlendEmissionEvent] — see the
+// [PositionEvent] doc for why this is a locally-declared type rather
+// than an alias, and for the bridge-conversion consequence.
+type EmissionEvent domain.BlendEmissionEvent
 
 // AdminEvent is the decoded shape of every pool-config / admin /
 // pool-factory lifecycle event: set_admin, update_pool,
@@ -112,46 +93,25 @@ type EmissionEvent struct {
 //
 // ContractID is the EMITTING contract — pool C-strkey for the six
 // pool events, pool-factory C-strkey for `deploy`.
-type AdminEvent struct {
-	ContractID string
-	Kind       string
-
-	// Promoted typed fields.
-	//   set_admin / update_pool / queue_set_reserve /
-	//   cancel_set_reserve / set_status (admin variant):  Admin
-	//   queue_set_reserve / cancel_set_reserve / set_reserve: Asset
-	//   set_admin.new_admin / deploy.pool_address:           Target
-	Admin  string
-	Asset  string
-	Target string
-
-	// update_pool body fields.
-	BackstopTakeRate uint32
-	MaxPositions     uint32
-	MinCollateral    *big.Int // i128 per ADR-0003
-
-	// set_reserve body field; queue_set_reserve.metadata.index.
-	ReserveIndex uint32
-
-	// set_status body field.
-	NewStatus uint32
-	// True when the set_status variant included an admin topic
-	// (set_status_admin in events.rs); false for the non-admin
-	// `set_status(new_status)` variant.
-	ByAdmin bool
-
-	// queue_set_reserve.metadata — full ReserveConfig.
-	// Stored as a map for round-trip parity with the on-wire
-	// struct; the storage layer marshals to jsonb. Nil when the
-	// event kind doesn't carry a ReserveConfig.
-	ReserveConfig map[string]any
-
-	Ledger     uint32
-	TxHash     string
-	OpIndex    uint32
-	EventIndex uint32 // distinguishes multiple same-kind admin events in one op (PK component)
-	Timestamp  time.Time
-}
+// Promoted typed fields.
+//
+//	set_admin / update_pool / queue_set_reserve /
+//	cancel_set_reserve / set_status (admin variant):  Admin
+//	queue_set_reserve / cancel_set_reserve / set_reserve: Asset
+//	set_admin.new_admin / deploy.pool_address:           Target
+//
+// ByAdmin is true when the set_status variant included an admin
+// topic (set_status_admin in events.rs); false for the non-admin
+// `set_status(new_status)` variant. ReserveConfig
+// (queue_set_reserve.metadata, full ReserveConfig) is stored as a
+// map for round-trip parity with the on-wire struct; the storage
+// layer marshals it to jsonb. Nil when the event kind doesn't carry
+// a ReserveConfig.
+//
+// Field-for-field identical to [domain.BlendAdminEvent] — see the
+// [PositionEvent] doc for why this is a locally-declared type rather
+// than an alias, and for the bridge-conversion consequence.
+type AdminEvent domain.BlendAdminEvent
 
 // ─── classify (extended) ───────────────────────────────────────
 //

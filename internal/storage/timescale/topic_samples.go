@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/sorobanevents"
+	"github.com/StellarIndex/stellar-index/internal/domain"
 )
 
 // TopicSample is one representative soroban_events row for a distinct
@@ -15,7 +15,7 @@ import (
 // full topic XDRs + body so it can be Reconstruct()ed and fed to a
 // decoder's Matches() — the recognition audit (ADR-0033 Claim 2a).
 type TopicSample struct {
-	Row       sorobanevents.Row
+	Row       domain.SorobanEventRow
 	Count     int64
 	MinLedger uint32
 	MaxLedger uint32
@@ -68,7 +68,7 @@ func (s *Store) DistinctSorobanTopicSamples(ctx context.Context, from, to uint32
 	for rows.Next() {
 		var (
 			samp                     TopicSample
-			r                        sorobanevents.Row
+			r                        domain.SorobanEventRow
 			ledger                   int64
 			opIdx, eventIdx          int16
 			topicCount               int16

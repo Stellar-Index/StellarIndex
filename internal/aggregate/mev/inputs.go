@@ -2,37 +2,27 @@ package mev
 
 import (
 	"sort"
-	"time"
 
 	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/StellarIndex/stellar-index/internal/domain"
 )
 
 // OracleRef is one on-chain oracle_updates row, as the ordering-aware
 // detectors consume it. Asset/Quote are the canonical asset strings
 // the served tier stores (e.g. "CAS3J7…" SAC ids, "fiat:USD").
-type OracleRef struct {
-	Source     string
-	ContractID string
-	Ledger     uint32
-	TxHash     string
-	OpIndex    uint32
-	Asset      string
-	Quote      string
-	Timestamp  time.Time
-}
+//
+// Canonical definition lives in [domain.MEVOracleRef] (D8 M0-1:
+// internal/storage/timescale reads/writes this shape and must not
+// import upward into this package to do so); this is a transparent
+// alias so every existing caller of mev.OracleRef is unaffected.
+type OracleRef = domain.MEVOracleRef
 
 // AuctionFill is one blend_auctions fill row (event_kind='fill',
 // liquidation-relevant auction types) for the cascade detector.
-type AuctionFill struct {
-	Pool        string
-	User        string
-	Filler      string
-	AuctionType int16 // 0=UserLiquidation, 1=BadDebt
-	Ledger      uint32
-	TxHash      string
-	OpIndex     uint32
-	Timestamp   time.Time
-}
+//
+// Canonical definition lives in [domain.MEVAuctionFill] — see the
+// [OracleRef] doc for why this is an alias.
+type AuctionFill = domain.MEVAuctionFill
 
 // xlmSAC is the native-XLM Stellar Asset Contract id — the same asset
 // as "native" under a different identity (Soroban venues emit the SAC

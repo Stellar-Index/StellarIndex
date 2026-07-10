@@ -8,7 +8,7 @@
 # violations OR stale baseline entries, so the baseline shrinks
 # monotonically as reworks land.
 #
-# ─── CURRENT STATE: 15 entries, all L/storage-below-compute ────
+# ─── CURRENT STATE: 6 entries, all L/storage-below-compute ─────
 #
 # All legacy RPC-based per-source orchestration code was removed
 # in PR 165d. New code must satisfy the rules in lint-imports.sh
@@ -23,18 +23,46 @@
 # structs move to a neutral home (canonical / internal/domain);
 # remove each line as its file's upward import goes away. Do NOT
 # add new files to this list.
+#
+# 2026-07-10 (D8 M0-1 storage-layering move, ROADMAP #47): moved the
+# plain persisted structs to the new internal/domain (zero-method
+# shapes re-exported as transparent aliases from their origin
+# package; method-bearing consumer.Event shapes — accounts.Observation,
+# blend.PositionEvent/EmissionEvent/AdminEvent — re-declared as
+# locally-defined types over the domain shape, since Go forbids
+# methods on a type alias to a foreign type). This cleared 9 of the
+# original 15 entries: account_observations.go, aggregates.go,
+# blend_admin.go, blend_emissions.go, blend_positions.go,
+# divergence_observations.go, mev.go, soroban_events.go,
+# topic_samples.go. The remaining 6 could NOT move mechanically —
+# each pulls in actual compute/policy logic, not just a persisted
+# shape, so moving it would mean relocating business logic rather
+# than a data struct:
+#   - blend_pool_state_reader.go / blend_auctions.go: call blend's
+#     scval-based ReserveData/PoolConfig decoders and
+#     ParseReserveConfigMetadata; blend.ReserveConfig also crosses
+#     into internal/api/v1 (lending.go) carrying a BorrowRate()
+#     method, so it can't be decoupled from the blend package without
+#     touching the API layer too.
+#   - baseline.go: baseline.Baseline / baseline.MultiBaseline carry
+#     ZScore()/HasAnyValid()/MaxZScore() methods AND are constructed
+#     across internal/aggregate/baseline's refresh worker, not just
+#     read/written by storage.
+#   - freeze_events.go: anomaly.Decision's Class/Thresholds fields
+#     pull in internal/aggregate/anomaly's classification + threshold
+#     policy (Classifier, AssetClass), not a flat data shape.
+#   - supply.go: supply.Supply / supply.Basis are constructed across
+#     many internal/supply call sites (classic.go, crosscheck.go,
+#     overlay.go, …); moving Basis (which carries a String() method)
+#     would require touching every one of them.
+#   - trades.go: calls aggregate.FiatProxy(...) and
+#     external.Lookup(...)/external.FXSources() — genuine aggregator
+#     / source-registry POLICY functions (CLAUDE.md: "Stablecoin
+#     fiat-proxy is aggregator policy, not decoder policy"), not
+#     persisted structs.
 L/storage-below-compute internal/storage/clickhouse/blend_pool_state_reader.go
-L/storage-below-compute internal/storage/timescale/account_observations.go
-L/storage-below-compute internal/storage/timescale/aggregates.go
 L/storage-below-compute internal/storage/timescale/baseline.go
-L/storage-below-compute internal/storage/timescale/blend_admin.go
 L/storage-below-compute internal/storage/timescale/blend_auctions.go
-L/storage-below-compute internal/storage/timescale/blend_emissions.go
-L/storage-below-compute internal/storage/timescale/blend_positions.go
-L/storage-below-compute internal/storage/timescale/divergence_observations.go
 L/storage-below-compute internal/storage/timescale/freeze_events.go
-L/storage-below-compute internal/storage/timescale/mev.go
-L/storage-below-compute internal/storage/timescale/soroban_events.go
 L/storage-below-compute internal/storage/timescale/supply.go
-L/storage-below-compute internal/storage/timescale/topic_samples.go
 L/storage-below-compute internal/storage/timescale/trades.go

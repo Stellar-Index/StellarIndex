@@ -3,6 +3,8 @@ package baseline
 import (
 	"math"
 	"time"
+
+	"github.com/StellarIndex/stellar-index/internal/domain"
 )
 
 // Window-length constants used by the multi-window safeguard
@@ -170,10 +172,12 @@ func SplitByLookback(timed []TimedVWAP, now time.Time) (day1, day7, day30 []floa
 // TimedVWAP is one bucketed VWAP with its window-end timestamp. The
 // timestamp is the bucket end (when the price was "as of"), so
 // SplitByLookback's cutoffs are wall-clock comparable.
-type TimedVWAP struct {
-	VWAP      float64
-	BucketEnd time.Time
-}
+//
+// Canonical definition lives in [domain.BaselineTimedVWAP] (D8 M0-1:
+// internal/storage/timescale reads/writes this shape and must not
+// import upward into this package to do so); this is a transparent
+// alias so every existing caller of baseline.TimedVWAP is unaffected.
+type TimedVWAP = domain.BaselineTimedVWAP
 
 // firstAtOrAfter returns the index of the first entry in `timed`
 // with BucketEnd >= cutoff. Returns len(timed) when every entry is
