@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -221,21 +222,47 @@ func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) (func
 	return flush, nil
 }
 
-// filteringForwarder scans `r` line-by-line, drops every line that
-// contains checksumWarnSubstring, and writes the rest verbatim to
-// `realStderr` (each followed by a newline — Scanner strips it).
-// Exits cleanly on scanner error or EOF.
+// filteringForwarder reads `r` line-by-line, drops every line that
+// contains checksumWarnSubstring, and forwards the rest verbatim to
+// `realStderr`.
+//
+// INVARIANT (2026-07-10 indexer-seizure incident): this loop may exit
+// ONLY when the pipe itself reports EOF/error — i.e. flush() closed
+// the writer. The previous implementation used bufio.Scanner with a
+// 1 MiB cap; a single oversized line made Scan() return false, the
+// goroutine returned, and the pipe silently lost its only reader.
+// From then on the 64 KiB pipe filled and EVERY stderr write in the
+// process blocked forever — log flood → whole-binary seizure (the
+// aquarius-replay PG error flood triggered exactly this, freezing
+// ingest for ~28 min; even SIGQUIT's traceback couldn't flush).
+// Oversized lines are now forwarded in raw chunks instead of
+// terminating the drain.
 func filteringForwarder(r io.Reader, realStderr *os.File) {
-	scanner := bufio.NewScanner(r)
-	// SDK lines fit in default 64 KiB; bump the cap defensively to
-	// 1 MiB so a stray giant line can never panic the goroutine.
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if strings.Contains(string(line), checksumWarnSubstring) {
-			continue
+	br := bufio.NewReaderSize(r, 64*1024)
+	for {
+		line, err := br.ReadSlice('\n')
+		// Oversized line: ReadSlice fills the buffer without finding
+		// '\n'. Forward the chunks verbatim (no filtering — the SDK
+		// lines this filter targets are short) until the line ends.
+		// Never bail: a giant line must not orphan the pipe.
+		for errors.Is(err, bufio.ErrBufferFull) {
+			_, _ = realStderr.Write(line)
+			line, err = br.ReadSlice('\n')
 		}
-		_, _ = realStderr.Write(line)
-		_, _ = realStderr.Write([]byte{'\n'})
+		if len(line) > 0 && !strings.Contains(string(line), checksumWarnSubstring) {
+			// ReadSlice keeps the trailing '\n' (absent only on a
+			// final unterminated line at EOF — terminate it so the
+			// journal line stays well-formed, matching the previous
+			// Scanner behavior).
+			_, _ = realStderr.Write(line)
+			if line[len(line)-1] != '\n' {
+				_, _ = realStderr.Write([]byte{'\n'})
+			}
+		}
+		if err != nil {
+			// EOF (flush closed the writer) or a genuine pipe read
+			// error — either way the writer side is done with us.
+			return
+		}
 	}
 }
