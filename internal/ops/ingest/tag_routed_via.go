@@ -18,10 +18,15 @@ import (
 // (migration 0025 Phase B / BACKLOG #29). It walks the persisted
 // router-invocation record (soroswap_router_swaps) in ledger windows
 // and back-tags every same-(ledger, tx_hash) soroswap `trades` row
-// with routed_via='soroswap-router' via the same
-// timescale.TagTradesRoutedVia primitive the live sweeper uses — so
-// the historical and live tagging policies (first-wins, soroswap-
-// scoped, time-bounded) cannot drift.
+// via the same timescale.TagTradesRoutedVia primitive the live
+// sweeper uses — so the historical and live tagging policies
+// (first-wins, soroswap-scoped, time-bounded, call-path-attributed)
+// cannot drift. As of migration 0101/0103 (ROADMAP #11), a row whose
+// router call was recorded as a sub_invocation is tagged with its
+// outermost wrapping contract's registry name when that contract is
+// registered (e.g. the aggregator-exec seed); otherwise — including
+// every row from before call_path tracking existed — it falls back
+// to routed_via='soroswap-router'.
 //
 // SQL-only: no Galexie walk, no decoders. Both join sides are
 // already in Postgres. Each window is one UPDATE whose predicate is

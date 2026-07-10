@@ -43,10 +43,13 @@ type RoutedViaTagger interface {
 }
 
 // RunRoutedViaTagger sweeps the trailing lookback window every
-// interval, tagging same-tx soroswap trades with
-// routed_via='soroswap-router'. Blocks until ctx cancels (run it in
-// its own goroutine); performs one final sweep on shutdown so the
-// last partial window isn't left to the next boot's first tick.
+// interval, tagging same-tx soroswap trades via
+// timescale.TagTradesRoutedVia — routed_via='soroswap-router' by
+// default, or a more specific registered wrapper's name when the
+// router call's call_path (migration 0101/0103) identifies one.
+// Blocks until ctx cancels (run it in its own goroutine); performs
+// one final sweep on shutdown so the last partial window isn't left
+// to the next boot's first tick.
 //
 // interval/lookback <= 0 select the package defaults.
 func RunRoutedViaTagger(ctx context.Context, logger *slog.Logger, store RoutedViaTagger, interval, lookback time.Duration) {

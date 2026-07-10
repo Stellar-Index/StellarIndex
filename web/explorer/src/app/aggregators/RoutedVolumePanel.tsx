@@ -104,6 +104,23 @@ export function RoutedVolumePanel() {
                   >
                     {r.name}
                   </Link>
+                  {r.auto_discovered && (
+                    <span
+                      className="ml-1.5 rounded border border-line px-1 py-0.5 text-[9px] uppercase tracking-wider text-ink-muted"
+                      title="Evidence-observed, not vendor- or WASM-audit-verified"
+                    >
+                      unverified
+                    </span>
+                  )}
+                  {r.notes && r.notes.length > 0 && (
+                    <span
+                      className="ml-1 cursor-help text-ink-muted"
+                      title={r.notes.join(' ')}
+                      aria-label="Coverage caveat"
+                    >
+                      *
+                    </span>
+                  )}
                 </Td>
                 <Td>
                   <Link
@@ -132,7 +149,14 @@ export function RoutedVolumePanel() {
         trades in the same transaction (first-wins, never re-tagged).
         Volume is the USD valuation of the routed trades; &ldquo;—&rdquo;
         means the window&apos;s routed trades haven&apos;t received a USD
-        valuation yet, not zero.
+        valuation yet, not zero. A sub-invocation call (an aggregator
+        wrapping the router) is attributed to that aggregator&apos;s own
+        row when it&apos;s a registered contract; rows marked{' '}
+        <span className="rounded border border-line px-1 py-0.5 text-[9px] uppercase tracking-wider">
+          unverified
+        </span>{' '}
+        or with <span title="hover any * for details">*</span> carry
+        coverage caveats — hover for detail.
       </p>
     </Panel>
   );

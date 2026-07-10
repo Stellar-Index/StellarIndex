@@ -214,3 +214,141 @@ func TestRoutedViaTaggingAndRollup(t *testing.T) { //nolint:gocognit // linear s
 func keyOf(ledger, op uint32) string {
 	return fmt.Sprintf("%d/%d", ledger, op)
 }
+
+// TestRoutedViaCallPathAttribution covers the migration 0101/0103
+// follow-on (ROADMAP #11 + #29): a router swap recorded as a
+// sub_invocation is attributed to its OUTERMOST wrapping contract
+// when that contract is a registered 'router'-kind entry, and falls
+// back to the plain router name otherwise (unregistered wrapper, or
+// a direct top_level call). Three same-shape router swaps, one per
+// case, driven through the exact production primitive
+// (TagTradesRoutedVia) both live paths call.
+func TestRoutedViaCallPathAttribution(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn) // includes the 0103 aggregator-exec seed
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const (
+		routerContract    = "CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH"
+		knownAggregator   = "CD45PQFHSIUMIC4MVZXCQ2RD6REKXJMEHWRN56TWT3C4DV2U4DHVJRZH" // migration 0103 seed
+		unknownAggregator = "CBUNKNOWNWRAPPERNOTINTHEREGISTRYAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	)
+
+	usdc, err := c.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, _ := c.NewPair(c.NativeAsset(), usdc)
+
+	t0 := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
+
+	direct := mkIntegrationTrade("soroswap", 10, t0, pair, 1_000_000_000, 12_000_000)
+	direct.Ledger = 200
+	viaKnown := mkIntegrationTrade("soroswap", 11, t0.Add(time.Minute), pair, 1_000_000_000, 12_000_000)
+	viaKnown.Ledger = 201
+	viaUnknown := mkIntegrationTrade("soroswap", 12, t0.Add(2*time.Minute), pair, 1_000_000_000, 12_000_000)
+	viaUnknown.Ledger = 202
+
+	for _, tr := range []c.Trade{direct, viaKnown, viaUnknown} {
+		if err := store.InsertTrade(ctx, tr); err != nil {
+			t.Fatalf("InsertTrade: %v", err)
+		}
+	}
+
+	path := []string{
+		"CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+		"CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+	}
+	swaps := []timescale.SoroswapRouterSwap{
+		{ // top_level: direct call, no wrapper.
+			Ledger: direct.Ledger, LedgerCloseTime: t0, TxHash: direct.TxHash, OpIndex: 0,
+			ContractID: routerContract, FunctionName: "swap_exact_tokens_for_tokens",
+			Recipient: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+			Path:      path, AmountIn: "1000000000", AmountOut: "12000000",
+			CallSig:  "callpathtest000000000000000001a",
+			CallPath: []string{routerContract}, CallDepth: 0, CallKind: "top_level",
+		},
+		{ // sub_invocation wrapped by the registered aggregator-exec seed.
+			Ledger: viaKnown.Ledger, LedgerCloseTime: t0.Add(time.Minute), TxHash: viaKnown.TxHash, OpIndex: 0,
+			ContractID: routerContract, FunctionName: "swap_exact_tokens_for_tokens",
+			Recipient: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+			Path:      path, AmountIn: "1000000000", AmountOut: "12000000",
+			CallSig:  "callpathtest000000000000000002b",
+			CallPath: []string{knownAggregator, routerContract}, CallDepth: 1, CallKind: "sub_invocation",
+		},
+		{ // sub_invocation wrapped by a contract NOT in the registry.
+			Ledger: viaUnknown.Ledger, LedgerCloseTime: t0.Add(2 * time.Minute), TxHash: viaUnknown.TxHash, OpIndex: 0,
+			ContractID: routerContract, FunctionName: "swap_exact_tokens_for_tokens",
+			Recipient: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+			Path:      path, AmountIn: "1000000000", AmountOut: "12000000",
+			CallSig:  "callpathtest000000000000000003c",
+			CallPath: []string{unknownAggregator, routerContract}, CallDepth: 1, CallKind: "sub_invocation",
+		},
+	}
+	for _, sw := range swaps {
+		if err := store.InsertSoroswapRouterSwap(ctx, sw); err != nil {
+			t.Fatalf("InsertSoroswapRouterSwap: %v", err)
+		}
+	}
+
+	windowFrom, windowTo := t0.Add(-time.Minute), t0.Add(10*time.Minute)
+	tagged, err := store.TagTradesRoutedVia(ctx, "soroswap-router", "soroswap", windowFrom, windowTo)
+	if err != nil {
+		t.Fatalf("TagTradesRoutedVia: %v", err)
+	}
+	if tagged != 3 {
+		t.Fatalf("tagged = %d, want 3", tagged)
+	}
+
+	trades, err := store.TradesInRange(ctx, pair, windowFrom, windowTo.Add(time.Hour), 100)
+	if err != nil {
+		t.Fatalf("TradesInRange: %v", err)
+	}
+	byLedger := map[uint32]string{}
+	for _, tr := range trades {
+		byLedger[tr.Ledger] = tr.RoutedVia
+	}
+	if got := byLedger[direct.Ledger]; got != "soroswap-router" {
+		t.Errorf("direct call routed_via = %q, want soroswap-router (top_level fallback)", got)
+	}
+	if got := byLedger[viaKnown.Ledger]; got != "soroswap-router-aggregator-exec" {
+		t.Errorf("known-wrapper call routed_via = %q, want soroswap-router-aggregator-exec (call_path attributed)", got)
+	}
+	if got := byLedger[viaUnknown.Ledger]; got != "soroswap-router" {
+		t.Errorf("unknown-wrapper call routed_via = %q, want soroswap-router (unregistered-wrapper fallback)", got)
+	}
+
+	rollup, err := store.AggregatorRollup(ctx, windowFrom)
+	if err != nil {
+		t.Fatalf("AggregatorRollup: %v", err)
+	}
+	byName := map[string]timescale.AggregatorRollupRow{}
+	for _, row := range rollup {
+		byName[row.Name] = row
+	}
+	execRow, ok := byName["soroswap-router-aggregator-exec"]
+	if !ok {
+		t.Fatalf("no 'soroswap-router-aggregator-exec' registry row in rollup (0103 seed missing?): %+v", rollup)
+	}
+	if !execRow.AutoDiscovered {
+		t.Errorf("aggregator-exec AutoDiscovered = false, want true (evidence-observed, not vetted)")
+	}
+	if execRow.RoutedTrades != 1 {
+		t.Errorf("aggregator-exec RoutedTrades = %d, want 1 (only the known-wrapper trade)", execRow.RoutedTrades)
+	}
+	routerRow, ok := byName["soroswap-router"]
+	if !ok {
+		t.Fatalf("no 'soroswap-router' registry row in rollup: %+v", rollup)
+	}
+	if routerRow.RoutedTrades != 2 {
+		t.Errorf("soroswap-router RoutedTrades = %d, want 2 (direct + unknown-wrapper fallback)", routerRow.RoutedTrades)
+	}
+}

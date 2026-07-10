@@ -124,6 +124,74 @@ func TestAggregators_HappyPath(t *testing.T) {
 	}
 }
 
+// TestAggregators_NotesHonestDegrade pins the ROADMAP #11/#29 coverage
+// caveats: a router row always carries a "these cases can't be told
+// apart" note, an auto_discovered (evidence-only, unverified) router
+// row carries the stronger "not yet attributed" note, and a vault row
+// carries no note at all (Notes is a router-kind-only concept).
+func TestAggregators_NotesHonestDegrade(t *testing.T) {
+	reader := &stubAggregatorsReader{
+		rows: []timescale.AggregatorRollupRow{
+			{
+				ContractID:   "CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH",
+				Name:         "soroswap-router",
+				Kind:         "router",
+				ProtocolSlug: "soroswap",
+			},
+			{
+				ContractID:     "CD45PQFHSIUMIC4MVZXCQ2RD6REKXJMEHWRN56TWT3C4DV2U4DHVJRZH",
+				Name:           "soroswap-router-aggregator-exec",
+				Kind:           "router",
+				ProtocolSlug:   "unattributed",
+				AutoDiscovered: true,
+			},
+			{
+				ContractID:   "CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP",
+				Name:         "defindex-vault-usdc-autocompound",
+				Kind:         "aggregator-vault",
+				ProtocolSlug: "defindex",
+			},
+		},
+	}
+	srv := v1.New(v1.Options{Aggregators: reader})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/aggregators")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.AggregatorRow `json:"data"`
+	}
+	body, _ := readAll(resp)
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&env); err != nil {
+		t.Fatalf("decode: %v (body=%s)", err, body)
+	}
+	if len(env.Data) != 3 {
+		t.Fatalf("len(data) = %d, want 3", len(env.Data))
+	}
+
+	byName := map[string]v1.AggregatorRow{}
+	for _, row := range env.Data {
+		byName[row.Name] = row
+	}
+
+	router := byName["soroswap-router"]
+	if len(router.Notes) != 1 {
+		t.Errorf("soroswap-router Notes = %v, want exactly 1 (the shared-bucket caveat)", router.Notes)
+	}
+
+	exec := byName["soroswap-router-aggregator-exec"]
+	if len(exec.Notes) != 2 {
+		t.Errorf("aggregator-exec Notes = %v, want exactly 2 (unverified + not-yet-attributed)", exec.Notes)
+	}
+
+	vault := byName["defindex-vault-usdc-autocompound"]
+	if vault.Notes != nil {
+		t.Errorf("vault Notes = %v, want nil (Notes is router-kind only)", vault.Notes)
+	}
+}
+
 // TestAggregators_500OnReaderError pins the upstream-failure path.
 func TestAggregators_500OnReaderError(t *testing.T) {
 	srv := v1.New(v1.Options{Aggregators: &stubAggregatorsReader{err: errors.New("pg down")}})
