@@ -51,6 +51,52 @@ const (
 	EventUnkillClaim       = "unkill_claim"
 	EventKillGaugesClaim   = "kill_gauges_claim"
 	EventUnkillGaugesClaim = "unkill_gauges_claim"
+
+	// ─── Rewards-gauge subsystem (ROADMAP #89, 2026-07-10 census) ───
+	//
+	// A per-pool liquidity-mining layer on top of the swap/liquidity
+	// surface above. Verified against real r1 lake bytes (ClickHouse
+	// stellar.contract_events, 2026-07-10) — every one of these
+	// topics was observed emitted by a REGISTERED Aquarius pool
+	// contract (the same 332-pool gated set the trade/liquidity/
+	// reserves events use), not a separate gauge-factory contract.
+	// See decode_rewards.go for the per-kind wire shape citations.
+	EventPoolState                  = "pool_state"
+	EventClaimReward                = "claim_reward"
+	EventSetRewardsConfig           = "set_rewards_config"
+	EventPositionUpdate             = "position_update"
+	EventGaugeDeposit               = "deposit"
+	EventClaimFees                  = "claim_fees"
+	EventRewardsGaugeClaim          = "rewards_gauge_claim"
+	EventGaugeClaim                 = "claim"
+	EventRewardsGaugeScheduleReward = "rewards_gauge_schedule_reward"
+	EventSetRewardsState            = "set_rewards_state"
+	EventRewardsGaugeAdd            = "rewards_gauge_add"
+
+	// ─── Governance / upgrade admin surface (ROADMAP #89) ───
+	//
+	// Router + pool lifecycle actions. apply_upgrade / commit_upgrade
+	// are emitted by the ROUTER (MainnetRouter); the others are
+	// observed on pool contracts — see decode_admin.go for the exact
+	// per-kind emitter, cited against real lake bytes.
+	EventApplyUpgrade            = "apply_upgrade"
+	EventCommitUpgrade           = "commit_upgrade"
+	EventSetPrivilegedAddrs      = "set_privileged_addrs"
+	EventApplyTransferOwnership  = "apply_transfer_ownership"
+	EventCommitTransferOwnership = "commit_transfer_ownership"
+	EventEnableEmergencyMode     = "enable_emergency_mode"
+	EventDisableEmergencyMode    = "disable_emergency_mode"
+	EventPoolGaugeSwitchToken    = "pool_gauge_switch_token"
+
+	// EventConfigRewards is the ROUTER-side companion to the pool-side
+	// EventSetRewardsConfig — same reward round (verified against real
+	// lake bytes 2026-07-10: identical amount + expires_at values in
+	// the same tx). Not in the original 19-topic README census (which
+	// scanned the "set_rewards_config" name), but equally unhandled
+	// before this change and documented under the same gap in
+	// docs/protocols/aquarius.md line 23; folded in here as the 12th
+	// rewards-family kind rather than left as a second gap.
+	EventConfigRewards = "config_rewards"
 )
 
 // Mainnet contract addresses — verified during Phase-1 audit against
@@ -117,6 +163,31 @@ var (
 	// TopicSymbolAddPool is a ROUTER event topic (pool registration),
 	// not a pool event — see EventAddPool below.
 	TopicSymbolAddPool = scval.MustEncodeSymbol(EventAddPool)
+
+	// Rewards-gauge topic symbols.
+	TopicSymbolPoolState                  = scval.MustEncodeSymbol(EventPoolState)
+	TopicSymbolClaimReward                = scval.MustEncodeSymbol(EventClaimReward)
+	TopicSymbolSetRewardsConfig           = scval.MustEncodeSymbol(EventSetRewardsConfig)
+	TopicSymbolPositionUpdate             = scval.MustEncodeSymbol(EventPositionUpdate)
+	TopicSymbolGaugeDeposit               = scval.MustEncodeSymbol(EventGaugeDeposit)
+	TopicSymbolClaimFees                  = scval.MustEncodeSymbol(EventClaimFees)
+	TopicSymbolRewardsGaugeClaim          = scval.MustEncodeSymbol(EventRewardsGaugeClaim)
+	TopicSymbolGaugeClaim                 = scval.MustEncodeSymbol(EventGaugeClaim)
+	TopicSymbolRewardsGaugeScheduleReward = scval.MustEncodeSymbol(EventRewardsGaugeScheduleReward)
+	TopicSymbolSetRewardsState            = scval.MustEncodeSymbol(EventSetRewardsState)
+	TopicSymbolRewardsGaugeAdd            = scval.MustEncodeSymbol(EventRewardsGaugeAdd)
+
+	// Governance / upgrade admin topic symbols.
+	TopicSymbolApplyUpgrade            = scval.MustEncodeSymbol(EventApplyUpgrade)
+	TopicSymbolCommitUpgrade           = scval.MustEncodeSymbol(EventCommitUpgrade)
+	TopicSymbolSetPrivilegedAddrs      = scval.MustEncodeSymbol(EventSetPrivilegedAddrs)
+	TopicSymbolApplyTransferOwnership  = scval.MustEncodeSymbol(EventApplyTransferOwnership)
+	TopicSymbolCommitTransferOwnership = scval.MustEncodeSymbol(EventCommitTransferOwnership)
+	TopicSymbolEnableEmergencyMode     = scval.MustEncodeSymbol(EventEnableEmergencyMode)
+	TopicSymbolDisableEmergencyMode    = scval.MustEncodeSymbol(EventDisableEmergencyMode)
+	TopicSymbolPoolGaugeSwitchToken    = scval.MustEncodeSymbol(EventPoolGaugeSwitchToken)
+
+	TopicSymbolConfigRewards = scval.MustEncodeSymbol(EventConfigRewards)
 )
 
 // Errors returned by the decode path.

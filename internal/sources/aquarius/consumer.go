@@ -106,9 +106,126 @@ func (LiquidityEvent) EventKind() string { return "aquarius.liquidity" }
 // Source implements [consumer.Event].
 func (LiquidityEvent) Source() string { return SourceName }
 
+// RewardsAction discriminates the twelve rewards-gauge event kinds
+// (migration 0099, ROADMAP #89). String values match the
+// aquarius_rewards_events.event_kind CHECK constraint.
+type RewardsAction string
+
+// Rewards-gauge event kinds. See README.md's "Rewards-gauge subsystem"
+// section for the per-kind lifetime counts + real-lake-bytes wire-shape
+// citations (decode_rewards.go has the per-kind decode + Rust-shape
+// doc comment).
+const (
+	RewardsPoolState           RewardsAction = RewardsAction(EventPoolState)
+	RewardsClaimReward         RewardsAction = RewardsAction(EventClaimReward)
+	RewardsSetRewardsConfig    RewardsAction = RewardsAction(EventSetRewardsConfig)
+	RewardsPositionUpdate      RewardsAction = RewardsAction(EventPositionUpdate)
+	RewardsDeposit             RewardsAction = RewardsAction(EventGaugeDeposit)
+	RewardsClaimFees           RewardsAction = RewardsAction(EventClaimFees)
+	RewardsGaugeClaim          RewardsAction = RewardsAction(EventRewardsGaugeClaim)
+	RewardsClaim               RewardsAction = RewardsAction(EventGaugeClaim)
+	RewardsGaugeScheduleReward RewardsAction = RewardsAction(EventRewardsGaugeScheduleReward)
+	RewardsSetRewardsState     RewardsAction = RewardsAction(EventSetRewardsState)
+	RewardsGaugeAdd            RewardsAction = RewardsAction(EventRewardsGaugeAdd)
+	RewardsConfigRewards       RewardsAction = RewardsAction(EventConfigRewards)
+)
+
+// RewardsEvent is the [consumer.Event] Aquarius's Decoder emits on a
+// successful decode of any of the twelve rewards-gauge event kinds.
+// UserAddress / Amount are universal promoted fields, empty/nil when
+// the kind doesn't carry them (see decode_rewards.go per-kind doc);
+// Attributes carries the kind-specific remainder — i128/u128/u256
+// values inside it are decimal strings (ADR-0003: NUMERIC-inside-jsonb
+// is lossy, a decimal string round-trips exactly).
+type RewardsEvent struct {
+	ContractID string
+	Ledger     uint32
+	TxHash     string
+	OpIndex    uint32
+	EventIndex uint32
+	ObservedAt time.Time
+	Kind       RewardsAction
+	// UserAddress is the acting/addressed account topic slot when the
+	// event carries one (may be an end-user LP or a pool admin/manager
+	// for config-toggle kinds like set_rewards_state — see the per-kind
+	// doc comment in decode_rewards.go). Empty when the kind carries
+	// none (e.g. rewards_gauge_add, pool_state).
+	UserAddress string
+	// Amount is the single dominant, always-non-negative i128/u128
+	// amount for kinds that have exactly one (claim_reward,
+	// rewards_gauge_claim, claim, set_rewards_config, config_rewards).
+	// Nil for kinds with zero, two, or signed amounts — those land
+	// in Attributes instead (e.g. position_update's delta CAN be
+	// negative, so it never populates this field).
+	Amount     *canonical.Amount
+	Attributes map[string]any
+}
+
+// EventKind implements [consumer.Event].
+func (RewardsEvent) EventKind() string { return "aquarius.rewards" }
+
+// Source implements [consumer.Event].
+func (RewardsEvent) Source() string { return SourceName }
+
+// AdminAction discriminates the eight governance/upgrade admin event
+// kinds (migration 0100, ROADMAP #89). String values match the
+// aquarius_admin.event_kind CHECK constraint.
+type AdminAction string
+
+// Governance / upgrade admin event kinds. See README.md's
+// "Governance / admin" section for lifetime counts; decode_admin.go
+// has the per-kind decode + wire-shape citation.
+const (
+	AdminApplyUpgrade            AdminAction = AdminAction(EventApplyUpgrade)
+	AdminCommitUpgrade           AdminAction = AdminAction(EventCommitUpgrade)
+	AdminSetPrivilegedAddrs      AdminAction = AdminAction(EventSetPrivilegedAddrs)
+	AdminApplyTransferOwnership  AdminAction = AdminAction(EventApplyTransferOwnership)
+	AdminCommitTransferOwnership AdminAction = AdminAction(EventCommitTransferOwnership)
+	AdminEnableEmergencyMode     AdminAction = AdminAction(EventEnableEmergencyMode)
+	AdminDisableEmergencyMode    AdminAction = AdminAction(EventDisableEmergencyMode)
+	AdminPoolGaugeSwitchToken    AdminAction = AdminAction(EventPoolGaugeSwitchToken)
+)
+
+// AdminEvent is the [consumer.Event] Aquarius's Decoder emits on a
+// successful decode of any of the eight governance/upgrade event
+// kinds. Admin / Target are universal promoted fields, empty when the
+// kind doesn't carry them; Attributes carries the kind-specific
+// remainder.
+type AdminEvent struct {
+	ContractID string
+	Ledger     uint32
+	TxHash     string
+	OpIndex    uint32
+	EventIndex uint32
+	ObservedAt time.Time
+	Kind       AdminAction
+	// Admin is the initiating-actor topic slot when the event carries
+	// one. Empty for every kind observed so far (none of the eight
+	// carry a distinct "admin" topic separate from the addressed
+	// entity — see decode_admin.go); kept for schema symmetry with
+	// aquarius_admin.admin / blend_admin's pattern and any future kind
+	// that does carry one.
+	Admin string
+	// Target is the "addressed entity" of the event — the new Wasm
+	// hash (hex) for *_upgrade, the new admin address for
+	// *_transfer_ownership, the new reward token for
+	// pool_gauge_switch_token. Empty for kinds with no single target
+	// (set_privileged_addrs; enable/disable_emergency_mode).
+	Target     string
+	Attributes map[string]any
+}
+
+// EventKind implements [consumer.Event].
+func (AdminEvent) EventKind() string { return "aquarius.admin" }
+
+// Source implements [consumer.Event].
+func (AdminEvent) Source() string { return SourceName }
+
 // Compile-time checks that the emitted types satisfy consumer.Event.
 var (
 	_ consumer.Event = TradeEvent{}
 	_ consumer.Event = ReservesEvent{}
 	_ consumer.Event = LiquidityEvent{}
+	_ consumer.Event = RewardsEvent{}
+	_ consumer.Event = AdminEvent{}
 )

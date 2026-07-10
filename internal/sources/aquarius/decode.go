@@ -14,55 +14,66 @@ import (
 // Address(user)].
 const aquariusTopicArity = 4
 
-// classify picks the event kind from topic[0]. Returns "" for
-// non-Aquarius events so the caller skips cheaply.
+// kindByTopicSymbol maps the pre-encoded topic[0] SCVal::Symbol blob
+// of every recognized Aquarius event to its event-kind name. Built
+// once at package init from the TopicSymbol*/Event* constant pairs
+// in events.go (uniqueness of keys holds because each TopicSymbol*
+// encodes a distinct Event* string).
 //
-// Every topic published by aquarius-amm/liquidity_pool_events/src/lib.rs
-// (verified 2026-05-27 against the upstream Rust source) must appear
-// in this switch — the EVERY-event policy
+// Every topic Aquarius emits (the original AMM surface verified
+// 2026-05-27 against the then-public upstream Rust source; the
+// rewards-gauge + governance surfaces verified 2026-07-10 against
+// real r1 lake bytes — the upstream repo is no longer public) must
+// appear here — the EVERY-event policy
 // (memory: project_every_event_principle) treats classify() as the
-// authoritative completeness gate for BackfillSafe. Today only
-// `trade` flows through to a canonical.Trade; the other event kinds
-// are classified here so future audits + the soroban_events landing
-// zone (ADR-0029) can rely on a closed-set enumeration.
+// authoritative completeness gate for BackfillSafe, and
+// TestClassify_completenessVsUpstream enumerates the closed set.
+var kindByTopicSymbol = map[string]string{
+	TopicSymbolTrade:                      EventTrade,
+	TopicSymbolDepositLiquidity:           EventDepositLiquidity,
+	TopicSymbolWithdrawLiquidity:          EventWithdrawLiquidity,
+	TopicSymbolUpdateReserves:             EventUpdateReserves,
+	TopicSymbolReservesSync:               EventReservesSync,
+	TopicSymbolSetProtocolFee:             EventSetProtocolFee,
+	TopicSymbolClaimProtocolFee:           EventClaimProtocolFee,
+	TopicSymbolKillDeposit:                EventKillDeposit,
+	TopicSymbolUnkillDeposit:              EventUnkillDeposit,
+	TopicSymbolKillSwap:                   EventKillSwap,
+	TopicSymbolUnkillSwap:                 EventUnkillSwap,
+	TopicSymbolKillClaim:                  EventKillClaim,
+	TopicSymbolUnkillClaim:                EventUnkillClaim,
+	TopicSymbolKillGaugesClaim:            EventKillGaugesClaim,
+	TopicSymbolUnkillGaugesClaim:          EventUnkillGaugesClaim,
+	TopicSymbolPoolState:                  EventPoolState,
+	TopicSymbolClaimReward:                EventClaimReward,
+	TopicSymbolSetRewardsConfig:           EventSetRewardsConfig,
+	TopicSymbolPositionUpdate:             EventPositionUpdate,
+	TopicSymbolGaugeDeposit:               EventGaugeDeposit,
+	TopicSymbolClaimFees:                  EventClaimFees,
+	TopicSymbolRewardsGaugeClaim:          EventRewardsGaugeClaim,
+	TopicSymbolGaugeClaim:                 EventGaugeClaim,
+	TopicSymbolRewardsGaugeScheduleReward: EventRewardsGaugeScheduleReward,
+	TopicSymbolSetRewardsState:            EventSetRewardsState,
+	TopicSymbolRewardsGaugeAdd:            EventRewardsGaugeAdd,
+	TopicSymbolConfigRewards:              EventConfigRewards,
+	TopicSymbolApplyUpgrade:               EventApplyUpgrade,
+	TopicSymbolCommitUpgrade:              EventCommitUpgrade,
+	TopicSymbolSetPrivilegedAddrs:         EventSetPrivilegedAddrs,
+	TopicSymbolApplyTransferOwnership:     EventApplyTransferOwnership,
+	TopicSymbolCommitTransferOwnership:    EventCommitTransferOwnership,
+	TopicSymbolEnableEmergencyMode:        EventEnableEmergencyMode,
+	TopicSymbolDisableEmergencyMode:       EventDisableEmergencyMode,
+	TopicSymbolPoolGaugeSwitchToken:       EventPoolGaugeSwitchToken,
+}
+
+// classify picks the event kind from topic[0]. Returns "" for
+// non-Aquarius events so the caller skips cheaply. See
+// kindByTopicSymbol for the closed-set enumeration contract.
 func classify(e *events.Event) string {
 	if len(e.Topic) == 0 {
 		return ""
 	}
-	switch e.Topic[0] {
-	case TopicSymbolTrade:
-		return EventTrade
-	case TopicSymbolDepositLiquidity:
-		return EventDepositLiquidity
-	case TopicSymbolWithdrawLiquidity:
-		return EventWithdrawLiquidity
-	case TopicSymbolUpdateReserves:
-		return EventUpdateReserves
-	case TopicSymbolReservesSync:
-		return EventReservesSync
-	case TopicSymbolSetProtocolFee:
-		return EventSetProtocolFee
-	case TopicSymbolClaimProtocolFee:
-		return EventClaimProtocolFee
-	case TopicSymbolKillDeposit:
-		return EventKillDeposit
-	case TopicSymbolUnkillDeposit:
-		return EventUnkillDeposit
-	case TopicSymbolKillSwap:
-		return EventKillSwap
-	case TopicSymbolUnkillSwap:
-		return EventUnkillSwap
-	case TopicSymbolKillClaim:
-		return EventKillClaim
-	case TopicSymbolUnkillClaim:
-		return EventUnkillClaim
-	case TopicSymbolKillGaugesClaim:
-		return EventKillGaugesClaim
-	case TopicSymbolUnkillGaugesClaim:
-		return EventUnkillGaugesClaim
-	default:
-		return ""
-	}
+	return kindByTopicSymbol[e.Topic[0]]
 }
 
 // decodeTrade decodes an Aquarius `trade` event into a single

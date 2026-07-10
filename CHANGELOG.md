@@ -15,6 +15,34 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Aquarius rewards-gauge + governance/upgrade event decoding** (ROADMAP #89,
+  2026-07-10 topic census). The census found 20 real, distinct Aquarius topics
+  `classify()` did not recognize — an 11-kind rewards-gauge subsystem
+  (`pool_state`, `claim_reward`, `set_rewards_config`, `position_update`,
+  bare `deposit`, `claim_fees`, `rewards_gauge_claim`, bare `claim`,
+  `rewards_gauge_schedule_reward`, `set_rewards_state`, `rewards_gauge_add`)
+  plus an 8-kind governance/upgrade surface (`apply_upgrade`, `commit_upgrade`,
+  `set_privileged_addrs`, `apply_transfer_ownership`, `commit_transfer_ownership`,
+  `enable_emergency_mode`, `disable_emergency_mode`, `pool_gauge_switch_token`).
+  A 12th rewards kind, the router-side `config_rewards` (previously
+  undocumented-but-uncounted), is folded into the rewards family too since it
+  duplicates `set_rewards_config`'s (amount, expires_at) pair per pool.
+  New tables `aquarius_rewards_events` (migration 0099) and `aquarius_admin`
+  (migration 0100), both registered as gap-detector targets (ADR-0030).
+  Every wire shape is reverse-engineered from real r1 ClickHouse lake bytes —
+  AquaToken's `soroban-amm` contract-source repo is no longer public — with
+  real-lake-bytes golden decode tests for all 20 kinds
+  (`internal/sources/aquarius/decode_rewards_test.go`,
+  `decode_admin_test.go`). Gating: the 11 pool-scoped rewards kinds gate on
+  the existing registered-pool trust root; `config_rewards` and the 8
+  governance kinds gate on the canonical router only — several governance
+  kinds are also observed on a FLAGGED parallel router deployment and an
+  unidentified sibling contract family, which correctly fail-closed (a
+  visible ADR-0033 recognition gap, not silent mis-attribution) pending
+  Aquarius-team confirmation. See `internal/sources/aquarius/README.md` and
+  `docs/protocols/aquarius.md` for full per-topic detail.
+
 ### Fixed
 - **The stderr fd-2 wrap can no longer seize the entire binary on an oversized log line**
   (2026-07-10 indexer-seizure incident, ~28 min of frozen ingest). The wrap

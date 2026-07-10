@@ -67,7 +67,10 @@ func TestDecoder_Matches(t *testing.T) {
 	}{
 		{"empty topic", events.Event{ContractID: testPool}},
 		{"non-trade topic[0]", events.Event{ContractID: testPool, Topic: []string{
-			encodeSymbol(t, "deposit"),
+			// "deposit" (bare) is now a recognized+gated rewards-gauge
+			// topic (ROADMAP #89) so it no longer proves this case —
+			// use a genuinely unclassified topic name instead.
+			encodeSymbol(t, "totally_unrecognized_topic"),
 			encodeContractAddrFromStrkey(t, tokenIn),
 			encodeContractAddrFromStrkey(t, tokenOut),
 			encodeAccountAddrFromStrkey(t, user),

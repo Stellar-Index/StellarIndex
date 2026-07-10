@@ -357,6 +357,7 @@ func IsProjectedEvent(ev consumer.Event) bool {
 	switch ev.(type) {
 	case soroswap.TradeEvent, soroswap.SkimEvent,
 		aquarius.TradeEvent, aquarius.ReservesEvent, aquarius.LiquidityEvent,
+		aquarius.RewardsEvent, aquarius.AdminEvent,
 		phoenix.TradeEvent, phoenix.LiquidityEvent, phoenix.StakeEvent,
 		comet.TradeEvent, comet.LiquidityEvent,
 		reflector.UpdateEvent, redstone.UpdateEvent,
@@ -557,6 +558,10 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		persistAquariusReserves(ctx, logger, store, e)
 	case aquarius.LiquidityEvent:
 		persistAquariusLiquidity(ctx, logger, store, e)
+	case aquarius.RewardsEvent:
+		persistAquariusRewards(ctx, logger, store, e)
+	case aquarius.AdminEvent:
+		persistAquariusAdmin(ctx, logger, store, e)
 	case phoenix.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)
 	case phoenix.LiquidityEvent:
@@ -939,6 +944,66 @@ func persistAquariusLiquidity(ctx context.Context, logger *slog.Logger, store *t
 		"source", aquarius.SourceName, "action", e.Action,
 		"contract_id", e.ContractID, "ledger", e.Ledger,
 		"tokens", len(e.Tokens))
+}
+
+// persistAquariusRewards lands one rewards-gauge event (any of the
+// twelve kinds — migration 0099, ROADMAP #89) into
+// aquarius_rewards_events.
+func persistAquariusRewards(ctx context.Context, logger *slog.Logger, store *timescale.Store, e aquarius.RewardsEvent) {
+	row := timescale.AquariusRewardsEvent{
+		ContractID:      e.ContractID,
+		Ledger:          e.Ledger,
+		LedgerCloseTime: e.ObservedAt,
+		TxHash:          e.TxHash,
+		OpIndex:         e.OpIndex,
+		EventIndex:      e.EventIndex,
+		Kind:            timescale.AquariusRewardsKind(e.Kind),
+		UserAddress:     e.UserAddress,
+		Attributes:      e.Attributes,
+	}
+	if e.Amount != nil {
+		row.Amount = e.Amount
+	}
+	if err := store.InsertAquariusRewardsEvent(ctx, row); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(aquarius.SourceName, "aquarius_rewards_events").Inc()
+		logger.Error("insert Aquarius rewards event failed",
+			"contract_id", e.ContractID, "kind", e.Kind,
+			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return
+	}
+	bumpEntryCount(ctx, logger, store, aquarius.SourceName)
+	logger.Debug("Aquarius rewards event ingested",
+		"source", aquarius.SourceName, "kind", e.Kind,
+		"contract_id", e.ContractID, "ledger", e.Ledger)
+}
+
+// persistAquariusAdmin lands one governance/upgrade admin event (any
+// of the eight kinds — migration 0100, ROADMAP #89) into
+// aquarius_admin.
+func persistAquariusAdmin(ctx context.Context, logger *slog.Logger, store *timescale.Store, e aquarius.AdminEvent) {
+	row := timescale.AquariusAdminEvent{
+		ContractID:      e.ContractID,
+		Ledger:          e.Ledger,
+		LedgerCloseTime: e.ObservedAt,
+		TxHash:          e.TxHash,
+		OpIndex:         e.OpIndex,
+		EventIndex:      e.EventIndex,
+		Kind:            timescale.AquariusAdminKind(e.Kind),
+		Admin:           e.Admin,
+		Target:          e.Target,
+		Attributes:      e.Attributes,
+	}
+	if err := store.InsertAquariusAdminEvent(ctx, row); err != nil {
+		obs.SourceInsertErrorsTotal.WithLabelValues(aquarius.SourceName, "aquarius_admin").Inc()
+		logger.Error("insert Aquarius admin event failed",
+			"contract_id", e.ContractID, "kind", e.Kind,
+			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
+		return
+	}
+	bumpEntryCount(ctx, logger, store, aquarius.SourceName)
+	logger.Debug("Aquarius admin event ingested",
+		"source", aquarius.SourceName, "kind", e.Kind,
+		"contract_id", e.ContractID, "ledger", e.Ledger)
 }
 
 // persistBlendPositionEvent routes one money-market position event

@@ -215,6 +215,23 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// writer-halt tripwire. 100K override matches the aquarius trades
 	// target. Migration 0089.
 	{Source: "aquarius-reserves", Table: "aquarius_reserves", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 100000},
+	// aquarius-rewards: the rewards-gauge event surface (ROADMAP #89,
+	// migration 0099). Dominated by pool_state (339,712 lifetime — one
+	// of the densest Aquarius topics, fires on every reward-affecting
+	// pool interaction) but the table also holds several genuinely
+	// sparse admin-triggered kinds (rewards_gauge_add: 12 lifetime,
+	// set_rewards_state: 25). Genesis matches the Aquarius pool
+	// deploy ledger. 100K override matches the aquarius-reserves
+	// cadence — pool_state's density means a real writer halt still
+	// trips this well before a natural quiet stretch would.
+	{Source: "aquarius-rewards", Table: "aquarius_rewards_events", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 100000},
+	// aquarius-admin: the governance/upgrade admin surface (ROADMAP
+	// #89, migration 0100) — router-scoped, operator-triggered
+	// actions (upgrades, ownership transfers, emergency mode). Rare by
+	// design (apply_upgrade: 706 lifetime across the whole protocol
+	// history is the DENSEST of the eight kinds); wide override
+	// matches blend-admin's sparsity treatment.
+	{Source: "aquarius-admin", Table: "aquarius_admin", LedgerColumn: "ledger", Genesis: 52_728_375, MinGapSizeOverride: 1300000},
 	// blend_auctions: live r1 (2026-05-28) showed 8049 distinct
 	// ledgers across a 5.9M-ledger span = one event per ~735
 	// ledgers. 2026-05-29 measurement bumped the 50K override to
