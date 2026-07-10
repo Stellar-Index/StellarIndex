@@ -88,6 +88,11 @@ func (s *Server) handlePairs(w http.ResponseWriter, r *http.Request) {
 
 	out := []Market{}
 	if found {
+		// dex-nonstandard-decimals forward normalization — see
+		// markets.go's adjustListingPrice / handlePools/handleMarkets
+		// equivalent comment. base/quote are already canonical.Asset
+		// here (no re-parse needed, unlike the listing handlers).
+		market.LastPrice = s.adjustListingPrice(base, quote, market.LastPrice)
 		out = append(out, market)
 	}
 	writeJSON(w, out, Flags{})

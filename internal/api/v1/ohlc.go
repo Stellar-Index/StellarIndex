@@ -104,16 +104,13 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		// dex-nonstandard-decimals read-time guard — series mode reads
-		// the prices_<n> continuous aggregates (migration 0002), which
-		// remain raw (unnormalized) for a confirmed non-7-decimals leg;
-		// see declineIfNonstandardDecimals and docs/operations/runbooks/
-		// dex-nonstandard-decimals.md "Root cause analysis". The
-		// single-bar branch below does NOT need this guard — it computes
-		// from raw trades at query time and is normalized directly.
-		if s.declineIfNonstandardDecimals(w, r, base, quote) {
-			return
-		}
+		// dex-nonstandard-decimals: series mode reads the prices_<n>
+		// continuous aggregates (migration 0002), a raw (unnormalized)
+		// quote/base ratio for a confirmed non-7-decimals leg — same as
+		// the single-bar branch below, normalized via aggregate.AdjustPrice
+		// inside handleOHLCSeries rather than declined. See
+		// docs/operations/runbooks/dex-nonstandard-decimals.md "Root
+		// cause analysis".
 		s.handleOHLCSeries(w, r, pair, interval)
 		return
 	}

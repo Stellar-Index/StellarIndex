@@ -1757,21 +1757,20 @@ on a live pair — page-adjacent (P2). Runbook:
 
 ### `stellarindex_price_serve_declined_nonstandard_decimals_total`
 
-Counter, label `asset`.
+Counter, label `asset`. **HISTORICAL — permanently zero since 2026-07-10.**
 
-The READ-TIME enforcement half of the dex-nonstandard-decimals guard — the
-detector above only alarms; this counter tracks the actual mitigation lever.
-Confirmed production bug (2026-07-08): token `CC2RB…` (`decimals()`=9)
-served a price exactly 100x wrong on its aquarius/USDC pair (35 trades)
-because nothing stopped serving once the assumption broke. `internal/api/v1`'s
-`NonstandardDecimalsCache` mirrors `nonstandard_decimals_assets` (migration
-0093, upserted by `internal/decimalsguard` on confirmation) and declines —
-`422 problem+json`, `Cache-Control: no-store` — `/v1/price`, `/v1/vwap`,
-`/v1/history`, `/v1/ohlc` for any pair with a listed leg, instead of serving
-the skewed value. Increments once per declined REQUEST (not latched like
-the detector counter) — chart it to see live customer impact taper to zero
-once the durable decimals normalization ships and the offending row is
-removed. `asset` is the flagged leg's C-strkey contract id. Runbook:
+This was the READ-TIME enforcement half of the dex-nonstandard-decimals
+guard: from 2026-07-09 the price surfaces declined (`422 problem+json`)
+any pair with a leg confirmed non-7-decimal in
+`nonstandard_decimals_assets` (migration 0093), and this counter fired
+once per declined request. On 2026-07-10 the decline was replaced
+endpoint-by-endpoint with read-time decimals NORMALIZATION
+(`aggregate.AdjustPrice` — the served value is corrected, not refused),
+and the last two declining paths (`/v1/price` closed-1m bucket,
+`/v1/ohlc?interval=` series) were normalized too, so the decline code
+path no longer exists and nothing increments this counter. Retained
+(registered, always zero) one release so dashboards/queries referencing
+it don't break; remove alongside the next metrics cleanup. Runbook:
 `docs/operations/runbooks/dex-nonstandard-decimals.md`.
 
 ### `stellarindex_nonstandard_decimals_cache_refresh_failures_total`
@@ -1789,6 +1788,13 @@ failure this reflects.
 
 ## Changelog
 
+- 2026-07-10 — `stellarindex_price_serve_declined_nonstandard_decimals_total`
+  is now HISTORICAL (permanently zero): the 422 decline path it counted
+  was removed when read-time decimals normalization
+  (`aggregate.AdjustPrice`) reached the last CAGG-reading serving paths
+  (`/v1/price` closed-1m bucket, `/v1/ohlc?interval=` series, `/v1/chart`,
+  markets/pools/pairs `last_price`, SEP-40 oracle passthroughs). Kept
+  registered one release for dashboard continuity.
 - 2026-07-09 — added the stellar-stack version-lag textfile-collector
   probe metrics (`stellarindex_stellar_stack_probe_success`,
   `stellarindex_stellar_stack_version_lag{component}`,

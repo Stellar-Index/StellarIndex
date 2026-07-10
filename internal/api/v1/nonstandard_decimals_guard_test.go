@@ -32,57 +32,71 @@ func nonstandardDecimalsCacheWith(t *testing.T, asset string, decimals int) *v1.
 	return c
 }
 
-// TestPrice_NonstandardDecimals_DeclinesFlaggedBaseLeg proves /v1/price
-// declines (422, no-store, RFC 9457 body naming the leg + its decimals)
-// when the requested asset is a confirmed non-7-decimal Soroban token —
-// the read-time enforcement half of the dex-nonstandard-decimals guard.
-// The PriceReader is never consulted: the guard fires before any storage
-// read, so a reader that would panic/error on lookup still proves nothing
-// leaked through.
-func TestPrice_NonstandardDecimals_DeclinesFlaggedBaseLeg(t *testing.T) {
+// TestPrice_NonstandardDecimals_NormalizesFlaggedBaseLeg proves /v1/price
+// no longer declines a confirmed non-7-decimal base leg — the closed-1m-
+// bucket read (the last /v1/price path still declining after v0.12.0)
+// now serves the AdjustPrice-corrected value. The stub snapshot carries
+// the RAW CAGG ratio 41.32 (the runbook's real CC2RB… incident value,
+// decimals()=9 vs USDC's 7): K = 10^(9−7) = 100 → true price 4132.
+func TestPrice_NonstandardDecimals_NormalizesFlaggedBaseLeg(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	key := flaggedAsset + "/fiat:USD"
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{key: {
+			AssetID:       flaggedAsset,
+			Quote:         "fiat:USD",
+			Price:         "41.32",
+			PriceType:     "vwap",
+			ObservedAt:    time.Unix(1745000000, 0).UTC(),
+			WindowSeconds: 60,
+		}},
+		sources: map[string][]string{key: {"aquarius"}},
+	}
 	srv := v1.New(v1.Options{
-		Prices:              &stubPriceReader{}, // empty: must never be reached
+		Prices:              reader,
 		NonstandardDecimals: cache,
 	})
 	ts := startHTTPTest(t, srv.Handler())
 
 	resp := mustGet(t, ts.URL+"/v1/price?asset="+flaggedAsset+"&quote=fiat:USD")
-	if resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d, want 422", resp.StatusCode)
-	}
-	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
-		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
-	}
-	if got := resp.Header.Get("Content-Type"); got != "application/problem+json" {
-		t.Errorf("Content-Type = %q, want application/problem+json", got)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (closed-bucket read is normalized, not declined)", resp.StatusCode)
 	}
 	body, _ := readAll(resp)
-	for _, want := range []string{
-		flaggedAsset,
-		`"status":422`,
-		"decimals()=9",
-		"nonstandard-decimals",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("body missing %q: %s", want, body)
-		}
+	if !strings.Contains(body, `"price":"4132.0000000000"`) {
+		t.Errorf("body missing normalized price 4132.0000000000: %s", body)
 	}
 }
 
-// TestPrice_NonstandardDecimals_DeclinesFlaggedQuoteLeg proves the guard
-// also checks the quote leg, not just the base/asset param.
-func TestPrice_NonstandardDecimals_DeclinesFlaggedQuoteLeg(t *testing.T) {
+// TestPrice_NonstandardDecimals_NormalizesFlaggedQuoteLeg proves the
+// quote leg scales the other way: K = 10^(7−9) = 1/100.
+func TestPrice_NonstandardDecimals_NormalizesFlaggedQuoteLeg(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	key := "native/" + flaggedAsset
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{key: {
+			AssetID:       "native",
+			Quote:         flaggedAsset,
+			Price:         "41.32",
+			PriceType:     "vwap",
+			ObservedAt:    time.Unix(1745000000, 0).UTC(),
+			WindowSeconds: 60,
+		}},
+		sources: map[string][]string{key: {"aquarius"}},
+	}
 	srv := v1.New(v1.Options{
-		Prices:              &stubPriceReader{},
+		Prices:              reader,
 		NonstandardDecimals: cache,
 	})
 	ts := startHTTPTest(t, srv.Handler())
 
 	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote="+flaggedAsset)
-	if resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d, want 422", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (closed-bucket read is normalized, not declined)", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"price":"0.4132000000"`) {
+		t.Errorf("body missing normalized price 0.4132000000: %s", body)
 	}
 }
 
@@ -223,9 +237,10 @@ func TestHistory_NonstandardDecimals_Normalizes(t *testing.T) {
 	}
 }
 
-// TestOHLC_NonstandardDecimals proves the split behaviour: single-bar
-// mode (raw trades, query-time) normalizes and serves 200; interval=
-// series mode (prices_<n> CAGG, still unnormalized) keeps declining.
+// TestOHLC_NonstandardDecimals proves BOTH modes normalize now:
+// single-bar mode (raw trades, query-time — normalized since v0.12.0)
+// and interval= series mode (prices_<n> CAGG — normalized 2026-07-10,
+// closing the deferred tail; previously declined 422).
 func TestOHLC_NonstandardDecimals(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
 	xlmUSD, err := canonical.ParseAsset(flaggedAsset)
@@ -260,10 +275,274 @@ func TestOHLC_NonstandardDecimals(t *testing.T) {
 	if !strings.Contains(body, `"open":"2.5000000000"`) {
 		t.Errorf("single-bar body missing normalized open 2.5000000000: %s", body)
 	}
+}
 
-	resp = mustGet(t, ts.URL+"/v1/ohlc?base="+flaggedAsset+"&quote=fiat:USD&interval=1h")
-	if resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Errorf("series mode: status = %d, want 422 (still CAGG-backed, still declined)", resp.StatusCode)
+// classicUSDC is a 7dp classic quote leg for series-mode fixtures — a
+// non-fiat quote takes ohlcSeriesWithAliases' first-hit path (no
+// fiat-combine fan-out), so the stub's bars map 1:1 onto the response.
+const classicUSDC = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+
+// TestOHLCSeries_NonstandardDecimals_NormalizesBarsNotVolumes pins the
+// series-mode contract closed on 2026-07-10:
+//
+//   - o/h/l/c: the raw prices_<n> CAGG ratio × K (K = 10^(9−7) = 100
+//     for a 9dp base vs a 7dp classic quote) — the same factor the
+//     single-bar path applies, since every bar shares the pair.
+//   - v_base/v_quote: UNCHANGED. The CAGG's volume columns are raw
+//     smallest-unit sums in each asset's OWN declared decimals
+//     (migration 0002: volume = Σ(base_amount)), and the wire contract
+//     (OHLCBar/VWAPResult doc: "in the asset's smallest unit") promises
+//     exactly that — same precedent as /v1/history, which serves raw
+//     base_amount/quote_amount plus base_decimals/quote_decimals
+//     metadata and never rescales amounts. Scaling volumes by 10^(7−dec)
+//     would silently break the smallest-unit contract.
+func TestOHLCSeries_NonstandardDecimals_NormalizesBarsNotVolumes(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	t0 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	reader := &stubHistoryReader{ohlcBars: []v1.OHLCSeriesBar{{
+		T: t0,
+		// Raw CAGG ratios (quote_amount/base_amount on smallest units):
+		// true price is 100x these for a 9dp base vs 7dp quote.
+		O: "2.5", H: "3", L: "2", C: "2.5",
+		// Raw smallest-unit sums: 10^11 base units at 9dp = 100 tokens;
+		// 2.5*10^9 quote units at 7dp = 250 USDC.
+		VBase: "100000000000", VQuote: "2500000000",
+		N: 4,
+	}}}
+	srv := v1.New(v1.Options{
+		History:             reader,
+		NonstandardDecimals: cache,
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/ohlc?base="+flaggedAsset+"&quote="+classicUSDC+"&interval=1h")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("series mode: status = %d, want 200 (CAGG read is normalized, not declined)", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	for _, want := range []string{
+		`"o":"250.0000000000"`,
+		`"h":"300.0000000000"`,
+		`"l":"200.0000000000"`,
+		`"c":"250.0000000000"`,
+		// Volumes byte-identical to the raw CAGG values.
+		`"v_base":"100000000000"`,
+		`"v_quote":"2500000000"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("series body missing %q: %s", want, body)
+		}
+	}
+}
+
+// TestOHLCSeries_NonstandardDecimals_7dpByteIdentical proves wiring the
+// cache does NOT reformat an unflagged (7dp/7dp) pair's bars — the CAGG's
+// NUMERIC::text strings must pass through byte-identical (AdjustPrice's
+// no-op contract), not get re-rendered at 10 fixed digits.
+func TestOHLCSeries_NonstandardDecimals_7dpByteIdentical(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9) // flagged asset NOT in this pair
+	t0 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	reader := &stubHistoryReader{ohlcBars: []v1.OHLCSeriesBar{{
+		T: t0, O: "0.16", H: "0.17", L: "0.15", C: "0.165",
+		VBase: "1000", VQuote: "165", N: 4,
+	}}}
+	srv := v1.New(v1.Options{
+		History:             reader,
+		NonstandardDecimals: cache,
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/ohlc?base=native&quote="+classicUSDC+"&interval=1h")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	for _, want := range []string{
+		`"o":"0.16"`, `"h":"0.17"`, `"l":"0.15"`, `"c":"0.165"`,
+		`"v_base":"1000"`, `"v_quote":"165"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("7dp bars must be byte-identical; body missing %q: %s", want, body)
+		}
+	}
+}
+
+// TestChart_NonstandardDecimals_NormalizesPriceNotVolumeUSD pins the
+// /v1/chart contract closed on 2026-07-10 (this endpoint was never
+// guarded at all — it served the raw prices_<gran> ratio):
+//
+//   - each point's `p`: raw CAGG ratio × K (10^(9−7) = 100 here).
+//   - each point's `v_usd`: UNCHANGED — prices_<gran>.volume_usd is
+//     Σ(usd_volume) (migration 0002), already USD-denominated at
+//     trade-valuation time and invariant to the pair's decimals split.
+func TestChart_NonstandardDecimals_NormalizesPriceNotVolumeUSD(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	t0 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	vusd := "1234.56"
+	reader := &stubHistoryReader{points: []v1.HistoryPoint{{
+		Bucket: t0, VWAP: "41.32", VolumeUSD: &vusd,
+	}}}
+	srv := v1.New(v1.Options{
+		History:             reader,
+		NonstandardDecimals: cache,
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/chart?asset="+flaggedAsset+"&quote="+classicUSDC+"&timeframe=24h")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"p":"4132.0000000000"`) {
+		t.Errorf("chart body missing normalized point price 4132.0000000000: %s", body)
+	}
+	if !strings.Contains(body, `"v_usd":"1234.56"`) {
+		t.Errorf("chart v_usd must be untouched (already USD-anchored): %s", body)
+	}
+}
+
+// TestChart_NonstandardDecimals_7dpByteIdentical — wiring the cache must
+// not reformat an unflagged pair's points.
+func TestChart_NonstandardDecimals_7dpByteIdentical(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	t0 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	reader := &stubHistoryReader{points: []v1.HistoryPoint{{Bucket: t0, VWAP: "0.1242"}}}
+	srv := v1.New(v1.Options{
+		History:             reader,
+		NonstandardDecimals: cache,
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/chart?asset=native&quote="+classicUSDC+"&timeframe=24h")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"p":"0.1242"`) {
+		t.Errorf("7dp chart points must be byte-identical; body: %s", body)
+	}
+}
+
+// TestMarkets_NonstandardDecimals_NormalizesLastPrice — /v1/markets'
+// last_price (prices_1d/prices_1m raw ratio) was never guarded; now
+// corrected per row. The unflagged sibling row must stay byte-identical.
+func TestMarkets_NonstandardDecimals_NormalizesLastPrice(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	flaggedPrice := "41.32"
+	cleanPrice := "0.1242"
+	reader := &stubMarketsReader{pairs: []v1.Market{
+		{Base: flaggedAsset, Quote: classicUSDC, LastPrice: &flaggedPrice},
+		{Base: "native", Quote: classicUSDC, LastPrice: &cleanPrice},
+	}}
+	srv := v1.New(v1.Options{Markets: reader, NonstandardDecimals: cache})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/markets")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"last_price":"4132.0000000000"`) {
+		t.Errorf("flagged market row not normalized: %s", body)
+	}
+	if !strings.Contains(body, `"last_price":"0.1242"`) {
+		t.Errorf("7dp market row must be byte-identical: %s", body)
+	}
+}
+
+// TestPools_NonstandardDecimals_NormalizesLastPrice — same fix on
+// /v1/pools (pools_per_source_1h bucket_last_price).
+func TestPools_NonstandardDecimals_NormalizesLastPrice(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	flaggedPrice := "41.32"
+	reader := &stubMarketsReader{pairs: []v1.Market{
+		{Base: flaggedAsset, Quote: classicUSDC, LastPrice: &flaggedPrice},
+	}}
+	srv := v1.New(v1.Options{Markets: reader, NonstandardDecimals: cache})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/pools")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"last_price":"4132.0000000000"`) {
+		t.Errorf("flagged pool row not normalized: %s", body)
+	}
+}
+
+// TestPairs_NonstandardDecimals_NormalizesLastPrice — /v1/pairs shares
+// the same Market wire shape; PairMarket's last_price is the same raw
+// prices_1m ratio.
+func TestPairs_NonstandardDecimals_NormalizesLastPrice(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	flaggedPrice := "41.32"
+	reader := &stubMarketsReader{
+		pair:      v1.Market{Base: flaggedAsset, Quote: classicUSDC, LastPrice: &flaggedPrice},
+		pairFound: true,
+	}
+	srv := v1.New(v1.Options{Markets: reader, NonstandardDecimals: cache})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/pairs?base="+flaggedAsset+"&quote="+classicUSDC)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"last_price":"4132.0000000000"`) {
+		t.Errorf("flagged pair row not normalized: %s", body)
+	}
+}
+
+// TestPriceBatch_NonstandardDecimals_Normalizes — the batch endpoint's
+// direct closed-bucket read goes through the same normalization as the
+// single-asset handler.
+func TestPriceBatch_NonstandardDecimals_Normalizes(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	key := flaggedAsset + "/fiat:USD"
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{key: {
+			AssetID: flaggedAsset, Quote: "fiat:USD", Price: "41.32",
+			PriceType: "vwap", ObservedAt: time.Unix(1745000000, 0).UTC(),
+		}},
+		sources: map[string][]string{key: {"aquarius"}},
+	}
+	srv := v1.New(v1.Options{Prices: reader, NonstandardDecimals: cache})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids="+flaggedAsset)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"price":"4132.0000000000"`) {
+		t.Errorf("batch row not normalized: %s", body)
+	}
+}
+
+// TestOraclePrices_NonstandardDecimals_Normalizes — the SEP-40
+// prices(asset, records) passthrough reads the same raw prices_1m CAGG
+// (RecentClosedSnapshots) and was neither guarded nor normalized; fixed
+// alongside the /v1/price closed-bucket path (2026-07-10).
+func TestOraclePrices_NonstandardDecimals_Normalizes(t *testing.T) {
+	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
+	key := flaggedAsset + "/fiat:USD"
+	reader := &stubPriceReader{
+		recent: map[string][]v1.PriceSnapshot{key: {{
+			AssetID: flaggedAsset, Quote: "fiat:USD", Price: "41.32",
+			PriceType: "vwap", ObservedAt: time.Unix(1745000000, 0).UTC(),
+		}}},
+	}
+	srv := v1.New(v1.Options{Prices: reader, NonstandardDecimals: cache})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/oracle/prices?asset="+flaggedAsset)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"price":"4132.0000000000"`) {
+		t.Errorf("oracle prices row not normalized: %s", body)
 	}
 }
 

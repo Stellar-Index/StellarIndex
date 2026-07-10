@@ -2287,28 +2287,23 @@ var DEXTradeNonstandardDecimalsTotal = prometheus.NewCounterVec(
 	[]string{"source", "asset"},
 )
 
-// PriceServeDeclinedNonstandardDecimalsTotal — the READ-TIME enforcement
-// half of the dex-nonstandard-decimals guard (API binary; the sweep above
-// is the aggregator-side DETECTION half). Confirmed production bug
-// 2026-07-08: token CC2RB…(decimals()=9) served a price exactly 100x wrong
-// on its aquarius/USDC pair for 35 trades because nothing stopped serving
-// once the assumption broke. `internal/api/v1`'s NonstandardDecimalsCache
-// mirrors `nonstandard_decimals_assets` (migration 0093, upserted by
-// internal/decimalsguard on confirmation) and declines to serve /v1/price,
-// /v1/vwap, /v1/history, /v1/ohlc — 422 problem+json — for any pair with a
-// leg in that table. This counter fires once per DECLINED request (not
-// latched like the detector counter above): it tracks live customer
-// impact, so operators can see it taper to zero once the durable decimals
-// normalization ships and the offending row is removed.
+// PriceServeDeclinedNonstandardDecimalsTotal — HISTORICAL (permanently
+// zero since 2026-07-10). This was the READ-TIME enforcement half of the
+// dex-nonstandard-decimals guard: 2026-07-09 → 2026-07-10, /v1/price and
+// /v1/ohlc?interval= declined (422) any pair with a confirmed
+// non-7-decimals leg, and this counter fired once per declined request.
+// The decline guard was REMOVED when decimals normalization reached the
+// last CAGG-reading paths (aggregate.AdjustPrice now corrects the served
+// value instead of declining — see the runbook's Root cause analysis), so
+// nothing increments this counter anymore. Retained (registered, zero)
+// one release so dashboards/queries referencing it don't break; remove
+// alongside the next metrics cleanup.
 //
-// Label: `asset` — the flagged leg's C-strkey contract id (whichever of
-// base/quote matched; if both are flagged, the base wins — see
-// nonstandardDecimalsLeg in internal/api/v1). Unbounded in principle,
-// near-empty in practice, so NOT pre-seeded.
+// Label: `asset` — the flagged leg's C-strkey contract id.
 var PriceServeDeclinedNonstandardDecimalsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_serve_declined_nonstandard_decimals_total",
-		Help: "Price-surface requests (/v1/price, /v1/vwap, /v1/history, /v1/ohlc) declined because a leg of the requested pair is a confirmed non-7-decimal Soroban asset. Label: asset (C-strkey). Non-zero means real requests are being honestly declined instead of served a wrong price; see runbook dex-nonstandard-decimals.md.",
+		Help: "HISTORICAL, permanently zero since 2026-07-10: price-surface requests declined for a confirmed non-7-decimal pair leg. The decline guard was replaced by read-time decimals normalization (runbook dex-nonstandard-decimals.md); retained one release for dashboard continuity.",
 	},
 	[]string{"asset"},
 )

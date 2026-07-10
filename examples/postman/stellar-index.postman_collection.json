@@ -2982,68 +2982,6 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Declined: `asset` or `quote` is a confirmed non-7-decimal Soroban token (docs/operations/runbooks/dex-nonstandard-decimals.md). The served price would be silently skewed by 10^(7−decimals), so pricing is declined rather than served wrong. Temporary — self-clears once decimals normalization ships for the asset.",
-              "originalRequest": {
-                "url": {
-                  "path": [
-                    "price"
-                  ],
-                  "host": [
-                    "{{baseUrl}}"
-                  ],
-                  "query": [
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "Aggregation window in seconds (board #43; proposal: the current-price window is query-selectable). Default 60 = the closed 1-minute bucket (ADR-0015 semantics, unchanged). 300/3600/86400 serve the aggregator's continuously-published rolling VWAP for that window; a window the aggregator has not published for the pair is a 404, never a silent substitution. Sub-minute rolling windows: /v1/price/tip. (This can only be one of 60,300,3600,86400)",
-                        "type": "text/plain"
-                      },
-                      "key": "window",
-                      "value": "60"
-                    },
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "(Required) Canonical asset identifier — matches the `asset_id` on\nresponse bodies. Query-parameter form is the shorter `asset`\nper the handler implementations (/v1/price, /v1/oracle/latest).\nStrict canonical form only — `XLM` / `USDC` are rejected;\nuse `native` for XLM and the full `<code>-<G…>` strkey for\ncredit assets.\n",
-                        "type": "text/plain"
-                      },
-                      "key": "asset",
-                      "value": "<string>"
-                    },
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "Quote-side asset. Either a canonical asset identifier (`native`,\n`<code>-<issuer>`, contract ID) for crypto-quoted pairs, or\nthe `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,\n`fiat:EUR`). Default `fiat:USD`.\n",
-                        "type": "text/plain"
-                      },
-                      "key": "quote",
-                      "value": "fiat:USD"
-                    }
-                  ],
-                  "variable": []
-                },
-                "header": [
-                  {
-                    "key": "Accept",
-                    "value": "application/problem+json"
-                  }
-                ],
-                "method": "GET",
-                "body": {}
-              },
-              "status": "Unprocessable Entity (WebDAV) (RFC 4918)",
-              "code": 422,
-              "header": [
-                {
-                  "key": "Content-Type",
-                  "value": "application/problem+json"
-                }
-              ],
-              "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
-              "cookie": [],
-              "_postman_previewlanguage": "json"
-            },
-            {
               "name": "Rate-limit quota exhausted. See `Retry-After` header.",
               "originalRequest": {
                 "url": {
@@ -7127,95 +7065,6 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Declined: `base` or `quote` is a confirmed non-7-decimal Soroban token (docs/operations/runbooks/dex-nonstandard-decimals.md). Same guard as `/v1/price`; see that endpoint's 422 for the full rationale.",
-              "originalRequest": {
-                "url": {
-                  "path": [
-                    "history"
-                  ],
-                  "host": [
-                    "{{baseUrl}}"
-                  ],
-                  "query": [
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "(Required) Canonical asset identifier for the base side of a pair.\nStrict canonical form only — `USDC` / `XLM` are rejected;\nthe full `<code>-<G…>` strkey is required, or `native` for\nXLM. The default example resolves to Centre's USDC issuance,\nwhich is the most-traded base on Stellar.\n",
-                        "type": "text/plain"
-                      },
-                      "key": "base",
-                      "value": "<string>"
-                    },
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "(Required) Quote-side asset (REQUIRED on this endpoint). Either a\ncanonical asset identifier (`native`, `<code>-<issuer>`,\ncontract ID) or the `fiat:<ISO-4217>` form (e.g. `fiat:USD`,\n`fiat:EUR`). Unlike the `/price` family, this endpoint does\nNOT default the quote — omitting it returns 400.\n",
-                        "type": "text/plain"
-                      },
-                      "key": "quote",
-                      "value": "<string>"
-                    },
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "Window start (inclusive), RFC 3339 UTC — e.g.\n`2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.\nWhen omitted the endpoint applies its own default lookback\nfrom `to` (documented per endpoint). Must be before `to`\nor the request 400s.\n",
-                        "type": "text/plain"
-                      },
-                      "key": "from",
-                      "value": "<dateTime>"
-                    },
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "Window end (exclusive), RFC 3339 UTC. Defaults to now.\nWindows are half-open `[from, to)` — a trade exactly at\n`to` is excluded.\n",
-                        "type": "text/plain"
-                      },
-                      "key": "to",
-                      "value": "<dateTime>"
-                    },
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "",
-                        "type": "text/plain"
-                      },
-                      "key": "limit",
-                      "value": "1000"
-                    },
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "Opaque pagination token echoed from a prior response's\n`pagination.next`. Pass it verbatim — it is a base64url-encoded\nblob whose internal shape is an implementation detail and\nchanges without notice. Clients MUST NOT parse, decode, or\nconstruct cursors by hand.\n\nA cursor is stable across retries but not across schema\nchanges; treat it as short-lived (minutes, not days). Empty\nmeans \"start from the beginning\".\n",
-                        "type": "text/plain"
-                      },
-                      "key": "cursor",
-                      "value": "<string>"
-                    }
-                  ],
-                  "variable": []
-                },
-                "header": [
-                  {
-                    "key": "Accept",
-                    "value": "application/problem+json"
-                  }
-                ],
-                "method": "GET",
-                "body": {}
-              },
-              "status": "Unprocessable Entity (WebDAV) (RFC 4918)",
-              "code": 422,
-              "header": [
-                {
-                  "key": "Content-Type",
-                  "value": "application/problem+json"
-                }
-              ],
-              "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
-              "cookie": [],
-              "_postman_previewlanguage": "json"
-            },
-            {
               "name": "Rate-limit quota exhausted. See `Retry-After` header.",
               "originalRequest": {
                 "url": {
@@ -8666,104 +8515,6 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Declined (both modes): `base` or `quote` is a confirmed non-7-decimal Soroban token (docs/operations/runbooks/dex-nonstandard-decimals.md). Same guard as `/v1/price`; see that endpoint's 422 for the full rationale.",
-              "originalRequest": {
-                "url": {
-                  "path": [
-                    "ohlc"
-                  ],
-                  "host": [
-                    "{{baseUrl}}"
-                  ],
-                  "query": [
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "(Required) Canonical asset identifier for the base side of a pair.\nStrict canonical form only — `USDC` / `XLM` are rejected;\nthe full `<code>-<G…>` strkey is required, or `native` for\nXLM. The default example resolves to Centre's USDC issuance,\nwhich is the most-traded base on Stellar.\n",
-                        "type": "text/plain"
-                      },
-                      "key": "base",
-                      "value": "<string>"
-                    },
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "(Required) Quote-side asset (REQUIRED on this endpoint). Either a\ncanonical asset identifier (`native`, `<code>-<issuer>`,\ncontract ID) or the `fiat:<ISO-4217>` form (e.g. `fiat:USD`,\n`fiat:EUR`). Unlike the `/price` family, this endpoint does\nNOT default the quote — omitting it returns 400.\n",
-                        "type": "text/plain"
-                      },
-                      "key": "quote",
-                      "value": "<string>"
-                    },
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "Window start (inclusive), RFC 3339 UTC — e.g.\n`2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.\nWhen omitted the endpoint applies its own default lookback\nfrom `to` (documented per endpoint). Must be before `to`\nor the request 400s.\n",
-                        "type": "text/plain"
-                      },
-                      "key": "from",
-                      "value": "<dateTime>"
-                    },
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "Window end (exclusive), RFC 3339 UTC. Defaults to now.\nWindows are half-open `[from, to)` — a trade exactly at\n`to` is excluded.\n",
-                        "type": "text/plain"
-                      },
-                      "key": "to",
-                      "value": "<dateTime>"
-                    },
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "Bar width for multi-bar series mode. Omit for the\nsingle-bar response over `[from, to)`. Invalid intervals\nreturn 400 `errors/invalid-interval`.\n (This can only be one of 1m,5m,15m,30m,1h,4h,1d,1w,1mo)",
-                        "type": "text/plain"
-                      },
-                      "key": "interval",
-                      "value": "1mo"
-                    },
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "Series-mode bar count (max 1000, default 100). Ignored in\nsingle-bar mode. Invalid values return 400\n`errors/limit-too-large`.\n",
-                        "type": "text/plain"
-                      },
-                      "key": "limit",
-                      "value": "100"
-                    },
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable.",
-                        "type": "text/plain"
-                      },
-                      "key": "outlier_sigma",
-                      "value": "4"
-                    }
-                  ],
-                  "variable": []
-                },
-                "header": [
-                  {
-                    "key": "Accept",
-                    "value": "application/problem+json"
-                  }
-                ],
-                "method": "GET",
-                "body": {}
-              },
-              "status": "Unprocessable Entity (WebDAV) (RFC 4918)",
-              "code": 422,
-              "header": [
-                {
-                  "key": "Content-Type",
-                  "value": "application/problem+json"
-                }
-              ],
-              "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
-              "cookie": [],
-              "_postman_previewlanguage": "json"
-            },
-            {
               "name": "Rate-limit quota exhausted. See `Retry-After` header.",
               "originalRequest": {
                 "url": {
@@ -9421,7 +9172,7 @@
               "_postman_previewlanguage": "json"
             },
             {
-              "name": "Either all trades in the window were filtered as outliers, OR `base`/`quote` is a confirmed non-7-decimal Soroban token (docs/operations/runbooks/dex-nonstandard-decimals.md) — the `type` field on the problem body distinguishes the two.",
+              "name": "All trades in the window were filtered as outliers by the requested `outlier_sigma`; relax the threshold or omit it.",
               "originalRequest": {
                 "url": {
                   "path": [
@@ -10057,77 +9808,6 @@
               },
               "status": "Not Found",
               "code": 404,
-              "header": [
-                {
-                  "key": "Content-Type",
-                  "value": "application/problem+json"
-                }
-              ],
-              "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
-              "cookie": [],
-              "_postman_previewlanguage": "json"
-            },
-            {
-              "name": "`base`/`quote` is a confirmed non-7-decimal Soroban token — pricing for the pair is declined pending decimals normalization (docs/operations/runbooks/dex-nonstandard-decimals.md).",
-              "originalRequest": {
-                "url": {
-                  "path": [
-                    "twap"
-                  ],
-                  "host": [
-                    "{{baseUrl}}"
-                  ],
-                  "query": [
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "(Required) Canonical asset identifier for the base side of a pair.\nStrict canonical form only — `USDC` / `XLM` are rejected;\nthe full `<code>-<G…>` strkey is required, or `native` for\nXLM. The default example resolves to Centre's USDC issuance,\nwhich is the most-traded base on Stellar.\n",
-                        "type": "text/plain"
-                      },
-                      "key": "base",
-                      "value": "<string>"
-                    },
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "(Required) Quote-side asset (REQUIRED on this endpoint). Either a\ncanonical asset identifier (`native`, `<code>-<issuer>`,\ncontract ID) or the `fiat:<ISO-4217>` form (e.g. `fiat:USD`,\n`fiat:EUR`). Unlike the `/price` family, this endpoint does\nNOT default the quote — omitting it returns 400.\n",
-                        "type": "text/plain"
-                      },
-                      "key": "quote",
-                      "value": "<string>"
-                    },
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "Window start (inclusive), RFC 3339 UTC — e.g.\n`2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.\nWhen omitted the endpoint applies its own default lookback\nfrom `to` (documented per endpoint). Must be before `to`\nor the request 400s.\n",
-                        "type": "text/plain"
-                      },
-                      "key": "from",
-                      "value": "<dateTime>"
-                    },
-                    {
-                      "disabled": false,
-                      "description": {
-                        "content": "Window end (exclusive), RFC 3339 UTC. Defaults to now.\nWindows are half-open `[from, to)` — a trade exactly at\n`to` is excluded.\n",
-                        "type": "text/plain"
-                      },
-                      "key": "to",
-                      "value": "<dateTime>"
-                    }
-                  ],
-                  "variable": []
-                },
-                "header": [
-                  {
-                    "key": "Accept",
-                    "value": "application/problem+json"
-                  }
-                ],
-                "method": "GET",
-                "body": {}
-              },
-              "status": "Unprocessable Entity (WebDAV) (RFC 4918)",
-              "code": 422,
               "header": [
                 {
                   "key": "Content-Type",

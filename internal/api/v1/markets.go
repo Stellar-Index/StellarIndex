@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/StellarIndex/stellar-index/internal/aggregate"
 	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/currency"
 	"github.com/StellarIndex/stellar-index/internal/sources/external"
@@ -264,6 +265,15 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 	if rows == nil {
 		rows = []Pool{}
 	}
+	// dex-nonstandard-decimals forward normalization (2026-07-10, closing
+	// the deferred CAGG-reading tail from docs/operations/runbooks/
+	// dex-nonstandard-decimals.md): /v1/pools's last_price was never
+	// guarded at all — pools_per_source_1h's bucket_last_price is the
+	// same raw quote/base ratio /v1/price's closed-1m-bucket path serves.
+	// See adjustListingPriceStrings for the byte-identical-on-7dp contract.
+	for i := range rows {
+		rows[i].LastPrice = s.adjustListingPriceStrings(rows[i].Base, rows[i].Quote, rows[i].LastPrice)
+	}
 	env := Envelope{Data: rows, Flags: Flags{}}
 	if next != "" {
 		env.Pagination = &Pagination{Next: next}
@@ -515,6 +525,12 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	if rows == nil {
 		rows = []Market{}
 	}
+	// dex-nonstandard-decimals forward normalization — see handlePools's
+	// equivalent comment. /v1/markets's last_price sources from the same
+	// prices_1d / pools_per_source_1h raw ratio.
+	for i := range rows {
+		rows[i].LastPrice = s.adjustListingPriceStrings(rows[i].Base, rows[i].Quote, rows[i].LastPrice)
+	}
 
 	// Optional opt-in: attach 24h hourly volume history per row
 	// for sparkline columns. Default off (avoids ~50KB per page
@@ -697,4 +713,57 @@ func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, a
 		merged = merged[:limit]
 	}
 	return merged, nil
+}
+
+// adjustListingPrice applies the dex-nonstandard-decimals forward
+// normalization to a listing row's last_price — see handleMarkets /
+// handlePools / pairs.go's handlePairs call sites for the full
+// rationale (docs/operations/runbooks/dex-nonstandard-decimals.md).
+//
+// nil / empty lastPrice passes through unchanged (no bucket to correct).
+// Returns lastPrice UNCHANGED (same pointer) when baseDecimals ==
+// quoteDecimals — every pair without a confirmed non-7-decimals leg.
+// This matters for byte-identical wire output: the CAGG's raw
+// NUMERIC::text formatting doesn't match [ratToDecimal]'s fixed
+// 10-digit rendering, so reformatting unconditionally would change the
+// wire bytes for every already-correct 7dp pair — the overwhelming
+// common case on a listing endpoint with thousands of pairs.
+func (s *Server) adjustListingPrice(base, quote canonical.Asset, lastPrice *string) *string {
+	if lastPrice == nil || *lastPrice == "" {
+		return lastPrice
+	}
+	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, base)
+	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, quote)
+	if baseDec == quoteDec {
+		return lastPrice
+	}
+	raw := ratFromDecimal(*lastPrice)
+	if raw == nil {
+		return lastPrice
+	}
+	adjusted := ratToDecimal(aggregate.AdjustPrice(raw, baseDec, quoteDec), ohlcPriceDigits)
+	return &adjusted
+}
+
+// adjustListingPriceStrings is [Server.adjustListingPrice] for callers
+// that only have the wire-shape base/quote strings (handleMarkets /
+// handlePools operate on the already-flattened v1.Market / v1.Pool
+// rows, one layer above where canonical.Asset is available). Both
+// strings originate from canonical.Asset.String() at the storage
+// layer, so a parse failure here is defensive-only (fails open —
+// returns lastPrice unchanged rather than dropping the row or 500ing
+// the whole listing).
+func (s *Server) adjustListingPriceStrings(baseRaw, quoteRaw string, lastPrice *string) *string {
+	if lastPrice == nil || *lastPrice == "" {
+		return lastPrice
+	}
+	base, err := canonical.ParseAsset(baseRaw)
+	if err != nil {
+		return lastPrice
+	}
+	quote, err := canonical.ParseAsset(quoteRaw)
+	if err != nil {
+		return lastPrice
+	}
+	return s.adjustListingPrice(base, quote, lastPrice)
 }

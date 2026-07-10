@@ -76,6 +76,11 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	// trades populate — returning stale/empty here while /v1/price
 	// serves fresh. See readPriceWithAliases for the full rationale.
 	snapshot, sources, stale, err := s.readPriceWithAliases(r.Context(), reader, asset, defaultPriceQuote)
+	// viaFallback mirrors handlePrice: normalizeRawPriceSnapshot below
+	// must only run on the RAW closed-1m-bucket read, never on a
+	// priceFallback result (already normalized upstream / peg / cross-
+	// rate) — see normalizeRawPriceSnapshot's doc comment in price.go.
+	viaFallback := false
 	if errors.Is(err, ErrPriceNotFound) {
 		// Same fallback chain as /v1/price (priceFallback): Redis VWAP
 		// cache (stablecoin-proxy rewrites + triangulated chains) →
@@ -85,6 +90,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		// bucket, while /v1/price?asset=native&quote=fiat:USD succeeds
 		// via the same fallback. Caught by the 2026-05-08 prod audit.
 		var ok bool
+		viaFallback = true
 		snapshot, sources, _, ok = s.priceFallback(r.Context(), asset, defaultPriceQuote)
 		// F-1339 (G2-02): every fallback degradation is below the
 		// surface's documented baseline contract, so flags.stale MUST
@@ -111,6 +117,12 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
+	}
+
+	// dex-nonstandard-decimals forward normalization on the raw
+	// closed-1m-bucket read — see handlePrice's equivalent call.
+	if !viaFallback {
+		s.normalizeRawPriceSnapshot(&snapshot, asset, defaultPriceQuote)
 	}
 
 	out := SEP40Price{
@@ -198,6 +210,15 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]SEP40Price, len(snapshots))
 	for i, snap := range snapshots {
+		// dex-nonstandard-decimals forward normalization — the snapshots
+		// come from RecentClosedSnapshots, the same raw prices_1m CAGG
+		// ratio /v1/price's closed-1m-bucket path reads (see
+		// normalizeRawPriceSnapshot in price.go). The quote leg is always
+		// fiat:USD or a 7dp classic USD peg here, so resolving against
+		// defaultPriceQuote is exact for both the direct and the
+		// peg-fallback branch. No-op (byte-identical) for an unflagged
+		// asset.
+		s.normalizeRawPriceSnapshot(&snap, asset, defaultPriceQuote)
 		out[i] = SEP40Price{
 			Asset:     asset.String(),
 			Price:     snap.Price,
