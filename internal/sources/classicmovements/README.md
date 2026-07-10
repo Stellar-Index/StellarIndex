@@ -9,7 +9,9 @@ See [docs/adr/0047-pre-p23-classic-movement-reconstruction.md](../../../docs/adr
 and [docs/architecture/pre-p23-classic-movements-research.md](../../../docs/architecture/pre-p23-classic-movements-research.md)
 for the full decision + evidence base.
 
-## What this ingests (Phases 1-3)
+## What this ingests (Phases 1-4 — complete)
+
+### Op-only decode surface (body/result only, no `ledger_entry_changes`)
 
 | Operation | Op type code | Movement kind | Row cardinality |
 | --- | --- | --- | --- |
@@ -21,35 +23,62 @@ for the full decision + evidence base.
 | `ClaimClaimableBalance` | `OperationTypeClaimClaimableBalance` | `claimable_balance_claim` | 1 row/op (0 if unresolved — see Q5) |
 | `ClawbackClaimableBalance` | `OperationTypeClawbackClaimableBalance` | `claimable_balance_clawback` | 1 row/op (0 if unresolved — see Q5) |
 | `Clawback` | `OperationTypeClawback` | `clawback` | 1 row/op |
+| `AccountMerge` | `OperationTypeAccountMerge` | `account_merge` | 1 row/op |
 
 `Payment`/`CreateAccount`/`CreateClaimableBalance`/`Clawback`
 reconstruct from the operation **body** alone once the operation
 **result**'s success code is confirmed (research §2 path (a)) — none
-need `ledger_entry_changes`. The two path-payment types reconstruct
-from the operation **result** (path (b)): the row's `asset`/`amount`
-columns hold the **destination** leg
+need `ledger_entry_changes`. The two path-payment types and
+`AccountMerge` reconstruct from the operation **result** (path (b)):
+path payments' `asset`/`amount` columns hold the **destination** leg
 (`result.Success.Last.{Asset,Amount}`, exact for both types);
 `attributes.send_asset`/`attributes.send_amount` hold the **source**
 leg — exact from the body (`SendAmount`) for StrictSend, derived from
 the result's `Offers` for StrictReceive (`SendMax` is only a ceiling
 — see `decode.go`'s `pathPaymentStrictReceiveSourceAmount` for the
-hop-order derivation). `ClaimClaimableBalance`/`ClawbackClaimableBalance`
-reconstruct via research's "b+own-index" path (b+own-index): neither
-op carries an asset/amount, only a `BalanceId`, resolved against the
-`CreateClaimableBalance` row this package itself derived earlier —
-see Q5. Every kind above is exactly one row per op (`leg_index`
-always 0) — none of these ops have a second asset leg, and the
-per-hop `ClaimAtom` trade legs of a path payment stay in `trades` via
-`internal/sources/sdex` and are never duplicated here. A failed op
-(bare result code that never reached the op's own result union, OR
-an inner union whose own code is a failure) decodes to **zero**
-movements, never an error.
+hop-order derivation). `AccountMerge`'s amount is
+`AccountMergeResult.SourceAccountBalance` — never derivable from the
+body, which carries only the destination. `ClaimClaimableBalance`/
+`ClawbackClaimableBalance` reconstruct via research's "b+own-index"
+path: neither op carries an asset/amount, only a `BalanceId`,
+resolved against the `CreateClaimableBalance` row this package itself
+derived earlier — see Q5. Every kind above is exactly one row per op
+(`leg_index` always 0) — none of these ops have a second asset leg,
+and the per-hop `ClaimAtom` trade legs of a path payment stay in
+`trades` via `internal/sources/sdex` and are never duplicated here. A
+failed op (bare result code that never reached the op's own result
+union, OR an inner union whose own code is a failure) decodes to
+**zero** movements, never an error.
 
-Later phase (not yet implemented): account merge + liquidity-pool
-deposit/withdraw + the CAP-0038 trustline-revocation edge case
-(Phase 4, gated on the `ledger_entry_changes` backfill). Migration
-0105's schema already admits all ten `movement_kind` values, so none
-of that needs a new migration — see `doc.go`.
+### Entry-changes-correlated decode surface (needs `ledger_entry_changes`)
+
+| Operation | Op type code | Movement kind | Row cardinality |
+| --- | --- | --- | --- |
+| `LiquidityPoolDeposit` | `OperationTypeLiquidityPoolDeposit` | `liquidity_pool_deposit` | 2 rows/op (leg_index 0/1, one per pool asset) |
+| `LiquidityPoolWithdraw` | `OperationTypeLiquidityPoolWithdraw` | `liquidity_pool_withdraw` | 2 rows/op (leg_index 0/1) |
+| `AllowTrust` / `SetTrustLineFlags` (CAP-0038 edge only) | `OperationTypeAllowTrust` / `OperationTypeSetTrustLineFlags` | `liquidity_pool_withdraw` | 0 rows (common case) or 2 rows (revocation-triggered liquidation) |
+
+`LiquidityPoolDeposit`/`Withdraw` results are bare success codes with
+zero data fields (research §2 path (c)) — the only ground truth is
+the pool's `LiquidityPoolEntryConstantProduct` `ReserveA`/`ReserveB`
+before vs. after the op, which lives ONLY in `ledger_entry_changes`.
+The CAP-0038 trustline-revocation auto-liquidation edge case is the
+same story: an `AllowTrust`/`SetTrustLineFlags` op that deauthorizes
+an account holding LP-share trustlines mixing the revoked asset
+auto-redeems those shares into two new `ClaimableBalanceEntry` rows,
+detectable ONLY by consulting entry changes at that op's index (the
+op body alone can't tell you whether the trustor actually held a
+matching position) — modelled as `movement_kind='liquidity_pool_withdraw'`
+rows with `attributes.revocation=true` since it IS functionally a
+forced withdrawal, just routed through escrow. See `entrychanges.go`
+and Q6 for the full design, including why an empty entry-changes
+group means something different for LP deposit/withdraw
+(unconditionally unavailable) than for the CAP-0038 check (the
+expected common case — a window-level fidelity probe is required to
+tell the two apart).
+
+Migration 0105's schema admitted all ten `movement_kind` values from
+day one, so no phase needed a new migration — see `doc.go`.
 
 ## Quirks
 
@@ -73,15 +102,17 @@ P23 boundary (58,762,517) regardless of what an operator requests.
 
 ### Q3 — The `Kind`/`Provenance` enums are wider than what's decoded
 
-Migration 0105's `movement_kind` CHECK admits all ten ADR-0047 D1
-kinds and both `provenance` values from day one, so Phase 4 adds
-decode arms, not schema churn. `recognition_test.go` pins
+Migration 0105's `movement_kind` CHECK admitted all ten ADR-0047 D1
+kinds and both `provenance` values from day one, so every phase added
+decode arms, never schema churn. `recognition_test.go` pins
 `Matches()` / `SupportedOpTypes()` / `decodeOp`'s switch to exactly
-this package's op-only in-scope kinds (Phases 1-3 today) and asserts
-every other value in the closed 27-value `xdr.OperationType` enum is
-rejected loudly (`ErrUnsupportedOpType`) rather than silently
-producing zero rows — the forcing function for a future phase's
-author.
+this package's op-only in-scope kinds (all nine, as of Phase 4) and
+asserts every other value in the closed 27-value `xdr.OperationType`
+enum is rejected loudly (`ErrUnsupportedOpType`) rather than silently
+producing zero rows. A SECOND, parallel guard
+(`TestRecognition_EntryChangeOpTypesIsExhaustiveAndDisjoint`) pins
+`EntryChangeOpTypes()` to exactly the four Phase 4 entry-changes
+types and asserts the two surfaces never overlap.
 
 ### Q4 — Op-level source resolution happens upstream
 
@@ -139,16 +170,72 @@ as any other heavy job; the Postgres fallback is what keeps chunked,
 resumed invocations correct despite each invocation starting with an
 empty index.
 
+### Q6 — Phase 4's entry-changes surface: a second, parallel decode path
+
+`LiquidityPoolDeposit`/`Withdraw` and the CAP-0038 edge case
+(`entrychanges.go`) do NOT go through `Decoder.Decode` — they can't,
+because `dispatcher.OpContext` (the op-only surface's input) has no
+field for a correlated `ledger_entry_changes` group, and this package
+deliberately doesn't extend that shared, live-path type for a
+historical-only need (nor does it implement
+`dispatcher.LedgerEntryChangeDecoder`, whose one-change-at-a-time
+contract is a mismatch for before/after delta computation — see
+`entrychanges.go`'s package doc for the full reasoning). Instead,
+`DecodeLiquidityPoolOp` / `DecodeCAP0038Revocation` are plain
+functions that take an already-correlated `[]EntryChangeXDR` — the
+caller (`classic-movements-backfill`) does the correlation itself via
+`clickhouse.StreamEntryChanges`, grouping by `(ledger, tx_hash,
+op_index)`.
+
+**Two different meanings for "no correlated entry changes,"
+per-op-type:**
+
+- `LiquidityPoolDeposit`/`Withdraw`: a REAL deposit/withdraw always
+  mutates the pool entry, so an empty group ALWAYS means
+  `ErrEntryChangesUnavailable` (fidelity absent for this ledger) —
+  never "nothing happened," since the op only reaches this decode
+  path after `opSucceeded` + a Success result code already confirmed
+  something DID happen.
+- `AllowTrust`/`SetTrustLineFlags`: the CAP-0038 liquidation is RARE
+  — the overwhelming majority of these ops trigger nothing, so an
+  empty group is the EXPECTED common case, indistinguishable at the
+  SQL layer from "fidelity is absent and we can't tell." The caller
+  MUST run a window-level fidelity probe
+  (`clickhouse.CountOpScopedEntryChanges`) BEFORE trusting "zero
+  movements" as "definitely no liquidation" — `classic-movements-backfill`
+  skips these ops entirely (counted separately, `CAP-0038 skipped`)
+  when the probe finds zero fidelity for the window, rather than
+  quietly under-reporting liquidations.
+
+**Current era**: as of this writing, `ledger_entry_changes`' real
+per-op fidelity starts at ~ledger 61,996,000 (research §3.2) —
+ALREADY PAST the P23 boundary (58,762,517) this command hard-clamps
+to. Every window this decode surface can address today therefore
+reports `LP entry-changes N/A` for 100% of LP ops and skips 100% of
+CAP-0038 checks, honestly and by design — confirmed against REAL
+mainnet LP deposit/withdraw op bytes in `real_bytes_test.go`'s
+`TestRealBytes_liquidityPoolDeposit_entryChangesUnavailable` /
+`_liquidityPoolWithdraw_entryChangesUnavailable`, and against a live
+end-to-end run through `stellarindex-ops classic-movements-backfill`
+over real r1 ClickHouse data during implementation. Phase 0's
+separate, operator-scheduled `ch-backfill` over `[38115806,
+61999000]` is the prerequisite that flips this; once it lands, the
+SAME code correctly derives real amounts with no further changes —
+re-running an already-processed range is safe (`ON CONFLICT DO
+NOTHING`).
+
 ## Files
 
 | File | Role |
 | --- | --- |
 | [`doc.go`](doc.go) | Package overview: phase scope, historical-only rationale, serving + retention deferrals |
-| [`events.go`](events.go) | `SourceName`, `Kind`/`Provenance` enums, `Movement`, `MovementEvent`, decode error sentinels |
-| [`decode.go`](decode.go) | `SupportedOpTypes` / `matchesSupportedOp` / `decodeOp` / per-kind decoders |
-| [`decode_test.go`](decode_test.go) | Synthetic-fixture unit tests (success, both failure shapes, malformed-amount defensive path, BalanceId correlation incl. the same-window-out-of-order case) |
-| [`real_bytes_test.go`](real_bytes_test.go) | Real pre-P23 mainnet bytes pulled from r1's ClickHouse lake, byte-for-byte golden assertions, incl. real failed-op negative cases |
-| [`recognition_test.go`](recognition_test.go) | ADR-0047 D4.2 recognition guard: exhaustive closed-enum switch-coverage test |
+| [`events.go`](events.go) | `SourceName`, `Kind`/`Provenance` enums, `Movement`, `MovementEvent`, `PendingClaimableBalanceRef`, decode error sentinels |
+| [`decode.go`](decode.go) | Op-only surface: `SupportedOpTypes` / `matchesSupportedOp` / `decodeOp` / per-kind decoders |
+| [`entrychanges.go`](entrychanges.go) | Entry-changes-correlated surface: `EntryChangeOpTypes` / `DecodeLiquidityPoolOp` / `DecodeCAP0038Revocation` (see Q6) |
+| [`decode_test.go`](decode_test.go) | Op-only surface synthetic-fixture unit tests (success, both failure shapes, malformed-amount defensive path, BalanceId correlation incl. the same-window-out-of-order case) |
+| [`entrychanges_test.go`](entrychanges_test.go) | Entry-changes surface synthetic-fixture unit tests (deposit/withdraw before/after derivation, new-pool implicit-zero case, CAP-0038 liquidation + no-liquidation cases) |
+| [`real_bytes_test.go`](real_bytes_test.go) | Real pre-P23 mainnet bytes pulled from r1's ClickHouse lake, byte-for-byte golden assertions, incl. real failed-op negative cases and the real LP entry-changes-unavailable proof |
+| [`recognition_test.go`](recognition_test.go) | ADR-0047 D4.2 recognition guards: exhaustive closed-enum switch-coverage for BOTH decode surfaces, plus their disjointness |
 | [`dispatcher_adapter.go`](dispatcher_adapter.go) | `Decoder` — the `dispatcher.OpDecoder` implementation `classic-movements-backfill` calls; owns the Phase 3 in-run BalanceId index + pending list (see Q5) |
 
 (No `consumer.go` — like SDEX, this source has no live-stream

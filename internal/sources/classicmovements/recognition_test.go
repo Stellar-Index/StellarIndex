@@ -54,6 +54,47 @@ var opOnlyInScope = map[xdr.OperationType]bool{
 	xdr.OperationTypeClaimClaimableBalance:    true,
 	xdr.OperationTypeClawbackClaimableBalance: true,
 	xdr.OperationTypeClawback:                 true,
+	xdr.OperationTypeAccountMerge:             true,
+}
+
+// entryChangeInScope is the SECOND (entry-changes-correlated)
+// decode surface's authoritative expected set — see entrychanges.go
+// for why LiquidityPoolDeposit/Withdraw and the CAP-0038
+// AllowTrust/SetTrustLineFlags edge case can't go through the
+// op-only surface above (they need a correlated
+// ledger_entry_changes group dispatcher.OpContext has no room for).
+var entryChangeInScope = map[xdr.OperationType]bool{
+	xdr.OperationTypeLiquidityPoolDeposit:  true,
+	xdr.OperationTypeLiquidityPoolWithdraw: true,
+	xdr.OperationTypeAllowTrust:            true,
+	xdr.OperationTypeSetTrustLineFlags:     true,
+}
+
+// TestRecognition_EntryChangeOpTypesIsExhaustiveAndDisjoint is the
+// ADR-0047 D4.2 recognition guard for the entry-changes-correlated
+// surface: EntryChangeOpTypes() must equal entryChangeInScope exactly
+// (every Phase 4 entry-changes type present, nothing extra), and the
+// two surfaces (opOnlyInScope, entryChangeInScope) must never
+// overlap — an op type belongs to exactly one decode path, never
+// both and never neither once it's in scope for either.
+func TestRecognition_EntryChangeOpTypesIsExhaustiveAndDisjoint(t *testing.T) {
+	got := map[string]bool{}
+	for _, s := range EntryChangeOpTypes() {
+		got[s] = true
+	}
+	if len(got) != len(entryChangeInScope) {
+		t.Fatalf("EntryChangeOpTypes() has %d entries, entryChangeInScope has %d", len(got), len(entryChangeInScope))
+	}
+	for typ := range entryChangeInScope {
+		if !got[typ.String()] {
+			t.Errorf("EntryChangeOpTypes() is missing %s", typ)
+		}
+	}
+	for typ := range entryChangeInScope {
+		if opOnlyInScope[typ] {
+			t.Errorf("%s is in BOTH opOnlyInScope and entryChangeInScope — an op type must belong to exactly one decode surface", typ)
+		}
+	}
 }
 
 // TestRecognition_MatchesCoversExactlyOpOnlyScope is the ADR-0047
