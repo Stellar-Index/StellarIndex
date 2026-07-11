@@ -102,7 +102,10 @@ func TestReconciliationCatalogue_OracleSourcesOptOut(t *testing.T) {
 		"redstone": true,
 	}
 	cfg := testConfigWithAllSources()
-	cat, _ := buildReconciliationCatalogue(cfg)
+	cat, _, err := buildReconciliationCatalogue(cfg)
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
 	if len(cat) < 10 {
 		t.Fatalf("catalogue unexpectedly small (%d) — test config not enabling sources?", len(cat))
 	}

@@ -74,6 +74,53 @@ against.
   `resolveChartAsset`) tolerate a MISSING `kind` when `asset_id` is present — an
   unambiguous stellar_asset shape — as a dated transition tolerance (remove ~2026-07-17),
   while still strictly rejecting a present-but-wrong `kind`.
+- **`compute-completeness`'s Postgres recognition-sample scan no longer walks the
+  whole `soroban_events` table.** Once the sep41 full-history re-derive (2026-07-11)
+  brought `soroban_events` to 357GB / ~3.56B rows, an operator's non-`-ch`
+  `compute-completeness` run (`computeRecognitionGaps` →
+  `Store.DistinctSorobanTopicSamples`, which unconditionally scanned
+  `[sorobanEraGenesis, tip]`) IO-scanned for ~2h before being cancelled — confirmed
+  on r1 (`heavy-verdict-cycle-2740469.scope`, started 12:53:06, deactivated
+  14:53:36). Same failure mode as the 2026-07-06 gap-detector IO-saturation
+  incident (`internal/storage/timescale/gap_detector.go`), against the same
+  table's growth. `internal/storage/timescale/topic_samples.go` now runs a
+  three-phase scan: (1) a trailing 30-day window (`distinctTopicSampleWindow`)
+  finds the representative row for almost every (contract_id, topic_0_sym) shape,
+  chunk-pruned by `ledger_close_time` — confirmed via r1 `EXPLAIN` to touch only
+  3 of 33 hypertable chunks instead of all of them; (2) a narrow scan of just
+  `soroban_events_contract_topic_idx` (contract_id, topic_0_sym) — confirmed via
+  `EXPLAIN` to plan as an Index Only Scan / bloom-filter-pruned columnar scan,
+  never the wide XDR/body columns — discovers any shape whose only activity
+  predates the window; (3) an indexed, bloom-filter-backed `LIMIT 1` per-pair
+  fetch (no `ORDER BY`) recovers that shape's sample, scoped to the caller's
+  range. Recognition only ever needed ONE example row per shape (to test against
+  a decoder's `Matches()`), not the whole table's history for that shape.
+  `verify-recognition` gets the same fix for free (shared code path). Regression:
+  `internal/storage/timescale/topic_samples_test.go` asserts the query text of
+  every phase carries its bound (trailing window / index-only predicate / `LIMIT 1`
+  no `ORDER BY`).
+- **sep41_transfers / sep41_supply promoted into the default ADR-0033 reconciliation
+  catalogue.** `internal/ops/chops/reconciliation_catalogue.go`'s
+  `buildReconciliationCatalogue` now folds in `buildSEP41ReconSources`'s two sources
+  whenever `[supply] watched_sep41_contracts` is configured — the promotion
+  `ch-rebuild -sep41`'s flag help has documented as the post-re-derive follow-up,
+  now DONE now that the 2026-07-11 full-history truncate+re-derive (windows
+  50.0M→63.42M, rc=0, self-healed through two OOM-killed sub-windows via smaller
+  retry chunks) purged every pre-migration-0057 collapsed row. Previously this
+  promotion lived as a one-off conditional append inside `compute-completeness`
+  alone, so `verify-reconciliation` and `ch-reproject` — which call
+  `buildReconciliationCatalogue` directly — never saw the two sources; promoting
+  inside the shared builder fixes that inconsistency for all three callers plus
+  `ch-rebuild`'s own default (non-`-sep41`) catalogue use. `buildReconciliationCatalogue`
+  now returns an error (only a malformed watched-contract C-strkey triggers one; an
+  EMPTY watched set is a silent no-op, matching the dispatcher's own non-opted-in
+  behavior) — updated all four call sites (`compute_completeness.go`,
+  `verify_reconciliation.go`, `ch_reproject.go`, `ch_rebuild.go`). `ch_rebuild.go`'s
+  own `-sep41` pass builds its own `sep41Cat` from freshly-constructed decoders (the
+  ones that actually decode this invocation's CH read); a new `dropReconSources`
+  helper strips the catalogue's promoted-but-stale copies first so the final report
+  loop doesn't double-count `written[src.name]`. Both sources stay on the strict
+  per-ledger reconcile (CS-084) — no `aggregateReconcile` opt-out.
 
 ### Added
 - **Aquarius rewards-gauge + governance analytics surface.** The v0.12

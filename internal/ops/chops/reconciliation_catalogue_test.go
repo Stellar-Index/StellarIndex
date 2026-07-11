@@ -16,20 +16,59 @@ var testWatchedSEP41 = []string{
 	"CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
 }
 
-// TestBuildReconciliationCatalogue_ExcludesSEP41ByDefault pins the
-// ADR-0033 boundary: even with a configured watched set, the DEFAULT
-// catalogue (compute-completeness / ch-reproject / verify-reconciliation
-// and ch-rebuild without -sep41) must NOT contain the sep41 sources —
-// their served tables still hold pre-migration-0057 collapsed rows, so
-// counting them would produce false projection deltas.
-func TestBuildReconciliationCatalogue_ExcludesSEP41ByDefault(t *testing.T) {
+// TestBuildReconciliationCatalogue_PromotesSEP41WhenWatched pins the
+// 2026-07-11 promotion: now that the full-history truncate+re-derive
+// (`ch-rebuild -sep41 -write`, windows 50.0M→63.42M, rc=0) has purged
+// every pre-migration-0057 collapsed row, a configured watched set makes
+// the DEFAULT catalogue (compute-completeness / ch-reproject /
+// verify-reconciliation) carry sep41_transfers + sep41_supply with the
+// same wiring buildSEP41ReconSources documents (genesis, contractIDs
+// prefilter, kinds, strict per-ledger reconcile) — see
+// TestBuildSEP41ReconSources_OptIn for the field-level assertions this
+// mirrors.
+func TestBuildReconciliationCatalogue_PromotesSEP41WhenWatched(t *testing.T) {
 	cfg := testConfigWithAllSources()
 	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
 
-	cat, _ := buildReconciliationCatalogue(cfg)
+	cat, _, err := buildReconciliationCatalogue(cfg)
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+	want := map[string]bool{"sep41_transfers": false, "sep41_supply": false}
+	for _, src := range cat {
+		if _, ok := want[src.name]; ok {
+			want[src.name] = true
+			if src.genesis != 50_457_424 {
+				t.Errorf("%s: genesis = %d, want 50_457_424 (sorobanEraGenesis)", src.name, src.genesis)
+			}
+			if src.aggregateReconcile != "" {
+				t.Errorf("%s: must stay on the strict per-ledger reconcile (CS-084), got opt-out %q", src.name, src.aggregateReconcile)
+			}
+		}
+	}
+	for name, seen := range want {
+		if !seen {
+			t.Errorf("default catalogue missing %s — buildReconciliationCatalogue must promote it when a watched set is configured", name)
+		}
+	}
+}
+
+// TestBuildReconciliationCatalogue_NoSEP41WithoutWatchedSet asserts the
+// promotion is silent-skip, not an error, for a deployment that never
+// opted into SEP-41 capture — mirroring the dispatcher's own
+// non-opted-in behavior (buildSEP41ReconSources itself errors on an
+// empty watched set; buildReconciliationCatalogue must never surface
+// that error for a plain unconfigured deployment).
+func TestBuildReconciliationCatalogue_NoSEP41WithoutWatchedSet(t *testing.T) {
+	cfg := testConfigWithAllSources() // WatchedSEP41Contracts left empty
+
+	cat, _, err := buildReconciliationCatalogue(cfg)
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: unexpected error with no watched set: %v", err)
+	}
 	for _, src := range cat {
 		if src.name == "sep41_transfers" || src.name == "sep41_supply" {
-			t.Errorf("default catalogue contains %s — sep41 sources are ch-rebuild -sep41 opt-in ONLY until the truncate+re-derive has run", src.name)
+			t.Errorf("catalogue contains %s with an empty watched set — promotion must be gated on non-emptiness", src.name)
 		}
 	}
 }
@@ -107,21 +146,24 @@ func TestBuildSEP41ReconSources_EmptyWatchedSetErrors(t *testing.T) {
 // TestCatalogue_OpArgsOnlyForRedstone pins the 2026-07-08 wide-column trim:
 // redstone is the ONLY decoder that consumes events.Event.OpArgs (write_prices
 // feed-id zip, PR 166), so it alone may ask the -ch reconcile to read the wide
-// op_args_xdr column. Every other source — critically the sep41 pair, whose
-// reconcile streams the CAP-67 firehose — must keep needsOpArgs false, or the
-// lake read regrows the memory profile that OOM-killed compute-completeness at
-// any ClickHouse server cap.
+// op_args_xdr column. Every other source — critically the sep41 pair (promoted
+// into the catalogue as of 2026-07-11, whose reconcile streams the CAP-67
+// firehose) — must keep needsOpArgs false, or the lake read regrows the memory
+// profile that OOM-killed compute-completeness at any ClickHouse server cap.
 func TestCatalogue_OpArgsOnlyForRedstone(t *testing.T) {
 	cfg := testConfigWithAllSources()
 	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
 
-	cat, _ := buildReconciliationCatalogue(cfg)
-	sepCat, err := buildSEP41ReconSources(cfg)
+	cat, _, err := buildReconciliationCatalogue(cfg)
 	if err != nil {
-		t.Fatalf("buildSEP41ReconSources: %v", err)
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
 	}
+	sawSEP41 := map[string]bool{"sep41_transfers": false, "sep41_supply": false}
 	sawRedstone := false
-	for _, src := range append(cat, sepCat...) {
+	for _, src := range cat {
+		if _, ok := sawSEP41[src.name]; ok {
+			sawSEP41[src.name] = true
+		}
 		if src.name == "redstone" {
 			sawRedstone = true
 			if !src.needsOpArgs {
@@ -135,5 +177,10 @@ func TestCatalogue_OpArgsOnlyForRedstone(t *testing.T) {
 	}
 	if !sawRedstone {
 		t.Fatal("catalogue missing redstone (test config sets its adapter contract)")
+	}
+	for name, seen := range sawSEP41 {
+		if !seen {
+			t.Fatalf("catalogue missing %s (test config sets a watched set — promotion should have included it)", name)
+		}
 	}
 }

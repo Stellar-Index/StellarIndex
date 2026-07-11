@@ -123,7 +123,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	sdexGaps := fs.Bool("sdex-gaps", false, "with -sdex: re-derive ONLY the served gaps in [from,to] in one pass (each gap is an empty range → pure insert, no ON CONFLICT walk) — efficient drop-backlog recovery vs re-scanning the whole range")
 	sdexReconcile := fs.Bool("sdex-reconcile", false, "with -sdex: re-derive ONLY ledgers where the distinct Validate-passing census exceeds the served count (PARTIAL-drop ledgers the empty-gap pass misses); recovers the served-tier projection to exact parity with the lake")
 	contractCalls := fs.Bool("contract-calls", false, "also re-derive the event-less ContractCall sources (band, soroswap-router) from the lake's InvokeContract ops — filtered on the contract's bytes in body_xdr (no contract_id column) — and run their ContractCallDecoders. These have NO soroban_events landing zone, so neither the event pass nor the projector can rebuild them; this is the ADR-0034 lake-replay successor to the retired backfill-router MinIO walk. Respects -sources.")
-	includeSEP41 := fs.Bool("sep41", false, "also re-derive the SEP-41 watched-contract sources (sep41_transfers, sep41_supply) from the lake via a contract_id-prefiltered event pass (their topics are the CAP-67 firehose the main pass excludes). FULL re-derive contract: for a whole-history rebuild run this as part of the truncate+re-derive procedure — TRUNCATE sep41_transfers + sep41_supply_events FIRST (historical rows predate the migration-0057 event_index PK, so multiple same-op events sit COLLAPSED on disk; the idempotent ON CONFLICT writes cannot un-collapse them — recover-into-existing is accepted only if you accept that residue). ROLLUP: when the SUPPLY source is re-derived, -write AUTO-RESETS the sep41_supply_rollup fold checkpoint after the events land (a FULL re-derive resets every watched contract's fold columns) so the aggregator worker re-folds from zero instead of double-counting the re-derived history (the KALE 2× served-value bug, incident 2026-07-06); the seeded migration-0088 genesis baseline is PRESERVED, so no manual TRUNCATE sep41_supply_rollup + re-seed is needed. After a full-history -write re-derive the two sources become eligible for the ADR-0033 projection reconcile (promote them into buildReconciliationCatalogue). For a SCOPED dropped-rows recovery (a decoder bug that lost a handful of rows from post-0057-clean data), use -contracts to narrow to the affected contracts instead — no truncate needed, the additive ON CONFLICT write only ADDS the missing rows (docs/operations/sep41-mint-recovery.md). Requires [supply] watched_sep41_contracts. Respects -sources.")
+	includeSEP41 := fs.Bool("sep41", false, "also re-derive the SEP-41 watched-contract sources (sep41_transfers, sep41_supply) from the lake via a contract_id-prefiltered event pass (their topics are the CAP-67 firehose the main pass excludes). FULL re-derive contract: for a whole-history rebuild run this as part of the truncate+re-derive procedure — TRUNCATE sep41_transfers + sep41_supply_events FIRST (historical rows predate the migration-0057 event_index PK, so multiple same-op events sit COLLAPSED on disk; the idempotent ON CONFLICT writes cannot un-collapse them — recover-into-existing is accepted only if you accept that residue). ROLLUP: when the SUPPLY source is re-derived, -write AUTO-RESETS the sep41_supply_rollup fold checkpoint after the events land (a FULL re-derive resets every watched contract's fold columns) so the aggregator worker re-folds from zero instead of double-counting the re-derived history (the KALE 2× served-value bug, incident 2026-07-06); the seeded migration-0088 genesis baseline is PRESERVED, so no manual TRUNCATE sep41_supply_rollup + re-seed is needed. After a full-history -write re-derive the two sources become eligible for the ADR-0033 projection reconcile — DONE (2026-07-11, windows 50.0M-63.42M, rc=0): buildReconciliationCatalogue now promotes them into the default catalogue unconditionally whenever [supply] watched_sep41_contracts is configured (no further code change needed), so verify-reconciliation/ch-reproject/compute-completeness all see them. Because that promotion is config-gated, not re-derive-state-gated, a FUTURE full truncate+re-derive will show the two sources as reconcile-red for the DURATION of the rebuild (truncated table vs. lake expectation) exactly like any other source mid-rebuild — expected, not a regression. For a SCOPED dropped-rows recovery (a decoder bug that lost a handful of rows from post-0057-clean data), use -contracts to narrow to the affected contracts instead — no truncate needed, the additive ON CONFLICT write only ADDS the missing rows (docs/operations/sep41-mint-recovery.md). Requires [supply] watched_sep41_contracts. Respects -sources.")
 	contractsCSV := fs.String("contracts", "", "comma-separated contract C-strkeys to SCOPE the read to (default: no scope). For -sep41 this REPLACES [supply] watched_sep41_contracts as the contract_id READ prefilter, so a scoped recovery does an indexed scan of ONLY these contracts' events (far cheaper than all watched contracts) and idempotently ADDS their missing rows — the leanest way to recover dropped rows without a full re-derive. With -sep41 -write on the SUPPLY source, ONLY these contracts' sep41_supply_rollup fold rows are reset afterwards (genesis baseline preserved), so the worker re-folds their recovered below-checkpoint rows — a scoped recovery is safe by default, no manual rollup surgery. Must be a SUBSET of the watched set: the sep41 decoders still gate Matches() on the full watched set, so a contract outside it is read but decoded to nothing (a warning is printed). For the general event pass it is an extra decode-time contract gate. See docs/operations/sep41-mint-recovery.md.")
 	sep41SupplyOnly := fs.Bool("sep41-supply-only", false, "with -sep41 -sources sep41_supply: narrow the CH read to the supply-affecting topics (mint/burn/clawback) via the topic_0_sym prefilter, skipping the transfer firehose at the SQL layer — so recovering a high-transfer-volume contract's few mints does not re-read millions of transfer events. Invalid unless sep41_transfers is disabled (via -sources sep41_supply): the topic prefilter would otherwise silently drop transfer recovery.")
 	write := fs.Bool("write", false, "actually write to Postgres (default: dry-run, count only)")
@@ -160,7 +160,23 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	lo, hi := uint32(*from), uint32(*to)
 
-	cat, soroswapDec := buildReconciliationCatalogue(cfg)
+	cat, soroswapDec, cerr := buildReconciliationCatalogue(cfg)
+	if cerr != nil {
+		return fmt.Errorf("ch-rebuild: reconciliation catalogue: %w", cerr)
+	}
+	// ch-rebuild manages sep41_transfers/sep41_supply itself via the
+	// dedicated -sep41 pass below (its own contract-prefiltered CH read,
+	// its own decoder instances, its own written-count bookkeeping) rather
+	// than through buildReconciliationCatalogue's generic per-source
+	// re-derive. buildReconciliationCatalogue ALSO promotes these two
+	// (2026-07-11) whenever the watched set is configured — which -sep41
+	// requires — so drop them here unconditionally to restore the
+	// pre-promotion invariant this whole function is written against: cat
+	// carries no sep41 entries until the -sep41 pass folds its OWN
+	// sep41Cat in below (after the read, so the main event pass's
+	// hasEventSource / -sources filtering above never spuriously trips on
+	// a source whose topics that pass's CH stream excludes anyway).
+	cat = dropReconSources(cat, sep41transfers.SourceName, sep41supply.SourceName)
 	// -sep41 opt-in: the sep41 sources stay OUT of the default catalogue
 	// (and out of every counting consumer) until the operator truncate+
 	// re-derive this flag exists for has run — see buildSEP41ReconSources.
@@ -673,6 +689,27 @@ func sep41RollupResetPlan(includeSEP41, write, supplyEnabled bool, contractsOver
 		return false, nil
 	}
 	return true, contractsOverride
+}
+
+// dropReconSources returns cat with every entry whose name is in names
+// removed, preserving order. Used to keep ch-rebuild's own -sep41
+// handling (a dedicated read pass + its own decoder instances) the sole
+// source of sep41_transfers/sep41_supply entries in cat, even though
+// buildReconciliationCatalogue may hand back a catalogue that already
+// promoted them.
+func dropReconSources(cat []reconSource, names ...string) []reconSource {
+	drop := make(map[string]bool, len(names))
+	for _, n := range names {
+		drop[n] = true
+	}
+	out := make([]reconSource, 0, len(cat))
+	for _, src := range cat {
+		if drop[src.name] {
+			continue
+		}
+		out = append(out, src)
+	}
+	return out
 }
 
 // anyEventSourceEnabled reports whether the -sources filter selects at

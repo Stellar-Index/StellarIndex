@@ -68,7 +68,10 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 
 	lo, hi := uint32(*from), uint32(*to)
 
-	cat, _ := buildReconciliationCatalogue(cfg)
+	cat, _, err := buildReconciliationCatalogue(cfg)
+	if err != nil {
+		return fmt.Errorf("ch-reproject: reconciliation catalogue: %w", err)
+	}
 
 	// ─── ClickHouse side: one pass, every event-based decoder per event ──
 	fmt.Fprintf(os.Stderr, "ch-reproject: re-deriving [%d,%d] from ClickHouse %s\n", lo, hi, *chAddr)

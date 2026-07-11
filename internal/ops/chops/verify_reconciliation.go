@@ -63,7 +63,10 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 
 	lo, hi := uint32(*from), uint32(*to)
 
-	catalogue, soroswapDec := buildReconciliationCatalogue(cfg)
+	catalogue, soroswapDec, err := buildReconciliationCatalogue(cfg)
+	if err != nil {
+		return fmt.Errorf("verify-reconciliation: reconciliation catalogue: %w", err)
+	}
 	if *only == "" || *only == "soroswap" {
 		if err := seedSoroswapForRecon(ctx, cfg, soroswapDec); err != nil {
 			fmt.Fprintf(os.Stderr, "verify-reconciliation: soroswap seed failed (%v) — soroswap counts may undercount pre-%d pairs\n", err, lo)

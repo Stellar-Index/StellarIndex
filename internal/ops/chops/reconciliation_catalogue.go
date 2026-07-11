@@ -95,26 +95,33 @@ type reconSource struct {
 // the LCM op census; and the event-less ContractCall sources (band,
 // soroswap-router) via the InvokeContract-op census (callDec path) — their
 // calls are re-derived from the lake by filtering body_xdr on the contract
-// bytes (stellar.operations has no contract_id column). EXCLUDED by default:
-//   - sep41-transfers / sep41-supply: included ONLY behind ch-rebuild's
-//     -sep41 opt-in (see [buildSEP41ReconSources]); run only as part of the
-//     truncate+re-derive procedure (see the flag help). The decoders gate
-//     Matches() on cfg.Supply.WatchedSEP41Contracts (the same watched set
-//     the dispatcher uses), with the watched contracts doubling as the
-//     contractIDs prefilter (kinds: "sep41_transfers.event" /
-//     "sep41_supply.event"; genesis 50_457_424 = sorobanEraGenesis). They
-//     stay OUT of the default catalogue for a CONCRETE correctness reason:
-//     the historical table rows predate the event_index PK discriminator
-//     (migration 0057), so multiple same-op events are still COLLAPSED on
-//     disk — a re-derive (which counts each event) would flag every such
-//     historical ledger as "missing rows", a false delta. Until the operator
-//     truncate + `ch-rebuild -sep41 -write` re-derive has run, they're
-//     covered by the data-derived gap detector, not the ADR-0033 projection
-//     reconcile; AFTER it has run they become eligible for the reconcile
-//     (promote them into this default set then).
+// bytes (stellar.operations has no contract_id column). PLUS, when
+// cfg.Supply.WatchedSEP41Contracts is configured, sep41_transfers +
+// sep41_supply (see [buildSEP41ReconSources]) — promoted into the default
+// catalogue as of the 2026-07-11 full-history truncate+re-derive
+// (`ch-rebuild -sep41 -write`, windows 50.0M→63.42M, rc=0), which purged
+// every pre-migration-0057 collapsed row. Before that re-derive, counting
+// them here would have produced false projection deltas: the historical
+// table rows predated the event_index PK discriminator (migration 0057),
+// so multiple same-op events sat COLLAPSED on disk, and a re-derive (which
+// counts each event) would have flagged every such historical ledger as
+// "missing rows". That risk is gone now that the affected history has been
+// rebuilt clean.
+//
+// Promoting them HERE — rather than each caller special-casing the append,
+// as compute-completeness alone used to — means verify-reconciliation and
+// ch-reproject see them too; ch_rebuild.go's -sep41 flag doc says exactly
+// this: "promote them into buildReconciliationCatalogue".
+//
+// Errors only when a configured watched contract fails to build its
+// decoder (a malformed C-strkey). An EMPTY watched set is NOT an error
+// here — unlike calling [buildSEP41ReconSources] directly for ch-rebuild's
+// explicit -sep41 opt-in — a deployment that doesn't watch any SEP-41
+// contract simply gets no sep41 entries, mirroring the dispatcher's own
+// non-opted-in behavior.
 //
 //nolint:funlen // linear per-source catalogue; one entry per projected source, splitting scatters the reconcile spec.
-func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.Decoder) {
+func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.Decoder, error) {
 	soroswapDec := soroswap.NewDecoder()
 
 	// genesis values mirror DefaultGapDetectorTargets (WASM-audit sourced).
@@ -282,29 +289,46 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 		callDec:      soroswap_router.NewDecoder(soroswap_router.MainnetRouter),
 		targets:      []reconTarget{{"soroswap_router_swaps", "", nil}},
 	})
-	return cat, soroswapDec
+
+	// sep41 promotion (2026-07-11, post-full-history-re-derive) — see the
+	// doc comment above. Gated the same way buildSEP41ReconSources's own
+	// EmptyWatchedSetErrors precondition expects: only attempt it when a
+	// watched set is actually configured, so a deployment that never opted
+	// into SEP-41 supply/transfer capture gets an empty (not an error)
+	// promotion — matching the dispatcher's own non-opted-in behavior.
+	if len(cfg.Supply.WatchedSEP41Contracts) > 0 {
+		sepCat, err := buildSEP41ReconSources(cfg)
+		if err != nil {
+			return nil, nil, fmt.Errorf("sep41 reconciliation sources: %w", err)
+		}
+		cat = append(cat, sepCat...)
+	}
+
+	return cat, soroswapDec, nil
 }
 
-// buildSEP41ReconSources builds the two SEP-41 reconSources that
-// [buildReconciliationCatalogue] deliberately excludes (see its doc
-// comment): sep41_transfers + sep41_supply, watched-set-gated exactly
-// like the production dispatcher (pipeline.RegisterSupplyEventDecoders
-// constructs the SAME decoders from the SAME config field, so a
-// re-derive reproduces precisely what the dispatcher would have
-// written). The watched contracts double as the contractIDs prefilter,
-// so the lake read is a contract-indexed scan, not a firehose walk —
-// mandatory here because the SEP-41 topics ARE the CAP-67 classic-token
-// firehose the DEX/lending passes exclude (ClassicTokenTopic0Syms).
+// buildSEP41ReconSources builds the two SEP-41 reconSources —
+// sep41_transfers + sep41_supply, watched-set-gated exactly like the
+// production dispatcher (pipeline.RegisterSupplyEventDecoders constructs
+// the SAME decoders from the SAME config field, so a re-derive reproduces
+// precisely what the dispatcher would have written). The watched contracts
+// double as the contractIDs prefilter, so the lake read is a
+// contract-indexed scan, not a firehose walk — mandatory here because the
+// SEP-41 topics ARE the CAP-67 classic-token firehose the DEX/lending
+// passes exclude (ClassicTokenTopic0Syms).
 //
-// Consumers: ch-rebuild's -sep41 flag (the re-derive) and — since the
-// 2026-07-06 full-history truncate+re-derive purged the
-// pre-migration-0057 collapsed rows — compute-completeness's default
-// catalogue (watched-set-gated), which gives the two sources ADR-0033
-// verdicts like every other projected source.
+// Consumers: ch-rebuild's -sep41 flag (the re-derive; called directly,
+// unconditionally erroring on an empty watched set — see below) and
+// [buildReconciliationCatalogue] (promoted into the default catalogue as
+// of the 2026-07-11 full-history truncate+re-derive, gated on the watched
+// set being non-empty so an unconfigured deployment gets silence instead
+// of this function's error).
 //
-// Errors when the watched set is empty: an operator who passed -sep41
-// with no `[supply] watched_sep41_contracts` asked for an impossible
-// rebuild, and silence would read as "nothing to recover".
+// Errors when the watched set is empty: called directly (ch-rebuild
+// -sep41), an operator who passed -sep41 with no `[supply]
+// watched_sep41_contracts` asked for an impossible rebuild, and silence
+// would read as "nothing to recover". buildReconciliationCatalogue avoids
+// ever hitting this by checking non-emptiness itself first.
 func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 	watched := cfg.Supply.WatchedSEP41Contracts
 	tdec, err := sep41transfers.NewDecoder(watched)

@@ -68,6 +68,40 @@ func TestContractAllowed(t *testing.T) {
 	}
 }
 
+// TestDropReconSources pins the de-dup guard added alongside the
+// 2026-07-11 sep41 catalogue promotion: buildReconciliationCatalogue now
+// hands ch-rebuild a `cat` that may already carry sep41_transfers/
+// sep41_supply (when a watched set is configured), but ch-rebuild's
+// -sep41 pass folds in its OWN freshly-built sep41Cat afterward — so the
+// stale, promoted copies must be dropped first, or the final report loop
+// (keyed by written[src.name]) double-prints and double-totals them.
+// Order of the surviving entries must be preserved (report output order
+// is otherwise stable and operator-relied-on).
+func TestDropReconSources(t *testing.T) {
+	cat := []reconSource{
+		{name: "soroswap"},
+		{name: "sep41_transfers"},
+		{name: "phoenix"},
+		{name: "sep41_supply"},
+		{name: "sdex"},
+	}
+	got := dropReconSources(cat, "sep41_transfers", "sep41_supply")
+	want := []string{"soroswap", "phoenix", "sdex"}
+	if len(got) != len(want) {
+		t.Fatalf("dropReconSources: got %d entries, want %d: %+v", len(got), len(want), got)
+	}
+	for i, src := range got {
+		if src.name != want[i] {
+			t.Errorf("dropReconSources[%d] = %q, want %q (order must be preserved)", i, src.name, want[i])
+		}
+	}
+
+	// Names absent from cat are a no-op, not an error.
+	if got := dropReconSources(cat, "nonexistent"); len(got) != len(cat) {
+		t.Errorf("dropping an absent name should be a no-op: got %d entries, want %d", len(got), len(cat))
+	}
+}
+
 // TestSEP41RollupResetPlan pins WHEN a -sep41 -write run resets the
 // sep41_supply_rollup fold checkpoint, and for WHICH contracts. This is the
 // footgun guard from incident 2026-07-06: a re-derive that rewrites

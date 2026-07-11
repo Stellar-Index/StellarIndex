@@ -88,19 +88,13 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	}
 	fmt.Fprintf(os.Stderr, "compute-completeness: tip=%d\n", tip)
 
-	catalogue, soroswapDec := buildReconciliationCatalogue(cfg)
-	// sep41 promotion (2026-07-06, post-re-derive): the full-history
-	// truncate+re-derive purged the pre-migration-0057 collapsed rows,
-	// so the two SEP-41 sources are now eligible for the ADR-0033
-	// projection reconcile. Gated on the watched set (empty = the
-	// deployment never captured sep41 — skip silently, matching the
-	// dispatcher's own non-opted-in behavior).
-	if len(cfg.Supply.WatchedSEP41Contracts) > 0 {
-		sepCat, serr := buildSEP41ReconSources(cfg)
-		if serr != nil {
-			return fmt.Errorf("compute-completeness: sep41 catalogue: %w", serr)
-		}
-		catalogue = append(catalogue, sepCat...)
+	// sep41_transfers/sep41_supply are promoted into this catalogue by
+	// buildReconciliationCatalogue itself (2026-07-11, post-full-history
+	// re-derive) whenever [supply] watched_sep41_contracts is configured —
+	// see its doc comment.
+	catalogue, soroswapDec, err := buildReconciliationCatalogue(cfg)
+	if err != nil {
+		return fmt.Errorf("compute-completeness: reconciliation catalogue: %w", err)
 	}
 	if *only == "" || *only == "soroswap" {
 		if serr := seedSoroswapForRecon(ctx, cfg, soroswapDec); serr != nil {
