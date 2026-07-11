@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.16.2] — 2026-07-11
+
 ### Fixed
 - **`supply seed-sac-balances -full-history` v3 (final): argMax aggregation replaces the
   global sort.** v0.16.1's byte-filter shrank the scan input but the `ORDER BY … LIMIT 1
