@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.16.0] — 2026-07-11
+
 ### Fixed
 - **`ch-rebuild -contract-calls` no longer exceeds ClickHouse's query memory budget on
   dense windows.** The successful-tx restriction was an IN-subquery whose
