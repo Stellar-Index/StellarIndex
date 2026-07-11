@@ -2,14 +2,19 @@ package clickhouse
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/StellarIndex/stellar-index/internal/scval"
+
+	"github.com/stellar/go-stellar-sdk/strkey"
 )
 
 // SACBalanceSeed is one current SAC / SEP-41 `Balance(Address)` entry
@@ -172,15 +177,30 @@ func StreamSACBalanceSeedsFullHistory(ctx context.Context, addr string, watched 
 	// "latest write wins" reduction ledger_entries_current's
 	// ReplacingMergeTree(ledger_seq) performs, computed directly over the
 	// full append-log instead of the (floor-limited) projection.
-	// SETTINGS: the LIMIT 1 BY reduction over the full multi-billion-row
-	// append-log needs a giant sort; without external (disk-spill) sort
-	// it exceeded the 10 GiB query budget on r1 (2026-07-11, first
-	// production run — container tests never see this scale). Spill
-	// keeps peak memory bounded at the cost of temp-disk IO, which is
-	// exactly the right trade for a rare operator-run seed.
-	const q = `SELECT key_xdr, entry_xdr, change_type, ledger_seq, close_time
+	// The watched-contract filter is pushed INTO the SQL as a raw-byte
+	// match on the strkey-decoded contract IDs embedded in key_xdr
+	// (multiSearchAny over the base64-decoded key — the same byte-match
+	// technique StreamContractCallOps uses on body_xdr). Without it, the
+	// LIMIT 1 BY reduction ran over EVERY contract_data key in the
+	// multi-billion-row append-log and exceeded the CH query budget
+	// twice on r1 (2026-07-11): first in the sort, then — with spill
+	// settings — in the wide-column read pipeline itself. Prefiltered
+	// to the watched handful of contracts, the surviving row set is
+	// tiny and the reduction is trivial. Spill settings retained as a
+	// belt-and-suspenders bound.
+	needles := make([]string, 0, len(watched))
+	for strk := range watched {
+		raw, derr := strkey.Decode(strkey.VersionByteContract, strk)
+		if derr != nil {
+			return fmt.Errorf("clickhouse: full-history seed: decode watched strkey %s: %w", strk, derr)
+		}
+		needles = append(needles, "unhex('"+hex.EncodeToString(raw)+"')")
+	}
+	sort.Strings(needles) // deterministic SQL for tests/logs
+	q := `SELECT key_xdr, entry_xdr, change_type, ledger_seq, close_time
 		FROM stellar.ledger_entry_changes
 		WHERE entry_type = 'contract_data'
+		  AND multiSearchAny(base64Decode(key_xdr), [` + strings.Join(needles, ", ") + `])
 		ORDER BY key_xdr, ledger_seq DESC
 		LIMIT 1 BY key_xdr
 		SETTINGS max_memory_usage = 8000000000,

@@ -15,6 +15,15 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **`supply seed-sac-balances -full-history` v2: the watched-contract filter is pushed into
+  SQL.** The v0.16.0 spill-settings fix bounded the sort but the WIDE-COLUMN read pipeline
+  itself still exceeded the CH budget (second 241 on r1, 2026-07-11) — the reduction was
+  scanning every contract_data key ever written before filtering client-side. The query now
+  prefilters to the watched SAC-wrapper contracts via `multiSearchAny` raw-byte matching on
+  the strkey-decoded IDs inside `key_xdr` (the `StreamContractCallOps` technique), shrinking
+  the reduction input from billions of rows to the watched handful's entries.
+
 ## [v0.16.0] — 2026-07-11
 
 ### Fixed
