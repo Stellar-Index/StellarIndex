@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **`supply seed-sac-balances -full-history` v3 (final): argMax aggregation replaces the
+  global sort.** v0.16.1's byte-filter shrank the scan input but the `ORDER BY … LIMIT 1
+  BY` reduction still pulled every surviving KB-scale `entry_xdr` row through a global
+  `MergeSortingTransform`, breaching the budget a third time. The latest-write-per-key
+  reduction is now `argMax(...) GROUP BY key_xdr` — per-group states, properly spilled by
+  `external_group_by`, no global sort — with non-shadowing output aliases (ClickHouse
+  resolves a shadowing alias back into sibling aggregate args: ILLEGAL_AGGREGATION).
+  **Validated live on r1**: 61s single-contract probe over the full 3B+-row append-log.
+
 ## [v0.16.1] — 2026-07-11
 
 ### Fixed
