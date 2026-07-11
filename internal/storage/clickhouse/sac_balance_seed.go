@@ -197,14 +197,25 @@ func StreamSACBalanceSeedsFullHistory(ctx context.Context, addr string, watched 
 		needles = append(needles, "unhex('"+hex.EncodeToString(raw)+"')")
 	}
 	sort.Strings(needles) // deterministic SQL for tests/logs
-	q := `SELECT key_xdr, entry_xdr, change_type, ledger_seq, close_time
+	// argMax GROUP BY instead of ORDER BY … LIMIT 1 BY: the global sort
+	// variant pulled every surviving WIDE row (entry_xdr is KB-scale)
+	// through MergeSortingTransform and still breached the budget even
+	// with spill thresholds (third 241 on r1, 2026-07-11). argMax keeps
+	// one latest-write state per key — per-GROUP memory, spilled by
+	// external_group_by — and no global sort exists at all.
+	// Output aliases must NOT shadow the source column names: ClickHouse
+	// resolves a shadowing alias back into sibling aggregate arguments
+	// (ILLEGAL_AGGREGATION — caught live 2026-07-11).
+	q := `SELECT key_xdr,
+		       argMax(entry_xdr, ledger_seq)   AS latest_entry_xdr,
+		       argMax(change_type, ledger_seq) AS latest_change_type,
+		       max(ledger_seq)                 AS latest_ledger_seq,
+		       argMax(close_time, ledger_seq)  AS latest_close_time
 		FROM stellar.ledger_entry_changes
 		WHERE entry_type = 'contract_data'
 		  AND multiSearchAny(base64Decode(key_xdr), [` + strings.Join(needles, ", ") + `])
-		ORDER BY key_xdr, ledger_seq DESC
-		LIMIT 1 BY key_xdr
+		GROUP BY key_xdr
 		SETTINGS max_memory_usage = 8000000000,
-		         max_bytes_before_external_sort = 2000000000,
 		         max_bytes_before_external_group_by = 2000000000,
 		         max_threads = 4`
 	rows, err := conn.Query(ctx, q)
