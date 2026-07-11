@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.16.1] — 2026-07-11
+
 ### Fixed
 - **Verdict recognition scan: the per-pair fallback can no longer eat the run's budget.**
   The bounded sampler's PHASE 3 fallback bundled an EXACT per-pair count/min/max aggregate
