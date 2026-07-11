@@ -15,6 +15,15 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **`supply seed-sac-balances -full-history` no longer exceeds ClickHouse's query memory
+  budget.** The `LIMIT 1 BY key_xdr` latest-write reduction over the full
+  multi-billion-row `ledger_entry_changes` append-log needs a giant sort; the first
+  production run (2026-07-11) hit the 10 GiB per-query ceiling and aborted — container
+  tests never see that scale. The query now carries explicit disk-spill SETTINGS
+  (external sort/group-by at 2 GB, 8 GB cap, 4 threads): bounded memory, temp-disk IO —
+  the right trade for a rare operator-run seed.
+
 ### Added
 - **"DeFi positions" view: `GET /v1/accounts/{g_strkey}/positions`** (spec
   1.9.0, x-stability: experimental, sibling of `/movements`). "Enter an

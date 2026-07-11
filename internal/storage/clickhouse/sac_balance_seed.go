@@ -172,11 +172,21 @@ func StreamSACBalanceSeedsFullHistory(ctx context.Context, addr string, watched 
 	// "latest write wins" reduction ledger_entries_current's
 	// ReplacingMergeTree(ledger_seq) performs, computed directly over the
 	// full append-log instead of the (floor-limited) projection.
+	// SETTINGS: the LIMIT 1 BY reduction over the full multi-billion-row
+	// append-log needs a giant sort; without external (disk-spill) sort
+	// it exceeded the 10 GiB query budget on r1 (2026-07-11, first
+	// production run — container tests never see this scale). Spill
+	// keeps peak memory bounded at the cost of temp-disk IO, which is
+	// exactly the right trade for a rare operator-run seed.
 	const q = `SELECT key_xdr, entry_xdr, change_type, ledger_seq, close_time
 		FROM stellar.ledger_entry_changes
 		WHERE entry_type = 'contract_data'
 		ORDER BY key_xdr, ledger_seq DESC
-		LIMIT 1 BY key_xdr`
+		LIMIT 1 BY key_xdr
+		SETTINGS max_memory_usage = 8000000000,
+		         max_bytes_before_external_sort = 2000000000,
+		         max_bytes_before_external_group_by = 2000000000,
+		         max_threads = 4`
 	rows, err := conn.Query(ctx, q)
 	if err != nil {
 		return fmt.Errorf("clickhouse: scan contract_data full history: %w", err)
