@@ -16,6 +16,17 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Verdict recognition scan: the per-pair fallback can no longer eat the run's budget.**
+  The bounded sampler's PHASE 3 fallback bundled an EXACT per-pair count/min/max aggregate
+  with its LIMIT 1 example fetch — for a DORMANT pair with a large historical footprint
+  (an old mint topic with millions of ancient rows) the aggregate scans the pair's whole
+  row set, and one such pair consumed the verdict's entire 2h context (second timeout,
+  2026-07-11). The aggregate is removed (fallback samples report Count = -1, "dormant
+  pair — not measured"; recognition only needs the example row), and each fallback fetch
+  runs under its own 90s deadline that degrades to a logged unsampled pair instead of a
+  run abort.
+
+### Fixed
 - **`supply seed-sac-balances -full-history` v2: the watched-contract filter is pushed into
   SQL.** The v0.16.0 spill-settings fix bounded the sort but the WIDE-COLUMN read pipeline
   itself still exceeded the CH budget (second 241 on r1, 2026-07-11) — the reduction was

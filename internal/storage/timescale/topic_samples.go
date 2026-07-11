@@ -282,20 +282,29 @@ func (s *Store) distinctSorobanContractTopicPairs(ctx context.Context) ([][2]str
 // (contract_id, topic_0_sym) — the composite index's exact columns —
 // and LIMIT 1 with no ORDER BY, so Postgres can stop at the first
 // matching index entry instead of sorting the pair's full row set.
+// NOTE (2026-07-11, second verdict timeout): the original PHASE 3 query
+// bundled an EXACT per-pair count/min/max aggregate alongside the LIMIT 1
+// fetch. For a DORMANT pair with a large historical footprint (e.g. an old
+// mint topic with millions of ancient rows), that aggregate scans the
+// pair's entire row set — one such pair ate the whole verdict's 2h budget.
+// Recognition only needs the EXAMPLE ROW (is this shape handled by a
+// decoder?); the count/span are informational. The aggregate is gone:
+// fallback-sampled pairs report Count = -1 ("not measured — dormant
+// pair"), and each fallback fetch runs under its own short deadline so a
+// pathological pair degrades to a logged skip instead of a run abort.
 const oneSorobanTopicSampleQuery = `
-        WITH agg AS (
-            SELECT count(*) AS cnt, min(ledger) AS lo, max(ledger) AS hi
-            FROM soroban_events
-            WHERE contract_id = $1 AND topic_0_sym = $2 AND ledger BETWEEN $3 AND $4
-        )
         SELECT e.ledger, e.ledger_close_time, e.tx_hash, e.op_index, e.event_index,
                e.contract_id, e.contract_id_hex, e.topic_count, e.topic_0_sym,
                e.topic_0_xdr, e.topic_1_xdr, e.topic_2_xdr, e.topic_3_xdr,
-               e.body_xdr, e.op_args_xdr,
-               agg.cnt, agg.lo, agg.hi
-        FROM soroban_events e, agg
+               e.body_xdr, e.op_args_xdr
+        FROM soroban_events e
         WHERE e.contract_id = $1 AND e.topic_0_sym = $2 AND e.ledger BETWEEN $3 AND $4
         LIMIT 1`
+
+// oneSorobanTopicSampleTimeout bounds each PHASE 3 per-pair fallback
+// fetch. A miss is tolerable (the pair is reported unsampled); a run
+// abort is not.
+const oneSorobanTopicSampleTimeout = 90 * time.Second
 
 // oneSorobanTopicSample is PHASE 3: an index-backed fetch of ANY one
 // row (LIMIT 1, no ORDER BY — recognition doesn't care which) for a
@@ -310,27 +319,33 @@ const oneSorobanTopicSampleQuery = `
 // entirely outside the caller's requested range).
 func (s *Store) oneSorobanTopicSample(ctx context.Context, contractID, topic0Sym string, from, to uint32) (TopicSample, bool, error) {
 	var (
-		samp                     TopicSample
-		r                        domain.SorobanEventRow
-		ledger                   int64
-		opIdx, eventIdx          int16
-		topicCount               int16
-		topic0SymOut             sql.NullString
-		topic1, topic2, topic3   []byte
-		opArgs                   []byte
-		grpCount, grpMin, grpMax int64
+		samp                   TopicSample
+		r                      domain.SorobanEventRow
+		ledger                 int64
+		opIdx, eventIdx        int16
+		topicCount             int16
+		topic0SymOut           sql.NullString
+		topic1, topic2, topic3 []byte
+		opArgs                 []byte
 	)
-	err := s.db.QueryRowContext(ctx, oneSorobanTopicSampleQuery, contractID, topic0Sym, int64(from), int64(to)).Scan(
+	pairCtx, cancel := context.WithTimeout(ctx, oneSorobanTopicSampleTimeout)
+	defer cancel()
+	err := s.db.QueryRowContext(pairCtx, oneSorobanTopicSampleQuery, contractID, topic0Sym, int64(from), int64(to)).Scan(
 		&ledger, &r.LedgerCloseTime, &r.TxHash, &opIdx, &eventIdx,
 		&r.ContractID, &r.ContractIDHex, &topicCount, &topic0SymOut,
 		&r.Topic0XDR, &topic1, &topic2, &topic3,
 		&r.BodyXDR, &opArgs,
-		&grpCount, &grpMin, &grpMax,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return TopicSample{}, false, nil
 	}
 	if err != nil {
+		// Per-pair deadline expiry (not the caller's ctx): degrade to
+		// "unsampled" instead of failing the whole recognition scan —
+		// the pathological-dormant-pair case this timeout exists for.
+		if pairCtx.Err() != nil && ctx.Err() == nil {
+			return TopicSample{}, false, nil
+		}
 		return TopicSample{}, false, fmt.Errorf("timescale: oneSorobanTopicSample query: %w", err)
 	}
 	r.Ledger = uint32(ledger)
@@ -345,8 +360,10 @@ func (s *Store) oneSorobanTopicSample(ctx context.Context, contractID, topic0Sym
 	r.Topic3XDR = topic3
 	r.OpArgsXDR = opArgs
 	samp.Row = r
-	samp.Count = grpCount
-	samp.MinLedger = uint32(grpMin)
-	samp.MaxLedger = uint32(grpMax)
+	// Count/span deliberately not measured on the fallback path (see the
+	// query const's note): -1 = "dormant pair, not measured".
+	samp.Count = -1
+	samp.MinLedger = uint32(ledger)
+	samp.MaxLedger = uint32(ledger)
 	return samp, true, nil
 }
