@@ -46,18 +46,25 @@ func StreamContractCallOps(ctx context.Context, addr, contractHex string, from, 
 	}
 	defer func() { _ = conn.Close() }()
 
+	// The successful-tx restriction is a grace_hash INNER JOIN, not an
+	// IN-subquery: IN builds the whole window's tx-hash set in memory
+	// (CreatingSetsTransform blew the 10 GiB query budget on a dense
+	// 250k-ledger window, 2026-07-11). grace_hash spills join buckets
+	// to disk — the same rationale as StreamSDEXOps/StreamClassicOps.
 	const query = `
 		SELECT o.ledger_seq, o.close_time, o.tx_hash, o.op_index, o.source_account, o.body_xdr
 		FROM stellar.operations AS o FINAL
+		INNER JOIN (
+		    SELECT tx_hash FROM stellar.transactions FINAL
+		    WHERE successful = 1 AND ledger_seq BETWEEN ? AND ?
+		) AS t ON o.tx_hash = t.tx_hash
 		WHERE o.ledger_seq BETWEEN ? AND ?
 		  AND o.op_type = 'OperationTypeInvokeHostFunction'
 		  AND position(base64Decode(o.body_xdr), unhex(?)) > 0
-		  AND o.tx_hash IN (
-		      SELECT tx_hash FROM stellar.transactions FINAL
-		      WHERE successful = 1 AND ledger_seq BETWEEN ? AND ?
-		  )
-		ORDER BY o.ledger_seq, o.tx_hash, o.op_index`
-	rows, err := conn.Query(ctx, query, from, to, contractHex, from, to)
+		ORDER BY o.ledger_seq, o.tx_hash, o.op_index
+		SETTINGS join_algorithm = 'grace_hash', grace_hash_join_initial_buckets = 32,
+		         max_memory_usage = 8000000000, max_bytes_before_external_sort = 2000000000`
+	rows, err := conn.Query(ctx, query, from, to, from, to, contractHex)
 	if err != nil {
 		return fmt.Errorf("clickhouse: query contract-call ops [%d,%d]: %w", from, to, err)
 	}

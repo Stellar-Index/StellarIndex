@@ -16,6 +16,12 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **`ch-rebuild -contract-calls` no longer exceeds ClickHouse's query memory budget on
+  dense windows.** The successful-tx restriction was an IN-subquery whose
+  `CreatingSetsTransform` materialized the whole window's tx-hash set in memory (11.68 GiB
+  attempted on a dense 250k-ledger window, 2026-07-11 — aborting the router call-path
+  re-derive mid-queue). Rewritten as a `grace_hash` INNER JOIN with disk-spill settings —
+  the same shape `StreamSDEXOps`/`StreamClassicOps` already use for exactly this reason.
 - **`supply seed-sac-balances -full-history` no longer exceeds ClickHouse's query memory
   budget.** The `LIMIT 1 BY key_xdr` latest-write reduction over the full
   multi-billion-row `ledger_entry_changes` append-log needs a giant sort; the first
