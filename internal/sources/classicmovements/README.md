@@ -175,15 +175,18 @@ guessed amount. This is the "in-window index with a lookup fallback"
 design named in ADR-0047's Phase 3 scope, not a full second pass over
 the whole range.
 
-**Memory-scaling caveat**: the in-run index has no eviction and grows
-with the ledger range one command invocation processes — a
-genesis-to-P23 run in a single invocation risks accumulating on the
-order of the full `CreateClaimableBalance` row count (research §5:
-~1.5B) in memory. Operators MUST chunk `-from`/`-to` into
-multi-million-ledger invocations for Phase 3 ranges, same discipline
-as any other heavy job; the ClickHouse fallback is what keeps
-chunked, resumed invocations correct despite each invocation starting
-with an empty index.
+**Memory-scaling caveat**: the in-run index is bounded at
+`maxCBIndexEntries` (2,000,000, FIFO eviction — oldest create evicted
+first) rather than growing without limit; unbounded growth across the
+full `CreateClaimableBalance` row count (research §5: ~1.5B) is what
+drove an earlier OOM. Eviction is safe — a miss just falls through to
+the ClickHouse fallback (`FindClaimableBalanceCreate`), same as a
+create outside this run's range entirely — but operators should still
+chunk `-from`/`-to` into multi-million-ledger invocations for Phase 3
+ranges, same discipline as any other heavy job: a smaller working set
+keeps more claims resolving from the free in-memory path instead of
+paying a ClickHouse round trip, and each invocation still starts with
+an empty index either way.
 
 ### Q6 — Phase 4's entry-changes surface: a second, parallel decode path
 

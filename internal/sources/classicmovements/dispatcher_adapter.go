@@ -31,16 +31,22 @@ import (
 // previously Postgres) — see
 // TakePendingClaimableBalances / ResolvePendingClaimableBalance.
 //
-// The in-memory index has NO eviction — it grows with the ledger
-// range one command invocation processes. A genesis-to-P23 run in a
-// single invocation would accumulate on the order of the full
+// The in-memory index is BOUNDED at maxCBIndexEntries (FIFO eviction,
+// oldest create evicted first) — a genesis-to-P23 run in a single
+// invocation would otherwise accumulate on the order of the full
 // CreateClaimableBalance row count (research §5: ~1.5B) before ever
-// being claimed, which is not a bounded amount of memory. Operators
-// backfilling Phase 3 MUST chunk `-from`/`-to` into multi-million-
-// ledger invocations (same heavy-job discipline as every other
-// backfill in this repo) rather than one genesis-to-P23 call — the
-// ClickHouse fallback is what keeps chunked, resumed invocations
-// correct despite each invocation starting with an empty index.
+// being claimed, which is what drove an earlier OOM. Eviction is safe
+// because a miss here is not data loss: ResolveBalance failing just
+// means the pending entry falls through to
+// clickhouse.FindClaimableBalanceCreate, classic-movements-backfill's
+// ClickHouse-backed second pass, which resolves any create this run
+// has itself already written — the same fallback path used for
+// creates outside this run's range entirely. Operators backfilling
+// Phase 3 should still chunk `-from`/`-to` into multi-million-ledger
+// invocations (same heavy-job discipline as every other backfill in
+// this repo): the bound protects against OOM, but a smaller working
+// set keeps more claims resolving from the free in-memory path
+// instead of paying a ClickHouse round trip.
 //
 // Not safe for concurrent Decode calls — sequential caller only,
 // matching dispatcher.Dispatcher's own "not safe for concurrent
@@ -48,8 +54,30 @@ import (
 // single-threaded, so this is never an issue in practice.
 type Decoder struct {
 	balances map[string]claimableBalanceInfo
-	pending  []PendingClaimableBalanceRef
+	// balanceOrder is a fixed-size ring buffer (len ==
+	// maxCBIndexEntries at construction time) recording FIFO
+	// insertion order of balances' keys — see indexClaimableBalanceCreate.
+	// A slot holding "" is unused (never written yet); balance_id is
+	// never empty (guarded in indexClaimableBalanceCreate), so "" is a
+	// safe empty sentinel.
+	balanceOrder []string
+	// balanceNext is the ring slot indexClaimableBalanceCreate writes
+	// to next.
+	balanceNext int
+	pending     []PendingClaimableBalanceRef
 }
+
+// maxCBIndexEntries bounds the Decoder's in-run claimable-balance-
+// create index (balances / balanceOrder above). Each entry is small —
+// a hex balance_id key plus a claimableBalanceInfo of two short
+// strings and a *big.Int amount, on the order of a few hundred bytes
+// all-in — so 2,000,000 entries costs on the order of several hundred
+// MB, comfortably inside a heavy job's MemoryMax=20G ceiling
+// (CLAUDE.md "Heavy one-shot jobs on r1") while still covering a
+// multi-million-ledger window's worth of creates without spilling to
+// the ClickHouse fallback. A var, not a const, so tests can shrink it
+// to exercise eviction without allocating millions of ring slots.
+var maxCBIndexEntries = 2_000_000
 
 // claimableBalanceInfo is what a 'claimable_balance_create' movement
 // contributes to the Decoder's in-run BalanceId index.
@@ -61,7 +89,10 @@ type claimableBalanceInfo struct {
 
 // NewDecoder constructs a classicmovements Decoder.
 func NewDecoder() *Decoder {
-	return &Decoder{balances: make(map[string]claimableBalanceInfo)}
+	return &Decoder{
+		balances:     make(map[string]claimableBalanceInfo),
+		balanceOrder: make([]string, maxCBIndexEntries),
+	}
 }
 
 // Name implements dispatcher.OpDecoder.
@@ -109,10 +140,25 @@ func (d *Decoder) Decode(ctx dispatcher.OpContext) ([]consumer.Event, error) {
 // a later claim/clawback falls through to the pending list instead
 // of resolving from memory, which is still correct (just slower),
 // never wrong.
+//
+// A genuinely new balance_id consumes one ring slot: if the ring has
+// wrapped all the way around (balanceOrder[d.balanceNext] already
+// holds a live key), that oldest key is evicted from balances first —
+// see maxCBIndexEntries' doc comment for why eviction is safe. A
+// balance_id already present in the index (re-decoding the same op,
+// e.g. on a retried window) is an in-place value update and does NOT
+// consume a new ring slot or move in FIFO order.
 func (d *Decoder) indexClaimableBalanceCreate(m Movement) {
 	id, ok := m.Attributes["balance_id"].(string)
 	if !ok || id == "" {
 		return
+	}
+	if _, exists := d.balances[id]; !exists && len(d.balanceOrder) > 0 {
+		if evicted := d.balanceOrder[d.balanceNext]; evicted != "" {
+			delete(d.balances, evicted)
+		}
+		d.balanceOrder[d.balanceNext] = id
+		d.balanceNext = (d.balanceNext + 1) % len(d.balanceOrder)
 	}
 	d.balances[id] = claimableBalanceInfo{
 		Asset:     m.Asset,

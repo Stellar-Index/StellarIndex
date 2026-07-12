@@ -2,12 +2,15 @@ package classicmovements
 
 import (
 	"errors"
+	"fmt"
+	"math/big"
 	"testing"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/StellarIndex/stellar-index/internal/canonical"
 	"github.com/StellarIndex/stellar-index/internal/dispatcher"
 )
 
@@ -898,6 +901,75 @@ func TestDecoder_ResolveBalance_sameWindowOutOfOrder(t *testing.T) {
 	}
 	if asset != "USDC-"+usdc.MustAlphaNum4().Issuer.Address() || amount.String() != "2500000000" || createdBy != creatorAddr {
 		t.Errorf("got asset=%s amount=%s createdBy=%s", asset, amount.String(), createdBy)
+	}
+}
+
+// TestDecoder_claimableBalanceIndex_FIFOEviction proves the in-run
+// claimable-balance-create index (dispatcher_adapter.go's balances /
+// balanceOrder) is bounded at maxCBIndexEntries with FIFO eviction —
+// the fix for the OOM risk documented on the Decoder type. Shrinks
+// maxCBIndexEntries to a tiny cap so the test doesn't need to
+// allocate (or insert) millions of entries; restores the package var
+// afterward so it doesn't leak into other tests in this package.
+func TestDecoder_claimableBalanceIndex_FIFOEviction(t *testing.T) {
+	orig := maxCBIndexEntries
+	maxCBIndexEntries = 3
+	t.Cleanup(func() { maxCBIndexEntries = orig })
+
+	d := NewDecoder()
+	fromAddr, _ := mkAccount(t, 0x01)
+
+	mkCreateMovement := func(id string) Movement {
+		return Movement{
+			Kind:        KindClaimableBalanceCreate,
+			Asset:       "native",
+			Amount:      canonical.NewAmount(big.NewInt(1)),
+			FromAddress: fromAddr,
+			Attributes:  map[string]any{"balance_id": id},
+		}
+	}
+
+	// Insert 5 distinct creates against a cap of 3 — bid0 and bid1
+	// (the two OLDEST) must be evicted; bid2-bid4 (the three NEWEST)
+	// must remain resolvable.
+	const inserted = 5
+	ids := make([]string, inserted)
+	for i := 0; i < inserted; i++ {
+		ids[i] = fmt.Sprintf("bid%d", i)
+		d.indexClaimableBalanceCreate(mkCreateMovement(ids[i]))
+	}
+
+	if got := len(d.balances); got != maxCBIndexEntries {
+		t.Fatalf("len(d.balances) = %d, want %d (capped)", got, maxCBIndexEntries)
+	}
+	for _, id := range ids[:inserted-maxCBIndexEntries] {
+		if _, _, _, found := d.ResolveBalance(id); found {
+			t.Errorf("ResolveBalance(%q) found = true, want false (should have been FIFO-evicted)", id)
+		}
+	}
+	for _, id := range ids[inserted-maxCBIndexEntries:] {
+		asset, amount, createdBy, found := d.ResolveBalance(id)
+		if !found {
+			t.Errorf("ResolveBalance(%q) found = false, want true (within the cap, should still be indexed)", id)
+			continue
+		}
+		if asset != "native" || amount.String() != "1" || createdBy != fromAddr {
+			t.Errorf("ResolveBalance(%q) = asset=%s amount=%s createdBy=%s, want native/1/%s", id, asset, amount.String(), createdBy, fromAddr)
+		}
+	}
+
+	// Re-inserting an ALREADY-indexed id (simulating a retried window
+	// re-decoding the same op) must not consume a new ring slot or
+	// disturb the existing FIFO order — cap stays the same size and
+	// the other still-live entries remain resolvable.
+	d.indexClaimableBalanceCreate(mkCreateMovement(ids[inserted-1]))
+	if got := len(d.balances); got != maxCBIndexEntries {
+		t.Fatalf("after re-insert, len(d.balances) = %d, want %d (unchanged)", got, maxCBIndexEntries)
+	}
+	for _, id := range ids[inserted-maxCBIndexEntries:] {
+		if _, _, _, found := d.ResolveBalance(id); !found {
+			t.Errorf("after re-insert, ResolveBalance(%q) found = false, want true", id)
+		}
 	}
 }
 
