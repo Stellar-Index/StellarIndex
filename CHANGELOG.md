@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **classic_movements: sponsored account creations (CAP-33, Protocol 15+) are no longer
+  dropped as malformed.** `CreateAccount` with `startingBalance = 0` is legal once a
+  sponsor covers the reserve; the decoder rejected any non-positive balance, silently
+  skipping every sponsored creation — caught live on the 2026-07-12 archive backfill at
+  ledger ~37.12M (a sponsorship-bot storm produced a decode-error flood). Zero now emits
+  a real zero-amount `create_account` movement; only NEGATIVE balances are malformed.
+  The already-derived ranges need one fixed-binary re-pass without `-resume` (idempotent,
+  ReplacingMergeTree) to pick up the dropped creations.
+
 ## [v0.16.2] — 2026-07-11
 
 ### Fixed

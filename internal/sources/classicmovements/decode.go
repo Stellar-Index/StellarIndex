@@ -120,8 +120,15 @@ func decodeCreateAccount(ledger uint32, closedAt time.Time, txHash string, opInd
 		return nil, fmt.Errorf("%w: op type CreateAccount but body has no CreateAccountOp (ledger %d tx %s op %d)",
 			ErrMalformedMovement, ledger, txHash, opIndex)
 	}
-	if body.StartingBalance <= 0 {
-		return nil, fmt.Errorf("%w: non-positive StartingBalance %d (ledger %d tx %s op %d)",
+	// StartingBalance == 0 is LEGAL since CAP-33 sponsored reserves
+	// (Protocol 15): a sponsor covers the reserve, so the created
+	// account can start with zero XLM. Treating it as malformed dropped
+	// every sponsored account creation from the archive (caught live on
+	// the 2026-07-12 backfill at ledger ~37.12M — a sponsorship-bot
+	// storm). Zero emits a real create_account movement with amount 0;
+	// only a NEGATIVE balance is malformed.
+	if body.StartingBalance < 0 {
+		return nil, fmt.Errorf("%w: negative StartingBalance %d (ledger %d tx %s op %d)",
 			ErrMalformedMovement, body.StartingBalance, ledger, txHash, opIndex)
 	}
 
