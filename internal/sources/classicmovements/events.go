@@ -175,7 +175,7 @@ type PendingClaimableBalanceRef struct {
 // ResolvePendingClaimableBalance builds the Movement for a
 // previously-pending claim/clawback now that its create row's
 // asset/amount/creator have been found — typically via a ClickHouse
-// second-pass lookup (clickhouse.FindClaimableBalanceCreate —
+// second-pass lookup (clickhouse.FindClaimableBalanceCreates —
 // ADR-0048 D2; previously Postgres)
 // run by the caller after Decoder.TakePendingClaimableBalances,
 // since this package stays storage-agnostic (mirrors

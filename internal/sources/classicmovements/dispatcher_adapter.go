@@ -38,8 +38,9 @@ import (
 // being claimed, which is what drove an earlier OOM. Eviction is safe
 // because a miss here is not data loss: ResolveBalance failing just
 // means the pending entry falls through to
-// clickhouse.FindClaimableBalanceCreate, classic-movements-backfill's
-// ClickHouse-backed second pass, which resolves any create this run
+// clickhouse.FindClaimableBalanceCreates, classic-movements-backfill's
+// ClickHouse-backed second pass (batched across a whole window's
+// misses, not one query per ref), which resolves any create this run
 // has itself already written — the same fallback path used for
 // creates outside this run's range entirely. Operators backfilling
 // Phase 3 should still chunk `-from`/`-to` into multi-million-ledger
@@ -207,9 +208,9 @@ func (d *Decoder) ResolveBalance(balanceIDHex string) (asset string, amount cano
 // call (or since construction), and clears its internal buffer. The
 // caller (classic-movements-backfill) is expected to drain this
 // after each streamed window and attempt a ClickHouse-backed second
-// pass (clickhouse.FindClaimableBalanceCreate — ADR-0048 D2;
-// previously Postgres) for each entry — see
-// ResolvePendingClaimableBalance. An entry that still can't be
+// pass (clickhouse.FindClaimableBalanceCreates, batched across the
+// whole window's misses — ADR-0048 D2; previously Postgres) for each
+// entry — see ResolvePendingClaimableBalance. An entry that still can't be
 // resolved there is a genuine ADR-0047 D4 recognizable-incompleteness
 // signal: count it, log a summary, never guess an amount.
 func (d *Decoder) TakePendingClaimableBalances() []PendingClaimableBalanceRef {

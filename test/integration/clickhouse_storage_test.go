@@ -371,9 +371,9 @@ func breakdownCount(rows []chstore.ProtocolEventTypeCount, name string) uint64 {
 // insert collapses under the table's ReplacingMergeTree engine (observed via
 // VerifyAccountMovementsWindow's uniqExact, which — like the table's own
 // dedup story — doesn't require FINAL to be correct), MaxAccountMovementLedger
-// resolves the right resume point, and FindClaimableBalanceCreate's
-// balance_id lookup (the ClickHouse replacement for the retired Postgres
-// fallback) resolves a previously-written create.
+// resolves the right resume point, and FindClaimableBalanceCreates'
+// batched balance_id lookup (the ClickHouse replacement for the retired
+// Postgres fallback) resolves a previously-written create.
 func TestClickHouseAccountMovementsRoundTrip(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -515,21 +515,30 @@ func TestClickHouseAccountMovementsRoundTrip(t *testing.T) {
 		t.Fatalf("MaxAccountMovementLedger (empty range) found=true, want false")
 	}
 
-	// ── FindClaimableBalanceCreate: the ClickHouse Phase-3 fallback lookup ──
-	asset, amt, createdBy, found, err := chstore.FindClaimableBalanceCreate(ctx, addr, balanceID)
+	// ── FindClaimableBalanceCreates: the ClickHouse Phase-3 batched fallback
+	// lookup (2026-07-12: replaces a serial per-ref FindClaimableBalanceCreate
+	// after the idx_cb_balance_id skip index made per-lookup cost negligible
+	// but per-window lookup COUNT still mattered) — one query resolving a
+	// found id, a missing id, and (via the empty-input short-circuit) the
+	// no-op case together.
+	foundCB, err := chstore.FindClaimableBalanceCreates(ctx, addr, []string{balanceID, "nonexistent"})
 	if err != nil {
-		t.Fatalf("FindClaimableBalanceCreate: %v", err)
+		t.Fatalf("FindClaimableBalanceCreates: %v", err)
 	}
-	if !found {
-		t.Fatal("FindClaimableBalanceCreate: found=false, want true")
+	row, ok := foundCB[balanceID]
+	if !ok {
+		t.Fatal("FindClaimableBalanceCreates: balanceID missing from result, want present")
 	}
-	if asset != "native" || amt == nil || amt.Cmp(big.NewInt(250)) != 0 || createdBy != creator {
-		t.Errorf("FindClaimableBalanceCreate = asset=%s amount=%v createdBy=%s, want native/250/%s", asset, amt, createdBy, creator)
+	if row.Asset != "native" || row.Amount == nil || row.Amount.Cmp(big.NewInt(250)) != 0 || row.CreatedBy != creator {
+		t.Errorf("FindClaimableBalanceCreates[%s] = asset=%s amount=%v createdBy=%s, want native/250/%s", balanceID, row.Asset, row.Amount, row.CreatedBy, creator)
 	}
-	if _, _, _, found, err := chstore.FindClaimableBalanceCreate(ctx, addr, "nonexistent"); err != nil {
-		t.Fatalf("FindClaimableBalanceCreate (miss): %v", err)
-	} else if found {
-		t.Fatal("FindClaimableBalanceCreate (miss): found=true, want false")
+	if _, ok := foundCB["nonexistent"]; ok {
+		t.Fatal("FindClaimableBalanceCreates: \"nonexistent\" present in result, want absent")
+	}
+	if empty, err := chstore.FindClaimableBalanceCreates(ctx, addr, nil); err != nil {
+		t.Fatalf("FindClaimableBalanceCreates (empty input): %v", err)
+	} else if len(empty) != 0 {
+		t.Fatalf("FindClaimableBalanceCreates (empty input) = %v, want empty map", empty)
 	}
 
 	// ── VerifyAccountMovementsWindow: uniqExact collapses the fan-out back

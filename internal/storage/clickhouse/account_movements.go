@@ -157,6 +157,15 @@ func FanOutAccountMovement(m AccountMovement) []AccountMovementRow {
 // so EnsureAccountMovementsTable can defensively create the table on
 // a fresh/older ClickHouse before the first backfill write, the same
 // belt-and-suspenders pattern supply_flows.go uses.
+//
+// idx_cb_balance_id (added 2026-07-12, see FindClaimableBalanceCreates'
+// doc comment) is part of this DDL so a FRESH install gets it from the
+// start. `CREATE TABLE IF NOT EXISTS` does NOT retrofit an index onto
+// an already-existing table, though — this only takes effect the first
+// time EnsureAccountMovementsTable creates the table from scratch. r1's
+// table already existed when the index was added, so it was applied
+// there directly via a one-off `ALTER TABLE ... ADD INDEX` (mutation
+// complete, not re-run by this DDL).
 const accountMovementsDDL = `
 	CREATE TABLE IF NOT EXISTS stellar.account_movements (
 		address           String,
@@ -172,7 +181,8 @@ const accountMovementsDDL = `
 		counterparty      String DEFAULT '',
 		amount            Int128,
 		attributes        String DEFAULT '{}',
-		ingested_at       DateTime DEFAULT now()
+		ingested_at       DateTime DEFAULT now(),
+		INDEX idx_cb_balance_id JSONExtractString(attributes, 'balance_id') TYPE bloom_filter(0.01) GRANULARITY 4
 	) ENGINE = ReplacingMergeTree(ingested_at)
 	PARTITION BY intDiv(ledger, 1000000)
 	ORDER BY (address, ledger, tx_hash, op_index, leg_index, direction)`
@@ -371,62 +381,90 @@ func MaxAccountMovementLedger(ctx context.Context, addr string, from, to uint32)
 	return uint32(hi), true, nil
 }
 
-// FindClaimableBalanceCreate looks up a previously-written
-// claimable_balance_create movement's asset/amount/creator by its
-// balance_id — the ADR-0048 D2 ClickHouse-native replacement for the
-// retired Postgres timescale.Store.FindClaimableBalanceCreate lookup
-// (ADR-0047 Phase 3's cross-window correlation fallback tier; see
+// ClaimableBalanceCreateRow is one resolved claimable_balance_create
+// movement's asset/amount/creator, keyed by balance_id in
+// FindClaimableBalanceCreates' returned map.
+type ClaimableBalanceCreateRow struct {
+	Asset     string
+	Amount    *big.Int
+	CreatedBy string
+}
+
+// FindClaimableBalanceCreates batch-resolves MANY pending claim/
+// clawback refs' claimable_balance_create rows in ONE query — the
+// ADR-0048 D2 ClickHouse-native replacement for the retired Postgres
+// timescale.Store.FindClaimableBalanceCreate lookup (ADR-0047 Phase
+// 3's cross-window correlation fallback tier; see
 // classicmovements/dispatcher_adapter.go's Decoder doc for the full
 // three-tier resolution: in-run index, this lookup, then unresolved).
+// It replaces a now-removed single-ref FindClaimableBalanceCreate that
+// classic-movements-backfill called once per pending ref, serially.
 //
-// found=false, err=nil means no matching create row exists YET for
-// this balance_id in what's been backfilled to ClickHouse so far — a
-// genuine ADR-0047 D4 recognizable-incompleteness signal (the create
-// may be outside the range backfilled so far, or — rarely —
-// same-ledger ordering noise), never a query failure. Callers must
-// count + log this, never guess an amount.
+// 2026-07-12 finding: the claimable-balance-bot era (ledgers
+// ~34M-40M) surfaces thousands of pending refs per window, and each
+// serial per-ref lookup was a 6.5s full scan of
+// stellar.account_movements' 973M rows — the drain was crawling.
+// idx_cb_balance_id (this package's accountMovementsDDL and
+// deploy/clickhouse/tier1_schema.sql; already applied to r1 via a
+// one-off ALTER TABLE) is a bloom_filter skip-index on
+// JSONExtractString(attributes, 'balance_id') that brought a single
+// lookup to ~84ms (~77x). Batching on top of that turns an entire
+// window's fallback resolution into ONE query regardless of how many
+// refs it has, instead of one query per ref.
 //
-// No index backs the JSON attributes' balance_id — this scans the
-// claimable_balance_create subset of stellar.account_movements (a
-// LowCardinality equality prunes columns but not primary-key
-// granules, since movement_kind isn't in ORDER BY). Same "acceptable
-// for a rare fallback path" caveat as the retired Postgres version
-// (see its doc comment for the identical reasoning); if this becomes
-// a hot path in production (a WARNING-level unresolved-count spike),
-// a dedicated balance_id column + bloom skip-index is the fix, not
-// pre-optimizing here.
-func FindClaimableBalanceCreate(ctx context.Context, addr, balanceIDHex string) (asset string, amount *big.Int, createdBy string, found bool, err error) {
-	if balanceIDHex == "" {
-		return "", nil, "", false, fmt.Errorf("clickhouse: FindClaimableBalanceCreate: balanceIDHex is empty")
+// ClickHouse's skip-index pruning only fires when the WHERE predicate
+// is textually IDENTICAL to the indexed expression — the WHERE clause
+// below MUST stay exactly `JSONExtractString(attributes, 'balance_id')`
+// (not a rewritten equivalent: a CTE, a different function, a cast,
+// …). Any divergence silently falls back to the pre-index full scan
+// with no query error to signal it.
+//
+// The returned map contains ONLY found ids; a balance_id absent from
+// it means no matching create row exists YET for it in what's been
+// backfilled to ClickHouse so far — a genuine ADR-0047 D4
+// recognizable-incompleteness signal (the create may be outside the
+// range backfilled so far, or — rarely — same-ledger ordering noise),
+// never a query failure. Callers must count + log misses, never guess
+// an amount. Duplicate rows for the same balance_id (ReplacingMergeTree
+// parts not yet merged) are identical by construction; the first one
+// scanned wins. Empty input returns an empty, non-nil map without
+// querying ClickHouse.
+func FindClaimableBalanceCreates(ctx context.Context, addr string, balanceIDHexes []string) (map[string]ClaimableBalanceCreateRow, error) {
+	out := make(map[string]ClaimableBalanceCreateRow, len(balanceIDHexes))
+	if len(balanceIDHexes) == 0 {
+		return out, nil
 	}
 	conn, err := openRead(ctx, addr)
 	if err != nil {
-		return "", nil, "", false, err
+		return nil, err
 	}
 	defer func() { _ = conn.Close() }()
 
 	const q = `
-		SELECT asset, amount, address
+		SELECT JSONExtractString(attributes, 'balance_id') AS balance_id, asset, amount, address
 		FROM stellar.account_movements
 		WHERE movement_kind = 'claimable_balance_create'
-		  AND JSONExtractString(attributes, 'balance_id') = ?
-		LIMIT 1`
-	rows, qerr := conn.Query(ctx, q, balanceIDHex)
+		  AND JSONExtractString(attributes, 'balance_id') IN (?)`
+	rows, qerr := conn.Query(ctx, q, balanceIDHexes)
 	if qerr != nil {
-		return "", nil, "", false, fmt.Errorf("clickhouse: FindClaimableBalanceCreate(%s): %w", balanceIDHex, qerr)
+		return nil, fmt.Errorf("clickhouse: FindClaimableBalanceCreates(%d ids): %w", len(balanceIDHexes), qerr)
 	}
 	defer func() { _ = rows.Close() }()
-	if !rows.Next() {
-		return "", nil, "", false, rows.Err()
+	for rows.Next() {
+		var balanceID, asset, createdBy string
+		var amt *big.Int
+		if err := rows.Scan(&balanceID, &asset, &amt, &createdBy); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan FindClaimableBalanceCreates row: %w", err)
+		}
+		if _, dup := out[balanceID]; dup {
+			continue // ReplacingMergeTree pre-merge duplicate — identical by construction; first wins.
+		}
+		if amt == nil {
+			amt = big.NewInt(0)
+		}
+		out[balanceID] = ClaimableBalanceCreateRow{Asset: asset, Amount: amt, CreatedBy: createdBy}
 	}
-	var amt *big.Int
-	if err := rows.Scan(&asset, &amt, &createdBy); err != nil {
-		return "", nil, "", false, fmt.Errorf("clickhouse: scan FindClaimableBalanceCreate(%s): %w", balanceIDHex, err)
-	}
-	if amt == nil {
-		amt = big.NewInt(0)
-	}
-	return asset, amt, createdBy, true, nil
+	return out, rows.Err()
 }
 
 // AccountMovementVerifyCounts maps movement_kind -> the number of

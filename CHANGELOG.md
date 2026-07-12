@@ -22,6 +22,14 @@ against.
   flooding logs or scratch space could fill the 49 GB root and wedge service
   logging channels. The remaining durable fix (move `/var/log`/swap onto ZFS or
   resize root) is recorded as accepted operator-gated debt in the post-mortem.
+- **`stellar.account_movements` gained a `balance_id` skip index** (`idx_cb_balance_id`,
+  `bloom_filter(0.01)` on `JSONExtractString(attributes, 'balance_id')`, `GRANULARITY 4`) —
+  applied directly to r1's production ClickHouse via `ALTER TABLE ... ADD INDEX`
+  (2026-07-12; mutation complete). Now codified in both DDL sites — `deploy/clickhouse/
+  tier1_schema.sql` and `internal/storage/clickhouse/account_movements.go`'s
+  `EnsureAccountMovementsTable` — so a fresh install gets it from the start; note that
+  `CREATE TABLE IF NOT EXISTS` does not retrofit it onto an already-existing table
+  (irrelevant for r1, already applied there directly).
 
 ### Fixed
 - **classic_movements: sponsored account creations (CAP-33, Protocol 15+) are no longer
@@ -36,7 +44,7 @@ against.
   2026-07-12 half-dead-connection stall.** A half-dead ClickHouse native connection left
   the backfill loop blocked in a network read for ~2h at zero CPU; the driver's
   `ReadTimeout` alone did not unwedge it. Every ClickHouse call inside a window (both
-  `StreamClassicOps` passes, both `StreamEntryChanges` calls, `FindClaimableBalanceCreate`,
+  `StreamClassicOps` passes, both `StreamEntryChanges` calls, `FindClaimableBalanceCreates`,
   `InsertAccountMovements`, `VerifyAccountMovementsWindow`) now runs under a single
   20-minute per-window `context.WithTimeout`; a window that exceeds it is retried exactly
   once on fresh connections before being treated as a real error. The window body was
@@ -50,8 +58,19 @@ against.
   full historical `CreateClaimableBalance` row count (research §5: ~1.5B), which
   contributed to an earlier OOM. It's now capped at 2,000,000 entries with FIFO eviction;
   a miss on an evicted balance_id falls through to `classic-movements-backfill`'s existing
-  ClickHouse lookup (`FindClaimableBalanceCreate`) the same way an out-of-range create
+  ClickHouse lookup (`FindClaimableBalanceCreates`) the same way an out-of-range create
   already does, so eviction never produces a wrong or guessed amount.
+- **`classic-movements-backfill`'s claimable-balance fallback lookups are now batched,
+  one query per window instead of one query per ref.** The claimable-balance-bot era
+  (ledgers ~34M-40M) surfaces thousands of pending claim/clawback refs per window; each
+  serial `FindClaimableBalanceCreate` call was, before the `idx_cb_balance_id` skip index
+  above existed, a 6.5s full scan of `stellar.account_movements`' 973M rows — with
+  thousands of refs per window, the drain was crawling. The index alone brought a single
+  lookup to ~84ms (~77x); the retired per-ref function is replaced by
+  `clickhouse.FindClaimableBalanceCreates`, which resolves an entire window's misses (after
+  the free in-memory index pass) in ONE `IN (?)` query. A batch-query error degrades the
+  whole miss-set to unresolved with one stderr line, matching the previous per-ref
+  behavior of counting a failed lookup as unresolved rather than failing the window.
 
 ## [v0.16.2] — 2026-07-11
 

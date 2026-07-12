@@ -165,11 +165,16 @@ whose tx_hash sorts before its own create's tx_hash in
 first, landing in pending, even though the create is indexed moments
 later in the SAME window — re-checking after the whole window is done
 catches this without a ClickHouse round trip); (2)
-`clickhouse.FindClaimableBalanceCreate` (ADR-0048 D2; previously
+`clickhouse.FindClaimableBalanceCreates` (ADR-0048 D2; previously
 `timescale.Store.FindClaimableBalanceCreate` against Postgres) — a
-ClickHouse query against previously-written `claimable_balance_create`
-rows in `stellar.account_movements` (matches on
-`JSONExtractString(attributes, 'balance_id')`); (3) if neither
+SINGLE batched ClickHouse query (`IN (?)`, not one query per ref —
+2026-07-12 finding: a serial per-ref lookup was a 6.5s full scan of
+`stellar.account_movements`' 973M rows, and the claimable-balance-bot
+era's thousands of refs per window made the drain crawl) against
+previously-written `claimable_balance_create` rows in
+`stellar.account_movements` (matches on
+`JSONExtractString(attributes, 'balance_id')`, backed by the
+`idx_cb_balance_id` bloom skip-index); (3) if neither
 resolves it, the op is counted as **unresolved** and logged — never a
 guessed amount. This is the "in-window index with a lookup fallback"
 design named in ADR-0047's Phase 3 scope, not a full second pass over
@@ -180,7 +185,7 @@ the whole range.
 first) rather than growing without limit; unbounded growth across the
 full `CreateClaimableBalance` row count (research §5: ~1.5B) is what
 drove an earlier OOM. Eviction is safe — a miss just falls through to
-the ClickHouse fallback (`FindClaimableBalanceCreate`), same as a
+the ClickHouse fallback (`FindClaimableBalanceCreates`), same as a
 create outside this run's range entirely — but operators should still
 chunk `-from`/`-to` into multi-million-ledger invocations for Phase 3
 ranges, same discipline as any other heavy job: a smaller working set

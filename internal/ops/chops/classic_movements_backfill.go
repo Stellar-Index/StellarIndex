@@ -87,11 +87,12 @@ const classicMovementsWindowDeadline = 20 * time.Minute
 //
 // Phase 3's ClaimableBalance claim/clawback correlation (research
 // §2's "b+own-index" path) resolves in three tiers per window:
-// Decoder's free in-memory BalanceId index first, a ClickHouse lookup
-// (clickhouse.FindClaimableBalanceCreate, scanning what THIS command
-// has itself already written to stellar.account_movements) second for
-// creates outside this run, and an explicit unresolved count — never
-// a guessed amount — for anything neither finds. See
+// Decoder's free in-memory BalanceId index first, a single batched
+// ClickHouse lookup (clickhouse.FindClaimableBalanceCreates, one query
+// for the whole window's misses, scanning what THIS command has itself
+// already written to stellar.account_movements) second for creates
+// outside this run, and an explicit unresolved count — never a guessed
+// amount — for anything neither finds. See
 // classicmovements/dispatcher_adapter.go's Decoder doc for the memory-
 // scaling reason operators should chunk `-from`/`-to` into multi-
 // million-ledger invocations once Phase 3 volume is in play.
@@ -437,17 +438,32 @@ func classicMovementsDecodeOpsSurface(winCtx context.Context, chAddr string, dec
 // classicMovementsResolvePendingClaimableBalances is the ADR-0047
 // Phase 3 second pass: resolve claim/clawback rows the main decode
 // loop couldn't correlate against a create seen earlier in this
-// window (dec.decodeOp records these instead of failing). Try the
-// free in-memory re-check first (closes the same-window tx_hash-
-// ordering gap — see Decoder.ResolveBalance's doc comment), then fall
-// back to ClickHouse for creates outside this run's range entirely
-// (ADR-0048 D2: previously a Postgres lookup). Still-unresolved
-// entries are a genuine ADR-0047 D4 recognizable-incompleteness
-// signal: counted and logged, never guessed. Never returns an error —
-// a ClickHouse lookup failure here degrades to "counted as
-// unresolved," not a window-level failure.
+// window (dec.decodeOp records these instead of failing). Two passes
+// over pending, not one interleaved loop:
+//
+//  1. The free in-memory re-check (closes the same-window tx_hash-
+//     ordering gap — see Decoder.ResolveBalance's doc comment) for
+//     every ref, collecting the misses.
+//  2. ONE batched clickhouse.FindClaimableBalanceCreates call for all
+//     of this window's misses together, for creates outside this
+//     run's range entirely (ADR-0048 D2: previously a Postgres
+//     lookup, one query per ref before 2026-07-12 — see that
+//     function's doc comment for why serial per-ref lookups were
+//     replaced).
+//
+// Still-unresolved entries are a genuine ADR-0047 D4 recognizable-
+// incompleteness signal: counted and logged, never guessed. Never
+// returns an error — a ClickHouse lookup failure here degrades the
+// WHOLE miss-set to "counted as unresolved" (one stderr line), not a
+// window-level failure, matching the previous per-ref error's
+// per-ref-counts-as-unresolved behavior.
 func classicMovementsResolvePendingClaimableBalances(winCtx context.Context, chAddr string, dec *classicmovements.Decoder, wlo, whi uint32, res *windowResult) {
 	pending := dec.TakePendingClaimableBalances()
+	if len(pending) == 0 {
+		return
+	}
+
+	var misses []classicmovements.PendingClaimableBalanceRef
 	for _, ref := range pending {
 		if asset, amount, createdBy, ok := dec.ResolveBalance(ref.BalanceIDHex); ok {
 			res.windowResolvedIndex++
@@ -457,29 +473,39 @@ func classicMovementsResolvePendingClaimableBalances(winCtx context.Context, chA
 			res.batch = append(res.batch, accountMovementOf(m))
 			continue
 		}
-		asset, amountBig, createdBy, found, ferr := clickhouse.FindClaimableBalanceCreate(winCtx, chAddr, ref.BalanceIDHex)
+		misses = append(misses, ref)
+	}
+
+	if len(misses) > 0 {
+		ids := make([]string, len(misses))
+		for i, ref := range misses {
+			ids[i] = ref.BalanceIDHex
+		}
+		found, ferr := clickhouse.FindClaimableBalanceCreates(winCtx, chAddr, ids)
 		if ferr != nil {
-			fmt.Fprintf(os.Stderr, "classic-movements-backfill: FindClaimableBalanceCreate(%s) failed: %v — counting as unresolved\n",
-				ref.BalanceIDHex, ferr)
-			res.windowUnresolved++
-			continue
+			fmt.Fprintf(os.Stderr, "classic-movements-backfill: FindClaimableBalanceCreates(%d ids) failed: %v — counting whole miss-set as unresolved\n",
+				len(ids), ferr)
+			res.windowUnresolved += int64(len(misses))
+		} else {
+			for _, ref := range misses {
+				row, ok := found[ref.BalanceIDHex]
+				if !ok {
+					res.windowUnresolved++
+					fmt.Fprintf(os.Stderr, "classic-movements-backfill: unresolved %s balance_id=%s ledger=%d tx=%s op=%d — no create row found (in-memory index or ClickHouse); skipping, not guessing\n",
+						ref.Kind, ref.BalanceIDHex, ref.Ledger, ref.TxHash, ref.OpIndex)
+					continue
+				}
+				res.windowResolvedCH++
+				res.windowDecoded++
+				m := classicmovements.ResolvePendingClaimableBalance(ref, row.Asset, canonical.NewAmount(row.Amount), row.CreatedBy)
+				res.windowCounts[m.Kind]++
+				res.batch = append(res.batch, accountMovementOf(m))
+			}
 		}
-		if !found {
-			res.windowUnresolved++
-			fmt.Fprintf(os.Stderr, "classic-movements-backfill: unresolved %s balance_id=%s ledger=%d tx=%s op=%d — no create row found (in-memory index or ClickHouse); skipping, not guessing\n",
-				ref.Kind, ref.BalanceIDHex, ref.Ledger, ref.TxHash, ref.OpIndex)
-			continue
-		}
-		res.windowResolvedCH++
-		res.windowDecoded++
-		m := classicmovements.ResolvePendingClaimableBalance(ref, asset, canonical.NewAmount(amountBig), createdBy)
-		res.windowCounts[m.Kind]++
-		res.batch = append(res.batch, accountMovementOf(m))
 	}
-	if len(pending) > 0 {
-		fmt.Fprintf(os.Stderr, "classic-movements-backfill: window [%d,%d] claimable-balance correlation — %d resolved (index), %d resolved (clickhouse), %d unresolved\n",
-			wlo, whi, res.windowResolvedIndex, res.windowResolvedCH, res.windowUnresolved)
-	}
+
+	fmt.Fprintf(os.Stderr, "classic-movements-backfill: window [%d,%d] claimable-balance correlation — %d resolved (index), %d resolved (clickhouse), %d unresolved\n",
+		wlo, whi, res.windowResolvedIndex, res.windowResolvedCH, res.windowUnresolved)
 }
 
 // classicMovementsDecodeEntryChangesSurface is the ADR-0047 Phase 4
