@@ -15,6 +15,14 @@ against.
 
 ## [Unreleased]
 
+### Operations
+- **`run-heavy-job.sh` gained a root-disk watchdog** (archival-node ansible role,
+  applied to r1): a background loop stops the job's systemd scope when root free
+  space drops below 2 GiB, closing the 2026-06-11 incident follow-up — a heavy job
+  flooding logs or scratch space could fill the 49 GB root and wedge service
+  logging channels. The remaining durable fix (move `/var/log`/swap onto ZFS or
+  resize root) is recorded as accepted operator-gated debt in the post-mortem.
+
 ### Fixed
 - **classic_movements: sponsored account creations (CAP-33, Protocol 15+) are no longer
   dropped as malformed.** `CreateAccount` with `startingBalance = 0` is legal once a

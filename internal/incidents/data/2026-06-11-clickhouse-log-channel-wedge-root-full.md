@@ -69,13 +69,21 @@ loop. Applied + codified (`configs/ansible/roles/archival-node/tasks/
 
 ## Follow-ups
 
-- [ ] **Root FS is chronically too small (49 GB, 17 GB of it swap).**
+- [~] **Root FS is chronically too small (49 GB, 17 GB of it swap).**
       The real durable fix is moving `/var/log` (and ideally the swap)
       onto the ZFS pool, or resizing root. This is the third root-fill
       incident in the class (2026-05-10, 2026-05-13, 2026-06-11).
-- [ ] **Heavy ClickHouse jobs must run with a root-disk watchdog.** The
-      SDEX re-verify now runs under one (`/tmp/verify-sdex-wd.sh` kills
-      on root < 2 GB); fold this into the ops tooling.
+      *Accepted debt 2026-07-12*: live filesystem surgery on the
+      production host is operator-gated — tracked in the r1 operator
+      queue (notes/ROADMAP.md). Interim mitigations shipped instead:
+      CH logs on ZFS (above), rsyslog filter, and the wrapper watchdog
+      below.
+- [x] **Heavy ClickHouse jobs must run with a root-disk watchdog.**
+      Done 2026-07-12: `/usr/local/sbin/run-heavy-job.sh` (mandatory
+      for ALL heavy one-shots since 2026-07-05, not just CH jobs) now
+      runs a background watchdog that stops the job's systemd scope
+      when root free space drops below 2 GiB — codified in the
+      archival-node ansible role.
 - [x] CH log path + rsyslog filter codified in the archival-node role.
 
 ## Lessons learned
