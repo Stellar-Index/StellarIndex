@@ -24,6 +24,26 @@ against.
   a real zero-amount `create_account` movement; only NEGATIVE balances are malformed.
   The already-derived ranges need one fixed-binary re-pass without `-resume` (idempotent,
   ReplacingMergeTree) to pick up the dropped creations.
+- **`classic-movements-backfill`: per-window deadline with one retry, closing the
+  2026-07-12 half-dead-connection stall.** A half-dead ClickHouse native connection left
+  the backfill loop blocked in a network read for ~2h at zero CPU; the driver's
+  `ReadTimeout` alone did not unwedge it. Every ClickHouse call inside a window (both
+  `StreamClassicOps` passes, both `StreamEntryChanges` calls, `FindClaimableBalanceCreate`,
+  `InsertAccountMovements`, `VerifyAccountMovementsWindow`) now runs under a single
+  20-minute per-window `context.WithTimeout`; a window that exceeds it is retried exactly
+  once on fresh connections before being treated as a real error. The window body was
+  extracted into `classicMovementsAttemptWindow`, which touches only window-local state
+  (a new `windowResult`), so a failed attempt's partial batch/counts are discarded rather
+  than merged into the run — the retry starts clean, including a discard-and-redecode of
+  the shared decoder's pending claimable-balance refs so stale state from the failed
+  attempt can't leak into the retry.
+- **`classicmovements.Decoder`'s in-run claimable-balance-create index is now bounded.**
+  The index had no eviction and could grow across a multi-million-ledger run toward the
+  full historical `CreateClaimableBalance` row count (research §5: ~1.5B), which
+  contributed to an earlier OOM. It's now capped at 2,000,000 entries with FIFO eviction;
+  a miss on an evicted balance_id falls through to `classic-movements-backfill`'s existing
+  ClickHouse lookup (`FindClaimableBalanceCreate`) the same way an out-of-range create
+  already does, so eviction never produces a wrong or guessed amount.
 
 ## [v0.16.2] — 2026-07-11
 

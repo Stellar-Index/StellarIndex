@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
@@ -42,6 +43,19 @@ const classicMovementsP23StartLedger uint32 = classicmovements.P23StartLedger
 // maxBufferedRange guard does, and gives a resume point every window
 // rather than only at the end of a multi-day run.
 const classicMovementsDefaultWindow = 500_000
+
+// classicMovementsWindowDeadline bounds a single window's decode +
+// write + verify attempt (2026-07-12 stall): a half-dead ClickHouse
+// native connection left this loop blocked in a network read for
+// hours with zero CPU — the driver-level ReadTimeout alone did not
+// unwedge it. A window that cannot finish inside this deadline is
+// aborted and retried exactly once on fresh connections
+// (StreamClassicOps / StreamEntryChanges dial per call, so a retry
+// gets new sockets); a second expiry within the same deadline is
+// treated as a real error, not retried again. Generous bound: the
+// densest observed window (~9M ops at 25k ledgers) completed in well
+// under 10 minutes when healthy.
+const classicMovementsWindowDeadline = 20 * time.Minute
 
 // classicMovementsBackfill is the ADR-0047 write path for ALL FOUR
 // phases, RETARGETED by ADR-0048 D2 to write ClickHouse's
@@ -207,228 +221,52 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 			whi = clampedTo
 		}
 
-		var batch []clickhouse.AccountMovement
-		windowCounts := map[classicmovements.Kind]int64{}
-		var windowRead, windowDecoded int64
-		werr := clickhouse.StreamClassicOps(ctx, *chAddr, wlo, whi, opTypes, func(op clickhouse.ClassicOp) error {
-			windowRead++
-			outs, derr := dec.Decode(dispatcher.OpContext{
-				Ledger:   op.Ledger,
-				ClosedAt: op.ClosedAt,
-				TxHash:   op.TxHash,
-				TxSource: op.Source,
-				OpIndex:  int(op.OpIndex),
-				Op:       op.Op,
-				OpResult: op.OpResult,
-			})
-			if derr != nil {
-				// Non-fatal per the OpDecoder contract (count + skip). In
-				// practice this should only ever be ErrMalformedMovement —
-				// StreamClassicOps already scoped the CH read to opTypes, so
-				// ErrUnsupportedOpType should never fire here.
-				fmt.Fprintf(os.Stderr, "classic-movements-backfill: decode error (ledger %d tx %s op %d): %v\n",
-					op.Ledger, op.TxHash, op.OpIndex, derr)
-				return nil
-			}
-			for _, ev := range outs {
-				me, ok := ev.(classicmovements.MovementEvent)
-				if !ok {
-					continue
-				}
-				windowDecoded++
-				counts[me.Movement.Kind]++
-				windowCounts[me.Movement.Kind]++
-				batch = append(batch, accountMovementOf(me.Movement))
-			}
-			return nil
-		})
+		windowCtx, windowCancel := context.WithTimeout(ctx, classicMovementsWindowDeadline)
+		res, werr := classicMovementsAttemptWindow(windowCtx, *chAddr, dec, opTypes, entryChangeOpTypes, wlo, whi, *write, *verify)
+		windowCancel()
+		if werr != nil && errors.Is(werr, context.DeadlineExceeded) && ctx.Err() == nil {
+			fmt.Fprintf(os.Stderr, "classic-movements-backfill: window [%d,%d] hit its %s deadline (2026-07-12 half-dead-connection stall class) — retrying once on fresh connections\n",
+				wlo, whi, classicMovementsWindowDeadline)
+			// Discard stale pending claim/clawback refs the failed
+			// attempt accumulated via dec.Decode before it stalled — the
+			// retry re-decodes this same window from scratch and
+			// re-records whatever is still genuinely unresolved. Without
+			// this, the retry's own TakePendingClaimableBalances would
+			// double up on refs the failed attempt already queued.
+			dec.TakePendingClaimableBalances()
+			windowCtx2, cancel2 := context.WithTimeout(ctx, classicMovementsWindowDeadline)
+			res, werr = classicMovementsAttemptWindow(windowCtx2, *chAddr, dec, opTypes, entryChangeOpTypes, wlo, whi, *write, *verify)
+			cancel2()
+		}
 		if werr != nil {
-			if errors.Is(werr, context.Canceled) {
+			if errors.Is(werr, context.Canceled) || ctx.Err() != nil {
 				fmt.Fprintf(os.Stderr, "classic-movements-backfill: cancelled mid-window [%d,%d] — resume will pick up at %d\n", wlo, whi, wlo)
 				break
 			}
-			return fmt.Errorf("classic-movements-backfill: stream [%d,%d]: %w", wlo, whi, werr)
-		}
-		totalRead += windowRead
-		totalDecoded += windowDecoded
-
-		// ADR-0047 Phase 3 second pass: resolve claim/clawback rows the
-		// main decode loop couldn't correlate against a create seen
-		// earlier in this window (dec.decodeOp records these instead of
-		// failing). Try the free in-memory re-check first (closes the
-		// same-window tx_hash-ordering gap — see Decoder.ResolveBalance's
-		// doc comment), then fall back to ClickHouse for creates outside
-		// this run's range entirely (ADR-0048 D2: previously a Postgres
-		// lookup). Still-unresolved entries are a genuine ADR-0047 D4
-		// recognizable-incompleteness signal: counted and logged, never
-		// guessed.
-		pending := dec.TakePendingClaimableBalances()
-		var windowResolvedIndex, windowResolvedCH, windowUnresolved int64
-		for _, ref := range pending {
-			if asset, amount, createdBy, ok := dec.ResolveBalance(ref.BalanceIDHex); ok {
-				windowResolvedIndex++
-				windowDecoded++
-				m := classicmovements.ResolvePendingClaimableBalance(ref, asset, amount, createdBy)
-				counts[m.Kind]++
-				windowCounts[m.Kind]++
-				batch = append(batch, accountMovementOf(m))
-				continue
-			}
-			asset, amountBig, createdBy, found, ferr := clickhouse.FindClaimableBalanceCreate(ctx, *chAddr, ref.BalanceIDHex)
-			if ferr != nil {
-				fmt.Fprintf(os.Stderr, "classic-movements-backfill: FindClaimableBalanceCreate(%s) failed: %v — counting as unresolved\n",
-					ref.BalanceIDHex, ferr)
-				windowUnresolved++
-				continue
-			}
-			if !found {
-				windowUnresolved++
-				fmt.Fprintf(os.Stderr, "classic-movements-backfill: unresolved %s balance_id=%s ledger=%d tx=%s op=%d — no create row found (in-memory index or ClickHouse); skipping, not guessing\n",
-					ref.Kind, ref.BalanceIDHex, ref.Ledger, ref.TxHash, ref.OpIndex)
-				continue
-			}
-			windowResolvedCH++
-			windowDecoded++
-			m := classicmovements.ResolvePendingClaimableBalance(ref, asset, canonical.NewAmount(amountBig), createdBy)
-			counts[m.Kind]++
-			windowCounts[m.Kind]++
-			batch = append(batch, accountMovementOf(m))
-		}
-		totalResolvedIndex += windowResolvedIndex
-		totalResolvedCH += windowResolvedCH
-		totalUnresolved += windowUnresolved
-		if len(pending) > 0 {
-			fmt.Fprintf(os.Stderr, "classic-movements-backfill: window [%d,%d] claimable-balance correlation — %d resolved (index), %d resolved (clickhouse), %d unresolved\n",
-				wlo, whi, windowResolvedIndex, windowResolvedCH, windowUnresolved)
+			return fmt.Errorf("classic-movements-backfill: window [%d,%d]: %w", wlo, whi, werr)
 		}
 
-		// ADR-0047 Phase 4 entry-changes-correlated surface:
-		// LiquidityPoolDeposit/Withdraw + the CAP-0038 AllowTrust/
-		// SetTrustLineFlags edge case. A window-level fidelity probe
-		// decides how "no correlated entry changes" is interpreted per
-		// op type — see this function's doc comment.
-		fidelityCount, ferr := clickhouse.CountOpScopedEntryChanges(ctx, *chAddr, wlo, whi)
-		if ferr != nil {
-			fmt.Fprintf(os.Stderr, "classic-movements-backfill: entry-changes fidelity probe failed for [%d,%d]: %v — treating as fidelity-absent for this window\n",
-				wlo, whi, ferr)
-			fidelityCount = 0
+		// Merge into the run totals — reached only after a successful
+		// attempt (first try or the one retry), so a window that failed
+		// both tries never contributes partial counts or a partial
+		// batch to the run (it already returned above instead).
+		for k, v := range res.windowCounts {
+			counts[k] += v
 		}
-		fidelityPresent := fidelityCount > 0
-
-		lpChanges := map[classicMovementOpKey][]classicmovements.EntryChangeXDR{}
-		if lerr := clickhouse.StreamEntryChanges(ctx, *chAddr, wlo, whi, "liquidity_pool", func(ec clickhouse.EntryChange) error {
-			k := classicMovementOpKey{Ledger: ec.Ledger, TxHash: ec.TxHash, OpIndex: ec.OpIndex}
-			lpChanges[k] = append(lpChanges[k], classicmovements.EntryChangeXDR{ChangeType: ec.ChangeType, Entry: ec.Entry})
-			return nil
-		}); lerr != nil {
-			return fmt.Errorf("classic-movements-backfill: stream liquidity_pool entry changes [%d,%d]: %w", wlo, whi, lerr)
-		}
-
-		// Only bother building the claimable_balance-created index when
-		// the window has fidelity at all — CAP-0038 ops are skipped
-		// entirely below when it doesn't, so this would otherwise be
-		// wasted work on every window until Phase 0 lands.
-		cbChanges := map[classicMovementOpKey][]classicmovements.EntryChangeXDR{}
-		if fidelityPresent {
-			if cerr := clickhouse.StreamEntryChanges(ctx, *chAddr, wlo, whi, "claimable_balance", func(ec clickhouse.EntryChange) error {
-				if ec.ChangeType != "created" {
-					return nil // CAP-0038 detection only cares about newly-created escrow rows.
-				}
-				k := classicMovementOpKey{Ledger: ec.Ledger, TxHash: ec.TxHash, OpIndex: ec.OpIndex}
-				cbChanges[k] = append(cbChanges[k], classicmovements.EntryChangeXDR{ChangeType: ec.ChangeType, Entry: ec.Entry})
-				return nil
-			}); cerr != nil {
-				return fmt.Errorf("classic-movements-backfill: stream claimable_balance entry changes [%d,%d]: %w", wlo, whi, cerr)
-			}
-		}
-
-		var windowLPUnavailable, windowCAP0038Checked, windowCAP0038Skipped, windowCAP0038Liquidations, windowEntryChangeRead, windowEntryChangeDecoded int64
-		werr2 := clickhouse.StreamClassicOps(ctx, *chAddr, wlo, whi, entryChangeOpTypes, func(op clickhouse.ClassicOp) error {
-			windowEntryChangeRead++
-			k := classicMovementOpKey{Ledger: op.Ledger, TxHash: op.TxHash, OpIndex: int32(op.OpIndex)} //nolint:gosec // OpIndex is a non-negative XDR index.
-			switch op.Op.Body.Type {
-			case xdr.OperationTypeLiquidityPoolDeposit, xdr.OperationTypeLiquidityPoolWithdraw:
-				movements, derr := classicmovements.DecodeLiquidityPoolOp(op.Ledger, op.ClosedAt, op.TxHash, op.OpIndex, op.Source, op.Op, op.OpResult, lpChanges[k])
-				if derr != nil {
-					if errors.Is(derr, classicmovements.ErrEntryChangesUnavailable) {
-						windowLPUnavailable++
-						if fidelityPresent {
-							fmt.Fprintf(os.Stderr, "classic-movements-backfill: ANOMALY entry-changes unavailable for LP op despite window fidelity present (ledger %d tx %s op %d) — investigate\n",
-								op.Ledger, op.TxHash, op.OpIndex)
-						}
-						return nil
-					}
-					fmt.Fprintf(os.Stderr, "classic-movements-backfill: LP decode error (ledger %d tx %s op %d): %v\n",
-						op.Ledger, op.TxHash, op.OpIndex, derr)
-					return nil
-				}
-				for _, m := range movements {
-					windowEntryChangeDecoded++
-					counts[m.Kind]++
-					windowCounts[m.Kind]++
-					batch = append(batch, accountMovementOf(m))
-				}
-			case xdr.OperationTypeAllowTrust, xdr.OperationTypeSetTrustLineFlags:
-				if !fidelityPresent {
-					windowCAP0038Skipped++
-					return nil
-				}
-				windowCAP0038Checked++
-				movements, derr := classicmovements.DecodeCAP0038Revocation(op.Ledger, op.ClosedAt, op.TxHash, op.OpIndex, op.Op, op.OpResult, cbChanges[k])
-				if derr != nil {
-					fmt.Fprintf(os.Stderr, "classic-movements-backfill: CAP-0038 decode error (ledger %d tx %s op %d): %v\n",
-						op.Ledger, op.TxHash, op.OpIndex, derr)
-					return nil
-				}
-				if len(movements) > 0 {
-					windowCAP0038Liquidations += int64(len(movements))
-					fmt.Fprintf(os.Stderr, "classic-movements-backfill: CAP-0038 auto-liquidation detected (ledger %d tx %s op %d) — %d leg(s)\n",
-						op.Ledger, op.TxHash, op.OpIndex, len(movements))
-				}
-				for _, m := range movements {
-					windowEntryChangeDecoded++
-					counts[m.Kind]++
-					windowCounts[m.Kind]++
-					batch = append(batch, accountMovementOf(m))
-				}
-			}
-			return nil
-		})
-		if werr2 != nil {
-			if errors.Is(werr2, context.Canceled) {
-				fmt.Fprintf(os.Stderr, "classic-movements-backfill: cancelled mid-window [%d,%d] (entry-changes surface) — resume will pick up at %d\n", wlo, whi, wlo)
-				break
-			}
-			return fmt.Errorf("classic-movements-backfill: stream entry-change ops [%d,%d]: %w", wlo, whi, werr2)
-		}
-		totalRead += windowEntryChangeRead
-		totalDecoded += windowEntryChangeDecoded
-		totalLPUnavailable += windowLPUnavailable
-		totalCAP0038Checked += windowCAP0038Checked
-		totalCAP0038Skipped += windowCAP0038Skipped
-		totalCAP0038Liquidations += windowCAP0038Liquidations
-		if windowLPUnavailable > 0 || windowCAP0038Skipped > 0 || windowCAP0038Checked > 0 {
-			fmt.Fprintf(os.Stderr, "classic-movements-backfill: window [%d,%d] entry-changes surface — fidelity_present=%v LP_unavailable=%d CAP0038_checked=%d CAP0038_skipped=%d CAP0038_liquidations=%d\n",
-				wlo, whi, fidelityPresent, windowLPUnavailable, windowCAP0038Checked, windowCAP0038Skipped, windowCAP0038Liquidations)
-		}
-
-		if *write && len(batch) > 0 {
-			written, ierr := clickhouse.InsertAccountMovements(ctx, *chAddr, batch)
-			if ierr != nil {
-				return fmt.Errorf("classic-movements-backfill: write [%d,%d]: %w", wlo, whi, ierr)
-			}
-			totalWritten += written
-		}
-
-		if *verify {
-			mismatches := verifyWindowCounts(wlo, whi, windowCounts, func() (clickhouse.AccountMovementVerifyCounts, error) {
-				return clickhouse.VerifyAccountMovementsWindow(ctx, *chAddr, wlo, whi)
-			})
-			totalVerifyMismatches += mismatches
-		}
+		totalRead += res.windowRead + res.windowEntryChangeRead
+		totalDecoded += res.windowDecoded + res.windowEntryChangeDecoded
+		totalResolvedIndex += res.windowResolvedIndex
+		totalResolvedCH += res.windowResolvedCH
+		totalUnresolved += res.windowUnresolved
+		totalLPUnavailable += res.windowLPUnavailable
+		totalCAP0038Checked += res.windowCAP0038Checked
+		totalCAP0038Skipped += res.windowCAP0038Skipped
+		totalCAP0038Liquidations += res.windowCAP0038Liquidations
+		totalWritten += res.windowWritten
+		totalVerifyMismatches += res.verifyMismatches
 
 		fmt.Fprintf(os.Stderr, "classic-movements-backfill: window [%d,%d] done — %d ops read, %d movements decoded (running totals: read=%d decoded=%d written=%d) — resume point -from %d\n",
-			wlo, whi, windowRead, windowDecoded, totalRead, totalDecoded, totalWritten, whi)
+			wlo, whi, res.windowRead, res.windowDecoded, totalRead, totalDecoded, totalWritten, whi)
 
 		if whi == clampedTo {
 			break
@@ -475,6 +313,319 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 	}
 	if totalVerifyMismatches > 0 {
 		fmt.Printf("\nWARNING: %d window(s) had a movement_kind count mismatch between this run's decode and stellar.account_movements — see stderr for the per-window detail. Common benign causes: a concurrent write to the SAME range from another invocation, or un-merged ReplacingMergeTree parts still settling; a persistent mismatch after a quiet re-run warrants investigation.\n", totalVerifyMismatches)
+	}
+	return nil
+}
+
+// windowResult holds everything one call to classicMovementsAttemptWindow
+// produces for a single [wlo,whi] window: the pre-fan-out batch ready
+// for clickhouse.InsertAccountMovements, the per-movement_kind counts
+// for this window alone, and every per-window counter the summary
+// report accumulates into its run-level totals. Deliberately holds
+// NOTHING run-level (no reference to the outer counts map or the
+// totalXxx accumulators) — the caller only merges a windowResult into
+// run state after classicMovementsAttemptWindow returns successfully,
+// which is what makes retrying a timed-out window safe: a failed
+// attempt's windowResult is simply discarded, never partially merged.
+type windowResult struct {
+	batch        []clickhouse.AccountMovement
+	windowCounts map[classicmovements.Kind]int64
+
+	windowRead, windowDecoded                                             int64
+	windowResolvedIndex, windowResolvedCH, windowUnresolved               int64
+	windowLPUnavailable                                                   int64
+	windowCAP0038Checked, windowCAP0038Skipped, windowCAP0038Liquidations int64
+	windowEntryChangeRead, windowEntryChangeDecoded                       int64
+	windowWritten                                                         int64
+	verifyMismatches                                                      int64
+}
+
+// classicMovementsAttemptWindow runs ONE attempt at decoding, writing,
+// and verifying the [wlo,whi] window — everything classicMovementsBackfill's
+// loop body used to do inline before the 2026-07-12 half-dead-connection
+// stall motivated a per-window deadline with a single retry (see
+// classicMovementsWindowDeadline). Pulled into its own named function,
+// rather than left as a closure in the loop, to keep the caller's
+// gocognit/gocyclo/funlen complexity down now that it also has to
+// juggle the retry-once control flow; the four phases below are
+// FURTHER split into their own named functions for the same reason —
+// see each one's doc comment.
+//
+// dec is the SAME classicmovements.Decoder instance across every
+// window and every retry, by design — its in-memory claimable-balance-
+// create index legitimately spans windows (ADR-0047 Phase 3), and
+// re-decoding the same ops on a retry re-inserts the same map keys,
+// which is idempotent. The one piece of dec's state that is NOT safe
+// to carry from a failed attempt into its retry is dec.pending — the
+// caller drains and discards it before retrying (see the loop body).
+//
+// Touches ONLY window-local state (the returned windowResult) plus
+// dec's shared, cross-window index — never the caller's run-level
+// counts map or totalXxx accumulators, so a failed attempt can be
+// discarded cleanly by the caller without unwinding any global
+// mutation. winCtx is threaded through every ClickHouse call (in every
+// phase below) so the per-window deadline actually bounds the whole
+// attempt, not just the first read.
+func classicMovementsAttemptWindow(
+	winCtx context.Context,
+	chAddr string,
+	dec *classicmovements.Decoder,
+	opTypes, entryChangeOpTypes []string,
+	wlo, whi uint32,
+	write, verify bool,
+) (windowResult, error) {
+	res := windowResult{windowCounts: map[classicmovements.Kind]int64{}}
+
+	if err := classicMovementsDecodeOpsSurface(winCtx, chAddr, dec, opTypes, wlo, whi, &res); err != nil {
+		return res, err
+	}
+	classicMovementsResolvePendingClaimableBalances(winCtx, chAddr, dec, wlo, whi, &res)
+	if err := classicMovementsDecodeEntryChangesSurface(winCtx, chAddr, entryChangeOpTypes, wlo, whi, &res); err != nil {
+		return res, err
+	}
+	if err := classicMovementsWriteAndVerify(winCtx, chAddr, wlo, whi, write, verify, &res); err != nil {
+		return res, err
+	}
+	return res, nil
+}
+
+// classicMovementsDecodeOpsSurface streams + decodes the op-only
+// surface (classicmovements.SupportedOpTypes / Decoder.Decode) for
+// one window — Phases 1-3 plus Phase 4's AccountMerge — accumulating
+// into res. dec.Decode also updates dec's shared claimable-balance-
+// create index as a side effect (see classicmovements.Decoder's doc
+// comment); that index feeds
+// classicMovementsResolvePendingClaimableBalances, called next.
+func classicMovementsDecodeOpsSurface(winCtx context.Context, chAddr string, dec *classicmovements.Decoder, opTypes []string, wlo, whi uint32, res *windowResult) error {
+	werr := clickhouse.StreamClassicOps(winCtx, chAddr, wlo, whi, opTypes, func(op clickhouse.ClassicOp) error {
+		res.windowRead++
+		outs, derr := dec.Decode(dispatcher.OpContext{
+			Ledger:   op.Ledger,
+			ClosedAt: op.ClosedAt,
+			TxHash:   op.TxHash,
+			TxSource: op.Source,
+			OpIndex:  int(op.OpIndex),
+			Op:       op.Op,
+			OpResult: op.OpResult,
+		})
+		if derr != nil {
+			// Non-fatal per the OpDecoder contract (count + skip). In
+			// practice this should only ever be ErrMalformedMovement —
+			// StreamClassicOps already scoped the CH read to opTypes, so
+			// ErrUnsupportedOpType should never fire here.
+			fmt.Fprintf(os.Stderr, "classic-movements-backfill: decode error (ledger %d tx %s op %d): %v\n",
+				op.Ledger, op.TxHash, op.OpIndex, derr)
+			return nil
+		}
+		for _, ev := range outs {
+			me, ok := ev.(classicmovements.MovementEvent)
+			if !ok {
+				continue
+			}
+			res.windowDecoded++
+			res.windowCounts[me.Movement.Kind]++
+			res.batch = append(res.batch, accountMovementOf(me.Movement))
+		}
+		return nil
+	})
+	if werr != nil {
+		return fmt.Errorf("stream classic ops [%d,%d]: %w", wlo, whi, werr)
+	}
+	return nil
+}
+
+// classicMovementsResolvePendingClaimableBalances is the ADR-0047
+// Phase 3 second pass: resolve claim/clawback rows the main decode
+// loop couldn't correlate against a create seen earlier in this
+// window (dec.decodeOp records these instead of failing). Try the
+// free in-memory re-check first (closes the same-window tx_hash-
+// ordering gap — see Decoder.ResolveBalance's doc comment), then fall
+// back to ClickHouse for creates outside this run's range entirely
+// (ADR-0048 D2: previously a Postgres lookup). Still-unresolved
+// entries are a genuine ADR-0047 D4 recognizable-incompleteness
+// signal: counted and logged, never guessed. Never returns an error —
+// a ClickHouse lookup failure here degrades to "counted as
+// unresolved," not a window-level failure.
+func classicMovementsResolvePendingClaimableBalances(winCtx context.Context, chAddr string, dec *classicmovements.Decoder, wlo, whi uint32, res *windowResult) {
+	pending := dec.TakePendingClaimableBalances()
+	for _, ref := range pending {
+		if asset, amount, createdBy, ok := dec.ResolveBalance(ref.BalanceIDHex); ok {
+			res.windowResolvedIndex++
+			res.windowDecoded++
+			m := classicmovements.ResolvePendingClaimableBalance(ref, asset, amount, createdBy)
+			res.windowCounts[m.Kind]++
+			res.batch = append(res.batch, accountMovementOf(m))
+			continue
+		}
+		asset, amountBig, createdBy, found, ferr := clickhouse.FindClaimableBalanceCreate(winCtx, chAddr, ref.BalanceIDHex)
+		if ferr != nil {
+			fmt.Fprintf(os.Stderr, "classic-movements-backfill: FindClaimableBalanceCreate(%s) failed: %v — counting as unresolved\n",
+				ref.BalanceIDHex, ferr)
+			res.windowUnresolved++
+			continue
+		}
+		if !found {
+			res.windowUnresolved++
+			fmt.Fprintf(os.Stderr, "classic-movements-backfill: unresolved %s balance_id=%s ledger=%d tx=%s op=%d — no create row found (in-memory index or ClickHouse); skipping, not guessing\n",
+				ref.Kind, ref.BalanceIDHex, ref.Ledger, ref.TxHash, ref.OpIndex)
+			continue
+		}
+		res.windowResolvedCH++
+		res.windowDecoded++
+		m := classicmovements.ResolvePendingClaimableBalance(ref, asset, canonical.NewAmount(amountBig), createdBy)
+		res.windowCounts[m.Kind]++
+		res.batch = append(res.batch, accountMovementOf(m))
+	}
+	if len(pending) > 0 {
+		fmt.Fprintf(os.Stderr, "classic-movements-backfill: window [%d,%d] claimable-balance correlation — %d resolved (index), %d resolved (clickhouse), %d unresolved\n",
+			wlo, whi, res.windowResolvedIndex, res.windowResolvedCH, res.windowUnresolved)
+	}
+}
+
+// classicMovementsDecodeEntryChangesSurface is the ADR-0047 Phase 4
+// entry-changes-correlated surface: LiquidityPoolDeposit/Withdraw +
+// the CAP-0038 AllowTrust/SetTrustLineFlags edge case. A window-level
+// fidelity probe decides how "no correlated entry changes" is
+// interpreted per op type — see classicMovementsBackfill's doc
+// comment. Per-op handling is delegated to
+// classicMovementsHandleLiquidityPoolOp /
+// classicMovementsHandleCAP0038Op to keep this function's own
+// complexity down.
+func classicMovementsDecodeEntryChangesSurface(winCtx context.Context, chAddr string, entryChangeOpTypes []string, wlo, whi uint32, res *windowResult) error {
+	fidelityCount, ferr := clickhouse.CountOpScopedEntryChanges(winCtx, chAddr, wlo, whi)
+	if ferr != nil {
+		fmt.Fprintf(os.Stderr, "classic-movements-backfill: entry-changes fidelity probe failed for [%d,%d]: %v — treating as fidelity-absent for this window\n",
+			wlo, whi, ferr)
+		fidelityCount = 0
+	}
+	fidelityPresent := fidelityCount > 0
+
+	lpChanges := map[classicMovementOpKey][]classicmovements.EntryChangeXDR{}
+	if lerr := clickhouse.StreamEntryChanges(winCtx, chAddr, wlo, whi, "liquidity_pool", func(ec clickhouse.EntryChange) error {
+		k := classicMovementOpKey{Ledger: ec.Ledger, TxHash: ec.TxHash, OpIndex: ec.OpIndex}
+		lpChanges[k] = append(lpChanges[k], classicmovements.EntryChangeXDR{ChangeType: ec.ChangeType, Entry: ec.Entry})
+		return nil
+	}); lerr != nil {
+		return fmt.Errorf("stream liquidity_pool entry changes [%d,%d]: %w", wlo, whi, lerr)
+	}
+
+	// Only bother building the claimable_balance-created index when
+	// the window has fidelity at all — CAP-0038 ops are skipped
+	// entirely below when it doesn't, so this would otherwise be
+	// wasted work on every window until Phase 0 lands.
+	cbChanges := map[classicMovementOpKey][]classicmovements.EntryChangeXDR{}
+	if fidelityPresent {
+		if cerr := clickhouse.StreamEntryChanges(winCtx, chAddr, wlo, whi, "claimable_balance", func(ec clickhouse.EntryChange) error {
+			if ec.ChangeType != "created" {
+				return nil // CAP-0038 detection only cares about newly-created escrow rows.
+			}
+			k := classicMovementOpKey{Ledger: ec.Ledger, TxHash: ec.TxHash, OpIndex: ec.OpIndex}
+			cbChanges[k] = append(cbChanges[k], classicmovements.EntryChangeXDR{ChangeType: ec.ChangeType, Entry: ec.Entry})
+			return nil
+		}); cerr != nil {
+			return fmt.Errorf("stream claimable_balance entry changes [%d,%d]: %w", wlo, whi, cerr)
+		}
+	}
+
+	werr2 := clickhouse.StreamClassicOps(winCtx, chAddr, wlo, whi, entryChangeOpTypes, func(op clickhouse.ClassicOp) error {
+		res.windowEntryChangeRead++
+		k := classicMovementOpKey{Ledger: op.Ledger, TxHash: op.TxHash, OpIndex: int32(op.OpIndex)} //nolint:gosec // OpIndex is a non-negative XDR index.
+		switch op.Op.Body.Type {
+		case xdr.OperationTypeLiquidityPoolDeposit, xdr.OperationTypeLiquidityPoolWithdraw:
+			classicMovementsHandleLiquidityPoolOp(op, lpChanges[k], fidelityPresent, res)
+		case xdr.OperationTypeAllowTrust, xdr.OperationTypeSetTrustLineFlags:
+			classicMovementsHandleCAP0038Op(op, cbChanges[k], fidelityPresent, res)
+		}
+		return nil
+	})
+	if werr2 != nil {
+		return fmt.Errorf("stream entry-change ops [%d,%d]: %w", wlo, whi, werr2)
+	}
+	if res.windowLPUnavailable > 0 || res.windowCAP0038Skipped > 0 || res.windowCAP0038Checked > 0 {
+		fmt.Fprintf(os.Stderr, "classic-movements-backfill: window [%d,%d] entry-changes surface — fidelity_present=%v LP_unavailable=%d CAP0038_checked=%d CAP0038_skipped=%d CAP0038_liquidations=%d\n",
+			wlo, whi, fidelityPresent, res.windowLPUnavailable, res.windowCAP0038Checked, res.windowCAP0038Skipped, res.windowCAP0038Liquidations)
+	}
+	return nil
+}
+
+// classicMovementsHandleLiquidityPoolOp decodes one
+// LiquidityPoolDeposit/Withdraw op against its correlated entry
+// changes (lpChanges — this op's slice from
+// classicMovementsDecodeEntryChangesSurface's lpChanges map, already
+// keyed by the caller) and accumulates the result into res. Split out
+// of the StreamClassicOps callback purely to keep
+// classicMovementsDecodeEntryChangesSurface's cognitive complexity
+// within the gocognit gate.
+func classicMovementsHandleLiquidityPoolOp(op clickhouse.ClassicOp, entryChanges []classicmovements.EntryChangeXDR, fidelityPresent bool, res *windowResult) {
+	movements, derr := classicmovements.DecodeLiquidityPoolOp(op.Ledger, op.ClosedAt, op.TxHash, op.OpIndex, op.Source, op.Op, op.OpResult, entryChanges)
+	if derr != nil {
+		if errors.Is(derr, classicmovements.ErrEntryChangesUnavailable) {
+			res.windowLPUnavailable++
+			if fidelityPresent {
+				fmt.Fprintf(os.Stderr, "classic-movements-backfill: ANOMALY entry-changes unavailable for LP op despite window fidelity present (ledger %d tx %s op %d) — investigate\n",
+					op.Ledger, op.TxHash, op.OpIndex)
+			}
+			return
+		}
+		fmt.Fprintf(os.Stderr, "classic-movements-backfill: LP decode error (ledger %d tx %s op %d): %v\n",
+			op.Ledger, op.TxHash, op.OpIndex, derr)
+		return
+	}
+	for _, m := range movements {
+		res.windowEntryChangeDecoded++
+		res.windowCounts[m.Kind]++
+		res.batch = append(res.batch, accountMovementOf(m))
+	}
+}
+
+// classicMovementsHandleCAP0038Op decodes one AllowTrust/
+// SetTrustLineFlags op for a possible CAP-0038 auto-liquidation
+// against its correlated claimable_balance-created entry changes
+// (cbChanges — this op's slice, already keyed by the caller) and
+// accumulates the result into res. Split out of the StreamClassicOps
+// callback for the same gocognit reason as
+// classicMovementsHandleLiquidityPoolOp.
+func classicMovementsHandleCAP0038Op(op clickhouse.ClassicOp, entryChanges []classicmovements.EntryChangeXDR, fidelityPresent bool, res *windowResult) {
+	if !fidelityPresent {
+		res.windowCAP0038Skipped++
+		return
+	}
+	res.windowCAP0038Checked++
+	movements, derr := classicmovements.DecodeCAP0038Revocation(op.Ledger, op.ClosedAt, op.TxHash, op.OpIndex, op.Op, op.OpResult, entryChanges)
+	if derr != nil {
+		fmt.Fprintf(os.Stderr, "classic-movements-backfill: CAP-0038 decode error (ledger %d tx %s op %d): %v\n",
+			op.Ledger, op.TxHash, op.OpIndex, derr)
+		return
+	}
+	if len(movements) > 0 {
+		res.windowCAP0038Liquidations += int64(len(movements))
+		fmt.Fprintf(os.Stderr, "classic-movements-backfill: CAP-0038 auto-liquidation detected (ledger %d tx %s op %d) — %d leg(s)\n",
+			op.Ledger, op.TxHash, op.OpIndex, len(movements))
+	}
+	for _, m := range movements {
+		res.windowEntryChangeDecoded++
+		res.windowCounts[m.Kind]++
+		res.batch = append(res.batch, accountMovementOf(m))
+	}
+}
+
+// classicMovementsWriteAndVerify persists res.batch (if -write) and
+// recounts the window from ClickHouse for reconciliation (if
+// -verify), both under winCtx so either can trigger the per-window
+// retry same as any decode-phase call.
+func classicMovementsWriteAndVerify(winCtx context.Context, chAddr string, wlo, whi uint32, write, verify bool, res *windowResult) error {
+	if write && len(res.batch) > 0 {
+		written, ierr := clickhouse.InsertAccountMovements(winCtx, chAddr, res.batch)
+		if ierr != nil {
+			return fmt.Errorf("write [%d,%d]: %w", wlo, whi, ierr)
+		}
+		res.windowWritten = written
+	}
+
+	if verify {
+		res.verifyMismatches = verifyWindowCounts(wlo, whi, res.windowCounts, func() (clickhouse.AccountMovementVerifyCounts, error) {
+			return clickhouse.VerifyAccountMovementsWindow(winCtx, chAddr, wlo, whi)
+		})
 	}
 	return nil
 }
