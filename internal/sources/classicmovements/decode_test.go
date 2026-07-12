@@ -953,3 +953,28 @@ func TestProvenance_IsValid(t *testing.T) {
 		t.Error(`Provenance("bogus").IsValid() = true, want false`)
 	}
 }
+
+// TestDecoder_createAccount_zeroBalance_sponsored pins the CAP-33 rule:
+// StartingBalance == 0 (sponsored reserves, Protocol 15+) is a REAL
+// account creation, not a malformed op — the 2026-07-12 backfill was
+// silently dropping every sponsored creation before this.
+func TestDecoder_createAccount_zeroBalance_sponsored(t *testing.T) {
+	fromAddr, _ := mkAccount(t, 0x20)
+	op := mkCreateAccountOp(t, 0x21, 0)
+	result := mkCreateAccountSuccessResult()
+
+	outs, err := NewDecoder().Decode(dispatcher.OpContext{
+		Ledger: 37_124_896, TxHash: "txsponsored", TxSource: fromAddr, OpIndex: 1,
+		Op: op, OpResult: result,
+	})
+	if err != nil {
+		t.Fatalf("zero StartingBalance must decode (CAP-33 sponsored creation), got: %v", err)
+	}
+	if len(outs) != 1 {
+		t.Fatalf("got %d outputs, want 1", len(outs))
+	}
+	m := outs[0].(MovementEvent).Movement
+	if m.Kind != KindCreateAccount || m.Amount.Sign() != 0 {
+		t.Fatalf("want zero-amount create_account, got kind=%q amount=%s", m.Kind, m.Amount)
+	}
+}
