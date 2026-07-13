@@ -93,15 +93,23 @@ against.
   as a server-side external table (`clickhouse.WithExternalTable`, native-protocol side
   channel, not SQL text) and matched via `JSONExtractString(attributes, 'balance_id') IN
   cb_ids` — a hash-set semijoin whose cost is O(ids), immune to both the SQL-text-size
-  ceiling and the bloom-filter false-positive-rate blowup, bounded by a per-query
-  `WithSettings` (`max_threads=4`, `max_memory_usage=8 GiB`,
-  `max_bytes_before_external_group_by=2 GiB`). The external table itself is still chunked
+  ceiling and the bloom-filter false-positive-rate blowup, bounded by a SQL-text
+  `SETTINGS` clause (`use_skip_indexes=0`, `max_threads=4`, `max_memory_usage=8 GB`) —
+  SQL-text because per-query `WithSettings` was observed not reaching the server next to
+  `WithExternalTable`, and `use_skip_indexes=0` because evaluating the bloom index against
+  a large IN-set matches every granule and itself blew the 10 GiB query-memory ceiling. The external table itself is still chunked
   (`cbLookupExtTableChunkSize`, 1,000,000 ids) as a footprint safety bound, not to dodge a
   ceiling — real windows up to 1.4M ids now resolve in one or two queries.
   `idx_cb_balance_id` is unaffected and still serves true point lookups (a literal `= ?`
   or a small hand-written `IN (?)`) — the indexed WHERE expression
   (`JSONExtractString(attributes, 'balance_id')`) must stay textually exact for either
   access pattern, or ClickHouse silently falls back to a full scan.
+- **classic_movements: the claimable-balance index cap was raised 2M → 8M entries.** The
+  2021 claimable-balance spam era creates 2–3 million balances per 10k-ledger window, so
+  the 2M FIFO cap evicted a window's own creates before its resolution pass ran, zeroing
+  in-memory resolution and dumping 600k+ refs per window onto the ClickHouse fallback
+  (each such scan ~2.5 min over 695M cb-create rows). 8M (~3 GB) restores ~3 spam windows
+  of locality; spam claims land seconds after their create, so the fallback is rare again.
 
 ## [v0.16.2] — 2026-07-11
 

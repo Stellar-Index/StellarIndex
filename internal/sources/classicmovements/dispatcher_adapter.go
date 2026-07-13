@@ -71,14 +71,22 @@ type Decoder struct {
 // maxCBIndexEntries bounds the Decoder's in-run claimable-balance-
 // create index (balances / balanceOrder above). Each entry is small —
 // a hex balance_id key plus a claimableBalanceInfo of two short
-// strings and a *big.Int amount, on the order of a few hundred bytes
-// all-in — so 2,000,000 entries costs on the order of several hundred
-// MB, comfortably inside a heavy job's MemoryMax=20G ceiling
-// (CLAUDE.md "Heavy one-shot jobs on r1") while still covering a
-// multi-million-ledger window's worth of creates without spilling to
-// the ClickHouse fallback. A var, not a const, so tests can shrink it
-// to exercise eviction without allocating millions of ring slots.
-var maxCBIndexEntries = 2_000_000
+// strings and a *big.Int amount, ~400 bytes all-in with map overhead —
+// so 8,000,000 entries is ~3 GB, sized against a heavy job's
+// MemoryMax=20G ceiling (CLAUDE.md "Heavy one-shot jobs on r1").
+//
+// Why 8M and not less: the 2021 claimable-balance spam era (ledgers
+// ~49M+) creates 2–3 MILLION balances per 10k-ledger backfill window.
+// The original 2M cap evicted a window's own creates before its
+// second-pass resolution ran (2026-07-13: "0 resolved (index)" with
+// 600k+ refs/window dumped onto the ClickHouse fallback, each such
+// scan ~2.5 min over 695M cb-create rows). 8M keeps ~3 spam windows
+// of locality — spam claims land seconds-to-minutes after their
+// create, so in-memory resolution does almost all the work and the
+// CH fallback stays the rare path it was designed to be. A var, not
+// a const, so tests can shrink it to exercise eviction without
+// allocating millions of ring slots.
+var maxCBIndexEntries = 8_000_000
 
 // claimableBalanceInfo is what a 'claimable_balance_create' movement
 // contributes to the Decoder's in-run BalanceId index.
