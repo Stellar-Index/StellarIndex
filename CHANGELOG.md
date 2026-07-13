@@ -71,6 +71,20 @@ against.
   the free in-memory index pass) in ONE `IN (?)` query. A batch-query error degrades the
   whole miss-set to unresolved with one stderr line, matching the previous per-ref
   behavior of counting a failed lookup as unresolved rather than failing the window.
+- **`FindClaimableBalanceCreates`'s single `IN (?)` query is now chunked at 2,000 ids per
+  query.** The `clickhouse-go` driver inlines a bound `[]string` directly into the SQL
+  text rather than sending it server-side, so the batched lookup above traded one failure
+  mode for another: the claimable-balance spam era around ledger 49.3M produces windows
+  with well over a million pending refs, and real production failures tonight (2026-07-13)
+  — 58,714, 853,775, 1,292,177, and 1,393,786 ids in a single unchunked call — all blew
+  past ClickHouse's `max_query_size` (256 KiB default) past ~3,400 ids, failing the whole
+  lookup with `code: 62, Max query size exceeded` and leaving every claim in that window's
+  batch unresolved. `FindClaimableBalanceCreates` now issues one bounded query per 2,000
+  ids (`cbLookupChunkSize`, comfortably under the 256 KiB limit with wide margin), reusing
+  a single connection across chunks and merging results into the same map; ctx is checked
+  between chunks so cancellation doesn't wait out every remaining one. `idx_cb_balance_id`
+  keeps each chunk a fast indexed lookup (~100ms), so even a 1.4M-id window now resolves
+  instead of failing outright.
 
 ## [v0.16.2] — 2026-07-11
 

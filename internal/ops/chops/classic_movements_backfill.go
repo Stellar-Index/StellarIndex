@@ -88,11 +88,13 @@ const classicMovementsWindowDeadline = 20 * time.Minute
 // Phase 3's ClaimableBalance claim/clawback correlation (research
 // §2's "b+own-index" path) resolves in three tiers per window:
 // Decoder's free in-memory BalanceId index first, a single batched
-// ClickHouse lookup (clickhouse.FindClaimableBalanceCreates, one query
-// for the whole window's misses, scanning what THIS command has itself
-// already written to stellar.account_movements) second for creates
-// outside this run, and an explicit unresolved count — never a guessed
-// amount — for anything neither finds. See
+// ClickHouse lookup (clickhouse.FindClaimableBalanceCreates — ONE call
+// for the whole window's misses, internally chunked at 2,000 ids per
+// query since 2026-07-13 to stay under ClickHouse's max_query_size,
+// scanning what THIS command has itself already written to
+// stellar.account_movements) second for creates outside this run, and
+// an explicit unresolved count — never a guessed amount — for
+// anything neither finds. See
 // classicmovements/dispatcher_adapter.go's Decoder doc for the memory-
 // scaling reason operators should chunk `-from`/`-to` into multi-
 // million-ledger invocations once Phase 3 volume is in play.
