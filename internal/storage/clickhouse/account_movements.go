@@ -546,11 +546,21 @@ func FindClaimableBalanceCreates(ctx context.Context, addr string, balanceIDHexe
 // attaches via clickhouse.WithExternalTable — a hash-set semijoin, not
 // an inlined IN-list. See FindClaimableBalanceCreates' doc comment for
 // why the WHERE expression must stay textually exact.
+// The SETTINGS clause lives in the SQL text, not clickhouse.WithSettings:
+// observed live (2026-07-13) that per-query context settings did NOT reach
+// the server when combined with WithExternalTable — the failing query ran
+// at openRead's connection-level 10 GiB ceiling, not the requested 8 GB.
+// use_skip_indexes=0 is load-bearing: evaluating idx_cb_balance_id (bloom,
+// 1% FPR) against a multi-thousand-element IN-set matches essentially every
+// granule (1-(1-0.01)^N → 1) and the index machinery itself blew the 10 GiB
+// limit; a plain PREWHERE-on-movement_kind scan + hash probe streams within
+// bounds (measured ~2.5 min over 695M cb-create rows at 4 threads).
 const cbLookupCreatesQuery = `
 	SELECT JSONExtractString(attributes, 'balance_id') AS balance_id, asset, amount, address
 	FROM stellar.account_movements
 	WHERE movement_kind = 'claimable_balance_create'
-	  AND JSONExtractString(attributes, 'balance_id') IN cb_ids`
+	  AND JSONExtractString(attributes, 'balance_id') IN cb_ids
+	SETTINGS use_skip_indexes = 0, max_threads = 4, max_memory_usage = 8000000000`
 
 // findClaimableBalanceCreatesChunk runs cbLookupCreatesQuery against
 // one chunk (<= cbLookupExtTableChunkSize ids), passed as a
@@ -569,20 +579,10 @@ func findClaimableBalanceCreatesChunk(ctx context.Context, conn driver.Conn, chu
 		}
 	}
 
-	// Per-query settings (not connection-level): this is the one
-	// caller that hands ClickHouse a hash-set semijoin sized to a
-	// batch of up to cbLookupExtTableChunkSize ids, so it gets its own
-	// bounded footprint rather than inheriting openRead's heavy-FINAL
-	// gate-class defaults verbatim.
-	qctx := clickhouse.Context(
-		ctx,
-		clickhouse.WithExternalTable(tbl),
-		clickhouse.WithSettings(clickhouse.Settings{
-			"max_threads":                        4,
-			"max_memory_usage":                   8_000_000_000,
-			"max_bytes_before_external_group_by": 2_000_000_000,
-		}),
-	)
+	// Query bounds are in cbLookupCreatesQuery's SQL-text SETTINGS
+	// clause — see its doc comment for why WithSettings cannot be
+	// trusted next to WithExternalTable.
+	qctx := clickhouse.Context(ctx, clickhouse.WithExternalTable(tbl))
 
 	rows, qerr := conn.Query(qctx, cbLookupCreatesQuery)
 	if qerr != nil {
