@@ -201,6 +201,68 @@ func TestMarshalAccountMovementAttributes(t *testing.T) {
 	}
 }
 
+func TestChunkStrings(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		got := chunkStrings(nil, 2000)
+		if got != nil {
+			t.Errorf("chunkStrings(nil, 2000) = %+v, want nil", got)
+		}
+		got = chunkStrings([]string{}, 2000)
+		if got != nil {
+			t.Errorf("chunkStrings([], 2000) = %+v, want nil", got)
+		}
+	})
+
+	t.Run("exact multiple", func(t *testing.T) {
+		ids := make([]string, 6)
+		for i := range ids {
+			ids[i] = string(rune('a' + i))
+		}
+		got := chunkStrings(ids, 2)
+		if len(got) != 3 {
+			t.Fatalf("len(chunks) = %d, want 3", len(got))
+		}
+		for i, c := range got {
+			if len(c) != 2 {
+				t.Errorf("chunk %d len = %d, want 2", i, len(c))
+			}
+		}
+		if got[0][0] != "a" || got[0][1] != "b" || got[2][0] != "e" || got[2][1] != "f" {
+			t.Errorf("chunks = %+v, want contiguous split preserving order", got)
+		}
+	})
+
+	t.Run("remainder", func(t *testing.T) {
+		ids := []string{"a", "b", "c", "d", "e"}
+		got := chunkStrings(ids, 2)
+		if len(got) != 3 {
+			t.Fatalf("len(chunks) = %d, want 3", len(got))
+		}
+		if len(got[0]) != 2 || len(got[1]) != 2 || len(got[2]) != 1 {
+			t.Errorf("chunk lens = [%d %d %d], want [2 2 1]", len(got[0]), len(got[1]), len(got[2]))
+		}
+		if got[2][0] != "e" {
+			t.Errorf("last chunk = %+v, want [e]", got[2])
+		}
+	})
+
+	t.Run("n bigger than input", func(t *testing.T) {
+		ids := []string{"a", "b", "c"}
+		got := chunkStrings(ids, 2000)
+		if len(got) != 1 || len(got[0]) != 3 {
+			t.Fatalf("chunkStrings(3 ids, 2000) = %+v, want one chunk of 3", got)
+		}
+	})
+
+	t.Run("n<=0 means no chunking", func(t *testing.T) {
+		ids := []string{"a", "b", "c"}
+		got := chunkStrings(ids, 0)
+		if len(got) != 1 || len(got[0]) != 3 {
+			t.Fatalf("chunkStrings(3 ids, 0) = %+v, want one chunk of 3", got)
+		}
+	})
+}
+
 func TestSortAccountMovementRows(t *testing.T) {
 	rows := []AccountMovementRow{
 		{Address: "GB", Ledger: 2, TxHash: "z"},

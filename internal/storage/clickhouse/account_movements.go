@@ -390,9 +390,52 @@ type ClaimableBalanceCreateRow struct {
 	CreatedBy string
 }
 
+// cbLookupChunkSize bounds how many balance_id hex strings go into a
+// single FindClaimableBalanceCreates query's IN-list. The
+// clickhouse-go driver inlines a bound []string directly into the SQL
+// text rather than sending it as a server-side parameter, so an
+// unbounded IN-list's size is bounded only by ClickHouse's
+// `max_query_size` setting (256 KiB by default). Each quoted 72-hex
+// balance_id plus its comma separator inlines to ~75 bytes, so 2,000
+// ids is ~150 KiB — comfortably under 256 KiB with wide margin for the
+// rest of the query text and any future column additions.
+//
+// 2026-07-13 finding: the claimable-balance-bot spam era (around
+// ledger 49.3M) produces windows with well over a million pending
+// refs — real production failures tonight were 58,714, 853,775,
+// 1,292,177, and 1,393,786 ids in a single unchunked call, each one
+// blowing well past max_query_size (`code: 62, Max query size
+// exceeded`) and failing the whole lookup, leaving every claim in
+// that window's batch unresolved.
+const cbLookupChunkSize = 2000
+
+// chunkStrings splits ids into contiguous sub-slices of at most n
+// elements each (the last sub-slice may be shorter). n<=0 is treated
+// as "no chunking" (one sub-slice containing all of ids). Extracted
+// as its own function so the chunking arithmetic (exact multiples,
+// remainders, n larger than len(ids)) is unit-testable without a
+// ClickHouse connection.
+func chunkStrings(ids []string, n int) [][]string {
+	if len(ids) == 0 {
+		return nil
+	}
+	if n <= 0 || n >= len(ids) {
+		return [][]string{ids}
+	}
+	chunks := make([][]string, 0, (len(ids)+n-1)/n)
+	for i := 0; i < len(ids); i += n {
+		end := i + n
+		if end > len(ids) {
+			end = len(ids)
+		}
+		chunks = append(chunks, ids[i:end])
+	}
+	return chunks
+}
+
 // FindClaimableBalanceCreates batch-resolves MANY pending claim/
-// clawback refs' claimable_balance_create rows in ONE query — the
-// ADR-0048 D2 ClickHouse-native replacement for the retired Postgres
+// clawback refs' claimable_balance_create rows — the ADR-0048 D2
+// ClickHouse-native replacement for the retired Postgres
 // timescale.Store.FindClaimableBalanceCreate lookup (ADR-0047 Phase
 // 3's cross-window correlation fallback tier; see
 // classicmovements/dispatcher_adapter.go's Decoder doc for the full
@@ -409,8 +452,24 @@ type ClaimableBalanceCreateRow struct {
 // one-off ALTER TABLE) is a bloom_filter skip-index on
 // JSONExtractString(attributes, 'balance_id') that brought a single
 // lookup to ~84ms (~77x). Batching on top of that turns an entire
-// window's fallback resolution into ONE query regardless of how many
-// refs it has, instead of one query per ref.
+// window's fallback resolution into (at most) a handful of queries
+// regardless of how many refs it has, instead of one query per ref.
+//
+// 2026-07-13 finding: "a handful of queries" needed a floor. Batching
+// into ONE query per window worked fine until the claimable-balance
+// spam era (ledger ~49.3M) produced windows with over a million
+// pending refs — the driver inlines the whole []string IN-list into
+// the SQL text, and anything past ~3,400 ids blew ClickHouse's
+// `max_query_size` (256 KiB default), failing the entire lookup
+// with `code: 62, Max query size exceeded` and leaving every claim in
+// that window's batch unresolved. This function now issues one
+// bounded query per cbLookupChunkSize (2,000) ids instead of one
+// query for the whole input, reusing a single connection across
+// chunks (opened once, not redialed per chunk) and merging results
+// into the same returned map. With idx_cb_balance_id in play each
+// 2,000-id chunk is still a fast indexed lookup (~100ms), so even a
+// 1.4M-id window costs on the order of a few hundred sequential
+// queries, not a single query that can never succeed.
 //
 // ClickHouse's skip-index pruning only fires when the WHERE predicate
 // is textually IDENTICAL to the indexed expression — the WHERE clause
@@ -426,9 +485,11 @@ type ClaimableBalanceCreateRow struct {
 // range backfilled so far, or — rarely — same-ledger ordering noise),
 // never a query failure. Callers must count + log misses, never guess
 // an amount. Duplicate rows for the same balance_id (ReplacingMergeTree
-// parts not yet merged) are identical by construction; the first one
-// scanned wins. Empty input returns an empty, non-nil map without
-// querying ClickHouse.
+// parts not yet merged, or the same id appearing in two different
+// chunks) are identical by construction; the first one scanned wins.
+// Empty input returns an empty, non-nil map without querying
+// ClickHouse. ctx is checked between chunks so a caller's cancellation
+// or deadline is honored without waiting for every remaining chunk.
 func FindClaimableBalanceCreates(ctx context.Context, addr string, balanceIDHexes []string) (map[string]ClaimableBalanceCreateRow, error) {
 	out := make(map[string]ClaimableBalanceCreateRow, len(balanceIDHexes))
 	if len(balanceIDHexes) == 0 {
@@ -445,26 +506,41 @@ func FindClaimableBalanceCreates(ctx context.Context, addr string, balanceIDHexe
 		FROM stellar.account_movements
 		WHERE movement_kind = 'claimable_balance_create'
 		  AND JSONExtractString(attributes, 'balance_id') IN (?)`
-	rows, qerr := conn.Query(ctx, q, balanceIDHexes)
+
+	for _, chunk := range chunkStrings(balanceIDHexes, cbLookupChunkSize) {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("clickhouse: FindClaimableBalanceCreates(%d ids): %w", len(balanceIDHexes), err)
+		}
+		if err := findClaimableBalanceCreatesChunk(ctx, conn, q, chunk, out); err != nil {
+			return nil, fmt.Errorf("clickhouse: FindClaimableBalanceCreates(%d ids): %w", len(balanceIDHexes), err)
+		}
+	}
+	return out, nil
+}
+
+// findClaimableBalanceCreatesChunk runs q against one chunk (<=
+// cbLookupChunkSize ids) and merges matches into out.
+func findClaimableBalanceCreatesChunk(ctx context.Context, conn driver.Conn, q string, chunk []string, out map[string]ClaimableBalanceCreateRow) error {
+	rows, qerr := conn.Query(ctx, q, chunk)
 	if qerr != nil {
-		return nil, fmt.Errorf("clickhouse: FindClaimableBalanceCreates(%d ids): %w", len(balanceIDHexes), qerr)
+		return qerr
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var balanceID, asset, createdBy string
 		var amt *big.Int
 		if err := rows.Scan(&balanceID, &asset, &amt, &createdBy); err != nil {
-			return nil, fmt.Errorf("clickhouse: scan FindClaimableBalanceCreates row: %w", err)
+			return fmt.Errorf("scan row: %w", err)
 		}
 		if _, dup := out[balanceID]; dup {
-			continue // ReplacingMergeTree pre-merge duplicate — identical by construction; first wins.
+			continue // ReplacingMergeTree pre-merge duplicate, or a repeat across chunks — identical by construction; first wins.
 		}
 		if amt == nil {
 			amt = big.NewInt(0)
 		}
 		out[balanceID] = ClaimableBalanceCreateRow{Asset: asset, Amount: amt, CreatedBy: createdBy}
 	}
-	return out, rows.Err()
+	return rows.Err()
 }
 
 // AccountMovementVerifyCounts maps movement_kind -> the number of
