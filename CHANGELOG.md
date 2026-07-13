@@ -29,7 +29,9 @@ against.
   tier1_schema.sql` and `internal/storage/clickhouse/account_movements.go`'s
   `EnsureAccountMovementsTable` — so a fresh install gets it from the start; note that
   `CREATE TABLE IF NOT EXISTS` does not retrofit it onto an already-existing table
-  (irrelevant for r1, already applied there directly).
+  (irrelevant for r1, already applied there directly). The watchdog subshell runs with `errexit`/`pipefail` disabled and skips a
+  non-numeric `df` reading (2026-07-13 review finding): a single transient `df`
+  failure must not silently kill the watchdog and fail the guard open.
 
 ### Fixed
 - **classic_movements: sponsored account creations (CAP-33, Protocol 15+) are no longer
