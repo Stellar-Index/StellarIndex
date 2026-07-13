@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/ext"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
@@ -390,24 +391,20 @@ type ClaimableBalanceCreateRow struct {
 	CreatedBy string
 }
 
-// cbLookupChunkSize bounds how many balance_id hex strings go into a
-// single FindClaimableBalanceCreates query's IN-list. The
-// clickhouse-go driver inlines a bound []string directly into the SQL
-// text rather than sending it as a server-side parameter, so an
-// unbounded IN-list's size is bounded only by ClickHouse's
-// `max_query_size` setting (256 KiB by default). Each quoted 72-hex
-// balance_id plus its comma separator inlines to ~75 bytes, so 2,000
-// ids is ~150 KiB — comfortably under 256 KiB with wide margin for the
-// rest of the query text and any future column additions.
-//
-// 2026-07-13 finding: the claimable-balance-bot spam era (around
-// ledger 49.3M) produces windows with well over a million pending
-// refs — real production failures tonight were 58,714, 853,775,
-// 1,292,177, and 1,393,786 ids in a single unchunked call, each one
-// blowing well past max_query_size (`code: 62, Max query size
-// exceeded`) and failing the whole lookup, leaving every claim in
-// that window's batch unresolved.
-const cbLookupChunkSize = 2000
+// cbLookupExtTableChunkSize bounds how many balance_id hex strings go
+// into a single external-table semijoin query (see
+// FindClaimableBalanceCreates' doc comment for the full failure
+// history). Unlike the retired inlined-IN-list chunk bound, this is
+// NOT driven by a SQL-text-size ceiling — an external table sends ids
+// as column data over the native protocol, not as inlined SQL
+// literals, so there is no `max_query_size` exposure at any size. This
+// bound exists purely as a safety ceiling on how large a single
+// server-side hash-set (and driver-side Table.Append batch) gets built
+// per query. 1,000,000 comfortably covers every real window observed
+// so far (up to 1,393,786 ids, 2026-07-13) in one or two queries,
+// while still capping worst-case per-query footprint if some future
+// window is far larger.
+const cbLookupExtTableChunkSize = 1_000_000
 
 // chunkStrings splits ids into contiguous sub-slices of at most n
 // elements each (the last sub-slice may be shorter). n<=0 is treated
@@ -455,28 +452,60 @@ func chunkStrings(ids []string, n int) [][]string {
 // window's fallback resolution into (at most) a handful of queries
 // regardless of how many refs it has, instead of one query per ref.
 //
-// 2026-07-13 finding: "a handful of queries" needed a floor. Batching
-// into ONE query per window worked fine until the claimable-balance
-// spam era (ledger ~49.3M) produced windows with over a million
-// pending refs — the driver inlines the whole []string IN-list into
-// the SQL text, and anything past ~3,400 ids blew ClickHouse's
-// `max_query_size` (256 KiB default), failing the entire lookup
-// with `code: 62, Max query size exceeded` and leaving every claim in
-// that window's batch unresolved. This function now issues one
-// bounded query per cbLookupChunkSize (2,000) ids instead of one
-// query for the whole input, reusing a single connection across
-// chunks (opened once, not redialed per chunk) and merging results
-// into the same returned map. With idx_cb_balance_id in play each
-// 2,000-id chunk is still a fast indexed lookup (~100ms), so even a
-// 1.4M-id window costs on the order of a few hundred sequential
-// queries, not a single query that can never succeed.
+// 2026-07-13 finding #1 (fixed same day, superseded below): "a handful
+// of queries" needed a floor. Batching into ONE query per window
+// worked fine until the claimable-balance spam era (ledger ~49.3M)
+// produced windows with over a million pending refs — the driver
+// inlines the whole []string IN-list into the SQL text, and anything
+// past ~3,400 ids blew ClickHouse's `max_query_size` (256 KiB
+// default: `code: 62, Max query size exceeded`), failing the entire
+// lookup and leaving every claim in that window's batch unresolved.
+// The first fix chunked the inlined IN-list at 2,000 ids per query.
 //
-// ClickHouse's skip-index pruning only fires when the WHERE predicate
-// is textually IDENTICAL to the indexed expression — the WHERE clause
-// below MUST stay exactly `JSONExtractString(attributes, 'balance_id')`
-// (not a rewritten equivalent: a CTE, a different function, a cast,
-// …). Any divergence silently falls back to the pre-index full scan
-// with no query error to signal it.
+// 2026-07-13 finding #2 (this fix, ~1h after #1 shipped): chunking the
+// inlined IN-list traded one failure mode for a worse one. With 2,000
+// ids inlined per chunk, idx_cb_balance_id's bloom_filter(0.01) skip
+// index stops helping and starts hurting: across the table's ~119k
+// granules, the chance a granule's bloom filter reports a false
+// positive for at least one of 2,000 probed ids is
+// 1-(1-0.01)^2000 ≈ 1 (indistinguishable from certainty), so every
+// chunk degenerates into a near-full parallel scan of the wide
+// `attributes` column over all 973M rows — and that blew the
+// connection's `max_memory_usage` (`code: 241, Query memory limit
+// exceeded, would use 10.00 GiB`). Single-id point lookups were never
+// affected (a 1-in-100 false-positive rate keeps a literal `= ?` or
+// tiny `IN (?)` cheap: ~84ms, confirmed live) — only the batched path
+// broke, because bloom-filter false-positive rate compounds with probe
+// count, not because the index itself regressed.
+//
+// The terminal fix: ids are passed as a ClickHouse EXTERNAL TABLE
+// (`clickhouse.WithExternalTable`, native-protocol side-channel, not
+// SQL text) and matched via `JSONExtractString(...) IN cb_ids` — a
+// hash-set semijoin whose cost is O(ids), not a function of granule
+// count or bloom FPR. This intentionally does NOT use
+// idx_cb_balance_id at all (an external table's contents aren't known
+// at query-analysis time, so there's nothing for the skip index to
+// prune against) — the `movement_kind = 'claimable_balance_create'`
+// LowCardinality prewhere already scopes the scan to the ~2.1M
+// cb-create rows before the semijoin runs, and a per-query
+// `WithSettings` (max_threads=4, max_memory_usage=8 GiB,
+// max_bytes_before_external_group_by=2 GiB) bounds the worst case.
+// cbLookupExtTableChunkSize (1,000,000) still chunks the external
+// table itself, purely as a footprint safety bound, not to dodge a
+// text-size or index-FPR ceiling — see its doc comment.
+//
+// idx_cb_balance_id remains valuable and is NOT being removed: any
+// TRUE point lookup (a literal `= ?` or a small hand-written `IN (?)`
+// with a handful of ids) still benefits from it, and ClickHouse's
+// skip-index pruning for such a query only fires when the WHERE
+// predicate is textually IDENTICAL to the indexed expression — so the
+// WHERE clause below MUST stay exactly
+// `JSONExtractString(attributes, 'balance_id')` (not a rewritten
+// equivalent: a CTE, a different function, a cast, …) even though
+// THIS function's batched external-table query no longer benefits
+// from that index itself. Any divergence silently falls back to a
+// full scan with no query error to signal it, for either access
+// pattern.
 //
 // The returned map contains ONLY found ids; a balance_id absent from
 // it means no matching create row exists YET for it in what's been
@@ -501,27 +530,61 @@ func FindClaimableBalanceCreates(ctx context.Context, addr string, balanceIDHexe
 	}
 	defer func() { _ = conn.Close() }()
 
-	const q = `
-		SELECT JSONExtractString(attributes, 'balance_id') AS balance_id, asset, amount, address
-		FROM stellar.account_movements
-		WHERE movement_kind = 'claimable_balance_create'
-		  AND JSONExtractString(attributes, 'balance_id') IN (?)`
-
-	for _, chunk := range chunkStrings(balanceIDHexes, cbLookupChunkSize) {
+	for _, chunk := range chunkStrings(balanceIDHexes, cbLookupExtTableChunkSize) {
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("clickhouse: FindClaimableBalanceCreates(%d ids): %w", len(balanceIDHexes), err)
 		}
-		if err := findClaimableBalanceCreatesChunk(ctx, conn, q, chunk, out); err != nil {
+		if err := findClaimableBalanceCreatesChunk(ctx, conn, chunk, out); err != nil {
 			return nil, fmt.Errorf("clickhouse: FindClaimableBalanceCreates(%d ids): %w", len(balanceIDHexes), err)
 		}
 	}
 	return out, nil
 }
 
-// findClaimableBalanceCreatesChunk runs q against one chunk (<=
-// cbLookupChunkSize ids) and merges matches into out.
-func findClaimableBalanceCreatesChunk(ctx context.Context, conn driver.Conn, q string, chunk []string, out map[string]ClaimableBalanceCreateRow) error {
-	rows, qerr := conn.Query(ctx, q, chunk)
+// cbLookupCreatesQuery matches chunk's ids against the external table
+// (`cb_ids`, one `balance_id String` column) findClaimableBalanceCreatesChunk
+// attaches via clickhouse.WithExternalTable — a hash-set semijoin, not
+// an inlined IN-list. See FindClaimableBalanceCreates' doc comment for
+// why the WHERE expression must stay textually exact.
+const cbLookupCreatesQuery = `
+	SELECT JSONExtractString(attributes, 'balance_id') AS balance_id, asset, amount, address
+	FROM stellar.account_movements
+	WHERE movement_kind = 'claimable_balance_create'
+	  AND JSONExtractString(attributes, 'balance_id') IN cb_ids`
+
+// findClaimableBalanceCreatesChunk runs cbLookupCreatesQuery against
+// one chunk (<= cbLookupExtTableChunkSize ids), passed as a
+// server-side external table rather than inlined SQL, and merges
+// matches into out. Building the ext.Table is per-chunk (the driver
+// has no reset/reuse API for one), which is cheap relative to the
+// query itself.
+func findClaimableBalanceCreatesChunk(ctx context.Context, conn driver.Conn, chunk []string, out map[string]ClaimableBalanceCreateRow) error {
+	tbl, terr := ext.NewTable("cb_ids", ext.Column("balance_id", "String"))
+	if terr != nil {
+		return fmt.Errorf("build cb_ids external table: %w", terr)
+	}
+	for _, id := range chunk {
+		if aerr := tbl.Append(id); aerr != nil {
+			return fmt.Errorf("append cb_ids row: %w", aerr)
+		}
+	}
+
+	// Per-query settings (not connection-level): this is the one
+	// caller that hands ClickHouse a hash-set semijoin sized to a
+	// batch of up to cbLookupExtTableChunkSize ids, so it gets its own
+	// bounded footprint rather than inheriting openRead's heavy-FINAL
+	// gate-class defaults verbatim.
+	qctx := clickhouse.Context(
+		ctx,
+		clickhouse.WithExternalTable(tbl),
+		clickhouse.WithSettings(clickhouse.Settings{
+			"max_threads":                        4,
+			"max_memory_usage":                   8_000_000_000,
+			"max_bytes_before_external_group_by": 2_000_000_000,
+		}),
+	)
+
+	rows, qerr := conn.Query(qctx, cbLookupCreatesQuery)
 	if qerr != nil {
 		return qerr
 	}
