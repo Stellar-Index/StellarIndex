@@ -71,20 +71,37 @@ against.
   the free in-memory index pass) in ONE `IN (?)` query. A batch-query error degrades the
   whole miss-set to unresolved with one stderr line, matching the previous per-ref
   behavior of counting a failed lookup as unresolved rather than failing the window.
-- **`FindClaimableBalanceCreates`'s single `IN (?)` query is now chunked at 2,000 ids per
-  query.** The `clickhouse-go` driver inlines a bound `[]string` directly into the SQL
-  text rather than sending it server-side, so the batched lookup above traded one failure
-  mode for another: the claimable-balance spam era around ledger 49.3M produces windows
-  with well over a million pending refs, and real production failures tonight (2026-07-13)
-  — 58,714, 853,775, 1,292,177, and 1,393,786 ids in a single unchunked call — all blew
-  past ClickHouse's `max_query_size` (256 KiB default) past ~3,400 ids, failing the whole
-  lookup with `code: 62, Max query size exceeded` and leaving every claim in that window's
-  batch unresolved. `FindClaimableBalanceCreates` now issues one bounded query per 2,000
-  ids (`cbLookupChunkSize`, comfortably under the 256 KiB limit with wide margin), reusing
-  a single connection across chunks and merging results into the same map; ctx is checked
-  between chunks so cancellation doesn't wait out every remaining one. `idx_cb_balance_id`
-  keeps each chunk a fast indexed lookup (~100ms), so even a 1.4M-id window now resolves
-  instead of failing outright.
+- **`FindClaimableBalanceCreates` now passes lookup ids as a ClickHouse EXTERNAL TABLE
+  instead of any inlined `IN` list — the terminal fix after two same-day regressions
+  (2026-07-12/13).** The failure chain: (1) a single unchunked `IN (?)` query was the
+  original batched-lookup shape; the claimable-balance spam era around ledger 49.3M
+  produces windows with well over a million pending refs, and the `clickhouse-go` driver
+  inlines a bound `[]string` directly into the SQL text rather than sending it
+  server-side — real production failures on 2026-07-13 (58,714, 853,775, 1,292,177, and
+  1,393,786 ids in a single call) all blew past ClickHouse's `max_query_size` (256 KiB
+  default, `code: 62`) past ~3,400 ids, failing the whole lookup and leaving every claim
+  in that window's batch unresolved. (2) The first fix chunked the inlined `IN` list at
+  2,000 ids per query — which shipped, then broke production an hour later: with 2,000
+  ids inlined per chunk, `idx_cb_balance_id`'s `bloom_filter(0.01)` skip index stops
+  helping and starts hurting, because a granule's false-positive probability compounds
+  with probe count — across the table's ~119k granules, `1-(1-0.01)^2000 ≈ 1`, so
+  effectively every granule looks like a possible match and each chunk degenerates into a
+  near-full parallel scan of the wide `attributes` column over the 973M-row table,
+  blowing the connection's `max_memory_usage` (`code: 241, Query memory limit exceeded,
+  would use 10.00 GiB`). Single-id point lookups were never affected by either failure
+  (~84ms, confirmed live) — only the batch path. (3) The terminal fix: ids are now sent
+  as a server-side external table (`clickhouse.WithExternalTable`, native-protocol side
+  channel, not SQL text) and matched via `JSONExtractString(attributes, 'balance_id') IN
+  cb_ids` — a hash-set semijoin whose cost is O(ids), immune to both the SQL-text-size
+  ceiling and the bloom-filter false-positive-rate blowup, bounded by a per-query
+  `WithSettings` (`max_threads=4`, `max_memory_usage=8 GiB`,
+  `max_bytes_before_external_group_by=2 GiB`). The external table itself is still chunked
+  (`cbLookupExtTableChunkSize`, 1,000,000 ids) as a footprint safety bound, not to dodge a
+  ceiling — real windows up to 1.4M ids now resolve in one or two queries.
+  `idx_cb_balance_id` is unaffected and still serves true point lookups (a literal `= ?`
+  or a small hand-written `IN (?)`) — the indexed WHERE expression
+  (`JSONExtractString(attributes, 'balance_id')`) must stay textually exact for either
+  access pattern, or ClickHouse silently falls back to a full scan.
 
 ## [v0.16.2] — 2026-07-11
 
