@@ -22,6 +22,9 @@ against.
   flooding logs or scratch space could fill the 49 GB root and wedge service
   logging channels. The remaining durable fix (move `/var/log`/swap onto ZFS or
   resize root) is recorded as accepted operator-gated debt in the post-mortem.
+  The watchdog subshell runs with `errexit`/`pipefail` disabled and skips a
+  non-numeric `df` reading (2026-07-13 review finding): a single transient `df`
+  failure must not silently kill the watchdog and fail the guard open.
 - **`stellar.account_movements` gained a `balance_id` skip index** (`idx_cb_balance_id`,
   `bloom_filter(0.01)` on `JSONExtractString(attributes, 'balance_id')`, `GRANULARITY 4`) —
   applied directly to r1's production ClickHouse via `ALTER TABLE ... ADD INDEX`
@@ -29,9 +32,7 @@ against.
   tier1_schema.sql` and `internal/storage/clickhouse/account_movements.go`'s
   `EnsureAccountMovementsTable` — so a fresh install gets it from the start; note that
   `CREATE TABLE IF NOT EXISTS` does not retrofit it onto an already-existing table
-  (irrelevant for r1, already applied there directly). The watchdog subshell runs with `errexit`/`pipefail` disabled and skips a
-  non-numeric `df` reading (2026-07-13 review finding): a single transient `df`
-  failure must not silently kill the watchdog and fail the guard open.
+  (irrelevant for r1, already applied there directly).
 
 ### Fixed
 - **classic_movements: sponsored account creations (CAP-33, Protocol 15+) are no longer
