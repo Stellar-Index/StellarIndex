@@ -15,7 +15,13 @@ against.
 
 ## [Unreleased]
 
+## [v0.16.3] — 2026-07-15
+
 ### Operations
+- **Repo migrated to the `Stellar-Index` GitHub org** (from the billing-locked
+  `StellarIndex` org). Go module path is now
+  `github.com/Stellar-Index/StellarIndex` — a pure rename across all imports,
+  CI/config refs, monitoring `runbook_url`s, and docs; build/vet/mod-verify green.
 - **`run-heavy-job.sh` gained a root-disk watchdog** (archival-node ansible role,
   applied to r1): a background loop stops the job's systemd scope when root free
   space drops below 2 GiB, closing the 2026-06-11 incident follow-up — a heavy job
