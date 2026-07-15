@@ -1,11 +1,28 @@
 ---
 title: Runbook — dex-nonstandard-decimals
-last_verified: 2026-07-10
+last_verified: 2026-07-15
 status: ratified
 severity: P2
 ---
 
-# Runbook — `stellarindex_dex_nonstandard_decimals_detected`
+# Runbook — `stellarindex_dex_nonstandard_decimals_detected` / `stellarindex_nonstandard_decimals_correction_failing`
+
+This runbook now covers **two** alerts that share the same root cause
+area but have very different action profiles:
+
+- **`stellarindex_dex_nonstandard_decimals_detected`** (informational) —
+  a non-7-decimal Soroban token was detected on a DEX trade. As of
+  2026-07-10 every serving path auto-normalizes via the
+  `nonstandard_decimals_assets` correction table, so this is now an
+  **expected, handled** condition — an awareness signal, not an
+  action item. See "Why this exists" below for the mechanism.
+- **`stellarindex_nonstandard_decimals_correction_failing`** (ticket) —
+  the correction mechanism ITSELF is failing: either the refresh
+  sweep that seeds/refreshes `nonstandard_decimals_assets` is erroring,
+  or a serving path is actively declining instead of normalizing. This
+  is the **real action item**: while it's firing, newly-detected
+  non-7-decimal tokens don't get corrected and serve the raw, skewed
+  ratio the detection alert above exists to warn about.
 
 ## Why this exists
 
@@ -43,20 +60,40 @@ only a detector — see "Mitigation" below.
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_dex_nonstandard_decimals_detected` |
-| Severity | P2 |
+| Alert (detection) | `stellarindex_dex_nonstandard_decimals_detected` — **severity: informational**, no action needed by default |
+| Alert (correction failing) | `stellarindex_nonstandard_decimals_correction_failing` — **severity: ticket, P2 — the real action item** |
 | Detected by | Prometheus rule in `deploy/monitoring/rules/aggregator.yml` (and `configs/prometheus/rules.r1/aggregator.yml`) |
-| Typical MTTR | Automatic within ~60s of confirmation (every serving path is normalized live) |
-| Impact | A **real, live pair** has a leg with confirmed non-7 `decimals()`. As of 2026-07-10 (second wave), **every serving path is decimals-corrected**: `/v1/vwap`, `/v1/twap`, `/v1/history`, `/v1/ohlc` (BOTH single-bar and `interval=` series modes), `/v1/price` (closed-1m CAGG bucket, batch, and windowed), `/v1/price/tip` (+ SSE), `/v1/chart` (vwap/twap/market-cap price legs), `/v1/markets` / `/v1/pools` / `/v1/pairs` `last_price`, the SEP-40 oracle passthroughs (`/v1/oracle/lastprice`, `/v1/oracle/prices`), and the aggregator's own published VWAP (feeds `/v1/price/stream` + the Redis fallback). Nothing declines anymore — the 422 guard was removed once every path served the corrected value. For any deployment that hasn't run migration 0093 / doesn't wire `NonstandardDecimals`, every path still serves the raw (wrong) ratio with no warning — normalization fails OPEN to 7dp. |
+| Typical MTTR | Detection: none required — automatic within ~60s of confirmation (every serving path is normalized live). Correction failing: depends on the underlying cause (Postgres blip, cache-wiring regression) — see Mitigation. |
+| Impact (detection) | A **real, live pair** has a leg with confirmed non-7 `decimals()`. As of 2026-07-10 (second wave), **every serving path is decimals-corrected**: `/v1/vwap`, `/v1/twap`, `/v1/history`, `/v1/ohlc` (BOTH single-bar and `interval=` series modes), `/v1/price` (closed-1m CAGG bucket, batch, and windowed), `/v1/price/tip` (+ SSE), `/v1/chart` (vwap/twap/market-cap price legs), `/v1/markets` / `/v1/pools` / `/v1/pairs` `last_price`, the SEP-40 oracle passthroughs (`/v1/oracle/lastprice`, `/v1/oracle/prices`), and the aggregator's own published VWAP (feeds `/v1/price/stream` + the Redis fallback). Nothing declines anymore — the 422 guard was removed once every path served the corrected value. For any deployment that hasn't run migration 0093 / doesn't wire `NonstandardDecimals`, every path still serves the raw (wrong) ratio with no warning — normalization fails OPEN to 7dp. |
+| Impact (correction failing) | The `nonstandard_decimals_assets` refresh sweep is erroring (`stellarindex_nonstandard_decimals_cache_refresh_failures_total`) or a serving path is actively declining (`stellarindex_price_serve_declined_nonstandard_decimals_total`, dormant since the 422 removal but a real signal if it ever increments). While this fires, newly-detected non-7-decimal tokens do NOT get a correction entry, so their pairs revert to the raw, silently-skewed ratio — this is the actual mispricing risk the detection alert warns about. |
 
 ## Symptoms
+
+**`stellarindex_dex_nonstandard_decimals_detected`:**
 
 - The alert names a `source` (DEX connector) and `asset` (Soroban C-strkey
   contract id).
 - The aggregator log (component `decimals-guard`) has an ERROR line with the
   exact `decimals` value and `price_skew_decades` (`|7 − decimals|`).
 - The counter latches: once a token is detected it stays firing for the
-  process lifetime (dedup is per `source`+`asset`).
+  process lifetime (dedup is per `source`+`asset`). This is expected —
+  no action needed. Confirm serving is actually corrected via the
+  "Quick diagnosis" step in the `stellarindex_nonstandard_decimals_correction_failing`
+  section below if in doubt.
+
+**`stellarindex_nonstandard_decimals_correction_failing`:**
+
+- `stellarindex_nonstandard_decimals_cache_refresh_failures_total` is
+  incrementing — the API's `NonstandardDecimalsCache` background refresh
+  (`internal/api/v1/nonstandard_decimals_cache.go`) is erroring against
+  Postgres, and/or
+- `stellarindex_price_serve_declined_nonstandard_decimals_total` is
+  incrementing — a serving path is declining instead of normalizing,
+  which should not happen post-2026-07-10 (the 422 guard was deleted);
+  its return is a signal of a regression, e.g. a reverted commit or a
+  code path that reintroduced a decline.
+- No per-asset labels on either metric — this alert doesn't name which
+  token is affected, only that the correction mechanism is unhealthy.
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -81,6 +118,36 @@ If the token genuinely declares `decimals != 7`, this is a **true positive** —
 the served price for those pairs is wrong. Proceed to mitigation.
 
 ## Mitigation (≤ 15 min)
+
+**If `stellarindex_nonstandard_decimals_correction_failing` is firing**
+(the action item — start here):
+
+- [ ] Check which side is failing:
+      `curl -s http://localhost:9465/metrics | grep -E 'nonstandard_decimals_cache_refresh_failures_total|price_serve_declined_nonstandard_decimals_total'`
+      (aggregator + API `/metrics`).
+- [ ] Cache-refresh failures: check the API process's connection to
+      Postgres — `NonstandardDecimalsCache`'s background refresh
+      (`internal/api/v1/nonstandard_decimals_cache.go`) reads
+      `nonstandard_decimals_assets` on `NonstandardDecimalsRefreshInterval`
+      (60s); a sustained failure usually means the API can't reach
+      Postgres (same blast radius as any other read failure) or the
+      table/migration 0093 is missing on this deployment.
+      Fix the connectivity issue; the counter stops incrementing and the
+      cache resumes refreshing from its last-good snapshot (fails OPEN,
+      not closed — see "Known false-positive patterns").
+- [ ] Serving declines: this metric should be permanently zero
+      post-2026-07-10 (the 422 guard was deleted). Any increment means a
+      serving path regressed back to declining instead of normalizing —
+      check for a recent deploy/rollback around
+      `internal/api/v1/{price,vwap,twap,ohlc,history,price_tip}.go`,
+      `chart.go`, `markets.go`, `pairs.go`, `oracle_sep40.go` (the
+      `AdjustPrice` call sites listed under "Related" below) and confirm
+      `declineIfNonstandardDecimals` hasn't been reintroduced.
+- [ ] While this alert is firing, treat any concurrently-firing
+      `stellarindex_dex_nonstandard_decimals_detected` for a NEW asset as
+      a live risk, not informational noise — its correction entry may not
+      have been written. Manually verify/seed per the hand-seed step
+      below.
 
 Immediate (stop serving the wrong number) — **now mostly automatic**:
 
@@ -310,6 +377,11 @@ skew was live before normalization/suppression.
   `stellarindex_price_serve_declined_nonstandard_decimals_total` (live
   enforcement impact), `stellarindex_nonstandard_decimals_cache_refresh_failures_total`
   (cache infra health) — `docs/reference/metrics/README.md`.
+- Alerting: both `stellarindex_dex_nonstandard_decimals_detected`
+  (informational) and `stellarindex_nonstandard_decimals_correction_failing`
+  (ticket) are defined in `deploy/monitoring/rules/aggregator.yml` and
+  mirrored in `configs/prometheus/rules.r1/aggregator.yml`; both are
+  catalogued in `docs/operations/alerts-catalog.md`.
 - The correctness invariant it protects: ADR-0003 (i128/decimals discipline)
   and the "external-source amount scaling is NOT uniform" note in `CLAUDE.md`.
 - Companion serving-sanity guard: `internal/pricingguard` (guards the raw
@@ -318,6 +390,21 @@ skew was live before normalization/suppression.
 
 ## Changelog
 
+- 2026-07-15 — **alert hygiene: split detection from the real risk.**
+  `stellarindex_dex_nonstandard_decimals_detected` had been sitting in
+  the firing list forever at `severity: ticket` even though, per the
+  2026-07-10 normalization work below, a detected token is now expected
+  and handled — every serving path corrects it automatically. Downgraded
+  it to `severity: informational` (still `for: 5m`, same runbook_url).
+  Added a new `severity: ticket` alert,
+  `stellarindex_nonstandard_decimals_correction_failing`
+  (`increase(stellarindex_nonstandard_decimals_cache_refresh_failures_total[15m]) > 0
+  or increase(stellarindex_price_serve_declined_nonstandard_decimals_total[15m]) > 0`,
+  `for: 5m`), which is the genuine action item: it fires when the
+  correction mechanism itself is failing, meaning newly-detected tokens
+  won't get normalized and their pairs revert to the raw skewed ratio.
+  Both alerts defined in `deploy/monitoring/rules/aggregator.yml` and
+  mirrored in `configs/prometheus/rules.r1/aggregator.yml`.
 - 2026-07-10 (second wave) — **the deferred CAGG-reading tail shipped**,
   completing normalization for every serving path: `/v1/price`'s
   closed-1m-bucket read (+ batch + last-trade fallback + windowed via the
