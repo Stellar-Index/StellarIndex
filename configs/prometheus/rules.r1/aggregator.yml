@@ -199,13 +199,64 @@ groups:
       # — true today because every DEX-traded token is 7-decimal. The
       # decimals-guard sweep (internal/decimalsguard, in the aggregator)
       # raises this counter the first time a DEX trade is observed for a
-      # Soroban token whose on-chain decimals() != 7, i.e. the assumption
-      # is violated and pairs involving that asset are being served a
-      # price skewed by 10^(7-decimals). It should be zero forever; any
-      # non-zero value is a real, silent mispricing on a live pair.
+      # Soroban token whose on-chain decimals() != 7. As of 2026-07-10
+      # EVERY serving path auto-normalizes via the
+      # nonstandard_decimals_assets correction table
+      # (aggregate.AdjustPrice / aggregate.ResolveDecimals), so a
+      # detected non-7-decimal token is EXPECTED and HANDLED — this is
+      # now an awareness signal, not an action item. The genuine risk
+      # isn't "a non-7-decimal token exists", it's "the correction
+      # isn't being applied" — see
+      # stellarindex_nonstandard_decimals_correction_failing below for
+      # that action-item alert.
       - alert: stellarindex_dex_nonstandard_decimals_detected
         expr: |
           sum by (source, asset) (stellarindex_dex_trade_nonstandard_decimals_total) > 0
+        for: 5m
+        labels:
+          severity: informational
+          team: stellarindex
+          component: aggregator
+          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+        annotations:
+          summary: "DEX trade for a non-7-decimal Soroban token detected — auto-corrected, no action needed"
+          description: |
+            A DEX trade landed for a Soroban token whose on-chain
+            decimals() is not 7 (source {{ $labels.source }}, asset
+            {{ $labels.asset }}). This is EXPECTED and HANDLED: every
+            serving path (prices_* continuous aggregates + reads,
+            aggregate.VWAP/TWAP/OHLC, /v1/price, /v1/vwap, /v1/twap,
+            /v1/history, /v1/ohlc, /v1/chart, /v1/markets /v1/pools
+            /v1/pairs, the SEP-40 oracle passthroughs) has normalized
+            against the confirmed decimals since 2026-07-10 — see the
+            runbook's "Mitigation" section. This alert is an awareness
+            signal only, latching so operators can see which tokens
+            have been confirmed non-7-decimal; it does not indicate a
+            pricing error. If the correction ITSELF is failing (the
+            refresh sweep erroring, or serving actively declining),
+            stellarindex_nonstandard_decimals_correction_failing fires
+            instead — that is the real action item.
+            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+
+      # ─── Decimals correction sweep/serving failing (the real risk) ───
+      # The detection alert above is now expected noise — every
+      # confirmed non-7-decimal token is auto-corrected. What ISN'T
+      # supposed to happen is the correction mechanism itself failing:
+      # either the aggregator's background sweep that seeds/refreshes
+      # nonstandard_decimals_assets errors out
+      # (NonstandardDecimalsCacheRefreshFailuresTotal), or a serving
+      # path actively declines instead of normalizing
+      # (PriceServeDeclinedNonstandardDecimalsTotal — dormant since the
+      # 422 guard was removed in favor of normalization, but a real
+      # failure signal if it ever increments again). Either means a
+      # newly-detected non-7-decimal token's pairs revert to the raw
+      # (skewed) ratio the detection alert above warns about — this is
+      # the actual action item.
+      - alert: stellarindex_nonstandard_decimals_correction_failing
+        expr: |
+          increase(stellarindex_nonstandard_decimals_cache_refresh_failures_total[15m]) > 0
+          or
+          increase(stellarindex_price_serve_declined_nonstandard_decimals_total[15m]) > 0
         for: 5m
         labels:
           severity: ticket
@@ -213,16 +264,20 @@ groups:
           component: aggregator
           runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
         annotations:
-          summary: "DEX trade for a non-7-decimal Soroban token — served price silently skewed (P2)"
+          summary: "Non-7-decimals correction sweep failing or serving declining — tokens at risk of silent price skew (P2)"
           description: |
-            A DEX trade landed for a Soroban token whose on-chain
-            decimals() is not 7 (source {{ $labels.source }}, asset
-            {{ $labels.asset }}). The served price (prices_* continuous
-            aggregates + aggregate.VWAP) is Σ(quote)/Σ(base) on raw
-            smallest-unit integers, which is correct only when base and
-            quote share a decimals scale — so every pair involving this
-            asset is now served a price skewed by 10^(7-decimals). This
-            should never fire: suppress the affected pair(s) from serving
-            and apply the decimals normalization. The guard's ERROR log
-            line carries the exact decimals + skew magnitude.
+            Either the aggregator's nonstandard_decimals_assets
+            refresh sweep is erroring
+            (stellarindex_nonstandard_decimals_cache_refresh_failures_total),
+            or a serving path is actively declining instead of
+            normalizing (stellarindex_price_serve_declined_nonstandard_decimals_total).
+            When the refresh sweep fails, newly-detected non-7-decimal
+            tokens don't get their nonstandard_decimals_assets
+            correction entry seeded/refreshed, so their pairs revert
+            to the raw, skewed ratio that
+            stellarindex_dex_nonstandard_decimals_detected exists to
+            warn about — this is the genuine action item behind that
+            latching detector. Investigate the aggregator's
+            decimals-guard component (internal/decimalsguard) and the
+            nonstandard_decimals_assets table directly.
             Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
