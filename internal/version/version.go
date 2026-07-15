@@ -56,3 +56,5 @@ func readVCSSetting(key string) string {
 	}
 	return "unknown"
 }
+
+// org migration verified on Stellar-Index — see git history.
