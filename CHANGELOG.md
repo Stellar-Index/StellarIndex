@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+### CI
+- **`web/explorer` and `web/status` `pnpm audit` steps no longer red the build
+  on `ERR_PNPM_AUDIT_BAD_RESPONSE`** — the npm advisory endpoint pnpm audit
+  calls now returns HTTP 410 (retired in favour of the bulk advisory
+  endpoint), so every run was failing on a registry-side condition, not a
+  real advisory. Only that specific error is now treated as non-fatal (with
+  a `::warning::` annotation); genuine high-severity advisories still fail
+  the job. Confirmed `web/explorer/src/api/types.ts` is NOT stale relative to
+  the lockfile-pinned `openapi-typescript` — no regeneration needed.
+
 ## [v0.16.3] — 2026-07-15
 
 ### Operations

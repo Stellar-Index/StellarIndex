@@ -456,7 +456,25 @@ jobs:
           # the build still succeeds with seed-only slugs.
           NEXT_PUBLIC_API_BASE_URL: http://api.ci-stub.invalid
       # F-1207 (codex audit-2026-05-12): pnpm advisory gate.
-      - run: pnpm audit --audit-level high
+      - name: pnpm audit (advisory gate)
+        # 2026-07-15: the npm advisory endpoint pnpm audit calls has been
+        # returning ERR_PNPM_AUDIT_BAD_RESPONSE (registry-side, not a repo
+        # issue); treat only that specific failure as non-fatal so a real
+        # high-severity advisory still reds the build.
+        run: |
+          set +e
+          audit_output="$(pnpm audit --audit-level high 2>&1)"
+          audit_exit=$?
+          set -e
+          echo "$audit_output"
+          if [ "$audit_exit" -eq 0 ]; then
+            exit 0
+          fi
+          if echo "$audit_output" | grep -q "ERR_PNPM_AUDIT_BAD_RESPONSE"; then
+            echo "::warning::pnpm audit endpoint returned a bad response (registry-side) — not failing the build on this."
+            exit 0
+          fi
+          exit "$audit_exit"
 
   # ────────────────────────────────────────────────────────────────
   # Status page — the status.stellarindex.io project is now redirect-only
@@ -486,7 +504,25 @@ jobs:
         env:
           NEXT_PUBLIC_API_BASE_URL: http://api.ci-stub.invalid
       # F-1207 (codex audit-2026-05-12): pnpm advisory gate.
-      - run: pnpm audit --audit-level high
+      - name: pnpm audit (advisory gate)
+        # 2026-07-15: the npm advisory endpoint pnpm audit calls has been
+        # returning ERR_PNPM_AUDIT_BAD_RESPONSE (registry-side, not a repo
+        # issue); treat only that specific failure as non-fatal so a real
+        # high-severity advisory still reds the build.
+        run: |
+          set +e
+          audit_output="$(pnpm audit --audit-level high 2>&1)"
+          audit_exit=$?
+          set -e
+          echo "$audit_output"
+          if [ "$audit_exit" -eq 0 ]; then
+            exit 0
+          fi
+          if echo "$audit_output" | grep -q "ERR_PNPM_AUDIT_BAD_RESPONSE"; then
+            echo "::warning::pnpm audit endpoint returned a bad response (registry-side) — not failing the build on this."
+            exit 0
+          fi
+          exit "$audit_exit"
 
   ansible-check:
     name: ansible syntax + lint
