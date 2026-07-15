@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
 // testConfigWithAllSources enables the config-gated catalogue entries

@@ -3,8 +3,8 @@ package redisclient_test
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/config"
-	"github.com/StellarIndex/stellar-index/internal/storage/redisclient"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/redisclient"
 )
 
 func TestBuild_DisabledWhenAllEmpty(t *testing.T) {

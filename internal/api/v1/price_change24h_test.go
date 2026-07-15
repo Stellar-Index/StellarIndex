@@ -7,7 +7,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 type stubChange24h struct{ then string }

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // ledgerHashFor builds a deterministic 32-byte hash for a sequence so

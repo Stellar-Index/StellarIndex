@@ -11,8 +11,8 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
 // Replay real Soroswap swap + sync fixtures captured from mainnet

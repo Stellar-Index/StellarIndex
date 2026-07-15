@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // SearchResultView classifies a free-text explorer query and points at the

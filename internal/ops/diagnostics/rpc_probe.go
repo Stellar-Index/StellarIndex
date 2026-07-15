@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/stellarrpc"
+	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
 )
 
 // rpcProbe runs a one-shot diagnostic against a stellar-rpc endpoint:

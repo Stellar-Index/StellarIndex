@@ -11,10 +11,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/obs"
-	"github.com/StellarIndex/stellar-index/internal/obstest"
-	"github.com/StellarIndex/stellar-index/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/obstest"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // ─── fakes ──────────────────────────────────────────────────────

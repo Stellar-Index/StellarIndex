@@ -11,8 +11,8 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarIndex/stellar-index/internal/scval"
-	"github.com/StellarIndex/stellar-index/internal/stellarrpc"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
+	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
 )
 
 // mockSorobanRPC stages a JSON-RPC server that responds to

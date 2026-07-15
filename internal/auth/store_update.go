@@ -8,7 +8,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/StellarIndex/stellar-index/internal/cachekeys"
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
 // ErrKeyNotFound is returned by [RedisAPIKeyStore.UpdateRateLimit]

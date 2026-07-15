@@ -10,10 +10,10 @@ import (
 
 	_ "github.com/lib/pq"
 
-	"github.com/StellarIndex/stellar-index/internal/aggregate/anomaly"
-	"github.com/StellarIndex/stellar-index/internal/aggregate/freeze"
-	c "github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
+	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TestFreezeEventSink_LKGVWAPLandsOnRow exercises the F-1228 path:

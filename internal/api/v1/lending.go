@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/sources/blend"
-	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
-	"github.com/StellarIndex/stellar-index/internal/xdrjson"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
 // LendingReader is the storage-side seam for /v1/lending/pools.

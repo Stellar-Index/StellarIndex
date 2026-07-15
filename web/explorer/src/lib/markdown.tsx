@@ -148,8 +148,8 @@ function tokenize(md: string): Block[] {
   return out;
 }
 
-const GH_BLOB = 'https://github.com/StellarIndex/stellar-index/blob/main/';
-const GH_TREE = 'https://github.com/StellarIndex/stellar-index/tree/main/';
+const GH_BLOB = 'https://github.com/Stellar-Index/StellarIndex/blob/main/';
+const GH_TREE = 'https://github.com/Stellar-Index/StellarIndex/tree/main/';
 
 // resolveDocLink turns a repo-relative markdown link (authored in the doc at
 // `sourcePath`, relative to ITS directory) into a URL that actually resolves

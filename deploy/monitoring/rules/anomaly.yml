@@ -33,7 +33,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
         annotations:
           summary: "Anomaly freeze engaged on class {{ $labels.class }} (P3)"
           description: |
@@ -48,7 +48,7 @@ groups:
             Inspect the freeze:<asset>:<quote> Redis keys to
             identify the affected pair(s); manual override via
             policy YAML if confirmed false-positive.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
 
       - alert: stellarindex_anomaly_freeze_sustained
         expr: |
@@ -58,7 +58,7 @@ groups:
           severity: page
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
         annotations:
           summary: "Anomaly freeze sustained for 1h+ on class {{ $labels.class }} (P1)"
           description: |
@@ -90,7 +90,7 @@ groups:
                 impact, but the alert is still real signal.
               - `SELECT COUNT(*) FROM freeze_events WHERE recovered_at IS NULL`
                 — durable mirror; should track Redis when both wire.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
 
       # Recovery-side health: the freeze recovery worker closes
       # durable freeze_events rows once the Redis marker TTL elapses.
@@ -107,7 +107,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/freeze-recovery-stalled.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-recovery-stalled.md
         annotations:
           summary: "Freeze recovery worker is stalled (P3)"
           description: |
@@ -126,4 +126,4 @@ groups:
             or a Redis ACL drift. Check the recovery worker logs
             (component=freeze-recovery) for the specific transport
             error.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/freeze-recovery-stalled.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-recovery-stalled.md

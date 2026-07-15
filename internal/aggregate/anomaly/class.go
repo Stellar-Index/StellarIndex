@@ -1,7 +1,7 @@
 package anomaly
 
 import (
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // AssetClass classifies an asset for anomaly threshold lookup. Stable

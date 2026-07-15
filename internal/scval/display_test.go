@@ -8,7 +8,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarIndex/stellar-index/internal/scval"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 func symVal(t *testing.T, s string) xdr.ScVal {

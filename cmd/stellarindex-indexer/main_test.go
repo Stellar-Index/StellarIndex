@@ -11,11 +11,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarIndex/stellar-index/internal/consumer"
-	"github.com/StellarIndex/stellar-index/internal/dispatcher"
-	"github.com/StellarIndex/stellar-index/internal/hashdb"
-	"github.com/StellarIndex/stellar-index/internal/obs"
-	"github.com/StellarIndex/stellar-index/internal/obstest"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/hashdb"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/obstest"
 )
 
 func TestProcessAndPersistCursor_ReturnsDispatcherErrorBeforeCursorWrite(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // TestDefaultPairs_GoldenSet pins the YAML-embedded pair table to the

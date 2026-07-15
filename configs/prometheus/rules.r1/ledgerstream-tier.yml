@@ -21,7 +21,7 @@ groups:
           severity: page
           team: stellarindex
           component: ledgerstream
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ledgerstream-tier-both-missing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledgerstream-tier-both-missing.md
         annotations:
           summary: "LCM read missed BOTH tiers in the last 5 min — indexer cannot progress"
           description: |

@@ -5,7 +5,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // ParticipantAccounts returns the non-source G-account strkeys an operation

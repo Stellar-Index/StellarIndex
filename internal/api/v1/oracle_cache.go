@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // CachedOracleReader wraps an [OracleReader] with a per-process TTL

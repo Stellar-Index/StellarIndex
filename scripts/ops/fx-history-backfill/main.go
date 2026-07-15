@@ -49,8 +49,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/external/frankfurter"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external/frankfurter"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 func main() {

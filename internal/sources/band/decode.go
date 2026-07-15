@@ -6,9 +6,9 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/obs"
-	"github.com/StellarIndex/stellar-index/internal/scval"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 // opIndexFanoutStride is the synthetic OpIndex spacing per Band

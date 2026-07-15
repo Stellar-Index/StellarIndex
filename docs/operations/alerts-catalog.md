@@ -270,7 +270,7 @@ Per the ADR-0016 per-region trust model: R1 runs verify-archive Tier A
 their own slower cadence. The timer fires once per night at 03:23 UTC
 + jitter; node_exporter's `--collector.systemd` exports the unit
 state so failures and stale runs trigger the alerts below. See
-[verify-archive-tier-a.timer](https://github.com/StellarIndex/stellar-index/blob/main/deploy/systemd/verify-archive-tier-a.timer).
+[verify-archive-tier-a.timer](https://github.com/Stellar-Index/StellarIndex/blob/main/deploy/systemd/verify-archive-tier-a.timer).
 
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |

@@ -10,11 +10,11 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/dispatcher"
-	"github.com/StellarIndex/stellar-index/internal/ops/opsutil"
-	"github.com/StellarIndex/stellar-index/internal/sources/classicmovements"
-	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/classicmovements"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 // classicMovementOpKey identifies one classic operation for

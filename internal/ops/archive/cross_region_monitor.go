@@ -15,7 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/StellarIndex/stellar-index/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
 // ─── cross-region-monitor ──────────────────────────────────────────

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 )
 
 // Envelope is the shape of every 2xx JSON response. See

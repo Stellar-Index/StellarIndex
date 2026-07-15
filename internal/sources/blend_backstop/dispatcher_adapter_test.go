@@ -3,8 +3,8 @@ package blend_backstop
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/consumer"
-	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
 func TestDecoder_Name(t *testing.T) {

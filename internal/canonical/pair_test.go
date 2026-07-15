@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	c "github.com/StellarIndex/stellar-index/internal/canonical"
+	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 func TestNewPair_validAndDirectional(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // handleSourceHealth serves GET /v1/sources/{name}/health — one

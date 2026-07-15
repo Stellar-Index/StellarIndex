@@ -36,7 +36,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: price-alerts
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/price-alert-eval-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-alert-eval-failing.md
         annotations:
           summary: "Price-alert evaluator failing to list alerts (P3)"
           description: |

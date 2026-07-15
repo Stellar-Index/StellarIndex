@@ -3,11 +3,11 @@ package pipeline
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/contractid"
-	"github.com/StellarIndex/stellar-index/internal/events"
-	"github.com/StellarIndex/stellar-index/internal/sources/aquarius"
-	"github.com/StellarIndex/stellar-index/internal/sources/blend"
-	"github.com/StellarIndex/stellar-index/internal/sources/defindex"
+	"github.com/Stellar-Index/StellarIndex/internal/contractid"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 )
 
 func TestGatedMetaFor_blend(t *testing.T) {

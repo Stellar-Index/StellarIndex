@@ -11,12 +11,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/StellarIndex/stellar-index/internal/auth"
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/config"
-	"github.com/StellarIndex/stellar-index/internal/divergence"
-	"github.com/StellarIndex/stellar-index/internal/platform"
-	"github.com/StellarIndex/stellar-index/internal/usage"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/divergence"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/usage"
 )
 
 // TestUsageReaderOrNil_RedisAbsent — when the usage counter is

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
 // blockableWriter holds a release channel — InsertSorobanEventsBatch

@@ -5,16 +5,16 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/phoenix"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
 
-	"github.com/StellarIndex/stellar-index/internal/contractid"
-	"github.com/StellarIndex/stellar-index/internal/dispatcher"
-	"github.com/StellarIndex/stellar-index/internal/sources/aquarius"
-	"github.com/StellarIndex/stellar-index/internal/sources/blend"
-	blend_emitter "github.com/StellarIndex/stellar-index/internal/sources/blend_emitter"
-	"github.com/StellarIndex/stellar-index/internal/sources/comet"
-	"github.com/StellarIndex/stellar-index/internal/sources/defindex"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/contractid"
+	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
+	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // GatedMeta is the per-source description a factory-anchored decoder

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // fakeClassicStore satisfies ClassicSupplyStore with in-memory

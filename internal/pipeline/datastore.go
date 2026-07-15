@@ -5,8 +5,8 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 
-	"github.com/StellarIndex/stellar-index/internal/config"
-	"github.com/StellarIndex/stellar-index/internal/ledgerstream"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ledgerstream"
 )
 
 // liveTailRetryWait shortens the SDK BufferedStorageBackend's 30s

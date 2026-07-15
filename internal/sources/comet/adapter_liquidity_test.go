@@ -4,7 +4,7 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
 // ─── Matches now claims four additional kinds ────────────────────

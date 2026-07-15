@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // protocolDetailTTL caches the expensive /v1/protocols/{name} detail

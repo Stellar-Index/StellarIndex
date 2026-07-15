@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // decimalsCacheRefreshInterval mirrors internal/api/v1.NonstandardDecimalsRefreshInterval

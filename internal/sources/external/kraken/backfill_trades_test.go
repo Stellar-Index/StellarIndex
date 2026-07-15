@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // The first page is a REAL frame captured from Kraken's /Trades for

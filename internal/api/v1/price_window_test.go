@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 type windowVWAPStub struct{ windows map[time.Duration]string }

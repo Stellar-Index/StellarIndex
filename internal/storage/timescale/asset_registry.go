@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // assetRegistryDedupeTTL throttles per-asset upserts so the

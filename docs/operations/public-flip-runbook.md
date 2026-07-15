@@ -11,9 +11,9 @@ gates the push.
 
 1. **GitHub org `StellarIndex`** — created via the GitHub web UI (orgs
    can't be created by API/CLI). The module path is
-   `github.com/StellarIndex/stellar-index`, so the public repo MUST live
+   `github.com/Stellar-Index/StellarIndex`, so the public repo MUST live
    there for `go get …/pkg/client` (the SDK) to resolve.
-2. **Empty public repo** `StellarIndex/stellar-index` (no README/license
+2. **Empty public repo** `Stellar-Index/StellarIndex` (no README/license
    init — the export supplies them).
 
 ## Steps
@@ -34,7 +34,7 @@ gates the push.
    git init -q && git add -A
    git commit -q -m "Stellar Index v1.0.0 — initial public release"
    git branch -M main
-   git remote add origin git@github.com:StellarIndex/stellar-index.git
+   git remote add origin git@github.com:Stellar-Index/StellarIndex.git
    git push -u origin main
    git tag v1.0.0 && git push origin v1.0.0
    ```

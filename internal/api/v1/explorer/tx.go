@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"regexp"
 
-	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 // txHashRe matches a Stellar transaction hash: 64 lowercase hex chars (the lake

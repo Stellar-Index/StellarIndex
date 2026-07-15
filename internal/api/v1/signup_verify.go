@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
 // SignupVerifier is the v1 boundary for the email-ownership-

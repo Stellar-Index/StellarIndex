@@ -16,7 +16,7 @@
 //	import (
 //	    "context"
 //	    "fmt"
-//	    "github.com/StellarIndex/stellar-index/pkg/client"
+//	    "github.com/Stellar-Index/StellarIndex/pkg/client"
 //	)
 //
 //	func main() {
@@ -113,5 +113,5 @@
 // runs a dashboard polling multiple regions. The Cursors method
 // exposes ingestion lag for the same reason.
 //
-// [ADR-0005]: https://github.com/StellarIndex/stellar-index/blob/main/docs/adr/0005-monorepo.md
+// [ADR-0005]: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/adr/0005-monorepo.md
 package client

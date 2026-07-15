@@ -8,7 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/StellarIndex/stellar-index/internal/incidents"
+	"github.com/Stellar-Index/StellarIndex/internal/incidents"
 )
 
 // IncidentsList is the wire shape returned by /v1/incidents.

@@ -11,8 +11,8 @@ import (
 	"net/mail"
 	"strings"
 
-	"github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
-	"github.com/StellarIndex/stellar-index/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
 // SignupTracker is the v1 boundary for "has this email already

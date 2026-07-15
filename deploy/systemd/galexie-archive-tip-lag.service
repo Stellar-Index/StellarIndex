@@ -16,7 +16,7 @@
 
 [Unit]
 Description=Stellar Index — galexie-archive tip-lag metric updater (#31)
-Documentation=https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
 After=minio.service
 Wants=minio.service
 

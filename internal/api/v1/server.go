@@ -10,16 +10,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/aggregate"
-	"github.com/StellarIndex/stellar-index/internal/api/streaming"
-	explorerpkg "github.com/StellarIndex/stellar-index/internal/api/v1/explorer"
-	"github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
-	"github.com/StellarIndex/stellar-index/internal/auth"
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/currency"
-	"github.com/StellarIndex/stellar-index/internal/incidents"
-	"github.com/StellarIndex/stellar-index/internal/obs"
-	"github.com/StellarIndex/stellar-index/internal/version"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
+	explorerpkg "github.com/Stellar-Index/StellarIndex/internal/api/v1/explorer"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/currency"
+	"github.com/Stellar-Index/StellarIndex/internal/incidents"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/version"
 )
 
 // ReadyChecker is the interface /readyz polls to decide whether
@@ -1743,8 +1743,8 @@ func (s *Server) handleSecurityTxt(w http.ResponseWriter, _ *http.Request) {
 		"Expires: " + expires + "\n" +
 		"Preferred-Languages: en\n" +
 		"Canonical: https://stellarindex.io/.well-known/security.txt\n" +
-		"Policy: https://github.com/StellarIndex/stellar-index/blob/main/SECURITY.md\n" +
-		"Acknowledgments: https://github.com/StellarIndex/stellar-index/security/advisories\n"
+		"Policy: https://github.com/Stellar-Index/StellarIndex/blob/main/SECURITY.md\n" +
+		"Acknowledgments: https://github.com/Stellar-Index/StellarIndex/security/advisories\n"
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	_, _ = w.Write([]byte(body))

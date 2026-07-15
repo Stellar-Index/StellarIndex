@@ -93,7 +93,7 @@ RULES = [
     {
         "name": "A/no-rpc-in-ingest",
         "banned": [
-            "github.com/StellarIndex/stellar-index/internal/stellarrpc",
+            "github.com/Stellar-Index/StellarIndex/internal/stellarrpc",
         ],
         "allow": [
             "internal/stellarrpc/",             # the package itself
@@ -158,7 +158,7 @@ RULES = [
     },
 ]
 
-MODULE = "github.com/StellarIndex/stellar-index/"
+MODULE = "github.com/Stellar-Index/StellarIndex/"
 
 # ─── Foundation-purity rules (D8 layering) ───────────────────────
 #

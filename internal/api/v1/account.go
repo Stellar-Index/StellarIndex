@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/auth"
-	"github.com/StellarIndex/stellar-index/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // AccountStore is the v1 boundary against [auth.APIKeyStore].

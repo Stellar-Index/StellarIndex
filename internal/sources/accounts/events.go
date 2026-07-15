@@ -1,7 +1,7 @@
 package accounts
 
 import (
-	"github.com/StellarIndex/stellar-index/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
 // SourceName is the canonical identifier for the AccountEntry

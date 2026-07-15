@@ -31,7 +31,7 @@ the same time. The cost — two repos coexisting — is negligible.
 
 - Org: `StellarIndex` (org already created)
 - Name: `stellar-index` (matches the Go module path
-  `github.com/StellarIndex/stellar-index` already used internally)
+  `github.com/Stellar-Index/StellarIndex` already used internally)
 - License: Apache-2.0 (same as private)
 - Default branch: `main`
 - Initial commit message: `Initial public release — Stellar Index v1.0`
@@ -99,9 +99,9 @@ PRs land between checklist verification and launch day. **Do this
    - The `CODEOWNERS` file's only @-handle (`@ash`) has the
      bandwidth to triage day-1 external PRs (or has a delegate
      wired up post-flip via branch-protection settings).
-   - The `StellarIndex/stellar-index` GitHub repo creation
+   - The `Stellar-Index/StellarIndex` GitHub repo creation
      command in §"Cut-over mechanics" still resolves cleanly
-     (`gh repo view StellarIndex/stellar-index` returns 404 —
+     (`gh repo view Stellar-Index/StellarIndex` returns 404 —
      i.e. nothing exists yet under that name).
 
 A row that fails the dry-run is a launch blocker. The dry-run
@@ -139,12 +139,12 @@ diff -r --brief --exclude=.git ../stellarindex . | head -50
 # Expect: zero diff. Anything reported is a publish-time slip-up.
 
 # 5. Create the GitHub repo + push
-gh repo create StellarIndex/stellar-index \
+gh repo create Stellar-Index/StellarIndex \
     --public \
     --description "Stellar-network pricing API: ingest, aggregate, serve VWAP/TWAP/OHLC" \
     --license Apache-2.0
 git remote remove origin
-git remote add origin git@github.com:StellarIndex/stellar-index.git
+git remote add origin git@github.com:Stellar-Index/StellarIndex.git
 git push -u origin public-v1:main
 
 # 6. Tag the release on the public repo
@@ -193,7 +193,7 @@ After the flip, both repos exist:
 - **Private (`ash/code/stellarindex`)** — full history, internal
   audit trail, day-to-day work continues here. New work lands here
   first; later mirrored to public via merge PR (see below).
-- **Public (`StellarIndex/stellar-index`)** — clean derived artefact;
+- **Public (`Stellar-Index/StellarIndex`)** — clean derived artefact;
   external PRs land here and get backported privately if they
   require additional internal-context discussion before merge.
 

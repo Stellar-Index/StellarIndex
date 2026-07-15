@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // fakeAssetsUpstream stubs every AssetsReader method with a per-call

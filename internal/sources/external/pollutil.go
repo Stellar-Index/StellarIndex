@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // GetRequest describes one polling GET. Headers are set verbatim on

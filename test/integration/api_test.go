@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
-	c "github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TestAPI_EndToEnd is the first integration test that proves the

@@ -6,8 +6,8 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarIndex/stellar-index/internal/consumer"
-	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
 // paymentEvent builds a complete, well-formed v1 payment events.Event

@@ -4,7 +4,7 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // TWAP returns the time-weighted average price over the given

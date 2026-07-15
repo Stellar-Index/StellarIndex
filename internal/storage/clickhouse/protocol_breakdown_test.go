@@ -3,7 +3,7 @@ package clickhouse
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/scval"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 // TestEffectiveEventName covers the topic name-recovery priority that

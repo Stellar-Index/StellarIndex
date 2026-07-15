@@ -25,8 +25,8 @@ export function GET() {
     `Expires: ${expires.toISOString()}`,
     `Preferred-Languages: en`,
     `Canonical: ${SITE_URL}/.well-known/security.txt`,
-    `Policy: https://github.com/StellarIndex/stellar-index/blob/main/SECURITY.md`,
-    `Acknowledgments: https://github.com/StellarIndex/stellar-index/security/advisories`,
+    `Policy: https://github.com/Stellar-Index/StellarIndex/blob/main/SECURITY.md`,
+    `Acknowledgments: https://github.com/Stellar-Index/StellarIndex/security/advisories`,
     ``,
   ].join('\n');
 

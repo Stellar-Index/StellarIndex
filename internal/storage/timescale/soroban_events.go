@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/StellarIndex/stellar-index/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
 // InsertSorobanEventsBatch persists a slice of raw Soroban event

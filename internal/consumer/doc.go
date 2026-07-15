@@ -25,7 +25,7 @@
 // callers. Production ingest is dispatcher-based:
 // Galexie MinIO → internal/ledgerstream → internal/dispatcher →
 // per-source decoders. New on-chain sources register a
-// [github.com/StellarIndex/stellar-index/internal/dispatcher.Decoder]
+// [github.com/Stellar-Index/StellarIndex/internal/dispatcher.Decoder]
 // (or OpDecoder / ContractCallDecoder / LedgerEntryChangeDecoder) —
 // never a per-source goroutine with its own RPC client. See
 // docs/architecture/ingest-pipeline.md for the binding rules.

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	rpc "github.com/StellarIndex/stellar-index/internal/stellarrpc"
+	rpc "github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
 )
 
 // ─── Options + Endpoint accessor ────────────────────────────────

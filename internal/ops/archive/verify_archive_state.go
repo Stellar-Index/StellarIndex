@@ -9,7 +9,7 @@ import (
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarIndex/stellar-index/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
 // VerifyArchiveState is the persisted on-disk record of how far each

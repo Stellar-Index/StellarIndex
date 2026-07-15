@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 
-	"github.com/StellarIndex/stellar-index/internal/aggregate/orchestrator"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/orchestrator"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // contributionSink adapts the timescale Store to the

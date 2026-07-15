@@ -10,8 +10,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/StellarIndex/stellar-index/internal/cachekeys"
-	"github.com/StellarIndex/stellar-index/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // PostgresAPIKeyValidator reads keys from the Postgres

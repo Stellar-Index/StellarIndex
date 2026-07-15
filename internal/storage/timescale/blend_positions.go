@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/StellarIndex/stellar-index/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
 // InsertBlendPositionEvent appends one money-market position-change

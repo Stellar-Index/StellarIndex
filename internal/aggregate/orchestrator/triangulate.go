@@ -9,12 +9,12 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/StellarIndex/stellar-index/internal/aggregate"
-	"github.com/StellarIndex/stellar-index/internal/cachekeys"
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/obs"
-	"github.com/StellarIndex/stellar-index/internal/sources/external"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TriangulationChain is one chain pricing entry. Target is the

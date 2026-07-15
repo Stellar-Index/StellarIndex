@@ -14,10 +14,10 @@ import (
 
 	"github.com/lib/pq"
 
-	"github.com/StellarIndex/stellar-index/internal/aggregate"
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/obs"
-	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // externalUSDVolumeDecimals is the off-chain quote-amount scale.

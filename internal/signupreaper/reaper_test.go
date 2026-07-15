@@ -11,9 +11,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/StellarIndex/stellar-index/internal/obs"
-	"github.com/StellarIndex/stellar-index/internal/obstest"
-	"github.com/StellarIndex/stellar-index/internal/signupreaper"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/obstest"
+	"github.com/Stellar-Index/StellarIndex/internal/signupreaper"
 )
 
 type reapCall struct {

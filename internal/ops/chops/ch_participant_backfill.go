@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/StellarIndex/stellar-index/internal/ops/opsutil"
-	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 // chParticipantBackfill fills stellar.operation_participants (the NON-source

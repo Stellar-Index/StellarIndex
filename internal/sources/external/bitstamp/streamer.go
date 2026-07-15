@@ -10,9 +10,9 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/sources/external"
-	"github.com/StellarIndex/stellar-index/internal/sources/external/wsclient"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external/wsclient"
 )
 
 // Streamer implements external.Streamer for Bitstamp. One

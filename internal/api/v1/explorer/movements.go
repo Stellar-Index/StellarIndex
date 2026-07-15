@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/classicmovements"
-	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/classicmovements"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // SEP41MovementsReader is the narrow Postgres read seam AccountMovements

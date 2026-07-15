@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
 // TopicSample is one representative soroban_events row for a distinct

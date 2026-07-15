@@ -13,7 +13,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: data-freshness
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/data-source-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-source-stale.md
         annotations:
           summary: "Data source {{ $labels.domain }}/{{ $labels.source }} is stale"
           description: |
@@ -23,7 +23,7 @@ groups:
             writer/timer stopped. The age is on
             stellarindex_data_freshness_age_seconds{domain="{{ $labels.domain }}",source="{{ $labels.source }}"}.
 
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/data-source-stale.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-source-stale.md
 
       # A source no longer reconciles to the certified lake. Now that the
       # ADR-0033 verdict is trustworthy + self-maintaining (rc.149), a
@@ -36,7 +36,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: completeness
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/completeness-incomplete.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/completeness-incomplete.md
         annotations:
           summary: "Source {{ $labels.source }} failed the ADR-0033 completeness verdict"
           description: |
@@ -45,7 +45,7 @@ groups:
             (latest verdict complete=false). A real served<>lake gap. Re-derive that source from
             the lake, then re-verify with compute-completeness.
 
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/completeness-incomplete.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/completeness-incomplete.md
 
       # The watchdog that catches every other staleness is itself dark.
       - alert: stellarindex_data_freshness_watchdog_silent
@@ -56,7 +56,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: data-freshness
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
         annotations:
           summary: "data-freshness watchdog stopped emitting"
           description: |
@@ -65,7 +65,7 @@ groups:
             verdict staleness is blind. Check `systemctl status data-freshness.service` +
             its last journal on r1.
 
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
 
       - alert: stellarindex_served_value_drift
         expr: stellarindex_served_value_ok == 0
@@ -74,7 +74,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: data-truth
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/served-value-drift.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
         annotations:
           summary: "Served value {{ $labels.check }} diverges from independent ground truth"
           description: |
@@ -92,7 +92,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: data-truth
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/served-value-drift.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
         annotations:
           summary: "verify-served-values has not completed in 2 days"
           description: |

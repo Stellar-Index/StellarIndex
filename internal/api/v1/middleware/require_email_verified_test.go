@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
-	"github.com/StellarIndex/stellar-index/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
 func runRequireEmailVerified(t *testing.T, sub auth.Subject) (status int, body string) {

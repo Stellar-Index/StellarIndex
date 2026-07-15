@@ -11,9 +11,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
-	"github.com/StellarIndex/stellar-index/internal/auth"
-	"github.com/StellarIndex/stellar-index/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // AuditSink is the narrow subset of [platform.AuditStore] the admin

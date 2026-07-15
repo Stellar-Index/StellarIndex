@@ -7,7 +7,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // sacStubReader lets each test choose what the lake claims the

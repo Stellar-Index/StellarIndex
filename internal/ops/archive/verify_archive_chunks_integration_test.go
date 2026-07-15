@@ -14,8 +14,8 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarIndex/stellar-index/internal/ledgerstream"
-	"github.com/StellarIndex/stellar-index/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/ledgerstream"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
 // testPassphrase is the SDF testnet passphrase. Doesn't matter for

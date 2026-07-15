@@ -3,7 +3,7 @@ package explorer
 import (
 	"net/http"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // AccountTransactionsView is the wire response for

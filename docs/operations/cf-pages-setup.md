@@ -89,7 +89,7 @@ patch any drift. Safe to run from CI on every change to
 1. Verifies the API token + looks up the `stellarindex.io`
    zone (warns + skips DNS if the zone isn't on Cloudflare).
 2. For each of the three Pages projects: creates it pointing
-   at `StellarIndex/stellar-index` with the right
+   at `Stellar-Index/StellarIndex` with the right
    `root_dir` / `build_command` / `output_dir` / env vars,
    or PATCHes the existing project to converge on those
    values.

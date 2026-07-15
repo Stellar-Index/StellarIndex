@@ -3,7 +3,7 @@ package cryptocompare
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // CryptoCompare is an aggregator (composite index across upstream

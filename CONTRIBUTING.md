@@ -46,7 +46,7 @@ CHANGELOG).
 ### First-time setup
 
 ```sh
-git clone https://github.com/StellarIndex/stellar-index
+git clone https://github.com/Stellar-Index/StellarIndex
 cd stellar-index
 make deps      # download Go modules + tools
 make verify    # canonical pre-push gate — fmt, vet, lint, doc-lint,

@@ -8,8 +8,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
 // HistoryPoint is a single bucket's worth of aggregated price +

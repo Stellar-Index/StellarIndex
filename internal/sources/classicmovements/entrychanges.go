@@ -8,8 +8,8 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/xdrjson"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
 // ─── Phase 4 (entry-changes half): LiquidityPoolDeposit/Withdraw + ──

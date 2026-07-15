@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/cachekeys"
-	"github.com/StellarIndex/stellar-index/internal/divergence"
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
+	"github.com/Stellar-Index/StellarIndex/internal/divergence"
 )
 
 // TestCountAgreeing pins the cross-oracle agreement math (ADR-0019

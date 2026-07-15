@@ -38,7 +38,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: archive
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/archive-files-missing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-files-missing.md
         annotations:
           summary: "{{ $value }} files missing in {{ $labels.archive }} archive (sustained > 4h)"
           description: |
@@ -61,7 +61,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: archive
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/archive-completeness-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-completeness-stale.md
         annotations:
           summary: "archive-completeness verify hasn't completed cleanly in {{ $value | humanizeDuration }}"
           description: |
@@ -79,7 +79,7 @@ groups:
           severity: page
           team: stellarindex
           component: archive
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/archive-completeness-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-completeness-stale.md
         annotations:
           summary: "(R1 integrity-leader) archive-completeness verify stale > 48h — SEV-2"
           description: |
@@ -105,7 +105,7 @@ groups:
           severity: informational
           team: stellarindex
           component: archive
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/archive-repair-source-degraded.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-repair-source-degraded.md
         annotations:
           summary: "Source {{ $labels.source }} repair failure ratio > 10% sustained 1h"
           description: |

@@ -7,9 +7,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/config"
-	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // issuerEnrich populates issuers.home_domain from the on-chain account state in

@@ -182,7 +182,7 @@ truth).
 
 ```sh
 # OPTION A — repo is empty enough that nobody cloned it:
-gh repo delete StellarIndex/stellar-index --yes
+gh repo delete Stellar-Index/StellarIndex --yes
 # Then re-do the cut-over per public-flip.md from step 5.
 
 # OPTION B — repo has been observed (someone might have cloned):

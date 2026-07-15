@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/api/streaming"
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // Observations-stream tunables. interval_seconds is the per-connection

@@ -25,7 +25,7 @@ groups:
           severity: page
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/aggregator-silent.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-silent.md
         annotations:
           summary: "Aggregator has stopped writing VWAP cache (P1)"
           description: |
@@ -35,7 +35,7 @@ groups:
             attempt. /v1/vwap responses fall back to raw aggregation —
             slow, and the freshness signal API consumers depend on goes
             quiet within 60 s.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/aggregator-silent.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-silent.md
 
       - alert: stellarindex_aggregator_outlier_storm
         expr: |
@@ -46,7 +46,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
         annotations:
           summary: "Outlier-filter drop rate >5× baseline (P3)"
           description: |
@@ -57,7 +57,7 @@ groups:
             window with anomalies; occasionally an upstream connector
             mis-decoding amounts. Either way the VWAP signal is
             degraded — a paged divergence alert is likely to follow.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
 
       - alert: stellarindex_aggregator_fx_snap_fallback_dominant
         expr: |
@@ -72,7 +72,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/aggregator-fx-snap-fallback-dominant.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-fx-snap-fallback-dominant.md
         annotations:
           summary: "FX snap fallback >50% of triangulations for 30m+ (P3)"
           description: |
@@ -83,7 +83,7 @@ groups:
             consistency. Investigate FX ingestion: polygon-forex /
             exchangeratesapi connector health, and the trades hypertable's
             FX rows.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/aggregator-fx-snap-fallback-dominant.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-fx-snap-fallback-dominant.md
 
       - alert: stellarindex_aggregator_class_drop_spike
         expr: |
@@ -94,7 +94,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/aggregator-class-drop-spike.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-class-drop-spike.md
         annotations:
           summary: "Class-filter drop rate >10× baseline (P3)"
           description: |
@@ -105,7 +105,7 @@ groups:
             fail-closed fallback IncludeInVWAP=false). Less common:
             an existing aggregator/oracle source unexpectedly
             increased volume.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/aggregator-class-drop-spike.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-class-drop-spike.md
 
       # F-1253 (audit-2026-05-12): explicit alert on aggregator
       # cache-write-error rate. The May-10 SEV-2 (root-FS full →
@@ -129,7 +129,7 @@ groups:
           severity: page
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
         annotations:
           summary: "Aggregator failing to publish VWAPs to Redis cache (P1)"
           description: |
@@ -139,7 +139,7 @@ groups:
             BGSAVE is failing because the root FS is full
             (stop-writes-on-bgsave-error=yes default — May-10 SEV-2
             class). Recovery: free disk → BGSAVE → cache rebuilds.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
 
       # ─── #43: protocol-events rollup worker ────────────────────
       # The aggregator's protoeventsrollup worker folds the
@@ -155,7 +155,7 @@ groups:
           severity: informational
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/protocol-events-rollup-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/protocol-events-rollup-failing.md
         annotations:
           summary: "Protocol-events rollup sweeps failing ({{ $value | humanize }}/s error rate)"
           description: |
@@ -181,7 +181,7 @@ groups:
           severity: informational
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/asset-volume-rollup-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/asset-volume-rollup-failing.md
         annotations:
           summary: "Asset-volume rollup sweeps failing ({{ $value | humanize }}/s error rate)"
           description: |
@@ -217,7 +217,7 @@ groups:
           severity: informational
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
         annotations:
           summary: "DEX trade for a non-7-decimal Soroban token detected — auto-corrected, no action needed"
           description: |
@@ -236,7 +236,7 @@ groups:
             refresh sweep erroring, or serving actively declining),
             stellarindex_nonstandard_decimals_correction_failing fires
             instead — that is the real action item.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
 
       # ─── Decimals correction sweep/serving failing (the real risk) ───
       # The detection alert above is now expected noise — every
@@ -262,7 +262,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
         annotations:
           summary: "Non-7-decimals correction sweep failing or serving declining — tokens at risk of silent price skew (P2)"
           description: |
@@ -280,4 +280,4 @@ groups:
             latching detector. Investigate the aggregator's
             decimals-guard component (internal/decimalsguard) and the
             nonstandard_decimals_assets table directly.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md

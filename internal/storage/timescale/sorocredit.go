@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // This file is the served-tier writer for the sorocredit source (an

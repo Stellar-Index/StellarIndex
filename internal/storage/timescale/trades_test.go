@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // TestSortTradesByConflictKey_FullKeyOrder is the regression test for

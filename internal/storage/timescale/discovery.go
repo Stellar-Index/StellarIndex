@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical/discovery"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical/discovery"
 )
 
 // RecordDiscovered persists a [discovery.Hit] to the

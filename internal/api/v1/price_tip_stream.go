@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/api/streaming"
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // tipStreamProducerQueueDepth is the capacity of the per-connection

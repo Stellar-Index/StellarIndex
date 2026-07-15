@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
-	"github.com/StellarIndex/stellar-index/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
 // TestKeyPolicy_AnonymousBypasses pins that anonymous traffic

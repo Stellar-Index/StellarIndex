@@ -9,9 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/external"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
-	"github.com/StellarIndex/stellar-index/internal/version"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/version"
 )
 
 // FXCoverageReader is the seam the ingestion diagnostics reads

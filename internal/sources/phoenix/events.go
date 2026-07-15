@@ -9,7 +9,7 @@ package phoenix
 import (
 	"errors"
 
-	"github.com/StellarIndex/stellar-index/internal/scval"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 // SourceName — stable identifier.

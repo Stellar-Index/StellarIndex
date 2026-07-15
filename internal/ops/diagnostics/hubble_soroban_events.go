@@ -14,7 +14,7 @@ import (
 	"cloud.google.com/go/bigquery"
 	"google.golang.org/api/iterator"
 
-	"github.com/StellarIndex/stellar-index/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
 // ─── stellarindex-ops hubble-soroban-events ─────────────────────────

@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/StellarIndex/stellar-index/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // In-process fakes for the three platform stores. Behavioural

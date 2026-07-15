@@ -20,7 +20,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // DefaultInterval is the refresh cadence. The census legs are each a

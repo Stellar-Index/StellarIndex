@@ -196,7 +196,7 @@ for the full walkthrough — it is **not** production-shaped: no HA, no
 TLS, no backups):
 
 ```sh
-git clone https://github.com/StellarIndex/stellar-index.git
+git clone https://github.com/Stellar-Index/StellarIndex.git
 cd stellar-index
 cp deploy/docker-compose/.env.example deploy/docker-compose/.env
 make dev              # timescale + redis + minio, docker compose

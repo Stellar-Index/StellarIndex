@@ -3,7 +3,7 @@ package domain
 import (
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // DivergenceObservationRecord is one per-reference cross-check

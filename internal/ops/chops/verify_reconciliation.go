@@ -7,11 +7,11 @@ import (
 	"os"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/completeness"
-	"github.com/StellarIndex/stellar-index/internal/config"
-	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
-	"github.com/StellarIndex/stellar-index/internal/stellarrpc"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/completeness"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // verifyReconciliation implements ADR-0033 Claim 2b (projection

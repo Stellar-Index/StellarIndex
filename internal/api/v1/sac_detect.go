@@ -1,6 +1,6 @@
 package v1
 
-import "github.com/StellarIndex/stellar-index/internal/xdrjson"
+import "github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 
 // isKnownSAC reports whether contractID is a Stellar Asset Contract we can
 // identify WITHOUT a captured instance entry. A SAC's id is the deterministic

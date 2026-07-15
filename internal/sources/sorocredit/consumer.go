@@ -3,8 +3,8 @@ package sorocredit
 import (
 	"fmt"
 
-	"github.com/StellarIndex/stellar-index/internal/consumer"
-	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
 // decodeOne classifies and decodes a single event into the canonical

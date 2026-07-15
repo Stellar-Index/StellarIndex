@@ -3,7 +3,7 @@ package aggregate
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // TestStablecoinCodes_InSyncWithCanonical pins canonical.StablecoinCodes

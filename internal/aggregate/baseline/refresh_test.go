@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/aggregate/baseline"
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/baseline"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // stubSource is a baseline.TimedVWAPSource that returns a per-pair

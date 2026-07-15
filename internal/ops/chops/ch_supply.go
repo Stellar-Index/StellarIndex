@@ -8,9 +8,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/config"
-	"github.com/StellarIndex/stellar-index/internal/ops/opsutil"
-	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 // chSupply derives total supply for EVERY token from the ClickHouse lake by

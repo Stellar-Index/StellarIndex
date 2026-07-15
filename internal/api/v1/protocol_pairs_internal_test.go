@@ -3,8 +3,8 @@ package v1
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/currency"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/currency"
 )
 
 // sacFor derives the deterministic Stellar-Asset-Contract C-strkey for an

@@ -47,7 +47,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: archive
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
         annotations:
           summary: "galexie-archive >1 partition behind live ({{ $value }} ledgers, sustained 90m, P3)"
           description: |
@@ -61,7 +61,7 @@ groups:
             backstops); R1's full-mirror guarantee is degrading.
             Investigate galexie-archive-fill.timer status + last log +
             aws-public mc-alias reachability.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
 
       - alert: stellarindex_galexie_archive_tip_lag_severe
         expr: galexie_archive_tip_lag_ledgers > 128000
@@ -70,7 +70,7 @@ groups:
           severity: page
           team: stellarindex
           component: archive
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
         annotations:
           summary: "galexie-archive >2 partitions behind live ({{ $value }} ledgers, P1)"
           description: |
@@ -90,7 +90,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: archive
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
         annotations:
           summary: "galexie-archive tip-lag metric not updated >30m"
           description: |

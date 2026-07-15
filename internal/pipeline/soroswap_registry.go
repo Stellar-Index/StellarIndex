@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // upsertHookTimeout caps how long the live new_pair upsert is allowed

@@ -11,7 +11,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/keypair"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 
-	"github.com/StellarIndex/stellar-index/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
 // ReplayGuard records the hash of every successfully-verified

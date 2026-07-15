@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TestParseStalledCursor covers every branch of the sub_source parser

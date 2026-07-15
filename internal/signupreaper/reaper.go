@@ -27,7 +27,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // SignupRaceReasonPrefix is the `suspended_reason` prefix the F-1255

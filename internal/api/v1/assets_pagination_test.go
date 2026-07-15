@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"testing"
 
-	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // paginatingAssetsReader embeds the full stub and overrides only

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // PriceChangeHorizon is one trailing-window delta on

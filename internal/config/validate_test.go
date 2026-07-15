@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
 func TestValidate_DefaultPasses(t *testing.T) {

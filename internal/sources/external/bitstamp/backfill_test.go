@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 func synthesiseBitstampCandles(count int, startSec, stepSec int64) []bitstampCandle {

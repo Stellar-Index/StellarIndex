@@ -39,7 +39,7 @@ groups:
           severity: page
           team: stellarindex
           component: api
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/sla-probe-p95-breach.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-p95-breach.md
         annotations:
           summary: "{{ $labels.endpoint }} p95 latency {{ $value }}ms exceeds SLA target (200ms) sustained 30m"
           description: |
@@ -69,7 +69,7 @@ groups:
           severity: page
           team: stellarindex
           component: api
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
         annotations:
           summary: "{{ $labels.endpoint }} price freshness {{ $value }}s exceeds its target (tip: 30s SLA / closed-bucket /price: 180s structural)"
           description: |
@@ -87,7 +87,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/sla-probe-unit-failed.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-unit-failed.md
         annotations:
           summary: "SLA probe verdict has been fail for ≥ 30m — at least one SLA breached"
           description: |
@@ -111,7 +111,7 @@ groups:
           severity: page
           team: stellarindex
           component: api
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/sla-probe-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-stale.md
         annotations:
           summary: "SLA probe hasn't passed in {{ $value | humanizeDuration }} (cadence 15m, threshold 90m)"
           description: |

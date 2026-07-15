@@ -3,8 +3,8 @@ package comet
 import (
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
 // TradeEvent is the [consumer.Event] Comet's Decoder emits on a

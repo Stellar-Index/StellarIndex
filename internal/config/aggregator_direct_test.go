@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	cfg "github.com/StellarIndex/stellar-index/internal/config"
+	cfg "github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
 // AggregatorPairs and AggregatorWindows are documented as

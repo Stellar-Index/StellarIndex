@@ -1,4 +1,4 @@
-module github.com/StellarIndex/stellar-index
+module github.com/Stellar-Index/StellarIndex
 
 go 1.25.10
 

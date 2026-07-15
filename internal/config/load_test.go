@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	cfg "github.com/StellarIndex/stellar-index/internal/config"
+	cfg "github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
 func TestLoadReader_happyPath(t *testing.T) {

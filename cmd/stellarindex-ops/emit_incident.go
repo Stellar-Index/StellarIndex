@@ -13,11 +13,11 @@ import (
 
 	_ "github.com/lib/pq" // postgres driver (ADR-0006)
 
-	"github.com/StellarIndex/stellar-index/internal/config"
-	"github.com/StellarIndex/stellar-index/internal/customerwebhook"
-	"github.com/StellarIndex/stellar-index/internal/incidents"
-	"github.com/StellarIndex/stellar-index/internal/platform"
-	"github.com/StellarIndex/stellar-index/internal/platform/postgresstore"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/customerwebhook"
+	"github.com/Stellar-Index/StellarIndex/internal/incidents"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
 // findIncidentForEmit locates the incident named by `slug` in the

@@ -3,7 +3,7 @@ package dispatcher
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
 // TestRecognize verifies Recognize reports a match (with decoder name)

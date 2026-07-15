@@ -3,7 +3,7 @@ package supply
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 // TestValidateGenesisLedgerBoundary pins the -genesis-ledger validation that

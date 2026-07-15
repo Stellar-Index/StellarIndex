@@ -7,7 +7,7 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // ClassicSupplyStore is the storage-side primitive set the

@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"testing"
 
-	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
 func TestExplorer_Search_Classifies(t *testing.T) {

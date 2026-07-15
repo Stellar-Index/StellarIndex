@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
 // decimalStringToScaledInt converts a decimal string (e.g. "0.123")

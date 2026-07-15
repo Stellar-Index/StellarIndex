@@ -34,7 +34,7 @@
 
 [Unit]
 Description=Stellar Index — public API (REST + SSE)
-Documentation=https://github.com/StellarIndex/stellar-index/blob/main/docs/reference/api/index.html
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/reference/api/index.html
 After=network-online.target postgresql.service redis-server.service
 Wants=network-online.target
 Requires=postgresql.service redis-server.service

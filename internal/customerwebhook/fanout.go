@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/StellarIndex/stellar-index/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // FanoutStore is the subset of [platform.WebhookStore] the fan-out

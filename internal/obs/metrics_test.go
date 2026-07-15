@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 func TestHandler_ExposesMetrics(t *testing.T) {

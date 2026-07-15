@@ -100,7 +100,7 @@ Every rule carries these labels for AlertManager routing:
 | `severity` | `page` / `ticket` / `informational` | routing tier |
 | `team` | `stellarindex` | downstream filtering |
 | `component` | `ingestion` / `storage` / `cache` / `api` / `stellar` / `infra` / `meta` / `aggregator` / `archive` / `divergence` / `supply` | dashboard grouping |
-| `runbook_url` | `https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/<name>.md` | direct link from the page |
+| `runbook_url` | `https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/<name>.md` | direct link from the page |
 
 Annotations (not labels) carry human-readable metadata:
 

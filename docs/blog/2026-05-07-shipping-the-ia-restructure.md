@@ -152,5 +152,5 @@ list is in the [launch-readiness backlog][backlog].
 If you want to follow the per-release ledger, the [changelog feed][feed]
 is also available as Atom.
 
-[backlog]: https://github.com/StellarIndex/stellar-index/blob/main/docs/architecture/launch-readiness-backlog.md
+[backlog]: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/architecture/launch-readiness-backlog.md
 [feed]: https://stellarindex.io/changelog.atom

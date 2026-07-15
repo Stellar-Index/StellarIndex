@@ -6,12 +6,12 @@ package pipeline
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/consumer"
-	"github.com/StellarIndex/stellar-index/internal/sources/comet"
-	sep41_supply "github.com/StellarIndex/stellar-index/internal/sources/sep41_supply"
-	sep41_transfers "github.com/StellarIndex/stellar-index/internal/sources/sep41_transfers"
-	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
+	sep41_supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
+	sep41_transfers "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_transfers"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
 // sep41Events is the set of consumer.Event types the two sep41 sources

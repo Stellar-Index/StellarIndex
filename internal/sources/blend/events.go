@@ -32,8 +32,8 @@ package blend
 import (
 	"errors"
 
-	"github.com/StellarIndex/stellar-index/internal/domain"
-	"github.com/StellarIndex/stellar-index/internal/scval"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 // SourceName constant — appears in metrics labels, registry keys,

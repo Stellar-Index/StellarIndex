@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/config"
-	"github.com/StellarIndex/stellar-index/internal/contractid"
-	"github.com/StellarIndex/stellar-index/internal/pipeline"
-	"github.com/StellarIndex/stellar-index/internal/sources/sorobanevents"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/contractid"
+	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // seedProtocolContracts is the genesis bootstrap for a factory-anchored

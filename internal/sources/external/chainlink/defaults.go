@@ -3,7 +3,7 @@ package chainlink
 import (
 	"fmt"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // DefaultFeedMap returns the built-in operator-facing default seed —

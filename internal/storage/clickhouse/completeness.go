@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
 // ReconcileEventStreamer adapts the CH contract_events read path to the

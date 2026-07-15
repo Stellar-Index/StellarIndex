@@ -18,7 +18,7 @@ GOLANGCI_LINT_VERSION := v2.11.4
 GOVULNCHECK_VERSION := v1.1.4
 
 # Project metadata
-MODULE          := github.com/StellarIndex/stellar-index
+MODULE          := github.com/Stellar-Index/StellarIndex
 VERSION         := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 BUILD_DATE      := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LD_FLAGS        := -X $(MODULE)/internal/version.Version=$(VERSION) \

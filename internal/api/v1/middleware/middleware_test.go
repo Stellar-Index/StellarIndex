@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	mw "github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
+	mw "github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 )
 
 func setTrustedProxyCIDRs(t *testing.T, cidrs ...string) {

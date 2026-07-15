@@ -52,7 +52,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: supply
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/supply-cross-check-divergence.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-cross-check-divergence.md
         annotations:
           summary: "Classic vs SAC supply mismatch >1 stroop on {{ $labels.classic_key }} ({{ $labels.wrap_class }}, P3)"
           description: |
@@ -70,7 +70,7 @@ groups:
             patterns" section before assuming corruption. The asset's
             circulating/total/max_supply on the API will be
             correspondingly wrong until reconciled.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/supply-cross-check-divergence.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-cross-check-divergence.md
 
       # Served circulating supply drifted > 1% from an EXTERNAL
       # authoritative reference (Stellar Network Dashboard for XLM;
@@ -93,7 +93,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: supply
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/supply-divergence.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-divergence.md
         annotations:
           summary: "Served circulating supply {{ $value | humanizePercentage }} off {{ $labels.reference }} for {{ $labels.asset }} (P3)"
           description: |
@@ -106,4 +106,4 @@ groups:
             no longer tracks accurately. Do NOT blindly change our number
             to match the reference; the methodology doc
             (docs/methodology/xlm-circulating-supply.md) is authoritative.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/supply-divergence.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-divergence.md

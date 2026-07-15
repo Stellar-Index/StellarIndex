@@ -3,7 +3,7 @@ package exchangeratesapi
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // Name + Class must agree with the entry in

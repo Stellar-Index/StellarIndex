@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/supply"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
 // TestInsertSupply_RejectsZeroValueStruct — the supply-package

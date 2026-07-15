@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 
-	"github.com/StellarIndex/stellar-index/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // APIKeyStore implements [platform.APIKeyStore] against Postgres

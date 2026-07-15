@@ -123,7 +123,7 @@ mid-release wastes a tag and forces a `.N+1` cut.
    cosign verify-blob \
      --bundle SHA256SUMS.sigstore.json \
      --certificate-identity-regexp \
-       '^https://github.com/StellarIndex/stellar-index/\.github/workflows/release\.yml@.*$' \
+       '^https://github.com/Stellar-Index/StellarIndex/\.github/workflows/release\.yml@.*$' \
      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
      SHA256SUMS
    ```
@@ -142,7 +142,7 @@ mid-release wastes a tag and forces a `.N+1` cut.
      --signature SHA256SUMS.sig \
      --certificate SHA256SUMS.pem \
      --certificate-identity-regexp \
-       '^https://github.com/StellarIndex/stellar-index/\.github/workflows/release\.yml@.*$' \
+       '^https://github.com/Stellar-Index/StellarIndex/\.github/workflows/release\.yml@.*$' \
      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
      SHA256SUMS
    ```

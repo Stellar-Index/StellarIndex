@@ -8,7 +8,7 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/supply"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
 // InsertSupply appends a [supply.Supply] snapshot to

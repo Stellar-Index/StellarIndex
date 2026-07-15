@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/hashdb"
+	"github.com/Stellar-Index/StellarIndex/internal/hashdb"
 )
 
 func mkHashDB(t *testing.T, startLedger uint32) *hashdb.DB {

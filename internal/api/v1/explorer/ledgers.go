@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
-	"github.com/StellarIndex/stellar-index/internal/xdrjson"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
 // LedgerView is the wire shape for a ledger header (ADR-0038). total_coins and

@@ -3,7 +3,7 @@ package kraken
 import (
 	"fmt"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // DefaultPairs returns the built-in Kraken symbol → canonical.Pair

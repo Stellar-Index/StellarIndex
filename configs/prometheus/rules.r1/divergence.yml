@@ -33,7 +33,7 @@ groups:
           severity: informational
           team: stellarindex
           component: divergence
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/price-divergence.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-divergence.md
         annotations:
           summary: "{{ $labels.asset }} {{ $value | humanizePercentage }} off reference"
           description: |
@@ -52,7 +52,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: divergence
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/price-divergence.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-divergence.md
         annotations:
           summary: "{{ $labels.asset }} {{ $value | humanizePercentage }} off reference (critical)"
           description: |
@@ -69,7 +69,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: divergence
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/oracle-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stale.md
         annotations:
           summary: "Oracle {{ $labels.source }} stale for {{ $labels.asset }}"
           description: |
@@ -100,7 +100,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: divergence
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/divergence-refresh-error-dominant.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-refresh-error-dominant.md
         annotations:
           summary: "Divergence-cache refresh failing more often than succeeding (P3)"
           description: |
@@ -130,7 +130,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: divergence
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/divergence-no-reference.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-reference.md
         annotations:
           summary: "Divergence checker running blind — no reference responded (P3)"
           description: |

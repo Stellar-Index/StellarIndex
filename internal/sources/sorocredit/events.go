@@ -56,8 +56,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/consumer"
-	"github.com/StellarIndex/stellar-index/internal/scval"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 // SourceName is the registry key for this source — appears in metrics

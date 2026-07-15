@@ -3,7 +3,7 @@ package rozo
 import (
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
 // Event is the [consumer.Event] the Rozo Decoder emits — one per

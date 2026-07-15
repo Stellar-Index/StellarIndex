@@ -291,7 +291,7 @@ All enforced in `.golangci.yml` + `.github/workflows/ci.yml`.
 | Gate | Tool | Fails on |
 | ---- | ---- | -------- |
 | Format | `gofumpt` | any unformatted file |
-| Imports | `goimports -local github.com/StellarIndex/stellar-index` | bad import order |
+| Imports | `goimports -local github.com/Stellar-Index/StellarIndex` | bad import order |
 | Vet | `go vet` | any warning |
 | Static | `staticcheck` + `govet` + `errcheck` + `errorlint` + `bodyclose` + `contextcheck` + `nilerr` + `noctx` + `rowserrcheck` + `sqlclosecheck` + `wastedassign` + `ineffassign` | any finding |
 | Security | `gosec` | any finding (except `G104` — we use `errcheck`) |

@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/aggregate/baseline"
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/baseline"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // StoredBaseline is the wire shape between the storage layer and

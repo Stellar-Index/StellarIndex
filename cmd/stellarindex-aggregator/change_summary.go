@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/aggregate/changesummary"
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/changesummary"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // changeSummaryPriceSource adapts the timescale Store to the

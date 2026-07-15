@@ -14,8 +14,8 @@ ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux \
     go build -trimpath -buildvcs=true \
       -ldflags="-s -w \
-        -X github.com/StellarIndex/stellar-index/internal/version.Version=${VERSION} \
-        -X github.com/StellarIndex/stellar-index/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        -X github.com/Stellar-Index/StellarIndex/internal/version.Version=${VERSION} \
+        -X github.com/Stellar-Index/StellarIndex/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       -o /out/stellarindex-api \
       ./cmd/stellarindex-api
 

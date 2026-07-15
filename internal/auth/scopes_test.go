@@ -6,8 +6,8 @@ package auth_test
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/auth"
-	"github.com/StellarIndex/stellar-index/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 func TestRequiredScope(t *testing.T) {

@@ -252,7 +252,7 @@ func TestLockstep_RegistrySourcesFullyWired(t *testing.T) {
 		projByPkg[parts[0]][parts[1]] = true
 	}
 
-	const modPrefix = "github.com/StellarIndex/stellar-index/"
+	const modPrefix = "github.com/Stellar-Index/StellarIndex/"
 
 	for _, pkg := range sortedKeys(regPkgs) {
 		impPath, ok := regImports[pkg]

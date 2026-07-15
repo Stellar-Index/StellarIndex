@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/pkg/client"
+	"github.com/Stellar-Index/StellarIndex/pkg/client"
 )
 
 // newTestServer wires an httptest.Server with the supplied handler

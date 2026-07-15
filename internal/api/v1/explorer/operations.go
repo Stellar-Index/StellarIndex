@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
-	"github.com/StellarIndex/stellar-index/internal/xdrjson"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
 // opsDirTTL bounds how stale the cached /v1/operations directory first page can

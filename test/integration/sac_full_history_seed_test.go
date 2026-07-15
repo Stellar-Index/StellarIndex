@@ -12,7 +12,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	chstore "github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
+	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 // TestSACFullHistorySeed_RecoversDormantPoolHolder reproduces the exact

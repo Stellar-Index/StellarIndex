@@ -4,7 +4,7 @@ import (
 	"context"
 	"math/big"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // MetadataResolver is the read-side interface the [Overlay]

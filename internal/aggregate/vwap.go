@@ -4,7 +4,7 @@ import (
 	"errors"
 	"math/big"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // ErrNoTrades is returned from [VWAP] when the input slice is empty

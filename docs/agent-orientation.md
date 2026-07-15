@@ -185,7 +185,7 @@ works via `endpoint_url` override.
 
 ### 4. One Go module, monorepo (ADR-0005)
 
-`github.com/StellarIndex/stellar-index` is the root module. `internal/` is
+`github.com/Stellar-Index/StellarIndex` is the root module. `internal/` is
 private (Go-enforced). `pkg/` is the public surface with SemVer
 compatibility promise.
 

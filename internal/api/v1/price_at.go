@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // PriceAtReader returns the closed VWAP bucket at-or-before a

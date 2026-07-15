@@ -16,8 +16,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/StellarIndex/stellar-index/internal/api/v1/dashboardauth"
-	"github.com/StellarIndex/stellar-index/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardauth"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // Tests use a session pre-planted on the request context (via

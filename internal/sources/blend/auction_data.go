@@ -3,8 +3,8 @@ package blend
 import (
 	"fmt"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/scval"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 // AuctionData wire-format keys. Verified against

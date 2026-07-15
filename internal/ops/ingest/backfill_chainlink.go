@@ -8,10 +8,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/config"
-	"github.com/StellarIndex/stellar-index/internal/sources/external/chainlink"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external/chainlink"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // chainlinkFeedSetFromConfig — same shape + reasoning as the

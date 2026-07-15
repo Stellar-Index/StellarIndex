@@ -35,7 +35,7 @@
 
 [Unit]
 Description=Stellar Index — supply-snapshot writer (daily cron per ADR-0011)
-Documentation=https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/supply-snapshot.md
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/supply-snapshot.md
 After=network-online.target postgresql.service
 Wants=network-online.target
 

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/StellarIndex/stellar-index/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
 // AuthMode is the operator-configured authentication policy. Maps

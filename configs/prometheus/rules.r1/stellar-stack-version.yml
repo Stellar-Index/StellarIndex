@@ -40,7 +40,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: stellar-stack
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
         annotations:
           summary: "{{ $labels.component }} is lagging upstream (lag={{ $value }}, sustained 2d)"
           description: |
@@ -53,7 +53,7 @@ groups:
             also be firing at the same time as that one.) Check
             stellarindex_stellar_stack_installed_info{component="{{ $labels.component }}"}
             for the exact installed version string.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
 
       - alert: stellarindex_stellar_stack_protocol_lag
         # A protocol-major lag is a time bomb with a network-scheduled
@@ -68,7 +68,7 @@ groups:
           severity: page
           team: stellarindex
           component: stellar-stack
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
         annotations:
           summary: "{{ $labels.component }} is a PROTOCOL-MAJOR version behind upstream (P1)"
           description: |
@@ -79,4 +79,4 @@ groups:
             maintenance window NOW, well before any network protocol-
             activation vote. See the "Remediation" section of the
             runbook for the exact upgrade recipe per component.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md

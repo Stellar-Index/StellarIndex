@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/aggregate"
-	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // stubGlobalPriceReader implements aggregate.GlobalPriceReader for

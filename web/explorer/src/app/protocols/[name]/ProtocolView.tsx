@@ -761,7 +761,7 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
       <div className="flex flex-wrap gap-x-6 gap-y-2 border-t border-line pt-3 text-xs">
         {data.verification_page && (
           <a
-            href={`https://github.com/StellarIndex/stellar-index/blob/main/${data.verification_page}`}
+            href={`https://github.com/Stellar-Index/StellarIndex/blob/main/${data.verification_page}`}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 text-brand-600 hover:underline"

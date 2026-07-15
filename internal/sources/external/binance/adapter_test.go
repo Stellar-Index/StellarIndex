@@ -3,8 +3,8 @@ package binance
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // Trivial accessor tests for the external.Connector / Streamer

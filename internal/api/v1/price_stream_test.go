@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/api/streaming"
-	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // TestPriceStream_NoHub_Returns503 — the endpoint is mounted but

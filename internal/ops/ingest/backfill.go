@@ -16,16 +16,16 @@ import (
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarIndex/stellar-index/internal/config"
-	"github.com/StellarIndex/stellar-index/internal/consumer"
-	"github.com/StellarIndex/stellar-index/internal/dispatcher"
-	"github.com/StellarIndex/stellar-index/internal/ledgerstream"
-	"github.com/StellarIndex/stellar-index/internal/ops/opsutil"
-	"github.com/StellarIndex/stellar-index/internal/pipeline"
-	"github.com/StellarIndex/stellar-index/internal/sources/external"
-	"github.com/StellarIndex/stellar-index/internal/sources/sorobanevents"
-	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/ledgerstream"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // SorobanEventsPseudoSource is the backfill-only source name that

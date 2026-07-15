@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
-	"github.com/StellarIndex/stellar-index/internal/sources/classicmovements"
-	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/classicmovements"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TestAccountMovements_MergesCHArchiveAndPGTail is the ADR-0048 D5

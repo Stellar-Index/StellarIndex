@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	c "github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/domain"
-	"github.com/StellarIndex/stellar-index/internal/sources/blend"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TestSourceEntryCounts_AtomicIdempotentBump is the correctness core

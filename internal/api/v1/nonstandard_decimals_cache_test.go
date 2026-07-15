@@ -7,9 +7,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
-	"github.com/StellarIndex/stellar-index/internal/obs"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // stubNonstandardDecimalsReader implements v1.NonstandardDecimalsReader.

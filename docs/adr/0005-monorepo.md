@@ -47,7 +47,7 @@ Two organisational shapes exist:
 ## Decision
 
 Single Go module, single repository:
-`github.com/StellarIndex/stellar-index`.
+`github.com/Stellar-Index/StellarIndex`.
 
 `internal/` holds private code (Go enforces non-importability).
 `pkg/` holds the narrow public surface — the client SDK and the

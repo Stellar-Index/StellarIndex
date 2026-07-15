@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
 func TestPairs_MissingBase400(t *testing.T) {

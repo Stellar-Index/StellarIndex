@@ -26,7 +26,7 @@
 
 [Unit]
 Description=Stellar Index — aggregator (VWAP / TWAP / confidence per ADR-0019)
-Documentation=https://github.com/StellarIndex/stellar-index/blob/main/docs/adr/0019-anomaly-response-and-confidence-scoring.md
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/adr/0019-anomaly-response-and-confidence-scoring.md
 After=network-online.target postgresql.service redis-server.service stellarindex-indexer.service
 Wants=network-online.target
 Requires=postgresql.service redis-server.service

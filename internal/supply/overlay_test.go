@@ -6,8 +6,8 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/supply"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
 // stubMetadataResolver is a minimal supply.MetadataResolver for

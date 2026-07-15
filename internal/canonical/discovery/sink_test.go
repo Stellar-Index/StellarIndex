@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical/discovery"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical/discovery"
 )
 
 // fakeRecorder counts Record + IsKnown calls and lets tests inject

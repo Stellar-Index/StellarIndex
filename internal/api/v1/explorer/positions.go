@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // This file serves GET /v1/accounts/{g_strkey}/positions — the "DeFi

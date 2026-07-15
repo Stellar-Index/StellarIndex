@@ -9,7 +9,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
-	"github.com/StellarIndex/stellar-index/internal/xdrjson"
+	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
 // operationParticipantRows derives the stellar.operation_participants rows for a

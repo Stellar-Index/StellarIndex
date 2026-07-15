@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // SourceName is the canonical identifier for classic-movement rows.

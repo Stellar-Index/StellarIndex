@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	c "github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TestOrientStragglers_CombineBothDirections proves the rc.131 pair-direction

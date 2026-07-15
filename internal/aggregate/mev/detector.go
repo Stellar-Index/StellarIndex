@@ -37,7 +37,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // KindArbitrage is the mev_events.kind value v1 emits.

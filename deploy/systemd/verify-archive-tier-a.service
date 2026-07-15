@@ -42,7 +42,7 @@
 
 [Unit]
 Description=Stellar Index — verify-archive Tier A (nightly chain-link integrity)
-Documentation=https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/archival-node-bringup.md
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/archival-node-bringup.md
 After=network-online.target
 Wants=network-online.target
 

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // fakeEmailLocker is the in-memory analogue of [auth.RedisSignupEmailLocker]

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/pkg/client"
+	"github.com/Stellar-Index/StellarIndex/pkg/client"
 )
 
 // TestHistorySinceInception_HappyPath — happy-path round-trip

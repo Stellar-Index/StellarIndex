@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/StellarIndex/stellar-index/internal/hashdb"
+	"github.com/Stellar-Index/StellarIndex/internal/hashdb"
 )
 
 // HashDBVerifyResult is the outcome of a [HashDBWindowVerifier] pass.

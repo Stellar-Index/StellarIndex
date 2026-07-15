@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // TestSentinelErrors_AreDistinct pins that callers can

@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical/discovery"
-	"github.com/StellarIndex/stellar-index/internal/events"
-	"github.com/StellarIndex/stellar-index/internal/scval"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical/discovery"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 // validContractID is a real, valid C-strkey reused across tests.

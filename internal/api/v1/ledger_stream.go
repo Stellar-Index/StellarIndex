@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/api/streaming"
+	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 )
 
 const (

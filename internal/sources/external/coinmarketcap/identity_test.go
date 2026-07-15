@@ -3,7 +3,7 @@ package coinmarketcap
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // Name + Class are the metadata the aggregator's external.Registry

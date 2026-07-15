@@ -4,8 +4,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/consumer"
-	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
 // TestStats_concurrentWithDispatch is the F-1317 regression guard.

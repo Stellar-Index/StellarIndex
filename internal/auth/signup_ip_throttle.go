@@ -8,7 +8,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/StellarIndex/stellar-index/internal/ratelimit"
+	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
 // DefaultSignupThrottleDwellTime is the F-0049 / F-0149 dwell-time

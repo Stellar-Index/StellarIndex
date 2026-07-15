@@ -133,7 +133,7 @@ groups:
           team: stellarindex
           component: api
           slo: api_latency_p95_under_200ms
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/api-latency.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
         annotations:
           summary: "FAST burn — consuming SLO budget at >14.4× rate"
           description: |
@@ -157,7 +157,7 @@ groups:
           team: stellarindex
           component: api
           slo: api_latency_p95_under_200ms
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/api-latency.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
         annotations:
           summary: "MEDIUM burn — consuming SLO budget at >6× rate"
           description: |
@@ -179,7 +179,7 @@ groups:
           team: stellarindex
           component: api
           slo: api_latency_p95_under_200ms
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/api-latency.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
         annotations:
           summary: "SLOW burn — sustained SLO budget consumption at 30d rate"
           description: |
@@ -251,7 +251,7 @@ groups:
           team: stellarindex
           component: api
           slo: api_availability_3_nines_9
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/api-5xx.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
         annotations:
           summary: "FAST burn — availability SLO budget consuming at >14.4× rate"
           description: |
@@ -270,7 +270,7 @@ groups:
           team: stellarindex
           component: api
           slo: api_availability_3_nines_9
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/api-5xx.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
         annotations:
           summary: "MEDIUM burn — availability SLO budget consuming at >6× rate"
           description: |
@@ -289,7 +289,7 @@ groups:
           team: stellarindex
           component: api
           slo: api_availability_3_nines_9
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/api-5xx.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
         annotations:
           summary: "SLOW burn — sustained availability SLO budget consumption"
           description: |

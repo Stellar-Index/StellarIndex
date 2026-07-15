@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
 // claims is the JWT body. Standard names where we can; SEP-10

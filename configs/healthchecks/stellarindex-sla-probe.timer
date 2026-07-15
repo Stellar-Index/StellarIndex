@@ -1,6 +1,6 @@
 [Unit]
 Description=Stellar Index SLA probe schedule
-Documentation=https://github.com/StellarIndex/stellar-index/blob/main/configs/healthchecks/README.md
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/configs/healthchecks/README.md
 
 [Timer]
 # 15-minute cadence. Each run drives ~30 s of load against the
