@@ -82,7 +82,7 @@ func scanSorobanEvents(args []string) error { //nolint:funlen,gocognit,gocyclo /
 		"scan-soroban-events: bucket=%s ledgers=%d..%d topic0=%q contract=%q limit=%d\n",
 		bucket, *from, *to, *topic0, *contract, *limit)
 
-	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, bucket)
+	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, bucket, 1)
 
 	var totalLedgers int
 	streamErr := ledgerstream.Stream(ctx, lsCfg, uint32(*from), uint32(*to),

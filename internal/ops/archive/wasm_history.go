@@ -117,7 +117,7 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 	// overshoots a not-yet-uploaded partition the walk would error
 	// otherwise. newBoundedLedgerStreamConfig opts into
 	// TolerateTrailingMissing for us.
-	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, bucketName)
+	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, bucketName, int(*parallel))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

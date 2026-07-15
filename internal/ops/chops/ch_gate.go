@@ -59,7 +59,7 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 	if *bucket != "" {
 		streamBucket = *bucket
 	}
-	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, streamBucket)
+	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, streamBucket, 1)
 	passphrase := cfg.Stellar.Passphrase()
 
 	fmt.Fprintf(os.Stderr, "ch-gate: census-walking ledgers %d..%d from %q, comparing to ClickHouse %s\n",

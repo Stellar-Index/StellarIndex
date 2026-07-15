@@ -101,7 +101,7 @@ func verifyDecoders(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	fmt.Fprintf(os.Stderr, "verify-decoders: streaming ledgers %d..%d from %s\n",
 		*from, *to, cfg.Storage.S3Endpoint)
 
-	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, cfg.Storage.S3BucketLive)
+	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, cfg.Storage.S3BucketLive, 1)
 
 	type perSourceStat struct {
 		outputs int

@@ -101,7 +101,7 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	if *bucket != "" {
 		streamBucket = *bucket
 	}
-	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, streamBucket)
+	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, streamBucket, 1)
 
 	fmt.Fprintf(os.Stderr, "backfill-router: streaming ledgers %d..%d from bucket %q\n",
 		startLedger, *to, streamBucket)

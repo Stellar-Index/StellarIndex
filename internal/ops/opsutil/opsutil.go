@@ -22,8 +22,10 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 	"unicode/utf8"
 
+	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 
 	"github.com/StellarIndex/stellar-index/internal/config"
@@ -136,7 +138,50 @@ func SplitRange(from, to uint32, n int) []RangeChunk {
 // without the flag and could hit the same trap when called with
 // `-to 0` (live tip). This helper centralises the construction so the
 // flag can't be forgotten.
-func NewBoundedLedgerStreamConfig(cfg config.Config, bucket string) ledgerstream.Config {
+//
+// parallel is the number of concurrent ledgerstream.Stream walkers
+// the CALLER is about to run against copies of the returned Config
+// (ch-backfill's -parallel, wasm-history's -parallel, verify-archive's
+// -workers all split a bounded range into N contiguous chunks and walk
+// each on its own goroutine — see boundedWalkerBufferConfig below).
+// Single-walker callers pass 1.
+//
+// # Why this sets an explicit Buffered override (2026-07-15 -parallel OOM)
+//
+// Left nil, [ledgerstream.Stream] falls back to the SDK's
+// ingest.DefaultBufferedStorageBackendConfig(lpf). Because this helper
+// never populates DataStore.Schema, lpf resolves to 1 inside Stream,
+// which selects the SDK's "small files" branch: BufferSize=10000,
+// NumWorkers=10 (github.com/stellar/go-stellar-sdk v0.6.0
+// ingest/producer.go — sized "so a bounded range fits entirely" for a
+// SINGLE walker). Each ledgerstream.Stream call constructs its own
+// BufferedStorageBackend with an independent priority-queue buffer, so
+// N parallel walkers sharing one process multiply that queue depth by
+// N. On r1, `stellarindex-ops ch-backfill -parallel 2` and `-parallel
+// 4` both OOM-killed the 20G ops job cap (run-heavy-job.sh) within
+// ~1000 ledgers; `-parallel 1` was stable at ~12GB using the same
+// 10000-deep default. The single walker is IO-latency-bound (it sleeps
+// on serial MinIO fetches; CPU is idle) — parallelism is the right
+// throughput lever for a backfill, but only once per-walker buffer
+// memory is bounded so it doesn't scale unboundedly with N.
+//
+// boundedWalkerBufferBudget is a TOTAL ledger-count budget shared
+// across all N walkers a caller intends to run concurrently: each
+// walker's BufferSize is boundedWalkerBufferBudget/parallel, floored
+// at boundedWalkerBufferMin so a high -parallel still keeps enough
+// read-ahead to hide MinIO fetch latency (that's the buffer's only
+// job here — it doesn't need to hold a large window). At parallel=1
+// this alone shrinks the queue depth from the SDK's 10000 to 200 — a
+// single walker never needed a range's-worth of prefetch either.
+// NumWorkers is fixed at a modest per-backend fetch concurrency
+// (well under boundedWalkerBufferMin, satisfying the SDK's NumWorkers
+// <= BufferSize invariant at any parallel). RetryLimit/RetryWait match
+// the SDK's own defaults — only BufferSize/NumWorkers needed bounding.
+//
+// The indexer's live-tail path (internal/pipeline.LedgerstreamConfig)
+// is deliberately NOT touched by this — it runs exactly one walker
+// and legitimately wants the SDK's larger default for throughput.
+func NewBoundedLedgerStreamConfig(cfg config.Config, bucket string, parallel int) ledgerstream.Config {
 	return ledgerstream.Config{
 		DataStore: datastore.DataStoreConfig{
 			Type: "S3",
@@ -149,5 +194,52 @@ func NewBoundedLedgerStreamConfig(cfg config.Config, bucket string) ledgerstream
 			Compression:       "zstd",
 		},
 		TolerateTrailingMissing: true,
+		Buffered:                boundedWalkerBufferConfig(parallel),
+	}
+}
+
+const (
+	// boundedWalkerBufferBudget is the total per-process ledger
+	// read-ahead depth shared across every concurrent bounded-backfill
+	// walker (ch-backfill -parallel, wasm-history -parallel,
+	// verify-archive -workers). See NewBoundedLedgerStreamConfig's doc
+	// for the 2026-07-15 OOM this replaces.
+	boundedWalkerBufferBudget = 200
+
+	// boundedWalkerBufferMin is the floor each walker's BufferSize is
+	// clamped to, so a high -parallel doesn't starve any one walker's
+	// read-ahead below what's needed to hide MinIO fetch latency.
+	boundedWalkerBufferMin = 32
+
+	// boundedWalkerNumWorkers is the fixed per-backend fetch
+	// concurrency (independent of parallel — this is in-flight S3 GETs
+	// per walker, not queue depth). Always <= boundedWalkerBufferMin,
+	// satisfying the SDK's NewBufferedStorageBackend NumWorkers <=
+	// BufferSize invariant regardless of parallel.
+	boundedWalkerNumWorkers = 4
+
+	// boundedWalkerRetryLimit / boundedWalkerRetryWait mirror the SDK's
+	// own ingest.DefaultBufferedStorageBackendConfig defaults — only
+	// BufferSize/NumWorkers needed bounding for the OOM fix.
+	boundedWalkerRetryLimit = 5
+	boundedWalkerRetryWait  = 30 * time.Second
+)
+
+// boundedWalkerBufferConfig returns the bounded, parallelism-scaled
+// BufferedStorageBackendConfig override for the ops bounded-backfill
+// read path. parallel <= 1 is treated as a single walker.
+func boundedWalkerBufferConfig(parallel int) *ledgerbackend.BufferedStorageBackendConfig {
+	if parallel < 1 {
+		parallel = 1
+	}
+	bufSize := boundedWalkerBufferBudget / parallel
+	if bufSize < boundedWalkerBufferMin {
+		bufSize = boundedWalkerBufferMin
+	}
+	return &ledgerbackend.BufferedStorageBackendConfig{
+		BufferSize: uint32(bufSize),
+		NumWorkers: boundedWalkerNumWorkers,
+		RetryLimit: boundedWalkerRetryLimit,
+		RetryWait:  boundedWalkerRetryWait,
 	}
 }
