@@ -82,7 +82,7 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	if *bucket != "" {
 		streamBucket = *bucket
 	}
-	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, streamBucket)
+	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, streamBucket, 1)
 	passphrase := cfg.Stellar.Passphrase()
 
 	fmt.Fprintf(os.Stderr, "census-backfill: streaming ledgers %d..%d from bucket %q\n",

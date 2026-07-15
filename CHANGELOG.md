@@ -34,6 +34,21 @@ against.
   `CREATE TABLE IF NOT EXISTS` does not retrofit it onto an already-existing table
   (irrelevant for r1, already applied there directly).
 
+### Changed
+- **`stellarindex_dex_nonstandard_decimals_detected` downgraded from `severity: ticket` to
+  `severity: informational`.** Per its runbook, every serving path has auto-normalized
+  non-7-decimal Soroban tokens via the `nonstandard_decimals_assets` correction table
+  since 2026-07-10, so a detected token is now an expected, handled condition — the
+  latching detector was sitting in the firing list forever as noise, not an action item.
+  Added a new `severity: ticket` alert, `stellarindex_nonstandard_decimals_correction_failing`
+  (`deploy/monitoring/rules/aggregator.yml` + `configs/prometheus/rules.r1/aggregator.yml`),
+  for the genuine failure mode: the correction sweep erroring
+  (`stellarindex_nonstandard_decimals_cache_refresh_failures_total`) or a serving path
+  actively declining (`stellarindex_price_serve_declined_nonstandard_decimals_total`) —
+  either means newly-detected tokens don't get corrected and silently revert to serving
+  the skewed raw ratio. Runbook `docs/operations/runbooks/dex-nonstandard-decimals.md`
+  extended to cover both alerts.
+
 ### Fixed
 - **classic_movements: sponsored account creations (CAP-33, Protocol 15+) are no longer
   dropped as malformed.** `CreateAccount` with `startingBalance = 0` is legal once a
@@ -113,6 +128,27 @@ against.
   in-memory resolution and dumping 600k+ refs per window onto the ClickHouse fallback
   (each such scan ~2.5 min over 695M cb-create rows). 8M (~3 GB) restores ~3 spam windows
   of locality; spam claims land seconds after their create, so the fallback is rare again.
+- **`stellarindex-ops` bounded-backfill walkers (ch-backfill, wasm-history,
+  verify-archive) now use a small, explicit, parallelism-scaled read-ahead buffer instead
+  of the SDK's large default — the fix for the 2026-07-15 `-parallel` OOM.**
+  `opsutil.NewBoundedLedgerStreamConfig` left `ledgerstream.Config.Buffered` nil, so every
+  bounded walk fell through to `ingest.DefaultBufferedStorageBackendConfig(1)`
+  (BufferSize=10000, NumWorkers=10 — the SDK's "small files" branch, since Galexie's
+  1-ledger-per-file schema was never threaded into `DataStore.Schema`). Each
+  `ledgerstream.Stream` call builds its own `BufferedStorageBackend` with an independent
+  prefetch queue, so N concurrent walkers (each subcommand's `-parallel`/`-workers` splits
+  a bounded range into N chunks, one goroutine per chunk) multiplied that queue depth by N.
+  On r1, `ch-backfill -parallel 2` and `-parallel 4` both OOM-killed the 20G
+  `run-heavy-job.sh` cap within ~1000 ledgers; `-parallel 1` was stable at ~12GB on the
+  same 10000-deep default — the single walker is IO-latency-bound (serial MinIO fetches;
+  CPU idle), so parallelism is the right throughput lever, it just needed a bounded buffer
+  to use it safely. `NewBoundedLedgerStreamConfig` gained a `parallel int` parameter and
+  now returns an explicit `Buffered` override sized `200/parallel` ledgers (floored at 32),
+  fixed `NumWorkers=4` — so per-walker read-ahead shrinks as `-parallel` grows and total
+  buffer memory across all walkers stays roughly constant instead of scaling with N. This
+  unblocks `-parallel N` as the intended throughput lever for historical backfills
+  (ADR-0047 Phase 0). The indexer's live-tail path (`internal/pipeline.LedgerstreamConfig`)
+  is untouched — it runs exactly one walker and legitimately wants the larger default.
 
 ## [v0.16.2] — 2026-07-11
 

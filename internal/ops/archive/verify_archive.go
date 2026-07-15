@@ -334,7 +334,7 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	// 2026-05-25 incident (project_62_diagnosis_2026_05_25) was
 	// exactly this: bootstrap walked 62.64M ledgers clean, then
 	// failed on the trailing-edge missing file.
-	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, bucket)
+	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, bucket, workers)
 
 	// maxRuntime == 0 → no cap (uncancellable parent). Operators
 	// pass 0 for full-archive runs that exceed any single-day

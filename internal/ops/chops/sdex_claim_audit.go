@@ -52,7 +52,7 @@ func sdexClaimAudit(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	if *bucket != "" {
 		streamBucket = *bucket
 	}
-	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, streamBucket)
+	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, streamBucket, 1)
 	passphrase := cfg.Stellar.Passphrase()
 
 	fmt.Fprintf(os.Stderr, "sdex-claim-audit: walking ledgers %d..%d from %q\n", *from, *to, streamBucket)

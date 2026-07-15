@@ -59,7 +59,7 @@ func chBackfill(args []string) error {
 	if *bucket != "" {
 		streamBucket = *bucket
 	}
-	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, streamBucket)
+	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, streamBucket, *parallel)
 	passphrase := cfg.Stellar.Passphrase()
 
 	chunks := opsutil.SplitRange(uint32(*from), uint32(*to), *parallel)
