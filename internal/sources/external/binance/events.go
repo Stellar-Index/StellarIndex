@@ -53,7 +53,7 @@ package binance
 import (
 	"errors"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // SourceName is stamped on every canonical.Trade this package emits.

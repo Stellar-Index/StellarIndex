@@ -281,7 +281,7 @@ pgbackrest_exporter). The play is wired into `tasks/main.yml` after
    for the application services (this session) and the full release
    pipeline (cut-release.sh + release.yml + deploy.yml + Dockerfiles
    from the prior session). v0.0.0-rc.1 cut as the first pipeline
-   smoke test; release page at github.com/StellarIndex/stellar-index/
+   smoke test; release page at github.com/Stellar-Index/StellarIndex/
    releases/tag/v0.0.0-rc.1 with the six binaries (linux/amd64
    only — arm64 dropped 2026-05-08, GHCR job dropped because no
    consumer existed) plus SHA256SUMS. The current `cmd/` set is

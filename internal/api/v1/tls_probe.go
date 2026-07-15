@@ -9,7 +9,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // TLSCertProbeInterval is the cadence at which [RunTLSCertProbe]

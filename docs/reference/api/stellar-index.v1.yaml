@@ -25,7 +25,7 @@ info:
     for every classic and SEP-41 Soroban asset on Stellar.
 
     Design intent: see
-    https://github.com/StellarIndex/stellar-index/blob/main/docs/reference/api-design.md
+    https://github.com/Stellar-Index/StellarIndex/blob/main/docs/reference/api-design.md
 
     **Amounts are always strings.** JSON numbers lose precision above
     2^53 and break i128 Soroban token amounts.

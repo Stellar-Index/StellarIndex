@@ -6,7 +6,7 @@ package v1
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/currency"
+	"github.com/Stellar-Index/StellarIndex/internal/currency"
 )
 
 // TestCatalogueSlugToStellarAssetID probes the exact chain

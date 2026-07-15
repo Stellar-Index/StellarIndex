@@ -3,7 +3,7 @@ package v1
 import (
 	"context"
 
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // AssetsReader is the seam the /v1/assets handlers read through to

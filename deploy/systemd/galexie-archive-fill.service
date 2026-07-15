@@ -24,7 +24,7 @@
 
 [Unit]
 Description=Stellar Index — galexie-archive scheduled catch-up (#26)
-Documentation=https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/galexie-backfill.md
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/galexie-backfill.md
 After=network-online.target minio.service
 Wants=network-online.target
 

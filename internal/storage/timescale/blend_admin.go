@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/StellarIndex/stellar-index/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
 // toAssetAmountRows converts a V1 new_liquidation_auction's decoded

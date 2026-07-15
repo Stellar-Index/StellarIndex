@@ -11,14 +11,14 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/config"
-	"github.com/StellarIndex/stellar-index/internal/sources/external"
-	externalbinance "github.com/StellarIndex/stellar-index/internal/sources/external/binance"
-	externalbitstamp "github.com/StellarIndex/stellar-index/internal/sources/external/bitstamp"
-	externalcoinbase "github.com/StellarIndex/stellar-index/internal/sources/external/coinbase"
-	externalkraken "github.com/StellarIndex/stellar-index/internal/sources/external/kraken"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+	externalbinance "github.com/Stellar-Index/StellarIndex/internal/sources/external/binance"
+	externalbitstamp "github.com/Stellar-Index/StellarIndex/internal/sources/external/bitstamp"
+	externalcoinbase "github.com/Stellar-Index/StellarIndex/internal/sources/external/coinbase"
+	externalkraken "github.com/Stellar-Index/StellarIndex/internal/sources/external/kraken"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // backfillExternal drives the Backfiller interface for one external

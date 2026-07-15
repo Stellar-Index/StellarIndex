@@ -16,8 +16,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/StellarIndex/stellar-index/internal/notify"
-	"github.com/StellarIndex/stellar-index/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/notify"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // newTestRig wires the in-memory fakes + a noop sender into a

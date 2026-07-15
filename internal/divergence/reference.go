@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // Reference is a pluggable external price reference. Each

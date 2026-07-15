@@ -112,7 +112,7 @@ cat > "$OUT_DIR/index.html" <<EOF
         <a href="https://stellarindex.io/sdk">Go SDK</a>
         <a href="https://stellarindex.io/changelog">Changelog</a>
         <a href="https://status.stellarindex.io"><span class="re-pulse" aria-hidden></span> Status</a>
-        <a href="https://github.com/StellarIndex/stellar-index" target="_blank" rel="noopener">GitHub ↗</a>
+        <a href="https://github.com/Stellar-Index/StellarIndex" target="_blank" rel="noopener">GitHub ↗</a>
       </nav>
     </header>
     <script

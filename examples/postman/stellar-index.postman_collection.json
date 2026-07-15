@@ -33816,7 +33816,7 @@
     "name": "Stellar Index API",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     "description": {
-      "content": "The Stellar Index API exposes normalised, VWAP-aggregated pricing\nfor every classic and SEP-41 Soroban asset on Stellar.\n\nDesign intent: see\nhttps://github.com/StellarIndex/stellar-index/blob/main/docs/reference/api-design.md\n\n**Amounts are always strings.** JSON numbers lose precision above\n2^53 and break i128 Soroban token amounts.\n\n\nContact Support:\n Name: Stellar Index\n Email: hello@stellarindex.io",
+      "content": "The Stellar Index API exposes normalised, VWAP-aggregated pricing\nfor every classic and SEP-41 Soroban asset on Stellar.\n\nDesign intent: see\nhttps://github.com/Stellar-Index/StellarIndex/blob/main/docs/reference/api-design.md\n\n**Amounts are always strings.** JSON numbers lose precision above\n2^53 and break i128 Soroban token amounts.\n\n\nContact Support:\n Name: Stellar Index\n Email: hello@stellarindex.io",
       "type": "text/plain"
     }
   }

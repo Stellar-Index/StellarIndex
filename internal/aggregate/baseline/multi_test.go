@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/aggregate/baseline"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/baseline"
 )
 
 // stableJitter returns `n` near-zero returns oscillating around 0

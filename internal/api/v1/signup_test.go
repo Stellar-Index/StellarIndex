@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
-	"github.com/StellarIndex/stellar-index/internal/auth"
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
 // fakeSignupTracker is the handler-level test double for

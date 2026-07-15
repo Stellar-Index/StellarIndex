@@ -7,9 +7,9 @@ import (
 
 	dto "github.com/prometheus/client_model/go"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/consumer"
-	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // Pin the metric labels emitted by runPoller so a refactor can't

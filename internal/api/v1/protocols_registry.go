@@ -1,12 +1,12 @@
 package v1
 
 import (
-	"github.com/StellarIndex/stellar-index/internal/sources/aquarius"
-	"github.com/StellarIndex/stellar-index/internal/sources/blend"
-	blend_backstop "github.com/StellarIndex/stellar-index/internal/sources/blend_backstop"
-	blend_emitter "github.com/StellarIndex/stellar-index/internal/sources/blend_emitter"
-	"github.com/StellarIndex/stellar-index/internal/sources/sorocredit"
-	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
+	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
+	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
 // ProtocolMeta is the hand-curated static identity of one indexed

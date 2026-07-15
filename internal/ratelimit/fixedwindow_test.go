@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/ratelimit"
+	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
 // TestFixedWindowCounter_IncrementsAndKeyShape pins the key derivation

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // stubHistoryReader implements v1.HistoryReader with a static slice.

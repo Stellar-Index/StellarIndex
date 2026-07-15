@@ -1,7 +1,7 @@
 package blend
 
 import (
-	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
 // Auction events emitted by the Blend Decoder. These are NOT

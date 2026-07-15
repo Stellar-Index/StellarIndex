@@ -22,7 +22,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // Row is the storage-neutral shape the worker hands to the Sink.

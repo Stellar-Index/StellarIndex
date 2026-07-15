@@ -55,7 +55,7 @@ sufficient, Git-driven deploys.
 
 1. **Connect the repo.** Cloudflare dashboard → Workers & Pages →
    Create application → Pages → Connect to Git → select the
-   `StellarIndex/stellar-index` repository.
+   `Stellar-Index/StellarIndex` repository.
 
 2. **Build configuration.**
    - Framework preset: `Next.js (Static HTML Export)`.

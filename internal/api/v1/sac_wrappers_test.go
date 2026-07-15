@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
 // TestSACWrappers_EmptyMapWhenUnconfigured pins the

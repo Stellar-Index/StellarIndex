@@ -30,11 +30,11 @@ The string `native` is a shorthand for `crypto:XLM`.
 
 ## Architecture
 
-- [CLAUDE.md](https://github.com/StellarIndex/stellar-index/blob/main/CLAUDE.md): repo orientation, invariants, and counter-intuitive facts (start here if you're an LLM agent reading the repo cold).
-- [docs/architecture/ingest-pipeline.md](https://github.com/StellarIndex/stellar-index/blob/main/docs/architecture/ingest-pipeline.md): Galexie → dispatcher → decoder.
-- [docs/architecture/aggregation-plan.md](https://github.com/StellarIndex/stellar-index/blob/main/docs/architecture/aggregation-plan.md): VWAP / TWAP / outlier / triangulation policy chain.
-- [docs/architecture/contract-schema-evolution.md](https://github.com/StellarIndex/stellar-index/blob/main/docs/architecture/contract-schema-evolution.md): Soroban DeFi contracts upgrade in place; decoders must be WASM-version-aware for backfill.
-- [docs/adr/](https://github.com/StellarIndex/stellar-index/tree/main/docs/adr): all architecture decisions, immutable, accept-only-or-supersede.
+- [CLAUDE.md](https://github.com/Stellar-Index/StellarIndex/blob/main/CLAUDE.md): repo orientation, invariants, and counter-intuitive facts (start here if you're an LLM agent reading the repo cold).
+- [docs/architecture/ingest-pipeline.md](https://github.com/Stellar-Index/StellarIndex/blob/main/docs/architecture/ingest-pipeline.md): Galexie → dispatcher → decoder.
+- [docs/architecture/aggregation-plan.md](https://github.com/Stellar-Index/StellarIndex/blob/main/docs/architecture/aggregation-plan.md): VWAP / TWAP / outlier / triangulation policy chain.
+- [docs/architecture/contract-schema-evolution.md](https://github.com/Stellar-Index/StellarIndex/blob/main/docs/architecture/contract-schema-evolution.md): Soroban DeFi contracts upgrade in place; decoders must be WASM-version-aware for backfill.
+- [docs/adr/](https://github.com/Stellar-Index/StellarIndex/tree/main/docs/adr): all architecture decisions, immutable, accept-only-or-supersede.
 
 ## Data sources we ingest
 
@@ -52,17 +52,17 @@ The string `native` is a shorthand for `crypto:XLM`.
 
 ## SDK
 
-- Go: `go get github.com/StellarIndex/stellar-index/pkg/client` — see [/sdk](https://stellarindex.io/sdk) for examples.
+- Go: `go get github.com/Stellar-Index/StellarIndex/pkg/client` — see [/sdk](https://stellarindex.io/sdk) for examples.
 
 ## Licensing + status
 
-- License: Apache-2.0 ([LICENSE](https://github.com/StellarIndex/stellar-index/blob/main/LICENSE)).
-- Status: pre-v1 (currently v0.5.0-rc.x). API surface is SemVer-stable per [docs/architecture/semver-policy.md](https://github.com/StellarIndex/stellar-index/blob/main/docs/architecture/semver-policy.md).
-- Security disclosures: [SECURITY.md](https://github.com/StellarIndex/stellar-index/blob/main/SECURITY.md) — `security@stellarindex.io`.
+- License: Apache-2.0 ([LICENSE](https://github.com/Stellar-Index/StellarIndex/blob/main/LICENSE)).
+- Status: pre-v1 (currently v0.5.0-rc.x). API surface is SemVer-stable per [docs/architecture/semver-policy.md](https://github.com/Stellar-Index/StellarIndex/blob/main/docs/architecture/semver-policy.md).
+- Security disclosures: [SECURITY.md](https://github.com/Stellar-Index/StellarIndex/blob/main/SECURITY.md) — `security@stellarindex.io`.
 
 ## Optional
 
-- [CHANGELOG](https://github.com/StellarIndex/stellar-index/blob/main/CHANGELOG.md): every release notes entry.
+- [CHANGELOG](https://github.com/Stellar-Index/StellarIndex/blob/main/CHANGELOG.md): every release notes entry.
 - [/changelog.atom](https://stellarindex.io/changelog.atom): Atom feed of release notes for syndication.
-- [docs/discovery/](https://github.com/StellarIndex/stellar-index/tree/main/docs/discovery): Phase-1 audit archive — read-only, but referenced often for "why does Stellar / source X behave like Y".
-- [docs/operations/runbooks/](https://github.com/StellarIndex/stellar-index/tree/main/docs/operations/runbooks): one runbook per alert. Read these before touching production.
+- [docs/discovery/](https://github.com/Stellar-Index/StellarIndex/tree/main/docs/discovery): Phase-1 audit archive — read-only, but referenced often for "why does Stellar / source X behave like Y".
+- [docs/operations/runbooks/](https://github.com/Stellar-Index/StellarIndex/tree/main/docs/operations/runbooks): one runbook per alert. Read these before touching production.

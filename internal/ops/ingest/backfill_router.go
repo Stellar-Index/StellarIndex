@@ -9,12 +9,12 @@ import (
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarIndex/stellar-index/internal/config"
-	"github.com/StellarIndex/stellar-index/internal/dispatcher"
-	"github.com/StellarIndex/stellar-index/internal/ledgerstream"
-	"github.com/StellarIndex/stellar-index/internal/ops/opsutil"
-	soroswap_router "github.com/StellarIndex/stellar-index/internal/sources/soroswap_router"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/ledgerstream"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // backfillRouter walks Galexie ledger metadata for a range and

@@ -13,17 +13,17 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 
-	"github.com/StellarIndex/stellar-index/internal/completeness"
-	"github.com/StellarIndex/stellar-index/internal/config"
-	"github.com/StellarIndex/stellar-index/internal/consumer"
-	"github.com/StellarIndex/stellar-index/internal/contractid"
-	"github.com/StellarIndex/stellar-index/internal/dispatcher"
-	"github.com/StellarIndex/stellar-index/internal/pipeline"
-	"github.com/StellarIndex/stellar-index/internal/sources/band"
-	"github.com/StellarIndex/stellar-index/internal/sources/sdex"
-	soroswap_router "github.com/StellarIndex/stellar-index/internal/sources/soroswap_router"
-	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/completeness"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/contractid"
+	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/sdex"
+	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // sorobanEraGenesis is the first pubnet ledger with Soroban — the lower

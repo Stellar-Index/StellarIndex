@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/external"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // NetworkStatsReader is the seam the /v1/network/stats handler

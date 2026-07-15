@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
 // decimalStringToScaledInt mirrors the helper in polygonforex /

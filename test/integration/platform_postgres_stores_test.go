@@ -18,9 +18,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/StellarIndex/stellar-index/internal/platform"
-	"github.com/StellarIndex/stellar-index/internal/platform/postgresstore"
-	"github.com/StellarIndex/stellar-index/internal/signupreaper"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
+	"github.com/Stellar-Index/StellarIndex/internal/signupreaper"
 )
 
 // TestPlatformPostgresStores exercises the AccountStore +

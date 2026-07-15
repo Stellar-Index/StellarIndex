@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	c "github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/sources/external"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TestFXQuoteAtOrBefore proves the X2.5 forex-snap storage primitive

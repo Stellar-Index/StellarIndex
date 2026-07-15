@@ -39,7 +39,7 @@ At deploy-time we will pin these:
 
 ```go
 // go.mod
-module github.com/StellarIndex/stellar-index
+module github.com/Stellar-Index/StellarIndex
 go 1.25
 
 require (

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
 // LedgerProvider is defined by freeze_events.go (#560 landed first).

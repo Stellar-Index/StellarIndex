@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/obs"
-	"github.com/StellarIndex/stellar-index/internal/obstest"
-	"github.com/StellarIndex/stellar-index/internal/usage"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/obstest"
+	"github.com/Stellar-Index/StellarIndex/internal/usage"
 )
 
 // fakeSink records every UpsertUsageDaily batch. err, when set,

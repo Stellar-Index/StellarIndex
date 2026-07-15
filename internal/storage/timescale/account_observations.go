@@ -9,7 +9,7 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
 // InsertAccountObservation appends one [domain.AccountObservation]

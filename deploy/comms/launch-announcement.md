@@ -26,7 +26,7 @@ across on-chain DEXs (Soroswap, Aquarius, Phoenix, Comet,
 SDEX), CEX feeds (Binance, Coinbase, Kraken, Bitstamp),
 oracle networks (Reflector, Redstone, Band), and FX anchors
 (ExchangeRatesApi, Polygon Forex). Source code is public at
-<https://github.com/StellarIndex/stellar-index>.
+<https://github.com/Stellar-Index/StellarIndex>.
 
 ## First request
 
@@ -63,7 +63,7 @@ exploration; an API key bumps you to 1000 rpm.)
 
 ## Reaching us
 
-- Bug reports / feature requests: <https://github.com/StellarIndex/stellar-index/issues>
+- Bug reports / feature requests: <https://github.com/Stellar-Index/StellarIndex/issues>
 - Security: `security@stellarindex.io`
 - Operational status: <https://stellarindex.io/status>
 

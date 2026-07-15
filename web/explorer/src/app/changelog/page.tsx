@@ -44,7 +44,7 @@ export default function ChangelogPage() {
           </code>{' '}
           on{' '}
           <a
-            href="https://github.com/StellarIndex/stellar-index/blob/main/CHANGELOG.md"
+            href="https://github.com/Stellar-Index/StellarIndex/blob/main/CHANGELOG.md"
             target="_blank"
             rel="noreferrer noopener"
             className="text-brand-600 hover:underline"
@@ -69,7 +69,7 @@ export default function ChangelogPage() {
           CHANGELOG.md not found at build time — this page is a
           stub. See the{' '}
           <a
-            href="https://github.com/StellarIndex/stellar-index/blob/main/CHANGELOG.md"
+            href="https://github.com/Stellar-Index/StellarIndex/blob/main/CHANGELOG.md"
             target="_blank"
             rel="noreferrer noopener"
             className="underline"
@@ -91,7 +91,7 @@ export default function ChangelogPage() {
               Showing the {RECENT_RELEASES} most recent of {releases.length}{' '}
               releases.{' '}
               <a
-                href="https://github.com/StellarIndex/stellar-index/blob/main/CHANGELOG.md"
+                href="https://github.com/Stellar-Index/StellarIndex/blob/main/CHANGELOG.md"
                 target="_blank"
                 rel="noreferrer noopener"
                 className="text-brand-600 hover:underline"
@@ -109,7 +109,7 @@ export default function ChangelogPage() {
         </Link>
         <span className="mx-2">·</span>
         <a
-          href="https://github.com/StellarIndex/stellar-index/releases"
+          href="https://github.com/Stellar-Index/StellarIndex/releases"
           target="_blank"
           rel="noreferrer noopener"
           className="text-brand-600 hover:underline"
@@ -153,7 +153,7 @@ function ReleaseCard({ release }: { release: Release }) {
           )}
           {!isUnreleased && (
             <a
-              href={`https://github.com/StellarIndex/stellar-index/releases/tag/${release.version}`}
+              href={`https://github.com/Stellar-Index/StellarIndex/releases/tag/${release.version}`}
               target="_blank"
               rel="noreferrer noopener"
               className="rounded-sm border border-line px-2 py-0.5 font-mono text-xs hover:border-brand-500 hover:text-brand-600"

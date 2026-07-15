@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/incidents"
+	"github.com/Stellar-Index/StellarIndex/internal/incidents"
 )
 
 // TestHandleIncidentsAtom_LinkTarget pins the per-entry alternate

@@ -13,7 +13,7 @@ groups:
           severity: page
           team: stellarindex
           component: api
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/api-down.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-down.md
         annotations:
           summary: "Every API pod is down (SEV-1)"
           description: |
@@ -31,7 +31,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/api-latency.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
         annotations:
           summary: "API p95 {{ $value | humanizeDuration }} > 500ms"
           description: |
@@ -49,7 +49,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/api-latency.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
         annotations:
           summary: "API p99 {{ $value | humanizeDuration }} > 2s"
           description: |
@@ -66,7 +66,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/api-5xx.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
         annotations:
           summary: "API 5xx rate {{ $value | humanizePercentage }}"
           description: |
@@ -82,7 +82,7 @@ groups:
           severity: page
           team: stellarindex
           component: api
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/api-5xx.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
         annotations:
           summary: "API 5xx rate {{ $value | humanizePercentage }} (SEV-1)"
           description: |
@@ -109,7 +109,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/price-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-stale.md
         annotations:
           summary: "Price for {{ $labels.asset }} is {{ $value }}s stale"
           description: |
@@ -143,7 +143,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/cache-miss-rate-high.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache-miss-rate-high.md
         annotations:
           summary: "API cache {{ $labels.cache }}/{{ $labels.op }} miss rate {{ $value | humanizePercentage }}"
           description: |
@@ -167,7 +167,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
         annotations:
           summary: "Customer webhook delivery failing at {{ $value | humanize }}/s"
           description: |
@@ -191,7 +191,7 @@ groups:
           severity: informational
           team: stellarindex
           component: api
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/usage-rollup-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/usage-rollup-failing.md
         annotations:
           summary: "Usage-rollup sweeps failing ({{ $value | humanize }}/s error rate)"
           description: |
@@ -210,7 +210,7 @@ groups:
           severity: informational
           team: stellarindex
           component: api
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
         annotations:
           summary: "Customer webhook deliveries permanently failed (budget exhausted)"
           description: |
@@ -232,7 +232,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/stripe-platform-sync-errors.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stripe-platform-sync-errors.md
         annotations:
           summary: "Stripe platform bridge degraded: {{ $value | humanize }} errors/s"
           description: |
@@ -253,7 +253,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
         annotations:
           summary: "TLS cert for {{ $labels.host }} expires in <14 days"
           description: |
@@ -263,4 +263,4 @@ groups:
             this alert firing means the renewal hasn't happened
             (rate limit, DNS issue, ACME quota, Caddy stuck).
 
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md

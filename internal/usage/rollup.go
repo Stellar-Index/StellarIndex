@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // RollupRow is one (day, subject, endpoint) aggregate handed to the

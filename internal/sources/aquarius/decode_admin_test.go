@@ -3,7 +3,7 @@ package aquarius
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
 // Golden decode tests for the eight governance/upgrade admin event

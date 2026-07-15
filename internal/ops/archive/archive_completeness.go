@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/archivecompleteness"
-	"github.com/StellarIndex/stellar-index/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/archivecompleteness"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
 // archiveCompleteness dispatches the `archive-completeness <mode>`

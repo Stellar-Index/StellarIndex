@@ -554,7 +554,7 @@
     content: |
       [Unit]
       Description=Stellar Index — stellar-stack upstream version-lag probe
-      Documentation=https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+      Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
       [Service]
       Type=oneshot
       ExecStart=/usr/local/sbin/stellar-stack-version-probe.sh
@@ -578,7 +578,7 @@
     content: |
       [Unit]
       Description=Run the stellar-stack version-lag probe daily
-      Documentation=https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
+      Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
       [Timer]
       OnCalendar=*-*-* 05:07:00 UTC
       RandomizedDelaySec=300

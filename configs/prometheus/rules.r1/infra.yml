@@ -19,7 +19,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: infra
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/host-down.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/host-down.md
         annotations:
           summary: "Host {{ $labels.instance }} unreachable"
           description: |
@@ -35,7 +35,7 @@ groups:
           severity: informational
           team: stellarindex
           component: infra
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/host-cpu-high.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/host-cpu-high.md
         annotations:
           summary: "Host {{ $labels.instance }} CPU at {{ $value | humanize }}%"
           description: |
@@ -51,7 +51,7 @@ groups:
           severity: informational
           team: stellarindex
           component: infra
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/host-memory-high.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/host-memory-high.md
         annotations:
           summary: "Host {{ $labels.instance }} memory at {{ $value | humanize }}%"
           description: |
@@ -73,7 +73,7 @@ groups:
           severity: page
           team: stellarindex
           component: infra
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/zfs-degraded.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-degraded.md
         annotations:
           summary: "ZFS pool {{ $labels.zpool }} is {{ $labels.state }} (SEV-1)"
           description: |
@@ -106,7 +106,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: infra
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/nvme-smart.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
         annotations:
           summary: "NVMe {{ $labels.device }} reporting IO errors"
           description: |
@@ -122,7 +122,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: infra
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/nvme-thermal.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-thermal.md
         annotations:
           summary: "NVMe {{ $labels.device }} at {{ $value }}°C"
           description: |

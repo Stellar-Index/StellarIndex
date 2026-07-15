@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/pkg/client"
+	"github.com/Stellar-Index/StellarIndex/pkg/client"
 )
 
 // TestAssetDetail_DecodesFullWirePayload pins the SDK's [AssetDetail]

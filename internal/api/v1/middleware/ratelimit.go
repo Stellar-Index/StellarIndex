@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/auth"
-	"github.com/StellarIndex/stellar-index/internal/obs"
-	"github.com/StellarIndex/stellar-index/internal/ratelimit"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
 // MaxRateLimitKeyLen caps the caller-supplied KeyFn output so a

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/incidents"
-	"github.com/StellarIndex/stellar-index/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/incidents"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // TestFindIncidentForEmit_RefusesWrongStatus — operator-finger-

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // nativeXLMSAC is the Stellar Asset Contract address wrapping native

@@ -18,10 +18,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
-	"github.com/StellarIndex/stellar-index/internal/httpx"
-	"github.com/StellarIndex/stellar-index/internal/notify"
-	"github.com/StellarIndex/stellar-index/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/httpx"
+	"github.com/Stellar-Index/StellarIndex/internal/notify"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // EmailLocker serialises first-login provisioning per email so

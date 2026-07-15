@@ -6,8 +6,8 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	c "github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/dispatcher"
+	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
 // extractClaimAtoms covers five op variants. The pre-existing

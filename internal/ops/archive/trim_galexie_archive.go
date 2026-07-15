@@ -18,7 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 
-	"github.com/StellarIndex/stellar-index/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
 // ─── stellarindex-ops trim-galexie-archive ──────────────────────

@@ -46,7 +46,7 @@ groups:
           severity: page
           team: stellarindex
           component: stellar
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/core-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/core-lag.md
         annotations:
           summary: "stellar-core ledger age {{ $value | humanizeDuration }} (SEV-1)"
           description: |
@@ -61,7 +61,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: stellar
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/core-peers.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/core-peers.md
         annotations:
           summary: "stellar-core has only {{ $value }} peers"
           description: |
@@ -75,7 +75,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: stellar
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/rpc-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/rpc-lag.md
         annotations:
           summary: "stellar-rpc lagging by {{ $value | humanizeDuration }}"
           description: |
@@ -90,7 +90,7 @@ groups:
           severity: informational
           team: stellarindex
           component: stellar
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/archive-publish.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-publish.md
         annotations:
           summary: "Archive-publish errors in the last hour"
           description: |
@@ -108,7 +108,7 @@ groups:
           severity: page
           team: stellarindex
           component: stellar
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/archive-divergence.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-divergence.md
         annotations:
           summary: "Archive hash divergence detected (SEV-1)"
           description: |

@@ -28,7 +28,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: external-poller
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/external-poller-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-stale.md
         annotations:
           summary: "external poller {{ $labels.source }} has not succeeded in 30+ min"
           description: |
@@ -52,7 +52,7 @@ groups:
           severity: informational
           team: stellarindex
           component: external-poller
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/external-poller-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-stale.md
         annotations:
           summary: "ECB FX poller has not succeeded in 12+ h (>2x poll interval)"
           description: |
@@ -87,7 +87,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: external-poller
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/fx-feed-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-feed-stale.md
         annotations:
           summary: "active fiat-FX feed has written no fx_quote in 6+ h"
           description: |
@@ -119,7 +119,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: external-poller
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/fx-feed-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-feed-stale.md
         annotations:
           summary: "active fiat-FX feed has never written an fx_quote since startup"
           description: |
@@ -150,7 +150,7 @@ groups:
           severity: informational
           team: stellarindex
           component: external-poller
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/external-poller-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-stale.md
         annotations:
           summary: "external poller {{ $labels.source }} error rate > 50 % (15 min)"
           description: |

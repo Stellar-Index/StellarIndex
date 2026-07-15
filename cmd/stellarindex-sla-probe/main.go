@@ -50,7 +50,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/version"
+	"github.com/Stellar-Index/StellarIndex/internal/version"
 )
 
 // SLA targets — match the stated thresholds. Configurable via

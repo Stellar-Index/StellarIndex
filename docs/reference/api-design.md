@@ -537,10 +537,10 @@ concurrently. `/v3` only when we can retire `/v1`.
 ## 14. SDK
 
 - **Go:** `pkg/client/` in this repo. Published as
-  `github.com/StellarIndex/stellar-index/pkg/client` (same module
+  `github.com/Stellar-Index/StellarIndex/pkg/client` (same module
   path as the server; tag with `client/v0.x.y` SemVer).
 - **TypeScript:** auto-generated from OpenAPI into
-  `https://github.com/StellarIndex/stellar-index-js`. Published to
+  `https://github.com/Stellar-Index/StellarIndex-js`. Published to
   npm. Owner: community, with review by @ash for launch version.
 - **Python:** post-launch, community-owned.
 

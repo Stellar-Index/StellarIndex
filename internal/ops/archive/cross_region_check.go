@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
 // ─── cross-region-check ─────────────────────────────────────────

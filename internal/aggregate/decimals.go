@@ -3,7 +3,7 @@ package aggregate
 import (
 	"math/big"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // StandardDecimals is the decimals scale every DEX-traded Stellar asset

@@ -51,7 +51,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // SourceName is stamped on every canonical.OracleUpdate this

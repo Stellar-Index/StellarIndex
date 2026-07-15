@@ -6,7 +6,7 @@ package chops
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
 // testWatchedSEP41 is a syntactically valid C-strkey watched set; the

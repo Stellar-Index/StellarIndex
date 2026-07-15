@@ -11,14 +11,14 @@ export const metadata: Metadata = {
   alternates: { canonical: '/sdk' },
 };
 
-const INSTALL = `go get github.com/StellarIndex/stellar-index/pkg/client`;
+const INSTALL = `go get github.com/Stellar-Index/StellarIndex/pkg/client`;
 
 const QUICKSTART = `package main
 
 import (
     "context"
     "fmt"
-    "github.com/StellarIndex/stellar-index/pkg/client"
+    "github.com/Stellar-Index/StellarIndex/pkg/client"
 )
 
 func main() {
@@ -164,7 +164,7 @@ export default function SDKPage() {
         <p className="text-sm text-ink-body">
           Single dependency. The module path follows the canonical{' '}
           <code className="rounded-sm bg-surface-subtle px-1.5 py-0.5 font-mono text-xs">
-            github.com/StellarIndex/stellar-index
+            github.com/Stellar-Index/StellarIndex
           </code>{' '}
           repo path.
         </p>
@@ -252,7 +252,7 @@ export default function SDKPage() {
         <ul className="mt-3 space-y-2 text-ink-body">
           <li>
             <a
-              href="https://pkg.go.dev/github.com/StellarIndex/stellar-index/pkg/client"
+              href="https://pkg.go.dev/github.com/Stellar-Index/StellarIndex/pkg/client"
               target="_blank"
               rel="noreferrer noopener"
               className="inline-flex items-center gap-1 text-brand-600 hover:underline"
@@ -263,7 +263,7 @@ export default function SDKPage() {
           </li>
           <li>
             <a
-              href="https://github.com/StellarIndex/stellar-index/tree/main/pkg/client"
+              href="https://github.com/Stellar-Index/StellarIndex/tree/main/pkg/client"
               target="_blank"
               rel="noreferrer noopener"
               className="inline-flex items-center gap-1 text-brand-600 hover:underline"

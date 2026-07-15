@@ -1,6 +1,6 @@
 [Unit]
 Description=Stellar Index Healthchecks.io heartbeat schedule — %i
-Documentation=https://github.com/StellarIndex/stellar-index/blob/main/configs/healthchecks/README.md
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/configs/healthchecks/README.md
 
 [Timer]
 # 60 s cadence matches Healthchecks.io's free-tier 2-minute grace

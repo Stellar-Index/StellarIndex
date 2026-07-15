@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/StellarIndex/stellar-index/internal/events"
-	"github.com/StellarIndex/stellar-index/internal/scval"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 // ErrUnknownEvent flags an event whose topic[0] symbol doesn't

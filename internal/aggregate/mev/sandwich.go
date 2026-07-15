@@ -3,7 +3,7 @@ package mev
 import (
 	"sort"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // KindSandwich is the mev_events.kind for cross-transaction sandwich

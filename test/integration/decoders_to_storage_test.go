@@ -10,12 +10,12 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 
-	c "github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/sources/aquarius"
-	"github.com/StellarIndex/stellar-index/internal/sources/phoenix"
-	"github.com/StellarIndex/stellar-index/internal/sources/reflector"
-	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/reflector"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TestDecoderOutputFitsStorageSchema builds one canonical.Trade

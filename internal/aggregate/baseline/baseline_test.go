@@ -5,7 +5,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/aggregate/baseline"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/baseline"
 )
 
 func almostEqual(a, b float64) bool {

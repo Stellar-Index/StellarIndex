@@ -6,7 +6,7 @@ import (
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarIndex/stellar-index/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
 // TestSplitRange_VariousSizes — pinning the split semantics across

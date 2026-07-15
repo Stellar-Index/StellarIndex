@@ -3,8 +3,8 @@ package v1
 import (
 	"net/http"
 
-	"github.com/StellarIndex/stellar-index/internal/api/streaming"
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // PriceStreamTopic returns the Hub topic key for closed-bucket events

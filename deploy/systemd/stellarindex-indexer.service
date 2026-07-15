@@ -32,7 +32,7 @@
 
 [Unit]
 Description=Stellar Index — indexer (decoder pipeline → canonical trades)
-Documentation=https://github.com/StellarIndex/stellar-index/blob/main/docs/architecture/ingest-pipeline.md
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/architecture/ingest-pipeline.md
 After=network-online.target minio.service postgresql.service redis-server.service
 Wants=network-online.target
 Requires=postgresql.service

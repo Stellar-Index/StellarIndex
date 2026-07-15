@@ -9,7 +9,7 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/StellarIndex/stellar-index/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
 // KeyToucher is the storage-side primitive the [TouchUsage]

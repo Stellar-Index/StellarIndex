@@ -67,7 +67,7 @@ export default async function BlogPostPage({ params }: { params: Params }) {
 
       <footer className="border-t border-line pt-4 text-xs">
         <a
-          href={`https://github.com/StellarIndex/stellar-index/blob/main/${post.source_path}`}
+          href={`https://github.com/Stellar-Index/StellarIndex/blob/main/${post.source_path}`}
           target="_blank"
           rel="noreferrer noopener"
           className="inline-flex items-center gap-1 text-ink-muted hover:text-brand-600"

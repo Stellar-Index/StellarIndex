@@ -6,7 +6,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarIndex/stellar-index/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
 // allClassicOpTypes enumerates the CLOSED 27-value xdr.OperationType

@@ -1,6 +1,6 @@
 package sep41_supply
 
-import "github.com/StellarIndex/stellar-index/internal/consumer"
+import "github.com/Stellar-Index/StellarIndex/internal/consumer"
 
 func (Event) EventKind() string { return EventKind }
 func (Event) Source() string    { return SourceName }

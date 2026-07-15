@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	c "github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // liveAsset24hVolSQL is the pre-#43 single-asset per-request SUM the

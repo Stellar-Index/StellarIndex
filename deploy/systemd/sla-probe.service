@@ -41,7 +41,7 @@
 
 [Unit]
 Description=Stellar Index — SLA probe (periodic per-endpoint p95/p99/freshness check)
-Documentation=https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/sla-probe.md
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/sla-probe.md
 After=network-online.target
 Wants=network-online.target
 

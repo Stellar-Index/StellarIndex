@@ -5,7 +5,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/StellarIndex/stellar-index/internal/cachekeys"
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
 // RedisKeyCacheInvalidator evicts a single API-key record from the

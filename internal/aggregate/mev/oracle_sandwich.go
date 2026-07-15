@@ -3,7 +3,7 @@ package mev
 import (
 	"strconv"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // KindOracleSandwich is the mev_events.kind for trades bracketing an

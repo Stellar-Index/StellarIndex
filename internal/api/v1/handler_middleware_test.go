@@ -5,8 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
-	"github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 )
 
 // noopMiddleware passes the request through unchanged. Sufficient

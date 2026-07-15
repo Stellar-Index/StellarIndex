@@ -17,7 +17,7 @@ groups:
           severity: page
           team: stellarindex
           component: cache
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/redis-master-down.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-master-down.md
         annotations:
           summary: "Redis master {{ $labels.instance }} down (SEV-1)"
           description: |
@@ -32,7 +32,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: cache
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/redis-memory.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-memory.md
         annotations:
           summary: "Redis {{ $labels.instance }} memory {{ $value | humanize }}% used"
           description: |
@@ -46,7 +46,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: cache
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/redis-memory.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-memory.md
         annotations:
           summary: "Redis {{ $labels.instance }} evicting {{ $value | humanize }}/s keys"
           description: |
@@ -72,7 +72,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: cache
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/redis-replication.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-replication.md
         annotations:
           summary: "Redis master {{ $labels.instance }} missing replicas"
           description: |

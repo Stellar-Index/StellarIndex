@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // ─── Typed-key mechanism (guard-debt: ROADMAP #48) ─────────────────

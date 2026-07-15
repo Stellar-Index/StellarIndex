@@ -8,7 +8,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarIndex/stellar-index/internal/xdrjson"
+	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
 // AccountState is the current on-chain state of an account, reconstructed from

@@ -55,42 +55,42 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/StellarIndex/stellar-index/internal/aggregate"
-	"github.com/StellarIndex/stellar-index/internal/aggregate/confidence"
-	"github.com/StellarIndex/stellar-index/internal/aggregate/freeze"
-	"github.com/StellarIndex/stellar-index/internal/api/streaming"
-	"github.com/StellarIndex/stellar-index/internal/api/streaming/redispub"
-	"github.com/StellarIndex/stellar-index/internal/api/streampublish"
-	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
-	"github.com/StellarIndex/stellar-index/internal/api/v1/dashboardauth"
-	"github.com/StellarIndex/stellar-index/internal/api/v1/dashboardkeys"
-	"github.com/StellarIndex/stellar-index/internal/api/v1/dashboardpricealerts"
-	"github.com/StellarIndex/stellar-index/internal/api/v1/dashboardwebhooks"
-	"github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
-	"github.com/StellarIndex/stellar-index/internal/auth"
-	"github.com/StellarIndex/stellar-index/internal/auth/sep10"
-	"github.com/StellarIndex/stellar-index/internal/cachekeys"
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/config"
-	"github.com/StellarIndex/stellar-index/internal/currency"
-	"github.com/StellarIndex/stellar-index/internal/customerwebhook"
-	"github.com/StellarIndex/stellar-index/internal/divergence"
-	"github.com/StellarIndex/stellar-index/internal/metadata"
-	"github.com/StellarIndex/stellar-index/internal/notify"
-	"github.com/StellarIndex/stellar-index/internal/obs"
-	"github.com/StellarIndex/stellar-index/internal/platform"
-	"github.com/StellarIndex/stellar-index/internal/platform/postgresstore"
-	"github.com/StellarIndex/stellar-index/internal/pricingguard"
-	"github.com/StellarIndex/stellar-index/internal/ratelimit"
-	"github.com/StellarIndex/stellar-index/internal/signupreaper"
-	"github.com/StellarIndex/stellar-index/internal/sources/external"
-	"github.com/StellarIndex/stellar-index/internal/sources/external/forex"
-	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
-	"github.com/StellarIndex/stellar-index/internal/storage/redisclient"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
-	"github.com/StellarIndex/stellar-index/internal/supply"
-	"github.com/StellarIndex/stellar-index/internal/usage"
-	"github.com/StellarIndex/stellar-index/internal/version"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
+	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
+	"github.com/Stellar-Index/StellarIndex/internal/api/streaming/redispub"
+	"github.com/Stellar-Index/StellarIndex/internal/api/streampublish"
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardauth"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardkeys"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardpricealerts"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardwebhooks"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/auth/sep10"
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/currency"
+	"github.com/Stellar-Index/StellarIndex/internal/customerwebhook"
+	"github.com/Stellar-Index/StellarIndex/internal/divergence"
+	"github.com/Stellar-Index/StellarIndex/internal/metadata"
+	"github.com/Stellar-Index/StellarIndex/internal/notify"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
+	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
+	"github.com/Stellar-Index/StellarIndex/internal/signupreaper"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external/forex"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/redisclient"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
+	"github.com/Stellar-Index/StellarIndex/internal/usage"
+	"github.com/Stellar-Index/StellarIndex/internal/version"
 )
 
 func main() {
@@ -2917,7 +2917,7 @@ func warnUnsafeBind(logger *slog.Logger, listenAddr string, trustedProxyCIDRs []
 		if len(trustedProxyCIDRs) == 0 {
 			logger.Warn("SECURITY: API is listening on a public interface with no trusted proxy CIDRs configured — direct :PORT requests bypass any TLS/WAF you have in front. Bind to 127.0.0.1 OR populate trusted_proxy_cidrs with your reverse proxy's source range.",
 				"listen", listenAddr,
-				"docs", "https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/pre-launch-hardening.md")
+				"docs", "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/pre-launch-hardening.md")
 			return
 		}
 		logger.Warn("API listening on a public interface; trusting forwarded headers from configured proxies. Confirm your reverse proxy strips client-supplied X-Forwarded-* headers before forwarding.",
@@ -2974,7 +2974,7 @@ func warnOpenCORS(logger *slog.Logger, allowedOrigins []string, authMode string)
 	case "apikey", "apikey_optional", "sep10":
 		logger.Warn("SECURITY: CORS allows every origin (\"*\") and auth_mode permits credentials — narrow [api].allowed_origins to your explorer / explorer hostnames before exposing the API publicly.",
 			"auth_mode", authMode,
-			"docs", "https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/pre-launch-hardening.md")
+			"docs", "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/pre-launch-hardening.md")
 	}
 }
 

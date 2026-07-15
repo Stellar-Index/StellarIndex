@@ -6,7 +6,7 @@ package auth
 import (
 	"strings"
 
-	"github.com/StellarIndex/stellar-index/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // RequiredScope maps a request path to the capability scope a

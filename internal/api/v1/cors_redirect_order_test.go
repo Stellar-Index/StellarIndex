@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 )
 
 // TestTrailingSlashRedirectCarriesCORS pins S-009: the trailing-slash

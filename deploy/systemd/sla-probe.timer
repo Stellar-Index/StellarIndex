@@ -25,7 +25,7 @@
 
 [Unit]
 Description=Periodic Stellar Index SLA probe (every 15 min)
-Documentation=https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/sla-probe.md
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/sla-probe.md
 
 [Timer]
 OnCalendar=*:0/15:00 UTC

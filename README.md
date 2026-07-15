@@ -49,7 +49,7 @@ See **[CLAUDE.md](CLAUDE.md)**. It's your orientation map.
   [`pkg/client/`](pkg/client/) (SemVer-stable surface, godoc-complete):
 
   ```sh
-  go get github.com/StellarIndex/stellar-index/pkg/client
+  go get github.com/Stellar-Index/StellarIndex/pkg/client
   ```
 
   ```go

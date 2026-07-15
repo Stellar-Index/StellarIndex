@@ -15,15 +15,15 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/consumer"
-	"github.com/StellarIndex/stellar-index/internal/sources/external"
-	externalbinance "github.com/StellarIndex/stellar-index/internal/sources/external/binance"
-	externalbitstamp "github.com/StellarIndex/stellar-index/internal/sources/external/bitstamp"
-	externalcoingecko "github.com/StellarIndex/stellar-index/internal/sources/external/coingecko"
-	externalecb "github.com/StellarIndex/stellar-index/internal/sources/external/ecb"
-	externalexchangerates "github.com/StellarIndex/stellar-index/internal/sources/external/exchangeratesapi"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+	externalbinance "github.com/Stellar-Index/StellarIndex/internal/sources/external/binance"
+	externalbitstamp "github.com/Stellar-Index/StellarIndex/internal/sources/external/bitstamp"
+	externalcoingecko "github.com/Stellar-Index/StellarIndex/internal/sources/external/coingecko"
+	externalecb "github.com/Stellar-Index/StellarIndex/internal/sources/external/ecb"
+	externalexchangerates "github.com/Stellar-Index/StellarIndex/internal/sources/external/exchangeratesapi"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TestExternalFleet_EndToEnd is the Phase-2-ingestion closing-

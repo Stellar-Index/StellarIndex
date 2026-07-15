@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/archivecompleteness"
+	"github.com/Stellar-Index/StellarIndex/internal/archivecompleteness"
 )
 
 // makeTestArchive builds a minimal `<root>/ledger/XX/YY/ZZ/ledger-…xdr.gz`

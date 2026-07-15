@@ -40,7 +40,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: archive
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/verify-archive-unit-failed.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-unit-failed.md
         annotations:
           summary: "verify-archive Tier A nightly run failed on {{ $labels.instance }}"
           description: |
@@ -73,7 +73,7 @@ groups:
           severity: page
           team: stellarindex
           component: archive
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/verify-archive-run-stale.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-run-stale.md
         annotations:
           summary: "(R1 integrity-leader) verify-archive Tier A hasn't run cleanly in {{ $value | humanizeDuration }}"
           description: |

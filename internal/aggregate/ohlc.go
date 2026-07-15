@@ -3,7 +3,7 @@ package aggregate
 import (
 	"math/big"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // OHLC is an Open/High/Low/Close bar over a bucket of trades, plus

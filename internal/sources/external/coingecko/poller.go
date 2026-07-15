@@ -39,9 +39,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/sources/external"
-	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
 // SourceName is stamped on every canonical.OracleUpdate this package

@@ -729,7 +729,7 @@ against.
   cosign verify-blob \
     --bundle SHA256SUMS.sigstore.json \
     --certificate-identity-regexp \
-      '^https://github.com/StellarIndex/stellar-index/\.github/workflows/release\.yml@.*$' \
+      '^https://github.com/Stellar-Index/StellarIndex/\.github/workflows/release\.yml@.*$' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
     SHA256SUMS
   ```
@@ -13574,7 +13574,7 @@ pipeline itself is what's being tested.
 
 - **Footer adds Issuers, GitHub, and Changelog links.** Browse
   column now lists `/issuers`. Bottom strip exposes GitHub
-  (StellarIndex/stellar-index) and a direct Changelog link
+  (Stellar-Index/StellarIndex) and a direct Changelog link
   alongside the API URL — the latter two were missing despite
   the project being open-source from day one.
 

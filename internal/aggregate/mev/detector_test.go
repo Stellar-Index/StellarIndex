@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 func mustPair(t *testing.T, base, quote string) canonical.Pair {

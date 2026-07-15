@@ -55,7 +55,7 @@ The week before the cut. Done while everything is still calm.
       Document the freeze in `#stellar-index` and pin the date.
 - [ ] **Public-flip dry-run.** Walk the
       [public-flip cut-over mechanics](public-flip.md#cut-over-mechanics)
-      against a temporary `StellarIndex/stellar-index-dryrun`
+      against a temporary `Stellar-Index/StellarIndex-dryrun`
       repo. Verify zero diff between private working tree and
       the orphan-branch initial commit. Delete the dryrun repo.
 - [ ] **Customer demo (L6.6) scheduled.** Calendar invite sent;

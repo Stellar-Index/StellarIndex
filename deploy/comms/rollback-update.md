@@ -52,7 +52,7 @@ hot-patch on top of {{tag}}." -->
 ## What's next
 
 A postmortem will be published at
-<https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/postmortems/>
+<https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/postmortems/>
 within {{postmortem_eta}}, including:
 
 - The root-cause mechanism.

@@ -3,8 +3,8 @@ package blend_emitter
 import (
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
 // Recipient is one (address, amount) pair from a DropEvent's

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/sorobanevents"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // preseedFactoryChildren seeds a factory-anchored reconcile source's

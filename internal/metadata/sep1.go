@@ -13,7 +13,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/StellarIndex/stellar-index/internal/nettools"
+	"github.com/Stellar-Index/StellarIndex/internal/nettools"
 )
 
 // SEP1 is the parsed subset of a stellar.toml document we care

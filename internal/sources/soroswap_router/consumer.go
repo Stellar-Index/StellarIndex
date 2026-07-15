@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/StellarIndex/stellar-index/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
 // Sink consumes RouterSwap events and persists them. For Phase A

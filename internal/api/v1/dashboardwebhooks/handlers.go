@@ -18,10 +18,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/StellarIndex/stellar-index/internal/api/v1/dashboardauth"
-	"github.com/StellarIndex/stellar-index/internal/httpx"
-	"github.com/StellarIndex/stellar-index/internal/nettools"
-	"github.com/StellarIndex/stellar-index/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardauth"
+	"github.com/Stellar-Index/StellarIndex/internal/httpx"
+	"github.com/Stellar-Index/StellarIndex/internal/nettools"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // The webhook ceiling is tier-aware: platform.Tier.MaxWebhooks is

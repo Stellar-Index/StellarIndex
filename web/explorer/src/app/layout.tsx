@@ -140,7 +140,7 @@ export default function RootLayout({
                   logo: `${SITE_URL}/icon.svg`,
                   description: SITE_DESCRIPTION,
                   sameAs: [
-                    'https://github.com/StellarIndex/stellar-index',
+                    'https://github.com/Stellar-Index/StellarIndex',
                   ],
                   contactPoint: [
                     {

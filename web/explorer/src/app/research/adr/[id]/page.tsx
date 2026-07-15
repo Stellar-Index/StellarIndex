@@ -69,7 +69,7 @@ export default async function ADRPage({
         </div>
         <h1 className="text-2xl font-semibold tracking-tight">{adr.title}</h1>
         <a
-          href={`https://github.com/StellarIndex/stellar-index/blob/main/${adr.source_path}`}
+          href={`https://github.com/Stellar-Index/StellarIndex/blob/main/${adr.source_path}`}
           target="_blank"
           rel="noreferrer noopener"
           className="inline-flex items-center gap-1 text-xs text-ink-muted hover:text-brand-600"

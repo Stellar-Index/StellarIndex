@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/events"
-	"github.com/StellarIndex/stellar-index/internal/scval"
-	chstore "github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
+	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 // TestClickHouseLakeRoundTrip is the first end-to-end proof of the Tier-1 lake

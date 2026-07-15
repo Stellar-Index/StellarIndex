@@ -19,7 +19,7 @@
 #        cd $OUT && git init && git add -A \
 #          && git commit -m "Stellar Index v1.0.0 — initial public release" \
 #          && git branch -M main \
-#          && git remote add origin git@github.com:StellarIndex/stellar-index.git \
+#          && git remote add origin git@github.com:Stellar-Index/StellarIndex.git \
 #          && git push -u origin main && git tag v1.0.0 && git push --tags
 set -euo pipefail
 

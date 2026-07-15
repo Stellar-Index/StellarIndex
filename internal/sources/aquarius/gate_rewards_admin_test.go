@@ -3,7 +3,7 @@ package aquarius
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
 // TestDecoder_MatchesRewards_gated pins that the rewards-gauge events

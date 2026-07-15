@@ -3,7 +3,7 @@ package v1
 import (
 	"net/http"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // handlePairs serves GET /v1/pairs?base=<id>&quote=<id>.

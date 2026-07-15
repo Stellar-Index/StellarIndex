@@ -7,7 +7,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarIndex/stellar-index/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
 // Real pre-P23 mainnet bytes, pulled read-only from r1's ClickHouse

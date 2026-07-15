@@ -41,8 +41,8 @@ const CHANNELS: Channel[] = [
     title: 'General issues + feature requests',
     blurb:
       "Open a GitHub issue. Bug? Open it under Issues. Feature idea? Open under Discussions. The team triages daily; we don't run a separate support email for general questions.",
-    destination: 'github.com/StellarIndex/stellar-index',
-    href: 'https://github.com/StellarIndex/stellar-index/issues',
+    destination: 'github.com/Stellar-Index/StellarIndex',
+    href: 'https://github.com/Stellar-Index/StellarIndex/issues',
     external: true,
   },
   {

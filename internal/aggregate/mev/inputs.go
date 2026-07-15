@@ -3,8 +3,8 @@ package mev
 import (
 	"sort"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
 // OracleRef is one on-chain oracle_updates row, as the ordering-aware

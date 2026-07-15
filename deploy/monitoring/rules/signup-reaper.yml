@@ -31,7 +31,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: signup-reaper
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/signup-reaper-failing.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/signup-reaper-failing.md
         annotations:
           summary: "Speculative-account reaper failing (P3)"
           description: |

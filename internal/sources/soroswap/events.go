@@ -8,7 +8,7 @@ package soroswap
 import (
 	"errors"
 
-	"github.com/StellarIndex/stellar-index/internal/scval"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 // Source name constant — appears in metrics labels, canonical.Trade.Source,

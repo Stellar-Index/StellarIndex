@@ -14,7 +14,7 @@ package redisclient
 import (
 	"github.com/redis/go-redis/v9"
 
-	"github.com/StellarIndex/stellar-index/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
 // Build returns a [redis.UniversalClient] suitable for both API

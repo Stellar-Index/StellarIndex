@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/aggregate/confidence"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
 )
 
 // healthyInputs are the ADR-0019 worked-example values:

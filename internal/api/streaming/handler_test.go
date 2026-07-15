@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/api/streaming"
+	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 )
 
 // readSSEFrames blocks until `want` complete frames have been read

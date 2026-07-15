@@ -38,12 +38,12 @@ Subject: "Stellar Index — scheduled maintenance {{utc_start}}"
 ## Rollback plan
 
 If anything misbehaves we revert per
-<https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/rollback.md>.
+<https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/rollback.md>.
 Status page reflects the live state as we go.
 
 ## Questions
 
 Reply to this email or open an issue at
-<https://github.com/StellarIndex/stellar-index/issues>.
+<https://github.com/Stellar-Index/StellarIndex/issues>.
 
 — {{your_name}}

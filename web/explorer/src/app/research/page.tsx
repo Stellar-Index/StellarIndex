@@ -59,7 +59,7 @@ export default function ResearchPage() {
           <span className="text-xs text-ink-muted">
             {archDocs.length} docs ·{' '}
             <a
-              href="https://github.com/StellarIndex/stellar-index/tree/main/docs/architecture"
+              href="https://github.com/Stellar-Index/StellarIndex/tree/main/docs/architecture"
               target="_blank"
               rel="noreferrer noopener"
               className="hover:text-brand-600"
@@ -105,7 +105,7 @@ export default function ResearchPage() {
           <span className="text-xs text-ink-muted">
             {opsDocs.length} guides ·{' '}
             <a
-              href="https://github.com/StellarIndex/stellar-index/tree/main/docs/operations"
+              href="https://github.com/Stellar-Index/StellarIndex/tree/main/docs/operations"
               target="_blank"
               rel="noreferrer noopener"
               className="hover:text-brand-600"
@@ -157,7 +157,7 @@ export default function ResearchPage() {
           <span className="text-xs text-ink-muted">
             {adrs.length} records ·{' '}
             <a
-              href="https://github.com/StellarIndex/stellar-index/tree/main/docs/adr"
+              href="https://github.com/Stellar-Index/StellarIndex/tree/main/docs/adr"
               target="_blank"
               rel="noreferrer noopener"
               className="hover:text-brand-600"

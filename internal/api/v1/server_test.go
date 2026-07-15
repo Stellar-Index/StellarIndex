@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
 // stubCheck is a ReadyChecker that returns a configurable error.
@@ -549,7 +549,7 @@ func TestSecurityTxt(t *testing.T) {
 		"Contact: mailto:security@stellarindex.io",
 		"Expires: ",
 		"Canonical: https://stellarindex.io/.well-known/security.txt",
-		"Policy: https://github.com/StellarIndex/stellar-index/blob/main/SECURITY.md",
+		"Policy: https://github.com/Stellar-Index/StellarIndex/blob/main/SECURITY.md",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("body missing %q", want)

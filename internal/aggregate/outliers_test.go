@@ -3,8 +3,8 @@ package aggregate_test
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/aggregate"
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 func TestFilterOutliers_DropsFatTail(t *testing.T) {

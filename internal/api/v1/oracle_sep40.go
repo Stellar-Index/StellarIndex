@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // SEP40Price is the wire shape for the SEP-40 passthrough

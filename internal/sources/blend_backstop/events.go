@@ -3,9 +3,9 @@ package blend_backstop
 import (
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/consumer"
-	"github.com/StellarIndex/stellar-index/internal/scval"
-	"github.com/StellarIndex/stellar-index/internal/sources/blend"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 )
 
 // SourceName is the registry key for this source.

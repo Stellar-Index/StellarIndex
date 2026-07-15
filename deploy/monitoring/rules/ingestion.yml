@@ -39,14 +39,14 @@ groups:
           severity: ticket
           team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/source-stopped.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
         annotations:
           summary: "Source {{ $labels.source }} has stopped ingesting"
           description: |
             No events from source {{ $labels.source }} in the last 30 minutes,
             sustained for ≥ 15 min. The source is configured
             as enabled in ingestion.enabled_sources.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/source-stopped.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
 
       - alert: stellarindex_ingestion_source_stopped_low_volume_dex
         expr: |
@@ -63,14 +63,14 @@ groups:
           severity: ticket
           team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/source-stopped.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
         annotations:
           summary: "Low-volume Soroban DEX {{ $labels.source }} silent 6+ hours"
           description: |
             For low-volume Soroban DEXes this is unusual but not
             necessarily an outage — check the contract on
             stellar.expert before paging the indexer team.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/source-stopped.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
 
       - alert: stellarindex_ingestion_source_stopped_daily_publisher
         expr: |
@@ -85,14 +85,14 @@ groups:
           severity: ticket
           team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/source-stopped.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
         annotations:
           summary: "Daily publisher {{ $labels.source }} silent 30+ hours"
           description: |
             ECB publishes daily; Band publishes on relayer push
             (also roughly daily). 30h gives a one-day buffer plus
             ample slack for upstream cadence variation.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/source-stopped.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/source-stopped.md
 
       - alert: stellarindex_ingestion_all_sources_stopped
         expr: sum(rate(stellarindex_source_events_total[5m])) == 0
@@ -101,14 +101,14 @@ groups:
           severity: page
           team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/all-ingestion-down.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/all-ingestion-down.md
         annotations:
           summary: "All ingestion sources have stopped (SEV-1)"
           description: |
             No events from any source in the last 3 minutes. API data will go
             stale within 60 s. This is a P1 — check shared upstream (stellar-rpc)
             or shared storage (Timescale) before restarting the indexer.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/all-ingestion-down.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/all-ingestion-down.md
 
       - alert: stellarindex_ingestion_cursor_stuck
         expr: |
@@ -119,7 +119,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/cursor-stuck.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cursor-stuck.md
         annotations:
           summary: "Cursor for {{ $labels.source }} not advancing"
           description: |
@@ -135,7 +135,7 @@ groups:
           severity: informational
           team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/orphan-events.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/orphan-events.md
         annotations:
           summary: "Source {{ $labels.source }} orphan events {{ $value | humanize }}/sec"
           description: |
@@ -152,7 +152,7 @@ groups:
           severity: informational
           team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/decode-errors.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/decode-errors.md
         annotations:
           summary: "Decode errors on {{ $labels.source }} at {{ $value }}/sec"
           description: |
@@ -167,7 +167,7 @@ groups:
           severity: informational
           team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/discovery-drops.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/discovery-drops.md
         annotations:
           summary: "Discovery sink is dropping hits"
           description: |
@@ -183,7 +183,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ch-live-sink-drops.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink-drops.md
         annotations:
           summary: "ClickHouse live-sink is dropping ledger extracts"
           description: |
@@ -201,7 +201,7 @@ groups:
           severity: page
           team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ch-live-sink-drops.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-live-sink-drops.md
         annotations:
           summary: "ClickHouse live-sink drops sustained for 1h — heal path losing the race"
           description: |
@@ -227,7 +227,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
         annotations:
           summary: "Trade sink retrying under backpressure — Postgres write path blocked"
           description: |
@@ -238,7 +238,7 @@ groups:
             tier is frozen and external (CEX/FX) price freshness is
             degrading (watch stellarindex_trade_insert_buffer_depth).
             Almost always a Postgres outage/restart.
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
 
       - alert: stellarindex_ingestion_insert_errors
         expr: sum by (source, kind) (rate(stellarindex_source_insert_errors_total[5m])) > 0.1
@@ -247,7 +247,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/insert-errors.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
         annotations:
           summary: "Insert errors on {{ $labels.source }}/{{ $labels.kind }} at {{ $value }}/sec"
           description: |
@@ -286,7 +286,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
         annotations:
           summary: "Source {{ $labels.source }} producing duplicates only (cursor replay or stuck-tip)"
           description: |
@@ -301,7 +301,7 @@ groups:
             channel feeding the sink from an old replay loop, or a
             back-pressure event that lost in-flight events.
 
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
 
       # Unit-ratio trade sentinel (2026-07-07 Phoenix incident): a
       # decoder field-mapping bug swapped/collapsed base_amount and
@@ -325,7 +325,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/dex-trade-unit-ratio.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-trade-unit-ratio.md
         annotations:
           summary: "Source {{ $labels.source }} producing a sustained stream of unit-ratio (1:1) trades"
           description: |
@@ -340,7 +340,7 @@ groups:
             the decoder's amount field mapping against the contract's
             event definition.
 
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/dex-trade-unit-ratio.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-trade-unit-ratio.md
 
       # Timestamp-shape sibling to the rate-shape duplicate_flood
       # above. Fires when a source's last successful INSERT is over
@@ -372,7 +372,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
         annotations:
           summary: "Source {{ $labels.source }} hasn't landed a new row in >1h"
           description: |
@@ -387,7 +387,7 @@ groups:
             dispatcher is still matching events, the gap is the
             stuck-tip diagnostic (cursor advances, data doesn't).
 
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-duplicate-flood.md
 
       # Data-derived gap detector. The cursor-derived density
       # projection in /v1/diagnostics/ingestion measures process
@@ -412,7 +412,7 @@ groups:
           severity: page
           team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingest-gap-detected.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detected.md
         annotations:
           summary: "Data-coverage gap of {{ $value }} ledgers in source={{ $labels.source }}"
           description: |
@@ -429,7 +429,7 @@ groups:
             For non-projected sources (sdex / soroban-events):
               stellarindex-ops backfill --source <name> --from F --to T
 
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingest-gap-detected.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detected.md
 
       # Meta-alert: gap detector itself is wedged for a target. Fires
       # when a (source, table)'s last SUCCESSFUL scan is older than 8h
@@ -454,7 +454,7 @@ groups:
           severity: ticket
           team: stellarindex
           component: ingestion
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
         annotations:
           summary: "Data-gap detector hasn't scanned {{ $labels.source }}/{{ $labels.table }} successfully in >8h (above the 6h sdex/soroban scan cadence)"
           description: |
@@ -476,4 +476,4 @@ groups:
             `stellarindex_ingest_gap_detector_runs_total{outcome="error"}`
             climbing?
 
-            Runbook: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingest-gap-detector-silent.md

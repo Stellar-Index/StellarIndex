@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/notify"
+	"github.com/Stellar-Index/StellarIndex/internal/notify"
 )
 
 func TestValidate_HappyPath(t *testing.T) {

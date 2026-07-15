@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
-	soroswap_router "github.com/StellarIndex/stellar-index/internal/sources/soroswap_router"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 )
 
 // Router attribution — the live half of migration 0025's

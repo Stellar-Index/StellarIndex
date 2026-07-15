@@ -10,7 +10,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarIndex/stellar-index/internal/ledgerstream"
+	"github.com/Stellar-Index/StellarIndex/internal/ledgerstream"
 )
 
 // When Config.Buffered is non-nil, Stream uses the caller-supplied

@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // TestClassicMovementKind_ParityWithMigrationCheck pins the Go-side

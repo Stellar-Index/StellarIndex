@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 // WasmExportView is one exported contract function on the wire: its name and

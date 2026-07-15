@@ -15,9 +15,9 @@ import (
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/StellarIndex/stellar-index/internal/ledgerstream"
-	"github.com/StellarIndex/stellar-index/internal/obs"
-	"github.com/StellarIndex/stellar-index/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/ledgerstream"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
 // startVerifyArchiveMetrics spins up a tiny http.Server on addr

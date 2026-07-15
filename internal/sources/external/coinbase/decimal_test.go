@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/external/scale"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
 // Error and edge-case tests for decimalStringToScaledInt. The

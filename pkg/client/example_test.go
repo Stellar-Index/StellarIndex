@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/pkg/client"
+	"github.com/Stellar-Index/StellarIndex/pkg/client"
 )
 
 // ExampleNew demonstrates the canonical SDK construction. The

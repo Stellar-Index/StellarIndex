@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
-	explorerpkg "github.com/StellarIndex/stellar-index/internal/api/v1/explorer"
+	explorerpkg "github.com/Stellar-Index/StellarIndex/internal/api/v1/explorer"
 )
 
 // The network-explorer endpoint implementations (ADR-0038) live in

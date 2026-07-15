@@ -8,9 +8,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/auth"
-	"github.com/StellarIndex/stellar-index/internal/config"
-	"github.com/StellarIndex/stellar-index/internal/storage/redisclient"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/redisclient"
 )
 
 // upgradeKey lifts (or lowers) the per-minute rate-limit on an

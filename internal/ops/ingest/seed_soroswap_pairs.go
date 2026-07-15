@@ -9,10 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/config"
-	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
-	"github.com/StellarIndex/stellar-index/internal/stellarrpc"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // seedSoroswapPairs reads every pair contract the Soroswap factory

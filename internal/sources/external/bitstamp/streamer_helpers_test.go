@@ -3,7 +3,7 @@ package bitstamp
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // symbolsFor inverts the operator-supplied PairMap so the streamer

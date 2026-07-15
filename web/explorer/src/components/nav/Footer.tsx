@@ -86,7 +86,7 @@ export function Footer() {
               </a>
             </span>
             <a
-              href="https://github.com/StellarIndex/stellar-index"
+              href="https://github.com/Stellar-Index/StellarIndex"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-ink-body"
@@ -115,7 +115,7 @@ function BuildBadge() {
   const date = time ? time.slice(0, 10) : '';
   return (
     <a
-      href={`https://github.com/StellarIndex/stellar-index/commit/${sha}`}
+      href={`https://github.com/Stellar-Index/StellarIndex/commit/${sha}`}
       target="_blank"
       rel="noopener noreferrer"
       title={`Built ${time} from commit ${sha}`}

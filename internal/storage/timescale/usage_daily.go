@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/usage"
+	"github.com/Stellar-Index/StellarIndex/internal/usage"
 )
 
 // UpsertUsageDaily merges a batch of per-(day, subject, endpoint)

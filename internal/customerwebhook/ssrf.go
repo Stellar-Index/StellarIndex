@@ -9,7 +9,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/nettools"
+	"github.com/Stellar-Index/StellarIndex/internal/nettools"
 )
 
 // ssrfGuardedDialContext is the [net/http.Transport]'s DialContext

@@ -12,7 +12,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarIndex/stellar-index/internal/sdexclaim"
+	"github.com/Stellar-Index/StellarIndex/internal/sdexclaim"
 )
 
 // ExtractLedger structurally decodes one LedgerCloseMeta into Tier-1 rows.

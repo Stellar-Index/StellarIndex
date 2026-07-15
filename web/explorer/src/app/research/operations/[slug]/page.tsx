@@ -74,7 +74,7 @@ export default async function OperationsDocPage({
           {doc.description}
         </p>
         <a
-          href={`https://github.com/StellarIndex/stellar-index/blob/main/${doc.source_path}`}
+          href={`https://github.com/Stellar-Index/StellarIndex/blob/main/${doc.source_path}`}
           target="_blank"
           rel="noreferrer noopener"
           className="inline-flex items-center gap-1 text-xs text-ink-muted hover:text-brand-600"

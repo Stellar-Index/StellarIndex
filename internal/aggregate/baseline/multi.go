@@ -4,7 +4,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
 // Window-length constants used by the multi-window safeguard

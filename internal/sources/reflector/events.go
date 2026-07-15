@@ -10,7 +10,7 @@ package reflector
 import (
 	"errors"
 
-	"github.com/StellarIndex/stellar-index/internal/scval"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 // Source name constants — one per Reflector contract variant.

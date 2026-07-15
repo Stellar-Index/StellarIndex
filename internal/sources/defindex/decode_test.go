@@ -8,9 +8,9 @@ import (
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 
-	"github.com/StellarIndex/stellar-index/internal/contractid"
+	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 )
 
 // TestClassify_depositWithdraw covers the topic-byte equality path —

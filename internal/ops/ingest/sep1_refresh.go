@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/config"
-	"github.com/StellarIndex/stellar-index/internal/metadata"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/metadata"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // sep1RefreshCmd resolves the SEP-1 stellar.toml for every issuer

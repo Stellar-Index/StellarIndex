@@ -16,7 +16,7 @@ groups:
         labels:
           severity: ticket
           component: projector
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/projector-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-lag.md
         annotations:
           summary: "Projector source {{ $labels.source }} lagging > 256 ledgers"
           description: |
@@ -35,7 +35,7 @@ groups:
         labels:
           severity: ticket
           component: projector
-          runbook_url: https://github.com/StellarIndex/stellar-index/blob/main/docs/operations/runbooks/projector-lag.md
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-lag.md
         annotations:
           summary: "Projector source {{ $labels.source }} cycle errors sustained"
           description: |

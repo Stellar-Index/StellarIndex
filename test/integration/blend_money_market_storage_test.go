@@ -11,9 +11,9 @@ import (
 
 	_ "github.com/lib/pq"
 
-	"github.com/StellarIndex/stellar-index/internal/domain"
-	"github.com/StellarIndex/stellar-index/internal/sources/blend"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TestBlendPositionsRoundTrip exercises the InsertBlendPositionEvent

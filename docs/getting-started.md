@@ -161,14 +161,14 @@ your needs (see [ADR-0018](adr/0018-api-consistency-surfaces.md)).
 
 | Language | Package | Status |
 |---|---|---|
-| Go | `github.com/StellarIndex/stellar-index/pkg/client` | v0.x — public-launch hardening |
+| Go | `github.com/Stellar-Index/StellarIndex/pkg/client` | v0.x — public-launch hardening |
 | TypeScript | (planned) | — |
 | Python | (planned) | — |
 
 The Go client is a thin layer over the v1 REST API:
 
 ```go
-import "github.com/StellarIndex/stellar-index/pkg/client"
+import "github.com/Stellar-Index/StellarIndex/pkg/client"
 
 c := client.New(client.Options{
     BaseURL: "https://api.stellarindex.io",
@@ -237,7 +237,7 @@ Stellar Index is Apache-2.0; the full stack runs locally with one
 command:
 
 ```sh
-git clone git@github.com:StellarIndex/stellar-index.git
+git clone git@github.com:Stellar-Index/StellarIndex.git
 cd stellar-index
 make dev    # docker-compose: TimescaleDB + Redis + MinIO (app binaries run on the host)
 ```
@@ -258,12 +258,12 @@ deployment runs three geographically-separated archival nodes per
 - **Documentation:** [`docs/`](.) in this repo, or the rendered
   reference at [`docs.stellarindex.io`](https://docs.stellarindex.io).
 - **Issues:** open one at
-  [github.com/StellarIndex/stellar-index/issues](https://github.com/StellarIndex/stellar-index/issues).
+  [github.com/Stellar-Index/StellarIndex/issues](https://github.com/Stellar-Index/StellarIndex/issues).
 - **Security:** `security@stellarindex.io` (do not open a public
   issue for security findings — see [SECURITY.md](../SECURITY.md)).
 
 ## What changed recently
 
 See [CHANGELOG.md](../CHANGELOG.md) for the per-release detail or
-[GitHub Releases](https://github.com/StellarIndex/stellar-index/releases)
+[GitHub Releases](https://github.com/Stellar-Index/StellarIndex/releases)
 for the operator-facing summaries.

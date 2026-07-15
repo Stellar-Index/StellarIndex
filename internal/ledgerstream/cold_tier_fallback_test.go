@@ -10,7 +10,7 @@ import (
 	sdklog "github.com/stellar/go-stellar-sdk/support/log"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/StellarIndex/stellar-index/internal/ledgerstream"
+	"github.com/Stellar-Index/StellarIndex/internal/ledgerstream"
 )
 
 // TestStream_ColdTierInitFailure_FallsBackToHotOnly proves BACKLOG

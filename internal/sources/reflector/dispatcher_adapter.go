@@ -1,8 +1,8 @@
 package reflector
 
 import (
-	"github.com/StellarIndex/stellar-index/internal/consumer"
-	"github.com/StellarIndex/stellar-index/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
 // Decoder is the dispatcher-facing view of one Reflector oracle

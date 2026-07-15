@@ -11,7 +11,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/StellarIndex/stellar-index/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
 // KeyPolicy returns a Middleware that enforces the per-key policy

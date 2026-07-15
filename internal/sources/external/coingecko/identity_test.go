@@ -3,7 +3,7 @@ package coingecko
 import (
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // Coingecko is an aggregator (composite index over upstream venues),

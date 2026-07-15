@@ -39,7 +39,7 @@ and the same-hour remediation.
 | All-Time = since asset inception | ✅ | XLM/USDC full (2021-02 IS its inception). XLM/fiat:USD deep history backfilled from kraken raw fills to 2018-07 (board #44; kraken's own listing date); per-market inception queryable via `/v1/markets?include=inception` |
 | HA, low-latency, high query volume | ✅ | p95 54ms origin-direct (k6, AC2); CDN in front; 99.99% uptime record claimed in proposal upheld by status page history |
 | Explain unavailable/diverging prices | ✅ **exceeds** | `flags{stale, reduced_redundancy, triangulated, divergence_warning, divergence_checked}` on every price + confidence scoring + divergence workers vs CoinGecko/Chainlink + public methodology docs |
-| **Completely open source (Tranche I & II)** | ✅ | github.com/StellarIndex/stellar-index is PUBLIC (verified `gh repo view` 2026-07-03 — the audit's first draft wrongly said private from stale memory; see §4 for the incident that correction triggered) |
+| **Completely open source (Tranche I & II)** | ✅ | github.com/Stellar-Index/StellarIndex is PUBLIC (verified `gh repo view` 2026-07-03 — the audit's first draft wrongly said private from stale memory; see §4 for the incident that correction triggered) |
 | Asset metadata (code/price/type/issuer/contract/home_domain) | ✅ | All fields incl. `contract_id` on classic + native (derived SAC address, board #40 shipped 2026-07-03) |
 | Production API ~10 weeks | ✅ | Live since deliverable claim 2026-06-13 (AC1-7 evidenced) |
 | API reference docs + self-service onboarding | ✅ | docs.stellarindex.io (generated from OpenAPI), dashboard signup → API key (`sip_` prefix), Postman collection, curl examples |

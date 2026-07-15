@@ -7,8 +7,8 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 
-	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
-	"github.com/StellarIndex/stellar-index/internal/storage/clickhouse"
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 // mkLStrkey builds a deterministic native-pool L-strkey from a seed.

@@ -4,7 +4,7 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // fakeDecimalsLookup is a trivial in-memory DecimalsLookup for tests.

@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/StellarIndex/stellar-index/internal/scval"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 func main() {

@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
-	"github.com/StellarIndex/stellar-index/internal/supply"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 
-	v1 "github.com/StellarIndex/stellar-index/internal/api/v1"
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
 // stubSupplyLooker implements v1.SupplyLooker for tests.

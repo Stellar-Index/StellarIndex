@@ -7,11 +7,11 @@ import (
 	"os"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/config"
-	"github.com/StellarIndex/stellar-index/internal/ops/opsutil"
-	"github.com/StellarIndex/stellar-index/internal/sources/soroswap"
-	soroswap_router "github.com/StellarIndex/stellar-index/internal/sources/soroswap_router"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // tagRoutedVia is the HISTORICAL half of router attribution

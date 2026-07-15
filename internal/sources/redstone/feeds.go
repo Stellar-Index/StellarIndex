@@ -3,7 +3,7 @@ package redstone
 import (
 	"math/big"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // feedEntry is one row of the RedStone feed registry: the canonical

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/StellarIndex/stellar-index/internal/canonical/discovery"
-	"github.com/StellarIndex/stellar-index/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical/discovery"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TestDiscoveryRoundTrip exercises the SEP-41 auto-discovery

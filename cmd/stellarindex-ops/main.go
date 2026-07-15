@@ -49,16 +49,16 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/StellarIndex/stellar-index/internal/config"
-	"github.com/StellarIndex/stellar-index/internal/ops/archive"
-	"github.com/StellarIndex/stellar-index/internal/ops/chops"
-	"github.com/StellarIndex/stellar-index/internal/ops/diagnostics"
-	"github.com/StellarIndex/stellar-index/internal/ops/discovery"
-	"github.com/StellarIndex/stellar-index/internal/ops/ingest"
-	"github.com/StellarIndex/stellar-index/internal/ops/opsutil"
-	"github.com/StellarIndex/stellar-index/internal/ops/supply"
-	"github.com/StellarIndex/stellar-index/internal/pipeline"
-	"github.com/StellarIndex/stellar-index/internal/version"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/archive"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/chops"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/diagnostics"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/discovery"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/ingest"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/supply"
+	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
+	"github.com/Stellar-Index/StellarIndex/internal/version"
 )
 
 // main is a thin shim over realMain so deferred functions (notably
