@@ -16,6 +16,20 @@ against.
 ## [Unreleased]
 
 ### Added
+- **`soroswap_router.Event` pinned `projected=false` in
+  `IsProjectedEvent`'s table-driven test** (`internal/pipeline/projected_test.go`).
+  soroswap_router rows mix a REALIZED amount with a user-supplied
+  slippage LIMIT in `AmountIn`/`AmountOut` — a price derived from them
+  would be the limit price, not the realized price, so router rows
+  must never reach pricing/VWAP. That exclusion was already
+  double-guarded (2026-07-10, `aa44efef`): `pipeline/sink.go`'s
+  `soroswap_router.Event` case writes only to `soroswap_router_swaps`,
+  never `trades`, and `external.Registry["soroswap-router"]` is
+  `ClassRouter`/`IncludeInVWAP=false` so the aggregator's
+  `filterForVWAP` drops it even in defense-in-depth. This closes the
+  one gap in that guard: `IsProjectedEvent` itself had no direct
+  executable assertion for the router event type. Regression-only —
+  no production code changed.
 - **`stellarindex-ops verify-lake`** — a single "is the lake sound?"
   invocation for cron/Healthchecks.io that COMPOSES the three existing
   standing ADR-0034 lake-verification checks into one call with one
