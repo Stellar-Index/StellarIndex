@@ -5597,7 +5597,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Per-source completeness verdicts (ADR-0033) — the public trust surface.
+         * Per-source completeness verdicts (ADR-0033/ADR-0034) — the public trust surface.
          * @description Every indexed source's latest completeness verdict: the three
          *     provable claims (substrate continuity, recognition, projection
          *     reconciliation) plus the headline `complete` boolean, the
@@ -5608,6 +5608,17 @@ export interface paths {
          *
          *     Verdicts change only when the completeness audit runs, so the
          *     endpoint is cheap and served with `public, max-age=60`.
+         *
+         *     **Two axes** (ADR-0033/ADR-0034 two-axis verdict): `lake_complete`
+         *     is the certified ClickHouse ARCHIVE's genesis-to-tip claim
+         *     (substrate ∧ recognition only) — "everything for every ledger,
+         *     ever" for that source. `complete` is the SERVED tier's claim:
+         *     `lake_complete` additionally gated by the projection reconcile,
+         *     which is retention-scoped by design (Postgres is the served
+         *     working set, not the archive — ADR-0034). A source can read
+         *     `lake_complete: true, complete: false`: the archive is proven
+         *     genesis-complete even though the served tier only reconciles
+         *     within its retention window.
          */
         get: {
             parameters: {
@@ -5631,6 +5642,7 @@ export interface paths {
                          *           {
                          *             "source": "aquarius",
                          *             "complete": true,
+                         *             "lake_complete": true,
                          *             "substrate_ok": true,
                          *             "recognition_ok": true,
                          *             "projection_ok": true,
@@ -5640,9 +5652,24 @@ export interface paths {
                          *             "coverage_pct": 1,
                          *             "detail": "complete: substrate + recognition + projection verified to tip",
                          *             "computed_at": "2026-07-03T05:30:21.937134Z"
+                         *           },
+                         *           {
+                         *             "source": "soroswap",
+                         *             "complete": false,
+                         *             "lake_complete": true,
+                         *             "substrate_ok": true,
+                         *             "recognition_ok": true,
+                         *             "projection_ok": false,
+                         *             "genesis_ledger": 61500000,
+                         *             "watermark_ledger": 63305532,
+                         *             "tip_ledger": 63305532,
+                         *             "coverage_pct": 1,
+                         *             "detail": "projection: 3 mismatched ledger(s) outside the served retention window",
+                         *             "computed_at": "2026-07-03T05:30:21.937134Z"
                          *           }
                          *         ],
                          *         "complete_sources": 14,
+                         *         "lake_complete_sources": 15,
                          *         "total_sources": 15
                          *       },
                          *       "as_of": "2026-07-03T22:38:20.564931481Z",
@@ -5660,16 +5687,38 @@ export interface paths {
                                 sources: {
                                     /** @example soroswap */
                                     source: string;
+                                    /**
+                                     * @description SERVED/combined axis: substrate ∧ recognition ∧
+                                     *     projection. Projection reconcile is
+                                     *     retention-scoped (ADR-0034: Postgres is the
+                                     *     served tier, not the archive), so this can be
+                                     *     false even when lake_complete is true.
+                                     */
                                     complete: boolean;
+                                    /**
+                                     * @description LAKE/archive axis: substrate ∧ recognition only,
+                                     *     genesis-to-tip, decoupled from the
+                                     *     retention-scoped projection reconcile — "the
+                                     *     certified ClickHouse archive is contiguous +
+                                     *     hash-chained + recognition-complete from genesis
+                                     *     to tip for this source." Two-axis verdict per
+                                     *     notes/DECISION-genesis-complete-verdict-2026-07-16.md
+                                     *     (Option B).
+                                     */
+                                    lake_complete: boolean;
                                     substrate_ok: boolean;
                                     recognition_ok: boolean;
                                     projection_ok: boolean;
                                     /** Format: int64 */
                                     genesis_ledger: number;
-                                    /** Format: int64 */
+                                    /**
+                                     * Format: int64
+                                     * @description Lake-axis watermark (substrate ∧ recognition), NOT gated by projection.
+                                     */
                                     watermark_ledger: number;
                                     /** Format: int64 */
                                     tip_ledger: number;
+                                    /** @description Lake-axis coverage (watermark vs tip) — see watermark_ledger. */
                                     coverage_pct: number;
                                     /** Format: int64 */
                                     first_problem_ledger?: number;
@@ -5677,7 +5726,10 @@ export interface paths {
                                     /** Format: date-time */
                                     computed_at: string;
                                 }[];
+                                /** @description Count of sources with complete=true (served/combined axis). */
                                 complete_sources: number;
+                                /** @description Count of sources with lake_complete=true (lake/archive axis). */
+                                lake_complete_sources: number;
                                 total_sources: number;
                             };
                         };

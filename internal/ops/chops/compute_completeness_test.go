@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
@@ -116,5 +117,57 @@ func TestReconciliationCatalogue_OracleSourcesOptOut(t *testing.T) {
 		if allowedAggregate[src.name] && src.aggregateReconcile == "" {
 			t.Errorf("%s should carry aggregateReconcile (documented oracle keying vintages)", src.name)
 		}
+	}
+}
+
+// TestCombineWatermark_LakeDecouplesFromProjection pins the
+// ADR-0033/0034 two-axis verdict (decision brief
+// notes/DECISION-genesis-complete-verdict-2026-07-16.md, Option B): a
+// source whose substrate+recognition watermark reaches tip (srW.Complete
+// = lake_complete = true) but whose served-tier projection fails
+// (projOK = false) must report complete=false while lake_complete stays
+// true — the lake (archive) axis is never gated by the retention-scoped
+// projection reconcile. combineWatermark is what compute-completeness's
+// CH branch calls to derive `w` (the served/combined axis); lake_complete
+// itself is read straight off srW, never off the return of this call.
+func TestCombineWatermark_LakeDecouplesFromProjection(t *testing.T) {
+	srW := completeness.Watermark{
+		Genesis: 61_500_000, Tip: 63_305_532, Ledger: 63_305_532,
+		Complete: true, CoveragePct: 1,
+	}
+	lakeComplete := srW.Complete // exactly what the compute loop does
+
+	// Projection fails (retention-scoped reconcile found a mismatch) —
+	// the combined/served axis must go false.
+	combined := combineWatermark(srW, false)
+	if combined.Complete {
+		t.Fatal("combined (served) watermark should be Complete=false when projOK=false")
+	}
+	if !lakeComplete {
+		t.Fatal("lake_complete must stay true — it must never be gated by projection")
+	}
+
+	// Projection also holds — combined matches the lake watermark.
+	combinedOK := combineWatermark(srW, true)
+	if !combinedOK.Complete {
+		t.Error("combined watermark should be Complete=true when both srW and projOK hold")
+	}
+	if combinedOK.Ledger != srW.Ledger || combinedOK.CoveragePct != srW.CoveragePct {
+		t.Errorf("combineWatermark must not otherwise mutate the lake watermark's fields: got %+v, want ledger/coverage from %+v", combinedOK, srW)
+	}
+
+	// srW itself must be untouched by combineWatermark (no aliasing bug).
+	if !srW.Complete {
+		t.Error("combineWatermark must not mutate its srW argument")
+	}
+}
+
+// TestCombineWatermark_LakeIncompleteStaysIncomplete — when the lake
+// axis itself has a problem, the combined axis can never be true
+// regardless of projOK (AND, not OR).
+func TestCombineWatermark_LakeIncompleteStaysIncomplete(t *testing.T) {
+	srW := completeness.Watermark{Genesis: 100, Tip: 200, Ledger: 150, Complete: false, FirstProblem: 151}
+	if combined := combineWatermark(srW, true); combined.Complete {
+		t.Error("combined watermark cannot be Complete=true when the lake watermark itself is incomplete")
 	}
 }

@@ -255,6 +255,16 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// fidelity claim on the served tier, evaluated separately so its keying
 		// artifacts / retention-scoping don't corrupt the coverage signal.
 		srW := completeness.ComputeWatermark(genesis, tip, problems)
+		// Lake (archive) axis: substrate ∧ recognition only. `problems` at
+		// this point holds no projection gaps in either branch below (the
+		// CH branch never adds them here; the PG/legacy branch only
+		// appends its projection gaps to `problems` AFTER this line), so
+		// srW.Complete is genuinely decoupled from projection — the
+		// ADR-0033/0034 two-axis verdict (decision brief
+		// notes/DECISION-genesis-complete-verdict-2026-07-16.md, Option
+		// B). lake_complete must NEVER be gated by the retention-scoped
+		// projection reconcile.
+		lakeComplete := srW.Complete
 		projOK := false
 		var w completeness.Watermark
 		// Incremental: only reconcile [from, srW.Ledger], trusting [genesis, from]
@@ -278,9 +288,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 				detail = append(detail, "projection: not evaluated (earlier claim failed at genesis)")
 			}
 			// Coverage = substrate∧recognition (proven data capture). complete
-			// additionally requires the served-tier projection to reconcile.
-			w = srW
-			w.Complete = srW.Complete && projOK
+			// additionally requires the served-tier projection to reconcile;
+			// lakeComplete (set above, pre-projection) never does.
+			w = combineWatermark(srW, projOK)
 		} else {
 			// Legacy Postgres path: strict per-ledger projection pins the watermark.
 			if srW.Ledger >= genesis {
@@ -305,14 +315,15 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		if err := store.UpsertCompletenessSnapshot(ctx, timescale.CompletenessSnapshot{
 			Source: src.name, Genesis: genesis, Tip: tip,
 			Watermark: w.Ledger, CoveragePct: w.CoveragePct, Complete: w.Complete,
+			LakeComplete: lakeComplete,
 			FirstProblem: w.FirstProblem,
 			SubstrateOK:  substrateOK, RecognitionOK: recOK, ProjectionOK: projOK,
 			Detail: strings.Join(detail, "; "),
 		}); err != nil {
 			return fmt.Errorf("%s: upsert snapshot: %w", src.name, err)
 		}
-		fmt.Fprintf(os.Stderr, "compute-completeness: %-14s watermark=%d coverage=%.4f complete=%v (%s)\n",
-			src.name, w.Ledger, w.CoveragePct, w.Complete, strings.Join(detail, "; "))
+		fmt.Fprintf(os.Stderr, "compute-completeness: %-14s watermark=%d coverage=%.4f complete=%v lake_complete=%v (%s)\n",
+			src.name, w.Ledger, w.CoveragePct, w.Complete, lakeComplete, strings.Join(detail, "; "))
 	}
 
 	// ── System recognition snapshot (gaps on contracts no source owns) ──
@@ -331,6 +342,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		if err := store.UpsertCompletenessSnapshot(ctx, timescale.CompletenessSnapshot{
 			Source: "recognition", Genesis: sorobanEraGenesis, Tip: tip,
 			Watermark: recW.Ledger, CoveragePct: recW.CoveragePct, Complete: recW.Complete,
+			LakeComplete: recW.Complete, // no projection axis on this system snapshot
 			FirstProblem: recW.FirstProblem, SubstrateOK: true, RecognitionOK: len(unattributed) == 0, ProjectionOK: true,
 			Detail: detail,
 		}); err != nil {
@@ -340,6 +352,19 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	}
 
 	return nil
+}
+
+// combineWatermark applies the served-tier projection gate to the lake
+// (substrate∧recognition) watermark srW: the returned watermark's
+// Complete additionally requires projOK — this is the `complete`
+// (served/combined) axis. It does NOT touch srW.Complete itself, which
+// callers read separately as lake_complete — the two-axis verdict from
+// notes/DECISION-genesis-complete-verdict-2026-07-16.md (Option B).
+// Pure and deterministic, mirroring completeness.ComputeWatermark.
+func combineWatermark(srW completeness.Watermark, projOK bool) completeness.Watermark {
+	w := srW
+	w.Complete = srW.Complete && projOK
+	return w
 }
 
 // reconcileSourceProjection reconciles every table a source writes over

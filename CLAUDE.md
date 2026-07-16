@@ -246,7 +246,15 @@ infeasible (OLTP-for-OLAP, billions of rows). Consequences:
 - **"100% coverage" = the ClickHouse substrate captured everything**
   (provable: ledgers contiguous + hash-chained to genesis). The served
   tier is verified faithful *within what it holds* (ADR-0033 projection
-  reconcile, retention-scoped).
+  reconcile, retention-scoped). "Retention-scoped" here means scoped to
+  what has been **PROJECTED** into the served tier — not every source is
+  projected genesis-wide (e.g. soroswap trades start ~ledger 61.5M) —
+  NOT a DB-level drop policy; `trades` itself carries no retention (see
+  next bullet). `/v1/coverage`'s two-axis verdict (`lake_complete` vs
+  `complete`, notes/DECISION-genesis-complete-verdict-2026-07-16.md)
+  surfaces this split publicly: `lake_complete` is the archive's
+  genesis-to-tip claim, `complete` is additionally gated by that
+  projection window.
 - **Raw `trades` are kept forever** in Postgres — migration 0031 removed
   the old 90-day retention (storage is not a constraint). If you see a
   `drop_after` retention policy on `trades`, it's drift — remove it.
