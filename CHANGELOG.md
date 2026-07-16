@@ -16,6 +16,25 @@ against.
 ## [Unreleased]
 
 ### Added
+- **`stellarindex-ops verify-hashchain`** — a standing ADR-0034
+  data-verification tool proving the ClickHouse raw lake's ledger substrate
+  is HASH-CHAINED, not just present — the second half of the "ledgers
+  contiguous AND hash-chained to genesis" claim (`verify-contiguity` proves
+  the first half). For every ledger `n` in `[-from,-to]`, asserts
+  `prev_hash == ledger n-1's ledger_hash`. Two checks, both windowed at
+  `verify-contiguity`'s same 1M-ledger buckets: (1) in-window links, via a
+  `lagInFrame(ledger_hash)` window function ordered by `ledger_seq`, one
+  cheap count-shaped query per window; (2) boundary links, a 2-row point
+  lookup at every window seam (the window function can't see across a
+  window's own bounds), where an absent predecessor counts as a broken link
+  same as a present-but-mismatched one, tagged distinctly in the report.
+  Per-ledger localization is bounded (capped at 200 entries) and only runs
+  for windows the headline already flagged nonzero. A missing ledger is
+  reported as a broken link too — run `verify-contiguity` first to tell
+  "missing ledger" apart from "present but wrong hash". Read-only; touches
+  ClickHouse only, never Postgres. Exit code = in-window broken links +
+  boundary broken links (capped at 255), mirroring `verify-contiguity`'s
+  convention.
 - **`stellarindex-ops verify-contiguity`** — a standing ADR-0034
   data-verification tool for the ClickHouse raw lake, exit-code-gated for
   cron/Healthchecks.io. Two checks: (1) ledger substrate contiguity — every

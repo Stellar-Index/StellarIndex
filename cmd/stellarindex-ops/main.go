@@ -33,7 +33,8 @@
 //     `ch-recognition`, `verify-recognition`, `verify-reconciliation`,
 //     `compute-completeness`, `verify-served-values`,
 //     `sdex-claim-audit`, `classic-movements-backfill`,
-//     `projected-rebuild`, `reconcile-balances`, `verify-contiguity`.
+//     `projected-rebuild`, `reconcile-balances`, `verify-contiguity`,
+//     `verify-hashchain`.
 //   - Doc generation: `docs-config` (regenerates the config
 //     reference from struct tags; called by `make docs-config`).
 //
@@ -150,6 +151,7 @@ var subcommands = map[string]func(args []string) error{
 	"projected-rebuild":          chops.Run,
 	"reconcile-balances":         chops.Run,
 	"verify-contiguity":          chops.Run,
+	"verify-hashchain":           chops.Run,
 }
 
 func realMain() int {
@@ -808,6 +810,37 @@ Subcommands:
                           directly. Example:
                             stellarindex-ops verify-contiguity \
                               -ch-addr 127.0.0.1:9300 -ec-floor 63050000
+  verify-hashchain [-config PATH] [-ch-addr H:P] [-from N] [-to N]
+                          Standing ADR-0034 data-verification tool proving the
+                          ClickHouse raw lake's ledger substrate is
+                          HASH-CHAINED, not just present — the second half of
+                          the "ledgers contiguous AND hash-chained to genesis"
+                          claim (verify-contiguity proves the first half). For
+                          every ledger n in [-from,-to] (default 2..CH max),
+                          asserts prev_hash == ledger n-1's ledger_hash. Two
+                          checks, both windowed at the same 1M-ledger buckets
+                          as verify-contiguity: (1) in-window links, via a
+                          lagInFrame(ledger_hash) window function ordered by
+                          ledger_seq, one cheap count-shaped query per window;
+                          (2) boundary links, a 2-row point lookup at every
+                          window seam (lagInFrame can't see across a window's
+                          own WHERE bounds). A broken or absent predecessor at
+                          a seam counts as a broken link either way, tagged
+                          distinctly in the report. Per-ledger localization
+                          (which exact ledger_seq is broken, capped at 200
+                          entries) only runs for windows the headline already
+                          flagged nonzero. NOTE: a missing ledger (a
+                          contiguity gap) is ALSO reported as a broken link
+                          here, because the chain necessarily fails to
+                          connect across it — run verify-contiguity first to
+                          tell "missing ledger" apart from "present but wrong
+                          hash". Read-only; touches ClickHouse only, never
+                          Postgres. Exit code = in-window broken links +
+                          boundary broken links (capped at 255), mirroring
+                          verify-contiguity's convention so cron/
+                          Healthchecks.io can consume it directly. Example:
+                            stellarindex-ops verify-hashchain \
+                              -ch-addr 127.0.0.1:9300 -from 2 -to 60000000
   verify-recognition -config PATH -from N -to N
                           ADR-0033 Claim 2a: pull every distinct
                           (contract, topic[0]) shape from soroban_events
