@@ -70,7 +70,7 @@ export default function DiagnosticsPage() {
       <section className="space-y-4">
         <SectionHeader
           title="Decoder coverage"
-          description="Per-source completeness verdicts — substrate continuity, event recognition, and projection reconciliation proven per source (ADR-0033)."
+          description="Per-source completeness verdicts — substrate continuity, event recognition, and projection reconciliation proven per source. Two axes: the served tier (retention-scoped) and the archive/lake (proven genesis-to-tip) can diverge (ADR-0033/0034)."
         />
         <CoveragePanel />
       </section>
