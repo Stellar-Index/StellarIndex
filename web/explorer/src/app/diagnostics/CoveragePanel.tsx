@@ -15,6 +15,14 @@ import { useCoverage, type CoverageVerdict } from '@/api/hooks';
  * "N/N complete" headline is computed from — one row per source
  * with the three claims broken out so a red verdict says WHICH
  * claim failed.
+ *
+ * ADR-0034 two-axis verdict: `complete` (served tier — substrate +
+ * recognition + projection, retention-scoped, since Postgres only
+ * holds the recent working set) and `lake_complete` (archive tier —
+ * substrate + recognition only, proven genesis-to-tip in the
+ * certified ClickHouse lake, independent of served-tier retention).
+ * A source can be `lake_complete: true, complete: false` — the full
+ * history is proven, the served tier just hasn't reconciled it all.
  */
 export function CoveragePanel() {
   const { data, isLoading, error } = useCoverage();
@@ -40,11 +48,12 @@ export function CoveragePanel() {
   }
 
   const allComplete = data.complete_sources === data.total_sources;
+  const allLakeComplete = data.lake_complete_sources === data.total_sources;
 
   return (
     <section className="rounded-lg border border-line bg-surface p-4">
-      <header className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <div className="flex items-baseline gap-3">
+      <header className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+        <div className="flex flex-wrap items-baseline gap-3">
           <h3 className="text-sm font-semibold uppercase tracking-wider text-ink-body">
             Completeness verdicts
           </h3>
@@ -52,23 +61,49 @@ export function CoveragePanel() {
             className={`rounded-sm px-2 py-0.5 font-mono text-xs tabular-nums ${
               allComplete ? 'bg-up-subtle text-up' : 'bg-down-subtle text-down'
             }`}
+            title="Served tier: substrate + recognition + projection verified, scoped to Postgres's retention window."
           >
-            {data.complete_sources}/{data.total_sources} complete
+            {data.complete_sources}/{data.total_sources} served tier
+          </span>
+          <span
+            className={`rounded-sm px-2 py-0.5 font-mono text-xs tabular-nums ${
+              allLakeComplete ? 'bg-up-subtle text-up' : 'bg-down-subtle text-down'
+            }`}
+            title="Archive (lake): the certified ClickHouse archive is contiguous and hash-chained from genesis to tip — independent of the served tier's retention window."
+          >
+            {data.lake_complete_sources}/{data.total_sources} archive (lake)
           </span>
         </div>
         <span className="text-xs text-ink-faint">
-          ADR-0033 · /v1/coverage ·{' '}
+          ADR-0033/0034 · /v1/coverage ·{' '}
           <Link href="/status" className="text-brand-600 hover:underline">
             status →
           </Link>
         </span>
       </header>
+      <p className="mb-3 text-xs text-ink-faint">
+        <strong className="font-medium text-ink-muted">Served tier</strong> = verified within
+        Postgres&apos;s retention window (what the API queries).{' '}
+        <strong className="font-medium text-ink-muted">Archive (lake)</strong> = the certified
+        ClickHouse archive, proven genesis-to-tip regardless of retention.
+      </p>
       <div className="-mx-4 overflow-x-auto">
         <table className="min-w-full divide-y divide-line text-sm">
           <thead>
             <tr className="text-left text-[10px] uppercase tracking-wider text-ink-muted">
               <th className="px-4 py-2 font-medium">Source</th>
-              <th className="px-4 py-2 font-medium">Verdict</th>
+              <th
+                className="px-4 py-2 font-medium"
+                title="Served tier: substrate + recognition + projection, retention-scoped."
+              >
+                Served
+              </th>
+              <th
+                className="px-4 py-2 font-medium"
+                title="Archive (lake): substrate + recognition, genesis-to-tip."
+              >
+                Lake
+              </th>
               <th className="px-4 py-2 font-medium">Claims</th>
               <th className="px-4 py-2 text-right font-medium">Watermark</th>
               <th className="px-4 py-2 text-right font-medium">Coverage</th>
@@ -102,8 +137,19 @@ function VerdictRow({ v }: { v: CoverageVerdict }) {
           className={`inline-flex items-center rounded-sm px-2 py-0.5 font-mono text-xs ${
             v.complete ? 'bg-up-subtle text-up' : 'bg-down-subtle text-down'
           }`}
+          title="Served tier: substrate + recognition + projection, retention-scoped."
         >
           {v.complete ? 'complete' : 'incomplete'}
+        </span>
+      </td>
+      <td className="px-4 py-2">
+        <span
+          className={`inline-flex items-center rounded-sm px-2 py-0.5 font-mono text-xs ${
+            v.lake_complete ? 'bg-up-subtle text-up' : 'bg-down-subtle text-down'
+          }`}
+          title="Archive (lake): substrate + recognition, genesis-to-tip — independent of served-tier retention."
+        >
+          {v.lake_complete ? 'genesis-complete' : 'partial'}
         </span>
       </td>
       <td className="px-4 py-2">

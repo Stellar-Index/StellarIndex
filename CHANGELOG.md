@@ -50,6 +50,15 @@ against.
   Additive migration (DEFAULT false, old-binary-safe); also corrects a
   stale table comment from migration 0052 that claimed
   `watermark_ledger` included projection.
+- **Explorer: `lake_complete` surfaced on `/diagnostics`'s Decoder
+  coverage panel** (`web/explorer/src/app/diagnostics/CoveragePanel.tsx`).
+  Per-source rows now show a "Served" indicator (the existing combined
+  `complete`) alongside a new "Lake" indicator (`lake_complete`), and the
+  header gains a second `lake_complete_sources`/`total_sources` tally
+  next to the existing `complete_sources` one — both labelled and
+  tooltipped ("Served tier" vs "Archive (lake)") so the two-axis verdict
+  is legible without reading the ADR. No API/type changes; the wire
+  fields already existed (migration 0108 / spec 1.10.0).
 - **`soroswap_router.Event` pinned `projected=false` in
   `IsProjectedEvent`'s table-driven test** (`internal/pipeline/projected_test.go`).
   soroswap_router rows mix a REALIZED amount with a user-supplied
