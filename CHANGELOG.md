@@ -15,6 +15,23 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **`stellarindex-ops reconcile-balances`** — an ADR-0033-style acceptance test
+  for the "verified explorer" claim: proves `stellar.ledger_entry_changes`
+  reflects true on-chain state by comparing our latest recorded NATIVE (XLM)
+  balance for an account against public Horizon (a one-off, read-only verifier
+  — the case ADR-0001's Horizon ban doesn't cover, since it scopes to
+  production ingest, not a standalone verification tool). `-account G...`
+  reconciles one account; `-sample N` samples N accounts recently active in
+  our lake (a deterministic `cityHash64` pseudo-shuffle, so their latest
+  snapshot approximates current chain state). Classifies each account
+  MATCH/MISMATCH/NO_DATA/MERGED_OR_ABSENT; Horizon's decimal XLM balance is
+  parsed to exact stroops via `math/big` (never float64, per ADR-0003). Exit
+  code is the MISMATCH count (capped at 255), mirroring
+  `scripts/dev/r1-smoke.sh`'s convention for cron/Healthchecks.io consumption
+  — the new `opsutil.ExitCodeError` type lets a subcommand report a non-1 exit
+  code without bypassing `realMain`'s flush-on-exit discipline.
+
 ### CI
 - **`web/explorer` and `web/status` `pnpm audit` steps no longer red the build
   on `ERR_PNPM_AUDIT_BAD_RESPONSE`** — the npm advisory endpoint pnpm audit

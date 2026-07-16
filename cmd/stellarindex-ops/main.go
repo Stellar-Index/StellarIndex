@@ -33,7 +33,7 @@
 //     `ch-recognition`, `verify-recognition`, `verify-reconciliation`,
 //     `compute-completeness`, `verify-served-values`,
 //     `sdex-claim-audit`, `classic-movements-backfill`,
-//     `projected-rebuild`.
+//     `projected-rebuild`, `reconcile-balances`.
 //   - Doc generation: `docs-config` (regenerates the config
 //     reference from struct tags; called by `make docs-config`).
 //
@@ -148,6 +148,7 @@ var subcommands = map[string]func(args []string) error{
 
 	"classic-movements-backfill": chops.Run,
 	"projected-rebuild":          chops.Run,
+	"reconcile-balances":         chops.Run,
 }
 
 func realMain() int {
@@ -187,6 +188,13 @@ func realMain() int {
 		return 2
 	}
 	if err := run(args); err != nil {
+		var ec *opsutil.ExitCodeError
+		if errors.As(err, &ec) {
+			if ec.Err != nil {
+				fmt.Fprintf(os.Stderr, "%s: %v\n", args[0], ec.Err)
+			}
+			return ec.Code
+		}
 		if !errors.Is(err, opsutil.ErrExitSilently) {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", args[0], err)
 		}
@@ -731,6 +739,47 @@ Subcommands:
                               -config /etc/stellarindex.toml \
                               -source blend_backstop -from 51499546 \
                               -workers 6 -write
+  reconcile-balances (-account G... | -sample N) [-ch-addr H:P] [-horizon URL] [-tolerance-stroops N] [-min-recent-ledger N] [-sleep-ms N] [-timeout DUR]
+                          ADR-0033-style verification harness for the
+                          "verified explorer" claim: proves
+                          stellar.ledger_entry_changes reflects TRUE
+                          on-chain state by comparing our latest
+                          recorded NATIVE (XLM) balance for an account
+                          against an independent external source
+                          (public Horizon — a one-off, read-only
+                          verifier is exactly the case ADR-0001's
+                          Horizon ban doesn't cover; see the source
+                          file's doc comment). Requires exactly one of
+                          -account (reconcile one) or -sample N
+                          (reconcile N accounts sampled from accounts
+                          with a ledger_entry_changes row above
+                          -min-recent-ledger, default 60000000, ordered
+                          by a deterministic cityHash64 pseudo-shuffle
+                          so their latest snapshot approximates current
+                          chain state). Per account: reads our balance
+                          via argMax(balance, ledger_seq) (zero rows =
+                          NO_DATA, outside our coverage, not a
+                          mismatch), fetches Horizon's current native
+                          balance (404 = MERGED_OR_ABSENT — the account
+                          existed in our data but is gone now, reported
+                          not hard-failed), and classifies
+                          MATCH/MISMATCH by
+                          |our_stroops - ref_stroops| <= -tolerance-stroops
+                          (default 0). Horizon's decimal XLM string is
+                          parsed exactly via math/big (no float64
+                          anywhere in the path, per ADR-0003). Polite
+                          by default: serial requests with -sleep-ms
+                          (default 250) between them and a bounded
+                          429 backoff/retry. Prints a full MATCH/
+                          MISMATCH/NO_DATA/MERGED_OR_ABSENT report plus
+                          a one-line summary. Exit code = number of
+                          MISMATCHes (capped at 255), mirroring
+                          scripts/dev/r1-smoke.sh's convention so cron/
+                          Healthchecks.io can consume it directly.
+                          Example:
+                            stellarindex-ops reconcile-balances \
+                              -sample 50 -ch-addr 127.0.0.1:9300 \
+                              -horizon https://horizon.stellar.org
   verify-recognition -config PATH -from N -to N
                           ADR-0033 Claim 2a: pull every distinct
                           (contract, topic[0]) shape from soroban_events
