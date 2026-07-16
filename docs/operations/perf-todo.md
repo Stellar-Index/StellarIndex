@@ -195,3 +195,32 @@ stellarindex-ops ch-txindex-backfill -ch-addr 127.0.0.1:9300 -window 5000000
 # -from defaults to 2, -to 0 = current lake tip; on interrupt re-run
 # with the last printed "resume point -from N".
 ```
+
+### 5. `/v1/accounts/{g}/movements` extreme-address timeout (BACKLOG #72)
+
+- **Symptom:** > 20 s for extreme-volume addresses (airdrop-sink accounts, e.g.
+  264M movements). Ordinary addresses serve fast.
+- **Root cause:** `stellar.account_movements` is `PARTITION BY intDiv(ledger,
+  1000000)` (~473 partitions). An address's movements scatter across the ~140
+  partitions it was ever active in, and the reverse-keyset read
+  (`WHERE address = ? ORDER BY ledger DESC … LIMIT ?`) must open + merge all of
+  them. `address` already LEADS the table's `ORDER BY`, so the within-partition
+  read is already optimal — the cost is the cross-partition fan-out, which
+  ledger-range partitioning makes unavoidable.
+- **Projection evaluated + REJECTED (2026-07-16):** a ClickHouse `PROJECTION`
+  is always co-partitioned with its parent, so it cannot reduce the fan-out.
+  An `(address, ledger, …)` projection merely DUPLICATES this table's existing
+  sort order at ~2× storage for ~zero durable benefit. (This corrects the
+  ROADMAP's "structural fix: PROJECTION on (address, ledger)" note, which
+  predated the fact that the base table is already address-leading.)
+- **Partly transient:** Phase-0's concurrent genesis-extension writes into old
+  partitions inflate part counts; ReplacingMergeTree + background merges
+  collapse this post-Phase-0. **RE-EVALUATE after Phase 0 completes + merges
+  settle** before doing anything structural — it may self-heal below the
+  timeout.
+- **Real structural fix (only if it persists):** a `PARTITION BY` change or an
+  address-keyed secondary structure (e.g. a second table/MV partitioned by
+  `cityHash64(address) % N`) — a full 6.76B-row rebuild, heavy, out of scope
+  until there's a measured need. **Interim:** accept-and-monitor; if it becomes
+  user-facing, add a per-query timeout + a "history too large to page
+  interactively" response for the handful of extreme addresses.
