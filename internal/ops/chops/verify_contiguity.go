@@ -346,6 +346,16 @@ func ecFloorSegments(from, to, ecFloor uint32) (pendingFrom, pendingTo uint32, h
 // tag carries the check-specific verdict ("GAP", "OK",
 // "DEFICIENCY (at/above -ec-floor)", "BACKFILL-PENDING (...)"). Pure — no
 // ClickHouse dependency — so it's unit-testable without a live lake.
+//
+// missing is a SATURATING expected-present: for Check 2, present (distinct
+// entry_change ledgers) can exceed expected (tx-bearing ledgers) on
+// protocol-upgrade / config-change ledgers — matching
+// clickhouse.ECWindowCoverage.Missing(), and keeping the displayed count from
+// wrapping uint64 when it does.
 func formatCoverageLine(from, to uint32, expected, present uint64, tag string) string {
-	return fmt.Sprintf("  [%d,%d]  expected=%d present=%d missing=%d  %s", from, to, expected, present, expected-present, tag)
+	var missing uint64
+	if present < expected {
+		missing = expected - present
+	}
+	return fmt.Sprintf("  [%d,%d]  expected=%d present=%d missing=%d  %s", from, to, expected, present, missing, tag)
 }

@@ -136,9 +136,23 @@ type ECWindowCoverage struct {
 	TxLedgers, ECCovered uint64
 }
 
-// Missing is TxLedgers-ECCovered — tx-bearing ledgers in [From,To] with zero
-// stellar.ledger_entry_changes rows.
+// Missing is the count of tx-bearing ledgers in [From,To] with zero
+// stellar.ledger_entry_changes rows — a SATURATING TxLedgers-ECCovered.
+//
+// ECCovered counts DISTINCT ledger_seq in ledger_entry_changes regardless of
+// tx_count, so it can legitimately EXCEED TxLedgers: a protocol-upgrade
+// ledger (or, in early history, a config/base-reserve change) mutates
+// LedgerEntry state with tx_count==0, landing in entry_changes but not in the
+// tx-bearing count. Treating that as "meets-or-exceeds coverage → no
+// deficiency" is correct for this check's purpose; a raw uint64 subtraction
+// would instead wrap to ~1.8e19 and catastrophically false-fail the whole
+// run off a single such ledger. This makes Missing() a lower bound on the
+// true per-ledger gap (the exact gap needs an anti-join), which is the right
+// trade for a coarse coverage signal whose backfills fill whole ranges.
 func (w ECWindowCoverage) Missing() uint64 {
+	if w.ECCovered >= w.TxLedgers {
+		return 0
+	}
 	return w.TxLedgers - w.ECCovered
 }
 
