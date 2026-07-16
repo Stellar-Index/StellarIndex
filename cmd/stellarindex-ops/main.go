@@ -33,7 +33,7 @@
 //     `ch-recognition`, `verify-recognition`, `verify-reconciliation`,
 //     `compute-completeness`, `verify-served-values`,
 //     `sdex-claim-audit`, `classic-movements-backfill`,
-//     `projected-rebuild`, `reconcile-balances`.
+//     `projected-rebuild`, `reconcile-balances`, `verify-contiguity`.
 //   - Doc generation: `docs-config` (regenerates the config
 //     reference from struct tags; called by `make docs-config`).
 //
@@ -149,6 +149,7 @@ var subcommands = map[string]func(args []string) error{
 	"classic-movements-backfill": chops.Run,
 	"projected-rebuild":          chops.Run,
 	"reconcile-balances":         chops.Run,
+	"verify-contiguity":          chops.Run,
 }
 
 func realMain() int {
@@ -780,6 +781,33 @@ Subcommands:
                             stellarindex-ops reconcile-balances \
                               -sample 50 -ch-addr 127.0.0.1:9300 \
                               -horizon https://horizon.stellar.org
+  verify-contiguity [-config PATH] [-ch-addr H:P] [-from N] [-to N] [-ec-floor N] [-check ledgers|entrychanges|all]
+                          Standing ADR-0034 data-verification tool for the
+                          ClickHouse raw lake. Two checks: (1) ledger
+                          substrate contiguity — every ledger_seq in
+                          [-from,-to] (default 2..CH max) must be present in
+                          stellar.ledgers exactly once; starts with a cheap
+                          whole-range uniqExact() headline, and only pays for
+                          a windowed (1M-ledger bucket) scan + a bounded
+                          per-bucket gap-range localization pass (capped at
+                          200 ranges total) when a deficit is found. (2)
+                          stellar.ledger_entry_changes coverage vs.
+                          tx-bearing ledgers, split at -ec-floor (default
+                          63050000, the known live-ingest floor — coverage is
+                          100% from there to tip and partial below it,
+                          backfill in progress): missing coverage AT/ABOVE
+                          the floor is a DEFICIENCY (counts toward the exit
+                          code); missing BELOW the floor is reported as
+                          BACKFILL-PENDING, informational only. -check
+                          restricts to one check (ledgers|entrychanges),
+                          default all. Read-only; touches ClickHouse only,
+                          never Postgres. Exit code = ledger gaps +
+                          entry-change deficiencies at/above -ec-floor
+                          (capped at 255), mirroring reconcile-balances'
+                          convention so cron/Healthchecks.io can consume it
+                          directly. Example:
+                            stellarindex-ops verify-contiguity \
+                              -ch-addr 127.0.0.1:9300 -ec-floor 63050000
   verify-recognition -config PATH -from N -to N
                           ADR-0033 Claim 2a: pull every distinct
                           (contract, topic[0]) shape from soroban_events

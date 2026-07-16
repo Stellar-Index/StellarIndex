@@ -16,6 +16,23 @@ against.
 ## [Unreleased]
 
 ### Added
+- **`stellarindex-ops verify-contiguity`** — a standing ADR-0034
+  data-verification tool for the ClickHouse raw lake, exit-code-gated for
+  cron/Healthchecks.io. Two checks: (1) ledger substrate contiguity — every
+  `ledger_seq` in `[-from,-to]` must be present in `stellar.ledgers` exactly
+  once, verified with a cheap whole-range `uniqExact()` headline that only
+  escalates to a windowed (1M-ledger bucket) scan + a bounded per-bucket
+  gap-range localization pass (capped at 200 ranges) when a deficit is
+  found; (2) `stellar.ledger_entry_changes` coverage vs. tx-bearing ledgers,
+  formalizing the ad hoc probe that first found the ledger 63,050,000
+  live-ingest floor — coverage split at `-ec-floor` (default 63050000) into
+  a hard-gated DEFICIENCY at/above the floor (counts toward the exit code)
+  and an informational BACKFILL-PENDING note below it, so the exit code
+  stays meaningful (fails only on real regressions in the live-covered
+  zone) while backfill progress is still surfaced. Read-only; touches
+  ClickHouse only, never Postgres. Exit code = ledger gaps + entry-change
+  deficiencies at/above `-ec-floor` (capped at 255), mirroring
+  `reconcile-balances`' convention.
 - **`stellarindex-ops reconcile-balances`** — an ADR-0033-style acceptance test
   for the "verified explorer" claim: proves `stellar.ledger_entry_changes`
   reflects true on-chain state by comparing our latest recorded NATIVE (XLM)
