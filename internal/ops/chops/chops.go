@@ -9,17 +9,20 @@
 // `verify-recognition`, `verify-reconciliation`, `compute-completeness`,
 // `verify-served-values`, `sdex-claim-audit`,
 // `classic-movements-backfill`, `projected-rebuild`,
-// `reconcile-balances`, `verify-contiguity`, `verify-hashchain` —
-// ADR-0033/ADR-0034 completeness + reconciliation checks, the ADR-0034
-// Phase 2-4 lake backfill/gate/reproject/rebuild tools, the ADR-0047
-// pre-P23 classic-movement reconstruction backfill, the ADR-0048 D3 bulk
-// catch-up path for projected sources, the reconcile-balances external
-// (Horizon) balance-reconciliation verifier, verify-contiguity's standing
-// ledger-substrate + entry_changes-coverage lake verification, and
+// `reconcile-balances`, `verify-contiguity`, `verify-hashchain`,
+// `verify-lake` — ADR-0033/ADR-0034 completeness + reconciliation checks,
+// the ADR-0034 Phase 2-4 lake backfill/gate/reproject/rebuild tools, the
+// ADR-0047 pre-P23 classic-movement reconstruction backfill, the ADR-0048
+// D3 bulk catch-up path for projected sources, the reconcile-balances
+// external (Horizon) balance-reconciliation verifier, verify-contiguity's
+// standing ledger-substrate + entry_changes-coverage lake verification,
 // verify-hashchain's standing hash-chain verification (the "hash-chained
 // to genesis" half of ADR-0034's provable-100% claim that verify-contiguity
-// doesn't cover), which is why reconciliation_catalogue.go and
-// gated_recon_seed.go
+// doesn't cover), and verify-lake's composition of all three of the above
+// into a single "is the lake sound?" invocation for cron/Healthchecks.io
+// (verify_lake.go calls no check logic of its own — it orchestrates the
+// same package-private run* funcs verify-contiguity and verify-hashchain
+// call), which is why reconciliation_catalogue.go and gated_recon_seed.go
 // (shared re-derivation source-set + factory-child preseed helpers used
 // by ch-rebuild, ch-reproject, compute-completeness, and
 // verify-reconciliation) live here too rather than in a 7th package.
@@ -36,7 +39,7 @@ import (
 // Run is the internal/ops/chops package's entry point — see
 // discovery.Run's doc comment for the calling convention shared by
 // every internal/ops/* package post-split. args[0] is the subcommand
-// verb (one of the seventeen this package owns); args[1:] are its flags.
+// verb (one of the nineteen this package owns); args[1:] are its flags.
 func Run(args []string) error {
 	switch args[0] {
 	case "ch-backfill":
@@ -75,6 +78,8 @@ func Run(args []string) error {
 		return verifyContiguity(args[1:])
 	case "verify-hashchain":
 		return verifyHashChain(args[1:])
+	case "verify-lake":
+		return verifyLake(args[1:])
 	default:
 		return fmt.Errorf("internal/ops/chops: unknown subcommand %q", args[0])
 	}

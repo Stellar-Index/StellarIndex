@@ -16,6 +16,23 @@ against.
 ## [Unreleased]
 
 ### Added
+- **`stellarindex-ops verify-lake`** — a single "is the lake sound?"
+  invocation for cron/Healthchecks.io that COMPOSES the three existing
+  standing ADR-0034 lake-verification checks into one call with one
+  unified verdict + exit code: ledger substrate contiguity and
+  `stellar.ledger_entry_changes` coverage (both from `verify-contiguity`,
+  floor-gated at `-ec-floor`) plus hash-chain integrity (in-window +
+  boundary links, from `verify-hashchain`). No check logic is duplicated —
+  it calls the same package-private run funcs those two subcommands call,
+  over one resolved `[-from,-to]` range, printing each check's own report
+  section plus a final unified summary block. `-checks` restricts to a
+  comma-separated subset (`contiguity|entrychanges|hashchain`), default
+  all. Exit code = ledger gaps + entry-change deficiencies at/above
+  `-ec-floor` + hash-chain broken links (capped at 255), mirroring the
+  sibling `verify-*` tools' convention. `reconcile-balances` (the
+  external-Horizon balance-sample check) is deliberately NOT composed in —
+  it's network-bound and account-sampled, a different shape; run it
+  separately. Read-only; touches ClickHouse only, never Postgres.
 - **`stellarindex-ops verify-hashchain`** — a standing ADR-0034
   data-verification tool proving the ClickHouse raw lake's ledger substrate
   is HASH-CHAINED, not just present — the second half of the "ledgers
