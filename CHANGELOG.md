@@ -16,6 +16,26 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Two-axis completeness verdict: `lake_complete`** on
+  `completeness_snapshots` / `GET /v1/coverage` (migration 0108;
+  `@ash`-approved decision brief
+  notes/DECISION-genesis-complete-verdict-2026-07-16.md, Option B).
+  `complete` has always meant substrate ∧ recognition ∧ projection
+  (ADR-0033), but projection reconcile for trade-emitting sources is
+  retention-scoped by design (ADR-0034: Postgres is the served tier,
+  not the archive) — so `complete` could read false even when the
+  certified ClickHouse archive is genuinely genesis-complete. The new
+  `lake_complete` column/field surfaces the substrate∧recognition
+  watermark's own Complete — computed by `compute-completeness` all
+  along but previously discarded before the projection AND — as its
+  own axis: "the certified ClickHouse archive is contiguous +
+  hash-chained + recognition-complete from genesis to tip," decoupled
+  from the served tier's retention window. `complete` / `watermark_ledger`
+  / `coverage_pct` are unchanged. The response envelope also gains
+  `lake_complete_sources` alongside `complete_sources`/`total_sources`.
+  Additive migration (DEFAULT false, old-binary-safe); also corrects a
+  stale table comment from migration 0052 that claimed
+  `watermark_ledger` included projection.
 - **`soroswap_router.Event` pinned `projected=false` in
   `IsProjectedEvent`'s table-driven test** (`internal/pipeline/projected_test.go`).
   soroswap_router rows mix a REALIZED amount with a user-supplied

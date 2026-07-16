@@ -14,13 +14,39 @@ import (
 // explorer's Coverage center renders it, and API consumers can audit
 // the same claim the demo makes ("every protocol, verified complete")
 // rather than taking a marketing badge on faith.
+//
+// Two axes (ADR-0033/ADR-0034 two-axis verdict, decision brief
+// notes/DECISION-genesis-complete-verdict-2026-07-16.md Option B):
+//   - LakeComplete: the certified ClickHouse ARCHIVE is contiguous +
+//     hash-chained + recognition-complete from genesis to tip
+//     (substrate ∧ recognition only).
+//   - Complete: the SERVED tier additionally reconciles against that
+//     archive within its retention window (substrate ∧ recognition ∧
+//     projection). Postgres is the served/working-set tier, not the
+//     archive (ADR-0034), so Complete can be false for a source whose
+//     LakeComplete is true.
 type CoverageVerdictView struct {
 	// Source is the logical source name (soroswap, blend, sdex, …) —
 	// the same identifiers /v1/sources uses.
 	Source string `json:"source"`
-	// Complete is the headline verdict: all three claims hold from
-	// genesis to the watermark.
+	// Complete is the SERVED/combined verdict: substrate ∧ recognition ∧
+	// projection, all holding from genesis to the watermark. Projection
+	// reconcile is retention-scoped by design (ADR-0034: Postgres is the
+	// served tier, not the archive), so Complete for a trade-emitting
+	// source reflects only what's PROJECTED into the served tier — it
+	// can be false even when the certified ClickHouse archive is
+	// genesis-complete. See LakeComplete for that claim.
 	Complete bool `json:"complete"`
+	// LakeComplete is the LAKE (archive) axis: substrate ∧ recognition
+	// only, genesis-to-tip, decoupled from the retention-scoped
+	// projection reconcile. This is "the certified ClickHouse archive is
+	// contiguous + hash-chained + recognition-complete from genesis to
+	// tip for this source's domain" — the two-axis verdict from
+	// notes/DECISION-genesis-complete-verdict-2026-07-16.md (Option B).
+	// A source can be lake_complete=true, complete=false: the archive is
+	// genesis-proven even though the served tier only holds a retention
+	// window of it.
+	LakeComplete bool `json:"lake_complete"`
 	// SubstrateOK / RecognitionOK / ProjectionOK are the three ADR-0033
 	// claims, reported separately so a consumer can see WHICH claim
 	// failed when Complete is false.
@@ -48,9 +74,15 @@ type CoverageVerdictView struct {
 type CoverageVerdictsView struct {
 	// Sources lists every audited source's verdict, source-sorted.
 	Sources []CoverageVerdictView `json:"sources"`
-	// CompleteSources / TotalSources summarize the headline ("15/15").
+	// CompleteSources / TotalSources summarize the headline ("15/15") for
+	// the served/combined axis (Complete).
 	CompleteSources int `json:"complete_sources"`
 	TotalSources    int `json:"total_sources"`
+	// LakeCompleteSources tallies the lake (archive) axis (LakeComplete)
+	// — how many sources' certified ClickHouse archive is proven
+	// genesis-complete, independent of the served tier's retention
+	// window. See CoverageVerdictView.LakeComplete.
+	LakeCompleteSources int `json:"lake_complete_sources"`
 }
 
 // handleCoverageVerdicts serves GET /v1/coverage — every source's
@@ -82,6 +114,7 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 		view.Sources = append(view.Sources, CoverageVerdictView{
 			Source:             sn.Source,
 			Complete:           sn.Complete,
+			LakeComplete:       sn.LakeComplete,
 			SubstrateOK:        sn.SubstrateOK,
 			RecognitionOK:      sn.RecognitionOK,
 			ProjectionOK:       sn.ProjectionOK,
@@ -95,6 +128,9 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 		})
 		if sn.Complete {
 			view.CompleteSources++
+		}
+		if sn.LakeComplete {
+			view.LakeCompleteSources++
 		}
 	}
 	view.TotalSources = len(view.Sources)

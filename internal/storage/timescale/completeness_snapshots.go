@@ -9,12 +9,18 @@ import (
 // CompletenessSnapshot is one source's completeness verdict
 // (migration 0052, ADR-0033 Phase 6).
 type CompletenessSnapshot struct {
-	Source        string
-	Genesis       uint32
-	Tip           uint32
-	Watermark     uint32
-	CoveragePct   float64
-	Complete      bool
+	Source      string
+	Genesis     uint32
+	Tip         uint32
+	Watermark   uint32
+	CoveragePct float64
+	Complete    bool
+	// LakeComplete is the ADR-0033/ADR-0034 two-axis verdict's lake
+	// (archive) axis: substrate ∧ recognition only, genesis-to-tip,
+	// decoupled from the retention-scoped projection reconcile that
+	// additionally gates Complete (the served/combined axis). See
+	// notes/DECISION-genesis-complete-verdict-2026-07-16.md Option B.
+	LakeComplete  bool
 	FirstProblem  uint32 // 0 = none
 	SubstrateOK   bool
 	RecognitionOK bool
@@ -28,15 +34,16 @@ func (s *Store) UpsertCompletenessSnapshot(ctx context.Context, snap Completenes
 	const q = `
         INSERT INTO completeness_snapshots (
             source, genesis_ledger, tip_ledger, watermark_ledger,
-            coverage_pct, complete, first_problem_ledger,
+            coverage_pct, complete, lake_complete, first_problem_ledger,
             substrate_ok, recognition_ok, projection_ok, detail, computed_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now())
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now())
         ON CONFLICT (source) DO UPDATE SET
             genesis_ledger       = EXCLUDED.genesis_ledger,
             tip_ledger           = EXCLUDED.tip_ledger,
             watermark_ledger     = EXCLUDED.watermark_ledger,
             coverage_pct         = EXCLUDED.coverage_pct,
             complete             = EXCLUDED.complete,
+            lake_complete        = EXCLUDED.lake_complete,
             first_problem_ledger = EXCLUDED.first_problem_ledger,
             substrate_ok         = EXCLUDED.substrate_ok,
             recognition_ok       = EXCLUDED.recognition_ok,
@@ -54,7 +61,7 @@ func (s *Store) UpsertCompletenessSnapshot(ctx context.Context, snap Completenes
            OR EXCLUDED.first_problem_ledger > 0`
 	if _, err := s.db.ExecContext(ctx, q,
 		snap.Source, int64(snap.Genesis), int64(snap.Tip), int64(snap.Watermark),
-		snap.CoveragePct, snap.Complete, int64(snap.FirstProblem),
+		snap.CoveragePct, snap.Complete, snap.LakeComplete, int64(snap.FirstProblem),
 		snap.SubstrateOK, snap.RecognitionOK, snap.ProjectionOK, snap.Detail,
 	); err != nil {
 		return fmt.Errorf("timescale: UpsertCompletenessSnapshot (%s): %w", snap.Source, err)
@@ -66,7 +73,7 @@ func (s *Store) UpsertCompletenessSnapshot(ctx context.Context, snap Completenes
 func (s *Store) ListCompletenessSnapshots(ctx context.Context) ([]CompletenessSnapshot, error) {
 	const q = `
         SELECT source, genesis_ledger, tip_ledger, watermark_ledger,
-               coverage_pct, complete, first_problem_ledger,
+               coverage_pct, complete, lake_complete, first_problem_ledger,
                substrate_ok, recognition_ok, projection_ok, detail, computed_at
         FROM completeness_snapshots
         ORDER BY source`
@@ -83,7 +90,7 @@ func (s *Store) ListCompletenessSnapshots(ctx context.Context) ([]CompletenessSn
 		)
 		if err := rows.Scan(
 			&snap.Source, &genesis, &tip, &wm,
-			&snap.CoveragePct, &snap.Complete, &firstProb,
+			&snap.CoveragePct, &snap.Complete, &snap.LakeComplete, &firstProb,
 			&snap.SubstrateOK, &snap.RecognitionOK, &snap.ProjectionOK, &snap.Detail, &snap.ComputedAt,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: ListCompletenessSnapshots scan: %w", err)
