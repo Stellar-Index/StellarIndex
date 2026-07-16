@@ -42,6 +42,33 @@ import (
 // the consumer goroutine behind fd 2's filter was killed mid-buffer).
 var ErrExitSilently = errors.New("exit silently")
 
+// ExitCodeError lets a subcommand report a specific positive exit
+// code — not just the generic 1 — while still returning through the
+// normal realMain flow, so the flush() defer in
+// cmd/stellarindex-ops/main.go's realMain (SilenceSDKChecksumWarnings)
+// still runs. NEVER call os.Exit directly from a subcommand handler
+// for this — see realMain's doc comment for why (rc.77 regression).
+//
+// reconcile-balances is the first user: "exit code = number of
+// MISMATCHes" mirrors scripts/dev/r1-smoke.sh's "exit code = number
+// of failed checks" convention so cron/Healthchecks.io can consume
+// either the same way. Err is optional context for the rare case the
+// subcommand wants realMain to also print a message; leave nil when
+// the subcommand has already printed its own report.
+type ExitCodeError struct {
+	Code int
+	Err  error
+}
+
+func (e *ExitCodeError) Error() string {
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return fmt.Sprintf("exit code %d", e.Code)
+}
+
+func (e *ExitCodeError) Unwrap() error { return e.Err }
+
 // SignalContext returns a context that cancels on SIGINT / SIGTERM so
 // long-running passes (backfill-router, tag-routed-via, the ch-*
 // ClickHouse walkers) can flush a final checkpoint and exit cleanly.
