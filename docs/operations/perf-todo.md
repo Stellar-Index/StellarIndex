@@ -195,3 +195,19 @@ stellarindex-ops ch-txindex-backfill -ch-addr 127.0.0.1:9300 -window 5000000
 # -from defaults to 2, -to 0 = current lake tip; on interrupt re-run
 # with the last printed "resume point -from N".
 ```
+
+## `stellar.account_movements` — extreme-address `/movements` timeout (BACKLOG #72)
+
+Same shape as the `tx_hash_index` item above: code-complete, operator
+step deferred. `GET /v1/accounts/{g}/movements` times out (> 20 s) for
+extreme-volume addresses (264M-movement airdrop-sink example) —
+`WHERE address = ? ORDER BY ledger DESC LIMIT ?` fans out across ~140
+of the table's ~473 `PARTITION BY intDiv(ledger, 1000000)` partitions,
+reading ~4M rows to serve a `LIMIT 5`. Fix is a ClickHouse `PROJECTION
+proj_by_address` (both DDL sites, `account_movements.go` +
+`tier1_schema.sql`) — code-complete. `ADD PROJECTION` + `MATERIALIZE
+PROJECTION` against r1's existing 6.76B-row table is the remaining
+operator step, deliberately NOT run yet (Phase 0's genesis-extension
+backfill still owns the one heavy-job slot and is still writing into
+this table). Full procedure + preconditions + verification:
+`docs/operations/runbooks/account-movements-projection.md`.
