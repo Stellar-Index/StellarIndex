@@ -471,38 +471,7 @@ CREATE TABLE IF NOT EXISTS stellar.account_movements
     -- ~34M-40M, thousands of refs per window) before this index existed; the
     -- bloom skip-index brought a single lookup to ~84ms (~77x). Only prunes when
     -- the WHERE predicate is textually IDENTICAL to this expression.
-    INDEX idx_cb_balance_id JSONExtractString(attributes, 'balance_id') TYPE bloom_filter(0.01) GRANULARITY 4,
-    -- BACKLOG #72 (2026-07-16): structural fix for `/v1/accounts/{g}/movements`
-    -- timing out on extreme-volume addresses (e.g. an airdrop-sink address with
-    -- 264M received payments) — the reverse keyset read (`WHERE address = ?
-    -- ORDER BY ledger DESC, tx_hash DESC, op_index DESC, leg_index DESC LIMIT
-    -- ?`) has to fan out across every one of this table's ~473 ledger-range
-    -- PARTITION BY partitions the address ever touched (~140 of them for the
-    -- pathological address): an equality filter on `address` prunes WITHIN a
-    -- touched partition (address already leads this table's own ORDER BY) but
-    -- cannot prune ACROSS partitions, since partitioning is by ledger range,
-    -- not by address. A projection can't declare its own PARTITION BY (it's
-    -- always co-partitioned with its parent table), so this isn't a sort-order
-    -- fix — its win is forcing a deterministic, one-time full compaction of the
-    -- touched partitions' parts (vs. today's fragmentation, hostage to
-    -- background-merge cadence contending with Phase-0's concurrent
-    -- genesis-extension writes into old partitions — see the ROADMAP's "partly
-    -- self-heals as parts merge post-Phase-0" note) plus a narrower column list
-    -- (drops `ingested_at`, which the reader never selects) that shrinks bytes
-    -- moved per touched partition. Same retrofit caveat as idx_cb_balance_id
-    -- above: `CREATE TABLE IF NOT EXISTS` does NOT retrofit a projection onto
-    -- an already-existing table — this only takes effect on a fresh install.
-    -- Applying it to r1's existing 6.76B-row table needs `ALTER TABLE ... ADD
-    -- PROJECTION` + `MATERIALIZE PROJECTION`, a HEAVY operation deliberately
-    -- NOT run by this schema file — see
-    -- docs/operations/runbooks/account-movements-projection.md for the
-    -- wrapped procedure + the Phase-0-free-window precondition.
-    PROJECTION proj_by_address
-    (
-        SELECT address, ledger, ledger_close_time, tx_hash, op_index, leg_index, direction,
-               movement_kind, provenance, asset, counterparty, amount, attributes
-        ORDER BY (address, ledger, tx_hash, op_index, leg_index, direction)
-    )
+    INDEX idx_cb_balance_id JSONExtractString(attributes, 'balance_id') TYPE bloom_filter(0.01) GRANULARITY 4
 )
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger, 1000000)

@@ -118,32 +118,6 @@ against.
   `scripts/dev/r1-smoke.sh`'s convention for cron/Healthchecks.io consumption
   — the new `opsutil.ExitCodeError` type lets a subcommand report a non-1 exit
   code without bypassing `realMain`'s flush-on-exit discipline.
-- **`stellar.account_movements` gains a `proj_by_address` PROJECTION, DDL only
-  (BACKLOG #72).** `GET /v1/accounts/{g}/movements` times out (> 20 s) for
-  extreme-volume addresses — e.g. an airdrop-sink address with 264M received
-  payments — because the reverse keyset read (`WHERE address = ? ORDER BY
-  ledger DESC ... LIMIT ?`) has to fan out across ~140 of the table's ~473
-  `PARTITION BY intDiv(ledger, 1000000)` partitions (an equality filter on
-  `address` prunes within a touched partition — address already leads this
-  table's own `ORDER BY` — but can't prune across partitions, since
-  partitioning is by ledger range, not address), reading ~4M rows to serve a
-  `LIMIT 5`. A projection can't declare its own `PARTITION BY` (always
-  co-partitioned with its parent table), so this isn't a sort-order fix — it
-  forces a deterministic, one-time full compaction of the fragmented parts
-  (today's fragmentation is partly a symptom of Phase 0's concurrent
-  genesis-extension writes into old partitions) plus a narrower column list
-  (drops `ingested_at`, which the reader never selects). Added to both DDL
-  sites — `internal/storage/clickhouse/account_movements.go`'s
-  `EnsureAccountMovementsTable` and `deploy/clickhouse/tier1_schema.sql` — so
-  a fresh install gets it from the start; same retrofit caveat as the
-  `idx_cb_balance_id` skip index above: `CREATE TABLE IF NOT EXISTS` does NOT
-  retrofit a projection onto an already-existing table. Applying it to r1's
-  existing 6.76B-row table needs an operator-run `ALTER TABLE ... ADD
-  PROJECTION` + `MATERIALIZE PROJECTION` — a HEAVY, long, disk-hungry
-  operation deliberately NOT run by this change (Phase 0 owns the one
-  heavy-job slot and is still writing into this table). Full procedure +
-  preconditions + verification query + rollback:
-  `docs/operations/runbooks/account-movements-projection.md`.
 
 ### CI
 - **`web/explorer` and `web/status` `pnpm audit` steps no longer red the build

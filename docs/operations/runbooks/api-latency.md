@@ -154,10 +154,6 @@ psql -c "SELECT state, count(*), max(now()-query_start) AS oldest
 - `api-5xx.md` — errors, not slowness.
 - `redis-memory.md` / `cagg-stale.md` — common upstream causes.
 - `pg-conns-saturated.md` — when the pool is the bottleneck.
-- [account-movements-projection.md](account-movements-projection.md) —
-  a narrower, address-specific instance of this symptom:
-  `GET /v1/accounts/{g}/movements` timing out for extreme-volume
-  addresses (BACKLOG #72), and the ClickHouse projection fix.
 
 ## Changelog
 
