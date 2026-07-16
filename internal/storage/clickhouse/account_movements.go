@@ -167,35 +167,6 @@ func FanOutAccountMovement(m AccountMovement) []AccountMovementRow {
 // table already existed when the index was added, so it was applied
 // there directly via a one-off `ALTER TABLE ... ADD INDEX` (mutation
 // complete, not re-run by this DDL).
-//
-// proj_by_address (added 2026-07-16, BACKLOG #72) is the structural fix
-// for `/v1/accounts/{g}/movements` timing out on extreme-volume addresses
-// (e.g. an airdrop-sink address with 264M received payments): the reverse
-// keyset read AccountMovements() issues (`WHERE address = ? ORDER BY
-// ledger DESC, tx_hash DESC, op_index DESC, leg_index DESC LIMIT ?`) has
-// to fan out across every one of PARTITION BY intDiv(ledger, 1000000)'s
-// ~473 ledger-range partitions the address ever touched (~140 of them for
-// the pathological address) — an equality filter on `address` prunes
-// WITHIN a touched partition (address already leads this table's own
-// ORDER BY) but cannot prune ACROSS partitions, since partitioning is by
-// ledger range, not by address. The projection doesn't change that
-// partitioning (a projection can't declare its own PARTITION BY — it's
-// always co-partitioned with its parent table), so its win is orthogonal:
-// MATERIALIZE PROJECTION forces a deterministic, one-time full compaction
-// of the touched partitions' parts (vs. today's fragmented ~140/473,
-// hostage to background-merge cadence contending with Phase-0's
-// concurrent genesis-extension writes into old partitions — the ROADMAP's
-// "partly self-heals as parts merge post-Phase-0" note), and its column
-// list is narrower than the base table (drops `ingested_at`, which
-// AccountMovements() never reads), shrinking bytes moved per touched
-// partition. Same retrofit caveat as idx_cb_balance_id: `CREATE TABLE IF
-// NOT EXISTS` does NOT retrofit a projection onto an already-existing
-// table — this only takes effect on a fresh install. Applying it to r1's
-// existing 6.76B-row table needs `ALTER TABLE ... ADD PROJECTION` +
-// `MATERIALIZE PROJECTION`, a HEAVY operation deliberately NOT run by
-// this DDL or by this change — see
-// docs/operations/runbooks/account-movements-projection.md for the
-// wrapped procedure + the Phase-0-free-window precondition.
 const accountMovementsDDL = `
 	CREATE TABLE IF NOT EXISTS stellar.account_movements (
 		address           String,
@@ -212,12 +183,7 @@ const accountMovementsDDL = `
 		amount            Int128,
 		attributes        String DEFAULT '{}',
 		ingested_at       DateTime DEFAULT now(),
-		INDEX idx_cb_balance_id JSONExtractString(attributes, 'balance_id') TYPE bloom_filter(0.01) GRANULARITY 4,
-		PROJECTION proj_by_address (
-			SELECT address, ledger, ledger_close_time, tx_hash, op_index, leg_index, direction,
-				movement_kind, provenance, asset, counterparty, amount, attributes
-			ORDER BY (address, ledger, tx_hash, op_index, leg_index, direction)
-		)
+		INDEX idx_cb_balance_id JSONExtractString(attributes, 'balance_id') TYPE bloom_filter(0.01) GRANULARITY 4
 	) ENGINE = ReplacingMergeTree(ingested_at)
 	PARTITION BY intDiv(ledger, 1000000)
 	ORDER BY (address, ledger, tx_hash, op_index, leg_index, direction)`
