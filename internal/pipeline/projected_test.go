@@ -21,6 +21,7 @@ import (
 	sep41_supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
 	sep41_transfers "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_transfers"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 )
 
 // TestIsProjectedEvent_TableDriven pins the [IsProjectedEvent]
@@ -73,6 +74,20 @@ func TestIsProjectedEvent_TableDriven(t *testing.T) {
 		{"external.TradeEvent", external.TradeEvent{Trade: canonical.Trade{Source: "binance"}}, false},
 		{"external.UpdateEvent", external.UpdateEvent{Update: canonical.OracleUpdate{Source: "ecb"}}, false},
 		{"band.UpdateEvent", band.UpdateEvent{Update: canonical.OracleUpdate{Source: "band"}}, false},
+		// soroswap_router.Event is log-only (HandleEvent's case writes
+		// ONLY to soroswap_router_swaps via InsertSoroswapRouterSwap,
+		// never persistTrade) and MUST stay projected=false. RouterSwap
+		// rows mix a REALIZED amount with a user-supplied slippage LIMIT
+		// in AmountIn/AmountOut (see soroswap_router.RouterSwap's doc
+		// comment) — a price derived from them would be the limit price,
+		// not the realized price. Pinned here so a future refactor that
+		// accidentally routes router events through the projector /
+		// trades path fails this test instead of silently corrupting
+		// VWAP. Complements the aggregator-side guard in
+		// internal/aggregate/orchestrator/orchestrator_test.go
+		// (TestFilterForVWAP_ExcludesSoroswapRouter /
+		// TestTick_SoroswapRouterTradeNeverContributesToVWAP).
+		{"soroswap_router.Event", soroswap_router.Event{Swap: soroswap_router.RouterSwap{Source: soroswap_router.SourceName}}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
