@@ -15,6 +15,20 @@ against.
 
 ## [Unreleased]
 
+### Documentation
+- **BACKLOG #72 (account_movements extreme-address `/movements` timeout):
+  the `(address, ledger)` PROJECTION was evaluated and REJECTED** (a
+  same-day projection commit was reverted). The base table already leads
+  its `ORDER BY` with `address`, and a ClickHouse projection is always
+  co-partitioned with its parent — so an `(address, ledger)` projection
+  merely duplicates the existing sort order at ~2× storage without
+  touching the ledger-range `PARTITION BY` fan-out that actually causes
+  the timeout. The fragmentation is partly transient (Phase-0 writes into
+  old partitions; self-heals as background merges settle), so re-evaluate
+  post-Phase-0 before any structural change. Analysis + the real options
+  (a `PARTITION BY` change / address-keyed secondary structure, deferred)
+  are recorded in `docs/operations/perf-todo.md` §5.
+
 ### Added
 - **Two-axis completeness verdict: `lake_complete`** on
   `completeness_snapshots` / `GET /v1/coverage` (migration 0108;
