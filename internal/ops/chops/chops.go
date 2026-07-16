@@ -9,15 +9,17 @@
 // `verify-recognition`, `verify-reconciliation`, `compute-completeness`,
 // `verify-served-values`, `sdex-claim-audit`,
 // `classic-movements-backfill`, `projected-rebuild`,
-// `reconcile-balances` — ADR-0033/ADR-0034 completeness + reconciliation
-// checks, the ADR-0034 Phase 2-4 lake backfill/gate/reproject/rebuild
-// tools, the ADR-0047 pre-P23 classic-movement reconstruction backfill,
-// the ADR-0048 D3 bulk catch-up path for projected sources, and the
-// reconcile-balances external (Horizon) balance-reconciliation
-// verifier, which is why reconciliation_catalogue.go and
-// gated_recon_seed.go (shared re-derivation source-set + factory-child
-// preseed helpers used by ch-rebuild, ch-reproject, compute-completeness,
-// and verify-reconciliation) live here too rather than in a 7th package.
+// `reconcile-balances`, `verify-contiguity` — ADR-0033/ADR-0034
+// completeness + reconciliation checks, the ADR-0034 Phase 2-4 lake
+// backfill/gate/reproject/rebuild tools, the ADR-0047 pre-P23
+// classic-movement reconstruction backfill, the ADR-0048 D3 bulk
+// catch-up path for projected sources, the reconcile-balances external
+// (Horizon) balance-reconciliation verifier, and verify-contiguity's
+// standing ledger-substrate + entry_changes-coverage lake verification,
+// which is why reconciliation_catalogue.go and gated_recon_seed.go
+// (shared re-derivation source-set + factory-child preseed helpers used
+// by ch-rebuild, ch-reproject, compute-completeness, and
+// verify-reconciliation) live here too rather than in a 7th package.
 //
 // Extracted from cmd/stellarindex-ops (maintainability audit
 // 2026-07-01, D1 finding M1-5); main.go's dispatch table calls Run
@@ -66,6 +68,8 @@ func Run(args []string) error {
 		return projectedRebuild(args[1:])
 	case "reconcile-balances":
 		return reconcileBalances(args[1:])
+	case "verify-contiguity":
+		return verifyContiguity(args[1:])
 	default:
 		return fmt.Errorf("internal/ops/chops: unknown subcommand %q", args[0])
 	}
