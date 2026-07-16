@@ -34,7 +34,7 @@
 //     `compute-completeness`, `verify-served-values`,
 //     `sdex-claim-audit`, `classic-movements-backfill`,
 //     `projected-rebuild`, `reconcile-balances`, `verify-contiguity`,
-//     `verify-hashchain`.
+//     `verify-hashchain`, `verify-lake`.
 //   - Doc generation: `docs-config` (regenerates the config
 //     reference from struct tags; called by `make docs-config`).
 //
@@ -152,6 +152,7 @@ var subcommands = map[string]func(args []string) error{
 	"reconcile-balances":         chops.Run,
 	"verify-contiguity":          chops.Run,
 	"verify-hashchain":           chops.Run,
+	"verify-lake":                chops.Run,
 }
 
 func realMain() int {
@@ -841,6 +842,40 @@ Subcommands:
                           Healthchecks.io can consume it directly. Example:
                             stellarindex-ops verify-hashchain \
                               -ch-addr 127.0.0.1:9300 -from 2 -to 60000000
+  verify-lake [-config PATH] [-ch-addr H:P] [-from N] [-to N] [-ec-floor N] [-checks contiguity,entrychanges,hashchain]
+                          Composes verify-contiguity's two checks and
+                          verify-hashchain's one check into a SINGLE
+                          "is the lake sound?" invocation with one
+                          unified verdict + exit code, for a cron/
+                          Healthchecks.io timer that wants one call
+                          instead of three. Calls the exact same
+                          check funcs verify-contiguity and
+                          verify-hashchain themselves call (no
+                          duplicated logic), over one resolved
+                          [-from,-to] range (default 2..CH max,
+                          -ec-floor default 63050000): (1) ledger
+                          substrate contiguity, (2)
+                          stellar.ledger_entry_changes coverage
+                          (floor-gated — below -ec-floor is
+                          backfill-pending, informational only), (3)
+                          hash-chain integrity (in-window + boundary
+                          links). -checks restricts to a comma-
+                          separated subset (contiguity|entrychanges|
+                          hashchain), default all. Prints each
+                          check's own report section plus a final
+                          unified summary block. Read-only; touches
+                          ClickHouse only, never Postgres. Exit code
+                          = ledger gaps + entry-change deficiencies
+                          at/above -ec-floor + hash-chain broken
+                          links (capped at 255), mirroring the
+                          sibling verify-* tools' convention so cron/
+                          Healthchecks.io can consume it directly.
+                          reconcile-balances (the ADR-0033 external-
+                          Horizon balance check) is NOT composed in —
+                          it's network-bound and account-sampled, a
+                          different shape; run it separately. Example:
+                            stellarindex-ops verify-lake \
+                              -ch-addr 127.0.0.1:9300 -ec-floor 63050000
   verify-recognition -config PATH -from N -to N
                           ADR-0033 Claim 2a: pull every distinct
                           (contract, topic[0]) shape from soroban_events
