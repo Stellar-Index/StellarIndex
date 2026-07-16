@@ -214,6 +214,18 @@ func TestFormatCoverageLine_NoDeficit(t *testing.T) {
 	}
 }
 
+// TestFormatCoverageLine_PresentExceedsExpected guards the saturating
+// subtraction: for Check 2, present (distinct entry_change ledgers) can exceed
+// expected (tx-bearing ledgers) on protocol-upgrade ledgers. A raw
+// expected-present would wrap uint64 to ~1.8e19 in the printed line.
+func TestFormatCoverageLine_PresentExceedsExpected(t *testing.T) {
+	got := formatCoverageLine(63_000_000, 63_999_999, 900, 901, "OK")
+	want := "  [63000000,63999999]  expected=900 present=901 missing=0  OK"
+	if got != want {
+		t.Fatalf("formatCoverageLine = %q, want %q", got, want)
+	}
+}
+
 // ─── toLedgerSeq: uint64 flag → uint32 ledger_seq, never silently wraps ───
 
 func TestToLedgerSeq(t *testing.T) {
