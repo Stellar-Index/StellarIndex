@@ -8,7 +8,12 @@ import { Panel } from '@/components/reveal';
 import { OperationMixPanel, ThroughputPanel } from '@/components/NetworkInsight';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
-import { type Envelope, type TxOperation, formatTimestamp } from '../explorer-shared';
+import {
+  type Envelope,
+  type TxOperation,
+  formatTimestamp,
+  renderOpFieldValue,
+} from '../explorer-shared';
 import type { paths } from '@/api/types';
 
 // GET /v1/operations response body + row shapes from the generated
@@ -29,7 +34,11 @@ function summarize(op: OpView): string {
   const f = op.fields;
   if (!f) return '';
   const pick = (k: string) => (f[k] != null ? String(f[k]) : '');
-  const amount = pick('amount') || pick('starting_balance') || pick('limit');
+  // Amount keys are raw stroop integers (ADR-0003) — scale them to XLM
+  // via the shared keyed renderer (exact BigInt divide), never String().
+  const pickAmount = (k: string) =>
+    f[k] != null ? renderOpFieldValue(k, f[k]) : '';
+  const amount = pickAmount('amount') || pickAmount('starting_balance') || pickAmount('limit');
   const asset = pick('asset') || pick('selling') || pick('send_asset');
   const dest = pick('destination') || pick('to') || pick('trustor');
   const parts: string[] = [];

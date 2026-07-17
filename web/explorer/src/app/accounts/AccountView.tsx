@@ -22,6 +22,7 @@ import {
   CopyHash,
   formatTimestamp,
   relativeAge,
+  renderOpFieldValue,
   stroopsToXlm,
 } from '../explorer-shared';
 
@@ -784,7 +785,7 @@ function OperationCard({ op }: { op: TxOperation }) {
                 {k}
               </dt>
               <dd className="break-all font-mono text-xs text-ink-body">
-                {renderFieldValue(fields[k])}
+                {renderOpFieldValue(k, fields[k])}
               </dd>
             </div>
           ))}
@@ -804,18 +805,6 @@ function OperationCard({ op }: { op: TxOperation }) {
       )}
     </div>
   );
-}
-
-function renderFieldValue(v: unknown): string {
-  if (v == null) return '—';
-  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-    return String(v);
-  }
-  try {
-    return JSON.stringify(v);
-  } catch {
-    return String(v);
-  }
 }
 
 // SuccessBadge renders a transaction's result. Success comes from the

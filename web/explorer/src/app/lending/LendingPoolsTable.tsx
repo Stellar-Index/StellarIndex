@@ -115,7 +115,7 @@ function PoolRealStats({ pool }: { pool: string }) {
   const supplied = (q.data?.reserves ?? []).reduce((s, r) => s + Number(r.supplied_usd ?? 0), 0);
   const borrowed = (q.data?.reserves ?? []).reduce((s, r) => s + Number(r.borrowed_usd ?? 0), 0);
   const util = supplied > 0 ? (borrowed / supplied) * 100 : null;
-  // BACKLOG #30: supplied-weighted average APYs from the same reserves
+  // BACKLOG #30: supplied-weighted average APRs from the same reserves
   // the row already fetched — no extra request.
   const wSupplyAPR =
     supplied > 0
@@ -183,8 +183,8 @@ function PoolRealStats({ pool }: { pool: string }) {
               <Th align="right">All-time auctions</Th>
               <Th align="right">TVL</Th>
               <Th align="right">Utilization</Th>
-              <Th align="right">Supply APY</Th>
-              <Th align="right">Borrow APY</Th>
+              <Th align="right">Supply APR</Th>
+              <Th align="right">Borrow APR</Th>
               <Th align="right">Users (30d)</Th>
               <Th align="right">Last activity</Th>
             </tr>

@@ -15,6 +15,7 @@ import {
   CopyHash,
   CopyValue,
   formatTimestamp,
+  renderOpFieldValue,
   stroopsToXlm,
 } from '../explorer-shared';
 
@@ -299,7 +300,7 @@ function OperationCard({ hash, op }: { hash: string; op: TxOperation }) {
                 {k}
               </dt>
               <dd className="break-all font-mono text-xs text-ink-body">
-                {renderFieldValue(fields[k])}
+                {renderOpFieldValue(k, fields[k])}
               </dd>
             </div>
           ))}
@@ -319,22 +320,6 @@ function OperationCard({ hash, op }: { hash: string; op: TxOperation }) {
       )}
     </div>
   );
-}
-
-function renderFieldValue(v: unknown): string {
-  if (v == null) return '—';
-  if (
-    typeof v === 'string' ||
-    typeof v === 'number' ||
-    typeof v === 'boolean'
-  ) {
-    return String(v);
-  }
-  try {
-    return JSON.stringify(v);
-  } catch {
-    return String(v);
-  }
 }
 
 function EventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
