@@ -228,6 +228,29 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 			return
 		}
 	}
+	// Validate base/quote up front (P2/C3-9, audit-2026-07-16): the
+	// `asset` filter above already runs ParseAsset, but base/quote flowed
+	// raw into the trades-hypertable scan. Reject malformed input here
+	// rather than let it reach the query — the same silent-empty-page /
+	// DoS-lever guard the `asset` filter enforces.
+	if baseFilter != "" {
+		if _, err := canonical.ParseAsset(baseFilter); err != nil {
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/invalid-asset-id",
+				"Invalid base", http.StatusBadRequest,
+				"base must be a canonical asset_id (e.g. 'native', 'USDC-G…'); got "+baseFilter+" ("+err.Error()+")")
+			return
+		}
+	}
+	if quoteFilter != "" {
+		if _, err := canonical.ParseAsset(quoteFilter); err != nil {
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/invalid-asset-id",
+				"Invalid quote", http.StatusBadRequest,
+				"quote must be a canonical asset_id (e.g. 'native', 'USDC-G…'); got "+quoteFilter+" ("+err.Error()+")")
+			return
+		}
+	}
 	filter := timescale.PoolsFilter{
 		Sources: dexSources,
 		Base:    baseFilter,

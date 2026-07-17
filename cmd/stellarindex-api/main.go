@@ -177,8 +177,14 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 
 	// Storage — required. API reads from Timescale (+ Redis cache
-	// in a follow-up PR).
-	store, err := timescale.Open(rootCtx, cfg.Storage.PostgresDSN)
+	// in a follow-up PR). OpenServing applies a session-level
+	// statement_timeout to every serving-pool connection (R1,
+	// audit-2026-07-16) — the SQL-side backstop bounding a runaway
+	// request-path query even if Go-side ctx cancellation races. Kept
+	// longer than api.request_timeout so the app-layer deadline fires
+	// first. Indexer/aggregator use the plain Open (their heavy batch
+	// scans set their own longer SET LOCAL statement_timeout).
+	store, err := timescale.OpenServing(rootCtx, cfg.Storage.PostgresDSN, cfg.API.ServingStatementTimeout)
 	if err != nil {
 		cancel() // nothing else registered yet; release the signal ctx
 		return fmt.Errorf("storage: %w", err)
@@ -1038,8 +1044,13 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// maintains. The handler prefers this over UsageReader and
 		// falls back per-request when the read errors or the table
 		// has no rows for the subject yet.
-		UsageRollupReader:    usageRollupReaderOrNil(store),
-		CDNEnabled:           cfg.API.CDNEnabled,
+		UsageRollupReader: usageRollupReaderOrNil(store),
+		CDNEnabled:        cfg.API.CDNEnabled,
+		// Per-request deadline applied to every non-streaming request
+		// (C3-1/C3-2/P1, audit-2026-07-16). Backs the RequestTimeout
+		// middleware; the serving-pool statement_timeout below is the
+		// SQL-side backstop.
+		RequestTimeout:       cfg.API.RequestTimeout,
 		StatusBackend:        statusBackend,
 		ArchiveReportPath:    cfg.API.ArchiveReportPath,
 		RegionName:           cfg.Region.ID,

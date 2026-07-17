@@ -435,6 +435,52 @@ func TestPools_AssetAndBaseTogether400(t *testing.T) {
 	}
 }
 
+// TestPools_InvalidBase400 / TestPools_InvalidQuote400 — the AND-shape
+// base/quote filters flowed raw into the trades-hypertable scan; a
+// malformed value now 400s up front (P2/C3-9, audit-2026-07-16) rather
+// than reaching the query. Mirrors the `?asset=` guard.
+func TestPools_InvalidBase400(t *testing.T) {
+	srv := v1.New(v1.Options{Markets: &stubMarketsReader{}})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/pools?base=USDC") // no issuer → not canonical
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	var p v1.Problem
+	mustDecode(t, resp, &p)
+	if p.Type != "https://api.stellarindex.io/errors/invalid-asset-id" {
+		t.Errorf("Type = %q, want invalid-asset-id", p.Type)
+	}
+}
+
+func TestPools_InvalidQuote400(t *testing.T) {
+	srv := v1.New(v1.Options{Markets: &stubMarketsReader{}})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/pools?quote=USDC")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	var p v1.Problem
+	mustDecode(t, resp, &p)
+	if p.Type != "https://api.stellarindex.io/errors/invalid-asset-id" {
+		t.Errorf("Type = %q, want invalid-asset-id", p.Type)
+	}
+}
+
+// TestPools_ValidBaseQuote200 — a well-formed base/quote pair passes the
+// new guard (guards against the validation rejecting legitimate input).
+func TestPools_ValidBaseQuote200(t *testing.T) {
+	srv := v1.New(v1.Options{Markets: &stubMarketsReader{}})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/pools?base=native&quote=USDC-"+testG)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
 func (r *stubMarketsReader) FirstTradeBatch(_ context.Context, _ [][2]string) (map[string]time.Time, error) {
 	return map[string]time.Time{}, nil
 }

@@ -131,8 +131,16 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	// if the window has more trades than that, the bar will under-
 	// count. Aggregator-persisted CAGGs will replace this raw-scan
 	// path once they're live.)
+	// Per-request DB ceiling (P1/C3-2, audit-2026-07-16): the single-bar
+	// path scans raw `trades` on every query (the multi-bar series path
+	// above reads CAGGs and sets its own timeout in handleOHLCSeries).
+	// 8s matches the sibling raw-scan endpoints and fires before the
+	// blanket request-timeout middleware.
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+
 	const maxTradesForOHLC = 10000
-	trades, triangulated, err := s.ohlcTradesWithStablecoinFallback(r.Context(), pair, from, to, maxTradesForOHLC)
+	trades, triangulated, err := s.ohlcTradesWithStablecoinFallback(ctx, pair, from, to, maxTradesForOHLC)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
