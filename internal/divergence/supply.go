@@ -198,6 +198,42 @@ type SupplyServiceOptions struct {
 	NowFn func() time.Time
 }
 
+// DefaultSupplyMaxAge is the CS-089 staleness ceiling for a supply
+// reference's upstream publication time. Circulating supply moves
+// glacially (XLM inflation was disabled in 2019; the figure now drifts
+// only by fee burns), so the gate is deliberately generous — its job
+// is to catch a genuinely FROZEN upstream (a reference that has stopped
+// updating for a day-plus), not normal cadence. The Stellar Dashboard
+// recomputes `updatedAt` roughly per-ledger and CoinGecko refreshes
+// `market_data.last_updated` frequently, so 24h means "the reference
+// has been dark for a full day" — well beyond any healthy gap.
+//
+// VALUE DECISION: 24h is a defensible engineering default, not a
+// business rule.
+const DefaultSupplyMaxAge = 24 * time.Hour
+
+// supplyStaleness enforces the CS-089 gate for a supply reference's
+// upstream publication time. Unlike the price path (which threads the
+// bucket-end observedAt through [Compare]) the [SupplyReference]
+// interface carries no comparison time, so each reference gates against
+// its own injected clock. A zero publishedAt no-ops (the upstream
+// didn't report a timestamp) — we only reject a figure we can PROVE is
+// stale.
+func supplyStaleness(now func() time.Time, maxAge time.Duration, refName string, publishedAt time.Time) error {
+	if publishedAt.IsZero() {
+		return nil
+	}
+	if maxAge <= 0 {
+		maxAge = DefaultSupplyMaxAge
+	}
+	asOf := now().UTC()
+	if age := asOf.Sub(publishedAt); age > maxAge {
+		return fmt.Errorf("%w: %s supply figure is stale (published %s ago, max %s)",
+			ErrSupplyUnavailable, refName, age.Truncate(time.Second), maxAge)
+	}
+	return nil
+}
+
 // DefaultSupplyThreshold is the 1% relative-divergence ceiling. It sits
 // two-plus orders of magnitude above the ~0.03% XLM noise floor (the
 // Fee-Pool delta between our figure and the Dashboard's, see
@@ -426,6 +462,8 @@ func scaleServedSupply(raw *big.Int, decimals int) (float64, bool) {
 type StellarDashboardReference struct {
 	httpClient *http.Client
 	baseURL    string
+	maxAge     time.Duration
+	nowFn      func() time.Time
 }
 
 // StellarDashboardOptions configures [NewStellarDashboardReference].
@@ -436,6 +474,11 @@ type StellarDashboardOptions struct {
 	// "https://dashboard.stellar.org/api/v3". Tests pass an
 	// httptest.Server URL. The reference GETs BaseURL + "/lumens".
 	BaseURL string
+	// MaxAge is the CS-089 staleness ceiling for the `/lumens`
+	// `updatedAt` field. <= 0 falls back to [DefaultSupplyMaxAge].
+	MaxAge time.Duration
+	// NowFn overrides time.Now for deterministic tests. Nil = time.Now.
+	NowFn func() time.Time
 }
 
 // NewStellarDashboardReference constructs the Dashboard-backed
@@ -449,9 +492,19 @@ func NewStellarDashboardReference(opts StellarDashboardOptions) *StellarDashboar
 	if baseURL == "" {
 		baseURL = "https://dashboard.stellar.org/api/v3"
 	}
+	maxAge := opts.MaxAge
+	if maxAge <= 0 {
+		maxAge = DefaultSupplyMaxAge
+	}
+	nowFn := opts.NowFn
+	if nowFn == nil {
+		nowFn = time.Now
+	}
 	return &StellarDashboardReference{
 		httpClient: httpClient,
 		baseURL:    strings.TrimRight(baseURL, "/"),
+		maxAge:     maxAge,
+		nowFn:      nowFn,
 	}
 }
 
@@ -469,6 +522,10 @@ type dashboardLumens struct {
 	UpgradeReserve    string `json:"upgradeReserve"`
 	FeePool           string `json:"feePool"`
 	CirculatingSupply string `json:"circulatingSupply"`
+	// UpdatedAt is the upstream publication time (RFC 3339). Present on
+	// the live v3 body; used for the CS-089 staleness gate. Absent on
+	// older/compat bodies — the gate then no-ops.
+	UpdatedAt string `json:"updatedAt"`
 }
 
 // LookupCirculatingSupply implements [SupplyReference]. XLM only.
@@ -485,6 +542,13 @@ func (r *StellarDashboardReference) LookupCirculatingSupply(ctx context.Context,
 	var parsed dashboardLumens
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return 0, fmt.Errorf("%w: stellar-dashboard decode: %w", ErrSupplyUnavailable, err)
+	}
+
+	// CS-089 staleness gate: a frozen `/lumens` upstream must read as
+	// "reference unavailable", never drive a supply divergence. A
+	// missing/unparseable updatedAt no-ops (zero time).
+	if err := supplyStaleness(r.nowFn, r.maxAge, r.Name(), parseUpstreamTime(parsed.UpdatedAt)); err != nil {
+		return 0, err
 	}
 
 	// Prefer an explicit circulatingSupply field when the endpoint
@@ -559,7 +623,9 @@ type CoinGeckoSupplyReference struct {
 	// idMap maps canonical asset_id → CoinGecko coin id ("native" →
 	// "stellar"). Any asset absent from the map yields
 	// ErrAssetUnsupported.
-	idMap map[string]string
+	idMap  map[string]string
+	maxAge time.Duration
+	nowFn  func() time.Time
 }
 
 // CoinGeckoSupplyOptions configures [NewCoinGeckoSupplyReference].
@@ -575,6 +641,11 @@ type CoinGeckoSupplyOptions struct {
 	// IDMap maps canonical asset_id → CoinGecko coin id. Empty falls
 	// back to the built-in default ("native" / "crypto:XLM" → "stellar").
 	IDMap map[string]string
+	// MaxAge is the CS-089 staleness ceiling for the response's
+	// `market_data.last_updated`. <= 0 falls back to [DefaultSupplyMaxAge].
+	MaxAge time.Duration
+	// NowFn overrides time.Now for deterministic tests. Nil = time.Now.
+	NowFn func() time.Time
 }
 
 // NewCoinGeckoSupplyReference constructs the CoinGecko-backed supply
@@ -595,11 +666,21 @@ func NewCoinGeckoSupplyReference(opts CoinGeckoSupplyOptions) *CoinGeckoSupplyRe
 			"crypto:XLM": "stellar",
 		}
 	}
+	maxAge := opts.MaxAge
+	if maxAge <= 0 {
+		maxAge = DefaultSupplyMaxAge
+	}
+	nowFn := opts.NowFn
+	if nowFn == nil {
+		nowFn = time.Now
+	}
 	return &CoinGeckoSupplyReference{
 		httpClient: httpClient,
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		apiKey:     opts.APIKey,
 		idMap:      idMap,
+		maxAge:     maxAge,
+		nowFn:      nowFn,
 	}
 }
 
@@ -610,6 +691,9 @@ func (c *CoinGeckoSupplyReference) Name() string { return "coingecko" }
 type coinGeckoResponse struct {
 	MarketData struct {
 		CirculatingSupply float64 `json:"circulating_supply"`
+		// LastUpdated is the upstream publication time (RFC 3339) used
+		// for the CS-089 staleness gate. Absent → gate no-ops.
+		LastUpdated string `json:"last_updated"`
 	} `json:"market_data"`
 }
 
@@ -656,7 +740,27 @@ func (c *CoinGeckoSupplyReference) LookupCirculatingSupply(ctx context.Context, 
 	if !isFinitePositive(parsed.MarketData.CirculatingSupply) {
 		return 0, fmt.Errorf("%w: coingecko circulating_supply non-positive for %q", ErrSupplyUnavailable, cgID)
 	}
+	// CS-089 staleness gate: a frozen CoinGecko supply must read as
+	// "reference unavailable". Missing last_updated no-ops (zero time).
+	if err := supplyStaleness(c.nowFn, c.maxAge, c.Name(), parseUpstreamTime(parsed.MarketData.LastUpdated)); err != nil {
+		return 0, err
+	}
 	return parsed.MarketData.CirculatingSupply, nil
+}
+
+// parseUpstreamTime parses an RFC 3339 upstream timestamp (the shape
+// both `/lumens`.updatedAt and `/coins/{id}`.market_data.last_updated
+// use), returning the zero time on empty/unparseable input so the
+// staleness gate no-ops rather than rejecting a usable figure.
+func parseUpstreamTime(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
 }
 
 // isXLMAsset reports whether the asset is native lumens in either

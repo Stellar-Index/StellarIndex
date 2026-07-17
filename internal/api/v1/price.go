@@ -939,8 +939,18 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 		}
 		rateQuote = 1
 	}
-	cross := rateQuote / rateAsset
-	priceStr := strconv.FormatFloat(cross, 'f', -1, 64)
+	// Cross-rate = rate_usd[Y] / rate_usd[X], computed as exact big.Rat
+	// rather than float64 division (INV-2 / ADR-0003 — no float64
+	// arithmetic on a served price). The two rates are float64 from the
+	// in-memory forex feed; each is converted via its shortest
+	// round-trip decimal so the division itself adds no float rounding
+	// beyond the source rates' own precision.
+	rateQuoteRat, okQ := new(big.Rat).SetString(strconv.FormatFloat(rateQuote, 'f', -1, 64))
+	rateAssetRat, okA := new(big.Rat).SetString(strconv.FormatFloat(rateAsset, 'f', -1, 64))
+	if !okQ || !okA || rateAssetRat.Sign() == 0 {
+		return PriceSnapshot{}, nil, false
+	}
+	priceStr := formatCrossRate(new(big.Rat).Quo(rateQuoteRat, rateAssetRat))
 	return PriceSnapshot{
 		AssetID:    asset.String(),
 		Quote:      quote.String(),
@@ -948,6 +958,21 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 		PriceType:  "vwap",
 		ObservedAt: snap.PublishedAt,
 	}, []string{"massive"}, true
+}
+
+// formatCrossRate serialises a fiat cross-rate big.Rat to a decimal
+// string with up to 15 fractional digits, trailing zeros trimmed. 15
+// places comfortably covers the precision an ECB-class FX rate carries
+// while keeping the exact-rational computation off the wire as a
+// bounded decimal (a non-terminating ratio like 1/3 would otherwise
+// have no finite form).
+func formatCrossRate(r *big.Rat) string {
+	s := r.FloatString(15)
+	if strings.Contains(s, ".") {
+		s = strings.TrimRight(s, "0")
+		s = strings.TrimRight(s, ".")
+	}
+	return s
 }
 
 // attachConfidence consults the wired ConfidenceLooker (when set)

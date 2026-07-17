@@ -1799,6 +1799,7 @@ func buildDivergenceReferences(cfg config.DivergenceConfig, oracles divergence.O
 		refs = append(refs, divergence.NewCoinGeckoReference(divergence.CoinGeckoOptions{
 			BaseURL: cfg.CoinGecko.BaseURL,
 			IDMap:   cfg.CoinGecko.IDMap,
+			MaxAge:  time.Duration(cfg.CoinGecko.MaxAgeMinutes) * time.Minute,
 		}))
 	}
 

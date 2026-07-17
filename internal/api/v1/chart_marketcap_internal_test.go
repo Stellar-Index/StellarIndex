@@ -2,6 +2,7 @@ package v1
 
 import (
 	"math/big"
+	"strconv"
 	"testing"
 	"time"
 
@@ -94,5 +95,76 @@ func TestMarketCapPoints_NonstandardDecimalsSupplyLeg(t *testing.T) {
 	old := marketCapPoints(price, supply, 7)
 	if len(old) != 1 || old[0].P != "500000.00" {
 		t.Fatalf("sanity: 7dp divisor should over-report as 500000.00, got %+v", old)
+	}
+}
+
+// TestFiatSupplyWholeUnits_ExactBeyondFloat64 (MNY) — the catalogue
+// carries circulating supply as an EXACT decimal string. Parsing it to
+// float64 (the pre-fix path) truncates any value past a float's 53-bit
+// mantissa (~9.007e15). fiatSupplyWholeUnits keeps it exact so the
+// served market cap doesn't silently drop integer digits.
+func TestFiatSupplyWholeUnits_ExactBeyondFloat64(t *testing.T) {
+	// 2^53 + 1 = 9007199254740993 — the smallest integer a float64
+	// cannot represent (it rounds to 9007199254740992).
+	const supplyStr = "9007199254740993"
+
+	got, ok := fiatSupplyWholeUnits(supplyStr, 0)
+	if !ok {
+		t.Fatalf("fiatSupplyWholeUnits(%q) not ok", supplyStr)
+	}
+	if got.RatString() != supplyStr {
+		t.Errorf("exact supply = %s, want %s (big.Rat must not truncate)", got.RatString(), supplyStr)
+	}
+
+	// Demonstrate the pre-fix float64 path genuinely loses the low digit.
+	f, _ := strconv.ParseFloat(supplyStr, 64)
+	if strconv.FormatFloat(f, 'f', -1, 64) == supplyStr {
+		t.Fatalf("test premise broken: float64 unexpectedly represented %s exactly", supplyStr)
+	}
+	if strconv.FormatFloat(f, 'f', -1, 64) != "9007199254740992" {
+		t.Errorf("float64(%s) = %s, want 9007199254740992 (proves the precision loss the fix avoids)",
+			supplyStr, strconv.FormatFloat(f, 'f', -1, 64))
+	}
+
+	// End-to-end: market cap at rate 1.0 must preserve the exact digit.
+	mc := computeFiatMarketCap(supplyStr, "1")
+	if mc == nil || *mc != "9007199254740993.00" {
+		t.Errorf("computeFiatMarketCap = %v, want 9007199254740993.00 (exact)", mc)
+	}
+}
+
+// TestComputeFiatMarketCap_ExactRat (MNY) — the served market cap is
+// exact big.Rat, matching the crypto path's usdMarketValue. Covers the
+// existing pinned catalogue cases plus a fractional-cent rounding.
+func TestComputeFiatMarketCap_ExactRat(t *testing.T) {
+	cases := []struct{ supply, price, want string }{
+		{"21700000000000", "1.00000000000000", "21700000000000.00"},  // USD identity
+		{"302000000000000", "0.14000000000000", "42280000000000.00"}, // CNY M2 × 0.14
+		{"1000000000000000000", "0.000000000000000001", "1.00"},      // 1e18 × 1e-18 stays exact
+	}
+	for _, c := range cases {
+		got := computeFiatMarketCap(c.supply, c.price)
+		if got == nil || *got != c.want {
+			t.Errorf("computeFiatMarketCap(%q,%q) = %v, want %q", c.supply, c.price, got, c.want)
+		}
+	}
+}
+
+// TestFormatCrossRate (MNY) — the fiat cross-rate is serialised from an
+// exact big.Rat (no float64 division on the served price), trailing
+// zeros trimmed.
+func TestFormatCrossRate(t *testing.T) {
+	cases := []struct {
+		r    *big.Rat
+		want string
+	}{
+		{new(big.Rat).SetFrac64(25, 23), "1.08695652173913"}, // 1/0.92 exact, 15dp, trailing zero trimmed
+		{new(big.Rat).SetInt64(155), "155"},                  // integer trims to no dot
+		{new(big.Rat).SetFrac64(1, 8), "0.125"},              // terminating, trailing zeros trimmed
+	}
+	for _, c := range cases {
+		if got := formatCrossRate(c.r); got != c.want {
+			t.Errorf("formatCrossRate(%s) = %q, want %q", c.r.RatString(), got, c.want)
+		}
 	}
 }
