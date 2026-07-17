@@ -4,6 +4,12 @@ last_verified: 2026-05-03
 status: ratified — per-region storage shapes captured in [ADR-0016](../../adr/0016-per-region-storage-strategy.md); cross-region serving invariant in [ADR-0015](../../adr/0015-last-closed-bucket-rate-serving.md)
 ---
 
+> **DEPLOYMENT STATE (audit 2026-07-16):** the 3-region topology below is a
+> **ratified DESIGN, not the deployed reality.** Only **R1** is provisioned
+> (R2/R3 inventory files are absent; `deploy.yml`'s region enum is `[r1]`;
+> `docs/architecture/r2-r3-bringup.md` is the bringup plan). Read this doc as
+> the target architecture, not a description of what runs today.
+
 # Multi-Region Topology
 
 **Owner:** @ash.

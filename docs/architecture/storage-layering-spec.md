@@ -4,6 +4,12 @@ last_verified: 2026-07-02
 status: current
 ---
 
+> **CORRECTION (audit 2026-07-16):** where this spec says the team decided NOT
+> to create an `internal/domain` package, that is superseded — the D8 refactor
+> (2026-07-10) DID create `internal/domain/` and moved the extracted structs
+> there (storage→compute import-boundary violations dropped 15→6). Treat the
+> "no internal/domain" statements below as historical.
+
 # Storage layering spec (delegation-ready)
 
 **Problem (maintainability audit D8):** `internal/storage/timescale`
