@@ -1,6 +1,7 @@
 package explorer
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -64,7 +65,11 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := h.Reader.ContractEventsRecent(r.Context(), cid, limit, cur)
+
+	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
+	defer cancel()
+
+	rows, err := h.Reader.ContractEventsRecent(ctx, cid, limit, cur)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -75,7 +80,7 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := ContractDetailView{ContractID: cid, Events: make([]ContractEventView, len(rows))}
-	out.Protocol = h.contractAttribution(r.Context())[cid]
+	out.Protocol = h.contractAttribution(ctx)[cid]
 	for i, e := range rows {
 		out.Events[i] = contractEventView(e)
 	}

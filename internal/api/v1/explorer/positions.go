@@ -166,7 +166,9 @@ func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	includeClosed := r.URL.Query().Get("include_closed") == "true"
-	ctx := r.Context()
+
+	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
+	defer cancel()
 
 	resolve := h.newPositionAssetResolver(ctx)
 
