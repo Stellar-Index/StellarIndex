@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
-import { formatCompact } from '@/lib/format';
+import { formatCompact, formatPairPrice } from '@/lib/format';
 import { SourceSparkline } from '@/components/SourceSparkline';
 import {
   Container,
@@ -304,9 +304,9 @@ function AllCEXMarkets() {
                     </Link>
                   </Td>
                   <Td align="right">
-                    {m.last_price ? (
+                    {m.last_price && Number.isFinite(Number(m.last_price)) ? (
                       <span className="font-mono tabular-nums text-ink-body">
-                        {Number(m.last_price).toFixed(4)}
+                        {formatPairPrice(Number(m.last_price))}
                       </span>
                     ) : (
                       <span className="text-ink-faint">—</span>

@@ -29,6 +29,36 @@ export function formatCompact(value: number | string): string {
   return COMPACT_FORMATTER.format(n);
 }
 
+// formatPriceSmall — compact USD price with a toExponential tail below
+// 0.001, so a real sub-cent (or sub-1e-8) price never collapses to
+// "0.00" the way a fixed-max-8dp formatter does. This is the /assets
+// directory price-column formatter, lifted here as the single source so
+// the asset-detail sidebar and any other USD-price cell share ONE
+// implementation instead of each re-deriving the thresholds.
+export function formatPriceSmall(n: number): string {
+  if (!Number.isFinite(n)) return '—';
+  if (n >= 1) return n.toFixed(n >= 100 ? 2 : 4);
+  if (n >= 0.001) return n.toFixed(6);
+  if (n > 0) return n.toExponential(3);
+  return '0';
+}
+
+// formatPairPrice — quote-per-base last-price formatter for the exchange
+// and pair tables. Same toExponential-below-threshold shape as
+// formatPriceSmall but tuned for pair prices (a >=1000 band and a lower
+// 0.0001 exponential cutoff) so a cheap pair never renders "0.0000".
+// Returns '—' for a non-finite value.
+export function formatPairPrice(n: number): string {
+  if (!Number.isFinite(n)) return '—';
+  return n >= 1000
+    ? n.toFixed(2)
+    : n >= 1
+      ? n.toFixed(4)
+      : n >= 0.0001
+        ? n.toFixed(6)
+        : n.toExponential(3);
+}
+
 // Pass a fraction (0.0123 → "+1.23%"). Pass a percentage point if you
 // already divided.
 export function formatPctChange(fraction: number): string {
