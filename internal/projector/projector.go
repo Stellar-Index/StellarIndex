@@ -303,8 +303,16 @@ func (p *Projector) runOneSource(ctx context.Context, src Source) {
 //   - PERMANENT sink data faults (CHECK / numeric) → log LOUD + count + SKIP,
 //     because a poison row must not wedge the source forever.
 //
+// cycleOneSource is intentionally a single linear cycle: read cursor → resolve
+// durable tip → scan the window → classify each event's sink outcome (decode
+// soft-fail / transient-hold / permanent-skip) → advance the cursor only to the
+// last fully-committed ledger. The branch count is the durability state machine
+// (audit-2026-07-16 C2-1); splitting it purely for the gocyclo metric would
+// scatter that one narrative across helpers and obscure the cursor-watermark
+// invariant, so it is suppressed rather than fragmented.
+//
 //nolint:gocognit,funlen // linear cycle (cursor read → tip → scan → cursor write) with a source branch (soroban_events vs CH); splitting into helpers would scatter the cycle's success/failure metric emissions and make the control flow harder to audit.
-func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint32) {
+func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint32) { //nolint:gocyclo // essential, cohesive durability classification (C2-1)
 	start := time.Now()
 	cycleCtx, cancel := context.WithTimeout(ctx, PerSourceTimeout)
 	defer cancel()

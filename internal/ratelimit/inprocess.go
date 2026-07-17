@@ -63,7 +63,7 @@ func newLocalStore() *localStore {
 // caller's `unix / window_seconds` bucket; a key whose stored entry
 // names an older window is reset to the new one (that is the
 // window-rollover that makes this a FIXED-window limiter).
-func (s *localStore) take(key string, window int64, max int, now time.Time, windowDur time.Duration) (count int, allowed bool) {
+func (s *localStore) take(key string, window int64, limit int, now time.Time, windowDur time.Duration) (count int, allowed bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -75,7 +75,7 @@ func (s *localStore) take(key string, window int64, max int, now time.Time, wind
 	}
 	e.count++
 	s.entries[key] = e
-	return e.count, e.count <= max
+	return e.count, e.count <= limit
 }
 
 // gcLocked deletes entries belonging to a window strictly older than

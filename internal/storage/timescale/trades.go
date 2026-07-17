@@ -569,6 +569,34 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 // is no partial-success semantic — either every row is attempted (and
 // individual rows may be duplicate-absorbed), or the whole batch
 // fails.
+// tradeBatchValues builds the multi-row INSERT VALUES placeholder fragments and
+// the flat positional-arg slice for BatchInsertTrades. Each row contributes 13
+// params (source, ledger, tx_hash, op_index, ts, base_asset, quote_asset,
+// base_amount, quote_amount, usd_volume, maker, taker, derive_generation).
+func (s *Store) tradeBatchValues(ctx context.Context, insertRows []canonical.Trade) ([]string, []any) {
+	const colsPerRow = 13
+	args := make([]any, 0, len(insertRows)*colsPerRow)
+	valuesParts := make([]string, 0, len(insertRows))
+	for i, t := range insertRows {
+		base := i*colsPerRow + 1
+		valuesParts = append(valuesParts, fmt.Sprintf(
+			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, NULLIF($%d, ''), NULLIF($%d, ''), $%d)",
+			base, base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12,
+		))
+		var usdVolume any
+		if v := tradeUSDVolume(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver); v != nil {
+			usdVolume = *v
+		}
+		args = append(args,
+			t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
+			t.Pair.Base.String(), t.Pair.Quote.String(),
+			t.BaseAmount, t.QuoteAmount, usdVolume,
+			t.Maker, t.Taker, s.deriveGeneration,
+		)
+	}
+	return valuesParts, args
+}
+
 func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade) error {
 	if len(trades) == 0 {
 		return nil
@@ -619,30 +647,10 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 	// as a duplicate — the outcome metric is unchanged.
 	insertRows := dedupeSortedTradesByConflictKey(trades)
 
-	// Build VALUES placeholders + args slice. Each row has 13 params
-	// (source, ledger, tx_hash, op_index, ts, base_asset, quote_asset,
-	// base_amount, quote_amount, usd_volume, maker, taker,
-	// derive_generation).
-	const colsPerRow = 13
-	args := make([]any, 0, len(insertRows)*colsPerRow)
-	valuesParts := make([]string, 0, len(insertRows))
-	for i, t := range insertRows {
-		base := i*colsPerRow + 1
-		valuesParts = append(valuesParts, fmt.Sprintf(
-			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, NULLIF($%d, ''), NULLIF($%d, ''), $%d)",
-			base, base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12,
-		))
-		var usdVolume any
-		if v := tradeUSDVolume(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver); v != nil {
-			usdVolume = *v
-		}
-		args = append(args,
-			t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
-			t.Pair.Base.String(), t.Pair.Quote.String(),
-			t.BaseAmount, t.QuoteAmount, usdVolume,
-			t.Maker, t.Taker, s.deriveGeneration,
-		)
-	}
+	// Build VALUES placeholders + args slice (13 params/row incl.
+	// derive_generation) — extracted to keep this function under the length
+	// budget without splitting the deadlock/dedup narrative above.
+	valuesParts, args := s.tradeBatchValues(ctx, insertRows)
 
 	// CTE shape:
 	//   ins → multi-row INSERT, RETURNING source (+ ledger/amounts for
