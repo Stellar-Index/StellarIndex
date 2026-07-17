@@ -180,6 +180,17 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     -- Lets top-holder / account-balance reads sort + aggregate in SQL without
     -- decoding every entry's XDR.
     balance      Int64 DEFAULT 0,
+    -- Position of this change within its ledger's canonical entry-change walk
+    -- (transactions in apply order; within each tx: fee-changes,
+    -- tx-changes-before, per-op changes in op_index/change_index order,
+    -- tx-changes-after) — a per-LEDGER monotonic counter, unlike change_index
+    -- which restarts per transaction. Folded into ledger_entries_current's
+    -- ReplacingMergeTree version so the LAST change to a key within one ledger
+    -- wins FINAL dedup deterministically (audit-2026-07-16 C2-4c). DEFAULT 0
+    -- (old-binary-safe + the value legacy/pre-fix rows carry until a re-derive
+    -- repopulates them); snapshot/seed backfill rows stamp 4294967295
+    -- (math.MaxUint32 — authoritative final state for their ledger).
+    intra_ledger_seq UInt32 DEFAULT 0,
     ingested_at  DateTime DEFAULT now(),
     INDEX idx_lec_account_id account_id TYPE bloom_filter(0.01) GRANULARITY 1,
     INDEX idx_lec_asset asset TYPE bloom_filter(0.01) GRANULARITY 1,
@@ -195,13 +206,36 @@ PARTITION BY intDiv(ledger_seq, 1000000)
 ORDER BY (ledger_seq, tx_hash, op_index, change_index);
 
 -- Current-state projection of ledger_entry_changes: the LATEST entry per
--- (entry_type, key) — ReplacingMergeTree(ledger_seq) keeps the highest-ledger
--- row, FINAL forces read-time dedup. Backs the account-state + asset-holder
--- reads (ADR-0038 Phase C): instead of a GROUP BY over all of an account's /
--- asset's historical changes (which grows unboundedly with the backfill), a
--- read touches ~1 row per live entry via the account_id / asset skip-indexes.
--- Kept current by the materialized view below — every insert into
+-- (entry_type, key) — ReplacingMergeTree keeps the highest-VERSION row, FINAL
+-- forces read-time dedup. Backs the account-state + asset-holder reads
+-- (ADR-0038 Phase C): instead of a GROUP BY over all of an account's / asset's
+-- historical changes (which grows unboundedly with the backfill), a read
+-- touches ~1 row per live entry via the account_id / asset skip-indexes. Kept
+-- current by the materialized view below — every insert into
 -- ledger_entry_changes (live-capture + ch-backfill re-derive) flows through.
+--
+-- Version = (ledger_seq << 32) | intra_ledger_seq, NOT ledger_seq alone
+-- (audit-2026-07-16 C2-4c). ledger_seq is not unique per key within a ledger —
+-- a single ledger can hold several changes to one key (update-then-remove, or
+-- remove-then-recreate). With ledger_seq as the sole version those same-ledger
+-- rows tied, so FINAL kept an ARBITRARY one: it could resurrect a deleted entry
+-- (keep a stale before-image over a later 'removed') or serve a mid-ledger
+-- state. Folding the per-ledger intra_ledger_seq (the canonical within-ledger
+-- walk position — see ledger_entry_changes.intra_ledger_seq) into the low 32
+-- bits makes the version strictly monotonic in canonical order, so FINAL
+-- deterministically keeps the LAST change (including a removal). The high 32
+-- bits are the ledger, so cross-ledger ordering is unchanged. version is
+-- MATERIALIZED (computed on insert, never written by a client) — the MV and any
+-- reproject INSERT supply only the base columns.
+--
+-- NOTE: intra_ledger_seq is 0 on every row written before this fix (the column
+-- DEFAULT) and on legacy rows until a full re-derive of ledger_entry_changes
+-- repopulates it; for those rows same-ledger ties remain unbroken exactly as
+-- before (no regression). The tie-break is effective for all NEW ingest
+-- immediately, and for historical ledgers once re-derived. Existing deployments
+-- reproject this table from ledger_entry_changes via the operator-run migration
+-- deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql (a fresh deploy
+-- gets the corrected shape straight from this file).
 CREATE TABLE IF NOT EXISTS stellar.ledger_entries_current
 (
     entry_type  LowCardinality(String),
@@ -213,16 +247,20 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entries_current
     ledger_seq  UInt32,
     close_time  DateTime('UTC'),
     entry_xdr   String,
+    intra_ledger_seq UInt32 DEFAULT 0,
+    version     UInt64 MATERIALIZED bitShiftLeft(toUInt64(ledger_seq), 32) + intra_ledger_seq,
     INDEX idx_lecur_account_id account_id TYPE bloom_filter(0.01) GRANULARITY 1,
     INDEX idx_lecur_asset asset TYPE bloom_filter(0.01) GRANULARITY 1
 )
-ENGINE = ReplacingMergeTree(ledger_seq)
+ENGINE = ReplacingMergeTree(version)
 ORDER BY (entry_type, key_xdr);
 
--- Feeds ledger_entries_current from every ledger_entry_changes insert.
+-- Feeds ledger_entries_current from every ledger_entry_changes insert. Selects
+-- intra_ledger_seq so the target's MATERIALIZED version folds it in; version
+-- itself is computed on insert and is NOT selected here.
 CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.ledger_entries_current_mv
 TO stellar.ledger_entries_current AS
-SELECT entry_type, key_xdr, account_id, asset, balance, change_type, ledger_seq, close_time, entry_xdr
+SELECT entry_type, key_xdr, account_id, asset, balance, change_type, ledger_seq, close_time, entry_xdr, intra_ledger_seq
 FROM stellar.ledger_entry_changes;
 
 -- Per-token supply events (CAP-67 classic SAC + SEP-41 mint/burn/clawback) with

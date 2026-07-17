@@ -127,6 +127,20 @@ type LedgerEntryChangeRow struct {
 	// account-balance reads sort + aggregate in SQL without decoding every
 	// entry's XDR. Int64 (XLM / classic balances are i64 in XDR).
 	Balance int64
+	// IntraLedgerSeq is the position of this change within its ledger's
+	// canonical entry-change walk (transactions in apply order; within each tx
+	// fee-changes, tx-changes-before, per-op changes in op_index/change_index
+	// order, tx-changes-after) — a per-ledger monotonic counter. It is the
+	// intra-ledger tie-breaker folded into stellar.ledger_entries_current's
+	// ReplacingMergeTree version (version = ledger_seq<<32 | intra_ledger_seq),
+	// so when the SAME key is changed more than once in one ledger (e.g.
+	// update-then-remove) FINAL deterministically keeps the LAST change instead
+	// of an arbitrary same-ledger row (audit-2026-07-16 C2-4c). change_index
+	// alone can't serve — it is a per-TRANSACTION counter, so it repeats across
+	// a ledger's txs (see extract_entry_changes.go). Snapshot/seed backfill rows
+	// stamp the seedIntraLedgerSeq sentinel (the authoritative final state for
+	// their ledger). DEFAULT 0 in the lake — old-binary-safe.
+	IntraLedgerSeq uint32
 }
 
 // SupplyFlowRow mirrors stellar.supply_flows: one decoded supply-affecting
@@ -438,12 +452,12 @@ func (s *Sink) flushChanges(ctx context.Context) error {
 	if len(s.changes) == 0 {
 		return nil // G12-03: always taken today — Extract.Changes is never populated.
 	}
-	b, err := s.conn.PrepareBatch(ctx, "INSERT INTO stellar.ledger_entry_changes (ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_type, key_xdr, entry_xdr, account_id, asset, balance)")
+	b, err := s.conn.PrepareBatch(ctx, "INSERT INTO stellar.ledger_entry_changes (ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_type, key_xdr, entry_xdr, account_id, asset, balance, intra_ledger_seq)")
 	if err != nil {
 		return fmt.Errorf("clickhouse: prepare ledger_entry_changes: %w", err)
 	}
 	for _, r := range s.changes {
-		if err := b.Append(r.LedgerSeq, r.CloseTime, r.TxHash, r.OpIndex, r.ChangeIndex, r.ChangeType, r.EntryType, r.KeyXDR, r.EntryXDR, r.AccountID, r.Asset, r.Balance); err != nil {
+		if err := b.Append(r.LedgerSeq, r.CloseTime, r.TxHash, r.OpIndex, r.ChangeIndex, r.ChangeType, r.EntryType, r.KeyXDR, r.EntryXDR, r.AccountID, r.Asset, r.Balance, r.IntraLedgerSeq); err != nil {
 			return fmt.Errorf("clickhouse: append change %s/%d/%d: %w", r.TxHash, r.OpIndex, r.ChangeIndex, err)
 		}
 	}
