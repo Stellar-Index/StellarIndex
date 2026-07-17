@@ -98,13 +98,14 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 	}
 	if isRemoval {
 		return []consumer.Event{Observation{
-			ContractID: contractID,
-			AssetKey:   assetKey,
-			Holder:     holder,
-			Ledger:     ctx.Ledger,
-			ObservedAt: ctx.ClosedAt,
-			Balance:    big.NewInt(0),
-			IsRemoval:  true,
+			ContractID:     contractID,
+			AssetKey:       assetKey,
+			Holder:         holder,
+			Ledger:         ctx.Ledger,
+			ObservedAt:     ctx.ClosedAt,
+			Balance:        big.NewInt(0),
+			IsRemoval:      true,
+			IntraLedgerSeq: ctx.IntraLedgerSeq,
 		}}, nil
 	}
 	balance, err := scval.SEP41BalanceAmount(cd.Val)
@@ -112,12 +113,13 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 		return nil, err
 	}
 	return []consumer.Event{Observation{
-		ContractID: contractID,
-		AssetKey:   assetKey,
-		Holder:     holder,
-		Ledger:     ctx.Ledger,
-		ObservedAt: ctx.ClosedAt,
-		Balance:    balance,
+		ContractID:     contractID,
+		AssetKey:       assetKey,
+		Holder:         holder,
+		Ledger:         ctx.Ledger,
+		ObservedAt:     ctx.ClosedAt,
+		Balance:        balance,
+		IntraLedgerSeq: ctx.IntraLedgerSeq,
 	}}, nil
 }
 

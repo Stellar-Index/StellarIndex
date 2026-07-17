@@ -36,4 +36,14 @@ type AccountObservation struct {
 
 	// IsRemoval is true when the change removed the AccountEntry.
 	IsRemoval bool
+
+	// IntraLedgerSeq is the within-ledger position of the change that
+	// produced this observation, in the dispatcher's canonical meta-walk
+	// order (see dispatcher.LedgerEntryChangeContext.IntraLedgerSeq). The
+	// writer persists it and guards its last-writer-wins upsert on it so an
+	// out-of-order PersistEvents worker can never overwrite a later
+	// intra-ledger change with an earlier one (audit-2026-07-16 C2-6). The
+	// ops seed path stamps timescale.SeedIntraLedgerSeq (the authoritative
+	// final state for the ledger).
+	IntraLedgerSeq uint32
 }

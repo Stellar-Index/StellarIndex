@@ -40,20 +40,29 @@ func (s *Store) InsertAccountObservation(ctx context.Context, o domain.AccountOb
 	if o.Balance == nil {
 		return fmt.Errorf("timescale: InsertAccountObservation: AccountID=%s Balance is nil", o.AccountID)
 	}
+	// intra_ledger_seq guards the upsert so a LATER intra-ledger change
+	// always wins regardless of which parallel PersistEvents worker commits
+	// last (audit-2026-07-16 C2-6). `<=` (not `<`) keeps a deterministic
+	// re-backfill — which re-assigns the SAME position per change —
+	// idempotent-corrective rather than a no-op.
 	const q = `
         INSERT INTO account_observations (
             account_id, ledger, observed_at,
-            balance_stroops, home_domain, flags, seq_num, is_removal
+            balance_stroops, home_domain, flags, seq_num, is_removal,
+            intra_ledger_seq
         ) VALUES (
             $1, $2, $3,
-            $4, $5, $6, $7, $8
+            $4, $5, $6, $7, $8,
+            $9
         )
         ON CONFLICT (account_id, ledger, observed_at) DO UPDATE SET
-            balance_stroops = EXCLUDED.balance_stroops,
-            home_domain     = EXCLUDED.home_domain,
-            flags           = EXCLUDED.flags,
-            seq_num         = EXCLUDED.seq_num,
-            is_removal      = EXCLUDED.is_removal
+            balance_stroops  = EXCLUDED.balance_stroops,
+            home_domain      = EXCLUDED.home_domain,
+            flags            = EXCLUDED.flags,
+            seq_num          = EXCLUDED.seq_num,
+            is_removal       = EXCLUDED.is_removal,
+            intra_ledger_seq = EXCLUDED.intra_ledger_seq
+        WHERE account_observations.intra_ledger_seq <= EXCLUDED.intra_ledger_seq
     `
 	var homeDomain sql.NullString
 	if o.HomeDomain != "" {
@@ -70,6 +79,7 @@ func (s *Store) InsertAccountObservation(ctx context.Context, o domain.AccountOb
 		int(o.Flags),
 		o.SeqNum,
 		o.IsRemoval,
+		int64(o.IntraLedgerSeq),
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertAccountObservation %s@%d: %w", o.AccountID, o.Ledger, err)

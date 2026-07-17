@@ -239,7 +239,27 @@ type LedgerEntryChangeContext struct {
 	ClosedAt time.Time
 	TxHash   string
 	OpIndex  int
-	Change   xdr.LedgerEntryChange
+
+	// IntraLedgerSeq is the position of this change within the ledger's
+	// canonical entry-change walk — a per-ledger monotonic counter assigned
+	// in meta-walk order (transactions in apply order; within each tx:
+	// fee-changes, tx-changes-before, operations in op_index order with each
+	// op's changes in change_index order, tx-changes-after). It is a faithful
+	// single-integer encoding of (tx position, op_index, change_index) — the
+	// same canonical within-ledger order entry_change_reader.go uses — so the
+	// HIGHEST value for a given ledger entry is its FINAL intra-ledger state.
+	//
+	// The balance-observation writers persist this alongside the value and
+	// guard their last-writer-wins upsert on it
+	// (intra_ledger_seq <= EXCLUDED.intra_ledger_seq) so an out-of-order
+	// PersistEvents worker can never overwrite a later intra-ledger change
+	// with an earlier one (audit-2026-07-16 C2-6). Counter resets per ledger;
+	// correctness only needs monotonicity WITHIN a ledger (rows from different
+	// ledgers never share the observation PK). Unmatched changes still consume
+	// a value (gaps are harmless — only relative order matters).
+	IntraLedgerSeq uint32
+
+	Change xdr.LedgerEntryChange
 }
 
 // Dispatcher owns the registered decoders. Construct with New(),
@@ -552,6 +572,13 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 	closedAt := lcm.ClosedAt().UTC().Format(time.RFC3339)
 
 	var outputs []consumer.Event
+	// Per-ledger monotonic entry-change position, threaded into every
+	// LedgerEntryChangeContext.IntraLedgerSeq so the balance-observation
+	// writers can make the FINAL intra-ledger change win their upsert
+	// regardless of parallel-worker commit order (audit-2026-07-16 C2-6).
+	// Declared OUTSIDE the tx loop so it accumulates across all txs in the
+	// ledger in apply order.
+	var entryChangeSeq uint32
 	for {
 		tx, err := reader.Read()
 		if errors.Is(err, io.EOF) {
@@ -681,7 +708,7 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 		// Skipped cheaply when no entry decoders are registered.
 		if len(d.entryDecoders) > 0 {
 			outputs = append(outputs,
-				d.walkEntryChanges(&tx, ledgerSeq, parsedClosedAt, txHash)...)
+				d.walkEntryChanges(&tx, ledgerSeq, parsedClosedAt, txHash, &entryChangeSeq)...)
 		}
 
 		// ─── Classic operations (SDEX and friends) ───────────
@@ -734,15 +761,20 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 // surface). V3 + V4 share the same Operations / TxChanges shape
 // for AccountEntry purposes; the only difference is the wrapping
 // type.
-func (d *Dispatcher) walkEntryChanges(tx *ingest.LedgerTransaction, ledgerSeq uint32, closedAt time.Time, txHash string) []consumer.Event {
+func (d *Dispatcher) walkEntryChanges(tx *ingest.LedgerTransaction, ledgerSeq uint32, closedAt time.Time, txHash string, seq *uint32) []consumer.Event {
 	dispatch := func(opIdx int, change xdr.LedgerEntryChange) []consumer.Event {
 		ctx := LedgerEntryChangeContext{
-			Ledger:   ledgerSeq,
-			ClosedAt: closedAt,
-			TxHash:   txHash,
-			OpIndex:  opIdx,
-			Change:   change,
+			Ledger:         ledgerSeq,
+			ClosedAt:       closedAt,
+			TxHash:         txHash,
+			OpIndex:        opIdx,
+			IntraLedgerSeq: *seq,
+			Change:         change,
 		}
+		// Advance the per-ledger position for the NEXT change. Bumped for
+		// every walked change (matched or not) so relative order is
+		// preserved; gaps from unmatched changes are harmless (C2-6).
+		*seq++
 		outs, err := d.dispatchEntryChange(ctx)
 		if err != nil {
 			return nil

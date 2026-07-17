@@ -1424,12 +1424,13 @@ func persistAccountObservation(ctx context.Context, logger *slog.Logger, store *
 
 func persistTrustlineObservation(ctx context.Context, logger *slog.Logger, store *timescale.Store, o trustlines.Observation) error {
 	if err := store.InsertTrustlineObservation(ctx, timescale.TrustlineObservation{
-		AccountID:  o.AccountID,
-		AssetKey:   o.AssetKey,
-		Ledger:     o.Ledger,
-		ObservedAt: o.ObservedAt,
-		Balance:    o.Balance,
-		IsRemoval:  o.IsRemoval,
+		AccountID:      o.AccountID,
+		AssetKey:       o.AssetKey,
+		Ledger:         o.Ledger,
+		ObservedAt:     o.ObservedAt,
+		Balance:        o.Balance,
+		IsRemoval:      o.IsRemoval,
+		IntraLedgerSeq: o.IntraLedgerSeq,
 	}); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(trustlines.SourceName, "trustline_observation").Inc()
 		logger.Error("insert trustline observation failed",
@@ -1446,12 +1447,13 @@ func persistTrustlineObservation(ctx context.Context, logger *slog.Logger, store
 
 func persistClaimableObservation(ctx context.Context, logger *slog.Logger, store *timescale.Store, o claimable_balances.Observation) error {
 	if err := store.InsertClaimableObservation(ctx, timescale.ClaimableObservation{
-		ClaimableID: o.ClaimableID,
-		AssetKey:    o.AssetKey,
-		Ledger:      o.Ledger,
-		ObservedAt:  o.ObservedAt,
-		Balance:     o.Balance,
-		IsRemoval:   o.IsRemoval,
+		ClaimableID:    o.ClaimableID,
+		AssetKey:       o.AssetKey,
+		Ledger:         o.Ledger,
+		ObservedAt:     o.ObservedAt,
+		Balance:        o.Balance,
+		IsRemoval:      o.IsRemoval,
+		IntraLedgerSeq: o.IntraLedgerSeq,
 	}); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(claimable_balances.SourceName, "claimable_observation").Inc()
 		logger.Error("insert claimable observation failed",
@@ -1468,12 +1470,13 @@ func persistClaimableObservation(ctx context.Context, logger *slog.Logger, store
 
 func persistLPReserveObservation(ctx context.Context, logger *slog.Logger, store *timescale.Store, o liquidity_pools.Observation) error {
 	if err := store.InsertLPReserveObservation(ctx, timescale.LPReserveObservation{
-		PoolID:     o.PoolID,
-		AssetKey:   o.AssetKey,
-		Ledger:     o.Ledger,
-		ObservedAt: o.ObservedAt,
-		Balance:    o.Balance,
-		IsRemoval:  o.IsRemoval,
+		PoolID:         o.PoolID,
+		AssetKey:       o.AssetKey,
+		Ledger:         o.Ledger,
+		ObservedAt:     o.ObservedAt,
+		Balance:        o.Balance,
+		IsRemoval:      o.IsRemoval,
+		IntraLedgerSeq: o.IntraLedgerSeq,
 	}); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(liquidity_pools.SourceName, "lp_reserve_observation").Inc()
 		logger.Error("insert LP-reserve observation failed",
@@ -1490,13 +1493,14 @@ func persistLPReserveObservation(ctx context.Context, logger *slog.Logger, store
 
 func persistSACBalanceObservation(ctx context.Context, logger *slog.Logger, store *timescale.Store, o sac_balances.Observation) error {
 	if err := store.InsertSACBalanceObservation(ctx, timescale.SACBalanceObservation{
-		ContractID: o.ContractID,
-		AssetKey:   o.AssetKey,
-		Holder:     o.Holder,
-		Ledger:     o.Ledger,
-		ObservedAt: o.ObservedAt,
-		Balance:    o.Balance,
-		IsRemoval:  o.IsRemoval,
+		ContractID:     o.ContractID,
+		AssetKey:       o.AssetKey,
+		Holder:         o.Holder,
+		Ledger:         o.Ledger,
+		ObservedAt:     o.ObservedAt,
+		Balance:        o.Balance,
+		IsRemoval:      o.IsRemoval,
+		IntraLedgerSeq: o.IntraLedgerSeq,
 	}); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(sac_balances.SourceName, "sac_balance_observation").Inc()
 		logger.Error("insert SAC balance observation failed",
