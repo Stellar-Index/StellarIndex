@@ -36,6 +36,80 @@ func (s *stubReader) ReserveBalanceTotal(_ context.Context, accounts []string, l
 	return new(big.Int).Set(s.balance), nil
 }
 
+// TestComputers_StampLedgerCloseTimeNotWallClock is the M4
+// determination test. The finding named the three Computers
+// (xlm/classic/sep41) as stamping ObservedAt with wall-clock write-time.
+// This proves the opposite: each Computer stamps ObservedAt with the
+// close time its CALLER passes — a value deliberately chosen far from
+// "now" (2024-01-02, ~2.5y stale) — never time.Now(). So the defect is
+// NOT in the Computers; it is in whichever caller supplies that
+// argument. (The two production ledger-resolvers —
+// internal/ops/supply/supply.go::resolveSnapshotLedger and
+// cmd/stellarindex-aggregator/main.go::supplyAggregatorLedgers.LatestKnownLedger
+// — both pass time.Now().UTC(); the authoritative close time is
+// account_observations.observed_at, documented in
+// internal/domain/accounts.go as "the ledger close time, UTC".)
+func TestComputers_StampLedgerCloseTimeNotWallClock(t *testing.T) {
+	// A historical ledger's close time, far from wall-clock now.
+	closeTime := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	const ledger = 40_000_000
+
+	assertStamp := func(t *testing.T, got supply.Supply) {
+		t.Helper()
+		if !got.ObservedAt.Equal(closeTime) {
+			t.Errorf("ObservedAt = %v, want the ledger close time %v", got.ObservedAt, closeTime)
+		}
+		if time.Since(got.ObservedAt) < 365*24*time.Hour {
+			t.Errorf("ObservedAt %v is suspiciously close to now — Computer ignored the close time", got.ObservedAt)
+		}
+	}
+
+	t.Run("xlm", func(t *testing.T) {
+		c, err := supply.NewXLMComputer(nil, nil)
+		if err != nil {
+			t.Fatalf("constructor: %v", err)
+		}
+		got, err := c.Compute(context.Background(), ledger, closeTime)
+		if err != nil {
+			t.Fatalf("Compute: %v", err)
+		}
+		assertStamp(t, got)
+	})
+
+	t.Run("classic", func(t *testing.T) {
+		reader := &stubClassicReader{comps: supply.ClassicSupplyComponents{
+			Trustline: bigInt(1000), Claimable: bigInt(0), LPReserve: bigInt(0),
+			SACWrapped: bigInt(0), IssuerBalance: bigInt(0),
+			LockedAccountBalances: bigInt(0), LockedContractBalances: bigInt(0),
+		}}
+		c, err := supply.NewClassicComputer(supply.Policy{}, reader)
+		if err != nil {
+			t.Fatalf("constructor: %v", err)
+		}
+		got, err := c.Compute(context.Background(), mustClassic(t, "USDC", validIssuer), ledger, closeTime)
+		if err != nil {
+			t.Fatalf("Compute: %v", err)
+		}
+		assertStamp(t, got)
+	})
+
+	t.Run("sep41", func(t *testing.T) {
+		reader := &stubSEP41Reader{comps: supply.SEP41SupplyComponents{
+			MintTotal: bigInt(1000), BurnTotal: bigInt(0), ClawbackTotal: bigInt(0),
+			AdminBalance: bigInt(0), LockedAccountBalances: bigInt(0), LockedContractBalances: bigInt(0),
+		}}
+		c, err := supply.NewSEP41Computer(supply.Policy{}, reader)
+		if err != nil {
+			t.Fatalf("constructor: %v", err)
+		}
+		got, err := c.Compute(context.Background(), mustSoroban(t, validContractID), ledger, closeTime)
+		if err != nil {
+			t.Fatalf("Compute: %v", err)
+		}
+		assertStamp(t, got)
+	})
+}
+
 // TestXLMTotalSupplyStroops_FrozenValue — the constant must match
 // the network-frozen value to the stroop. Renaming or recomputing
 // this is a wire break we'd reject in review — the test guards
