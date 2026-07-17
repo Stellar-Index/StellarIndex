@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
-# Migration money-column lint (ADR-0003).
+# Migration lint: money-column (ADR-0003) + file integrity (audit C4-7).
+#
+# Two passes, both gating (exit non-zero on any violation):
+#   1. money-column — monetary columns must be NUMERIC (ADR-0003).
+#   2. file integrity — every NNNN_*.up.sql has a matching NON-EMPTY
+#      *.down.sql (and no orphan downs), no duplicate NNNN prefixes, and
+#      no empty files. Numbering GAPS are a non-fatal WARNING (this repo
+#      legitimately skips numbers when a migration is squashed/removed).
+#
+# ── money-column detail ──
 #
 # Money is NUMERIC — never BIGINT / INT8 / DOUBLE PRECISION / FLOAT /
 # REAL (JSON numbers are IEEE-754 doubles; i128 amounts overflow both
@@ -51,5 +60,65 @@ done
 
 if [ "$fail" -eq 0 ]; then
   echo "✅ migration money-column lint passed."
+fi
+
+# ─── Pass 2: pairing / numbering / non-empty (audit C4-7) ───
+# A missing or empty .down.sql means a migration can't be rolled back —
+# a silent operational trap discovered only during an incident. This
+# pass makes it a CI failure. Gaps are WARN-only (see header): the tree
+# legitimately skips numbers (e.g. 0075, 0077-0079, 0084 today) when a
+# migration is squashed out, so a hard no-gap rule would false-positive.
+
+# Non-empty: every migration file must have content.
+for f in migrations/*.sql; do
+  [ -e "$f" ] || continue
+  if [ ! -s "$f" ]; then
+    echo "lint-migrations ❌ ${f}: migration file is empty" >&2
+    fail=1
+  fi
+done
+
+# up ↔ down pairing: every up needs a non-empty down; no orphan downs.
+for up in migrations/*.up.sql; do
+  [ -e "$up" ] || continue
+  down="${up%.up.sql}.down.sql"
+  if [ ! -f "$down" ]; then
+    echo "lint-migrations ❌ ${up}: no matching down migration (${down##*/})" >&2
+    fail=1
+  elif [ ! -s "$down" ]; then
+    echo "lint-migrations ❌ ${down}: down migration is empty (a down must reverse its up)" >&2
+    fail=1
+  fi
+done
+for down in migrations/*.down.sql; do
+  [ -e "$down" ] || continue
+  up="${down%.down.sql}.up.sql"
+  if [ ! -f "$up" ]; then
+    echo "lint-migrations ❌ ${down}: orphan down migration (no matching ${up##*/})" >&2
+    fail=1
+  fi
+done
+
+# Duplicate NNNN prefixes among *.up.sql (two migrations claiming one number).
+dupes=$(ls migrations/*.up.sql 2>/dev/null \
+  | sed -E 's#.*/([0-9]+)_.*#\1#' | sort | uniq -d || true)
+if [ -n "$dupes" ]; then
+  echo "lint-migrations ❌ duplicate migration number(s) among *.up.sql:" >&2
+  echo "$dupes" | sed 's/^/  /' >&2
+  fail=1
+fi
+
+# Numbering gaps → WARNING only (non-fatal; see header).
+gaps=$(ls migrations/*.up.sql 2>/dev/null \
+  | sed -E 's#.*/([0-9]+)_.*#\1#' | sort -n | awk '
+    NR==1 { prev = $1 + 0; next }
+    { cur = $1 + 0; while (prev + 1 < cur) { prev++; printf "%04d ", prev } prev = cur }
+  ' || true)
+if [ -n "$gaps" ]; then
+  echo "lint-migrations ⚠️  numbering gap(s) (non-fatal — squashed/removed migrations): ${gaps}" >&2
+fi
+
+if [ "$fail" -eq 0 ]; then
+  echo "✅ migration lint passed (money-column + pairing/numbering/non-empty)."
 fi
 exit "$fail"
