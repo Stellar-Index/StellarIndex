@@ -485,7 +485,7 @@
           ref_date="${latest_commit_date:-$latest_published}"
           ref_date_compact=$(printf '%s' "$ref_date" | tr -dc '0-9' | cut -c1-14)
 
-          if [ -n "$latest_major" ] && [ "${#ref_date_compact}" -eq 14 ]; then
+          if [ -n "$latest_major" ] && {% raw %}[ "${#ref_date_compact}" -eq 14 ]{% endraw %}; then
             if [ "$galexie_date" -ge "$ref_date_compact" ]; then
               lag=0
             else
