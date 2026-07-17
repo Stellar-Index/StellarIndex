@@ -200,6 +200,130 @@ func TestSACFullHistorySeed_LatestWriteWins(t *testing.T) {
 	}
 }
 
+// TestSACFullHistorySeed_SameLedgerRemovalCoherence proves audit-2026-07-16
+// C2-4: when one storage key is BOTH present and removed within the SAME
+// ledger, the full-history seed must resolve the single genuine latest change
+// coherently (every projected column from that one row) so the removed-entry
+// skip fires and the deleted balance is NOT resurrected.
+//
+// change_index is only a per-transaction counter (extract_entry_changes.go),
+// so ledger_seq does not order intra-ledger changes — the intra-ledger order
+// is (op_index, change_index). The prior query took four INDEPENDENT
+// argMax(col, ledger_seq) aggregates, which ClickHouse resolves per-column on
+// a ledger_seq tie: it could pair the present row's entry_xdr with the removed
+// row's change_type (or vice versa), so the removed skip below missed and the
+// pre-removal before-image balance leaked into the SAC supply seed. The tuple
+// argMax (ledger_seq, tx_hash, op_index, change_index) forces all columns from
+// the one latest row, here the op_index=1 'removed' change → holder skipped.
+func TestSACFullHistorySeed_SameLedgerRemovalCoherence(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	const (
+		sac   = "CBZ7M5B3Y4WWBZ5XK5UZCAFOEZ23KSSZXYECYX3IXM6E2JOLQC52DK32"
+		asset = "PHO:GAX5TXB5RYJNLBUR477PEXM4X75APK2PGMTN6KEFQSESGWFXEAKFSXJO"
+	)
+	const ledger = uint32(50_000_000)
+	closeTime := time.Date(2022, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	sacContract := fhContractScAddr(t, sac)
+	holder, holderAddr := fhSyntheticAccountAddr(t, 0xC3)
+	holderKey := fhBalanceKey(t, holderAddr)
+	keyXDR := fhKeyXDR(t, sacContract, holderKey)
+
+	// A non-zero before-image balance on BOTH rows: if the query resolves
+	// change_type incoherently and misses the removal, this is exactly the
+	// value that would be resurrected into the supply seed.
+	beforeImage := big.NewInt(100_000_000)
+	rows := []chstore.LedgerEntryChangeRow{
+		{ // present earlier in the ledger (op 0)
+			LedgerSeq: ledger, CloseTime: closeTime, TxHash: "aa", OpIndex: 0, ChangeIndex: 1,
+			ChangeType: "updated", EntryType: "contract_data", KeyXDR: keyXDR,
+			EntryXDR: fhEntryXDR(t, sacContract, holderKey, fhI128Val(beforeImage), ledger),
+		},
+		{ // removed later in the SAME ledger (op 1) — the genuine latest state
+			LedgerSeq: ledger, CloseTime: closeTime, TxHash: "aa", OpIndex: 1, ChangeIndex: 1,
+			ChangeType: "removed", EntryType: "contract_data", KeyXDR: keyXDR,
+			EntryXDR: fhEntryXDR(t, sacContract, holderKey, fhI128Val(beforeImage), ledger),
+		},
+	}
+	if _, err := chstore.InsertEntryChanges(ctx, addr, rows, 0); err != nil {
+		t.Fatalf("InsertEntryChanges: %v", err)
+	}
+
+	watched := map[string]string{sac: asset}
+	var resurrected int
+	if err := chstore.StreamSACBalanceSeedsFullHistory(ctx, addr, watched, func(seed chstore.SACBalanceSeed) error {
+		if seed.Holder == holder {
+			resurrected++
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("StreamSACBalanceSeedsFullHistory: %v", err)
+	}
+	if resurrected != 0 {
+		t.Errorf("removed-in-same-ledger holder was emitted %d time(s) — the deleted balance was RESURRECTED (column-incoherent argMax tie): the latest intra-ledger change is 'removed'", resurrected)
+	}
+}
+
+// TestSACFullHistorySeed_SameLedgerRecreateWins is the positive complement:
+// removed early then RE-CREATED later in the same ledger → the holder IS
+// emitted, with the re-created balance (the latest intra-ledger change wins,
+// resolved by op_index within the tied ledger_seq).
+func TestSACFullHistorySeed_SameLedgerRecreateWins(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	const (
+		sac   = "CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY"
+		asset = "BLND:GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E3JF6MQ5EZYY"
+	)
+	const ledger = uint32(55_000_000)
+	closeTime := time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	sacContract := fhContractScAddr(t, sac)
+	holder, holderAddr := fhSyntheticAccountAddr(t, 0xD4)
+	holderKey := fhBalanceKey(t, holderAddr)
+	keyXDR := fhKeyXDR(t, sacContract, holderKey)
+
+	recreated := big.NewInt(777_000_000)
+	rows := []chstore.LedgerEntryChangeRow{
+		{ // removed early (op 0)
+			LedgerSeq: ledger, CloseTime: closeTime, TxHash: "bb", OpIndex: 0, ChangeIndex: 1,
+			ChangeType: "removed", EntryType: "contract_data", KeyXDR: keyXDR,
+			EntryXDR: fhEntryXDR(t, sacContract, holderKey, fhI128Val(big.NewInt(1)), ledger),
+		},
+		{ // re-created later in the SAME ledger (op 2) — the genuine latest state
+			LedgerSeq: ledger, CloseTime: closeTime, TxHash: "bb", OpIndex: 2, ChangeIndex: 1,
+			ChangeType: "created", EntryType: "contract_data", KeyXDR: keyXDR,
+			EntryXDR: fhEntryXDR(t, sacContract, holderKey, fhI128Val(recreated), ledger),
+		},
+	}
+	if _, err := chstore.InsertEntryChanges(ctx, addr, rows, 0); err != nil {
+		t.Fatalf("InsertEntryChanges: %v", err)
+	}
+
+	watched := map[string]string{sac: asset}
+	var got *chstore.SACBalanceSeed
+	if err := chstore.StreamSACBalanceSeedsFullHistory(ctx, addr, watched, func(seed chstore.SACBalanceSeed) error {
+		if seed.Holder == holder {
+			s := seed
+			got = &s
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("StreamSACBalanceSeedsFullHistory: %v", err)
+	}
+	if got == nil {
+		t.Fatal("re-created-in-same-ledger holder was NOT emitted — the removal at op 0 incoherently won over the re-create at op 2")
+	}
+	if got.Balance.Cmp(recreated) != 0 {
+		t.Errorf("Balance = %s, want %s (a stale intra-ledger change won)", got.Balance, recreated)
+	}
+}
+
 // fhSuppressFromCurrentState synchronously deletes the row matching
 // keyXDR from stellar.ledger_entries_current — used to reproduce, in a
 // fresh test schema, the end state of the real current-state coverage
