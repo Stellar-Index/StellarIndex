@@ -687,7 +687,8 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
                 taker             = EXCLUDED.taker,
                 derive_generation = EXCLUDED.derive_generation
               WHERE trades.derive_generation <= EXCLUDED.derive_generation
-            RETURNING (xmax = 0) AS inserted, source, ledger, base_amount, quote_amount
+            RETURNING (xmax = 0) AS inserted, source, ledger, ts,
+                      base_asset, quote_asset, base_amount, quote_amount
         ), bump AS (
             INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
             -- ORDER BY source: mixed-source batches row-lock one
@@ -706,10 +707,17 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
               SET entry_count = sec.entry_count + EXCLUDED.entry_count,
                   updated_at  = EXCLUDED.updated_at
         )
-        SELECT source,
-               count(*) FILTER (WHERE inserted),
-               count(*) FILTER (WHERE inserted AND ledger <> 0 AND base_amount = quote_amount AND base_amount <> 0)
-          FROM ins GROUP BY source
+        -- Per-LANDED-row projection (xmax = 0 only). The old aggregate
+        -- returned per-source counts; we now return one row per genuinely-
+        -- inserted trade so the caller can (a) tally new/unit-ratio in Go and
+        -- (b) drive the classic-asset/issuer registry hook off the SAME
+        -- landed set the single-row InsertTrade path uses (C2-13b). is_unit_ratio
+        -- keeps the numeric comparison in SQL (ledger already gated non-zero,
+        -- and WHERE inserted already gates landed) to avoid Go-side decimal
+        -- equality drift.
+        SELECT source, ledger, ts, base_asset, quote_asset,
+               (ledger <> 0 AND base_amount = quote_amount AND base_amount <> 0) AS is_unit_ratio
+          FROM ins WHERE inserted
     `, strings.Join(valuesParts, ", "))
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -721,16 +729,37 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 	// Counts per source for outcome metrics: how many landed (new) +
 	// how many were absorbed by ON CONFLICT (duplicate) + how many of
 	// the landed rows are unit-ratio (base_amount == quote_amount).
+	// Aggregated in Go from the per-landed-row result set (was a SQL
+	// GROUP BY); a source with zero landed rows simply never appears in
+	// perSourceNew, and perSourceNew[missing] == 0 keeps the duplicate =
+	// sent - landed math below identical to the old aggregate.
 	perSourceNew := make(map[string]int, 4)
 	perSourceUnitRatio := make(map[string]int, 4)
+	// C2-13b: distinct landed assets (base + quote of every inserted row),
+	// keyed by asset string, holding the highest-ledger observation so the
+	// registry hook advances last_seen_* correctly (registerClassicAssetSeen
+	// uses GREATEST). Drives the classic-asset/issuer registry the batch
+	// path previously skipped.
+	seenAssets := make(map[string]registryObservation, 8)
+	noteAsset := func(asset string, ledger uint32, ts time.Time) {
+		if prev, ok := seenAssets[asset]; !ok || ledger > prev.ledger {
+			seenAssets[asset] = registryObservation{ledger: ledger, ts: ts}
+		}
+	}
 	for rows.Next() {
-		var source string
-		var n, unitRatio int
-		if err := rows.Scan(&source, &n, &unitRatio); err != nil {
+		var source, baseAsset, quoteAsset string
+		var ledger uint32
+		var ts time.Time
+		var isUnitRatio bool
+		if err := rows.Scan(&source, &ledger, &ts, &baseAsset, &quoteAsset, &isUnitRatio); err != nil {
 			return fmt.Errorf("timescale: BatchInsertTrades scan: %w", err)
 		}
-		perSourceNew[source] = n
-		perSourceUnitRatio[source] = unitRatio
+		perSourceNew[source]++
+		if isUnitRatio {
+			perSourceUnitRatio[source]++
+		}
+		noteAsset(baseAsset, ledger, ts)
+		noteAsset(quoteAsset, ledger, ts)
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("timescale: BatchInsertTrades rows.Err: %w", err)
@@ -760,12 +789,42 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 		}
 	}
 
-	// Asset-registry side effects: skip in the batch path. The
-	// registry is dedupe-cached per process, and a missing
-	// registration is soft-fail — it'll get picked up on the next
-	// single-row InsertTrade for the same asset (e.g. backfill
-	// subcommand). The hot batch path stays narrow.
+	// C2-13b: auto-register the classic-asset / issuer registry from the
+	// LANDED trades — the same Phase-4 hook InsertTrade runs. The batch path
+	// used to skip this, reasoning a later single-row InsertTrade would pick
+	// the asset up; but the LIVE indexer ingests trades EXCLUSIVELY through
+	// this batch path (persistWorker → BatchInsertTrades), so classic_assets
+	// / issuers permanently under-populated for batch-ingested assets. We
+	// register only genuinely-inserted rows (matching InsertTrade's F-1243
+	// duplicate-replay guard), deduped to the distinct assets in this batch,
+	// each at the highest ledger we saw. Soft-fail + dedupe-cached, exactly
+	// like the single-row path — a registry write can't sink the committed
+	// batch, and steady state is a no-op after the first touch per asset.
+	for assetID, obsv := range seenAssets {
+		asset, perr := canonical.ParseAsset(assetID)
+		if perr != nil {
+			// A stored asset string that won't re-parse is a decoder-side
+			// invariant break, not a batch failure — the trades already
+			// committed. Breadcrumb at debug (same posture as the hook's own
+			// soft-fail) and skip this asset.
+			slog.Default().Debug("timescale: batch registry asset parse failed (soft-skip)",
+				"asset", assetID, "err", perr)
+			continue
+		}
+		if regErr := s.registerClassicAssetSeen(ctx, asset, obsv.ledger, obsv.ts); regErr != nil {
+			slog.Default().Debug("timescale: batch classic-asset registry upsert failed (soft-skip)",
+				"asset", assetID, "ledger", obsv.ledger, "err", regErr)
+		}
+	}
 	return nil
+}
+
+// registryObservation is the highest-ledger observation of a landed asset
+// within one BatchInsertTrades call — the input to the C2-13b batch-path
+// classic-asset/issuer registry hook.
+type registryObservation struct {
+	ledger uint32
+	ts     time.Time
 }
 
 // LatestTradesForPair returns up to `limit` most-recent trades for

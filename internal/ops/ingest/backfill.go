@@ -379,18 +379,30 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	// count of ledgers actually walked. Operators read the log as a
 	// false-positive "backfill complete" and moved on without the
 	// gap being filled.
-	var walked uint64
+	var (
+		walked uint64
+		// C2-14: the last ledger whose events were FULLY enqueued onto the
+		// sink channel (ProcessLedger returned nil). This is NOT yet a
+		// "durably persisted" marker — the async PersistEvents drain (+
+		// batched trades + the soroban rawSink) commit the rows later. The
+		// cursor is advanced to this value only AFTER the drain below
+		// confirms every enqueued row landed.
+		lastFullyEnqueued uint32
+	)
 	streamErr := ledgerstream.Stream(ctx, streamCfg, startFrom, chunk.to,
 		func(lcm sdkxdr.LedgerCloseMeta) error {
 			walked++
 			if err := pipeline.ProcessLedger(ctx, disp, events, logger, lcm, cfg.Stellar.Passphrase()); err != nil {
 				return err
 			}
-			if err := store.UpsertCursor(ctx, backfillCursorSource, cursorSub, lcm.LedgerSequence()); err != nil {
-				logger.Warn("backfill cursor upsert",
-					"ledger", lcm.LedgerSequence(),
-					"err", err)
-			}
+			// C2-14 (durability): DO NOT advance the cursor here. Advancing
+			// at enqueue time moved the resume watermark PAST rows that were
+			// still buffered in the sink channel / trade batch / rawSink — a
+			// crash between this enqueue and the async commit lost those rows
+			// with the cursor already beyond them (same class as C2-1). Record
+			// only the last fully-enqueued ledger; the durable advance happens
+			// after <-sinkDone + rawSink.Stop() below prove the rows committed.
+			lastFullyEnqueued = lcm.LedgerSequence()
 			return nil
 		},
 	)
@@ -419,6 +431,41 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 				"dropped", dropped,
 				"impact", "the dropped rows are NOT in soroban_events — investigate; only expected on hard kill")
 		}
+	}
+
+	// C2-14 (durability): advance the resume cursor ONLY now. The sink
+	// goroutine has fully drained (<-sinkDone: every enqueued event either
+	// committed or block-and-retried per ADR-0041) and the soroban rawSink
+	// has flushed its final batch (Stop above), so every row for ledgers
+	// [startFrom, lastFullyEnqueued] is durably persisted. The cursor is the
+	// last FULLY-COMMITTED ledger, never the last enqueued — so a crash
+	// before this point leaves the cursor at (or before) the last persisted
+	// ledger and the next run re-reads the gap rather than striding past it.
+	//
+	// This checkpoints even when streamErr is set: everything enqueued
+	// before the stream aborted is drained and committed above, so recording
+	// the last fully-enqueued ledger lets a resume continue from the failure
+	// point instead of restarting the whole chunk. On a graceful ctx-cancel
+	// (SIGINT) the interrupted ledger's ProcessLedger returns before this
+	// runs, so lastFullyEnqueued stays at the last ledger that fully drained.
+	// (A hard crash before the drain completes checkpoints nothing this run —
+	// resume restarts from the prior checkpoint; all writes are idempotent
+	// via ON CONFLICT, so the re-read is safe. Finer hard-crash granularity
+	// would require a per-window drain barrier: stream the chunk in bounded
+	// sub-windows, each with its own drain+flush before checkpointing — a
+	// future refinement, not needed for correctness.)
+	if lastFullyEnqueued > 0 && lastFullyEnqueued >= startFrom {
+		// Use a FRESH bounded context: on a graceful SIGINT the parent ctx is
+		// already canceled by the time we get here, and passing it would make
+		// this final checkpoint fail instantly — silently discarding the
+		// resume watermark for the ledgers we just drained (F-1318 pattern).
+		cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := store.UpsertCursor(cctx, backfillCursorSource, cursorSub, lastFullyEnqueued); err != nil {
+			logger.Warn("backfill cursor upsert (post-drain)",
+				"ledger", lastFullyEnqueued,
+				"err", err)
+		}
+		ccancel()
 	}
 
 	if streamErr != nil && !errors.Is(streamErr, context.Canceled) {

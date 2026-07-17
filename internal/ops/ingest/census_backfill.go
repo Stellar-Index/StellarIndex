@@ -89,9 +89,24 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 		startLedger, *to, streamBucket)
 
 	var (
-		total          int
-		skipped        int
-		lastProcessed  uint32
+		total         int
+		skipped       int
+		lastProcessed uint32 // last ledger we actually WROTE a row for (logging only)
+		// C2-14: `wm` is the durable resume checkpoint — the highest
+		// ledger such that EVERY ledger from startLedger through it was
+		// persisted (no census error, no skip, no upsert failure). The
+		// moment any ledger in the run is left un-persisted the watermark
+		// FREEZES, so the checkpoint can never stride PAST a gap. The old
+		// code checkpointed `lastProcessed` (the last row written), which
+		// advanced right over mid-range skipped ledgers: on resume the
+		// cursor sat beyond the gap and the skipped ledgers were never
+		// re-read, leaving a permanent substrate hole. Freezing instead
+		// re-reads the gap on the next run (idempotent UpsertLedgerIngestLog
+		// converges) — and if the ledger is still unreadable the run makes
+		// no forward progress, which is a LOUD stall rather than a silent
+		// gap (mirrors the C2-1 "durable watermark = last fully-committed"
+		// posture).
+		wm             contiguousWatermark
 		lastCheckpoint = time.Now()
 	)
 	const checkpointInterval = 30 * time.Second
@@ -107,6 +122,9 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 			total++
 			census, cerr := dispatcher.CensusLedger(lcm, passphrase)
 			if cerr != nil {
+				// Ledger not persisted — freeze the checkpoint so resume
+				// re-reads from here rather than striding past it.
+				wm.gap()
 				fmt.Fprintf(os.Stderr, "census-backfill: ledger %d census: %v\n", lcm.LedgerSequence(), cerr)
 				return nil
 			}
@@ -116,9 +134,11 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 			// "complete" substrate row: its SorobanEventCount undercounts,
 			// so a projection reconcile against it would falsely pass
 			// (G15-06). Skip it; a later re-run on a fixed reader writes
-			// the real row.
+			// the real row. The checkpoint must stay behind the skip so
+			// that "later re-run" actually re-reads it (C2-14).
 			if census.TxReadErrors > 0 || census.TxEventReadErrors > 0 {
 				skipped++
+				wm.gap()
 				fmt.Fprintf(os.Stderr, "census-backfill: ledger %d had %d tx read errors + %d tx-event read errors; skipping substrate row\n",
 					census.LedgerSeq, census.TxReadErrors, census.TxEventReadErrors)
 				return nil
@@ -132,25 +152,38 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 				ClassicTradeEffectCount: census.ClassicTradeEffectCount,
 			}
 			if ierr := store.UpsertLedgerIngestLog(ctx, row); ierr != nil {
+				// Row not durably written — freeze the checkpoint here too,
+				// otherwise the next successful ledger would checkpoint past
+				// this un-persisted one (same stride-past class as a skip).
+				wm.gap()
 				fmt.Fprintf(os.Stderr, "census-backfill: upsert ledger %d: %v\n", census.LedgerSeq, ierr)
 				return nil
 			}
 			lastProcessed = census.LedgerSeq
-			if time.Since(lastCheckpoint) >= checkpointInterval {
-				checkpoint(lastProcessed)
+			wm.persisted(census.LedgerSeq)
+			if wm.seq > 0 && time.Since(lastCheckpoint) >= checkpointInterval {
+				checkpoint(wm.seq)
 				lastCheckpoint = time.Now()
-				fmt.Fprintf(os.Stderr, "census-backfill: %d ledgers processed (at %d, %d skipped)\n",
-					total, lastProcessed, skipped)
+				fmt.Fprintf(os.Stderr, "census-backfill: %d ledgers processed (at %d, checkpoint %d, %d skipped)\n",
+					total, lastProcessed, wm.seq, skipped)
 			}
 			return nil
 		},
 	)
 
-	// Flush a final checkpoint at the last ledger we actually wrote, so
-	// a resume picks up exactly after it (whether we finished or were
-	// interrupted / hit an archive gap).
-	if lastProcessed > 0 {
-		checkpoint(lastProcessed)
+	// Flush a final checkpoint at the contiguous watermark — the last
+	// ledger with NO un-persisted ledger before it — so a resume picks up
+	// exactly at the first gap (whether we finished, were interrupted, or
+	// hit an archive/read gap). Never past it (C2-14). Use a FRESH bounded
+	// context: on a graceful SIGINT the parent ctx is already canceled by
+	// the time Stream returns, and checkpointing with it would fail
+	// instantly and drop the final resume watermark (F-1318 pattern).
+	if wm.seq > 0 {
+		fctx, fcancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := store.UpsertCursor(fctx, cursorSrc, cursorSub, wm.seq); err != nil {
+			fmt.Fprintf(os.Stderr, "census-backfill: final checkpoint at %d failed: %v\n", wm.seq, err)
+		}
+		fcancel()
 	}
 
 	if walkErr != nil && !errors.Is(walkErr, context.Canceled) {
@@ -159,4 +192,35 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	fmt.Fprintf(os.Stderr, "census-backfill: done — %d ledgers processed, %d skipped, last %d\n",
 		total, skipped, lastProcessed)
 	return nil
+}
+
+// contiguousWatermark tracks the highest ledger sequence such that every
+// ledger from the run's start through it has been durably persisted, with
+// NO gap (skipped or failed ledger) before it. It is the durability-honest
+// resume checkpoint for an in-order ledger walk (C2-14).
+//
+// Callers report each ledger's outcome in stream order: persisted(seq) for
+// a ledger whose row is durably committed, gap() for one that was skipped
+// or failed to persist. The first gap FREEZES the watermark — subsequent
+// persisted() calls do not advance it — so the checkpoint can never move
+// past an un-persisted ledger. `seq` is 0 until the first contiguous
+// ledger is persisted (so callers gate the checkpoint on seq > 0).
+//
+// Correctness depends on in-order delivery (ledgerstream.Stream walks
+// [from, to] ascending): once frozen, the watermark holds the last ledger
+// before the first gap, which is exactly where a resume must re-read from.
+type contiguousWatermark struct {
+	seq    uint32
+	frozen bool
+}
+
+func (w *contiguousWatermark) persisted(seq uint32) {
+	if w.frozen {
+		return
+	}
+	w.seq = seq
+}
+
+func (w *contiguousWatermark) gap() {
+	w.frozen = true
 }

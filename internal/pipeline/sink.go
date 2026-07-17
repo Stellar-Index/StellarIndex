@@ -262,9 +262,43 @@ func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.St
 	for {
 		select {
 		case <-ctx.Done():
+			// C2-17: shutdown requested. Before exiting, drain every event
+			// THIS worker can pull right now, so the racy select — which can
+			// pick this arm even while events sit buffered in `in` — cannot
+			// drop in-flight work. The drain is NON-BLOCKING (the default arm
+			// breaks out the instant `in` is momentarily empty), so a channel
+			// the producer hasn't closed yet can't pin the worker: worker 0's
+			// blocking drainBufferedEvents below still catches late arrivals
+			// and the channel close. The parent ctx is already cancelled, so
+			// trade-shaped events go to tradeBuf (flushed by flushShutdown with
+			// a fresh ctx) and everything else drains under a fresh bounded ctx
+			// (F-1318) — never the cancelled parent, which would fail every
+			// insert instantly and silently drop the event.
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), drainTimeout)
+		drainInFlight:
+			for {
+				select {
+				case ev, ok := <-in:
+					if !ok {
+						break drainInFlight
+					}
+					if skipInSink(ev, mode) {
+						continue
+					}
+					if t, ok := tradeFromEvent(ev); ok {
+						tradeBuf = append(tradeBuf, t)
+						continue
+					}
+					_ = HandleEvent(shutdownCtx, logger, store, ev)
+				default:
+					break drainInFlight
+				}
+			}
+			shutdownCancel()
 			flushShutdown()
-			// Only the first worker handles the shutdown drain to
-			// avoid duplicate drain work; the others just exit.
+			// Only the first worker handles the blocking shutdown drain
+			// (catches events that arrive after our non-blocking sweep + the
+			// channel close) to avoid duplicate drain work; the others exit.
 			if workerID == 0 {
 				drainBufferedEvents(in, logger, store, mode)
 			}
@@ -460,22 +494,25 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 			_ = HandleEvent(drainCtx, logger, store, ev) // shutdown drain: log-and-continue (HandleEvent logs internally)
 		case <-drainCtx.Done():
 			flushTrades()
-			// Don't drop silently. Under ADR-0034 every raw op is durably in
-			// the ClickHouse lake, so an undrained shutdown window is
-			// RE-DERIVABLE — but only if it's visible. Drain the remainder
-			// non-blocking (the producer has already stopped on ctx cancel, so
-			// `in` is a fixed set) to surface the exact ledger span at ERROR.
-			// The completeness timer + `stellarindex-ops ch-rebuild -sdex-gaps`
-			// recover that range from the lake instead of it becoming a silent
-			// served-tier gap.
-			// Count EVERY undrained event, not just trade-shaped ones
-			// (G15-08). Oracle updates, supply observations, blend /
-			// cctp / rozo rows etc. are also served-tier writes that go
-			// missing on a hung shutdown; tallying only trades reported
-			// "no trade events undrained" while silently losing them.
-			// Trade ledger bounds still come from trade-shaped events
-			// (only they carry a Ledger we can range on) so the
-			// re-derive hint stays actionable.
+			// C2-17 + G15-08: the bounded drain deadline tripped with events
+			// possibly still buffered. Make a FINAL best-effort pass to
+			// PERSIST the immediately-available remainder under a FRESH short
+			// context (the parent drainCtx is done; passing it would fail every
+			// insert instantly). Non-blocking (default arm) so the producer
+			// having stopped means we drain the fixed buffered set and exit,
+			// never block on a fresh arrival. Anything this STILL can't land is
+			// recoverable — under ADR-0034 every raw op is durably in the
+			// ClickHouse lake — so it's surfaced at ERROR with its exact ledger
+			// span for `stellarindex-ops ch-rebuild -sdex-gaps` + the
+			// completeness timer, instead of becoming a silent served-tier gap.
+			//
+			// Count EVERY undrained event, not just trade-shaped ones (G15-08):
+			// oracle updates, supply observations, blend / cctp / rozo rows are
+			// served-tier writes too. Trade ledger bounds come from trade-shaped
+			// events (only they carry a Ledger we can range on) so the re-derive
+			// hint stays actionable.
+			finalCtx, finalCancel := context.WithTimeout(context.Background(), drainTimeout)
+			finalTrades := make([]canonical.Trade, 0, tradeBatchSize)
 			var total, trades int
 			var minL, maxL uint32
 		drainRemainder:
@@ -486,7 +523,8 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 						break drainRemainder
 					}
 					total++
-					if t, ok := tradeFromEvent(ev); ok {
+					t, isTrade := tradeFromEvent(ev)
+					if isTrade {
 						trades++
 						if minL == 0 || t.Ledger < minL {
 							minL = t.Ledger
@@ -495,12 +533,25 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 							maxL = t.Ledger
 						}
 					}
+					if skipInSink(ev, mode) {
+						continue
+					}
+					if isTrade {
+						finalTrades = append(finalTrades, t)
+						continue
+					}
+					_ = HandleEvent(finalCtx, logger, store, ev)
 				default:
 					break drainRemainder
 				}
 			}
+			if len(finalTrades) > 0 {
+				// nil extBuf: same shutdown block-and-retry posture as flushTrades.
+				flushTradeBatch(finalCtx, logger, store, nil, finalTrades, -1)
+			}
+			finalCancel()
 			if total > 0 {
-				logger.Error("PersistEvents drain deadline exceeded — undrained served-tier events are recoverable from the CH lake; re-derive this ledger range",
+				logger.Error("PersistEvents drain deadline exceeded — made a final best-effort persist pass; any residual is recoverable from the CH lake, re-derive this ledger range if the served tier is short",
 					"undrained_events", total, "undrained_trades", trades,
 					"ledger_from", minL, "ledger_to", maxL)
 			} else {
@@ -1253,6 +1304,7 @@ func persistCCTPEvent(ctx context.Context, logger *slog.Logger, store *timescale
 		Ledger:             e.Ledger,
 		TxHash:             e.TxHash,
 		OpIndex:            uint32(e.OpIndex),
+		EventIndex:         e.EventIndex,
 		ObservedAt:         e.ObservedAt,
 		EventType:          timescale.CCTPEventType(e.EventType),
 		Amount:             e.Amount,
@@ -1280,6 +1332,7 @@ func persistRozoEvent(ctx context.Context, logger *slog.Logger, store *timescale
 		Ledger:      e.Ledger,
 		TxHash:      e.TxHash,
 		OpIndex:     uint32(e.OpIndex),
+		EventIndex:  e.EventIndex,
 		ObservedAt:  e.ObservedAt,
 		EventType:   timescale.RozoEventType(e.EventType),
 		Amount:      e.Amount,
