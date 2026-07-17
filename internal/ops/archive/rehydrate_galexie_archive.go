@@ -57,7 +57,12 @@ func rehydrateGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,fu
 		return fmt.Errorf("invalid -from / -to: from=%d to=%d (both required; from <= to)", opts.from, opts.to)
 	}
 
-	cfg, err := config.Load(opts.cfgPath)
+	// LoadWithEnv (not bare Load) so the STELLARINDEX_* env overrides —
+	// the injected Postgres DSN / Redis + ClickHouse secrets — take
+	// effect, matching every other binary (cmd/stellarindex-{api,indexer,
+	// aggregator} and the rest of internal/ops). Bare Load left this
+	// operator reading the placeholder TOML DSN/secrets (C3-14).
+	cfg, err := config.LoadWithEnv(opts.cfgPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
