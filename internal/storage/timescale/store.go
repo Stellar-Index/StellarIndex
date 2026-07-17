@@ -44,6 +44,24 @@ type Store struct {
 	// [Open]; safe to leave unset for tests, ops binary, and any
 	// deployment that hasn't enabled Phase 2.
 	usdVolumeFXResolver USDVolumeFXResolver
+
+	// deriveGeneration is the re-derive generation stamped into the
+	// `derive_generation` column (migration 0109) by every row the
+	// derived-value writers — [InsertTrade], [BatchInsertTrades],
+	// [InsertOracleUpdate], [InsertSupply] — write. It is the schema
+	// half of the INV-3 re-derive-trap fix (audit-2026-07-16 M1): those
+	// writers now DO UPDATE the value columns in place on conflict
+	// (guarded by `derive_generation <= EXCLUDED.derive_generation`)
+	// instead of the old `DO NOTHING` no-op, so a corrected re-derive
+	// lands without a destructive DELETE + re-backfill.
+	//
+	// It defaults to 0 — the LIVE-ingest generation. A re-derive entry
+	// point (stellarindex-ops backfill / ch-rebuild / projected-rebuild /
+	// supply snapshot) calls [SetDeriveGeneration] with a POSITIVE value
+	// so its corrected value wins the guard and can never be reverted by
+	// a subsequent live gen-0 replay. Set via [SetDeriveGeneration] after
+	// [Open]; leaving it 0 keeps live ingest unchanged.
+	deriveGeneration int64
 }
 
 // SetUSDVolumeQuoteSpec installs the operator-configured quote-asset
@@ -65,6 +83,23 @@ func (s *Store) SetUSDVolumeQuoteSpec(spec *USDVolumeQuoteSpec) {
 // (USDVolumeQuoteSpec) declines the trade — see [tradeUSDVolume].
 func (s *Store) SetUSDVolumeFXResolver(r USDVolumeFXResolver) {
 	s.usdVolumeFXResolver = r
+}
+
+// SetDeriveGeneration sets the re-derive generation the derived-value
+// writers stamp into the `derive_generation` column (migration 0109).
+//
+// The default (0) is the LIVE-ingest generation; a re-derive tool sets a
+// POSITIVE value so its corrected value wins the writers' ON CONFLICT
+// guard (`derive_generation <= EXCLUDED.derive_generation`) and can never
+// be reverted by a live gen-0 replay. The ops re-derive entry points pass
+// time.Now().Unix() — always positive and monotonic across runs, so a
+// later re-derive supersedes an earlier one. This is the INV-3 re-derive-
+// trap fix (audit-2026-07-16 M1).
+//
+// Safe to call once at startup; not safe to call concurrently with the
+// writers.
+func (s *Store) SetDeriveGeneration(gen int64) {
+	s.deriveGeneration = gen
 }
 
 // Pool-tuning constants. Exposed so [store_test.go] can assert

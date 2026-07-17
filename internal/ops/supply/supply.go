@@ -127,6 +127,10 @@ func supplySnapshot(args []string) error {
 		return supplySnapshotMaybeEmitFailure(*textfileOut, *assetRaw, startedAt, err)
 	}
 	defer func() { _ = store.Close() }()
+	// Re-derive path (INV-3 / migration 0109): stamp a positive
+	// derive_generation so a corrected supply snapshot UPDATEs the stored
+	// value in place and wins over the live gen-0 snapshot.
+	store.SetDeriveGeneration(startedAt.Unix())
 
 	ledger, observedAt, err := resolveSnapshotLedger(ctx, store, uint32(*ledgerArg))
 	if err != nil {
