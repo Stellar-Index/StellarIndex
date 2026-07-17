@@ -925,15 +925,6 @@ func emptyMarketCapSeries(pair canonical.Pair, tfRaw, gran string, _ time.Time) 
 	}
 }
 
-// marketCapDecimals is the per-unit scale handleChartMarketCapCrypto
-// divides supply by. 7 is correct for native XLM + every classic
-// asset; SEP-41 Soroban tokens can declare other decimals, but 7 is
-// the Stellar/SAC default and matches the spot market_cap path
-// (populateMarketCap → detail.Decimals defaults to 7), so the chart
-// and the headline cap stay consistent. Refining per-token decimals
-// is the same follow-up the spot path carries.
-const marketCapDecimals = 7
-
 // handleChartMarketCapCrypto serves /v1/chart?price_type=market_cap
 // for an on-chain (native / classic / Soroban) base. Market cap is a
 // daily series: each day's USD price × that day's circulating supply.
@@ -996,9 +987,12 @@ func (s *Server) handleChartMarketCapCrypto(
 	}
 
 	// dex-nonstandard-decimals forward normalization on the USD price
-	// leg — see handleChart's equivalent comment. (The supply leg's own
-	// decimals scaling — marketCapDecimals — is a separate, already-
-	// acknowledged follow-up; not touched here.)
+	// leg — see handleChart's equivalent comment. baseDec ALSO scales the
+	// supply leg below (M2): circulating supply is denominated in the base
+	// token's own smallest unit, so a confirmed non-7-decimals token's supply
+	// must be divided by 10^baseDec — not the old hardcoded 10^7 — or the cap
+	// is off by 10^(baseDec−7). Both legs share the SAME baseDec so
+	// market_cap = supply × price stays internally coherent.
 	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Base)
 	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Quote)
 	pricePts = adjustHistoryPointPrices(pricePts, baseDec, quoteDec)
@@ -1016,7 +1010,7 @@ func (s *Server) handleChartMarketCapCrypto(
 		return
 	}
 
-	wire := marketCapPoints(pricePts, supPts)
+	wire := marketCapPoints(pricePts, supPts, baseDec)
 	series := ChartSeries{
 		AssetID:     pair.Base.String(),
 		Quote:       pair.Quote.String(),
@@ -1043,7 +1037,7 @@ func (s *Server) handleChartMarketCapCrypto(
 // by bucket; a single forward cursor over supPts keeps it O(n+m). A
 // price day with no supply at-or-before it (asset priced before its
 // first supply snapshot) is skipped rather than emitted as zero.
-func marketCapPoints(pricePts []HistoryPoint, supPts []timescale.SupplyDayPoint) []HistoryPointWire {
+func marketCapPoints(pricePts []HistoryPoint, supPts []timescale.SupplyDayPoint, baseDecimals int) []HistoryPointWire {
 	wire := make([]HistoryPointWire, 0, len(pricePts))
 	si := 0
 	var cur *big.Int
@@ -1055,7 +1049,7 @@ func marketCapPoints(pricePts []HistoryPoint, supPts []timescale.SupplyDayPoint)
 		if cur == nil || pp.VWAP == "" {
 			continue
 		}
-		mc, err := usdMarketValue(cur, pp.VWAP, marketCapDecimals)
+		mc, err := usdMarketValue(cur, pp.VWAP, baseDecimals)
 		if err != nil {
 			continue
 		}

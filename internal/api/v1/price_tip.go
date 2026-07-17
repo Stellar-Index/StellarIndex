@@ -167,6 +167,14 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// literal form.
 	snap, sources, _, err := s.readPriceWithAliases(ctx, s.prices, asset, quote)
 	if err == nil {
+		// dex-nonstandard-decimals forward normalization (M2): this
+		// closed-bucket / last-trade fallback returns the RAW asset/quote ratio,
+		// exactly like /v1/price's readPriceWithAliases read. The tip window
+		// VWAP path (tipWindowVWAP) already normalizes; this fallback branch did
+		// NOT, so a confirmed non-7-decimals asset served a skewed tip here.
+		// Byte-identical no-op at 7dp. (The Redis/proxy/fiat branches below
+		// self-normalize at their own source — see tryStablecoinFiatProxy.)
+		s.normalizeRawPriceSnapshot(&snap, asset, quote)
 		return snap, sources, nil
 	}
 	if !errors.Is(err, ErrPriceNotFound) {

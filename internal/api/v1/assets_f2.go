@@ -395,10 +395,19 @@ func (s *Server) lookupUSDPrice(ctx context.Context, asset canonical.Asset) (str
 	// unaffected (assetAliases returns [asset] for everything else).
 	snap, _, _, err := s.readPriceWithAliases(ctx, s.prices, asset, defaultPriceQuote)
 	if err == nil && snap.Price != "" {
+		// dex-nonstandard-decimals forward normalization (M2):
+		// readPriceWithAliases returns the RAW asset/fiat:USD ratio. This is
+		// the sub-chokepoint for all THREE F2 USD fields — price_usd,
+		// market_cap_usd and fdv_usd all derive from this return (the caps via
+		// usdMarketValue(supply, thisPrice, decimals)), so correcting it here
+		// fixes every one at once. Byte-identical no-op for a 7dp asset. (The
+		// proxy branch below self-normalizes inside tryStablecoinFiatProxy.)
+		s.normalizeRawPriceSnapshot(&snap, asset, defaultPriceQuote)
 		return snap.Price, true
 	}
 	// Read-time stablecoin-fiat proxy fallback (matches the
-	// handler-side fix in #1217 / tryStablecoinFiatProxy).
+	// handler-side fix in #1217 / tryStablecoinFiatProxy). Already
+	// decimals-normalized inside tryStablecoinFiatProxy — do NOT re-apply.
 	if proxy, _, ok := s.tryStablecoinFiatProxy(ctx, asset, defaultPriceQuote); ok && proxy.Price != "" {
 		return proxy.Price, true
 	}

@@ -130,6 +130,14 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 				// cap — refusing beats fabricating continuity.
 				continue
 			}
+			// dex-nonstandard-decimals forward normalization (M2): PriceAt
+			// returns the RAW prices_<n> ratio for the ACTUAL traded pair
+			// (a/q — which, after the lookupPriceAtStablecoinFallback retry,
+			// can be asset/<peg>). Resolve decimals against those legs, not the
+			// requested asset/quote. This is the sub-chokepoint for /v1/price/at
+			// (the fallback also routes through here). Byte-identical no-op for
+			// a pair with no confirmed non-7-decimals leg.
+			value = s.normalizeRawRatioString(value, pair.Base, pair.Quote)
 			return PriceSnapshot{
 				AssetID:       asset.String(),
 				Quote:         quote.String(),
