@@ -612,34 +612,10 @@ func TestMaskEmail(t *testing.T) {
 			t.Errorf("maskEmail(%q) = %q, want %q", in, got, want)
 		}
 		// the full local part must never survive in the output (PRV1)
-		if in != "" && in != "garbage" {
-			at := len(in)
-			if i := indexByte(in, '@'); i >= 0 {
-				at = i
-			}
-			if at > 1 && contains(maskEmail(in), in[1:at]) {
-				t.Errorf("maskEmail(%q) leaked the local part", in)
+		if at := strings.LastIndex(in, "@"); at > 1 {
+			if rest := in[1:at]; strings.Contains(maskEmail(in), rest) {
+				t.Errorf("maskEmail(%q) leaked the local part %q", in, rest)
 			}
 		}
 	}
-}
-
-func indexByte(s string, b byte) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == b {
-			return i
-		}
-	}
-	return -1
-}
-func contains(s, sub string) bool {
-	return sub != "" && len(sub) <= len(s) && stringsIndex(s, sub) >= 0
-}
-func stringsIndex(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
 }
