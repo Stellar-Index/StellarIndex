@@ -116,16 +116,28 @@ func (s *Store) InsertCometLiquidity(ctx context.Context, e CometLiquidityEvent)
 		poolAmountIn = sql.NullString{String: e.PoolAmountIn.String(), Valid: true}
 	}
 
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the i128 amounts (amount / pool_amount_in) or
+	// direction / caller lands in place when its generation is >= the stored
+	// one; a live gen-0 replay can never revert it. Replaces the old DO NOTHING.
 	const q = `
         INSERT INTO comet_liquidity (
             contract_id, ledger, ledger_close_time, tx_hash, op_index,
-            event_kind, event_index, direction, caller, token, amount, pool_amount_in
+            event_kind, event_index, direction, caller, token, amount, pool_amount_in,
+            derive_generation
         ) VALUES (
             $1, $2, $3, $4, $5,
-            $6, $7, $8, $9, $10, $11, $12
+            $6, $7, $8, $9, $10, $11, $12,
+            $13
         )
         ON CONFLICT (ledger_close_time, contract_id, ledger, tx_hash,
-                     op_index, event_kind, token, event_index) DO NOTHING
+                     op_index, event_kind, token, event_index) DO UPDATE SET
+            direction         = EXCLUDED.direction,
+            caller            = EXCLUDED.caller,
+            amount            = EXCLUDED.amount,
+            pool_amount_in    = EXCLUDED.pool_amount_in,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE comet_liquidity.derive_generation <= EXCLUDED.derive_generation
     `
 	_, err := s.db.ExecContext(ctx, q,
 		e.ContractID, int(e.Ledger), e.LedgerCloseTime.UTC(),
@@ -133,6 +145,7 @@ func (s *Store) InsertCometLiquidity(ctx context.Context, e CometLiquidityEvent)
 		string(e.Kind), int(e.EventIndex), e.Kind.Direction(),
 		e.Caller, e.Token,
 		e.Amount.String(), poolAmountIn,
+		s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertCometLiquidity %s@%d: %w", e.ContractID, e.Ledger, err)

@@ -65,15 +65,27 @@ func (s *Store) InsertSoroswapSkimEvent(ctx context.Context, e SoroswapSkimEvent
 		return fmt.Errorf("timescale: InsertSoroswapSkimEvent: Amount1 is empty (contract=%s ledger=%d)", e.ContractID, e.Ledger)
 	}
 
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the skimmed amounts (amount_0 / amount_1) lands
+	// in place when its generation is >= the stored one; a live gen-0 replay
+	// can never revert it. Replaces the old DO NOTHING no-op.
 	const q = `
         INSERT INTO soroswap_skim_events (
             ledger_close_time, ledger, tx_hash, op_index, event_index,
-            contract_id, to_address, amount_0, amount_1
+            contract_id, to_address, amount_0, amount_1,
+            derive_generation
         ) VALUES (
             $1, $2, $3, $4, $5,
-            $6, $7, $8, $9
+            $6, $7, $8, $9,
+            $10
         )
-        ON CONFLICT (ledger_close_time, ledger, tx_hash, op_index, event_index) DO NOTHING
+        ON CONFLICT (ledger_close_time, ledger, tx_hash, op_index, event_index) DO UPDATE SET
+            contract_id       = EXCLUDED.contract_id,
+            to_address        = EXCLUDED.to_address,
+            amount_0          = EXCLUDED.amount_0,
+            amount_1          = EXCLUDED.amount_1,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE soroswap_skim_events.derive_generation <= EXCLUDED.derive_generation
     `
 
 	var toAddr sql.NullString
@@ -83,6 +95,7 @@ func (s *Store) InsertSoroswapSkimEvent(ctx context.Context, e SoroswapSkimEvent
 	_, err := s.db.ExecContext(ctx, q,
 		e.LedgerCloseTime.UTC(), int(e.Ledger), e.TxHash, e.OpIndex, e.EventIndex,
 		e.ContractID, toAddr, e.Amount0, e.Amount1,
+		s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertSoroswapSkimEvent %s@%d: %w", e.ContractID, e.Ledger, err)

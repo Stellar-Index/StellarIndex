@@ -107,19 +107,31 @@ func (s *Store) InsertPhoenixStakeEvent(ctx context.Context, e PhoenixStakeEvent
 			e.StakeContract, e.TxHash)
 	}
 
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the staked `amount` (or user_addr / lp_token)
+	// lands in place when its generation is >= the stored one; a live gen-0
+	// replay can never revert it. Replaces the old DO NOTHING no-op.
 	const q = `
         INSERT INTO phoenix_stake_events (
             stake_contract, ledger, ledger_close_time, tx_hash, op_index,
-            action, event_index, user_addr, lp_token, amount
+            action, event_index, user_addr, lp_token, amount,
+            derive_generation
         ) VALUES (
             $1, $2, $3, $4, $5,
-            $6, $7, $8, $9, $10
+            $6, $7, $8, $9, $10,
+            $11
         )
-        ON CONFLICT (ledger_close_time, stake_contract, ledger, tx_hash, op_index, action, event_index) DO NOTHING
+        ON CONFLICT (ledger_close_time, stake_contract, ledger, tx_hash, op_index, action, event_index) DO UPDATE SET
+            user_addr         = EXCLUDED.user_addr,
+            lp_token          = EXCLUDED.lp_token,
+            amount            = EXCLUDED.amount,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE phoenix_stake_events.derive_generation <= EXCLUDED.derive_generation
     `
 	_, err := s.db.ExecContext(ctx, q,
 		e.StakeContract, int(e.Ledger), e.ObservedAt.UTC(), e.TxHash, int(e.OpIndex),
 		string(e.Action), int(e.EventIndex), nullString(e.User), e.LPToken, nullNumeric(e.Amount),
+		s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertPhoenixStakeEvent %s@%d: %w",
