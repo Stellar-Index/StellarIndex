@@ -597,6 +597,80 @@ func (s *Store) tradeBatchValues(ctx context.Context, insertRows []canonical.Tra
 	return valuesParts, args
 }
 
+// scanBatchTradeOutcome runs the batch INSERT..RETURNING query and folds the
+// per-landed-row (xmax=0) result set into the outcome tallies (new + unit-ratio
+// per source) and the distinct landed assets — each kept at its highest-ledger
+// observation (registerClassicAssetSeen advances last_seen_* via GREATEST) —
+// that drive the classic-asset/issuer registry hook the batch path previously
+// skipped (C2-13b). Split out of BatchInsertTrades for length/complexity.
+// emitBatchTradeOutcomeMetrics records the per-source insert-outcome metrics for
+// a batch: landed (new) + duplicate (sent-landed) + unit-ratio counts. Split
+// out of BatchInsertTrades to keep it under the length budget.
+func emitBatchTradeOutcomeMetrics(trades []canonical.Trade, perSourceNew, perSourceUnitRatio map[string]int) {
+	// Per-source totals (we know how many we sent per source from the input
+	// slice). Duplicates = sent - landed.
+	perSourceSent := make(map[string]int, len(perSourceNew))
+	for _, t := range trades {
+		perSourceSent[t.Source]++
+	}
+	now := float64(time.Now().Unix())
+	for source, sent := range perSourceSent {
+		landed := perSourceNew[source]
+		duplicate := sent - landed
+		if landed > 0 {
+			obs.TradeInsertOutcomeTotal.WithLabelValues(source, "new").Add(float64(landed))
+			obs.SourceLastInsertUnix.WithLabelValues(source).Set(now)
+		}
+		if duplicate > 0 {
+			obs.TradeInsertOutcomeTotal.WithLabelValues(source, "duplicate").Add(float64(duplicate))
+		}
+	}
+	for source, n := range perSourceUnitRatio {
+		if n > 0 {
+			obs.DexTradeUnitRatioTotal.WithLabelValues(source).Add(float64(n))
+		}
+	}
+}
+
+func (s *Store) scanBatchTradeOutcome(ctx context.Context, query string, args []any) (
+	perSourceNew, perSourceUnitRatio map[string]int,
+	seenAssets map[string]registryObservation, err error,
+) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("timescale: BatchInsertTrades: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	perSourceNew = make(map[string]int, 4)
+	perSourceUnitRatio = make(map[string]int, 4)
+	seenAssets = make(map[string]registryObservation, 8)
+	noteAsset := func(asset string, ledger uint32, ts time.Time) {
+		if prev, ok := seenAssets[asset]; !ok || ledger > prev.ledger {
+			seenAssets[asset] = registryObservation{ledger: ledger, ts: ts}
+		}
+	}
+	for rows.Next() {
+		var source, baseAsset, quoteAsset string
+		var ledger uint32
+		var ts time.Time
+		var isUnitRatio bool
+		if err := rows.Scan(&source, &ledger, &ts, &baseAsset, &quoteAsset, &isUnitRatio); err != nil {
+			return nil, nil, nil, fmt.Errorf("timescale: BatchInsertTrades scan: %w", err)
+		}
+		perSourceNew[source]++
+		if isUnitRatio {
+			perSourceUnitRatio[source]++
+		}
+		noteAsset(baseAsset, ledger, ts)
+		noteAsset(quoteAsset, ledger, ts)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, nil, fmt.Errorf("timescale: BatchInsertTrades rows.Err: %w", err)
+	}
+	return perSourceNew, perSourceUnitRatio, seenAssets, nil
+}
+
 func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade) error {
 	if len(trades) == 0 {
 		return nil
@@ -720,74 +794,12 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
           FROM ins WHERE inserted
     `, strings.Join(valuesParts, ", "))
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	perSourceNew, perSourceUnitRatio, seenAssets, err := s.scanBatchTradeOutcome(ctx, query, args)
 	if err != nil {
-		return fmt.Errorf("timescale: BatchInsertTrades: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	// Counts per source for outcome metrics: how many landed (new) +
-	// how many were absorbed by ON CONFLICT (duplicate) + how many of
-	// the landed rows are unit-ratio (base_amount == quote_amount).
-	// Aggregated in Go from the per-landed-row result set (was a SQL
-	// GROUP BY); a source with zero landed rows simply never appears in
-	// perSourceNew, and perSourceNew[missing] == 0 keeps the duplicate =
-	// sent - landed math below identical to the old aggregate.
-	perSourceNew := make(map[string]int, 4)
-	perSourceUnitRatio := make(map[string]int, 4)
-	// C2-13b: distinct landed assets (base + quote of every inserted row),
-	// keyed by asset string, holding the highest-ledger observation so the
-	// registry hook advances last_seen_* correctly (registerClassicAssetSeen
-	// uses GREATEST). Drives the classic-asset/issuer registry the batch
-	// path previously skipped.
-	seenAssets := make(map[string]registryObservation, 8)
-	noteAsset := func(asset string, ledger uint32, ts time.Time) {
-		if prev, ok := seenAssets[asset]; !ok || ledger > prev.ledger {
-			seenAssets[asset] = registryObservation{ledger: ledger, ts: ts}
-		}
-	}
-	for rows.Next() {
-		var source, baseAsset, quoteAsset string
-		var ledger uint32
-		var ts time.Time
-		var isUnitRatio bool
-		if err := rows.Scan(&source, &ledger, &ts, &baseAsset, &quoteAsset, &isUnitRatio); err != nil {
-			return fmt.Errorf("timescale: BatchInsertTrades scan: %w", err)
-		}
-		perSourceNew[source]++
-		if isUnitRatio {
-			perSourceUnitRatio[source]++
-		}
-		noteAsset(baseAsset, ledger, ts)
-		noteAsset(quoteAsset, ledger, ts)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("timescale: BatchInsertTrades rows.Err: %w", err)
+		return err
 	}
 
-	// Per-source totals (we know how many we sent per source from
-	// the input slice). Duplicates = sent - landed.
-	perSourceSent := make(map[string]int, len(perSourceNew))
-	for _, t := range trades {
-		perSourceSent[t.Source]++
-	}
-	now := float64(time.Now().Unix())
-	for source, sent := range perSourceSent {
-		landed := perSourceNew[source]
-		duplicate := sent - landed
-		if landed > 0 {
-			obs.TradeInsertOutcomeTotal.WithLabelValues(source, "new").Add(float64(landed))
-			obs.SourceLastInsertUnix.WithLabelValues(source).Set(now)
-		}
-		if duplicate > 0 {
-			obs.TradeInsertOutcomeTotal.WithLabelValues(source, "duplicate").Add(float64(duplicate))
-		}
-	}
-	for source, n := range perSourceUnitRatio {
-		if n > 0 {
-			obs.DexTradeUnitRatioTotal.WithLabelValues(source).Add(float64(n))
-		}
-	}
+	emitBatchTradeOutcomeMetrics(trades, perSourceNew, perSourceUnitRatio)
 
 	// C2-13b: auto-register the classic-asset / issuer registry from the
 	// LANDED trades — the same Phase-4 hook InsertTrade runs. The batch path

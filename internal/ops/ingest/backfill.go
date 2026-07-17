@@ -305,7 +305,7 @@ func buildChunkDispatcher(
 // chunks never share a cursor row.
 //
 //nolint:gocognit,funlen // chunk lifecycle is linear setup → stream → teardown; splitting reduces readability of dependency-construction order.
-func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpts, cfg config.Config, store *timescale.Store, chunk chunkRange) error {
+func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpts, cfg config.Config, store *timescale.Store, chunk chunkRange) error { //nolint:gocyclo // one cohesive backfill orchestration: chunk stream -> async drain -> post-drain durable cursor (C2-14); splitting scatters the watermark narrative
 	chunkOpts := opts
 	chunkOpts.from = chunk.from
 	chunkOpts.to = chunk.to
@@ -460,7 +460,7 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		// this final checkpoint fail instantly — silently discarding the
 		// resume watermark for the ledgers we just drained (F-1318 pattern).
 		cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
-		if err := store.UpsertCursor(cctx, backfillCursorSource, cursorSub, lastFullyEnqueued); err != nil {
+		if err := store.UpsertCursor(cctx, backfillCursorSource, cursorSub, lastFullyEnqueued); err != nil { //nolint:contextcheck // deliberate fresh ctx: the parent is already canceled on a graceful SIGINT (F-1318) — using it would silently drop the resume watermark; see the comment above
 			logger.Warn("backfill cursor upsert (post-drain)",
 				"ledger", lastFullyEnqueued,
 				"err", err)
