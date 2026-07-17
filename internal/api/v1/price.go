@@ -651,11 +651,12 @@ func (s *Server) readPriceWithAliases(ctx context.Context, reader PriceReader, a
 // exact here, same as the query-time paths normalized on 2026-07-09.
 //
 // Callers MUST NOT invoke this on a snapshot sourced from priceFallback —
-// its Redis-VWAP branch is already normalized upstream by the aggregator
-// orchestrator (computeNormalizedVWAP) before publishing, and its
-// stablecoin-peg / fiat-cross-rate branches are either a literal "1.0" or
-// never touch a flagged Soroban leg; re-applying AdjustPrice there would
-// double-correct an already-correct value.
+// every priceFallback branch is ALREADY normalized at its own source, so
+// re-applying AdjustPrice here would double-correct: the Redis-VWAP branch is
+// normalized upstream by the aggregator orchestrator (computeNormalizedVWAP)
+// before publishing; the stablecoin-proxy branch self-normalizes its raw
+// asset/<peg> ratio inside tryStablecoinFiatProxy (M2); and the peg-literal
+// "1.0" / fiat-cross-rate branches carry no flagged Soroban leg to scale.
 //
 // No-op — snap.Price left byte-identical, no parse/reformat round-trip —
 // when baseDecimals == quoteDecimals (every pair without a confirmed
@@ -664,16 +665,35 @@ func (s *Server) readPriceWithAliases(ctx context.Context, reader PriceReader, a
 // [ratToDecimal]'s fixed 10-digit rendering; reformatting unconditionally
 // would change the wire bytes for every already-correct 7dp pair.
 func (s *Server) normalizeRawPriceSnapshot(snap *PriceSnapshot, base, quote canonical.Asset) {
+	snap.Price = s.normalizeRawRatioString(snap.Price, base, quote)
+}
+
+// normalizeRawRatioString is the string-level primitive under
+// [Server.normalizeRawPriceSnapshot]: it applies the dex-nonstandard-decimals
+// forward normalization (aggregate.AdjustPrice) to a decimal price STRING
+// sourced from a RAW, unnormalized quote/base ratio — a PriceAt / LatestPrice /
+// prices_1m read. Shared by the non-snapshot raw-price serve paths (/v1/price/at,
+// /v1/price/changes) that carry the ratio as a bare string, not a PriceSnapshot.
+//
+// base/quote MUST be the ACTUAL legs the ratio is priced in — for a
+// stablecoin-proxy read that is asset/<peg>, NOT the requested fiat:USD.
+//
+// Returns value BYTE-IDENTICAL when neither leg is a confirmed non-7-decimals
+// asset (baseDec == quoteDec, the common case) or when value doesn't parse. The
+// byte-identical no-op matters: reformatting unconditionally would change the
+// wire bytes of every already-correct 7dp price (the CAGG's NUMERIC::text
+// rendering doesn't match ratToDecimal's fixed digit count).
+func (s *Server) normalizeRawRatioString(value string, base, quote canonical.Asset) string {
 	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, base)
 	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, quote)
 	if baseDec == quoteDec {
-		return
+		return value
 	}
-	raw := ratFromDecimal(snap.Price)
+	raw := ratFromDecimal(value)
 	if raw == nil {
-		return
+		return value
 	}
-	snap.Price = ratToDecimal(aggregate.AdjustPrice(raw, baseDec, quoteDec), ohlcPriceDigits)
+	return ratToDecimal(aggregate.AdjustPrice(raw, baseDec, quoteDec), ohlcPriceDigits)
 }
 
 // priceFallback runs the post-Timescale-miss fallback chain for
@@ -830,6 +850,17 @@ func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canoni
 			// the chart fallback — silent skip, try the next peg.
 			continue
 		}
+		// dex-nonstandard-decimals forward normalization (M2). LatestPrice
+		// returns the RAW asset/<peg> ratio, and `asset` here can be a
+		// confirmed non-7-decimals Soroban leg (the <peg> is always a 7dp
+		// classic). This is the SINGLE place the stablecoin-proxy tier is
+		// corrected, so every caller — priceFallback on /v1/price,
+		// /v1/price/tip, /v1/oracle/{,x_}last_price (via priceFallback), and
+		// /v1/assets/{id} lookupUSDPrice — serves the scaled value without
+		// re-normalizing (none of them post-normalize a proxy result). Resolve
+		// against the ACTUAL traded legs (asset, peg), NOT the requested
+		// fiat:USD. Byte-identical no-op for a 7dp asset.
+		s.normalizeRawPriceSnapshot(&snap, asset, peg)
 		// Rewrite the snapshot's Quote field so the wire response
 		// reflects what the user asked for, not the proxy peg.
 		snap.Quote = quote.String()

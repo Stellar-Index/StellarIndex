@@ -186,6 +186,35 @@ func tradeRowFrom(t canonical.Trade, decimals int) TradeRow {
 	}
 }
 
+// normalizeTradeRowPrices rewrites each row's Price from the RAW
+// quote_amount/base_amount ratio (what tradeRowFrom / priceRatioDecimal
+// render) to the dex-nonstandard-decimals-corrected price (M2). rows and
+// trades are parallel slices; base/quote are the request pair's legs, resolved
+// ONCE against the nonstandard_decimals_assets guard table (the SAME source
+// every normalized endpoint uses — /v1/vwap, main /v1/price, …).
+//
+// BYTE-IDENTICAL no-op — rows left exactly as tradeRowFrom rendered them —
+// when neither leg is a confirmed non-7-decimals asset (baseDec == quoteDec,
+// the common case), keeping the wire response unchanged for standard tokens.
+// BaseAmount / QuoteAmount are deliberately left as raw smallest-unit integers
+// (the on-chain truth); only the convenience Price field is corrected, exactly
+// as /v1/history and /v1/observations agree.
+func (s *Server) normalizeTradeRowPrices(rows []TradeRow, trades []canonical.Trade, base, quote canonical.Asset) {
+	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, base)
+	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, quote)
+	if baseDec == quoteDec {
+		return
+	}
+	for i := range rows {
+		b := trades[i].BaseAmount.BigInt()
+		if b.Sign() == 0 {
+			continue
+		}
+		raw := new(big.Rat).SetFrac(trades[i].QuoteAmount.BigInt(), b)
+		rows[i].Price = ratToDecimal(aggregate.AdjustPrice(raw, baseDec, quoteDec), 10)
+	}
+}
+
 // ─── Handler ──────────────────────────────────────────────────────
 
 // handleHistory serves GET /v1/history?base=<id>&quote=<id>&from=<rfc3339>&to=<rfc3339>&limit=<int>.
@@ -305,31 +334,23 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 	// for Soroban tokens that declare a different scale.
 	baseDec := s.resolveAssetDecimals(hCtx, base)
 	quoteDec := s.resolveAssetDecimals(hCtx, quote)
-	// dex-nonstandard-decimals forward normalization: tradeRowFrom's Price
-	// is the raw quote_amount/base_amount ratio (shared with
-	// /v1/observations, which is intentionally left alone here — it has
-	// no per-side decimals context and isn't guard-covered). Resolved
-	// from the SAME `nonstandard_decimals_assets` source of truth every
-	// other normalized endpoint uses (s.nonstandardDecimals), not the
-	// broader live-contract baseDec/quoteDec resolved above for the
-	// BaseDecimals/QuoteDecimals metadata fields — those two resolvers
-	// can legitimately disagree (the live resolver covers any Soroban
-	// token; the guard table is the curated confirmed-offender list this
-	// fix targets) and mixing them here would make Price disagree with
-	// what /v1/vwap serves for the identical pair. No-op (byte-identical)
-	// when both legs resolve to aggregate.StandardDecimals.
-	priceBaseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, base)
-	priceQuoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, quote)
 	rows := make([]TradeRow, len(trades))
 	for i, t := range trades {
 		rows[i] = tradeRowFrom(t, 10)
 		rows[i].BaseDecimals = baseDec
 		rows[i].QuoteDecimals = quoteDec
-		if priceBaseDec != priceQuoteDec {
-			raw := new(big.Rat).SetFrac(t.QuoteAmount.BigInt(), t.BaseAmount.BigInt())
-			rows[i].Price = ratToDecimal(aggregate.AdjustPrice(raw, priceBaseDec, priceQuoteDec), 10)
-		}
 	}
+	// dex-nonstandard-decimals forward normalization of the Price field
+	// (M2). tradeRowFrom's Price is the raw quote_amount/base_amount ratio;
+	// normalizeTradeRowPrices corrects it against the `nonstandard_decimals_assets`
+	// guard table (s.nonstandardDecimals) — the SAME source /v1/vwap and the
+	// main /v1/price use, NOT the broader live-contract baseDec/quoteDec stamped
+	// above for the BaseDecimals/QuoteDecimals metadata (those two resolvers can
+	// legitimately disagree, and mixing them would make Price disagree with what
+	// /v1/vwap serves for the identical pair). /v1/observations shares this exact
+	// helper so the two raw-trade surfaces stay in lockstep. Byte-identical no-op
+	// at 7dp.
+	s.normalizeTradeRowPrices(rows, trades, base, quote)
 
 	// If the page is full, emit a next-cursor pointing at the last
 	// row we returned. Clients just re-issue the same request with

@@ -27,7 +27,7 @@ func TestMarketCapPoints_ForwardFill(t *testing.T) {
 		{Bucket: day(2026, 6, 2), Circulating: big.NewInt(2_000_0000000)},  // 2000.0
 	}
 
-	got := marketCapPoints(price, supply)
+	got := marketCapPoints(price, supply, 7)
 	want := []struct {
 		t time.Time
 		p string
@@ -56,7 +56,7 @@ func TestMarketCapPoints_SkipBeforeFirstSupply(t *testing.T) {
 	supply := []timescale.SupplyDayPoint{
 		{Bucket: day(2026, 6, 3), Circulating: big.NewInt(1_000_0000000)}, // 1000.0
 	}
-	got := marketCapPoints(price, supply)
+	got := marketCapPoints(price, supply, 7)
 	if len(got) != 1 {
 		t.Fatalf("got %d points, want 1: %+v", len(got), got)
 	}
@@ -68,7 +68,31 @@ func TestMarketCapPoints_SkipBeforeFirstSupply(t *testing.T) {
 // No supply at all → empty series (not a panic, not zeros).
 func TestMarketCapPoints_NoSupply(t *testing.T) {
 	price := []HistoryPoint{{Bucket: day(2026, 6, 1), VWAP: "0.10"}}
-	if got := marketCapPoints(price, nil); len(got) != 0 {
+	if got := marketCapPoints(price, nil, 7); len(got) != 0 {
 		t.Errorf("want empty series with no supply, got %+v", got)
+	}
+}
+
+// M2: the supply leg divides by 10^baseDecimals, NOT a hardcoded 10^7. A 9dp
+// token's circulating supply is denominated in 10^9 stroops, so a 10^12-stroop
+// balance is 1000 whole tokens — dividing by 10^7 (the old constant) would
+// report 100,000 tokens and a market cap 100× too large. VWAP here is already
+// the decimals-normalized USD price (the price leg is corrected upstream in
+// handleChartMarketCapCrypto via adjustHistoryPointPrices).
+func TestMarketCapPoints_NonstandardDecimalsSupplyLeg(t *testing.T) {
+	price := []HistoryPoint{{Bucket: day(2026, 7, 1), VWAP: "5.00"}}
+	// 10^12 stroops @9dp = 1000 whole tokens.
+	supply := []timescale.SupplyDayPoint{
+		{Bucket: day(2026, 7, 1), Circulating: new(big.Int).Exp(big.NewInt(10), big.NewInt(12), nil)},
+	}
+	// Correct: 1000 tokens × $5.00 = $5,000.00.
+	got := marketCapPoints(price, supply, 9)
+	if len(got) != 1 || got[0].P != "5000.00" {
+		t.Fatalf("9dp supply leg: got %+v, want single point 5000.00", got)
+	}
+	// Regression guard: the old hardcoded-7 divisor would 100× it.
+	old := marketCapPoints(price, supply, 7)
+	if len(old) != 1 || old[0].P != "500000.00" {
+		t.Fatalf("sanity: 7dp divisor should over-report as 500000.00, got %+v", old)
 	}
 }
