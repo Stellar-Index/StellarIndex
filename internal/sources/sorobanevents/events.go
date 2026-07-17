@@ -171,31 +171,47 @@ func Capture(ev events.Event) (Row, error) {
 		ContractIDHex: contractIDRaw,
 		TopicCount:    int16(len(ev.Topic)),
 		Topic0Sym:     topic0Sym,
-		Topic0XDR:     topicXDRs[0],
-		Topic1XDR:     topicXDRs[1],
-		Topic2XDR:     topicXDRs[2],
-		Topic3XDR:     topicXDRs[3],
-		BodyXDR:       bodyXDR,
-		OpArgsXDR:     opArgsXDR,
+		// topicXDRs[0] is safe: the len(ev.Topic)==0 guard above
+		// returned ErrSkip, so decodeTopics produced >=1 element.
+		Topic0XDR: topicXDRs[0],
+		Topic1XDR: topicAt(topicXDRs, 1),
+		Topic2XDR: topicAt(topicXDRs, 2),
+		Topic3XDR: topicAt(topicXDRs, 3),
+		TopicsXDR: topicXDRs,
+		BodyXDR:   bodyXDR,
+		OpArgsXDR: opArgsXDR,
 	}, nil
 }
 
-// decodeTopics base64-decodes up to 4 topic slots from the wire.
-// Returns a fixed-size [4][]byte where unused slots are nil. The
-// migration only persists topics 0-3 — events with 5+ topics
-// (rare; Soroban's max topic arity is 4 per the contractevent
-// macro, but custom-emitted events can exceed that) silently
-// truncate. The full topic count is preserved via topic_count.
-func decodeTopics(topics []string) ([4][]byte, error) {
-	var out [4][]byte
-	for i := 0; i < 4 && i < len(topics); i++ {
+// decodeTopics base64-decodes EVERY topic slot from the wire into an
+// ordered slice — no truncation (audit-2026-07-16 C2-11). The first
+// four also populate the fixed topic_0..3 columns (back-compat + the
+// topic_0_sym index fast-path); the full slice is persisted in the
+// topics_xdr array column (migration 0114) so events with 5+ topics —
+// e.g. Aquarius multi-token pool events — keep every topic rather than
+// silently dropping topics 5+. (Soroban's contractevent macro caps at
+// 4, but custom-emitted events exceed that.) topic_count still records
+// the full arity.
+func decodeTopics(topics []string) ([][]byte, error) {
+	out := make([][]byte, len(topics))
+	for i := range topics {
 		raw, err := base64.StdEncoding.DecodeString(topics[i])
 		if err != nil {
-			return out, fmt.Errorf("topic[%d]: %w", i, err)
+			return nil, fmt.Errorf("topic[%d]: %w", i, err)
 		}
 		out[i] = raw
 	}
 	return out, nil
+}
+
+// topicAt returns the i-th decoded topic or nil when the event had
+// fewer than i+1 topics — used to fill the fixed topic_0..3 columns
+// from the variable-length full list.
+func topicAt(xs [][]byte, i int) []byte {
+	if i < len(xs) {
+		return xs[i]
+	}
+	return nil
 }
 
 // tryDecodeSymbolOrString returns the decoded Symbol/String value
