@@ -4,6 +4,7 @@
 package chops
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -23,6 +24,73 @@ func testConfigWithAllSources() config.Config {
 	cfg.Oracle.Redstone.AdapterContract = "CBCIXRPTFeu6M2Q6ISDIT3QQBAYXC4YIIFCTVKC5FGZALVQAQ2QLDLQ4"
 	cfg.Oracle.Band.StandardReferenceContract = "CDEGQ2P4RXDT7BXCOAJB4MDNMSTOTBBHNS7HHRZ7ZKBWHSPQXNSMPPMV"
 	return cfg
+}
+
+// TestRunRecognitionScan_ScanErrorFailsClosed pins C2-5 (RFC-8
+// detector-fail-open): a recognition scan ERROR — CH unreachable, a query
+// timeout, or the load-heaviest DistinctTopicShapes hitting the CH memory
+// cap — must FAIL CLOSED. The unfixed compute-completeness logged the error
+// and continued with an empty gap slice; the per-source loop reads that as
+// "no recognition gaps" → recognition_ok=true, and with substrate ∧
+// projection clean writes lake_complete=true / complete=true to
+// completeness_snapshots — a FALSE "complete" verdict on the public
+// /v1/coverage. The scan error must instead surface as a returned error so
+// the run aborts before any snapshot write and the cron sees a non-zero
+// exit.
+func TestRunRecognitionScan_ScanErrorFailsClosed(t *testing.T) {
+	scanErr := errors.New("clickhouse: memory limit (for query) exceeded in DistinctTopicShapes")
+	gaps, err := runRecognitionScan(false, func() ([]completeness.RecognitionGap, error) {
+		return nil, scanErr
+	})
+	if err == nil {
+		t.Fatal("recognition scan error was swallowed — compute-completeness would launder it into recognition_ok=true / lake_complete=true / complete=true (C2-5); want a returned error that fails the run closed")
+	}
+	if !errors.Is(err, scanErr) {
+		t.Errorf("returned error must wrap the underlying scan error for operator diagnosis, got: %v", err)
+	}
+	if gaps != nil {
+		t.Errorf("a failed scan must yield NO gaps (never an empty-looking clean set the loop reads as recognition_ok=true), got: %v", gaps)
+	}
+}
+
+// TestRunRecognitionScan_SkipTrustsPriorAudit — -skip-recognition is an
+// explicit operator trust flag (trust the prior recognition_ok): no scan is
+// run, and no gaps / no error are returned. It must be DISTINCT from a scan
+// FAILURE (which fails closed) — the operator's deliberate choice to trust a
+// prior audit is not a swallowed error.
+func TestRunRecognitionScan_SkipTrustsPriorAudit(t *testing.T) {
+	scanned := false
+	gaps, err := runRecognitionScan(true, func() ([]completeness.RecognitionGap, error) {
+		scanned = true
+		return nil, errors.New("scan must not run under -skip-recognition")
+	})
+	if scanned {
+		t.Error("-skip-recognition must NOT invoke the scan")
+	}
+	if err != nil {
+		t.Errorf("-skip-recognition must not error, got: %v", err)
+	}
+	if gaps != nil {
+		t.Errorf("-skip-recognition returns no gaps, got: %v", gaps)
+	}
+}
+
+// TestRunRecognitionScan_CleanScanPassesGapsThrough — the fail-closed fix
+// must NOT change the genuine-INCOMPLETE path: a scan that SUCCEEDS and
+// finds a real recognition gap still returns that gap, so the per-source
+// loop writes recognition_ok=false / complete=false exactly as before. Only
+// ERRORS fail closed.
+func TestRunRecognitionScan_CleanScanPassesGapsThrough(t *testing.T) {
+	want := []completeness.RecognitionGap{{ContractID: "CBID", Topic0Sym: "transfer", MinLedger: 51_000_000}}
+	gaps, err := runRecognitionScan(false, func() ([]completeness.RecognitionGap, error) {
+		return want, nil
+	})
+	if err != nil {
+		t.Fatalf("a successful scan must not error, got: %v", err)
+	}
+	if len(gaps) != 1 || gaps[0].MinLedger != 51_000_000 {
+		t.Errorf("a real recognition gap must pass through unchanged, got: %v", gaps)
+	}
 }
 
 // TestProjectionDelta_PerLedgerCatchesNetting pins the CS-084 fix:

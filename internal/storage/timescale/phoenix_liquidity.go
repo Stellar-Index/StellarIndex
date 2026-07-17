@@ -106,22 +106,34 @@ func (s *Store) InsertPhoenixLiquidityChange(ctx context.Context, e PhoenixLiqui
 		shares = sql.NullString{String: e.SharesAmount, Valid: true}
 	}
 
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the per-leg amounts (amount_a/amount_b/shares)
+	// lands in place when its generation is >= the stored one; a live gen-0
+	// replay can never revert it. Replaces the old DO NOTHING no-op.
 	const q = `
         INSERT INTO phoenix_liquidity (
             pool, ledger, ledger_close_time, tx_hash, op_index,
             action, event_index, sender, token_a, token_b, amount_a, amount_b,
-            shares_amount
+            shares_amount, derive_generation
         ) VALUES (
             $1, $2, $3, $4, $5,
             $6, $7, $8, $9, $10, $11, $12,
-            $13
+            $13, $14
         )
-        ON CONFLICT (ledger_close_time, pool, ledger, tx_hash, op_index, action, event_index) DO NOTHING
+        ON CONFLICT (ledger_close_time, pool, ledger, tx_hash, op_index, action, event_index) DO UPDATE SET
+            sender            = EXCLUDED.sender,
+            token_a           = EXCLUDED.token_a,
+            token_b           = EXCLUDED.token_b,
+            amount_a          = EXCLUDED.amount_a,
+            amount_b          = EXCLUDED.amount_b,
+            shares_amount     = EXCLUDED.shares_amount,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE phoenix_liquidity.derive_generation <= EXCLUDED.derive_generation
     `
 	_, err := s.db.ExecContext(ctx, q,
 		e.Pool, int(e.Ledger), e.ObservedAt.UTC(), e.TxHash, int(e.OpIndex),
 		string(e.Action), int(e.EventIndex), e.Sender, tokenA, tokenB, e.AmountA, e.AmountB,
-		shares,
+		shares, s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertPhoenixLiquidityChange %s@%d: %w",

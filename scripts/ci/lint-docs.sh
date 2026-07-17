@@ -266,28 +266,34 @@ if [ -d docs/adr ]; then
   done
 fi
 
-# ─── 9. Every alert rule's runbook_url must point to an existing file ──────
+# ─── 9. Every alert rule's runbook_url must live in ANNOTATIONS + exist ─────
 #
 # Prometheus alert rules ship with `runbook_url` so the pager routes
-# oncall to a specific diagnosis page. A 404 runbook URL means the
-# responder gets dumped on a GitHub error page at 3 AM — the opposite
-# of useful. This check greps every runbook_url out of deploy/
-# monitoring/rules/*.yml and asserts the referenced file exists.
+# oncall to a specific diagnosis page. Two things must hold:
+#   (a) it lives under `annotations:`, NOT `labels:` — Alertmanager keeps
+#       .Labels and .Annotations strictly separate and both Discord
+#       templates render the runbook line from .Annotations.runbook_url,
+#       so a runbook_url stashed in `labels:` renders nothing (audit C4-1:
+#       266/270 alerts had it in the wrong block → no page ever showed a
+#       runbook link);
+#   (b) a local runbook target points at a file that exists — a 404 URL
+#       dumps the responder on a GitHub error page at 3 AM.
+# The pre-C4-1 version of this check was a blind grep over raw text, so it
+# matched a `runbook_url:` string in either block and never noticed (a).
+# This now delegates to the YAML-aware scripts/ci/lint-runbook-annotations.py
+# which PARSES each rule and asserts (a) + (b) per alert across both trees.
 
-echo "Checking alert-rule runbook_url targets..."
-if [ -d deploy/monitoring/rules ]; then
-  for rule_file in deploy/monitoring/rules/*.yml; do
-    # Extract the path suffix after /runbooks/ for every runbook_url.
-    grep -oE 'runbook_url:[[:space:]]*https://[^[:space:]]+/docs/operations/runbooks/[^[:space:]]+\.md' "$rule_file" 2>/dev/null | \
-      sed -E 's|.*/docs/operations/runbooks/|docs/operations/runbooks/|' | \
-      sort -u | \
-      while IFS= read -r runbook_path; do
-        [ -z "$runbook_path" ] && continue
-        if [ ! -f "$runbook_path" ]; then
-          err "alert rule references missing runbook: $runbook_path (from $rule_file)"
-        fi
-      done
-  done
+echo "Checking alert-rule runbook_url annotations..."
+if runbook_out=$(python3 scripts/ci/lint-runbook-annotations.py 2>&1); then
+  : # ok
+else
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    case "$line" in
+      *"problem(s) found"*) continue ;;  # summary line, not a distinct error
+    esac
+    err "runbook-annotations:$line"
+  done <<< "$runbook_out"
 fi
 
 # ─── 10. Every alert rule must have a row in the alerts catalogue ──────────

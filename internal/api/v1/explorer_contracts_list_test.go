@@ -72,7 +72,7 @@ func TestExplorer_ContractInteractions(t *testing.T) {
 	})
 	base := httpTestServer(t, srv).URL
 
-	resp := mustGet(t, base+"/v1/contracts/CSUBJECT/interactions")
+	resp := mustGet(t, base+"/v1/contracts/"+wasmTestCID+"/interactions")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
@@ -80,8 +80,8 @@ func TestExplorer_ContractInteractions(t *testing.T) {
 		Data v1.ContractInteractionsView `json:"data"`
 	}
 	mustDecode(t, resp, &body)
-	if body.Data.ContractID != "CSUBJECT" {
-		t.Errorf("contract_id = %q, want CSUBJECT", body.Data.ContractID)
+	if body.Data.ContractID != wasmTestCID {
+		t.Errorf("contract_id = %q, want %q", body.Data.ContractID, wasmTestCID)
 	}
 	if len(body.Data.Interactions) != 2 {
 		t.Fatalf("want 2 edges, got %d", len(body.Data.Interactions))
@@ -101,7 +101,7 @@ func TestExplorer_ContractCodeHistory(t *testing.T) {
 		{Ledger: 52000000, CloseTime: now, WasmHash: "bbbb"},
 	}}
 	base := explorerTestServer(t, reader)
-	resp := mustGet(t, base+"/v1/contracts/CSUBJECT/code-history")
+	resp := mustGet(t, base+"/v1/contracts/"+wasmTestCID+"/code-history")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
@@ -109,7 +109,7 @@ func TestExplorer_ContractCodeHistory(t *testing.T) {
 		Data v1.ContractCodeHistoryView `json:"data"`
 	}
 	mustDecode(t, resp, &body)
-	if body.Data.ContractID != "CSUBJECT" || len(body.Data.Versions) != 2 {
+	if body.Data.ContractID != wasmTestCID || len(body.Data.Versions) != 2 {
 		t.Fatalf("got %+v", body.Data)
 	}
 	if body.Data.Versions[0].WasmHash != "aaaa" || body.Data.Versions[1].Ledger != 52000000 {

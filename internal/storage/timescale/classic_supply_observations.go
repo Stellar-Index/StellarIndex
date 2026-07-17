@@ -5,9 +5,22 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"time"
 )
+
+// SeedIntraLedgerSeq is the intra_ledger_seq an ops seed writer
+// (stellarindex-ops supply-seed / supply-seed-sac) stamps on every row it
+// writes. It is math.MaxUint32 — the top of the per-ledger position space —
+// because a seed row is the authoritative reconstructed FINAL state for its
+// ledger (the latest entry from the ClickHouse lake, ADR-0034), so it must
+// sit at the END of the intra-ledger order: a live per-ledger change (a much
+// smaller position) can never overwrite it, while a re-seed (equal sentinel)
+// stays corrective under the `<=` guard. The live dispatcher counter cannot
+// reach this value (it would require 4.3e9 entry-changes in one ledger), so
+// there is no live/seed ambiguity. See migration 0111 (audit-2026-07-16 C2-6).
+const SeedIntraLedgerSeq = uint32(math.MaxUint32)
 
 // TrustlineObservation is the wire shape for a single
 // trustline-delta row. Mirrors trustline_observations columns.
@@ -18,6 +31,13 @@ type TrustlineObservation struct {
 	ObservedAt time.Time
 	Balance    *big.Int
 	IsRemoval  bool
+
+	// IntraLedgerSeq is the within-ledger position of the change that
+	// produced this row (audit-2026-07-16 C2-6). Guards the last-writer-wins
+	// upsert so an out-of-order PersistEvents worker can't persist a stale
+	// intra-ledger balance. Zero for the first change in a ledger; ops seeds
+	// use SeedIntraLedgerSeq.
+	IntraLedgerSeq uint32
 }
 
 // InsertTrustlineObservation appends one [TrustlineObservation]
@@ -38,21 +58,25 @@ func (s *Store) InsertTrustlineObservation(ctx context.Context, o TrustlineObser
 	if o.Balance == nil {
 		return fmt.Errorf("timescale: InsertTrustlineObservation: Balance is nil (account=%s asset=%s)", o.AccountID, o.AssetKey)
 	}
+	// intra_ledger_seq-guarded upsert: a later intra-ledger change wins
+	// regardless of parallel-worker commit order (audit-2026-07-16 C2-6).
 	const q = `
         INSERT INTO trustline_observations (
             account_id, asset_key, ledger, observed_at,
-            balance_stroops, is_removal
+            balance_stroops, is_removal, intra_ledger_seq
         ) VALUES (
             $1, $2, $3, $4,
-            $5, $6
+            $5, $6, $7
         )
         ON CONFLICT (account_id, asset_key, ledger, observed_at) DO UPDATE SET
-            balance_stroops = EXCLUDED.balance_stroops,
-            is_removal      = EXCLUDED.is_removal
+            balance_stroops  = EXCLUDED.balance_stroops,
+            is_removal       = EXCLUDED.is_removal,
+            intra_ledger_seq = EXCLUDED.intra_ledger_seq
+        WHERE trustline_observations.intra_ledger_seq <= EXCLUDED.intra_ledger_seq
     `
 	_, err := s.db.ExecContext(ctx, q,
 		o.AccountID, o.AssetKey, int(o.Ledger), o.ObservedAt.UTC(),
-		o.Balance.String(), o.IsRemoval,
+		o.Balance.String(), o.IsRemoval, int64(o.IntraLedgerSeq),
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertTrustlineObservation %s/%s@%d: %w", o.AccountID, o.AssetKey, o.Ledger, err)
@@ -92,6 +116,10 @@ type ClaimableObservation struct {
 	ObservedAt  time.Time
 	Balance     *big.Int
 	IsRemoval   bool
+
+	// IntraLedgerSeq — within-ledger change position; guards the upsert
+	// (audit-2026-07-16 C2-6). See TrustlineObservation.IntraLedgerSeq.
+	IntraLedgerSeq uint32
 }
 
 // InsertClaimableObservation — same shape as
@@ -106,20 +134,23 @@ func (s *Store) InsertClaimableObservation(ctx context.Context, o ClaimableObser
 	if o.Balance == nil {
 		return fmt.Errorf("timescale: InsertClaimableObservation: Balance is nil (cb=%s)", o.ClaimableID)
 	}
+	// intra_ledger_seq-guarded upsert (audit-2026-07-16 C2-6).
 	const q = `
         INSERT INTO claimable_observations (
             claimable_id, asset_key, ledger, observed_at,
-            balance_stroops, is_removal
+            balance_stroops, is_removal, intra_ledger_seq
         ) VALUES (
-            $1, $2, $3, $4, $5, $6
+            $1, $2, $3, $4, $5, $6, $7
         )
         ON CONFLICT (claimable_id, ledger, observed_at) DO UPDATE SET
-            balance_stroops = EXCLUDED.balance_stroops,
-            is_removal      = EXCLUDED.is_removal
+            balance_stroops  = EXCLUDED.balance_stroops,
+            is_removal       = EXCLUDED.is_removal,
+            intra_ledger_seq = EXCLUDED.intra_ledger_seq
+        WHERE claimable_observations.intra_ledger_seq <= EXCLUDED.intra_ledger_seq
     `
 	_, err := s.db.ExecContext(ctx, q,
 		o.ClaimableID, o.AssetKey, int(o.Ledger), o.ObservedAt.UTC(),
-		o.Balance.String(), o.IsRemoval,
+		o.Balance.String(), o.IsRemoval, int64(o.IntraLedgerSeq),
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertClaimableObservation %s@%d: %w", o.ClaimableID, o.Ledger, err)
@@ -153,6 +184,10 @@ type LPReserveObservation struct {
 	ObservedAt time.Time
 	Balance    *big.Int
 	IsRemoval  bool
+
+	// IntraLedgerSeq — within-ledger change position; guards the upsert
+	// (audit-2026-07-16 C2-6). See TrustlineObservation.IntraLedgerSeq.
+	IntraLedgerSeq uint32
 }
 
 // InsertLPReserveObservation — keyed on (pool_id, asset_key).
@@ -168,20 +203,23 @@ func (s *Store) InsertLPReserveObservation(ctx context.Context, o LPReserveObser
 	if o.Balance == nil {
 		return fmt.Errorf("timescale: InsertLPReserveObservation: Balance is nil (pool=%s asset=%s)", o.PoolID, o.AssetKey)
 	}
+	// intra_ledger_seq-guarded upsert (audit-2026-07-16 C2-6).
 	const q = `
         INSERT INTO lp_reserve_observations (
             pool_id, asset_key, ledger, observed_at,
-            balance_stroops, is_removal
+            balance_stroops, is_removal, intra_ledger_seq
         ) VALUES (
-            $1, $2, $3, $4, $5, $6
+            $1, $2, $3, $4, $5, $6, $7
         )
         ON CONFLICT (pool_id, asset_key, ledger, observed_at) DO UPDATE SET
-            balance_stroops = EXCLUDED.balance_stroops,
-            is_removal      = EXCLUDED.is_removal
+            balance_stroops  = EXCLUDED.balance_stroops,
+            is_removal       = EXCLUDED.is_removal,
+            intra_ledger_seq = EXCLUDED.intra_ledger_seq
+        WHERE lp_reserve_observations.intra_ledger_seq <= EXCLUDED.intra_ledger_seq
     `
 	_, err := s.db.ExecContext(ctx, q,
 		o.PoolID, o.AssetKey, int(o.Ledger), o.ObservedAt.UTC(),
-		o.Balance.String(), o.IsRemoval,
+		o.Balance.String(), o.IsRemoval, int64(o.IntraLedgerSeq),
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertLPReserveObservation %s/%s@%d: %w", o.PoolID, o.AssetKey, o.Ledger, err)
@@ -216,6 +254,13 @@ type SACBalanceObservation struct {
 	ObservedAt time.Time
 	Balance    *big.Int
 	IsRemoval  bool
+
+	// IntraLedgerSeq — within-ledger change position; guards the upsert so
+	// when a single (contract, holder) changes multiple times in one ledger
+	// the FINAL change wins rather than whichever out-of-order worker
+	// committed last (audit-2026-07-16 C2-6). See
+	// TrustlineObservation.IntraLedgerSeq.
+	IntraLedgerSeq uint32
 }
 
 // InsertSACBalanceObservation — keyed on (contract_id, holder).
@@ -234,21 +279,26 @@ func (s *Store) InsertSACBalanceObservation(ctx context.Context, o SACBalanceObs
 	if o.Balance == nil {
 		return fmt.Errorf("timescale: InsertSACBalanceObservation: Balance is nil (contract=%s holder=%s)", o.ContractID, o.Holder)
 	}
+	// intra_ledger_seq-guarded upsert: the FINAL intra-ledger change to this
+	// (contract, holder) wins regardless of parallel-worker commit order —
+	// the wrong-supply-component fix (audit-2026-07-16 C2-6).
 	const q = `
         INSERT INTO sac_balance_observations (
             contract_id, asset_key, holder, ledger, observed_at,
-            balance_stroops, is_removal
+            balance_stroops, is_removal, intra_ledger_seq
         ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7
+            $1, $2, $3, $4, $5, $6, $7, $8
         )
         ON CONFLICT (contract_id, holder, ledger, observed_at) DO UPDATE SET
-            asset_key       = EXCLUDED.asset_key,
-            balance_stroops = EXCLUDED.balance_stroops,
-            is_removal      = EXCLUDED.is_removal
+            asset_key        = EXCLUDED.asset_key,
+            balance_stroops  = EXCLUDED.balance_stroops,
+            is_removal       = EXCLUDED.is_removal,
+            intra_ledger_seq = EXCLUDED.intra_ledger_seq
+        WHERE sac_balance_observations.intra_ledger_seq <= EXCLUDED.intra_ledger_seq
     `
 	_, err := s.db.ExecContext(ctx, q,
 		o.ContractID, o.AssetKey, o.Holder, int(o.Ledger), o.ObservedAt.UTC(),
-		o.Balance.String(), o.IsRemoval,
+		o.Balance.String(), o.IsRemoval, int64(o.IntraLedgerSeq),
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertSACBalanceObservation %s/%s@%d: %w", o.ContractID, o.Holder, o.Ledger, err)

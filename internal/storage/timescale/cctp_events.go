@@ -82,10 +82,14 @@ func (t CCTPEventType) IsValid() bool {
 // (message_sent / mint_and_withdraw carry no domain). Attributes
 // holds the event-type-specific remainder as a jsonb blob.
 type CCTPEvent struct {
-	ContractID         string
-	Ledger             uint32
-	TxHash             string
-	OpIndex            uint32
+	ContractID string
+	Ledger     uint32
+	TxHash     string
+	OpIndex    uint32
+	// EventIndex is the position of this event within its operation's
+	// contract-event list — the migration-0112 PK discriminator that keeps
+	// two same-type events emitted by one op from collapsing (C2-13a).
+	EventIndex         uint32
 	ObservedAt         time.Time
 	EventType          CCTPEventType
 	Amount             string // decimal i128; "" → NULL
@@ -125,17 +129,32 @@ func (s *Store) InsertCCTPEvent(ctx context.Context, e CCTPEvent) error {
 		attrs = marshaled
 	}
 
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the i128 amounts (amount / fee) or the other
+	// decoded columns lands in place when its generation is >= the stored
+	// one; a live gen-0 replay can never revert it. Replaces the old DO NOTHING.
+	// event_index ($13) is in the INSERT column list AND the ON CONFLICT
+	// target (migration 0112, C2-13a): two same-type events emitted by one
+	// op differ only in event_index, so it MUST be part of the conflict key
+	// or the second row collapses onto the first.
 	const q = `
         INSERT INTO cctp_events (
             contract_id, ledger, tx_hash, op_index, ts,
             event_type, amount, fee, token, counterparty_domain,
-            attributes
+            attributes, derive_generation, event_index
         ) VALUES (
             $1, $2, $3, $4, $5,
             $6, $7, $8, $9, $10,
-            $11
+            $11, $12, $13
         )
-        ON CONFLICT (contract_id, ledger, tx_hash, op_index, event_type, ts) DO NOTHING
+        ON CONFLICT (contract_id, ledger, tx_hash, op_index, event_type, event_index, ts) DO UPDATE SET
+            amount              = EXCLUDED.amount,
+            fee                 = EXCLUDED.fee,
+            token               = EXCLUDED.token,
+            counterparty_domain = EXCLUDED.counterparty_domain,
+            attributes          = EXCLUDED.attributes,
+            derive_generation   = EXCLUDED.derive_generation
+          WHERE cctp_events.derive_generation <= EXCLUDED.derive_generation
     `
 	var (
 		domain sql.NullInt64
@@ -150,7 +169,7 @@ func (s *Store) InsertCCTPEvent(ctx context.Context, e CCTPEvent) error {
 	_, err := s.db.ExecContext(ctx, q,
 		e.ContractID, int(e.Ledger), e.TxHash, int(e.OpIndex), e.ObservedAt.UTC(),
 		string(e.EventType), nullNumeric(e.Amount), nullNumeric(e.Fee), token, domain,
-		attrs,
+		attrs, s.deriveGeneration, int(e.EventIndex),
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertCCTPEvent %s@%d: %w", e.ContractID, e.Ledger, err)

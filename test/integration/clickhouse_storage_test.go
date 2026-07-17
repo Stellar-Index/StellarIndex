@@ -682,3 +682,72 @@ func TestClickHouseProtocolDailyActivityDedup(t *testing.T) {
 		t.Fatalf("ProtocolEventBreakdownFast swap count = %d (rows=%v), want 3 — dedup regression", got, breakdown)
 	}
 }
+
+// TestNetworkThroughput_DedupsReingestedLedger is the audit C2-12 guard:
+// stellar.ledgers is ReplacingMergeTree, and a re-ingested ledger (a ch-backfill
+// re-derive) leaves an un-merged duplicate PART until a background merge. Before
+// the fix NetworkThroughput's count()/sum(*_count) ran WITHOUT FINAL, so during
+// that window the served daily throughput double-counted the ledger and doubled
+// its tx/op/event sums. The fix reads FROM stellar.ledgers FINAL. This inserts a
+// ledger twice (two parts, identical RMT identity) and asserts the served bucket
+// counts it ONCE. Uses a very high, isolated ledger_seq + a unique close date so
+// the windowed aggregate can't be contaminated by other tests' rows.
+func TestNetworkThroughput_DedupsReingestedLedger(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	const ledger = uint32(200_000_000) // above any other test's ledgers → the max
+	closeTime := time.Date(2027, 6, 15, 9, 0, 0, 0, time.UTC)
+	ext := chstore.LedgerExtract{
+		Ledger: chstore.LedgerRow{
+			LedgerSeq: ledger, CloseTime: closeTime, LedgerHash: "dd00", PrevHash: "ee00",
+			ProtocolVersion: 22, BucketListHash: "ff00",
+			TxCount: 7, OpCount: 3, SorobanEventCount: 2,
+			TotalCoins: 1, FeePool: 1, BaseFee: 100, BaseReserve: 5_000_000,
+		},
+	}
+	sink, err := chstore.Open(ctx, addr, 1000)
+	if err != nil {
+		t.Fatalf("open sink: %v", err)
+	}
+	t.Cleanup(func() { _ = sink.Close(ctx) })
+	// Ingest, then RE-INGEST the identical ledger → two ReplacingMergeTree parts
+	// sharing one ORDER-BY identity (ledger_seq), un-merged at read time.
+	for i := 0; i < 2; i++ {
+		if err := sink.Add(ctx, ext); err != nil {
+			t.Fatalf("sink add #%d: %v", i, err)
+		}
+		if err := sink.Flush(ctx); err != nil {
+			t.Fatalf("sink flush #%d: %v", i, err)
+		}
+	}
+
+	er, err := chstore.NewExplorerReader(ctx, addr)
+	if err != nil {
+		t.Fatalf("new explorer reader: %v", err)
+	}
+	t.Cleanup(func() { _ = er.Close() })
+
+	buckets, err := er.NetworkThroughput(ctx, 1) // 1-day window → only the tip region (this ledger)
+	if err != nil {
+		t.Fatalf("NetworkThroughput: %v", err)
+	}
+	day := closeTime.Truncate(24 * time.Hour)
+	var found bool
+	for _, b := range buckets {
+		if !b.Day.Equal(day) {
+			continue
+		}
+		found = true
+		if b.Ledgers != 1 {
+			t.Errorf("Ledgers = %d, want 1 (a re-ingested ledger must count once — un-merged RMT part double-counted)", b.Ledgers)
+		}
+		if b.Txs != 7 || b.Ops != 3 || b.Events != 2 {
+			t.Errorf("sums = (tx=%d op=%d ev=%d), want (7,3,2) — FINAL missing lets the duplicate part double the sums", b.Txs, b.Ops, b.Events)
+		}
+	}
+	if !found {
+		t.Fatalf("no throughput bucket for %v — the test ledger fell outside the window (another test inserted a higher ledger_seq?)", day)
+	}
+}

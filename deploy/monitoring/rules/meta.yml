@@ -21,8 +21,8 @@ groups:
           severity: informational
           team: stellarindex
           component: meta
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/scrape-failing.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/scrape-failing.md
           summary: "Prometheus scrape of {{ $labels.job }}@{{ $labels.instance }} failing"
           description: |
             A scrape target has been down for 2+ min. We lose visibility
@@ -36,8 +36,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: meta
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/alertmanager-bad-config.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/alertmanager-bad-config.md
           summary: "AlertManager config reload failed"
           description: |
             AlertManager reload failed. Any rule changes since the last
@@ -79,8 +79,8 @@ groups:
           severity: page
           team: stellarindex
           component: monitoring
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
           summary: "redis_exporter scrape target is down — cascade-blind for any alert that depends on it"
           description: |
             The redis_exporter Prometheus scrape target has been down
@@ -107,8 +107,8 @@ groups:
           severity: page
           team: stellarindex
           component: monitoring
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
           summary: "postgres_exporter scrape target is down — cascade-blind for any alert that depends on it"
           description: |
             The postgres_exporter Prometheus scrape target has been
@@ -135,8 +135,8 @@ groups:
           severity: page
           team: stellarindex
           component: monitoring
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
           summary: "pgbackrest_exporter scrape target is down — cascade-blind for any alert that depends on it"
           description: |
             The pgbackrest_exporter Prometheus scrape target has been
@@ -162,8 +162,8 @@ groups:
           severity: page
           team: stellarindex
           component: monitoring
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/exporter-down.md
           summary: "MinIO scrape target is down — cascade-blind for any alert that depends on it"
           description: |
             The MinIO Prometheus scrape target has been down for 2+
@@ -193,8 +193,8 @@ groups:
           severity: informational
           team: stellarindex
           component: meta
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/deadmansswitch.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/deadmansswitch.md
           summary: "This alert fires constantly — alarm is when it STOPS"
           description: |
             Routing target (e.g., an external watchdog.healthchecks.io URL)

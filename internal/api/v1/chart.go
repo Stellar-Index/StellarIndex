@@ -849,10 +849,15 @@ func (s *Server) handleChartMarketCap(
 		writeJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{})
 		return
 	}
-	m2, err := parseSupply(vc.CirculatingSupply, vc.SupplyDecimals)
-	if err != nil {
+	// Exact circulating supply in whole units (INV-2 / ADR-0003 — the
+	// catalogue carries supply as an exact decimal STRING; parsing it
+	// to float64 truncates once it exceeds a float's 53-bit mantissa,
+	// e.g. a quadrillion-unit fiat M2). Scale by supply_decimals via
+	// big.Rat, never float division.
+	m2, ok := fiatSupplyWholeUnits(vc.CirculatingSupply, vc.SupplyDecimals)
+	if !ok {
 		s.logger.Warn("market_cap: bad catalogue supply",
-			"ticker", vc.Ticker, "err", err)
+			"ticker", vc.Ticker, "supply", vc.CirculatingSupply)
 		writeJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{})
 		return
 	}
@@ -882,10 +887,18 @@ func (s *Server) handleChartMarketCap(
 		if p.InverseUSD <= 0 {
 			continue
 		}
-		mcap := m2 * p.InverseUSD
+		// market_cap = supply × rate, exact big.Rat. The rate is a
+		// float64 from the FX feed; convert via its shortest round-trip
+		// decimal so the multiplication itself introduces no float
+		// rounding (only the source rate's own precision, which the
+		// crypto path's usdMarketValue shares).
+		rate, ok := new(big.Rat).SetString(strconv.FormatFloat(p.InverseUSD, 'f', -1, 64))
+		if !ok {
+			continue
+		}
 		wire = append(wire, HistoryPointWire{
 			T: p.Bucket,
-			P: fmt.Sprintf("%.2f", mcap),
+			P: new(big.Rat).Mul(m2, rate).FloatString(2),
 		})
 	}
 
@@ -924,15 +937,6 @@ func emptyMarketCapSeries(pair canonical.Pair, tfRaw, gran string, _ time.Time) 
 		Points:      []HistoryPointWire{},
 	}
 }
-
-// marketCapDecimals is the per-unit scale handleChartMarketCapCrypto
-// divides supply by. 7 is correct for native XLM + every classic
-// asset; SEP-41 Soroban tokens can declare other decimals, but 7 is
-// the Stellar/SAC default and matches the spot market_cap path
-// (populateMarketCap → detail.Decimals defaults to 7), so the chart
-// and the headline cap stay consistent. Refining per-token decimals
-// is the same follow-up the spot path carries.
-const marketCapDecimals = 7
 
 // handleChartMarketCapCrypto serves /v1/chart?price_type=market_cap
 // for an on-chain (native / classic / Soroban) base. Market cap is a
@@ -996,9 +1000,12 @@ func (s *Server) handleChartMarketCapCrypto(
 	}
 
 	// dex-nonstandard-decimals forward normalization on the USD price
-	// leg — see handleChart's equivalent comment. (The supply leg's own
-	// decimals scaling — marketCapDecimals — is a separate, already-
-	// acknowledged follow-up; not touched here.)
+	// leg — see handleChart's equivalent comment. baseDec ALSO scales the
+	// supply leg below (M2): circulating supply is denominated in the base
+	// token's own smallest unit, so a confirmed non-7-decimals token's supply
+	// must be divided by 10^baseDec — not the old hardcoded 10^7 — or the cap
+	// is off by 10^(baseDec−7). Both legs share the SAME baseDec so
+	// market_cap = supply × price stays internally coherent.
 	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Base)
 	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Quote)
 	pricePts = adjustHistoryPointPrices(pricePts, baseDec, quoteDec)
@@ -1016,7 +1023,7 @@ func (s *Server) handleChartMarketCapCrypto(
 		return
 	}
 
-	wire := marketCapPoints(pricePts, supPts)
+	wire := marketCapPoints(pricePts, supPts, baseDec)
 	series := ChartSeries{
 		AssetID:     pair.Base.String(),
 		Quote:       pair.Quote.String(),
@@ -1043,7 +1050,7 @@ func (s *Server) handleChartMarketCapCrypto(
 // by bucket; a single forward cursor over supPts keeps it O(n+m). A
 // price day with no supply at-or-before it (asset priced before its
 // first supply snapshot) is skipped rather than emitted as zero.
-func marketCapPoints(pricePts []HistoryPoint, supPts []timescale.SupplyDayPoint) []HistoryPointWire {
+func marketCapPoints(pricePts []HistoryPoint, supPts []timescale.SupplyDayPoint, baseDecimals int) []HistoryPointWire {
 	wire := make([]HistoryPointWire, 0, len(pricePts))
 	si := 0
 	var cur *big.Int
@@ -1055,7 +1062,7 @@ func marketCapPoints(pricePts []HistoryPoint, supPts []timescale.SupplyDayPoint)
 		if cur == nil || pp.VWAP == "" {
 			continue
 		}
-		mc, err := usdMarketValue(cur, pp.VWAP, marketCapDecimals)
+		mc, err := usdMarketValue(cur, pp.VWAP, baseDecimals)
 		if err != nil {
 			continue
 		}
@@ -1064,19 +1071,29 @@ func marketCapPoints(pricePts []HistoryPoint, supPts []timescale.SupplyDayPoint)
 	return wire
 }
 
-// parseSupply converts the catalogue's (supply, decimals) tuple into
-// a float64. The catalogue stores supplies as decimal strings in the
-// asset's smallest integer unit (per the seed.yaml convention),
-// alongside a decimals exponent. For fiat M2 the decimals are 0 so
-// the supply is already in major units (e.g. "21700000000000" =
-// $21.7T). For tokens decimals would be 7 / 18 / etc; we divide.
-func parseSupply(supplyStr string, decimals int) (float64, error) {
-	v, err := strconv.ParseFloat(supplyStr, 64)
-	if err != nil {
-		return 0, fmt.Errorf("parse supply %q: %w", supplyStr, err)
+// fiatSupplyWholeUnits converts the catalogue's (supply, decimals)
+// tuple into an EXACT whole-unit big.Rat. The catalogue stores
+// supplies as decimal strings in the asset's smallest integer unit
+// (per the seed.yaml convention), alongside a decimals exponent. For
+// fiat M2 the decimals are 0 so the supply is already in major units
+// (e.g. "21700000000000" = $21.7T); for tokens decimals would be
+// 7 / 18 / etc, and we divide by 10^decimals via big.Rat.
+//
+// Exact by construction (INV-2 / ADR-0003): the earlier float64 form
+// truncated any supply past a float's 53-bit mantissa (~9.0e15) — a
+// real risk for high-denomination fiat M2 figures. Returns ok=false
+// when supplyStr isn't a decimal or decimals is negative.
+func fiatSupplyWholeUnits(supplyStr string, decimals int) (*big.Rat, bool) {
+	if decimals < 0 {
+		return nil, false
 	}
-	for i := 0; i < decimals; i++ {
-		v /= 10
+	v, ok := new(big.Rat).SetString(supplyStr)
+	if !ok {
+		return nil, false
 	}
-	return v, nil
+	if decimals > 0 {
+		div := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
+		v.Quo(v, new(big.Rat).SetInt(div))
+	}
+	return v, true
 }

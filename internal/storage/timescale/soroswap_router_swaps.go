@@ -106,6 +106,10 @@ func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSw
 		}
 	}
 
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the swap amounts (amount_in / amount_out) or the
+	// other decoded columns lands in place when its generation is >= the
+	// stored one; a live gen-0 replay can never revert it. Replaces DO NOTHING.
 	const q = `
         INSERT INTO soroswap_router_swaps (
             ledger, ledger_close_time, tx_hash, op_index,
@@ -114,7 +118,8 @@ func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSw
             recipient, path,
             amount_in, amount_out, deadline_ts,
             call_sig,
-            call_path, call_depth, call_kind
+            call_path, call_depth, call_kind,
+            derive_generation
         ) VALUES (
             $1, $2, $3, $4,
             $5, $6,
@@ -122,9 +127,24 @@ func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSw
             $9, $10,
             $11, $12, $13,
             $14,
-            $15, $16, $17
+            $15, $16, $17,
+            $18
         )
-        ON CONFLICT (ledger_close_time, ledger, tx_hash, op_index, call_sig) DO NOTHING
+        ON CONFLICT (ledger_close_time, ledger, tx_hash, op_index, call_sig) DO UPDATE SET
+            contract_id       = EXCLUDED.contract_id,
+            function_name     = EXCLUDED.function_name,
+            op_source         = EXCLUDED.op_source,
+            tx_source         = EXCLUDED.tx_source,
+            recipient         = EXCLUDED.recipient,
+            path              = EXCLUDED.path,
+            amount_in         = EXCLUDED.amount_in,
+            amount_out        = EXCLUDED.amount_out,
+            deadline_ts       = EXCLUDED.deadline_ts,
+            call_path         = EXCLUDED.call_path,
+            call_depth        = EXCLUDED.call_depth,
+            call_kind         = EXCLUDED.call_kind,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE soroswap_router_swaps.derive_generation <= EXCLUDED.derive_generation
     `
 	// deadline_ts is a user-supplied u64 expiry. Some router calls pass a
 	// sentinel / garbage value (≈3e18, or one that overflows int64 to a BC
@@ -157,6 +177,7 @@ func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSw
 		e.AmountIn, e.AmountOut, deadline,
 		e.CallSig,
 		callPath, callDepth, callKind,
+		s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertSoroswapRouterSwap %s@%d: %w", e.TxHash, e.Ledger, err)

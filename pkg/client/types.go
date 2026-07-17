@@ -859,26 +859,29 @@ type ChartSeries struct {
 }
 
 // ChangeSummary is the data shape returned by [Client.ChangeSummary]
-// — per-entity multi-window delta rollup.
+// — per-entity multi-window delta rollup. The *_value fields are money
+// (a price / market-cap snapshot) and are JSON STRINGS end to end (M7,
+// INV-2), matching every other money field the API serves; the
+// *_delta_pct fields are percentages and stay numbers.
 type ChangeSummary struct {
-	EntityType   string  `json:"entity_type"`
-	EntityID     string  `json:"entity_id"`
-	RefreshedAt  string  `json:"refreshed_at"`
-	CurrentValue float64 `json:"current_value"`
+	EntityType   string `json:"entity_type"`
+	EntityID     string `json:"entity_id"`
+	RefreshedAt  string `json:"refreshed_at"`
+	CurrentValue string `json:"current_value"`
 
-	H1Value     *float64 `json:"h1_value,omitempty"`
+	H1Value     *string  `json:"h1_value,omitempty"`
 	H1DeltaPct  *float64 `json:"h1_delta_pct,omitempty"`
-	H24Value    *float64 `json:"h24_value,omitempty"`
+	H24Value    *string  `json:"h24_value,omitempty"`
 	H24DeltaPct *float64 `json:"h24_delta_pct,omitempty"`
-	D7Value     *float64 `json:"d7_value,omitempty"`
+	D7Value     *string  `json:"d7_value,omitempty"`
 	D7DeltaPct  *float64 `json:"d7_delta_pct,omitempty"`
-	D30Value    *float64 `json:"d30_value,omitempty"`
+	D30Value    *string  `json:"d30_value,omitempty"`
 	D30DeltaPct *float64 `json:"d30_delta_pct,omitempty"`
 
-	ATHValue *float64 `json:"ath_value,omitempty"`
-	ATHAt    string   `json:"ath_at,omitempty"`
-	ATLValue *float64 `json:"atl_value,omitempty"`
-	ATLAt    string   `json:"atl_at,omitempty"`
+	ATHValue *string `json:"ath_value,omitempty"`
+	ATHAt    string  `json:"ath_at,omitempty"`
+	ATLValue *string `json:"atl_value,omitempty"`
+	ATLAt    string  `json:"atl_at,omitempty"`
 
 	StreakDirection string `json:"streak_direction,omitempty"`
 	StreakDays      *int   `json:"streak_days,omitempty"`

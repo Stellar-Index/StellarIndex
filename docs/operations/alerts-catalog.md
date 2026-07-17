@@ -47,6 +47,8 @@ Severity maps to [sev-playbook.md §1](sev-playbook.md#1-severity-definitions).
 | `stellarindex_ingestion_ch_live_sink_drops_sustained` | `increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[1h])` | > 0 sustained 1 h | P2 | [ch-live-sink-drops](runbooks/ch-live-sink-drops.md) |
 | `stellarindex_ingestion_trade_insert_backpressure` | `sum(rate(stellarindex_trade_insert_retries_total{outcome="retry"}[5m]))` | > 0 sustained 10 min | P3 | [trade-insert-backpressure](runbooks/trade-insert-backpressure.md) |
 | `stellarindex_ingestion_insert_errors` | `rate(stellarindex_source_insert_errors_total[5m])` per (source, kind) | > 0.1/s (≈6/min) sustained 5 min | P2 | [insert-errors](runbooks/insert-errors.md) |
+| `stellarindex_ingestion_persist_drop` | `increase(stellarindex_source_insert_errors_total{kind=~"soroswap_router_swap\|defindex_flow_strategy\|defindex_flow_vault"}[15m])` | > 0 sustained 15 min (any rate) | P2 | [insert-errors](runbooks/insert-errors.md) |
+| `stellarindex_ingestion_discovery_record_failures` | `increase(stellarindex_discovery_record_failures_total[10m])` | > 0 sustained 10 min | P3 | [discovery-drops](runbooks/discovery-drops.md) |
 | `stellarindex_ingestion_duplicate_flood` | `rate(stellarindex_trade_insert_outcome_total{outcome="duplicate"}[10m])` AND `rate(...{outcome="new"}[10m]) == 0` per source | duplicates > 0.5/s with zero new for 10 min | P2 | [ingestion-duplicate-flood](runbooks/ingestion-duplicate-flood.md) |
 | `stellarindex_ingestion_source_insert_stale` | `time() - stellarindex_source_last_insert_unix` per source AND `source_enabled=1` | > 3600 s for ≥ 10 min | P2 | [ingestion-duplicate-flood](runbooks/ingestion-duplicate-flood.md) |
 | `stellarindex_dex_trade_unit_ratio_detected` | `sum by (source) (increase(stellarindex_dex_trade_unit_ratio_total[30m]))` | > 25 per source, sustained 5 min | P2 | [dex-trade-unit-ratio](runbooks/dex-trade-unit-ratio.md) |
@@ -245,6 +247,8 @@ coingecko rot 11 days and sep1 metadata never populate, both unnoticed.
 | `stellarindex_data_source_stale` | `stellarindex_data_freshness_stale{domain,source}` | == 1 for > 1h | P3 | [data-source-stale](runbooks/data-source-stale.md) |
 | `stellarindex_completeness_incomplete` | `stellarindex_completeness_incomplete{source}` | == 1 for > 1h | P3 | [completeness-incomplete](runbooks/completeness-incomplete.md) |
 | `stellarindex_data_freshness_watchdog_silent` | `absent_over_time(stellarindex_data_freshness_stale[45m])` | for > 15m | P3 | [data-freshness-watchdog-silent](runbooks/data-freshness-watchdog-silent.md) |
+| `stellarindex_serving_insert_frozen` | `time() - max(stellarindex_source_last_insert_unix)` | > 1800 s (no insert from ANY source) for 10 min | P2 | [data-source-stale](runbooks/data-source-stale.md) |
+| `stellarindex_serving_insert_absent` | `absent(stellarindex_source_last_insert_unix)` | series missing for 15 min | P2 | [data-source-stale](runbooks/data-source-stale.md) |
 
 ## Ledgerstream tier alerts
 
@@ -360,6 +364,7 @@ override.
 | `stellarindex_postgres_exporter_down` | `up{job="postgres_exporter"}` | == 0 for > 2 min OR series absent for 5 min | **P1** | [exporter-down](runbooks/exporter-down.md) |
 | `stellarindex_pgbackrest_exporter_down` | `up{job="pgbackrest_exporter"}` | == 0 for > 2 min OR series absent for 5 min | **P1** | [exporter-down](runbooks/exporter-down.md) |
 | `stellarindex_minio_exporter_down` | `up{job="minio"}` | == 0 for > 2 min OR series absent for 5 min | **P1** | [exporter-down](runbooks/exporter-down.md) — or [minio-metrics-403](runbooks/minio-metrics-403.md) if the cause is a 403 (bearer-token gap) |
+| `stellarindex_metrics_registry_absent` | `stellarindex_metrics_registry_present{component}` | == 0 for 15 min (component running Registry-less → its metrics + dependent alerts are dead) | P3 | [metrics-registry-absent](runbooks/metrics-registry-absent.md) |
 
 The four `*_exporter_down` rules close the F-0085 cascade-blindness gap surfaced by the 2026-05-26 audit — each exporter feeds an alert family whose detection silently fails if the exporter dies first. Adding the meta-alert ensures any future cascade surfaces immediately even when the metric-producing exporter is the same process tree dying alongside the failure it's meant to detect. The MinIO scrape specifically has a separate 403-shape failure (missing bearer-token file) documented in [minio-metrics-403](runbooks/minio-metrics-403.md) — operators paged by `stellarindex_minio_exporter_down` whose Prometheus `lastError` shows `HTTP status 403` should consult that runbook first.
 

@@ -54,6 +54,16 @@ type CoinGeckoReference struct {
 	// the per-tick fan-out across pairs reuses one HTTP call.
 	batchTTL time.Duration
 
+	// maxAge is the CS-089 staleness ceiling: a quote whose upstream
+	// last_updated_at is older than this (relative to the
+	// comparison's observedAt) is rejected as ErrPriceUnavailable
+	// instead of served as a fresh reference. A FROZEN CoinGecko
+	// price served as fresh can both mask a real divergence and
+	// fabricate a false one — the same failure mode the Chainlink
+	// (chainlink.go) and on-chain oracle (oracle.go) references gate
+	// against. See defaultCoinGeckoMaxAge for the default rationale.
+	maxAge time.Duration
+
 	// nowFn returns the current time. Hookable for tests so the
 	// TTL-window logic is deterministic. Production uses time.Now.
 	nowFn func() time.Time
@@ -67,6 +77,14 @@ type CoinGeckoReference struct {
 	// batchData is the parsed response: cgID → cgQuote → price.
 	// Nil/empty until the first successful fetch.
 	batchData map[string]map[string]float64
+
+	// batchUpdatedAt maps cgID → the UPSTREAM publication time
+	// CoinGecko reports for that coin (the `last_updated_at` field
+	// returned when the request sets include_last_updated_at=true).
+	// Absent from the map when CoinGecko omitted the field for an id
+	// (older/compat endpoints); the staleness gate then no-ops for
+	// that id rather than rejecting an otherwise-usable price.
+	batchUpdatedAt map[string]time.Time
 }
 
 // CoinGeckoOptions configures [NewCoinGeckoReference].
@@ -98,9 +116,36 @@ type CoinGeckoOptions struct {
 	// or longer for paranoid rate-limit conservation.
 	BatchTTL time.Duration
 
+	// MaxAge is the CS-089 staleness ceiling for a quote's upstream
+	// last_updated_at. <= 0 falls back to [defaultCoinGeckoMaxAge].
+	// A quote older than this is rejected as ErrPriceUnavailable so a
+	// frozen upstream can't silently drive the divergence signal.
+	MaxAge time.Duration
+
 	// NowFn overrides time.Now for deterministic tests. Nil = time.Now.
 	NowFn func() time.Time
 }
+
+// defaultCoinGeckoMaxAge is the staleness ceiling for a CoinGecko
+// /simple/price quote's upstream last_updated_at (CS-089). CoinGecko
+// refreshes /simple/price on the order of every 1–5 minutes for
+// liquid coins; 30m means "missed roughly five refresh cycles + slack"
+// — the same shape as the Reflector on-chain default
+// (DefaultOracleMaxAgeReflector). It exists to catch a genuinely
+// FROZEN feed (last_updated_at stops advancing for hours), not to
+// second-guess normal update jitter.
+//
+// VALUE DECISION: 30m is a defensible engineering default, not a
+// business rule. Operators tune it via
+// `[divergence.coingecko].max_age_minutes`.
+const defaultCoinGeckoMaxAge = 30 * time.Minute
+
+// coinGeckoLastUpdatedKey is the sentinel key CoinGecko folds into
+// each id's object when the request sets include_last_updated_at=true
+// (`{"stellar":{"usd":0.12,"last_updated_at":1710000000}}`). It is NOT
+// a vs_currency, so [fetchBatch] lifts it out of the price map into
+// the per-id timestamp map before the quote lookup runs.
+const coinGeckoLastUpdatedKey = "last_updated_at"
 
 // NewCoinGeckoReference constructs a CoinGecko-backed reference.
 //
@@ -137,6 +182,10 @@ func NewCoinGeckoReference(opts CoinGeckoOptions) *CoinGeckoReference {
 	if batchTTL <= 0 {
 		batchTTL = 25 * time.Second
 	}
+	maxAge := opts.MaxAge
+	if maxAge <= 0 {
+		maxAge = defaultCoinGeckoMaxAge
+	}
 	nowFn := opts.NowFn
 	if nowFn == nil {
 		nowFn = time.Now
@@ -148,6 +197,7 @@ func NewCoinGeckoReference(opts CoinGeckoOptions) *CoinGeckoReference {
 		idMap:      idMap,
 		quoteMap:   quoteMap,
 		batchTTL:   batchTTL,
+		maxAge:     maxAge,
 		nowFn:      nowFn,
 	}
 }
@@ -187,16 +237,24 @@ func defaultCoinGeckoIDMap() map[string]string {
 // Name implements [Reference].
 func (c *CoinGeckoReference) Name() string { return "coingecko" }
 
-// LookupPrice implements [Reference]. observedAt is ignored —
-// CoinGecko's /simple/price returns the latest cached price; for
-// closed-bucket comparison this is acceptable when the bucket is
-// recent (within a few minutes).
+// LookupPrice implements [Reference].
+//
+// CS-089 staleness gate: CoinGecko's /simple/price returns the latest
+// CACHED price, so a frozen upstream keeps serving a stale number with
+// no error. We request include_last_updated_at=true and reject any
+// quote whose upstream last_updated_at is older than [maxAge] relative
+// to observedAt (the bucket-end comparison time Compare passes
+// through; zero falls back to wall time defensively) — mirroring the
+// Chainlink and on-chain oracle references so a stale reference reads
+// as "unavailable", never as agreement or divergence. When CoinGecko
+// omits last_updated_at for the id (older/compat endpoints) the gate
+// no-ops for that id.
 //
 // Internally this delegates to the per-tick batched fetcher: the
 // first call within batchTTL issues ONE HTTP request covering every
 // configured (id, quote) pair; subsequent calls within the TTL read
 // from the in-memory map without touching the network.
-func (c *CoinGeckoReference) LookupPrice(ctx context.Context, pair canonical.Pair, _ time.Time) (float64, error) {
+func (c *CoinGeckoReference) LookupPrice(ctx context.Context, pair canonical.Pair, observedAt time.Time) (float64, error) {
 	cgID, ok := c.idMap[pair.Base.String()]
 	if !ok {
 		return 0, fmt.Errorf("%w: base %q has no CoinGecko slug in idMap", ErrAssetUnsupported, pair.Base.String())
@@ -206,7 +264,7 @@ func (c *CoinGeckoReference) LookupPrice(ctx context.Context, pair canonical.Pai
 		return 0, fmt.Errorf("%w: quote %q has no CoinGecko vs_currency", ErrAssetUnsupported, pair.Quote.String())
 	}
 
-	data, err := c.ensureBatch(ctx)
+	data, updatedAt, err := c.ensureBatch(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -222,7 +280,31 @@ func (c *CoinGeckoReference) LookupPrice(ctx context.Context, pair canonical.Pai
 	if !isFinitePositive(price) {
 		return 0, fmt.Errorf("%w: coingecko returned non-positive price %g", ErrPriceUnavailable, price)
 	}
+	if err := c.staleness(cgID, updatedAt, observedAt); err != nil {
+		return 0, err
+	}
 	return price, nil
+}
+
+// staleness enforces the CS-089 gate for one id's upstream
+// last_updated_at. asOf defaults to wall time when observedAt is zero
+// (matching chainlink.go / oracle.go). A missing upstream timestamp
+// no-ops (nil) — we only reject a price we can PROVE is stale, never
+// one whose freshness the upstream simply didn't report.
+func (c *CoinGeckoReference) staleness(cgID string, updatedAt map[string]time.Time, observedAt time.Time) error {
+	ts, ok := updatedAt[cgID]
+	if !ok || ts.IsZero() {
+		return nil
+	}
+	asOf := observedAt
+	if asOf.IsZero() {
+		asOf = c.nowFn().UTC()
+	}
+	if age := asOf.Sub(ts); age > c.maxAge {
+		return fmt.Errorf("%w: coingecko id %q last_updated_at is stale (updated %s ago, max %s)",
+			ErrPriceUnavailable, cgID, age.Truncate(time.Second), c.maxAge)
+	}
+	return nil
 }
 
 // LookupPrices returns the CoinGecko-reported price for each pair in
@@ -242,10 +324,12 @@ func (c *CoinGeckoReference) LookupPrices(ctx context.Context, pairs []canonical
 	if len(pairs) == 0 {
 		return out, nil
 	}
-	data, err := c.ensureBatch(ctx)
+	data, updatedAt, err := c.ensureBatch(ctx)
 	if err != nil {
 		return out, err
 	}
+	// No per-pair observedAt on the batch path — gate against wall
+	// time (staleness passes zero, which falls back to nowFn).
 	for _, p := range pairs {
 		cgID, ok := c.idMap[p.Base.String()]
 		if !ok {
@@ -266,6 +350,9 @@ func (c *CoinGeckoReference) LookupPrices(ctx context.Context, pairs []canonical
 		if !isFinitePositive(price) {
 			continue
 		}
+		if c.staleness(cgID, updatedAt, time.Time{}) != nil {
+			continue
+		}
 		out[p] = price
 	}
 	return out, nil
@@ -277,57 +364,64 @@ func (c *CoinGeckoReference) LookupPrices(ctx context.Context, pairs []canonical
 // fresh map. Concurrent calls coalesce on batchMu — the second
 // caller observes the first caller's freshly-cached response
 // instead of double-fetching.
-func (c *CoinGeckoReference) ensureBatch(ctx context.Context) (map[string]map[string]float64, error) {
+func (c *CoinGeckoReference) ensureBatch(ctx context.Context) (map[string]map[string]float64, map[string]time.Time, error) {
 	c.batchMu.Lock()
 	defer c.batchMu.Unlock()
 
 	now := c.nowFn()
 	if c.batchData != nil && now.Sub(c.batchAt) < c.batchTTL {
-		return c.batchData, nil
+		return c.batchData, c.batchUpdatedAt, nil
 	}
 
 	ids := sortedValues(c.idMap)
 	quotes := sortedValues(c.quoteMap)
 	if len(ids) == 0 || len(quotes) == 0 {
-		return nil, fmt.Errorf("%w: coingecko id/quote map empty", ErrAssetUnsupported)
+		return nil, nil, fmt.Errorf("%w: coingecko id/quote map empty", ErrAssetUnsupported)
 	}
 
-	data, err := c.fetchBatch(ctx, ids, quotes)
+	data, updatedAt, err := c.fetchBatch(ctx, ids, quotes)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	c.batchData = data
+	c.batchUpdatedAt = updatedAt
 	c.batchAt = now
-	return data, nil
+	return data, updatedAt, nil
 }
 
 // fetchBatch issues a single GET against /simple/price covering
 // every (id, quote) pair, parses the response into the nested
-// map[id]map[quote]price shape CoinGecko emits.
-func (c *CoinGeckoReference) fetchBatch(ctx context.Context, ids, quotes []string) (map[string]map[string]float64, error) {
+// map[id]map[quote]price shape CoinGecko emits, and lifts each id's
+// upstream `last_updated_at` (requested via include_last_updated_at)
+// out of the price map into a parallel cgID → time map for the
+// CS-089 staleness gate.
+func (c *CoinGeckoReference) fetchBatch(ctx context.Context, ids, quotes []string) (map[string]map[string]float64, map[string]time.Time, error) {
 	v := url.Values{}
 	v.Set("ids", strings.Join(ids, ","))
 	v.Set("vs_currencies", strings.Join(quotes, ","))
+	// CS-089: ask CoinGecko to stamp each coin's upstream publication
+	// time so the staleness gate can reject a frozen feed.
+	v.Set("include_last_updated_at", "true")
 	endpoint := c.baseURL + "/simple/price?" + v.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, fmt.Errorf("coingecko: build request: %w", err)
+		return nil, nil, fmt.Errorf("coingecko: build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "stellarindex-divergence/0.1")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("coingecko: %w", err)
+		return nil, nil, fmt.Errorf("coingecko: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return nil, fmt.Errorf("%w: coingecko rate-limited (HTTP 429)", ErrPriceUnavailable)
+		return nil, nil, fmt.Errorf("%w: coingecko rate-limited (HTTP 429)", ErrPriceUnavailable)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("coingecko: HTTP %d", resp.StatusCode)
+		return nil, nil, fmt.Errorf("coingecko: HTTP %d", resp.StatusCode)
 	}
 
 	// Cap response size — /simple/price for ~12 ids × ~12 quotes
@@ -336,18 +430,33 @@ func (c *CoinGeckoReference) fetchBatch(ctx context.Context, ids, quotes []strin
 	const maxBody = 256 << 10
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	if err != nil {
-		return nil, fmt.Errorf("coingecko: read body: %w", err)
+		return nil, nil, fmt.Errorf("coingecko: read body: %w", err)
 	}
 
-	// Response shape: {"<id>": {"<vs_currency>": <price>, ...}, ...}
+	// Response shape (include_last_updated_at=true):
+	//   {"<id>": {"<vs_currency>": <price>, ..., "last_updated_at": <unix>}}
 	var parsed map[string]map[string]float64
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, fmt.Errorf("coingecko: decode: %w", err)
+		return nil, nil, fmt.Errorf("coingecko: decode: %w", err)
 	}
 	if len(parsed) == 0 {
-		return nil, errors.New("coingecko: empty response body")
+		return nil, nil, errors.New("coingecko: empty response body")
 	}
-	return parsed, nil
+
+	// Lift last_updated_at out of each id's price object so it can't be
+	// mistaken for a vs_currency quote, and convert to a UTC time for
+	// the staleness gate. A missing/zero/negative value leaves the id
+	// out of updatedAt — the gate then no-ops for that id.
+	updatedAt := make(map[string]time.Time, len(parsed))
+	for id, entry := range parsed {
+		if raw, ok := entry[coinGeckoLastUpdatedKey]; ok {
+			delete(entry, coinGeckoLastUpdatedKey)
+			if sec := int64(raw); sec > 0 {
+				updatedAt[id] = time.Unix(sec, 0).UTC()
+			}
+		}
+	}
+	return parsed, updatedAt, nil
 }
 
 // sortedValues returns the unique values of m in sorted order. Sort

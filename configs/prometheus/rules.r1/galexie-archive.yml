@@ -47,8 +47,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: archive
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
           summary: "galexie-archive >1 partition behind live ({{ $value }} ledgers, sustained 90m, P3)"
           description: |
             galexie-archive (R1 durable full-mirror) is {{ $value }}
@@ -70,8 +70,8 @@ groups:
           severity: page
           team: stellarindex
           component: archive
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
           summary: "galexie-archive >2 partitions behind live ({{ $value }} ledgers, P1)"
           description: |
             galexie-archive is {{ $value }} ledgers behind galexie-live
@@ -90,8 +90,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: archive
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
           summary: "galexie-archive tip-lag metric not updated >30m"
           description: |
             The galexie-archive-tip-lag.timer hasn't successfully
@@ -114,7 +114,7 @@ groups:
           severity: page
         annotations:
           summary: "galexie captive core is refusing catchup (invalid local state)"
-          runbook: docs/operations/runbooks/galexie-catchup-refused.md
+          runbook_url: docs/operations/runbooks/galexie-catchup-refused.md
 
       - alert: stellarindex_host_swap_activity
         # Swap engagement is the early warning of the pressure class that
@@ -127,4 +127,4 @@ groups:
           severity: ticket
         annotations:
           summary: "host is swapping — a memory budget is being violated"
-          runbook: docs/operations/runbooks/galexie-catchup-refused.md
+          runbook_url: docs/operations/runbooks/galexie-catchup-refused.md

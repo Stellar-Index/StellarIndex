@@ -112,6 +112,10 @@ func supplySeedObservations(args []string) error {
 			HomeDomain: seed.HomeDomain,
 			Flags:      seed.Flags,
 			SeqNum:     seed.SeqNum,
+			// Authoritative reconstructed FINAL state for the ledger — sits at
+			// the top of the intra-ledger order so a live per-ledger change
+			// can't overwrite it and a re-seed stays corrective (C2-6).
+			IntraLedgerSeq: timescale.SeedIntraLedgerSeq,
 		}
 		if err := store.InsertAccountObservation(ctx, domain.AccountObservation(obs)); err != nil {
 			return fmt.Errorf("insert observation for %s: %w", seed.AccountID, err)

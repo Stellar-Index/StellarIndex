@@ -17,12 +17,20 @@ func (s *Store) InsertOracleUpdate(ctx context.Context, u canonical.OracleUpdate
 	if err := u.Validate(); err != nil {
 		return err
 	}
-	// Atomic + idempotent, mirroring InsertTrade: the trade/oracle
-	// row insert and the per-source entry-tally bump (migration
-	// 0035) are one statement; the `HAVING count(*) > 0` gate means
-	// a re-walked duplicate (ON CONFLICT DO NOTHING → 0 rows) never
-	// inflates the tally. Oracle ingest doesn't need the inserted
-	// count, so this stays an Exec.
+	// Atomic + idempotent-corrective, mirroring InsertTrade: the oracle
+	// row upsert and the per-source entry-tally bump (migration 0035)
+	// are one statement. On conflict we DO UPDATE every value column plus
+	// derive_generation, guarded by
+	// `oracle_updates.derive_generation <= EXCLUDED.derive_generation`
+	// (migration 0109 / INV-3): a re-derive with a higher-or-equal
+	// generation lands its corrected price in place, while a lower
+	// generation (a live gen-0 replay) can never revert a correction —
+	// replacing the old `DO NOTHING`, which silently discarded corrected
+	// re-derives. `xmax = 0` distinguishes a fresh insert from an
+	// on-conflict update, and the `HAVING count(*) FILTER (WHERE inserted)
+	// > 0` gate means a re-walked duplicate OR a re-derive update never
+	// inflates the tally. Oracle ingest doesn't need the inserted count,
+	// so this stays an Exec.
 	const q = `
         WITH ins AS (
             INSERT INTO oracle_updates (
@@ -30,20 +38,29 @@ func (s *Store) InsertOracleUpdate(ctx context.Context, u canonical.OracleUpdate
                 ledger, tx_hash, op_index, ts,
                 asset, quote,
                 price, decimals,
-                confidence, observer
+                confidence, observer, derive_generation
             ) VALUES (
                 $1, NULLIF($2, ''),
                 $3, $4, $5, $6,
                 $7, $8,
                 $9, $10,
-                NULLIF($11, 0.0), NULLIF($12, '')
+                NULLIF($11, 0.0), NULLIF($12, ''), $13
             )
-            ON CONFLICT (source, ledger, tx_hash, op_index, ts) DO NOTHING
-            RETURNING 1
+            ON CONFLICT (source, ledger, tx_hash, op_index, ts) DO UPDATE SET
+                contract_id       = EXCLUDED.contract_id,
+                asset             = EXCLUDED.asset,
+                quote             = EXCLUDED.quote,
+                price             = EXCLUDED.price,
+                decimals          = EXCLUDED.decimals,
+                confidence        = EXCLUDED.confidence,
+                observer          = EXCLUDED.observer,
+                derive_generation = EXCLUDED.derive_generation
+              WHERE oracle_updates.derive_generation <= EXCLUDED.derive_generation
+            RETURNING (xmax = 0) AS inserted
         )
         INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
-        SELECT $1, count(*), now() FROM ins
-        HAVING count(*) > 0
+        SELECT $1, count(*) FILTER (WHERE inserted), now() FROM ins
+        HAVING count(*) FILTER (WHERE inserted) > 0
         ON CONFLICT (source) DO UPDATE
           SET entry_count = sec.entry_count + EXCLUDED.entry_count,
               updated_at  = EXCLUDED.updated_at
@@ -53,7 +70,7 @@ func (s *Store) InsertOracleUpdate(ctx context.Context, u canonical.OracleUpdate
 		u.Ledger, u.TxHash, u.OpIndex, u.Timestamp.UTC(),
 		u.Asset.String(), u.Quote.String(),
 		u.Price, int(u.Decimals),
-		u.Confidence, u.Observer,
+		u.Confidence, u.Observer, s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertOracleUpdate: %w", err)

@@ -43,24 +43,34 @@ func (s *Store) InsertBlendEmissionEvent(ctx context.Context, e domain.BlendEmis
 		return fmt.Errorf("timescale: InsertBlendEmissionEvent: marshal attributes: %w", err)
 	}
 
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the emission `amount` (or asset / user /
+	// attributes) lands in place when its generation is >= the stored one; a
+	// live gen-0 replay can never revert it. Replaces the old DO NOTHING.
 	const q = `
         INSERT INTO blend_emissions (
             pool, ledger, tx_hash, op_index, event_index, ledger_close_time,
             event_kind, amount, asset, user_address,
-            attributes
+            attributes, derive_generation
         ) VALUES (
             $1, $2, $3, $4, $5, $6,
             $7, $8, $9, $10,
-            $11
+            $11, $12
         )
-        ON CONFLICT (pool, ledger, tx_hash, op_index, event_kind, event_index, ledger_close_time) DO NOTHING
+        ON CONFLICT (pool, ledger, tx_hash, op_index, event_kind, event_index, ledger_close_time) DO UPDATE SET
+            amount            = EXCLUDED.amount,
+            asset             = EXCLUDED.asset,
+            user_address      = EXCLUDED.user_address,
+            attributes        = EXCLUDED.attributes,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE blend_emissions.derive_generation <= EXCLUDED.derive_generation
     `
 	_, err = s.db.ExecContext(ctx, q,
 		e.Pool, int(e.Ledger), e.TxHash, int(e.OpIndex), int(e.EventIndex), e.Timestamp.UTC(),
 		e.Kind,
 		nullNumeric(bigIntOrEmpty(e.Amount)),
 		nullString(e.Asset), nullString(e.User),
-		attrsJSON,
+		attrsJSON, s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertBlendEmissionEvent %s@%d: %w", e.Pool, e.Ledger, err)

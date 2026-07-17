@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -66,8 +67,13 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-request DB ceiling (P1/C3-2, audit-2026-07-16): /v1/twap
+	// scans raw `trades` on every query — same posture as /v1/vwap.
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+
 	const maxTrades = 10000
-	trades, triangulated, err := s.tradesInRangeWithStablecoinFallback(r.Context(), pair, from, to, maxTrades)
+	trades, triangulated, err := s.tradesInRangeWithStablecoinFallback(ctx, pair, from, to, maxTrades)
 	if err != nil {
 		if clientAborted(r, err) {
 			return

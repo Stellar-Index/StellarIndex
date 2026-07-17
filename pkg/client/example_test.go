@@ -658,7 +658,7 @@ func ExampleClient_ChangeSummary() {
 				"entity_type": "coin",
 				"entity_id": "crypto:XLM",
 				"refreshed_at": "2026-05-09T15:00:00Z",
-				"current_value": 0.163,
+				"current_value": "0.163",
 				"h24_delta_pct": 3.21,
 				"d7_delta_pct": -1.8,
 				"streak_direction": "up",
@@ -684,15 +684,15 @@ func ExampleClient_ChangeSummary() {
 		}
 		return fmt.Sprintf("%+.2f%%", *p)
 	}
-	fmt.Printf("%s: $%.4f, 24h=%s 7d=%s (%s, %s)\n",
+	fmt.Printf("%s: $%s, 24h=%s 7d=%s (%s, %s)\n",
 		got.Data.EntityID,
-		got.Data.CurrentValue,
+		got.Data.CurrentValue, // money is a string end to end (INV-2)
 		pct(got.Data.H24DeltaPct),
 		pct(got.Data.D7DeltaPct),
 		got.Data.StreakDirection,
 		got.Data.Acceleration)
 
-	// Output: crypto:XLM: $0.1630, 24h=+3.21% 7d=-1.80% (up, increasing)
+	// Output: crypto:XLM: $0.163, 24h=+3.21% 7d=-1.80% (up, increasing)
 }
 
 // ExampleClient_Healthz demonstrates the shallow liveness probe —

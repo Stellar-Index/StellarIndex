@@ -28,4 +28,13 @@ type Observation struct {
 
 	// IsRemoval reserved for v2 (writer-side lookup follow-up).
 	IsRemoval bool
+
+	// IntraLedgerSeq is the within-ledger position of the change that
+	// produced this observation, in the dispatcher's canonical meta-walk
+	// order (see dispatcher.LedgerEntryChangeContext.IntraLedgerSeq). Both
+	// asset-side rows from one pool-change share the same position (they come
+	// from the same change). The writer guards its last-writer-wins upsert on
+	// it so an out-of-order PersistEvents worker can never overwrite a later
+	// intra-ledger change with an earlier one (audit-2026-07-16 C2-6).
+	IntraLedgerSeq uint32
 }

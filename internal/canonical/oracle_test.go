@@ -88,6 +88,45 @@ func TestOracle_Validate_errors(t *testing.T) {
 	}
 }
 
+// TestOracle_Validate_rejectsSelfPriced is the M12 guard: an oracle
+// update whose Asset and Quote are the same canonical asset is
+// degenerate (e.g. "USD priced in USD" ⇒ a tautological price of 1) and
+// must be rejected — nothing downstream should ingest a self-referential
+// quote. A genuine cross-asset update must still validate.
+func TestOracle_Validate_rejectsSelfPriced(t *testing.T) {
+	t.Run("native priced in native is rejected", func(t *testing.T) {
+		u := validOracle()
+		u.Quote = u.Asset // XLM/XLM
+		err := u.Validate()
+		if err == nil {
+			t.Fatal("self-priced update (Asset == Quote) validated; want rejection")
+		}
+		if !errors.Is(err, c.ErrInvalidOracle) {
+			t.Errorf("err %v does not wrap ErrInvalidOracle", err)
+		}
+	})
+
+	t.Run("fiat priced in the same fiat is rejected", func(t *testing.T) {
+		usd, err := c.NewFiatAsset("USD")
+		if err != nil {
+			t.Fatalf("NewFiatAsset: %v", err)
+		}
+		u := validOracle()
+		u.Asset = usd
+		u.Quote = usd // USD/USD
+		if err := u.Validate(); err == nil {
+			t.Fatal("USD priced in USD validated; want rejection")
+		}
+	})
+
+	t.Run("cross-asset update still validates", func(t *testing.T) {
+		// The default fixture is XLM/USDC — a real cross pair.
+		if err := validOracle().Validate(); err != nil {
+			t.Fatalf("cross-asset update rejected: %v", err)
+		}
+	})
+}
+
 func TestOracle_FiatQuoteAccepted(t *testing.T) {
 	// Per ADR-0010 fiat is a first-class AssetType variant, not a
 	// sentinel. The USD fiat quote should validate cleanly via the

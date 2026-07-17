@@ -36,6 +36,13 @@ FROM=$(CH "SELECT max(ledger_seq)+1 FROM stellar.supply_flows" | tr -d '[:space:
 
 echo "$(date -u) ch-supply refresh: seed [$FROM,$TIP] (chunk=$CHUNK)" >> "$LOG"
 
+# Track whether any chunk failed so the oneshot unit reports failure to systemd
+# instead of a spurious success (audit-2026-07-16 C4-2: without this, a failed
+# seed chunk was logged but the script still exit-0'd, so no alert fired and the
+# served SEP-41 supply silently understated until the next run happened to heal).
+# Mirrors run-compute-completeness.sh's rc + `exit $rc`.
+rc=0
+
 # Phase 1 — seed new flows in chunks, with a memory guard between.
 while [ "$FROM" -lt "$TIP" ]; do
   TO=$(( FROM + CHUNK )); [ "$TO" -gt "$TIP" ] && TO=$TIP
@@ -45,7 +52,12 @@ while [ "$FROM" -lt "$TIP" ]; do
     sleep 20
   done
   "$OPS" ch-supply -config "$CONFIG" -ch-addr "$CHADDR" -from "$FROM" -to "$TO" -seed-flows </dev/null >> "$LOG" 2>&1 \
-    || echo "$(date -u) seed [$FROM,$TO] FAILED" >> "$LOG"
+    || { echo "$(date -u) seed [$FROM,$TO] FAILED" >> "$LOG"; rc=1; }
   FROM=$TO
 done
-echo "$(date -u) supply_flows seed complete (tip=$TIP)" >> "$LOG"
+if [ "$rc" -ne 0 ]; then
+  echo "$(date -u) supply_flows seed FINISHED WITH FAILURES (tip=$TIP) — see FAILED lines above" >> "$LOG"
+else
+  echo "$(date -u) supply_flows seed complete (tip=$TIP)" >> "$LOG"
+fi
+exit "$rc"

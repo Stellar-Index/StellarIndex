@@ -149,3 +149,45 @@ func TestFilterOutliers_IdenticalPricesAllKept(t *testing.T) {
 		t.Errorf("stripped trades from a σ=0 distribution: %d/%d kept", len(got), len(trades))
 	}
 }
+
+// TestFilterOutliers_MADCatchesMaskedOutlier is the finding-M5 proof:
+// on a SMALL window the single-pass mean/σ filter is masking-vulnerable
+// and rejects nothing, whereas the median+MAD filter catches the
+// injected outlier.
+//
+// Window: four clean prints at 100 + one fat-finger at 200 (a 2x
+// outlier). Mean/σ: mean = 120, sample stdev ≈ 44.7, so even a 4σ
+// band ≈ 178.9 — the 200 is only 80 off the mean and SURVIVES (the
+// outlier inflated σ enough to escape its own rejection: masking).
+// Median+MAD: median = 100, MAD = 0 (a strict majority are identical),
+// so any deviation from the majority centre is an outlier and the 200
+// is dropped.
+func TestFilterOutliers_MADCatchesMaskedOutlier(t *testing.T) {
+	trades := []canonical.Trade{
+		mkTrade(1, 100), mkTrade(1, 100), mkTrade(1, 100), mkTrade(1, 100),
+		mkTrade(1, 200), // masked outlier
+	}
+	got := aggregate.FilterOutliers(trades, 4.0)
+	if len(got) != 4 {
+		t.Fatalf("MAD filter kept %d trades, want 4 (the masked 200 outlier must be dropped)", len(got))
+	}
+	for _, tr := range got {
+		if tr.QuoteAmount.BigInt().Int64() >= 200 {
+			t.Fatalf("masked outlier 200 survived the filter: quote=%s", tr.QuoteAmount.String())
+		}
+	}
+}
+
+// TestFilterOutliers_MADCleanWindowUnaffected is the companion "clean
+// window is unaffected" half of the M5 proof: a small window with
+// genuine, tight spread (MAD > 0) keeps every trade.
+func TestFilterOutliers_MADCleanWindowUnaffected(t *testing.T) {
+	trades := []canonical.Trade{
+		mkTrade(1, 100), mkTrade(1, 101), mkTrade(1, 99),
+		mkTrade(1, 100), mkTrade(1, 102), mkTrade(1, 98),
+	}
+	got := aggregate.FilterOutliers(trades, 4.0)
+	if len(got) != len(trades) {
+		t.Fatalf("MAD filter stripped %d trades from a clean spread", len(trades)-len(got))
+	}
+}

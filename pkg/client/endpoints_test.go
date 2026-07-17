@@ -1161,7 +1161,7 @@ func TestChangeSummary_HappyPath(t *testing.T) {
 			t.Errorf("path = %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"entity_type":"coin","entity_id":"crypto:XLM","refreshed_at":"2026-05-09T00:00:00Z","current_value":0.163,"h24_delta_pct":3.21,"streak_direction":"down","acceleration":"increasing"},"as_of":"2026-05-09T00:00:00Z","flags":{}}`))
+		_, _ = w.Write([]byte(`{"data":{"entity_type":"coin","entity_id":"crypto:XLM","refreshed_at":"2026-05-09T00:00:00Z","current_value":"0.163","h24_delta_pct":3.21,"streak_direction":"down","acceleration":"increasing"},"as_of":"2026-05-09T00:00:00Z","flags":{}}`))
 	})
 	got, err := c.ChangeSummary(context.Background(), client.ChangeSummaryQuery{
 		EntityType: "coin", EntityID: "crypto:XLM",

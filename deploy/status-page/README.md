@@ -36,8 +36,7 @@ domain `status.stellarindex.io`. Bootstrap config managed by
 - Root: `web/status`
 - Build command: `pnpm install --frozen-lockfile && pnpm build`
 - Output: `out`
-- Env: `NEXT_PUBLIC_API_BASE_URL=https://api.stellarindex.io`,
-  `NODE_VERSION=20`, `PNPM_VERSION=10`
+- Env: `NODE_VERSION=20`, `PNPM_VERSION=10`
 
 ## Why not cstate / Statuspage.io
 

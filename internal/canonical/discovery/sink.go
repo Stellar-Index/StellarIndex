@@ -45,6 +45,7 @@ type AsyncSink struct {
 	mu      sync.Mutex
 	dropped uint64
 	skipped uint64
+	failed  uint64
 	seen    map[string]struct{}
 }
 
@@ -172,6 +173,17 @@ func (s *AsyncSink) SkippedCount() uint64 {
 	return s.skipped
 }
 
+// FailedCount returns the number of Hits whose Recorder.Record write
+// failed (recorder outage/timeout). Bridged to
+// obs.DiscoveryRecordFailuresTotal for alerting — a sustained non-zero
+// rate means discovery coverage is degrading under recorder pressure,
+// which was invisible while the failure was only logged (C4-3).
+func (s *AsyncSink) FailedCount() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.failed
+}
+
 // run drains the input channel until close. One Recorder.Record
 // call per Hit; per-record timeout caps the worker's exposure to a
 // slow recorder.
@@ -180,6 +192,16 @@ func (s *AsyncSink) run() {
 	for hit := range s.ch {
 		ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
 		if err := s.rec.Record(ctx, hit); err != nil {
+			// Count the write failure (audit-2026-07-16 C4-3) — previously
+			// this was a log-only path, so a recorder outage silently
+			// stopped discovered_assets from growing. Exposed via
+			// FailedCount() and bridged to obs.DiscoveryRecordFailuresTotal
+			// by the indexer, mirroring dropped/skipped. Record's contract
+			// is best-effort (the contract re-appears on a later event), so
+			// this is a failure-RATE signal, not permanent-loss.
+			s.mu.Lock()
+			s.failed++
+			s.mu.Unlock()
 			s.logger.Warn("discovery: record failed",
 				"err", err,
 				"contract_id", hit.ContractID,

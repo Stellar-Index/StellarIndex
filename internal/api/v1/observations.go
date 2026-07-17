@@ -138,6 +138,10 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 		rows[i] = tradeRowFrom(t, 0) // 0 → default 10 fractional digits
 		srcSet[t.Source] = struct{}{}
 	}
+	// dex-nonstandard-decimals forward normalization of each row's Price (M2),
+	// shared with /v1/history via normalizeTradeRowPrices. Byte-identical no-op
+	// for a pair with no confirmed non-7-decimals leg.
+	s.normalizeTradeRowPrices(rows, trades, pair.Base, pair.Quote)
 	srcs := make([]string, 0, len(srcSet))
 	for src := range srcSet {
 		srcs = append(srcs, src)

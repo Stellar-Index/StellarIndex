@@ -102,8 +102,17 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	// time windows, so it always scans trades on-query — the
 	// aggregator binary's pre-computed rollups feed `/v1/price`'s
 	// closed-bucket surface (ADR-0015), not this endpoint.
+	// Per-request DB ceiling (P1/C3-2, audit-2026-07-16): /v1/vwap
+	// scans raw `trades` on every query (no CAGG), so without a
+	// bounded context a slow scan holds its pool connection until the
+	// client gives up. 8s matches the sibling raw-scan endpoints
+	// (liquidity_pools.go, markets.go) and fires before the blanket
+	// request-timeout middleware.
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+
 	const maxTrades = 10000
-	trades, triangulated, ok := s.fetchVWAPTrades(w, r, pair, from, to, maxTrades)
+	trades, triangulated, ok := s.fetchVWAPTrades(ctx, w, r, pair, from, to, maxTrades)
 	if !ok {
 		return
 	}
@@ -169,10 +178,10 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 // Pulled out to keep handleVWAP under the funlen budget while preserving
 // the cache-unavailable branch added for F-0089.
 func (s *Server) fetchVWAPTrades(
-	w http.ResponseWriter, r *http.Request,
+	ctx context.Context, w http.ResponseWriter, r *http.Request,
 	pair canonical.Pair, from, to time.Time, maxTrades int,
 ) ([]canonical.Trade, bool, bool) {
-	trades, triangulated, err := s.tradesInRangeWithStablecoinFallback(r.Context(), pair, from, to, maxTrades)
+	trades, triangulated, err := s.tradesInRangeWithStablecoinFallback(ctx, pair, from, to, maxTrades)
 	if err == nil {
 		return trades, triangulated, true
 	}

@@ -12,9 +12,19 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
+
+// ledgerCloseTimeReader resolves a ledger's real on-chain close time. The
+// authoritative every-ledger source is ClickHouse stellar.ledgers (satisfied
+// by *clickhouse.ExplorerReader.CloseTimeForLedger); kept as an interface so
+// resolveSnapshotLedger is unit-testable without a live lake. found=false means
+// the ledger has no lake row.
+type ledgerCloseTimeReader interface {
+	CloseTimeForLedger(ctx context.Context, ledger uint32) (time.Time, bool, error)
+}
 
 // Run is the internal/ops/supply package's entry point — see
 // discovery.Run's doc comment for the calling convention shared by
@@ -92,12 +102,19 @@ func supplyCmd(args []string) error {
 //	                 ingestion cursors (so the snapshot is dated
 //	                 against current chain state, not against the
 //	                 wall-clock).
+//	-ch-addr ADDR    ClickHouse native address (default
+//	                 127.0.0.1:9300). The snapshot's ObservedAt is
+//	                 stamped with the chosen ledger's REAL close time
+//	                 read from stellar.ledgers — NOT the wall-clock
+//	                 write-time — so a re-derived historical snapshot
+//	                 stays point-in-time correct (audit M4-callers).
 //	-dry-run         Compute + print but do not write.
 func supplySnapshot(args []string) error {
 	fs := flag.NewFlagSet("supply snapshot", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	assetRaw := fs.String("asset", "native", "Asset to snapshot (native only at v1)")
 	ledgerArg := fs.Int("ledger", 0, "Ledger sequence to attribute to (default: latest from ingestion_cursors)")
+	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address (source of the ledger close time stamped as ObservedAt)")
 	dryRun := fs.Bool("dry-run", false, "Compute + print without writing to asset_supply_history")
 	textfileOut := fs.String("textfile-output", "", "Path to write Prometheus textfile (node_exporter textfile_collector format). Empty = no metrics emit.")
 	if err := fs.Parse(args); err != nil {
@@ -127,8 +144,22 @@ func supplySnapshot(args []string) error {
 		return supplySnapshotMaybeEmitFailure(*textfileOut, *assetRaw, startedAt, err)
 	}
 	defer func() { _ = store.Close() }()
+	// Re-derive path (INV-3 / migration 0109): stamp a positive
+	// derive_generation so a corrected supply snapshot UPDATEs the stored
+	// value in place and wins over the live gen-0 snapshot.
+	store.SetDeriveGeneration(startedAt.Unix())
 
-	ledger, observedAt, err := resolveSnapshotLedger(ctx, store, uint32(*ledgerArg))
+	// The snapshot's ObservedAt must be the chosen ledger's REAL close time
+	// (audit M4-callers) — a re-derived HISTORICAL snapshot stamped with the
+	// wall-clock write-time corrupts point-in-time supply queries. The
+	// authoritative every-ledger source is ClickHouse stellar.ledgers.
+	closeTimes, err := clickhouse.NewExplorerReader(ctx, *chAddr)
+	if err != nil {
+		return supplySnapshotMaybeEmitFailure(*textfileOut, *assetRaw, startedAt, fmt.Errorf("clickhouse close-time reader: %w", err))
+	}
+	defer func() { _ = closeTimes.Close() }()
+
+	ledger, observedAt, err := resolveSnapshotLedger(ctx, store, closeTimes, uint32(*ledgerArg))
 	if err != nil {
 		return supplySnapshotMaybeEmitFailure(*textfileOut, *assetRaw, startedAt, err)
 	}
@@ -251,8 +282,20 @@ func supplySnapshotMaybeEmitFailure(textfileOut, assetRaw string, startedAt time
 }
 
 // resolveSnapshotLedger picks the ledger to attribute the snapshot
-// to. Operator-supplied -ledger wins; otherwise we use the max
+// to AND resolves that ledger's real on-chain close time to stamp as
+// ObservedAt. Operator-supplied -ledger wins; otherwise we use the max
 // last_ledger across all ingestion cursors.
+//
+// M4-callers (audit 2026-07): ObservedAt is the chosen ledger's
+// close_time from ClickHouse stellar.ledgers — NEVER time.Now(). A
+// re-derived HISTORICAL snapshot (the operator re-derives supply
+// constantly) stamped with the wall-clock write-time silently
+// corrupts point-in-time supply/observation queries. Fail-closed:
+// if the ledger has no stellar.ledgers row we return an error rather
+// than falling back to time.Now() — a real snapshot ledger (an
+// operator-named -ledger or a live ingestion cursor) MUST exist in
+// the dual-sink-populated lake, so its absence is a genuine lake gap
+// worth surfacing, not a wall-clock guess that reintroduces the bug.
 //
 // F-1236 (codex audit-2026-05-12) — KNOWN: a stalled supply
 // observer can leave a component balance behind the snapshot
@@ -263,24 +306,30 @@ func supplySnapshotMaybeEmitFailure(textfileOut, assetRaw string, startedAt time
 // acceptance (the per-row Ledger is already returned by
 // AccountObservationRow et al, so it's a refactor of the Refresher
 // + Supply shapes, not a new storage primitive).
-func resolveSnapshotLedger(ctx context.Context, store *timescale.Store, opLedger uint32) (uint32, time.Time, error) {
-	if opLedger > 0 {
-		return opLedger, time.Now().UTC(), nil
-	}
-	cursors, err := store.ListCursors(ctx)
-	if err != nil {
-		return 0, time.Time{}, fmt.Errorf("ListCursors: %w", err)
-	}
-	var maxLedger uint32
-	for _, c := range cursors {
-		if c.LastLedger > maxLedger {
-			maxLedger = c.LastLedger
+func resolveSnapshotLedger(ctx context.Context, store *timescale.Store, closeTimes ledgerCloseTimeReader, opLedger uint32) (uint32, time.Time, error) {
+	ledger := opLedger
+	if ledger == 0 {
+		cursors, err := store.ListCursors(ctx)
+		if err != nil {
+			return 0, time.Time{}, fmt.Errorf("ListCursors: %w", err)
+		}
+		for _, c := range cursors {
+			if c.LastLedger > ledger {
+				ledger = c.LastLedger
+			}
+		}
+		if ledger == 0 {
+			return 0, time.Time{}, errors.New("no ingestion cursors yet — pass -ledger explicitly until the indexer has produced a cursor")
 		}
 	}
-	if maxLedger == 0 {
-		return 0, time.Time{}, errors.New("no ingestion cursors yet — pass -ledger explicitly until the indexer has produced a cursor")
+	closeTime, found, err := closeTimes.CloseTimeForLedger(ctx, ledger)
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("resolve close time for ledger %d: %w", ledger, err)
 	}
-	return maxLedger, time.Now().UTC(), nil
+	if !found {
+		return 0, time.Time{}, fmt.Errorf("ledger %d has no stellar.ledgers row — cannot resolve its close time (lake gap?); refusing to stamp the snapshot with wall-clock time", ledger)
+	}
+	return ledger, closeTime, nil
 }
 
 // supplyAudit prints the latest supply snapshot for an asset, plus
