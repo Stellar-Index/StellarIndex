@@ -643,6 +643,15 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 			row.DeadlineTS = &e.Swap.DeadlineTs
 		}
 		if err := store.InsertSoroswapRouterSwap(ctx, row); err != nil {
+			// Count the persist failure like every sibling case in this
+			// switch (audit-2026-07-16 C4-3): before this, the router /
+			// defindex cases were the ONLY persist paths that logged a
+			// Warn without bumping SourceInsertErrorsTotal, so a dropped
+			// swap was invisible to metrics/alerts. Callers that discard
+			// this returned err (the dispatcher drain's `_ = HandleEvent`)
+			// then dropped the row silently. Counter only — control flow
+			// (return err) is unchanged.
+			obs.SourceInsertErrorsTotal.WithLabelValues(soroswap_router.SourceName, "soroswap_router_swap").Inc()
 			logger.Warn("soroswap-router persist failed",
 				"source", soroswap_router.SourceName,
 				"tx_hash", e.Swap.TxHash, "ledger", e.Swap.Ledger,
@@ -670,6 +679,10 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 			Amount:          e.Flow.Amount.String(),
 		}
 		if err := store.InsertDefindexFlow(ctx, strategyRow); err != nil {
+			// Count the persist failure (audit-2026-07-16 C4-3) — see the
+			// soroswap-router case above for why. Counter only; return err
+			// (control flow) unchanged.
+			obs.SourceInsertErrorsTotal.WithLabelValues(defindex.SourceName, "defindex_flow_strategy").Inc()
 			logger.Warn("defindex strategy persist failed",
 				"source", defindex.SourceName,
 				"tx_hash", e.Flow.TxHash, "ledger", e.Flow.Ledger,
@@ -701,6 +714,10 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 			DfTokens:        e.Flow.DfTokens.String(),
 		}
 		if err := store.InsertDefindexFlow(ctx, vaultRow); err != nil {
+			// Count the persist failure (audit-2026-07-16 C4-3) — see the
+			// soroswap-router case above for why. Counter only; return err
+			// (control flow) unchanged.
+			obs.SourceInsertErrorsTotal.WithLabelValues(defindex.SourceName, "defindex_flow_vault").Inc()
 			logger.Warn("defindex vault persist failed",
 				"source", defindex.SourceName,
 				"tx_hash", e.Flow.TxHash, "ledger", e.Flow.Ledger,

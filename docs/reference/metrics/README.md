@@ -440,10 +440,54 @@ Tracked for capacity-planning visibility, not for alerting. A process
 restart resets the dedup set; the first push for any key after
 restart still records (no-op upsert if already in DB).
 
+### `stellarindex_discovery_record_failures_total`
+
+Counter, no labels.
+
+Discovery hits whose `Recorder.Record` write FAILED (Postgres
+error / timeout) — distinct from
+`stellarindex_discovery_dropped_hits_total` (buffer-full pre-write
+drop) and `stellarindex_discovery_skipped_hits_total` (in-process
+dedup). Before this counter (audit-2026-07-16 C4-3), a Record failure
+in the async sink was only logged, so a persistent recorder outage
+silently stopped `discovered_assets` from growing with no metric or
+alert. Emitted by the live indexer from periodic `FailedCount`
+sampling, mirroring how `stellarindex_discovery_dropped_hits_total` is
+fed. Best-effort by design (the contract re-appears on a later event),
+so this counts failed write ATTEMPTS, not permanent loss — but a
+sustained non-zero rate means discovery coverage is degrading and is
+alerted by `stellarindex_ingestion_discovery_record_failures`.
+
+### `stellarindex_metrics_registry_present`
+
+Gauge, label `component`. Value 0/1.
+
+Boot-time detectability gauge (audit-2026-07-16 C4-4): `1` when the
+named component was wired with a Prometheus Registry (its metrics +
+dependent alerts are live), `0` when it is running Registry-less (those
+metrics/alerts are DEAD — the source series never registers so the
+alert can never fire). Set per component at startup on the binaries
+that build the affected config; an absent series means "component not
+used on this binary" and is not alerted. The concrete case is
+`component="ledgerstream"`: `pipeline.LedgerstreamConfig` deliberately
+leaves `Config.Registry` nil (the SDK's metric registration panics on
+the repeated `Stream` calls the archive→live→catch-up path makes), so
+`stellarindex_ledgerstream_tier_read_total` is dead in production and
+the `both_missing` page is inert. Alerted by
+`stellarindex_metrics_registry_absent`; remediation in
+`runbooks/metrics-registry-absent.md`.
+
 ### `stellarindex_source_insert_errors_total`
 
 Counter, labels `source`, `kind` (`trade` / `oracle` / `panic` /
-`unhandled` / `dropped`).
+`unhandled` / `dropped` / `soroswap_router_swap` /
+`defindex_flow_strategy` / `defindex_flow_vault`).
+
+The `soroswap_router_swap` / `defindex_flow_*` kinds were added
+audit-2026-07-16 (C4-3): those persist paths previously logged a Warn
+without bumping any counter, so a dropped DEX-swap / vault-flow row was
+invisible; they now count like every sibling case and are alerted by
+`stellarindex_ingestion_persist_drop`.
 
 `unhandled` fires when a source emits an event type the sink's
 type-switch doesn't recognise — usually a half-wired new source
