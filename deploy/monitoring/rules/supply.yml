@@ -52,8 +52,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: supply
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-cross-check-divergence.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-cross-check-divergence.md
           summary: "Classic vs SAC supply mismatch >1 stroop on {{ $labels.classic_key }} ({{ $labels.wrap_class }}, P3)"
           description: |
             The cross-check between Algorithm 2 (classic ledger-entry
@@ -93,8 +93,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: supply
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-divergence.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-divergence.md
           summary: "Served circulating supply {{ $value | humanizePercentage }} off {{ $labels.reference }} for {{ $labels.asset }} (P3)"
           description: |
             Our served circulating_supply for {{ $labels.asset }} differs

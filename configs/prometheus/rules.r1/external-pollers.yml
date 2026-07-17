@@ -28,8 +28,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: external-poller
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-stale.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-stale.md
           summary: "external poller {{ $labels.source }} has not succeeded in 30+ min"
           description: |
             stellarindex_external_poller_last_success_unix for source
@@ -52,8 +52,8 @@ groups:
           severity: informational
           team: stellarindex
           component: external-poller
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-stale.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-stale.md
           summary: "ECB FX poller has not succeeded in 12+ h (>2x poll interval)"
           description: |
             ECB's 6h poll interval skipped at least one whole cycle.
@@ -87,8 +87,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: external-poller
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-feed-stale.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-feed-stale.md
           summary: "active fiat-FX feed has written no fx_quote in 6+ h"
           description: |
             The freshest stellarindex_external_fx_last_quote_unix across
@@ -119,8 +119,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: external-poller
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-feed-stale.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-feed-stale.md
           summary: "active fiat-FX feed has never written an fx_quote since startup"
           description: |
             stellarindex_external_fx_last_quote_unix has no series for
@@ -150,8 +150,8 @@ groups:
           severity: informational
           team: stellarindex
           component: external-poller
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-stale.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-poller-stale.md
           summary: "external poller {{ $labels.source }} error rate > 50 % (15 min)"
           description: |
             More than half of recent {{ $labels.source }} polls returned

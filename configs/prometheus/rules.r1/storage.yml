@@ -19,8 +19,8 @@ groups:
           severity: page
           team: stellarindex
           component: storage
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-primary-down.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-primary-down.md
           summary: "TimescaleDB primary is down (SEV-1)"
           description: |
             Postgres primary {{ $labels.instance }} has been unreachable for
@@ -45,8 +45,8 @@ groups:
           severity: page
           team: stellarindex
           component: storage
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres-ping-failing.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres-ping-failing.md
           summary: "Indexer postgres pool ping failing (F-0151)"
           description: |
             The indexer's resilience-ping goroutine is reporting
@@ -65,8 +65,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: storage
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/replica-lag.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/replica-lag.md
           summary: "Postgres sync replica lagging {{ $value }}s"
           description: |
             Replica {{ $labels.instance }} is more than 5 s behind the primary
@@ -99,8 +99,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: storage
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/pg-conns-saturated.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/pg-conns-saturated.md
           summary: "Postgres lock-table > 70% saturated (P3)"
           description: |
             Lock-table utilisation is {{ $value | humanizePercentage }}.
@@ -119,8 +119,8 @@ groups:
           severity: page
           team: stellarindex
           component: storage
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/db-disk-full.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/db-disk-full.md
           summary: "Postgres disk {{ $value | humanize }}% free (SEV-1)"
           description: |
             Postgres data volume on {{ $labels.instance }} has < 10 % free.
@@ -135,8 +135,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: storage
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/db-disk-full.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/db-disk-full.md
           summary: "Postgres disk {{ $value | humanize }}% free"
           description: |
             Postgres data volume on {{ $labels.instance }} under 20 %. Plan
@@ -159,8 +159,8 @@ groups:
           severity: page
           team: stellarindex
           component: storage
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
           summary: "Root filesystem on {{ $labels.instance }} {{ $value | humanize }}% free (SEV-1)"
           description: |
             Root FS (/) under 10 % free on {{ $labels.instance }}.
@@ -179,8 +179,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: storage
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
           summary: "Root filesystem on {{ $labels.instance }} {{ $value | humanize }}% free"
           description: |
             Root FS (/) under 20 % on {{ $labels.instance }}.
@@ -207,8 +207,8 @@ groups:
           severity: page
           team: stellarindex
           component: storage
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-filling-fast.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/node-root-disk-filling-fast.md
           summary: "Root filesystem on {{ $labels.instance }} trending to FULL within 30 min"
           description: |
             Root FS (/) on {{ $labels.instance }} is filling fast enough
@@ -232,8 +232,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: storage
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/config-assertion-failed.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/config-assertion-failed.md
           summary: "Guard config {{ $labels.assertion }} is missing or reverted on {{ $labels.instance }}"
           description: |
             config-assertions.sh found {{ $labels.assertion }} absent or
@@ -251,8 +251,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: storage
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/config-assertion-failed.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/config-assertion-failed.md
           summary: "config-assertions has not run for 2h on {{ $labels.instance }}"
           description: |
             The hourly config-assertions.timer is not producing fresh
@@ -276,8 +276,8 @@ groups:
           severity: page
           team: stellarindex
           component: cache
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
           summary: "Redis BGSAVE failing on {{ $labels.instance }} (SEV-1) — writes blocked"
           description: |
             Redis BGSAVE on {{ $labels.instance }} has been failing
@@ -298,8 +298,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: storage
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/pg-conns-saturated.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/pg-conns-saturated.md
           summary: "Postgres connection pool {{ $value | humanize }}% used"
           description: |
             > 80 % of max_connections in use for 5+ minutes. PgBouncer should
@@ -331,8 +331,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: storage
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cagg-stale.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cagg-stale.md
           summary: "Continuous aggregate {{ $labels.cagg }} hasn't refreshed"
           description: |
             Refresh for {{ $labels.cagg }} is 5× its configured interval
@@ -347,8 +347,8 @@ groups:
           severity: informational
           team: stellarindex
           component: storage
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/compression-lag.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/compression-lag.md
           summary: "{{ $value }} chunks older than 7d are still uncompressed"
           description: |
             Compression policy should run on chunks older than 7 days. If some
@@ -377,8 +377,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: storage
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
           summary: "pgBackRest stanza {{ $labels.stanza }} last backup {{ $value | humanizeDuration }} ago"
           description: |
             Backup has missed at least one expected daily cycle (no completed
@@ -394,8 +394,8 @@ groups:
           severity: page
           team: stellarindex
           component: storage
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/backup-failed.md
           summary: "No successful Postgres backup in > 24 h (SEV-1)"
           description: |
             RPO breach. At 24h+ without a backup we exceed the documented

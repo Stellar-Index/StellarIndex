@@ -16,8 +16,8 @@ groups:
         labels:
           severity: ticket
           component: projector
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-lag.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-lag.md
           summary: "Projector source {{ $labels.source }} lagging > 256 ledgers"
           description: |
             The ADR-0032 projector's per-source cursor for {{ $labels.source }}
@@ -35,8 +35,8 @@ groups:
         labels:
           severity: ticket
           component: projector
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-lag.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-lag.md
           summary: "Projector source {{ $labels.source }} cycle errors sustained"
           description: |
             The projector for {{ $labels.source }} is failing > 5% of cycles
