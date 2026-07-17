@@ -312,14 +312,14 @@ func TestAssetsF2_NonstandardDecimals_NormalizesPriceAndCaps(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
 	// Supply: 1000 tokens circulating, 2000 max, both @9dp (stroops).
 	circ := new(big.Int).Mul(big.NewInt(1000), new(big.Int).Exp(big.NewInt(10), big.NewInt(9), nil))
-	max := new(big.Int).Mul(big.NewInt(2000), new(big.Int).Exp(big.NewInt(10), big.NewInt(9), nil))
+	maxSupply := new(big.Int).Mul(big.NewInt(2000), new(big.Int).Exp(big.NewInt(10), big.NewInt(9), nil))
 	srv := v1.New(v1.Options{
 		Prices: &stubPriceReader{
 			snapshots: map[string]v1.PriceSnapshot{flaggedAsset + "/fiat:USD": {
 				AssetID: flaggedAsset, Quote: "fiat:USD", Price: "41.32", PriceType: "vwap",
 			}},
 		},
-		Supply:              &stubSupplyLooker{hit: true, snap: supply.Supply{CirculatingSupply: circ, MaxSupply: max}},
+		Supply:              &stubSupplyLooker{hit: true, snap: supply.Supply{CirculatingSupply: circ, MaxSupply: maxSupply}},
 		TokenDecimals:       &decStub{d: 9, found: true}, // detail.Decimals = 9 (supply divisor)
 		NonstandardDecimals: cache,
 	})

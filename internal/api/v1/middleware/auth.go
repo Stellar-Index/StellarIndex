@@ -113,7 +113,7 @@ func Auth(opts AuthOptions) Middleware {
 				// 503s (ErrNotImplemented) don't count against the caller.
 				if opts.FailedAuthLimiter != nil && isCredentialRejection(err) {
 					if throttled, retryAfter := takeFailedAuth(r, opts.FailedAuthLimiter); throttled {
-						writeAuthThrottleProblem(w, r, retryAfter)
+						writeAuthThrottleProblem(w, retryAfter)
 						return
 					}
 				}
@@ -175,7 +175,7 @@ func takeFailedAuth(r *http.Request, limiter *ratelimit.Bucket) (throttled bool,
 // failed-auth budget (C3-5). Distinct problem type from the ordinary
 // rate-limit 429 so operators reading access logs can tell
 // credential-stuffing defence apart from ordinary request throttling.
-func writeAuthThrottleProblem(w http.ResponseWriter, r *http.Request, retryAfter int) {
+func writeAuthThrottleProblem(w http.ResponseWriter, retryAfter int) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
