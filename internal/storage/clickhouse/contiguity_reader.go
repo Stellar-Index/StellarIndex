@@ -170,7 +170,12 @@ func QueryECWindowCoverage(ctx context.Context, addr string, from, to, stride ui
 	}
 	defer func() { _ = conn.Close() }()
 
-	const txQ = `SELECT count() FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ? AND tx_count > 0`
+	// uniqExact(ledger_seq), not count(): stellar.ledgers is
+	// ReplacingMergeTree, so count() over an un-merged re-ingested ledger
+	// double-counts a tx-bearing ledger and manufactures a false coverage
+	// surplus (audit C2-12). uniqExact counts distinct ledgers — matching the
+	// ecQ sibling below and the two uniqExact reads above.
+	const txQ = `SELECT uniqExact(ledger_seq) FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ? AND tx_count > 0`
 	const ecQ = `SELECT uniqExact(ledger_seq) FROM stellar.ledger_entry_changes WHERE ledger_seq BETWEEN ? AND ?`
 
 	var out []ECWindowCoverage
