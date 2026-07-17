@@ -90,20 +90,37 @@ type BlendEmitterSwapConfigEvent struct {
 // insertBlendEmitterEventQuery is shared by every writer below — the
 // three event kinds differ only in which columns are populated vs
 // NULL.
+//
+// INV-3 generation-guarded corrective upsert (migration 0110): a corrected
+// re-derive of the emission `amount` (or the other decoded columns) lands in
+// place when its generation is >= the stored one; a live gen-0 replay can
+// never revert it. The drop fan-out issues one Exec per recipient with a
+// distinct recipient_index (a conflict-key component), so one statement never
+// repeats a key — no intra-batch dedup needed. Replaces the old DO NOTHING.
 const insertBlendEmitterEventQuery = `
     INSERT INTO blend_emitter_events (
         contract_id, ledger, ledger_close_time, tx_hash, op_index,
         event_index, event_kind, recipient_index,
         backstop_id, recipient, amount,
-        new_backstop, new_backstop_token, unlock_time
+        new_backstop, new_backstop_token, unlock_time,
+        derive_generation
     ) VALUES (
         $1, $2, $3, $4, $5,
         $6, $7, $8,
         $9, $10, $11,
-        $12, $13, $14
+        $12, $13, $14,
+        $15
     )
     ON CONFLICT (ledger_close_time, contract_id, ledger, tx_hash,
-                 op_index, event_kind, event_index, recipient_index) DO NOTHING
+                 op_index, event_kind, event_index, recipient_index) DO UPDATE SET
+        backstop_id        = EXCLUDED.backstop_id,
+        recipient          = EXCLUDED.recipient,
+        amount             = EXCLUDED.amount,
+        new_backstop       = EXCLUDED.new_backstop,
+        new_backstop_token = EXCLUDED.new_backstop_token,
+        unlock_time        = EXCLUDED.unlock_time,
+        derive_generation  = EXCLUDED.derive_generation
+      WHERE blend_emitter_events.derive_generation <= EXCLUDED.derive_generation
 `
 
 // blendEmitterExecer is satisfied by both *sql.DB and *sql.Tx, so the
@@ -122,12 +139,14 @@ func execBlendEmitterRow(
 	kind BlendEmitterKind, recipientIndex int,
 	backstopID, recipient string, amount sql.NullString,
 	newBackstop, newBackstopToken string, unlockTime sql.NullTime,
+	deriveGeneration int64,
 ) error {
 	if _, err := x.ExecContext(ctx, insertBlendEmitterEventQuery,
 		contractID, int(ledger), closeTime.UTC(), txHash, int(opIndex),
 		int(eventIndex), string(kind), recipientIndex,
 		nullString(backstopID), nullString(recipient), amount,
 		nullString(newBackstop), nullString(newBackstopToken), unlockTime,
+		deriveGeneration,
 	); err != nil {
 		return fmt.Errorf("timescale: InsertBlendEmitterEvent %s@%d kind=%s: %w", contractID, ledger, kind, err)
 	}
@@ -163,6 +182,7 @@ func (s *Store) InsertBlendEmitterDistribute(ctx context.Context, e BlendEmitter
 		BlendEmitterDistribute, 0,
 		e.BackstopID, "", sql.NullString{String: e.Amount.String(), Valid: true},
 		"", "", sql.NullTime{},
+		s.deriveGeneration,
 	)
 }
 
@@ -203,6 +223,7 @@ func (s *Store) InsertBlendEmitterDrop(ctx context.Context, e BlendEmitterDropEv
 			BlendEmitterDrop, i,
 			"", r.Address, sql.NullString{String: r.Amount.String(), Valid: true},
 			"", "", sql.NullTime{},
+			s.deriveGeneration,
 		); err != nil {
 			return err
 		}
@@ -248,5 +269,6 @@ func (s *Store) InsertBlendEmitterSwapConfig(ctx context.Context, e BlendEmitter
 		e.Kind, 0,
 		"", "", sql.NullString{},
 		e.NewBackstop, e.NewBackstopToken, unlockTime,
+		s.deriveGeneration,
 	)
 }

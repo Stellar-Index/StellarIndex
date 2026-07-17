@@ -75,20 +75,34 @@ func (s *Store) InsertRozoEvent(ctx context.Context, e RozoEvent) error {
 		return fmt.Errorf("timescale: InsertRozoEvent: Amount is empty (contract=%s tx=%s)", e.ContractID, e.TxHash)
 	}
 
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the payment `amount` (or destination / from /
+	// memo / token) lands in place when its generation is >= the stored one;
+	// a live gen-0 replay can never revert it. Replaces the old DO NOTHING.
 	const q = `
         INSERT INTO rozo_events (
             contract_id, ledger, tx_hash, op_index, ts,
-            event_type, amount, destination, from_addr, memo, token
+            event_type, amount, destination, from_addr, memo, token,
+            derive_generation
         ) VALUES (
             $1, $2, $3, $4, $5,
-            $6, $7, $8, $9, $10, $11
+            $6, $7, $8, $9, $10, $11,
+            $12
         )
-        ON CONFLICT (contract_id, ledger, tx_hash, op_index, event_type, ts) DO NOTHING
+        ON CONFLICT (contract_id, ledger, tx_hash, op_index, event_type, ts) DO UPDATE SET
+            amount            = EXCLUDED.amount,
+            destination       = EXCLUDED.destination,
+            from_addr         = EXCLUDED.from_addr,
+            memo              = EXCLUDED.memo,
+            token             = EXCLUDED.token,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE rozo_events.derive_generation <= EXCLUDED.derive_generation
     `
 	_, err := s.db.ExecContext(ctx, q,
 		e.ContractID, int(e.Ledger), e.TxHash, int(e.OpIndex), e.ObservedAt.UTC(),
 		string(e.EventType), e.Amount, e.Destination,
 		ptrToNullString(e.From), ptrToNullString(e.Memo), ptrToNullString(e.Token),
+		s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertRozoEvent %s@%d: %w", e.ContractID, e.Ledger, err)

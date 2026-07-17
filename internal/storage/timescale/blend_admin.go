@@ -59,23 +59,34 @@ func (s *Store) InsertBlendAdminEvent(ctx context.Context, e domain.BlendAdminEv
 		return fmt.Errorf("timescale: InsertBlendAdminEvent: marshal attributes: %w", err)
 	}
 
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the decoded columns (admin / asset / target and
+	// the attributes jsonb, which carries i128 amounts like
+	// min_collateral / supply_cap) lands in place when its generation is >=
+	// the stored one; a live gen-0 replay can never revert it. Replaces DO NOTHING.
 	const q = `
         INSERT INTO blend_admin (
             contract_id, ledger, tx_hash, op_index, event_index, ledger_close_time,
             event_kind, admin, asset, target,
-            attributes
+            attributes, derive_generation
         ) VALUES (
             $1, $2, $3, $4, $5, $6,
             $7, $8, $9, $10,
-            $11
+            $11, $12
         )
-        ON CONFLICT (contract_id, ledger, tx_hash, op_index, event_kind, event_index, ledger_close_time) DO NOTHING
+        ON CONFLICT (contract_id, ledger, tx_hash, op_index, event_kind, event_index, ledger_close_time) DO UPDATE SET
+            admin             = EXCLUDED.admin,
+            asset             = EXCLUDED.asset,
+            target            = EXCLUDED.target,
+            attributes        = EXCLUDED.attributes,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE blend_admin.derive_generation <= EXCLUDED.derive_generation
     `
 	_, err = s.db.ExecContext(ctx, q,
 		e.ContractID, int(e.Ledger), e.TxHash, int(e.OpIndex), int(e.EventIndex), e.Timestamp.UTC(),
 		e.Kind,
 		nullString(e.Admin), nullString(e.Asset), nullString(e.Target),
-		attrsJSON,
+		attrsJSON, s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertBlendAdminEvent %s@%d: %w", e.ContractID, e.Ledger, err)

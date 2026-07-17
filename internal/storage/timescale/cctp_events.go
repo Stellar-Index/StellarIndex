@@ -125,17 +125,28 @@ func (s *Store) InsertCCTPEvent(ctx context.Context, e CCTPEvent) error {
 		attrs = marshaled
 	}
 
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the i128 amounts (amount / fee) or the other
+	// decoded columns lands in place when its generation is >= the stored
+	// one; a live gen-0 replay can never revert it. Replaces the old DO NOTHING.
 	const q = `
         INSERT INTO cctp_events (
             contract_id, ledger, tx_hash, op_index, ts,
             event_type, amount, fee, token, counterparty_domain,
-            attributes
+            attributes, derive_generation
         ) VALUES (
             $1, $2, $3, $4, $5,
             $6, $7, $8, $9, $10,
-            $11
+            $11, $12
         )
-        ON CONFLICT (contract_id, ledger, tx_hash, op_index, event_type, ts) DO NOTHING
+        ON CONFLICT (contract_id, ledger, tx_hash, op_index, event_type, ts) DO UPDATE SET
+            amount              = EXCLUDED.amount,
+            fee                 = EXCLUDED.fee,
+            token               = EXCLUDED.token,
+            counterparty_domain = EXCLUDED.counterparty_domain,
+            attributes          = EXCLUDED.attributes,
+            derive_generation   = EXCLUDED.derive_generation
+          WHERE cctp_events.derive_generation <= EXCLUDED.derive_generation
     `
 	var (
 		domain sql.NullInt64
@@ -150,7 +161,7 @@ func (s *Store) InsertCCTPEvent(ctx context.Context, e CCTPEvent) error {
 	_, err := s.db.ExecContext(ctx, q,
 		e.ContractID, int(e.Ledger), e.TxHash, int(e.OpIndex), e.ObservedAt.UTC(),
 		string(e.EventType), nullNumeric(e.Amount), nullNumeric(e.Fee), token, domain,
-		attrs,
+		attrs, s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertCCTPEvent %s@%d: %w", e.ContractID, e.Ledger, err)
