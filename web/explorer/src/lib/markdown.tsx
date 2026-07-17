@@ -317,7 +317,16 @@ function renderBlock(b: Block, i: number): React.ReactElement {
 // (path / anchor / query). Anything else (javascript:, data:,
 // vbscript:, file:, …) is rejected and rendered as plain text.
 function isSafeHref(href: string): boolean {
-  const h = href.trim();
+  // Strip ASCII control characters (C0 + DEL) BEFORE scheme detection.
+  // Browsers remove tab/LF/CR while parsing a URL and ignore other C0
+  // controls, so `java&#9;script:alert(1)` (a literal tab inside the scheme)
+  // becomes `javascript:` at click time. Without this the scheme regex below
+  // fails to match — the control char isn't in [a-zA-Z0-9+.-] — and the
+  // function FALLS OPEN, returning true as if it were a harmless relative
+  // ref, while the browser still executes the javascript: scheme
+  // (audit C4-13: control-char-obfuscated-scheme stored-XSS bypass). Stripping
+  // first makes the sanitizer see exactly the scheme the browser will.
+  const h = href.replace(/[\u0000-\u001F\u007F]/g, '').trim();
   if (h === '') return false;
   // Relative references — no scheme, can't be javascript:.
   if (/^[/#?]/.test(h) || h.startsWith('./') || h.startsWith('../')) {

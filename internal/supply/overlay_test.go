@@ -178,6 +178,97 @@ func TestOverlay_RejectsNegativeDeclaration(t *testing.T) {
 	}
 }
 
+// TestOverlay_RejectsZeroOrBelowCirculating is the M14 guard against
+// issuer-poisoning: a sloppy/hostile issuer declaring max_supply=0 (or
+// any max below the asset's known circulating supply) in stellar.toml
+// must NOT be applied — publishing max < circulating is a nonsensical,
+// self-contradictory number (FDV below realised supply). Treat it as
+// unset, exactly like a missing declaration.
+func TestOverlay_RejectsZeroOrBelowCirculating(t *testing.T) {
+	usdc, _ := canonical.NewClassicAsset("USDC", validIssuer)
+
+	t.Run("max_supply=0 is not applied", func(t *testing.T) {
+		resolver := &stubMetadataResolver{raw: "0", ok: true}
+		snap := supply.Supply{
+			AssetKey: "USDC:GA1", TotalSupply: big.NewInt(1000),
+			CirculatingSupply: big.NewInt(1000),
+			MaxSupply:         nil, Basis: supply.BasisIssuerExclusion,
+		}
+		got, applied, err := supply.Overlay(context.Background(), snap, usdc, resolver)
+		if err != nil {
+			t.Fatalf("Overlay: %v", err)
+		}
+		if applied {
+			t.Error("applied=true for max_supply=0; expected false")
+		}
+		if got.MaxSupply != nil {
+			t.Errorf("MaxSupply set from zero declaration: %s", got.MaxSupply)
+		}
+		if got.Basis != supply.BasisIssuerExclusion {
+			t.Errorf("Basis = %q, want unchanged %q", got.Basis, supply.BasisIssuerExclusion)
+		}
+	})
+
+	t.Run("max_supply below circulating is not applied", func(t *testing.T) {
+		// circulating = 1000, declared max = 500 → max < circulating.
+		resolver := &stubMetadataResolver{raw: "500", ok: true}
+		snap := supply.Supply{
+			AssetKey: "USDC:GA1", TotalSupply: big.NewInt(1000),
+			CirculatingSupply: big.NewInt(1000),
+			MaxSupply:         nil, Basis: supply.BasisIssuerExclusion,
+		}
+		got, applied, err := supply.Overlay(context.Background(), snap, usdc, resolver)
+		if err != nil {
+			t.Fatalf("Overlay: %v", err)
+		}
+		if applied {
+			t.Error("applied=true for below-circulating max; expected false")
+		}
+		if got.MaxSupply != nil {
+			t.Errorf("MaxSupply set below circulating: %s (circulating=1000)", got.MaxSupply)
+		}
+	})
+
+	t.Run("valid max >= circulating still applies", func(t *testing.T) {
+		// circulating = 1000, declared max = 2000 → legitimate cap.
+		resolver := &stubMetadataResolver{raw: "2000", ok: true}
+		snap := supply.Supply{
+			AssetKey: "USDC:GA1", TotalSupply: big.NewInt(1000),
+			CirculatingSupply: big.NewInt(1000),
+			MaxSupply:         nil, Basis: supply.BasisIssuerExclusion,
+		}
+		got, applied, err := supply.Overlay(context.Background(), snap, usdc, resolver)
+		if err != nil {
+			t.Fatalf("Overlay: %v", err)
+		}
+		if !applied {
+			t.Fatal("applied=false for valid max >= circulating; expected applied")
+		}
+		if got.MaxSupply == nil || got.MaxSupply.String() != "2000" {
+			t.Errorf("MaxSupply = %v, want 2000", got.MaxSupply)
+		}
+		if got.Basis != supply.BasisSEP1DeclaredMax {
+			t.Errorf("Basis = %q, want %q", got.Basis, supply.BasisSEP1DeclaredMax)
+		}
+	})
+
+	t.Run("max == circulating is applied (boundary)", func(t *testing.T) {
+		resolver := &stubMetadataResolver{raw: "1000", ok: true}
+		snap := supply.Supply{
+			AssetKey: "USDC:GA1", TotalSupply: big.NewInt(1000),
+			CirculatingSupply: big.NewInt(1000),
+			MaxSupply:         nil, Basis: supply.BasisIssuerExclusion,
+		}
+		_, applied, err := supply.Overlay(context.Background(), snap, usdc, resolver)
+		if err != nil {
+			t.Fatalf("Overlay: %v", err)
+		}
+		if !applied {
+			t.Error("applied=false for max == circulating; boundary should apply")
+		}
+	})
+}
+
 // TestOverlay_RejectsUnparseableDeclaration — a non-decimal value
 // (e.g. "TBD" or "~21M") in stellar.toml falls through with
 // applied=false, no error.

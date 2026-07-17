@@ -113,6 +113,11 @@ func backfillExternal(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
+	// Re-derive path (INV-3 / migration 0109): stamp a positive
+	// derive_generation so a corrected trade re-derive UPDATEs the stored
+	// row in place (usd_volume et al.) and wins over the live gen-0 value.
+	store.SetDeriveGeneration(time.Now().Unix())
+
 	// Mirror the indexer's USD-volume wiring (L2.2 phase 1) so an
 	// ops-driven backfill of on-chain trades populates usd_volume
 	// the same way live ingest does.

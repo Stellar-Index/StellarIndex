@@ -131,6 +131,12 @@ func (u OracleUpdate) Validate() error {
 	if err := u.Quote.Validate(); err != nil {
 		return fmt.Errorf("%w: quote: %w", ErrInvalidOracle, err)
 	}
+	// A self-priced update (Asset == Quote, e.g. USD priced in USD) is
+	// degenerate — the price is a tautological 1 and nothing downstream
+	// should ingest a self-referential quote. Compare canonical identity.
+	if u.Asset.Equal(u.Quote) {
+		return fmt.Errorf("%w: asset and quote are the same asset %s (self-priced update)", ErrInvalidOracle, u.Asset.String())
+	}
 	if u.Price.Sign() <= 0 {
 		return fmt.Errorf("%w: price must be positive, got %s", ErrInvalidOracle, u.Price)
 	}

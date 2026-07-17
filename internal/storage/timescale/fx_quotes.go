@@ -131,7 +131,11 @@ const fxQuotesSnapLookback = 7 * 24 * time.Hour
 const fxQuotesSourceLabel = "massive"
 
 // usdFiatCode is the anchor currency fx_quotes rates are expressed
-// against (`rate_usd` = USD per 1 unit of ticker).
+// against. `rate_usd` is the price of 1 USD denominated in the ticker —
+// i.e. UNITS-OF-TICKER PER 1 USD (e.g. rate_usd(EUR) ≈ 0.92 means 1 USD
+// buys 0.92 EUR). See internal/sources/external/forex/client.go
+// (LatestUSDRates) + cache.go (Currency.RateUSD) for the source-of-truth
+// orientation the `massive` feed writes.
 const usdFiatCode = "USD"
 
 // fxSnapRow is one latest-per-ticker fx_quotes observation feeding
@@ -165,10 +169,12 @@ func fxSnapTickers(pair canonical.Pair) []string {
 // the same QuoteAmount/BaseAmount orientation the trades path returns)
 // from latest-per-ticker fx_quotes rows, keyed by ticker.
 //
-// Math is exact *big.Rat throughout: rate_usd(T) is "USD per 1 T", so
-// price(B/Q) = rate_usd(B) / rate_usd(Q), with either USD side
-// contributing an exact 1. The cached float-derived `inverse_usd`
-// column is deliberately NOT used — inversion happens in Rat space.
+// Math is exact *big.Rat throughout: rate_usd(T) is "T per 1 USD", so
+// price(B/Q) = quote-per-base = rate_usd(Q) / rate_usd(B), with either
+// USD side contributing an exact 1. (M3: the earlier code divided the
+// other way, rate_usd(B)/rate_usd(Q), which inverted every served
+// fiat-quoted pair.) The cached float-derived `inverse_usd` column is
+// deliberately NOT used — inversion happens in Rat space.
 //
 // observedAt is the OLDEST bucket among the rows used (the staler
 // input governs the quote's freshness). The source label is the
@@ -225,7 +231,9 @@ func fxSnapFromRows(pair canonical.Pair, rows map[string]fxSnapRow) (*big.Rat, t
 	}
 	sort.Strings(sources)
 
-	return new(big.Rat).Quo(baseRate, quoteRate), observedAt, strings.Join(sources, "+"), nil
+	// price = quote-per-base = rate_usd(Q)/rate_usd(B) because rate_usd
+	// is ticker-per-USD (M3). USD legs carry an exact 1.
+	return new(big.Rat).Quo(quoteRate, baseRate), observedAt, strings.Join(sources, "+"), nil
 }
 
 // fxQuotesSnapAtOrBefore is the fx_quotes leg of [Store.FXQuoteAtOrBefore]:

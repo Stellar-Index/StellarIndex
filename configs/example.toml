@@ -326,6 +326,11 @@ per_reference_timeout_seconds  = 5
 
 [divergence.coingecko]
 enabled  = true
+# max_age_minutes is the CS-089 staleness ceiling for the /simple/price
+# quote's upstream last_updated_at: a quote older than this is rejected
+# as reference-unavailable so a frozen upstream can't drive divergence.
+# 0 = the 30-minute default.
+# max_age_minutes = 0
 # id_map maps canonical asset_id → CoinGecko slug. Empty falls back
 # to the built-in default covering XLM + major stables.
 # Example:

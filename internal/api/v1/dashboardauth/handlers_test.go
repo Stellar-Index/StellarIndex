@@ -597,3 +597,25 @@ func TestHandleLogin_ThrottleErrors_FailsOpen(t *testing.T) {
 		t.Errorf("sent emails = %d, want 1 (must fall open on throttle error)", r.sender.SentCount())
 	}
 }
+
+func TestMaskEmail(t *testing.T) {
+	cases := map[string]string{
+		"alice@example.com": "a***@example.com",
+		"a@b.co":            "***@b.co", // single-char local → fully hidden
+		"bob.smith@x.io":    "b***@x.io",
+		"":                  "",
+		"garbage":           "***", // no @ → hide entirely
+		"@nolocal.com":      "***", // empty local part (malformed) → hidden entirely
+	}
+	for in, want := range cases {
+		if got := maskEmail(in); got != want {
+			t.Errorf("maskEmail(%q) = %q, want %q", in, got, want)
+		}
+		// the full local part must never survive in the output (PRV1)
+		if at := strings.LastIndex(in, "@"); at > 1 {
+			if rest := in[1:at]; strings.Contains(maskEmail(in), rest) {
+				t.Errorf("maskEmail(%q) leaked the local part %q", in, rest)
+			}
+		}
+	}
+}

@@ -4800,18 +4800,18 @@ export interface paths {
                          *         "entity_type": "coin",
                          *         "entity_id": "crypto:XLM",
                          *         "refreshed_at": "2026-07-03T22:38:00Z",
-                         *         "current_value": 0.2041764538697883,
-                         *         "h1_value": 0.20380247911865504,
+                         *         "current_value": "0.2041764538697883",
+                         *         "h1_value": "0.20380247911865504",
                          *         "h1_delta_pct": 0.1834986270778068,
-                         *         "h24_value": 0.19673099518995452,
+                         *         "h24_value": "0.19673099518995452",
                          *         "h24_delta_pct": 3.784588530467602,
-                         *         "d7_value": 0.17768054591385554,
+                         *         "d7_value": "0.17768054591385554",
                          *         "d7_delta_pct": 14.912104090888326,
-                         *         "d30_value": 0.21078647159614772,
+                         *         "d30_value": "0.21078647159614772",
                          *         "d30_delta_pct": -3.13588328335594,
-                         *         "ath_value": 0.29758550057923283,
+                         *         "ath_value": "0.29758550057923283",
                          *         "ath_at": "2026-05-30T03:52:00Z",
-                         *         "atl_value": 0.13999047864054645,
+                         *         "atl_value": "0.13999047864054645",
                          *         "atl_at": "2026-05-23T08:41:00Z",
                          *         "streak_direction": "up",
                          *         "streak_days": 5,
@@ -4833,19 +4833,26 @@ export interface paths {
                                 entity_id?: string;
                                 /** Format: date-time */
                                 refreshed_at?: string;
-                                current_value?: number;
-                                h1_value?: number | null;
+                                /** @description money (price/market-cap) — JSON string per INV-2 */
+                                current_value?: string;
+                                /** @description money — JSON string per INV-2 */
+                                h1_value?: string | null;
                                 h1_delta_pct?: number | null;
-                                h24_value?: number | null;
+                                /** @description money — JSON string per INV-2 */
+                                h24_value?: string | null;
                                 h24_delta_pct?: number | null;
-                                d7_value?: number | null;
+                                /** @description money — JSON string per INV-2 */
+                                d7_value?: string | null;
                                 d7_delta_pct?: number | null;
-                                d30_value?: number | null;
+                                /** @description money — JSON string per INV-2 */
+                                d30_value?: string | null;
                                 d30_delta_pct?: number | null;
-                                ath_value?: number | null;
+                                /** @description money — JSON string per INV-2 */
+                                ath_value?: string | null;
                                 /** Format: date-time */
                                 ath_at?: string | null;
-                                atl_value?: number | null;
+                                /** @description money — JSON string per INV-2 */
+                                atl_value?: string | null;
                                 /** Format: date-time */
                                 atl_at?: string | null;
                                 /** @enum {string|null} */

@@ -111,13 +111,16 @@ func TestGuardServedVWAP_ModerateMovePasses(t *testing.T) {
 	}
 }
 
-func TestGuardServedVWAP_InsufficientBaselineFailsOpen(t *testing.T) {
-	// Fewer than guardMinSamples usable trailing buckets → no robust
-	// baseline → fail open (serve candidate) even for an extreme value.
-	trailing := repeatRat(t, "1.0", guardMinSamples-1)
-	accept, lkg := GuardServedVWAP(rat(t, "1000.0"), trailing)
-	if !accept || lkg != -1 {
-		t.Fatalf("thin baseline: accept=%v lkg=%d, want fail-open accept=true lkg=-1", accept, lkg)
+func TestGuardServedVWAP_EmptyBaselineFailsOpen(t *testing.T) {
+	// Post-M11(b): ONLY a truly empty baseline (no usable trailing
+	// bucket) fails open — there is no centre to judge against. A thin
+	// but non-empty baseline is handled by the wider-finite band and is
+	// proven in TestGuardServedVWAP_ThinHistoryNotFullyOpen.
+	for _, trailing := range [][]*big.Rat{nil, {}, {nil, nil}} {
+		accept, lkg := GuardServedVWAP(rat(t, "1000.0"), trailing)
+		if !accept || lkg != -1 {
+			t.Fatalf("empty baseline: accept=%v lkg=%d, want fail-open accept=true lkg=-1", accept, lkg)
+		}
 	}
 }
 
@@ -190,22 +193,48 @@ func TestMedianRat_ExactAndNonMutating(t *testing.T) {
 }
 
 func TestRobustBand_ContainsCentreAndRatioBounds(t *testing.T) {
-	// Flat history: MAD = 0, so the band collapses to the ratio band
-	// [centre/10, centre*10].
+	// Flat history (>= guardMinSamples): MAD = 0, so the FULL band
+	// collapses to the tight ratio band [centre/3, centre*3] (R = 3
+	// post-M11(a); was 10).
 	trailing := repeatRat(t, "1.0", 10)
 	lo, hi, ok := robustBand(trailing)
 	if !ok {
 		t.Fatal("robustBand not ok on a valid baseline")
 	}
-	if lo.Cmp(rat(t, "1/10")) != 0 {
-		t.Fatalf("lo = %s, want 1/10 (centre/R with MAD=0)", lo.RatString())
+	if lo.Cmp(rat(t, "1/3")) != 0 {
+		t.Fatalf("lo = %s, want 1/3 (centre/R with MAD=0, R=3)", lo.RatString())
 	}
-	if hi.Cmp(rat(t, "10")) != 0 {
-		t.Fatalf("hi = %s, want 10 (centre*R with MAD=0)", hi.RatString())
+	if hi.Cmp(rat(t, "3")) != 0 {
+		t.Fatalf("hi = %s, want 3 (centre*R with MAD=0, R=3)", hi.RatString())
 	}
 	// Centre is always inside the band.
 	if !withinBand(rat(t, "1.0"), lo, hi) {
 		t.Fatal("centre must be within its own band")
+	}
+}
+
+func TestRobustBand_ThinHistoryWiderFiniteBand(t *testing.T) {
+	// Finding M11(b): a thin baseline (1..guardMinSamples-1 usable
+	// buckets) yields a WIDER but finite ratio-only band
+	// [centre/10, centre*10] — not fail-open, not the tight R=3.
+	trailing := repeatRat(t, "1.0", guardMinSamples-1)
+	lo, hi, ok := robustBand(trailing)
+	if !ok {
+		t.Fatal("thin history must still produce a finite band (ok=true), not fail open")
+	}
+	if lo.Cmp(rat(t, "1/10")) != 0 || hi.Cmp(rat(t, "10")) != 0 {
+		t.Fatalf("thin band = [%s, %s], want [1/10, 10]", lo.RatString(), hi.RatString())
+	}
+}
+
+func TestRobustBand_EmptyBaselineFailsOpen(t *testing.T) {
+	// Zero usable values → no centre → ok=false (fail open). All-nil
+	// and empty inputs both count as no baseline.
+	if _, _, ok := robustBand(nil); ok {
+		t.Fatal("empty baseline must be ok=false (fail open)")
+	}
+	if _, _, ok := robustBand([]*big.Rat{nil, nil}); ok {
+		t.Fatal("all-nil baseline must be ok=false (fail open)")
 	}
 }
 

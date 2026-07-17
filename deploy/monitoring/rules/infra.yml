@@ -19,8 +19,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: infra
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/host-down.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/host-down.md
           summary: "Host {{ $labels.instance }} unreachable"
           description: |
             node_exporter on {{ $labels.instance }} hasn't scraped in 2+ min.
@@ -35,8 +35,8 @@ groups:
           severity: informational
           team: stellarindex
           component: infra
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/host-cpu-high.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/host-cpu-high.md
           summary: "Host {{ $labels.instance }} CPU at {{ $value | humanize }}%"
           description: |
             CPU > 90 % for 10+ minutes. Either a runaway process or undersized
@@ -51,8 +51,8 @@ groups:
           severity: informational
           team: stellarindex
           component: infra
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/host-memory-high.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/host-memory-high.md
           summary: "Host {{ $labels.instance }} memory at {{ $value | humanize }}%"
           description: |
             > 90 % memory for 10+ min. OOMKill risk. Check per-service
@@ -73,8 +73,8 @@ groups:
           severity: page
           team: stellarindex
           component: infra
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-degraded.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-degraded.md
           summary: "ZFS pool {{ $labels.zpool }} is {{ $labels.state }} (SEV-1)"
           description: |
             The data ZFS pool reports {{ $labels.state }} — one or more drives
@@ -106,8 +106,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: infra
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
           summary: "NVMe {{ $labels.device }} reporting IO errors"
           description: |
             Any IO error on an NVMe is a warning sign — schedule a
@@ -122,8 +122,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: infra
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-thermal.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-thermal.md
           summary: "NVMe {{ $labels.device }} at {{ $value }}°C"
           description: |
             Enterprise NVMe spec'd to 70 °C. Above this it throttles IO →

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"math/big"
 	"testing"
 	"time"
@@ -504,5 +505,56 @@ func TestConfidence_BaselineMissingDoesNotBlockVWAP(t *testing.T) {
 	confKey := cachekeys.Confidence(pair.Base, pair.Quote, time.Minute)
 	if exists, _ := rdb.Exists(context.Background(), confKey.String()).Result(); exists != 0 {
 		t.Errorf("confidence key present despite baseline error")
+	}
+}
+
+// TestApproxUSDVolume_CEXQuoteIsEightDecimals (M13) — bucket USD volume
+// must scale each quote amount by its SOURCE's smallest-unit decimals,
+// not a fixed 1e7. A CEX quote is 8dp (externalAmountDecimals = 8), so
+// the pre-fix fixed-1e7 divisor overstated it 10×. Because
+// LiquidityFactor is log-linear across [1e3, 1e5], that 10× swings the
+// factor by ~0.5 (here from 0.7386 up to a saturated 1.0) — a material
+// distortion, not the "insensitive" error the old comment claimed.
+func TestApproxUSDVolume_CEXQuoteIsEightDecimals(t *testing.T) {
+	pair := xlmUSDPair(t)
+	ts := time.Now().UTC()
+
+	// $30,000 of CEX (binance) quote volume at 8 decimals.
+	const usdWhole = 30_000
+	quote8dp := int64(usdWhole) * 100_000_000
+	trades := []canonical.Trade{makeXLMUSDTrade(t, "binance", 1_000_000, quote8dp, ts)}
+
+	got := approxUSDVolume(trades, pair)
+	if math.Abs(got-float64(usdWhole)) > 1.0 {
+		t.Fatalf("approxUSDVolume = %.2f, want ~%d (8dp CEX scale, not 10× that)", got, usdWhole)
+	}
+
+	corrected := confidence.LiquidityFactor(got)                // F(30000)
+	buggy := confidence.LiquidityFactor(float64(usdWhole) * 10) // what /1e7 produced: F(300000)
+	if math.Abs(corrected-0.7386) > 0.01 {
+		t.Errorf("LiquidityFactor(30000) = %.4f, want ~0.7386", corrected)
+	}
+	if buggy != 1.0 {
+		t.Errorf("pre-fix LiquidityFactor(300000) = %.4f, want 1.0 (saturated)", buggy)
+	}
+	if buggy-corrected < 0.25 {
+		t.Errorf("factor swing = %.4f, want a material (>0.25) gap the fix removes", buggy-corrected)
+	}
+}
+
+// TestApproxUSDVolume_PerSourceDecimals (M13) — resolution is
+// per-source: an 8dp CEX quote and a 6dp FX quote of the same $30k each
+// both read as $30k, summing to $60k. A single fixed divisor could not
+// value both correctly.
+func TestApproxUSDVolume_PerSourceDecimals(t *testing.T) {
+	pair := xlmUSDPair(t)
+	ts := time.Now().UTC()
+	trades := []canonical.Trade{
+		makeXLMUSDTrade(t, "binance", 1_000_000, 30_000*100_000_000, ts), // 8dp
+		makeXLMUSDTrade(t, "massive", 1_000_000, 30_000*1_000_000, ts),   // 6dp
+	}
+	got := approxUSDVolume(trades, pair)
+	if math.Abs(got-60_000) > 1.0 {
+		t.Fatalf("approxUSDVolume = %.2f, want ~60000 ($30k @8dp + $30k @6dp)", got)
 	}
 }

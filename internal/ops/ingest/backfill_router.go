@@ -68,6 +68,15 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 		return fmt.Errorf("storage open: %w", err)
 	}
 	defer func() { _ = store.Close() }()
+	// Re-derive path (INV-3 / migration 0110): stamp a positive
+	// derive_generation so a corrected router re-walk (fixed decoder / amount
+	// scaling) UPDATEs the stored soroswap_router_swaps rows in place —
+	// InsertSoroswapRouterSwap reads the generation from this store — and wins
+	// over the live gen-0 values instead of silently no-op'ing. This is the
+	// only protocol re-derive entry point that writes a projector table via a
+	// DIRECT store call rather than through pipeline.HandleEvent (which
+	// projected-rebuild / ch-rebuild already stamp).
+	store.SetDeriveGeneration(time.Now().Unix())
 
 	// Minimal dispatcher: just the router decoder. Every other source
 	// is irrelevant for this backfill and avoiding their decoders

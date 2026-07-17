@@ -110,11 +110,12 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 			continue
 		}
 		outs = append(outs, Observation{
-			PoolID:     poolID,
-			AssetKey:   ak,
-			Ledger:     ctx.Ledger,
-			ObservedAt: ctx.ClosedAt,
-			Balance:    big.NewInt(int64(side.reserve)),
+			PoolID:         poolID,
+			AssetKey:       ak,
+			Ledger:         ctx.Ledger,
+			ObservedAt:     ctx.ClosedAt,
+			Balance:        big.NewInt(int64(side.reserve)),
+			IntraLedgerSeq: ctx.IntraLedgerSeq,
 		})
 	}
 	return outs, nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
@@ -63,17 +64,25 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-request DB ceiling (P1, audit-2026-07-16): the ClickHouse
+	// supply_flows sum (and the native ledger-header read) run against
+	// the shared explorer pool; a bounded context releases the pool
+	// connection on a slow scan. 8s matches the sibling raw-scan
+	// endpoints and fires before the blanket request-timeout middleware.
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+
 	// XLM: supply is the ledger header's total_coins (XLM is not minted/burned
 	// via SAC mint/burn events, so it has no supply_flows). Handle every alias.
 	if assetID == "native" || assetID == "XLM" || assetID == "crypto:XLM" {
-		coins, ledger, err := s.tokenSupply.NativeTotalCoins(r.Context())
+		coins, ledger, err := s.tokenSupply.NativeTotalCoins(ctx)
 		if err != nil {
 			s.logger.Warn("supply: native total_coins", "err", err)
 			writeProblem(w, r, "https://api.stellarindex.io/errors/supply-error",
 				"Supply read failed", http.StatusBadGateway, "Could not read native supply.")
 			return
 		}
-		_, stale, _ := s.lakeWatermark(r.Context())
+		_, stale, _ := s.lakeWatermark(ctx)
 		writeJSON(w, AssetSupply{
 			AssetID:     assetID,
 			TotalSupply: strconv.FormatInt(coins, 10),
@@ -93,7 +102,7 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sup, err := s.tokenSupply.TokenSupply(r.Context(), contractID)
+	sup, err := s.tokenSupply.TokenSupply(ctx, contractID)
 	if err != nil {
 		s.logger.Warn("supply: token supply", "contract_id", contractID, "err", err)
 		writeProblem(w, r, "https://api.stellarindex.io/errors/supply-error",
@@ -101,7 +110,7 @@ func (s *Server) handleAssetSupply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mint, burn, clawback := sup.Mint.String(), sup.Burn.String(), sup.Clawback.String()
-	wmLedger, stale, _ := s.lakeWatermark(r.Context())
+	wmLedger, stale, _ := s.lakeWatermark(ctx)
 	writeJSON(w, AssetSupply{
 		AssetID:       assetID,
 		ContractID:    contractID,

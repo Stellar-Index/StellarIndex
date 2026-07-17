@@ -171,7 +171,7 @@ func (s *Server) runObservationsStreamProducer(
 ) {
 	defer close(ch)
 
-	if firstEv, ok := observationsStreamEvent(gen, first); ok {
+	if firstEv, ok := s.observationsStreamEvent(gen, pair, first); ok {
 		select {
 		case <-ctx.Done():
 			return
@@ -195,7 +195,7 @@ func (s *Server) runObservationsStreamProducer(
 				}
 				continue
 			}
-			ev, ok := observationsStreamEvent(gen, trades)
+			ev, ok := s.observationsStreamEvent(gen, pair, trades)
 			if !ok {
 				continue
 			}
@@ -215,13 +215,17 @@ func (s *Server) runObservationsStreamProducer(
 // as an array of TradeRow, `as_of`, `sources`, and `flags`. Single-
 // source flag mirrors the request handler (true when exactly one
 // source contributed).
-func observationsStreamEvent(gen *streaming.Generator, trades []canonical.Trade) (streaming.Event, bool) {
+func (s *Server) observationsStreamEvent(gen *streaming.Generator, pair canonical.Pair, trades []canonical.Trade) (streaming.Event, bool) {
 	rows := make([]TradeRow, len(trades))
 	srcSet := make(map[string]struct{}, len(trades))
 	for i, t := range trades {
 		rows[i] = tradeRowFrom(t, 0)
 		srcSet[t.Source] = struct{}{}
 	}
+	// dex-nonstandard-decimals forward normalization of each row's Price (M2),
+	// shared with /v1/observations + /v1/history via normalizeTradeRowPrices.
+	// Byte-identical no-op for a pair with no confirmed non-7-decimals leg.
+	s.normalizeTradeRowPrices(rows, trades, pair.Base, pair.Quote)
 	srcs := make([]string, 0, len(srcSet))
 	for src := range srcSet {
 		srcs = append(srcs, src)

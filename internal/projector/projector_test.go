@@ -46,13 +46,44 @@ func discardLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard,
 func TestProcessEventSafely_RecoversDecoderPanic(t *testing.T) {
 	src := Source{Name: "x", Decoder: &fakeDecoder{matches: true, panics: true}}
 	sinked := 0
-	emitted, softFail := processEventSafely(src, events.Event{Ledger: 42},
-		func(consumer.Event) { sinked++ }, discardLog())
-	if !softFail {
-		t.Error("a decoder panic must be a soft-fail (counted), not propagate")
+	emitted, decodeFail, sinkErr := processEventSafely(src, events.Event{Ledger: 42},
+		func(consumer.Event) error { sinked++; return nil }, discardLog())
+	if !decodeFail {
+		t.Error("a decoder panic must be a decode soft-fail (counted), not propagate")
+	}
+	if sinkErr != nil {
+		t.Errorf("sinkErr = %v, want nil on a decode panic (nothing was written)", sinkErr)
 	}
 	if emitted != 0 || sinked != 0 {
 		t.Errorf("emitted=%d sinked=%d, want 0/0 on panic", emitted, sinked)
+	}
+}
+
+// TestProcessEventSafely_SinkErrorPropagates pins C2-1: a downstream sink
+// write failure must be RETURNED to the caller (not swallowed), with
+// `emitted` counting only the outputs that committed before it.
+func TestProcessEventSafely_SinkErrorPropagates(t *testing.T) {
+	boom := errors.New("deadlock detected")
+	// Two decoded outputs; the sink fails on the SECOND, so the first is
+	// counted committed and the error surfaces.
+	d := &fakeDecoder{matches: true, outs: []consumer.Event{fakeEvent{}, fakeEvent{}}}
+	calls := 0
+	emitted, decodeFail, sinkErr := processEventSafely(Source{Name: "x", Decoder: d}, events.Event{Ledger: 7},
+		func(consumer.Event) error {
+			calls++
+			if calls == 2 {
+				return boom
+			}
+			return nil
+		}, discardLog())
+	if decodeFail {
+		t.Error("a sink failure is NOT a decode failure")
+	}
+	if !errors.Is(sinkErr, boom) {
+		t.Errorf("sinkErr = %v, want the propagated sink error", sinkErr)
+	}
+	if emitted != 1 {
+		t.Errorf("emitted = %d, want 1 (only the pre-failure output committed)", emitted)
 	}
 }
 
@@ -61,9 +92,9 @@ func TestProcessEventSafely_RecoversDecoderPanic(t *testing.T) {
 func TestProcessEventSafely_DecodeErrorIsSoftFail(t *testing.T) {
 	src := Source{Name: "x", Decoder: &fakeDecoder{matches: true, err: errors.New("bad row")}}
 	sinked := 0
-	emitted, softFail := processEventSafely(src, events.Event{}, func(consumer.Event) { sinked++ }, discardLog())
-	if !softFail || emitted != 0 || sinked != 0 {
-		t.Errorf("decode error: softFail=%v emitted=%d sinked=%d, want true/0/0", softFail, emitted, sinked)
+	emitted, decodeFail, sinkErr := processEventSafely(src, events.Event{}, func(consumer.Event) error { sinked++; return nil }, discardLog())
+	if !decodeFail || emitted != 0 || sinked != 0 || sinkErr != nil {
+		t.Errorf("decode error: decodeFail=%v emitted=%d sinked=%d sinkErr=%v, want true/0/0/nil", decodeFail, emitted, sinked, sinkErr)
 	}
 }
 
@@ -72,9 +103,9 @@ func TestProcessEventSafely_DecodeErrorIsSoftFail(t *testing.T) {
 func TestProcessEventSafely_HappyPathSinks(t *testing.T) {
 	src := Source{Name: "x", Decoder: &fakeDecoder{matches: true, outs: []consumer.Event{fakeEvent{}, fakeEvent{}}}}
 	sinked := 0
-	emitted, softFail := processEventSafely(src, events.Event{}, func(consumer.Event) { sinked++ }, discardLog())
-	if softFail || emitted != 2 || sinked != 2 {
-		t.Errorf("happy: softFail=%v emitted=%d sinked=%d, want false/2/2", softFail, emitted, sinked)
+	emitted, decodeFail, sinkErr := processEventSafely(src, events.Event{}, func(consumer.Event) error { sinked++; return nil }, discardLog())
+	if decodeFail || emitted != 2 || sinked != 2 || sinkErr != nil {
+		t.Errorf("happy: decodeFail=%v emitted=%d sinked=%d sinkErr=%v, want false/2/2/nil", decodeFail, emitted, sinked, sinkErr)
 	}
 }
 
@@ -83,10 +114,10 @@ func TestProcessEventSafely_HappyPathSinks(t *testing.T) {
 func TestProcessEventSafely_NonMatchSkips(t *testing.T) {
 	d := &fakeDecoder{matches: false}
 	sinked := 0
-	emitted, softFail := processEventSafely(Source{Name: "x", Decoder: d}, events.Event{},
-		func(consumer.Event) { sinked++ }, discardLog())
-	if softFail || emitted != 0 || sinked != 0 || d.decodeHi != 0 {
-		t.Errorf("non-match: softFail=%v emitted=%d sinked=%d decodeCalls=%d, want false/0/0/0", softFail, emitted, sinked, d.decodeHi)
+	emitted, decodeFail, sinkErr := processEventSafely(Source{Name: "x", Decoder: d}, events.Event{},
+		func(consumer.Event) error { sinked++; return nil }, discardLog())
+	if decodeFail || emitted != 0 || sinked != 0 || d.decodeHi != 0 || sinkErr != nil {
+		t.Errorf("non-match: decodeFail=%v emitted=%d sinked=%d decodeCalls=%d sinkErr=%v, want false/0/0/0/nil", decodeFail, emitted, sinked, d.decodeHi, sinkErr)
 	}
 }
 
@@ -95,7 +126,7 @@ func oracleConfigEmpty() config.OracleConfig { return config.OracleConfig{} }
 // TestNew_DefaultsLogger checks the nil-logger branch picks up
 // slog.Default rather than panicking on the first Info call.
 func TestNew_DefaultsLogger(t *testing.T) {
-	p := New(nil, Registry{}, func(context.Context, consumer.Event) {}, nil)
+	p := New(nil, Registry{}, func(context.Context, consumer.Event) error { return nil }, nil)
 	if p == nil {
 		t.Fatal("New returned nil")
 	}
@@ -109,7 +140,7 @@ func TestNew_DefaultsLogger(t *testing.T) {
 // than panicking later when a goroutine touches the store.
 func TestRun_NilStoreReturnsError(t *testing.T) {
 	p := New(nil, Registry{Sources: []Source{{Name: "x"}}},
-		func(context.Context, consumer.Event) {}, slog.Default())
+		func(context.Context, consumer.Event) error { return nil }, slog.Default())
 	if err := p.Run(context.Background()); err == nil {
 		t.Fatal("expected non-nil error from Run with nil store")
 	}

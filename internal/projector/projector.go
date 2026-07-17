@@ -82,16 +82,30 @@ const MinBatchLimit = 25
 const PerSourceTimeout = 60 * time.Second
 
 // SinkFunc is the per-event handler the projector calls after
-// successful decode. The existing
-// `internal/pipeline/sink.go::handleOneEvent` function is the
-// production wiring (Phase 3 parallel mode); Phase 4 will route
-// to a direct per-source persister bypassing handleOneEvent.
+// successful decode. `internal/pipeline/sink.go::HandleEvent` is the
+// production wiring (it persists the decoded event to its per-source
+// hypertable and RETURNS the underlying Insert error).
 //
-// The projector treats sink failures as warnings (decode succeeded,
-// downstream write failed) — does not advance the cursor for that
-// row, retries on the next cycle. ON CONFLICT DO NOTHING in the
-// downstream Insert* ensures repeated writes are idempotent.
-type SinkFunc func(ctx context.Context, ev consumer.Event)
+// The error return is load-bearing (audit-2026-07-16 C2-1/D1): a sink
+// write can fail transiently (a Postgres deadlock / connection reset /
+// statement-timeout) or permanently (a CHECK violation on a poison row).
+// The projector consumes the error to decide whether to advance its
+// cursor past the event's ledger:
+//
+//   - a TRANSIENT failure ([timescale.IsPermanentDataError] false) holds
+//     the cursor at the last fully-committed ledger, so the next cycle
+//     re-reads and retries the row. ON CONFLICT in the downstream Insert*
+//     (DO NOTHING, or DO UPDATE since migration 0109) makes the retry
+//     idempotent / corrective.
+//   - a PERMANENT data fault ([timescale.IsPermanentDataError] true) is
+//     logged loudly, counted, and SKIPPED (the cursor advances past it) —
+//     blocking forever on a poison row is a worse outage than dropping it.
+//
+// Before this signature carried an error the projector could not see a
+// sink failure at all: it advanced the cursor unconditionally on stream
+// success, so a transient fault during a sole-writer (sep41) cycle
+// permanently dropped that row (the loss C2-1 documents).
+type SinkFunc func(ctx context.Context, ev consumer.Event) error
 
 // Source describes one protocol's projection target. The
 // projector keeps an independent cursor per source so one stuck
@@ -211,31 +225,45 @@ func (p *Projector) Run(ctx context.Context) error {
 // and because the cursor doesn't advance past the bad row, restart re-reads it
 // into a crash-loop.
 //
-// Returns the number of events sinked and softFail=true when the row should be
-// counted as a decode failure — either a returned decode error OR a recovered
-// panic. A deterministically broken row would only re-fail on retry, so the
-// caller advances the cursor regardless (the failure is counted for visibility).
-func processEventSafely(src Source, ev events.Event, sink func(consumer.Event), log *slog.Logger) (emitted int, softFail bool) {
+// Returns:
+//   - emitted:    the number of decoded outputs that were successfully
+//     sinked (durably committed). On a mid-row sink failure it counts only
+//     the outputs that committed BEFORE the failing one.
+//   - decodeFail: true when the row is a DECODE failure — a returned decode
+//     error OR a recovered panic. A deterministically broken row would only
+//     re-fail on retry, so the caller advances the cursor regardless (the
+//     failure is counted for visibility).
+//   - sinkErr:    the FIRST sink (downstream write) error for this row, or
+//     nil. Unlike a decode failure this is NOT necessarily deterministic —
+//     the caller classifies it ([timescale.IsPermanentDataError]) to decide
+//     whether to hold the cursor for retry (transient) or skip (permanent).
+//     A recovered decode panic returns sinkErr=nil (nothing was written).
+func processEventSafely(src Source, ev events.Event, sink func(consumer.Event) error, log *slog.Logger) (emitted int, decodeFail bool, sinkErr error) {
 	defer func() {
 		if rec := recover(); rec != nil {
-			emitted, softFail = 0, true
+			emitted, decodeFail, sinkErr = 0, true, nil
 			log.Error("projector decode panicked; skipping row",
 				"source", src.Name, "ledger", ev.Ledger, "tx", ev.TxHash,
 				"op_index", ev.OperationIndex, "event_index", ev.EventIndex, "panic", rec)
 		}
 	}()
 	if !src.Decoder.Matches(ev) {
-		return 0, false
+		return 0, false, nil
 	}
 	outs, derr := src.Decoder.Decode(ev)
 	if derr != nil {
-		return 0, true
+		return 0, true, nil
 	}
 	for _, out := range outs {
-		sink(out)
+		if err := sink(out); err != nil {
+			// Stop at the first sink failure for this row. `emitted` counts
+			// the outputs that DID commit; the caller classifies sinkErr
+			// against ev.Ledger to gate the cursor.
+			return emitted, false, err
+		}
 		emitted++
 	}
-	return emitted, false
+	return emitted, false, nil
 }
 
 // runOneSource is the per-source catch-up loop. Reads from the
@@ -262,13 +290,29 @@ func (p *Projector) runOneSource(ctx context.Context, src Source) {
 }
 
 // cycleOneSource runs one read-decode-write cycle for one source.
-// Soft-fails: read errors / decode errors / sink errors all log
-// + leave the cursor untouched so the next cycle retries the
-// same rows (ON CONFLICT DO NOTHING absorbs the idempotent
-// repeats).
+// Failure handling:
+//   - read / tip / cursor errors → log + leave the cursor untouched; the
+//     next cycle retries the same rows.
+//   - decode failures (decode error / recovered panic) → count + SKIP the
+//     row (deterministic; a retry would re-fail) and let the cursor advance.
+//   - TRANSIENT sink write failures (audit-2026-07-16 C2-1) → cap the cursor
+//     at the last fully-committed ledger so the failing ledger is re-read
+//     next cycle; the idempotent downstream Insert* absorbs the retry. NEVER
+//     advances past an un-committed row — the anti-silent-loss property this
+//     cycle now actually implements (the SinkFunc godoc's old claim).
+//   - PERMANENT sink data faults (CHECK / numeric) → log LOUD + count + SKIP,
+//     because a poison row must not wedge the source forever.
+//
+// cycleOneSource is intentionally a single linear cycle: read cursor → resolve
+// durable tip → scan the window → classify each event's sink outcome (decode
+// soft-fail / transient-hold / permanent-skip) → advance the cursor only to the
+// last fully-committed ledger. The branch count is the durability state machine
+// (audit-2026-07-16 C2-1); splitting it purely for the gocyclo metric would
+// scatter that one narrative across helpers and obscure the cursor-watermark
+// invariant, so it is suppressed rather than fragmented.
 //
 //nolint:gocognit,funlen // linear cycle (cursor read → tip → scan → cursor write) with a source branch (soroban_events vs CH); splitting into helpers would scatter the cycle's success/failure metric emissions and make the control flow harder to audit.
-func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint32) {
+func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint32) { //nolint:gocyclo // essential, cohesive durability classification (C2-1)
 	start := time.Now()
 	cycleCtx, cancel := context.WithTimeout(ctx, PerSourceTimeout)
 	defer cancel()
@@ -323,18 +367,57 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		eventsEmitted  int
 		decodeErrors   int
 		lastSeenLedger uint32
+
+		// Sink-durability tracking (audit-2026-07-16 C2-1). A TRANSIENT
+		// sink write failure must NOT let the cursor advance past its
+		// ledger, or that row is permanently lost for a sole-writer (sep41)
+		// domain. firstTransientFailLedger is the LOWEST ledger with such a
+		// failure this cycle; the cursor is then capped at
+		// firstTransientFailLedger-1 (the last FULLY-committed ledger) so the
+		// next cycle re-reads and retries [firstTransientFailLedger, …]. A
+		// PERMANENT data fault (poison row) does NOT hold the cursor — it is
+		// counted + skipped so it can't wedge the source forever.
+		firstTransientFailLedger uint32
+		sinkTransientFails       int
+		sinkPermanentFails       int
 	)
 	// process runs the per-event decode + route, identical regardless of the
 	// read source (soroban_events or CH contract_events). Decode failures
 	// soft-fail (cursor still advances; the row is deterministically broken so
-	// a retry would re-fail) and are counted for visibility.
+	// a retry would re-fail) and are counted for visibility. A SINK failure is
+	// classified: transient → cap the cursor below ev.Ledger for retry;
+	// permanent → count + skip.
 	process := func(ev events.Event) {
-		emitted, softFail := processEventSafely(src, ev, func(out consumer.Event) { p.sink(cycleCtx, out) }, p.logger)
-		if softFail {
+		emitted, decodeFail, sinkErr := processEventSafely(src, ev,
+			func(out consumer.Event) error { return p.sink(cycleCtx, out) }, p.logger)
+		eventsEmitted += emitted
+		if decodeFail {
 			decodeErrors++
 			return
 		}
-		eventsEmitted += emitted
+		if sinkErr == nil {
+			return
+		}
+		if timescale.IsPermanentDataError(sinkErr) {
+			// Poison row: retrying can never succeed, so skipping (letting
+			// the cursor advance past it) is safer than stalling the source
+			// forever. Log LOUD + count so it surfaces as an alert.
+			sinkPermanentFails++
+			p.logger.Error("projector: PERMANENT sink failure — skipping poison row (cursor advances past it)",
+				"source", src.Name, "ledger", ev.Ledger, "tx", ev.TxHash,
+				"op_index", ev.OperationIndex, "event_index", ev.EventIndex, "err", sinkErr)
+			return
+		}
+		// Transient fault (deadlock / reset / statement-timeout / ctx /
+		// unknown): hold the cursor below this ledger so the next cycle
+		// re-reads and retries. Track the lowest such ledger.
+		sinkTransientFails++
+		if firstTransientFailLedger == 0 || ev.Ledger < firstTransientFailLedger {
+			firstTransientFailLedger = ev.Ledger
+		}
+		p.logger.Warn("projector: transient sink failure — holding cursor for retry (NOT advancing past this ledger)",
+			"source", src.Name, "ledger", ev.Ledger, "tx", ev.TxHash,
+			"op_index", ev.OperationIndex, "event_index", ev.EventIndex, "err", sinkErr)
 	}
 
 	if p.chAddr != "" {
@@ -390,11 +473,36 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		return
 	}
 
-	// Advance cursor to toLedger (not lastSeenLedger): a source
-	// that's silent in a range still moves the cursor so we don't
-	// rescan empty stretches every cycle. lastSeenLedger is only
-	// logged for visibility.
-	if err := p.store.UpsertCursor(cycleCtx, "projector", src.Name, toLedger); err != nil {
+	// Cursor watermark (audit-2026-07-16 C2-1): advance only to the highest
+	// ledger for which EVERY event fully committed. With no transient sink
+	// failure that is `toLedger` — a source silent in a range still moves the
+	// cursor so we don't rescan empty stretches, and decode failures + skipped
+	// poison rows don't hold it back. A transient sink failure caps the cursor
+	// at firstTransientFailLedger-1 so the failing ledger (and everything
+	// after it in this window) is re-read + retried next cycle; the idempotent
+	// downstream Insert* absorbs the repeats. lastSeenLedger is only logged.
+	commitTo := toLedger
+	if firstTransientFailLedger != 0 {
+		commitTo = firstTransientFailLedger - 1
+	}
+	if commitTo < fromLedger {
+		// The window's FIRST ledger failed transiently — nothing new is
+		// durably committed, so DON'T move the cursor; the next cycle retries
+		// the identical range. This is a VISIBLE stall (rising lag + the
+		// sink_retry metrics below), never a silent advance-past-loss.
+		obs.ProjectorLagLedgers.WithLabelValues(src.Name).Set(float64(tip - fromLedger + 1))
+		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_retry").Add(float64(sinkTransientFails))
+		if sinkPermanentFails > 0 {
+			obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_permanent").Add(float64(sinkPermanentFails))
+		}
+		obs.ProjectorRunsTotal.WithLabelValues(src.Name, "sink_retry").Inc()
+		p.logger.Warn("projector: no fully-committed progress (transient sink failure at the window's first ledger) — holding cursor for retry",
+			"source", src.Name, "from", fromLedger, "to", toLedger,
+			"first_transient_fail_ledger", firstTransientFailLedger,
+			"transient_fails", sinkTransientFails, "permanent_fails", sinkPermanentFails)
+		return
+	}
+	if err := p.store.UpsertCursor(cycleCtx, "projector", src.Name, commitTo); err != nil {
 		p.logger.Warn("projector: cursor advance failed", "source", src.Name, "err", err)
 		obs.ProjectorRunsTotal.WithLabelValues(src.Name, "error").Inc()
 		return
@@ -405,22 +513,41 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	// the replay.
 	*window = recoverWindow(*window)
 
-	obs.ProjectorLagLedgers.WithLabelValues(src.Name).Set(float64(tip - toLedger))
+	obs.ProjectorLagLedgers.WithLabelValues(src.Name).Set(float64(tip - commitTo))
+	// "ok" counts only events that DURABLY committed — eventsEmitted excludes
+	// any output whose sink write failed (audit-2026-07-16 C2-1 / C4-14: a
+	// sink-lost event must never be reported as a successful projection).
 	obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "ok").Add(float64(eventsEmitted))
 	if decodeErrors > 0 {
 		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "decode_error").Add(float64(decodeErrors))
 	}
-	obs.ProjectorRunsTotal.WithLabelValues(src.Name, "ok").Inc()
+	if sinkTransientFails > 0 {
+		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_retry").Add(float64(sinkTransientFails))
+	}
+	if sinkPermanentFails > 0 {
+		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_permanent").Add(float64(sinkPermanentFails))
+	}
+	// A partially-failed cycle made forward progress (commitTo >= fromLedger)
+	// but still has a pending retry above commitTo — surface it as a distinct
+	// run outcome so a genuinely-stuck source alerts rather than silently
+	// stalling under an "ok" label.
+	runOutcome := "ok"
+	if sinkTransientFails > 0 {
+		runOutcome = "sink_retry"
+	}
+	obs.ProjectorRunsTotal.WithLabelValues(src.Name, runOutcome).Inc()
 	obs.ProjectorCycleDurationSeconds.WithLabelValues(src.Name).Observe(time.Since(start).Seconds())
 
-	if eventsEmitted > 0 || decodeErrors > 0 {
+	if eventsEmitted > 0 || decodeErrors > 0 || sinkTransientFails > 0 || sinkPermanentFails > 0 {
 		p.logger.Info("projector cycle",
 			"source", src.Name,
-			"from", fromLedger, "to", toLedger,
+			"from", fromLedger, "to", toLedger, "committed_to", commitTo,
 			"rows_scanned", rowsScanned,
 			"events_emitted", eventsEmitted,
 			"decode_errors", decodeErrors,
-			"lag_ledgers", tip-toLedger,
+			"sink_transient_fails", sinkTransientFails,
+			"sink_permanent_fails", sinkPermanentFails,
+			"lag_ledgers", tip-commitTo,
 			"elapsed", time.Since(start).Round(time.Millisecond),
 		)
 	}

@@ -31,7 +31,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=root
-ExecStart=/usr/local/bin/galexie-archive-fill
+ExecStart=/usr/local/sbin/run-heavy-job.sh galexie-archive-fill /usr/local/bin/galexie-archive-fill
 # A routine hourly drift fills in seconds-minutes; a large catch-up
 # after an outage (e.g. the original ~346k-ledger hole) can run for
 # hours. Cap generously rather than risk a half-mirrored partition

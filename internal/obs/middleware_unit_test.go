@@ -4,6 +4,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 )
 
 // Unit tests for the small helpers inside http_middleware.go.
@@ -122,67 +126,67 @@ func TestStatusRecorder_Flush_noopWhenInnerDoesntImplementFlusher(t *testing.T) 
 // histogram as fast successes, so a 500 returning in 5 ms reported
 // as "good" against the latency SLO numerator. After this fix, the
 // 500's elapsed time only lands in HTTPRequestDuration (the full
-// distribution); HTTPRequestSuccessDuration stays at zero for the
-// route's _bucket{le=0.2} counter.
+// distribution); HTTPRequestSuccessDuration stays untouched.
+//
+// This drives the REAL middleware chain (HTTPMetrics → CaptureRoute →
+// ServeMux) rather than hand-observing the histograms, and asserts on
+// before/after deltas of the actual counters so it fails if the
+// middleware ever regresses the 5xx-vs-success split.
 func TestHTTPMetrics_Fast5xxDoesNotCountAsSuccess(t *testing.T) {
-	// Use a hand-rolled response so we don't touch the package's
-	// shared Registry from a parallel test. Resetting a histogram
-	// requires per-test isolation infrastructure we don't have; the
-	// route label is unique to this test to keep the assertion
-	// well-scoped.
-	const route = "/test-f0105"
-	const status = 500
-	HTTPRequestSuccessDuration.WithLabelValues("GET", route)
-	HTTPRequestDuration.WithLabelValues("GET", route)
-	// Manual observation that mirrors what the middleware does for
-	// a status<500 vs >=500 split.
-	HTTPRequestDuration.WithLabelValues("GET", route).Observe(0.003)
-	if status < 500 && status != 499 {
-		HTTPRequestSuccessDuration.WithLabelValues("GET", route).Observe(0.003)
+	const (
+		method = "GET"
+		route  = "/test-f0105"
+	)
+
+	// Route through a real ServeMux so r.Pattern (and thus the `route`
+	// label) is populated exactly as it is in production. Handler
+	// returns a fast 500.
+	mux := http.NewServeMux()
+	mux.HandleFunc(method+" "+route, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	h := HTTPMetrics(CaptureRoute(mux))
+
+	successBefore := histSampleCount(t, HTTPRequestSuccessDuration.WithLabelValues(method, route))
+	durationBefore := histSampleCount(t, HTTPRequestDuration.WithLabelValues(method, route))
+	total5xxBefore := testutil.ToFloat64(HTTPRequestsTotal.WithLabelValues(method, route, "500"))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(method, route, nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("handler status = %d, want 500", rec.Code)
 	}
-	// Scrape the metric and verify the route landed in
-	// _duration_seconds but NOT in _success_duration_seconds.
-	srv := httptest.NewServer(Handler())
-	defer srv.Close()
-	resp, err := http.Get(srv.URL)
-	if err != nil {
-		t.Fatal(err)
+
+	successAfter := histSampleCount(t, HTTPRequestSuccessDuration.WithLabelValues(method, route))
+	durationAfter := histSampleCount(t, HTTPRequestDuration.WithLabelValues(method, route))
+	total5xxAfter := testutil.ToFloat64(HTTPRequestsTotal.WithLabelValues(method, route, "500"))
+
+	// The 5xx counter must tick — the request WAS served and WAS a 500.
+	if got := total5xxAfter - total5xxBefore; got != 1 {
+		t.Errorf("http_requests_total{status=\"500\"} delta = %v, want 1", got)
 	}
-	defer resp.Body.Close()
-	body := make([]byte, 1<<16)
-	n, _ := resp.Body.Read(body)
-	scrape := string(body[:n])
-	if !containsAll(scrape, `http_request_duration_seconds_count{method="GET",route="/test-f0105"}`) {
-		t.Error("scrape missing duration entry for /test-f0105")
+	// The full-distribution latency histogram must observe the 500...
+	if got := durationAfter - durationBefore; got != 1 {
+		t.Errorf("http_request_duration_seconds count delta = %d, want 1", got)
 	}
-	if containsAny(scrape, `http_request_success_duration_seconds_count{method="GET",route="/test-f0105"} 1`) {
-		t.Error("a 500 leaked into the success histogram — F-0105 regression")
+	// ...but the success-only histogram must NOT (F-0105: a fast 5xx is
+	// not a latency success and must stay out of the SLO numerator).
+	if got := successAfter - successBefore; got != 0 {
+		t.Errorf("fast 500 leaked into success histogram: count delta = %d, want 0", got)
 	}
 }
 
-func containsAll(s string, parts ...string) bool {
-	for _, p := range parts {
-		if !strContains(s, p) {
-			return false
-		}
+// histSampleCount reads the current observation count off a single
+// histogram child (the value behind `<name>_count` on a scrape).
+func histSampleCount(t *testing.T, o prometheus.Observer) uint64 {
+	t.Helper()
+	m, ok := o.(prometheus.Metric)
+	if !ok {
+		t.Fatalf("observer %T is not a prometheus.Metric", o)
 	}
-	return true
-}
-
-func containsAny(s string, parts ...string) bool {
-	for _, p := range parts {
-		if strContains(s, p) {
-			return true
-		}
+	var dm dto.Metric
+	if err := m.Write(&dm); err != nil {
+		t.Fatalf("Write metric: %v", err)
 	}
-	return false
-}
-
-func strContains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
+	return dm.GetHistogram().GetSampleCount()
 }

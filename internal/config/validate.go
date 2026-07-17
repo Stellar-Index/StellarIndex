@@ -220,7 +220,7 @@ func (s StellarConfig) validate() error {
 	return nil
 }
 
-func (s StorageConfig) validate() error { //nolint:gocognit // dispatch-heavy; splitting would reduce linearity
+func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduce linearity
 	if s.PostgresDSN == "" {
 		return fmt.Errorf("%w: storage.postgres_dsn required", ErrInvalidConfig)
 	}
@@ -285,6 +285,17 @@ func (s StorageConfig) validate() error { //nolint:gocognit // dispatch-heavy; s
 					ErrInvalidConfig, b.name, b.v)
 			}
 		}
+	}
+	// ClickHouse feed-switch dependency (ADR-0034 #10, C3-20): the
+	// projector reads forward events from the CH lake's contract_events,
+	// so CH must actually be BEING WRITTEN — i.e. the real-time dual-sink
+	// must be on. projector_source=true with live_sink=false silently
+	// mis-reads a lake nothing keeps current. Enforce the documented
+	// "Requires clickhouse_live_sink" invariant at validate-time.
+	if s.ClickHouseProjectorSource && !s.ClickHouseLiveSink {
+		return fmt.Errorf("%w: storage.clickhouse_projector_source requires storage.clickhouse_live_sink "+
+			"(the projector reads forward events from ClickHouse, so the dual-sink must be writing them)",
+			ErrInvalidConfig)
 	}
 	return nil
 }

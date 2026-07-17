@@ -23,7 +23,7 @@ Environment=CONFIG_PATH=/etc/stellarindex.toml
 Environment=CH_ADDR=127.0.0.1:9300
 Environment=CHSUPPLY_CHUNK=25000
 
-ExecStart=/usr/local/sbin/run-ch-supply.sh
+ExecStart=/usr/local/sbin/run-heavy-job.sh ch-supply /usr/local/sbin/run-ch-supply.sh
 
 # De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
 # created by 04-users.yml (CS-119). Talks Postgres + ClickHouse over the

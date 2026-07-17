@@ -1407,40 +1407,6 @@ func (o *Orchestrator) dropForMinUSDVolume(pair canonical.Pair, trades []canonic
 	return true
 }
 
-// windowUSDVolume sums quote_amount across the supplied trades and
-// converts to USD, scaling EACH trade by ITS OWN source's amount
-// decimals (external.Lookup(src).AmountScaleDecimals()) rather than a
-// uniform 10^8 (CS-040). The old fixed-1e8 assumption understated FX
-// sources (which stamp 1e6) by ~100×, so a fiat:USD pair fed by the FX
-// pollers (EUR/USD, …) would compute USD volume 100× low and the
-// dropForMinUSDVolume gate would wrongly drop it. This is the latent
-// trap behind keeping min_usd_volume=0.
-//
-// CALLER CONTRACT: invoke when [minUSDVolumeApplies] is true (the quote
-// is USD, so quote_amount is USD-denominated at the source's scale).
-//
-// Empty input yields 0 (a window with zero contributing trades has
-// zero USD volume by definition).
-func windowUSDVolume(trades []canonical.Trade) float64 {
-	if len(trades) == 0 {
-		return 0
-	}
-	// The comparison is operator-tunable, not precision-critical, so a
-	// big.Rat accumulator → float64 is acceptable.
-	total := new(big.Rat)
-	for i := range trades {
-		amt := trades[i].QuoteAmount.BigInt()
-		if amt == nil || amt.Sign() == 0 {
-			continue
-		}
-		dec := external.Lookup(trades[i].Source).AmountScaleDecimals()
-		scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(dec)), nil)
-		total.Add(total, new(big.Rat).SetFrac(amt, scale))
-	}
-	f, _ := total.Float64()
-	return f
-}
-
 // filterForVWAP drops trades whose source is not registered as a
 // Class=Exchange + IncludeInVWAP=true venue. This is the
 // aggregator-policy layer that implements the "only genuine

@@ -25,6 +25,10 @@ echo "=== PK discriminators ===" && go run ./scripts/ci/lint-pk-discriminators
 # class that otherwise only CI's promtool job flags (2026-07-06 galexie-archive
 # incident: alerts at group level → "field expr not found in type RuleGroup").
 echo "=== Rule structure ===" && python3 ./scripts/ci/lint-rule-structure.py
+# YAML-aware runbook guard (audit C4-1): runbook_url must be an annotation,
+# not a label, on every alert — else the Alertmanager Discord templates
+# render no runbook link. Fails if a runbook_url regresses back into labels.
+echo "=== Runbook annotations ===" && python3 ./scripts/ci/lint-runbook-annotations.py
 # Prometheus rule files. Graceful-skip when promtool isn't
 # installed locally — CI installs it explicitly. The Makefile
 # target hard-fails on missing promtool; verify.sh wraps it with
