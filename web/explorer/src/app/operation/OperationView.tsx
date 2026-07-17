@@ -24,6 +24,7 @@ import {
   CopyHash,
   CopyValue,
   formatTimestamp,
+  renderOpFieldValue,
 } from '../explorer-shared';
 
 const HASH_RE = /^[0-9a-fA-F]{64}$/;
@@ -203,7 +204,7 @@ function DecodedFields({ op }: { op: TxOperation }) {
           {keys.map((k) => (
             <div key={k} className="flex items-baseline gap-2">
               <dt className="shrink-0 text-[11px] uppercase tracking-wider text-ink-muted">{k}</dt>
-              <dd className="break-all font-mono text-xs text-ink-body">{renderFieldValue(fields[k])}</dd>
+              <dd className="break-all font-mono text-xs text-ink-body">{renderOpFieldValue(k, fields[k])}</dd>
             </div>
           ))}
         </dl>
@@ -314,18 +315,6 @@ function OpResultBadge({ code }: { code?: number }) {
       {ok ? 'success' : `code ${code}`}
     </span>
   );
-}
-
-function renderFieldValue(v: unknown): string {
-  if (v == null) return '—';
-  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-    return String(v);
-  }
-  try {
-    return JSON.stringify(v);
-  } catch {
-    return String(v);
-  }
 }
 
 function errorStatus(err: unknown): number | null {

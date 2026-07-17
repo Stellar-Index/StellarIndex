@@ -15,6 +15,7 @@ import {
   CopyHash,
   formatTimestamp,
   relativeAge,
+  scaledUnits,
 } from '../explorer-shared';
 import type { paths } from '@/api/types';
 
@@ -553,6 +554,17 @@ interface TransferRow {
   amount?: string;
 }
 
+// transferAmount scales a raw i128 base-unit transfer amount (string) to
+// display units by 10^decimals via the exact string-split path — never
+// Number() on the raw integer, which loses precision above 2^53 and
+// invents float dust (ADR-0003). Falls back to the raw string if the
+// value isn't a clean integer.
+function transferAmount(amount: string, decimals: number): string {
+  const n = scaledUnits(amount, decimals);
+  if (!Number.isFinite(n)) return amount;
+  return n.toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
+
 /**
  * TransfersPanel — decoded token flows (S-016: the visitor question
  * "where is the money going" was answered by a raw-JSON external link
@@ -580,7 +592,6 @@ function TransfersPanel({ id }: { id: string }) {
   // Stellar stroops / the SAC default, so SACs and classic tokens are
   // exact even on the fallback.
   const decimals = data?.decimals ?? 7;
-  const scale = 10 ** decimals;
   if (rows.length === 0) return null;
   const gLink = (g?: string) =>
     g && /^G[A-Z2-7]{55}$/.test(g) ? (
@@ -627,9 +638,7 @@ function TransfersPanel({ id }: { id: string }) {
               <td className="px-4 py-2">{gLink(t.from)}</td>
               <td className="px-4 py-2">{gLink(t.to)}</td>
               <td className="px-4 py-2 text-right font-mono tabular-nums">
-                {t.amount
-                  ? (Number(t.amount) / scale).toLocaleString(undefined, { maximumFractionDigits: 4 })
-                  : '—'}
+                {t.amount ? transferAmount(t.amount, decimals) : '—'}
               </td>
               <td className="px-4 py-2">
                 {t.tx_hash ? (
