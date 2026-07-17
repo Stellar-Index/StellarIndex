@@ -26,15 +26,18 @@ CONFIG="${CONFIG_PATH:-/etc/stellarindex.toml}"
 CHADDR="${CH_ADDR:-127.0.0.1:9300}"
 CHUNK="${CHSUPPLY_CHUNK:-25000}"
 MEMGUARD="${CHSUPPLY_MEMGUARD:-6442450944}"   # wait while CH mem > 6 GiB
-LOG=/var/log/ch-supply-refresh.log
+# Logs go to stdout/stderr → systemd-journald → promtail → loki. This oneshot
+# unit is de-privileged (User=stellarindex) and writes NOTHING to disk: a
+# /var/log file would fail on ownership under the 2026-07-03 hardening AND isn't
+# scraped by promtail (which ships the journal, not files). (2026-07-17)
 CH() { curl -sS --max-time 3600 http://localhost:8123/ --data-binary "$1" 2>/dev/null; }
 
 TIP=$("$PSQL" "$DSN" -tA -c "SELECT last_ledger FROM ingestion_cursors WHERE source='ledgerstream'" 2>/dev/null | tr -d '[:space:]')
-[ -n "$TIP" ] && [ "$TIP" != "0" ] || { echo "$(date -u) ch-supply: tip unresolved" >> "$LOG"; exit 1; }
+[ -n "$TIP" ] && [ "$TIP" != "0" ] || { echo "$(date -u) ch-supply: tip unresolved" >&2; exit 1; }
 FROM=$(CH "SELECT max(ledger_seq)+1 FROM stellar.supply_flows" | tr -d '[:space:]')
 [ -n "$FROM" ] && [ "$FROM" != "0" ] || FROM=2
 
-echo "$(date -u) ch-supply refresh: seed [$FROM,$TIP] (chunk=$CHUNK)" >> "$LOG"
+echo "$(date -u) ch-supply refresh: seed [$FROM,$TIP] (chunk=$CHUNK)"
 
 # Track whether any chunk failed so the oneshot unit reports failure to systemd
 # instead of a spurious success (audit-2026-07-16 C4-2: without this, a failed
@@ -51,13 +54,13 @@ while [ "$FROM" -lt "$TIP" ]; do
     [ "${M:-0}" -lt "$MEMGUARD" ] && break
     sleep 20
   done
-  "$OPS" ch-supply -config "$CONFIG" -ch-addr "$CHADDR" -from "$FROM" -to "$TO" -seed-flows </dev/null >> "$LOG" 2>&1 \
-    || { echo "$(date -u) seed [$FROM,$TO] FAILED" >> "$LOG"; rc=1; }
+  "$OPS" ch-supply -config "$CONFIG" -ch-addr "$CHADDR" -from "$FROM" -to "$TO" -seed-flows </dev/null \
+    || { echo "$(date -u) seed [$FROM,$TO] FAILED" >&2; rc=1; }
   FROM=$TO
 done
 if [ "$rc" -ne 0 ]; then
-  echo "$(date -u) supply_flows seed FINISHED WITH FAILURES (tip=$TIP) — see FAILED lines above" >> "$LOG"
+  echo "$(date -u) supply_flows seed FINISHED WITH FAILURES (tip=$TIP) — see FAILED lines above" >&2
 else
-  echo "$(date -u) supply_flows seed complete (tip=$TIP)" >> "$LOG"
+  echo "$(date -u) supply_flows seed complete (tip=$TIP)"
 fi
 exit "$rc"
