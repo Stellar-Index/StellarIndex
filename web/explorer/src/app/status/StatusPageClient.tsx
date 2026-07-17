@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 
 import { Badge, Card, Container, type BadgeTone } from '@/components/ui';
+import { isSafeHref } from '@/lib/markdown';
 import type { components, paths } from '@/api/types';
 
 const API_BASE_URL =
@@ -935,7 +936,11 @@ function ActiveIncidents({ incidents }: { incidents: IncidentEntry[] }) {
                       </Badge>
                     </div>
                   </div>
-                  {inc.runbook_url && (
+                  {/* runbook_url is live API JSON — only render it as a
+                      live link when it passes the scheme allowlist
+                      (http/https/mailto), else drop the anchor so a
+                      javascript:/data: URL can't execute on click. */}
+                  {inc.runbook_url && isSafeHref(inc.runbook_url) && (
                     <a
                       href={inc.runbook_url}
                       target="_blank"

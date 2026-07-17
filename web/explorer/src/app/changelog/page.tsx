@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { loadReleases, versionSlug, type Release } from '@/lib/changelog';
+import { isSafeHref } from '@/lib/markdown';
 
 // Cap the rendered changelog to the most recent N releases. The full
 // history (242+ sections) inlined to a ~4.4 MB page (audit 2026-06-19);
@@ -287,7 +288,13 @@ function MarkdownLite({ text }: { text: string }) {
               {t.value}
             </code>
           );
-        if (t.kind === 'link')
+        if (t.kind === 'link') {
+          // Reject disallowed schemes (javascript:, data:, …) — render
+          // the label as plain text rather than a live anchor. Shares the
+          // scheme allowlist with lib/markdown's Inline renderer.
+          if (!isSafeHref(t.href)) {
+            return <span key={i}>{t.value}</span>;
+          }
           return (
             <a
               key={i}
@@ -299,6 +306,7 @@ function MarkdownLite({ text }: { text: string }) {
               {t.value}
             </a>
           );
+        }
         return <span key={i}>{t.value}</span>;
       })}
     </>
