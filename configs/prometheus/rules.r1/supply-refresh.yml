@@ -137,3 +137,33 @@ groups:
             Runbook: split by outcome, inspect the dominant kind; for
             sustained `stale_component` on one asset, see
             WithStaleComponentLedgersFor.
+
+      # ch-supply.service (daily supply_flows gap-fill) failed its last run.
+      # Added 2026-07-17: this unit failed SILENTLY for weeks (a /var/log
+      # permission regression under the 2026-07-03 non-root hardening) because
+      # NOTHING alerted on it. The fix moved its logging to journald; this alert
+      # ensures a future failure is loud. node_systemd_unit_state comes from
+      # node_exporter --collector.systemd (same source as verify-archive).
+      - alert: stellarindex_ch_supply_gapfill_failed
+        expr: |
+          node_systemd_unit_state{
+            name="ch-supply.service",
+            state="failed"
+          } == 1
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: supply
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-supply-gapfill-failed.md
+          summary: "ch-supply SEP-41 supply gap-fill failed on {{ $labels.instance }}"
+          description: |
+            The most-recent run of `ch-supply.service` ended in the `failed`
+            state — the daily defensive forward-gap-fill of stellar.supply_flows
+            (backing /v1/assets SEP-41 supply) did not complete. The live
+            decode-at-ingest path normally keeps supply_flows current, so served
+            supply is likely still correct, but the backstop is down: a genuine
+            live-writer gap would go unhealed. Diagnose with
+            `journalctl -u ch-supply` (chunk-level FAILED lines, ClickHouse
+            memory-guard stalls, or a Postgres tip-resolution error).
