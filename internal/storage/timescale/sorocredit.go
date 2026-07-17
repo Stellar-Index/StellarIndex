@@ -114,19 +114,31 @@ func (s *Store) InsertCreditPosition(ctx context.Context, e CreditPosition) erro
 	if e.TxHash == "" {
 		return errors.New("timescale: InsertCreditPosition: TxHash is empty")
 	}
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// re-derive with a higher-or-equal generation UPDATEs the decoded value
+	// columns in place; a lower generation (a live gen-0 replay) can never
+	// revert a correction. Replaces the old DO NOTHING no-op.
 	const q = `
         INSERT INTO credit_positions (
             collateral_contract, position_uuid, position_name, owner,
-            ledger, ledger_close_time, tx_hash, op_index, event_index
+            ledger, ledger_close_time, tx_hash, op_index, event_index,
+            derive_generation
         ) VALUES (
             $1, $2, $3, $4,
-            $5, $6, $7, $8, $9
+            $5, $6, $7, $8, $9,
+            $10
         )
-        ON CONFLICT (ledger_close_time, collateral_contract, ledger, tx_hash, op_index, event_index) DO NOTHING
+        ON CONFLICT (ledger_close_time, collateral_contract, ledger, tx_hash, op_index, event_index) DO UPDATE SET
+            position_uuid     = EXCLUDED.position_uuid,
+            position_name     = EXCLUDED.position_name,
+            owner             = EXCLUDED.owner,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE credit_positions.derive_generation <= EXCLUDED.derive_generation
     `
 	_, err := s.db.ExecContext(ctx, q,
 		e.CollateralContract, e.PositionUUID, e.PositionName, e.Owner,
 		int(e.Ledger), e.LedgerCloseTime.UTC(), e.TxHash, e.OpIndex, e.EventIndex,
+		s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertCreditPosition %s@%d: %w", e.CollateralContract, e.Ledger, err)
@@ -142,22 +154,35 @@ func (s *Store) InsertCreditStatement(ctx context.Context, e CreditStatement) er
 	if e.TxHash == "" {
 		return errors.New("timescale: InsertCreditStatement: TxHash is empty")
 	}
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of `amount` (or any decoded column) lands in place
+	// when its generation is >= the stored one; a live gen-0 replay can never
+	// revert it.
 	const q = `
         INSERT INTO credit_statements (
             statement_uuid, position_uuid, collateral_contract,
             amount, statement_time,
-            ledger, ledger_close_time, tx_hash, op_index, event_index
+            ledger, ledger_close_time, tx_hash, op_index, event_index,
+            derive_generation
         ) VALUES (
             $1, $2, $3,
             $4::numeric, $5,
-            $6, $7, $8, $9, $10
+            $6, $7, $8, $9, $10,
+            $11
         )
-        ON CONFLICT (ledger_close_time, statement_uuid, ledger, tx_hash, op_index, event_index) DO NOTHING
+        ON CONFLICT (ledger_close_time, statement_uuid, ledger, tx_hash, op_index, event_index) DO UPDATE SET
+            position_uuid       = EXCLUDED.position_uuid,
+            collateral_contract = EXCLUDED.collateral_contract,
+            amount              = EXCLUDED.amount,
+            statement_time      = EXCLUDED.statement_time,
+            derive_generation   = EXCLUDED.derive_generation
+          WHERE credit_statements.derive_generation <= EXCLUDED.derive_generation
     `
 	_, err := s.db.ExecContext(ctx, q,
 		e.StatementUUID, e.PositionUUID, e.CollateralContract,
 		nullNumeric(e.Amount), e.StatementTime.UTC(),
 		int(e.Ledger), e.LedgerCloseTime.UTC(), e.TxHash, e.OpIndex, e.EventIndex,
+		s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertCreditStatement %s@%d: %w", e.StatementUUID, e.Ledger, err)
@@ -179,22 +204,33 @@ func (s *Store) InsertCreditSettlement(ctx context.Context, e CreditSettlement) 
 	if err != nil {
 		return err
 	}
+	// INV-3 generation-guarded corrective upsert (migration 0110).
 	const q = `
         INSERT INTO credit_settlements (
             collateral_contract, position_uuid, statement_uuid,
             settler_account, debt_asset, settled_amount, attributes,
-            ledger, ledger_close_time, tx_hash, op_index, event_index
+            ledger, ledger_close_time, tx_hash, op_index, event_index,
+            derive_generation
         ) VALUES (
             $1, $2, $3,
             $4, $5, $6::numeric, $7,
-            $8, $9, $10, $11, $12
+            $8, $9, $10, $11, $12,
+            $13
         )
-        ON CONFLICT (ledger_close_time, position_uuid, statement_uuid, ledger, tx_hash, op_index, event_index) DO NOTHING
+        ON CONFLICT (ledger_close_time, position_uuid, statement_uuid, ledger, tx_hash, op_index, event_index) DO UPDATE SET
+            collateral_contract = EXCLUDED.collateral_contract,
+            settler_account     = EXCLUDED.settler_account,
+            debt_asset          = EXCLUDED.debt_asset,
+            settled_amount      = EXCLUDED.settled_amount,
+            attributes          = EXCLUDED.attributes,
+            derive_generation   = EXCLUDED.derive_generation
+          WHERE credit_settlements.derive_generation <= EXCLUDED.derive_generation
     `
 	_, err = s.db.ExecContext(ctx, q,
 		e.CollateralContract, e.PositionUUID, e.StatementUUID,
 		e.SettlerAccount, nullString(e.DebtAsset), nullNumeric(e.SettledAmount), attrs,
 		int(e.Ledger), e.LedgerCloseTime.UTC(), e.TxHash, e.OpIndex, e.EventIndex,
+		s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertCreditSettlement %s@%d: %w", e.PositionUUID, e.Ledger, err)
@@ -216,20 +252,31 @@ func (s *Store) InsertCreditEvent(ctx context.Context, e CreditEvent) error {
 	if err != nil {
 		return err
 	}
+	// INV-3 generation-guarded corrective upsert (migration 0110).
 	const q = `
         INSERT INTO credit_events (
             event_type, collateral_contract, asset, account, amount, attributes,
-            ledger, ledger_close_time, tx_hash, op_index, event_index
+            ledger, ledger_close_time, tx_hash, op_index, event_index,
+            derive_generation
         ) VALUES (
             $1, $2, $3, $4, $5::numeric, $6,
-            $7, $8, $9, $10, $11
+            $7, $8, $9, $10, $11,
+            $12
         )
-        ON CONFLICT (ledger_close_time, event_type, ledger, tx_hash, op_index, event_index) DO NOTHING
+        ON CONFLICT (ledger_close_time, event_type, ledger, tx_hash, op_index, event_index) DO UPDATE SET
+            collateral_contract = EXCLUDED.collateral_contract,
+            asset               = EXCLUDED.asset,
+            account             = EXCLUDED.account,
+            amount              = EXCLUDED.amount,
+            attributes          = EXCLUDED.attributes,
+            derive_generation   = EXCLUDED.derive_generation
+          WHERE credit_events.derive_generation <= EXCLUDED.derive_generation
     `
 	_, err = s.db.ExecContext(ctx, q,
 		e.EventType, nullString(e.CollateralContract), nullString(e.Asset),
 		nullString(e.Account), nullNumeric(e.Amount), attrs,
 		int(e.Ledger), e.LedgerCloseTime.UTC(), e.TxHash, e.OpIndex, e.EventIndex,
+		s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertCreditEvent %s@%d: %w", e.EventType, e.Ledger, err)

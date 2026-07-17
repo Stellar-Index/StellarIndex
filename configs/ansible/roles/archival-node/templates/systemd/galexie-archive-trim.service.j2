@@ -31,7 +31,8 @@ User=root
 ExecStartPre=/usr/local/sbin/compute-trim-cutoff.sh
 EnvironmentFile=/run/galexie-archive-trim.env
 
-ExecStart=/usr/local/bin/stellarindex-ops trim-galexie-archive \
+ExecStart=/usr/local/sbin/run-heavy-job.sh galexie-archive-trim \
+  /usr/local/bin/stellarindex-ops trim-galexie-archive \
   -older-than-ledger ${TRIM_CUTOFF} \
   -verify-upstream \
   -commit

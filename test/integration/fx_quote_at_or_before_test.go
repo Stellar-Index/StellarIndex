@@ -207,11 +207,17 @@ func TestFXQuoteAtOrBeforeFXQuotesFirst(t *testing.T) {
 	}
 
 	t.Run("fx_quotes row wins over the trades row, exact scale", func(t *testing.T) {
-		// Active-feed row: rate_usd(EUR) = 1.085 USD per EUR. float64
-		// 1.085 round-trips through lib/pq as the shortest decimal
-		// "1.085", so NUMERIC stores it exactly.
+		// Active-feed row: rate_usd(EUR) = 0.92, i.e. EUR PER USD — the raw
+		// close of Massive's C:USDEUR ticker (units-of-quote per unit-of-base;
+		// standard forex convention), which is exactly what forex/client.go
+		// stores ("usd→eur ≈ 0.92 means 1 USD buys 0.92 EUR"). NOT 1.085
+		// (that is USD-per-EUR = C:EURUSD, the inverse — an earlier fixture used
+		// it and, paired with the then-inverted fxSnapFromRows division, the two
+		// errors cancelled to a plausible result and masked audit M3). float64
+		// 0.92 round-trips through lib/pq as the shortest decimal "0.92", stored
+		// exactly in NUMERIC.
 		if err := store.InsertFXQuoteBatch(ctx, []timescale.FXQuote{{
-			Bucket: day, Ticker: "EUR", RateUSD: 1.085, InverseUSD: 1.0 / 1.085, Source: "massive",
+			Bucket: day, Ticker: "EUR", RateUSD: 0.92, InverseUSD: 1.0 / 0.92, Source: "massive",
 		}}); err != nil {
 			t.Fatalf("InsertFXQuoteBatch: %v", err)
 		}
@@ -226,9 +232,12 @@ func TestFXQuoteAtOrBeforeFXQuotesFirst(t *testing.T) {
 		if !obs.Equal(day) {
 			t.Errorf("observedAt = %v, want the fx_quotes bucket %v", obs, day)
 		}
-		// USD/EUR price = 1 / rate_usd(EUR) = 200/217 — exact Rat
-		// inversion, NOT the float-derived inverse_usd column.
-		want := new(big.Rat).SetFrac(big.NewInt(200), big.NewInt(217))
+		// USD/EUR = EUR per USD = quote-per-base = rate_usd(EUR)/rate_usd(USD)
+		// = 0.92/1 = 0.92 = 23/25, the SAME quote-per-base orientation the
+		// trades fallback returns (subtest below: quote_amount/base_amount).
+		// (M3: the old fxSnapFromRows returned base/quote — inverted — so a real
+		// 0.92 feed served 1/0.92 = 1.085, the wrong-way-up fiat price.)
+		want := new(big.Rat).SetFrac(big.NewInt(23), big.NewInt(25))
 		if price.Cmp(want) != 0 {
 			t.Errorf("price = %s, want exactly %s", price.RatString(), want.RatString())
 		}

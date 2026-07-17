@@ -115,20 +115,33 @@ func TestPriceAlertReader_FatFingerServesLKGNoSpuriousAlert(t *testing.T) {
 	}
 }
 
-func TestPriceAlertReader_ThinHistoryPassesThrough(t *testing.T) {
-	// Too few trailing buckets to judge → serve the candidate (fail-open),
-	// even if extreme.
+func TestPriceAlertReader_ThinHistoryWiderFiniteBand(t *testing.T) {
+	// Post-M11(b): a thin baseline no longer fails fully open. A gross
+	// (>10x) print is caught and served as last-known-good (no spurious
+	// alert); a within-order-of-magnitude value still passes through.
 	base, quote := alertUSDAssets(t)
-	reader := priceAlertVWAPReader{
+	gross := priceAlertVWAPReader{
 		store:  fakeAlertVWAPStore{latest: alertRow(0, "999.0"), trailing: steadyAlertRows(3)},
 		logger: discardLogger(),
 	}
-	price, _, ok, err := reader.LatestVWAP(context.Background(), base, quote)
+	price, _, ok, err := gross.LatestVWAP(context.Background(), base, quote)
 	if err != nil || !ok {
 		t.Fatalf("expected a served price; got ok=%v err=%v", ok, err)
 	}
-	if price != "999.0" {
-		t.Fatalf("served price = %s, want candidate 999.0 (thin-history pass-through)", price)
+	if price != "1.0" {
+		t.Fatalf("served price = %s, want last-known-good 1.0 (thin-history gross print caught)", price)
+	}
+
+	moderate := priceAlertVWAPReader{
+		store:  fakeAlertVWAPStore{latest: alertRow(0, "5.0"), trailing: steadyAlertRows(3)},
+		logger: discardLogger(),
+	}
+	price, _, ok, err = moderate.LatestVWAP(context.Background(), base, quote)
+	if err != nil || !ok {
+		t.Fatalf("expected a served price; got ok=%v err=%v", ok, err)
+	}
+	if price != "5.0" {
+		t.Fatalf("served price = %s, want candidate 5.0 (within-band thin-history pass-through)", price)
 	}
 }
 

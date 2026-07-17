@@ -1143,31 +1143,6 @@ func TestUSDQuoteDecimals(t *testing.T) {
 	}
 }
 
-// TestWindowUSDVolume — the sum/1e8 conversion gives a clean USD
-// figure when the input slice's quote_amount values are at the
-// uniform 10^8 external-source convention.
-func TestWindowUSDVolume(t *testing.T) {
-	// 100 trades at $0.01 each = $1.00 total. quote_amount in 1e8
-	// scale: $0.01 = 1_000_000.
-	var trades []canonical.Trade
-	for i := 0; i < 100; i++ {
-		trades = append(trades, buildTrade(t,
-			big.NewInt(1_000_000_000), // base (irrelevant to USD-volume)
-			big.NewInt(1_000_000),     // quote at 1e8 scale = $0.01
-			time.Now(),
-		))
-	}
-	got := windowUSDVolume(trades)
-	if got < 0.99 || got > 1.01 {
-		t.Errorf("got %f, want ~1.00", got)
-	}
-
-	// Empty input → 0.
-	if got := windowUSDVolume(nil); got != 0 {
-		t.Errorf("empty input: got %f, want 0", got)
-	}
-}
-
 // TestTick_MinUSDVolumeFilter — the threshold gate rejects a thin
 // fiat:USD-quoted window and lets a fat one through. Verifies the
 // AggregatorDroppedWindowsTotal{reason="min_usd_volume"} counter
@@ -1739,25 +1714,5 @@ func TestTick_StreamPublisher_ErrorDoesNotPropagate(t *testing.T) {
 	// Cache write still happened — Publish failure is non-blocking.
 	if !mr.Exists("vwap:" + pair.Base.String() + ":" + pair.Quote.String() + ":300") {
 		t.Error("VWAP key should be present even when stream publish fails")
-	}
-}
-
-// TestWindowUSDVolume_ScalesPerSourceDecimals pins CS-040: USD volume must
-// scale each trade by its source's amount decimals, not a uniform 1e8. The FX
-// pollers stamp 1e6 — the old fixed-1e8 divisor understated them ~100×.
-func TestWindowUSDVolume_ScalesPerSourceDecimals(t *testing.T) {
-	mk := func(src string, quote int64) canonical.Trade {
-		return canonical.Trade{Source: src, QuoteAmount: canonical.NewAmount(big.NewInt(quote))}
-	}
-	if got := windowUSDVolume([]canonical.Trade{mk("binance", 100_000_000)}); got != 1 {
-		t.Errorf("CEX (1e8): got %v USD, want 1", got)
-	}
-	if got := windowUSDVolume([]canonical.Trade{mk("exchangeratesapi", 1_000_000)}); got != 1 {
-		t.Errorf("FX (1e6): got %v USD, want 1 (old 1e8 code gave 0.01)", got)
-	}
-	if got := windowUSDVolume([]canonical.Trade{
-		mk("binance", 100_000_000), mk("exchangeratesapi", 1_000_000),
-	}); got != 2 {
-		t.Errorf("mixed CEX+FX: got %v USD, want 2", got)
 	}
 }

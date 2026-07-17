@@ -1,0 +1,84 @@
+---
+# Served-value freshness tripwire (audit-2026-07-16 C4-6).
+#
+# The operator's core pain: wrong / stale served values go UNNOTICED.
+# There are already good per-surface freshness alerts —
+# stellarindex_api_price_stale (price stale OR absent),
+# stellarindex_oracle_stale, stellarindex_ingestion_source_insert_stale
+# (per source), stellarindex_aggregator_supply_refresh_stalled. What
+# NONE of them cover is the GLOBAL served-INSERT heartbeat:
+#
+#   * source_insert_stale is per-source and, being `time() - gauge`,
+#     is silent when the gauge series is ABSENT (never inserted /
+#     metric dropped) — a NULL, not a staleness.
+#   * all_sources_stopped watches source_EVENTS (the INPUT side). Events
+#     can keep flowing (last_event_unix climbs) while every INSERT fails
+#     or ON-CONFLICT-noops (last_insert_unix frozen) — the documented
+#     stuck-cursor / replay-loop pattern (see SourceLastInsertUnix godoc).
+#     That is invisible to an events-side rate check.
+#
+# These two rules are the served-side tripwire: the whole served tier
+# has stopped LANDING rows (STALE), or the served-insert timestamp
+# family has vanished from scrape entirely (NULL). Thresholds are
+# deliberately conservative (30 min total silence is unambiguous on a
+# continuously-trading mainnet feed) and tunable.
+#
+# Scrape source: internal/pipeline/sink.go sets
+# stellarindex_source_last_insert_unix on every SUCCESSFUL row landed.
+
+groups:
+  - name: stellarindex.serving_freshness
+    interval: 60s
+    rules:
+
+      # STALE: the freshest successful insert across ALL sources is
+      # older than 30 min — the served tier has frozen even though
+      # individual per-source thresholds may not have tripped.
+      - alert: stellarindex_serving_insert_frozen
+        expr: (time() - max(stellarindex_source_last_insert_unix)) > 1800
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: serving
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-source-stale.md
+          summary: "Served tier frozen — no successful insert from ANY source in {{ $value | humanizeDuration }}"
+          description: |
+            time() - max(stellarindex_source_last_insert_unix) is over 30
+            minutes: NOT ONE source has landed a successful row recently.
+            The served tier (trades, oracle updates, protocol flows) is
+            frozen, so /v1 responses are going stale across the board.
+
+            This fires even when source_EVENTS are still flowing — the
+            events-side all_sources_stopped alert would stay quiet in the
+            stuck-cursor / replay-loop pattern (events matched but every
+            insert ON-CONFLICT-noops or fails). Check Timescale write
+            health and the trade-insert backpressure metric first.
+
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-source-stale.md
+
+      # NULL: the served-insert timestamp family is entirely absent from
+      # scrape — the indexer is down, the metric was dropped, or no
+      # source has EVER inserted since boot. `time() - gauge` staleness
+      # checks are silent on an absent series; this catches that hole.
+      - alert: stellarindex_serving_insert_absent
+        expr: absent(stellarindex_source_last_insert_unix)
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: serving
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-source-stale.md
+          summary: "Served-insert freshness metric is ABSENT — freshness monitoring is blind"
+          description: |
+            stellarindex_source_last_insert_unix has no series in scrape for
+            15+ minutes. Either the indexer is down, the metric stopped
+            being exported, or no source has landed a single row since boot.
+            Every `time() - stellarindex_source_last_insert_unix` staleness
+            alert is a no-op while the series is absent, so this is the
+            backstop that keeps served-freshness monitoring from silently
+            going blind.
+
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-source-stale.md

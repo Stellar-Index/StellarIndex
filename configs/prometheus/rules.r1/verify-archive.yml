@@ -40,8 +40,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: archive
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-unit-failed.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-unit-failed.md
           summary: "verify-archive Tier A nightly run failed on {{ $labels.instance }}"
           description: |
             The most-recent run of `verify-archive-tier-a.service` exited
@@ -73,8 +73,8 @@ groups:
           severity: page
           team: stellarindex
           component: archive
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-run-stale.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-run-stale.md
           summary: "(R1 integrity-leader) verify-archive Tier A hasn't run cleanly in {{ $value | humanizeDuration }}"
           description: |
             R1 is the integrity leader per ADR-0016 — its nightly chain-link

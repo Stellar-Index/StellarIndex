@@ -46,6 +46,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -177,8 +178,14 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 
 	// Storage — required. API reads from Timescale (+ Redis cache
-	// in a follow-up PR).
-	store, err := timescale.Open(rootCtx, cfg.Storage.PostgresDSN)
+	// in a follow-up PR). OpenServing applies a session-level
+	// statement_timeout to every serving-pool connection (R1,
+	// audit-2026-07-16) — the SQL-side backstop bounding a runaway
+	// request-path query even if Go-side ctx cancellation races. Kept
+	// longer than api.request_timeout so the app-layer deadline fires
+	// first. Indexer/aggregator use the plain Open (their heavy batch
+	// scans set their own longer SET LOCAL statement_timeout).
+	store, err := timescale.OpenServing(rootCtx, cfg.Storage.PostgresDSN, cfg.API.ServingStatementTimeout)
 	if err != nil {
 		cancel() // nothing else registered yet; release the signal ctx
 		return fmt.Errorf("storage: %w", err)
@@ -305,12 +312,19 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// Rate limit — separate buckets per tier (F-0008 remediation).
 	// `anon` is keyed by remote IP (with Subject.Identifier when an
 	// auth middleware has stamped one); `auth` is keyed per-API-key
-	// or per-Subject for authenticated tiers (apikey, SEP-10). When
-	// Redis is unavailable, neither bucket is constructed — the
-	// middleware is omitted and the stack runs uncapped. An operator
-	// who cares will see this in readyz.
+	// or per-Subject for authenticated tiers (apikey, SEP-10).
+	//
+	// C3-13 / C3-22 (audit-2026-07-16): the buckets are now constructed
+	// even when Redis is absent. ratelimit.New(nil, …) returns a Bucket
+	// backed by an IN-PROCESS fixed-window limiter, so the anon/key
+	// tiers stay ENFORCED (fail-closed, single-instance accounting)
+	// rather than the stack running uncapped. The previous behaviour
+	// omitted the middleware entirely on a nil rdb — an anonymous flood
+	// then had no limiter at all. Single-instance accounting is correct
+	// for the R1 single-instance deployment; a future multi-instance
+	// deployment provides Redis and gets fleet-wide accounting back.
 	var rateLimit middleware.Middleware
-	if rdb != nil && (cfg.API.AnonRateLimitPerMin > 0 || cfg.API.KeyRateLimitPerMin > 0) {
+	if cfg.API.AnonRateLimitPerMin > 0 || cfg.API.KeyRateLimitPerMin > 0 {
 		var anonBucket, authBucket *ratelimit.Bucket
 		if cfg.API.AnonRateLimitPerMin > 0 {
 			anonBucket = ratelimit.New(rdb, cfg.API.AnonRateLimitPerMin, time.Minute)
@@ -324,13 +338,34 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			middleware.SkipHealthAndMetrics,
 			logger.With("component", "ratelimit"),
 		)
+		backend := "redis"
+		if rdb == nil {
+			backend = "in-process (single-instance fallback — no Redis)"
+		}
 		logger.Info(
 			"rate-limit tiers wired",
 			"anon_per_min", cfg.API.AnonRateLimitPerMin,
 			"key_per_min", cfg.API.KeyRateLimitPerMin,
 			"anon_enabled", anonBucket != nil,
 			"key_enabled", authBucket != nil,
+			"backend", backend,
 		)
+	}
+
+	// Failed-auth per-IP throttle (C3-5, audit-2026-07-16). Auth runs
+	// BEFORE the rate-limit middleware — deliberately, so per-tier
+	// limits key off the AUTHENTICATED subject — which means a request
+	// with an INVALID credential is rejected (401) before it ever
+	// reaches the limiter, leaving credential-stuffing / key-guessing
+	// unthrottled. This dedicated bucket throttles ONLY credential
+	// FAILURES, keyed on the resolved client IP, inside the Auth
+	// middleware; valid requests are untouched and still limited by
+	// subject downstream. Redis-backed when available, in-process
+	// fallback otherwise (same C3-13 fallback as above). Only engaged
+	// when an auth mode is active (mode=none never fails auth).
+	var failedAuthLimiter *ratelimit.Bucket
+	if cfg.API.FailedAuthRateLimitPerMin > 0 {
+		failedAuthLimiter = ratelimit.New(rdb, cfg.API.FailedAuthRateLimitPerMin, time.Minute)
 	}
 
 	// Per-account usage counter — daily INCRs alongside rate-limit
@@ -545,6 +580,15 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// Hub further down (gated on rdb != nil).
 	hub := streaming.NewHub(0)
 
+	// Per-IP concurrent-SSE-connection cap (C3-8, audit-2026-07-16). The
+	// global cap alone lets one client hold the whole budget; this bounds
+	// each client. Key off the trusted-proxy-aware resolver (the same one
+	// the rate limiter uses) so the cap tracks the real client behind
+	// Caddy, not the proxy's single address. SetTrustedProxyCIDRs already
+	// ran above, so RemoteIP honours the configured proxy allow-list.
+	streaming.SetMaxStreamsPerIP(cfg.API.Streaming.MaxStreamsPerIP)
+	streaming.SetStreamClientIPResolver(middleware.RemoteIP)
+
 	priceReader := storePriceReader{s: store, logger: logger}
 
 	// Oracle reader — Redis-cached read-through wrapper around the
@@ -672,6 +716,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Rdb:               rdb,
 		PostgresValidator: dashboardBundle.pgValidator,
 		SEP10:             sep10Validator,
+		FailedAuthLimiter: failedAuthLimiter,
 	}, logger)
 
 	// Hoist cache instances out of the Options literal so the
@@ -1038,8 +1083,13 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// maintains. The handler prefers this over UsageReader and
 		// falls back per-request when the read errors or the table
 		// has no rows for the subject yet.
-		UsageRollupReader:    usageRollupReaderOrNil(store),
-		CDNEnabled:           cfg.API.CDNEnabled,
+		UsageRollupReader: usageRollupReaderOrNil(store),
+		CDNEnabled:        cfg.API.CDNEnabled,
+		// Per-request deadline applied to every non-streaming request
+		// (C3-1/C3-2/P1, audit-2026-07-16). Backs the RequestTimeout
+		// middleware; the serving-pool statement_timeout below is the
+		// SQL-side backstop.
+		RequestTimeout:       cfg.API.RequestTimeout,
 		StatusBackend:        statusBackend,
 		ArchiveReportPath:    cfg.API.ArchiveReportPath,
 		RegionName:           cfg.Region.ID,
@@ -1253,6 +1303,10 @@ type authValidatorOptions struct {
 	Rdb               redis.UniversalClient
 	PostgresValidator *auth.PostgresAPIKeyValidator // non-nil when dashboard wired
 	SEP10             auth.SEP10Validator
+	// FailedAuthLimiter throttles invalid-credential attempts per IP
+	// (C3-5). Nil disables it. Attached to the Auth middleware for every
+	// mode that can actually fail auth (i.e. not mode=none).
+	FailedAuthLimiter *ratelimit.Bucket
 }
 
 // buildAuthMiddleware translates the configured auth_mode into a
@@ -1273,18 +1327,21 @@ func buildAuthMiddleware(mode string, opts authValidatorOptions, logger *slog.Lo
 		return nil
 	case "sep10":
 		return middleware.Auth(middleware.AuthOptions{
-			Mode:  middleware.AuthModeSEP10,
-			SEP10: opts.SEP10,
+			Mode:              middleware.AuthModeSEP10,
+			SEP10:             opts.SEP10,
+			FailedAuthLimiter: opts.FailedAuthLimiter,
 		})
 	case "apikey":
 		return middleware.Auth(middleware.AuthOptions{
-			Mode:   middleware.AuthModeAPIKey,
-			APIKey: buildAPIKeyValidator(opts, logger, "apikey"),
+			Mode:              middleware.AuthModeAPIKey,
+			APIKey:            buildAPIKeyValidator(opts, logger, "apikey"),
+			FailedAuthLimiter: opts.FailedAuthLimiter,
 		})
 	case "apikey_optional":
 		return middleware.Auth(middleware.AuthOptions{
-			Mode:   middleware.AuthModeAPIKeyOptional,
-			APIKey: buildAPIKeyValidator(opts, logger, "apikey_optional"),
+			Mode:              middleware.AuthModeAPIKeyOptional,
+			APIKey:            buildAPIKeyValidator(opts, logger, "apikey_optional"),
+			FailedAuthLimiter: opts.FailedAuthLimiter,
 		})
 	}
 	logger.Error("unknown auth_mode — server falling through to no-auth", "mode", mode)
@@ -1638,6 +1695,7 @@ func buildDivergenceReferences(cfg config.DivergenceConfig, oracles divergence.O
 		refs = append(refs, divergence.NewCoinGeckoReference(divergence.CoinGeckoOptions{
 			BaseURL: cfg.CoinGecko.BaseURL,
 			IDMap:   cfg.CoinGecko.IDMap,
+			MaxAge:  time.Duration(cfg.CoinGecko.MaxAgeMinutes) * time.Minute,
 		}))
 	}
 
@@ -2905,14 +2963,24 @@ func mkLogger(cfg config.ObsConfig) *slog.Logger {
 // Doesn't block startup — the binary still serves — but the
 // warning is loud enough to surface in journalctl + log aggregation.
 func warnUnsafeBind(logger *slog.Logger, listenAddr string, trustedProxyCIDRs []string) {
-	host, _, found := strings.Cut(listenAddr, ":")
-	if !found {
+	// net.SplitHostPort correctly handles bracketed IPv6 literals —
+	// "[::]:3000" → host "::", "[::1]:3000" → host "::1" — where the
+	// old strings.Cut(":") split "[::]:3000" into host "[" and never
+	// matched the all-interfaces check, so a public IPv6 all-interfaces
+	// bind shipped with NO warning (C3-18, audit-2026-07-16).
+	host, _, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		// Not a parseable host:port — can't classify the bind, so stay
+		// silent rather than warn on something we don't understand.
 		return
 	}
 	loopback := host == "127.0.0.1" || host == "::1" || host == "localhost"
 	if loopback {
 		return
 	}
+	// Empty host, 0.0.0.0, and :: all mean "every interface". After
+	// SplitHostPort the brackets are already stripped, so a "[::]" listen
+	// addr arrives here as "::".
 	if host == "0.0.0.0" || host == "::" || host == "" {
 		if len(trustedProxyCIDRs) == 0 {
 			logger.Warn("SECURITY: API is listening on a public interface with no trusted proxy CIDRs configured — direct :PORT requests bypass any TLS/WAF you have in front. Bind to 127.0.0.1 OR populate trusted_proxy_cidrs with your reverse proxy's source range.",

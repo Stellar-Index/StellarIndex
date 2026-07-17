@@ -83,22 +83,31 @@ func (s *Store) InsertAquariusAdminEvent(ctx context.Context, e AquariusAdminEve
 		return fmt.Errorf("timescale: InsertAquariusAdminEvent: marshal attributes: %w", err)
 	}
 
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the decoded governance columns (admin / target /
+	// attributes) lands in place when its generation is >= the stored one; a
+	// live gen-0 replay can never revert it. Replaces the old DO NOTHING.
 	const q = `
         INSERT INTO aquarius_admin (
             contract_id, ledger, ledger_close_time, tx_hash,
             op_index, event_index, event_kind, admin, target,
-            attributes
+            attributes, derive_generation
         ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
         )
         ON CONFLICT (ledger_close_time, contract_id, ledger, tx_hash,
-                     op_index, event_kind, event_index) DO NOTHING
+                     op_index, event_kind, event_index) DO UPDATE SET
+            admin             = EXCLUDED.admin,
+            target            = EXCLUDED.target,
+            attributes        = EXCLUDED.attributes,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE aquarius_admin.derive_generation <= EXCLUDED.derive_generation
     `
 	_, err = s.db.ExecContext(ctx, q,
 		e.ContractID, int(e.Ledger), e.LedgerCloseTime.UTC(), e.TxHash,
 		int(e.OpIndex), int(e.EventIndex), string(e.Kind),
 		nullString(e.Admin), nullString(e.Target),
-		attrsJSON,
+		attrsJSON, s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertAquariusAdminEvent %s@%d: %w", e.ContractID, e.Ledger, err)

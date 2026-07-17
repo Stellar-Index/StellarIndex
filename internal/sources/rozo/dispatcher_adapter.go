@@ -22,6 +22,18 @@ type Decoder struct{}
 // value is safe to share.
 func NewDecoder() *Decoder { return &Decoder{} }
 
+// withIndex stamps the intra-op event index onto the projected Event and
+// wraps it as the decoder's single-event output. EventIndex is the
+// rozo_events PK discriminator (migration 0112) that keeps two events of
+// the SAME event_type emitted by ONE operation from collapsing to a single
+// row (C2-13a). idx comes from the source events.Event.EventIndex, which
+// the production dispatcher populates from the LCM and the re-derive path
+// reads back from the lake's event_index column.
+func withIndex(idx int, e Event) []consumer.Event {
+	e.EventIndex = uint32(idx) //nolint:gosec // EventIndex is non-negative by Soroban spec.
+	return []consumer.Event{e}
+}
+
 // Compile-time check that *Decoder satisfies dispatcher.Decoder.
 var _ dispatcher.Decoder = (*Decoder)(nil)
 
@@ -76,13 +88,13 @@ func (*Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		if err != nil {
 			return nil, err
 		}
-		return []consumer.Event{eventFromPayment(p, observedAt)}, nil
+		return withIndex(ev.EventIndex, eventFromPayment(p, observedAt)), nil
 	case EventFlush:
 		f, err := DecodeFlush(&ev)
 		if err != nil {
 			return nil, err
 		}
-		return []consumer.Event{eventFromFlush(f, observedAt)}, nil
+		return withIndex(ev.EventIndex, eventFromFlush(f, observedAt)), nil
 	}
 	// Unreachable while Classify and this switch stay in lockstep —
 	// Classify already returned non-empty above, and every kind it

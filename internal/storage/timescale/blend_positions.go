@@ -37,19 +37,30 @@ func (s *Store) InsertBlendPositionEvent(ctx context.Context, e domain.BlendPosi
 		return fmt.Errorf("timescale: InsertBlendPositionEvent: invalid Kind %q", e.Kind)
 	}
 
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the i128 amounts (token_amount / b_or_d_amount)
+	// lands in place when its generation is >= the stored one; a live gen-0
+	// replay can never revert it. Replaces the old DO NOTHING no-op.
 	const q = `
         INSERT INTO blend_positions (
             pool, ledger, tx_hash, op_index, event_index, ledger_close_time,
             event_kind, asset, user_address,
             token_amount, b_or_d_amount,
-            counterparty
+            counterparty, derive_generation
         ) VALUES (
             $1, $2, $3, $4, $5, $6,
             $7, $8, $9,
             $10::numeric, $11::numeric,
-            $12
+            $12, $13
         )
-        ON CONFLICT (pool, ledger, tx_hash, op_index, event_kind, event_index, ledger_close_time) DO NOTHING
+        ON CONFLICT (pool, ledger, tx_hash, op_index, event_kind, event_index, ledger_close_time) DO UPDATE SET
+            asset             = EXCLUDED.asset,
+            user_address      = EXCLUDED.user_address,
+            token_amount      = EXCLUDED.token_amount,
+            b_or_d_amount     = EXCLUDED.b_or_d_amount,
+            counterparty      = EXCLUDED.counterparty,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE blend_positions.derive_generation <= EXCLUDED.derive_generation
     `
 	var counterparty sql.NullString
 	if e.Counterparty != "" {
@@ -59,7 +70,7 @@ func (s *Store) InsertBlendPositionEvent(ctx context.Context, e domain.BlendPosi
 		e.Pool, int(e.Ledger), e.TxHash, int(e.OpIndex), int(e.EventIndex), e.Timestamp.UTC(),
 		e.Kind, e.Asset, e.User,
 		bigIntToNumericString(e.TokenAmount), bigIntToNumericString(e.BOrDAmount),
-		counterparty,
+		counterparty, s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertBlendPositionEvent %s@%d: %w", e.Pool, e.Ledger, err)

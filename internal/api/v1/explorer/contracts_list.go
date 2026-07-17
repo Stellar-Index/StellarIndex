@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // ledgersPerDay is the approximate Stellar ledger cadence (≈5s close time →
@@ -55,9 +57,12 @@ func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	since := h.windowFloorLedger(r.Context(), days)
+	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
+	defer cancel()
 
-	rows, err := h.Reader.RecentContracts(r.Context(), limit, since)
+	since := h.windowFloorLedger(ctx, days)
+
+	rows, err := h.Reader.RecentContracts(ctx, limit, since)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -68,7 +73,7 @@ func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	attribution := h.contractAttribution(r.Context())
+	attribution := h.contractAttribution(ctx)
 	out := ContractsDirectoryView{
 		WindowDays:  days,
 		SinceLedger: since,
@@ -113,9 +118,14 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cid := r.PathValue("contract_id")
-	if cid == "" {
-		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-contract",
-			"Invalid contract", http.StatusBadRequest, "contract_id path segment is required")
+	// Validate up front (P2/C3-9, audit-2026-07-16): a malformed
+	// contract_id otherwise reaches ClickHouse before any 400. IsContractID
+	// is the same C-strkey validator the sibling contract endpoints
+	// (contracts.go ContractDetail, wasm_view.go ContractWasm) enforce.
+	if !canonical.IsContractID(cid) {
+		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-contract-id",
+			"Invalid contract id", http.StatusBadRequest,
+			"the contract id must be a valid C-strkey")
 		return
 	}
 	days := 90
@@ -133,9 +143,12 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	since := h.windowFloorLedger(r.Context(), days)
+	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
+	defer cancel()
 
-	edges, err := h.Reader.ContractInteractions(r.Context(), cid, limit, since)
+	since := h.windowFloorLedger(ctx, days)
+
+	edges, err := h.Reader.ContractInteractions(ctx, cid, limit, since)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -146,7 +159,7 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	attribution := h.contractAttribution(r.Context())
+	attribution := h.contractAttribution(ctx)
 	out := ContractInteractionsView{
 		ContractID:   cid,
 		WindowDays:   days,
@@ -188,12 +201,18 @@ func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cid := r.PathValue("contract_id")
-	if cid == "" {
-		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-contract",
-			"Invalid contract", http.StatusBadRequest, "contract_id path segment is required")
+	// Validate up front (P2/C3-9, audit-2026-07-16) — see ContractInteractions.
+	if !canonical.IsContractID(cid) {
+		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-contract-id",
+			"Invalid contract id", http.StatusBadRequest,
+			"the contract id must be a valid C-strkey")
 		return
 	}
-	versions, err := h.Reader.ContractCodeHistory(r.Context(), cid)
+
+	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
+	defer cancel()
+
+	versions, err := h.Reader.ContractCodeHistory(ctx, cid)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return

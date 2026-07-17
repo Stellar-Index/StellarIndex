@@ -2,7 +2,6 @@ package aggregate
 
 import (
 	"math/big"
-	"sort"
 )
 
 // Serving-sanity guard for the /v1/price closed-bucket path.
@@ -35,25 +34,48 @@ import (
 // *big.Rat (ADR-0003); no float64 enters the value path.
 
 const (
-	// guardMinSamples is the minimum number of trailing closed buckets
-	// with a usable VWAP required before the guard will judge a
-	// candidate. With fewer there is no robust baseline, so the guard
-	// fails OPEN (serves the candidate) rather than risk dropping a real
-	// price off a thin history.
+	// guardMinSamples is the number of trailing closed buckets with a
+	// usable VWAP at or above which the guard applies its FULL band
+	// (tight ratio ∪ MAD). Below it there is no stable MAD, so the guard
+	// falls back to the wider thin-history band ([guardThinRatioBound])
+	// rather than failing fully open — finding M11(b). Only a TRULY
+	// empty baseline (zero usable buckets) fails open, because then
+	// there is no centre to judge a candidate against at all.
 	guardMinSamples = 5
 )
 
 var (
-	// guardRatioBound: a candidate is accepted if it lies within
-	// [centre/R, centre*R] of the robust centre. R = 10 catches
-	// decimal-shift fat-fingers (10×, 100×, 0.1×, 0.01× — the classic
-	// "extra zero" / misplaced-decimal manipulation) while passing
-	// anything inside an order of magnitude. A real move that large in a
-	// single 1-minute bucket essentially never happens outside
-	// manipulation, and even when it does we serve the last clean bucket
-	// (a real recent price), never a fabricated number — so a one-bucket
-	// hold on a genuine 10× move is the conservative, honest trade-off.
-	guardRatioBound = big.NewRat(10, 1)
+	// guardRatioBound: on a tight/flat history a candidate is accepted
+	// only if it lies within [centre/R, centre*R] of the robust centre.
+	//
+	// R = 3 (finding M11(a); was 10). The previous 10× admitted the
+	// entire 3×–9× manipulation band a served-price sanity guard exists
+	// to stop; 3× catches a 5× pump (the finding's proof) and every
+	// larger deviation. A swing beyond 3× in a single 1-minute bucket is
+	// not credible as organic price discovery on a pair whose recent
+	// history is tight, and when a genuine >3× move does occur we serve
+	// the last clean bucket (a real recent price), never a fabricated
+	// number — a one-bucket hold is the conservative, honest trade-off.
+	//
+	// The band is inclusive, so this rejects deviations STRICTLY GREATER
+	// than 3×; a move of up to 3× (covering stablecoin depegs/halvings
+	// and extreme-but-real volatility) is still served. NOTE
+	// (business-value knob): 3 is the served-price manipulation
+	// tolerance — surfaced for the orchestrator to tighten (e.g. to 2×)
+	// per risk appetite. A genuinely volatile pair is not held to this
+	// number: the MAD band below widens acceptance from the pair's own
+	// history.
+	guardRatioBound = big.NewRat(3, 1)
+
+	// guardThinRatioBound is the WIDER but FINITE ratio band applied
+	// when the baseline is thin (1..guardMinSamples-1 usable buckets):
+	// [centre/10, centre*10]. Finding M11(b): a short history used to
+	// fail fully open, admitting any manipulation. A scarce baseline is
+	// widened (we only catch order-of-magnitude, decimal-shift
+	// fat-fingers) rather than tightened, so a real price off a thin
+	// history is never over-filtered — but a 10×/100× print is still
+	// caught instead of served unguarded.
+	guardThinRatioBound = big.NewRat(10, 1)
 
 	// guardMADFactor widens acceptance for genuinely volatile pairs: a
 	// candidate within centre ± K·(1.4826·MAD) also passes. Because the
@@ -62,13 +84,6 @@ var (
 	// over-filtered — its own history earns it the wider band. K = 10 is
 	// ~6.7σ-equivalent, well beyond ordinary volatility.
 	guardMADFactor = big.NewRat(10, 1)
-
-	// madToStd is 1.4826, the constant that scales a median-absolute-
-	// deviation to a standard-deviation-equivalent for a normal
-	// distribution (MAD is more robust to outliers than raw stdev, which
-	// is the whole point here — a prior manipulated bucket in the
-	// trailing set must not inflate the scale).
-	madToStd = big.NewRat(7413, 5000)
 )
 
 // GuardServedVWAP decides, from a candidate VWAP and the pair's recent
@@ -106,10 +121,20 @@ func GuardServedVWAP(candidate *big.Rat, trailing []*big.Rat) (accept bool, lkgI
 	return true, -1
 }
 
-// robustBand returns the acceptance interval [lo, hi] = union of the
-// ratio band [centre/R, centre*R] and the MAD band centre ± K·1.4826·MAD,
-// where centre is the median of the (positive, non-nil) trailing values.
-// ok is false when fewer than [guardMinSamples] usable values exist.
+// robustBand returns the acceptance interval [lo, hi] for a candidate,
+// where centre is the median of the (positive, non-nil) trailing
+// values. ok is false ONLY when there is no usable value at all (an
+// empty baseline — nothing to judge against, so the guard fails open).
+//
+// Regimes:
+//   - >= [guardMinSamples] usable values: the FULL band = union of the
+//     tight ratio band [centre/R, centre*R] ([guardRatioBound]) and the
+//     MAD band centre ± K·1.4826·MAD ([guardMADFactor]). A volatile
+//     pair earns the wider band from its own spread.
+//   - 1..guardMinSamples-1 usable values (thin history, M11(b)): the
+//     WIDER but finite ratio-only band [centre/thinR, centre*thinR]
+//     ([guardThinRatioBound]). No stable MAD on so few points, so we
+//     widen rather than fail fully open.
 func robustBand(trailing []*big.Rat) (lo, hi *big.Rat, ok bool) {
 	vals := make([]*big.Rat, 0, len(trailing))
 	for _, v := range trailing {
@@ -117,12 +142,22 @@ func robustBand(trailing []*big.Rat) (lo, hi *big.Rat, ok bool) {
 			vals = append(vals, v)
 		}
 	}
-	if len(vals) < guardMinSamples {
+	// Empty baseline → no centre → fail open (favour serving a real
+	// price over rejecting against nothing).
+	if len(vals) == 0 {
 		return nil, nil, false
 	}
 	centre := medianRat(vals)
 	if centre.Sign() <= 0 {
 		return nil, nil, false
+	}
+
+	// Thin history: wider, finite ratio-only band — still catches
+	// order-of-magnitude manipulation, never fails fully open.
+	if len(vals) < guardMinSamples {
+		lo = new(big.Rat).Quo(centre, guardThinRatioBound)
+		hi = new(big.Rat).Mul(centre, guardThinRatioBound)
+		return lo, hi, true
 	}
 
 	// Ratio band: [centre/R, centre*R].
@@ -151,26 +186,7 @@ func withinBand(v, lo, hi *big.Rat) bool {
 	return v.Cmp(lo) >= 0 && v.Cmp(hi) <= 0
 }
 
-// medianRat returns the exact median of vals (which must be non-empty)
-// as a fresh *big.Rat. Does not mutate its input.
-func medianRat(vals []*big.Rat) *big.Rat {
-	s := make([]*big.Rat, len(vals))
-	copy(s, vals)
-	sort.Slice(s, func(i, j int) bool { return s[i].Cmp(s[j]) < 0 })
-	n := len(s)
-	if n%2 == 1 {
-		return new(big.Rat).Set(s[n/2])
-	}
-	sum := new(big.Rat).Add(s[n/2-1], s[n/2])
-	return sum.Quo(sum, big.NewRat(2, 1))
-}
-
-// madRat returns the median absolute deviation of vals about centre.
-func madRat(vals []*big.Rat, centre *big.Rat) *big.Rat {
-	devs := make([]*big.Rat, len(vals))
-	for i, v := range vals {
-		d := new(big.Rat).Sub(v, centre)
-		devs[i] = d.Abs(d)
-	}
-	return medianRat(devs)
-}
+// medianRat and madRat (the exact median / MAD primitives) live in
+// robust.go — shared with the published-VWAP outlier filter (M5) and
+// the global aggregator-tier filter (M8) so all three guards use one
+// exact-rational definition of robust centre and spread.

@@ -32,7 +32,8 @@ Environment=REPORT_OUTPUT=/var/lib/galexie/last-completeness-report.json
 Environment=WORKERS=8
 
 ExecStartPre=/usr/local/sbin/compute-archive-to.sh
-ExecStart=/usr/local/bin/stellarindex-ops archive-completeness verify \
+ExecStart=/usr/local/sbin/run-heavy-job.sh archive-completeness \
+  /usr/local/bin/stellarindex-ops archive-completeness verify \
   -from ${ARCHIVE_FROM} \
   -to ${ARCHIVE_TO} \
   -workers ${WORKERS} \

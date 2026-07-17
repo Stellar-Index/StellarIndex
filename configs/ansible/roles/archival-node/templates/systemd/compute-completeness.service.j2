@@ -25,7 +25,7 @@ Environment=CONFIG_PATH=/etc/stellarindex.toml
 Environment=CH_ADDR=127.0.0.1:9300
 Environment=COMPLETENESS_CHUNK=25000
 
-ExecStart=/usr/local/sbin/run-compute-completeness.sh
+ExecStart=/usr/local/sbin/run-heavy-job.sh compute-completeness /usr/local/sbin/run-compute-completeness.sh
 
 # De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
 # created by 04-users.yml (CS-119). Talks Postgres + ClickHouse over the

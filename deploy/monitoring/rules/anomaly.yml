@@ -33,8 +33,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
           summary: "Anomaly freeze engaged on class {{ $labels.class }} (P3)"
           description: |
             The aggregator's anomaly checker emitted ActionFreeze
@@ -58,8 +58,8 @@ groups:
           severity: page
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
           summary: "Anomaly freeze sustained for 1h+ on class {{ $labels.class }} (P1)"
           description: |
             Freeze decisions for asset class {{ $labels.class }}
@@ -107,8 +107,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-recovery-stalled.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/freeze-recovery-stalled.md
           summary: "Freeze recovery worker is stalled (P3)"
           description: |
             stellarindex_anomaly_freeze_engaged_total has outpaced

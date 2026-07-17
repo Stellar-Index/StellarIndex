@@ -129,6 +129,12 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 		return fmt.Errorf("storage open: %w", err)
 	}
 	defer func() { _ = store.Close() }()
+	// Re-derive path (INV-3 / migration 0109): stamp a positive
+	// derive_generation so this projection's corrected values UPDATE the
+	// stored rows in place via pipeline.HandleEvent (which draws the
+	// generation from this store) and win over the live gen-0 values.
+	// Harmless in the default dry-run (no writes occur until -write).
+	store.SetDeriveGeneration(time.Now().Unix())
 
 	logger := opsutil.MkBackfillLogger()
 
@@ -490,7 +496,10 @@ func runProjectedRebuildWorker(ctx context.Context, sched *windowScheduler, opts
 					windowEmitted++
 					counters.addKind(out.EventKind())
 					if opts.Write {
-						pipeline.HandleEvent(ctx, logger, opts.Store, out)
+						// Log-and-continue (unchanged re-derive behavior): HandleEvent
+						// logs + counts a failed insert internally. The idempotent
+						// ON CONFLICT write is retried by re-running the range.
+						_ = pipeline.HandleEvent(ctx, logger, opts.Store, out)
 					}
 				}
 				return nil

@@ -235,26 +235,45 @@ func distinctSourceClassCount(trades []canonicalTrade) int {
 
 // approxUSDVolume returns an approximation of bucket USD volume.
 // Best when the pair quotes in fiat:USD or a USD-pegged stablecoin
-// — uses sum(QuoteAmount) directly. For non-USD-quoted pairs
-// returns 0 (the LiquidityFactor then reads as 0 — the right
-// signal: "we can't see USD liquidity for this pair").
+// — sums each trade's QuoteAmount scaled by ITS SOURCE's decimals.
+// For non-USD-quoted pairs returns 0 (the LiquidityFactor then reads
+// as 0 — the right signal: "we can't see USD liquidity for this pair").
 //
-// Refines once L2.2 (`usd_volume` column populated per trade)
-// ships and the trade carries an authoritative USD figure.
+// Scale correctness (M13 / CS-040): the quote amount's smallest-unit
+// scale is a per-SOURCE property, not a constant. Off-chain CEX /
+// aggregator quotes use 1e8 (8 decimals — see each poller's
+// externalAmountDecimals), the FX pollers 1e6, on-chain legs 1e7. A
+// fixed 1e7 divisor (the prior implementation) overstated every 8dp
+// CEX quote by 10× — and every pair this function values (fiat:USD +
+// the abstract crypto:* stablecoin tickers) is that off-chain 8dp
+// convention, so the whole valued set was systematically 10×-inflated.
+//
+// That is NOT the benign error the old comment claimed: the
+// LiquidityFactor is log-LINEAR across its [1e3, 1e5] band, so a 10×
+// (one-decade) volume error shifts the factor by
+// ln(10)/ln(100) = 0.5 — HALF the full [0,1] range — for any true
+// volume in that band (it only vanishes once the true volume already
+// saturates ≥ $100K). That materially distorts the per-pair confidence
+// ranking. Resolve the scale the same way the contribution-sink USD
+// valuation does — external.Metadata.AmountScaleDecimals.
+//
+// Refines once L2.2 (`usd_volume` column populated per trade) ships
+// and the trade carries an authoritative USD figure.
 func approxUSDVolume(trades []canonicalTrade, pair canonical.Pair) float64 {
 	if !isUSDQuoted(pair) {
 		return 0
 	}
-	sum := new(big.Int)
+	total := new(big.Rat)
 	for i := range trades {
-		sum.Add(sum, trades[i].QuoteAmount.BigInt())
+		amt := trades[i].QuoteAmount.BigInt()
+		if amt == nil || amt.Sign() <= 0 {
+			continue
+		}
+		dec := external.Lookup(trades[i].Source).AmountScaleDecimals()
+		scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(dec)), nil)
+		total.Add(total, new(big.Rat).SetFrac(amt, scale))
 	}
-	// Quote amounts are integer stroops at 7 decimals for XLM-side
-	// pairs; for stablecoin quotes the convention is also 7. We
-	// divide by 1e7 to get a USD-magnitude figure. Approximate is
-	// fine — the LiquidityFactor's log-saturating shape doesn't
-	// care about a 10x error.
-	usd, _ := new(big.Rat).SetFrac(sum, big.NewInt(10_000_000)).Float64()
+	usd, _ := total.Float64()
 	return usd
 }
 

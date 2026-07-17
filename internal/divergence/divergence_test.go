@@ -669,3 +669,91 @@ func TestCompare_PanicInName(t *testing.T) {
 		t.Errorf("expected _unknown failure entry, got %+v", res.Failures)
 	}
 }
+
+// TestCoinGecko_StalenessGate (MNY-22 / CS-089) — a FROZEN CoinGecko
+// upstream must read as "reference unavailable", never as a fresh
+// price that could suppress a real divergence or manufacture a false
+// one. The reference requests include_last_updated_at=true and gates
+// the returned quote against observedAt using the same discipline as
+// the Chainlink and on-chain oracle references.
+//
+// Pre-fix the reference ignored observedAt entirely and had no
+// upstream timestamp at all, so a price stamped hours ago sailed
+// straight into the divergence median.
+func TestCoinGecko_StalenessGate(t *testing.T) {
+	// Fixed bucket-end comparison time the aggregator passes through.
+	observedAt := time.Unix(1_770_000_000, 0).UTC()
+
+	// serveAt builds a /simple/price server whose stellar quote is
+	// stamped with lastUpdated (unix seconds), and asserts the request
+	// opted into include_last_updated_at.
+	serveAt := func(lastUpdated time.Time) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("include_last_updated_at") != "true" {
+				t.Errorf("include_last_updated_at = %q, want true (no upstream timestamp requested)",
+					r.URL.Query().Get("include_last_updated_at"))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"stellar": {"usd": 0.16, "last_updated_at": %d}}`, lastUpdated.Unix())
+		}))
+	}
+
+	// Fresh: upstream stamped 5 minutes before the bucket — well within
+	// the 30m default — so the price flows through.
+	t.Run("fresh_reference_is_served", func(t *testing.T) {
+		ts := serveAt(observedAt.Add(-5 * time.Minute))
+		defer ts.Close()
+		ref := divergence.NewCoinGeckoReference(divergence.CoinGeckoOptions{
+			BaseURL:  ts.URL,
+			IDMap:    map[string]string{"native": "stellar"},
+			QuoteMap: map[string]string{"fiat:USD": "usd"},
+		})
+		price, err := ref.LookupPrice(context.Background(), xlmUSD(t), observedAt)
+		if err != nil {
+			t.Fatalf("LookupPrice(fresh): %v", err)
+		}
+		if price < 0.159 || price > 0.161 {
+			t.Errorf("price = %g, want ~0.16", price)
+		}
+	})
+
+	// Stale: upstream frozen 90 minutes before the bucket — 3× the 30m
+	// default — must be excluded as ErrPriceUnavailable, not served.
+	t.Run("stale_reference_is_excluded", func(t *testing.T) {
+		ts := serveAt(observedAt.Add(-90 * time.Minute))
+		defer ts.Close()
+		ref := divergence.NewCoinGeckoReference(divergence.CoinGeckoOptions{
+			BaseURL:  ts.URL,
+			IDMap:    map[string]string{"native": "stellar"},
+			QuoteMap: map[string]string{"fiat:USD": "usd"},
+		})
+		_, err := ref.LookupPrice(context.Background(), xlmUSD(t), observedAt)
+		if !errors.Is(err, divergence.ErrPriceUnavailable) {
+			t.Fatalf("LookupPrice(stale) err = %v, want ErrPriceUnavailable (frozen feed must not drive divergence)", err)
+		}
+	})
+
+	// A stale reference feeding Compare must land in Failures (as
+	// price_unavailable), NOT in Sources — so it can neither pull the
+	// median toward its frozen value nor count as agreement.
+	t.Run("stale_reference_does_not_drive_compare", func(t *testing.T) {
+		ts := serveAt(observedAt.Add(-90 * time.Minute))
+		defer ts.Close()
+		ref := divergence.NewCoinGeckoReference(divergence.CoinGeckoOptions{
+			BaseURL:  ts.URL,
+			IDMap:    map[string]string{"native": "stellar"},
+			QuoteMap: map[string]string{"fiat:USD": "usd"},
+		})
+		res := divergence.Compare(context.Background(),
+			[]divergence.Reference{ref}, xlmUSD(t), 0.16, observedAt, divergence.CompareOptions{})
+		if res.SuccessCount != 0 {
+			t.Errorf("SuccessCount = %d, want 0 (stale ref must not be a source)", res.SuccessCount)
+		}
+		if _, ok := res.Sources["coingecko"]; ok {
+			t.Errorf("coingecko in Sources; a stale ref must be excluded, got %+v", res.Sources)
+		}
+		if got := res.Failures["coingecko"]; got != "price_unavailable" {
+			t.Errorf("Failures[coingecko] = %q, want price_unavailable", got)
+		}
+	})
+}

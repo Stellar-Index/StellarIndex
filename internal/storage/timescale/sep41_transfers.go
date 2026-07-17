@@ -83,27 +83,39 @@ func (s *Store) InsertSEP41TransferBatch(ctx context.Context, rows []SEP41Transf
 		}
 	}
 
-	const ncols = 12
+	// INV-3 (migration 0110): the batch upsert below is now ON CONFLICT DO
+	// UPDATE, and Postgres rejects a single statement that presents the same
+	// conflict key twice ("cannot affect row a second time") — which the old
+	// DO NOTHING silently absorbed. Collapse intra-batch conflict-key
+	// duplicates (last-wins) before building the statement.
+	insertRows := dedupeSEP41TransferRows(rows)
+
+	const ncols = 13
 	var sb strings.Builder
+	// Generation-guarded corrective upsert: a re-derive with a higher-or-
+	// equal generation UPDATEs the decoded value columns (amount, event_kind,
+	// addresses, …) in place; a live gen-0 replay can never revert a
+	// correction. Replaces the old DO NOTHING no-op.
 	sb.WriteString(`
         INSERT INTO sep41_transfers (
             ledger_close_time, ledger, tx_hash, op_index, event_index,
             contract_id, event_kind,
             from_addr, to_addr,
-            amount, live_until_ledger, authorized
+            amount, live_until_ledger, authorized,
+            derive_generation
         ) VALUES `)
-	args := make([]any, 0, ncols*len(rows))
-	for i := range rows {
+	args := make([]any, 0, ncols*len(insertRows))
+	for i := range insertRows {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
 		base := i * ncols
 		fmt.Fprintf(&sb,
-			"($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+			"($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
 			base+1, base+2, base+3, base+4, base+5, base+6,
-			base+7, base+8, base+9, base+10, base+11, base+12,
+			base+7, base+8, base+9, base+10, base+11, base+12, base+13,
 		)
-		r := &rows[i]
+		r := &insertRows[i]
 		args = append(args,
 			r.ObservedAt.UTC(),
 			int64(r.Ledger),
@@ -117,14 +129,84 @@ func (s *Store) InsertSEP41TransferBatch(ctx context.Context, rows []SEP41Transf
 			nullNumericFromBigXfer(r.Amount),
 			nullU32Xfer(r.LiveUntilLedger, r.Kind == SEP41Approve),
 			nullBoolXfer(r.Authorized),
+			s.deriveGeneration,
 		)
 	}
-	sb.WriteString(` ON CONFLICT (ledger_close_time, contract_id, ledger, tx_hash, op_index, event_index) DO NOTHING`)
+	sb.WriteString(` ON CONFLICT (ledger_close_time, contract_id, ledger, tx_hash, op_index, event_index) DO UPDATE SET
+            event_kind        = EXCLUDED.event_kind,
+            from_addr         = EXCLUDED.from_addr,
+            to_addr           = EXCLUDED.to_addr,
+            amount            = EXCLUDED.amount,
+            live_until_ledger = EXCLUDED.live_until_ledger,
+            authorized        = EXCLUDED.authorized,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE sep41_transfers.derive_generation <= EXCLUDED.derive_generation`)
 
 	if _, err := s.db.ExecContext(ctx, sb.String(), args...); err != nil {
-		return fmt.Errorf("timescale: InsertSEP41TransferBatch (%d rows): %w", len(rows), err)
+		return fmt.Errorf("timescale: InsertSEP41TransferBatch (%d rows): %w", len(insertRows), err)
 	}
 	return nil
+}
+
+// sep41TransferConflictKey is the sep41_transfers ON CONFLICT identity
+// (ledger_close_time, contract_id, ledger, tx_hash, op_index, event_index).
+// The timestamp is normalised to a UTC UnixNano so two instants that differ
+// only in monotonic-clock reading / location still collapse to one key (they
+// land in the same timestamptz).
+type sep41TransferConflictKey struct {
+	observedAtNanos int64
+	contractID      string
+	ledger          uint32
+	txHash          string
+	opIndex         uint32
+	eventIndex      uint32
+}
+
+func sep41TransferKeyOf(r *SEP41TransferRow) sep41TransferConflictKey {
+	return sep41TransferConflictKey{
+		observedAtNanos: r.ObservedAt.UTC().UnixNano(),
+		contractID:      r.ContractID,
+		ledger:          r.Ledger,
+		txHash:          r.TxHash,
+		opIndex:         r.OpIndex,
+		eventIndex:      r.EventIndex,
+	}
+}
+
+// dedupeSEP41TransferRows collapses rows that collide on the sep41_transfers
+// conflict key, keeping the LAST copy of each key (the latest redelivery) in
+// first-seen order. Required because the INV-3 batch upsert (migration 0110)
+// uses ON CONFLICT DO UPDATE, which Postgres rejects when one statement
+// presents the same conflict key twice; the old DO NOTHING tolerated it.
+//
+// Copy-on-write: the common case (no intra-batch duplicate) returns the input
+// slice untouched and allocates nothing.
+func dedupeSEP41TransferRows(rows []SEP41TransferRow) []SEP41TransferRow {
+	firstDup := -1
+	seen := make(map[sep41TransferConflictKey]int, len(rows))
+	for i := range rows {
+		k := sep41TransferKeyOf(&rows[i])
+		if _, ok := seen[k]; ok {
+			firstDup = i
+			break
+		}
+		seen[k] = i
+	}
+	if firstDup < 0 {
+		return rows // already unique — no allocation
+	}
+	out := make([]SEP41TransferRow, 0, len(rows))
+	pos := make(map[sep41TransferConflictKey]int, len(rows))
+	for i := range rows {
+		k := sep41TransferKeyOf(&rows[i])
+		if idx, ok := pos[k]; ok {
+			out[idx] = rows[i] // last wins
+			continue
+		}
+		pos[k] = len(out)
+		out = append(out, rows[i])
+	}
+	return out
 }
 
 // InsertSEP41Transfer is the single-row convenience wrapper.

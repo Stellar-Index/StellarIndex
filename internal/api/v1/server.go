@@ -266,7 +266,21 @@ type Server struct {
 	ingestionSnapshot atomic.Pointer[ingestionSnapshotEntry]
 	mux               *http.ServeMux
 	started           time.Time
+	// requestTimeout bounds every non-streaming request's context via
+	// the RequestTimeout middleware (see Handler). Defaulted in New to
+	// [defaultRequestTimeout] when Options.RequestTimeout is unset. The
+	// durable chokepoint behind C3-1/C3-2/P1 (audit-2026-07-16) — every
+	// handler inherits a deadline even when it forgets its own.
+	requestTimeout time.Duration
 }
+
+// defaultRequestTimeout is the fallback per-request deadline applied by
+// the RequestTimeout middleware when Options.RequestTimeout is unset.
+// 15s is longer than the per-read 8s ceilings (so a per-read deadline
+// surfaces its own, more specific error first) and shorter than the
+// http.Server WriteTimeout (30s) so the app-layer deadline is what
+// actually bounds a hung request.
+const defaultRequestTimeout = 15 * time.Second
 
 // DashboardAuthMounter is the interface main.go's
 // dashboardauth.Handlers satisfies — defined here so this package
@@ -929,6 +943,14 @@ type Options struct {
 	// defaults can't safely guess which sources are aggregator
 	// class without importing the registry).
 	GlobalPriceOpts aggregate.GlobalPriceOptions
+
+	// RequestTimeout is the per-request context deadline applied to
+	// every non-streaming request by the RequestTimeout middleware
+	// (see Handler). Zero (or negative) falls back to
+	// [defaultRequestTimeout]. Wire from cfg.API.RequestTimeout.
+	// Streaming (SSE) endpoints are exempt — they own their lifecycle
+	// through client-disconnect ctx cancellation.
+	RequestTimeout time.Duration
 }
 
 // New constructs a Server and mounts all v1 routes.
@@ -1037,6 +1059,7 @@ func New(opts Options) *Server {
 		assetDetailCache: newAssetDetailResponseCache(120 * time.Second),
 		mux:              http.NewServeMux(),
 		started:          time.Now().UTC(),
+		requestTimeout:   durationOr(opts.RequestTimeout, defaultRequestTimeout),
 	}
 	s.explorerHandler = explorerHandlerFor(s, opts, logger)
 	loadIncidents(s, logger)
@@ -1064,6 +1087,15 @@ func valueOr(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// durationOr returns d when it is positive, else fallback. Used to back
+// an unset (zero-value) Options duration with a safe default.
+func durationOr(d, fallback time.Duration) time.Duration {
+	if d <= 0 {
+		return fallback
+	}
+	return d
 }
 
 // globalPriceOptsWithDefaults backs `Options.GlobalPriceOpts` with
@@ -1198,6 +1230,18 @@ func (s *Server) Handler() http.Handler {
 	// and the result stays attached for the rest of the chain.
 	if s.sessionAuth != nil {
 		stack = append(stack, s.sessionAuth)
+	}
+	// RequestTimeout bounds every non-streaming request's context so
+	// EVERY handler inherits a deadline even when it forgets to wrap
+	// its own DB/ClickHouse read (C3-1/C3-2/P1, audit-2026-07-16). It
+	// sits just above CaptureRoute (i.e. innermost of the cross-cutting
+	// wrappers, directly around the mux) so the deadline covers the
+	// handler and everything it calls, and so the tighter per-handler
+	// 8s WithTimeout wrappers layer under it and fire first. SSE
+	// endpoints are exempt inside the middleware. Skipped entirely when
+	// requestTimeout <= 0 (the middleware also self-guards on that).
+	if s.requestTimeout > 0 {
+		stack = append(stack, middleware.RequestTimeout(s.requestTimeout))
 	}
 	// CaptureRoute MUST be innermost — directly above the mux — so
 	// r.Pattern is populated before it reads. It writes the matched

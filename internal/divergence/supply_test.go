@@ -59,7 +59,14 @@ func TestStellarDashboardReference_DerivesCirculating(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ref := NewStellarDashboardReference(StellarDashboardOptions{BaseURL: srv.URL})
+	// Pin the clock just after the fixture's updatedAt (2026-07-07T01:06:15Z)
+	// so the CS-089 staleness gate reads the historical snapshot as fresh
+	// rather than depending on wall time.
+	fixedNow := time.Date(2026, 7, 7, 1, 30, 0, 0, time.UTC)
+	ref := NewStellarDashboardReference(StellarDashboardOptions{
+		BaseURL: srv.URL,
+		NowFn:   func() time.Time { return fixedNow },
+	})
 	got, err := ref.LookupCirculatingSupply(context.Background(), canonical.NativeAsset())
 	if err != nil {
 		t.Fatalf("LookupCirculatingSupply: %v", err)
@@ -93,6 +100,55 @@ func TestStellarDashboardReference_PrefersExplicitField(t *testing.T) {
 	if math.Abs(got-34_740_000_000) > 1.0 {
 		t.Errorf("circulating = %.2f, want 34740000000 (explicit field)", got)
 	}
+}
+
+// TestSupplyReferences_StalenessGate (MNY-22 / CS-089) — a FROZEN
+// supply upstream must read as "reference unavailable", never drive a
+// supply divergence. Both references expose an upstream publication
+// time (`/lumens`.updatedAt, `/coins/{id}`.market_data.last_updated);
+// a figure older than the 24h default is excluded.
+func TestSupplyReferences_StalenessGate(t *testing.T) {
+	now := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
+	fresh := now.Add(-1 * time.Hour).Format(time.RFC3339)  // within 24h
+	stale := now.Add(-48 * time.Hour).Format(time.RFC3339) // 2× the 24h default
+
+	t.Run("dashboard_fresh_served", func(t *testing.T) {
+		body := `{"updatedAt":"` + fresh + `","totalSupply":"50000000000","sdfMandate":"15000000000","upgradeReserve":"250000000","feePool":"10000000"}`
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, body)
+		}))
+		defer srv.Close()
+		ref := NewStellarDashboardReference(StellarDashboardOptions{BaseURL: srv.URL, NowFn: func() time.Time { return now }})
+		if _, err := ref.LookupCirculatingSupply(context.Background(), canonical.NativeAsset()); err != nil {
+			t.Fatalf("fresh dashboard: %v", err)
+		}
+	})
+
+	t.Run("dashboard_stale_excluded", func(t *testing.T) {
+		body := `{"updatedAt":"` + stale + `","totalSupply":"50000000000","sdfMandate":"15000000000","upgradeReserve":"250000000","feePool":"10000000"}`
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, body)
+		}))
+		defer srv.Close()
+		ref := NewStellarDashboardReference(StellarDashboardOptions{BaseURL: srv.URL, NowFn: func() time.Time { return now }})
+		_, err := ref.LookupCirculatingSupply(context.Background(), canonical.NativeAsset())
+		if !errors.Is(err, ErrSupplyUnavailable) {
+			t.Fatalf("stale dashboard err = %v, want ErrSupplyUnavailable", err)
+		}
+	})
+
+	t.Run("coingecko_stale_excluded", func(t *testing.T) {
+		body := `{"market_data":{"circulating_supply":34066264765.0,"last_updated":"` + stale + `"}}`
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, body)
+		}))
+		defer srv.Close()
+		ref := NewCoinGeckoSupplyReference(CoinGeckoSupplyOptions{BaseURL: srv.URL, NowFn: func() time.Time { return now }})
+		_, err := ref.LookupCirculatingSupply(context.Background(), canonical.NativeAsset())
+		if !errors.Is(err, ErrSupplyUnavailable) {
+			t.Fatalf("stale coingecko err = %v, want ErrSupplyUnavailable", err)
+		}
+	})
 }
 
 func TestStellarDashboardReference_NonXLMUnsupported(t *testing.T) {

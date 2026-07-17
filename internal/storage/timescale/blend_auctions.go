@@ -86,25 +86,43 @@ func (s *Store) InsertBlendNewAuction(ctx context.Context, e blend.NewAuctionEve
 	if err != nil {
 		return fmt.Errorf("timescale: InsertBlendNewAuction: lot: %w", err)
 	}
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the decoded columns (bid / lot i128 amounts,
+	// percent, block) lands in place when its generation is >= the stored
+	// one; a live gen-0 replay can never revert it. event_kind is part of the
+	// conflict key, so a 'new' row only ever conflicts with another 'new' row
+	// — the SET touches exactly this writer's columns. Replaces DO NOTHING.
 	const q = `
         INSERT INTO blend_auctions (
             pool, auction_type, user_address,
             ledger, tx_hash, op_index, ts,
             event_kind, event_index, percent,
-            block, bid, lot
+            block, bid, lot,
+            derive_generation
         ) VALUES (
             $1, $2, $3,
             $4, $5, $6, $7,
             'new', $8, $9,
-            $10, $11, $12
+            $10, $11, $12,
+            $13
         )
-        ON CONFLICT (ledger, tx_hash, op_index, ts, event_kind, event_index) DO NOTHING
+        ON CONFLICT (ledger, tx_hash, op_index, ts, event_kind, event_index) DO UPDATE SET
+            pool              = EXCLUDED.pool,
+            auction_type      = EXCLUDED.auction_type,
+            user_address      = EXCLUDED.user_address,
+            percent           = EXCLUDED.percent,
+            block             = EXCLUDED.block,
+            bid               = EXCLUDED.bid,
+            lot               = EXCLUDED.lot,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE blend_auctions.derive_generation <= EXCLUDED.derive_generation
     `
 	_, err = s.db.ExecContext(ctx, q,
 		e.Pool, int(e.AuctionType), e.User,
 		int(e.Ledger), e.TxHash, int(e.OpIndex), e.Timestamp.UTC(),
 		int(e.EventIndex), int(e.Percent),
 		int(e.Data.Block), bid, lot,
+		s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertBlendNewAuction: %w", err)
@@ -126,21 +144,37 @@ func (s *Store) InsertBlendFillAuction(ctx context.Context, e blend.FillAuctionE
 		return fmt.Errorf("timescale: InsertBlendFillAuction: lot: %w", err)
 	}
 	fillPct := e.FillPercent.String() // i128 → numeric column accepts text
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the decoded columns (fill_percent, bid/lot i128
+	// amounts, filler, block) lands in place when its generation is >= the
+	// stored one; a live gen-0 replay can never revert it. Replaces DO NOTHING.
 	const q = `
         INSERT INTO blend_auctions (
             pool, auction_type, user_address,
             ledger, tx_hash, op_index, ts,
             event_kind, event_index,
             filler, fill_percent,
-            block, bid, lot
+            block, bid, lot,
+            derive_generation
         ) VALUES (
             $1, $2, $3,
             $4, $5, $6, $7,
             'fill', $8,
             $9, $10::numeric,
-            $11, $12, $13
+            $11, $12, $13,
+            $14
         )
-        ON CONFLICT (ledger, tx_hash, op_index, ts, event_kind, event_index) DO NOTHING
+        ON CONFLICT (ledger, tx_hash, op_index, ts, event_kind, event_index) DO UPDATE SET
+            pool              = EXCLUDED.pool,
+            auction_type      = EXCLUDED.auction_type,
+            user_address      = EXCLUDED.user_address,
+            filler            = EXCLUDED.filler,
+            fill_percent      = EXCLUDED.fill_percent,
+            block             = EXCLUDED.block,
+            bid               = EXCLUDED.bid,
+            lot               = EXCLUDED.lot,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE blend_auctions.derive_generation <= EXCLUDED.derive_generation
     `
 	_, err = s.db.ExecContext(ctx, q,
 		e.Pool, int(e.AuctionType), e.User,
@@ -148,6 +182,7 @@ func (s *Store) InsertBlendFillAuction(ctx context.Context, e blend.FillAuctionE
 		int(e.EventIndex),
 		e.Filler, fillPct,
 		int(e.Data.Block), bid, lot,
+		s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertBlendFillAuction: %w", err)
@@ -158,22 +193,34 @@ func (s *Store) InsertBlendFillAuction(ctx context.Context, e blend.FillAuctionE
 // InsertBlendDeleteAuction writes a `delete_auction` row. No body
 // fields — body is the unit value () on the wire.
 func (s *Store) InsertBlendDeleteAuction(ctx context.Context, e blend.DeleteAuctionEvent) error {
+	// INV-3 generation-guarded corrective upsert (migration 0110). A delete
+	// row carries no body amounts, but a corrected re-derive of its decoded
+	// identity columns still lands in place; a live gen-0 replay can never
+	// revert it. Replaces DO NOTHING.
 	const q = `
         INSERT INTO blend_auctions (
             pool, auction_type, user_address,
             ledger, tx_hash, op_index, ts,
-            event_kind, event_index
+            event_kind, event_index,
+            derive_generation
         ) VALUES (
             $1, $2, $3,
             $4, $5, $6, $7,
-            'delete', $8
+            'delete', $8,
+            $9
         )
-        ON CONFLICT (ledger, tx_hash, op_index, ts, event_kind, event_index) DO NOTHING
+        ON CONFLICT (ledger, tx_hash, op_index, ts, event_kind, event_index) DO UPDATE SET
+            pool              = EXCLUDED.pool,
+            auction_type      = EXCLUDED.auction_type,
+            user_address      = EXCLUDED.user_address,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE blend_auctions.derive_generation <= EXCLUDED.derive_generation
     `
 	_, err := s.db.ExecContext(ctx, q,
 		e.Pool, int(e.AuctionType), e.User,
 		int(e.Ledger), e.TxHash, int(e.OpIndex), e.Timestamp.UTC(),
 		int(e.EventIndex),
+		s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertBlendDeleteAuction: %w", err)

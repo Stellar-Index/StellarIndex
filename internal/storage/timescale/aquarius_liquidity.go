@@ -85,15 +85,25 @@ func (s *Store) InsertAquariusReserves(ctx context.Context, e AquariusReservesEv
 		return errors.New("timescale: InsertAquariusReserves: empty reserve vector")
 	}
 
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the post-state `reserve` lands in place when its
+	// generation is >= the stored one; a live gen-0 replay can never revert
+	// it. Each fanned row carries a distinct token_index (a conflict-key
+	// component), so one statement never repeats a key — no intra-batch dedup
+	// needed. Replaces the old DO NOTHING no-op.
 	const q = `
         INSERT INTO aquarius_reserves (
             contract_id, ledger, ledger_close_time, tx_hash,
-            op_index, event_index, token_index, reserve
+            op_index, event_index, token_index, reserve,
+            derive_generation
         ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8
+            $1, $2, $3, $4, $5, $6, $7, $8, $9
         )
         ON CONFLICT (ledger_close_time, contract_id, ledger, tx_hash,
-                     op_index, event_index, token_index) DO NOTHING
+                     op_index, event_index, token_index) DO UPDATE SET
+            reserve           = EXCLUDED.reserve,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE aquarius_reserves.derive_generation <= EXCLUDED.derive_generation
     `
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -108,6 +118,7 @@ func (s *Store) InsertAquariusReserves(ctx context.Context, e AquariusReservesEv
 		if _, err := tx.ExecContext(ctx, q,
 			e.ContractID, int(e.Ledger), e.LedgerCloseTime.UTC(), e.TxHash,
 			int(e.OpIndex), int(e.EventIndex), i, r.String(),
+			s.deriveGeneration,
 		); err != nil {
 			return fmt.Errorf("timescale: InsertAquariusReserves %s@%d[%d]: %w", e.ContractID, e.Ledger, i, err)
 		}
@@ -148,15 +159,27 @@ func (s *Store) InsertAquariusLiquidity(ctx context.Context, e AquariusLiquidity
 		return fmt.Errorf("timescale: InsertAquariusLiquidity: shares must be >= 0 (got %s)", e.Shares)
 	}
 
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the per-leg `amount` / `shares` lands in place
+	// when its generation is >= the stored one; a live gen-0 replay can never
+	// revert it. Each fanned row carries a distinct token_index (a
+	// conflict-key component), so one statement never repeats a key — no
+	// intra-batch dedup needed. Replaces the old DO NOTHING no-op.
 	const q = `
         INSERT INTO aquarius_liquidity (
             contract_id, ledger, ledger_close_time, tx_hash,
-            op_index, event_index, action, token_index, token, amount, shares
+            op_index, event_index, action, token_index, token, amount, shares,
+            derive_generation
         ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
         )
         ON CONFLICT (ledger_close_time, contract_id, ledger, tx_hash,
-                     op_index, event_index, action, token_index) DO NOTHING
+                     op_index, event_index, action, token_index) DO UPDATE SET
+            token             = EXCLUDED.token,
+            amount            = EXCLUDED.amount,
+            shares            = EXCLUDED.shares,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE aquarius_liquidity.derive_generation <= EXCLUDED.derive_generation
     `
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -181,6 +204,7 @@ func (s *Store) InsertAquariusLiquidity(ctx context.Context, e AquariusLiquidity
 		if _, err := tx.ExecContext(ctx, q,
 			e.ContractID, int(e.Ledger), e.LedgerCloseTime.UTC(), e.TxHash,
 			int(e.OpIndex), int(e.EventIndex), string(e.Action), i, tok, amt.String(), shares,
+			s.deriveGeneration,
 		); err != nil {
 			return fmt.Errorf("timescale: InsertAquariusLiquidity %s@%d[%d]: %w", e.ContractID, e.Ledger, i, err)
 		}

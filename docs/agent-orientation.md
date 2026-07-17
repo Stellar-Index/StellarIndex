@@ -100,7 +100,7 @@ development. If one does, it's a bug.
 │   ├── archivecompleteness/      dual-archive completeness daemon (ADR-0017)
 │   ├── hashdb/                   on-disk (ledger_seq → sha256(LCM)) record for drift-detection-vs-upstream-rewrites (ADR-0016). Wired into production 2026-07-09: the indexer's live LCM read loop appends on ingest, a periodic sweep (also in the indexer) re-verifies a trailing window against the same bucket. Off by default (`[hashdb].enabled = false`, opt-in first deploy); founding case is ledger 63332650. Alert `stellarindex_hashdb_drift_detected` + runbook docs/operations/runbooks/hashdb-drift-detected.md. The ADR-0033 "feeder" role is still aspirational.
 │   ├── api/                      REST/SSE handlers (v1)
-│   ├── ratelimit/                Redis-backed token bucket
+│   ├── ratelimit/                Redis-backed fixed-window counter (INCR+EXPIRE; NOT a token bucket)
 │   ├── metadata/                 SEP-1 / stellar.toml resolution
 │   ├── cachekeys/                canonical Redis key builders (ADR-0007)
 │   ├── version/                  build-time version info (ldflags-populated)
@@ -213,8 +213,11 @@ Full picture + binding rules: [docs/architecture/ingest-pipeline.md](docs/archit
 **Soroban-derived events** (`trades`, `blend_*`, `phoenix_*`,
 `comet_*`, `soroswap_skim`, `cctp_events`, `rozo_events`,
 `defindex_*`, `sep41_*`, `reflector`/`redstone` `oracle_updates`)
-are written by **`internal/projector`** — and ONLY by the projector — from
-the `soroban_events` raw landing zone (ADR-0029). Adding a new
+are written by **`internal/projector`** — and ONLY by the projector.
+Its READ source is the **ClickHouse `contract_events` lake by default**
+(`storage.clickhouse_projector_source`, default `true`, ADR-0034); the
+Postgres `soroban_events` raw landing zone (ADR-0029) is the legacy
+fallback source, decommission-pending (#39). Adding a new
 Soroban source means adding a case in
 `internal/projector/registry.go::buildSource` AND an arm in
 `internal/pipeline/sink.go::IsProjectedEvent`. Catch-up after a

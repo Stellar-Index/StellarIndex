@@ -12,10 +12,15 @@ import (
 )
 
 // InsertSupply appends a [supply.Supply] snapshot to
-// asset_supply_history. Idempotent on
+// asset_supply_history. Idempotent-corrective on
 // (asset_key, ledger_sequence, time) — re-deriving at the same
-// ledger is a no-op via ON CONFLICT DO NOTHING. The aggregator
-// writes one snapshot per asset-affecting bucket close.
+// ledger UPDATEs the value columns in place when the writer's
+// derive_generation is >= the stored one (migration 0109 / INV-3),
+// so a corrected re-derive lands without a DELETE + re-backfill; a
+// lower generation is a no-op guard-skip. Live ingest uses the
+// default generation 0, so a plain re-observe re-writes the identical
+// value. The aggregator writes one snapshot per asset-affecting
+// bucket close.
 //
 // The third column (`time`) is required by TimescaleDB's unique-
 // index constraint that the partition column be part of any
@@ -55,12 +60,27 @@ func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 	// fails with `there is no unique or exclusion constraint
 	// matching the ON CONFLICT specification`. The named-target
 	// form bypasses inference. Constraint added by migration 0030.
+	//
+	// INV-3 fix (migration 0109): on conflict we DO UPDATE the supply
+	// value columns plus derive_generation, guarded by
+	// `asset_supply_history.derive_generation <= EXCLUDED.derive_generation`,
+	// so a corrected re-derive (a fixed supply algorithm) lands its
+	// value in place instead of the old `DO NOTHING` no-op, while a
+	// lower generation (a live gen-0 replay) can never revert a
+	// correction. Live ingest writes generation 0 (the default), so a
+	// same-(asset,ledger) re-observe just re-writes the identical value.
 	const q = `
 		INSERT INTO asset_supply_history
-		    (time, asset_key, total_supply, circulating_supply, max_supply, basis, ledger_sequence)
+		    (time, asset_key, total_supply, circulating_supply, max_supply, basis, ledger_sequence, derive_generation)
 		VALUES
-		    ($1, $2, $3::numeric, $4::numeric, $5::numeric, $6, $7)
-		ON CONFLICT ON CONSTRAINT asset_supply_history_asset_ledger_idx DO NOTHING
+		    ($1, $2, $3::numeric, $4::numeric, $5::numeric, $6, $7, $8)
+		ON CONFLICT ON CONSTRAINT asset_supply_history_asset_ledger_idx DO UPDATE SET
+		    total_supply       = EXCLUDED.total_supply,
+		    circulating_supply = EXCLUDED.circulating_supply,
+		    max_supply         = EXCLUDED.max_supply,
+		    basis              = EXCLUDED.basis,
+		    derive_generation  = EXCLUDED.derive_generation
+		  WHERE asset_supply_history.derive_generation <= EXCLUDED.derive_generation
 	`
 	_, err := s.db.ExecContext(ctx, q,
 		snap.ObservedAt.UTC(),
@@ -70,6 +90,7 @@ func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 		maxSupply,
 		string(snap.Basis),
 		int64(snap.LedgerSequence),
+		s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertSupply %s @ ledger %d: %w",

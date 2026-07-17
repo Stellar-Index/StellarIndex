@@ -33,4 +33,13 @@ type Observation struct {
 	// IsRemoval is true when the ContractData entry was Removed.
 	// Asset_key is still populated (from the operator map).
 	IsRemoval bool
+
+	// IntraLedgerSeq is the within-ledger position of the change that
+	// produced this observation, in the dispatcher's canonical meta-walk
+	// order (see dispatcher.LedgerEntryChangeContext.IntraLedgerSeq). When a
+	// single (contract, holder) balance changes MULTIPLE times within one
+	// ledger, this is what lets the writer keep the FINAL change rather than
+	// whichever out-of-order PersistEvents worker committed last — the
+	// wrong-supply-component bug (audit-2026-07-16 C2-6).
+	IntraLedgerSeq uint32
 }

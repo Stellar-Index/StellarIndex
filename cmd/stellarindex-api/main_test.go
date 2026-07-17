@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -277,4 +279,52 @@ func TestBuildAPIKeyValidator_BothFlagStates(t *testing.T) {
 			t.Fatalf("got %T, want auth.NoopAPIKeyValidator (postgres backend without the dashboard bundle must fail loud)", v)
 		}
 	})
+}
+
+// TestWarnUnsafeBind covers the C3-18 IPv6 parse fix: a public
+// all-interfaces bind must trigger the unsafe-bind warning whether it's
+// written as IPv4 (0.0.0.0), IPv6 ([::]), or port-only (:3000). The
+// pre-fix strings.Cut(":") split "[::]:3000" into host "[" and silently
+// shipped a public IPv6 bind with no warning.
+func TestWarnUnsafeBind(t *testing.T) {
+	// warnLogged runs warnUnsafeBind against a captured logger and
+	// reports whether the SECURITY warning fired.
+	warnLogged := func(listenAddr string, cidrs []string) bool {
+		var buf bytes.Buffer
+		// Level Warn so the SECURITY warning is emitted; a captured
+		// handler lets us assert on presence/absence of output.
+		lg := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		warnUnsafeBind(lg, listenAddr, cidrs)
+		return strings.Contains(buf.String(), "SECURITY")
+	}
+
+	// Public all-interfaces binds WITHOUT trusted proxies must warn.
+	for _, addr := range []string{"0.0.0.0:3000", "[::]:3000", ":3000", "::"} {
+		if addr == "::" {
+			// "::" alone has no port; SplitHostPort rejects it, so it must
+			// NOT warn (can't classify) — assert that separately below.
+			continue
+		}
+		if !warnLogged(addr, nil) {
+			t.Errorf("warnUnsafeBind(%q, no CIDRs): expected SECURITY warning, got none", addr)
+		}
+	}
+
+	// Loopback binds must stay quiet — IPv4, IPv6, and hostname forms.
+	for _, addr := range []string{"127.0.0.1:3000", "[::1]:3000", "localhost:3000"} {
+		if warnLogged(addr, nil) {
+			t.Errorf("warnUnsafeBind(%q): loopback must NOT warn", addr)
+		}
+	}
+
+	// A public bind WITH trusted proxies configured takes the softer
+	// (non-SECURITY) branch — no hard SECURITY warning.
+	if warnLogged("[::]:3000", []string{"10.0.0.0/8"}) {
+		t.Error("warnUnsafeBind([::]:3000, with CIDRs): must not emit the hard SECURITY warning when proxies are configured")
+	}
+
+	// Unparseable listen addr can't be classified → stay silent.
+	if warnLogged("::", nil) {
+		t.Error(`warnUnsafeBind("::"): bare host with no port is unparseable; must stay silent`)
+	}
 }

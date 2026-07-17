@@ -38,8 +38,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: archive
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-files-missing.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-files-missing.md
           summary: "{{ $value }} files missing in {{ $labels.archive }} archive (sustained > 4h)"
           description: |
             The daily archive-completeness verify run found {{ $value }}
@@ -61,8 +61,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: archive
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-completeness-stale.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-completeness-stale.md
           summary: "archive-completeness verify hasn't completed cleanly in {{ $value | humanizeDuration }}"
           description: |
             Either the systemd timer isn't running, or every run since the
@@ -79,8 +79,8 @@ groups:
           severity: page
           team: stellarindex
           component: archive
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-completeness-stale.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-completeness-stale.md
           summary: "(R1 integrity-leader) archive-completeness verify stale > 48h — SEV-2"
           description: |
             R1 is the integrity leader for the fleet (ADR-0016). 48h
@@ -105,8 +105,8 @@ groups:
           severity: informational
           team: stellarindex
           component: archive
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-repair-source-degraded.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-repair-source-degraded.md
           summary: "Source {{ $labels.source }} repair failure ratio > 10% sustained 1h"
           description: |
             A specific archive source is failing > 10% of repair attempts

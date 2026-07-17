@@ -59,14 +59,21 @@ route:
 
 # ─── Inhibit rules ───────────────────────────────────────────────
 #
-# Suppress lower-severity variants of the same alert when a page is
+# Suppress lower-severity variants on the same component when a page is
 # already firing — prevents stacking when an incident escalates and
 # both the ticket-tier baseline alert and the page-tier escalation
 # fire simultaneously.
+#
+# `equal` is [component] ONLY — NOT [alertname, component]. The page and
+# its paired lower-severity alert have DIFFERENT alertnames (the
+# ticket-tier baseline and the page-tier escalation are separate rules),
+# so requiring alertname equality made the inhibition never fire. Match
+# on `component` alone so the page suppresses the ticket/informational
+# variants for that component.
 inhibit_rules:
   - source_matchers: [severity = "page"]
     target_matchers: [severity =~ "ticket|informational"]
-    equal: [alertname, component]
+    equal: [component]
 
 # ─── Receivers ───────────────────────────────────────────────────
 #

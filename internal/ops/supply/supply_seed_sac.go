@@ -141,6 +141,11 @@ func supplySeedSACBalances(args []string) error {
 			Ledger:     seed.LedgerSeq,
 			ObservedAt: seed.CloseTime,
 			Balance:    seed.Balance,
+			// The seed is the authoritative reconstructed FINAL state for its
+			// ledger (latest lake entry), so it sits at the top of the
+			// intra-ledger order — a live per-ledger change can never
+			// overwrite it, a re-seed stays corrective (audit-2026-07-16 C2-6).
+			IntraLedgerSeq: timescale.SeedIntraLedgerSeq,
 		})
 	})
 	if err != nil {

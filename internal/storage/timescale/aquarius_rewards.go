@@ -101,22 +101,31 @@ func (s *Store) InsertAquariusRewardsEvent(ctx context.Context, e AquariusReward
 		amount = sql.NullString{String: e.Amount.String(), Valid: true}
 	}
 
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the reward `amount` (or user_address /
+	// attributes) lands in place when its generation is >= the stored one; a
+	// live gen-0 replay can never revert it. Replaces the old DO NOTHING.
 	const q = `
         INSERT INTO aquarius_rewards_events (
             contract_id, ledger, ledger_close_time, tx_hash,
             op_index, event_index, event_kind, user_address, amount,
-            attributes
+            attributes, derive_generation
         ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
         )
         ON CONFLICT (ledger_close_time, contract_id, ledger, tx_hash,
-                     op_index, event_kind, event_index) DO NOTHING
+                     op_index, event_kind, event_index) DO UPDATE SET
+            user_address      = EXCLUDED.user_address,
+            amount            = EXCLUDED.amount,
+            attributes        = EXCLUDED.attributes,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE aquarius_rewards_events.derive_generation <= EXCLUDED.derive_generation
     `
 	_, err = s.db.ExecContext(ctx, q,
 		e.ContractID, int(e.Ledger), e.LedgerCloseTime.UTC(), e.TxHash,
 		int(e.OpIndex), int(e.EventIndex), string(e.Kind),
 		nullString(e.UserAddress), amount,
-		attrsJSON,
+		attrsJSON, s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertAquariusRewardsEvent %s@%d: %w", e.ContractID, e.Ledger, err)

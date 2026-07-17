@@ -253,7 +253,7 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:   h.cfg.Now().Add(h.cfg.MagicLinkTTL),
 		RequestedIP: clientIP(r),
 	}); err != nil {
-		h.cfg.Logger.Error("create magic link token", "err", err, "email", email)
+		h.cfg.Logger.Error("create magic link token", "err", err, "email", maskEmail(email))
 		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/login")
 		return
 	}
@@ -287,7 +287,7 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		// "we tried to email you and failed" because that's a
 		// signal an attacker can use to confirm an email
 		// exists. Operator gets the alert via Loki / Sentry.
-		h.cfg.Logger.Error("send magic link email", "err", err, "email", email)
+		h.cfg.Logger.Error("send magic link email", "err", err, "email", maskEmail(email))
 	}
 
 	_ = json.NewEncoder(w).Encode(loginResponse{Status: "sent"})
@@ -341,7 +341,7 @@ func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.startSessionForEmail(w, r, tok.Email); err != nil {
-		h.cfg.Logger.Error("start session (callback)", "err", err, "email", tok.Email)
+		h.cfg.Logger.Error("start session (callback)", "err", err, "email", maskEmail(tok.Email))
 		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/callback")
 		return
 	}
@@ -398,7 +398,7 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 
 	cands, err := h.cfg.Tokens.ConsumableLoginCandidates(r.Context(), email, maxCodeAttempts)
 	if err != nil {
-		h.cfg.Logger.Error("consumable login candidates", "err", err, "email", email)
+		h.cfg.Logger.Error("consumable login candidates", "err", err, "email", maskEmail(email))
 		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/verify-code")
 		return
 	}
@@ -416,7 +416,7 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 		// in-flight tokens so the small code space can't be ground
 		// down, then return the generic error.
 		if incErr := h.cfg.Tokens.IncrementLoginCodeAttempts(r.Context(), email); incErr != nil {
-			h.cfg.Logger.Warn("increment login code attempts", "err", incErr, "email", email)
+			h.cfg.Logger.Warn("increment login code attempts", "err", incErr, "email", maskEmail(email))
 		}
 		writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
 		return
@@ -431,13 +431,13 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
 			return
 		}
-		h.cfg.Logger.Error("consume code token", "err", err, "email", email)
+		h.cfg.Logger.Error("consume code token", "err", err, "email", maskEmail(email))
 		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/verify-code")
 		return
 	}
 
 	if err := h.startSessionForEmail(w, r, email); err != nil {
-		h.cfg.Logger.Error("start session (verify-code)", "err", err, "email", email)
+		h.cfg.Logger.Error("start session (verify-code)", "err", err, "email", maskEmail(email))
 		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/verify-code")
 		return
 	}
@@ -593,7 +593,7 @@ func (h *Handlers) signupNewUser(ctx context.Context, email string) (platform.Us
 			// succeeded, and its account is the canonical one.
 			// Re-fetch and use that user.
 			h.cfg.Logger.Warn("signup race: rolling back to winning user",
-				"email", email, "speculative_account_id", acct.ID)
+				"email", maskEmail(email), "speculative_account_id", acct.ID)
 			winner, getErr := h.cfg.Users.GetUserByEmail(ctx, email)
 			if getErr != nil {
 				return platform.User{}, fmt.Errorf("create user conflict + reload: %w", getErr)
@@ -644,7 +644,7 @@ func (h *Handlers) acquireSignupLock(ctx context.Context, email string) (platfor
 	acquired, lockErr := h.cfg.EmailLocker.Acquire(ctx, emailHash, 30*time.Second)
 	if lockErr != nil {
 		h.cfg.Logger.Warn("signup email-lock acquire failed; falling through to non-locked path",
-			"err", lockErr, "email", email)
+			"err", lockErr, "email", maskEmail(email))
 		return platform.User{}, false, nil, nil
 	}
 	if !acquired {
@@ -656,13 +656,13 @@ func (h *Handlers) acquireSignupLock(ctx context.Context, email string) (platfor
 			return winner, true, nil, nil
 		}
 		h.cfg.Logger.Warn("signup email-lock held by another caller but winner did not materialise in poll window; attempting provisioning ourselves",
-			"email", email)
+			"email", maskEmail(email))
 		return platform.User{}, false, nil, nil
 	}
 	release := func() {
 		if relErr := h.cfg.EmailLocker.Release(ctx, emailHash); relErr != nil {
 			h.cfg.Logger.Warn("signup email-lock release failed",
-				"err", relErr, "email", email)
+				"err", relErr, "email", maskEmail(email))
 		}
 	}
 	// Inside the lock, a concurrent winner may have already
@@ -836,4 +836,23 @@ func slugFromEmail(email string) string {
 // writeProblem.
 func writeProblem(w http.ResponseWriter, status int, detail, instance string) {
 	httpx.WriteProblem(w, "https://api.stellarindex.io/errors/auth", status, detail, instance)
+}
+
+// maskEmail redacts a customer email for logging (audit PRV1): keep the first
+// local-part character + the full domain, hide the rest —
+// "alice@example.com" -> "a***@example.com". Enough to correlate a log line to
+// a domain / support ticket without persisting the full PII in application logs.
+func maskEmail(email string) string {
+	at := strings.LastIndex(email, "@")
+	if at <= 0 {
+		if email == "" {
+			return ""
+		}
+		return "***" // malformed / no domain — hide entirely
+	}
+	local, domain := email[:at], email[at:]
+	if len(local) <= 1 {
+		return "***" + domain
+	}
+	return local[:1] + "***" + domain
 }
