@@ -9,8 +9,11 @@ name: ansible-drift
 # but never live; the reverse direction nearly had a playbook erase
 # the CS-010 supply config).
 #
-# Secrets (all three must be current — set in repo settings):
+# Secrets (all four must be current — set in repo settings):
 #   - DEPLOY_SSH_PRIVATE_KEY  (same key deploy.yml uses)
+#   - R1_SSH_KNOWN_HOSTS      (base64 of the pinned r1 host key — the same
+#                              secret deploy.yml pins; REQUIRED, there is no
+#                              live ssh-keyscan fallback anymore)
 #   - ANSIBLE_VAULT_PASSWORD  (the r1.secrets.yml vault password)
 #   - ANSIBLE_VAULT_FILE_B64  (base64 of the encrypted r1.secrets.yml)
 # NOTE (2026-07-17): ANSIBLE_VAULT_PASSWORD must match the vault that
@@ -39,27 +42,55 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
       - name: Install ansible
         run: pipx install --include-deps ansible && pipx inject ansible passlib
 
       - name: SSH key + known_hosts
+        # Mirrors deploy.yml's "Set up SSH" step (F-1297/F-1298):
+        #  - route the deploy key through `env:`, never interpolate a
+        #    `${{ secrets.* }}` into the shell, and write it with printf.
+        #  - PIN the host key from R1_SSH_KNOWN_HOSTS and fail fast if it
+        #    is unset. The previous live `ssh-keyscan` trusted whatever
+        #    key was served on the wire — a silent MITM hole in a job that
+        #    carries the deploy key + vault password (host_key_checking is
+        #    True in ansible.cfg, so this known_hosts is load-bearing).
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS_B64: ${{ secrets.R1_SSH_KNOWN_HOSTS }}
         run: |
+          set -euo pipefail
           mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 700 ~/.ssh
+          # inventory/r1.yml pins ansible_ssh_private_key_file to this path.
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H 136.243.90.96 >> ~/.ssh/known_hosts 2>/dev/null
+          if [ -z "${KNOWN_HOSTS_B64:-}" ]; then
+            echo "::error::R1_SSH_KNOWN_HOSTS is unset — pin the r1 host key before retrying (capture once out-of-band, e.g. ssh root@136.243.90.96 ssh-keyscan -t ed25519 136.243.90.96 | base64 -w0, then set it as a repo secret). The live ssh-keyscan fallback was removed (F-001) — it was a MITM hole." >&2
+            exit 1
+          fi
+          echo "$KNOWN_HOSTS_B64" | base64 -d > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
 
       - name: Vault password
+        # F-1298: the vault password + the base64 vault both flow through
+        # `env:`, never interpolated into the shell. The password was a
+        # shell-injection sink when inlined (a `$(...)`/backtick inside the
+        # secret would have executed in the runner). Written with printf,
+        # not echo, so no trailing newline is appended to the password.
+        env:
+          VAULT_PASS: ${{ secrets.ANSIBLE_VAULT_PASSWORD }}
+          VAULT_FILE_B64: ${{ secrets.ANSIBLE_VAULT_FILE_B64 }}
         run: |
+          set -euo pipefail
           mkdir -p ~/.ansible
-          echo -n "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > ~/.ansible/r1_vault_pass
+          printf '%s' "$VAULT_PASS" > ~/.ansible/r1_vault_pass
           chmod 600 ~/.ansible/r1_vault_pass
           # The encrypted vault itself is NOT in the (public) repo —
           # 2026-07-03 exposure response. Materialize it from the
           # Actions secret.
-          echo "${{ secrets.ANSIBLE_VAULT_FILE_B64 }}" | base64 -d > configs/ansible/inventory/r1.secrets.yml
+          printf '%s' "$VAULT_FILE_B64" | base64 -d > configs/ansible/inventory/r1.secrets.yml
 
       - name: Dry-run the playbook against r1
         working-directory: configs/ansible
@@ -93,3 +124,15 @@ jobs:
             exit 1
           fi
           echo "within allowance ($CHANGED <= 13)"
+
+      - name: Shred materialized secrets
+        # F-003: always remove the decoded vault + the plaintext vault
+        # password from the runner — even if the dry-run failed above — so
+        # neither the workspace copy of r1.secrets.yml nor the vault-pass
+        # file lingers on the (shared-tenant) runner disk or gets swept into
+        # any post-job artifact. `shred` overwrites first; `rm -f` is the
+        # fallback if shred is unavailable / the file was never created.
+        if: always()
+        run: |
+          shred -u ~/.ansible/r1_vault_pass 2>/dev/null || rm -f ~/.ansible/r1_vault_pass
+          shred -u configs/ansible/inventory/r1.secrets.yml 2>/dev/null || rm -f configs/ansible/inventory/r1.secrets.yml
