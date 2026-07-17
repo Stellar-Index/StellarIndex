@@ -10,12 +10,25 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
+// seedIntraLedgerSeq is the intra_ledger_seq a snapshot/seed backfill row
+// stamps: math.MaxUint32, the top of the per-ledger position space. A snapshot
+// 'state' row is the authoritative reconstructed FINAL state of its entry as of
+// LastModifiedLedgerSeq (ADR-0034), so it must sit at the END of that ledger's
+// intra-ledger order — a live per-ledger change (a much smaller position) can
+// never overwrite it in ledger_entries_current's version comparison, while a
+// re-snapshot (equal sentinel) stays corrective. The live extract counter
+// cannot reach this value (it would require ~4.3e9 entry-changes in one
+// ledger). Mirrors timescale.SeedIntraLedgerSeq (migration 0111, C2-6); kept a
+// local const so the lake layer takes no dependency on the served-tier package.
+const seedIntraLedgerSeq = uint32(0xFFFFFFFF) // math.MaxUint32
+
 // SnapshotEntryRow builds a ledger_entry_changes row from a live snapshot entry
 // (Post-only), populating owner/asset/balance with the SAME helpers the indexer
 // uses for its own writes — so account-state + asset-holder + supply reads work
 // identically against backfilled rows. Keyed on the entry's real LedgerKey +
 // LastModifiedLedgerSeq (so the readers' key_xdr lookups match and newest-wins
-// ordering stays correct). change_type="state", op_index=-1. ok=false on a
+// ordering stays correct). change_type="state", op_index=-1, intra_ledger_seq =
+// seedIntraLedgerSeq (authoritative final state for its ledger). ok=false on a
 // marshal error (skip the one entry, never abort the backfill).
 func SnapshotEntryRow(post *xdr.LedgerEntry, closeTime time.Time) (LedgerEntryChangeRow, bool) {
 	key, err := post.LedgerKey()
@@ -53,6 +66,10 @@ func SnapshotEntryRow(post *xdr.LedgerEntry, closeTime time.Time) (LedgerEntryCh
 		AccountID:   owner,
 		Asset:       asset,
 		Balance:     entryBalance(*post),
+		// A reconstructed snapshot is the ledger's final state for this key —
+		// it must win any same-ledger live change in ledger_entries_current's
+		// version comparison (C2-4c), so it stamps the top-of-space sentinel.
+		IntraLedgerSeq: seedIntraLedgerSeq,
 	}, true
 }
 
@@ -117,13 +134,13 @@ func InsertEntryChanges(ctx context.Context, addr string, rows []LedgerEntryChan
 // insertEntryChunk sends one prepared batch of entry-change rows.
 func insertEntryChunk(ctx context.Context, conn clickhouse.Conn, chunk []LedgerEntryChangeRow) error {
 	b, err := conn.PrepareBatch(ctx,
-		"INSERT INTO stellar.ledger_entry_changes (ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_type, key_xdr, entry_xdr, account_id, asset, balance)")
+		"INSERT INTO stellar.ledger_entry_changes (ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_type, key_xdr, entry_xdr, account_id, asset, balance, intra_ledger_seq)")
 	if err != nil {
 		return fmt.Errorf("clickhouse: prepare entry-changes batch: %w", err)
 	}
 	for _, r := range chunk {
 		if err := b.Append(r.LedgerSeq, r.CloseTime, r.TxHash, r.OpIndex, r.ChangeIndex,
-			r.ChangeType, r.EntryType, r.KeyXDR, r.EntryXDR, r.AccountID, r.Asset, r.Balance); err != nil {
+			r.ChangeType, r.EntryType, r.KeyXDR, r.EntryXDR, r.AccountID, r.Asset, r.Balance, r.IntraLedgerSeq); err != nil {
 			return fmt.Errorf("clickhouse: append entry-change: %w", err)
 		}
 	}

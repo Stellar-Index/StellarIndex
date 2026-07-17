@@ -218,6 +218,15 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	}
 	assertPolicyAttached(t, db, ctx, "soroban_events", "policy_compression")
 
+	// 0105 created the classic_movements hypertable; 0113 drops it
+	// (audit C2-18 / DAT-03 — superseded by ADR-0048 D2, the archive
+	// moved to ClickHouse-native stellar.account_movements and this
+	// Postgres table had no live writer/reader). After the FULL up
+	// stack, therefore, it must NOT exist — this asserts the cleanup
+	// migration actually removed it (and guards against a future
+	// re-add without a matching drop).
+	assertTableAbsent(t, db, ctx, "classic_movements")
+
 	// ─── Down: roll everything back ─────────────────────────────
 	if err := migrator.Down(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		t.Fatalf("migrate down: %v", err)
@@ -271,7 +280,10 @@ func assertTableAbsent(t *testing.T, db *sql.DB, ctx context.Context, name strin
 		t.Fatalf("check absent %q: %v", name, err)
 	}
 	if exists {
-		t.Errorf("expected table %q to be absent after rollback", name)
+		// Used both post-rollback (every migration's down ran) and in
+		// the up-path for a table a later migration drops (0113 →
+		// classic_movements), so the message stays context-neutral.
+		t.Errorf("expected table %q to be absent", name)
 	}
 }
 

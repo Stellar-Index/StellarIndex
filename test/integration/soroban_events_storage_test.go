@@ -3,6 +3,7 @@
 package integration_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -70,6 +72,97 @@ func TestSorobanEventsBatchInsert(t *testing.T) {
 	}
 	if err := store.InsertSorobanEventsBatch(ctx, []sorobanevents.Row{}); err != nil {
 		t.Errorf("InsertSorobanEventsBatch(empty slice) = %v, want nil", err)
+	}
+}
+
+// TestSorobanEventsBatchInsert_PreservesFiveOrMoreTopics is the C2-11
+// DB-round-trip guard: a row carrying MORE than four topics must
+// persist through InsertSorobanEventsBatch → topics_xdr (migration
+// 0114) → StreamSorobanEvents with EVERY topic byte-for-byte intact,
+// in order. Pre-fix (four fixed topic_0..3 columns only) topics 5+ had
+// nowhere to land; post-fix the topics_xdr bytea[] column keeps them
+// all.
+func TestSorobanEventsBatchInsert_PreservesFiveOrMoreTopics(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const ledger = 50_500_000
+	ts := time.Date(2026, 5, 25, 8, 0, 0, 0, time.UTC)
+
+	var cid [32]byte
+	cid[0] = 0x5A
+	cid[1] = 0xBB
+	cstrk, err := strkey.Encode(strkey.VersionByteContract, cid[:])
+	if err != nil {
+		t.Fatalf("strkey.Encode: %v", err)
+	}
+	txh := make([]byte, 32)
+	for i := range txh {
+		txh[i] = 0x5A
+	}
+
+	// Six distinct topics — beyond the pre-0114 four-column cap.
+	topics := [][]byte{
+		mkBytes(0x01, 8),
+		mkBytes(0x02, 9),
+		mkBytes(0x03, 10),
+		mkBytes(0x04, 11),
+		mkBytes(0x05, 12), // topic[4]
+		mkBytes(0x06, 13), // topic[5]
+	}
+
+	row := domain.SorobanEventRow{
+		Ledger:          ledger,
+		LedgerCloseTime: ts,
+		TxHash:          txh,
+		OpIndex:         0,
+		EventIndex:      0,
+		ContractID:      cstrk,
+		ContractIDHex:   cid[:],
+		TopicCount:      int16(len(topics)),
+		Topic0Sym:       "multi_topic_event",
+		Topic0XDR:       topics[0],
+		Topic1XDR:       topics[1],
+		Topic2XDR:       topics[2],
+		Topic3XDR:       topics[3],
+		TopicsXDR:       topics,
+		BodyXDR:         mkBytes(0x77, 32),
+	}
+
+	if err := store.InsertSorobanEventsBatch(ctx, []sorobanevents.Row{row}); err != nil {
+		t.Fatalf("InsertSorobanEventsBatch: %v", err)
+	}
+
+	var got []domain.SorobanEventRow
+	if err := store.StreamSorobanEvents(ctx, ledger, ledger, nil, nil, nil,
+		func(r domain.SorobanEventRow) error {
+			got = append(got, r)
+			return nil
+		}); err != nil {
+		t.Fatalf("StreamSorobanEvents: %v", err)
+	}
+
+	if len(got) != 1 {
+		t.Fatalf("streamed %d rows, want 1", len(got))
+	}
+	streamed := got[0]
+	if len(streamed.TopicsXDR) != len(topics) {
+		t.Fatalf("streamed TopicsXDR len = %d, want %d (topics 5+ lost through the DB round-trip)",
+			len(streamed.TopicsXDR), len(topics))
+	}
+	for i, want := range topics {
+		if !bytes.Equal(streamed.TopicsXDR[i], want) {
+			t.Errorf("TopicsXDR[%d] = %x, want %x", i, streamed.TopicsXDR[i], want)
+		}
 	}
 }
 

@@ -21,15 +21,25 @@ import (
 // monotonic per-transaction counter (stable across re-ingest → idempotent under
 // the ReplacingMergeTree). Resilient: a change that won't marshal is skipped,
 // never fatal.
-func extractEntryChanges(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, closeTime time.Time, txHash string) {
+//
+// entryChangeSeq is the per-LEDGER intra-ledger position, threaded across every
+// tx in the ledger (declared in ExtractLedger). Unlike change_index — a
+// per-TRANSACTION counter that repeats across a ledger's txs — this counter is
+// monotonic over the WHOLE ledger's canonical walk, so it uniquely orders every
+// change to a given key within one ledger. It is folded into
+// ledger_entries_current's ReplacingMergeTree version so the LAST intra-ledger
+// change to a key wins FINAL dedup deterministically (audit-2026-07-16 C2-4c).
+func extractEntryChanges(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, closeTime time.Time, txHash string, entryChangeSeq *uint32) {
 	var changeIdx uint32
 	emit := func(opIndex int, c xdr.LedgerEntryChange) {
 		row, ok := entryChangeRow(seq, closeTime, txHash, int32(opIndex), changeIdx, c)
 		if !ok {
 			return
 		}
+		row.IntraLedgerSeq = *entryChangeSeq
 		ext.Changes = append(ext.Changes, row)
 		changeIdx++
+		*entryChangeSeq++
 	}
 
 	// Tx-level fee changes (every successful tx debits a fee) — op_index -1.
