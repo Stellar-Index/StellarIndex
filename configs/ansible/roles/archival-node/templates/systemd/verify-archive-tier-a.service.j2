@@ -60,7 +60,14 @@ Environment=VERIFY_ARCHIVE_SAFETY_OVERLAP=5000
 # -to is omitted intentionally — verify-archive resolves the head
 # ledger from the manifest at start time, so we always verify up to
 # whatever the archive contained at run-launch.
-ExecStart=/usr/local/bin/stellarindex-ops verify-archive \
+# Routed through run-heavy-job.sh for the per-job singleton lock (C4-14 /
+# INF-11): this is the longest heavy job (~13.8h first pass), so a slow run
+# is the most likely to still be going when the next timer fires. The wrapper
+# runs as User=stellarindex (non-root) so it takes the lock then `exec`s the
+# binary in place — the payload stays the unit's MAIN pid, keeping Type=notify
+# + NotifyAccess=main + WatchdogSec intact (a systemd-run scope would break it).
+ExecStart=/usr/local/sbin/run-heavy-job.sh verify-archive \
+  /usr/local/bin/stellarindex-ops verify-archive \
   -config /etc/stellarindex.toml \
   -from ${VERIFY_ARCHIVE_FROM} \
   -tier chain \
