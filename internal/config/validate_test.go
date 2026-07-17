@@ -192,6 +192,53 @@ func TestValidate_ReflectorSourceRequiresContract(t *testing.T) {
 	}
 }
 
+// TestValidate_ClickHouseProjectorSourceRequiresLiveSink locks the
+// ADR-0034 #10 feed-switch dependency (C3-20): the projector reading
+// forward events FROM ClickHouse only makes sense if the dual-sink is
+// WRITING them. The invariant is documented on the field ("Requires
+// clickhouse_live_sink") but was never enforced — a misconfig
+// (projector_source=true, live_sink=false) would silently mis-read.
+func TestValidate_ClickHouseProjectorSourceRequiresLiveSink(t *testing.T) {
+	// The bad combo: read from CH but never write to it.
+	bad := withBad(func(c *config.Config) {
+		c.Storage.ClickHouseProjectorSource = true
+		c.Storage.ClickHouseLiveSink = false
+	})
+	err := bad.Validate()
+	if err == nil {
+		t.Fatal("expected rejection of projector_source=true with live_sink=false, got nil")
+	}
+	if !errors.Is(err, config.ErrInvalidConfig) {
+		t.Errorf("err not wrapped as ErrInvalidConfig: %v", err)
+	}
+	if !strings.Contains(err.Error(), "clickhouse_projector_source") ||
+		!strings.Contains(err.Error(), "clickhouse_live_sink") {
+		t.Errorf("err should name both fields; got %v", err)
+	}
+
+	// Every valid combination must pass.
+	valid := []struct {
+		name            string
+		projectorSource bool
+		liveSink        bool
+	}{
+		{"both on (production / Default)", true, true},
+		{"sink on, projector off", false, true},
+		{"both off", false, false},
+	}
+	for _, tc := range valid {
+		t.Run(tc.name, func(t *testing.T) {
+			c := withBad(func(c *config.Config) {
+				c.Storage.ClickHouseProjectorSource = tc.projectorSource
+				c.Storage.ClickHouseLiveSink = tc.liveSink
+			})
+			if err := c.Validate(); err != nil {
+				t.Fatalf("valid combo %s rejected: %v", tc.name, err)
+			}
+		})
+	}
+}
+
 func TestValidate_CoreHTTPEndpointOptional(t *testing.T) {
 	// Empty CoreHTTPEndpoint means "don't probe core" — valid.
 	c := config.Default()
