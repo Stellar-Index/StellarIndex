@@ -2,6 +2,11 @@
 # Build + runtime image for stellarindex-ops.
 # See docker/README.md for the shared image-shape rationale.
 
+# Base image pinned by TAG, not digest. TODO(supply-chain, DEP-low): pin by
+# immutable digest — FROM golang:1.26-alpine@sha256:<digest> AS builder.
+# Digest NOT inlined: unresolvable offline in this worktree (no registry
+# access) and must not be fabricated. Resolve with
+# `docker buildx imagetools inspect golang:1.26-alpine` and pin in the same PR.
 FROM golang:1.26-alpine AS builder
 RUN apk add --no-cache git ca-certificates tzdata
 WORKDIR /src
@@ -19,6 +24,10 @@ RUN CGO_ENABLED=0 GOOS=linux \
       -o /out/stellarindex-ops \
       ./cmd/stellarindex-ops
 
+# Base image pinned by TAG, not digest. TODO(supply-chain, DEP-low): pin by
+# immutable digest — FROM gcr.io/distroless/static-debian12:nonroot@sha256:<digest>.
+# Resolve the (offline-unavailable) digest via `docker buildx imagetools
+# inspect gcr.io/distroless/static-debian12:nonroot`; pin in the same PR (do NOT fabricate).
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=builder /out/stellarindex-ops /usr/local/bin/stellarindex-ops
 USER nonroot:nonroot
