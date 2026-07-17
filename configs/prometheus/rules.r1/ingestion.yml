@@ -207,6 +207,63 @@ groups:
             stall the main ingest path, but discovery coverage is degrading
             under recorder pressure or buffer saturation.
 
+      # audit-2026-07-16 C4-3: the soroswap-router + defindex persist
+      # paths used to log a Warn without bumping any counter, so a
+      # dropped swap / vault-flow row was invisible to metrics. Those
+      # sites now increment source_insert_errors_total like every sibling
+      # case; this alert is the SENSITIVE (rate > 0) tripwire on exactly
+      # those money-flow kinds — the existing stellarindex_ingestion_
+      # insert_errors alert only fires above 0.1/s, so a low-rate silent
+      # drop would slip past it.
+      - alert: stellarindex_ingestion_persist_drop
+        expr: increase(stellarindex_source_insert_errors_total{kind=~"soroswap_router_swap|defindex_flow_strategy|defindex_flow_vault"}[15m]) > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
+          summary: "Persist drops on {{ $labels.source }}/{{ $labels.kind }} (any rate)"
+          description: |
+            A soroswap-router or defindex persist write failed for
+            {{ $labels.source }}/{{ $labels.kind }} in the last 15 minutes.
+            These are DEX-swap / vault-flow rows — even a low-rate drop
+            matters, and this path was previously counter-less (the drop
+            was log-only and invisible). If the write went through the
+            projector it is retried (watch stellarindex_projector_events_
+            decoded_total{outcome="sink_retry"}); if it went through the
+            dispatcher drain the row was dropped. Check Timescale health
+            and the poison-row logs.
+
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
+
+      # audit-2026-07-16 C4-3: discovery Recorder.Record failures were
+      # log-only inside the async sink, so a recorder outage silently
+      # stopped discovered_assets from growing. Now counted +
+      # alertable. Informational (best-effort: the contract re-appears
+      # on a later event), same posture as discovery_drops.
+      - alert: stellarindex_ingestion_discovery_record_failures
+        expr: increase(stellarindex_discovery_record_failures_total[10m]) > 0
+        for: 10m
+        labels:
+          severity: informational
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/discovery-drops.md
+          summary: "Discovery recorder writes are failing"
+          description: |
+            The discovery async sink's Recorder.Record write failed at
+            least once in the last 10 minutes and kept failing for 10
+            minutes. discovered_assets stops growing while this persists —
+            usually a Postgres outage or a discovered_assets schema/constraint
+            problem. Best-effort by design (the contract re-appears on a
+            later event), so this is a coverage-degradation signal, not
+            data loss.
+
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/discovery-drops.md
+
       - alert: stellarindex_ingestion_ch_live_sink_drops
         expr: increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[10m]) > 0
         for: 10m
