@@ -61,7 +61,10 @@ func (h *Handler) ContractWasm(w http.ResponseWriter, r *http.Request) {
 			"the contract id must be a valid C-strkey")
 		return
 	}
-	info, err := h.Reader.ContractWasm(r.Context(), cid)
+	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
+	defer cancel()
+
+	info, err := h.Reader.ContractWasm(ctx, cid)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -102,7 +105,7 @@ func (h *Handler) ContractWasm(w http.ResponseWriter, r *http.Request) {
 			// the derivation cross-check makes it spoof-proof (a fake
 			// contract can emit the topic but can never occupy the
 			// derived address).
-			if assetName, found := h.sacAssetViaEvents(r.Context(), cid); found {
+			if assetName, found := h.sacAssetViaEvents(ctx, cid); found {
 				h.WriteProblem(w, r, "https://api.stellarindex.io/errors/contract-is-sac",
 					"Stellar Asset Contract — no WASM", http.StatusNotFound,
 					"this contract is the Stellar Asset Contract for "+assetName+

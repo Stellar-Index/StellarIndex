@@ -1,6 +1,7 @@
 package explorer
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -68,7 +69,11 @@ func (h *Handler) AccountTransactions(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := h.Reader.AccountTransactions(r.Context(), g, limit, cur)
+
+	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
+	defer cancel()
+
+	rows, err := h.Reader.AccountTransactions(ctx, g, limit, cur)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -109,7 +114,11 @@ func (h *Handler) AccountOperations(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := h.Reader.AccountOperations(r.Context(), g, limit, cur)
+
+	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
+	defer cancel()
+
+	rows, err := h.Reader.AccountOperations(ctx, g, limit, cur)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return

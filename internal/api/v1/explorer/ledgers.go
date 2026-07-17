@@ -1,6 +1,7 @@
 package explorer
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
@@ -101,7 +102,11 @@ func (h *Handler) LedgersList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := h.Reader.RecentLedgers(r.Context(), limit, before)
+
+	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
+	defer cancel()
+
+	rows, err := h.Reader.RecentLedgers(ctx, limit, before)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -145,7 +150,11 @@ func (h *Handler) LedgerDetail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	l, found, err := h.Reader.LedgerBySeq(r.Context(), seq)
+
+	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
+	defer cancel()
+
+	l, found, err := h.Reader.LedgerBySeq(ctx, seq)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -184,7 +193,11 @@ func (h *Handler) LedgerTransactions(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := h.Reader.LedgerTransactions(r.Context(), seq, limit)
+
+	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
+	defer cancel()
+
+	rows, err := h.Reader.LedgerTransactions(ctx, seq, limit)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return

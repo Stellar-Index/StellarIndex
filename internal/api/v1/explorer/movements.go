@@ -191,7 +191,9 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
+	defer cancel()
+
 	chCur := clickhouse.AccountMovementCursor{Ledger: cur.Ledger, TxHash: cur.TxHash, OpIndex: cur.OpIndex, LegIndex: cur.LegIndex}
 
 	chRows, err := h.Reader.AccountMovements(ctx, g, limit, chCur, filter)
