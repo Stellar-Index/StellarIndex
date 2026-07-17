@@ -11,7 +11,7 @@ that reference them.
 
 | Repo | SHA | Last commit | Tag | Our dependency? |
 | ---- | --- | ----------- | --- | --------------- |
-| `stellar/stellar-galexie` | `6dec23e20802202e23d60a6505ead19898636e75` | 2026-04-01 | `galexie-v26.0.0` | Runtime binary — we run Galexie alongside our code, not link as a library. |
+| `stellar/stellar-galexie` | _(pending v27 build stamp)_ | _(pending)_ | `galexie-v27.0.0` | Runtime binary — we run Galexie alongside our code, not link as a library. Pinned in `configs/ansible/roles/archival-node/defaults/main.yml` (`galexie_version`), bumped 26→27 on 2026-07-09 (CAP-0071 SEV fix). SHA/date to be stamped from the built galexie-v27.0.0 artifact — not fabricated offline; see audit deps F-002. Prior v26.0.0 SHA was `6dec23e2` (2026-04-01). |
 | `stellar/rs-stellar-archivist` | `a6a25033dc2dd1783314ff5b009123e6bfc00e7a` | 2026-04-20 | (no tag yet) | Runtime binary — we call it from scripts. Pin SHA since no tag. |
 | `stellar/stellar-rpc` | `99a61f337b66635ba6f9d70d2403ee5faed1d7c1` | 2026-04-07 | (no tag visible locally) | Removed from r1 on 2026-04-23 — kept ONLY for the `stellarindex-ops rpc-probe` operator diagnostic that dials remote public endpoints; not on the data path. |
 | `stellar/go-stellar-sdk` | `dd844ab32ac8bef7984c76ad1e59c2209a4aacc5` | 2026-07-01 | `v0.6.0` | **Go library — direct dep.** SHA is the `v0.6.0` tag commit (go.mod pins `v0.6.0`). Compat pass done 2026-07-01: v0.6 changed `datastore.DataStore.GetFile` to return `(io.ReadCloser, int64, error)` (adds object size); adapted `internal/ledgerstream/tiered.go` (+test) + `cmd/stellarindex-ops/rehydrate_galexie_archive.go` (size threaded through, unused). Full `go build ./...` + unit suite green (SCVal/XDR decoding + ingest path unchanged). Prior `v0.5.0` SHA was `475bbd9a`. |
@@ -40,10 +40,10 @@ At deploy-time we will pin these:
 ```go
 // go.mod
 module github.com/Stellar-Index/StellarIndex
-go 1.25
+go 1.25.10
 
 require (
-    github.com/stellar/go-stellar-sdk v0.5.0
+    github.com/stellar/go-stellar-sdk v0.6.0
     // + our own deps (timescale driver, redis client, echo/chi, prometheus, etc.)
 )
 ```
@@ -56,7 +56,8 @@ Reference link kept in the pinned-snapshots table above.
 Runtime binaries / Debian packages:
 
 ```
-stellar-galexie   v26.0.0      (pinned per tag + SHA 6dec23e2)
+stellar-galexie   v27.0.0      (pinned per tag galexie-v27.0.0; SHA pending
+                                v27 build stamp — see the galexie row above)
                                 — embeds captive stellar-core internally;
                                   the only stellar-core on r1 today.
 rs-stellar-archivist  (pre-tag; pin SHA a6a25033)

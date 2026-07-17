@@ -1,7 +1,16 @@
 auth_enabled: false
 
 server:
+  # Loopback-only. Omitting these binds Loki's HTTP + gRPC listeners to
+  # 0.0.0.0 (all interfaces), leaving the auth_enabled:false server
+  # reachable off-host and relying solely on the R1 firewall (see the
+  # Redis no-auth finding for the same class). Everything that talks to
+  # this single-host Loki is local: promtail (configs/loki/promtail.r1.yml)
+  # pushes to http://localhost:3100, and pattern_ingester / frontend query
+  # the loopback API. Firewall stays as defence-in-depth.
+  http_listen_address: 127.0.0.1
   http_listen_port: 3100
+  grpc_listen_address: 127.0.0.1
   grpc_listen_port: 9096
   log_level: warn
   grpc_server_max_concurrent_streams: 1000
