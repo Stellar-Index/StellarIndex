@@ -50,24 +50,29 @@ env:
   GITLEAKS_VERSION: 8.21.2
 
   # F-1294 (codex audit-2026-05-13): SHA-256 of upstream tool
-  # tarballs that the install steps verify before unpacking.
-  # Sourced from GitHub repo secrets (Settings → Secrets and
-  # variables → Actions) so a SHA bump alongside a version bump
-  # doesn't require touching this workflow file. Empty values
-  # cause the install steps to fail-fast with a clear error
-  # rather than silently installing unverified binaries.
+  # tarballs that the install steps verify before unpacking —
+  # pre-fix the install steps were `curl | tar -xz` with no
+  # checksum, so a compromised upstream tarball could have made
+  # the `monitoring-rules` job accept broken PromQL or the `vuln`
+  # job miss leaked secrets.
   #
-  # Pre-wave-123 the install steps were `curl | tar -xz` with
-  # no checksum — a compromised upstream tarball could have
-  # made the `monitoring-rules` job accept broken PromQL or the
-  # `vuln` job miss leaked secrets.
+  # audit-2026-07-16 (C4-17b): the EXPECTED checksums are committed
+  # (PROM_TARBALL_SHA256_DEFAULT next to PROM_VERSION in the
+  # monitoring-rules job; GITLEAKS_TARBALL_SHA256_DEFAULT below),
+  # NOT stored only in a repo secret. A tarball checksum is public
+  # (upstream sha256sums.txt) and belongs in the reviewable diff:
+  # storing it as a secret gained nothing and left main CI hard-red
+  # for 24h+ whenever the secret was unset — invisible to local
+  # `make verify`. The `secrets.*` references remain as an OPTIONAL
+  # override (a set secret wins); an unset secret now falls back to
+  # the committed default instead of fail-fast.
   #
-  # Bump procedure: bump the VERSION above; copy the matching
-  # SHA from the upstream release page (Prometheus publishes a
-  # SHA256SUMS file alongside the release; gitleaks ships
-  # `*.sha256` per asset); update the repo secret. CI fails
-  # loudly on a stale SHA — the failure message names the
-  # tarball and shows expected-vs-actual.
+  # Bump procedure: bump the VERSION; copy the matching SHA from the
+  # upstream release (Prometheus publishes sha256sums.txt; gitleaks
+  # ships gitleaks_<v>_checksums.txt) into the *_DEFAULT beside it,
+  # IN THE SAME COMMIT. CI fails loudly on a stale SHA — the message
+  # names the tarball and shows expected-vs-actual.
+  GITLEAKS_TARBALL_SHA256_DEFAULT: "5bc41815076e6ed6ef8fbecc9d9b75bcae31f39029ceb55da08086315316e3ba"
   PROM_TARBALL_SHA256: ${{ secrets.PROM_TARBALL_SHA256 }}
   GITLEAKS_TARBALL_SHA256: ${{ secrets.GITLEAKS_TARBALL_SHA256 }}
 
@@ -262,6 +267,14 @@ jobs:
     # unchecked.
     env:
       PROM_VERSION: "2.55.1"
+      # audit-2026-07-16 (C4-17b): the expected tarball SHA-256 lives HERE, in
+      # version control next to the version pin — NOT in a repo secret. A
+      # checksum is public (from the upstream sha256sums.txt) and belongs in the
+      # reviewable diff: bumping PROM_VERSION obligates bumping this in the same
+      # commit. Storing it as a secret gained nothing and left CI hard-red for
+      # 24h+ whenever the secret was unset. The `secrets.PROM_TARBALL_SHA256`
+      # override below is retained only as an optional escape hatch.
+      PROM_TARBALL_SHA256_DEFAULT: "19700bdd42ec31ee162e4079ebda4cd0a44432df4daa637141bdbea4b1cd8927"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - name: structural rule lint (no promtool)
@@ -280,12 +293,12 @@ jobs:
           # F-1294 (codex audit-2026-05-13): SHA-verified install.
           # Pre-fix this was `curl | tar -xz` straight, no
           # checksum. Now we download, verify, then unpack.
-          if [ -z "$PROM_TARBALL_SHA256" ]; then
-            echo "::error::PROM_TARBALL_SHA256 secret is not set in repo. Set it to the SHA-256 of prometheus-${PROM_VERSION}.linux-amd64.tar.gz from the upstream SHA256SUMS file." >&2
-            exit 1
-          fi
+          # Checksum source (audit-2026-07-16 C4-17b): the committed
+          # PROM_TARBALL_SHA256_DEFAULT (in the job env, versioned + reviewable),
+          # overridable by an optional repo secret. No unset-secret hard-red.
+          SHA="${PROM_TARBALL_SHA256:-$PROM_TARBALL_SHA256_DEFAULT}"
           curl -fsSL "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/prometheus-${PROM_VERSION}.linux-amd64.tar.gz" -o /tmp/prom.tar.gz
-          echo "${PROM_TARBALL_SHA256}  /tmp/prom.tar.gz" | sha256sum -c -
+          echo "${SHA}  /tmp/prom.tar.gz" | sha256sum -c -
           tar -xzf /tmp/prom.tar.gz
           sudo install -m 0755 "prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
       - name: validate rules
@@ -324,12 +337,12 @@ jobs:
           # F-1294 (codex audit-2026-05-13): SHA-verified install.
           # Pre-fix this was `curl | tar -xz` straight, no
           # checksum. Now we download, verify, then unpack.
-          if [ -z "$GITLEAKS_TARBALL_SHA256" ]; then
-            echo "::error::GITLEAKS_TARBALL_SHA256 secret is not set in repo. Set it to the SHA-256 of gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz from the upstream release page." >&2
-            exit 1
-          fi
+          # Checksum source (audit-2026-07-16 C4-17b): the committed
+          # GITLEAKS_TARBALL_SHA256_DEFAULT (top-level env, versioned +
+          # reviewable), overridable by an optional repo secret.
+          SHA="${GITLEAKS_TARBALL_SHA256:-$GITLEAKS_TARBALL_SHA256_DEFAULT}"
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
-          echo "${GITLEAKS_TARBALL_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
+          echo "${SHA}  /tmp/gitleaks.tar.gz" | sha256sum -c -
           tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
           gitleaks detect --redact --verbose --no-banner
 
