@@ -340,6 +340,7 @@ override.
 | `stellarindex_aggregator_supply_refresh_stalled` | `time() - max(timestamp(stellarindex_aggregator_supply_refresh_total{outcome="ok"}))` | > 30 min for ≥ 5 min | **P2** | [supply-refresh-stalled](runbooks/supply-refresh-stalled.md) |
 | `stellarindex_aggregator_supply_refresh_error_dominant` | error-outcome rate / total-rate | > 50% for ≥ 30 min | P3 | [supply-refresh-error-dominant](runbooks/supply-refresh-error-dominant.md) |
 | `stellarindex_aggregator_supply_refresh_never_initialized` | `absent_over_time(stellarindex_aggregator_supply_refresh_total{outcome="ok"}[36h])` | == 1 for ≥ 5 min | P3 | [aggregator-supply-refresh-never-initialized](runbooks/aggregator-supply-refresh-never-initialized.md) |
+| `stellarindex_ch_supply_gapfill_failed` | `node_systemd_unit_state{name="ch-supply.service",state="failed"}` | == 1 for ≥ 10 min | P3 | [ch-supply-gapfill-failed](runbooks/ch-supply-gapfill-failed.md) |
 
 ## Infra / host alerts
 
