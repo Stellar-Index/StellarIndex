@@ -962,6 +962,15 @@ type APIConfig struct {
 	AnonRateLimitPerMin int      `toml:"anon_rate_limit_per_min" doc:"Per-IP rate limit for anonymous requests." default:"60"`
 	KeyRateLimitPerMin  int      `toml:"key_rate_limit_per_min" doc:"Per-API-key rate limit, default tier." default:"1000"`
 
+	// RequestTimeout + ServingStatementTimeout are the two layers of the
+	// unauth-DoS chokepoint fix (C3-1/C3-2/P1/R1, audit-2026-07-16). The
+	// app-layer request deadline is the primary bound; the SQL
+	// statement_timeout is the defense-in-depth backstop for when Go-side
+	// ctx cancellation races. Keep statement_timeout LONGER than
+	// request_timeout so the app-layer deadline fires first.
+	RequestTimeout          time.Duration `toml:"request_timeout" doc:"Per-request context deadline applied to every non-streaming request by the API's RequestTimeout middleware, so every handler inherits a bound even when it forgets its own. Streaming (SSE) endpoints are exempt (they own their lifecycle via client-disconnect ctx cancellation). Should exceed the per-read 8s ceilings (so a per-read deadline surfaces its own error first) and stay under the 30s http.Server WriteTimeout. 0 disables the middleware." default:"15s"`
+	ServingStatementTimeout time.Duration `toml:"serving_statement_timeout" doc:"Session-level Postgres statement_timeout applied to every connection in the API's serving pool (via a post-connect SET), so a runaway request-path query is bounded SQL-side even if Go-side ctx cancellation races. Keep it LONGER than request_timeout so the app-layer deadline fires first (defense in depth). The indexer/aggregator pools are unaffected — their heavy batch scans set their own longer SET LOCAL statement_timeout inside a transaction, which overrides this session default. 0 disables it (plain Open, no session timeout)." default:"30s"`
+
 	// SignupRequireEmailVerification opts the deployment into
 	// the F-1218 wave 45 gate: API-key Subjects whose
 	// EmailVerifiedAt is zero AND whose identifier indicates
@@ -1342,9 +1351,15 @@ func defaultAPIConfig() APIConfig {
 		AuthBackend:         "redis",
 		AnonRateLimitPerMin: 60,
 		KeyRateLimitPerMin:  1000,
-		CDNEnabled:          true,
-		AllowedOrigins:      []string{"*"},
-		TrustedProxyCIDRs:   []string{},
+		// Unauth-DoS chokepoint (audit-2026-07-16): the app-layer request
+		// deadline (15s) is the primary bound; the serving-pool
+		// statement_timeout (30s) is the SQL-side backstop, kept longer so
+		// the app deadline fires first.
+		RequestTimeout:          15 * time.Second,
+		ServingStatementTimeout: 30 * time.Second,
+		CDNEnabled:              true,
+		AllowedOrigins:          []string{"*"},
+		TrustedProxyCIDRs:       []string{},
 		// F-0051: probe the public TLS leaf certs by default so silent
 		// Let's Encrypt renewal failures surface before expiry (the alert
 		// series only exists when this is populated).
