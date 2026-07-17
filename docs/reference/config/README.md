@@ -238,6 +238,7 @@ the `env:` column.
 | `divergence.coingecko.enabled` | `bool` | `true` | — | Whether the CoinGecko reference is wired into the divergence service. |
 | `divergence.coingecko.base_url` | `string` | _(required)_ | — | CoinGecko API base URL. Empty defaults to https://api.coingecko.com/api/v3. |
 | `divergence.coingecko.id_map` | `map` | `{}` | — | Maps canonical asset_id → CoinGecko slug. Operator-curated; empty falls back to the built-in default covering XLM + major stables. |
+| `divergence.coingecko.max_age_minutes` | `int` | `0` | — | Staleness ceiling in minutes for the CoinGecko quote's upstream last_updated_at; older quotes are rejected as reference-unavailable (CS-089). 0 = 30-minute default. |
 | `divergence.chainlink.enabled` | `bool` | `false` | — | Whether the Chainlink reference is wired into the divergence service. |
 | `divergence.chainlink.rpc_url` | `string` | _(required)_ | `CHAINLINK_RPC_URL` | Ethereum JSON-RPC endpoint. Shares the CHAINLINK_RPC_URL env var with the ingest poller (env overrides TOML). Empty defaults to https://cloudflare-eth.com. |
 | `divergence.chainlink.feeds` | `map[string]ChainlinkFeedConfig` | `{}` | — | Maps pair strings to {address, decimals, invert}. Empty disables Chainlink in practice. |

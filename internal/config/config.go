@@ -390,6 +390,13 @@ type DivergenceCoinGeckoConfig struct {
 	Enabled bool              `toml:"enabled" doc:"Whether the CoinGecko reference is wired into the divergence service." default:"true"`
 	BaseURL string            `toml:"base_url" doc:"CoinGecko API base URL. Empty defaults to https://api.coingecko.com/api/v3." default:""`
 	IDMap   map[string]string `toml:"id_map" doc:"Maps canonical asset_id → CoinGecko slug. Operator-curated; empty falls back to the built-in default covering XLM + major stables." default:"{}"`
+	// MaxAgeMinutes is the CS-089 staleness ceiling: a /simple/price
+	// quote whose upstream last_updated_at is older than this (relative
+	// to the comparison time) is rejected as reference-unavailable
+	// rather than served as a fresh reference (a frozen upstream must
+	// not drive the divergence signal). 0 = the 30-minute built-in
+	// default (CoinGecko refreshes /simple/price every ~1–5m).
+	MaxAgeMinutes int `toml:"max_age_minutes" doc:"Staleness ceiling in minutes for the CoinGecko quote's upstream last_updated_at; older quotes are rejected as reference-unavailable (CS-089). 0 = 30-minute default." default:"0"`
 }
 
 // DivergenceChainlinkConfig configures the Chainlink reference.
