@@ -65,14 +65,34 @@ func Reconstruct(row Row) (events.Event, error) {
 }
 
 // reconstructTopics base64-re-encodes the stored topic XDR bytes
-// into the slice shape decoders expect. Trims to the row's
-// TopicCount so events that legitimately had fewer than 4 topics
-// don't carry empty trailing strings.
+// into the slice shape decoders expect.
+//
+// Prefers the COMPLETE ordered topics_xdr list (migration 0114,
+// audit-2026-07-16 C2-11) so events with 5+ topics reconstruct with
+// every topic instead of the pre-fix cap of 4. Rows written before
+// 0114 (or by a pre-0114 binary) carry an empty TopicsXDR — fall back
+// to the fixed topic_0..3 columns, trimmed to TopicCount so events
+// that legitimately had fewer than 4 topics don't carry empty
+// trailing strings. Those legacy rows still cap at 4 (that is all
+// their storage kept); a ClickHouse-lake re-project recovers the
+// truncated tail.
 func reconstructTopics(row Row) []string {
+	if len(row.TopicsXDR) > 0 {
+		out := make([]string, 0, len(row.TopicsXDR))
+		for _, x := range row.TopicsXDR {
+			if len(x) == 0 {
+				continue
+			}
+			out = append(out, base64.StdEncoding.EncodeToString(x))
+		}
+		return out
+	}
+
+	// Legacy fallback: the four fixed topic columns.
 	xdrs := [4][]byte{row.Topic0XDR, row.Topic1XDR, row.Topic2XDR, row.Topic3XDR}
 	want := int(row.TopicCount)
 	if want > 4 {
-		// The migration only stores topics 0-3; reflect that cap
+		// Pre-0114 rows only stored topics 0-3; reflect that cap
 		// rather than the higher count the original event had.
 		want = 4
 	}

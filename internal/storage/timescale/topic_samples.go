@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lib/pq"
+
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
@@ -154,7 +156,7 @@ func distinctSorobanTopicSamplesWindowedQuery(rangeCovered bool) string {
             ledger, ledger_close_time, tx_hash, op_index, event_index,
             contract_id, contract_id_hex, topic_count, topic_0_sym,
             topic_0_xdr, topic_1_xdr, topic_2_xdr, topic_3_xdr,
-            body_xdr, op_args_xdr,
+            body_xdr, op_args_xdr, topics_xdr,
             count(*)   OVER (PARTITION BY contract_id, topic_0_sym) AS grp_count,
             min(ledger) OVER (PARTITION BY contract_id, topic_0_sym) AS grp_min,
             max(ledger) OVER (PARTITION BY contract_id, topic_0_sym) AS grp_max
@@ -198,13 +200,14 @@ func (s *Store) distinctSorobanTopicSamplesWindowed(ctx context.Context, from, t
 			topic0Sym                sql.NullString
 			topic1, topic2, topic3   []byte
 			opArgs                   []byte
+			topicsXDR                pq.ByteaArray
 			grpCount, grpMin, grpMax int64
 		)
 		if err := rows.Scan(
 			&ledger, &r.LedgerCloseTime, &r.TxHash, &opIdx, &eventIdx,
 			&r.ContractID, &r.ContractIDHex, &topicCount, &topic0Sym,
 			&r.Topic0XDR, &topic1, &topic2, &topic3,
-			&r.BodyXDR, &opArgs,
+			&r.BodyXDR, &opArgs, &topicsXDR,
 			&grpCount, &grpMin, &grpMax,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: DistinctSorobanTopicSamples scan: %w", err)
@@ -220,6 +223,7 @@ func (s *Store) distinctSorobanTopicSamplesWindowed(ctx context.Context, from, t
 		r.Topic2XDR = topic2
 		r.Topic3XDR = topic3
 		r.OpArgsXDR = opArgs
+		r.TopicsXDR = [][]byte(topicsXDR)
 		samp.Row = r
 		samp.Count = grpCount
 		samp.MinLedger = uint32(grpMin)
@@ -296,7 +300,7 @@ const oneSorobanTopicSampleQuery = `
         SELECT e.ledger, e.ledger_close_time, e.tx_hash, e.op_index, e.event_index,
                e.contract_id, e.contract_id_hex, e.topic_count, e.topic_0_sym,
                e.topic_0_xdr, e.topic_1_xdr, e.topic_2_xdr, e.topic_3_xdr,
-               e.body_xdr, e.op_args_xdr
+               e.body_xdr, e.op_args_xdr, e.topics_xdr
         FROM soroban_events e
         WHERE e.contract_id = $1 AND e.topic_0_sym = $2 AND e.ledger BETWEEN $3 AND $4
         LIMIT 1`
@@ -327,6 +331,7 @@ func (s *Store) oneSorobanTopicSample(ctx context.Context, contractID, topic0Sym
 		topic0SymOut           sql.NullString
 		topic1, topic2, topic3 []byte
 		opArgs                 []byte
+		topicsXDR              pq.ByteaArray
 	)
 	pairCtx, cancel := context.WithTimeout(ctx, oneSorobanTopicSampleTimeout)
 	defer cancel()
@@ -334,7 +339,7 @@ func (s *Store) oneSorobanTopicSample(ctx context.Context, contractID, topic0Sym
 		&ledger, &r.LedgerCloseTime, &r.TxHash, &opIdx, &eventIdx,
 		&r.ContractID, &r.ContractIDHex, &topicCount, &topic0SymOut,
 		&r.Topic0XDR, &topic1, &topic2, &topic3,
-		&r.BodyXDR, &opArgs,
+		&r.BodyXDR, &opArgs, &topicsXDR,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return TopicSample{}, false, nil
@@ -359,6 +364,7 @@ func (s *Store) oneSorobanTopicSample(ctx context.Context, contractID, topic0Sym
 	r.Topic2XDR = topic2
 	r.Topic3XDR = topic3
 	r.OpArgsXDR = opArgs
+	r.TopicsXDR = [][]byte(topicsXDR)
 	samp.Row = r
 	// Count/span deliberately not measured on the fallback path (see the
 	// query const's note): -1 = "dormant pair, not measured".
