@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,29 +30,49 @@ type ChangeSummaryReader interface {
 //
 // Powers every multi-window delta strip on the explorer per
 // data-inventory §6.1.
+// M7 (INV-2): the *_value fields are MONEY (a price / market-cap snapshot)
+// and cross the wire as JSON STRINGS, matching every other money field the
+// API serves (e.g. /v1/price's `price`). The *_delta_pct fields are
+// percentages, not money, and stay JSON numbers; streak_days stays an int.
+// The values are display-grade (the changesummary rollup accepts float64
+// rounding by design — see internal/aggregate/changesummary/rollup.go), so
+// the string carries the shortest decimal that round-trips the stored value.
 type ChangeSummaryResponse struct {
-	EntityType   string  `json:"entity_type"`
-	EntityID     string  `json:"entity_id"`
-	RefreshedAt  string  `json:"refreshed_at"`
-	CurrentValue float64 `json:"current_value"`
+	EntityType   string `json:"entity_type"`
+	EntityID     string `json:"entity_id"`
+	RefreshedAt  string `json:"refreshed_at"`
+	CurrentValue string `json:"current_value"`
 
-	H1Value     *float64 `json:"h1_value,omitempty"`
+	H1Value     *string  `json:"h1_value,omitempty"`
 	H1DeltaPct  *float64 `json:"h1_delta_pct,omitempty"`
-	H24Value    *float64 `json:"h24_value,omitempty"`
+	H24Value    *string  `json:"h24_value,omitempty"`
 	H24DeltaPct *float64 `json:"h24_delta_pct,omitempty"`
-	D7Value     *float64 `json:"d7_value,omitempty"`
+	D7Value     *string  `json:"d7_value,omitempty"`
 	D7DeltaPct  *float64 `json:"d7_delta_pct,omitempty"`
-	D30Value    *float64 `json:"d30_value,omitempty"`
+	D30Value    *string  `json:"d30_value,omitempty"`
 	D30DeltaPct *float64 `json:"d30_delta_pct,omitempty"`
 
-	ATHValue *float64 `json:"ath_value,omitempty"`
-	ATHAt    string   `json:"ath_at,omitempty"`
-	ATLValue *float64 `json:"atl_value,omitempty"`
-	ATLAt    string   `json:"atl_at,omitempty"`
+	ATHValue *string `json:"ath_value,omitempty"`
+	ATHAt    string  `json:"ath_at,omitempty"`
+	ATLValue *string `json:"atl_value,omitempty"`
+	ATLAt    string  `json:"atl_at,omitempty"`
 
 	StreakDirection string `json:"streak_direction,omitempty"`
 	StreakDays      *int   `json:"streak_days,omitempty"`
 	Acceleration    string `json:"acceleration,omitempty"`
+}
+
+// moneyStr formats a display-grade money value as the shortest decimal string
+// that round-trips the float64 (so 1.1 → "1.1", not "1.1000000000000001").
+func moneyStr(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
+
+// moneyStrPtr is the nullable-money form: nil stays nil (omitempty → absent).
+func moneyStrPtr(v *float64) *string {
+	if v == nil {
+		return nil
+	}
+	s := moneyStr(*v)
+	return &s
 }
 
 // allowedChangeSummaryEntityTypes pins the set of entity_type values
@@ -198,17 +219,17 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 		EntityType:      row.EntityType,
 		EntityID:        row.EntityID,
 		RefreshedAt:     row.RefreshedAt.UTC().Format(time.RFC3339),
-		CurrentValue:    row.CurrentValue,
-		H1Value:         row.H1Value,
+		CurrentValue:    moneyStr(row.CurrentValue),
+		H1Value:         moneyStrPtr(row.H1Value),
 		H1DeltaPct:      row.H1DeltaPct,
-		H24Value:        row.H24Value,
+		H24Value:        moneyStrPtr(row.H24Value),
 		H24DeltaPct:     row.H24DeltaPct,
-		D7Value:         row.D7Value,
+		D7Value:         moneyStrPtr(row.D7Value),
 		D7DeltaPct:      row.D7DeltaPct,
-		D30Value:        row.D30Value,
+		D30Value:        moneyStrPtr(row.D30Value),
 		D30DeltaPct:     row.D30DeltaPct,
-		ATHValue:        row.ATHValue,
-		ATLValue:        row.ATLValue,
+		ATHValue:        moneyStrPtr(row.ATHValue),
+		ATLValue:        moneyStrPtr(row.ATLValue),
 		StreakDirection: row.StreakDirection,
 		StreakDays:      row.StreakDays,
 		Acceleration:    row.Acceleration,
