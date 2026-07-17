@@ -288,7 +288,11 @@ func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.St
 				}
 				continue
 			}
-			HandleEvent(ctx, logger, store, ev)
+			// Dispatcher drain: log-and-continue. HandleEvent already logs +
+			// counts the failure internally; these events either double-write
+			// (the projector owns the sole-writer domains) or ride the
+			// block-and-retry trade path, so the drain doesn't gate on the err.
+			_ = HandleEvent(ctx, logger, store, ev)
 		}
 	}
 }
@@ -453,7 +457,7 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 				}
 				continue
 			}
-			HandleEvent(drainCtx, logger, store, ev)
+			_ = HandleEvent(drainCtx, logger, store, ev) // shutdown drain: log-and-continue (HandleEvent logs internally)
 		case <-drainCtx.Done():
 			flushTrades()
 			// Don't drop silently. Under ADR-0034 every raw op is durably in
@@ -519,16 +523,30 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 // via `stellarindex-ops ch-rebuild -sdex-gaps` and the completeness timer.
 const drainTimeout = 90 * time.Second
 
-// HandleEvent dispatches one event to its hypertable insert.
-// Panic-recovers so a single malformed Amount can't take the whole
-// sink down — the source-level decoder error metric has already
-// counted the upstream event by the time we get here.
+// HandleEvent dispatches one event to its hypertable insert and RETURNS
+// the underlying Insert error (nil on success). Panic-recovers so a
+// single malformed Amount can't take the whole sink down — a recovered
+// panic is surfaced as the returned error too.
 //
-// Exported for use by the ADR-0032 projector (`internal/projector`),
-// which invokes this function per decoded event as its sink during
-// Phase 3 parallel mode. The drain-from-channel pattern in
-// [PersistEvents] still uses this as its per-event handler.
-func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, ev consumer.Event) { //nolint:gocyclo,funlen // dispatch table; one case per consumer.Event implementation. Splitting would reduce clarity.
+// The error return is load-bearing for the ADR-0032 projector
+// (audit-2026-07-16 C2-1): the projector invokes HandleEvent as its
+// per-event sink and gates its cursor on the result — a write that fails
+// transiently must NOT let the cursor advance past that ledger, or a
+// sole-writer (sep41) row is permanently lost. The dispatcher's
+// events-goroutine drain and the ops re-derive tools still call
+// HandleEvent for log-and-continue and DISCARD the error (their events
+// either double-write or ride the block-and-retry trade path), so every
+// caller compiles against the one signature.
+//
+// A recovered panic is returned as a generic (non-classified) error: the
+// projector treats it as transient (retry-and-alert) per its safe-side
+// default. This is acceptable because the sole-writer sep41 insert path
+// validates + returns errors rather than panicking, and decoder panics
+// are caught upstream in the projector's own processEventSafely recover.
+//
+// Exported for use by the projector (`internal/projector`) and the ops
+// re-derive tools (`stellarindex-ops projected-rebuild` / `ch-rebuild`).
+func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, ev consumer.Event) (retErr error) { //nolint:gocyclo,funlen // dispatch table; one case per consumer.Event implementation. Splitting would reduce clarity.
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Error("panic in event sink — recovered",
@@ -536,6 +554,7 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 				"kind", ev.EventKind(),
 				"source", ev.Source())
 			obs.SourceInsertErrorsTotal.WithLabelValues(ev.Source(), "panic").Inc()
+			retErr = fmt.Errorf("pipeline: panic in event sink for %s/%s: %v", ev.Source(), ev.EventKind(), r)
 		}
 	}()
 
@@ -547,39 +566,50 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 	obs.SourceEventsTotal.WithLabelValues(source).Inc()
 	obs.SourceLastEventUnix.WithLabelValues(source).Set(float64(time.Now().Unix()))
 
+	// Every arm RETURNS its persist result so the projector can gate its
+	// cursor on a sink failure (audit-2026-07-16 C2-1). Trade-shaped events
+	// are the one exception: persistTrade owns ADR-0041 block-and-retry
+	// (infra faults BLOCK the caller, data faults skip) so it never silently
+	// loses a write — those arms return nil and let that policy stand rather
+	// than double-gating it here.
 	switch e := ev.(type) {
 	case soroswap.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)
+		return nil
 	case soroswap.SkimEvent:
-		persistSoroswapSkim(ctx, logger, store, e)
+		return persistSoroswapSkim(ctx, logger, store, e)
 	case aquarius.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)
+		return nil
 	case aquarius.ReservesEvent:
-		persistAquariusReserves(ctx, logger, store, e)
+		return persistAquariusReserves(ctx, logger, store, e)
 	case aquarius.LiquidityEvent:
-		persistAquariusLiquidity(ctx, logger, store, e)
+		return persistAquariusLiquidity(ctx, logger, store, e)
 	case aquarius.RewardsEvent:
-		persistAquariusRewards(ctx, logger, store, e)
+		return persistAquariusRewards(ctx, logger, store, e)
 	case aquarius.AdminEvent:
-		persistAquariusAdmin(ctx, logger, store, e)
+		return persistAquariusAdmin(ctx, logger, store, e)
 	case phoenix.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)
+		return nil
 	case phoenix.LiquidityEvent:
-		persistPhoenixLiquidity(ctx, logger, store, e)
+		return persistPhoenixLiquidity(ctx, logger, store, e)
 	case phoenix.StakeEvent:
-		persistPhoenixStake(ctx, logger, store, e)
+		return persistPhoenixStake(ctx, logger, store, e)
 	case comet.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)
+		return nil
 	case comet.LiquidityEvent:
-		persistCometLiquidity(ctx, logger, store, e)
+		return persistCometLiquidity(ctx, logger, store, e)
 	case sdex.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)
+		return nil
 	case reflector.UpdateEvent:
-		persistOracle(ctx, logger, store, e.Update)
+		return persistOracle(ctx, logger, store, e.Update)
 	case redstone.UpdateEvent:
-		persistOracle(ctx, logger, store, e.Update)
+		return persistOracle(ctx, logger, store, e.Update)
 	case band.UpdateEvent:
-		persistOracle(ctx, logger, store, e.Update)
+		return persistOracle(ctx, logger, store, e.Update)
 	case soroswap_router.Event:
 		// Persist to the soroswap_router_swaps hypertable (migration
 		// 0049). Pre-Phase-B this was log-only — the source had no
@@ -617,7 +647,9 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 				"source", soroswap_router.SourceName,
 				"tx_hash", e.Swap.TxHash, "ledger", e.Swap.Ledger,
 				"err", err)
+			return err
 		}
+		return nil
 	case defindex.Event:
 		// Strategy-layer flow (vault → strategy capital movement).
 		// Persists to defindex_flows with layer='strategy' (migration
@@ -642,7 +674,9 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 				"source", defindex.SourceName,
 				"tx_hash", e.Flow.TxHash, "ledger", e.Flow.Ledger,
 				"err", err)
+			return err
 		}
+		return nil
 	case defindex.VaultEvent:
 		// Vault-wrapper layer (user-facing deposit/withdraw).
 		// Persists to defindex_flows with layer='vault'. `actor` here
@@ -671,62 +705,69 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 				"source", defindex.SourceName,
 				"tx_hash", e.Flow.TxHash, "ledger", e.Flow.Ledger,
 				"err", err)
+			return err
 		}
+		return nil
 	case external.TradeEvent:
 		persistTrade(ctx, logger, store, e.Trade)
+		return nil
 	case external.UpdateEvent:
-		persistOracle(ctx, logger, store, e.Update)
+		return persistOracle(ctx, logger, store, e.Update)
 	case blend.NewAuctionEvent:
-		persistBlendNewAuction(ctx, logger, store, e)
+		return persistBlendNewAuction(ctx, logger, store, e)
 	case blend.FillAuctionEvent:
-		persistBlendFillAuction(ctx, logger, store, e)
+		return persistBlendFillAuction(ctx, logger, store, e)
 	case blend.DeleteAuctionEvent:
-		persistBlendDeleteAuction(ctx, logger, store, e)
+		return persistBlendDeleteAuction(ctx, logger, store, e)
 	case blend.PositionEvent:
-		persistBlendPositionEvent(ctx, logger, store, e)
+		return persistBlendPositionEvent(ctx, logger, store, e)
 	case blend.EmissionEvent:
-		persistBlendEmissionEvent(ctx, logger, store, e)
+		return persistBlendEmissionEvent(ctx, logger, store, e)
 	case blend.AdminEvent:
-		persistBlendAdminEvent(ctx, logger, store, e)
+		return persistBlendAdminEvent(ctx, logger, store, e)
 	case blend_backstop.Event:
-		persistBlendBackstopEvent(ctx, logger, store, e)
+		return persistBlendBackstopEvent(ctx, logger, store, e)
 	case blend_emitter.DistributeEvent:
-		persistBlendEmitterDistribute(ctx, logger, store, e)
+		return persistBlendEmitterDistribute(ctx, logger, store, e)
 	case blend_emitter.DropEvent:
-		persistBlendEmitterDrop(ctx, logger, store, e)
+		return persistBlendEmitterDrop(ctx, logger, store, e)
 	case blend_emitter.SwapConfigEvent:
-		persistBlendEmitterSwapConfig(ctx, logger, store, e)
+		return persistBlendEmitterSwapConfig(ctx, logger, store, e)
 	case cctp.Event:
-		persistCCTPEvent(ctx, logger, store, e)
+		return persistCCTPEvent(ctx, logger, store, e)
 	case rozo.Event:
-		persistRozoEvent(ctx, logger, store, e)
+		return persistRozoEvent(ctx, logger, store, e)
 	case sorocredit.Event:
-		persistSoroCreditEvent(ctx, logger, store, e)
+		return persistSoroCreditEvent(ctx, logger, store, e)
 	case accounts.Observation:
-		persistAccountObservation(ctx, logger, store, e)
+		return persistAccountObservation(ctx, logger, store, e)
 	case trustlines.Observation:
-		persistTrustlineObservation(ctx, logger, store, e)
+		return persistTrustlineObservation(ctx, logger, store, e)
 	case claimable_balances.Observation:
-		persistClaimableObservation(ctx, logger, store, e)
+		return persistClaimableObservation(ctx, logger, store, e)
 	case liquidity_pools.Observation:
-		persistLPReserveObservation(ctx, logger, store, e)
+		return persistLPReserveObservation(ctx, logger, store, e)
 	case sac_balances.Observation:
-		persistSACBalanceObservation(ctx, logger, store, e)
+		return persistSACBalanceObservation(ctx, logger, store, e)
 	case sep41_supply.Event:
-		persistSEP41SupplyEvent(ctx, logger, store, e)
+		return persistSEP41SupplyEvent(ctx, logger, store, e)
 	case sep41_transfers.Event:
-		persistSEP41TransferEvent(ctx, logger, store, e)
+		return persistSEP41TransferEvent(ctx, logger, store, e)
 	default:
 		// A source emitted an event type the sink doesn't know how
 		// to persist. Usually means a new source was registered in
 		// BuildDispatcher but the type-switch wasn't updated in
 		// lock-step. Count + log — silent drops would otherwise
 		// look like "metrics say we're ingesting but the tables
-		// stay empty" from the operator's POV.
+		// stay empty" from the operator's POV. Return nil (not an
+		// error): the lockstep AST tests guarantee every projected
+		// type has an arm, so this is unreachable for the projector;
+		// returning an error would make it retry a wiring bug forever.
 		obs.SourceInsertErrorsTotal.WithLabelValues(source, "unhandled").Inc()
 		logger.Warn("unhandled event kind",
 			"kind", ev.EventKind(),
 			"source", source)
+		return nil
 	}
 }
 
@@ -802,7 +843,7 @@ func usdPopulatedLabel(populated bool) string {
 	return "no"
 }
 
-func persistOracle(ctx context.Context, logger *slog.Logger, store *timescale.Store, u canonical.OracleUpdate) {
+func persistOracle(ctx context.Context, logger *slog.Logger, store *timescale.Store, u canonical.OracleUpdate) error {
 	if err := store.InsertOracleUpdate(ctx, u); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(u.Source, "oracle").Inc()
 		logger.Error("insert oracle update failed",
@@ -813,7 +854,7 @@ func persistOracle(ctx context.Context, logger *slog.Logger, store *timescale.St
 			"asset", u.Asset.String(),
 			"err", err,
 		)
-		return
+		return err
 	}
 	obs.OracleLastUpdateUnix.WithLabelValues(u.Source, u.Asset.String()).
 		Set(float64(u.Timestamp.Unix()))
@@ -824,51 +865,55 @@ func persistOracle(ctx context.Context, logger *slog.Logger, store *timescale.St
 		"price", u.Price.String(),
 		"decimals", u.Decimals,
 	)
+	return nil
 }
 
-func persistBlendNewAuction(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend.NewAuctionEvent) {
+func persistBlendNewAuction(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend.NewAuctionEvent) error {
 	if err := store.InsertBlendNewAuction(ctx, e); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(blend.SourceName, "blend_auction").Inc()
 		logger.Error("insert blend new_auction failed",
 			"pool", e.Pool, "user", e.User, "auction_type", e.AuctionType,
 			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, blend.SourceName)
 	logger.Info("blend new_auction ingested",
 		"pool", e.Pool, "user", e.User, "auction_type", e.AuctionType,
 		"percent", e.Percent, "ledger", e.Ledger)
+	return nil
 }
 
-func persistBlendFillAuction(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend.FillAuctionEvent) {
+func persistBlendFillAuction(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend.FillAuctionEvent) error {
 	if err := store.InsertBlendFillAuction(ctx, e); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(blend.SourceName, "blend_auction").Inc()
 		logger.Error("insert blend fill_auction failed",
 			"pool", e.Pool, "user", e.User, "filler", e.Filler,
 			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, blend.SourceName)
 	logger.Info("blend fill_auction ingested",
 		"pool", e.Pool, "user", e.User, "filler", e.Filler,
 		"fill_percent", e.FillPercent, "ledger", e.Ledger)
+	return nil
 }
 
-func persistBlendDeleteAuction(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend.DeleteAuctionEvent) {
+func persistBlendDeleteAuction(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend.DeleteAuctionEvent) error {
 	if err := store.InsertBlendDeleteAuction(ctx, e); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(blend.SourceName, "blend_auction").Inc()
 		logger.Error("insert blend delete_auction failed",
 			"pool", e.Pool, "user", e.User, "auction_type", e.AuctionType,
 			"ledger", e.Ledger, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, blend.SourceName)
 	logger.Info("blend delete_auction ingested",
 		"pool", e.Pool, "user", e.User, "auction_type", e.AuctionType,
 		"ledger", e.Ledger)
+	return nil
 }
 
-func persistCometLiquidity(ctx context.Context, logger *slog.Logger, store *timescale.Store, e comet.LiquidityEvent) {
+func persistCometLiquidity(ctx context.Context, logger *slog.Logger, store *timescale.Store, e comet.LiquidityEvent) error {
 	if err := store.InsertCometLiquidity(ctx, timescale.CometLiquidityEvent{
 		ContractID:      e.ContractID,
 		Ledger:          e.Ledger,
@@ -886,13 +931,14 @@ func persistCometLiquidity(ctx context.Context, logger *slog.Logger, store *time
 		logger.Error("insert Comet liquidity event failed",
 			"contract_id", e.ContractID, "kind", e.Kind,
 			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, comet.SourceName)
 	logger.Debug("Comet liquidity event ingested",
 		"source", comet.SourceName, "kind", e.Kind,
 		"contract_id", e.ContractID, "ledger", e.Ledger,
 		"token", e.Token, "amount", e.Amount.String())
+	return nil
 }
 
 // persistAquariusReserves lands one update_reserves observation (the
@@ -900,7 +946,7 @@ func persistCometLiquidity(ctx context.Context, logger *slog.Logger, store *time
 // per token position (migration 0089). The first real Aquarius TVL /
 // liquidity-depth signal; Aquarius has no published price so these
 // rows never reach VWAP.
-func persistAquariusReserves(ctx context.Context, logger *slog.Logger, store *timescale.Store, e aquarius.ReservesEvent) {
+func persistAquariusReserves(ctx context.Context, logger *slog.Logger, store *timescale.Store, e aquarius.ReservesEvent) error {
 	if err := store.InsertAquariusReserves(ctx, timescale.AquariusReservesEvent{
 		ContractID:      e.ContractID,
 		Ledger:          e.Ledger,
@@ -914,18 +960,19 @@ func persistAquariusReserves(ctx context.Context, logger *slog.Logger, store *ti
 		logger.Error("insert Aquarius reserves failed",
 			"contract_id", e.ContractID, "ledger", e.Ledger,
 			"tx_hash", e.TxHash, "tokens", len(e.Reserves), "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, aquarius.SourceName)
 	logger.Debug("Aquarius reserves ingested",
 		"source", aquarius.SourceName, "contract_id", e.ContractID,
 		"ledger", e.Ledger, "tokens", len(e.Reserves))
+	return nil
 }
 
 // persistAquariusLiquidity lands one deposit_liquidity /
 // withdraw_liquidity observation into aquarius_liquidity — one row per
 // token position, shares on the token_index=0 row (migration 0089).
-func persistAquariusLiquidity(ctx context.Context, logger *slog.Logger, store *timescale.Store, e aquarius.LiquidityEvent) {
+func persistAquariusLiquidity(ctx context.Context, logger *slog.Logger, store *timescale.Store, e aquarius.LiquidityEvent) error {
 	if err := store.InsertAquariusLiquidity(ctx, timescale.AquariusLiquidityEvent{
 		ContractID:      e.ContractID,
 		Ledger:          e.Ledger,
@@ -942,19 +989,20 @@ func persistAquariusLiquidity(ctx context.Context, logger *slog.Logger, store *t
 		logger.Error("insert Aquarius liquidity failed",
 			"contract_id", e.ContractID, "action", e.Action,
 			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, aquarius.SourceName)
 	logger.Debug("Aquarius liquidity ingested",
 		"source", aquarius.SourceName, "action", e.Action,
 		"contract_id", e.ContractID, "ledger", e.Ledger,
 		"tokens", len(e.Tokens))
+	return nil
 }
 
 // persistAquariusRewards lands one rewards-gauge event (any of the
 // twelve kinds — migration 0099, ROADMAP #89) into
 // aquarius_rewards_events.
-func persistAquariusRewards(ctx context.Context, logger *slog.Logger, store *timescale.Store, e aquarius.RewardsEvent) {
+func persistAquariusRewards(ctx context.Context, logger *slog.Logger, store *timescale.Store, e aquarius.RewardsEvent) error {
 	row := timescale.AquariusRewardsEvent{
 		ContractID:      e.ContractID,
 		Ledger:          e.Ledger,
@@ -974,18 +1022,19 @@ func persistAquariusRewards(ctx context.Context, logger *slog.Logger, store *tim
 		logger.Error("insert Aquarius rewards event failed",
 			"contract_id", e.ContractID, "kind", e.Kind,
 			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, aquarius.SourceName)
 	logger.Debug("Aquarius rewards event ingested",
 		"source", aquarius.SourceName, "kind", e.Kind,
 		"contract_id", e.ContractID, "ledger", e.Ledger)
+	return nil
 }
 
 // persistAquariusAdmin lands one governance/upgrade admin event (any
 // of the eight kinds — migration 0100, ROADMAP #89) into
 // aquarius_admin.
-func persistAquariusAdmin(ctx context.Context, logger *slog.Logger, store *timescale.Store, e aquarius.AdminEvent) {
+func persistAquariusAdmin(ctx context.Context, logger *slog.Logger, store *timescale.Store, e aquarius.AdminEvent) error {
 	row := timescale.AquariusAdminEvent{
 		ContractID:      e.ContractID,
 		Ledger:          e.Ledger,
@@ -1003,45 +1052,48 @@ func persistAquariusAdmin(ctx context.Context, logger *slog.Logger, store *times
 		logger.Error("insert Aquarius admin event failed",
 			"contract_id", e.ContractID, "kind", e.Kind,
 			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, aquarius.SourceName)
 	logger.Debug("Aquarius admin event ingested",
 		"source", aquarius.SourceName, "kind", e.Kind,
 		"contract_id", e.ContractID, "ledger", e.Ledger)
+	return nil
 }
 
 // persistBlendPositionEvent routes one money-market position event
 // (supply / withdraw / supply_collateral / withdraw_collateral /
 // borrow / repay / flash_loan) to the blend_positions hypertable.
-func persistBlendPositionEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend.PositionEvent) {
+func persistBlendPositionEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend.PositionEvent) error {
 	if err := store.InsertBlendPositionEvent(ctx, domain.BlendPositionEvent(e)); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(blend.SourceName, "blend_position").Inc()
 		logger.Error("insert blend position event failed",
 			"pool", e.Pool, "kind", e.Kind, "user", e.User, "asset", e.Asset,
 			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, blend.SourceName)
 	logger.Debug("blend position event ingested",
 		"pool", e.Pool, "kind", e.Kind, "user", e.User, "asset", e.Asset,
 		"token_amount", e.TokenAmount.String(), "ledger", e.Ledger)
+	return nil
 }
 
 // persistBlendEmissionEvent routes one emission / credit-risk event
 // (gulp / claim / reserve_emission_update / gulp_emissions /
 // bad_debt / defaulted_debt) to the blend_emissions hypertable.
-func persistBlendEmissionEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend.EmissionEvent) {
+func persistBlendEmissionEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend.EmissionEvent) error {
 	if err := store.InsertBlendEmissionEvent(ctx, domain.BlendEmissionEvent(e)); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(blend.SourceName, "blend_emission").Inc()
 		logger.Error("insert blend emission event failed",
 			"pool", e.Pool, "kind", e.Kind,
 			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, blend.SourceName)
 	logger.Debug("blend emission event ingested",
 		"pool", e.Pool, "kind", e.Kind, "ledger", e.Ledger)
+	return nil
 }
 
 // persistBlendAdminEvent routes one admin / pool-config / pool-
@@ -1049,22 +1101,23 @@ func persistBlendEmissionEvent(ctx context.Context, logger *slog.Logger, store *
 // queue_set_reserve / cancel_set_reserve / set_reserve / set_status
 // / deploy) to the blend_admin hypertable. The deploy event from
 // the pool-factory drives runtime pool enumeration.
-func persistBlendAdminEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend.AdminEvent) {
+func persistBlendAdminEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend.AdminEvent) error {
 	if err := store.InsertBlendAdminEvent(ctx, domain.BlendAdminEvent(e)); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(blend.SourceName, "blend_admin").Inc()
 		logger.Error("insert blend admin event failed",
 			"contract_id", e.ContractID, "kind", e.Kind,
 			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, blend.SourceName)
 	logger.Info("blend admin event ingested",
 		"contract_id", e.ContractID, "kind", e.Kind,
 		"admin", e.Admin, "target", e.Target, "asset", e.Asset,
 		"ledger", e.Ledger)
+	return nil
 }
 
-func persistBlendBackstopEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend_backstop.Event) {
+func persistBlendBackstopEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend_backstop.Event) error {
 	if err := store.InsertBlendBackstopEvent(ctx, timescale.BlendBackstopEvent{
 		ContractID:  e.ContractID,
 		Ledger:      e.Ledger,
@@ -1083,17 +1136,18 @@ func persistBlendBackstopEvent(ctx context.Context, logger *slog.Logger, store *
 		logger.Error("insert Blend backstop event failed",
 			"contract_id", e.ContractID, "event_type", e.EventType,
 			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, blend_backstop.SourceName)
 	logger.Debug("Blend backstop event ingested",
 		"source", blend_backstop.SourceName, "event_type", e.EventType,
 		"contract_id", e.ContractID, "ledger", e.Ledger, "tx_hash", e.TxHash)
+	return nil
 }
 
 // persistBlendEmitterDistribute writes one `distribute` row (one
 // BLND emission to a backstop) via Store.InsertBlendEmitterDistribute.
-func persistBlendEmitterDistribute(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend_emitter.DistributeEvent) {
+func persistBlendEmitterDistribute(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend_emitter.DistributeEvent) error {
 	if err := store.InsertBlendEmitterDistribute(ctx, timescale.BlendEmitterDistributeEvent{
 		ContractID:      e.ContractID,
 		Ledger:          e.Ledger,
@@ -1108,19 +1162,20 @@ func persistBlendEmitterDistribute(ctx context.Context, logger *slog.Logger, sto
 		logger.Error("insert Blend Emitter distribute failed",
 			"contract_id", e.ContractID, "backstop_id", e.BackstopID,
 			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, blend_emitter.SourceName)
 	logger.Debug("Blend Emitter distribute ingested",
 		"source", blend_emitter.SourceName, "backstop_id", e.BackstopID,
 		"ledger", e.Ledger, "amount", e.Amount.String())
+	return nil
 }
 
 // persistBlendEmitterDrop writes one `drop` event, fanned out to one
 // row per recipient by Store.InsertBlendEmitterDrop (single
 // transaction — see its godoc for why a partial fan-out can't
 // happen).
-func persistBlendEmitterDrop(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend_emitter.DropEvent) {
+func persistBlendEmitterDrop(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend_emitter.DropEvent) error {
 	recipients := make([]timescale.BlendEmitterRecipient, len(e.Recipients))
 	for i, r := range e.Recipients {
 		recipients[i] = timescale.BlendEmitterRecipient{Address: r.Address, Amount: r.Amount}
@@ -1138,17 +1193,18 @@ func persistBlendEmitterDrop(ctx context.Context, logger *slog.Logger, store *ti
 		logger.Error("insert Blend Emitter drop failed",
 			"contract_id", e.ContractID, "recipients", len(e.Recipients),
 			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, blend_emitter.SourceName)
 	logger.Info("Blend Emitter drop ingested",
 		"source", blend_emitter.SourceName, "recipients", len(e.Recipients),
 		"ledger", e.Ledger, "tx_hash", e.TxHash)
+	return nil
 }
 
 // persistBlendEmitterSwapConfig writes one `q_swap` / `swap` row via
 // Store.InsertBlendEmitterSwapConfig.
-func persistBlendEmitterSwapConfig(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend_emitter.SwapConfigEvent) {
+func persistBlendEmitterSwapConfig(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend_emitter.SwapConfigEvent) error {
 	if err := store.InsertBlendEmitterSwapConfig(ctx, timescale.BlendEmitterSwapConfigEvent{
 		ContractID:       e.ContractID,
 		Ledger:           e.Ledger,
@@ -1165,15 +1221,16 @@ func persistBlendEmitterSwapConfig(ctx context.Context, logger *slog.Logger, sto
 		logger.Error("insert Blend Emitter swap config failed",
 			"contract_id", e.ContractID, "kind", e.Kind,
 			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, blend_emitter.SourceName)
 	logger.Info("Blend Emitter swap config ingested",
 		"source", blend_emitter.SourceName, "kind", e.Kind,
 		"new_backstop", e.NewBackstop, "ledger", e.Ledger)
+	return nil
 }
 
-func persistCCTPEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e cctp.Event) {
+func persistCCTPEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e cctp.Event) error {
 	if err := store.InsertCCTPEvent(ctx, timescale.CCTPEvent{
 		ContractID:         e.ContractID,
 		Ledger:             e.Ledger,
@@ -1191,15 +1248,16 @@ func persistCCTPEvent(ctx context.Context, logger *slog.Logger, store *timescale
 		logger.Error("insert CCTP event failed",
 			"contract_id", e.ContractID, "event_type", e.EventType,
 			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, cctp.SourceName)
 	logger.Debug("CCTP event ingested",
 		"source", cctp.SourceName, "event_type", e.EventType,
 		"contract_id", e.ContractID, "ledger", e.Ledger, "tx_hash", e.TxHash)
+	return nil
 }
 
-func persistRozoEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e rozo.Event) {
+func persistRozoEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e rozo.Event) error {
 	if err := store.InsertRozoEvent(ctx, timescale.RozoEvent{
 		ContractID:  e.ContractID,
 		Ledger:      e.Ledger,
@@ -1217,12 +1275,13 @@ func persistRozoEvent(ctx context.Context, logger *slog.Logger, store *timescale
 		logger.Error("insert Rozo event failed",
 			"contract_id", e.ContractID, "event_type", e.EventType,
 			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, rozo.SourceName)
 	logger.Debug("Rozo event ingested",
 		"source", rozo.SourceName, "event_type", e.EventType,
 		"contract_id", e.ContractID, "ledger", e.Ledger, "tx_hash", e.TxHash)
+	return nil
 }
 
 // persistSoroCreditEvent routes one sorocredit event to its served-tier
@@ -1233,7 +1292,7 @@ func persistRozoEvent(ctx context.Context, logger *slog.Logger, store *timescale
 // on-wire "Liquidation" event is a SCHEDULED settlement, written to
 // credit_settlements — NOT a distress/liquidation signal (see
 // internal/sources/sorocredit).
-func persistSoroCreditEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e sorocredit.Event) {
+func persistSoroCreditEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e sorocredit.Event) error {
 	var err error
 	switch e.EventType {
 	case sorocredit.TypeNewCollateralContract:
@@ -1298,19 +1357,20 @@ func persistSoroCreditEvent(ctx context.Context, logger *slog.Logger, store *tim
 	default:
 		obs.SourceInsertErrorsTotal.WithLabelValues(sorocredit.SourceName, "unhandled_type").Inc()
 		logger.Warn("unhandled sorocredit EventType", "event_type", e.EventType, "ledger", e.Ledger)
-		return
+		return err
 	}
 	if err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(sorocredit.SourceName, "sorocredit_"+string(e.EventType)).Inc()
 		logger.Error("insert sorocredit event failed",
 			"event_type", e.EventType, "collateral_contract", e.CollateralContract,
 			"ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, sorocredit.SourceName)
 	logger.Debug("sorocredit event ingested",
 		"source", sorocredit.SourceName, "event_type", e.EventType,
 		"collateral_contract", e.CollateralContract, "ledger", e.Ledger)
+	return nil
 }
 
 // bumpEntryCount is the shared 'entries' counter increment used by
@@ -1329,22 +1389,23 @@ func bumpEntryCount(ctx context.Context, logger *slog.Logger, store *timescale.S
 	}
 }
 
-func persistAccountObservation(ctx context.Context, logger *slog.Logger, store *timescale.Store, o accounts.Observation) {
+func persistAccountObservation(ctx context.Context, logger *slog.Logger, store *timescale.Store, o accounts.Observation) error {
 	if err := store.InsertAccountObservation(ctx, domain.AccountObservation(o)); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(accounts.SourceName, "account_observation").Inc()
 		logger.Error("insert account observation failed",
 			"account_id", o.AccountID, "ledger", o.Ledger,
 			"is_removal", o.IsRemoval, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, accounts.SourceName)
 	logger.Debug("account observation ingested",
 		"account_id", o.AccountID, "ledger", o.Ledger,
 		"balance_stroops", o.Balance.String(),
 		"home_domain", o.HomeDomain, "is_removal", o.IsRemoval)
+	return nil
 }
 
-func persistTrustlineObservation(ctx context.Context, logger *slog.Logger, store *timescale.Store, o trustlines.Observation) {
+func persistTrustlineObservation(ctx context.Context, logger *slog.Logger, store *timescale.Store, o trustlines.Observation) error {
 	if err := store.InsertTrustlineObservation(ctx, timescale.TrustlineObservation{
 		AccountID:  o.AccountID,
 		AssetKey:   o.AssetKey,
@@ -1357,15 +1418,16 @@ func persistTrustlineObservation(ctx context.Context, logger *slog.Logger, store
 		logger.Error("insert trustline observation failed",
 			"account_id", o.AccountID, "asset_key", o.AssetKey, "ledger", o.Ledger,
 			"is_removal", o.IsRemoval, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, trustlines.SourceName)
 	logger.Debug("trustline observation ingested",
 		"account_id", o.AccountID, "asset_key", o.AssetKey, "ledger", o.Ledger,
 		"balance_stroops", o.Balance.String(), "is_removal", o.IsRemoval)
+	return nil
 }
 
-func persistClaimableObservation(ctx context.Context, logger *slog.Logger, store *timescale.Store, o claimable_balances.Observation) {
+func persistClaimableObservation(ctx context.Context, logger *slog.Logger, store *timescale.Store, o claimable_balances.Observation) error {
 	if err := store.InsertClaimableObservation(ctx, timescale.ClaimableObservation{
 		ClaimableID: o.ClaimableID,
 		AssetKey:    o.AssetKey,
@@ -1378,15 +1440,16 @@ func persistClaimableObservation(ctx context.Context, logger *slog.Logger, store
 		logger.Error("insert claimable observation failed",
 			"claimable_id", o.ClaimableID, "asset_key", o.AssetKey, "ledger", o.Ledger,
 			"err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, claimable_balances.SourceName)
 	logger.Debug("claimable observation ingested",
 		"claimable_id", o.ClaimableID, "asset_key", o.AssetKey, "ledger", o.Ledger,
 		"balance_stroops", o.Balance.String())
+	return nil
 }
 
-func persistLPReserveObservation(ctx context.Context, logger *slog.Logger, store *timescale.Store, o liquidity_pools.Observation) {
+func persistLPReserveObservation(ctx context.Context, logger *slog.Logger, store *timescale.Store, o liquidity_pools.Observation) error {
 	if err := store.InsertLPReserveObservation(ctx, timescale.LPReserveObservation{
 		PoolID:     o.PoolID,
 		AssetKey:   o.AssetKey,
@@ -1399,15 +1462,16 @@ func persistLPReserveObservation(ctx context.Context, logger *slog.Logger, store
 		logger.Error("insert LP-reserve observation failed",
 			"pool_id", o.PoolID, "asset_key", o.AssetKey, "ledger", o.Ledger,
 			"err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, liquidity_pools.SourceName)
 	logger.Debug("LP-reserve observation ingested",
 		"pool_id", o.PoolID, "asset_key", o.AssetKey, "ledger", o.Ledger,
 		"balance_stroops", o.Balance.String())
+	return nil
 }
 
-func persistSACBalanceObservation(ctx context.Context, logger *slog.Logger, store *timescale.Store, o sac_balances.Observation) {
+func persistSACBalanceObservation(ctx context.Context, logger *slog.Logger, store *timescale.Store, o sac_balances.Observation) error {
 	if err := store.InsertSACBalanceObservation(ctx, timescale.SACBalanceObservation{
 		ContractID: o.ContractID,
 		AssetKey:   o.AssetKey,
@@ -1421,22 +1485,23 @@ func persistSACBalanceObservation(ctx context.Context, logger *slog.Logger, stor
 		logger.Error("insert SAC balance observation failed",
 			"contract_id", o.ContractID, "holder", o.Holder, "asset_key", o.AssetKey,
 			"ledger", o.Ledger, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, sac_balances.SourceName)
 	logger.Debug("SAC balance observation ingested",
 		"contract_id", o.ContractID, "holder", o.Holder, "asset_key", o.AssetKey,
 		"ledger", o.Ledger, "balance_stroops", o.Balance.String(),
 		"is_removal", o.IsRemoval)
+	return nil
 }
 
-func persistSoroswapSkim(ctx context.Context, logger *slog.Logger, store *timescale.Store, e soroswap.SkimEvent) {
+func persistSoroswapSkim(ctx context.Context, logger *slog.Logger, store *timescale.Store, e soroswap.SkimEvent) error {
 	txHash, err := timescale.DecodeSoroswapTxHash(e.TxHash)
 	if err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(soroswap.SourceName, "soroswap_skim_event").Inc()
 		logger.Error("decode soroswap skim tx_hash failed",
 			"contract_id", e.ContractID, "ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	if err := store.InsertSoroswapSkimEvent(ctx, timescale.SoroswapSkimEvent{
 		ContractID:      e.ContractID,
@@ -1452,16 +1517,17 @@ func persistSoroswapSkim(ctx context.Context, logger *slog.Logger, store *timesc
 		obs.SourceInsertErrorsTotal.WithLabelValues(soroswap.SourceName, "soroswap_skim_event").Inc()
 		logger.Error("insert soroswap skim event failed",
 			"contract_id", e.ContractID, "ledger", e.Ledger, "tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, soroswap.SourceName)
 	logger.Debug("soroswap skim event ingested",
 		"contract_id", e.ContractID, "ledger", e.Ledger,
 		"amount_0", e.Amount0.String(), "amount_1", e.Amount1.String(),
 		"to", e.To)
+	return nil
 }
 
-func persistPhoenixLiquidity(ctx context.Context, logger *slog.Logger, store *timescale.Store, e phoenix.LiquidityEvent) {
+func persistPhoenixLiquidity(ctx context.Context, logger *slog.Logger, store *timescale.Store, e phoenix.LiquidityEvent) error {
 	c := e.Change
 	sharesStr := ""
 	// Withdraw rows have shares_amount populated; provide rows don't.
@@ -1487,15 +1553,16 @@ func persistPhoenixLiquidity(ctx context.Context, logger *slog.Logger, store *ti
 		logger.Error("insert phoenix liquidity failed",
 			"pool", c.Pool, "action", c.Action,
 			"ledger", c.Ledger, "tx_hash", c.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, phoenix.SourceName)
 	logger.Debug("phoenix liquidity ingested",
 		"pool", c.Pool, "action", c.Action,
 		"sender", c.Sender, "ledger", c.Ledger)
+	return nil
 }
 
-func persistPhoenixStake(ctx context.Context, logger *slog.Logger, store *timescale.Store, e phoenix.StakeEvent) {
+func persistPhoenixStake(ctx context.Context, logger *slog.Logger, store *timescale.Store, e phoenix.StakeEvent) error {
 	c := e.Change
 	amountStr := ""
 	// bond/unbond always carry an amount; withdraw_rewards /
@@ -1521,26 +1588,28 @@ func persistPhoenixStake(ctx context.Context, logger *slog.Logger, store *timesc
 		logger.Error("insert phoenix stake event failed",
 			"stake_contract", c.Contract, "action", c.Action,
 			"ledger", c.Ledger, "tx_hash", c.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, phoenix.SourceName)
 	logger.Debug("phoenix stake event ingested",
 		"stake_contract", c.Contract, "action", c.Action,
 		"user", c.User, "ledger", c.Ledger)
+	return nil
 }
 
-func persistSEP41SupplyEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e sep41_supply.Event) {
+func persistSEP41SupplyEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e sep41_supply.Event) error {
 	if err := store.InsertSEP41SupplyEvent(ctx, SEP41SupplyRowOf(e)); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(sep41_supply.SourceName, "sep41_supply_event").Inc()
 		logger.Error("insert SEP-41 supply event failed",
 			"contract_id", e.ContractID, "kind", e.Kind, "ledger", e.Ledger,
 			"tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, sep41_supply.SourceName)
 	logger.Debug("SEP-41 supply event ingested",
 		"contract_id", e.ContractID, "kind", e.Kind, "ledger", e.Ledger,
 		"amount", e.Amount.String(), "counterparty", e.Counterparty)
+	return nil
 }
 
 // persistSEP41TransferEvent routes one sep41_transfers audit-trail
@@ -1548,18 +1617,19 @@ func persistSEP41SupplyEvent(ctx context.Context, logger *slog.Logger, store *ti
 // sep41_transfers hypertable. F-0021 closure (audit-2026-05-26):
 // unlocks per-account net-position queries — the Stellar moat
 // feature CG/CMC structurally cannot offer.
-func persistSEP41TransferEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e sep41_transfers.Event) {
+func persistSEP41TransferEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e sep41_transfers.Event) error {
 	if err := store.InsertSEP41Transfer(ctx, SEP41TransferRowOf(e)); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(sep41_transfers.SourceName, "sep41_transfers_event").Inc()
 		logger.Error("insert SEP-41 transfer event failed",
 			"contract_id", e.ContractID, "kind", e.Kind, "ledger", e.Ledger,
 			"tx_hash", e.TxHash, "err", err)
-		return
+		return err
 	}
 	bumpEntryCount(ctx, logger, store, sep41_transfers.SourceName)
 	logger.Debug("SEP-41 transfer event ingested",
 		"contract_id", e.ContractID, "kind", e.Kind, "ledger", e.Ledger,
 		"from", e.FromAddr, "to", e.ToAddr)
+	return nil
 }
 
 // SEP41TransferRowOf converts a decoded sep41_transfers event to its
