@@ -561,7 +561,22 @@ func run(cfgPath string, dryRun bool) error {
 			}()
 		}
 
-		bindings, err := buildSupplyRefreshers(cfg, store, logger.With("component", "supply-refresh"))
+		// Close-time source for the snapshot ObservedAt (audit M4-callers):
+		// each refresh stamps the snapshot ledger's REAL close_time from the
+		// ClickHouse lake, never the wall-clock write-time. Required for the
+		// aggregator supply-refresh path — without an authoritative close-time
+		// source a re-derive would corrupt point-in-time supply queries, so we
+		// fail closed at startup rather than silently fall back to time.Now().
+		if cfg.Storage.ClickHouseAddr == "" {
+			return errors.New("supply aggregator refresh requires storage.clickhouse_addr (source of the ledger close time stamped as snapshot ObservedAt) — set it or disable [supply] aggregator_refresh_enabled")
+		}
+		supplyCloseTimes, err := clickhouse.NewExplorerReader(rootCtx, cfg.Storage.ClickHouseAddr)
+		if err != nil {
+			return fmt.Errorf("supply refresher close-time reader: %w", err)
+		}
+		defer func() { _ = supplyCloseTimes.Close() }()
+
+		bindings, err := buildSupplyRefreshers(cfg, store, supplyCloseTimes, logger.With("component", "supply-refresh"))
 		if err != nil {
 			return fmt.Errorf("supply refresher init: %w", err)
 		}
@@ -830,22 +845,22 @@ type supplyRefresherBinding struct {
 //
 // Returns an error on operator-config inconsistencies (per
 // [config.SupplyConfig.Validate] + per-asset parse errors).
-func buildSupplyRefreshers(cfg config.Config, store *timescale.Store, logger *slog.Logger) ([]supplyRefresherBinding, error) {
+func buildSupplyRefreshers(cfg config.Config, store *timescale.Store, closeTimes ledgerCloseTimeReader, logger *slog.Logger) ([]supplyRefresherBinding, error) {
 	out := make([]supplyRefresherBinding, 0, 1+len(cfg.Supply.WatchedClassicAssets)+len(cfg.Supply.WatchedSEP41Contracts))
 
-	xlmRefresher, err := buildXLMRefresher(cfg, store, logger)
+	xlmRefresher, err := buildXLMRefresher(cfg, store, closeTimes, logger)
 	if err != nil {
 		return nil, fmt.Errorf("xlm refresher: %w", err)
 	}
 	out = append(out, supplyRefresherBinding{refresher: xlmRefresher, assetKey: "XLM"})
 
-	classicBindings, err := buildClassicRefreshers(cfg, store, logger)
+	classicBindings, err := buildClassicRefreshers(cfg, store, closeTimes, logger)
 	if err != nil {
 		return nil, err
 	}
 	out = append(out, classicBindings...)
 
-	sep41Bindings, err := buildSEP41Refreshers(cfg, store, logger)
+	sep41Bindings, err := buildSEP41Refreshers(cfg, store, closeTimes, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -854,7 +869,7 @@ func buildSupplyRefreshers(cfg config.Config, store *timescale.Store, logger *sl
 	return out, nil
 }
 
-func buildClassicRefreshers(cfg config.Config, store *timescale.Store, logger *slog.Logger) ([]supplyRefresherBinding, error) {
+func buildClassicRefreshers(cfg config.Config, store *timescale.Store, closeTimes ledgerCloseTimeReader, logger *slog.Logger) ([]supplyRefresherBinding, error) {
 	if len(cfg.Supply.WatchedClassicAssets) == 0 {
 		return nil, nil
 	}
@@ -879,7 +894,7 @@ func buildClassicRefreshers(cfg config.Config, store *timescale.Store, logger *s
 		}
 		out = append(out, supplyRefresherBinding{
 			refresher: supply.NewRefresher(
-				supplyAggregatorLedgers{s: store},
+				supplyAggregatorLedgers{s: store, closeTimes: closeTimes},
 				bound,
 				supplyAggregatorInserter{s: store},
 				logger.With("asset", raw),
@@ -905,7 +920,7 @@ func supplyRefresherOptions(cfg config.Config, assetKey string) []supply.Refresh
 	return opts
 }
 
-func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, logger *slog.Logger) ([]supplyRefresherBinding, error) {
+func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, closeTimes ledgerCloseTimeReader, logger *slog.Logger) ([]supplyRefresherBinding, error) {
 	if len(cfg.Supply.WatchedSEP41Contracts) == 0 {
 		return nil, nil
 	}
@@ -926,7 +941,7 @@ func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, logger *slo
 		}
 		out = append(out, supplyRefresherBinding{
 			refresher: supply.NewRefresher(
-				supplyAggregatorLedgers{s: store},
+				supplyAggregatorLedgers{s: store, closeTimes: closeTimes},
 				bound,
 				supplyAggregatorInserter{s: store},
 				logger.With("asset", contractID),
@@ -938,7 +953,7 @@ func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, logger *slo
 	return out, nil
 }
 
-func buildXLMRefresher(cfg config.Config, store *timescale.Store, logger *slog.Logger) (*supply.Refresher, error) {
+func buildXLMRefresher(cfg config.Config, store *timescale.Store, closeTimes ledgerCloseTimeReader, logger *slog.Logger) (*supply.Refresher, error) {
 	staticReader, err := supply.NewConfigReserveBalanceReader(cfg.Supply.ReserveBalancesStroops)
 	if err != nil {
 		return nil, fmt.Errorf("config reserve reader: %w", err)
@@ -952,7 +967,7 @@ func buildXLMRefresher(cfg config.Config, store *timescale.Store, logger *slog.L
 		return nil, fmt.Errorf("xlm computer: %w", err)
 	}
 	return supply.NewRefresher(
-		supplyAggregatorLedgers{s: store},
+		supplyAggregatorLedgers{s: store, closeTimes: closeTimes},
 		computer,
 		supplyAggregatorInserter{s: store},
 		logger.With("asset", "native"),
@@ -1060,11 +1075,31 @@ func runSupplyRefresh(ctx context.Context, r *supply.Refresher, cadence time.Dur
 	}
 }
 
+// ledgerCloseTimeReader resolves a ledger's real on-chain close time.
+// Satisfied by *clickhouse.ExplorerReader.CloseTimeForLedger; the
+// authoritative every-ledger source is ClickHouse stellar.ledgers.
+// Interface (not the concrete type) so the refresher wiring stays
+// testable without a live lake.
+type ledgerCloseTimeReader interface {
+	CloseTimeForLedger(ctx context.Context, ledger uint32) (time.Time, bool, error)
+}
+
 // supplyAggregatorLedgers adapts *timescale.Store to
 // supply.LedgerLookup. Resolves the latest known chain ledger as
 // the max last_ledger across every ingestion cursor — same shape
 // as internal/ops/supply/supply.go::resolveSnapshotLedger but
 // inlined here so the aggregator path stays self-contained.
+//
+// M4-callers (audit 2026-07): the snapshot's ObservedAt is that
+// ledger's real close_time from ClickHouse stellar.ledgers, NEVER
+// time.Now(). Stamping the wall-clock write-time corrupts
+// point-in-time supply queries (worst on the operator's constant
+// supply re-derives). Fail-closed: if the picked ledger has no
+// stellar.ledgers row we return an error (retryable no_ledger
+// outcome) rather than a wall-clock guess. The lake is populated by
+// the same real-time dual-sink that advances the cursors, so a miss
+// is a transient lake lag / genuine gap the refresher should retry
+// past — not something to paper over with time.Now().
 //
 // F-1236 (codex audit-2026-05-12) — KNOWN: this stamps the
 // freshest cursor but the supply-component readers
@@ -1078,7 +1113,10 @@ func runSupplyRefresh(ctx context.Context, r *supply.Refresher, cadence time.Dur
 // `supply.Supply` with MinComponentLedger + reject snapshots
 // where (snapshotLedger - minComponentLedger) > threshold.
 // Tracked as F-1236 in docs/audit-2026-05-12-codex/.
-type supplyAggregatorLedgers struct{ s *timescale.Store }
+type supplyAggregatorLedgers struct {
+	s          *timescale.Store
+	closeTimes ledgerCloseTimeReader
+}
 
 func (a supplyAggregatorLedgers) LatestKnownLedger(ctx context.Context) (uint32, time.Time, error) {
 	cursors, err := a.s.ListCursors(ctx)
@@ -1094,7 +1132,14 @@ func (a supplyAggregatorLedgers) LatestKnownLedger(ctx context.Context) (uint32,
 	if maxLedger == 0 {
 		return 0, time.Time{}, errors.New("no ingestion cursors yet — refresher will retry next tick")
 	}
-	return maxLedger, time.Now().UTC(), nil
+	closeTime, found, err := a.closeTimes.CloseTimeForLedger(ctx, maxLedger)
+	if err != nil {
+		return 0, time.Time{}, fmt.Errorf("resolve close time for ledger %d: %w", maxLedger, err)
+	}
+	if !found {
+		return 0, time.Time{}, fmt.Errorf("ledger %d has no stellar.ledgers row yet (lake lag?) — refresher will retry next tick", maxLedger)
+	}
+	return maxLedger, closeTime, nil
 }
 
 // supplyAggregatorStoreLookup adapts *timescale.Store to
