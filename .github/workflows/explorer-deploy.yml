@@ -120,6 +120,27 @@ jobs:
       - name: SEO metadata lint
         run: bash scripts/ci/explorer-seo-lint.sh web/explorer/out
 
+      - name: Resolve deploy branch
+        # F-004: workflow_dispatch means github.ref_name is whatever ref the
+        # run was launched from — any pushable branch (incl. wt/* agent
+        # branches). Passed straight into the wrangler `command:` it is a
+        # script-injection vector in a job holding CLOUDFLARE_API_TOKEN. Take
+        # the raw value via `env:` (never interpolate a `${{ }}` into the
+        # shell), allowlist-validate it, and only then export it for the
+        # deploy step to consume as a static, metacharacter-free token.
+        env:
+          RAW_BRANCH: ${{ github.event.inputs.environment == 'production' && 'main' || github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Whole-string match ([[ =~ ]], not line-oriented grep) so an
+          # embedded newline can't slip a second line past the allowlist
+          # and into $GITHUB_ENV. Mirrors deploy.yml's binary-name check.
+          if [[ ! "$RAW_BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+            echo "::error::Refusing to deploy: branch '$RAW_BRANCH' has characters outside [A-Za-z0-9._/-]"
+            exit 1
+          fi
+          printf 'BRANCH=%s\n' "$RAW_BRANCH" >> "$GITHUB_ENV"
+
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0  # v4.0.0
         with:
@@ -129,4 +150,4 @@ jobs:
           command: >-
             pages deploy out
             --project-name stellarindex-explorer
-            --branch ${{ github.event.inputs.environment == 'production' && 'main' || github.ref_name }}
+            --branch ${{ env.BRANCH }}
