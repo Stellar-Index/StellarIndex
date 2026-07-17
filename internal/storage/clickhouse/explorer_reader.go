@@ -282,8 +282,11 @@ func (r *ExplorerReader) OperationTypeStats(ctx context.Context, windowLedgers u
 	if windowLedgers == 0 {
 		windowLedgers = 17280 // ~24h at 5s ledger close
 	}
+	// FINAL: stellar.operations is ReplacingMergeTree(ingested_at); a re-ingested
+	// operation leaves an un-merged duplicate part that inflates count() until a
+	// merge (audit C2-12). Bounded by the ledger-window predicate.
 	const q = `SELECT op_type, toInt64(count()) AS c
-		FROM stellar.operations
+		FROM stellar.operations FINAL
 		WHERE ledger_seq > (SELECT max(ledger_seq) FROM stellar.operations) - ?
 		GROUP BY op_type
 		ORDER BY c DESC`
@@ -327,7 +330,12 @@ func (r *ExplorerReader) NetworkThroughput(ctx context.Context, windowDays int) 
 		toInt64(sum(tx_count))            AS txs,
 		toInt64(sum(op_count))            AS ops,
 		toInt64(sum(soroban_event_count)) AS events
-		FROM stellar.ledgers
+		-- FINAL: stellar.ledgers is ReplacingMergeTree(ingested_at); without it
+		-- an un-merged re-ingested ledger contributes TWO parts, so count() and
+		-- every sum(*_count) double-count until a background merge (audit
+		-- C2-12). FINAL is a no-op once merged. The ledger-window predicate
+		-- keeps the FINAL bounded to the recent partition.
+		FROM stellar.ledgers FINAL
 		WHERE ledger_seq > (SELECT max(ledger_seq) FROM stellar.ledgers) - ?
 		GROUP BY day
 		ORDER BY day ASC`
