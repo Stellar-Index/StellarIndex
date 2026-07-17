@@ -710,7 +710,7 @@ type StorageConfig struct {
 	// dev/single-node deployments.
 	RedisSentinelAddrs []string `toml:"redis_sentinel_addrs" doc:"List of Sentinel host:port addresses. Non-empty enables FailoverClient mode (production HA per ADR-0024); empty falls back to single-node redis_addr." default:"[]"`
 	RedisMasterName    string   `toml:"redis_master_name" doc:"Sentinel master name as set in inventory (e.g. stellarindex-r1-cache). Required when redis_sentinel_addrs is non-empty." default:""`
-	RedisPassword      string   `toml:"redis_password_env" doc:"Env var holding the Redis password (reference, not the password itself). Used as both requirepass (client auth) and SentinelPassword (sentinel auth) — they're the same secret per the role." env:"STELLARINDEX_REDIS_PASSWORD" default:""`
+	RedisPassword      string   `toml:"redis_password_env" doc:"The Redis password itself — injected via the STELLARINDEX_REDIS_PASSWORD env override (the project's standard secret path), NOT an env-var NAME to dereference. The '_env' toml suffix is a legacy misnomer (audit C3-15): the code uses this value directly, so putting an env-var name here ships that literal string as the password. Used as both requirepass (client auth) and SentinelPassword (sentinel auth) — same secret per the role." env:"STELLARINDEX_REDIS_PASSWORD" default:""`
 	RedisUsername      string   `toml:"redis_username" doc:"Optional Redis ACL username. Empty (default) AUTHs as Redis's legacy 'default' user — same wire shape as redis_password alone. Set to 'stellarindex' (or the operator's per-component user) when redis_acl_lockdown is enabled in the ansible role (F-1213 audit-2026-05-12); without a username the broker-side ACL rejects the connection." default:""`
 	S3Endpoint         string   `toml:"s3_endpoint" doc:"S3-compatible object-store endpoint (MinIO / AWS S3)." default:"http://127.0.0.1:9000"`
 	S3Region           string   `toml:"s3_region" doc:"S3 region label (free-form for MinIO; AWS region name otherwise)." default:"r1"`
@@ -780,7 +780,7 @@ type StorageConfig struct {
 	// env-var NAME (the direct-value `env:` convention, same as
 	// RedisPassword — see that field's doc comment — NOT the
 	// name-of-env-var convention S3AccessKeyEnv uses).
-	ClickHouseServingPassword string `toml:"clickhouse_serving_password_env" doc:"Env var holding the ClickHouse serving user's password (reference, not the password itself). Empty (default) uses no password, matching an empty clickhouse_serving_user." env:"STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD" default:""`
+	ClickHouseServingPassword string `toml:"clickhouse_serving_password_env" doc:"The ClickHouse serving user's password itself — injected via the STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD env override, NOT an env-var NAME to dereference (audit C3-15: the code uses this value directly; the '_env' suffix is a legacy misnomer). Empty (default) uses no password, matching an empty clickhouse_serving_user." env:"STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD" default:""`
 }
 
 // ColdTieringEnabled reports whether the cold-tier read path
