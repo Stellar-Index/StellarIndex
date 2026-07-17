@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/lib/pq"
+
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
@@ -56,9 +58,10 @@ func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []domain.Soro
 		}
 	}
 
-	// Build the multi-row VALUES clause + arg slice. 15 columns ×
-	// N rows.
-	const cols = 15
+	// Build the multi-row VALUES clause + arg slice. 16 columns ×
+	// N rows. topics_xdr (migration 0114) carries the COMPLETE ordered
+	// topic list; topic_0..3 stay populated for back-compat (C2-11).
+	const cols = 16
 	var sb strings.Builder
 	sb.WriteString(`
         INSERT INTO soroban_events (
@@ -66,7 +69,7 @@ func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []domain.Soro
             contract_id, contract_id_hex,
             topic_count, topic_0_sym,
             topic_0_xdr, topic_1_xdr, topic_2_xdr, topic_3_xdr,
-            body_xdr, op_args_xdr
+            body_xdr, op_args_xdr, topics_xdr
         ) VALUES `)
 	args := make([]any, 0, cols*len(rows))
 	for i := range rows {
@@ -75,14 +78,24 @@ func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []domain.Soro
 		}
 		base := i * cols
 		fmt.Fprintf(&sb,
-			"($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+			"($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
 			base+1, base+2, base+3, base+4, base+5,
 			base+6, base+7,
 			base+8, base+9,
 			base+10, base+11, base+12, base+13,
-			base+14, base+15,
+			base+14, base+15, base+16,
 		)
 		r := &rows[i]
+		// A nil [][]byte marshals through pq.Array to SQL NULL, which
+		// the NOT NULL topics_xdr column (migration 0114) rejects. A
+		// row built without the full list (e.g. a legacy topic_0..3-only
+		// constructor) writes an empty '{}' array instead, so the reader
+		// falls back to topic_0..3; the live Capture path always
+		// populates TopicsXDR (>=1 topic).
+		topics := r.TopicsXDR
+		if topics == nil {
+			topics = [][]byte{}
+		}
 		args = append(args,
 			int64(r.Ledger),
 			r.LedgerCloseTime,
@@ -99,6 +112,7 @@ func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []domain.Soro
 			nullBytes(r.Topic3XDR),
 			r.BodyXDR,
 			nullBytes(r.OpArgsXDR),
+			pq.Array(topics),
 		)
 	}
 	sb.WriteString(` ON CONFLICT (ledger_close_time, ledger, tx_hash, op_index, event_index) DO NOTHING`)
@@ -153,7 +167,7 @@ func (s *Store) StreamSorobanEvents(
             contract_id, contract_id_hex,
             topic_count, topic_0_sym,
             topic_0_xdr, topic_1_xdr, topic_2_xdr, topic_3_xdr,
-            body_xdr, op_args_xdr
+            body_xdr, op_args_xdr, topics_xdr
         FROM soroban_events
         WHERE ledger BETWEEN $1 AND $2
     `)
@@ -209,13 +223,14 @@ func (s *Store) StreamSorobanEvents(
 			topic0Sym              sql.NullString
 			topic1, topic2, topic3 []byte
 			opArgs                 []byte
+			topicsXDR              pq.ByteaArray
 		)
 		if err := rows.Scan(
 			&ledger, &r.LedgerCloseTime, &r.TxHash, &opIdx, &eventIdx,
 			&r.ContractID, &r.ContractIDHex,
 			&topicCount, &topic0Sym,
 			&r.Topic0XDR, &topic1, &topic2, &topic3,
-			&r.BodyXDR, &opArgs,
+			&r.BodyXDR, &opArgs, &topicsXDR,
 		); err != nil {
 			return fmt.Errorf("timescale: StreamSorobanEvents scan: %w", err)
 		}
@@ -230,6 +245,7 @@ func (s *Store) StreamSorobanEvents(
 		r.Topic2XDR = topic2
 		r.Topic3XDR = topic3
 		r.OpArgsXDR = opArgs
+		r.TopicsXDR = [][]byte(topicsXDR)
 		if err := fn(r); err != nil {
 			return err
 		}

@@ -205,36 +205,39 @@ func StreamSACBalanceSeedsFullHistory(ctx context.Context, addr string, watched 
 	// external_group_by — and no global sort exists at all.
 	//
 	// The ordering key is the FULL within-ledger identity tuple
-	// (ledger_seq, tx_hash, op_index, change_index) — the same canonical
-	// replay order entry_change_reader.go uses — NOT ledger_seq alone.
-	// audit-2026-07-16 C2-4: ledger_seq is not unique per key within a
-	// ledger (change_index is only a per-TRANSACTION counter — see
-	// extract_entry_changes.go — so a single ledger can hold several
-	// changes to the same storage key), so `argMax(col, ledger_seq)`
-	// computed INDEPENDENTLY per column let ClickHouse resolve the tie
-	// differently for each column: `entry_xdr` from a still-present
-	// change and `change_type` from a later 'removed' change in the same
-	// ledger → a Frankenstein current-state row. When change_type was
-	// mis-read as present, the removed-entry skip below never fired and
-	// a deleted balance was RESURRECTED (before-image) into the SAC
-	// supply seed — a direct contributor to the supply cross-check
-	// divergence. A single argMax over the whole identity TUPLE forces
-	// every column to come from the one genuine latest row (the tuple is
-	// unique per key, so there is no residual tie), making the removal
-	// skip coherent. (Residual: tx_hash orders lexically, not by
-	// tx-apply order — a same-ledger cross-tx write to one key still
-	// resolves by hash, matching the codebase's existing canonical
-	// order; a fully apply-ordered resolution needs tx_index, tracked
-	// under C2-4c with the ledger_entries_current projection fix.)
+	// (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index) — NOT
+	// ledger_seq alone. audit-2026-07-16 C2-4: ledger_seq is not unique per key
+	// within a ledger (change_index is only a per-TRANSACTION counter — see
+	// extract_entry_changes.go — so a single ledger can hold several changes to
+	// the same storage key), so `argMax(col, ledger_seq)` computed
+	// INDEPENDENTLY per column let ClickHouse resolve the tie differently for
+	// each column: `entry_xdr` from a still-present change and `change_type`
+	// from a later 'removed' change in the same ledger → a Frankenstein
+	// current-state row. When change_type was mis-read as present, the
+	// removed-entry skip below never fired and a deleted balance was
+	// RESURRECTED (before-image) into the SAC supply seed — a direct
+	// contributor to the supply cross-check divergence. A single argMax over
+	// the whole identity TUPLE forces every column to come from the one genuine
+	// latest row, making the removal skip coherent.
+	//
+	// intra_ledger_seq LEADS the within-ledger part of the tuple (C2-4c): it is
+	// the per-LEDGER canonical walk position (apply order across all txs), so it
+	// resolves same-ledger cross-tx writes by TRUE apply order — and it is the
+	// exact same tie-break folded into ledger_entries_current's version, so this
+	// full-history reduction and the FINAL projection agree on the winner. Rows
+	// written before the C2-4c fix (and legacy rows until a re-derive) carry
+	// intra_ledger_seq = 0, so among them the tuple falls through to
+	// (tx_hash, op_index, change_index) — the prior lexical-but-deterministic
+	// canonical order — a strict superset, never a regression.
 	//
 	// Output aliases must NOT shadow the source column names: ClickHouse
 	// resolves a shadowing alias back into sibling aggregate arguments
 	// (ILLEGAL_AGGREGATION — caught live 2026-07-11).
 	q := `SELECT key_xdr,
-		       argMax(entry_xdr,   (ledger_seq, tx_hash, op_index, change_index)) AS win_entry_xdr,
-		       argMax(change_type, (ledger_seq, tx_hash, op_index, change_index)) AS win_change_type,
-		       argMax(ledger_seq,  (ledger_seq, tx_hash, op_index, change_index)) AS win_ledger_seq,
-		       argMax(close_time,  (ledger_seq, tx_hash, op_index, change_index)) AS win_close_time
+		       argMax(entry_xdr,   (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS win_entry_xdr,
+		       argMax(change_type, (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS win_change_type,
+		       argMax(ledger_seq,  (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS win_ledger_seq,
+		       argMax(close_time,  (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS win_close_time
 		FROM stellar.ledger_entry_changes
 		WHERE entry_type = 'contract_data'
 		  AND multiSearchAny(base64Decode(key_xdr), [` + strings.Join(needles, ", ") + `])
