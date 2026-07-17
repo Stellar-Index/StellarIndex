@@ -82,13 +82,23 @@ Main was red for 24h+ on three CI-only checks, invisible to local `make verify`:
 
 - **M11 `guardRatioBound = 3`** — the served-VWAP manipulation tolerance (rejects a >3× single-bucket deviation). The finding's prose wanted ≥3× rejected; the default admits ≤3× to avoid false-rejecting real extreme moves (depegs/halvings). A one-constant tightening if a stricter posture is wanted. Also `M8 aggregatorMADFactor=5`, `M11 guardThinRatioBound=10`.
 
-## STILL OPEN (next wave — value-ranked)
+## IN FLIGHT (next-wave fixers running, proof-first)
 
-- **M9/M10** — divergence-ref upstream-staleness gates (CoinGecko/CryptoCompare stamp time.Now()) + the remaining float-fiat serve paths (price.go fiat cross-rate fallback, assets_global/chart fiat market-cap).
-- **M13** — confidence `approxUSDVolume` divides CEX quotes by the wrong scale → ~10× liquidity overstatement in the confidence score.
-- **C2-13/14/16/17** — same-op event collapse (cctp/rozo); two enqueue-not-persist backfill cursor advances; oracle window-netting reconcile; graceful-shutdown drain race.
-- **C2-11, C2-18** — deferred above (schema + re-ingest / dead-table DROP).
-- **Queued:** M9/M10 (divergence-ref staleness gates + remaining float-fiat serve paths), M13 (confidence 10× liquidity overstatement), C2-12/13/14/16/17 (RMT-without-FINAL over-count, same-op collapse, enqueue-not-persist cursors, window-netting, shutdown drain).
+- **M9/M10/M13** — divergence-ref upstream-staleness gates + remaining float-fiat serve paths + the confidence mixed-scale (CEX 1e8) bias.
+- **C2-13/14/16/17** — same-op event collapse (cctp/rozo) + missing batch registry hook; two enqueue-not-persist cursor advances (durability, C2-1 class); oracle window-netting reconcile; graceful-shutdown drain race.
+
+## LOW / INFO / GATED tail — disposition
+
+Many tail items are already CLOSED by the landed waves: C3-13/C3-18 (auth), C4-4/C4-16 (detectability), C4-2 (supply-seed exit), G6/windowUSDVolume + web/status dead env (hygiene), C3-1/C3-2/C3-9 (API DoS/validation). `VerifiedCurrencyListItem` was a FALSE POSITIVE (live API contract — kept).
+
+- **Worth a follow-up (clean, real):** C4-13 (isSafeHref fails OPEN on control-char-obfuscated schemes `java\tscript:` → stored-XSS bypass — MED, gated behind markdown rendering but a real bypass); C3-14 (two ops archive commands use bare `config.Load()`, no `ApplyEnvOverrides` → placeholder DSN); C3-15 (`*_password_env` doc says "reference" but code reads the VALUE — a maintainer-footgun); C3-20 (`clickhouse_projector_source` requires `clickhouse_live_sink`, unenforced at config-validate); C3-17 (6-digit login-code brute-force leans on the OPTIONAL LoginThrottle); PRV1 (customer email PII logged in dashboardauth handlers).
+- **GATED-not-live on R1 (accepted; reactivate-if-enabled, documented):** G1/CS-040 decimals hardcode (polygon-forex/exchangeratesapi disabled, min_usd_volume=0); C3-16 (Stripe lifecycle/downgrade); C3-19 (/metrics colocation); C3-21 (usage rollup 2-day window); C3-13/C3-14/C3-15 are gated but the code fixes above still apply.
+- **negspace / operator-safety (N1, C2-19):** no guarded (dry-run/backup/confirm) re-derive command, no dead-letter/quarantine, no `migrate down` destructive guard, no advisory lock coordinating ops re-derives vs the live projector, no single-source kill-switch — these are OPERATOR-CONTROL absences (tooling to build), surfaced for a dedicated hardening pass, not a code bug to patch inline.
+- **LOW/INFO accepted (documented, not blocking):** DOC-drift comments, `scval.Display` U256 rendering, ACC aria-live gaps, ISO `coingecko_id` slugs, tag-pinned (not digest) Docker base images, heterogeneous-decimal stablecoin-proxy VWAP fold.
+
+## DEFERRED-STRUCTURAL (schema/reproject/re-ingest — [OP]-coordinated)
+
+- **C2-11, C2-18** — see DEFERRED above (topics >4 schema + re-ingest / classic_movements dead-table DROP).
 
 ## [OP] — operator actions (logged, cannot be done here)
 
