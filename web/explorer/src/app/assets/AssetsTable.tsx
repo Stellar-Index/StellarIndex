@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
 
 import { useAssets, type AssetClassFilter, type Coin } from '@/api/hooks';
-import { formatCompact } from '@/lib/format';
+import { formatCompact, formatPriceSmall } from '@/lib/format';
 import {
   Badge,
   Button,
@@ -347,7 +347,13 @@ function AssetRow({
   const price = parseDec(coin.price_usd);
   const marketCapRaw = parseDec(coin.market_cap_usd);
   const volume = parseDec(coin.volume_24h_usd);
-  const supply = parseDec(coin.circulating_supply);
+  // circulating_supply is a RAW smallest-unit integer string; render it
+  // in whole asset units by scaling down 10^decimals (7 for classic /
+  // native, 0 for catalogue / fiat rows). market_cap / volume / price are
+  // already server-pre-scaled — do NOT divide those.
+  const supplyRaw = parseDec(coin.circulating_supply);
+  const supply =
+    supplyRaw != null ? supplyRaw / 10 ** (coin.decimals ?? 7) : null;
   // Suppress market cap when 24h volume is below the confidence
   // threshold — without enough recent trade volume the price
   // underlying the cap is too thin to publish a believable number.
@@ -407,7 +413,7 @@ function AssetRow({
       <Td align="right">
         {price != null ? (
           <span className="font-mono tabular-nums text-ink">
-            ${formatPriceSmart(price)}
+            ${formatPriceSmall(price)}
           </span>
         ) : (
           <Dash />
@@ -575,13 +581,6 @@ function parseDec(s: string | null | undefined): number | null {
   if (!s) return null;
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
-}
-
-function formatPriceSmart(n: number): string {
-  if (n >= 1) return n.toFixed(n >= 100 ? 2 : 4);
-  if (n >= 0.001) return n.toFixed(6);
-  if (n > 0) return n.toExponential(3);
-  return '0';
 }
 
 function parseLimit(raw: string | null): number {

@@ -1,8 +1,9 @@
 import Link from 'next/link';
 
-import { formatCompact, formatPrice } from '@/lib/format';
+import { formatCompact, formatPriceSmall } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { AssetConverter } from './AssetConverter';
+import { SidebarAssetIcon } from './SidebarAssetIcon';
 
 // Loosely-typed mirror of the page's fetched shapes — only the fields
 // the sidebar renders. Keeps this component decoupled from page.tsx's
@@ -14,6 +15,10 @@ export interface SidebarCoin {
   image?: string | null;
   slug: string;
   asset_id: string;
+  // On-chain smallest-unit scale — 7 for classic / native, 0 for
+  // catalogue / fiat rows. Supply strings are RAW smallest-unit
+  // integers and must be scaled down 10^decimals before display.
+  decimals?: number | null;
   issuer?: string | null;
   price_usd?: string | null;
   volume_24h_usd?: string | null;
@@ -28,6 +33,7 @@ export interface SidebarCoin {
 }
 
 export interface SidebarDetail {
+  decimals?: number | null;
   total_supply?: string | null;
   circulating_supply?: string | null;
   max_supply?: string | null;
@@ -56,12 +62,19 @@ export function AssetSidebar({
   name?: string | null;
   homeDomain?: string | null;
 }) {
+  // market_cap / volume / fdv arrive already server-pre-scaled (USD) —
+  // num() only, never divide. The supply fields (circulating / total /
+  // max) are RAW smallest-unit integers, so scale them down 10^decimals.
   const marketCap = num(detail?.market_cap_usd ?? coin.market_cap_usd);
   const vol = num(detail?.volume_24h_usd ?? coin.volume_24h_usd);
   const fdv = num(detail?.fdv_usd);
-  const circulating = num(detail?.circulating_supply ?? coin.circulating_supply);
-  const total = num(detail?.total_supply);
-  const max = num(detail?.max_supply);
+  const decimals = detail?.decimals ?? coin.decimals ?? 7;
+  const circulating = supplyNum(
+    detail?.circulating_supply ?? coin.circulating_supply,
+    decimals,
+  );
+  const total = supplyNum(detail?.total_supply, decimals);
+  const max = supplyNum(detail?.max_supply, decimals);
   const volMktCap = vol != null && marketCap != null && marketCap > 0 ? vol / marketCap : null;
   const change = num(coin.change_24h_pct);
   // Native (and a few sparse rows) can arrive without a `code` — fall
@@ -82,24 +95,7 @@ export function AssetSidebar({
       {/* Identity + live price */}
       <div className="rounded-card border border-line bg-surface p-4">
         <div className="flex items-center gap-2.5">
-          {coin.image ? (
-            // eslint-disable-next-line @next/next/no-img-element -- remote SEP-1 icons; next/image needs a domain allowlist we can't enumerate
-            <img
-              src={coin.image}
-              alt=""
-              width={36}
-              height={36}
-              loading="lazy"
-              className="h-9 w-9 rounded-full bg-surface-subtle object-contain"
-            />
-          ) : (
-            <span
-              aria-hidden
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-subtle font-mono text-sm font-semibold text-ink"
-            >
-              {code.slice(0, 1)}
-            </span>
-          )}
+          <SidebarAssetIcon image={coin.image} code={code} />
           <div className="min-w-0">
             <div className="flex items-baseline gap-1.5">
               <span className="text-lg font-semibold text-ink">{code}</span>
@@ -111,7 +107,7 @@ export function AssetSidebar({
         </div>
         <div className="mt-3 flex flex-wrap items-baseline gap-2">
           <span className="font-mono text-3xl tabular-nums text-ink">
-            {priceUSD != null ? `$${formatPrice(priceUSD)}` : '—'}
+            {priceUSD != null ? `$${formatPriceSmall(priceUSD)}` : '—'}
           </span>
           {change != null && (
             <span
@@ -257,8 +253,8 @@ function PerformanceRange({
         />
       </div>
       <div className="mt-1.5 flex items-baseline justify-between font-mono text-xs tabular-nums text-ink-body">
-        <span>${formatPrice(low)}</span>
-        <span>${formatPrice(high)}</span>
+        <span>${formatPriceSmall(low)}</span>
+        <span>${formatPriceSmall(high)}</span>
       </div>
     </div>
   );
@@ -268,6 +264,17 @@ function num(raw: string | null | undefined): number | null {
   if (raw == null || raw === '') return null;
   const n = Number(raw);
   return Number.isFinite(n) ? n : null;
+}
+
+// supplyNum parses a RAW smallest-unit supply string and scales it down
+// 10^decimals to whole asset units (mirrors SupplyTabPanel.parseSmallest
+// / HoldersTabPanel). Display-only — never re-used for arithmetic.
+function supplyNum(
+  raw: string | null | undefined,
+  decimals: number,
+): number | null {
+  const n = num(raw);
+  return n != null ? n / 10 ** decimals : null;
 }
 
 function usd(n: number | null): string {
