@@ -1,6 +1,7 @@
 package explorer
 
 import (
+	"context"
 	"net/http"
 	"regexp"
 
@@ -45,7 +46,10 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, found, err := h.Reader.TransactionByHash(r.Context(), hash)
+	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
+	defer cancel()
+
+	tx, found, err := h.Reader.TransactionByHash(ctx, hash)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -62,7 +66,7 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ops, err := h.Reader.OperationsByTx(r.Context(), tx.Seq, hash)
+	ops, err := h.Reader.OperationsByTx(ctx, tx.Seq, hash)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -72,14 +76,14 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	results, err := h.Reader.OperationResultsByTx(r.Context(), tx.Seq, hash)
+	results, err := h.Reader.OperationResultsByTx(ctx, tx.Seq, hash)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
 		}
 		results = nil // non-fatal: serve ops without per-op result codes
 	}
-	events, err := h.Reader.EventsByTx(r.Context(), tx.Seq, hash)
+	events, err := h.Reader.EventsByTx(ctx, tx.Seq, hash)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return

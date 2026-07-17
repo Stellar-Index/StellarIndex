@@ -55,13 +55,26 @@ func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, ass
 	// readers' instance keys went ~21s → ~0.7s.) An active pool's latest
 	// reserve state is always in-window; a reserve untouched for longer
 	// is reported as absent (consistent with "captured window").
+	//
+	// The version key is the COMPOSITE (ledger_seq, intra_ledger_seq), not
+	// ledger_seq alone (audit-2026-07-16 C2-4c): a Blend ResData entry is
+	// commonly rewritten several times within ONE ledger (multiple pool ops in
+	// the same close), and ledger_seq ties those rows so a single-column argMax
+	// served an ARBITRARY mid-ledger reserve state (stale b_rate/d_rate/
+	// supplies). intra_ledger_seq — the canonical within-ledger walk position —
+	// breaks the tie so the LAST change wins. The removed-key drop moves from a
+	// pre-aggregation `entry_xdr != ''` filter (which excluded a same-ledger
+	// removal from the argMax and could thus RESURRECT a key deleted later in
+	// the same ledger) to a HAVING on the WINNING row's change_type, so a key
+	// whose final intra-ledger change is a removal correctly drops out.
 	const reserveWindowLedgers = 250_000 // ~14 days at 5s
-	const q = `SELECT key_xdr, argMax(entry_xdr, ledger_seq)
+	const q = `SELECT key_xdr, argMax(entry_xdr, (ledger_seq, intra_ledger_seq)) AS latest_xdr
 		FROM stellar.ledger_entry_changes
 		WHERE entry_type = 'contract_data'
 		  AND ledger_seq > (SELECT max(ledger_seq) FROM stellar.ledger_entry_changes) - ?
-		  AND key_xdr IN (?) AND entry_xdr != ''
-		GROUP BY key_xdr`
+		  AND key_xdr IN (?)
+		GROUP BY key_xdr
+		HAVING argMax(change_type, (ledger_seq, intra_ledger_seq)) != 'removed'`
 	rows, err := r.conn.Query(ctx, q, uint32(reserveWindowLedgers), keys)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: blend reserves lookup: %w", err)

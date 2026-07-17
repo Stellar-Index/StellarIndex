@@ -1,6 +1,7 @@
 package explorer
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"sync"
@@ -166,7 +167,11 @@ func (h *Handler) Operations(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := h.Reader.OperationsByLedger(r.Context(), seq, limit)
+
+	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
+	defer cancel()
+
+	rows, err := h.Reader.OperationsByLedger(ctx, seq, limit)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -208,7 +213,11 @@ func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	windowDays := h.ParseWindowDays(r, 30)
-	buckets, err := h.Reader.NetworkThroughput(r.Context(), windowDays)
+
+	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
+	defer cancel()
+
+	buckets, err := h.Reader.NetworkThroughput(ctx, windowDays)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -248,7 +257,11 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	rows, err := h.Reader.RecentOperations(r.Context(), limit, cur)
+
+	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
+	defer cancel()
+
+	rows, err := h.Reader.RecentOperations(ctx, limit, cur)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -270,7 +283,7 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 	// fail the listing (only attached on the first page to keep paging
 	// responses lean).
 	if firstPage {
-		if stats, serr := h.Reader.OperationTypeStats(r.Context(), 0); serr == nil {
+		if stats, serr := h.Reader.OperationTypeStats(ctx, 0); serr == nil {
 			out.OpTypeStats = make([]OpTypeStatV, len(stats))
 			for i, st := range stats {
 				out.OpTypeStats[i] = OpTypeStatV{Type: normalizeLakeOpType(st.OpType), Count: st.Count}

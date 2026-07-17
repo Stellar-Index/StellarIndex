@@ -102,7 +102,14 @@ func (r *ExplorerReader) NativeLiquidityPoolReserves(ctx context.Context, poolID
 func (r *ExplorerReader) NativeLiquidityPoolsRanked(ctx context.Context, limit int) ([]NativeLiquidityPoolState, error) {
 	// argMax over the ReplacingMergeTree versions (manual dedup —
 	// cheaper than FINAL for a whole-prefix scan), latest entry per pool.
-	const q = `SELECT argMax(entry_xdr, ledger_seq) AS e, max(ledger_seq) AS led
+	// The version key is `version` — the table's own RMT ordering column,
+	// (ledger_seq << 32) | intra_ledger_seq — NOT ledger_seq alone
+	// (audit-2026-07-16 C2-4c): ledger_seq ties same-ledger changes to one
+	// pool key, so a single-column argMax could keep an ARBITRARY mid-ledger
+	// row (or resurrect a same-ledger-removed pool). Tie-breaking on `version`
+	// reproduces FINAL's deterministic LAST-change resolution; the trailing
+	// removal (empty entry_xdr) is then dropped by `HAVING e != ''`.
+	const q = `SELECT argMax(entry_xdr, version) AS e, max(ledger_seq) AS led
 		FROM stellar.ledger_entries_current
 		WHERE entry_type = 'liquidity_pool'
 		GROUP BY key_xdr
