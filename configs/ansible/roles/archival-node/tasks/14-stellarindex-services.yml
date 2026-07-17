@@ -261,10 +261,16 @@
   notify: daemon-reload
 
 - name: heavy-job wrapper (mandatory for ops one-shots on this host)
-  # Wraps any command in a systemd transient scope with a hard memory
-  # budget + batch-class CPU/IO so a ballooning job gets killed before
-  # it can starve galexie/CH/PG (the 2026-07-05 lesson). Usage:
-  #   run-heavy-job.sh <name> <command...>
+  # Serialises + host-protects heavy ops one-shots. Two jobs:
+  #   1. Singleton lock (C4-14 / INF-11): a per-job flock so overlapping
+  #      timer fires (or a manual run racing a timer run) can't stack
+  #      and exhaust the single R1 host — a second run is skipped while
+  #      the first is still going.
+  #   2. For root callers, wraps the command in a systemd transient
+  #      scope with a hard memory budget + batch-class CPU/IO so a
+  #      ballooning job gets killed before it can starve galexie/CH/PG
+  #      (the 2026-07-05 lesson).
+  # Usage: run-heavy-job.sh <name> <command...>
   ansible.builtin.copy:
     dest: /usr/local/sbin/run-heavy-job.sh
     owner: root
@@ -273,11 +279,49 @@
     content: |
       #!/usr/bin/env bash
       # Mandatory wrapper for heavy one-shot jobs (ops re-derives,
-      # backfills, bulk SQL). Hard-caps memory at 20G (kill, not swap:
-      # MemoryswapMax=0 keeps the job away from swap entirely) and
-      # deprioritises CPU/IO below the service units.
+      # backfills, bulk SQL, archive walks). First takes a per-job
+      # singleton lock so a new run can't start while the prior run of
+      # the same job is still going (C4-14 / INF-11). Then, for root
+      # callers, hard-caps memory at 20G (kill, not swap: MemorySwapMax=0
+      # keeps the job away from swap entirely) and deprioritises CPU/IO
+      # below the service units; non-root callers exec directly under
+      # the lock (see the id -u branch below).
       set -euo pipefail
+      if [ "$#" -lt 2 ]; then
+        echo "run-heavy-job: usage: run-heavy-job.sh <name> <command> [args...]" >&2
+        exit 2
+      fi
       NAME="$1"; shift
+
+      # ── Singleton lock (C4-14 / INF-11) ──────────────────────────
+      # Per-job flock so a new run cannot start while the prior run of
+      # the SAME job is still going. Overlapping timer fires — or a
+      # manual run racing a timer run — that would otherwise stack and
+      # exhaust the single R1 host are skipped cleanly instead of
+      # piling on. The lock is held for the whole run: in the scoped
+      # path below the wrapper blocks on systemd-run until the payload
+      # exits; in the exec path fd 9 is inherited across exec (flock
+      # survives exec) and the payload holds it until it exits.
+      LOCK="${HEAVY_JOB_LOCK_DIR:-/run/lock}/stellarindex-heavy-${NAME}.lock"
+      exec 9>"$LOCK"
+      if ! flock -n 9; then
+        echo "run-heavy-job: ${NAME} already running (lock ${LOCK} held) — skipping this fire" >&2
+        exit 0
+      fi
+
+      # De-privileged units (User=stellarindex) can't create a system
+      # transient scope (polkit denies non-root StartTransientUnit), and
+      # Type=notify units must keep the payload as the unit's MAIN pid
+      # for sd_notify/WatchdogSec — a systemd-run scope would move it
+      # into a child cgroup and silently break NotifyAccess=main. So for
+      # non-root callers, exec the payload directly under the held lock.
+      # (Root one-shots fall through to the memory-capped scope below;
+      # non-root heavy scripts already self-guard memory — e.g.
+      # CHSUPPLY_MEMGUARD / 25k-ledger chunking.)
+      if [ "$(id -u)" -ne 0 ]; then
+        exec "$@"
+      fi
+
       UNIT="heavy-${NAME}-$$"
 
       # Root-disk watchdog (2026-06-11 incident follow-up): a heavy job

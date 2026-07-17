@@ -80,6 +80,7 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 	}
 	obs.Ledger = ctx.Ledger
 	obs.ObservedAt = ctx.ClosedAt
+	obs.IntraLedgerSeq = ctx.IntraLedgerSeq
 	return []consumer.Event{obs}, nil
 }
 

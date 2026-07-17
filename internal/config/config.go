@@ -390,6 +390,13 @@ type DivergenceCoinGeckoConfig struct {
 	Enabled bool              `toml:"enabled" doc:"Whether the CoinGecko reference is wired into the divergence service." default:"true"`
 	BaseURL string            `toml:"base_url" doc:"CoinGecko API base URL. Empty defaults to https://api.coingecko.com/api/v3." default:""`
 	IDMap   map[string]string `toml:"id_map" doc:"Maps canonical asset_id → CoinGecko slug. Operator-curated; empty falls back to the built-in default covering XLM + major stables." default:"{}"`
+	// MaxAgeMinutes is the CS-089 staleness ceiling: a /simple/price
+	// quote whose upstream last_updated_at is older than this (relative
+	// to the comparison time) is rejected as reference-unavailable
+	// rather than served as a fresh reference (a frozen upstream must
+	// not drive the divergence signal). 0 = the 30-minute built-in
+	// default (CoinGecko refreshes /simple/price every ~1–5m).
+	MaxAgeMinutes int `toml:"max_age_minutes" doc:"Staleness ceiling in minutes for the CoinGecko quote's upstream last_updated_at; older quotes are rejected as reference-unavailable (CS-089). 0 = 30-minute default." default:"0"`
 }
 
 // DivergenceChainlinkConfig configures the Chainlink reference.
@@ -710,7 +717,7 @@ type StorageConfig struct {
 	// dev/single-node deployments.
 	RedisSentinelAddrs []string `toml:"redis_sentinel_addrs" doc:"List of Sentinel host:port addresses. Non-empty enables FailoverClient mode (production HA per ADR-0024); empty falls back to single-node redis_addr." default:"[]"`
 	RedisMasterName    string   `toml:"redis_master_name" doc:"Sentinel master name as set in inventory (e.g. stellarindex-r1-cache). Required when redis_sentinel_addrs is non-empty." default:""`
-	RedisPassword      string   `toml:"redis_password_env" doc:"Env var holding the Redis password (reference, not the password itself). Used as both requirepass (client auth) and SentinelPassword (sentinel auth) — they're the same secret per the role." env:"STELLARINDEX_REDIS_PASSWORD" default:""`
+	RedisPassword      string   `toml:"redis_password_env" doc:"The Redis password itself — injected via the STELLARINDEX_REDIS_PASSWORD env override (the project's standard secret path), NOT an env-var NAME to dereference. The '_env' toml suffix is a legacy misnomer (audit C3-15): the code uses this value directly, so putting an env-var name here ships that literal string as the password. Used as both requirepass (client auth) and SentinelPassword (sentinel auth) — same secret per the role." env:"STELLARINDEX_REDIS_PASSWORD" default:""`
 	RedisUsername      string   `toml:"redis_username" doc:"Optional Redis ACL username. Empty (default) AUTHs as Redis's legacy 'default' user — same wire shape as redis_password alone. Set to 'stellarindex' (or the operator's per-component user) when redis_acl_lockdown is enabled in the ansible role (F-1213 audit-2026-05-12); without a username the broker-side ACL rejects the connection." default:""`
 	S3Endpoint         string   `toml:"s3_endpoint" doc:"S3-compatible object-store endpoint (MinIO / AWS S3)." default:"http://127.0.0.1:9000"`
 	S3Region           string   `toml:"s3_region" doc:"S3 region label (free-form for MinIO; AWS region name otherwise)." default:"r1"`
@@ -780,7 +787,7 @@ type StorageConfig struct {
 	// env-var NAME (the direct-value `env:` convention, same as
 	// RedisPassword — see that field's doc comment — NOT the
 	// name-of-env-var convention S3AccessKeyEnv uses).
-	ClickHouseServingPassword string `toml:"clickhouse_serving_password_env" doc:"Env var holding the ClickHouse serving user's password (reference, not the password itself). Empty (default) uses no password, matching an empty clickhouse_serving_user." env:"STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD" default:""`
+	ClickHouseServingPassword string `toml:"clickhouse_serving_password_env" doc:"The ClickHouse serving user's password itself — injected via the STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD env override, NOT an env-var NAME to dereference (audit C3-15: the code uses this value directly; the '_env' suffix is a legacy misnomer). Empty (default) uses no password, matching an empty clickhouse_serving_user." env:"STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD" default:""`
 }
 
 // ColdTieringEnabled reports whether the cold-tier read path
@@ -962,6 +969,25 @@ type APIConfig struct {
 	AnonRateLimitPerMin int      `toml:"anon_rate_limit_per_min" doc:"Per-IP rate limit for anonymous requests." default:"60"`
 	KeyRateLimitPerMin  int      `toml:"key_rate_limit_per_min" doc:"Per-API-key rate limit, default tier." default:"1000"`
 
+	// FailedAuthRateLimitPerMin caps invalid-credential attempts per IP
+	// (C3-5, audit-2026-07-16). Auth runs before the main rate limiter,
+	// so a wrong API key / SEP-10 token is rejected (401) before it
+	// reaches the limiter — leaving credential-stuffing / key-guessing
+	// otherwise unthrottled. This is a dedicated per-IP throttle applied
+	// inside the Auth middleware to credential FAILURES only; valid
+	// requests are unaffected. Only engaged when auth_mode != none (mode
+	// none never fails auth). 0 disables it.
+	FailedAuthRateLimitPerMin int `toml:"failed_auth_rate_limit_per_min" doc:"Per-IP cap on INVALID-credential (failed-auth) attempts per minute, enforced inside the Auth middleware so credential-stuffing / API-key guessing is throttled even though auth rejects before the main rate limiter (C3-5). Only active when auth_mode != none. Keyed on the resolved client IP; Redis-backed when available, in-process fixed-window fallback otherwise. 0 disables the failed-auth throttle." default:"20"`
+
+	// RequestTimeout + ServingStatementTimeout are the two layers of the
+	// unauth-DoS chokepoint fix (C3-1/C3-2/P1/R1, audit-2026-07-16). The
+	// app-layer request deadline is the primary bound; the SQL
+	// statement_timeout is the defense-in-depth backstop for when Go-side
+	// ctx cancellation races. Keep statement_timeout LONGER than
+	// request_timeout so the app-layer deadline fires first.
+	RequestTimeout          time.Duration `toml:"request_timeout" doc:"Per-request context deadline applied to every non-streaming request by the API's RequestTimeout middleware, so every handler inherits a bound even when it forgets its own. Streaming (SSE) endpoints are exempt (they own their lifecycle via client-disconnect ctx cancellation). Should exceed the per-read 8s ceilings (so a per-read deadline surfaces its own error first) and stay under the 30s http.Server WriteTimeout. 0 disables the middleware." default:"15s"`
+	ServingStatementTimeout time.Duration `toml:"serving_statement_timeout" doc:"Session-level Postgres statement_timeout applied to every connection in the API's serving pool (via a post-connect SET), so a runaway request-path query is bounded SQL-side even if Go-side ctx cancellation races. Keep it LONGER than request_timeout so the app-layer deadline fires first (defense in depth). The indexer/aggregator pools are unaffected — their heavy batch scans set their own longer SET LOCAL statement_timeout inside a transaction, which overrides this session default. 0 disables it (plain Open, no session timeout)." default:"30s"`
+
 	// SignupRequireEmailVerification opts the deployment into
 	// the F-1218 wave 45 gate: API-key Subjects whose
 	// EmailVerifiedAt is zero AND whose identifier indicates
@@ -1054,6 +1080,16 @@ type StreamingConfig struct {
 	// 5 s detects a new 1-minute closed bucket within 5 s of its
 	// end — well inside Freighter's 30 s freshness target.
 	PollInterval time.Duration `toml:"poll_interval" doc:"Per-pair poll cadence for the closed-bucket producer. Default 5s; clamped to 1s minimum." default:"5s"`
+
+	// MaxStreamsPerIP caps concurrently-held SSE connections from a
+	// single client IP across every stream endpoint (C3-8 /
+	// CS-013). Without it one non-reading client can hold open (and
+	// leak, until the write deadline fires) enough connections to
+	// starve file descriptors / goroutines and deny the streams to
+	// everyone else, since the global cap alone lets one IP consume the
+	// whole budget. Over the cap, a new SSE connection is rejected with
+	// 503. 0 disables the per-IP cap (the global cap still applies).
+	MaxStreamsPerIP int `toml:"max_streams_per_ip" doc:"Maximum concurrently-held SSE stream connections per client IP across all stream endpoints (/v1/price/stream, /v1/price/tip/stream, /v1/observations/stream, /v1/ledger/stream). Guards against a single client exhausting file descriptors / goroutines by holding many stalled streams (C3-8 / CS-013). Over the cap a new stream is rejected with 503. 0 disables the per-IP cap; a separate global cap still bounds total concurrent streams." default:"20"`
 }
 
 // SEP10Config configures the SEP-10 Web Auth validator. Both
@@ -1336,15 +1372,22 @@ func defaultHashDBConfig() HashDBConfig {
 // TestDefault_MatchesStructTags).
 func defaultAPIConfig() APIConfig {
 	return APIConfig{
-		ListenAddr:          "0.0.0.0:3000",
-		ExternalBaseURL:     "https://api.stellarindex.io/v1",
-		AuthMode:            "none",
-		AuthBackend:         "redis",
-		AnonRateLimitPerMin: 60,
-		KeyRateLimitPerMin:  1000,
-		CDNEnabled:          true,
-		AllowedOrigins:      []string{"*"},
-		TrustedProxyCIDRs:   []string{},
+		ListenAddr:                "0.0.0.0:3000",
+		ExternalBaseURL:           "https://api.stellarindex.io/v1",
+		AuthMode:                  "none",
+		AuthBackend:               "redis",
+		AnonRateLimitPerMin:       60,
+		KeyRateLimitPerMin:        1000,
+		FailedAuthRateLimitPerMin: 20,
+		// Unauth-DoS chokepoint (audit-2026-07-16): the app-layer request
+		// deadline (15s) is the primary bound; the serving-pool
+		// statement_timeout (30s) is the SQL-side backstop, kept longer so
+		// the app deadline fires first.
+		RequestTimeout:          15 * time.Second,
+		ServingStatementTimeout: 30 * time.Second,
+		CDNEnabled:              true,
+		AllowedOrigins:          []string{"*"},
+		TrustedProxyCIDRs:       []string{},
 		// F-0051: probe the public TLS leaf certs by default so silent
 		// Let's Encrypt renewal failures surface before expiry (the alert
 		// series only exists when this is populated).
@@ -1372,8 +1415,9 @@ func defaultAPIConfig() APIConfig {
 			CookieSecure:        true, // dev (http://localhost) overrides to false
 		},
 		Streaming: StreamingConfig{
-			Pairs:        [][]string{},
-			PollInterval: 5 * time.Second,
+			Pairs:           [][]string{},
+			PollInterval:    5 * time.Second,
+			MaxStreamsPerIP: 20,
 		},
 	}
 }

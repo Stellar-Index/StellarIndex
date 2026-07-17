@@ -87,8 +87,8 @@ func StreamFromChannel(w http.ResponseWriter, r *http.Request, ch <-chan Event, 
 		return
 	}
 
-	// Concurrent-stream cap (CS-013): refuse new connections past the
-	// ceiling so a connection flood can't exhaust FDs/goroutines.
+	// Global concurrent-stream cap (CS-013): refuse new connections past
+	// the ceiling so a connection flood can't exhaust FDs/goroutines.
 	if limit := atomic.LoadInt64(&maxConcurrentStreams); limit > 0 {
 		if atomic.AddInt64(&activeStreams, 1) > limit {
 			atomic.AddInt64(&activeStreams, -1)
@@ -100,6 +100,19 @@ func StreamFromChannel(w http.ResponseWriter, r *http.Request, ch <-chan Event, 
 		atomic.AddInt64(&activeStreams, 1)
 		defer atomic.AddInt64(&activeStreams, -1)
 	}
+
+	// Per-IP concurrent-stream cap (C3-8): the global cap alone lets one
+	// client hold the entire budget, so a single stalled/hostile address
+	// can starve the streams for everyone. Give each client its own small
+	// ceiling. Rejected over the cap with 503; the global counter's defer
+	// above releases on this return, so no slot leaks. Disabled (cap 0)
+	// yields a no-op release.
+	releaseIPSlot, ok := acquireIPStreamSlot(r)
+	if !ok {
+		http.Error(w, "too many concurrent streams from your address", http.StatusServiceUnavailable)
+		return
+	}
+	defer releaseIPSlot()
 
 	// F-1228 + CS-013: the API's http.Server sets `WriteTimeout: 30s` to
 	// keep short handlers honest, but that fixed deadline would reset an

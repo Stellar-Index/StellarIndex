@@ -120,6 +120,10 @@ func backfillChainlink(args []string) error {
 			return fmt.Errorf("storage: %w", err)
 		}
 		defer func() { _ = store.Close() }()
+		// Re-derive path (INV-3 / migration 0109): stamp a positive
+		// derive_generation so a corrected oracle re-derive UPDATEs the
+		// stored price in place and wins over the live gen-0 value.
+		store.SetDeriveGeneration(time.Now().Unix())
 	}
 
 	t0 := time.Now()

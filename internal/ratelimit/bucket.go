@@ -65,6 +65,13 @@ type Bucket struct {
 	// inversion (legacy fail-open-always behaviour).
 	dwellTime time.Duration
 
+	// local is the in-process fixed-window fallback, non-nil iff rdb
+	// was nil at construction. When set, Take/TakeN bypass Redis
+	// entirely and enforce the limit from an in-memory map — the
+	// fail-CLOSED fallback that keeps the anon/key tiers throttled when
+	// Redis is absent at boot (C3-13 / C3-22). See [localStore].
+	local *localStore
+
 	mu              sync.Mutex
 	redisErrorSince time.Time
 }
@@ -119,7 +126,15 @@ type Result struct {
 //   - max    — requests per window.
 //   - window — size of the fixed window.
 //
-// Panics on invalid arguments (zero or negative).
+// rdb may be nil: the Bucket then falls back to an in-process
+// fixed-window limiter (see [localStore]) instead of Redis. This is the
+// deliberate degraded mode for a single-instance deployment with no
+// Redis — the limits are still ENFORCED (fail-closed), just accounted
+// per-process rather than fleet-wide. Every other caller passes a real
+// client and gets the Redis path unchanged. C3-13 / C3-22.
+//
+// Panics on invalid arguments (zero or negative limit / sub-second
+// window).
 func New(rdb redis.Cmdable, limit int, window time.Duration, opts ...Option) *Bucket {
 	if limit <= 0 {
 		panic("ratelimit: max must be positive")
@@ -143,8 +158,20 @@ func New(rdb redis.Cmdable, limit int, window time.Duration, opts ...Option) *Bu
 	for _, opt := range opts {
 		opt(b)
 	}
+	// A nil Redis client selects the in-process fixed-window fallback.
+	// Constructed after opts so it inherits any WithClock override
+	// through b.nowFn at Take time.
+	if rdb == nil {
+		b.local = newLocalStore()
+	}
 	return b
 }
+
+// InProcess reports whether this Bucket is running on the in-process
+// fixed-window fallback (rdb was nil at construction) rather than
+// Redis. Exposed so the binary can log which backend is enforcing the
+// limit at startup.
+func (b *Bucket) InProcess() bool { return b.local != nil }
 
 // observeRedisFailure stamps the dwell-time clock + reports whether
 // it's elapsed. True → caller maps to [ErrThrottleUnavailable];
@@ -244,6 +271,14 @@ func (b *Bucket) TakeN(ctx context.Context, key string, limit int) (Result, erro
 		effectiveMax = limit
 	}
 	minute := b.nowFn().Unix() / int64(b.window.Seconds())
+
+	// In-process fallback (rdb was nil at construction). No Redis
+	// round-trip, no error path, no fail-open — the limit is enforced
+	// from an in-memory fixed-window map. C3-13 / C3-22.
+	if b.local != nil {
+		return b.localTakeN(key, effectiveMax, minute), nil
+	}
+
 	// url.QueryEscape the caller-supplied key before concatenating
 	// with ":<minute>". Callers pass things like IPv6 addresses (which
 	// contain `:`), future API-key strings, SEP-10 account IDs; any
@@ -323,4 +358,38 @@ func (b *Bucket) TakeN(ctx context.Context, key string, limit int) (Result, erro
 		RetryAfter: retryAfter,
 		Count:      int(count),
 	}, nil
+}
+
+// localTakeN is the in-process fixed-window path taken when rdb was nil
+// at construction. Mirrors the Redis path's Result derivation
+// (Remaining clamped at zero; RetryAfter = seconds left in the current
+// window, floored at 1s on a denial) so callers can't tell the two
+// backends apart from the Result shape. Never errors — the whole point
+// of the fallback is that it stays enforced when Redis is unavailable.
+func (b *Bucket) localTakeN(key string, effectiveMax int, minute int64) Result {
+	now := b.nowFn()
+	count, allowed := b.local.take(key, minute, effectiveMax, now, b.window)
+
+	remaining := effectiveMax - count
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	var retryAfter time.Duration
+	if !allowed {
+		windowSec := int64(b.window.Seconds())
+		elapsed := now.Unix() - minute*windowSec
+		remainingSec := windowSec - elapsed
+		if remainingSec < 1 {
+			remainingSec = 1
+		}
+		retryAfter = time.Duration(remainingSec) * time.Second
+	}
+
+	return Result{
+		Allowed:    allowed,
+		Remaining:  remaining,
+		RetryAfter: retryAfter,
+		Count:      count,
+	}
 }

@@ -13,8 +13,8 @@ groups:
           severity: page
           team: stellarindex
           component: api
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-down.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-down.md
           summary: "Every API pod is down (SEV-1)"
           description: |
             No API instance is scrape-reachable across the fleet. This is a
@@ -31,8 +31,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
           summary: "API p95 {{ $value | humanizeDuration }} > 500ms"
           description: |
             Freighter SLA is p95 ≤ 200 ms; we alarm at > 500 ms (≥ 2.5×
@@ -49,8 +49,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
           summary: "API p99 {{ $value | humanizeDuration }} > 2s"
           description: |
             Freighter SLA is p99 ≤ 500 ms; we alarm at > 2 s (≥ 4× target).
@@ -66,8 +66,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
           summary: "API 5xx rate {{ $value | humanizePercentage }}"
           description: |
             Sustained > 1 % 5xx responses. At 5 % we escalate to SEV-1 via
@@ -82,8 +82,8 @@ groups:
           severity: page
           team: stellarindex
           component: api
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
           summary: "API 5xx rate {{ $value | humanizePercentage }} (SEV-1)"
           description: |
             > 5 % of requests returning 5xx. Customers are broken; declare
@@ -109,8 +109,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-stale.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-stale.md
           summary: "Price for {{ $labels.asset }} is {{ $value }}s stale"
           description: |
             The most recent aggregated price observation is older than 2 min
@@ -143,8 +143,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache-miss-rate-high.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache-miss-rate-high.md
           summary: "API cache {{ $labels.cache }}/{{ $labels.op }} miss rate {{ $value | humanizePercentage }}"
           description: |
             Sustained > 50 % miss rate on the v1.Cached* wrapper for
@@ -167,8 +167,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
           summary: "Customer webhook delivery failing at {{ $value | humanize }}/s"
           description: |
             The customer-webhook delivery worker has been failing
@@ -191,8 +191,8 @@ groups:
           severity: informational
           team: stellarindex
           component: api
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/usage-rollup-failing.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/usage-rollup-failing.md
           summary: "Usage-rollup sweeps failing ({{ $value | humanize }}/s error rate)"
           description: |
             The API binary's usage-rollup worker has been failing its
@@ -210,8 +210,8 @@ groups:
           severity: informational
           team: stellarindex
           component: api
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md
           summary: "Customer webhook deliveries permanently failed (budget exhausted)"
           description: |
             A delivery hit the 15-attempt retry budget (72h) and
@@ -232,8 +232,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stripe-platform-sync-errors.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stripe-platform-sync-errors.md
           summary: "Stripe platform bridge degraded: {{ $value | humanize }} errors/s"
           description: |
             Stripe webhook → platform-store side effects failing.
@@ -253,8 +253,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
           summary: "TLS cert for {{ $labels.host }} expires in <14 days"
           description: |
             The leaf certificate for {{ $labels.host }} expires at

@@ -31,8 +31,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: signup-reaper
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/signup-reaper-failing.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/signup-reaper-failing.md
           summary: "Speculative-account reaper failing (P3)"
           description: |
             More error outcomes than ok over the last 6h for 30+ min

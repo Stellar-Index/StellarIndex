@@ -119,33 +119,44 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	}
 
 	// ── Recognition (Claim 2a): one global scan, attributed per source ──
-	var (
-		recGaps []completeness.RecognitionGap
-		recErr  error
-	)
-	switch {
-	case *skipRecognition:
+	//
+	// FAIL CLOSED (C2-5 / RFC-8 detector-fail-open): a scan error must abort
+	// the run. The prior code logged the error and continued with an empty
+	// recGaps — indistinguishable from a clean "no gaps" scan — which the
+	// per-source loop below reads as recognition_ok=true and (with substrate
+	// ∧ projection clean) writes as lake_complete=true / complete=true: a
+	// FALSE "complete" verdict on the public /v1/coverage. A transient CH
+	// fault / query timeout / the DistinctTopicShapes memory-cap hit (the
+	// load-heaviest step — see -skip-recognition) would launder into a
+	// passing trust verdict. runRecognitionScan returns the error instead;
+	// returning it here writes NO snapshot (the last real verdict stands) and
+	// gives the cron a non-zero exit. A genuine INCOMPLETE (a scan that
+	// SUCCEEDS and finds a real gap) still flows through as recGaps below,
+	// keeping the existing recognition_ok=false / complete=false behavior.
+	if *skipRecognition {
 		fmt.Fprintln(os.Stderr, "compute-completeness: -skip-recognition — trusting prior recognition audit (no shape scan)")
-	case *useCH:
-		// Recognition (Claim 2a) is a FULL-HISTORY property — "is every
-		// topic shape a gated contract has EVER emitted recognized by some
-		// decoder" — NOT an incremental one. It must NOT be scoped to the
-		// incremental -from window: a low-volume source's rare wrong-topic
-		// event (rozo emitted 393 payment_events over ~2 months, none in a
-		// recent incremental window) would slip through and never flip
-		// recognition_ok — the 2026-07-07 rozo blind spot (BACKLOG #89).
-		// DistinctTopicShapes is bounded-memory at any lake size (windowed
-		// per-partition narrow-column scan + batched exemplar fetch — the
-		// single-query argMax-over-wide-XDR form died at any server memory
-		// cap once P23/CAP-67 grew the distinct set), so always scan from
-		// genesis regardless of -from — which correctly scopes only the
-		// expensive row-by-row projection reconcile below.
-		recGaps, recErr = computeRecognitionGapsCH(ctx, cfg, *chAddr, gatedOpts, uint32(sorobanEraGenesis), tip)
-	default:
-		recGaps, recErr = computeRecognitionGaps(ctx, store, cfg, gatedOpts, tip)
 	}
+	recGaps, recErr := runRecognitionScan(*skipRecognition, func() ([]completeness.RecognitionGap, error) {
+		if *useCH {
+			// Recognition (Claim 2a) is a FULL-HISTORY property — "is every
+			// topic shape a gated contract has EVER emitted recognized by some
+			// decoder" — NOT an incremental one. It must NOT be scoped to the
+			// incremental -from window: a low-volume source's rare wrong-topic
+			// event (rozo emitted 393 payment_events over ~2 months, none in a
+			// recent incremental window) would slip through and never flip
+			// recognition_ok — the 2026-07-07 rozo blind spot (BACKLOG #89).
+			// DistinctTopicShapes is bounded-memory at any lake size (windowed
+			// per-partition narrow-column scan + batched exemplar fetch — the
+			// single-query argMax-over-wide-XDR form died at any server memory
+			// cap once P23/CAP-67 grew the distinct set), so always scan from
+			// genesis regardless of -from — which correctly scopes only the
+			// expensive row-by-row projection reconcile below.
+			return computeRecognitionGapsCH(ctx, cfg, *chAddr, gatedOpts, uint32(sorobanEraGenesis), tip)
+		}
+		return computeRecognitionGaps(ctx, store, cfg, gatedOpts, tip)
+	})
 	if recErr != nil {
-		fmt.Fprintf(os.Stderr, "compute-completeness: recognition scan failed: %v\n", recErr)
+		return recErr
 	}
 	ownerOf := map[string]string{} // contract_id → source name (contract-pinned sources)
 	for _, src := range catalogue {
@@ -352,6 +363,32 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	}
 
 	return nil
+}
+
+// runRecognitionScan runs the selected recognition audit (Claim 2a) and
+// returns its gaps, FAILING CLOSED on a scan error (C2-5 / RFC-8
+// detector-fail-open). A scan ERROR (CH unreachable, query timeout, the
+// DistinctTopicShapes memory-cap hit, a partial read) is wrapped and
+// returned so compute-completeness aborts WITHOUT writing a verdict: an
+// empty gap slice from a FAILED scan is indistinguishable from a clean
+// scan, and proceeding would launder the failure into recognition_ok=true /
+// lake_complete=true / complete=true for every source. A scan that SUCCEEDS
+// and finds a real gap returns that gap (genuine INCOMPLETE is preserved);
+// only errors fail closed. skip is the explicit -skip-recognition operator
+// trust flag: no scan is run, and no gaps / no error are returned (trust the
+// prior recognition_ok), which is distinct from a scan FAILURE.
+//
+// The scan is passed as a func value so the fail-closed contract is unit
+// testable without a live ClickHouse / Postgres (compute_completeness_test).
+func runRecognitionScan(skip bool, scan func() ([]completeness.RecognitionGap, error)) ([]completeness.RecognitionGap, error) {
+	if skip {
+		return nil, nil
+	}
+	gaps, err := scan()
+	if err != nil {
+		return nil, fmt.Errorf("recognition scan failed (failing closed — not writing completeness verdicts): %w", err)
+	}
+	return gaps, nil
 }
 
 // combineWatermark applies the served-tier projection gate to the lake

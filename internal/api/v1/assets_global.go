@@ -328,16 +328,20 @@ func computeFiatMarketCap(supplyStr, priceStr string) *string {
 	if supplyStr == "" || priceStr == "" {
 		return nil
 	}
-	supply, ok := new(big.Float).SetPrec(128).SetString(supplyStr)
+	// Exact big.Rat — no float64 on served money (INV-2 / ADR-0003),
+	// matching the crypto market-cap path's usdMarketValue. The prior
+	// big.Float(128) path was near-exact for realistic fiat sizes but
+	// still not rational-exact; big.Rat removes any ambiguity for a
+	// supply string that would overflow a float64's 53-bit mantissa.
+	supply, ok := new(big.Rat).SetString(supplyStr)
 	if !ok {
 		return nil
 	}
-	price, ok := new(big.Float).SetPrec(128).SetString(priceStr)
+	price, ok := new(big.Rat).SetString(priceStr)
 	if !ok {
 		return nil
 	}
-	product := new(big.Float).SetPrec(128).Mul(supply, price)
-	out := product.Text('f', 2)
+	out := new(big.Rat).Mul(supply, price).FloatString(2)
 	return &out
 }
 

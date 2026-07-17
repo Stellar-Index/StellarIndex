@@ -40,8 +40,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: stellar-stack
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
           summary: "{{ $labels.component }} is lagging upstream (lag={{ $value }}, sustained 2d)"
           description: |
             The daily stellar-stack-version-probe has found the
@@ -68,8 +68,8 @@ groups:
           severity: page
           team: stellarindex
           component: stellar-stack
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stellar-stack-version-lag.md
           summary: "{{ $labels.component }} is a PROTOCOL-MAJOR version behind upstream (P1)"
           description: |
             The installed {{ $labels.component }} is behind upstream

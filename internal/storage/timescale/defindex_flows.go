@@ -109,17 +109,31 @@ func (s *Store) InsertDefindexFlow(ctx context.Context, e DefindexFlow) error {
 		}
 	}
 
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the flow amounts (amount / amounts_vec /
+	// df_tokens) or direction / actor lands in place when its generation is
+	// >= the stored one; a live gen-0 replay can never revert it. Replaces
+	// the old DO NOTHING no-op.
 	const q = `
         INSERT INTO defindex_flows (
             ledger, ledger_close_time, tx_hash, op_index, event_index,
             contract_id, layer, direction, actor,
-            amount, amounts_vec, df_tokens
+            amount, amounts_vec, df_tokens,
+            derive_generation
         ) VALUES (
             $1, $2, $3, $4, $5,
             $6, $7, $8, $9,
-            $10, $11, $12
+            $10, $11, $12,
+            $13
         )
-        ON CONFLICT (ledger_close_time, contract_id, ledger, tx_hash, op_index, layer, event_index) DO NOTHING
+        ON CONFLICT (ledger_close_time, contract_id, ledger, tx_hash, op_index, layer, event_index) DO UPDATE SET
+            direction         = EXCLUDED.direction,
+            actor             = EXCLUDED.actor,
+            amount            = EXCLUDED.amount,
+            amounts_vec       = EXCLUDED.amounts_vec,
+            df_tokens         = EXCLUDED.df_tokens,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE defindex_flows.derive_generation <= EXCLUDED.derive_generation
     `
 	var amount, dfTokens interface{}
 	if e.Amount != "" {
@@ -136,6 +150,7 @@ func (s *Store) InsertDefindexFlow(ctx context.Context, e DefindexFlow) error {
 		int(e.Ledger), e.LedgerCloseTime.UTC(), e.TxHash, int(e.OpIndex), int(e.EventIndex),
 		e.ContractID, string(e.Layer), string(e.Direction), e.Actor,
 		amount, amountsVec, dfTokens,
+		s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertDefindexFlow %s@%d: %w", e.TxHash, e.Ledger, err)

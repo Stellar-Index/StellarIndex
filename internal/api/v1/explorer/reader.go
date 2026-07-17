@@ -22,12 +22,26 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
+
+// explorerReadTimeout is the per-request ceiling every explorer handler
+// wraps its ClickHouse lake reads in (C3-1, audit-2026-07-16). The
+// explorer endpoints read the shared explorer pool (MaxOpenConns:8);
+// without a bounded context a handful of slow unauthenticated requests
+// (e.g. AssetHolders' two ledger_entries_current FINAL scans) hold every
+// connection open and block every lake-backed endpoint — the server
+// WriteTimeout does NOT cancel an in-flight query. A request-scoped
+// deadline lets the reads observe cancellation and release the
+// connection. 8s matches the sibling raw-scan endpoints in package v1
+// (liquidity_pools.go, markets.go) and fires before the blanket
+// request-timeout middleware (defaultRequestTimeout, 15s).
+const explorerReadTimeout = 8 * time.Second
 
 // ExplorerReader is the seam the network-explorer endpoints (ADR-0038) read
 // through: the certified Tier-1 ClickHouse lake (the full chain to genesis —

@@ -98,23 +98,36 @@ func (s *Store) InsertBlendBackstopEvent(ctx context.Context, e BlendBackstopEve
 		attrs = marshaled
 	}
 
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the i128 amounts (amount / amount2) or the other
+	// decoded columns lands in place when its generation is >= the stored
+	// one; a live gen-0 replay can never revert it. Replaces the old DO NOTHING.
 	const q = `
         INSERT INTO blend_backstop_events (
             contract_id, ledger, tx_hash, op_index, event_index, ledger_close_time,
             event_kind, pool, user_address, amount, amount2,
-            attributes
+            attributes, derive_generation
         ) VALUES (
             $1, $2, $3, $4, $5, $6,
             $7, $8, $9, $10, $11,
-            $12
+            $12, $13
         )
-        ON CONFLICT (ledger_close_time, ledger, tx_hash, op_index, event_index) DO NOTHING
+        ON CONFLICT (ledger_close_time, ledger, tx_hash, op_index, event_index) DO UPDATE SET
+            contract_id       = EXCLUDED.contract_id,
+            event_kind        = EXCLUDED.event_kind,
+            pool              = EXCLUDED.pool,
+            user_address      = EXCLUDED.user_address,
+            amount            = EXCLUDED.amount,
+            amount2           = EXCLUDED.amount2,
+            attributes        = EXCLUDED.attributes,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE blend_backstop_events.derive_generation <= EXCLUDED.derive_generation
     `
 	_, err := s.db.ExecContext(ctx, q,
 		e.ContractID, int(e.Ledger), e.TxHash, int(e.OpIndex), int(e.EventIndex), e.ObservedAt.UTC(),
 		string(e.EventType), nullString(e.Pool), nullString(e.UserAddress),
 		nullNumeric(e.Amount), nullNumeric(e.Amount2),
-		attrs,
+		attrs, s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertBlendBackstopEvent %s@%d: %w", e.ContractID, e.Ledger, err)

@@ -266,12 +266,17 @@ func tryAggregatorTier(
 	if len(fresh) == 0 {
 		return GlobalPriceResult{}, false, nil
 	}
-	avgPrice, latest, ok := averageAggregatorPrices(fresh)
+	// M8: drop any source grossly divergent from the consensus BEFORE
+	// averaging, so a single bad print can't drag the plain-mean
+	// headline. Both the served price and the reported Sources reflect
+	// only the survivors.
+	kept := rejectAggregatorOutliers(fresh)
+	avgPrice, latest, ok := averageAggregatorPrices(kept)
 	if !ok {
 		return GlobalPriceResult{}, false, nil
 	}
-	sources := make([]string, 0, len(fresh))
-	for _, u := range fresh {
+	sources := make([]string, 0, len(kept))
+	for _, u := range kept {
 		sources = append(sources, u.Source)
 	}
 	return GlobalPriceResult{
@@ -301,6 +306,109 @@ func filterFreshAggregatorRows(rows []canonical.OracleUpdate, maxAge time.Durati
 	cp := make([]canonical.OracleUpdate, len(out))
 	copy(cp, out)
 	return cp
+}
+
+// aggregatorCommonDecimals is the shared fixed scale every aggregator
+// price is projected onto before it is compared or averaged — matches
+// the /v1/oracle/lastprice surface and exceeds every wired
+// aggregator's native precision (CoinGecko=8, CMC=8).
+const aggregatorCommonDecimals = 14
+
+// aggregatorMinForOutlierReject is the fewest sources at which a robust
+// outlier can be identified. With 1–2 sources there is no majority to
+// define a consensus (two sources 2× apart are indistinguishable —
+// either could be the true price), so the tier averages them
+// unchanged; at >= 3 a single divergent print is a clear minority and
+// is dropped.
+const aggregatorMinForOutlierReject = 3
+
+// aggregatorMADFactor is the σ-equivalent half-width of the aggregator
+// tier's acceptance band: a source is dropped when it lies more than
+// aggregatorMADFactor·(1.4826·MAD) from the median of the sources.
+//
+// K = 5 matches the codebase's 5σ anomaly convention (ADR-0019).
+// NOTE (business-value knob): this is the aggregator-divergence
+// tolerance — how far a CoinGecko/CMC/CryptoCompare print may sit from
+// its peers before it is treated as a bad print rather than a real
+// disagreement. Surfaced for the orchestrator to tune per risk
+// appetite.
+var aggregatorMADFactor = big.NewRat(5, 1)
+
+// rejectAggregatorOutliers drops aggregator observations whose price is
+// grossly divergent from the consensus of the other sources, so a
+// single bad print cannot drag the plain-mean headline price (finding
+// M8: a 2-source example moved the mean 50%; a 3-source example ~33%).
+//
+// It computes the EXACT median of the sources' prices (each projected
+// onto [aggregatorCommonDecimals]) and drops any source outside
+// median ± aggregatorMADFactor·(1.4826·MAD). When a strict majority of
+// sources agree exactly (MAD == 0) any divergent source is dropped.
+// All comparison arithmetic is exact *big.Rat (ADR-0003).
+//
+// It NEVER fails closed: with fewer than [aggregatorMinForOutlierReject]
+// usable sources (no majority to define consensus) it returns the input
+// unchanged, and because the centre is the median at least one source
+// (the consensus) always survives whenever it does filter.
+func rejectAggregatorOutliers(rows []canonical.OracleUpdate) []canonical.OracleUpdate {
+	if len(rows) < aggregatorMinForOutlierReject {
+		return rows
+	}
+	vals := make([]*big.Rat, 0, len(rows))
+	idx := make([]int, 0, len(rows))
+	for i := range rows {
+		v, ok := scaledAggregatorRat(&rows[i])
+		if !ok {
+			continue // non-positive price — no usable value to judge
+		}
+		vals = append(vals, v)
+		idx = append(idx, i)
+	}
+	if len(vals) < aggregatorMinForOutlierReject {
+		return rows // too few usable prices to judge a consensus
+	}
+
+	centre, scale := robustCentreScale(vals)
+	half := new(big.Rat).Mul(aggregatorMADFactor, scale)
+
+	kept := make([]canonical.OracleUpdate, 0, len(rows))
+	for k, v := range vals {
+		dev := new(big.Rat).Sub(v, centre)
+		dev.Abs(dev)
+		if dev.Cmp(half) > 0 {
+			continue // divergent print — drop
+		}
+		kept = append(kept, rows[idx[k]])
+	}
+	if len(kept) == 0 {
+		// Unreachable: the median centre keeps >= half the sources.
+		// Never fail closed — serve the unfiltered set rather than no
+		// price when sources merely disagree.
+		return rows
+	}
+	return kept
+}
+
+// scaledAggregatorRat projects u.Price (at u.Decimals) onto
+// [aggregatorCommonDecimals] and returns it as an exact *big.Rat for
+// cross-source comparison. ok=false for a non-positive price.
+func scaledAggregatorRat(u *canonical.OracleUpdate) (*big.Rat, bool) {
+	bi := u.Price.BigInt()
+	if bi == nil || bi.Sign() <= 0 {
+		return nil, false
+	}
+	scaled := new(big.Int).Set(bi)
+	diff := int(aggregatorCommonDecimals) - int(u.Decimals)
+	if diff > 0 {
+		scaled.Mul(scaled, pow10(diff))
+	} else if diff < 0 {
+		scaled.Quo(scaled, pow10(-diff))
+	}
+	return new(big.Rat).SetInt(scaled), true
+}
+
+// pow10 returns 10^n as a *big.Int (n >= 0).
+func pow10(n int) *big.Int {
+	return new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil)
 }
 
 // averageAggregatorPrices computes the simple arithmetic mean

@@ -95,7 +95,10 @@ func (r *ExplorerReader) ProtocolEventBreakdown(ctx context.Context, contractIDs
 		       if(topic_0_sym = '', topics_xdr[2], '') AS t1,
 		       if(topic_0_sym = '', topics_xdr[1], '') AS t0,
 		       count() AS c
-		FROM stellar.contract_events
+		-- FINAL: stellar.contract_events is ReplacingMergeTree(ingested_at); an
+		-- un-merged re-ingested event double-counts here until a merge (audit
+		-- C2-12). Contract-scoped, so FINAL stays bounded.
+		FROM stellar.contract_events FINAL
 		WHERE contract_id IN (?) AND event_type = 'contract'`
 	args := []any{contractIDs}
 	if sinceLedger > 0 {
@@ -220,7 +223,7 @@ func (r *ExplorerReader) ProtocolDailyActivity(ctx context.Context, contractIDs 
 		return nil, nil
 	}
 	const q = `SELECT toString(toDate(close_time)) AS d, count() AS c
-		FROM stellar.contract_events
+		FROM stellar.contract_events FINAL
 		WHERE contract_id IN (?) AND event_type = 'contract' AND ledger_seq >= ?
 		GROUP BY d ORDER BY d ASC`
 	rows, err := r.conn.Query(ctx, q, contractIDs, sinceLedger)
@@ -248,7 +251,7 @@ func (r *ExplorerReader) ProtocolContractActivity(ctx context.Context, contractI
 		return nil, nil
 	}
 	const q = `SELECT contract_id, count() AS c, max(close_time) AS last_seen
-		FROM stellar.contract_events
+		FROM stellar.contract_events FINAL
 		WHERE contract_id IN (?) AND event_type = 'contract' AND ledger_seq >= ?
 		GROUP BY contract_id ORDER BY c DESC LIMIT 1000`
 	rows, err := r.conn.Query(ctx, q, contractIDs, sinceLedger)

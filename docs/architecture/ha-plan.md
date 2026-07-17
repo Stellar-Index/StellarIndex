@@ -4,6 +4,13 @@ last_verified: 2026-06-12
 status: ratified — binding decisions in [ADR-0008](../adr/0008-ha-topology.md); long-form design here
 ---
 
+> **DEPLOYMENT STATE (audit 2026-07-16):** the HAProxy/Patroni/Redis-Sentinel HA
+> below is a **ratified DESIGN, not deployed.** The roles exist under
+> `configs/ansible/roles/{haproxy,patroni,redis-sentinel}/` but **NO playbook
+> invokes them** — R1 runs a single unclustered Postgres and a single
+> internal-bind no-AUTH Redis today. Any operator/runbook that assumes Patroni
+> or multi-node Redis on R1 is describing the target, not reality.
+
 # High-Availability Infrastructure Plan
 
 **Owner:** @ash (arch) + @alex (ops).

@@ -651,11 +651,12 @@ func (s *Server) readPriceWithAliases(ctx context.Context, reader PriceReader, a
 // exact here, same as the query-time paths normalized on 2026-07-09.
 //
 // Callers MUST NOT invoke this on a snapshot sourced from priceFallback —
-// its Redis-VWAP branch is already normalized upstream by the aggregator
-// orchestrator (computeNormalizedVWAP) before publishing, and its
-// stablecoin-peg / fiat-cross-rate branches are either a literal "1.0" or
-// never touch a flagged Soroban leg; re-applying AdjustPrice there would
-// double-correct an already-correct value.
+// every priceFallback branch is ALREADY normalized at its own source, so
+// re-applying AdjustPrice here would double-correct: the Redis-VWAP branch is
+// normalized upstream by the aggregator orchestrator (computeNormalizedVWAP)
+// before publishing; the stablecoin-proxy branch self-normalizes its raw
+// asset/<peg> ratio inside tryStablecoinFiatProxy (M2); and the peg-literal
+// "1.0" / fiat-cross-rate branches carry no flagged Soroban leg to scale.
 //
 // No-op — snap.Price left byte-identical, no parse/reformat round-trip —
 // when baseDecimals == quoteDecimals (every pair without a confirmed
@@ -664,16 +665,35 @@ func (s *Server) readPriceWithAliases(ctx context.Context, reader PriceReader, a
 // [ratToDecimal]'s fixed 10-digit rendering; reformatting unconditionally
 // would change the wire bytes for every already-correct 7dp pair.
 func (s *Server) normalizeRawPriceSnapshot(snap *PriceSnapshot, base, quote canonical.Asset) {
+	snap.Price = s.normalizeRawRatioString(snap.Price, base, quote)
+}
+
+// normalizeRawRatioString is the string-level primitive under
+// [Server.normalizeRawPriceSnapshot]: it applies the dex-nonstandard-decimals
+// forward normalization (aggregate.AdjustPrice) to a decimal price STRING
+// sourced from a RAW, unnormalized quote/base ratio — a PriceAt / LatestPrice /
+// prices_1m read. Shared by the non-snapshot raw-price serve paths (/v1/price/at,
+// /v1/price/changes) that carry the ratio as a bare string, not a PriceSnapshot.
+//
+// base/quote MUST be the ACTUAL legs the ratio is priced in — for a
+// stablecoin-proxy read that is asset/<peg>, NOT the requested fiat:USD.
+//
+// Returns value BYTE-IDENTICAL when neither leg is a confirmed non-7-decimals
+// asset (baseDec == quoteDec, the common case) or when value doesn't parse. The
+// byte-identical no-op matters: reformatting unconditionally would change the
+// wire bytes of every already-correct 7dp price (the CAGG's NUMERIC::text
+// rendering doesn't match ratToDecimal's fixed digit count).
+func (s *Server) normalizeRawRatioString(value string, base, quote canonical.Asset) string {
 	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, base)
 	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, quote)
 	if baseDec == quoteDec {
-		return
+		return value
 	}
-	raw := ratFromDecimal(snap.Price)
+	raw := ratFromDecimal(value)
 	if raw == nil {
-		return
+		return value
 	}
-	snap.Price = ratToDecimal(aggregate.AdjustPrice(raw, baseDec, quoteDec), ohlcPriceDigits)
+	return ratToDecimal(aggregate.AdjustPrice(raw, baseDec, quoteDec), ohlcPriceDigits)
 }
 
 // priceFallback runs the post-Timescale-miss fallback chain for
@@ -830,6 +850,17 @@ func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canoni
 			// the chart fallback — silent skip, try the next peg.
 			continue
 		}
+		// dex-nonstandard-decimals forward normalization (M2). LatestPrice
+		// returns the RAW asset/<peg> ratio, and `asset` here can be a
+		// confirmed non-7-decimals Soroban leg (the <peg> is always a 7dp
+		// classic). This is the SINGLE place the stablecoin-proxy tier is
+		// corrected, so every caller — priceFallback on /v1/price,
+		// /v1/price/tip, /v1/oracle/{,x_}last_price (via priceFallback), and
+		// /v1/assets/{id} lookupUSDPrice — serves the scaled value without
+		// re-normalizing (none of them post-normalize a proxy result). Resolve
+		// against the ACTUAL traded legs (asset, peg), NOT the requested
+		// fiat:USD. Byte-identical no-op for a 7dp asset.
+		s.normalizeRawPriceSnapshot(&snap, asset, peg)
 		// Rewrite the snapshot's Quote field so the wire response
 		// reflects what the user asked for, not the proxy peg.
 		snap.Quote = quote.String()
@@ -908,8 +939,18 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 		}
 		rateQuote = 1
 	}
-	cross := rateQuote / rateAsset
-	priceStr := strconv.FormatFloat(cross, 'f', -1, 64)
+	// Cross-rate = rate_usd[Y] / rate_usd[X], computed as exact big.Rat
+	// rather than float64 division (INV-2 / ADR-0003 — no float64
+	// arithmetic on a served price). The two rates are float64 from the
+	// in-memory forex feed; each is converted via its shortest
+	// round-trip decimal so the division itself adds no float rounding
+	// beyond the source rates' own precision.
+	rateQuoteRat, okQ := new(big.Rat).SetString(strconv.FormatFloat(rateQuote, 'f', -1, 64))
+	rateAssetRat, okA := new(big.Rat).SetString(strconv.FormatFloat(rateAsset, 'f', -1, 64))
+	if !okQ || !okA || rateAssetRat.Sign() == 0 {
+		return PriceSnapshot{}, nil, false
+	}
+	priceStr := formatCrossRate(new(big.Rat).Quo(rateQuoteRat, rateAssetRat))
 	return PriceSnapshot{
 		AssetID:    asset.String(),
 		Quote:      quote.String(),
@@ -917,6 +958,21 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 		PriceType:  "vwap",
 		ObservedAt: snap.PublishedAt,
 	}, []string{"massive"}, true
+}
+
+// formatCrossRate serialises a fiat cross-rate big.Rat to a decimal
+// string with up to 15 fractional digits, trailing zeros trimmed. 15
+// places comfortably covers the precision an ECB-class FX rate carries
+// while keeping the exact-rational computation off the wire as a
+// bounded decimal (a non-terminating ratio like 1/3 would otherwise
+// have no finite form).
+func formatCrossRate(r *big.Rat) string {
+	s := r.FloatString(15)
+	if strings.Contains(s, ".") {
+		s = strings.TrimRight(s, "0")
+		s = strings.TrimRight(s, ".")
+	}
+	return s
 }
 
 // attachConfidence consults the wired ConfidenceLooker (when set)

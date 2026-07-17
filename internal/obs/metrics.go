@@ -63,6 +63,8 @@ func registerAppMetrics() {
 		CEXStreamDisconnectTotal,
 		DiscoveryDroppedHitsTotal,
 		DiscoverySkippedHitsTotal,
+		DiscoveryRecordFailuresTotal,
+		MetricsRegistryPresent,
 		SourceInsertErrorsTotal,
 		RateLimitFailOpenTotal,
 		Sep1CacheOpsTotal,
@@ -823,6 +825,51 @@ var DiscoverySkippedHitsTotal = prometheus.NewCounter(
 		Name: "stellarindex_discovery_skipped_hits_total",
 		Help: "Discovery hits skipped because (contract_id, event_type) was already enqueued in this process.",
 	},
+)
+
+// DiscoveryRecordFailuresTotal — count of discovery hits whose
+// Recorder.Record write FAILED (Postgres error / timeout), distinct
+// from [DiscoveryDroppedHitsTotal] (buffer-full pre-write drop) and
+// [DiscoverySkippedHitsTotal] (in-process dedup). Before this counter,
+// a Record failure in the async sink was only logged (a Warn line in
+// internal/canonical/discovery/sink.go) — so a persistent recorder
+// outage silently stopped discovered_assets from growing with no
+// metric or alert. The discovered contract will re-appear on a later
+// event (best-effort policy), so this counts write ATTEMPTS that failed,
+// not permanent loss — but a sustained non-zero rate means discovery
+// coverage is degrading and must be visible. Bridged from the sink's
+// FailedCount() by the indexer's discovery-metrics goroutine, mirroring
+// how DiscoveryDroppedHitsTotal is fed.
+var DiscoveryRecordFailuresTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_discovery_record_failures_total",
+		Help: "Discovery hits whose Recorder.Record write failed (recorder outage/timeout); logged-only before, now countable + alertable.",
+	},
+)
+
+// MetricsRegistryPresent — boot-time gauge (0/1) recording whether a
+// component that CAN run without a Prometheus Registry actually got one
+// wired (audit-2026-07-16 C4-4). The concrete case: ledgerstream's
+// buffer + TieredDataStore metrics (incl. stellarindex_ledgerstream_
+// tier_read_total, which deploy/monitoring/rules/ledgerstream-tier.yml
+// alerts on) only register when Config.Registry != nil. The production
+// builder (pipeline.LedgerstreamConfig) leaves it nil ON PURPOSE — the
+// archive→live→catch-up path calls Stream repeatedly and the SDK's
+// WithMetrics / ApplyLedgerMetadata would panic on the second identical
+// registration — so those metrics are dead in production and the
+// dependent alert can NEVER fire. This gauge makes that silent state
+// observable: the indexer sets {component="ledgerstream"} to 1 when the
+// config carries a Registry, 0 when it doesn't, so an operator (and the
+// metrics-registry.yml alert) can see the dead-alert condition instead
+// of it lurking unnoticed. Only set on binaries that actually build the
+// affected config; absent series = "component not used here", not an
+// alert.
+var MetricsRegistryPresent = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_metrics_registry_present",
+		Help: "1 if the named component was wired with a Prometheus Registry (its metrics + dependent alerts are live), 0 if it is running Registry-less (those metrics/alerts are DEAD). Set per component at boot.",
+	},
+	[]string{"component"},
 )
 
 // Sep1CacheOpsTotal — per-outcome counter for SEP-1 cache

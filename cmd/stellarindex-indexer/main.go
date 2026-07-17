@@ -502,8 +502,8 @@ func run(cfgPath string, dryRun bool) error {
 		// Sink wraps the same pipeline.HandleEvent the events
 		// goroutine uses; decoded rows take the same per-source
 		// write path. See internal/pipeline/sink.go.
-		sinkFn := func(ctx context.Context, ev consumer.Event) {
-			pipeline.HandleEvent(ctx, logger, store, ev)
+		sinkFn := func(ctx context.Context, ev consumer.Event) error {
+			return pipeline.HandleEvent(ctx, logger, store, ev)
 		}
 		proj := projector.New(store, registry, sinkFn, logger.With("component", "projector"))
 		// Feed-switch (ADR-0034 #10): read forward events from the CH lake
@@ -557,6 +557,32 @@ func run(cfgPath string, dryRun bool) error {
 	// degrades to a plain live-only Stream (the historical default).
 	archiveCfg := pipeline.LedgerstreamConfig(cfg, cfg.Storage.S3BucketArchive)
 	liveCfg := pipeline.LedgerstreamConfig(cfg, cfg.Storage.S3BucketLive)
+
+	// Detectability (audit-2026-07-16 C4-4): ledgerstream's buffer +
+	// TieredDataStore metrics — including
+	// stellarindex_ledgerstream_tier_read_total, which
+	// deploy/monitoring/rules/ledgerstream-tier.yml alerts on — only
+	// register when Config.Registry != nil. LedgerstreamConfig leaves it
+	// nil ON PURPOSE (the archive→live→catch-up path calls Stream
+	// repeatedly and the SDK's WithMetrics/ApplyLedgerMetadata panics on a
+	// second identical registration), so in production those metrics are
+	// DEAD and the dependent alert can never fire. Export a 0/1 gauge so
+	// that state is observable + alertable (metrics-registry.yml) instead
+	// of silently dead, and log it once at boot. If a future change wires a
+	// Registry safely (idempotent registration), this flips to 1 with no
+	// other edit.
+	if liveCfg.Registry != nil {
+		obs.MetricsRegistryPresent.WithLabelValues("ledgerstream").Set(1)
+	} else {
+		obs.MetricsRegistryPresent.WithLabelValues("ledgerstream").Set(0)
+		logger.Warn("ledgerstream running WITHOUT a Prometheus Registry — "+
+			"its buffer + tier-read metrics are not registered, so "+
+			"stellarindex_ledgerstream_tier_read_total and its both_missing "+
+			"alert are DEAD (see audit C4-4)",
+			"component", "ledgerstream",
+			"metric", "stellarindex_metrics_registry_present",
+		)
+	}
 
 	// ─── HashDB (ADR-0016 drift detector) ───────────────────────
 	// Off by default — opt-in first deploy, 2026-07-08 sign-off. Two
@@ -1092,10 +1118,11 @@ func watchDiscoveryDrops(sink *discovery.AsyncSink, logger *slog.Logger) (contex
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
 
-		var lastDropped, lastSkipped uint64
+		var lastDropped, lastSkipped, lastFailed uint64
 		flush := func() {
 			lastDropped = emitDiscoveryDropMetricDelta(lastDropped, sink.DroppedCount(), logger)
 			lastSkipped = emitDiscoverySkipMetricDelta(lastSkipped, sink.SkippedCount())
+			lastFailed = emitDiscoveryRecordFailMetricDelta(lastFailed, sink.FailedCount(), logger)
 		}
 
 		for {
@@ -1119,6 +1146,27 @@ func emitDiscoveryDropMetricDelta(prev, current uint64, logger *slog.Logger) uin
 	obs.DiscoveryDroppedHitsTotal.Add(float64(delta))
 	if logger != nil {
 		logger.Warn("discovery: hits dropped",
+			"delta", delta,
+			"total", current,
+		)
+	}
+	return current
+}
+
+// emitDiscoveryRecordFailMetricDelta bridges the discovery sink's
+// FailedCount() into obs.DiscoveryRecordFailuresTotal (audit-2026-07-16
+// C4-3), mirroring emitDiscoveryDropMetricDelta. A record-write failure
+// used to be log-only inside the async sink, so a recorder outage
+// silently stopped discovered_assets from growing; the counter (and its
+// ingestion.yml alert) now makes it visible.
+func emitDiscoveryRecordFailMetricDelta(prev, current uint64, logger *slog.Logger) uint64 {
+	if current <= prev {
+		return current
+	}
+	delta := current - prev
+	obs.DiscoveryRecordFailuresTotal.Add(float64(delta))
+	if logger != nil {
+		logger.Warn("discovery: record writes failing",
 			"delta", delta,
 			"total", current,
 		)

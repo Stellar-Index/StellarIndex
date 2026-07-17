@@ -80,10 +80,22 @@ func Overlay(ctx context.Context, snap Supply, asset canonical.Asset, resolver M
 	if !parsed {
 		return snap, false, nil
 	}
-	if val.Sign() < 0 {
-		// Negative max declared in stellar.toml is nonsensical;
-		// don't apply — better to publish nil than a number that
-		// asserts "this asset can never have any supply".
+	if val.Sign() <= 0 {
+		// A zero or negative max declared in stellar.toml is nonsensical
+		// (it asserts "this asset can never have any supply") and, for
+		// max_supply=0, would publish max < circulating for any live
+		// asset. Don't apply — better to publish nil than an
+		// issuer-poisoned number. (M14: was `< 0`, which let 0 through.)
+		return snap, false, nil
+	}
+	// A max_supply BELOW the known circulating supply is self-
+	// contradictory — the served max would be less than the realised
+	// circulating (and any FDV derived from it below the market cap). A
+	// sloppy or hostile issuer must not be able to poison the served
+	// number this way, so treat it as unset, exactly like a missing
+	// declaration. CirculatingSupply may be nil (not computed for this
+	// snapshot); when it is, we have no lower bound to enforce. (M14)
+	if snap.CirculatingSupply != nil && val.Cmp(snap.CirculatingSupply) < 0 {
 		return snap, false, nil
 	}
 

@@ -51,8 +51,11 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	assets, prices := h.usdPriceMap(r.Context())
-	ranked, err := h.Reader.AccountsByWealth(r.Context(), assets, prices, limit)
+	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
+	defer cancel()
+
+	assets, prices := h.usdPriceMap(ctx)
+	ranked, err := h.Reader.AccountsByWealth(ctx, assets, prices, limit)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -70,11 +73,11 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	for i, a := range ranked {
 		ids[i] = a.AccountID
 	}
-	locked, lockErr := h.Reader.AccountsUnspendable(r.Context(), ids)
+	locked, lockErr := h.Reader.AccountsUnspendable(ctx, ids)
 	if lockErr != nil {
 		h.Logger.Warn("accounts unspendable", "err", lockErr)
 	}
-	wmLedger, stale, _ := h.LakeWatermark(r.Context())
+	wmLedger, stale, _ := h.LakeWatermark(ctx)
 	out := AccountsListView{PricedAssets: len(assets), Accounts: make([]AccountWealthRow, len(ranked)), AsOfLedger: wmLedger}
 	for i, a := range ranked {
 		out.Accounts[i] = AccountWealthRow{
@@ -209,7 +212,10 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	st, err := h.Reader.AccountState(r.Context(), g)
+	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
+	defer cancel()
+
+	st, err := h.Reader.AccountState(ctx, g)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -220,7 +226,7 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wmLedger, stale, _ := h.LakeWatermark(r.Context())
+	wmLedger, stale, _ := h.LakeWatermark(ctx)
 	out := AccountStateView{AccountID: g, Exists: st.Exists, AsOfLedger: wmLedger}
 	if st.Exists {
 		out.Balance = strconv.FormatInt(st.Balance, 10)
@@ -280,12 +286,26 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 			"Invalid asset", http.StatusBadRequest, "asset_id path segment is required")
 		return
 	}
+	// Validate up front (P2/C3-9, audit-2026-07-16): a malformed asset_id
+	// otherwise reaches ClickHouse as-is and drives TWO
+	// ledger_entries_current FINAL scans before any 400. ParseAsset is the
+	// same validator the sibling /v1/pools?asset= (markets.go) enforces —
+	// reject genuinely-malformed input here, cheaply.
+	if _, err := canonical.ParseAsset(asset); err != nil {
+		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-asset-id",
+			"Invalid asset", http.StatusBadRequest,
+			"asset_id must be a canonical asset_id (e.g. 'native', 'USDC-G…'); got "+asset+" ("+err.Error()+")")
+		return
+	}
 	limit, ok := h.ParseLimit(w, r, 100, 500)
 	if !ok {
 		return
 	}
 
-	holders, total, err := h.Reader.AssetHolders(r.Context(), asset, limit)
+	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
+	defer cancel()
+
+	holders, total, err := h.Reader.AssetHolders(ctx, asset, limit)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -296,7 +316,7 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wmLedger, stale, _ := h.LakeWatermark(r.Context())
+	wmLedger, stale, _ := h.LakeWatermark(ctx)
 	out := AssetHoldersView{Asset: asset, HolderCount: total, Holders: make([]AssetHolderV, len(holders)), AsOfLedger: wmLedger}
 	for i, hh := range holders {
 		out.Holders[i] = AssetHolderV{AccountID: hh.AccountID, Balance: strconv.FormatInt(hh.Balance, 10)}

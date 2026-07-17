@@ -78,16 +78,26 @@ func (s *Store) InsertSEP41SupplyEvent(ctx context.Context, e SEP41SupplyEvent) 
 	if e.Amount.Sign() < 0 {
 		return fmt.Errorf("timescale: InsertSEP41SupplyEvent: negative Amount %s (event amounts are non-negative; kind discriminates direction)", e.Amount)
 	}
+	// INV-3 generation-guarded corrective upsert (migration 0110): a
+	// corrected re-derive of the supply-event `amount` (or counterparty)
+	// lands in place when its generation is >= the stored one; a live gen-0
+	// replay can never revert it. Replaces the old DO NOTHING no-op.
 	const q = `
         INSERT INTO sep41_supply_events (
             contract_id, ledger, tx_hash, op_index, observed_at,
-            event_kind, event_index, amount, counterparty
+            event_kind, event_index, amount, counterparty,
+            derive_generation
         ) VALUES (
             $1, $2, $3, $4, $5,
-            $6, $7, $8, $9
+            $6, $7, $8, $9,
+            $10
         )
         ON CONFLICT (contract_id, ledger, tx_hash, op_index, observed_at,
-                     event_kind, event_index) DO NOTHING
+                     event_kind, event_index) DO UPDATE SET
+            amount            = EXCLUDED.amount,
+            counterparty      = EXCLUDED.counterparty,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE sep41_supply_events.derive_generation <= EXCLUDED.derive_generation
     `
 	var counterparty sql.NullString
 	if e.Counterparty != "" {
@@ -96,6 +106,7 @@ func (s *Store) InsertSEP41SupplyEvent(ctx context.Context, e SEP41SupplyEvent) 
 	_, err := s.db.ExecContext(ctx, q,
 		e.ContractID, int(e.Ledger), e.TxHash, int(e.OpIndex), e.ObservedAt.UTC(),
 		string(e.Kind), int(e.EventIndex), e.Amount.String(), counterparty,
+		s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertSEP41SupplyEvent %s@%d: %w", e.ContractID, e.Ledger, err)
@@ -474,25 +485,36 @@ func (s *Store) InsertSEP41SupplyEventBatch(ctx context.Context, rows []SEP41Sup
 		}
 	}
 
-	const ncols = 9
+	// INV-3 (migration 0110): the batch upsert below is now ON CONFLICT DO
+	// UPDATE, which Postgres rejects when one statement presents the same
+	// conflict key twice ("cannot affect row a second time") — which the old
+	// DO NOTHING absorbed. Collapse intra-batch conflict-key duplicates
+	// (last-wins) first.
+	insertRows := dedupeSEP41SupplyRows(rows)
+
+	const ncols = 10
 	var sb strings.Builder
+	// Generation-guarded corrective upsert: a re-derive with a higher-or-
+	// equal generation UPDATEs the supply-event `amount` (and counterparty)
+	// in place; a live gen-0 replay can never revert a correction.
 	sb.WriteString(`
         INSERT INTO sep41_supply_events (
             contract_id, ledger, tx_hash, op_index, event_index,
-            observed_at, event_kind, amount, counterparty
+            observed_at, event_kind, amount, counterparty,
+            derive_generation
         ) VALUES `)
-	args := make([]any, 0, ncols*len(rows))
-	for i := range rows {
+	args := make([]any, 0, ncols*len(insertRows))
+	for i := range insertRows {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
 		base := i * ncols
 		fmt.Fprintf(&sb,
-			"($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+			"($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
 			base+1, base+2, base+3, base+4, base+5,
-			base+6, base+7, base+8, base+9,
+			base+6, base+7, base+8, base+9, base+10,
 		)
-		e := &rows[i]
+		e := &insertRows[i]
 		args = append(args,
 			e.ContractID,
 			int64(e.Ledger),
@@ -503,14 +525,78 @@ func (s *Store) InsertSEP41SupplyEventBatch(ctx context.Context, rows []SEP41Sup
 			string(e.Kind),
 			e.Amount.String(),
 			sql.NullString{String: e.Counterparty, Valid: e.Counterparty != ""},
+			s.deriveGeneration,
 		)
 	}
-	sb.WriteString(` ON CONFLICT (contract_id, ledger, tx_hash, op_index, observed_at, event_kind, event_index) DO NOTHING`)
+	sb.WriteString(` ON CONFLICT (contract_id, ledger, tx_hash, op_index, observed_at, event_kind, event_index) DO UPDATE SET
+            amount            = EXCLUDED.amount,
+            counterparty      = EXCLUDED.counterparty,
+            derive_generation = EXCLUDED.derive_generation
+          WHERE sep41_supply_events.derive_generation <= EXCLUDED.derive_generation`)
 
 	if _, err := s.db.ExecContext(ctx, sb.String(), args...); err != nil {
-		return fmt.Errorf("timescale: InsertSEP41SupplyEventBatch (%d rows): %w", len(rows), err)
+		return fmt.Errorf("timescale: InsertSEP41SupplyEventBatch (%d rows): %w", len(insertRows), err)
 	}
 	return nil
+}
+
+// sep41SupplyConflictKey is the sep41_supply_events ON CONFLICT identity
+// (contract_id, ledger, tx_hash, op_index, observed_at, event_kind,
+// event_index). observed_at is normalised to a UTC UnixNano so equal instants
+// collapse to one key regardless of monotonic-clock / location.
+type sep41SupplyConflictKey struct {
+	contractID      string
+	ledger          uint32
+	txHash          string
+	opIndex         uint32
+	observedAtNanos int64
+	eventKind       string
+	eventIndex      uint32
+}
+
+func sep41SupplyKeyOf(e *SEP41SupplyEvent) sep41SupplyConflictKey {
+	return sep41SupplyConflictKey{
+		contractID:      e.ContractID,
+		ledger:          e.Ledger,
+		txHash:          e.TxHash,
+		opIndex:         e.OpIndex,
+		observedAtNanos: e.ObservedAt.UTC().UnixNano(),
+		eventKind:       string(e.Kind),
+		eventIndex:      e.EventIndex,
+	}
+}
+
+// dedupeSEP41SupplyRows collapses rows that collide on the sep41_supply_events
+// conflict key, keeping the LAST copy of each key (latest redelivery) in
+// first-seen order — the INV-3 batch upsert's intra-statement-duplicate guard
+// (see dedupeSEP41TransferRows for the rationale). Copy-on-write: no allocation
+// when the batch is already unique.
+func dedupeSEP41SupplyRows(rows []SEP41SupplyEvent) []SEP41SupplyEvent {
+	firstDup := -1
+	seen := make(map[sep41SupplyConflictKey]int, len(rows))
+	for i := range rows {
+		k := sep41SupplyKeyOf(&rows[i])
+		if _, ok := seen[k]; ok {
+			firstDup = i
+			break
+		}
+		seen[k] = i
+	}
+	if firstDup < 0 {
+		return rows // already unique
+	}
+	out := make([]SEP41SupplyEvent, 0, len(rows))
+	pos := make(map[sep41SupplyConflictKey]int, len(rows))
+	for i := range rows {
+		k := sep41SupplyKeyOf(&rows[i])
+		if idx, ok := pos[k]; ok {
+			out[idx] = rows[i] // last wins
+			continue
+		}
+		pos[k] = len(out)
+		out = append(out, rows[i])
+	}
+	return out
 }
 
 // SEP41RollupAdvance reports what one AdvanceSEP41SupplyRollup pass

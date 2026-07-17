@@ -3345,18 +3345,18 @@ paths:
                   entity_type: coin
                   entity_id: crypto:XLM
                   refreshed_at: '2026-07-03T22:38:00Z'
-                  current_value: 0.2041764538697883
-                  h1_value: 0.20380247911865504
+                  current_value: '0.2041764538697883'
+                  h1_value: '0.20380247911865504'
                   h1_delta_pct: 0.1834986270778068
-                  h24_value: 0.19673099518995452
+                  h24_value: '0.19673099518995452'
                   h24_delta_pct: 3.784588530467602
-                  d7_value: 0.17768054591385554
+                  d7_value: '0.17768054591385554'
                   d7_delta_pct: 14.912104090888326
-                  d30_value: 0.21078647159614772
+                  d30_value: '0.21078647159614772'
                   d30_delta_pct: -3.13588328335594
-                  ath_value: 0.29758550057923283
+                  ath_value: '0.29758550057923283'
                   ath_at: '2026-05-30T03:52:00Z'
-                  atl_value: 0.13999047864054645
+                  atl_value: '0.13999047864054645'
                   atl_at: '2026-05-23T08:41:00Z'
                   streak_direction: up
                   streak_days: 5
@@ -3379,18 +3379,18 @@ paths:
                           entity_type: { type: string }
                           entity_id: { type: string }
                           refreshed_at: { type: string, format: date-time }
-                          current_value: { type: number }
-                          h1_value: { type: number, nullable: true }
+                          current_value: { type: string, description: "money (price/market-cap) — JSON string per INV-2" }
+                          h1_value: { type: string, nullable: true, description: "money — JSON string per INV-2" }
                           h1_delta_pct: { type: number, nullable: true }
-                          h24_value: { type: number, nullable: true }
+                          h24_value: { type: string, nullable: true, description: "money — JSON string per INV-2" }
                           h24_delta_pct: { type: number, nullable: true }
-                          d7_value: { type: number, nullable: true }
+                          d7_value: { type: string, nullable: true, description: "money — JSON string per INV-2" }
                           d7_delta_pct: { type: number, nullable: true }
-                          d30_value: { type: number, nullable: true }
+                          d30_value: { type: string, nullable: true, description: "money — JSON string per INV-2" }
                           d30_delta_pct: { type: number, nullable: true }
-                          ath_value: { type: number, nullable: true }
+                          ath_value: { type: string, nullable: true, description: "money — JSON string per INV-2" }
                           ath_at: { type: string, format: date-time, nullable: true }
-                          atl_value: { type: number, nullable: true }
+                          atl_value: { type: string, nullable: true, description: "money — JSON string per INV-2" }
                           atl_at: { type: string, format: date-time, nullable: true }
                           streak_direction:
                             type: string

@@ -16,10 +16,16 @@ import (
 // channel (internal/pipeline/sink.go) and writes via
 // Store.InsertRozoEvent.
 type Event struct {
-	ContractID  string
-	Ledger      uint32
-	TxHash      string
-	OpIndex     int
+	ContractID string
+	Ledger     uint32
+	TxHash     string
+	OpIndex    int
+	// EventIndex is the position of this event within its operation's
+	// contract-event list (internal/events.Event.EventIndex). It is the
+	// rozo_events PK discriminator (migration 0112) that keeps two same-type
+	// events emitted by ONE operation from collapsing to a single row
+	// (C2-13a). Stamped by the Decoder from the source events.Event.
+	EventIndex  uint32
 	ObservedAt  time.Time
 	EventType   string // one of the Event* constants
 	Amount      string // decimal i128

@@ -137,14 +137,14 @@ func TestHandleChangeSummary_HappyPath_Coin(t *testing.T) {
 	if d.EntityType != "coin" || d.EntityID != "XLM" {
 		t.Errorf("entity = (%q, %q)", d.EntityType, d.EntityID)
 	}
-	if d.CurrentValue != 0.1675 {
-		t.Errorf("CurrentValue = %v", d.CurrentValue)
+	if d.CurrentValue != "0.1675" {
+		t.Errorf("CurrentValue = %q, want \"0.1675\" (M7: money is a string)", d.CurrentValue)
 	}
 	if d.H24DeltaPct == nil || *d.H24DeltaPct != 5.2 {
-		t.Errorf("H24DeltaPct = %v, want 5.2", d.H24DeltaPct)
+		t.Errorf("H24DeltaPct = %v, want 5.2 (percentage stays a number)", d.H24DeltaPct)
 	}
-	if d.ATHValue == nil || *d.ATHValue != 1.03 {
-		t.Errorf("ATHValue = %v", d.ATHValue)
+	if d.ATHValue == nil || *d.ATHValue != "1.03" {
+		t.Errorf("ATHValue = %v, want \"1.03\"", d.ATHValue)
 	}
 	if d.ATHAt != "2026-05-04T12:00:00Z" {
 		t.Errorf("ATHAt = %q (RFC3339 format pin)", d.ATHAt)
@@ -213,5 +213,57 @@ func TestHandleChangeSummary_ReaderError500(t *testing.T) {
 	body, _ := readAll(resp)
 	if !strings.Contains(body, "change-summary-error") {
 		t.Errorf("expected change-summary-error tag: %s", body)
+	}
+}
+
+// TestChangeSummary_MoneyFieldsAreJSONStrings is the M7 (INV-2) guard: the
+// /v1/changes *_value fields are MONEY and must serialize as JSON STRINGS
+// (like every other money field the API serves), while the *_delta_pct
+// PERCENTAGE fields stay JSON numbers. Proven red: on the pre-fix DTO (float64
+// value fields) the raw body carried unquoted numbers, so the quoted-string
+// assertions below fail. The stub feeds float64 row values (the display-grade
+// storage shape) through the handler — the fix's moneyStr formatting is what
+// produces the strings.
+func TestChangeSummary_MoneyFieldsAreJSONStrings(t *testing.T) {
+	h1, h24 := 0.20380247911865504, 0.19673099518995452
+	hd24 := 3.784588530467602
+	ath := 0.29758550057923283
+	reader := &stubChangeSummaryReader{
+		row: timescale.ChangeSummaryRow{
+			EntityType:   "coin",
+			EntityID:     "XLM",
+			RefreshedAt:  time.Date(2026, 7, 3, 22, 38, 0, 0, time.UTC),
+			CurrentValue: 0.2041764538697883,
+			H1Value:      &h1,
+			H24Value:     &h24,
+			H24DeltaPct:  &hd24,
+			ATHValue:     &ath,
+		},
+	}
+	srv := v1.New(v1.Options{ChangeSummary: reader})
+	ts := startHTTPTest(t, srv.Handler())
+	resp := mustGet(t, ts.URL+"/v1/changes/coin/XLM")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+
+	// Money → quoted strings (shortest round-tripping decimal).
+	for _, want := range []string{
+		`"current_value":"0.2041764538697883"`,
+		`"h1_value":"0.20380247911865504"`,
+		`"h24_value":"0.19673099518995452"`,
+		`"ath_value":"0.29758550057923283"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing quoted money field %s\n(INV-2: money must be a JSON string)\nbody=%s", want, body)
+		}
+	}
+	// Percentages stay unquoted numbers (NOT strings).
+	if !strings.Contains(body, `"h24_delta_pct":3.784588530467602`) {
+		t.Errorf("h24_delta_pct should be an unquoted number (percentage, not money)\nbody=%s", body)
+	}
+	if strings.Contains(body, `"h24_delta_pct":"`) {
+		t.Errorf("h24_delta_pct was serialized as a string — percentages are not money\nbody=%s", body)
 	}
 }

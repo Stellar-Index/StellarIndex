@@ -46,8 +46,8 @@ groups:
           severity: page
           team: stellarindex
           component: stellar
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/core-lag.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/core-lag.md
           summary: "stellar-core ledger age {{ $value | humanizeDuration }} (SEV-1)"
           description: |
             stellar-core hasn't applied a ledger in > 60 s. Either the node
@@ -61,8 +61,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: stellar
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/core-peers.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/core-peers.md
           summary: "stellar-core has only {{ $value }} peers"
           description: |
             stellar-core connected to < 5 peers. Quorum resilience degraded.
@@ -75,8 +75,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: stellar
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/rpc-lag.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/rpc-lag.md
           summary: "stellar-rpc lagging by {{ $value | humanizeDuration }}"
           description: |
             stellar-rpc's latestLedger is > 5 min behind wall-clock. Its
@@ -90,8 +90,8 @@ groups:
           severity: informational
           team: stellarindex
           component: stellar
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-publish.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-publish.md
           summary: "Archive-publish errors in the last hour"
           description: |
             stellar-core failed to publish a checkpoint to our history archive.
@@ -108,8 +108,8 @@ groups:
           severity: page
           team: stellarindex
           component: stellar
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-divergence.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-divergence.md
           summary: "Archive hash divergence detected (SEV-1)"
           description: |
             Our published archive's bucket hash differs from at least one

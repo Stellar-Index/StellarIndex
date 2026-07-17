@@ -343,12 +343,18 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 	// fiat:USD)` resolves a fresh `crypto:XLM/fiat:USD` VWAP that CEX
 	// trades populate rather than missing it on the literal form.
 	snapshot, sources, stale, err := s.readPriceWithAliases(r.Context(), reader, base, quote)
+	// viaFallback mirrors handlePrice / handleOracleLastPrice: the M2
+	// normalizeRawPriceSnapshot below must run ONLY on the RAW closed-1m-bucket
+	// read, never on a priceFallback result (already normalized at its own
+	// source) — see normalizeRawPriceSnapshot's doc comment.
+	viaFallback := false
 	if errors.Is(err, ErrPriceNotFound) {
 		// Same fallback chain as /v1/price (priceFallback): Redis VWAP
 		// cache → read-time stablecoin-fiat proxy → fiat-vs-fiat
 		// cross-rate. Companion to the equivalent fix on
 		// /v1/oracle/lastprice — see that handler's comment.
 		var ok bool
+		viaFallback = true
 		snapshot, sources, _, ok = s.priceFallback(r.Context(), base, quote)
 		// F-1339 (G2-02): fallback responses surface flags.stale=true
 		// — the chain itself is the staleness signal (F-1254). The
@@ -373,6 +379,12 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
+	}
+
+	// dex-nonstandard-decimals forward normalization (M2) on the raw
+	// closed-1m-bucket read — see handleOracleLastPrice's equivalent call.
+	if !viaFallback {
+		s.normalizeRawPriceSnapshot(&snapshot, base, quote)
 	}
 
 	out := SEP40Price{

@@ -208,6 +208,12 @@ func (s *Server) currentPriceForAliases(
 			if err != nil {
 				continue
 			}
+			// dex-nonstandard-decimals forward normalization (M2) on the
+			// absolute current price. The pct deltas are scale-invariant (a
+			// constant K cancels in (ref-cur)/cur), so they are UNCHANGED; only
+			// the served current_price / reference_price absolute values are
+			// corrected. Resolve against the actual traded legs. No-op at 7dp.
+			value = s.normalizeRawRatioString(value, pair.Base, pair.Quote)
 			return pair, priceAtResult{value: value, observedAt: observedAt, resSec: resSec}, true
 		}
 	}
@@ -225,6 +231,12 @@ func (s *Server) priceChangeHorizon(
 	if err != nil {
 		return PriceChangeHorizon{Available: false}
 	}
+	// dex-nonstandard-decimals forward normalization (M2) on the absolute
+	// reference price. `currentPrice` was already normalized against this SAME
+	// pair (resolvePriceChangePair), so pctChange sees both legs scaled by the
+	// identical K and the returned percentage is byte-identical to pre-fix —
+	// only the emitted reference_price absolute value changes. No-op at 7dp.
+	value = s.normalizeRawRatioString(value, pair.Base, pair.Quote)
 	pct, err := pctChange(currentPrice, value)
 	if err != nil {
 		return PriceChangeHorizon{Available: false}

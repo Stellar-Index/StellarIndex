@@ -45,8 +45,8 @@ groups:
           severity: page
           team: stellarindex
           component: supply
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh-stalled.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh-stalled.md
           summary: "supply refresher hasn't recorded a successful tick in {{ $value | humanizeDuration }} (cadence 5m, threshold 30m)"
           description: |
             The aggregator-resident supply refresher emits
@@ -81,8 +81,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: supply
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-snapshot-never-initialized.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-snapshot-never-initialized.md
           summary: "supply refresher (goroutine path) has never recorded a successful tick"
           description: |
             stellarindex_aggregator_supply_refresh_total{outcome="ok"}
@@ -119,8 +119,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: supply
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh-error-dominant.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-refresh-error-dominant.md
           summary: "supply refresher: > 50% of ticks non-ok for asset {{ $labels.asset_key }} for ≥ 30m"
           description: |
             More than half of the supply refresher's ticks for
