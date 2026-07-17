@@ -962,6 +962,16 @@ type APIConfig struct {
 	AnonRateLimitPerMin int      `toml:"anon_rate_limit_per_min" doc:"Per-IP rate limit for anonymous requests." default:"60"`
 	KeyRateLimitPerMin  int      `toml:"key_rate_limit_per_min" doc:"Per-API-key rate limit, default tier." default:"1000"`
 
+	// FailedAuthRateLimitPerMin caps invalid-credential attempts per IP
+	// (C3-5, audit-2026-07-16). Auth runs before the main rate limiter,
+	// so a wrong API key / SEP-10 token is rejected (401) before it
+	// reaches the limiter — leaving credential-stuffing / key-guessing
+	// otherwise unthrottled. This is a dedicated per-IP throttle applied
+	// inside the Auth middleware to credential FAILURES only; valid
+	// requests are unaffected. Only engaged when auth_mode != none (mode
+	// none never fails auth). 0 disables it.
+	FailedAuthRateLimitPerMin int `toml:"failed_auth_rate_limit_per_min" doc:"Per-IP cap on INVALID-credential (failed-auth) attempts per minute, enforced inside the Auth middleware so credential-stuffing / API-key guessing is throttled even though auth rejects before the main rate limiter (C3-5). Only active when auth_mode != none. Keyed on the resolved client IP; Redis-backed when available, in-process fixed-window fallback otherwise. 0 disables the failed-auth throttle." default:"20"`
+
 	// RequestTimeout + ServingStatementTimeout are the two layers of the
 	// unauth-DoS chokepoint fix (C3-1/C3-2/P1/R1, audit-2026-07-16). The
 	// app-layer request deadline is the primary bound; the SQL
@@ -1063,6 +1073,16 @@ type StreamingConfig struct {
 	// 5 s detects a new 1-minute closed bucket within 5 s of its
 	// end — well inside Freighter's 30 s freshness target.
 	PollInterval time.Duration `toml:"poll_interval" doc:"Per-pair poll cadence for the closed-bucket producer. Default 5s; clamped to 1s minimum." default:"5s"`
+
+	// MaxStreamsPerIP caps concurrently-held SSE connections from a
+	// single client IP across every stream endpoint (C3-8 /
+	// CS-013). Without it one non-reading client can hold open (and
+	// leak, until the write deadline fires) enough connections to
+	// starve file descriptors / goroutines and deny the streams to
+	// everyone else, since the global cap alone lets one IP consume the
+	// whole budget. Over the cap, a new SSE connection is rejected with
+	// 503. 0 disables the per-IP cap (the global cap still applies).
+	MaxStreamsPerIP int `toml:"max_streams_per_ip" doc:"Maximum concurrently-held SSE stream connections per client IP across all stream endpoints (/v1/price/stream, /v1/price/tip/stream, /v1/observations/stream, /v1/ledger/stream). Guards against a single client exhausting file descriptors / goroutines by holding many stalled streams (C3-8 / CS-013). Over the cap a new stream is rejected with 503. 0 disables the per-IP cap; a separate global cap still bounds total concurrent streams." default:"20"`
 }
 
 // SEP10Config configures the SEP-10 Web Auth validator. Both
@@ -1345,12 +1365,13 @@ func defaultHashDBConfig() HashDBConfig {
 // TestDefault_MatchesStructTags).
 func defaultAPIConfig() APIConfig {
 	return APIConfig{
-		ListenAddr:          "0.0.0.0:3000",
-		ExternalBaseURL:     "https://api.stellarindex.io/v1",
-		AuthMode:            "none",
-		AuthBackend:         "redis",
-		AnonRateLimitPerMin: 60,
-		KeyRateLimitPerMin:  1000,
+		ListenAddr:                "0.0.0.0:3000",
+		ExternalBaseURL:           "https://api.stellarindex.io/v1",
+		AuthMode:                  "none",
+		AuthBackend:               "redis",
+		AnonRateLimitPerMin:       60,
+		KeyRateLimitPerMin:        1000,
+		FailedAuthRateLimitPerMin: 20,
 		// Unauth-DoS chokepoint (audit-2026-07-16): the app-layer request
 		// deadline (15s) is the primary bound; the serving-pool
 		// statement_timeout (30s) is the SQL-side backstop, kept longer so
@@ -1387,8 +1408,9 @@ func defaultAPIConfig() APIConfig {
 			CookieSecure:        true, // dev (http://localhost) overrides to false
 		},
 		Streaming: StreamingConfig{
-			Pairs:        [][]string{},
-			PollInterval: 5 * time.Second,
+			Pairs:           [][]string{},
+			PollInterval:    5 * time.Second,
+			MaxStreamsPerIP: 20,
 		},
 	}
 }

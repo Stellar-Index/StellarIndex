@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
 // AuthMode is the operator-configured authentication policy. Maps
@@ -57,6 +59,20 @@ type AuthOptions struct {
 	// SEP10 validator. Required when Mode == AuthModeSEP10.
 	// Ignored otherwise.
 	SEP10 auth.SEP10Validator
+
+	// FailedAuthLimiter, when non-nil, throttles INVALID-credential
+	// attempts PER CLIENT IP (C3-5). Auth deliberately runs before the
+	// main rate-limit middleware so per-tier limits key off the
+	// authenticated subject — but that means a rejected credential
+	// (401/403/expired/malformed) never reaches the limiter, leaving
+	// credential-stuffing / key-guessing unthrottled. This bucket closes
+	// that gap: every credential FAILURE consumes a per-IP token, and
+	// over the budget the middleware returns 429 instead of the auth
+	// error. Successful auth and anonymous passes never touch it, so the
+	// Auth-before-RateLimit ordering for VALID requests is preserved.
+	// Nil disables the failed-auth throttle (e.g. auth_mode=none, which
+	// never produces a credential failure anyway).
+	FailedAuthLimiter *ratelimit.Bucket
 }
 
 // Auth returns a middleware that enforces the configured AuthMode.
@@ -92,6 +108,15 @@ func Auth(opts AuthOptions) Middleware {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			subject, err := authenticate(r, mode, opts)
 			if err != nil {
+				// C3-5: throttle per-IP on a CREDENTIAL FAILURE so a bad
+				// key/token can't be retried without bound. Server-misconfig
+				// 503s (ErrNotImplemented) don't count against the caller.
+				if opts.FailedAuthLimiter != nil && isCredentialRejection(err) {
+					if throttled, retryAfter := takeFailedAuth(r, opts.FailedAuthLimiter); throttled {
+						writeAuthThrottleProblem(w, r, retryAfter)
+						return
+					}
+				}
 				writeAuthError(w, err)
 				return
 			}
@@ -99,6 +124,68 @@ func Auth(opts AuthOptions) Middleware {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// isCredentialRejection reports whether err is a caller-supplied
+// bad-credential outcome (as opposed to a server-side misconfiguration).
+// Only these count against the per-IP failed-auth budget — a 503
+// "validator not wired" is the operator's fault, not an attacker's, and
+// throttling on it would let a boot-time misconfig masquerade as abuse.
+func isCredentialRejection(err error) bool {
+	switch {
+	case errors.Is(err, auth.ErrUnauthorized),
+		errors.Is(err, auth.ErrForbidden),
+		errors.Is(err, auth.ErrTokenExpired),
+		errors.Is(err, auth.ErrTokenMalformed):
+		return true
+	default:
+		return false
+	}
+}
+
+// takeFailedAuth consumes one token from the per-IP failed-auth bucket
+// and reports whether the caller is now over budget (and the
+// Retry-After seconds to advertise). Keyed on the resolved client IP
+// (forge-resistant XFF, F-1338) under a "failauth:" prefix so it shares
+// no key space with the main per-IP request limiter. Fails OPEN on a
+// limiter/backend error — a Redis blip must not convert every failed
+// login into a 429; the auth error itself still returns.
+func takeFailedAuth(r *http.Request, limiter *ratelimit.Bucket) (throttled bool, retryAfter int) {
+	ip := remoteIPFor(r)
+	if ip == "" {
+		// No resolvable IP → collapse into one shared bucket rather than
+		// skip the throttle (fail-closed for the throttle itself).
+		ip = "unknown"
+	}
+	res, err := limiter.Take(r.Context(), "failauth:"+ip)
+	if err != nil {
+		return false, 0
+	}
+	if res.Allowed {
+		return false, 0
+	}
+	ra := int(res.RetryAfter.Seconds())
+	if ra < 1 {
+		ra = 1
+	}
+	return true, ra
+}
+
+// writeAuthThrottleProblem is the 429 returned when an IP exceeds its
+// failed-auth budget (C3-5). Distinct problem type from the ordinary
+// rate-limit 429 so operators reading access logs can tell
+// credential-stuffing defence apart from ordinary request throttling.
+func writeAuthThrottleProblem(w http.ResponseWriter, r *http.Request, retryAfter int) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+	w.WriteHeader(http.StatusTooManyRequests)
+	_ = json.NewEncoder(w).Encode(authProblem{
+		Type:   "https://api.stellarindex.io/errors/too-many-failed-auth",
+		Title:  "Too many failed authentication attempts",
+		Status: http.StatusTooManyRequests,
+		Detail: "too many invalid-credential attempts from this client; retry after " + strconv.Itoa(retryAfter) + "s",
+	})
 }
 
 // authenticate runs the per-mode credential check + returns the
