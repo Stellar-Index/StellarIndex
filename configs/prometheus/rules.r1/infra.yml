@@ -78,8 +78,52 @@ groups:
           summary: "ZFS pool {{ $labels.zpool }} is {{ $labels.state }} (SEV-1)"
           description: |
             The data ZFS pool reports {{ $labels.state }} — one or more drives
-            have failed. raidz2 tolerates 2 failures, but every failure
-            reduces the redundancy margin. Replace + resilver ASAP.
+            have failed. This pool is raidz1 (single parity): it tolerates
+            only ONE drive failure — a second failure before the resilver
+            completes means data loss. Replace + resilver IMMEDIATELY.
+
+      # ── Pool capacity ─────────────────────────────────────────────
+      # No zpool-level capacity metric on this box: node_exporter's ZFS
+      # collector here exports only node_zfs_zpool_state + dataset IO
+      # counters (no size/alloc/free). All ZFS datasets share the pool's
+      # free space, so node_filesystem_avail_bytes{fstype="zfs"} (identical
+      # across every dataset) is the pool-free proxy. Added 2026-07-17 after
+      # the live R1 review found a ~90%-full pool with NO fullness alert.
+      # Thresholds are absolute (box-specific): ~16.8 TiB usable, and ZFS
+      # (copy-on-write) degrades sharply past ~90% and can stall writes
+      # near-full, so page well before 0%.
+      - alert: stellarindex_zfs_pool_low_space
+        expr: min by (instance) (node_filesystem_avail_bytes{fstype="zfs"}) < 1.3e12
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
+          summary: "ZFS data pool free space low ({{ $value | humanize1024 }}B free)"
+          description: |
+            The data pool (raidz1, ~16.8 TiB usable) has under 1.3 TB free.
+            All ZFS datasets share this pool, so every writer (ClickHouse lake,
+            MinIO archive, Postgres, pgBackRest) is affected. ZFS is
+            copy-on-write: performance degrades past ~90% and writes stall
+            near-full. Plan reclamation (stale snapshots, pgBackRest off-box,
+            TSDB compression) — see the storage section of the go-live master plan.
+      - alert: stellarindex_zfs_pool_critical_space
+        expr: min by (instance) (node_filesystem_avail_bytes{fstype="zfs"}) < 0.65e12
+        for: 5m
+        labels:
+          severity: page
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
+          summary: "ZFS data pool CRITICALLY low ({{ $value | humanize1024 }}B free) (SEV-1)"
+          description: |
+            Under 650 GB free on the data pool. On a copy-on-write filesystem
+            this risks write stalls / ingest failure across ClickHouse, MinIO,
+            and Postgres. Reclaim space NOW (drop stale snapshots, move
+            pgBackRest off-box) or ingestion will halt.
 
       # ── INERT (F-1329) — NO PRODUCER ──────────────────────────────
       # The two NVMe alerts below reference metrics that NOTHING on r1
