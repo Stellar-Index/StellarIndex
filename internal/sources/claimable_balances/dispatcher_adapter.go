@@ -80,11 +80,12 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 		return nil, err
 	}
 	return []consumer.Event{Observation{
-		ClaimableID: id,
-		AssetKey:    ak,
-		Ledger:      ctx.Ledger,
-		ObservedAt:  ctx.ClosedAt,
-		Balance:     balance,
+		ClaimableID:    id,
+		AssetKey:       ak,
+		Ledger:         ctx.Ledger,
+		ObservedAt:     ctx.ClosedAt,
+		Balance:        balance,
+		IntraLedgerSeq: ctx.IntraLedgerSeq,
 	}}, nil
 }
 
