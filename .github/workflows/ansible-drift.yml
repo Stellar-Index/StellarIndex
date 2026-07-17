@@ -9,8 +9,22 @@ name: ansible-drift
 # but never live; the reverse direction nearly had a playbook erase
 # the CS-010 supply config).
 #
-# Secrets: DEPLOY_SSH_PRIVATE_KEY (same key deploy.yml uses) +
-# ANSIBLE_VAULT_PASSWORD (the r1.secrets.yml vault password).
+# Secrets (all three must be current — set in repo settings):
+#   - DEPLOY_SSH_PRIVATE_KEY  (same key deploy.yml uses)
+#   - ANSIBLE_VAULT_PASSWORD  (the r1.secrets.yml vault password)
+#   - ANSIBLE_VAULT_FILE_B64  (base64 of the encrypted r1.secrets.yml)
+# NOTE (2026-07-17): ANSIBLE_VAULT_PASSWORD must match the vault that
+# ANSIBLE_VAULT_FILE_B64 was encrypted with. After the 2026-07-03 vault
+# rotation these drifted — a manual dispatch failed with
+# "Invalid vault password" (the SSH + checkout + ansible-install steps all
+# passed, so only the secret is stale). Re-set both from the current vault.
+#
+# SCHEDULING (2026-07-17): this cron has never fired — no scheduled run has
+# ever executed for this workflow OR security.yml (both added early-July),
+# despite multiple Mondays passing. The repo is public + active + not a fork,
+# so this is a GitHub scheduled-workflow registration/enablement gap, not a
+# workflow defect. Verify Settings → Actions is not restricting schedules;
+# a manual `workflow_dispatch` always works as a fallback.
 
 on:
   schedule:
@@ -50,12 +64,26 @@ jobs:
       - name: Dry-run the playbook against r1
         working-directory: configs/ansible
         run: |
+          # pipefail so an ansible failure (invalid vault password, unreachable
+          # host, task error) fails THIS step loudly. Without it, `... | tee`
+          # returns tee's exit 0 under `bash -e`, masking the real error and
+          # resurfacing it as a confusing empty-recap "drift detected" in the
+          # next step (observed 2026-07-17: a stale ANSIBLE_VAULT_PASSWORD
+          # secret produced exactly that misleading failure).
+          set -o pipefail
           ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
             --check --diff | tee /tmp/drift.out
 
       - name: Fail on drift
         run: |
           RECAP=$(grep -E "changed=[0-9]+" /tmp/drift.out | tail -1)
+          # No recap => the dry-run never reached PLAY RECAP (the play errored).
+          # With pipefail above this step won't even run, but guard anyway so a
+          # future regression fails with the TRUE cause, not "drift detected: <empty>".
+          if [ -z "$RECAP" ]; then
+            echo "::error::ansible produced no PLAY RECAP — the dry-run failed (invalid vault password, unreachable host, or a task error). See the 'Dry-run the playbook against r1' step above; this is NOT a drift signal."
+            exit 1
+          fi
           CHANGED=$(echo "$RECAP" | grep -oE "changed=[0-9]+" | cut -d= -f2)
           echo "recap: $RECAP"
           # A small allowance for known non-idempotent command tasks
