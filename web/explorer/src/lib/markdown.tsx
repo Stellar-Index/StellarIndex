@@ -316,7 +316,10 @@ function renderBlock(b: Block, i: number): React.ReactElement {
 // anchor. We permit absolute http/https/mailto and relative refs
 // (path / anchor / query). Anything else (javascript:, data:,
 // vbscript:, file:, …) is rejected and rendered as plain text.
-function isSafeHref(href: string): boolean {
+// Exported so the other trusted-corpus renderers (changelog MarkdownLite)
+// and live-JSON link sites (status runbook links) share ONE scheme
+// allowlist instead of each re-deriving it.
+export function isSafeHref(href: string): boolean {
   // Strip ASCII control characters (C0 + DEL) BEFORE scheme detection.
   // Browsers remove tab/LF/CR while parsing a URL and ignore other C0
   // controls, so `java&#9;script:alert(1)` (a literal tab inside the scheme)

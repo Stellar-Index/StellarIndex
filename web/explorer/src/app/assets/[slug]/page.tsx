@@ -951,7 +951,10 @@ function OverviewBody({
             />
             <Stat
               label="Circulating"
-              value={fmtNum(detail?.circulating_supply ?? coin.circulating_supply)}
+              value={fmtNum(
+                detail?.circulating_supply ?? coin.circulating_supply,
+                detail?.decimals ?? coin.decimals ?? 7,
+              )}
             />
             <Stat
               label={
@@ -1115,14 +1118,20 @@ function OverviewBody({
             {detail?.circulating_supply != null && (
               <Stat
                 label="Circulating"
-                value={fmtNum(detail.circulating_supply)}
+                value={fmtNum(detail.circulating_supply, detail.decimals ?? 7)}
               />
             )}
             {detail?.total_supply != null && (
-              <Stat label="Total" value={fmtNum(detail.total_supply)} />
+              <Stat
+                label="Total"
+                value={fmtNum(detail.total_supply, detail.decimals ?? 7)}
+              />
             )}
             {detail?.max_supply != null && (
-              <Stat label="Max" value={fmtNum(detail.max_supply)} />
+              <Stat
+                label="Max"
+                value={fmtNum(detail.max_supply, detail.decimals ?? 7)}
+              />
             )}
             {detail?.fdv_usd != null && (
               <Stat label="FDV" value={fmtUsd(detail.fdv_usd)} />
@@ -1245,11 +1254,15 @@ function fmtUsd(raw: string | null | undefined): string {
   return `$${formatCompact(n)}`;
 }
 
-function fmtNum(raw: string | null | undefined): string {
+// fmtNum renders a RAW smallest-unit supply string (circulating / total
+// / max) in whole asset units — scaled down 10^decimals (7 for classic /
+// native, 0 for catalogue / fiat). market_cap / fdv arrive already
+// server-pre-scaled and go through fmtUsd, which must NOT divide.
+function fmtNum(raw: string | null | undefined, decimals: number): string {
   if (!raw) return '—';
   const n = Number(raw);
   if (!Number.isFinite(n)) return '—';
-  return formatCompact(n);
+  return formatCompact(n / 10 ** decimals);
 }
 
 // athDrawdown computes the % drop from ATH given the current
