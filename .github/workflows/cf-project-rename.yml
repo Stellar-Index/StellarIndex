@@ -138,9 +138,32 @@ jobs:
 
           for d in $domains; do
             echo "moving $d ..."
-            api DELETE "/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$OLD_PROJECT/domains/$d" | jq -r '.success'
-            api POST "/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$NEW_PROJECT/domains" \
-              --data "{\"name\":\"$d\"}" | jq -r '.success'
+
+            # Remove the domain from the OLD project. Capture .success and
+            # abort on false — at this point nothing has changed yet, so a
+            # clean exit leaves the domain still routed to OLD (no outage).
+            del=$(api DELETE "/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$OLD_PROJECT/domains/$d")
+            if [ "$(echo "$del" | jq -r '.success')" != "true" ]; then
+              echo "::error::failed to detach $d from $OLD_PROJECT — aborting before any change: $(echo "$del" | jq -c '.errors')"
+              exit 1
+            fi
+
+            # Attach the domain to the NEW project. If THIS fails the domain
+            # is now attached to no project — re-add it to OLD (rollback)
+            # BEFORE the DNS repoint so a live domain is never left unrouted.
+            add=$(api POST "/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$NEW_PROJECT/domains" \
+              --data "{\"name\":\"$d\"}")
+            if [ "$(echo "$add" | jq -r '.success')" != "true" ]; then
+              echo "::error::failed to attach $d to $NEW_PROJECT: $(echo "$add" | jq -c '.errors')"
+              echo "rolling back: re-attaching $d to $OLD_PROJECT ..."
+              rb=$(api POST "/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$OLD_PROJECT/domains" \
+                --data "{\"name\":\"$d\"}")
+              if [ "$(echo "$rb" | jq -r '.success')" != "true" ]; then
+                echo "::error::ROLLBACK FAILED — $d is attached to NEITHER project. Re-attach it to $OLD_PROJECT by hand immediately: $(echo "$rb" | jq -c '.errors')"
+              fi
+              exit 1
+            fi
+
             # Repoint the DNS record at the new project's pages.dev target.
             rec=$(api GET "/zones/$zone_id/dns_records?name=$d" | jq -r '.result[0]')
             rec_id=$(echo "$rec" | jq -r '.id // empty')
