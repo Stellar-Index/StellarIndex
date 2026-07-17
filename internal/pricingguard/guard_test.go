@@ -83,16 +83,24 @@ func TestSelectGuardedVWAP1m_CandidateBucketExcludedFromOwnBaseline(t *testing.T
 	}
 }
 
-func TestSelectGuardedVWAP1m_ThinBaselineFailsOpen(t *testing.T) {
-	// Too few trailing buckets to judge → serve the candidate even if
-	// extreme (favour serving a real price over over-filtering).
-	candidate := mkRow(0, "999.0")
-	served, rejected := SelectGuardedVWAP1m(candidate, steadyRows(3))
-	if rejected {
-		t.Fatal("thin baseline must fail open (serve candidate)")
+func TestSelectGuardedVWAP1m_ThinBaselineWiderFiniteBand(t *testing.T) {
+	// Post-M11(b): a thin (but non-empty) baseline no longer fails fully
+	// open — it falls back to a WIDER but finite order-of-magnitude band.
+	// A gross (>10x) manipulation is still caught and served as LKG...
+	gross := mkRow(0, "999.0")
+	served, rejected := SelectGuardedVWAP1m(gross, steadyRows(3))
+	if !rejected {
+		t.Fatal("thin-history 999x manipulation must be caught, not served fully-open")
 	}
-	if served.VWAP != "999.0" {
-		t.Fatalf("served VWAP = %s, want candidate 999.0 (fail-open)", served.VWAP)
+	if served.VWAP != "1.0" {
+		t.Fatalf("served VWAP = %s, want last-known-good 1.0", served.VWAP)
+	}
+	// ...while a within-order-of-magnitude candidate still passes through
+	// (a scarce baseline is widened, never tightened).
+	moderate := mkRow(0, "5.0")
+	served, rejected = SelectGuardedVWAP1m(moderate, steadyRows(3))
+	if rejected || served.VWAP != "5.0" {
+		t.Fatalf("within-band thin-history candidate must pass; got served=%s rejected=%v", served.VWAP, rejected)
 	}
 }
 
@@ -202,10 +210,13 @@ func TestSelectGuardedVWAP1m_HeadlineFatFingerServesLKGFields(t *testing.T) {
 }
 
 func TestSelectGuardedVWAP1m_HeadlineThinHistoryPassesThrough(t *testing.T) {
-	candidate := mkGlobalRow(0, "999.0", 7, "kraken")
+	// Post-M11(b): thin history is permissive for a within-order-of-
+	// magnitude value (served byte-identical), but a gross print is
+	// caught (covered in TestSelectGuardedVWAP1m_ThinBaselineWiderFiniteBand).
+	candidate := mkGlobalRow(0, "5.0", 7, "kraken")
 	served, rejected := SelectGuardedVWAP1m(candidate, steadyGlobalRows(3))
 	if rejected {
-		t.Fatal("thin history must fail open (serve candidate)")
+		t.Fatal("within-band thin-history headline candidate must pass through")
 	}
 	if served.VWAP != candidate.VWAP || served.TradeCount != candidate.TradeCount {
 		t.Fatalf("thin-history served %+v, want candidate %+v", served, candidate)
@@ -263,12 +274,19 @@ func TestGuardServedVWAP1m_FatFingerServesLKG(t *testing.T) {
 	}
 }
 
-func TestGuardServedVWAP1m_ThinHistoryPassesThrough(t *testing.T) {
-	candidate := mkRow(0, "999.0")
+func TestGuardServedVWAP1m_ThinHistoryWiderFiniteBand(t *testing.T) {
+	// Post-M11(b): thin history uses a wider-but-finite band. A gross
+	// print is caught (served LKG); a within-band value passes through.
+	gross := mkRow(0, "999.0")
 	store := fakeTrailing{rows: steadyRows(3)}
-	served := GuardServedVWAP1m(context.Background(), store, nil, testPair(t), candidate)
-	if served.VWAP != "999.0" {
-		t.Fatalf("thin history must pass the candidate through; got %s", served.VWAP)
+	served := GuardServedVWAP1m(context.Background(), store, nil, testPair(t), gross)
+	if served.VWAP != "1.0" {
+		t.Fatalf("thin-history gross manipulation must serve last-known-good 1.0; got %s", served.VWAP)
+	}
+	moderate := mkRow(0, "5.0")
+	served = GuardServedVWAP1m(context.Background(), store, nil, testPair(t), moderate)
+	if served.VWAP != "5.0" {
+		t.Fatalf("within-band thin-history candidate must pass through; got %s", served.VWAP)
 	}
 }
 

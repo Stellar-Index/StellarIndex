@@ -261,6 +261,63 @@ func TestAverageAggregatorPrices_DifferentDecimals(t *testing.T) {
 	}
 }
 
+func sourceSet(rows []canonical.OracleUpdate) map[string]bool {
+	m := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		m[r.Source] = true
+	}
+	return m
+}
+
+func TestRejectAggregatorOutliers(t *testing.T) {
+	t.Run("drops_divergent_source_MAD_positive", func(t *testing.T) {
+		// Two agreeing-but-not-identical sources + one 2x outlier. The
+		// MAD is positive here (agreeing sources differ slightly), so
+		// this exercises the MAD-band path (not the MAD==0 path).
+		rows := []canonical.OracleUpdate{
+			mkAggRow("cg", 10000, 2),  // 100.00
+			mkAggRow("cmc", 10500, 2), // 105.00 (agrees, ~5%)
+			mkAggRow("cc", 21000, 2),  // 210.00 (2x-off outlier)
+		}
+		kept := rejectAggregatorOutliers(rows)
+		got := sourceSet(kept)
+		if len(kept) != 2 || got["cc"] {
+			t.Fatalf("kept = %v, want the 2 agreeing sources (cg, cmc), outlier cc dropped", got)
+		}
+	})
+
+	t.Run("all_agree_no_op", func(t *testing.T) {
+		rows := []canonical.OracleUpdate{
+			mkAggRow("cg", 10000, 2), mkAggRow("cmc", 10010, 2), mkAggRow("cc", 9990, 2),
+		}
+		if kept := rejectAggregatorOutliers(rows); len(kept) != 3 {
+			t.Fatalf("tightly-agreeing sources must all survive; kept %d/3", len(kept))
+		}
+	})
+
+	t.Run("two_sources_passthrough", func(t *testing.T) {
+		// Only 2 sources — no majority to define a consensus, so even a
+		// 2x gap is passed through unchanged (either could be right).
+		rows := []canonical.OracleUpdate{
+			mkAggRow("cg", 10000, 2), mkAggRow("cmc", 20000, 2),
+		}
+		if kept := rejectAggregatorOutliers(rows); len(kept) != 2 {
+			t.Fatalf("2-source input must pass through unchanged; kept %d/2", len(kept))
+		}
+	})
+
+	t.Run("always_keeps_at_least_one", func(t *testing.T) {
+		// A pathological 3-way split still yields a non-empty survivor
+		// set (the median centre is always a survivor).
+		rows := []canonical.OracleUpdate{
+			mkAggRow("a", 100, 2), mkAggRow("b", 100000, 2), mkAggRow("c", 100000000, 2),
+		}
+		if kept := rejectAggregatorOutliers(rows); len(kept) == 0 {
+			t.Fatal("rejectAggregatorOutliers must never fail closed to zero survivors")
+		}
+	})
+}
+
 func TestAverageAggregatorPrices_RejectsZeroPrices(t *testing.T) {
 	zero := big.NewInt(0)
 	rows := []canonical.OracleUpdate{
