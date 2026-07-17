@@ -509,14 +509,24 @@ galexie_expected_version_string: "stellar-galexie v0.0.0-20260610161848-c97d6484
 # Optional second guard: sha256 of the /usr/local/bin/galexie file
 # itself (belt-and-suspenders alongside the version-string assert
 # above — catches a same-version-string-but-different-bytes swap,
-# e.g. a different build toolchain). Left unset by default because
-# computing it requires shell access to the host
-# (`sha256sum /usr/local/bin/galexie`); the assert task in
-# 07-galexie.yml is skipped entirely while this is unset. Fill in
-# once known and it becomes a hard gate like minio_release_sha256.
-# sha256 of the 2026-07-09 v27.0.0 build installed on r1 (built from
-# tag galexie-v27.0.0, CGO_ENABLED=0 GOOS=linux GOARCH=amd64,
-# go build -trimpath): set here since we know it exactly.
+# e.g. a different build toolchain). When UNSET the assert task in
+# 07-galexie.yml is skipped; once SET it becomes a hard gate like
+# minio_release_sha256. It IS SET below, so the sha256 assert is
+# LIVE (NOT skipped) — the earlier "left unset by default → skipped"
+# note was stale.
+# WARNING — the two galexie drift constants currently target
+# DIFFERENT builds: this sha256 is stamped from the 2026-07-09
+# v27.0.0 build (CGO_ENABLED=0 GOOS=linux GOARCH=amd64,
+# go build -trimpath), but galexie_expected_version_string above is
+# a 2026-06-10 stamp (…-20260610161848-…). They cannot both match a
+# single installed binary, and the version assert has been observed
+# to hard-fail on r1 (live galexie reports '' vs the pinned string).
+# TODO(post-Phase-0): reconcile galexie_expected_version_string +
+# galexie_expected_binary_sha256 from ONE built galexie-v27.0.0
+# binary — currently they target different build dates; see audit
+# deps F-002. (Rebuild galexie-v27.0.0 with the flags above, then
+# read `galexie version` + `sha256sum` off that exact artifact and
+# set BOTH constants from it in the same PR.)
 galexie_expected_binary_sha256: "045caa5f1cfc43b2cc367f1e48155763ef67ef94cecd61f3c3aaa1a77382a270"
 
 galexie_s3_endpoint:     "http://127.0.0.1:9000"
@@ -547,6 +557,14 @@ galexie_backfill_admin_port: 6062          # archive-backfill galexie: distinct 
 #       Object Storage. Same minio_buckets override as r2.
 # ]
 minio_version:           "RELEASE.2024-11-07T00-52-20Z"
+# Listener interface. Loopback-only by default: galexie, the indexer,
+# and the 09-minio.yml health probe all reach MinIO via 127.0.0.1:9000
+# (galexie_s3_endpoint above). The MINIO_OPTS template previously bound
+# ":9000"/":9001" (all interfaces); loopback keeps the S3 API + console
+# off the public interface. Override to the private interface ONLY for a
+# genuine cross-host MinIO consumer (and add port 9000 to
+# internal_allow_ports for that host).
+minio_bind_address:      "127.0.0.1"
 minio_port:              9000
 minio_console_port:      9001
 minio_data_path:         "/var/lib/minio"

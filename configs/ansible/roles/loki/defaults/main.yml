@@ -15,12 +15,17 @@ loki_retention_days: 30
 # before flushing to MinIO and keeps the boltdb index on local
 # disk; both share /var by default.
 loki_var_min_free_gb: 50
-# HTTP API listen address — loopback-only by default; the
-# `agent` task pushes to the log_aggregator host's INTERNAL IP
-# (resolved at template-render time), so loopback isn't enough.
-# Operators who want loopback-only set `loki_listen_internal`
-# to 127.0.0.1 explicitly and add an HAProxy/nginx hop.
-loki_listen_address: "0.0.0.0"
+# HTTP API listen address — loopback-only by default (matches the
+# design note docs/architecture/loki-ansible-role-design-note.md and
+# the grpc_listen_address below, both 127.0.0.1). r1 is single-host:
+# promtail ships to loki_push_url = http://localhost:3100, so loopback
+# is sufficient and keeps the auth_enabled:false server off every
+# non-loopback interface (was 0.0.0.0 — the same no-auth-bound-to-all
+# class as the Redis finding, relying on the firewall alone). Multi-
+# host operators who run promtail on separate hosts override this to
+# the log_aggregator's INTERNAL/private IP; loki_http_port is already
+# firewalled to internal CIDRs (server-05-firewall.yml).
+loki_listen_address: "127.0.0.1"
 loki_http_port: 3100
 loki_grpc_port: 9095
 
