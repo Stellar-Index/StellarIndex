@@ -40,8 +40,8 @@ groups:
           severity: page
           team: stellarindex
           component: api
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-p95-breach.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-p95-breach.md
           summary: "{{ $labels.endpoint }} p95 latency {{ $value }}ms exceeds SLA target (200ms) sustained 30m"
           description: |
             The SLA probe's per-endpoint p95 has been above the SLA-stated
@@ -65,8 +65,8 @@ groups:
           severity: page
           team: stellarindex
           component: api
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
           summary: "{{ $labels.endpoint }} price freshness {{ $value }}s exceeds SLA target (30s) sustained 30m"
           description: |
             The SLA probe's median observed_at freshness for
@@ -84,8 +84,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: api
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-unit-failed.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-unit-failed.md
           summary: "SLA probe verdict has been fail for ≥ 30m — at least one SLA breached"
           description: |
             The probe's overall verdict gauge has been 1 (fail) for
@@ -108,8 +108,8 @@ groups:
           severity: page
           team: stellarindex
           component: api
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-stale.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-stale.md
           summary: "SLA probe hasn't passed in {{ $value | humanizeDuration }} (cadence 15m, threshold 90m)"
           description: |
             Either the systemd timer isn't running, or every run since

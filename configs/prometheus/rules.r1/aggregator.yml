@@ -25,8 +25,8 @@ groups:
           severity: page
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-silent.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-silent.md
           summary: "Aggregator has stopped writing VWAP cache (P1)"
           description: |
             Zero VWAP writes for 5+ minutes. Either the orchestrator
@@ -46,8 +46,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
           summary: "Outlier-filter drop rate >5× baseline (P3)"
           description: |
             The σ-threshold filter is dropping trades at >5× its
@@ -72,8 +72,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-fx-snap-fallback-dominant.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-fx-snap-fallback-dominant.md
           summary: "FX snap fallback >50% of triangulations for 30m+ (P3)"
           description: |
             The X2.5 forex-factor-snap path is failing for more than
@@ -94,8 +94,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-class-drop-spike.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-class-drop-spike.md
           summary: "Class-filter drop rate >10× baseline (P3)"
           description: |
             The class filter is dropping trades at >10× its baseline
@@ -129,8 +129,8 @@ groups:
           severity: page
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-write-blocked-disk-full.md
           summary: "Aggregator failing to publish VWAPs to Redis cache (P1)"
           description: |
             VWAP cache writes are erroring; rewritten / triangulated /
@@ -155,8 +155,8 @@ groups:
           severity: informational
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/protocol-events-rollup-failing.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/protocol-events-rollup-failing.md
           summary: "Protocol-events rollup sweeps failing ({{ $value | humanize }}/s error rate)"
           description: |
             The aggregator's protocol-events rollup worker has been
@@ -181,8 +181,8 @@ groups:
           severity: informational
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/asset-volume-rollup-failing.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/asset-volume-rollup-failing.md
           summary: "Asset-volume rollup sweeps failing ({{ $value | humanize }}/s error rate)"
           description: |
             The aggregator's asset-volume rollup worker has been failing
@@ -217,8 +217,8 @@ groups:
           severity: informational
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
           summary: "DEX trade for a non-7-decimal Soroban token detected — auto-corrected, no action needed"
           description: |
             A DEX trade landed for a Soroban token whose on-chain
@@ -262,8 +262,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: aggregator
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
           summary: "Non-7-decimals correction sweep failing or serving declining — tokens at risk of silent price skew (P2)"
           description: |
             Either the aggregator's nonstandard_decimals_assets

@@ -13,8 +13,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: data-freshness
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-source-stale.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-source-stale.md
           summary: "Data source {{ $labels.domain }}/{{ $labels.source }} is stale"
           description: |
             stellarindex_data_freshness_stale{domain="{{ $labels.domain }}",source="{{ $labels.source }}"} = 1
@@ -36,8 +36,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: completeness
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/completeness-incomplete.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/completeness-incomplete.md
           summary: "Source {{ $labels.source }} failed the ADR-0033 completeness verdict"
           description: |
             stellarindex_completeness_incomplete{source="{{ $labels.source }}"} = 1 — the served
@@ -56,8 +56,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: data-freshness
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
           summary: "data-freshness watchdog stopped emitting"
           description: |
             stellarindex_data_freshness_stale has been absent > 45m — data-freshness.timer
@@ -74,8 +74,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: data-truth
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
           summary: "Served value {{ $labels.check }} diverges from independent ground truth"
           description: |
             verify-served-values found {{ $labels.check }} outside its
@@ -92,8 +92,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: data-truth
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
           summary: "verify-served-values has not completed in 2 days"
           description: |
             The daily served-value truth harness hasn't written its

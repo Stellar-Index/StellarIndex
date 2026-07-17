@@ -42,8 +42,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: hashdb
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/hashdb-drift-detected.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/hashdb-drift-detected.md
           summary: "hashdb drift detected — {{ $value }} drifted ledger(s) since indexer start"
           description: |
             The periodic hashdb verify sweep re-read a trailing window of
@@ -69,8 +69,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: hashdb
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/hashdb-drift-detected.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/hashdb-drift-detected.md
           summary: "hashdb periodic verify sweep failing more often than it completes (P3)"
           description: |
             More error-outcome sweeps than clean/drift-outcome sweeps over

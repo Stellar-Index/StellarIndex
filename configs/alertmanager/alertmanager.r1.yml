@@ -66,11 +66,19 @@ route:
 
 # ─── Inhibit rules ───────────────────────────────────────────────
 inhibit_rules:
-  # If a page-severity alert fires for the same component, mute the
-  # ticket + informational variants to avoid stacking.
+  # If a page-severity alert fires for a component, mute the ticket +
+  # informational variants on that SAME component to avoid stacking.
+  #
+  # `equal` is [component] ONLY — NOT [alertname, component]. A page and
+  # its paired lower-severity alert are DIFFERENT alerts with different
+  # alertnames (e.g. `..._tip_lag_severe` [page] escalates
+  # `..._tip_lag_high` [ticket]), so requiring alertname equality made
+  # the inhibition never fire — the source page and target ticket could
+  # never have the same alertname. Matching on `component` alone lets the
+  # page suppress the ticket/informational variants for that component.
   - source_matchers: [severity = "page"]
     target_matchers: [severity =~ "ticket|informational"]
-    equal: [alertname, component]
+    equal: [component]
 
 # ─── Receivers ───────────────────────────────────────────────────
 receivers:

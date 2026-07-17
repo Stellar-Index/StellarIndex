@@ -119,8 +119,8 @@ groups:
           team: stellarindex
           component: api
           slo: api_latency_p95_under_200ms
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
           summary: "FAST burn — consuming SLO budget at >14.4× rate"
           description: |
             Latency SLO (99.9% under 200 ms over 30d) is burning fast.
@@ -143,8 +143,8 @@ groups:
           team: stellarindex
           component: api
           slo: api_latency_p95_under_200ms
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
           summary: "MEDIUM burn — consuming SLO budget at >6× rate"
           description: |
             Latency SLO is burning medium-fast. 30m and 6h windows both
@@ -165,8 +165,8 @@ groups:
           team: stellarindex
           component: api
           slo: api_latency_p95_under_200ms
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
           summary: "SLOW burn — sustained SLO budget consumption at 30d rate"
           description: |
             Latency SLO is consuming budget at exactly the 30-day rate.
@@ -237,8 +237,8 @@ groups:
           team: stellarindex
           component: api
           slo: api_availability_3_nines_9
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
           summary: "FAST burn — availability SLO budget consuming at >14.4× rate"
           description: |
             Availability SLO (99.99% non-5xx over 30d) is burning fast.
@@ -256,8 +256,8 @@ groups:
           team: stellarindex
           component: api
           slo: api_availability_3_nines_9
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
           summary: "MEDIUM burn — availability SLO budget consuming at >6× rate"
           description: |
             Availability SLO is burning medium-fast. 30m and 6h windows
@@ -275,8 +275,8 @@ groups:
           team: stellarindex
           component: api
           slo: api_availability_3_nines_9
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-5xx.md
           summary: "SLOW burn — sustained availability SLO budget consumption"
           description: |
             Availability SLO is consuming budget at the 30-day rate.

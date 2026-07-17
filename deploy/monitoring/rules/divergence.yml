@@ -33,8 +33,8 @@ groups:
           severity: informational
           team: stellarindex
           component: divergence
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-divergence.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-divergence.md
           summary: "{{ $labels.asset }} {{ $value | humanizePercentage }} off reference"
           description: |
             Our aggregated price for {{ $labels.asset }} differs from reference
@@ -52,8 +52,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: divergence
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-divergence.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-divergence.md
           summary: "{{ $labels.asset }} {{ $value | humanizePercentage }} off reference (critical)"
           description: |
             Divergence > 10 % from reference sustained 2 min. This is usually
@@ -69,8 +69,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: divergence
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stale.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/oracle-stale.md
           summary: "Oracle {{ $labels.source }} stale for {{ $labels.asset }}"
           description: |
             {{ $labels.source }} hasn't published a price for {{ $labels.asset }}
@@ -100,8 +100,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: divergence
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-refresh-error-dominant.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-refresh-error-dominant.md
           summary: "Divergence-cache refresh failing more often than succeeding (P3)"
           description: |
             More refresh_error outcomes than ok over the last 5 min for
@@ -130,8 +130,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: divergence
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-reference.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-reference.md
           summary: "Divergence checker running blind — no reference responded (P3)"
           description: |
             For 30+ min more pairs received zero reference responses than got a

@@ -17,8 +17,8 @@ groups:
           severity: page
           team: stellarindex
           component: cache
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-master-down.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-master-down.md
           summary: "Redis master {{ $labels.instance }} down (SEV-1)"
           description: |
             A Redis master has been unreachable for 30+ s. Sentinel should
@@ -32,8 +32,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: cache
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-memory.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-memory.md
           summary: "Redis {{ $labels.instance }} memory {{ $value | humanize }}% used"
           description: |
             At > 90 % memory for 5+ minutes. allkeys-lru will start evicting
@@ -46,8 +46,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: cache
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-memory.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-memory.md
           summary: "Redis {{ $labels.instance }} evicting {{ $value | humanize }}/s keys"
           description: |
             Eviction rate exceeds 100/s sustained 5+ min. LRU pressure. API
@@ -69,8 +69,8 @@ groups:
           severity: ticket
           team: stellarindex
           component: cache
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-replication.md
         annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-replication.md
           summary: "Redis master {{ $labels.instance }} missing replicas"
           description: |
             Master reports {{ $value }} connected replicas, fewer than the
