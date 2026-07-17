@@ -1,0 +1,106 @@
+name: ci-health
+
+# Main-CI-red tripwire (audit C4-16).
+#
+# Chronically-red `main` is a standing operator pain: nobody notices
+# when main CI has been failing for hours. This scheduled workflow
+# queries the recent `ci` runs on main and, if main has been red past a
+# threshold (consecutive-failure count OR wall-clock age), opens/updates
+# a tracking issue AND fails this run — two independent surfaces so the
+# red state can't stay invisible. When main goes green again it closes
+# the tracking issue.
+#
+# Self-contained: uses ${{ github.token }} via the gh CLI, no new
+# secrets. The decision core is scripts/ci/check-main-ci-health.sh
+# (unit-testable offline via CI_HEALTH_FIXTURE).
+
+on:
+  schedule:
+    # Every 2 hours. Chronic-red is a slow-burn problem; a tighter
+    # cadence would just re-notify the same open issue.
+    - cron: '17 */2 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: ci-health
+  cancel-in-progress: false
+
+env:
+  ISSUE_LABEL: ci-health
+  ISSUE_TITLE: "CI health: main has been red"
+  FAIL_RUNS: '3'
+  FAIL_HOURS: '6'
+
+jobs:
+  check-main-ci:
+    name: main CI red tripwire
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - name: Assess main CI health
+        id: assess
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          set +e
+          report="$(FAIL_RUNS="${FAIL_RUNS}" FAIL_HOURS="${FAIL_HOURS}" ./scripts/ci/check-main-ci-health.sh)"
+          rc=$?
+          set -e
+          echo "$report"
+          {
+            echo "verdict_rc=${rc}"
+            echo "report<<REPORT_EOF"
+            echo "$report"
+            echo "REPORT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the tracking issue (main is red)
+        if: steps.assess.outputs.verdict_rc != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REPORT: ${{ steps.assess.outputs.report }}
+        run: |
+          set -euo pipefail
+          # Ensure the label exists (idempotent).
+          gh label create "$ISSUE_LABEL" --color B60205 \
+            --description "main CI has been red past threshold" 2>/dev/null || true
+
+          body="$(printf '%s\n\n---\n_Auto-managed by the ci-health workflow (run %s). Closes automatically when main goes green._\n' \
+            "$REPORT" "${GITHUB_RUN_ID:-?}")"
+
+          existing="$(gh issue list --label "$ISSUE_LABEL" --state open \
+            --json number --jq '.[0].number' || true)"
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "$body"
+            echo "Updated existing ci-health issue #$existing."
+          else
+            gh issue create --title "$ISSUE_TITLE" --label "$ISSUE_LABEL" --body "$body"
+            echo "Opened new ci-health issue."
+          fi
+
+      - name: Close the tracking issue (main is green)
+        if: steps.assess.outputs.verdict_rc == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for n in $(gh issue list --label "$ISSUE_LABEL" --state open \
+              --json number --jq '.[].number' || true); do
+            gh issue close "$n" --comment "main CI is green again — ci-health closing automatically."
+            echo "Closed ci-health issue #$n."
+          done
+
+      - name: Fail the run if main is red
+        if: steps.assess.outputs.verdict_rc != '0'
+        run: |
+          echo "::error::main CI has been red past threshold — see the ci-health tracking issue."
+          exit 1
