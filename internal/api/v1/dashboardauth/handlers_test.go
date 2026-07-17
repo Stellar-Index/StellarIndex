@@ -597,3 +597,49 @@ func TestHandleLogin_ThrottleErrors_FailsOpen(t *testing.T) {
 		t.Errorf("sent emails = %d, want 1 (must fall open on throttle error)", r.sender.SentCount())
 	}
 }
+
+func TestMaskEmail(t *testing.T) {
+	cases := map[string]string{
+		"alice@example.com": "a***@example.com",
+		"a@b.co":            "***@b.co", // single-char local → fully hidden
+		"bob.smith@x.io":    "b***@x.io",
+		"":                  "",
+		"garbage":           "***", // no @ → hide entirely
+		"@nolocal.com":      "***", // empty local part (malformed) → hidden entirely
+	}
+	for in, want := range cases {
+		if got := maskEmail(in); got != want {
+			t.Errorf("maskEmail(%q) = %q, want %q", in, got, want)
+		}
+		// the full local part must never survive in the output (PRV1)
+		if in != "" && in != "garbage" {
+			at := len(in)
+			if i := indexByte(in, '@'); i >= 0 {
+				at = i
+			}
+			if at > 1 && contains(maskEmail(in), in[1:at]) {
+				t.Errorf("maskEmail(%q) leaked the local part", in)
+			}
+		}
+	}
+}
+
+func indexByte(s string, b byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == b {
+			return i
+		}
+	}
+	return -1
+}
+func contains(s, sub string) bool {
+	return sub != "" && len(sub) <= len(s) && stringsIndex(s, sub) >= 0
+}
+func stringsIndex(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
