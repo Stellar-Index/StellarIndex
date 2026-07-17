@@ -174,6 +174,36 @@ func (r *ExplorerReader) LedgerBySeq(ctx context.Context, seq uint32) (LedgerHea
 	return l, true, nil
 }
 
+// CloseTimeForLedger returns the on-chain close time of a single ledger from
+// stellar.ledgers. found=false (nil error) when the sequence has no row (not
+// yet ingested / out of range) — the caller decides how to treat the miss.
+//
+// This is the authoritative every-ledger close-time source the supply-snapshot
+// ledger resolvers use to stamp a snapshot's ObservedAt (audit M4-callers): a
+// re-derived HISTORICAL snapshot must carry the ledger's real close time, never
+// the wall-clock write-time. Both callers fail closed on found=false rather
+// than falling back to time.Now() (which is the very defect being removed).
+//
+// FINAL, like LedgerBySeq: stellar.ledgers is ReplacingMergeTree(ingested_at),
+// so a re-ingested ledger leaves an un-merged duplicate part until a background
+// merge; FINAL collapses it. A single-row point read stays cheap under FINAL.
+func (r *ExplorerReader) CloseTimeForLedger(ctx context.Context, seq uint32) (time.Time, bool, error) {
+	const q = `SELECT close_time FROM stellar.ledgers FINAL WHERE ledger_seq = ? LIMIT 1`
+	rows, err := r.conn.Query(ctx, q, seq)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("clickhouse: close time for ledger %d: %w", seq, err)
+	}
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		return time.Time{}, false, rows.Err()
+	}
+	var closeTime time.Time
+	if err := rows.Scan(&closeTime); err != nil {
+		return time.Time{}, false, fmt.Errorf("clickhouse: scan close time for ledger %d: %w", seq, err)
+	}
+	return closeTime.UTC(), true, nil
+}
+
 // LedgerTransactions returns the transactions in a ledger, ordered by tx_index.
 func (r *ExplorerReader) LedgerTransactions(ctx context.Context, seq uint32, limit int) ([]TxSummary, error) {
 	if limit <= 0 || limit > 1000 {
