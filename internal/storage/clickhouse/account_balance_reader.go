@@ -15,8 +15,14 @@ import (
 // readers already query this table for other entry types; this is
 // the account/native-balance analogue.
 type AccountBalanceSnapshot struct {
-	// Stroops is argMax(balance, ledger_seq) — the balance recorded
-	// at the highest ledger_seq we've observed for this account.
+	// Stroops is argMax(balance, (ledger_seq, intra_ledger_seq)) — the
+	// balance from the LAST change (in canonical intra-ledger walk order) to
+	// this account. The intra_ledger_seq tie-break makes same-ledger
+	// multi-change resolution deterministic (audit-2026-07-16 C2-4c): one
+	// ledger can hold several changes to a single account (receive-then-send
+	// across two ops, or update-then-merge), and ledger_seq alone ties them,
+	// so a single-column argMax picked an ARBITRARY same-ledger row — possibly
+	// a mid-ledger balance. The composite order keeps the final change.
 	// stellar.ledger_entry_changes.balance is Int64 (stroops fit
 	// comfortably within int64 for the whole XLM supply — unlike
 	// arbitrary Soroban i128 token amounts, which is why this column
@@ -44,7 +50,7 @@ func QueryAccountBalance(ctx context.Context, addr, accountID string) (snap Acco
 	defer func() { _ = conn.Close() }()
 
 	const query = `
-		SELECT argMax(balance, ledger_seq) AS bal, max(ledger_seq) AS at_ledger, count() AS snapshots
+		SELECT argMax(balance, (ledger_seq, intra_ledger_seq)) AS bal, max(ledger_seq) AS at_ledger, count() AS snapshots
 		FROM stellar.ledger_entry_changes
 		WHERE entry_type = 'account' AND account_id = ?
 	`
