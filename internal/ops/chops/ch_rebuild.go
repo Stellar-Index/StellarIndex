@@ -154,6 +154,12 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		return fmt.Errorf("storage open: %w", err)
 	}
 	defer func() { _ = store.Close() }()
+	// Re-derive path (INV-3 / migration 0109): stamp a positive
+	// derive_generation so this rebuild's corrected values UPDATE the
+	// stored rows in place — via both BatchInsertTrades/InsertTrade below
+	// and pipeline.HandleEvent (which draws the generation from this same
+	// store) — and win over the live gen-0 values.
+	store.SetDeriveGeneration(time.Now().Unix())
 
 	// Warn-level logger: HandleEvent debug-logs per event, which would flood at
 	// rebuild volume. Errors + warns still surface.

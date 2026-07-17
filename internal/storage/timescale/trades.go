@@ -414,40 +414,60 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	}
 
 	// One statement, two effects, fully atomic:
-	//   1. Insert the trade (idempotent on its PK).
-	//   2. If — and only if — a row was actually inserted, bump the
-	//      per-source entry tally (migration 0035). The `HAVING
-	//      count(*) > 0` makes the counter upsert produce zero rows
-	//      on a duplicate, so a backfill re-walk over already-stored
-	//      ledgers never inflates the tally. Data-modifying CTEs
-	//      always execute even though `bump` is unreferenced.
-	// The trailing `SELECT count(*) FROM ins` returns 1 (new) or 0
-	// (duplicate) — an explicit count, sturdier than the old
-	// RowsAffected() path (no driver-quirk fail-open ambiguity).
+	//   1. Upsert the trade (idempotent-corrective on its PK). On
+	//      conflict we DO UPDATE every value column plus derive_generation,
+	//      guarded by `trades.derive_generation <= EXCLUDED.derive_generation`
+	//      (migration 0109 / INV-3): a re-derive with a higher-or-equal
+	//      generation lands its correction in place, while a lower
+	//      generation (e.g. a live gen-0 replay) can never revert a
+	//      correction. This replaces the old `DO NOTHING`, which silently
+	//      discarded corrected re-derives (the re-backfill treadmill).
+	//   2. If — and only if — a row was actually INSERTED (not updated),
+	//      bump the per-source entry tally (migration 0035). `xmax = 0`
+	//      distinguishes a fresh insert from an on-conflict update; the
+	//      `HAVING count(*) FILTER (WHERE inserted) > 0` makes the counter
+	//      upsert produce zero rows on a duplicate or an update, so a
+	//      backfill re-walk / re-derive over already-stored ledgers never
+	//      inflates the tally. Data-modifying CTEs always execute even
+	//      though `bump` is unreferenced.
+	// The trailing `SELECT count(*) FILTER (WHERE inserted)` returns 1
+	// (new row) or 0 (duplicate, update, or guard-skipped) — an explicit
+	// count, sturdier than the old RowsAffected() path (no driver-quirk
+	// fail-open ambiguity), and it keeps the landed-only gating below
+	// (registry hook, outcome metric, sentinels) exactly as before.
 	const q = `
         WITH ins AS (
             INSERT INTO trades (
                 source, ledger, tx_hash, op_index, ts,
                 base_asset, quote_asset,
                 base_amount, quote_amount, usd_volume,
-                maker, taker
+                maker, taker, derive_generation
             ) VALUES (
                 $1, $2, $3, $4, $5,
                 $6, $7,
                 $8, $9, $10,
-                NULLIF($11, ''), NULLIF($12, '')
+                NULLIF($11, ''), NULLIF($12, ''), $13
             )
-            ON CONFLICT (source, ledger, tx_hash, op_index, ts) DO NOTHING
-            RETURNING 1
+            ON CONFLICT (source, ledger, tx_hash, op_index, ts) DO UPDATE SET
+                base_asset        = EXCLUDED.base_asset,
+                quote_asset       = EXCLUDED.quote_asset,
+                base_amount       = EXCLUDED.base_amount,
+                quote_amount      = EXCLUDED.quote_amount,
+                usd_volume        = EXCLUDED.usd_volume,
+                maker             = EXCLUDED.maker,
+                taker             = EXCLUDED.taker,
+                derive_generation = EXCLUDED.derive_generation
+              WHERE trades.derive_generation <= EXCLUDED.derive_generation
+            RETURNING (xmax = 0) AS inserted
         ), bump AS (
             INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
-            SELECT $1, count(*), now() FROM ins
-            HAVING count(*) > 0
+            SELECT $1, count(*) FILTER (WHERE inserted), now() FROM ins
+            HAVING count(*) FILTER (WHERE inserted) > 0
             ON CONFLICT (source) DO UPDATE
               SET entry_count = sec.entry_count + EXCLUDED.entry_count,
                   updated_at  = EXCLUDED.updated_at
         )
-        SELECT count(*) FROM ins
+        SELECT count(*) FILTER (WHERE inserted) FROM ins
     `
 	var usdVolume any // sql NULL when nil; pq accepts the *string form too
 	if v := tradeUSDVolume(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver); v != nil {
@@ -458,7 +478,7 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 		t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
 		t.Pair.Base.String(), t.Pair.Quote.String(),
 		t.BaseAmount, t.QuoteAmount, usdVolume,
-		t.Maker, t.Taker,
+		t.Maker, t.Taker, s.deriveGeneration,
 	).Scan(&rowsInserted); err != nil {
 		return fmt.Errorf("timescale: InsertTrade: %w", err)
 	}
@@ -586,17 +606,31 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 	// belt-and-braces for whatever this doesn't catch.
 	sortTradesByConflictKey(trades)
 
-	// Build VALUES placeholders + args slice. Each row has 12 params
+	// Collapse intra-batch PK duplicates BEFORE building the statement.
+	// The INV-3 fix (migration 0109) turns the batch `ON CONFLICT` into a
+	// DO UPDATE, and Postgres rejects a single INSERT..ON CONFLICT DO
+	// UPDATE that presents the same conflict key twice ("cannot affect
+	// row a second time") — which the old DO NOTHING silently absorbed. A
+	// CEX WS reconnect can redeliver the same exchange trade into one
+	// worker's batch (see the deadlock note above), so dedupe adjacent
+	// equal keys here (input is already conflict-key sorted), keeping the
+	// latest copy. The original `trades` slice is left intact so the
+	// per-source "sent" tally below still counts the collapsed duplicate
+	// as a duplicate — the outcome metric is unchanged.
+	insertRows := dedupeSortedTradesByConflictKey(trades)
+
+	// Build VALUES placeholders + args slice. Each row has 13 params
 	// (source, ledger, tx_hash, op_index, ts, base_asset, quote_asset,
-	// base_amount, quote_amount, usd_volume, maker, taker).
-	const colsPerRow = 12
-	args := make([]any, 0, len(trades)*colsPerRow)
-	valuesParts := make([]string, 0, len(trades))
-	for i, t := range trades {
+	// base_amount, quote_amount, usd_volume, maker, taker,
+	// derive_generation).
+	const colsPerRow = 13
+	args := make([]any, 0, len(insertRows)*colsPerRow)
+	valuesParts := make([]string, 0, len(insertRows))
+	for i, t := range insertRows {
 		base := i*colsPerRow + 1
 		valuesParts = append(valuesParts, fmt.Sprintf(
-			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, NULLIF($%d, ''), NULLIF($%d, ''))",
-			base, base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11,
+			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, NULLIF($%d, ''), NULLIF($%d, ''), $%d)",
+			base, base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12,
 		))
 		var usdVolume any
 		if v := tradeUSDVolume(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver); v != nil {
@@ -606,7 +640,7 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 			t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
 			t.Pair.Base.String(), t.Pair.Quote.String(),
 			t.BaseAmount, t.QuoteAmount, usdVolume,
-			t.Maker, t.Taker,
+			t.Maker, t.Taker, s.deriveGeneration,
 		)
 	}
 
@@ -633,23 +667,40 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
                 source, ledger, tx_hash, op_index, ts,
                 base_asset, quote_asset,
                 base_amount, quote_amount, usd_volume,
-                maker, taker
+                maker, taker, derive_generation
             ) VALUES %s
-            ON CONFLICT (source, ledger, tx_hash, op_index, ts) DO NOTHING
-            RETURNING source, ledger, base_amount, quote_amount
+            ON CONFLICT (source, ledger, tx_hash, op_index, ts) DO UPDATE SET
+                base_asset        = EXCLUDED.base_asset,
+                quote_asset       = EXCLUDED.quote_asset,
+                base_amount       = EXCLUDED.base_amount,
+                quote_amount      = EXCLUDED.quote_amount,
+                usd_volume        = EXCLUDED.usd_volume,
+                maker             = EXCLUDED.maker,
+                taker             = EXCLUDED.taker,
+                derive_generation = EXCLUDED.derive_generation
+              WHERE trades.derive_generation <= EXCLUDED.derive_generation
+            RETURNING (xmax = 0) AS inserted, source, ledger, base_amount, quote_amount
         ), bump AS (
             INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
             -- ORDER BY source: mixed-source batches row-lock one
             -- source_entry_counts row per source; deterministic order
             -- prevents cross-batch AB/BA deadlocks (2026-07-09 — the
             -- second lock resource the trades-row batch sort missed).
-            SELECT source, count(*), now() FROM ins GROUP BY source ORDER BY source
+            -- count(*) FILTER (WHERE inserted): a re-derive UPDATE (INV-3,
+            -- migration 0109) must NOT inflate the per-source tally, so
+            -- only genuinely-inserted rows (xmax = 0) count — the
+            -- multi-source twin of InsertTrade's landed-only bump gate.
+            SELECT source, count(*) FILTER (WHERE inserted), now() FROM ins
+              GROUP BY source
+              HAVING count(*) FILTER (WHERE inserted) > 0
+              ORDER BY source
             ON CONFLICT (source) DO UPDATE
               SET entry_count = sec.entry_count + EXCLUDED.entry_count,
                   updated_at  = EXCLUDED.updated_at
         )
-        SELECT source, count(*),
-               count(*) FILTER (WHERE ledger <> 0 AND base_amount = quote_amount AND base_amount <> 0)
+        SELECT source,
+               count(*) FILTER (WHERE inserted),
+               count(*) FILTER (WHERE inserted AND ledger <> 0 AND base_amount = quote_amount AND base_amount <> 0)
           FROM ins GROUP BY source
     `, strings.Join(valuesParts, ", "))
 
@@ -1164,4 +1215,53 @@ func sortTradesByConflictKey(trades []canonical.Trade) {
 		}
 		return a.Timestamp.Before(b.Timestamp)
 	})
+}
+
+// sameTradeConflictKey reports whether two trades collide on the full
+// trades PK (source, ledger, tx_hash, op_index, ts) — i.e. they map to
+// the same row. Timestamp is compared with time.Equal so two instants
+// that differ only in monotonic-clock reading / location still count as
+// equal (they land in the same timestamptz).
+func sameTradeConflictKey(a, b *canonical.Trade) bool {
+	return a.Source == b.Source &&
+		a.Ledger == b.Ledger &&
+		a.TxHash == b.TxHash &&
+		a.OpIndex == b.OpIndex &&
+		a.Timestamp.Equal(b.Timestamp)
+}
+
+// dedupeSortedTradesByConflictKey collapses adjacent PK-duplicate rows in
+// a conflict-key-sorted batch, keeping the LAST copy of each run (the
+// latest redelivery). It exists because the INV-3 batch upsert (migration
+// 0109) uses ON CONFLICT DO UPDATE, which Postgres rejects when one
+// statement presents the same conflict key twice; the old DO NOTHING
+// tolerated it. Input MUST be sorted by sortTradesByConflictKey so equal
+// keys are adjacent.
+//
+// Copy-on-write: the common case (no intra-batch duplicate) returns the
+// input slice untouched and allocates nothing; only when a duplicate is
+// found does it build a fresh slice, leaving the caller's slice intact so
+// the per-source "sent" tally can still count the collapsed duplicate.
+func dedupeSortedTradesByConflictKey(sorted []canonical.Trade) []canonical.Trade {
+	firstDup := -1
+	for i := 1; i < len(sorted); i++ {
+		if sameTradeConflictKey(&sorted[i-1], &sorted[i]) {
+			firstDup = i
+			break
+		}
+	}
+	if firstDup < 0 {
+		return sorted // already unique — hot path, no allocation
+	}
+	out := make([]canonical.Trade, firstDup, len(sorted))
+	copy(out, sorted[:firstDup])
+	for i := firstDup; i < len(sorted); i++ {
+		last := &out[len(out)-1]
+		if sameTradeConflictKey(last, &sorted[i]) {
+			*last = sorted[i] // keep the latest redelivered copy
+			continue
+		}
+		out = append(out, sorted[i])
+	}
+	return out
 }

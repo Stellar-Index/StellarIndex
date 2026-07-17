@@ -129,6 +129,12 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 		return fmt.Errorf("storage open: %w", err)
 	}
 	defer func() { _ = store.Close() }()
+	// Re-derive path (INV-3 / migration 0109): stamp a positive
+	// derive_generation so this projection's corrected values UPDATE the
+	// stored rows in place via pipeline.HandleEvent (which draws the
+	// generation from this store) and win over the live gen-0 values.
+	// Harmless in the default dry-run (no writes occur until -write).
+	store.SetDeriveGeneration(time.Now().Unix())
 
 	logger := opsutil.MkBackfillLogger()
 
