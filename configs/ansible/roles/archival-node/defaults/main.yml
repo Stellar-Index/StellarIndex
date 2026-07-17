@@ -332,12 +332,15 @@ stellar_extra_known_peers: []
 # reference config:
 #   https://github.com/stellar/packages/blob/master/docs/examples/
 #   pubnet-validator-full/stellar-core.cfg
-# (fetched 2026-04-23).
+# (re-fetched 2026-07-17: OBSRVR added to the T1 set; SatoshiPay and
+#  Creit validators dropped from SDF's reference — see notes below).
 #
-# 7 organizations × 3 validators each = 21 tier-1 validators.
+# 6 organizations × 3 validators each = 18 tier-1 validators, plus
+# stellar.creit.tech retained as a HIGH-quality HOME_DOMAIN that SDF
+# currently lists with no validators.
 # stellar-core auto-builds the quorum set from the HOME_DOMAINS
 # groupings below: inner set per org (2/3 threshold), outer set
-# across orgs (5/7 default via QUALITY=HIGH).
+# across orgs (QUALITY=HIGH).
 #
 # IMPORTANT: if any validator's public-key CRC stops matching (org
 # rotated keys, SDF updated the reference), stellar-core won't parse
@@ -353,8 +356,11 @@ stellar_home_domains:
     quality:     "HIGH"
   - home_domain: "www.franklintempleton.com"
     quality:     "HIGH"
-  - home_domain: "satoshipay.io"
+  - home_domain: "stellar.withobsrvr.com"
     quality:     "HIGH"
+  # stellar.creit.tech retained as a HIGH-quality org per SDF's canonical
+  # config, though SDF currently lists no Creit validators (validators
+  # dropped from the reference set as of the 2026-07-17 re-fetch).
   - home_domain: "stellar.creit.tech"
     quality:     "HIGH"
   - home_domain: "www.stellar.org"
@@ -414,39 +420,23 @@ stellar_validators:
     address:     "stellar1.franklintempleton.com:11625"
     history:     "curl -sf https://stellar-history-usw.franklintempleton.com/azuswshf401/{0} -o {1}"
 
-  # SatoshiPay — 3 validators
-  - name: "SatoshiPay Frankfurt"
-    home_domain: "satoshipay.io"
-    public_key:  "GC5SXLNAM3C4NMGK2PXK4R34B5GNZ47FYQ24ZIBFDFOCU6D4KBN4POAE"
-    address:     "stellar-de-fra.satoshipay.io:11625"
-    history:     "curl -sf https://stellar-history-de-fra.satoshipay.io/{0} -o {1}"
-  - name: "SatoshiPay Singapore"
-    home_domain: "satoshipay.io"
-    public_key:  "GBJQUIXUO4XSNPAUT6ODLZUJRV2NPXYASKUBY4G5MYP3M47PCVI55MNT"
-    address:     "stellar-sg-sin.satoshipay.io:11625"
-    history:     "curl -sf https://stellar-history-sg-sin.satoshipay.io/{0} -o {1}"
-  - name: "SatoshiPay Iowa"
-    home_domain: "satoshipay.io"
-    public_key:  "GAK6Z5UVGUVSEK6PEOCAYJISTT5EJBB34PN3NOLEQG2SUKXRVV2F6HZY"
-    address:     "stellar-us-iowa.satoshipay.io:11625"
-    history:     "curl -sf https://stellar-history-us-iowa.satoshipay.io/{0} -o {1}"
-
-  # Creit Tech — 3 validators
-  - name: "Creit Alpha"
-    home_domain: "stellar.creit.tech"
-    public_key:  "GBPLJDBFZO2H7QQH7YFCH3HFT6EMC42Z2DNJ2QFROCKETAPY54V4DCZD"
-    address:     "alpha.validator.stellar.creit.tech:11625"
-    history:     "curl -sf https://alpha-history.validator.stellar.creit.tech/{0} -o {1}"
-  - name: "Creit Beta"
-    home_domain: "stellar.creit.tech"
-    public_key:  "GDDANSYOYSY5EPSFHBRPCLX6XMHPPLIMHVIDXG6IPQLVVLRI2BN4HMH3"
-    address:     "beta.validator.stellar.creit.tech:11625"
-    history:     "curl -sf https://beta-history.validator.stellar.creit.tech/{0} -o {1}"
-  - name: "Creit Gamma"
-    home_domain: "stellar.creit.tech"
-    public_key:  "GBF7QOLFPTHUEDUPTT4ZTULDTA3QXDIO75JHKJN2IYD7YGQLYUTR75BT"
-    address:     "gamma.validator.stellar.creit.tech:11625"
-    history:     "curl -sf https://gamma-history.validator.stellar.creit.tech/{0} -o {1}"
+  # OBSRVR — 3 validators (added to SDF's Tier-1 canonical set as of the
+  # 2026-07-17 re-fetch; replaced the dropped SatoshiPay + Creit validators)
+  - name: "OBSRVR Validator 1"
+    home_domain: "stellar.withobsrvr.com"
+    public_key:  "GDRCZ4IPJR7V3HK4GR45CRTE72SDAOZUF2TDBQ5E5IGWC4KM5TSKU2LS"
+    address:     "core-live-1.nodeswithobsrvr.co:11625"
+    history:     "curl -sf https://history-1.nodeswithobsrvr.co/obsrvr-core-1/{0} -o {1}"
+  - name: "OBSRVR Validator 2"
+    home_domain: "stellar.withobsrvr.com"
+    public_key:  "GA2PU4UGMLSFUXGZATHPTDXXX7FOHBAQC57RSJCQUN72WFKTD6CEPQSF"
+    address:     "core-live-2.nodeswithobsrvr.co:11625"
+    history:     "curl -sf https://history-2.nodeswithobsrvr.co/obsrvr-core-2/{0} -o {1}"
+  - name: "OBSRVR Validator 3"
+    home_domain: "stellar.withobsrvr.com"
+    public_key:  "GACM6GIRMLXBBZIYJXBDTAEYZ2GJP3JJP5G5K4WDPBS6QFHPJNK6S2FB"
+    address:     "core-live-3.nodeswithobsrvr.co:11625"
+    history:     "curl -sf https://history-3.nodeswithobsrvr.co/obsrvr-core-3/{0} -o {1}"
 
   # Stellar Development Foundation — 3 validators
   - name: "SDF 2"
