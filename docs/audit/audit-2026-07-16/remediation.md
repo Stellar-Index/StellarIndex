@@ -49,8 +49,14 @@ These landed by clearing the strongest verification; they are already committed.
 | M14 | `295128cb` | reject issuer max_supply of 0 or below circulating |
 | M4 (partial) | `755ba052` | regression guard: Computers stamp the passed close time; the CALLER fix is deferred (below) |
 | M7 | `b0e01b8b` | /v1/changes money → JSON strings across API + SDK + OpenAPI + Postman + docs |
+| M3 (test) | `a2c41925*` | corrected the fx_quotes orientation fixture that masked M3 (rate_usd is ticker-per-USD, externally confirmed; the FX leg was genuinely inverted) |
+| C2-12 | `3f5693ad` | dedup RMT reads (FINAL / uniqExact) in served analytics counts — a re-ingested row no longer double-counts throughput/op-type/event breakdowns |
+| C2-6 | `5e38f54d` | observation writers keep the FINAL intra-ledger change (intra_ledger_seq guard) not last-writer-wins + migration 0111 |
+| M2 | `d354243c` | non-7dp decimals normalization applied on the ~8 missing serve paths (per-path; main /price byte-identical, no double-apply) |
+| M5,M8,M11 | `867b46e1` | robust manipulation resistance: median+MAD outlier filter (M5), median-filtered global mean (M8), tightened served-VWAP guard (M11) |
+| — (CI) | `b2efc14a` | clear golangci-lint (funlen/gocyclo/predeclared/unparam) + regenerate web API types for the M7 OpenAPI change |
 
-*(C4-14 and C4-15 each appear on two commits — the finding had two aspects, both addressed.)*
+*(C4-14 and C4-15 each appear on two commits — the finding had two aspects, both addressed. The M3 orientation was reconfirmed against Polygon's C:USDEUR convention externally; the integration test that encoded the inverted value was corrected.)*
 
 ---
 
@@ -72,9 +78,16 @@ Main was red for 24h+ on three CI-only checks, invisible to local `make verify`:
 - **C2-11** — `soroban_events` stores topics in 4 fixed columns and truncates >4 (Aquarius ≥5-topic multi-token pools lose topics). Needs a schema change (topics array / overflow) + the ingest capture path + a re-ingest to recover historical events. Migration-owner task.
 - **C2-18** — migration-0105 `classic_movements` DROP. The table has code refs (writer/reader methods) but the finding is they're caller-less; confirming true deadness needs caller-tracing, and a destructive DROP should be operator-reviewed. LOW housekeeping.
 
-## STILL OPEN (in-flight / next wave)
+## REVIEW knobs (defensible defaults chosen; operator may tune)
 
-- **In-flight (3 fixers running, proof-first):** M2 (non-7dp decimals normalization on ~10 serve paths, reader chokepoint), C2-6 (8-worker last-writer-wins observation → non-final intra-ledger balance), M5/M8/M11 (VWAP/global-price/served-guard manipulation resistance).
+- **M11 `guardRatioBound = 3`** — the served-VWAP manipulation tolerance (rejects a >3× single-bucket deviation). The finding's prose wanted ≥3× rejected; the default admits ≤3× to avoid false-rejecting real extreme moves (depegs/halvings). A one-constant tightening if a stricter posture is wanted. Also `M8 aggregatorMADFactor=5`, `M11 guardThinRatioBound=10`.
+
+## STILL OPEN (next wave — value-ranked)
+
+- **M9/M10** — divergence-ref upstream-staleness gates (CoinGecko/CryptoCompare stamp time.Now()) + the remaining float-fiat serve paths (price.go fiat cross-rate fallback, assets_global/chart fiat market-cap).
+- **M13** — confidence `approxUSDVolume` divides CEX quotes by the wrong scale → ~10× liquidity overstatement in the confidence score.
+- **C2-13/14/16/17** — same-op event collapse (cctp/rozo); two enqueue-not-persist backfill cursor advances; oracle window-netting reconcile; graceful-shutdown drain race.
+- **C2-11, C2-18** — deferred above (schema + re-ingest / dead-table DROP).
 - **Queued:** M9/M10 (divergence-ref staleness gates + remaining float-fiat serve paths), M13 (confidence 10× liquidity overstatement), C2-12/13/14/16/17 (RMT-without-FINAL over-count, same-op collapse, enqueue-not-persist cursors, window-netting, shutdown drain).
 
 ## [OP] — operator actions (logged, cannot be done here)
