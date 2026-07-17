@@ -597,7 +597,9 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 					flush()
 				}
 			} else {
-				pipeline.HandleEvent(ctx, logger, store, ev)
+				// Log-and-continue (unchanged re-derive behavior): HandleEvent
+				// logs + counts internally; idempotent ON CONFLICT re-run recovers.
+				_ = pipeline.HandleEvent(ctx, logger, store, ev)
 			}
 		}
 		written[ev.Source()]++

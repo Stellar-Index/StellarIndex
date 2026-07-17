@@ -496,7 +496,10 @@ func runProjectedRebuildWorker(ctx context.Context, sched *windowScheduler, opts
 					windowEmitted++
 					counters.addKind(out.EventKind())
 					if opts.Write {
-						pipeline.HandleEvent(ctx, logger, opts.Store, out)
+						// Log-and-continue (unchanged re-derive behavior): HandleEvent
+						// logs + counts a failed insert internally. The idempotent
+						// ON CONFLICT write is retried by re-running the range.
+						_ = pipeline.HandleEvent(ctx, logger, opts.Store, out)
 					}
 				}
 				return nil

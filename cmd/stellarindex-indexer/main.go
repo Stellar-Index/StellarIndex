@@ -502,8 +502,8 @@ func run(cfgPath string, dryRun bool) error {
 		// Sink wraps the same pipeline.HandleEvent the events
 		// goroutine uses; decoded rows take the same per-source
 		// write path. See internal/pipeline/sink.go.
-		sinkFn := func(ctx context.Context, ev consumer.Event) {
-			pipeline.HandleEvent(ctx, logger, store, ev)
+		sinkFn := func(ctx context.Context, ev consumer.Event) error {
+			return pipeline.HandleEvent(ctx, logger, store, ev)
 		}
 		proj := projector.New(store, registry, sinkFn, logger.With("component", "projector"))
 		// Feed-switch (ADR-0034 #10): read forward events from the CH lake
