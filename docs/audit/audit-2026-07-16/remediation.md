@@ -82,10 +82,13 @@ Main was red for 24h+ on three CI-only checks, invisible to local `make verify`:
 
 - **M11 `guardRatioBound = 3`** — the served-VWAP manipulation tolerance (rejects a >3× single-bucket deviation). The finding's prose wanted ≥3× rejected; the default admits ≤3× to avoid false-rejecting real extreme moves (depegs/halvings). A one-constant tightening if a stricter posture is wanted. Also `M8 aggregatorMADFactor=5`, `M11 guardThinRatioBound=10`.
 
-## IN FLIGHT (next-wave fixers running, proof-first)
+## SECOND WAVE — landed (money2 + data2)
 
-- **M9/M10/M13** — divergence-ref upstream-staleness gates + remaining float-fiat serve paths + the confidence mixed-scale (CEX 1e8) bias.
-- **C2-13/14/16/17** — same-op event collapse (cctp/rozo) + missing batch registry hook; two enqueue-not-persist cursor advances (durability, C2-1 class); oracle window-netting reconcile; graceful-shutdown drain race.
+- **M9** (staleness gates), **M10** (exact fiat money), **M13** (confidence mixed-scale 10× — the author's "log-saturating doesn't care" rationale was disproved: ΔF=0.5 across the sub-$100K band).
+- **C2-13** (cctp/rozo event_index migration 0112 + batch registry hook), **C2-14** (both enqueue-not-persist cursors → persist-confirmed watermarks), **C2-17** (shutdown drain, C2-1 preserved).
+- **C2-16 — DEFERRED (rigorous):** the oracle-reconcile window-netting deliberately absorbs a legacy vintage ledger-keying shift (legacy backfills key by oracle-timestamp ledger, live by event ledger); a strict per-ledger compare would re-introduce false positives on every legacy oracle window. A sound fix needs a content-level per-update reconcile on a vintage-stable identity — flagged, not rushed.
+
+**Total: 52 distinct findings addressed across 42 commits. Full local integration suite + golangci-lint green on the merged tree.**
 
 ## LOW / INFO / GATED tail — disposition
 
