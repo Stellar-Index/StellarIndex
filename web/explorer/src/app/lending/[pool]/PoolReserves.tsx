@@ -7,6 +7,7 @@ import { AssetLink } from '@/components/AssetLink';
 import { DonutChart } from '@/components/charts/DonutChart';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
+import { scaledUnits } from '../../explorer-shared';
 
 interface ReserveRow {
   asset: string;
@@ -33,7 +34,10 @@ function shortAsset(asset: string): string {
 }
 
 function tokenAmount(base: string, decimals: number): string {
-  const n = Number(base) / 10 ** decimals;
+  // Reserve amounts are exact i128 base-unit strings (ADR-0003); scale
+  // via the string-split path, never Number() on the raw integer, which
+  // loses precision above 2^53.
+  const n = scaledUnits(base, decimals);
   if (!Number.isFinite(n)) return base;
   return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(n);
 }
@@ -62,7 +66,7 @@ export function PoolReserves({ pool }: { pool: string }) {
   return (
     <Panel
       title="Reserve composition"
-      hint="Real current-state TVL / utilisation / supply+borrow APY, decoded from the pool contract's Soroban storage (ADR-0039)."
+      hint="Real current-state TVL / utilisation / supply+borrow APR, decoded from the pool contract's Soroban storage (ADR-0039)."
       source={asExample(`/v1/lending/pools/${pool}/reserves`, {})}
       bodyClassName="space-y-3"
     >

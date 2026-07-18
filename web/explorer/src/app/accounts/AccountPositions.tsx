@@ -19,6 +19,7 @@ import {
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
+import { scaledUnits } from '../explorer-shared';
 
 // Mirror of the slice of AccountStateResp we need (kept local so this
 // reads from the SAME React Query cache key the AccountView state panel
@@ -118,7 +119,10 @@ export function AccountPositions({ id }: { id: string }) {
   const priceMap = pricesQ.data ?? {};
   const holdings: Holding[] = assetIds.map((asset) => {
     const raw = asset === 'native' ? state.balance ?? '0' : (state.trustlines ?? []).find((t) => t.asset === asset)?.balance ?? '0';
-    const amount = Number(raw) / 1e7;
+    // Balances are stroop integers (7 decimals, ADR-0003); scale via the
+    // string-split path so a >9e8-XLM holding doesn't lose low digits to
+    // Number() before it feeds the USD total / allocation split.
+    const amount = scaledUnits(raw, 7);
     const priceUSD = priceMap[asset] ?? null;
     const valueUSD = priceUSD != null && Number.isFinite(amount) ? amount * priceUSD : null;
     return { asset, amount, priceUSD, valueUSD };

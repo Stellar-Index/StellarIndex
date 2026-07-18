@@ -48,8 +48,13 @@ export function ConvertPair({
         {},
       );
       const row = (env.data ?? []).find((r) => r.asset_id === `fiat:${to}`);
+      // batch(asset_ids=fiat:{to}, quote=fiat:{from}) returns the value
+      // of 1 {to} in {from} units; the widget displays "1 {from} = ? {to}",
+      // the INVERSE. Invert here so the live rate matches the SSR
+      // `fromToRate` (page.tsx) — otherwise it silently overwrites the
+      // correct initialRate with the wrong direction (audit MONEY-2).
       const price = row?.price ? Number(row.price) : 0;
-      return price > 0 ? price : null;
+      return price > 0 ? 1 / price : null;
     },
     refetchInterval: 60_000,
     staleTime: 30_000,
