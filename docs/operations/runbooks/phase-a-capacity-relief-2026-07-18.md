@@ -24,7 +24,7 @@ Make room for the comprehensive backfill (Phase D) **without hitting the disk wa
 |---|---|---|
 | now (`data/clickhouse` avail) | ~0.9 TiB | fluctuating at 91–94% |
 | recompress `ledger_entry_changes` XDR → ZSTD (measured **1.75×** on `entry_xdr`; p43 canary −31%) | **+~1.3–1.5 TiB** | **in progress** (1 of 16 partitions) |
-| recompress the OTHER big tables — `operations` 3.1T / `operation_results` 2.3T / `transactions` 1.6T / `contract_events` 1.2T (all still **LZ4**) | +~0.5–2 TiB (**TBD** — ratios 1.5–3.2 are less-compressible than XDR; **canary one first**) | not started |
+| recompress the OTHER big tables — `operations` 3.1T / `operation_results` 2.3T / `contract_events` 1.2T (all **LZ4**) | **+~1.5–2.5 TiB** (canary MEASURED **2.04×** on `operations.body_xdr` — worth it; skip/test `transactions` — ratio 1.5, signature-heavy) | next, after LEC |
 | pgbackrest diff prune (13→5 d) | +~1.0 TiB | **deferred** until S3 off-site exists (currently the *only* backup copy) — held as an emergency lever |
 | **Phase D** comprehensive fill (as ZSTD) | −~1.5 TiB | after Phase A |
 
@@ -74,6 +74,16 @@ run-heavy-job.sh recompress-lec bash -c '
   done'
 ```
 Smallest-first builds headroom early. Watch `stellarindex_zfs_pool_low_space` and `SELECT * FROM system.merges`. Reclaims ~1.3–1.5 TiB.
+
+## Step 3b — recompress the other big tables (after Step 3, sequenced not concurrent)
+Canary MEASURED **2.04×** on `operations.body_xdr` → worth ~1.5–2.5 TiB. Same mechanism, run **after** LEC finishes (avoid concurrent merge pressure). For each of `operations`, `operation_results`, `contract_events`:
+```
+# 1. set ZSTD on the blob/XDR columns (instant metadata). Identify them first:
+clickhouse-client --port 9300 -q "SELECT name,type FROM system.columns WHERE database='stellar' AND table='operations' AND (name LIKE '%_xdr' OR type LIKE '%String%') ORDER BY position"
+clickhouse-client --port 9300 -q "ALTER TABLE stellar.operations MODIFY COLUMN body_xdr String CODEC(ZSTD(3))"   # + other _xdr cols
+# 2. recompress per partition, biggest-first, disk-guarded — reuse the recompress-lec.sh pattern (change the table name + [range])
+```
+**Skip / test `transactions`** — its ratio is 1.5 (signature/result XDR is high-entropy; ZSTD won't help much; canary before spending the transient). Keep `max_bytes_to_merge_at_max_space_in_pool` at 150 GiB and the disk floor active throughout.
 
 ## Gate → proceed to Phase D only when ALL hold
 - [ ] `data/clickhouse` available **≥ ~2.0 TiB** (need 1.5 + margin), measured.
