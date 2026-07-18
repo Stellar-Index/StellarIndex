@@ -10,12 +10,17 @@ so it runs everywhere verify.sh does.
 Checks each groups[].rules[] entry has: exactly one of alert|record, an
 `expr`, and no stray rule-shaped keys at the group level.
 """
-import glob, sys
+import glob, os, sys
 try:
     import yaml
 except ImportError:
-    print("lint-rule-structure: PyYAML not available; skipping (CI's promtool job is the backstop)", file=sys.stderr)
-    sys.exit(0)
+    # Fail-closed, not skip: a silent exit-0 here (the old behaviour) let a
+    # mis-indented rule reach main whenever PyYAML happened to be absent — the
+    # exact vacuous-pass this lint exists to prevent. Mirror lint-metric-refs.sh's
+    # `exit 2` on a missing prerequisite so CI installs/repairs it instead.
+    print("lint-rule-structure: FAIL — PyYAML not available; cannot lint rule files "
+          "(install pyyaml so this check runs; refusing to pass vacuously)", file=sys.stderr)
+    sys.exit(2)
 
 DIRS = ["deploy/monitoring/rules", "configs/prometheus/rules.r1"]
 GROUP_LEVEL_RULE_KEYS = {"alert", "record", "expr", "for", "labels", "annotations"}
@@ -27,7 +32,16 @@ def err(path, msg):
     print(f"  {path}: {msg}")
 
 for d in DIRS:
-    for path in sorted(glob.glob(f"{d}/*.yml")):
+    if not os.path.isdir(d):
+        err(d, "rule directory does not exist — a moved/renamed dir would make this "
+               "lint a vacuous pass (empty glob -> exit 0); restore it or fix DIRS")
+        continue
+    yml_files = sorted(glob.glob(f"{d}/*.yml"))
+    if not yml_files:
+        err(d, "rule directory matched zero *.yml files — nothing to lint; a wrong "
+               "path or moved files would otherwise pass silently")
+        continue
+    for path in yml_files:
         try:
             doc = yaml.safe_load(open(path))
         except yaml.YAMLError as e:
