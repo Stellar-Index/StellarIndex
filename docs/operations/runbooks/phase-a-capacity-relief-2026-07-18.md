@@ -15,16 +15,20 @@ Make room for the comprehensive backfill (Phase D) **without hitting the disk wa
 - **Measured ZSTD(3) gain on `entry_xdr` = 1.75×** (LZ4 24.8 MiB → 14.2 MiB, identical rows).
 - Phase 0 **halted** (its runaway loop `/root/phase0.sh` is stopped — do not restart it).
 
-## Capacity math (why it fits)
-| Item | ΔFree |
-|---|---|
-| Start (`data/clickhouse` available) | +0.95 TiB |
-| **Step 1** pgbackrest prune (retention-diff → ~5 d) | **+~1.0 TiB** |
-| **Step 3** recompress `entry_xdr`+`key_xdr` → ZSTD | **+~1.3–1.5 TiB** |
-| = free after Phase A | **~3.3 TiB** |
-| **Phase D** fill (10.5 B ops degraded ranges, as ZSTD) | −~1.5 TiB |
-| = free after Phase D (comprehensive) | **~1.8 TiB** |
-Gate `need+15%` = 1.5 × 1.15 ≈ **1.73 TiB**; free after Phase A ≈ 3.3 TiB → **holds with ~1.8 TiB to spare.**
+## Capacity math (live-updated 2026-07-18 — supersedes the first estimate)
+
+**Hardware reality (verified):** all 4× 7.68 TB NVMes are fully allocated — 2 hold OS (boot/swap/root on md-RAID1) + a 6.9 TB ZFS partition, 2 are whole-disk in the pool; `parted` shows **0 GB unpartitioned** and there is **no spare drive**. Adding *raw* capacity needs a **5th NVMe** — this pool already did a ZFS raidz-expansion, so a 5th drive can join the vdev (+~6.9 TiB usable → pool 94% → ~65%). Durable fix; a Hetzner/`[OP]` action (not doable from software).
+
+**Software reclaim levers (no hardware):**
+| Lever | ΔFree | Status |
+|---|---|---|
+| now (`data/clickhouse` avail) | ~0.9 TiB | fluctuating at 91–94% |
+| recompress `ledger_entry_changes` XDR → ZSTD (measured **1.75×** on `entry_xdr`; p43 canary −31%) | **+~1.3–1.5 TiB** | **in progress** (1 of 16 partitions) |
+| recompress the OTHER big tables — `operations` 3.1T / `operation_results` 2.3T / `transactions` 1.6T / `contract_events` 1.2T (all still **LZ4**) | +~0.5–2 TiB (**TBD** — ratios 1.5–3.2 are less-compressible than XDR; **canary one first**) | not started |
+| pgbackrest diff prune (13→5 d) | +~1.0 TiB | **deferred** until S3 off-site exists (currently the *only* backup copy) — held as an emergency lever |
+| **Phase D** comprehensive fill (as ZSTD) | −~1.5 TiB | after Phase A |
+
+**Net (honest):** software-only — recompress-LEC, no prune, no hardware → after Phase A **~2.3 TiB** free → after Phase D **~0.8 TiB spare (pool ~87%)** — *works, but tight.* The earlier "~3.3 TiB after Phase A" assumed the pgbackrest prune, **now deferred → ~2.3 TiB.** Gate to start Phase D unchanged: free ≥ need (1.5) + 15% ≈ **1.73 TiB** — so we need the other-table recompress **or** the prune **or** the 5th NVMe to clear the gate with margin; recompress-LEC alone doesn't.
 
 ---
 
