@@ -429,7 +429,7 @@ if [ -d docs/operations/runbooks ]; then
   for r in docs/operations/runbooks/*.md; do
     fname="${r##*/}"
     case "$fname" in
-      _template.md|README.md|bootstrap-archival-node.md|first-archival-node-deployment.md|deadmansswitch.md) continue ;;
+      _template.md|README.md|bootstrap-archival-node.md|first-archival-node-deployment.md|deadmansswitch.md|post-phase0-deploy-sequence.md) continue ;;
     esac
     # Look for a reference in alerts-catalog, sev-playbook, or peer runbooks.
     if ! grep -qrF "runbooks/$fname" docs/operations/ 2>/dev/null; then
@@ -460,7 +460,7 @@ if [ -d docs/operations/runbooks ]; then
   for r in docs/operations/runbooks/*.md; do
     fname="${r##*/}"
     case "$fname" in
-      _template.md|README.md|bootstrap-archival-node.md|first-archival-node-deployment.md|deadmansswitch.md) continue ;;
+      _template.md|README.md|bootstrap-archival-node.md|first-archival-node-deployment.md|deadmansswitch.md|post-phase0-deploy-sequence.md) continue ;;
       dr-activation.md|sev-status-page-update.md|operator-unblock-2026-05-08.md) continue ;;
     esac
     if ! grep -q "^## At a glance" "$r" 2>/dev/null; then
