@@ -12,3 +12,16 @@ ExecStart=/usr/local/bin/ch-live-catchup.sh
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=6
+
+# Runs as root: the script sources /etc/default/stellarindex-ops
+# (Postgres DSN + credentials) directly, which is root-readable only.
+# It writes nothing to local disk — all output goes to ClickHouse and
+# Postgres over the network — so no ReadWritePaths are required.
+# Hardening mirrors the archive-completeness root oneshot sibling.
+User=root
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
