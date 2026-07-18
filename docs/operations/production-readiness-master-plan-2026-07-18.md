@@ -76,11 +76,12 @@ The fidelity is a patchwork — full only `[38M→~54M]` + `[~63M→tip]`; degra
 - **F5 — hygiene:** merge dependabot PRs #2–#5 (deps) on green CI.
 
 ## 4. `[OP]` items (need you / off-repo)
-1. **Deploy secrets** (B1) — the hard deploy blocker.
-2. **Cloudflare token rename** (B2) — frontend blocker.
+1. ~~**Deploy secrets** (B1)~~ — **DONE (2026-07-18):** `DEPLOY_SSH_PRIVATE_KEY`, `R1_HOST`, `R1_SSH_KNOWN_HOSTS` set (verified via Actions API); deploy pubkey in R1 root `authorized_keys`. (`R1_USER` unset = defaults to `root`, correct.)
+2. ~~**Cloudflare token** (B2)~~ — **DONE:** `CLOUDFLARE_API_TOKEN` now present → frontend deploy unblocked. (Old `CLOUDFLARE_API_SECRET` still present — harmless leftover, can delete.)
 3. **pgbackrest retention decision** (A1) + **storage-expansion decision** (A3).
 4. **Vault rotation confirm** + **galexie v27 build** (F3).
-5. ~~Re-register cron schedules~~ — **resolved** (schedules now firing).
+5. **Ansible vault secrets NOT set** — `ANSIBLE_VAULT_PASSWORD` + `ANSIBLE_VAULT_FILE_B64` absent. **Not needed for the binary deploy (Phase C)**, but required for the config-drift apply (Phase F2) + the `ansible-drift` CI check. Set before Phase F.
+6. ~~Re-register cron schedules~~ — **resolved** (schedules now firing).
 
 ## 5. Realistic timeline & effort
 | Phase | Effort | Nature |
