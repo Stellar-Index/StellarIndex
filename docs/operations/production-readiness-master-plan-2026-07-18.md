@@ -10,6 +10,17 @@ supersedes_context: docs/operations/runbooks/consolidated-deploy-plan-2026-07-18
 
 The single, honest, dependency-ordered plan to take StellarIndex (Stellar explorer + public pricing API on the R1 Hetzner box) from its current state to a production-live state fit to present to Stellar. Every number here is live-verified on R1 (2026-07-18) or cited to a rehearsed artifact.
 
+> **⭐ THIS IS THE SOURCE OF TRUTH for the production-readiness campaign.** If you're resuming (context was lost / new session): read §0 for current state, then the phases (§3). Companion docs: `runbooks/phase-a-capacity-relief-2026-07-18.md` (capacity detail + live table), `off-site-backup-plan.md`, `runbooks/consolidated-deploy-plan-2026-07-18.md` (Phase C/D detail). Canonical-but-stale: `docs/architecture/ha-plan.md` (§4/§8 need the rewrite noted in §6b).
+
+## 0. CURRENT STATE — resume here (update this section as we progress)
+**As of 2026-07-18 (~18:25 UTC):**
+- **Phase:** A (Capacity). **Running now:** recompressing `ledger_entry_changes` `[38–53]` LZ4→ZSTD on R1 to reclaim ~1.5 TiB (**1 of 16 partitions done**; CH scheduler merges, bounded to ≤150 GiB each, monitored). Live serving/ingest healthy throughout (3 services active, tip advancing). Pool ~93%, free fluctuating ~0.75–1.0 TiB as merges run/complete.
+- **Check progress:** `ssh root@136.243.90.96 "curl -sS localhost:8123/ --data-binary \"SELECT countIf(ratio>9) zstd_done, countIf(ratio<=9) lz4_left FROM (SELECT partition, sum(data_uncompressed_bytes)/sum(data_compressed_bytes) ratio FROM system.parts_columns WHERE database='stellar' AND table='ledger_entry_changes' AND active AND column='entry_xdr' AND toUInt32(partition) BETWEEN 38 AND 53 GROUP BY partition)\""` + `df -h /var/lib/clickhouse`.
+- **Immediate next (in order):** (1) finish recompress-LEC; (2) canary + recompress the other big tables (operations/results/txns/events — still LZ4); (3) clear the Phase A gate (free ≥ ~1.73 TiB); then Phase C (deploy) → D (backfill) → E (prove).
+- **⚠️ In-flight / DO NOT:** do **not** restart `/root/phase0.sh` or `phase0-seam.sh` (halted runaways). **Temp CH settings to REVERT when recompress done:** `max_bytes_to_merge_at_max_space_in_pool` → `161061273600` (150 GiB; already lowered back from 500), `old_parts_lifetime` → `480` (currently 30). pgbackrest prune **deferred** (only backup copy until S3).
+- **Blocked-on-you (`[OP]`):** 5th-NVMe order (durable capacity, recommended); pgbackrest retention #; HA v1-or-fast-follow; S3 provider. Deploy secrets + CF token already ✅.
+- **Branch/PR:** `ops/consolidated-deploy-plan-audited-2026-07-18` → PR #23 (all campaign docs + the recompress script + watchdog fix).
+
 ## 1. Definition of "production ready" (the bar)
 
 | Dimension | Bar |
