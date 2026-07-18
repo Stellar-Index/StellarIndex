@@ -1,7 +1,7 @@
 ---
 title: Consolidated deploy plan — cancel Phase 0 + deploy + single re-derive
 last_verified: 2026-07-18
-status: audited-NOT-YET (go-conditions below)
+status: BLOCKED-on-capacity (comprehensive fill needs ~2.7-3 TiB; ~1 TiB free) — see capacity section
 severity: P1
 ---
 
@@ -9,14 +9,30 @@ severity: P1
 
 **Rationale:** Phase 0 is `ch-backfill … -from 50115806 -to 54115805` on the **old** binary — the *same* operation the post-deploy re-derive runs on the *new* binary, over an overlapping range. Finishing Phase 0 then re-deriving does the same multi-day work twice. Consolidate: cancel Phase 0, deploy, run **one** `ch-backfill [genesis→tip]` on the new binary that fills the entry-change genesis-edge gap **and** closes Phase 0's op-fidelity gap **and** populates `intra_ledger_seq` **and** writes the corrected extraction — one contiguous pass, full-fidelity across all of Stellar history under a single binary.
 
-## Lake-completeness attestation (2026-07-18, live-verified on R1)
-Confirmed the "capture once, decode forever" substrate is comprehensive across **all eras** at the ledger/tx/op/event level, with two boundaries on the state-diff table:
-- **`stellar.ledgers` (commit spine): [2 → tip], contiguous, ZERO missing** — every ledger in Stellar history present.
-- **`transactions`/`operations`/`operation_results`/`contract_events`: [3 → tip]** — full activity history, classic **and** Soroban eras (contract_events holds 12.7B pre-Soroban rows — it captures classic events too).
-- **`ledger_entry_changes` (state diffs): two boundaries →** (1) a genesis-edge floor at 287,404 (below it 0 rows; only 42 rows in the first 1M ledgers — the 2015 near-empty era); (2) the [38.1M→62M] op-fidelity gap. **This genesis→tip re-derive closes both** (`287,404` is not a code floor — grep-confirmed — just where the old backfill started; the archive has the genesis data, proven by tx/op reaching ledger 3).
+## 🔴 CAPACITY BLOCKER + corrected fidelity map (2026-07-18, deep live-verify on R1)
+**A deeper investigation overturned two assumptions this plan (and Phase 0, and ADR-0047) rested on. Do not schedule the re-derive until the capacity plan below is resolved.**
 
-### Why genesis→tip, not [38M→tip] (the "never again" decision)
-User decision (2026-07-18): comprehensive, no compromise for simplicity, never repeat this backfill. One contiguous genesis→tip pass gives **uniform full-fidelity provenance across all history under one binary** — no seam between "old-binary below 38M" and "new-binary above," and it fills the genesis-edge gap in the same pass. After it, the entry-change substrate is complete and correct end-to-end; future extractor fixes are **bounded, idempotent-corrective re-derives of only the affected range** (RMT overwrite + the INV-3 `derive_generation` keystone) — never a from-genesis rebuild. That is the structural guarantee that this is a one-time cost. *(Narrower alternative, if the extra ~1–2 days aren't wanted: fill only [2→287,404] + re-derive [38M→tip], leaving the proven-correct [287,404→38M] middle untouched — comprehensive but with a provenance seam. Recommended: the full pass.)*
+**Activity tables ARE comprehensive** (this part holds): `stellar.ledgers` contiguous [2→tip] zero-missing; `transactions`/`operations`/`operation_results`/`contract_events` all [3→tip], all eras.
+
+**But `ledger_entry_changes` (the state-diff substrate) is a PATCHWORK, not "two boundaries."** Ground truth = ops-vs-changes ratio per ledger (a ledger with thousands of ops but ~0 captured changes is degraded):
+
+| Range | State | Evidence |
+|---|---|---|
+| `[genesis → 38M]` | **degraded** (sparse census `state` rows only, no per-op rows) | 35M window: 25,582 ops → **4** changes |
+| `[38M → ~54M]` | **full fidelity** | 43M: 191,934 ops → 746,214 changes (3.9/op); partitions 38-53 hold 2-7B rows each |
+| `[~54M → ~63M]` | **degraded** (Phase 0's un-finished frontier) | 58M: 66,391 ops → **107** changes; 62.5M: 63,746 → **54** |
+| `[~63M → tip]` | **full fidelity** (live extractor, since ~63M not 62M) | 63.4M: 64,061 ops → 427,782 changes |
+
+**Consequences that break the old plan:** (1) "zero ties below 38M" was measuring near-empty data — **invalid**; the safe re-derive floor is NOT 38M. (2) "full fidelity above 62M" is **false** (62.5M is degraded; live full-fidelity only from ~63M). (3) The fix **requires an archive walk** for every degraded range — a code trace confirmed the per-op rows are physically absent from ClickHouse (only the galexie archive's `LedgerCloseMeta` has them); the in-CH `row_number()` ordinal trick works ONLY for `[63M→tip]` where rows already exist. Correct ordinal = `row_number() OVER (PARTITION BY ledger_seq ORDER BY tx_index, change_index)` — **NOT** `op_index` (that reintroduces the update→remove bug). Note: ledger-level `UpgradesProcessing` changes are not extracted at all (a separate, known gap).
+
+**The capacity collision (measured):** making the substrate comprehensive means archive-walking `[genesis→38M]` + `[54M→63M]`. At the observed full-fidelity density (~4,278 changes/ledger, ~62 B/row on disk), `[54M→62M]` alone adds **~1.93 TiB**; the whole comprehensive fill ≈ **~2.7–3 TiB of NEW data**. The pool has **~1.0 TiB free (93% full, no reclaimable snapshots).** It does not fit. **Even Phase 0's own full scope `[38.1M→62M]` does not fit** — the running Phase 0 is on a disk-collision course for its remaining `[54→62M]`.
+
+**Levers to make room (must PROVE free-space > need + margin before any run):**
+- **Recompress the XDR columns to ZSTD** — `entry_xdr` (2.51 TiB, default **LZ4**) + `key_xdr` (1.03 TiB) dominate; ZSTD on structured XDR ≈ **~1–1.5 TiB reclaimed**. Partition-by-partition, reversible.
+- **Prune pgbackrest diff retention** — 2.52 TiB is ~13 days of daily diffs off one full; trimming to ~5 days ≈ **~1 TiB** (backup-window tradeoff).
+- **Expand storage** (add NVMe / bigger box, ~3–4 TiB headroom) — the robust path for "comprehensive, never again."
+
+**So "comprehensive genesis→tip" is NOT a software-only 5–7 day run.** It is: (1) capacity plan → make room (recompress + prune, and/or expand) with margin proven by measurement; (2) then archive-walk the degraded ranges **per-partition with disk monitoring** (drop-old-partition-before-reinsert, or staging+`REPLACE PARTITION`, to bound transient to ~1 partition ≤424 GiB); (3) in-CH ordinal reproject for `[63M→tip]`; (4) then the `ledger_entries_current` reproject. The genesis-edge `[2→287,404]` is likely unfillable (a prior ledger-2 walk left 0 rows there) — accept + document.
 
 ## AUDIT VERDICT (2026-07-18): NOT-YET — three independent reviewers
 The consolidation logic is **verified sound** (the new-binary `ch-backfill` genuinely supersedes Phase 0; cancelling breaks no dependency — the "gate" is data-derived, not a flag). But the first draft had **two silent-failure traps + a live-lock exposure**, and the deploy is **blocked on operator-only secrets**. All corrections are folded into the sequence below. Do not execute until the **Go-conditions** hold.
