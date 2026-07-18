@@ -31,6 +31,14 @@ After=network-online.target postgresql.service redis-server.service stellarindex
 Wants=network-online.target
 Requires=postgresql.service redis-server.service
 
+# Restart-storm limit — [Unit] directives per systemd.unit(5). systemd
+# >=230 (the Ubuntu 22.04/24.04 deploy targets) IGNORES StartLimit* if
+# placed under [Service]. When more than StartLimitBurst restarts occur
+# within StartLimitIntervalSec the unit enters `failed`, which the
+# node_systemd_unit_state{state="failed"} alert pages on.
+StartLimitIntervalSec=5min
+StartLimitBurst=10
+
 [Service]
 Type=simple
 User=stellarindex
@@ -46,8 +54,6 @@ LimitNPROC=1048576
 
 Restart=on-failure
 RestartSec=10s
-StartLimitInterval=5min
-StartLimitBurst=10
 
 NoNewPrivileges=true
 PrivateTmp=true

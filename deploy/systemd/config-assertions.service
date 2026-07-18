@@ -4,3 +4,18 @@ Description=Stellar Index config-assertion check (guard configs live?)
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/config-assertions.sh
+
+# Runs as root: this probe reads root-only secrets (/etc/default/galexie)
+# and runs privileged host checks — `nft list ruleset`, `zpool status`,
+# `apt-mark showhold` — that a dropped user cannot perform. ProtectSystem
+# is `full` (not `strict`) to keep /var and /root writable: the probe
+# writes its node_exporter textfile-collector output under /var and mc
+# uses HOME=/root. Hardening mirrors the archive-completeness root oneshot.
+User=root
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
