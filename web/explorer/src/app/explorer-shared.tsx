@@ -151,6 +151,66 @@ function bigStroopsToXlm(stroops: bigint): string {
   return neg ? `-${out}` : out;
 }
 
+// Classic (Stellar CAP) operation-amount fields arrive from the API as
+// raw stroop integers at the protocol-fixed 7-decimal scale (ADR-0003),
+// so the display layer must divide by 1e7 — via the exact BigInt path
+// (stroopsToXlm), never Number(). Keyed on field name so ONLY amounts
+// scale: ids, flags, addresses and base_fee (genuinely stroop-labelled)
+// keep rendering verbatim.
+const CLASSIC_AMOUNT_FIELDS = new Set([
+  'amount', // payment / clawback / offer amount
+  'starting_balance', // create_account
+  'send_max',
+  'send_amount',
+  'dest_amount',
+  'dest_min',
+  'buy_amount', // manage_buy_offer
+  'limit', // change_trust — the trust limit is a stroop-scaled amount
+]);
+
+// renderOpFieldValue formats one decoded operation field for display.
+// A classic amount field (see CLASSIC_AMOUNT_FIELDS) is a stroop integer
+// and is scaled to XLM via stroopsToXlm (exact BigInt divide); a
+// non-numeric amount value falls through to the verbatim path. Every
+// other field renders exactly as before — verbatim string/number/bool,
+// else JSON.
+export function renderOpFieldValue(key: string, v: unknown): string {
+  if (v == null) return '—';
+  if (
+    CLASSIC_AMOUNT_FIELDS.has(key) &&
+    (typeof v === 'string' || typeof v === 'number')
+  ) {
+    return stroopsToXlm(v);
+  }
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+    return String(v);
+  }
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
+}
+
+// scaledUnits scales an exact base-unit integer STRING by 10^decimals
+// for display, splitting the string at the decimal point so the raw
+// (possibly >2^53) integer is NEVER routed through Number() as a whole —
+// only the human-scale magnitude is floated (mirrors displayUnits /
+// bigStroopsToXlm; ADR-0003). Returns NaN for non-integer input so
+// callers can fall back to the raw string.
+export function scaledUnits(baseUnits: string, decimals: number): number {
+  const s = baseUnits.trim();
+  if (!/^-?\d+$/.test(s)) return NaN;
+  const neg = s.startsWith('-');
+  const digits = neg ? s.slice(1) : s;
+  if (decimals <= 0) return Number(neg ? `-${digits}` : digits);
+  const padded = digits.padStart(decimals + 1, '0');
+  const whole = padded.slice(0, padded.length - decimals);
+  const frac = padded.slice(padded.length - decimals);
+  const n = Number(`${whole}.${frac}`);
+  return neg ? -n : n;
+}
+
 export function shortHash(
   h: string | undefined | null,
   head = 8,

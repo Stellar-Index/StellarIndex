@@ -84,7 +84,9 @@ function explorerHref(c: SearchClassification): string | null {
     case 'asset':
       // The classification may hand back a ready-made explorer href
       // (e.g. /assets/<slug>); prefer it, else build from canonical.
-      if (c.href && c.href.startsWith('/')) return c.href;
+      // Reject protocol-relative "//evil.com" (an open redirect) — same
+      // guard as CallbackHandler's safe-next check.
+      if (c.href && c.href.startsWith('/') && !c.href.startsWith('//')) return c.href;
       return canonical ? `/assets/${encodeURIComponent(canonical)}` : null;
     default:
       return null;
