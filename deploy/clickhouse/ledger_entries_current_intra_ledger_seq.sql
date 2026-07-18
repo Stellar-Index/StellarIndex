@@ -88,7 +88,7 @@ FROM stellar.ledger_entry_changes;
 -- re-running an overlapping window is SAFE/idempotent. Cap the upper bound at
 -- the ledger_seq that was live when the v2 MV was created (Step 1) — the MV
 -- already captured everything above it — though re-covering it is harmless.
--- Choose {reproject_from} to match the coverage you want: the min(ledger_seq)
+-- Choose {window_start} to match the coverage you want: the min(ledger_seq)
 -- currently in stellar.ledger_entries_current preserves today's coverage floor;
 -- going lower additionally closes that floor (see StreamSACBalanceSeedsFullHistory
 -- in internal/storage/clickhouse/sac_balance_seed.go for why the floor exists).
@@ -105,6 +105,17 @@ FROM stellar.ledger_entry_changes;
 -- match v1 for keys whose last change is unambiguous, and must CORRECT v1 for
 -- keys with a same-ledger update-then-remove: v2 shows change_type='removed',
 -- v1 may show the resurrected before-image):
+-- *** REHEARSAL (2026-07-18, scratch CH 24.8) — READ THIS. The reproject is a
+-- SHAPE change; it makes the tie-break deterministic ONLY where intra_ledger_seq
+-- is populated (new ingest + a re-derived ledger_entry_changes range). A LEGACY
+-- same-ledger tie whose two source rows are BOTH intra_ledger_seq=0 STILL
+-- resolves ARBITRARILY, and this verify query will FALSELY report it as
+-- "corrected" (v1 updated -> v2 removed) identically to a genuine fix. THE ONLY
+-- TELL: v2 intra_ledger_seq (v2_ils below) = 0  ⇒  UNRESOLVED, not corrected.
+-- To actually fix HISTORICAL resurrections you must run the heavy full re-derive
+-- of ledger_entry_changes (which populates intra_ledger_seq) over that range
+-- BEFORE/with the Step-2 window. Go-forward correctness needs neither; the DDL
+-- itself ran clean end-to-end (cutover + both rollbacks verified). ***
 --
 --   SELECT key_xdr,
 --          v1.change_type AS v1_ct, v1.ledger_seq AS v1_ledger,
@@ -120,8 +131,8 @@ FROM stellar.ledger_entry_changes;
 -- the MV under the canonical name/target, then run ONE small overlapping
 -- catch-up reproject for the brief DDL gap (capture the pre-cutover tip first):
 --
---   DROP TABLE stellar.ledger_entries_current_mv;
---   DROP TABLE stellar.ledger_entries_current_v2_mv;
+--   DROP TABLE IF EXISTS stellar.ledger_entries_current_mv;
+--   DROP TABLE IF EXISTS stellar.ledger_entries_current_v2_mv;
 --   RENAME TABLE stellar.ledger_entries_current    TO stellar.ledger_entries_current_old,
 --                stellar.ledger_entries_current_v2 TO stellar.ledger_entries_current;
 --   CREATE MATERIALIZED VIEW stellar.ledger_entries_current_mv
@@ -155,7 +166,7 @@ FROM stellar.ledger_entry_changes;
 --     shape as _v1restore, reproject, and RENAME-swap back (the inverse of
 --     Steps 1-4), OR — if Step 5 has not run — RENAME the retained _old table
 --     back to canonical:
---       DROP TABLE stellar.ledger_entries_current_mv;
+--       DROP TABLE IF EXISTS stellar.ledger_entries_current_mv;
 --       RENAME TABLE stellar.ledger_entries_current     TO stellar.ledger_entries_current_v2,
 --                    stellar.ledger_entries_current_old TO stellar.ledger_entries_current;
 --       CREATE MATERIALIZED VIEW stellar.ledger_entries_current_mv
