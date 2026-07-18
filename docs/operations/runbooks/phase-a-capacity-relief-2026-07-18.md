@@ -28,7 +28,17 @@ Make room for the comprehensive backfill (Phase D) **without hitting the disk wa
 | pgbackrest diff prune (13→5 d) | +~1.0 TiB | **deferred** until S3 off-site exists (currently the *only* backup copy) — held as an emergency lever |
 | **Phase D** comprehensive fill (as ZSTD) | −~1.5 TiB | after Phase A |
 
-**Net (honest):** software-only — recompress-LEC, no prune, no hardware → after Phase A **~2.3 TiB** free → after Phase D **~0.8 TiB spare (pool ~87%)** — *works, but tight.* The earlier "~3.3 TiB after Phase A" assumed the pgbackrest prune, **now deferred → ~2.3 TiB.** Gate to start Phase D unchanged: free ≥ need (1.5) + 15% ≈ **1.73 TiB** — so we need the other-table recompress **or** the prune **or** the 5th NVMe to clear the gate with margin; recompress-LEC alone doesn't.
+**Net (honest):** software-only — recompress-LEC, no prune, no hardware → after Phase A **~2.3 TiB** free → after Phase D **~0.8 TiB spare (pool ~87%)** — *works, but tight.* The earlier "~3.3 TiB after Phase A" assumed the pgbackrest prune, **now deferred → ~2.3 TiB.** Gate to start Phase D unchanged: free ≥ need (1.5) + 15% ≈ **1.73 TiB** — so we need the other-table recompress **or** the prune to clear the gate with margin; recompress-LEC alone doesn't.
+
+**Projection — "will we be full after the backfills?" (answer: no, ~83–85%):**
+| Stage | Usable free | Pool |
+|---|---|---|
+| now (mid-recompress) | ~0.9 TiB | 94% |
+| after LEC recompress | ~2.4 TiB | ~88% |
+| after other-tables recompress (2.04× lever) | ~4–5 TiB | ~76–80% |
+| **after Phase D comprehensive backfill** | **~2.5–3.5 TiB** | **~83–85%** |
+
+**Capacity decision (Ash, 2026-07-19):** a few months of headroom is the bar, and it's **met** — Phase D lands at ~83–85% with ~2.5–3.5 TiB free ≈ **~6 months** of live-growth runway (~5.5 TiB/yr). **A second server will be procured later** for durable growth; the **S3 offload** (galexie archive 5.56 TiB + pgBackRest off-site → frees ~7.5 TiB) is a **deferred lever, not needed now.** ⚠️ The margin depends on the **other-tables recompress** delivering ~1.5–2.5 TiB — without it Phase D lands at ~91% (fits, no headroom), so it's a required Phase A step, not optional.
 
 ---
 
