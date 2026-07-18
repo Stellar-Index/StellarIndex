@@ -29,6 +29,33 @@ err() {
   echo "$((count + 1))" > "$ERROR_FILE"
 }
 
+# ─── 0. Load-bearing source-of-truth inputs must exist ──────────────────────
+#
+# Every check below is gated on `if [ -f X ] && [ -f Y ]`, which turns a
+# missing/renamed load-bearing input into a SILENT SKIP: the check's body
+# never runs, the error counter stays 0, and the script prints "passed".
+# Renaming (say) config.go or the OpenAPI spec would hollow out its doc-sync
+# check with no signal. Assert the load-bearing config/source/spec paths up
+# front so a rename fails the lint instead. Optional/best-effort inputs
+# (runbooks, incidents, web CSP headers, R1 overlays) are intentionally NOT
+# listed here — they are legitimately absent in some checkouts.
+
+require_path() { # require_path <-f|-d> <path>
+  case "$1" in
+    -f) [ -f "$2" ] || err "REQUIRED input missing: file '$2' not found — a rename/move would silently skip its doc-sync check below; restore it or update lint-docs.sh" ;;
+    -d) [ -d "$2" ] || err "REQUIRED input missing: directory '$2' not found — a rename/move would silently skip its doc-sync check below; restore it or update lint-docs.sh" ;;
+  esac
+}
+
+echo "Checking load-bearing inputs exist..."
+require_path -f internal/config/config.go
+require_path -f docs/reference/config/README.md
+require_path -d internal/api/v1
+require_path -f openapi/stellar-index.v1.yaml
+require_path -f docs/reference/api/stellar-index.v1.yaml
+require_path -d internal/obs
+require_path -f docs/reference/metrics/README.md
+
 # ─── 1. Every config `toml:"..."` tag must appear in the generated ref ──────
 #
 # The generated reference (docs/reference/config/README.md) uses the

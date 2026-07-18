@@ -105,6 +105,15 @@ func main() {
 		os.Exit(2)
 	}
 
+	// Fail-closed on an empty path set: parseable YAML with no `paths:` block
+	// would otherwise walk zero operations and print "comply" (exit 0) — a
+	// vacuous pass that hides a wrong file or a spec that lost its paths.
+	// Mirrors verify-launch-ready's zero-rows guard.
+	if len(s.Paths) == 0 {
+		fmt.Fprintf(os.Stderr, "openapi-urls: %s declared zero paths — refusing to pass vacuously (wrong file or missing `paths:` block?)\n", specPath)
+		os.Exit(2)
+	}
+
 	violations := lint(&s)
 	if len(violations) == 0 {
 		fmt.Println("openapi-urls: all query parameters comply with ADR-0018 URL discipline")

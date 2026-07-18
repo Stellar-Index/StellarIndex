@@ -37,6 +37,14 @@ After=network-online.target minio.service postgresql.service redis-server.servic
 Wants=network-online.target
 Requires=postgresql.service
 
+# Restart-storm limit — [Unit] directives per systemd.unit(5). systemd
+# >=230 (the Ubuntu 22.04/24.04 deploy targets) IGNORES StartLimit* if
+# placed under [Service]. When more than StartLimitBurst restarts occur
+# within StartLimitIntervalSec the unit enters `failed`, which the
+# node_systemd_unit_state{state="failed"} alert pages on.
+StartLimitIntervalSec=5min
+StartLimitBurst=10
+
 [Service]
 Type=simple
 User=stellarindex
@@ -53,13 +61,11 @@ LimitNOFILE=1048576
 LimitNPROC=1048576
 
 # Restart on crash but with backoff to avoid hot-looping on a
-# config-side break (e.g. DB unreachable). systemd marks the unit
-# `failed` after StartLimitBurst restarts in StartLimitInterval —
-# Prometheus alerts pick that up via node_systemd_unit_state.
+# config-side break (e.g. DB unreachable). The restart-storm limit
+# that marks the unit `failed` (and pages via node_systemd_unit_state)
+# lives in [Unit] (StartLimit*) — see the comment there.
 Restart=on-failure
 RestartSec=10s
-StartLimitInterval=5min
-StartLimitBurst=10
 
 # Hardening — read-only most of the filesystem, write only to
 # the working dir + the cache dir if any.
