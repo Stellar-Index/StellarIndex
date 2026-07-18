@@ -112,10 +112,14 @@ FROM stellar.ledger_entry_changes;
 -- resolves ARBITRARILY, and this verify query will FALSELY report it as
 -- "corrected" (v1 updated -> v2 removed) identically to a genuine fix. THE ONLY
 -- TELL: v2 intra_ledger_seq (v2_ils below) = 0  ⇒  UNRESOLVED, not corrected.
--- To actually fix HISTORICAL resurrections you must run the heavy full re-derive
--- of ledger_entry_changes (which populates intra_ledger_seq) over that range
--- BEFORE/with the Step-2 window. Go-forward correctness needs neither; the DDL
--- itself ran clean end-to-end (cutover + both rollbacks verified). ***
+-- To actually fix HISTORICAL resurrections you must first re-derive
+-- ledger_entry_changes (idempotent-corrective under this RMT — no truncate):
+--   stellarindex-ops ch-backfill -from 38000000 -to <tip>   (new binary, windowed)
+-- Range is PROVEN: genesis(287404)→38M has ZERO same-ledger ties (full scan);
+-- they begin in (38M,40M]. So [38M→tip] is the complete tie-range. Run it BEFORE
+-- the Step-2 windows. Go-forward correctness needs neither. The DDL itself ran
+-- clean end-to-end (cutover + both rollbacks verified). See the runbook
+-- docs/operations/runbooks/post-phase0-deploy-sequence.md Step 3a. ***
 --
 --   SELECT key_xdr,
 --          v1.change_type AS v1_ct, v1.ledger_seq AS v1_ledger,
