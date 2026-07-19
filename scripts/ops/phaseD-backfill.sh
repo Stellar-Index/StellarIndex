@@ -25,7 +25,7 @@ for range in "54000000 63050000" "2 38000000"; do
     case "$avail" in ''|*[!0-9]*) sleep 60; continue ;; esac
     if [ "$avail" -lt "$FLOOR_KB" ]; then echo "$(date -u +%FT%TZ) PAUSE <500G (${avail}KiB) before $w" >> "$LOG"; sleep 300; continue; fi
     echo "$(date -u +%FT%TZ) window $w-$wto START avail=${avail}KiB" >> "$LOG"
-    if "$OPS" ch-backfill -config /etc/stellarindex.toml -bucket galexie-archive -parallel 3 -flush-every 200 -from "$w" -to "$wto" >> "$LOG" 2>&1; then
+    if "$OPS" ch-backfill -config /etc/stellarindex.toml -bucket galexie-archive -parallel 8 -flush-every 200 -from "$w" -to "$wto" >> "$LOG" 2>&1; then
       echo "$w" >> "$STATE"
       echo "$(date -u +%FT%TZ) window $w-$wto DONE (avail now $(df --output=avail -k /var/lib/clickhouse | tail -1 | tr -d ' ')KiB, tip $(curl -sS --max-time 15 localhost:8123/ --data-binary 'SELECT max(ledger_seq) FROM stellar.ledgers'))" >> "$LOG"
     else
