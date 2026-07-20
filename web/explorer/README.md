@@ -17,13 +17,12 @@ phasing.
 
 ## Stack
 
-- [Next.js 15](https://nextjs.org) — app router, RSC default
+- [Next.js 16](https://nextjs.org) — app router, RSC default
 - TypeScript (strict)
-- [TailwindCSS](https://tailwindcss.com) + [shadcn/ui](https://ui.shadcn.com)
+- [TailwindCSS 4](https://tailwindcss.com) — semantic tokens in the `@theme` block of `src/app/globals.css` (there is no `tailwind.config.ts`) + a hand-rolled component library in `src/components/ui` (see [design-system.md](../../docs/architecture/design-system.md)) — **not** shadcn/ui
 - [TradingView Lightweight Charts](https://tradingview.github.io/lightweight-charts/)
 - [TanStack Query v5](https://tanstack.com/query)
 - [openapi-typescript](https://github.com/openapi-ts/openapi-typescript) — types generated from `../../openapi/stellar-index.v1.yaml`
-- [Zod](https://zod.dev) — runtime validation at the API boundary
 - [satori](https://github.com/vercel/satori) + [@resvg/resvg-js](https://github.com/yisibl/resvg-js) — Open Graph card generation (build-time + Cloudflare Worker for long-tail)
 - [lucide-react](https://lucide.dev) — icons
 - MDX via `@next/mdx` (Phase 12 — research blog)

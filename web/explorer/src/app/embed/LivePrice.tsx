@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
+import { API_BASE_URL as API_BASE } from '@/api/client';
 
 /**
  * LivePrice — client-side price hydration for the embed widgets

@@ -6,9 +6,7 @@ import { LivePrice } from '../../LivePrice';
 // plus the spec'd since board #33; narrowed-to-required here coin-overlay fields this widget reads:
 // price_history_24h / change_1h_pct / change_7d_pct).
 import type { Coin } from '@/api/hooks';
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
+import { API_BASE_URL } from '@/api/client';
 
 const isCIStub =
   API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
