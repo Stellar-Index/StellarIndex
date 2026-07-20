@@ -217,7 +217,7 @@ function Sparkline({ points, positive }: { points: { p?: string | null }[]; posi
     lastIdx = i;
   });
   if (pen && runStart >= 0) runs.push({ start: runStart, end: lastIdx });
-  const fill = positive ? 'rgba(16,185,129,0.14)' : 'rgba(244,63,94,0.14)';
+  const fill = positive ? 'var(--color-up-subtle)' : 'var(--color-down-subtle)';
   const areaSegs: string[] = [];
   for (const run of runs) {
     let started = false;

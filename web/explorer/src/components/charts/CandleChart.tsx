@@ -3,7 +3,6 @@
 import { useEffect, useRef } from 'react';
 import {
   CandlestickSeries,
-  ColorType,
   createChart,
   HistogramSeries,
   type CandlestickData,
@@ -14,6 +13,7 @@ import {
 } from 'lightweight-charts';
 
 import { localTickMarkFormatter, localCrosshairTimeFormatter } from './localTime';
+import { readChartTheme, baseChartOptions, type ChartTheme } from './chartTheme';
 
 export type CandlePoint = {
   /** Unix epoch seconds */
@@ -22,7 +22,7 @@ export type CandlePoint = {
   high: number;
   low: number;
   close: number;
-  /** Optional per-bar volume — renders a histogram under the candles. */
+  /** Optional per-bar volume — renders a histogram in the pane below. */
   volume?: number;
 };
 
@@ -33,95 +33,82 @@ export type CandleChartProps = {
   /**
    * Text alternative for the canvas-rendered chart (WCAG 1.1.1).
    * lightweight-charts paints to a <canvas> with no DOM text, so
-   * screen readers get nothing without this. Callers should pass a
-   * summary like "XLM/USD daily candles"; falls back to a generic
-   * label with the bar count.
+   * screen readers get nothing without this.
    */
   ariaLabel?: string;
 };
 
 /**
- * CandleChart — TradingView Lightweight Charts wrapper: OHLC
- * candlesticks with an optional volume histogram underneath (rendered
- * when any bar carries a `volume`). The volume series sits on its own
- * overlaid price scale pinned to the bottom ~22% so it never collides
- * with the price axis.
+ * CandleChart — TradingView Lightweight Charts wrapper: OHLC candlesticks with
+ * an optional VOLUME histogram in a separate pane **below** the price pane
+ * (v5 native multi-pane, ~75/25 split), sharing one time axis. Colours are
+ * driven by the dark design tokens via ./chartTheme (no hardcoded literals).
  *
- * Per docs/architecture/explorer-implementation-plan.md §1.1 we use
- * Lightweight Charts (BSD, ~30 KB gzipped) over the full Charting
- * Library — drawing tools aren't needed at v1 and the bundle savings
- * matter for the per-route budget.
- *
- * The component owns the chart lifecycle: create on mount, apply
- * theme, dispose on unmount. Data updates push via setData rather than
- * tearing down the chart on re-render.
+ * The component owns the chart lifecycle: create on mount, dispose on unmount.
+ * Data updates push via setData rather than tearing down the chart.
  */
 export function CandleChart({ data, height = 360, className, ariaLabel }: CandleChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+  const themeRef = useRef<ChartTheme | null>(null);
+
+  const hasVolume = data.some((p) => p.volume != null && Number.isFinite(p.volume));
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
+    const theme = readChartTheme();
+    themeRef.current = theme;
+
     const chart = createChart(container, {
-      layout: {
-        background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#64748b', // slate-500
-        fontFamily: 'var(--font-sans)',
-        fontSize: 11,
-      },
-      grid: {
-        horzLines: { color: 'rgba(148, 163, 184, 0.15)' }, // slate-400 @ 15%
-        vertLines: { color: 'rgba(148, 163, 184, 0.10)' },
-      },
+      ...baseChartOptions(theme, { timeVisible: true }),
       timeScale: {
         timeVisible: true,
         secondsVisible: false,
-        borderColor: 'rgba(148, 163, 184, 0.25)',
-        // Local-time axis labels — see ./localTime. The default is UTC,
-        // which reads as "stale" against a viewer's wall clock.
+        borderColor: theme.border,
+        // Local-time axis labels — the default UTC reads as "stale".
         tickMarkFormatter: localTickMarkFormatter,
       },
       localization: {
         timeFormatter: localCrosshairTimeFormatter,
       },
       rightPriceScale: {
-        borderColor: 'rgba(148, 163, 184, 0.25)',
-        // Leave room at the bottom for the volume histogram.
-        scaleMargins: { top: 0.08, bottom: 0.26 },
-      },
-      crosshair: {
-        mode: 1, // CrosshairMode.Normal
+        borderColor: theme.border,
+        scaleMargins: { top: 0.1, bottom: 0.08 },
       },
       width: container.clientWidth,
       height,
     });
     chartRef.current = chart;
 
-    // lightweight-charts v5 series API: addSeries(SeriesDefinition, options).
     const series = chart.addSeries(CandlestickSeries, {
-      upColor: '#16a34a', // up
-      downColor: '#dc2626', // down
-      wickUpColor: '#16a34a',
-      wickDownColor: '#dc2626',
+      upColor: theme.up,
+      downColor: theme.down,
+      wickUpColor: theme.up,
+      wickDownColor: theme.down,
       borderVisible: false,
     });
     seriesRef.current = series;
 
-    // Volume histogram on its own overlay scale, pinned to the bottom.
-    const volume = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: 'volume' },
-      priceScaleId: 'volume',
-      priceLineVisible: false,
-      lastValueVisible: false,
-    });
-    chart.priceScale('volume').applyOptions({
-      scaleMargins: { top: 0.8, bottom: 0 },
-    });
-    volumeRef.current = volume;
+    if (hasVolume) {
+      // Volume in its own pane (index 1), below the price pane.
+      const volume = chart.addSeries(
+        HistogramSeries,
+        { priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: false },
+        1,
+      );
+      volume.priceScale().applyOptions({ scaleMargins: { top: 0.15, bottom: 0 } });
+      volumeRef.current = volume;
+      // Split ~75% price / ~25% volume.
+      const panes = chart.panes();
+      if (panes.length > 1) {
+        panes[0].setStretchFactor(3);
+        panes[1].setStretchFactor(1);
+      }
+    }
 
     const ro = new ResizeObserver((entries) => {
       for (const e of entries) {
@@ -137,18 +124,13 @@ export function CandleChart({ data, height = 360, className, ariaLabel }: Candle
       seriesRef.current = null;
       volumeRef.current = null;
     };
-    // `data` is intentionally NOT a dep — the data effect below updates
-    // without tearing down the chart. Effect ordering guarantees the
-    // data effect fires after this one on first render. (This effect
-    // body reads no reactive value beyond `height`, so exhaustive-deps
-    // is already satisfied — no disable needed.)
-  }, [height]);
+  }, [height, hasVolume]);
 
-  // Push new data on prop changes (and initial mount) without
-  // destroying the chart.
+  // Push new data on prop changes (and initial mount) without destroying the chart.
   useEffect(() => {
+    const theme = themeRef.current;
     seriesRef.current?.setData(toSeries(data));
-    volumeRef.current?.setData(toVolume(data));
+    if (theme) volumeRef.current?.setData(toVolume(data, theme));
     chartRef.current?.timeScale().fitContent();
   }, [data]);
 
@@ -176,14 +158,14 @@ function toSeries(points: CandlePoint[]): CandlestickData<Time>[] {
   }));
 }
 
-// Volume bars, tinted to the bar's direction (green when close ≥ open,
-// red otherwise) at low opacity so they read as context, not foreground.
-function toVolume(points: CandlePoint[]): HistogramData<Time>[] {
+// Volume bars, tinted to the bar's direction (up when close ≥ open) at low
+// opacity so they read as context, not foreground.
+function toVolume(points: CandlePoint[], theme: ChartTheme): HistogramData<Time>[] {
   return points
     .filter((p) => p.volume != null && Number.isFinite(p.volume))
     .map((p) => ({
       time: p.time as Time,
       value: p.volume as number,
-      color: p.close >= p.open ? 'rgba(22, 163, 74, 0.45)' : 'rgba(220, 38, 38, 0.45)',
+      color: p.close >= p.open ? theme.volUp : theme.volDown,
     }));
 }

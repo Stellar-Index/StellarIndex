@@ -50,10 +50,10 @@ export function Sparkline({
     tone === 'auto' ? (netDelta >= 0 ? 'up' : 'down') : tone;
   const stroke =
     resolvedTone === 'up'
-      ? 'rgb(22 163 74)' // up-DEFAULT
+      ? 'var(--color-up)'
       : resolvedTone === 'down'
-        ? 'rgb(220 38 38)' // down-DEFAULT
-        : 'rgb(100 116 139)'; // slate-500
+        ? 'var(--color-down)'
+        : 'var(--color-ink-faint)';
 
   return (
     <svg
