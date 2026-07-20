@@ -106,9 +106,11 @@ whole route — decompose before reordering) · ⚪ content/simple page (fine as
 
 1. **`contract/ContractView.tsx`** (947, 96% of route) — split into
    header / metadata / interface / activity / holders sections.
-2. **`assets/[slug]/page.tsx`** (1526) — extract the still-inline
-   `OverviewBody`, `AssetFAQ`, `VerifiedCurrencyView` into co-located files
-   (the tab panels are already split — follow that pattern).
+2. **`assets/[slug]/page.tsx`** (was 1526) — extract the still-inline
+   `OverviewBody`, `VerifiedCurrencyView` into co-located files (the tab panels
+   are already split — follow that pattern). ✅ **`AssetFAQ` done 2026-07-20 as
+   the worked example** → `./AssetFAQ.tsx` (+ `AssetFAQ.test.tsx`); replicate its
+   shape for the rest.
 3. **`network/NetworkView.tsx`** (553, 97%) — split the metric/health/chart
    sections.
 4. **`markets/[pair]/page.tsx`** (741) & **`issuers/[g_strkey]/page.tsx`**
@@ -118,7 +120,12 @@ whole route — decompose before reordering) · ⚪ content/simple page (fine as
 
 Extraction is behavior-preserving (move JSX + props into a co-located
 `*.tsx`, import it back). With the [safety net](#safety-net) in place it's low
-risk.
+risk. **The worked example (`AssetFAQ`) is the template:** move the trio
+(data-builder + component + item), add a render test, run
+`pnpm test && pnpm typecheck`. **Lesson from it:** a helper may have more than
+one caller — `assetFaqFor` also feeds the FAQ JSON-LD schema, so it had to be
+*exported*, not just moved. `pnpm typecheck` catches that coupling instantly;
+always run it after an extraction rather than assuming a section is self-contained.
 
 ## The redesign playbook
 
