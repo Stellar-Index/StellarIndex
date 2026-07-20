@@ -155,8 +155,24 @@ risk.
 
 ## Safety net
 
-**Status: (being added 2026-07-20).** Target: `vitest` + React Testing Library
-render/smoke tests over `components/ui/` + `components/primitives/` (props-only,
-deterministic) and a few prop-driven section components. Rationale: these are
-exactly the pieces a redesign manipulates, and a green net turns "restructure a
-fair bit" from blind surgery into a checked refactor. Run with `pnpm test`.
+**Status: landed 2026-07-20** — `pnpm test` (vitest + React Testing Library +
+jsdom). 34 tests, all green:
+
+- `src/components/ui/ui.test.tsx` — every design-system primitive renders with
+  the right semantics (roles, text, element type — *not* Tailwind classes, so a
+  restyle won't trip it).
+- `src/components/primitives/primitives.test.tsx` — the domain atoms render
+  across their key branches (delta/no-data, streak/ath, etc.).
+- `src/lib/format.test.ts` + `src/lib/cn.test.ts` — the pure formatters and the
+  class-merge helper (exact-output assertions — these *should* fail if logic
+  changes).
+
+Infra: `vitest.config.ts` (esbuild automatic JSX — no `@vitejs/plugin-react`
+needed; `@/` alias + hermetic `next/link` / `next/navigation` stubs under
+`test/stubs/` so `<Link>`-using components render without the Next runtime),
+`vitest.setup.ts` (jest-dom matchers + auto-cleanup).
+
+This is a **starting net over the redesign surface**, not full coverage — extend
+it as you extract sections from the monoliths (a render test per newly-extracted
+section is the cheap, high-value habit). Gate a restructure with
+`pnpm test && pnpm typecheck`.
