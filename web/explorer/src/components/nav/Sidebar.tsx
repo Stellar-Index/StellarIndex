@@ -40,6 +40,7 @@ import {
 import { useEffect, useRef, useState } from 'react';
 
 import { useMe } from '@/api/hooks';
+import { API_BASE_URL } from '@/api/client';
 import { cn } from '@/lib/cn';
 import { SearchModal } from './SearchModal';
 
@@ -290,8 +291,7 @@ function AccountMenu({ email }: { email?: string }) {
 
   async function signOut() {
     try {
-      const base = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
-      await fetch(`${base}/v1/auth/logout`, { method: 'POST', credentials: 'include' });
+      await fetch(`${API_BASE_URL}/v1/auth/logout`, { method: 'POST', credentials: 'include' });
     } catch {
       /* best-effort */
     }

@@ -8,9 +8,7 @@ import { assetHrefFor } from '@/lib/fiat-slugs';
 import { buildConvertParams } from '@/lib/convert-params';
 import { ConvertPair } from './ConvertPair';
 import { ConvertChart } from './ConvertChart';
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
+import { API_BASE_URL } from '@/api/client';
 
 const isCIStub =
   API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
