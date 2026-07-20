@@ -2,7 +2,7 @@
 title: Design system — Stellar Index web (v2)
 date: 2026-06-17
 status: active
-last_verified: 2026-06-17
+last_verified: 2026-07-20
 ---
 
 # Design system
@@ -13,9 +13,12 @@ explorer (`web/explorer`, which now also hosts the in-site customer account at
 everywhere. (The standalone `web/dashboard` app was consolidated into the
 explorer on 2026-06-17.)
 
-**Live reference:** `/dev/styleguide` in the explorer renders every token and
-component. **Tokens:** `web/explorer/tailwind.config.ts`. **Base layer:**
-`web/explorer/src/app/globals.css`. **Components:** `web/explorer/src/components/ui/`.
+**Live reference:** `/dev/styleguide` (+ `/dev/primitives`) in the explorer
+renders every token and component. **Tokens:** the `@theme` block in
+`web/explorer/src/app/globals.css` — Tailwind 4 defines the design tokens
+inline in CSS, there is **no `tailwind.config.ts`**. **Components:**
+`web/explorer/src/components/ui/` (barrel: `@/components/ui`). See also the
+restructuring companion, `docs/frontend/redesign-readiness.md`.
 
 ## Principles
 
