@@ -25,7 +25,7 @@ tiny separate app (one client component) and out of scope here.
 | **Reorder sections within a *decomposed* page** | 🟢 Easy | It's rearranging composed children / tab arrays. Most routes are here. |
 | **Reorder sections within a *monolith* page** | 🟡 Medium | Sections are inline JSX in one big file — extract first (list below), then reorder. |
 | **Restructure IA** (move a feature between pages, new layouts, new nav) | 🟡 Medium | Nav is centralized, routes are independent feature folders, data is decoupled via generated types — feasible, but some sections assume their page's loaded data shape. |
-| **Add dark mode** | 🟠 Deliberate non-goal | `design-system.md` is light-mode-only by decision; legacy `dark:` is being *stripped*. Reversing that is a project, not a toggle. |
+| **Theme** | ⚫ Dark only (2026-07-21) | The system is now dark-only — semantic tokens are defined dark; no light/dark toggle. See `dark-redesign-direction.md`. |
 
 **Biggest single lever before a heavy redesign:** the test net (there is
 currently *zero* — see [Safety net](#safety-net)). Everything else is in good
