@@ -136,7 +136,7 @@ development. If one does, it's a bug.
 ├── openapi/                   stellar-index.v1.yaml — source of truth for API
 ├── examples/                  curl scripts + Postman collection (auto-gen) for the public API
 ├── deploy/                    docker-compose (dev), systemd (production unit files), monitoring (Prometheus rules — multi-host), clickhouse/ (tier-1 lake DDL, ADR-0034), comms/ (customer-facing incident/launch templates). The shipped status-page lives at `web/status/` (Cloudflare Pages static export); earlier scaffolds were retired (F-1211 / wave 57).
-├── web/explorer/              Next.js 15 static-export explorer rendered at stellarindex.io (Cloudflare Pages)
+├── web/explorer/              Next.js 16 static-export explorer rendered at stellarindex.io (Cloudflare Pages); see web/explorer/CLAUDE.md for the frontend/design brief
 ├── scripts/                   dev/ops/ci helpers (incl. ci/lint-docs.sh, dev/r1-smoke.sh)
 ├── test/                      integration / fixtures (build tag: integration), load (k6), chaos
 │

@@ -12,9 +12,7 @@ import {
 import { Badge, Card, Container, type BadgeTone } from '@/components/ui';
 import { isSafeHref } from '@/lib/markdown';
 import type { components, paths } from '@/api/types';
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
+import { API_BASE_URL } from '@/api/client';
 
 // Polled every 30 s — same cadence as Healthchecks.io's hosted
 // status pages and well inside the 60-s indexer/aggregator

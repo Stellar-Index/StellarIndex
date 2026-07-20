@@ -3,9 +3,7 @@ import type { Metadata } from 'next';
 // Wire shapes from the generated OpenAPI contract (src/api/types.ts,
 // `make web-generate-api`).
 import type { components } from '@/api/types';
-
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
+import { API_BASE_URL } from '@/api/client';
 
 const isCIStub =
   API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
