@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import { Inter, JetBrains_Mono } from 'next/font/google';
+import { Inter, JetBrains_Mono, Fraunces } from 'next/font/google';
 import './globals.css';
 import { ConsoleShell } from '@/components/nav/ConsoleShell';
 import { QueryProvider } from '@/components/QueryProvider';
@@ -19,6 +19,14 @@ const jetbrainsMono = JetBrains_Mono({
   display: 'swap',
   variable: '--font-mono',
 });
+// Fraunces (serif) carries the display/identity voice — page titles + hero
+// figures — against Inter body and JetBrains Mono data. Self-hosted via
+// next/font; exposed as --font-serif for the Tailwind theme + `font-display`.
+const fraunces = Fraunces({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-serif',
+});
 
 const SITE_URL = 'https://stellarindex.io';
 const SITE_NAME = 'Stellar Index';
@@ -27,7 +35,7 @@ const SITE_DESCRIPTION =
 
 // Mobile address-bar / PWA theme tint — the primary brand blue (brand-600).
 export const viewport: Viewport = {
-  themeColor: '#1f4ae0',
+  themeColor: '#0a0b0d',
 };
 
 export const metadata: Metadata = {
@@ -110,7 +118,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
+    <html
+      lang="en"
+      className={`${inter.variable} ${jetbrainsMono.variable} ${fraunces.variable}`}
+    >
       <head>
         {/* Build identifier — same SHA + time as the footer badge,
             in machine-readable form. `curl -s stellarindex.io | grep
