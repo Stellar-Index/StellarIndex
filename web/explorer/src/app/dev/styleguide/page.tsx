@@ -104,7 +104,7 @@ export default function StyleGuidePage() {
         <PageHeader
           eyebrow="Design system"
           title="Style guide"
-          description="The living reference for Stellar Index's light-mode design system — tokens, type, and every UI primitive. Build pages from these."
+          description="The living reference for Stellar Index's dark design system — tokens, type, and every UI primitive. Build pages from these."
         />
 
         {/* Colour */}

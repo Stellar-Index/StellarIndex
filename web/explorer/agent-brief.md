@@ -22,8 +22,13 @@ TanStack Query. Customer account at `/account/*`. ~70 routes.
    tokens in the `@theme` block of `src/app/globals.css` (Tailwind 4 — there is
    **no `tailwind.config.ts`**). Restyle by editing tokens. Compose class
    strings with `cn()` (`@/lib/cn`, last-wins merge) — never concatenate.
-3. **Light mode only.** No `dark:` variants — it's a deliberate non-goal and
-   legacy `dark:` is being stripped. Design for a near-white canvas.
+3. **Dark only.** The semantic tokens are defined dark (neutral near-black
+   canvas `#0a0b0d`); there is one mode — don't add `dark:` variants or a
+   light/dark toggle. Depth comes from surface layering + hairline borders, not
+   shadows. Type: **Fraunces serif** for display/titles (`h1`, `.font-display`),
+   **Inter** body, **JetBrains Mono** for all data/numerics/eyebrows. Charts
+   theme from tokens via `components/charts/chartTheme.ts`. See
+   `docs/frontend/dark-redesign-direction.md`.
 4. **Never hand-edit `src/api/types.ts`.** It's generated from the OpenAPI spec
    (`pnpm generate:api`) and CI drift-gated. Data flows through `api/client.ts`
    (`API_BASE_URL` + `apiGet` — import it, don't re-derive the base), build-time

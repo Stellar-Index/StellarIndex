@@ -13,19 +13,20 @@ export type DonutSlice = {
   color?: string;
 };
 
-// Categorical palette — distinct hues, design-token-aligned where possible.
-// Used for composition breakdowns (reserves, source classes, protocol mix).
+// Categorical palette — distinct hues tuned for the dark canvas (brighter /
+// more saturated than mid-tones so segments read against near-black). Used for
+// composition breakdowns (reserves, source classes, protocol mix).
 const PALETTE = [
-  '#0284c7', // brand-600
-  '#16a34a', // up
-  '#d97706', // amber-600
-  '#7c3aed', // violet-600
-  '#0891b2', // cyan-600
-  '#db2777', // pink-600
-  '#ea580c', // orange-600
-  '#4f46e5', // indigo-600
-  '#0d9488', // teal-600
-  '#94a3b8', // slate-400 (tail / "other")
+  '#4c7dff', // brand blue
+  '#31c48d', // green (up)
+  '#e0a63c', // amber
+  '#a78bfa', // violet
+  '#22d3ee', // cyan
+  '#f472b6', // pink
+  '#fb923c', // orange
+  '#818cf8', // indigo
+  '#2dd4bf', // teal
+  '#5b6472', // ink-faint (tail / "other")
 ];
 
 /**

@@ -350,7 +350,7 @@ function Sparkline({ points }: { points: { p?: string | null }[] }) {
   });
   if (pen && runStart >= 0) runs.push({ start: runStart, end: lastIdx });
   const trendUp = valid[valid.length - 1].n! >= valid[0].n!;
-  const fill = trendUp ? 'rgba(16,185,129,0.14)' : 'rgba(244,63,94,0.14)';
+  const fill = trendUp ? 'var(--color-up-subtle)' : 'var(--color-down-subtle)';
   // Area path: one closed sub-region per contiguous run.
   const areaSegs: string[] = [];
   for (const run of runs) {

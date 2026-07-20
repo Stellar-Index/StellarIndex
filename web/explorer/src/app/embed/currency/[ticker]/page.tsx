@@ -229,8 +229,8 @@ function Sparkline({ points, positive }: { points: number[]; positive: boolean }
     .map((pt, i) => `${i === 0 ? 'M' : 'L'}${pt.x.toFixed(2)},${pt.y.toFixed(2)}`)
     .join(' ');
   const area = `${path} L${xy[xy.length - 1].x.toFixed(2)},${h} L${xy[0].x.toFixed(2)},${h} Z`;
-  const stroke = positive ? '#059669' : '#e11d48';
-  const fill = positive ? 'rgba(16,185,129,0.14)' : 'rgba(244,63,94,0.14)';
+  const stroke = positive ? 'var(--color-up)' : 'var(--color-down)';
+  const fill = positive ? 'var(--color-up-subtle)' : 'var(--color-down-subtle)';
   return (
     <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="h-9 w-full">
       <path d={area} fill={fill} stroke="none" />

@@ -2,91 +2,116 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ─────────────────────────────────────────────────────────────────────────
+   Stellar Index — dark design system (v3, 2026-07-20).
+   Dark is the ONLY mode: the semantic tokens below are defined dark, so every
+   component built on bg-surface / text-ink / border-line flips automatically.
+   The numbered tint scales (-50/-100…) run dark→bright (low = dark tint bg,
+   high = bright text) because on dark that's the direction chips/callouts need.
+   Reference: dune.com product UI. See docs/frontend/dark-redesign-direction.md.
+   ───────────────────────────────────────────────────────────────────────── */
 @theme {
-  --color-brand-50: #eef4ff;
-  --color-brand-100: #d9e6ff;
-  --color-brand-200: #bcd3ff;
-  --color-brand-300: #8eb6ff;
-  --color-brand-400: #598dff;
-  --color-brand-500: #3366f6;
-  --color-brand-600: #1f4ae0;
-  --color-brand-700: #1a3bc2;
-  --color-brand-800: #1b349c;
-  --color-brand-900: #1c317b;
-  --color-brand-950: #151f4b;
+  /* Brand — Stellar Index blue, tuned for dark. 400–600 = the live accent
+     (links, focus, primary); low steps = dark navy tints; high = bright text. */
+  --color-brand-50: #101f42;
+  --color-brand-100: #16295c;
+  --color-brand-200: #1e3a80;
+  --color-brand-300: #3358bf;
+  --color-brand-400: #6e97ff;
+  --color-brand-500: #4c7dff;
+  --color-brand-600: #4270f0;
+  --color-brand-700: #86a9ff;
+  --color-brand-800: #21408f;
+  --color-brand-900: #b3caff;
+  --color-brand-950: #0b1226;
 
-  --color-surface: #ffffff;
-  --color-surface-canvas: #fbfcfe;
-  --color-surface-muted: #f6f8fb;
-  --color-surface-subtle: #eef2f7;
+  /* Surfaces — neutral near-black, a whisper of cool. */
+  --color-surface: #101216;
+  --color-surface-canvas: #0a0b0d;
+  --color-surface-muted: #171b22;
+  --color-surface-subtle: #0d0f13;
 
-  --color-line-subtle: #eef1f5;
-  --color-line: #e3e8ef;
-  --color-line-strong: #cdd5e0;
+  /* Lines — hairline borders (the ledger grid). */
+  --color-line-subtle: #17191f;
+  --color-line: #23272f;
+  --color-line-strong: #30353f;
 
-  --color-ink: #0b1220;
-  --color-ink-strong: #0b1220;
-  --color-ink-body: #37415b;
-  --color-ink-muted: #555f6e;
-  --color-ink-faint: #636d7e;
+  /* Ink — text hierarchy (light on dark). */
+  --color-ink: #f4f6fa;
+  --color-ink-strong: #ffffff;
+  --color-ink-body: #c6ccd6;
+  --color-ink-muted: #8a91a0;
+  --color-ink-faint: #5b6472;
 
-  --color-up-subtle: #dcfce7;
-  --color-up: #16a34a;
-  --color-up-strong: #15803d;
+  /* Price up / down + freshness — tuned for dark. */
+  --color-up-subtle: #0f241c;
+  --color-up: #31c48d;
+  --color-up-strong: #4ade9e;
 
-  --color-down-subtle: #fee2e2;
-  --color-down: #dc2626;
-  --color-down-strong: #b91c1c;
+  --color-down-subtle: #2a1319;
+  --color-down: #f6465d;
+  --color-down-strong: #ff6b7a;
 
-  --color-bad-50: #fef2f2;
-  --color-bad-300: #fca5a5;
-  --color-bad-500: #ef4444;
-  --color-bad-700: #b91c1c;
-  --color-bad-900: #7f1d1d;
+  /* Severity — dark tint bg (-50) + bright text (-700/900). */
+  --color-bad-50: #2a1216;
+  --color-bad-300: #f6465d;
+  --color-bad-500: #f6465d;
+  --color-bad-700: #ff9aa6;
+  --color-bad-900: #ffd5da;
 
-  --color-warn-50: #fffbeb;
-  --color-warn-300: #fcd34d;
-  --color-warn-500: #f59e0b;
-  --color-warn-700: #b45309;
-  --color-warn-900: #78350f;
+  --color-warn-50: #241c0c;
+  --color-warn-300: #e0a63c;
+  --color-warn-500: #e0a63c;
+  --color-warn-700: #f3ca7d;
+  --color-warn-900: #fbe6bf;
 
-  --color-ok-50: #f0fdf4;
-  --color-ok-300: #86efac;
-  --color-ok-500: #22c55e;
-  --color-ok-700: #15803d;
+  --color-ok-50: #0f241c;
+  --color-ok-300: #31c48d;
+  --color-ok-500: #31c48d;
+  --color-ok-700: #6ee0b0;
 
-  --color-timepin: #fef3c7;
-  --color-timepin-ring: #f59e0b;
+  --color-timepin: #241c0c;
+  --color-timepin-ring: #e0a63c;
 
+  /* Type — serif display + Inter body + JetBrains Mono data.
+     next/font sets --font-sans/mono/serif on <html>; these reference them. */
   --font-sans: var(--font-sans), system-ui, sans-serif;
   --font-mono: var(--font-mono), ui-monospace, SFMono-Regular, monospace;
+  --font-serif: var(--font-serif), Georgia, 'Times New Roman', serif;
 
   --text-display: 3.5rem;
-  --text-display--line-height: 1.05;
-  --text-display--letter-spacing: -0.035em;
+  --text-display--line-height: 1.04;
+  --text-display--letter-spacing: -0.02em;
   --text-display-sm: 2.5rem;
-  --text-display-sm--line-height: 1.1;
-  --text-display-sm--letter-spacing: -0.03em;
+  --text-display-sm--line-height: 1.08;
+  --text-display-sm--letter-spacing: -0.018em;
   --text-h1: 2rem;
   --text-h1--line-height: 1.15;
-  --text-h1--letter-spacing: -0.025em;
+  --text-h1--letter-spacing: -0.015em;
   --text-h2: 1.5rem;
   --text-h2--line-height: 1.2;
-  --text-h2--letter-spacing: -0.02em;
+  --text-h2--letter-spacing: -0.01em;
   --text-h3: 1.25rem;
   --text-h3--line-height: 1.3;
-  --text-h3--letter-spacing: -0.015em;
+  --text-h3--letter-spacing: -0.008em;
 
-  --tracking-tightest: -0.04em;
+  --tracking-tightest: -0.03em;
 
-  --radius-card: 0.875rem;
-  --radius-4xl: 2rem;
+  /* Radius — crisp, not childish (was 14px). */
+  --radius-sm: 0.1875rem;
+  --radius-md: 0.25rem;
+  --radius-lg: 0.375rem;
+  --radius-xl: 0.5rem;
+  --radius-card: 0.375rem;
+  --radius-4xl: 1rem;
 
-  --shadow-xs: 0 1px 2px 0 rgb(11 18 32 / 0.04);
-  --shadow-card: 0 1px 2px rgb(11 18 32 / 0.04), 0 1px 3px rgb(11 18 32 / 0.05);
+  /* Elevation — on dark, depth is borders + layering, not soft shadows.
+     Only overlays/menus get a real shadow. */
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.4);
+  --shadow-card: 0 1px 0 0 rgb(0 0 0 / 0.3);
   --shadow-elevated:
-    0 8px 24px -6px rgb(11 18 32 / 0.1), 0 2px 6px -2px rgb(11 18 32 / 0.05);
-  --shadow-focus: 0 0 0 3px rgb(31 74 224 / 0.2);
+    0 12px 32px -8px rgb(0 0 0 / 0.7), 0 4px 12px -4px rgb(0 0 0 / 0.5);
+  --shadow-focus: 0 0 0 3px rgb(76 125 255 / 0.35);
 
   --container-page: 108rem;
   --container-prose: 46rem;
@@ -105,21 +130,14 @@
   }
 }
 
-/*
-  The default border color has changed to `currentcolor` in Tailwind CSS v4,
-  so we've added these compatibility styles to make sure everything still
-  looks the same as it did with Tailwind CSS v3.
-
-  If we ever want to remove these styles, we need to add an explicit border
-  color utility to any element that depends on these defaults.
-*/
+/* Tailwind v4 default border color compat → hairline dark line. */
 @layer base {
   *,
   ::after,
   ::before,
   ::backdrop,
   ::file-selector-button {
-    border-color: var(--color-gray-200, currentcolor);
+    border-color: var(--color-line, currentcolor);
   }
 }
 
@@ -129,19 +147,12 @@
   font-feature-settings: 'tnum';
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
-   Stellar Index — base layer (light mode only, v2 redesign 2026-06-17).
-   Fonts (Inter / JetBrains Mono) are loaded via next/font in layout.tsx and
-   exposed as --font-sans / --font-mono on <html>. Design tokens live in
-   tailwind.config.ts; see docs/architecture/design-system.md.
-   ───────────────────────────────────────────────────────────────────────── */
-
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
     scroll-behavior: smooth;
-    /* Inter: enable contextual alternates + stylistic set so the type
-       reads crisp; numeric alignment is handled by the .tnum utility. */
+    color-scheme: dark;
+    /* Inter: contextual alternates + stylistic set for crisp UI text. */
     font-feature-settings: 'cv11', 'ss01';
     font-variant-ligatures: contextual;
   }
@@ -151,7 +162,15 @@
     text-rendering: optimizeLegibility;
   }
 
-  h1,
+  /* Serif carries identity — the page-title display voice. Smaller headings
+     stay sans (quiet); data stays mono. */
+  h1 {
+    @apply text-ink;
+    font-family: var(--font-serif);
+    font-weight: 500;
+    text-wrap: balance;
+  }
+
   h2,
   h3,
   h4 {
@@ -160,15 +179,15 @@
   }
 
   ::selection {
-    @apply bg-brand-600/15 text-ink;
+    @apply bg-brand-500/25 text-ink;
   }
 
-  /* Consistent, accessible focus ring across interactive elements. */
+  /* Accessible focus ring. */
   :focus-visible {
-    @apply outline-hidden ring-2 ring-brand-600/60 ring-offset-2 ring-offset-surface-canvas;
+    @apply outline-hidden ring-2 ring-brand-500/70 ring-offset-2 ring-offset-surface-canvas;
   }
 
-  /* Hairline default border colour so `border` alone reads as a hairline. */
+  /* Hairline default border so `border` alone reads as a hairline. */
   *,
   ::before,
   ::after {
@@ -176,11 +195,18 @@
   }
 }
 
-/* Time-machine pinned-mode overlay tint (kept from v1). */
+/* Serif display utility for hero figures/titles that aren't an <h1>. */
+@utility font-display {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+/* Time-machine pinned-mode overlay tint — amber, dimmed for dark. */
 [data-as-of] {
   background-image: linear-gradient(
     180deg,
-    rgba(254, 243, 199, 0.16) 0%,
+    rgba(224, 166, 60, 0.08) 0%,
     transparent 120px
   );
 }

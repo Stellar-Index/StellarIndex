@@ -16,7 +16,7 @@ export default function GlobalError({
   reset: () => void;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" style={{ colorScheme: 'dark' }}>
       <body
         style={{
           margin: 0,
@@ -24,8 +24,8 @@ export default function GlobalError({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          background: '#fafaf9',
-          color: '#1c1917',
+          background: '#0a0b0d',
+          color: '#f4f6fa',
           fontFamily:
             "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
         }}
@@ -34,7 +34,7 @@ export default function GlobalError({
           <h1 style={{ fontSize: '1.25rem', fontWeight: 600, margin: '0 0 0.5rem' }}>
             Stellar Index hit an unexpected error
           </h1>
-          <p style={{ fontSize: '0.875rem', color: '#57534e', margin: '0 0 1.25rem', lineHeight: 1.5 }}>
+          <p style={{ fontSize: '0.875rem', color: '#8a91a0', margin: '0 0 1.25rem', lineHeight: 1.5 }}>
             The application shell failed to render. This is usually transient —
             try again, or head back to the homepage.
           </p>
@@ -43,7 +43,7 @@ export default function GlobalError({
               style={{
                 fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
                 fontSize: '0.75rem',
-                color: '#a8a29e',
+                color: '#5b6472',
                 margin: '0 0 1.25rem',
               }}
             >
@@ -54,10 +54,10 @@ export default function GlobalError({
             <button
               onClick={reset}
               style={{
-                background: '#1f4ae0',
+                background: '#4270f0',
                 color: '#ffffff',
                 border: 'none',
-                borderRadius: '0.5rem',
+                borderRadius: '0.375rem',
                 padding: '0.5rem 1rem',
                 fontSize: '0.875rem',
                 fontWeight: 500,
@@ -74,12 +74,12 @@ export default function GlobalError({
               href="/"
               style={{
                 display: 'inline-block',
-                border: '1px solid #d6d3d1',
-                borderRadius: '0.5rem',
+                border: '1px solid #30353f',
+                borderRadius: '0.375rem',
                 padding: '0.5rem 1rem',
                 fontSize: '0.875rem',
                 fontWeight: 500,
-                color: '#1c1917',
+                color: '#f4f6fa',
                 textDecoration: 'none',
               }}
             >
