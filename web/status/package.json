@@ -41,7 +41,10 @@
   "pnpm": {
     "overrides": {
       "postcss@<8.5.10": ">=8.5.10",
-      "js-yaml@<4.2.0": ">=4.2.0"
+      "js-yaml@<4.2.0": ">=4.2.0",
+      "brace-expansion@<1.1.16": ">=1.1.16",
+      "brace-expansion@>=2.0.0 <2.1.2": ">=2.1.2",
+      "brace-expansion@>=3.0.0 <5.0.7": ">=5.0.7"
     },
     "patchedDependencies": {
       "eslint-plugin-react@7.37.5": "patches/eslint-plugin-react@7.37.5.patch"
