@@ -130,6 +130,12 @@ type Server struct {
 	classicSupplyCache  map[string]string
 	classicSupplyAt     time.Time
 	classicSupplyFlight chan struct{}
+	// classicSupplyAttemptAt advances on EVERY refresh attempt, success or
+	// failure — unlike classicSupplyAt, which advances only on success. Without
+	// it a failing refresh left the cache permanently stale, so every request
+	// retried the heavy query and paid the full request timeout (the 2026-07-21
+	// /v1/assets 15s latch). It gates retries to classicSupplyRetryGap.
+	classicSupplyAttemptAt time.Time
 	// Per-server TTL + single-flight cache for the SEP-1 logo map
 	// (canonical asset_id → safe image URL), built from every verified
 	// issuer's cached sep1_payload in one scan. Backs the image fill on

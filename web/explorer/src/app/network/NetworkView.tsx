@@ -86,7 +86,11 @@ export function NetworkView() {
     time: Math.floor(Date.parse(`${b.day ?? ''}T00:00:00Z`) / 1000),
     value: b[metric] ?? 0,
   }));
-  const total = buckets.reduce((s, b) => s + (b[metric] ?? 0), 0);
+  // Today's bucket is still accumulating (`partial`), so including it in the
+  // headline total under-reports the daily rate and misstates the span. Sum
+  // only whole days and label the total with the count actually summed.
+  const completeBuckets = buckets.filter((b) => !b.partial);
+  const total = completeBuckets.reduce((s, b) => s + (b[metric] ?? 0), 0);
 
   const s = statsQ.data;
   const tip = ledgersQ.data?.ledgers?.[0];
@@ -152,7 +156,8 @@ export function NetworkView() {
           <>
             <p className="text-sm text-ink-body">
               <span className="font-mono tabular-nums">{formatCompact(total)}</span>{' '}
-              {METRICS.find((m) => m.key === metric)?.label.toLowerCase()} over the last {windowDays} days
+              {METRICS.find((m) => m.key === metric)?.label.toLowerCase()} over the last{' '}
+              {completeBuckets.length} complete days
             </p>
             <LineChart
               data={points}

@@ -148,6 +148,13 @@ type Handler struct {
 	// first page (opsDirCache doc comment in operations.go has the
 	// full rationale). Zero value is ready to use.
 	opsDir opsDirCache
+
+	// opTypeStats caches the trailing-24h op-type breakdown SEPARATELY from
+	// the 3s directory cache. It summarises a 24-HOUR window over a 34B-row
+	// table, so recomputing it on the directory's 3s cadence was ~1,200
+	// pointless recomputes/hour and the dominant cause of /v1/operations
+	// blowing its read deadline under load.
+	opTypeStats opTypeStatsCache
 }
 
 // unavailable writes the standard 503 when no explorer reader is wired

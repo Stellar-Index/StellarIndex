@@ -528,7 +528,17 @@ export function useCoins(
   cursor?: string,
   q?: string,
   orderBy?: 'observation_count_desc' | 'volume_24h_usd_desc',
-  options?: { sparkline?: boolean; sparkline7d?: boolean; ath?: boolean },
+  options?: {
+    sparkline?: boolean;
+    sparkline7d?: boolean;
+    ath?: boolean;
+    // enabled=false skips the fetch entirely. Used by the global search
+    // modal, which is mounted in the sidebar on EVERY page: without this it
+    // fired a /v1/assets?limit=100 round-trip on every single page load, for
+    // a list the user only ever sees after opening the modal.
+    enabled?: boolean;
+    staleTime?: number;
+  },
 ) {
   const includeParts: string[] = [];
   if (options?.sparkline) includeParts.push('sparkline');
@@ -570,6 +580,8 @@ export function useCoins(
     // user sees prior rows while sparklines fade in. TanStack v5's
     // `placeholderData: (prev) => prev` is the recommended idiom.
     placeholderData: (prev) => prev,
+    enabled: options?.enabled ?? true,
+    ...(options?.staleTime !== undefined ? { staleTime: options.staleTime } : {}),
   });
 }
 

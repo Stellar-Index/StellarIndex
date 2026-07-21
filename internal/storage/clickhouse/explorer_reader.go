@@ -135,6 +135,18 @@ func (r *ExplorerReader) RecentLedgers(ctx context.Context, limit int, beforeSeq
 	if beforeSeq > 0 {
 		q += ` WHERE ledger_seq < ?`
 		args = append(args, beforeSeq)
+	} else {
+		// Tip query (the explorer's hot path — it backs "Total XLM", base fee
+		// and the latest-ledger line). Without a lower bound this is
+		// `FINAL ... ORDER BY ledger_seq DESC LIMIT n` across the WHOLE table,
+		// so ClickHouse merges every part (490 of them / 124M rows) to return
+		// n rows — O(table), not O(n), and it got worse as part count grew
+		// during the backfill. Bounding to a tail window prunes to the newest
+		// partition and makes it a small merge, exactly as NetworkThroughput
+		// and OperationTypeStats already do. The window is a wide multiple of
+		// the max page size so it can never truncate a legitimate first page.
+		q += ` WHERE ledger_seq > (SELECT max(ledger_seq) FROM stellar.ledgers) - ?`
+		args = append(args, uint32(recentLedgersTailWindow))
 	}
 	q += ` ORDER BY ledger_seq DESC LIMIT ?`
 	args = append(args, limit)
@@ -343,18 +355,58 @@ type ThroughputBucket struct {
 	Txs     int64
 	Ops     int64
 	Events  int64
+	// Partial marks a bucket that does NOT cover a whole UTC day — in
+	// practice only TODAY, which is still accumulating. Callers must render
+	// it distinctly (dashed/faded) and EXCLUDE it from window totals, or the
+	// chart shows a misleading drop at the right edge and the total
+	// under-reports. Every other bucket is a complete day by construction
+	// (see NetworkThroughput's day-aligned window).
+	Partial bool
 }
 
+// ledgersPerDayPruningEstimate is a generous UPPER bound on ledgers closed per
+// day (theoretical 5.0s cadence; the observed rate is ~14,950/day ≈ 5.78s).
+// It is ONLY ever used to size a `ledger_seq >` predicate as a PARTITION-PRUNING
+// HINT — never as a semantic window boundary. Overshooting is safe (it just
+// scans a little wider); undershooting would silently truncate real data.
+// Using it as the boundary was the 2026-07-21 chart bug: a ledger-count window
+// lands mid-day, so the first toStartOfDay bucket was a partial day rendered as
+// a real drop, and a "30 day" window actually spanned ~34.6 days.
+const ledgersPerDayPruningEstimate = 17280
+
+// recentLedgersTailWindow bounds the tip-page ledger query to a tail slice so
+// its FINAL merge prunes to the newest partition(s) instead of scanning the
+// whole table. 5000 is ~25x the max page size (200) — wide enough that a first
+// page can never be truncated, narrow enough to stay inside one partition.
+const recentLedgersTailWindow = 5000
+
 // NetworkThroughput returns daily network throughput (ledger / tx / op
-// / Soroban-event counts) over the most-recent `windowDays` days,
-// ascending by day. Aggregates stellar.ledgers (which carries the
-// per-ledger counts) bounded to the tip via the ledger-window
-// predicate → partition-pruned. windowDays defaults to 30, capped 365.
+// / Soroban-event counts) for the most-recent `windowDays` UTC days,
+// ascending by day. Exactly windowDays buckets: windowDays-1 COMPLETE days
+// plus today, which is flagged Partial (still accumulating).
+// windowDays defaults to 30, capped 365.
+//
+// The window is DAY-ALIGNED on close_time, not a ledger count. The old form
+// bounded the range with `ledger_seq > max - windowDays*17280` alone, which
+// lands on an arbitrary ledger MID-DAY: the earliest toStartOfDay bucket then
+// covered only part of that day and rendered as a real throughput drop (at
+// windowDays=90 the first bucket was ~20% of a day). It also silently
+// mis-sized the window — 17280 is the theoretical 5.0s cadence but the real
+// rate is ~14,950/day, so a "30 day" window actually spanned ~34.6 days and
+// inflated every window total by ~15%.
+//
+// The ledger predicate is retained ONLY as a partition-pruning hint (sized
+// generously so it can never clip a day the time predicate wants); close_time
+// is the authoritative boundary.
 func (r *ExplorerReader) NetworkThroughput(ctx context.Context, windowDays int) ([]ThroughputBucket, error) {
 	if windowDays <= 0 || windowDays > 365 {
 		windowDays = 30
 	}
-	windowLedgers := uint32(windowDays) * 17280 // ~17280 ledgers/day at 5s
+	// +2 days of slack so the pruning hint always covers the aligned window
+	// even if the chain runs faster than the estimate.
+	pruneLedgers := uint32(windowDays+2) * ledgersPerDayPruningEstimate
+	// windowDays-1: the window spans windowDays buckets INCLUDING today.
+	daysBack := uint32(windowDays - 1)
 	const q = `SELECT toStartOfDay(close_time) AS day,
 		toInt64(count())                  AS ledgers,
 		toInt64(sum(tx_count))            AS txs,
@@ -363,23 +415,29 @@ func (r *ExplorerReader) NetworkThroughput(ctx context.Context, windowDays int) 
 		-- FINAL: stellar.ledgers is ReplacingMergeTree(ingested_at); without it
 		-- an un-merged re-ingested ledger contributes TWO parts, so count() and
 		-- every sum(*_count) double-count until a background merge (audit
-		-- C2-12). FINAL is a no-op once merged. The ledger-window predicate
-		-- keeps the FINAL bounded to the recent partition.
+		-- C2-12). FINAL is a no-op once merged. The ledger_seq predicate keeps
+		-- the FINAL bounded to the recent partitions (pruning hint ONLY); the
+		-- close_time predicate is the authoritative, day-aligned boundary.
 		FROM stellar.ledgers FINAL
 		WHERE ledger_seq > (SELECT max(ledger_seq) FROM stellar.ledgers) - ?
+		  AND close_time >= toStartOfDay(now('UTC')) - toIntervalDay(?)
 		GROUP BY day
 		ORDER BY day ASC`
-	rows, err := r.conn.Query(ctx, q, windowLedgers)
+	rows, err := r.conn.Query(ctx, q, pruneLedgers, daysBack)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: network throughput: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	today := time.Now().UTC().Truncate(24 * time.Hour)
 	var out []ThroughputBucket
 	for rows.Next() {
 		var b ThroughputBucket
 		if err := rows.Scan(&b.Day, &b.Ledgers, &b.Txs, &b.Ops, &b.Events); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan throughput: %w", err)
 		}
+		// Only today can be incomplete — every earlier bucket is a whole UTC
+		// day because the window is day-aligned.
+		b.Partial = !b.Day.UTC().Before(today)
 		out = append(out, b)
 	}
 	return out, rows.Err()
