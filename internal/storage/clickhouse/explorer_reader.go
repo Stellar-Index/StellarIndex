@@ -135,6 +135,18 @@ func (r *ExplorerReader) RecentLedgers(ctx context.Context, limit int, beforeSeq
 	if beforeSeq > 0 {
 		q += ` WHERE ledger_seq < ?`
 		args = append(args, beforeSeq)
+	} else {
+		// Tip query (the explorer's hot path — it backs "Total XLM", base fee
+		// and the latest-ledger line). Without a lower bound this is
+		// `FINAL ... ORDER BY ledger_seq DESC LIMIT n` across the WHOLE table,
+		// so ClickHouse merges every part (490 of them / 124M rows) to return
+		// n rows — O(table), not O(n), and it got worse as part count grew
+		// during the backfill. Bounding to a tail window prunes to the newest
+		// partition and makes it a small merge, exactly as NetworkThroughput
+		// and OperationTypeStats already do. The window is a wide multiple of
+		// the max page size so it can never truncate a legitimate first page.
+		q += ` WHERE ledger_seq > (SELECT max(ledger_seq) FROM stellar.ledgers) - ?`
+		args = append(args, uint32(recentLedgersTailWindow))
 	}
 	q += ` ORDER BY ledger_seq DESC LIMIT ?`
 	args = append(args, limit)
@@ -361,6 +373,12 @@ type ThroughputBucket struct {
 // lands mid-day, so the first toStartOfDay bucket was a partial day rendered as
 // a real drop, and a "30 day" window actually spanned ~34.6 days.
 const ledgersPerDayPruningEstimate = 17280
+
+// recentLedgersTailWindow bounds the tip-page ledger query to a tail slice so
+// its FINAL merge prunes to the newest partition(s) instead of scanning the
+// whole table. 5000 is ~25x the max page size (200) — wide enough that a first
+// page can never be truncated, narrow enough to stay inside one partition.
+const recentLedgersTailWindow = 5000
 
 // NetworkThroughput returns daily network throughput (ledger / tx / op
 // / Soroban-event counts) for the most-recent `windowDays` UTC days,
