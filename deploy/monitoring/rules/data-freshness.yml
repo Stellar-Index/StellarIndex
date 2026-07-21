@@ -99,3 +99,25 @@ groups:
             The daily served-value truth harness hasn't written its
             textfile in 48h — the timer is dead or the run is
             crashing. Data-truth reconciliation is dark.
+
+      - alert: stellarindex_served_value_persistently_skipped
+        expr: stellarindex_served_value_skipped == 1
+        for: 26h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: data-truth
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/served-value-drift.md
+          summary: "Served-value check {{ $labels.check }} unverifiable for 2 days (truth source dark)"
+          description: |
+            verify-served-values has SKIPPED {{ $labels.check }} on every
+            run for 2 days — its independent truth source (SDF lumen API /
+            Stellar Expert) is unreachable. This is availability, not drift,
+            so served_value_drift (ok==0) stays quiet AND check_stale stays
+            quiet (the run still completes). Without this alert a PERSISTENT
+            truth-source break (URL/schema change) would leave that value
+            UNVERIFIED behind a green gate forever — the F5 fail-open a
+            skipped check opens (it emits no served_value_ok). Check the
+            source is reachable / its response shape; the check resumes
+            automatically once truth returns.

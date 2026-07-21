@@ -71,7 +71,7 @@ func verifyServedValues(args []string) error {
 		return fmt.Errorf("write textfile: %w", err)
 	}
 
-	failed := 0
+	failed, skipped := 0, 0
 	for _, r := range results {
 		status := "OK"
 		switch {
@@ -79,6 +79,7 @@ func verifyServedValues(args []string) error {
 			// Truth-source outage: availability, not a served-value
 			// verdict — reported, never counted as a failure.
 			status = "SKIP"
+			skipped++
 		case !r.ok:
 			status = "FAIL"
 			failed++
@@ -86,8 +87,23 @@ func verifyServedValues(args []string) error {
 		fmt.Fprintf(os.Stderr, "verify-served-values: %-28s %-4s served=%s truth=%s rel_err=%.4f tol=%.4f (%s)\n",
 			r.name, status, r.served, r.truth, r.relErr, r.tolerance, r.note)
 	}
+	return servedValuesExitError(len(results), failed, skipped)
+}
+
+// servedValuesExitError decides the run's exit status from its tally. Any
+// FAILED (drifted) check fails the run. An ALL-SKIPPED run also fails CLOSED:
+// every independent truth source was dark, so the run verified NOTHING and a
+// one-shot gate must not read that as a clean pass (F5 — the
+// served_value_persistently_skipped alert catches a SUSTAINED dark source, but
+// a single run must fail closed too). A PARTIAL skip stays clean: some checks
+// were verified, and a lone third-party outage must not fail the daily cron.
+// Pure — unit-testable.
+func servedValuesExitError(total, failed, skipped int) error {
 	if failed > 0 {
 		return fmt.Errorf("%d served-value check(s) failed", failed)
+	}
+	if total > 0 && skipped == total {
+		return fmt.Errorf("all %d served-value check(s) SKIPPED — every independent truth source was unreachable; verified nothing (not a clean pass)", skipped)
 	}
 	return nil
 }

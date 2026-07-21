@@ -169,3 +169,31 @@ func TestServedSupplyField_ScalesBaseUnits(t *testing.T) {
 		t.Fatalf("scaled supply = %v, want %v", got, want)
 	}
 }
+
+// TestServedValuesExitError pins the F5 all-skip fail-closed refinement
+// (reviewer #3): a run where EVERY check skipped verified nothing and must not
+// exit clean, while a partial skip stays clean and any drift fails.
+func TestServedValuesExitError(t *testing.T) {
+	cases := []struct {
+		name                   string
+		total, failed, skipped int
+		wantErr                bool
+	}{
+		{"all verified clean", 3, 0, 0, false},
+		{"a drift fails", 3, 1, 0, true},
+		{"partial skip stays clean (some verified)", 3, 0, 1, false},
+		{"partial skip with the rest verified", 3, 0, 2, false},
+		{"ALL skipped fails closed — verified nothing", 3, 0, 3, true},
+		{"single check all-skipped fails closed", 1, 0, 1, true},
+		{"empty run (no checks) is not an all-skip failure", 0, 0, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := servedValuesExitError(tc.total, tc.failed, tc.skipped)
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("servedValuesExitError(total=%d, failed=%d, skipped=%d) err=%v, wantErr=%v",
+					tc.total, tc.failed, tc.skipped, err, tc.wantErr)
+			}
+		})
+	}
+}
