@@ -30,6 +30,19 @@ import (
 // bound for the global recognition scan.
 const sorobanEraGenesis = 50_457_424
 
+// sourceSubstrateOK is the per-source Claim-1 verdict from a whole-range
+// SubstrateProblem result: a source is substrate-OK iff there is no problem, or
+// the reported problem ledger is strictly below the source's genesis (the
+// break/absence lies before the source's own data). Correctness depends on
+// SubstrateProblem returning a COVERAGE-correct problem ledger — an empty or
+// tail-truncated lake returns the range tip, so `problem < genesis` is false for
+// every source and none can green itself on an absent lake (the F1 consumer
+// fail-open the reviewer caught: a point value like `from` let soroswap, genesis
+// 50.7M, read `2 < 50.7M = true` on an EMPTY lake). Pure — unit-testable.
+func sourceSubstrateOK(problem uint32, hasProblem bool, genesis uint32) bool {
+	return !hasProblem || problem < genesis
+}
+
 // computeCompleteness is the ADR-0033 Phase 6 computor: it derives the
 // per-source completeness WATERMARK (substrate ∧ recognition ∧
 // projection) and writes it to completeness_snapshots for the API +
@@ -95,6 +108,12 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	catalogue, soroswapDec, err := buildReconciliationCatalogue(cfg)
 	if err != nil {
 		return fmt.Errorf("compute-completeness: reconciliation catalogue: %w", err)
+	}
+	// Fail CLOSED on an unknown -source before the per-source loop, which
+	// would otherwise skip every source and report SUCCESS having verified
+	// nothing (F7 fail-open).
+	if verr := validateSourceFilter(*only, catalogue); verr != nil {
+		return fmt.Errorf("compute-completeness: %w", verr)
 	}
 	if *only == "" || *only == "soroswap" {
 		if serr := seedSoroswapForRecon(ctx, cfg, soroswapDec); serr != nil {
@@ -222,8 +241,12 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		var substrateOK bool
 		if *useCH {
 			// Reuse the once-computed lake substrate; it's this source's
-			// problem only if it falls at/after the source's genesis.
-			substrateOK = !chSubHas || chSubProblem < genesis
+			// problem only if the reported problem ledger falls at/after the
+			// source's genesis. SubstrateProblem returns coverage-correct
+			// problem ledgers for empty/head/tail absences (see its
+			// substrateHeadProblem doc) so a high-genesis source can't read a
+			// COVERAGE failure as "below my genesis, I'm fine" (F1 fail-open).
+			substrateOK = sourceSubstrateOK(chSubProblem, chSubHas, genesis)
 			if !substrateOK {
 				problems = append(problems, chSubProblem)
 				detail = append(detail, fmt.Sprintf("substrate: lake gap/break at %d", chSubProblem))

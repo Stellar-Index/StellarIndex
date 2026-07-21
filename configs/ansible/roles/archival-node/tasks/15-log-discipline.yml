@@ -357,3 +357,36 @@
       </clickhouse>
   # No automatic restart — same operator-coordinated policy as above.
   tags: [clickhouse, log-discipline]
+
+- name: ClickHouse system-log TTL drop-in
+  # The system.*_log tables (query/trace/part/metric/asynchronous_metric)
+  # grow UNBOUNDED by default — the highest-volume ones (trace_log,
+  # metric_log, asynchronous_metric_log) add rows every collection tick and
+  # were a recurring ~40 GiB of self-inflicted pool bloat with no retention.
+  # A <ttl> under each log section makes ClickHouse apply it as the table's
+  # native TTL, so old rows age out automatically. event_date exists on all
+  # of these. 14 days keeps ample debugging history while bounding growth.
+  #
+  # Retroactive: on the next (operator-coordinated) CH restart, if an
+  # existing system-log table's engine/TTL differs, ClickHouse renames it to
+  # <table>_<N> and creates a fresh table with the new TTL; the renamed
+  # backlog can be dropped by hand once. Applies going forward regardless.
+  ansible.builtin.copy:
+    dest: /etc/clickhouse-server/config.d/zz-system-log-ttl.xml
+    owner: clickhouse
+    group: clickhouse
+    mode: "0644"
+    content: |
+      <clickhouse>
+          <!-- Managed by ansible (archival-node / 15-log-discipline.yml).
+               Bounds system.*_log growth (was ~40 GiB unbounded). TTL is
+               read at startup; needs an operator-coordinated CH restart. -->
+          <query_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></query_log>
+          <query_thread_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></query_thread_log>
+          <trace_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></trace_log>
+          <part_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></part_log>
+          <metric_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></metric_log>
+          <asynchronous_metric_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></asynchronous_metric_log>
+      </clickhouse>
+  # No automatic restart — same operator-coordinated policy as above.
+  tags: [clickhouse, log-discipline]

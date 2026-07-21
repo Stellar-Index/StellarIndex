@@ -239,3 +239,36 @@ func TestCombineWatermark_LakeIncompleteStaysIncomplete(t *testing.T) {
 		t.Error("combined watermark cannot be Complete=true when the lake watermark itself is incomplete")
 	}
 }
+
+// TestSourceSubstrateOK pins the F1 consumer fail-open fix (reviewer CONFIRMED):
+// the per-source substrate verdict must fail a high-genesis source when the lake
+// reports a COVERAGE failure (empty/tail → problem = tip). Pre-fix, an empty
+// lake reported problem=2 and soroswap (genesis 50_746_266) read `2 < 50.7M =
+// true`, certifying substrate-OK on an empty lake.
+func TestSourceSubstrateOK(t *testing.T) {
+	const soroswap = uint32(50_746_266)
+	const tip = uint32(63_000_000)
+	cases := []struct {
+		name       string
+		problem    uint32
+		hasProblem bool
+		genesis    uint32
+		want       bool
+	}{
+		{"no problem is OK", 0, false, soroswap, true},
+		{"interior break below genesis is OK (before source data)", 30_000_000, true, soroswap, true},
+		{"interior break at/after genesis fails", 55_000_000, true, soroswap, false},
+		{"empty lake (problem=tip) fails soroswap — the F1 regression", tip, true, soroswap, false},
+		{"empty lake (problem=tip) fails SDEX too", tip, true, 2, false},
+		{"missing head (problem=haveMin-1) fails source starting in the head", 49_999_999, true, 40_000_000, false},
+		{"missing head does NOT fail a source whose data is fully present", 49_999_999, true, soroswap, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sourceSubstrateOK(tc.problem, tc.hasProblem, tc.genesis); got != tc.want {
+				t.Fatalf("sourceSubstrateOK(problem=%d, has=%v, genesis=%d) = %v, want %v",
+					tc.problem, tc.hasProblem, tc.genesis, got, tc.want)
+			}
+		})
+	}
+}

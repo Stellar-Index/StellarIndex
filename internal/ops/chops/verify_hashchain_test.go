@@ -99,3 +99,27 @@ func TestBoundaryTag(t *testing.T) {
 		})
 	}
 }
+
+// TestHashChainWindowsPresent pins the F3 fail-closed decision (reviewer #4:
+// F3 had no test, so a revert failed nothing). Zero present ledgers across the
+// windows means the range is empty — vacuous, must not PASS.
+func TestHashChainWindowsPresent(t *testing.T) {
+	cases := []struct {
+		name    string
+		windows []clickhouse.HashChainWindowResult
+		want    uint64
+	}{
+		{"nil windows (empty range) is zero", nil, 0},
+		{"empty slice is zero", []clickhouse.HashChainWindowResult{}, 0},
+		{"all-zero windows is zero — the F3 vacuous-PASS case", []clickhouse.HashChainWindowResult{{Present: 0}, {Present: 0}}, 0},
+		{"single populated window", []clickhouse.HashChainWindowResult{{Present: 1_000_000}}, 1_000_000},
+		{"sums across windows", []clickhouse.HashChainWindowResult{{Present: 10}, {Present: 0}, {Present: 5}}, 15},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hashChainWindowsPresent(tc.windows); got != tc.want {
+				t.Fatalf("hashChainWindowsPresent = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
