@@ -777,7 +777,13 @@ func (s *Server) cachedClassicSupply(ctx context.Context) map[string]string {
 		s.classicSupplyAttemptAt = time.Now() // advances on failure too
 		flight = make(chan struct{})
 		s.classicSupplyFlight = flight
-		go s.refreshClassicSupply(er, flight)
+		// G118 is exactly the behaviour we want here, not a bug: detaching from
+		// the request context is THE fix. Running this refresh on the caller's
+		// ctx is what latched the cache into permanent failure — a refresh
+		// killed at the request timeout never advanced classicSupplyAt, so
+		// every later request retried the doomed query and paid the full 15s.
+		// The goroutine gets its own bounded budget in refreshClassicSupply.
+		go s.refreshClassicSupply(er, flight) //nolint:gosec,contextcheck // G118 + contextcheck: the detachment is intentional; see refreshClassicSupply's doc comment.
 	}
 	s.classicSupplyMu.Unlock()
 

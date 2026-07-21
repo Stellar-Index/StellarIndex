@@ -154,6 +154,31 @@ func normalizeLakeOpType(s string) string {
 	return strings.ToLower(strings.TrimPrefix(s, "OperationType"))
 }
 
+// resolveOpTypeStats returns the trailing-24h op-type breakdown, preferring the
+// 5-minute cache and falling back to the STALE value on a refresh error — for a
+// 24-hour aggregate, numbers a few minutes old are still truthful, whereas an
+// empty panel is not. Extracted from operationsDirectory to keep that handler's
+// control flow flat (it is otherwise a listing assembler, not a cache manager).
+func (h *Handler) resolveOpTypeStats(ctx context.Context, r *http.Request) []OpTypeStatV {
+	cached, fresh := h.opTypeStats.get()
+	if fresh {
+		return cached
+	}
+	stats, err := h.Reader.OperationTypeStats(ctx, 0)
+	if err != nil {
+		if !h.ClientAborted(r, err) {
+			h.Logger.Warn("explorer OperationTypeStats failed (serving last good)", "err", err)
+		}
+		return cached
+	}
+	v := make([]OpTypeStatV, len(stats))
+	for i, st := range stats {
+		v[i] = OpTypeStatV{Type: normalizeLakeOpType(st.OpType), Count: st.Count}
+	}
+	h.opTypeStats.put(v)
+	return v
+}
+
 // OperationsView is the wire response for GET /v1/operations.
 //
 // Two shapes on one route: with ?ledger=<seq> it's that ledger's ops
@@ -319,28 +344,7 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 	// fail the listing (only attached on the first page to keep paging
 	// responses lean).
 	if firstPage {
-		cached, fresh := h.opTypeStats.get()
-		switch {
-		case fresh:
-			out.OpTypeStats = cached
-		default:
-			stats, serr := h.Reader.OperationTypeStats(ctx, 0)
-			if serr == nil {
-				v := make([]OpTypeStatV, len(stats))
-				for i, st := range stats {
-					v[i] = OpTypeStatV{Type: normalizeLakeOpType(st.OpType), Count: st.Count}
-				}
-				out.OpTypeStats = v
-				h.opTypeStats.put(v)
-			} else {
-				if !h.ClientAborted(r, serr) {
-					h.Logger.Warn("explorer OperationTypeStats failed (serving last good)", "err", serr)
-				}
-				// Stale beats blank: a 24h aggregate that's a few minutes old
-				// is still a truthful answer; an empty panel is not.
-				out.OpTypeStats = cached
-			}
-		}
+		out.OpTypeStats = h.resolveOpTypeStats(ctx, r)
 		h.opsDir.put(limit, out) // warm the cache with the assembled first page
 	}
 	h.WriteJSON(w, out, false)
