@@ -71,6 +71,11 @@ export function baseChartOptions(
       textColor: theme.text,
       fontFamily: 'var(--font-mono)',
       fontSize: 11,
+      // Hide the TradingView attribution logo. This is an official
+      // lightweight-charts option and license-clean: the library is Apache-2.0
+      // (attribution is preserved in the dependency/NOTICE, not required as an
+      // on-canvas logo), and TradingView ships this flag to disable it.
+      attributionLogo: false,
       panes: {
         separatorColor: theme.border,
         separatorHoverColor: withAlpha(theme.brand, 0.4),
