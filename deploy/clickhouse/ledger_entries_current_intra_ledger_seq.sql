@@ -114,10 +114,12 @@ FROM stellar.ledger_entry_changes;
 -- TELL: v2 intra_ledger_seq (v2_ils below) = 0  ⇒  UNRESOLVED, not corrected.
 -- To actually fix HISTORICAL resurrections you must first re-derive
 -- ledger_entry_changes (idempotent-corrective under this RMT — no truncate):
---   stellarindex-ops ch-backfill -from 38000000 -to <tip>   (new binary, windowed)
--- Range is PROVEN: genesis(287404)→38M has ZERO same-ledger ties (full scan);
--- they begin in (38M,40M]. So [38M→tip] is the complete tie-range. Run it BEFORE
--- the Step-2 windows. Go-forward correctness needs neither. The DDL itself ran
+--   stellarindex-ops ch-backfill -from 2 -to <tip>   (new binary, windowed, genesis->tip)
+-- The re-derive runs GENESIS->tip (2026-07-18 decision: comprehensive, one-time) —
+-- it also fills the entry-change edge gap [2->287404] (0 rows today). But the TIE
+-- range is PROVEN narrower: [287404->38M] has ZERO same-ledger ties (full scan);
+-- they begin in (38M,40M]. So THIS current-state reproject's Step-2 windows only
+-- need [38M->tip]. Run the re-derive BEFORE the windows. The DDL itself ran
 -- clean end-to-end (cutover + both rollbacks verified). See the runbook
 -- docs/operations/runbooks/post-phase0-deploy-sequence.md Step 3a. ***
 --

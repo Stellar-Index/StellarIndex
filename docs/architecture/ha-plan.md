@@ -1,7 +1,7 @@
 ---
 title: High-Availability Infrastructure Plan
-last_verified: 2026-06-12
-status: ratified — binding decisions in [ADR-0008](../adr/0008-ha-topology.md); long-form design here
+last_verified: 2026-07-18
+status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for ClickHouse; §3 still lacks a CH tier (see top amendment)
 ---
 
 > **DEPLOYMENT STATE (audit 2026-07-16):** the HAProxy/Patroni/Redis-Sentinel HA
@@ -10,6 +10,15 @@ status: ratified — binding decisions in [ADR-0008](../adr/0008-ha-topology.md)
 > invokes them** — R1 runs a single unclustered Postgres and a single
 > internal-bind no-AUTH Redis today. Any operator/runbook that assumes Patroni
 > or multi-node Redis on R1 is describing the target, not reality.
+
+> **⚠️ ARCHITECTURE-STALENESS AMENDMENT (2026-07-18).** This plan predates the ADR-0034
+> **ClickHouse tier-1 lake** — now the largest store (8.6 TiB) and the primary serving
+> path. **§4.3 (storage/capacity) and §8 (backup) have been rewritten** to current
+> reality. **Still stale / TODO:** §3 (component-by-component HA) has **no ClickHouse
+> tier** — deploying the HA design as-written would leave ClickHouse a SPOF. The HA/DR
+> re-evaluation (bootstrap-from-snapshot model, R2/R3 sequencing) is in
+> `docs/operations/production-readiness-master-plan-2026-07-18.md` §6b (the campaign
+> source of truth) + `docs/operations/off-site-backup-plan.md`.
 
 # High-Availability Infrastructure Plan
 
@@ -405,17 +414,17 @@ host for lightweight handlers. Our handlers are mostly
 "Redis GET → JSON encode → return." Hitting 2 000 rps per pod with 3
 pods is comfortable.
 
-### 4.3 Storage growth
+### 4.3 Storage growth — REWRITTEN 2026-07-18 (the original was pre-ClickHouse and wrong)
 
-- `trades`: ~150 trades/sec sustained Stellar network-wide × 1 kB
-  average row = 150 kB/s = ~13 GB/day uncompressed.
-- With TimescaleDB native columnar compression: expect 10×
-  reduction → ~1.3 GB/day compressed.
-- At that rate: **~500 GB/year** post-compression. A single TB NVMe
-  disk lasts 2 years before we start pruning.
+> ⚠️ The original estimate here ("~500 GB/year, a single TB NVMe lasts 2 years, storage is not a constraint") sized storage off the Timescale `trades` table and **predates the ADR-0034 ClickHouse tier-1 lake.** It is the likely root cause of R1 reaching **94% unplanned** — the capacity model was never redone after the architecture changed. Real, live-verified numbers:
 
-Validated assumption: Stellar's trade volume is roughly stable
-year-over-year at this order of magnitude. Re-measure post-launch.
+**Actual footprint (R1, 2026-07-18):** ZFS pool `data` = 27.7 TB raw (4× 7.68 TB NVMe, **raidz1**), **94% full**. Datasets: **ClickHouse 8.6 TiB** (the tier-1 lake — the dominant store), MinIO galexie-archive **5.56 TiB**, Postgres **676 GiB**, pgBackRest **2.6 TiB**, rest small. **Storage is the binding production constraint**, not an afterthought.
+
+**Growth:** live ingest adds ~10–20 GiB/day (full-fidelity `ledger_entry_changes` dominate) + a one-time ~1.5 TiB from the Phase-D comprehensive backfill.
+
+**Headroom levers:** (1) **ZSTD recompress** of the CH XDR columns — measured **1.75×** on `entry_xdr`, ~1.5 TiB reclaim (in progress); other big tables still LZ4 (more TBD). (2) pgBackRest diff-retention prune (~1 TiB, deferred until off-site exists). (3) **A 5th NVMe** — the pool supports raidz-expansion (already used once) → +~6.9 TiB, 94%→~65%; the durable fix. All 4 current drives are fully allocated — no spare, no unpartitioned space.
+
+Detail + live capacity table: `docs/operations/runbooks/phase-a-capacity-relief-2026-07-18.md`. Campaign source of truth: `docs/operations/production-readiness-master-plan-2026-07-18.md`.
 
 ---
 
@@ -487,22 +496,21 @@ Alerts already sketched in `docs/operations/alerts-catalog.md` (Week 9).
 
 ---
 
-## 8. Backup & restore
+## 8. Backup & restore — REWRITTEN 2026-07-18 (added ClickHouse; made it off-site)
 
-| Asset | Tool | Frequency | RPO | Retention | Restore drill |
-| ----- | ---- | --------- | --- | --------- | ------------- |
-| Timescale | pgBackRest → MinIO | full weekly, diff daily, incr hourly, WAL stream | 5 min | 90 d full, 3 y incr | Monthly to `db-drill-01` |
-| Redis | AOF every-second | 1 s | AOF last 7 d | 7 d | Not needed (cache) |
-| MinIO `galexie-live` | versioning | per write | 0 | 30 d versions | Monthly restore of one ledger window |
-| MinIO `galexie-archive` | versioning + object-lock | per write | 0 | indefinite | Annual |
-| Configs (in Git) | Git → GitHub | every commit | 0 | indefinite | Every deploy is a restore |
-| Secrets (Vault) | Vault snapshot → S3 (encrypted) | 4× daily | 6 h | 30 d | Quarterly |
+> ⚠️ The original table (in git history) had two gaps that make it unsafe as-is: **(1) no ClickHouse** — the largest store and primary serving path, omitted because this predates ADR-0034; **(2) backups landed on the *same box's* MinIO**, so a single ZFS-pool/box loss takes the data *and* its backups. Corrected below. Full design + provider/cost: **`docs/operations/off-site-backup-plan.md`**.
 
-Restore time objectives:
+| Asset | Tool | Off-site target | RPO | Restore (RTO) |
+| --- | --- | --- | --- | --- |
+| **ClickHouse lake (~7 TiB post-ZSTD)** | `clickhouse-backup` (part-level incremental) | S3 (Cloudflare R2 / B2) | daily | **~2–16 h restore.** Re-derive from the archive is the *last resort* (~1–2 wk), NOT the plan |
+| Postgres (served money state) | pgBackRest **`repo2-type=s3`** (off-site) + `repo1` local | S3 | 5 min (WAL) | ~1–3 h |
+| Galexie archive (source of truth) | `mc mirror` / `rclone` (append-only, incremental) | S3 | continuous | hours |
+| Config / vault / secrets / systemd | encrypted tarball (`age`/`gpg`) | S3 | daily | minutes; **keep the vault passphrase off-R1** |
+| Redis | AOF (cache only — not backed up) | — | — | rehydrates from CH/PG |
 
-- **Hot (Timescale point-in-time, last hour):** 10 min.
-- **Warm (last week):** 2 h.
-- **Cold (arbitrary historical ledger):** 8 h worst case.
+**Design principle — back up the source of truth + the RTO tiers.** The archive is irreplaceable; PG + CH are the served/RTO tiers. The CH lake is *also* re-derivable from the archive, but that path is weeks, so it's backed up in full for a ~half-day RTO. **The off-site CH snapshot doubles as the region-bootstrap + cross-region consistency baseline** — R2/R3 restore from it and keep up live, rather than each independently re-deriving (see the ADR-0008 amendment / §2). RTOs: Postgres PITR ~1–3 h; full CH restore ~½ day; total-loss (both copies gone) → re-derive from a Stellar history archive, days.
+
+> **Better than backups for downtime: the HA warm standby** (§2, §3.3). An S3 restore is still hours dark; a warm standby (PG Patroni + a CH replica that bootstraps from the snapshot) fails over in minutes and removes the single-box SPOF. Full S3 backup = the durable floor; the standby = the real production target.
 
 ---
 
