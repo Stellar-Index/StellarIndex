@@ -71,23 +71,49 @@ func verifyServedValues(args []string) error {
 		return fmt.Errorf("write textfile: %w", err)
 	}
 
-	failed := 0
+	failed, skipped := 0, 0
 	for _, r := range results {
 		status := "OK"
-		if !r.ok {
+		switch {
+		case r.skipped:
+			// Truth-source outage: availability, not a served-value
+			// verdict — reported, never counted as a failure.
+			status = "SKIP"
+			skipped++
+		case !r.ok:
 			status = "FAIL"
 			failed++
 		}
 		fmt.Fprintf(os.Stderr, "verify-served-values: %-28s %-4s served=%s truth=%s rel_err=%.4f tol=%.4f (%s)\n",
 			r.name, status, r.served, r.truth, r.relErr, r.tolerance, r.note)
 	}
+	return servedValuesExitError(len(results), failed, skipped)
+}
+
+// servedValuesExitError decides the run's exit status from its tally. Any
+// FAILED (drifted) check fails the run. An ALL-SKIPPED run also fails CLOSED:
+// every independent truth source was dark, so the run verified NOTHING and a
+// one-shot gate must not read that as a clean pass (F5 — the
+// served_value_persistently_skipped alert catches a SUSTAINED dark source, but
+// a single run must fail closed too). A PARTIAL skip stays clean: some checks
+// were verified, and a lone third-party outage must not fail the daily cron.
+// Pure — unit-testable.
+func servedValuesExitError(total, failed, skipped int) error {
 	if failed > 0 {
 		return fmt.Errorf("%d served-value check(s) failed", failed)
+	}
+	if total > 0 && skipped == total {
+		return fmt.Errorf("all %d served-value check(s) SKIPPED — every independent truth source was unreachable; verified nothing (not a clean pass)", skipped)
 	}
 	return nil
 }
 
-// servedValueResult is one reconciled check.
+// servedValueResult is one reconciled check. ok and skipped are
+// mutually exclusive and jointly encode three states: verified-pass
+// (ok), verified-drift (neither), and not-verified (skipped — the
+// truth source was dark). skipped is NOT a pass: it must never assert
+// served_value_ok=1, or a persistently-dark ground truth would mask a
+// real drift behind a green gauge (the F5 fail-open).
 type servedValueResult struct {
 	name      string
 	served    string // decimal string as served
@@ -95,6 +121,7 @@ type servedValueResult struct {
 	relErr    float64
 	tolerance float64
 	ok        bool
+	skipped   bool
 	note      string
 }
 
@@ -147,9 +174,12 @@ func runServedValueChecks(ctx context.Context, c *http.Client, apiBase string) [
 // reconcileOneCheck fetches both sides of one check and classifies:
 // within tolerance (ok), drifted (fail), served-side fetch error
 // (fail — our own surface must answer), truth-side outage (SKIPPED,
-// ok, NaN rel_err — a dark ground-truth source is availability, not
-// evidence our value is wrong; the last_run staleness alert covers a
-// persistently-dark source).
+// NaN rel_err — a dark ground-truth source is availability, not
+// evidence our value is wrong, so it doesn't fail the run; but it is
+// NOT a pass either — skipped never sets ok, so it can't emit
+// served_value_ok=1 and hide a real drift behind a green gauge. A
+// persistently-dark source shows up as a lingering served_value_skipped=1
+// gauge and stale rel_err, which the alerting warns on separately).
 func reconcileOneCheck(ctx context.Context, c *http.Client, apiBase string, chk servedValueCheck) servedValueResult {
 	r := servedValueResult{name: chk.name, tolerance: chk.tolerance, note: chk.note}
 	served, sErr := chk.served(ctx, c, apiBase)
@@ -158,7 +188,7 @@ func reconcileOneCheck(ctx context.Context, c *http.Client, apiBase string, chk 
 	case sErr != nil:
 		r.note = "served fetch: " + sErr.Error()
 	case tErr != nil:
-		r.ok = true
+		r.skipped = true
 		r.note = "truth fetch failed (skipped): " + tErr.Error()
 		r.relErr = math.NaN()
 	default:
@@ -180,13 +210,27 @@ func renderServedValueProm(results []servedValueResult, now time.Time) string {
 	b := &jsonSafeBuilder{}
 	b.line("# HELP stellarindex_served_value_rel_err Relative error of a served value vs its independent ground truth.")
 	b.line("# TYPE stellarindex_served_value_rel_err gauge")
-	b.line("# HELP stellarindex_served_value_ok 1 when the served value is within tolerance of ground truth (or truth source was unavailable).")
+	b.line("# HELP stellarindex_served_value_ok 1 when the served value is verified within tolerance of ground truth. NOT emitted for a check whose truth source was unavailable (see served_value_skipped) — absence is honest: we did not verify.")
 	b.line("# TYPE stellarindex_served_value_ok gauge")
+	b.line("# HELP stellarindex_served_value_skipped 1 when a check could not run because its independent truth source was unavailable (availability, not a served-value verdict).")
+	b.line("# TYPE stellarindex_served_value_skipped gauge")
 	b.line("# HELP stellarindex_served_value_last_run_unix When verify-served-values last completed.")
 	b.line("# TYPE stellarindex_served_value_last_run_unix gauge")
 	for _, r := range results {
 		if !math.IsNaN(r.relErr) {
 			b.line(fmt.Sprintf(`stellarindex_served_value_rel_err{check=%q} %g`, r.name, r.relErr))
+		}
+		skipped := 0
+		if r.skipped {
+			skipped = 1
+		}
+		b.line(fmt.Sprintf(`stellarindex_served_value_skipped{check=%q} %d`, r.name, skipped))
+		// A skipped check asserts NO ok verdict: emitting ok=1 would
+		// hide a real drift behind a dark truth source (F5 fail-open),
+		// and ok=0 would page for a third-party outage. Absence is the
+		// honest state — the skipped gauge above carries the signal.
+		if r.skipped {
+			continue
 		}
 		ok := 0
 		if r.ok {

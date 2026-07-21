@@ -324,11 +324,39 @@
 
       UNIT="heavy-${NAME}-$$"
 
-      # Root-disk watchdog (2026-06-11 incident follow-up): a heavy job
-      # that floods logs or scratch space can fill the 49G root faster
-      # than anyone reacts, wedging service logging into the CH
-      # async-channel failure mode. Stop the job while root still has
-      # headroom; the services it would have starved keep their logs.
+      # Disk watchdog (2026-06-11 incident follow-up, extended 2026-07-21).
+      # Two independent failure modes, each with its own filesystem:
+      #   1. ROOT (49G): a heavy job that floods logs or scratch space
+      #      fills root faster than anyone reacts, wedging service logging
+      #      into the CH async-channel failure mode.
+      #   2. DATA POOL: the heavy jobs themselves (backfills, re-derives,
+      #      archive walks) WRITE to the ZFS data pool via
+      #      /var/lib/clickhouse — a backfill that fills the pool would
+      #      break CH ingest and PG/galexie alike, and the root-only guard
+      #      above is BLIND to it (different filesystem). A pool near-full
+      #      also degrades ZFS write performance sharply. All pool datasets
+      #      share the pool's free space, so `df` on the CH dataset is a
+      #      faithful pool-capacity probe.
+      # Stop the job while EITHER filesystem still has headroom; the
+      # services it would have starved keep running. Thresholds/paths are
+      # env-overridable for non-standard hosts (same pattern as
+      # HEAVY_JOB_LOCK_DIR above).
+      POOL_PATH="${HEAVY_JOB_POOL_PATH:-/var/lib/clickhouse}"
+      # Default 300 GiB (2026-07-18 rationale): a heavy job that fills the
+      # shared ZFS pool wedges LIVE ingest + merges, not just this job — the
+      # runaway-phase0 near-miss ran unattended with ~2 TiB left and <1 TiB
+      # free, guarded only on root. 300 GiB keeps headroom for merges + the
+      # live sink, well above the point where ZFS write performance collapses.
+      POOL_MIN_KB="${HEAVY_MIN_DATA_KB:-314572800}"
+      # Fail LOUD, not silent: if POOL_PATH doesn't resolve, every watchdog tick
+      # would hit the "df glitched — skip" arm and the pool guard would protect
+      # nothing, invisibly, while the root guard kept working and masked the
+      # gap — the exact fail-open class this watchdog exists to prevent. Probe
+      # once up front and warn if it's unusable (the job still runs, guarded by
+      # root; an operator sees the warning in the unit log).
+      if ! df --output=avail -k "$POOL_PATH" >/dev/null 2>&1; then
+        echo "run-heavy-job: WARNING POOL_PATH '${POOL_PATH}' is not statable — the DATA-POOL watchdog is INACTIVE for this job (root-FS guard still active). Set HEAVY_JOB_POOL_PATH to a path on the data pool." >&2
+      fi
       (
         # This subshell MUST NOT inherit errexit/pipefail: a single
         # transient `df` failure (EBUSY/EIO under the very I/O pressure a
@@ -339,31 +367,22 @@
         # treated as "skip this tick, re-check in 30s", never as a
         # false low-space trip.
         set +eo pipefail
-        # CH data-pool floor (2026-07-18): a heavy job that fills the shared ZFS
-        # pool wedges LIVE ingest + merges, not just this job — the root-only
-        # check below never saw it (the runaway-phase0 near-miss: an unattended
-        # backfill with ~2 TiB left and <1 TiB free, guarded only on root).
-        # Tunable; default 300 GiB keeps headroom for merges + the live sink.
-        DATA_MIN_KB="${HEAVY_MIN_DATA_KB:-314572800}"
+        stop_job() {  # $1=human reason
+          echo "run-heavy-job: ${1} — stopping ${UNIT}" >&2
+          systemctl stop "${UNIT}.scope" 2>/dev/null || systemctl kill "${UNIT}.scope" 2>/dev/null || true
+          exit 0
+        }
         while sleep 30; do
-          avail_kb=$(df --output=avail -k / 2>/dev/null | tail -1 | tr -d ' ')
-          case "$avail_kb" in
-            ''|*[!0-9]*) continue ;;  # df glitched — don't act on garbage
+          root_kb=$(df --output=avail -k / 2>/dev/null | tail -1 | tr -d ' ')
+          case "$root_kb" in
+            ''|*[!0-9]*) : ;;  # df glitched — don't act on garbage
+            *) [ "$root_kb" -lt 2097152 ] && stop_job "root FS below 2 GiB (${root_kb} KiB avail)" ;;
           esac
-          if [ "$avail_kb" -lt 2097152 ]; then
-            echo "run-heavy-job: root FS below 2 GiB (${avail_kb} KiB avail) — stopping ${UNIT}" >&2
-            systemctl stop "${UNIT}.scope" 2>/dev/null || systemctl kill "${UNIT}.scope" 2>/dev/null || true
-            exit 0
-          fi
-          data_kb=$(df --output=avail -k /var/lib/clickhouse 2>/dev/null | tail -1 | tr -d ' ')
-          case "$data_kb" in
-            ''|*[!0-9]*) continue ;;  # df glitched — skip this tick, don't act on garbage
+          pool_kb=$(df --output=avail -k "$POOL_PATH" 2>/dev/null | tail -1 | tr -d ' ')
+          case "$pool_kb" in
+            ''|*[!0-9]*) : ;;  # df glitched or POOL_PATH absent — skip this tick
+            *) [ "$pool_kb" -lt "$POOL_MIN_KB" ] && stop_job "data pool ${POOL_PATH} below $((POOL_MIN_KB / 1048576)) GiB (${pool_kb} KiB avail)" ;;
           esac
-          if [ "$data_kb" -lt "$DATA_MIN_KB" ]; then
-            echo "run-heavy-job: CH data pool below $((DATA_MIN_KB / 1048576)) GiB (${data_kb} KiB avail) — stopping ${UNIT}" >&2
-            systemctl stop "${UNIT}.scope" 2>/dev/null || systemctl kill "${UNIT}.scope" 2>/dev/null || true
-            exit 0
-          fi
         done
       ) &
       WATCHDOG=$!

@@ -4,6 +4,7 @@
 package chops
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
@@ -182,5 +183,37 @@ func TestCatalogue_OpArgsOnlyForRedstone(t *testing.T) {
 		if !seen {
 			t.Fatalf("catalogue missing %s (test config sets a watched set — promotion should have included it)", name)
 		}
+	}
+}
+
+// TestValidateSourceFilter is the F7 fail-open regression: a -source
+// filter that names no catalogue source must fail CLOSED, not silently
+// skip every source and report success. Empty (all sources) and a real
+// name both pass.
+func TestValidateSourceFilter(t *testing.T) {
+	cat := []reconSource{{name: "soroswap"}, {name: "aquarius"}, {name: "sdex"}}
+	cases := []struct {
+		name    string
+		only    string
+		wantErr bool
+	}{
+		{"empty means all sources", "", false},
+		{"exact match", "aquarius", false},
+		{"first entry", "soroswap", false},
+		{"typo fails closed", "aquariuss", true},
+		{"unknown fails closed", "not-a-source", true},
+		{"case-sensitive (no fuzzy match)", "Soroswap", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateSourceFilter(tc.only, cat)
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("validateSourceFilter(%q) err=%v, wantErr=%v", tc.only, err, tc.wantErr)
+			}
+			// A rejection must name what the operator can actually pass.
+			if err != nil && !strings.Contains(err.Error(), "soroswap") {
+				t.Errorf("rejection should list known sources; got %q", err.Error())
+			}
+		})
 	}
 }

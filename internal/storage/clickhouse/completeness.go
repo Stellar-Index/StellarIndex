@@ -166,6 +166,22 @@ func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (proble
 			)
 		) WHERE ledger_seq > ? AND prior_hash != '' AND prev_hash != prior_hash), 0))`
 
+	// Endpoint-presence guard (F1 fail-open fix): the windowed gap/chain scan
+	// below only finds holes BETWEEN present ledgers, so an EMPTY range, or one
+	// missing its head/tail ledgers, would otherwise read as "intact" — which
+	// falsely certifies lake_complete during a partial restore/backfill. Assert
+	// the endpoints are present + count the range up front so an absent
+	// substrate fails CLOSED. (Interior gaps still fall through to the windowed
+	// scan, which pinpoints their location; the tail is re-checked after it.)
+	var haveMin, haveMax, present uint64
+	const endpointsQ = `SELECT toUInt64(ifNull(min(ledger_seq),0)), toUInt64(ifNull(max(ledger_seq),0)), toUInt64(uniqExact(ledger_seq)) FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?`
+	if qerr := conn.QueryRow(ctx, endpointsQ, from, to).Scan(&haveMin, &haveMax, &present); qerr != nil {
+		return 0, false, "", fmt.Errorf("clickhouse: substrate endpoint presence [%d,%d]: %w", from, to, qerr)
+	}
+	if p, has, d := substrateHeadProblem(from, to, present > 0, uint32(haveMin)); has {
+		return p, true, d, nil
+	}
+
 	for wlo := uint64(from); wlo <= uint64(to); wlo += substrateWindow {
 		whi := wlo + substrateWindow
 		if whi > uint64(to) {
@@ -197,7 +213,37 @@ func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (proble
 			return uint32(firstBreak), true, fmt.Sprintf("substrate: hash-chain break at %d", firstBreak), nil
 		}
 	}
+	// Tail-presence guard (F1): the interior scan is clean, but if the last
+	// present ledger is below `to`, the tail of the range is missing — every
+	// source's data extends to `to`, so return `to` (not haveMax+1) so the
+	// per-source consumer's `problem < genesis` test fails EVERY source, not
+	// just those below haveMax+1 (the F1 consumer fail-open a high-genesis
+	// source would otherwise slip through — see substrateHeadProblem).
+	if haveMax < uint64(to) {
+		return to, true, fmt.Sprintf("substrate: missing tail ledger(s) — last present is %d, expected %d", haveMax, to), nil
+	}
 	return 0, false, "", nil
+}
+
+// substrateHeadProblem is the pure low-ledger coverage decision for
+// SubstrateProblem: an EMPTY range, or one missing its HEAD ledger(s) — the two
+// absences the between-present-ledgers gap scan cannot see. It returns a problem
+// ledger chosen so the per-source consumer's `problem < genesis ⟹ source-OK`
+// test stays correct for a COVERAGE failure (the F1 consumer fail-open): an
+// empty range returns `to` (the range tip) so EVERY source with genesis ≤ tip
+// fails — not just SDEX at genesis 2 — and a missing head returns haveMin-1 so
+// exactly the sources whose data begins inside the absent head fail, while a
+// high-genesis source whose data is fully present still (correctly) passes. Pure
+// — unit-testable without a live lake. hasProblem=false ⟹ the head is covered
+// (interior gaps and the tail are decided elsewhere).
+func substrateHeadProblem(from, to uint32, present bool, haveMin uint32) (problem uint32, hasProblem bool, detail string) {
+	if !present {
+		return to, true, fmt.Sprintf("substrate: no ledgers present in [%d,%d] (empty range — not intact)", from, to)
+	}
+	if haveMin > from {
+		return haveMin - 1, true, fmt.Sprintf("substrate: missing head ledger(s) — first present is %d, expected %d (fails every source with genesis ≤ %d)", haveMin, from, haveMin-1)
+	}
+	return 0, false, ""
 }
 
 // watermark is the pure interpretation of a ContiguousWatermark query result:
