@@ -339,6 +339,12 @@
         # treated as "skip this tick, re-check in 30s", never as a
         # false low-space trip.
         set +eo pipefail
+        # CH data-pool floor (2026-07-18): a heavy job that fills the shared ZFS
+        # pool wedges LIVE ingest + merges, not just this job — the root-only
+        # check below never saw it (the runaway-phase0 near-miss: an unattended
+        # backfill with ~2 TiB left and <1 TiB free, guarded only on root).
+        # Tunable; default 300 GiB keeps headroom for merges + the live sink.
+        DATA_MIN_KB="${HEAVY_MIN_DATA_KB:-314572800}"
         while sleep 30; do
           avail_kb=$(df --output=avail -k / 2>/dev/null | tail -1 | tr -d ' ')
           case "$avail_kb" in
@@ -346,6 +352,15 @@
           esac
           if [ "$avail_kb" -lt 2097152 ]; then
             echo "run-heavy-job: root FS below 2 GiB (${avail_kb} KiB avail) — stopping ${UNIT}" >&2
+            systemctl stop "${UNIT}.scope" 2>/dev/null || systemctl kill "${UNIT}.scope" 2>/dev/null || true
+            exit 0
+          fi
+          data_kb=$(df --output=avail -k /var/lib/clickhouse 2>/dev/null | tail -1 | tr -d ' ')
+          case "$data_kb" in
+            ''|*[!0-9]*) continue ;;  # df glitched — skip this tick, don't act on garbage
+          esac
+          if [ "$data_kb" -lt "$DATA_MIN_KB" ]; then
+            echo "run-heavy-job: CH data pool below $((DATA_MIN_KB / 1048576)) GiB (${data_kb} KiB avail) — stopping ${UNIT}" >&2
             systemctl stop "${UNIT}.scope" 2>/dev/null || systemctl kill "${UNIT}.scope" 2>/dev/null || true
             exit 0
           fi
