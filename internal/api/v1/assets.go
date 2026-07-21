@@ -743,6 +743,13 @@ const classicSupplyRetryGap = 60 * time.Second
 // timeout, which is precisely what the old request-scoped refresh could not do.
 const classicSupplyRefreshBudget = 3 * time.Minute
 
+// classicSupplyReader is the narrow capability cachedClassicSupply needs from
+// the explorer reader — named rather than inline so the request path and the
+// detached refresh share one declaration.
+type classicSupplyReader interface {
+	ClassicCirculatingSupply(context.Context) (map[string]string, error)
+}
+
 // cachedClassicSupply returns the broad-coverage classic circulating-supply
 // map (canonical CODE-ISSUER → raw 7dp total) from the explorer reader,
 // cached per-server with a TTL + single-flight. The backing ClickHouse
@@ -751,9 +758,7 @@ const classicSupplyRefreshBudget = 3 * time.Minute
 // degrade to the precise supply set only. Serves the last good map on a
 // refresh error.
 func (s *Server) cachedClassicSupply(ctx context.Context) map[string]string {
-	er, ok := s.explorer.(interface {
-		ClassicCirculatingSupply(context.Context) (map[string]string, error)
-	})
+	er, ok := s.explorer.(classicSupplyReader)
 	if !ok {
 		return nil
 	}
@@ -808,9 +813,7 @@ func (s *Server) cachedClassicSupply(ctx context.Context) map[string]string {
 // (18.6% of /v1/assets requests were pinned there on 2026-07-21). Now a slow
 // refresh burns its own budget in the background, callers are served stale, and
 // classicSupplyAttemptAt rate-limits retries.
-func (s *Server) refreshClassicSupply(er interface {
-	ClassicCirculatingSupply(context.Context) (map[string]string, error)
-}, done chan struct{}) {
+func (s *Server) refreshClassicSupply(er classicSupplyReader, done chan struct{}) {
 	ctx, cancel := context.WithTimeout(context.Background(), classicSupplyRefreshBudget)
 	defer cancel()
 
