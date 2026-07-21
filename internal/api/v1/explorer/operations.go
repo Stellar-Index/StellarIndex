@@ -54,6 +54,36 @@ func (c *opsDirCache) put(limit int, view OperationsView) {
 	c.entries[limit] = opsDirEntry{view: view, expires: time.Now().Add(opsDirTTL)}
 }
 
+// opTypeStatsTTL bounds the trailing-24h op-type breakdown. It is deliberately
+// MUCH longer than opsDirTTL: the directory listing changes every ledger (~5s),
+// but this aggregate summarises a 24-HOUR window, so 3s precision on it was
+// meaningless — and expensive, since each recompute scans a day of a 34B-row
+// table. 5 minutes is still ~288x finer than the window it describes.
+const opTypeStatsTTL = 5 * time.Minute
+
+// opTypeStatsCache holds the last computed op-type breakdown. On a refresh
+// failure the caller serves the STALE value rather than blanking the panel —
+// a slow aggregate should degrade to slightly-old numbers, never to nothing.
+type opTypeStatsCache struct {
+	mu    sync.Mutex
+	stats []OpTypeStatV
+	at    time.Time
+}
+
+// get returns the cached breakdown and whether it is still fresh. The stats
+// are returned even when stale so the caller can fall back to them on error.
+func (c *opTypeStatsCache) get() (stats []OpTypeStatV, fresh bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.stats, c.stats != nil && time.Since(c.at) < opTypeStatsTTL
+}
+
+func (c *opTypeStatsCache) put(stats []OpTypeStatV) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.stats, c.at = stats, time.Now()
+}
+
 // OpView is the wire shape for a decoded operation. Type is the snake_case op
 // type; Fields holds the decoded, human-readable body (empty for not-yet-decoded
 // types, in which case RawXDR carries the original base64 so nothing is lost).
@@ -122,6 +152,31 @@ func opView(o clickhouse.OpRow) OpView {
 // only — the happy path uses xdrjson's controlled snake_case vocabulary.
 func normalizeLakeOpType(s string) string {
 	return strings.ToLower(strings.TrimPrefix(s, "OperationType"))
+}
+
+// resolveOpTypeStats returns the trailing-24h op-type breakdown, preferring the
+// 5-minute cache and falling back to the STALE value on a refresh error — for a
+// 24-hour aggregate, numbers a few minutes old are still truthful, whereas an
+// empty panel is not. Extracted from operationsDirectory to keep that handler's
+// control flow flat (it is otherwise a listing assembler, not a cache manager).
+func (h *Handler) resolveOpTypeStats(ctx context.Context, r *http.Request) []OpTypeStatV {
+	cached, fresh := h.opTypeStats.get()
+	if fresh {
+		return cached
+	}
+	stats, err := h.Reader.OperationTypeStats(ctx, 0)
+	if err != nil {
+		if !h.ClientAborted(r, err) {
+			h.Logger.Warn("explorer OperationTypeStats failed (serving last good)", "err", err)
+		}
+		return cached
+	}
+	v := make([]OpTypeStatV, len(stats))
+	for i, st := range stats {
+		v[i] = OpTypeStatV{Type: normalizeLakeOpType(st.OpType), Count: st.Count}
+	}
+	h.opTypeStats.put(v)
+	return v
 }
 
 // OperationsView is the wire response for GET /v1/operations.
@@ -201,6 +256,11 @@ type ThroughputBucketV struct {
 	Txs     int64  `json:"txs"`
 	Ops     int64  `json:"ops"`
 	Events  int64  `json:"events"`
+	// Partial is true for a bucket that does not cover a whole UTC day — in
+	// practice only today, still accumulating. Clients should render it
+	// distinctly and exclude it from window totals; every other bucket is a
+	// complete day (the window is day-aligned).
+	Partial bool `json:"partial,omitempty"`
 }
 
 // NetworkThroughput serves GET /v1/network/throughput — daily
@@ -232,6 +292,7 @@ func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 		out.Buckets[i] = ThroughputBucketV{
 			Day:     b.Day.UTC().Format("2006-01-02"),
 			Ledgers: b.Ledgers, Txs: b.Txs, Ops: b.Ops, Events: b.Events,
+			Partial: b.Partial,
 		}
 	}
 	h.WriteJSON(w, out, false)
@@ -283,14 +344,7 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 	// fail the listing (only attached on the first page to keep paging
 	// responses lean).
 	if firstPage {
-		if stats, serr := h.Reader.OperationTypeStats(ctx, 0); serr == nil {
-			out.OpTypeStats = make([]OpTypeStatV, len(stats))
-			for i, st := range stats {
-				out.OpTypeStats[i] = OpTypeStatV{Type: normalizeLakeOpType(st.OpType), Count: st.Count}
-			}
-		} else if !h.ClientAborted(r, serr) {
-			h.Logger.Warn("explorer OperationTypeStats failed", "err", serr)
-		}
+		out.OpTypeStats = h.resolveOpTypeStats(ctx, r)
 		h.opsDir.put(limit, out) // warm the cache with the assembled first page
 	}
 	h.WriteJSON(w, out, false)

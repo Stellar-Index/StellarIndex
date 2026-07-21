@@ -733,6 +733,23 @@ func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetai
 // totals move slowly, so a 10-minute TTL keeps it off the API hot path.
 const classicSupplyTTL = 10 * time.Minute
 
+// classicSupplyRetryGap rate-limits refresh ATTEMPTS after a failure. The
+// backing query is a full-table GROUP BY; retrying it on every request once it
+// starts failing is what turned one slow query into a sustained outage.
+const classicSupplyRetryGap = 60 * time.Second
+
+// classicSupplyRefreshBudget is the DETACHED refresh's own deadline — generous,
+// because it no longer blocks any request. It must exceed the API's request
+// timeout, which is precisely what the old request-scoped refresh could not do.
+const classicSupplyRefreshBudget = 3 * time.Minute
+
+// classicSupplyReader is the narrow capability cachedClassicSupply needs from
+// the explorer reader — named rather than inline so the request path and the
+// detached refresh share one declaration.
+type classicSupplyReader interface {
+	ClassicCirculatingSupply(context.Context) (map[string]string, error)
+}
+
 // cachedClassicSupply returns the broad-coverage classic circulating-supply
 // map (canonical CODE-ISSUER → raw 7dp total) from the explorer reader,
 // cached per-server with a TTL + single-flight. The backing ClickHouse
@@ -741,9 +758,7 @@ const classicSupplyTTL = 10 * time.Minute
 // degrade to the precise supply set only. Serves the last good map on a
 // refresh error.
 func (s *Server) cachedClassicSupply(ctx context.Context) map[string]string {
-	er, ok := s.explorer.(interface {
-		ClassicCirculatingSupply(context.Context) (map[string]string, error)
-	})
+	er, ok := s.explorer.(classicSupplyReader)
 	if !ok {
 		return nil
 	}
@@ -753,21 +768,60 @@ func (s *Server) cachedClassicSupply(ctx context.Context) map[string]string {
 		s.classicSupplyMu.Unlock()
 		return m
 	}
-	if ch := s.classicSupplyFlight; ch != nil {
-		s.classicSupplyMu.Unlock()
-		select {
-		case <-ch:
-			s.classicSupplyMu.Lock()
-			m := s.classicSupplyCache
-			s.classicSupplyMu.Unlock()
-			return m
-		case <-ctx.Done():
-			return nil
-		}
+	// Stale (or never filled). Kick off a DETACHED refresh — at most one in
+	// flight, and at most one attempt per classicSupplyRetryGap — then serve
+	// the last-good map immediately without blocking on it.
+	last := s.classicSupplyCache
+	flight := s.classicSupplyFlight
+	if flight == nil && time.Since(s.classicSupplyAttemptAt) >= classicSupplyRetryGap {
+		s.classicSupplyAttemptAt = time.Now() // advances on failure too
+		flight = make(chan struct{})
+		s.classicSupplyFlight = flight
+		// G118 is exactly the behaviour we want here, not a bug: detaching from
+		// the request context is THE fix. Running this refresh on the caller's
+		// ctx is what latched the cache into permanent failure — a refresh
+		// killed at the request timeout never advanced classicSupplyAt, so
+		// every later request retried the doomed query and paid the full 15s.
+		// The goroutine gets its own bounded budget in refreshClassicSupply.
+		go s.refreshClassicSupply(er, flight) //nolint:gosec,contextcheck // G118 + contextcheck: the detachment is intentional; see refreshClassicSupply's doc comment.
 	}
-	done := make(chan struct{})
-	s.classicSupplyFlight = done
 	s.classicSupplyMu.Unlock()
+
+	// Serving stale beats blocking: this map only feeds market-cap enrichment,
+	// and a 10-minute-old supply figure is far better than a 15s stall.
+	if last != nil {
+		return last
+	}
+	// Cold start with nothing cached: wait for the in-flight refresh so the
+	// first request still gets data when the query is healthy, bounded by the
+	// caller's own deadline. Returns nil if it can't make it — callers degrade
+	// to the precise supply set rather than hanging.
+	if flight == nil {
+		return nil // retry gap still open and nothing cached
+	}
+	select {
+	case <-flight:
+		s.classicSupplyMu.Lock()
+		m := s.classicSupplyCache
+		s.classicSupplyMu.Unlock()
+		return m
+	case <-ctx.Done():
+		return nil
+	}
+}
+
+// refreshClassicSupply recomputes the classic supply map on a DETACHED context
+// and stores it. Detaching is load-bearing: the old code ran this refresh on
+// the *caller's* request context, so once the underlying ClickHouse GROUP BY
+// grew past the 15s request timeout it could never complete — and because
+// classicSupplyAt advanced only on success, the cache stayed stale forever and
+// EVERY subsequent request re-ran the doomed query and paid the full 15s
+// (18.6% of /v1/assets requests were pinned there on 2026-07-21). Now a slow
+// refresh burns its own budget in the background, callers are served stale, and
+// classicSupplyAttemptAt rate-limits retries.
+func (s *Server) refreshClassicSupply(er classicSupplyReader, done chan struct{}) {
+	ctx, cancel := context.WithTimeout(context.Background(), classicSupplyRefreshBudget)
+	defer cancel()
 
 	m, err := er.ClassicCirculatingSupply(ctx)
 
@@ -775,16 +829,13 @@ func (s *Server) cachedClassicSupply(ctx context.Context) map[string]string {
 	if err == nil && len(m) > 0 {
 		s.classicSupplyCache = m
 		s.classicSupplyAt = time.Now()
-	} else {
-		m = s.classicSupplyCache // serve last good on error/empty
 	}
 	s.classicSupplyFlight = nil
 	s.classicSupplyMu.Unlock()
 	close(done)
 	if err != nil {
-		s.logger.Warn("classic supply refresh failed", "err", err)
+		s.logger.Warn("classic supply refresh failed (serving last good)", "err", err)
 	}
-	return m
 }
 
 // computeMarketCapUSD = (circulating / 10^decimals) × priceUSD, as a

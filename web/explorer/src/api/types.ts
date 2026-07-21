@@ -6371,10 +6371,10 @@ export interface paths {
                          *         "buckets": [
                          *           {
                          *             "day": "2026-06-25",
-                         *             "ledgers": 3331,
-                         *             "txs": 1068712,
-                         *             "ops": 2398506,
-                         *             "events": 1713900
+                         *             "ledgers": 14832,
+                         *             "txs": 5210044,
+                         *             "ops": 10981233,
+                         *             "events": 7498112
                          *           },
                          *           {
                          *             "day": "2026-06-26",
@@ -6382,6 +6382,14 @@ export interface paths {
                          *             "txs": 5232968,
                          *             "ops": 11025463,
                          *             "events": 7512422
+                         *           },
+                         *           {
+                         *             "day": "2026-06-27",
+                         *             "ledgers": 8934,
+                         *             "txs": 3160221,
+                         *             "ops": 6655109,
+                         *             "events": 4537880,
+                         *             "partial": true
                          *           }
                          *         ]
                          *       },
@@ -6409,6 +6417,8 @@ export interface paths {
                                     ops?: number;
                                     /** Format: int64 */
                                     events?: number;
+                                    /** @description True when this bucket does not cover a whole UTC day — in practice only today, which is still accumulating. Render it distinctly and EXCLUDE it from window totals; every other bucket is a complete day (the window is day-aligned). Omitted when false. */
+                                    partial?: boolean;
                                 }[];
                             };
                         };
