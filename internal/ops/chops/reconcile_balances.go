@@ -44,8 +44,9 @@ import (
 // [-sleep-ms N] [-timeout DUR]. Exactly one of -account/-sample is
 // required. Exit code is the number of MISMATCHes (capped at 255); a run whose
 // ERROR rate exceeds -max-error-rate ALSO fails non-zero (C2-15 fail-open guard
-// — an all-errored run verified nothing and must not look clean),
-// mirroring scripts/dev/r1-smoke.sh's "exit code = number of failed
+// — an all-errored run verified nothing and must not look clean), as does a
+// -sample run that MATCHED zero accounts (F4 — a vacuous run that confirmed
+// nothing), mirroring scripts/dev/r1-smoke.sh's "exit code = number of failed
 // checks" convention so cron/Healthchecks.io can consume it directly
 // — see opsutil.ExitCodeError's doc comment for how a Go subcommand
 // reports a non-1 exit code without breaking realMain's flush-on-exit
@@ -118,6 +119,19 @@ func reconcileBalances(args []string) error { //nolint:funlen // linear: flag pa
 			}
 			return &opsutil.ExitCodeError{Code: code}
 		}
+	}
+
+	// Fail-open guard (F4, sibling of C2-15): a -sample run that MATCHED zero
+	// accounts confirmed nothing — every account came back no-data / merged /
+	// errored — so exiting 0 would green the go-live balance gate on a vacuous
+	// run (the sample is drawn from RECENTLY-ACTIVE accounts, which should
+	// overwhelmingly match). A single -account run is exempt: the operator
+	// deliberately chose that account, which may legitimately be merged/absent.
+	if haveSample && mismatches == 0 && sampleConfirmedNothing(results) {
+		fmt.Fprintf(os.Stderr,
+			"reconcile-balances: FAIL — -sample checked %d account(s) but MATCHED none; the reconcile confirmed nothing, not a clean pass\n",
+			len(results))
+		return &opsutil.ExitCodeError{Code: 255}
 	}
 
 	if mismatches == 0 {
@@ -410,6 +424,26 @@ func xlmDecimalToStroops(s string) (*big.Int, error) {
 }
 
 // ─── report ─────────────────────────────────────────────────────────
+
+// sampleConfirmedNothing reports whether a -sample reconcile run verified zero
+// accounts — every result was no-data / merged / errored, none MATCHED. That is
+// a vacuous pass the go-live gate must reject (F4 fail-open guard): the sample
+// is drawn from recently-active accounts, so a real serving tier makes most of
+// them MATCH; zero matches means the reconcile proved nothing. Pure — no I/O —
+// so it's unit-testable without a live lake or Horizon. An empty result set
+// returns false (reconcileResolveAccounts already errors on an empty sample, so
+// "nothing checked" can't reach here; guard against it anyway).
+func sampleConfirmedNothing(results []reconcileResult) bool {
+	if len(results) == 0 {
+		return false
+	}
+	for _, r := range results {
+		if r.Outcome == outcomeMatch {
+			return false
+		}
+	}
+	return true
+}
 
 // printReconcileReport writes the full per-account + summary report to w and
 // returns the MISMATCH count (the caller's exit code) and the ERROR count (used

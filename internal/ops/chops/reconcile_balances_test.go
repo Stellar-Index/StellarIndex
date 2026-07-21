@@ -246,6 +246,41 @@ func TestHorizonRetryAfter(t *testing.T) {
 	}
 }
 
+// ─── sampleConfirmedNothing: F4 vacuous-sample fail-open guard ─────────────
+
+func TestSampleConfirmedNothing(t *testing.T) {
+	cases := []struct {
+		name    string
+		results []reconcileResult
+		want    bool
+	}{
+		{"empty is not a confirm-nothing (guarded elsewhere)", nil, false},
+		{"one match confirms something", []reconcileResult{{Outcome: outcomeMatch}}, false},
+		{"a match among no-data confirms something", []reconcileResult{
+			{Outcome: outcomeNoData}, {Outcome: outcomeMatch}, {Outcome: outcomeMergedOrAbsent},
+		}, false},
+		{"all no-data confirmed nothing", []reconcileResult{
+			{Outcome: outcomeNoData}, {Outcome: outcomeNoData},
+		}, true},
+		{"all merged/absent confirmed nothing", []reconcileResult{
+			{Outcome: outcomeMergedOrAbsent}, {Outcome: outcomeMergedOrAbsent},
+		}, true},
+		{"all errored confirmed nothing (C2-15 also catches this)", []reconcileResult{
+			{Outcome: outcomeError}, {Outcome: outcomeError},
+		}, true},
+		{"a mismatch is not a match — still confirmed nothing MATCHED", []reconcileResult{
+			{Outcome: outcomeMismatch}, {Outcome: outcomeNoData},
+		}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sampleConfirmedNothing(tc.results); got != tc.want {
+				t.Fatalf("sampleConfirmedNothing = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // ─── printReconcileReport: exit-code-bearing summary ───────────────────────
 
 func TestPrintReconcileReport_CountsAndExitCode(t *testing.T) {
