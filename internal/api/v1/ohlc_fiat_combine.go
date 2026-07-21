@@ -209,30 +209,28 @@ func selectExtreme(cands []*big.Rat, vwap *big.Rat, isHigh bool) *big.Rat {
 	if len(cands) == 0 {
 		return new(big.Rat)
 	}
-	var bound *big.Rat // ceil for highs, floor for lows
-	if vwap != nil {
-		if isHigh {
-			bound = new(big.Rat).Mul(vwap, combinedOutlierBandRatio)
-		} else {
-			bound = new(big.Rat).Quo(vwap, combinedOutlierBandRatio)
-		}
+	// Collapse the high/low direction into two comparators up front so the
+	// scan below is direction-agnostic: `moreExtreme` picks the bucket
+	// extreme, `inBand` decides whether a print survives the outlier filter.
+	moreExtreme := func(a, b *big.Rat) bool { return a.Cmp(b) > 0 } // higher wins
+	inBand := func(c, bound *big.Rat) bool { return c.Cmp(bound) <= 0 }
+	if !isHigh {
+		moreExtreme = func(a, b *big.Rat) bool { return a.Cmp(b) < 0 } // lower wins
+		inBand = func(c, bound *big.Rat) bool { return c.Cmp(bound) >= 0 }
 	}
+	bound := outlierBound(vwap, isHigh)
+
 	var best, fallback *big.Rat
 	for _, c := range cands {
-		// fallback = the least-outlier candidate (min high / max low) so an
+		// fallback = the LEAST extreme candidate (min high / max low) so an
 		// all-outlier bucket still serves something bounded, not the wick.
-		if fallback == nil || (isHigh && c.Cmp(fallback) < 0) || (!isHigh && c.Cmp(fallback) > 0) {
+		if fallback == nil || moreExtreme(fallback, c) {
 			fallback = c
 		}
-		if bound != nil {
-			if isHigh && c.Cmp(bound) > 0 {
-				continue // high above the ceiling — drop
-			}
-			if !isHigh && c.Cmp(bound) < 0 {
-				continue // low below the floor — drop
-			}
+		if bound != nil && !inBand(c, bound) {
+			continue // dust / fat-finger print — drop it
 		}
-		if best == nil || (isHigh && c.Cmp(best) > 0) || (!isHigh && c.Cmp(best) < 0) {
+		if best == nil || moreExtreme(c, best) {
 			best = c
 		}
 	}
@@ -240,6 +238,19 @@ func selectExtreme(cands []*big.Rat, vwap *big.Rat, isHigh bool) *big.Rat {
 		return best
 	}
 	return fallback
+}
+
+// outlierBound returns the in-band ceiling (highs) or floor (lows) around the
+// bucket VWAP, or nil when VWAP is unavailable — in which case nothing is
+// dropped and the raw extreme stands.
+func outlierBound(vwap *big.Rat, isHigh bool) *big.Rat {
+	if vwap == nil {
+		return nil
+	}
+	if isHigh {
+		return new(big.Rat).Mul(vwap, combinedOutlierBandRatio)
+	}
+	return new(big.Rat).Quo(vwap, combinedOutlierBandRatio)
 }
 
 // ratFromDecimal parses a NUMERIC decimal string (e.g. "0.19056",
