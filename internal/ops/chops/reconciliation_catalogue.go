@@ -121,7 +121,6 @@ type reconSource struct {
 // contract simply gets no sep41 entries, mirroring the dispatcher's own
 // non-opted-in behavior.
 //
-//nolint:funlen // linear per-source catalogue; one entry per projected source, splitting scatters the reconcile spec.
 // validateSourceFilter fails CLOSED when a -source filter names no source
 // in the catalogue actually built for this config. Both compute-completeness
 // and verify-reconciliation filter their per-source loop with
@@ -131,6 +130,8 @@ type reconSource struct {
 // config-dependent (sep41 sources are promoted only when configured), so
 // the valid set is exactly what buildReconciliationCatalogue returned.
 // only == "" (all sources) is always valid.
+//
+//nolint:funlen // linear per-source catalogue; one entry per projected source, splitting scatters the reconcile spec.
 func validateSourceFilter(only string, cat []reconSource) error {
 	if only == "" {
 		return nil
