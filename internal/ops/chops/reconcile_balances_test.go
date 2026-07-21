@@ -11,6 +11,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
 // ─── xlmDecimalToStroops: exact decimal parse, no float64 ─────────────────
@@ -337,5 +339,76 @@ func TestPrintReconcileReport_CountsErrors(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "ERROR") {
 		t.Fatalf("report should surface the ERROR count; got:\n%s", buf.String())
+	}
+}
+
+// TestReconcileExitError pins the consolidated exit decision (reviewer #4: the
+// C2-15 and F4 exit branches were previously untested at the command level) and
+// the C2-15 Horizon-split (reviewer #2: truth outages are outcomeTruthUnavailable
+// and NOT in `errored`, so a Horizon rate-limit episode can't fail a healthy
+// -sample gate).
+func TestReconcileExitError(t *testing.T) {
+	cases := []struct {
+		name                     string
+		mismatches, errored, n   int
+		haveSample, confirmedNil bool // confirmedNil = sampleConfirmedNothing
+		maxErrorRate             float64
+		wantExit                 bool
+		wantCode                 int // only checked when wantExit
+	}{
+		{"clean sample pass", 0, 0, 100, true, false, 0.25, false, 0},
+		{"mismatches exit with count", 3, 0, 100, true, false, 0.25, true, 3},
+		{"mismatch count capped at 255", 900, 0, 1000, true, false, 0.25, true, 255},
+		// C2-15: our-side error rate
+		{"our-error rate over threshold fails even at 0 mismatch", 0, 30, 100, true, false, 0.25, true, 255},
+		{"our-error rate at threshold stays clean", 0, 25, 100, true, false, 0.25, false, 0},
+		{"our-error over threshold WITH mismatches keeps mismatch code", 4, 30, 100, true, false, 0.25, true, 4},
+		// C2-15 Horizon-split: truth-unavailable is NOT in `errored`, so a run
+		// with 70 match + 30 truth-dark has errored=0 → passes the rate guard.
+		{"30% Horizon-dark does NOT trip C2-15 (errored=0)", 0, 0, 100, true, false, 0.25, false, 0},
+		// F4: -sample matched nothing
+		{"sample matched nothing fails", 0, 0, 100, true, true, 0.25, true, 255},
+		{"single -account matched nothing is exempt", 0, 0, 1, false, true, 0.25, false, 0},
+		{"empty run is clean", 0, 0, 0, true, false, 0.25, false, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err, _ := reconcileExitError(tc.mismatches, tc.errored, tc.n, tc.haveSample, tc.confirmedNil, tc.maxErrorRate)
+			if tc.wantExit != (err != nil) {
+				t.Fatalf("reconcileExitError = %v, wantExit=%v", err, tc.wantExit)
+			}
+			if tc.wantExit {
+				ece, ok := err.(*opsutil.ExitCodeError)
+				if !ok {
+					t.Fatalf("want *ExitCodeError, got %T", err)
+				}
+				if ece.Code != tc.wantCode {
+					t.Fatalf("exit code = %d, want %d", ece.Code, tc.wantCode)
+				}
+			}
+		})
+	}
+}
+
+// TestPrintReconcileReport_TruthUnavailableNotCountedAsError pins that a
+// truth-source outage is tallied separately and NOT returned as an our-side
+// error (so it can't feed the C2-15 rate).
+func TestPrintReconcileReport_TruthUnavailableNotCountedAsError(t *testing.T) {
+	results := []reconcileResult{
+		{Account: "G1", Outcome: outcomeMatch},
+		{Account: "G2", Outcome: outcomeTruthUnavailable},
+		{Account: "G3", Outcome: outcomeTruthUnavailable},
+		{Account: "G4", Outcome: outcomeError},
+	}
+	var buf bytes.Buffer
+	mismatches, errored := printReconcileReport(&buf, results)
+	if mismatches != 0 {
+		t.Fatalf("mismatches = %d, want 0", mismatches)
+	}
+	if errored != 1 {
+		t.Fatalf("errored = %d, want 1 (only the CH-side ERROR; the 2 TRUTH_UNAVAILABLE excluded)", errored)
+	}
+	if out := buf.String(); !strings.Contains(out, "TRUTH_UNAVAILABLE") {
+		t.Fatalf("report should surface TRUTH_UNAVAILABLE; got:\n%s", out)
 	}
 }

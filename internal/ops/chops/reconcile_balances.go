@@ -102,47 +102,11 @@ func reconcileBalances(args []string) error { //nolint:funlen // linear: flag pa
 
 	mismatches, errored := printReconcileReport(os.Stdout, results)
 
-	// Fail-open guard (C2-15): a run where most accounts ERRORED did not
-	// actually verify anything — treating it as a clean pass (exit 0) would let
-	// bad data through the go-live gate. Fail if the error rate exceeds the
-	// threshold, even when the mismatch count is zero.
-	if n := len(results); n > 0 {
-		if rate := float64(errored) / float64(n); rate > *maxErrorRate {
-			fmt.Fprintf(os.Stderr,
-				"reconcile-balances: FAIL — %d/%d accounts (%.0f%%) errored, over -max-error-rate %.0f%%; result is unreliable, not a clean pass\n",
-				errored, n, rate*100, *maxErrorRate*100)
-			code := mismatches
-			if code == 0 {
-				code = 255 // ensure non-zero even when nothing could be compared
-			} else if code > 255 {
-				code = 255
-			}
-			return &opsutil.ExitCodeError{Code: code}
-		}
+	exitErr, reason := reconcileExitError(mismatches, errored, len(results), haveSample, sampleConfirmedNothing(results), *maxErrorRate)
+	if reason != "" {
+		fmt.Fprintf(os.Stderr, "reconcile-balances: FAIL — %s\n", reason)
 	}
-
-	// Fail-open guard (F4, sibling of C2-15): a -sample run that MATCHED zero
-	// accounts confirmed nothing — every account came back no-data / merged /
-	// errored — so exiting 0 would green the go-live balance gate on a vacuous
-	// run (the sample is drawn from RECENTLY-ACTIVE accounts, which should
-	// overwhelmingly match). A single -account run is exempt: the operator
-	// deliberately chose that account, which may legitimately be merged/absent.
-	if haveSample && mismatches == 0 && sampleConfirmedNothing(results) {
-		fmt.Fprintf(os.Stderr,
-			"reconcile-balances: FAIL — -sample checked %d account(s) but MATCHED none; the reconcile confirmed nothing, not a clean pass\n",
-			len(results))
-		return &opsutil.ExitCodeError{Code: 255}
-	}
-
-	if mismatches == 0 {
-		return nil
-	}
-	code := mismatches
-	if code > 255 {
-		fmt.Fprintf(os.Stderr, "reconcile-balances: %d mismatches exceeds the max process exit code (255) — reporting 255\n", mismatches)
-		code = 255
-	}
-	return &opsutil.ExitCodeError{Code: code}
+	return exitErr
 }
 
 // reconcileResolveAccounts turns the parsed -account/-sample flags
@@ -187,9 +151,19 @@ const (
 	// (the account existed in our data but is gone from the chain now)
 	// — reported separately, never a hard failure.
 	outcomeMergedOrAbsent reconcileOutcome = "MERGED_OR_ABSENT"
-	// outcomeError: something other than the above went wrong (CH
-	// query failure, Horizon transport error, unparseable response).
+	// outcomeError: an OUR-SIDE failure — the ClickHouse read for this
+	// account failed. This is the only outcome counted toward the C2-15
+	// -max-error-rate guard, because it means WE could not produce our
+	// value; a run dominated by these verified nothing reliable.
 	outcomeError reconcileOutcome = "ERROR"
+	// outcomeTruthUnavailable: the INDEPENDENT truth source (Horizon) was
+	// unreachable or returned an unparseable body — availability, not a
+	// verdict on our data, exactly like F5's SKIPPED for verify-served-values.
+	// Reported separately and DELIBERATELY EXCLUDED from the C2-15 error rate:
+	// a Horizon rate-limit episode must not fail an otherwise-healthy -sample
+	// gate. (A run where truth was dark for EVERY account still fails, via F4 —
+	// zero MATCHes confirmed nothing.)
+	outcomeTruthUnavailable reconcileOutcome = "TRUTH_UNAVAILABLE"
 )
 
 // reconcileResult is one account's full reconciliation outcome —
@@ -234,13 +208,18 @@ func reconcileOneAccount(ctx context.Context, client *http.Client, chAddr, horiz
 		return res
 	}
 	if err != nil {
-		res.Outcome = outcomeError
+		// Horizon transport error / 429-exhaustion / bad status — the
+		// independent truth source was unavailable, not our data failing.
+		// Truth-side, not counted toward the C2-15 rate (see the outcome doc).
+		res.Outcome = outcomeTruthUnavailable
 		res.Err = err
 		return res
 	}
 	refStroops, err := bigStroopsToInt64(refBig)
 	if err != nil {
-		res.Outcome = outcomeError
+		// Horizon returned an unparseable / out-of-range balance — again a
+		// truth-source problem (their response), not ours.
+		res.Outcome = outcomeTruthUnavailable
 		res.Err = err
 		return res
 	}
@@ -425,6 +404,48 @@ func xlmDecimalToStroops(s string) (*big.Int, error) {
 
 // ─── report ─────────────────────────────────────────────────────────
 
+// clampExitCode caps a failure count to a valid process exit code [0,255].
+func clampExitCode(n int) int {
+	if n > 255 {
+		return 255
+	}
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+// reconcileExitError maps a completed run's tally to its exit error (nil =
+// clean) plus a human-readable reason for stderr, consolidating the mismatch
+// exit code with the C2-15 and F4 fail-open guards so all three are decided —
+// and tested — in one pure place. `errored` counts OUR-side (ClickHouse)
+// failures ONLY; Horizon/truth outages are outcomeTruthUnavailable and excluded,
+// so a Horizon rate-limit episode can't fail an otherwise-healthy -sample gate
+// (consistent with F5). Pure — unit-testable.
+func reconcileExitError(mismatches, errored, n int, haveSample, confirmedNothing bool, maxErrorRate float64) (error, string) {
+	// C2-15: too many OUR-side errors ⟹ verified nothing reliable; fail even at
+	// zero mismatches.
+	if n > 0 && float64(errored)/float64(n) > maxErrorRate {
+		code := clampExitCode(mismatches)
+		if code == 0 {
+			code = 255 // non-zero even when nothing could be compared
+		}
+		return &opsutil.ExitCodeError{Code: code},
+			fmt.Sprintf("%d/%d accounts (%.0f%%) errored on OUR side, over -max-error-rate %.0f%% — result unreliable, not a clean pass",
+				errored, n, float64(errored)/float64(n)*100, maxErrorRate*100)
+	}
+	// F4: a -sample run that MATCHED nothing confirmed nothing (single -account
+	// runs are exempt — the operator chose that account).
+	if haveSample && mismatches == 0 && confirmedNothing {
+		return &opsutil.ExitCodeError{Code: 255},
+			"-sample matched no accounts — the reconcile confirmed nothing, not a clean pass"
+	}
+	if mismatches == 0 {
+		return nil, ""
+	}
+	return &opsutil.ExitCodeError{Code: clampExitCode(mismatches)}, ""
+}
+
 // sampleConfirmedNothing reports whether a -sample reconcile run verified zero
 // accounts — every result was no-data / merged / errored, none MATCHED. That is
 // a vacuous pass the go-live gate must reject (F4 fail-open guard): the sample
@@ -449,7 +470,7 @@ func sampleConfirmedNothing(results []reconcileResult) bool {
 // returns the MISMATCH count (the caller's exit code) and the ERROR count (used
 // by the caller's C2-15 fail-open guard — a mostly-errored run isn't a pass).
 func printReconcileReport(w io.Writer, results []reconcileResult) (int, int) {
-	var matched, mismatched, noData, mergedAbsent, errored int
+	var matched, mismatched, noData, mergedAbsent, errored, truthUnavail int
 	var mismatchRows, errorRows []reconcileResult
 	for _, r := range results {
 		switch r.Outcome {
@@ -462,6 +483,9 @@ func printReconcileReport(w io.Writer, results []reconcileResult) (int, int) {
 			noData++
 		case outcomeMergedOrAbsent:
 			mergedAbsent++
+		case outcomeTruthUnavailable:
+			truthUnavail++
+			errorRows = append(errorRows, r) // listed under Errors for the detail, but NOT counted as our-side error
 		case outcomeError:
 			errored++
 			errorRows = append(errorRows, r)
@@ -473,6 +497,9 @@ func printReconcileReport(w io.Writer, results []reconcileResult) (int, int) {
 	_, _ = fmt.Fprintf(w, "%-18s %8d\n", "MISMATCH", mismatched)
 	_, _ = fmt.Fprintf(w, "%-18s %8d\n", "NO_DATA", noData)
 	_, _ = fmt.Fprintf(w, "%-18s %8d\n", "MERGED_OR_ABSENT", mergedAbsent)
+	if truthUnavail > 0 {
+		_, _ = fmt.Fprintf(w, "%-18s %8d\n", "TRUTH_UNAVAILABLE", truthUnavail)
+	}
 	if errored > 0 {
 		_, _ = fmt.Fprintf(w, "%-18s %8d\n", "ERROR", errored)
 	}
@@ -491,8 +518,8 @@ func printReconcileReport(w io.Writer, results []reconcileResult) (int, int) {
 		}
 	}
 
-	_, _ = fmt.Fprintf(w, "\nreconcile-balances: %d checked, %d matched, %d mismatch, %d no_data, %d merged_or_absent, %d error\n",
-		len(results), matched, mismatched, noData, mergedAbsent, errored)
+	_, _ = fmt.Fprintf(w, "\nreconcile-balances: %d checked, %d matched, %d mismatch, %d no_data, %d merged_or_absent, %d truth_unavailable, %d error\n",
+		len(results), matched, mismatched, noData, mergedAbsent, truthUnavail, errored)
 
 	return mismatched, errored
 }
