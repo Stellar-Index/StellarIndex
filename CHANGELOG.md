@@ -152,6 +152,25 @@ against.
   the job. Confirmed `web/explorer/src/api/types.ts` is NOT stale relative to
   the lockfile-pinned `openapi-typescript` — no regeneration needed.
 
+## [v0.18.1] — 2026-07-21
+
+Tested against Stellar protocol v23.
+
+### Fixed
+
+- **First `/v1/assets` request after a restart still paid the full 15s request
+  timeout.** v0.18.0 broke the permanent failure latch, but the cold-start path
+  waited on the caller's deadline for the in-flight refresh — and the backing
+  full-table `GROUP BY` outlives that deadline, so the first visitor after every
+  deploy waited 15s and got a degraded page anyway. The cold wait is now bounded
+  to 2s (that visitor degrades either way), and the cache is prewarmed at startup
+  on a 5-minute cadence (TTL is 10 minutes, so it stays permanently warm) — no
+  user request pays the cold fill.
+- **CI: `sharp` advisory.** GHSA-f88m-g3jw-g9cj (`sharp <0.35.0`, inherited
+  libvips vulnerabilities) was published between runs and broke the audit gate
+  with no code change on our side. Both web workspaces are affected via different
+  paths (`next>sharp`, `wrangler>miniflare>sharp`); both now override `>=0.35.0`.
+
 ## [v0.18.0] — 2026-07-21
 
 Tested against Stellar protocol v23.
