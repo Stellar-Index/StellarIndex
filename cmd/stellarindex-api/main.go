@@ -1119,6 +1119,30 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		},
 	})
 
+	// Prewarm the classic circulating-supply cache OUT OF BAND. It backs
+	// market-cap enrichment on /v1/assets, and its backing full-table GROUP BY
+	// outlives the request timeout — so a cold fill on the request path costs
+	// the first visitor after every deploy a slow, degraded page. Filling it
+	// here means no user request ever pays for it. This runs separately from
+	// prewarmCaches (started earlier, before this server exists) but on the
+	// same 5-minute cadence as prewarmHeavy; the cache's TTL is 10 minutes, so
+	// that keeps it permanently warm. Each call reuses the request path's
+	// single-flight + retry-gap, so a still-warm cache is a cheap no-op.
+	go func() {
+		const cadence = 5 * time.Minute
+		apiSrv.PrewarmClassicSupply(rootCtx)
+		t := time.NewTicker(cadence)
+		defer t.Stop()
+		for {
+			select {
+			case <-rootCtx.Done():
+				return
+			case <-t.C:
+				apiSrv.PrewarmClassicSupply(rootCtx)
+			}
+		}
+	}()
+
 	// Closed-bucket producer — only spawn when the operator
 	// configured pairs to broadcast. Empty pair list is a valid
 	// deployment (Hub still constructs; subscribers connect and
