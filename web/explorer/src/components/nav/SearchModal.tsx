@@ -247,14 +247,24 @@ export function SearchModal() {
   // burst of keystrokes doesn't fan out a request per character.
   const [debouncedQ, setDebouncedQ] = useState('');
 
-  const topCoins = useCoins(100);
-  // Server-side search — only fires when the user has typed at
-  // least 2 chars; below that the top-100 list covers it.
+  // Gated on `open`: this modal is mounted in the sidebar on EVERY page, so
+  // an ungated fetch cost a /v1/assets?limit=100 round-trip on every page
+  // load for a list that is only ever rendered once the modal is opened.
+  // 5-minute staleTime because the top-100 asset list barely moves — reopening
+  // the modal should be instant, not another round-trip.
+  const topCoins = useCoins(100, undefined, undefined, undefined, undefined, {
+    enabled: open,
+    staleTime: 300_000,
+  });
+  // Server-side search — only fires when the modal is open AND the user has
+  // typed at least 2 chars; below that the top-100 list covers it.
   const searchedCoins = useCoins(
     25,
     undefined,
     undefined,
     debouncedQ.length >= 2 ? debouncedQ : undefined,
+    undefined,
+    { enabled: open },
   );
 
   // Currency catalogue — fetched once on first modal open, cached

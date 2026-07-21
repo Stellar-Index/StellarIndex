@@ -54,6 +54,36 @@ func (c *opsDirCache) put(limit int, view OperationsView) {
 	c.entries[limit] = opsDirEntry{view: view, expires: time.Now().Add(opsDirTTL)}
 }
 
+// opTypeStatsTTL bounds the trailing-24h op-type breakdown. It is deliberately
+// MUCH longer than opsDirTTL: the directory listing changes every ledger (~5s),
+// but this aggregate summarises a 24-HOUR window, so 3s precision on it was
+// meaningless — and expensive, since each recompute scans a day of a 34B-row
+// table. 5 minutes is still ~288x finer than the window it describes.
+const opTypeStatsTTL = 5 * time.Minute
+
+// opTypeStatsCache holds the last computed op-type breakdown. On a refresh
+// failure the caller serves the STALE value rather than blanking the panel —
+// a slow aggregate should degrade to slightly-old numbers, never to nothing.
+type opTypeStatsCache struct {
+	mu    sync.Mutex
+	stats []OpTypeStatV
+	at    time.Time
+}
+
+// get returns the cached breakdown and whether it is still fresh. The stats
+// are returned even when stale so the caller can fall back to them on error.
+func (c *opTypeStatsCache) get() (stats []OpTypeStatV, fresh bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.stats, c.stats != nil && time.Since(c.at) < opTypeStatsTTL
+}
+
+func (c *opTypeStatsCache) put(stats []OpTypeStatV) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.stats, c.at = stats, time.Now()
+}
+
 // OpView is the wire shape for a decoded operation. Type is the snake_case op
 // type; Fields holds the decoded, human-readable body (empty for not-yet-decoded
 // types, in which case RawXDR carries the original base64 so nothing is lost).
@@ -289,13 +319,27 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 	// fail the listing (only attached on the first page to keep paging
 	// responses lean).
 	if firstPage {
-		if stats, serr := h.Reader.OperationTypeStats(ctx, 0); serr == nil {
-			out.OpTypeStats = make([]OpTypeStatV, len(stats))
-			for i, st := range stats {
-				out.OpTypeStats[i] = OpTypeStatV{Type: normalizeLakeOpType(st.OpType), Count: st.Count}
+		cached, fresh := h.opTypeStats.get()
+		switch {
+		case fresh:
+			out.OpTypeStats = cached
+		default:
+			stats, serr := h.Reader.OperationTypeStats(ctx, 0)
+			if serr == nil {
+				v := make([]OpTypeStatV, len(stats))
+				for i, st := range stats {
+					v[i] = OpTypeStatV{Type: normalizeLakeOpType(st.OpType), Count: st.Count}
+				}
+				out.OpTypeStats = v
+				h.opTypeStats.put(v)
+			} else {
+				if !h.ClientAborted(r, serr) {
+					h.Logger.Warn("explorer OperationTypeStats failed (serving last good)", "err", serr)
+				}
+				// Stale beats blank: a 24h aggregate that's a few minutes old
+				// is still a truthful answer; an empty panel is not.
+				out.OpTypeStats = cached
 			}
-		} else if !h.ClientAborted(r, serr) {
-			h.Logger.Warn("explorer OperationTypeStats failed", "err", serr)
 		}
 		h.opsDir.put(limit, out) // warm the cache with the assembled first page
 	}
