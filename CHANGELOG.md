@@ -152,6 +152,76 @@ against.
   the job. Confirmed `web/explorer/src/api/types.ts` is NOT stale relative to
   the lockfile-pinned `openapi-typescript` — no regeneration needed.
 
+## [v0.18.0] — 2026-07-21
+
+Tested against Stellar protocol v23.
+
+### Fixed
+
+- **Charts opened with a fabricated low first bucket.** The throughput window
+  was a LEDGER-COUNT window (`max(ledger_seq) - windowDays*17280`), which lands
+  mid-day, so the earliest `toStartOfDay` bucket covered only part of that day
+  and rendered as a real throughput drop. The constant compounded it: `17280`
+  is the theoretical 5.0s cadence but the observed rate is ~14,950/day, so the
+  window overshot ~15% — a "30 day" window actually spanned ~34.6 days and
+  inflated every window total by the same margin. Measured on production
+  (7-day window): first bucket **1,808 → 14,867** ledgers, buckets returned
+  **9 → 7**. `close_time >= toStartOfDay(now('UTC')) - toIntervalDay(N-1)` is
+  now the authoritative boundary; the ledger predicate is a partition-pruning
+  hint only.
+- **`/v1/assets` was latched into permanent failure.** `cachedClassicSupply`
+  ran its refresh on the CALLER'S request context and advanced its timestamp
+  only on success, so once the backing full-table `GROUP BY` grew past the 15s
+  request timeout the cache could never refill — every subsequent request
+  re-ran the doomed query and paid the full 15s (18.6% of requests pinned
+  >10s). The refresh is now detached with its own budget, callers are served
+  last-good immediately, and retries are rate-limited.
+- **`/v1/ledgers` tip page did an unbounded `FINAL` merge** across all 490
+  parts / 124M rows to return 12 rows — O(table), not O(n). Now bounded to a
+  5000-ledger tail, the same pruning used elsewhere. Fixes slow "Total XLM",
+  base fee, and latest-ledger rendering.
+- **Spurious XLM/USD highs above $0.50.** `combinedOutlierBandRatio` acted as a
+  CLAMP: a fat-finger print was rescaled to 3× VWAP and served as a real high.
+  Out-of-band prints are now DROPPED, not clamped. Serve-layer only — corrects
+  all history on deploy, no re-scan or re-backfill.
+- **Go-live verification gate fail-opens.** Nine closures so a `0` exit means
+  *proven* rather than "nothing errored loudly enough to notice": an empty or
+  truncated lake can no longer certify `lake_complete` (including via the
+  per-source consumer, where a range-absence was read as a point and greened
+  every high-genesis source on an EMPTY lake); `verify-hashchain` refuses a
+  range with zero present ledgers; a dark truth source is SKIPPED rather than
+  reported OK; an all-errored or all-skipped or matched-nothing run fails; and
+  a typo'd `-source` fails closed instead of verifying zero sources.
+
+### Added
+
+- `partial` on throughput buckets (OpenAPI + generated types) so a
+  still-accumulating day renders distinctly and is excluded from window totals.
+- `stellarindex_served_value_persistently_skipped` alert — catches a truth
+  source that is dark for 2 days, which no existing alert covered.
+- `-max-error-rate` on `reconcile-balances`; Horizon outages are now classified
+  `TRUTH_UNAVAILABLE` and excluded from that rate so a third-party rate-limit
+  cannot fail an otherwise-healthy gate run.
+- `scripts/ops/add-missing-compression-policies.sql` — 19 hypertables are
+  compression-eligible but never got a policy. Staged as an operational script,
+  deliberately NOT a migration, so it runs after the backfill rather than
+  competing with it.
+
+### Performance
+
+- The global search modal, mounted in the sidebar on every page, no longer
+  fetches `/v1/assets` on every page load — it is gated on modal open.
+- The trailing-24h operation-mix aggregate was recomputed on the operations
+  directory's 3-second cadence (~1,200 recomputes/hour of a 24-hour window over
+  a 34B-row table). It now has its own 5-minute cache and serves stale on error.
+
+### Operations
+
+- The heavy-job watchdog now guards the ClickHouse **data pool** in addition to
+  the root filesystem, and warns loudly if its probe path is unstatable rather
+  than silently protecting nothing.
+- ClickHouse `system.*_log` TTL drop-in — those tables grow unbounded by default.
+
 ## [v0.16.3] — 2026-07-15
 
 ### Operations
