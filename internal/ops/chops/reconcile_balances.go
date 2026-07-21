@@ -42,7 +42,9 @@ import (
 // Usage: reconcile-balances (-account G... | -sample N) [-ch-addr H:P]
 // [-horizon URL] [-tolerance-stroops N] [-min-recent-ledger N]
 // [-sleep-ms N] [-timeout DUR]. Exactly one of -account/-sample is
-// required. Exit code is the number of MISMATCHes (capped at 255),
+// required. Exit code is the number of MISMATCHes (capped at 255); a run whose
+// ERROR rate exceeds -max-error-rate ALSO fails non-zero (C2-15 fail-open guard
+// — an all-errored run verified nothing and must not look clean),
 // mirroring scripts/dev/r1-smoke.sh's "exit code = number of failed
 // checks" convention so cron/Healthchecks.io can consume it directly
 // — see opsutil.ExitCodeError's doc comment for how a Go subcommand
@@ -58,6 +60,7 @@ func reconcileBalances(args []string) error { //nolint:funlen // linear: flag pa
 	minRecentLedger := fs.Uint("min-recent-ledger", 60_000_000, "for -sample: only consider accounts with a ledger_entry_changes 'account' row above this ledger, so their latest snapshot approximates current chain state")
 	sleepMS := fs.Int("sleep-ms", 250, "polite delay between Horizon requests (serial, not concurrent)")
 	timeout := fs.Duration("timeout", 15*time.Second, "per-request Horizon HTTP timeout")
+	maxErrorRate := fs.Float64("max-error-rate", 0.25, "fail the run (non-zero exit) when more than this FRACTION of checked accounts ERROR — an all-errored run must not exit 0/clean (C2-15 fail-open guard)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -96,7 +99,27 @@ func reconcileBalances(args []string) error { //nolint:funlen // linear: flag pa
 		}
 	}
 
-	mismatches := printReconcileReport(os.Stdout, results)
+	mismatches, errored := printReconcileReport(os.Stdout, results)
+
+	// Fail-open guard (C2-15): a run where most accounts ERRORED did not
+	// actually verify anything — treating it as a clean pass (exit 0) would let
+	// bad data through the go-live gate. Fail if the error rate exceeds the
+	// threshold, even when the mismatch count is zero.
+	if n := len(results); n > 0 {
+		if rate := float64(errored) / float64(n); rate > *maxErrorRate {
+			fmt.Fprintf(os.Stderr,
+				"reconcile-balances: FAIL — %d/%d accounts (%.0f%%) errored, over -max-error-rate %.0f%%; result is unreliable, not a clean pass\n",
+				errored, n, rate*100, *maxErrorRate*100)
+			code := mismatches
+			if code == 0 {
+				code = 255 // ensure non-zero even when nothing could be compared
+			} else if code > 255 {
+				code = 255
+			}
+			return &opsutil.ExitCodeError{Code: code}
+		}
+	}
+
 	if mismatches == 0 {
 		return nil
 	}
@@ -388,9 +411,10 @@ func xlmDecimalToStroops(s string) (*big.Int, error) {
 
 // ─── report ─────────────────────────────────────────────────────────
 
-// printReconcileReport writes the full per-account + summary report
-// to w and returns the MISMATCH count (the caller's exit code).
-func printReconcileReport(w io.Writer, results []reconcileResult) int {
+// printReconcileReport writes the full per-account + summary report to w and
+// returns the MISMATCH count (the caller's exit code) and the ERROR count (used
+// by the caller's C2-15 fail-open guard — a mostly-errored run isn't a pass).
+func printReconcileReport(w io.Writer, results []reconcileResult) (int, int) {
 	var matched, mismatched, noData, mergedAbsent, errored int
 	var mismatchRows, errorRows []reconcileResult
 	for _, r := range results {
@@ -436,5 +460,5 @@ func printReconcileReport(w io.Writer, results []reconcileResult) int {
 	_, _ = fmt.Fprintf(w, "\nreconcile-balances: %d checked, %d matched, %d mismatch, %d no_data, %d merged_or_absent, %d error\n",
 		len(results), matched, mismatched, noData, mergedAbsent, errored)
 
-	return mismatched
+	return mismatched, errored
 }

@@ -166,6 +166,25 @@ func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (proble
 			)
 		) WHERE ledger_seq > ? AND prior_hash != '' AND prev_hash != prior_hash), 0))`
 
+	// Endpoint-presence guard (F1 fail-open fix): the windowed gap/chain scan
+	// below only finds holes BETWEEN present ledgers, so an EMPTY range, or one
+	// missing its head/tail ledgers, would otherwise read as "intact" — which
+	// falsely certifies lake_complete during a partial restore/backfill. Assert
+	// the endpoints are present + count the range up front so an absent
+	// substrate fails CLOSED. (Interior gaps still fall through to the windowed
+	// scan, which pinpoints their location; the tail is re-checked after it.)
+	var haveMin, haveMax, present uint64
+	const endpointsQ = `SELECT toUInt64(ifNull(min(ledger_seq),0)), toUInt64(ifNull(max(ledger_seq),0)), toUInt64(uniqExact(ledger_seq)) FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?`
+	if qerr := conn.QueryRow(ctx, endpointsQ, from, to).Scan(&haveMin, &haveMax, &present); qerr != nil {
+		return 0, false, "", fmt.Errorf("clickhouse: substrate endpoint presence [%d,%d]: %w", from, to, qerr)
+	}
+	if present == 0 {
+		return from, true, fmt.Sprintf("substrate: no ledgers present in [%d,%d] (empty range — not intact)", from, to), nil
+	}
+	if haveMin > uint64(from) {
+		return from, true, fmt.Sprintf("substrate: missing head ledger(s) — first present is %d, expected %d", haveMin, from), nil
+	}
+
 	for wlo := uint64(from); wlo <= uint64(to); wlo += substrateWindow {
 		whi := wlo + substrateWindow
 		if whi > uint64(to) {
@@ -196,6 +215,12 @@ func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (proble
 		default:
 			return uint32(firstBreak), true, fmt.Sprintf("substrate: hash-chain break at %d", firstBreak), nil
 		}
+	}
+	// Tail-presence guard (F1): the interior scan is clean, but if the last
+	// present ledger is below `to`, the tail of the range is missing — fail
+	// closed at the first missing tail ledger rather than certify it intact.
+	if haveMax < uint64(to) {
+		return uint32(haveMax + 1), true, fmt.Sprintf("substrate: missing tail ledger(s) — last present is %d, expected %d", haveMax, to), nil
 	}
 	return 0, false, "", nil
 }

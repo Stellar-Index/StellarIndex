@@ -257,9 +257,12 @@ func TestPrintReconcileReport_CountsAndExitCode(t *testing.T) {
 		{Account: "G5", Outcome: outcomeMergedOrAbsent},
 	}
 	var buf bytes.Buffer
-	got := printReconcileReport(&buf, results)
+	got, errored := printReconcileReport(&buf, results)
 	if got != 2 {
-		t.Fatalf("printReconcileReport returned %d, want 2 (the mismatch count == exit code)", got)
+		t.Fatalf("printReconcileReport mismatches = %d, want 2 (the exit code)", got)
+	}
+	if errored != 0 {
+		t.Fatalf("printReconcileReport errored = %d, want 0", errored)
 	}
 	out := buf.String()
 	for _, want := range []string{"G2", "G3", "MATCHED", "MISMATCH", "NO_DATA", "MERGED_OR_ABSENT"} {
@@ -275,7 +278,29 @@ func TestPrintReconcileReport_AllMatchZeroExitCode(t *testing.T) {
 		{Account: "G2", Outcome: outcomeMatch},
 	}
 	var buf bytes.Buffer
-	if got := printReconcileReport(&buf, results); got != 0 {
-		t.Fatalf("printReconcileReport returned %d, want 0", got)
+	if got, errored := printReconcileReport(&buf, results); got != 0 || errored != 0 {
+		t.Fatalf("printReconcileReport = (%d mismatch, %d error), want (0, 0)", got, errored)
+	}
+}
+
+// TestPrintReconcileReport_CountsErrors pins the input to the C2-15 fail-open
+// guard: the report must surface the ERROR count so a mostly-errored run can be
+// failed (an all-errored run verified nothing and must NOT exit clean).
+func TestPrintReconcileReport_CountsErrors(t *testing.T) {
+	results := []reconcileResult{
+		{Account: "G1", Outcome: outcomeError},
+		{Account: "G2", Outcome: outcomeError},
+		{Account: "G3", Outcome: outcomeMatch},
+	}
+	var buf bytes.Buffer
+	mismatches, errored := printReconcileReport(&buf, results)
+	if mismatches != 0 {
+		t.Fatalf("mismatches = %d, want 0", mismatches)
+	}
+	if errored != 2 {
+		t.Fatalf("errored = %d, want 2 (the C2-15 guard fails the run on this)", errored)
+	}
+	if !strings.Contains(buf.String(), "ERROR") {
+		t.Fatalf("report should surface the ERROR count; got:\n%s", buf.String())
 	}
 }

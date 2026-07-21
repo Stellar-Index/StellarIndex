@@ -124,6 +124,18 @@ func runHashChainCheck(ctx context.Context, addr string, from, to uint32) (inWin
 		return 0, 0, fmt.Errorf("verify-hashchain: windowed in-window-link scan: %w", err)
 	}
 
+	// Fail-closed guard (F3): a range with NO present ledgers has 0 links and 0
+	// breaks, which would otherwise report PASSED — the chain "passes" precisely
+	// where the substrate is absent. Refuse to pass when nothing was present to
+	// chain. (verify-contiguity localizes WHERE the substrate is missing.)
+	var totalPresent uint64
+	for _, w := range windows {
+		totalPresent += w.Present
+	}
+	if totalPresent == 0 {
+		return 0, 0, fmt.Errorf("verify-hashchain: no ledgers present in [%d,%d] — nothing to hash-chain; refusing to PASS (fail-closed)", from, to)
+	}
+
 	var shown int
 	var truncated bool
 	for _, w := range windows {
