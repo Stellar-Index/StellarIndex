@@ -348,6 +348,15 @@
       # free, guarded only on root. 300 GiB keeps headroom for merges + the
       # live sink, well above the point where ZFS write performance collapses.
       POOL_MIN_KB="${HEAVY_MIN_DATA_KB:-314572800}"
+      # Fail LOUD, not silent: if POOL_PATH doesn't resolve, every watchdog tick
+      # would hit the "df glitched — skip" arm and the pool guard would protect
+      # nothing, invisibly, while the root guard kept working and masked the
+      # gap — the exact fail-open class this watchdog exists to prevent. Probe
+      # once up front and warn if it's unusable (the job still runs, guarded by
+      # root; an operator sees the warning in the unit log).
+      if ! df --output=avail -k "$POOL_PATH" >/dev/null 2>&1; then
+        echo "run-heavy-job: WARNING POOL_PATH '${POOL_PATH}' is not statable — the DATA-POOL watchdog is INACTIVE for this job (root-FS guard still active). Set HEAVY_JOB_POOL_PATH to a path on the data pool." >&2
+      fi
       (
         # This subshell MUST NOT inherit errexit/pipefail: a single
         # transient `df` failure (EBUSY/EIO under the very I/O pressure a

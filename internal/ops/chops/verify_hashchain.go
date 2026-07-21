@@ -128,11 +128,7 @@ func runHashChainCheck(ctx context.Context, addr string, from, to uint32) (inWin
 	// breaks, which would otherwise report PASSED — the chain "passes" precisely
 	// where the substrate is absent. Refuse to pass when nothing was present to
 	// chain. (verify-contiguity localizes WHERE the substrate is missing.)
-	var totalPresent uint64
-	for _, w := range windows {
-		totalPresent += w.Present
-	}
-	if totalPresent == 0 {
+	if hashChainWindowsPresent(windows) == 0 {
 		return 0, 0, fmt.Errorf("verify-hashchain: no ledgers present in [%d,%d] — nothing to hash-chain; refusing to PASS (fail-closed)", from, to)
 	}
 
@@ -189,6 +185,19 @@ func runHashChainCheck(ctx context.Context, addr string, from, to uint32) (inWin
 	fmt.Printf("hash-chain check: %d in-window broken link(s), %d boundary broken link(s) across [%d,%d]\n",
 		inWindowBroken, boundaryBroken, from, to)
 	return inWindowBroken, boundaryBroken, nil
+}
+
+// hashChainWindowsPresent sums the present-ledger count across the windowed
+// scan. ZERO means the range holds no ledgers at all — there is nothing to
+// hash-chain, so a "0 broken links" result is vacuous and must NOT read as a
+// clean PASS (the F3 fail-closed guard). A healthy range always has Present>0,
+// so this never false-positives. Pure — unit-testable without a live lake.
+func hashChainWindowsPresent(windows []clickhouse.HashChainWindowResult) uint64 {
+	var total uint64
+	for _, w := range windows {
+		total += w.Present
+	}
+	return total
 }
 
 // boundarySeqsToCheck returns the window-seam ledger_seq values
