@@ -743,6 +743,12 @@ const classicSupplyRetryGap = 60 * time.Second
 // timeout, which is precisely what the old request-scoped refresh could not do.
 const classicSupplyRefreshBudget = 3 * time.Minute
 
+// classicSupplyColdWait bounds how long a request will block when NOTHING is
+// cached yet (a fresh process). Deliberately short: the backing query outlives
+// the request timeout, so a longer wait just makes the first visitor after a
+// deploy sit through the full budget before getting the same degraded page.
+const classicSupplyColdWait = 2 * time.Second
+
 // classicSupplyReader is the narrow capability cachedClassicSupply needs from
 // the explorer reader — named rather than inline so the request path and the
 // detached refresh share one declaration.
@@ -792,22 +798,41 @@ func (s *Server) cachedClassicSupply(ctx context.Context) map[string]string {
 	if last != nil {
 		return last
 	}
-	// Cold start with nothing cached: wait for the in-flight refresh so the
-	// first request still gets data when the query is healthy, bounded by the
-	// caller's own deadline. Returns nil if it can't make it — callers degrade
-	// to the precise supply set rather than hanging.
+	// Cold start with nothing cached (a fresh process): wait BRIEFLY for the
+	// in-flight refresh so a healthy, fast query still fills this first
+	// response — but never hold the request for its whole budget. The backing
+	// query currently runs longer than the 15s request timeout, so waiting on
+	// the caller's deadline meant the FIRST visitor after every deploy ate a
+	// full 15s before getting a degraded page anyway. Bounding the wait costs
+	// that visitor nothing (they degrade either way) and returns in 2s instead.
+	// The detached refresh keeps running on its own budget, so the very next
+	// request is served from cache. Prewarm (prewarmClassicSupply) normally
+	// fills this before any user request arrives at all.
 	if flight == nil {
 		return nil // retry gap still open and nothing cached
 	}
+	timer := time.NewTimer(classicSupplyColdWait)
+	defer timer.Stop()
 	select {
 	case <-flight:
 		s.classicSupplyMu.Lock()
 		m := s.classicSupplyCache
 		s.classicSupplyMu.Unlock()
 		return m
+	case <-timer.C:
+		return nil // degrade now; the detached refresh fills the cache for the next request
 	case <-ctx.Done():
 		return nil
 	}
+}
+
+// PrewarmClassicSupply fills the classic circulating-supply cache out of band,
+// so no user request ever pays the cold fill. Called from the API's prewarm
+// loop at startup and on its recurring cadence. Safe to call concurrently and
+// repeatedly — it reuses the same single-flight + retry-gap logic as the
+// request path, so a still-warm cache is a no-op.
+func (s *Server) PrewarmClassicSupply(ctx context.Context) {
+	s.cachedClassicSupply(ctx)
 }
 
 // refreshClassicSupply recomputes the classic supply map on a DETACHED context
