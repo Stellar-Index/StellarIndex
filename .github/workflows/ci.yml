@@ -393,7 +393,7 @@ jobs:
         run: go run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
       - name: ADR-0033 PK-discriminator check (coarse-PK data-loss guard)
         run: go run ./scripts/ci/lint-pk-discriminators
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
         with:
           node-version: "22"
       - name: Generated API reference is in sync
@@ -435,7 +435,7 @@ jobs:
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271  # v6
         with:
           version: "10"
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
         with:
           node-version: "20"
           cache: "pnpm"
@@ -511,7 +511,7 @@ jobs:
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271  # v6
         with:
           version: "10"
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
         with:
           node-version: "20"
           cache: "pnpm"
