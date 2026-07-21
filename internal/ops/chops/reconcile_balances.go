@@ -102,7 +102,7 @@ func reconcileBalances(args []string) error { //nolint:funlen // linear: flag pa
 
 	mismatches, errored := printReconcileReport(os.Stdout, results)
 
-	exitErr, reason := reconcileExitError(mismatches, errored, len(results), haveSample, sampleConfirmedNothing(results), *maxErrorRate)
+	reason, exitErr := reconcileExitError(mismatches, errored, len(results), haveSample, sampleConfirmedNothing(results), *maxErrorRate)
 	if reason != "" {
 		fmt.Fprintf(os.Stderr, "reconcile-balances: FAIL — %s\n", reason)
 	}
@@ -422,7 +422,7 @@ func clampExitCode(n int) int {
 // failures ONLY; Horizon/truth outages are outcomeTruthUnavailable and excluded,
 // so a Horizon rate-limit episode can't fail an otherwise-healthy -sample gate
 // (consistent with F5). Pure — unit-testable.
-func reconcileExitError(mismatches, errored, n int, haveSample, confirmedNothing bool, maxErrorRate float64) (error, string) {
+func reconcileExitError(mismatches, errored, n int, haveSample, confirmedNothing bool, maxErrorRate float64) (reason string, err error) {
 	// C2-15: too many OUR-side errors ⟹ verified nothing reliable; fail even at
 	// zero mismatches.
 	if n > 0 && float64(errored)/float64(n) > maxErrorRate {
@@ -430,20 +430,20 @@ func reconcileExitError(mismatches, errored, n int, haveSample, confirmedNothing
 		if code == 0 {
 			code = 255 // non-zero even when nothing could be compared
 		}
-		return &opsutil.ExitCodeError{Code: code},
-			fmt.Sprintf("%d/%d accounts (%.0f%%) errored on OUR side, over -max-error-rate %.0f%% — result unreliable, not a clean pass",
-				errored, n, float64(errored)/float64(n)*100, maxErrorRate*100)
+		return fmt.Sprintf("%d/%d accounts (%.0f%%) errored on OUR side, over -max-error-rate %.0f%% — result unreliable, not a clean pass",
+				errored, n, float64(errored)/float64(n)*100, maxErrorRate*100),
+			&opsutil.ExitCodeError{Code: code}
 	}
 	// F4: a -sample run that MATCHED nothing confirmed nothing (single -account
 	// runs are exempt — the operator chose that account).
 	if haveSample && mismatches == 0 && confirmedNothing {
-		return &opsutil.ExitCodeError{Code: 255},
-			"-sample matched no accounts — the reconcile confirmed nothing, not a clean pass"
+		return "-sample matched no accounts — the reconcile confirmed nothing, not a clean pass",
+			&opsutil.ExitCodeError{Code: 255}
 	}
 	if mismatches == 0 {
-		return nil, ""
+		return "", nil
 	}
-	return &opsutil.ExitCodeError{Code: clampExitCode(mismatches)}, ""
+	return "", &opsutil.ExitCodeError{Code: clampExitCode(mismatches)}
 }
 
 // sampleConfirmedNothing reports whether a -sample reconcile run verified zero

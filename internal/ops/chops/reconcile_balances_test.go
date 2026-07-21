@@ -6,6 +6,7 @@ package chops
 import (
 	"bytes"
 	"context"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -373,13 +374,13 @@ func TestReconcileExitError(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err, _ := reconcileExitError(tc.mismatches, tc.errored, tc.n, tc.haveSample, tc.confirmedNil, tc.maxErrorRate)
+			_, err := reconcileExitError(tc.mismatches, tc.errored, tc.n, tc.haveSample, tc.confirmedNil, tc.maxErrorRate)
 			if tc.wantExit != (err != nil) {
 				t.Fatalf("reconcileExitError = %v, wantExit=%v", err, tc.wantExit)
 			}
 			if tc.wantExit {
-				ece, ok := err.(*opsutil.ExitCodeError)
-				if !ok {
+				var ece *opsutil.ExitCodeError
+				if !errors.As(err, &ece) {
 					t.Fatalf("want *ExitCodeError, got %T", err)
 				}
 				if ece.Code != tc.wantCode {

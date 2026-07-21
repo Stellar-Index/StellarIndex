@@ -132,6 +132,35 @@ func runHashChainCheck(ctx context.Context, addr string, from, to uint32) (inWin
 		return 0, 0, fmt.Errorf("verify-hashchain: no ledgers present in [%d,%d] — nothing to hash-chain; refusing to PASS (fail-closed)", from, to)
 	}
 
+	inWindowBroken, err = reportInWindowBrokenLinks(ctx, addr, windows)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	fmt.Println("  --- boundary links (window seams) ---")
+	for _, seq := range boundarySeqsToCheck(windows, from) {
+		b, berr := clickhouse.QueryHashChainBoundary(ctx, addr, seq)
+		if berr != nil {
+			return 0, 0, fmt.Errorf("verify-hashchain: boundary check at seq=%d: %w", seq, berr)
+		}
+		if !b.Linked {
+			boundaryBroken++
+		}
+		fmt.Printf("  boundary seq=%d predecessor=%d  %s\n", b.Seq, b.PredecessorSeq, boundaryTag(b))
+	}
+
+	fmt.Printf("hash-chain check: %d in-window broken link(s), %d boundary broken link(s) across [%d,%d]\n",
+		inWindowBroken, boundaryBroken, from, to)
+	return inWindowBroken, boundaryBroken, nil
+}
+
+// reportInWindowBrokenLinks tallies + localizes the in-window broken links
+// across the windowed headline. It prints each flagged window's count and, for
+// the first hashChainLinkCap links overall, the per-ledger detail — the same
+// pay-only-when-a-problem-exists discipline as verify-contiguity's Check 1.
+// Split out of runHashChainCheck to keep that function's control flow flat.
+func reportInWindowBrokenLinks(ctx context.Context, addr string, windows []clickhouse.HashChainWindowResult) (uint64, error) {
+	var inWindowBroken uint64
 	var shown int
 	var truncated bool
 	for _, w := range windows {
@@ -148,7 +177,7 @@ func runHashChainCheck(ctx context.Context, addr string, from, to uint32) (inWin
 		}
 		links, lerr := clickhouse.QueryBrokenHashLinks(ctx, addr, w.From, w.To)
 		if lerr != nil {
-			return 0, 0, fmt.Errorf("verify-hashchain: broken-link localization [%d,%d]: %w", w.From, w.To, lerr)
+			return 0, fmt.Errorf("verify-hashchain: broken-link localization [%d,%d]: %w", w.From, w.To, lerr)
 		}
 		toPrint := links
 		if len(toPrint) > remaining {
@@ -169,22 +198,7 @@ func runHashChainCheck(ctx context.Context, addr string, from, to uint32) (inWin
 		fmt.Printf("verify-hashchain: broken-link list truncated at %d entries — more breaks exist; narrow -from/-to for full detail\n",
 			hashChainLinkCap)
 	}
-
-	fmt.Println("  --- boundary links (window seams) ---")
-	for _, seq := range boundarySeqsToCheck(windows, from) {
-		b, berr := clickhouse.QueryHashChainBoundary(ctx, addr, seq)
-		if berr != nil {
-			return 0, 0, fmt.Errorf("verify-hashchain: boundary check at seq=%d: %w", seq, berr)
-		}
-		if !b.Linked {
-			boundaryBroken++
-		}
-		fmt.Printf("  boundary seq=%d predecessor=%d  %s\n", b.Seq, b.PredecessorSeq, boundaryTag(b))
-	}
-
-	fmt.Printf("hash-chain check: %d in-window broken link(s), %d boundary broken link(s) across [%d,%d]\n",
-		inWindowBroken, boundaryBroken, from, to)
-	return inWindowBroken, boundaryBroken, nil
+	return inWindowBroken, nil
 }
 
 // hashChainWindowsPresent sums the present-ledger count across the windowed
