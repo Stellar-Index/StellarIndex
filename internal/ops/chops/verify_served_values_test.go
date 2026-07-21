@@ -16,23 +16,26 @@ import (
 // TestRunServedValueChecks_TolerancesAndOutages exercises the three
 // outcome classes against stub servers: within tolerance (ok),
 // drifted beyond tolerance (fail — the CS-010 class), and
-// ground-truth outage (skipped, ok, NaN rel_err — a dark truth
-// source must not read as a served-value failure).
+// ground-truth outage (SKIPPED, NaN rel_err — a dark truth source
+// must not read as a served-value failure, AND must not read as a
+// pass either: skipped never sets ok, closing the F5 fail-open where
+// a dark truth source would mask a real drift behind ok=1).
 func TestRunServedValueChecks_TolerancesAndOutages(t *testing.T) {
 	ctx := context.Background()
 
 	cases := []struct {
-		name       string
-		served     float64
-		truth      float64
-		tolerance  float64
-		truthFails bool
-		wantOK     bool
-		wantNaN    bool
+		name        string
+		served      float64
+		truth       float64
+		tolerance   float64
+		truthFails  bool
+		wantOK      bool
+		wantSkipped bool
+		wantNaN     bool
 	}{
-		{"within tolerance", 105_000_000_000, 105_400_000_000, 0.005, false, true, false},
-		{"cs-010 class drift fails", 105_000_000_000, 66_000_000_000, 0.02, false, false, false},
-		{"truth outage skips", 105_000_000_000, 0, 0.005, true, true, true},
+		{"within tolerance", 105_000_000_000, 105_400_000_000, 0.005, false, true, false, false},
+		{"cs-010 class drift fails", 105_000_000_000, 66_000_000_000, 0.02, false, false, false, false},
+		{"truth outage skips", 105_000_000_000, 0, 0.005, true, false, true, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,10 +76,29 @@ func TestRunServedValueChecks_TolerancesAndOutages(t *testing.T) {
 			if r.ok != tc.wantOK {
 				t.Errorf("ok = %v, want %v (rel_err=%v note=%s)", r.ok, tc.wantOK, r.relErr, r.note)
 			}
+			if r.skipped != tc.wantSkipped {
+				t.Errorf("skipped = %v, want %v (note=%s)", r.skipped, tc.wantSkipped, r.note)
+			}
 			if tc.wantNaN != math.IsNaN(r.relErr) {
 				t.Errorf("NaN rel_err = %v, want %v", math.IsNaN(r.relErr), tc.wantNaN)
 			}
 		})
+	}
+}
+
+// TestReconcileSkippedNeverAssertsOK is the direct F5 regression pin:
+// a skipped (truth-dark) check must render served_value_skipped=1 and
+// NO served_value_ok line at all — never ok=1, which would hide a real
+// drift behind an unavailable ground truth.
+func TestReconcileSkippedNeverAssertsOK(t *testing.T) {
+	body := renderServedValueProm([]servedValueResult{
+		{name: "dark", relErr: math.NaN(), skipped: true},
+	}, time.Unix(1_751_000_000, 0))
+	if !strings.Contains(body, `stellarindex_served_value_skipped{check="dark"} 1`) {
+		t.Errorf("skipped check must emit served_value_skipped=1:\n%s", body)
+	}
+	if strings.Contains(body, `stellarindex_served_value_ok{check="dark"}`) {
+		t.Errorf("skipped check must NOT emit any served_value_ok line (F5 fail-open):\n%s", body)
 	}
 }
 
@@ -102,6 +124,8 @@ func TestRenderServedValueProm(t *testing.T) {
 		`stellarindex_served_value_rel_err{check="a"} 0.001`,
 		`stellarindex_served_value_ok{check="a"} 1`,
 		`stellarindex_served_value_ok{check="b"} 1`,
+		`stellarindex_served_value_skipped{check="a"} 0`,
+		`stellarindex_served_value_skipped{check="b"} 0`,
 		"stellarindex_served_value_last_run_unix 1751000000",
 	} {
 		if !strings.Contains(body, want) {

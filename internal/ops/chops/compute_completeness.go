@@ -96,6 +96,12 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	if err != nil {
 		return fmt.Errorf("compute-completeness: reconciliation catalogue: %w", err)
 	}
+	// Fail CLOSED on an unknown -source before the per-source loop, which
+	// would otherwise skip every source and report SUCCESS having verified
+	// nothing (F7 fail-open).
+	if verr := validateSourceFilter(*only, catalogue); verr != nil {
+		return fmt.Errorf("compute-completeness: %w", verr)
+	}
 	if *only == "" || *only == "soroswap" {
 		if serr := seedSoroswapForRecon(ctx, cfg, soroswapDec); serr != nil {
 			fmt.Fprintf(os.Stderr, "compute-completeness: soroswap seed failed (%v) — soroswap projection may undercount\n", serr)

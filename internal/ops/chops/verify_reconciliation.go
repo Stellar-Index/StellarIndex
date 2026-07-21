@@ -67,6 +67,12 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 	if err != nil {
 		return fmt.Errorf("verify-reconciliation: reconciliation catalogue: %w", err)
 	}
+	// Fail CLOSED on an unknown -source before the per-source loop, which
+	// would otherwise skip every source and report "no gaps" having
+	// reconciled nothing (F7 fail-open).
+	if verr := validateSourceFilter(*only, catalogue); verr != nil {
+		return fmt.Errorf("verify-reconciliation: %w", verr)
+	}
 	if *only == "" || *only == "soroswap" {
 		if err := seedSoroswapForRecon(ctx, cfg, soroswapDec); err != nil {
 			fmt.Fprintf(os.Stderr, "verify-reconciliation: soroswap seed failed (%v) — soroswap counts may undercount pre-%d pairs\n", err, lo)

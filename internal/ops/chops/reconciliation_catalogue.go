@@ -2,6 +2,7 @@ package chops
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
@@ -121,6 +122,29 @@ type reconSource struct {
 // non-opted-in behavior.
 //
 //nolint:funlen // linear per-source catalogue; one entry per projected source, splitting scatters the reconcile spec.
+// validateSourceFilter fails CLOSED when a -source filter names no source
+// in the catalogue actually built for this config. Both compute-completeness
+// and verify-reconciliation filter their per-source loop with
+// `if only != "" && src.name != only { continue }`; without this check a
+// typo'd -source silently skips EVERY source and the run reports SUCCESS /
+// "no gaps" having verified nothing (F7 fail-open). The catalogue is
+// config-dependent (sep41 sources are promoted only when configured), so
+// the valid set is exactly what buildReconciliationCatalogue returned.
+// only == "" (all sources) is always valid.
+func validateSourceFilter(only string, cat []reconSource) error {
+	if only == "" {
+		return nil
+	}
+	names := make([]string, 0, len(cat))
+	for _, src := range cat {
+		if src.name == only {
+			return nil
+		}
+		names = append(names, src.name)
+	}
+	return fmt.Errorf("-source %q matches no reconciliation source for this config; known sources: %s", only, strings.Join(names, ", "))
+}
+
 func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.Decoder, error) {
 	soroswapDec := soroswap.NewDecoder()
 
