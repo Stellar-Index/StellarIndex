@@ -116,14 +116,13 @@ func (s *Server) usdPeggedConstituents(pair canonical.Pair) []canonical.Pair {
 // bucket timestamp. All arithmetic is big.Rat/big.Int to preserve the
 // NUMERIC precision the wire contract promises (no float round-trip).
 type ohlcBucketAcc struct {
-	openNum  *big.Rat // Σ(open  · base_vol)
-	closeNum *big.Rat // Σ(close · base_vol)
-	high     *big.Rat
-	low      *big.Rat
-	baseVol  *big.Rat // Σ base_vol (weight denominator)
-	quoteVol *big.Rat // Σ quote_vol
+	openNum  *big.Rat   // Σ(open  · base_vol)
+	closeNum *big.Rat   // Σ(close · base_vol)
+	baseVol  *big.Rat   // Σ base_vol (weight denominator)
+	quoteVol *big.Rat   // Σ quote_vol
+	highs    []*big.Rat // per-constituent candidate highs (outliers dropped at finalize)
+	lows     []*big.Rat // per-constituent candidate lows
 	n        int64
-	have     bool
 }
 
 func newOHLCBucketAcc() *ohlcBucketAcc {
@@ -153,29 +152,23 @@ func (a *ohlcBucketAcc) add(b *OHLCSeriesBar) {
 		a.quoteVol.Add(a.quoteVol, qv)
 	}
 	a.n += b.N
-	if !a.have {
-		a.high, a.low, a.have = high, low, true
-	} else {
-		if high.Cmp(a.high) > 0 {
-			a.high = high
-		}
-		if low.Cmp(a.low) < 0 {
-			a.low = low
-		}
-	}
+	// Collect the per-constituent extremes as candidates; finalize DROPS the
+	// out-of-band ones (thin-book / fat-finger prints) against the bucket VWAP.
+	a.highs = append(a.highs, high)
+	a.lows = append(a.lows, low)
 }
 
-// combinedOutlierBandRatio bounds how far a combined bar's high/low
-// may sit from the bar's own volume-weighted price. The USD-peg
-// expansion folds thin SDEX stablecoin books into the fiat series, and
-// a single fat-finger print there (site audit S-012: one 1.00-USDC-
-// per-XLM fill, 5.6× market, inside a 3,177-trade hour) otherwise
-// becomes the served high for the flagship pair. 3× vs the bar's VWAP
-// never clips a plausible intra-bucket move (largest observed XLM/USD
-// 1h range is well under 2×) while removing dust-print wicks. Applies
-// ONLY to the synthetic combined series — direct venue series serve
-// their true extremes untouched.
-var combinedOutlierBandRatio = big.NewRat(3, 1)
+// combinedOutlierBandRatio bounds a combined bar's high/low against the
+// bucket's volume-weighted price. The USD-peg expansion folds thin SDEX
+// stablecoin books into the fiat series, and a single fat-finger print there
+// (site audit S-012: one 1.00-USDC-per-XLM fill, 5.6× market; and the 2026-07
+// XLM/USD >$0.50 wicks) would otherwise set the served high for the flagship
+// pair. Prints beyond this band are DROPPED — not clamped to the ceiling, which
+// still served a visible ~3× wick ($0.56 on a $0.187 XLM). 2× never clips a
+// plausible intra-bucket move (largest observed XLM/USD 1h range is well under
+// 2×) while removing dust wicks entirely. Applies ONLY to the synthetic
+// combined series — direct venue series serve their true extremes untouched.
+var combinedOutlierBandRatio = big.NewRat(2, 1)
 
 func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
 	open, closeP := new(big.Rat), new(big.Rat)
@@ -183,16 +176,15 @@ func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
 		open.Quo(a.openNum, a.baseVol)
 		closeP.Quo(a.closeNum, a.baseVol)
 	}
-	high, low := a.high, a.low
+	// Anchor the outlier band on the bucket VWAP (the high-volume CEX
+	// constituents dominate it, so it's the real price even when a single
+	// thin-book print skews one constituent's high/low).
+	var vwap *big.Rat
 	if a.baseVol.Sign() > 0 && a.quoteVol.Sign() > 0 {
-		vwap := new(big.Rat).Quo(a.quoteVol, a.baseVol)
-		if ceil := new(big.Rat).Mul(vwap, combinedOutlierBandRatio); high.Cmp(ceil) > 0 {
-			high = ceil
-		}
-		if floor := new(big.Rat).Quo(vwap, combinedOutlierBandRatio); low.Cmp(floor) < 0 {
-			low = floor
-		}
+		vwap = new(big.Rat).Quo(a.quoteVol, a.baseVol)
 	}
+	high := selectExtreme(a.highs, vwap, true)
+	low := selectExtreme(a.lows, vwap, false)
 	return OHLCSeriesBar{
 		T:      t,
 		O:      ratToDecimal(open, ohlcPriceDigits),
@@ -203,6 +195,51 @@ func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
 		VQuote: ratToDecimal(a.quoteVol, ohlcPriceDigits),
 		N:      a.n,
 	}
+}
+
+// selectExtreme returns the bucket high (isHigh=true) or low from the candidate
+// per-constituent extremes, DROPPING dust/fat-finger prints: a high above
+// combinedOutlierBandRatio × vwap (or a low below vwap / band) is a thin-book
+// artifact and is excluded, so the served extreme is the true market extreme
+// among the in-band prints — not a synthetic clamp ceiling. Falls back to the
+// least-outlier candidate when every print is out of band (pathological) or vwap
+// is unavailable, and to a zero Rat when there are no candidates (defensive:
+// finalize only runs with ≥1 bar).
+func selectExtreme(cands []*big.Rat, vwap *big.Rat, isHigh bool) *big.Rat {
+	if len(cands) == 0 {
+		return new(big.Rat)
+	}
+	var bound *big.Rat // ceil for highs, floor for lows
+	if vwap != nil {
+		if isHigh {
+			bound = new(big.Rat).Mul(vwap, combinedOutlierBandRatio)
+		} else {
+			bound = new(big.Rat).Quo(vwap, combinedOutlierBandRatio)
+		}
+	}
+	var best, fallback *big.Rat
+	for _, c := range cands {
+		// fallback = the least-outlier candidate (min high / max low) so an
+		// all-outlier bucket still serves something bounded, not the wick.
+		if fallback == nil || (isHigh && c.Cmp(fallback) < 0) || (!isHigh && c.Cmp(fallback) > 0) {
+			fallback = c
+		}
+		if bound != nil {
+			if isHigh && c.Cmp(bound) > 0 {
+				continue // high above the ceiling — drop
+			}
+			if !isHigh && c.Cmp(bound) < 0 {
+				continue // low below the floor — drop
+			}
+		}
+		if best == nil || (isHigh && c.Cmp(best) > 0) || (!isHigh && c.Cmp(best) < 0) {
+			best = c
+		}
+	}
+	if best != nil {
+		return best
+	}
+	return fallback
 }
 
 // ratFromDecimal parses a NUMERIC decimal string (e.g. "0.19056",

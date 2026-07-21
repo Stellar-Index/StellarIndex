@@ -9,13 +9,14 @@ import (
 	"time"
 )
 
-// TestCombinedBarClampsFatFinger pins S-012: the USD-peg expansion
-// folds thin SDEX books into the combined fiat series, and one
-// fat-finger print (1.00 USDC/XLM vs a ~0.178 market) must not become
-// the served high of the flagship pair.
-func TestCombinedBarClampsFatFinger(t *testing.T) {
+// TestCombinedBarDropsFatFinger pins S-012 + the 2026-07 XLM/USD wick: the
+// USD-peg expansion folds thin SDEX books into the combined fiat series, and a
+// fat-finger print (1.00 USDC/XLM vs a ~0.178 market) must be DROPPED from the
+// served high — not clamped to a 3× ceiling (which still served a visible ~0.53
+// wick on a ~0.178 pair). The served high is the real market high (~0.1792).
+func TestCombinedBarDropsFatFinger(t *testing.T) {
 	acc := newOHLCBucketAcc()
-	// A healthy CEX-shaped constituent: vwap ~0.178.
+	// A healthy CEX-shaped constituent: vwap ~0.178, real high 0.1792.
 	acc.add(&OHLCSeriesBar{
 		O: "0.1789", H: "0.1792", L: "0.1776", C: "0.1777",
 		VBase: "1000000", VQuote: "178000", N: 2099,
@@ -31,13 +32,18 @@ func TestCombinedBarClampsFatFinger(t *testing.T) {
 	if !ok {
 		t.Fatalf("unparseable high %q", bar.H)
 	}
-	ceiling := big.NewRat(6, 10) // 3× a ~0.178 vwap ≈ 0.534 < 0.6
-	if high.Cmp(ceiling) >= 0 {
-		t.Fatalf("combined high %s not clamped — the 1.00 fat-finger survived", bar.H)
+	// The high must be the real market high (~0.1792), NOT the 1.00 print and
+	// NOT a 3× clamp ceiling (~0.53). Bucket vwap ≈ 0.178, band 2× → ceil ≈
+	// 0.356; the 1.00 print is dropped, leaving the healthy 0.1792.
+	if high.Cmp(big.NewRat(20, 100)) >= 0 {
+		t.Fatalf("combined high %s — fat-finger not dropped (expected ~0.1792)", bar.H)
 	}
-	// The true (non-outlier) extremes must be preserved.
+	if high.Cmp(big.NewRat(178, 1000)) < 0 {
+		t.Fatalf("combined high %s — real market high lost", bar.H)
+	}
+	// The true (non-outlier) low must be preserved.
 	low, _ := new(big.Rat).SetString(bar.L)
 	if low.Cmp(big.NewRat(17, 100)) < 0 {
-		t.Fatalf("low %s over-clamped", bar.L)
+		t.Fatalf("low %s over-dropped", bar.L)
 	}
 }
