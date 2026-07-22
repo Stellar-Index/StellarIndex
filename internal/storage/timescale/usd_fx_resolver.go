@@ -62,6 +62,21 @@ type VWAPUSDFXResolver struct {
 	// a stale rate land in a fresh trade's usd_volume.
 	freshness time.Duration
 
+	// bridgeFreshness is the staleness bound for the tier-3b XLM
+	// bridge leg. Deliberately much wider than `freshness`: that one
+	// is calibrated for liquid direct markets, while the bridge exists
+	// precisely to price tokens whose markets are thin. Measured
+	// 2026-07-22, the tokens behind the largest unpriced classes trade
+	// $8-$220 across a whole day, so requiring a bridge rate from the
+	// last hour rejects most of them — and the alternative to a
+	// slightly-stale rate is not a better rate, it is NULL, which
+	// silently drops the trade from every aggregate built on
+	// usd_volume. The error this admits is also bounded by the size of
+	// what it prices: these are sub-cent valuations, so even a badly
+	// stale rate moves aggregate volume by a rounding error, whereas
+	// each NULL removes a row outright.
+	bridgeFreshness time.Duration
+
 	// cacheTTL caps how long a cached rate is valid before
 	// re-querying. Default 5 min.
 	cacheTTL time.Duration
@@ -85,6 +100,11 @@ type VWAPUSDFXResolver struct {
 // enough that steady-state live ingest (a handful of assets × a few
 // minutes) never triggers a sweep.
 const fxCacheSweepThreshold = 8192
+
+// defaultBridgeFreshness is how stale a tier-3b XLM bridge leg may be.
+// See [VWAPUSDFXResolver.bridgeFreshness] for why this is a day rather
+// than the direct market's hour.
+const defaultBridgeFreshness = 24 * time.Hour
 
 // fxCacheKey is (asset.String(), 1-minute floor of `at`). Two
 // trades within the same minute against the same asset share a
@@ -123,6 +143,11 @@ type VWAPUSDFXResolverOptions struct {
 	// The negative-disable convention removes the ambiguity.
 	Freshness time.Duration
 
+	// BridgeFreshness — max staleness for the tier-3b XLM bridge leg.
+	// Same sentinel convention as Freshness: 0 inherits the default
+	// ([defaultBridgeFreshness]), negative disables the bound entirely.
+	BridgeFreshness time.Duration
+
 	// CacheTTL bounds the in-memory cache. Default 5 min.
 	CacheTTL time.Duration
 
@@ -147,6 +172,12 @@ func NewVWAPUSDFXResolver(store *Store, opts VWAPUSDFXResolverOptions) (*VWAPUSD
 	case opts.Freshness == 0:
 		opts.Freshness = time.Hour
 	}
+	switch {
+	case opts.BridgeFreshness < 0:
+		opts.BridgeFreshness = 0
+	case opts.BridgeFreshness == 0:
+		opts.BridgeFreshness = defaultBridgeFreshness
+	}
 	if opts.CacheTTL == 0 {
 		opts.CacheTTL = 5 * time.Minute
 	}
@@ -157,12 +188,13 @@ func NewVWAPUSDFXResolver(store *Store, opts VWAPUSDFXResolverOptions) (*VWAPUSD
 	pegs := make([]string, len(opts.USDPegs))
 	copy(pegs, opts.USDPegs)
 	return &VWAPUSDFXResolver{
-		store:     store,
-		usdPegs:   pegs,
-		freshness: opts.Freshness,
-		cacheTTL:  opts.CacheTTL,
-		clock:     opts.Clock,
-		cache:     make(map[fxCacheKey]fxCacheEntry),
+		store:           store,
+		usdPegs:         pegs,
+		freshness:       opts.Freshness,
+		bridgeFreshness: opts.BridgeFreshness,
+		cacheTTL:        opts.CacheTTL,
+		clock:           opts.Clock,
+		cache:           make(map[fxCacheKey]fxCacheEntry),
 	}, nil
 }
 
@@ -205,11 +237,19 @@ func (r *VWAPUSDFXResolver) USDPriceAt(ctx context.Context, asset canonical.Asse
 	if err != nil {
 		return "", false, err
 	}
+	if rate != "" && !r.fresh(observedAt, at, r.freshness) {
+		// Direct market exists but its most recent VWAP is too old to
+		// price this trade. Discard it and let the bridge try — a
+		// current XLM-routed rate beats a stale direct one, and before
+		// tier 3b existed this simply returned NULL.
+		rate = ""
+	}
 	if rate == "" {
-		// Tier 3b — no direct <asset>/<peg> market. Most Stellar
+		// Tier 3b — no usable direct <asset>/<peg> rate. Most Stellar
 		// tokens route their liquidity through XLM rather than a
 		// stablecoin, so try <asset>/XLM x XLM/USD before giving up.
-		rate, observedAt, err = r.bridgeViaXLM(ctx, asset, at)
+		// The bridge enforces its own (wider) freshness internally.
+		rate, err = r.bridgeViaXLM(ctx, asset, at)
 		if err != nil {
 			return "", false, err
 		}
@@ -227,21 +267,6 @@ func (r *VWAPUSDFXResolver) USDPriceAt(ctx context.Context, asset canonical.Asse
 	// the canonical decimal form. Mathematically equivalent;
 	// just easier to compare + display.
 	rate = trimNumericText(rate)
-	if r.freshness > 0 && at.Sub(observedAt) > r.freshness {
-		// F-1251 (codex audit-2026-05-12): staleness is measured
-		// against the TRADE timestamp `at`, not wall-clock. Pre-
-		// fix the comparison used `r.clock().Sub(observedAt)`,
-		// which rejected every historical / backfill trade older
-		// than the 1h window even when a contemporaneous FX
-		// anchor existed (the trade ran at T, the anchor was at
-		// T-30m, both an hour ago — fine in trade-time but the
-		// old check saw it as "anchor is 1h30m stale by my
-		// wall-clock"). Now: at-time freshness, so historical
-		// replay and backfill correctly inherit a peer-aligned
-		// USD rate.
-		r.storeCache(key, fxCacheEntry{rate: "", cachedAt: r.clock()})
-		return "", false, nil
-	}
 	r.storeCache(key, fxCacheEntry{rate: rate, cachedAt: r.clock()})
 	return rate, true, nil
 }
@@ -320,6 +345,27 @@ func (r *VWAPUSDFXResolver) usdPriceForFiat(ctx context.Context, asset canonical
 	rate := trimNumericText(price.FloatString(fiatUSDRateScale))
 	r.storeCache(key, fxCacheEntry{rate: rate, cachedAt: r.clock()})
 	return rate, true, nil
+}
+
+// fresh reports whether a rate observed at `observedAt` is recent
+// enough to price a trade at `at`, under the given window. A
+// non-positive window disables the check (the F-1251 negative-disable
+// sentinel).
+//
+// F-1251 (codex audit-2026-05-12): staleness is measured against the
+// TRADE timestamp `at`, not wall-clock. Pre-fix the comparison used
+// `r.clock().Sub(observedAt)`, which rejected every historical /
+// backfill trade older than the window even when a contemporaneous FX
+// anchor existed (the trade ran at T, the anchor was at T-30m, both an
+// hour ago — fine in trade-time but the old check saw it as "anchor is
+// 1h30m stale by my wall-clock"). Now: at-time freshness, so
+// historical replay and backfill correctly inherit a peer-aligned USD
+// rate.
+func (r *VWAPUSDFXResolver) fresh(observedAt, at time.Time, window time.Duration) bool {
+	if window <= 0 {
+		return true
+	}
+	return at.Sub(observedAt) <= window
 }
 
 // lookupCache returns (rate, true) when the cache has a fresh
@@ -429,25 +475,27 @@ const bridgeVWAPScale = 18
 // BOTH legs are fresh — the XLM leg by USDPriceAt's own check, the
 // asset leg by the caller applying freshness to the bucket returned
 // here.
-func (r *VWAPUSDFXResolver) bridgeViaXLM(ctx context.Context, asset canonical.Asset, at time.Time) (string, time.Time, error) {
+func (r *VWAPUSDFXResolver) bridgeViaXLM(ctx context.Context, asset canonical.Asset, at time.Time) (string, error) {
 	if isXLMAsset(asset) {
 		// Base case. XLM resolves directly against a peg or not at
 		// all; bridging it through itself would be circular.
-		return "", time.Time{}, nil
+		return "", nil
 	}
-	xlmPerAsset, assetLegAt, err := r.queryXLMLeg(ctx, asset, at)
+	// Freshness for the asset leg is applied as the SQL lower bound in
+	// queryXLMLeg, so a row returned here is fresh by construction.
+	xlmPerAsset, err := r.queryXLMLeg(ctx, asset, at)
 	if err != nil || xlmPerAsset == nil {
-		return "", time.Time{}, err
+		return "", err
 	}
 	usdPerXLMStr, ok, err := r.USDPriceAt(ctx, canonical.NativeAsset(), at)
 	if err != nil || !ok || usdPerXLMStr == "" {
-		return "", time.Time{}, err
+		return "", err
 	}
 	rate, ok := bridgeRate(xlmPerAsset, usdPerXLMStr)
 	if !ok {
-		return "", time.Time{}, nil
+		return "", nil
 	}
-	return rate, assetLegAt, nil
+	return rate, nil
 }
 
 // bridgeRate multiplies the two bridge legs into a USD-per-asset rate
@@ -500,7 +548,7 @@ func xlmLegRate(vwapText string, inverted bool) (*big.Rat, bool) {
 // bucket cannot set the rate. The lower bucket bound mirrors the
 // G11-06 rationale on queryDB: without it a miss walks prices_1m back
 // to genesis before returning a row the caller would discard anyway.
-func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Asset, at time.Time) (*big.Rat, time.Time, error) {
+func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Asset, at time.Time) (*big.Rat, error) {
 	// Both on-chain wire forms of XLM — the classic `native` type and
 	// the SAC wrapper a Soroban pool holds. Mirrors [isXLMAsset].
 	xlmForms := []string{canonical.NativeAsset().String(), nativeXLMSAC}
@@ -516,10 +564,10 @@ func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Ass
 	// back to genesis on a miss — the very thing G11-06 fixed on
 	// queryDB. Same reason the vwap > 0 guard is inlined too.
 	lowerBound := ""
-	if r.freshness > 0 {
+	if r.bridgeFreshness > 0 {
 		lowerBound = `
 		            AND bucket     >= $5`
-		args = append(args, at.UTC().Add(-r.freshness))
+		args = append(args, at.UTC().Add(-r.bridgeFreshness))
 	}
 	// Each UNION branch is parenthesised: Postgres rejects a bare
 	// ORDER BY/LIMIT inside an unparenthesised union arm. The per-arm
@@ -559,15 +607,15 @@ func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Ass
 	)
 	if err := row.Scan(&bucket, &vwapText, &inverted); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, time.Time{}, nil
+			return nil, nil
 		}
-		return nil, time.Time{}, fmt.Errorf("timescale: VWAPUSDFXResolver XLM leg: %w", err)
+		return nil, fmt.Errorf("timescale: VWAPUSDFXResolver XLM leg: %w", err)
 	}
 	vwap, ok := xlmLegRate(vwapText, inverted)
 	if !ok {
-		return nil, time.Time{}, nil
+		return nil, nil
 	}
-	return vwap, bucket, nil
+	return vwap, nil
 }
 
 // queryDB does one prices_1m read for `<asset>/<peg>` for any peg

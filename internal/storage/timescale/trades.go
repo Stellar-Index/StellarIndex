@@ -267,9 +267,20 @@ func tradeUSDVolumeViaFX(ctx context.Context, t canonical.Trade, subclass extern
 // means a tier-4 hit here is picked up there too, with no
 // double-count.
 //
-// Pure SEP-41/SEP-41 pairs (neither leg XLM nor USD-pegged) still
-// return nil — matching the documented scope boundary (needs a
-// per-token oracle, separate work).
+// Widened 2026-07-22 from XLM-only to any base leg whose amounts are
+// known to sit at the Stellar classic 10^7 scale (see
+// [baseAnchorEligible]). The original guard was `isXLMAsset(base)`
+// because the XLM leg was the only base the resolver could price; now
+// that the resolver bridges arbitrary tokens through XLM (tier 3b), a
+// TOKEN_A/TOKEN_B trade whose QUOTE leg cannot be priced can still be
+// valued off its BASE leg. That matters because the largest remaining
+// unpriced class is exactly token/token — for a 6T/F8 trade where F8
+// has no usable market, 6T may well have one.
+//
+// Pure SEP-41 bases stay excluded: their decimals are per-contract and
+// are not plumbed through the trade-insert path, so assuming 10^7
+// would silently mis-scale the value. That is the remaining documented
+// scope boundary (needs per-asset decimals or a per-token oracle).
 func tradeUSDVolumeViaXLMBaseAnchor(ctx context.Context, t canonical.Trade, subclass external.Subclass, r USDVolumeFXResolver) *string {
 	if r == nil || subclass != external.SubclassDEX {
 		// Off-chain sources don't have this orientation problem —
@@ -277,14 +288,23 @@ func tradeUSDVolumeViaXLMBaseAnchor(ctx context.Context, t canonical.Trade, subc
 		// covers every USD-pegged quote.
 		return nil
 	}
-	if !isXLMAsset(t.Pair.Base) {
+	if !baseAnchorEligible(t.Pair.Base) {
 		return nil
 	}
 	base := t.BaseAmount.BigInt()
 	if base == nil || base.Sign() <= 0 {
 		return nil
 	}
-	usdRateStr, ok, err := r.USDPriceAt(ctx, canonical.NativeAsset(), t.Timestamp)
+	// Resolve XLM through its canonical `native` form whichever wire
+	// form the pool used: the XLM/USD markets in prices_1m are stored
+	// as `native`, so asking for the SAC contract id would miss (and
+	// then decline the bridge, since XLM is the bridge's base case).
+	// Non-XLM bases resolve as themselves.
+	anchor := t.Pair.Base
+	if isXLMAsset(anchor) {
+		anchor = canonical.NativeAsset()
+	}
+	usdRateStr, ok, err := r.USDPriceAt(ctx, anchor, t.Timestamp)
 	if err != nil || !ok || usdRateStr == "" {
 		return nil
 	}
@@ -306,6 +326,21 @@ func tradeUSDVolumeViaXLMBaseAnchor(ctx context.Context, t canonical.Trade, subc
 func isXLMAsset(a canonical.Asset) bool {
 	return a.Type == canonical.AssetNative ||
 		(a.Type == canonical.AssetSoroban && a.ContractID == nativeXLMSAC)
+}
+
+// baseAnchorEligible reports whether an asset's on-chain amounts are
+// known to be denominated at the Stellar classic 10^7 scale, which is
+// what lets [tradeUSDVolumeViaXLMBaseAnchor] divide by 1e7 without
+// knowing the asset's own decimals.
+//
+// True for native XLM, its SAC wrapper, and every classic credit —
+// 7 decimals is a Stellar classic invariant. FALSE for a pure Soroban
+// SEP-41 token, whose decimals() is per-contract and is not plumbed
+// through the trade-insert path; assuming 7 there would mis-scale the
+// value by whatever the real exponent is, which is a silent
+// money-correctness bug rather than a missing value.
+func baseAnchorEligible(a canonical.Asset) bool {
+	return isXLMAsset(a) || a.Type == canonical.AssetClassic
 }
 
 // stellarClassicDecimals is the smallest-unit-to-display divisor
