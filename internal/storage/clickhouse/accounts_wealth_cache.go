@@ -26,7 +26,20 @@ const AccountsWealthCacheTTL = 15 * time.Minute
 // pin the refresher forever.
 const AccountsWealthRefreshTimeout = 3 * time.Minute
 
-// accountsWealthEntry is one cached ranking, keyed by limit.
+// accountsWealthMaxLimit is the size of the single ranking the cache
+// computes and stores. Requests ask for a limit (ParseLimit caps it at
+// 500), and the cache serves the first `limit` rows of this one ranking
+// rather than caching per-limit.
+//
+// Per-limit keying was a real bug (site-audit S3 verification): prewarm
+// warms one limit (100) while requests use 5/10/etc, so every real request
+// missed a different key, kicked its own 23s refresh, and served 503 until
+// that particular limit happened to finish. One ranking, sliced, means a
+// single warm entry covers every request size.
+const accountsWealthMaxLimit = 500
+
+// accountsWealthEntry is the single cached ranking (top
+// [accountsWealthMaxLimit]); callers slice it to their requested limit.
 type accountsWealthEntry struct {
 	rows     []AccountWealth
 	cachedAt time.Time
@@ -47,67 +60,65 @@ type accountsWealthEntry struct {
 // a warm entry returns immediately, and a request that finds none is told
 // so honestly rather than being hung for 8 s first.
 type accountsWealthCache struct {
-	mu      sync.Mutex
-	entries map[int]accountsWealthEntry
-	flight  map[int]chan struct{}
+	mu     sync.Mutex
+	entry  accountsWealthEntry
+	filled bool
+	flight chan struct{}
 }
 
 func newAccountsWealthCache() *accountsWealthCache {
-	return &accountsWealthCache{
-		entries: make(map[int]accountsWealthEntry),
-		flight:  make(map[int]chan struct{}),
-	}
+	return &accountsWealthCache{}
 }
 
-// get returns a cached ranking when one is fresh enough.
-// A nil cache (a zero-value ExplorerReader, as built in some tests)
-// behaves as a permanent miss rather than panicking.
-func (c *accountsWealthCache) get(limit int, ttl time.Duration) ([]AccountWealth, bool) {
+// get returns the cached ranking when it is fresh. A nil cache (a
+// zero-value ExplorerReader, as built in some tests) behaves as a
+// permanent miss rather than panicking.
+func (c *accountsWealthCache) get(ttl time.Duration) ([]AccountWealth, bool) {
 	if c == nil {
 		return nil, false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e, ok := c.entries[limit]
-	if !ok || time.Since(e.cachedAt) > ttl {
+	if !c.filled || time.Since(c.entry.cachedAt) > ttl {
 		return nil, false
 	}
-	return e.rows, true
+	return c.entry.rows, true
 }
 
-func (c *accountsWealthCache) put(limit int, rows []AccountWealth, now time.Time) {
+func (c *accountsWealthCache) put(rows []AccountWealth, now time.Time) {
 	if c == nil {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.entries[limit] = accountsWealthEntry{rows: rows, cachedAt: now}
+	c.entry = accountsWealthEntry{rows: rows, cachedAt: now}
+	c.filled = true
 }
 
-// beginFlight returns (wait, false) when a refresh for `limit` is already
-// running — the caller should wait on the channel rather than issue a
-// second 20-second scan. It returns (done, true) when the caller owns the
-// refresh and must close `done` when finished.
-func (c *accountsWealthCache) beginFlight(limit int) (chan struct{}, bool) {
+// beginFlight returns (wait, false) when a refresh is already running — the
+// caller should wait on the channel rather than issue a second scan. It
+// returns (done, true) when the caller owns the refresh and must close
+// `done` when finished.
+func (c *accountsWealthCache) beginFlight() (chan struct{}, bool) {
 	if c == nil {
 		return nil, false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if ch, running := c.flight[limit]; running {
-		return ch, false
+	if c.flight != nil {
+		return c.flight, false
 	}
 	ch := make(chan struct{})
-	c.flight[limit] = ch
+	c.flight = ch
 	return ch, true
 }
 
-func (c *accountsWealthCache) endFlight(limit int, ch chan struct{}) {
+func (c *accountsWealthCache) endFlight(ch chan struct{}) {
 	if c == nil {
 		return
 	}
 	c.mu.Lock()
-	delete(c.flight, limit)
+	c.flight = nil
 	c.mu.Unlock()
 	close(ch)
 }
@@ -127,11 +138,11 @@ func (c *accountsWealthCache) endFlight(limit int, ch chan struct{}) {
 func (r *ExplorerReader) AccountsByWealthCached(
 	ctx context.Context, assets []string, prices []float64, limit int,
 ) ([]AccountWealth, bool) {
-	if limit <= 0 || limit > 500 {
+	if limit <= 0 || limit > accountsWealthMaxLimit {
 		limit = 100
 	}
-	if rows, ok := r.wealthCache.get(limit, AccountsWealthCacheTTL); ok {
-		return rows, true
+	if rows, ok := r.wealthCache.get(AccountsWealthCacheTTL); ok {
+		return clampWealth(rows, limit), true
 	}
 	// Miss: start a background refresh and tell the caller we have nothing
 	// yet. Deliberately does not block — see the godoc.
@@ -141,8 +152,16 @@ func (r *ExplorerReader) AccountsByWealthCached(
 	// ~11-20s FINAL scan completed, so the cache would never populate and
 	// every request would keep paying the timeout — exactly the failure
 	// this cache exists to fix (site-audit S3).
-	r.refreshAccountsWealth(assets, prices, limit) //nolint:contextcheck // intentional detach; see above
+	r.refreshAccountsWealth(assets, prices) //nolint:contextcheck // intentional detach; see above
 	return nil, false
+}
+
+// clampWealth returns the first `limit` rows of a cached ranking.
+func clampWealth(rows []AccountWealth, limit int) []AccountWealth {
+	if limit < len(rows) {
+		return rows[:limit]
+	}
+	return rows
 }
 
 // PrewarmAccountsByWealth refreshes the ranking synchronously, for the
@@ -150,33 +169,30 @@ func (r *ExplorerReader) AccountsByWealthCached(
 // AccountsWealthRefreshTimeout), which is exactly what a background
 // warmer should do.
 func (r *ExplorerReader) PrewarmAccountsByWealth(
-	ctx context.Context, assets []string, prices []float64, limit int,
+	ctx context.Context, assets []string, prices []float64,
 ) error {
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
-	rows, err := r.AccountsByWealth(ctx, assets, prices, limit)
+	rows, err := r.AccountsByWealth(ctx, assets, prices, accountsWealthMaxLimit)
 	if err != nil {
 		return err
 	}
-	r.wealthCache.put(limit, rows, time.Now())
+	r.wealthCache.put(rows, time.Now())
 	return nil
 }
 
 // refreshAccountsWealth runs one detached refresh, collapsing concurrent
 // attempts for the same limit into a single scan.
-func (r *ExplorerReader) refreshAccountsWealth(assets []string, prices []float64, limit int) {
-	ch, owner := r.wealthCache.beginFlight(limit)
+func (r *ExplorerReader) refreshAccountsWealth(assets []string, prices []float64) {
+	ch, owner := r.wealthCache.beginFlight()
 	if !owner {
 		return // someone else is already scanning; don't pile on
 	}
 	// Detached from the request context on purpose: the whole point is to
 	// outlive the request that noticed the miss.
 	go func() {
-		defer r.wealthCache.endFlight(limit, ch)
+		defer r.wealthCache.endFlight(ch)
 		ctx, cancel := context.WithTimeout(context.Background(), AccountsWealthRefreshTimeout)
 		defer cancel()
-		rows, err := r.AccountsByWealth(ctx, assets, prices, limit)
+		rows, err := r.AccountsByWealth(ctx, assets, prices, accountsWealthMaxLimit)
 		if err != nil {
 			// Log rather than swallow: a persistently-failing refresh keeps
 			// /v1/accounts on its 503 warming state indefinitely, and a
@@ -187,6 +203,6 @@ func (r *ExplorerReader) refreshAccountsWealth(assets []string, prices []float64
 			}
 			return // next caller retries; nothing cached, nothing corrupted
 		}
-		r.wealthCache.put(limit, rows, time.Now())
+		r.wealthCache.put(rows, time.Now())
 	}()
 }

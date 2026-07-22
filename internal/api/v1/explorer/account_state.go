@@ -392,20 +392,17 @@ func looksLikeStellarAccount(s string) bool {
 	return true
 }
 
-// AccountsWealthPrewarmLimit is the page size the prewarm loop warms.
-// /v1/accounts defaults to limit=100 and the explorer requests exactly
-// that, so warming this one key covers the real traffic; other limits
-// warm themselves on first use via the cache's miss path.
-const AccountsWealthPrewarmLimit = 100
-
 // PrewarmAccountsWealth primes the wealth-ranking cache so no user ever
 // meets the cold state.
 //
-// The ranking is a FINAL scan over 43.6M current-state rows (11-20 s) and
+// The ranking is a FINAL scan over 43.6M current-state rows (~23 s) and
 // cannot run on a request deadline — before site-audit S3 it was attempted
 // inline and 500'd on 100% of requests. Calling the cached reader here is
 // enough: on a miss it kicks off the detached background refresh and
-// returns immediately, so this is cheap to call on a timer.
+// returns immediately, so this is cheap to call on a timer. The cache
+// stores ONE ranking (the top accountsWealthMaxLimit) that every request
+// size slices from, so a single warm entry covers all traffic — the limit
+// argument is not a cache key.
 func (h *Handler) PrewarmAccountsWealth(ctx context.Context) {
 	if h.Reader == nil || !h.PricingEnabled {
 		return
@@ -414,5 +411,5 @@ func (h *Handler) PrewarmAccountsWealth(ctx context.Context) {
 	if len(assets) == 0 {
 		return // pricing not up yet; the next tick retries
 	}
-	h.Reader.AccountsByWealthCached(ctx, assets, prices, AccountsWealthPrewarmLimit)
+	h.Reader.AccountsByWealthCached(ctx, assets, prices, 0)
 }
