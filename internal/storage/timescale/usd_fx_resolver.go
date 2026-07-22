@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,20 @@ import (
 // hammer prices_1m with one query per insert. The minute-bucket
 // key matches the CAGG's resolution — finer-grained caching adds
 // no precision but multiplies misses.
+//
+// Three resolution routes, tried in this order (2026-07-22 — see
+// docs/operations/usd-volume-coverage-plan.md for the measurements
+// that motivated the last two):
+//
+//  1. FIAT assets → `fx_quotes`, not prices_1m. prices_1m holds
+//     crypto markets only, so a fiat:EUR quote could never resolve
+//     here at all. [VWAPUSDFXResolver.usdPriceForFiat].
+//  2. Direct `<asset>/<peg>` VWAP in prices_1m — the original path.
+//     [VWAPUSDFXResolver.queryDB].
+//  3. The XLM bridge — `<asset>/XLM x XLM/USD`. Most Stellar tokens
+//     have no stablecoin market but do have an XLM one, so this is
+//     what carries on-chain coverage past the USD-pegged pairs.
+//     [VWAPUSDFXResolver.bridgeViaXLM].
 type VWAPUSDFXResolver struct {
 	store *Store
 
@@ -189,6 +204,15 @@ func (r *VWAPUSDFXResolver) USDPriceAt(ctx context.Context, asset canonical.Asse
 	rate, observedAt, err := r.queryDB(ctx, asset, at)
 	if err != nil {
 		return "", false, err
+	}
+	if rate == "" {
+		// Tier 3b — no direct <asset>/<peg> market. Most Stellar
+		// tokens route their liquidity through XLM rather than a
+		// stablecoin, so try <asset>/XLM x XLM/USD before giving up.
+		rate, observedAt, err = r.bridgeViaXLM(ctx, asset, at)
+		if err != nil {
+			return "", false, err
+		}
 	}
 	if rate == "" {
 		r.storeCache(key, fxCacheEntry{rate: "", cachedAt: r.clock()})
@@ -350,6 +374,200 @@ func trimNumericText(s string) string {
 		return "0"
 	}
 	return s
+}
+
+// ─── tier 3b: the XLM bridge ─────────────────────────────────────────
+
+// bridgeLegMinUSDVolume is the dust floor a bridge bucket must clear
+// before its VWAP is allowed to value another trade.
+//
+// Rationale is the dust finding (docs/operations/
+// finding-dust-trades-set-chart-extremes.md): amounts are integers
+// (stroops), so a fill of a few stroops carries a quantisation error
+// near 100% — its "price" is an artifact of dividing two tiny integers,
+// not an observation. VWAP is volume-weighted and therefore already
+// near-immune to a crumb sitting inside a real bucket; what it cannot
+// survive is a bucket containing ONLY dust, where the crumb sets the
+// rate outright. This floor removes exactly that case. Without it a
+// 2-stroop remainder could set the valuation rate for every trade that
+// bridges through the pair.
+//
+// $0.01 matches the floor chosen for the OHLC extremes, so the two
+// dust defences agree rather than each picking their own threshold.
+const bridgeLegMinUSDVolume = "0.01"
+
+// bridgeVWAPScale is the decimal scale the bridged rate is rendered at.
+// The bridge multiplies two VWAPs, and Stellar tokens routinely price
+// far below a cent against XLM, so the result can be very small; 18
+// places keeps ample significance without unbounded text.
+const bridgeVWAPScale = 18
+
+// bridgeViaXLM prices `asset` in USD through XLM when no direct
+// <asset>/<peg> market exists:
+//
+//	USD per asset = (XLM per asset) x (USD per XLM)
+//
+// This is what takes on-chain coverage past the USD-pegged markets.
+// Most Stellar tokens have no stablecoin pair at all but do have an XLM
+// one — measured 2026-07-22, the tokens behind the largest unpriced
+// classes (6T, F8, YxT, aTTaiN, GYEN, uniT) ALL have XLM markets, and
+// 237,305 on-chain trades on 2026-07-17 were unpriced purely because
+// neither leg was XLM or a stablecoin while both legs had XLM markets.
+//
+// Returns ("", zero, nil) on a miss — a token with no XLM market
+// either, which is the documented end of the waterfall.
+//
+// The XLM/USD leg goes back through USDPriceAt rather than straight to
+// the DB, which both shares its cache — XLM/USD is identical for every
+// asset bridging in the same minute, so this collapses one query per
+// bridged asset into one per minute — and applies the freshness check
+// to that leg independently.
+//
+// That recursion is bounded at depth 2 and provably terminates: the
+// only call is with native XLM, and the isXLMAsset guard above returns
+// before any further bridging. A bridged rate is therefore fresh iff
+// BOTH legs are fresh — the XLM leg by USDPriceAt's own check, the
+// asset leg by the caller applying freshness to the bucket returned
+// here.
+func (r *VWAPUSDFXResolver) bridgeViaXLM(ctx context.Context, asset canonical.Asset, at time.Time) (string, time.Time, error) {
+	if isXLMAsset(asset) {
+		// Base case. XLM resolves directly against a peg or not at
+		// all; bridging it through itself would be circular.
+		return "", time.Time{}, nil
+	}
+	xlmPerAsset, assetLegAt, err := r.queryXLMLeg(ctx, asset, at)
+	if err != nil || xlmPerAsset == nil {
+		return "", time.Time{}, err
+	}
+	usdPerXLMStr, ok, err := r.USDPriceAt(ctx, canonical.NativeAsset(), at)
+	if err != nil || !ok || usdPerXLMStr == "" {
+		return "", time.Time{}, err
+	}
+	rate, ok := bridgeRate(xlmPerAsset, usdPerXLMStr)
+	if !ok {
+		return "", time.Time{}, nil
+	}
+	return rate, assetLegAt, nil
+}
+
+// bridgeRate multiplies the two bridge legs into a USD-per-asset rate
+// string. Split out of [VWAPUSDFXResolver.bridgeViaXLM] so the money
+// arithmetic is unit-testable without a database — the DB parts of the
+// bridge are just row fetches; this is the part that can be wrong.
+//
+// Returns ok=false on an unparseable or non-positive XLM/USD leg rather
+// than propagating a bad rate into usd_volume.
+func bridgeRate(xlmPerAsset *big.Rat, usdPerXLMText string) (string, bool) {
+	if xlmPerAsset == nil || xlmPerAsset.Sign() <= 0 {
+		return "", false
+	}
+	usdPerXLM, ok := new(big.Rat).SetString(usdPerXLMText)
+	if !ok || usdPerXLM.Sign() <= 0 {
+		return "", false
+	}
+	return new(big.Rat).Mul(xlmPerAsset, usdPerXLM).FloatString(bridgeVWAPScale), true
+}
+
+// xlmLegRate turns a prices_1m VWAP row into XLM-per-asset, inverting
+// when the pair is stored XLM-first. Split out for testability: the
+// inversion is the one place an orientation bug would silently produce
+// a rate that is wrong by a factor of vwap^2.
+func xlmLegRate(vwapText string, inverted bool) (*big.Rat, bool) {
+	vwap, ok := new(big.Rat).SetString(vwapText)
+	if !ok || vwap.Sign() <= 0 {
+		return nil, false
+	}
+	if inverted {
+		// Stored as XLM/<asset>, i.e. asset-per-XLM. We need
+		// XLM-per-asset.
+		return new(big.Rat).Inv(vwap), true
+	}
+	return vwap, true
+}
+
+// queryXLMLeg returns XLM-per-unit-of-asset at-or-before `at`, from
+// whichever orientation the pair is stored in.
+//
+// Both orientations genuinely occur for the same token — trades keep
+// the venue's observed base/quote ordering rather than being
+// re-oriented (see [canonical.Trade]), so a token can have both
+// TOKEN/XLM and XLM/TOKEN buckets on the same day. `native` is the
+// classic wire form; the SAC wrapper is the form a Soroban pool holds.
+// A stored `<asset>/XLM` VWAP is already XLM-per-asset; an `XLM/<asset>`
+// VWAP is asset-per-XLM and must be inverted.
+//
+// Buckets below [bridgeLegMinUSDVolume] are excluded so a dust-only
+// bucket cannot set the rate. The lower bucket bound mirrors the
+// G11-06 rationale on queryDB: without it a miss walks prices_1m back
+// to genesis before returning a row the caller would discard anyway.
+func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Asset, at time.Time) (*big.Rat, time.Time, error) {
+	// Both on-chain wire forms of XLM — the classic `native` type and
+	// the SAC wrapper a Soroban pool holds. Mirrors [isXLMAsset].
+	xlmForms := []string{canonical.NativeAsset().String(), nativeXLMSAC}
+	args := []any{
+		asset.String(),
+		pq.Array(xlmForms),
+		at.UTC(),
+		bridgeLegMinUSDVolume,
+	}
+	// The lower bucket bound must live INSIDE each UNION branch, not on
+	// the outer query: chunk exclusion is decided per-scan, so a bound
+	// applied after the union still lets both branches walk prices_1m
+	// back to genesis on a miss — the very thing G11-06 fixed on
+	// queryDB. Same reason the vwap > 0 guard is inlined too.
+	lowerBound := ""
+	if r.freshness > 0 {
+		lowerBound = `
+		            AND bucket     >= $5`
+		args = append(args, at.UTC().Add(-r.freshness))
+	}
+	// Each UNION branch is parenthesised: Postgres rejects a bare
+	// ORDER BY/LIMIT inside an unparenthesised union arm. The per-arm
+	// LIMIT 1 is what keeps this cheap — each side is an index-ordered
+	// walk that stops at its first qualifying bucket.
+	q := fmt.Sprintf(`
+		SELECT bucket, vwap::text, inverted
+		  FROM (
+		        (SELECT bucket, vwap, false AS inverted
+		           FROM prices_1m
+		          WHERE base_asset  = $1
+		            AND quote_asset = ANY($2)
+		            AND bucket     <= $3
+		            AND volume_usd >= $4::numeric
+		            AND vwap        > 0%[1]s
+		          ORDER BY bucket DESC
+		          LIMIT 1)
+		        UNION ALL
+		        (SELECT bucket, vwap, true AS inverted
+		           FROM prices_1m
+		          WHERE base_asset  = ANY($2)
+		            AND quote_asset = $1
+		            AND bucket     <= $3
+		            AND volume_usd >= $4::numeric
+		            AND vwap        > 0%[1]s
+		          ORDER BY bucket DESC
+		          LIMIT 1)
+		       ) legs
+		 ORDER BY bucket DESC
+		 LIMIT 1
+	`, lowerBound)
+	row := r.store.db.QueryRowContext(ctx, q, args...)
+	var (
+		bucket   time.Time
+		vwapText string
+		inverted bool
+	)
+	if err := row.Scan(&bucket, &vwapText, &inverted); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, time.Time{}, nil
+		}
+		return nil, time.Time{}, fmt.Errorf("timescale: VWAPUSDFXResolver XLM leg: %w", err)
+	}
+	vwap, ok := xlmLegRate(vwapText, inverted)
+	if !ok {
+		return nil, time.Time{}, nil
+	}
+	return vwap, bucket, nil
 }
 
 // queryDB does one prices_1m read for `<asset>/<peg>` for any peg
