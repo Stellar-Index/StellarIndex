@@ -514,3 +514,70 @@ table as a blank ASSET column for roughly half the listing.
   `/v1/assets/verified` as a local index, so the S18 API gap may be partly
   masked in the UI for verified assets. Worth confirming interactively —
   the API-level gap is real either way.
+
+---
+
+## S18 — DOWNGRADED after checking the UI
+
+I flagged search as HIGH on the strength of the API alone. Checking the
+actual user path changes the severity.
+
+Typing `USDC` into the site's search modal **works**: it returns USDC,
+yXLM, AQUA, SHX, VELO, yUSDC, AFR, XRP, WGUARDIAN, LIBRE — each linking to
+a valid `/assets/<CODE>` page. The modal builds a client-side index from
+`/v1/assets/verified` + the assets listing and only falls through to
+`/v1/search` for things that look like explorer entities
+(`looksLikeExplorerEntity`).
+
+So the S18 gap is **real at the API level but masked for site users**:
+
+- **Affected:** direct `/v1/search` consumers — integrators, the public
+  API surface, anything not carrying the UI's local index.
+- **Not affected:** people using the site's search box.
+
+Severity **HIGH → LOW/MEDIUM**. Still worth fixing (we publish `/v1/search`
+as a public endpoint that cannot resolve `USDC`), but it is not the
+user-facing outage I first implied.
+
+### S18a — search result relevance is weak (needs a second look)
+
+Typing `USDC` returns USDC first, then nine assets with no textual relation
+to the query (AFR, XRP, WGUARDIAN, LIBRE, …). Either the list is
+unfiltered beyond the top match, or unmatched "popular assets" are appended
+without a visual separator. Not confirmed which — flagged for follow-up
+rather than asserted.
+
+---
+
+## Coverage status — what is verified vs what is NOT
+
+Being explicit so the gaps are not mistaken for clean results.
+
+**Verified this audit:** all 56 static routes · 169 internal static links ·
+75 external links · 60 API endpoints (status + warm latency) · 5 dynamic
+route families probed for both nonsense and valid-unlisted params · the
+`/markets` pre-render population vs live ranking · sitemap (50-URL spread
+sample) · feeds · og:image on 13 routes · title/description presence ·
+security + cache headers on 5 surfaces · compression · contamination across
+6 listing endpoints · data freshness on 6 endpoints · pagination on 4
+endpoints · the full `/embed/*` surface · the `/widgets/` product page ·
+`/network` widget-level network waterfall · `/accounts`, `/liquidity-pools`,
+`/markets`, `/assets` rendered states.
+
+**NOT verified — do not read absence of findings as absence of problems:**
+
+- **Mobile / responsive.** Attempted via `resize_window` to 390×844; the
+  screenshot pipeline continued to capture at 1568×776, so the narrow
+  viewport was never actually observed. **No mobile conclusion of any kind
+  should be drawn from this audit.**
+- **Console errors per page.** The console-capture tool returned no
+  messages on repeated attempts, including after reloads with tracking
+  armed. Unverified, not clean.
+- **Per-widget render timing beyond `/network`.** Only `/network` had its
+  network waterfall captured.
+- **Accessibility.** Not started.
+- **Authenticated surfaces** (`/dashboard/*`, `/signin`, `/signup` flows)
+  beyond an anonymous 200 check.
+- **Interactive behaviour**: filters, sorting, per-page selectors, tab
+  switches, "load more" — none exercised.
+- **`/status` app internals** beyond a 200 + latency check.
