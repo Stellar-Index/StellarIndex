@@ -76,6 +76,44 @@ Trades on 2026-07-17 (one day):
 A quarter of all trades are sub-cent dust. Any one of them can set an extreme on
 any pair, in either direction, on every granularity.
 
+
+## Why the dust exists: path-payment remainders
+
+The offending fill was NOT a standalone order. The transaction
+(`6231307e…`, ledger 63514245) contains exactly ONE operation —
+`PathPaymentStrictSend` — and the trades table's `op_index` is the CLAIM-ATOM
+index within that path payment, not an operation index. The full chain:
+
+| hop | sold → bought | usd_volume | leg price |
+|---|---|---|---|
+| 0 | XLM → BTC | $20.22 | — |
+| 1 | USDC → XLM | $0.09 | 5.458 |
+| 2 | USDC → XLM | $19.99 | 5.459 ✓ market |
+| 3 | USDC → XLM | **$0.00000027** | **7.500** ← the outlier |
+
+Hops 1–2 filled at the true market rate. Hop 3 is the **remainder** — the
+2-stroop crumb left after the earlier hops consumed the available depth, swept
+against the next offer in the book at a worse price. At 2 stroops there is no
+precision left: 15/2 = 7.5 exactly, so the "price" is an artifact of dividing two
+tiny integers.
+
+**This is the real modeling error.** We record every claim atom of a path payment
+as an independent market trade. Economically this was ONE ~$20 conversion that
+executed at ~5.458 — it was never a market quote of 7.5 XLM/USDC. Path-payment
+remainders are structurally guaranteed to produce these crumbs, which is why 24%
+of trades are sub-cent.
+
+It also gives the notional floor a principled meaning: it is not "ignore small
+trades", it is **ignore fills too small to carry price information**. $0.01
+excludes this crumb by ~37,000x while leaving hops 1 ($0.09) and 2 ($19.99)
+intact, so the genuine execution stays fully represented.
+
+Worth considering alongside the notional floor: whether a path payment's
+intermediate hops should contribute to price discovery at all, or whether only
+the end-to-end rate is a real observation. That is a broader modelling decision
+(it affects VWAP and volume too, not just extremes) and should be taken
+deliberately.
+
 ## Fix (designed, not implemented)
 
 The extremes must be computed over economically meaningful trades only. This has
