@@ -1312,3 +1312,80 @@ The remaining static/content routes (`/docs`, `/pricing`, `/methodology`,
 `/research/*`, `/blog`, `/changelog`, `/careers`, `/company`, `/contact`,
 `/sdk`, `/widgets`, `/dev/*`) carry no data widgets; they were covered by
 the link, meta, payload and compression sweeps.
+
+---
+
+## S38 — CRITICAL (re-scoped): `/v1/sources` gates SIX page types
+
+Walking every data-bearing route with instrumentation attached shows the
+`/v1/sources` slowness (S3) is far more central than first measured:
+
+| page | slowest call | endpoint |
+|---|---|---|
+| `/network` | **8,070 ms** | `/v1/sources` |
+| `/lending` | **8,085 ms** | `/v1/sources` |
+| `/sources` | **8,105 ms** | `/v1/sources` |
+| `/bridges` | **4,452 ms** | `/v1/sources` |
+| `/oracles` | **3,217 ms** | `/v1/sources` |
+| `/status` | contributes | (46-call page, S32) |
+
+**One endpoint is the slowest call on five separate page types and
+contributes to a sixth.** Every other endpoint on the site gates at most
+one page.
+
+This substantially raises its priority: `?include=stats` was already the
+highest-leverage single fix at two page types; it is actually **six**.
+
+## S39 — HIGH: two pages never finish loading
+
+`/dexes` and `/aggregators` still show a loading indicator **5 seconds
+after** their data has arrived:
+
+| page | API calls | slowest | rows rendered | still showing "loading" |
+|---|---|---|---|---|
+| `/dexes` | 2 | 52 ms | 101 | **yes** |
+| `/aggregators` | 1 | 46 ms | 3 | **yes** |
+
+Both are *fast* — 52 ms and 46 ms — and both render their rows. Yet a
+loading state persists alongside the populated table. This is not slowness;
+it is a **stuck spinner on a page whose data already arrived**, which reads
+to a user as "still working" on a page that has finished. Distinct from
+S3's genuinely-slow endpoints and worth separating from them.
+
+## S40 — MEDIUM: two pages render no table at all
+
+| page | API calls | rows | `<th>` | empty-state message |
+|---|---|---|---|---|
+| `/bridges` | 2 | **0** | **0** | none shown |
+| `/mev` | 1 | **0** | **0** | none shown |
+
+Neither returns an error and neither displays an empty-state message —
+they simply render no table. `/mev`'s call to `/v1/mev` completes in 41 ms
+with no failure, so this is "no data, silently" rather than a fetch
+problem. Whether these surfaces are genuinely empty or quietly broken needs
+a product answer; either way a user gets an unexplained blank.
+
+## S41 — LOW: `/sdex` and `/amm` are unreachable from the nav
+
+The sidebar shows **SDEX Markets** and **AMM Pools**, and routes
+`/sdex/` and `/amm/` both exist and return 200. But no nav anchor
+resolves to either path — an automated walk of every `<a href>` on the
+page could not reach them, failing with `no nav link`. The nav entries
+point somewhere else, so the two routes are orphaned from the primary
+navigation.
+
+---
+
+## Final per-widget timing coverage — 19 data-bearing routes
+
+`/network` · `/status` · `/transactions` · `/contracts` · `/accounts` ·
+`/assets` · `/ledgers` · `/operations` · `/issuers` · `/oracles` ·
+`/dexes` · `/lending` · `/bridges` · `/aggregators` · `/mev` ·
+`/divergences` · `/markets` · `/liquidity-pools` · `/sources`
+
+Sorting: **absent on all nine listings measured** except `/markets` (S36).
+Empty/stuck states: `/dexes`, `/aggregators` (S39), `/bridges`, `/mev`
+(S40). Everything else rendered its data correctly.
+
+Not walked: `/sdex`, `/amm` (S41 — no nav path), and the static content
+routes, which carry no data widgets.
