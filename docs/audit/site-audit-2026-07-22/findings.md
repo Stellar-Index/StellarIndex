@@ -445,3 +445,72 @@ unindexed.
   `events: []`. Genuinely no anomalies firing, not a broken widget.
 - **`/embed/pair/*` works** for every pair tested, including non-top pairs.
 - **`status.stellarindex.io` and `/status/` both 200** and are fast.
+
+---
+
+## S18 — HIGH: search cannot find any Stellar asset by its code
+
+`/v1/search` resolves **only** `XLM`/`native` and full 56-character
+canonical asset IDs. Every other Stellar asset code is rejected:
+
+```
+XLM     asset    supported=True   canonical=native
+native  asset    supported=True   canonical=native
+USDC    unknown  supported=False
+AQUA    unknown  supported=False      SHX   unknown  supported=False
+EURC    unknown  supported=False      yXLM  unknown  supported=False
+VELO    unknown  supported=False      SSLX  unknown  supported=False
+GOLD    unknown  supported=False
+```
+
+Every one of those has a working `/assets/<CODE>/` page (all 200), and
+`?q=USDC-GA5ZSEJY…` (the full canonical form) resolves fine. So the data
+exists and the page exists — only the lookup by the string a human would
+actually type fails. Nobody types a 56-character issuer key.
+
+Same shape as S13: the only inputs that work are the hardcoded special
+cases, with everything data-driven falling through.
+
+## S19 — MEDIUM: the Stellar Assets page leads with 19 fiat currencies
+
+`/v1/assets/verified` — rendered as the "Verified currencies" strip at the
+top of `/assets/`, above the actual asset table — breaks down as:
+
+```
+fiat        19   USD EUR CNY JPY GBP INR BRL KRW HKD AUD CAD
+                 CHF MXN SGD ZAR TRY NZD SEK NOK
+crypto       7   XLM AQUA yXLM SHX VELO BLND PHO
+stablecoin   4   USDC PYUSD EURC yUSDC
+```
+
+**63% of the "verified" strip on a Stellar explorer's asset directory is
+national fiat currencies**, each with its own `/assets/<currency>/` page
+(`/assets/japanese-yen/`, `/assets/turkish-lira/`, …). These are FX
+reference currencies from the pricing-API era, not Stellar assets — the
+clearest instance of the legacy-positioning class.
+
+All 19 links resolve, so this is a positioning/contamination finding, not
+a dead-link one.
+
+## S20 — LOW: 47% of assets have no icon
+
+`image` is null/empty for **47 of 100** rows in `/v1/assets`. Visible in the
+table as a blank ASSET column for roughly half the listing.
+
+---
+
+## Further corrections to my own checks
+
+- **`/assets/EUR/` and `/assets/JPY/` "404s" were my error.** The verified
+  chips link to friendly slugs (`/assets/euro/`, `/assets/japanese-yen/`),
+  not codes. Re-tested all 19 fiat chips: **0 dead of 19**. Not a finding.
+- **The assets table is not missing much data.** My reading of the
+  screenshot suggested widespread gaps; the API says otherwise —
+  `price_usd` missing in 2/100, `market_cap_usd` 4/100,
+  `volume_24h_usd` 3/100, and **0 rows have volume without a price**. Only
+  `image` (S20) is materially sparse.
+- **The UI search modal is not simply `/v1/search`.** It gates that call
+  behind a `looksLikeExplorerEntity` check and separately loads
+  `/v1/assets/verified` as a local index, so the S18 API gap may be partly
+  masked in the UI for verified assets. Worth confirming interactively —
+  the API-level gap is real either way.
