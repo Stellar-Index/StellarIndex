@@ -1060,3 +1060,67 @@ sequential dependency, not concurrency.
 
 Net effect: the status page takes **4.7 s** to finish populating, roughly
 half of which is avoidable ordering rather than slow endpoints.
+
+---
+
+## S33 — MEDIUM: the markets table has no responsive column handling
+
+Resolved without ever observing a narrow viewport, by checking the
+rendered DOM for the mechanism that would adapt it.
+
+```
+table columns:                    8   (#, Base, Quote, Last price,
+                                       24h volume, 24h trades,
+                                       24h chart, Last trade)
+columns with a responsive class:  0
+table content width:           1807 px
+container width:               1662 px
+```
+
+**Zero of the eight columns carry `hidden` / `sm:` / `md:` / `lg:`
+classes**, so all eight render at every viewport. The CSS bundle *does*
+contain `.sm\:table-cell` rules (a responsive-table pattern is used
+somewhere in the app) — just not on this table.
+
+By contrast the sidebar **is** properly responsive:
+`sticky top-0 hidden h-screen w-64 shrink-0 border-r border-line lg:block`
+— hidden below 1024 px, shown above. So the app has the pattern and applies
+it to chrome, but not to its densest data surface.
+
+Consequence at 390 px: 1,807 px of table content in a ~390 px viewport,
+with no columns dropped ⟹ roughly **4.6× horizontal scrolling** inside the
+container to reach `24h chart` / `Last trade`.
+
+### Correction chain on this finding, for the record
+
+1. S8 first described this as "data overflowing the UX / broken layout".
+2. S28 corrected that: it is **contained** (`overflow-x-auto`; the page
+   never scrolls sideways) but the rightmost column is off-screen even at
+   2560 px.
+3. I then found `.sm\:table-cell` in the CSS and **provisionally withdrew**
+   the mobile inference, on the theory that columns drop below 640 px.
+4. Checking the actual table DOM showed **0 of 8 columns carry any
+   responsive class** — those rules belong to a different table. The
+   inference **stands**, now on structural evidence rather than arithmetic.
+
+---
+
+## Mobile — status after all attempts
+
+Narrow-viewport **rendering** was never visually observed: `resize_window`
+reports success but the viewport stays 2560 px (confirmed via
+`window.innerWidth`), and framing the site to get an independent viewport
+is blocked by its own `frame-ancestors 'none'` (S14).
+
+What *was* established, structurally and without observation:
+
+- ✅ Responsive infrastructure exists — 5 Tailwind breakpoints (40/48/64/80/96 rem)
+- ✅ The sidebar adapts correctly (`hidden … lg:block`)
+- ✅ `prefers-reduced-motion` handled in **both** directions
+- ✅ `forced-colors: active` handled (Windows high-contrast)
+- ✅ `<meta name="viewport">` and `<html lang>` correct
+- ❌ The markets table does **not** adapt (S33)
+
+That is a real, defensible mobile result. It is not a substitute for
+looking at the site on a phone, and the visual check should still happen —
+but "mobile is unaudited" is no longer accurate.
