@@ -581,3 +581,57 @@ endpoints · the full `/embed/*` surface · the `/widgets/` product page ·
 - **Interactive behaviour**: filters, sorting, per-page selectors, tab
   switches, "load more" — none exercised.
 - **`/status` app internals** beyond a 200 + latency check.
+
+---
+
+## S21 — HIGH: time-to-data per page type — three page types block for 8+ seconds
+
+Measured as the slowest API dependency each page type must resolve before
+its primary widget can render (warm, production):
+
+| page type | slowest dep | time | blocking endpoint |
+|---|---|---|---|
+| `/accounts` | 1 of 1 | **8.23 s** | `/v1/accounts` — *then 500s* |
+| `/network` | 1 of 9 | **8.13 s** | `/v1/sources?include=stats` |
+| `/sources` | 1 of 1 | **8.11 s** | `/v1/sources?include=stats` |
+| `/contracts` | 1 of 1 | **3.89 s** | `/v1/contracts` |
+| `/liquidity-pools` | 1 of 2 | **2.08 s** | `/v1/pools/reserves` (202 KB) |
+| `/protocols` | 1 of 1 | 1.27 s | `/v1/protocols` |
+| `/oracles` | 1 of 2 | 0.62 s | `/v1/oracle/streams` |
+| `/markets` | 1 of 2 | 0.13 s | — |
+| `/assets` | 1 of 2 | 0.17 s | — |
+| `/ledgers` | 1 of 1 | 0.13 s | — |
+
+**Five page types exceed 2 s; three exceed 8 s.** This is the measured form
+of the "widgets are too slow to load" report.
+
+Note `/network` fires 9 dependencies summing 10.3 s of API time but is
+governed by one 8.1 s call — so it is not fan-out that hurts, it is a
+single endpoint. Fixing `?include=stats` alone fixes two page types
+(`/network` and `/sources`) and removes 8 s from the worst path on the
+site. Combined with S3's `/v1/accounts`, **two endpoint fixes address every
+page over 8 s.**
+
+## S22 — MEDIUM: `/accounts` ships with no `<h1>`
+
+Every other page sampled has exactly one `<h1>`; `/accounts/` has **zero**
+(no `<h2>` either). `/markets/` for comparison emits
+`<h1 class="text-h1 …">Markets`. The visible "Accounts" title is not a
+heading element, so the page has no document outline — an accessibility
+defect (screen-reader navigation) and an SEO one.
+
+---
+
+## Method limits on the a11y pass
+
+The static-HTML a11y sweep across 10 routes found **zero `<img>` and zero
+`<input>` elements in the served markup** — icons are inline SVG and the
+search box is client-rendered. So alt-text and form-label coverage
+**could not be assessed statically** and remain **unverified, not clean**.
+The `<h1>` check was meaningful because headings *are* server-rendered,
+which is what makes S22 a real result rather than an artefact.
+
+Mobile prerequisites are present and correct on the routes checked
+(`<html lang="en">`, `<meta name="viewport" content="width=device-width,
+initial-scale=1">`) — but per the coverage-status section, actual
+narrow-viewport rendering was never observed.
