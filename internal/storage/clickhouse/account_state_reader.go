@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
@@ -267,7 +268,20 @@ func (r *ExplorerReader) AccountsByWealth(ctx context.Context, assets []string, 
 		HAVING usd > 0
 		ORDER BY usd DESC
 		LIMIT ?`
-	rows, err := r.conn.Query(ctx, q, prices, assets, assets, limit)
+	// This is a background-refresh query (never on a request deadline —
+	// see accounts_wealth_cache.go). The FINAL scan of 43.6M current-state
+	// rows measured ~23s on R1 and is close to the connection's default
+	// 30s max_execution_time, which real production price arrays (30+
+	// assets) plus serving contention tip over. The refresh has a 3-minute
+	// Go budget; give the CH side matching headroom so the query completes
+	// and the cache populates, instead of dying silently at 30s.
+	//
+	// Per-query override works because the API connects as the CH `default`
+	// user (no serving profile / readonly cap is set on this deployment).
+	qctx := clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{
+		"max_execution_time": 150,
+	}))
+	rows, err := r.conn.Query(qctx, q, prices, assets, assets, limit)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: accounts by wealth: %w", err)
 	}

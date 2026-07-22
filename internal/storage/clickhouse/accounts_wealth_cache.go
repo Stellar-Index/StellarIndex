@@ -178,6 +178,13 @@ func (r *ExplorerReader) refreshAccountsWealth(assets []string, prices []float64
 		defer cancel()
 		rows, err := r.AccountsByWealth(ctx, assets, prices, limit)
 		if err != nil {
+			// Log rather than swallow: a persistently-failing refresh keeps
+			// /v1/accounts on its 503 warming state indefinitely, and a
+			// silent failure here is what made that hard to diagnose the
+			// first time (the query was dying at the connection's 30s cap).
+			if r.wealthRefreshErr != nil {
+				r.wealthRefreshErr(err)
+			}
 			return // next caller retries; nothing cached, nothing corrupted
 		}
 		r.wealthCache.put(limit, rows, time.Now())
