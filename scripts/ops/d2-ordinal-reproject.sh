@@ -37,13 +37,24 @@ COLS_NO_ORD="ledger_seq, close_time, tx_hash, op_index, change_index, change_typ
 mkdir -p "$(dirname "$STATE")"; touch "$STATE"
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) d2: $*"; }
 # Per-query limits: cap well under the server's 72 GiB so a chunk SPILLS to disk
-# instead of being killed, and hold threads down (peak memory scales with them).
-# This job must never be the reason the server OOMs — live ingest shares it.
+# instead of being killed. This job must never be the reason the server OOMs —
+# live ingest shares the box.
+#
+# THREADS=10 of 20 cores. The canary's first pass ran with 4 and measured 26%
+# user CPU / 65% idle with disks at only ~30% util and peak query memory of
+# 2.91 GiB against the 20 GiB cap — i.e. nothing was saturated except the thread
+# cap itself (4/20 cores ≈ the 26% observed). 10 leaves half the box for live
+# ingest and the API while roughly doubling throughput.
+#
+# NOTE: do NOT parallelise across partitions instead. One partition's staging
+# consumed ~550 GiB of pool; two concurrently would leave under the 300 GiB
+# data-pool watchdog floor and get the job killed mid-run.
+D2_THREADS="${D2_THREADS:-10}"
 q()   { $CH --max_execution_time 3600 \
             --max_memory_usage 20000000000 \
             --max_bytes_before_external_sort 4000000000 \
             --max_bytes_before_external_group_by 4000000000 \
-            --max_threads 4 \
+            --max_threads "$D2_THREADS" \
             -q "$1"; }
 
 for P in $(seq "$FIRST" "$LAST"); do
