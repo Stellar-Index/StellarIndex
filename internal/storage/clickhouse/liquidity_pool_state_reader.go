@@ -103,29 +103,34 @@ func (r *ExplorerReader) NativeLiquidityPoolsRanked(ctx context.Context, limit i
 	// argMax over the ReplacingMergeTree versions (manual dedup —
 	// cheaper than FINAL for a whole-prefix scan), latest entry per pool.
 	//
-	// Version key = `ledger_seq`, which is the table's ACTUAL
-	// ReplacingMergeTree version on this deployment
-	// (`ReplacingMergeTree(ledger_seq)`), so this argMax reproduces FINAL's
-	// resolution exactly.
+	// Version key: `version` where the D3 reproject has run, else
+	// `ledger_seq`.
 	//
-	// site-audit S3: this query referenced a `version` column that does not
-	// exist, so /v1/liquidity-pools 500'd on 100% of requests ("Unknown
-	// expression or function identifier `version`"). It was written ahead of
-	// the C2-4c schema — the D3 reproject that folds intra_ledger_seq into
-	// the RMT version as `(ledger_seq << 32) | intra_ledger_seq` to
-	// disambiguate same-ledger changes. That migration is still pending
-	// (D2 in progress), and neither a `version` nor an `intra_ledger_seq`
-	// column exists on the served table yet. Using ledger_seq matches the
-	// live schema and carries exactly the same same-ledger-tie limitation
-	// FINAL already has here — no worse than the rest of the system
-	// pre-D3. WHEN D3 LANDS, restore the (ledger_seq<<32|intra_ledger_seq)
-	// version key so C2-4c holds for pools too. The trailing removal (empty
-	// entry_xdr) is dropped by `HAVING e != ''`.
-	const q = `SELECT argMax(entry_xdr, ledger_seq) AS e, max(ledger_seq) AS led
+	// site-audit S3: this query hard-coded `version`, a column that does not
+	// exist on R1's pre-D3 table, so /v1/liquidity-pools 500'd on 100% of
+	// requests ("Unknown identifier `version`"). `version` is the
+	// (ledger_seq<<32)|intra_ledger_seq RMT version that
+	// deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql (D3)
+	// introduces to disambiguate same-ledger changes (C2-4c). D3 is
+	// freeze-gated and runs after D2, so the served table is still
+	// ReplacingMergeTree(ledger_seq) with no such column — while CI's
+	// ClickHouse has the post-D3 schema.
+	//
+	// Probing (once per process) makes the query correct on both: `version`
+	// gives true C2-4c same-ledger-last-wins resolution where it exists;
+	// `ledger_seq` matches the pre-D3 engine exactly and carries the same
+	// same-ledger-tie limitation FINAL already has there. When D3 lands on
+	// R1 the probe flips and pools get C2-4c automatically, no code change.
+	// The trailing removal (empty entry_xdr) is dropped by `HAVING e != ''`.
+	versionKey := "ledger_seq"
+	if r.ledgerEntriesVersioned(ctx) {
+		versionKey = "version"
+	}
+	q := fmt.Sprintf(`SELECT argMax(entry_xdr, %s) AS e, max(ledger_seq) AS led
 		FROM stellar.ledger_entries_current
 		WHERE entry_type = 'liquidity_pool'
 		GROUP BY key_xdr
-		HAVING e != ''`
+		HAVING e != ''`, versionKey)
 	rows, err := r.conn.Query(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: liquidity pools ranked scan: %w", err)
