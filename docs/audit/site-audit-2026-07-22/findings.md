@@ -932,3 +932,72 @@ Note the JS bridge itself was initially rejected ("Cookie/query string
 data") — that was triggered by URLs with query strings inside the submitted
 code, not by the tool being unavailable. Rewriting the payload without
 query strings made it work, which is what unblocked S27 and S28.
+
+---
+
+## S29 — per-widget render timing, measured (`/network`)
+
+From the browser's own `performance` timeline, not endpoint probing:
+
+```
+DOMContentLoaded      141 ms
+load event            271 ms
+10 API calls all start ~285 ms   (well parallelised — no waterfall)
+9 of 10 settle by     404 ms
+/v1/sources settles  8356 ms     <- 8,070 ms duration
+/v1/operations       1300 ms
+```
+
+So the page shell is interactive in **0.27 s**, nine widgets are populated
+by **0.4 s**, and **one widget shows a skeleton for 8.4 seconds**.
+
+This kills a plausible theory: the problem is *not* fan-out or a request
+waterfall. Ten calls fire simultaneously and nine finish in ~120 ms each.
+A single endpoint accounts for the entire perceived slowness of the page.
+
+## S30 — HIGH: the `/accounts` failure is silent to developers and misattributed to users
+
+Captured live by hooking `console.error`, `window.onerror`,
+`unhandledrejection` and `fetch` **before** SPA-navigating into `/accounts`:
+
+```
+failedFetches:        ["500 /v1/accounts?limit=100"]
+consoleErrors:        []
+warnings:             []
+unhandledRejections:  []
+```
+
+Two distinct problems:
+
+1. **Silent to developers.** A 500 on the page's only data source produces
+   **no console output whatsoever**. Anyone debugging in devtools sees a red
+   Network row and nothing else.
+2. **Misattributed to users.** The rendered message is:
+
+   > "The accounts directory is unavailable right now (the current-state
+   > projection is still backfilling, or pricing is offline)."
+
+   Neither is true. The projection is not backfilling and pricing is not
+   offline — `/v1/accounts` takes 8.1 s and returns HTTP 500. The copy names
+   two innocent subsystems and omits the real one, actively pointing an
+   operator (or an evaluator) at the wrong place.
+
+An honest degraded state here would say the directory query failed, and
+ideally return 200 with a `degraded` flag rather than nothing.
+
+---
+
+## Console / runtime state — now verified
+
+Previously recorded as unverifiable. Resolved by installing hooks via the JS
+bridge and then using **SPA navigation** (which preserves the JS context)
+instead of a full page load.
+
+- **`/network`**: 13 s observation — **0 console errors, 0 warnings,
+  0 unhandled rejections, 0 failed fetches.** Genuinely clean.
+- **`/accounts`**: 1 failed fetch (the 500), and — the finding — **0 console
+  errors** despite it.
+
+The remaining true gap is errors thrown *before* hooks can be injected on a
+cold page load; those still cannot be captured with this tooling. Everything
+after hydration is now covered.
