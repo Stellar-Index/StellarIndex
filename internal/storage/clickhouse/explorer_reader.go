@@ -37,6 +37,18 @@ type ExplorerReader struct {
 	// (site-audit S3); it is served from here and refreshed in the
 	// background. Non-nil for every reader built by the constructors.
 	wealthCache *accountsWealthCache
+
+	// wealthRefreshErr, when set, is called with any error from the
+	// detached wealth-ranking refresh. Optional — nil swallows the error
+	// as before. Wired by the API so a persistently-failing refresh (which
+	// would pin /v1/accounts on its 503 warming state) is visible in logs.
+	wealthRefreshErr func(error)
+}
+
+// SetWealthRefreshErrorHandler installs a callback for background
+// wealth-refresh failures. Call once at wiring time.
+func (r *ExplorerReader) SetWealthRefreshErrorHandler(fn func(error)) {
+	r.wealthRefreshErr = fn
 }
 
 // NewExplorerReader dials ClickHouse (native protocol) with a request-sized

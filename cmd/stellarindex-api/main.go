@@ -930,6 +930,13 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			logger.Warn("explorer reader unavailable; /v1/ledgers etc. will 503", "addr", addr, "err", err)
 		} else {
 			defer func() { _ = er.Close() }()
+			// Surface background wealth-refresh failures (site-audit S3):
+			// a persistently-failing refresh keeps /v1/accounts on its 503
+			// warming state, and the first time round the failure was
+			// silent because the query was dying at the CH execution cap.
+			er.SetWealthRefreshErrorHandler(func(err error) {
+				logger.Warn("accounts wealth refresh failed; /v1/accounts stays on warming state", "err", err)
+			})
 			explorerReader = er
 			protocolActivityReader = er
 			lakeWatermarkReader = er
