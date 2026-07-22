@@ -896,3 +896,111 @@ func TestTradeUSDVolume_Tier2bDoesNotDisplaceQuoteSidePeg(t *testing.T) {
 		t.Errorf("usd_volume = %q, want 200.00000000 (quote leg) — tier 2b displaced tier 2", *got)
 	}
 }
+
+// ─── tier 4b: widened base anchor (2026-07-22) ───────────────────────
+
+// TestBaseAnchorEligible — the 1e7 divisor in the base anchor is only
+// valid for assets known to sit at the Stellar classic scale. A pure
+// SEP-41 token's decimals() is per-contract and is NOT plumbed through
+// the trade-insert path, so admitting one here would silently
+// mis-scale its value — a money bug, strictly worse than a NULL.
+func TestBaseAnchorEligible(t *testing.T) {
+	t.Parallel()
+	classic, err := canonical.NewClassicAsset("6T", "GBGRBCUB6L7LH4JQ6EPDP7REH2DDACMCUQI76M3P6DM52QWU2Z5LIEVW")
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+	cases := map[string]struct {
+		asset canonical.Asset
+		want  bool
+	}{
+		"native XLM":  {canonical.NativeAsset(), true},
+		"XLM SAC":     {canonical.Asset{Type: canonical.AssetSoroban, ContractID: nativeXLMSAC}, true},
+		"classic":     {classic, true},
+		"pure SEP-41": {canonical.Asset{Type: canonical.AssetSoroban, ContractID: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"}, false},
+		"fiat":        {canonical.Asset{Type: canonical.AssetFiat, Code: "EUR"}, false},
+	}
+	for name, tc := range cases {
+		if got := baseAnchorEligible(tc.asset); got != tc.want {
+			t.Errorf("baseAnchorEligible(%s) = %t, want %t", name, got, tc.want)
+		}
+	}
+}
+
+// TestTradeUSDVolume_Tier4bClassicBaseAnchor — a token/token trade
+// whose QUOTE leg has no resolvable price is valued off its BASE leg.
+// This is the path that takes on-chain coverage from 87.5% to 99.2%
+// of the remaining unpriced trades (measured 2026-07-22): for a 6T/F8
+// trade where F8 has no usable market, 6T does.
+func TestTradeUSDVolume_Tier4bClassicBaseAnchor(t *testing.T) {
+	t.Parallel()
+	sixT, err := canonical.NewClassicAsset("6T", "GBGRBCUB6L7LH4JQ6EPDP7REH2DDACMCUQI76M3P6DM52QWU2Z5LIEVW")
+	if err != nil {
+		t.Fatalf("NewClassicAsset 6T: %v", err)
+	}
+	f8, err := canonical.NewClassicAsset("F8", "GBGRBCUB6L7LH4JQ6EPDP7REH2DDACMCUQI76M3P6DM52QWU2Z5LIEVW")
+	if err != nil {
+		t.Fatalf("NewClassicAsset F8: %v", err)
+	}
+	spec, err := NewUSDVolumeQuoteSpec(
+		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
+	}
+	// 1000 6T base (1e10 stroops at 1e7). Resolver knows 6T (the real
+	// bridged rate) but NOT F8 — the quote leg must decline and the
+	// base leg must carry it.
+	tr := canonical.Trade{
+		Source:      "sdex",
+		Ledger:      63514245,
+		TxHash:      "jkl",
+		OpIndex:     0,
+		Timestamp:   time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC),
+		Pair:        canonical.Pair{Base: sixT, Quote: f8},
+		BaseAmount:  canonical.NewAmount(big.NewInt(10_000_000_000)),
+		QuoteAmount: canonical.NewAmount(big.NewInt(123_456_789)),
+	}
+	fx := stubFXResolver{prices: map[string]string{sixT.String(): "0.005933704130547542"}}
+
+	got := tradeUSDVolume(context.Background(), tr, spec, fx)
+	if got == nil {
+		t.Fatal("tier 4b did not fire — token/token trade would insert NULL")
+	}
+	// 1000 x 0.005933704130547542 = 5.933704130547542, to 8dp.
+	if *got != "5.93370413" {
+		t.Errorf("usd_volume = %q, want 5.93370413", *got)
+	}
+}
+
+// TestTradeUSDVolume_Tier4bRejectsPureSEP41Base — the decimals
+// boundary holds: a pure SEP-41 base is left NULL rather than valued
+// at an assumed 1e7.
+func TestTradeUSDVolume_Tier4bRejectsPureSEP41Base(t *testing.T) {
+	t.Parallel()
+	sep41 := canonical.Asset{Type: canonical.AssetSoroban, ContractID: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"}
+	other := canonical.Asset{Type: canonical.AssetSoroban, ContractID: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMB"}
+	spec, err := NewUSDVolumeQuoteSpec(
+		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
+	}
+	tr := canonical.Trade{
+		Source:      "soroswap",
+		Ledger:      63514245,
+		TxHash:      "mno",
+		OpIndex:     0,
+		Timestamp:   time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC),
+		Pair:        canonical.Pair{Base: sep41, Quote: other},
+		BaseAmount:  canonical.NewAmount(big.NewInt(10_000_000_000)),
+		QuoteAmount: canonical.NewAmount(big.NewInt(123_456_789)),
+	}
+	// Even with a price available for the base, the scale is unknown.
+	fx := stubFXResolver{prices: map[string]string{sep41.String(): "1.23"}}
+	if got := tradeUSDVolume(context.Background(), tr, spec, fx); got != nil {
+		t.Errorf("pure SEP-41 base was valued at %q; want NULL (decimals unknown)", *got)
+	}
+}
