@@ -73,13 +73,13 @@ func newAccountsWealthCache() *accountsWealthCache {
 // get returns the cached ranking when it is fresh. A nil cache (a
 // zero-value ExplorerReader, as built in some tests) behaves as a
 // permanent miss rather than panicking.
-func (c *accountsWealthCache) get(ttl time.Duration) ([]AccountWealth, bool) {
+func (c *accountsWealthCache) get() ([]AccountWealth, bool) {
 	if c == nil {
 		return nil, false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.filled || time.Since(c.entry.cachedAt) > ttl {
+	if !c.filled || time.Since(c.entry.cachedAt) > AccountsWealthCacheTTL {
 		return nil, false
 	}
 	return c.entry.rows, true
@@ -141,7 +141,7 @@ func (r *ExplorerReader) AccountsByWealthCached(
 	if limit <= 0 || limit > accountsWealthMaxLimit {
 		limit = 100
 	}
-	if rows, ok := r.wealthCache.get(AccountsWealthCacheTTL); ok {
+	if rows, ok := r.wealthCache.get(); ok {
 		return clampWealth(rows, limit), true
 	}
 	// Miss: start a background refresh and tell the caller we have nothing
