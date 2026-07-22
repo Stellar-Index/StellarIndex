@@ -32,6 +32,18 @@ type ExplorerReader struct {
 	txIndexOnce sync.Once
 	txIndexOK   bool
 
+	// lecVersionOnce probes whether stellar.ledger_entries_current carries a
+	// `version` column — the (ledger_seq<<32)|intra_ledger_seq RMT version
+	// that the D3 reproject introduces (deploy/clickhouse/
+	// ledger_entries_current_intra_ledger_seq.sql). D3 is freeze-gated and
+	// runs AFTER D2; until it lands, R1's table is still
+	// ReplacingMergeTree(ledger_seq) with no such column. Queries that
+	// tie-break same-ledger changes must use `version` where it exists
+	// (C2-4c) and fall back to `ledger_seq` where it does not — otherwise
+	// they 500 with "Unknown identifier `version`" (site-audit S3).
+	lecVersionOnce sync.Once
+	lecVersionOK   bool
+
 	// wealthCache backs AccountsByWealthCached. The wealth ranking is a
 	// FINAL scan over 43.6M rows that cannot fit a request deadline
 	// (site-audit S3); it is served from here and refreshed in the
@@ -634,6 +646,22 @@ func (r *ExplorerReader) txHashIndexAvailable(ctx context.Context) bool {
 		r.txIndexOK = true
 	})
 	return r.txIndexOK
+}
+
+// ledgerEntriesVersioned reports whether stellar.ledger_entries_current has
+// a `version` column (the post-D3 RMT version). Probed once per process,
+// like txHashIndexAvailable. false → pre-D3 schema; callers use ledger_seq
+// as the version key. See lecVersionOnce.
+func (r *ExplorerReader) ledgerEntriesVersioned(ctx context.Context) bool {
+	r.lecVersionOnce.Do(func() {
+		rows, err := r.conn.Query(ctx, `SELECT version FROM stellar.ledger_entries_current LIMIT 1`)
+		if err != nil {
+			return
+		}
+		_ = rows.Close()
+		r.lecVersionOK = true
+	})
+	return r.lecVersionOK
 }
 
 // txByHashIndexed is the two-step fast path: hash → ledger_seq via the
