@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -124,4 +125,14 @@ func explorerHandlerFor(s *Server, opts Options, logger *slog.Logger) *explorerp
 			writeJSON(w, data, Flags{Stale: stale})
 		},
 	}
+}
+
+// PrewarmAccountsWealth primes the /v1/accounts wealth ranking. Exposed on
+// the Server so cmd/stellarindex-api can drive it from the prewarm loop;
+// see [explorer.Handler.PrewarmAccountsWealth] for why it is needed.
+func (s *Server) PrewarmAccountsWealth(ctx context.Context) {
+	if s.explorerHandler == nil {
+		return
+	}
+	s.explorerHandler.PrewarmAccountsWealth(ctx)
 }

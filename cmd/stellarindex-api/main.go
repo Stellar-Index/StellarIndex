@@ -1128,9 +1128,16 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// same 5-minute cadence as prewarmHeavy; the cache's TTL is 10 minutes, so
 	// that keeps it permanently warm. Each call reuses the request path's
 	// single-flight + retry-gap, so a still-warm cache is a cheap no-op.
+	//
+	// PrewarmAccountsWealth rides the same loop (site-audit S3). Its cache
+	// has a 15-minute TTL, so a 5-minute cadence keeps it permanently warm
+	// with two cycles of slack. Both calls are cheap no-ops when already
+	// warm — the wealth one returns as soon as it sees a live entry, and
+	// only kicks off its detached refresh on a miss.
 	go func() {
 		const cadence = 5 * time.Minute
 		apiSrv.PrewarmClassicSupply(rootCtx)
+		apiSrv.PrewarmAccountsWealth(rootCtx)
 		t := time.NewTicker(cadence)
 		defer t.Stop()
 		for {
@@ -1139,6 +1146,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 				return
 			case <-t.C:
 				apiSrv.PrewarmClassicSupply(rootCtx)
+				apiSrv.PrewarmAccountsWealth(rootCtx)
 			}
 		}
 	}()
