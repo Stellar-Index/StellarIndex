@@ -328,19 +328,53 @@ func isXLMAsset(a canonical.Asset) bool {
 		(a.Type == canonical.AssetSoroban && a.ContractID == nativeXLMSAC)
 }
 
-// baseAnchorEligible reports whether an asset's on-chain amounts are
-// known to be denominated at the Stellar classic 10^7 scale, which is
-// what lets [tradeUSDVolumeViaXLMBaseAnchor] divide by 1e7 without
-// knowing the asset's own decimals.
+// baseAnchorEligible reports whether an asset can be valued from a
+// raw-VWAP rate by [tradeUSDVolumeViaXLMBaseAnchor].
 //
-// True for native XLM, its SAC wrapper, and every classic credit —
-// 7 decimals is a Stellar classic invariant. FALSE for a pure Soroban
-// SEP-41 token, whose decimals() is per-contract and is not plumbed
-// through the trade-insert path; assuming 7 there would mis-scale the
-// value by whatever the real exponent is, which is a silent
-// money-correctness bug rather than a missing value.
+// The 1e7 divisor there looks like it assumes the base asset has 7
+// decimals. It does not — and this is the subtle part worth stating
+// plainly, because the obvious "fix" of looking up per-token decimals
+// would INTRODUCE the very error it appears to remove.
+//
+// The divisor belongs to the asset the RATE is denominated against,
+// not to the asset being scaled. prices_1m stores vwap as a RAW ratio
+// (quote_amount/base_amount straight off `trades`, no decimals applied
+// to either side), so for A raw units of a token at raw rate R = X/A
+// against an anchor:
+//
+//	usd = (A / 1e7) x R x anchorUSD = (X / 1e7) x anchorUSD
+//
+// A cancels identically, leaving the ANCHOR's leg valued at the
+// anchor's own scale. Every anchor we price through is genuinely
+// 7-decimal (native XLM, and the classic/SAC USD pegs), so 1e7 is
+// correct and the priced token's declared decimals never enter.
+// TestUSDVolumeIsIndependentOfTokenDecimals pins this by pricing the
+// same economic trade through tokens declaring 6, 7, 9 and 18 decimals
+// and requiring an identical result.
+//
+// So pure SEP-41 tokens ARE eligible, which is also what makes this
+// consistent with [tradeUSDVolumeViaFX]: that path has never had an
+// asset-type guard and has always valued pure-SEP-41 QUOTE legs this
+// way. Excluding them only on the base side left ~6,400 aquarius /
+// soroswap / phoenix trades a day unpriced for no reason.
+//
+// The boundary that does exist: a per-WHOLE-UNIT price (a declared
+// peg, an oracle quote) does NOT cancel and genuinely needs real
+// decimals. That is why the peg tiers ([usdVolumeDecimals] /
+// QuoteUSDPegInfo) stay restricted to classic + SAC, whose 7 decimals
+// are an invariant — and why the served per-unit PRICE for a non-7
+// token is a separate, real bug that internal/decimalsguard declines
+// rather than something this function should be policing.
 func baseAnchorEligible(a canonical.Asset) bool {
-	return isXLMAsset(a) || a.Type == canonical.AssetClassic
+	//exhaustive:ignore — the on-chain asset forms are the point; fiat,
+	// crypto-ticker and RWA are external-source shapes that never reach
+	// a SubclassDEX trade.
+	switch a.Type {
+	case canonical.AssetNative, canonical.AssetClassic, canonical.AssetSoroban:
+		return true
+	default:
+		return false
+	}
 }
 
 // stellarClassicDecimals is the smallest-unit-to-display divisor

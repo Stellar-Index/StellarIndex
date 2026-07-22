@@ -914,11 +914,16 @@ func TestBaseAnchorEligible(t *testing.T) {
 		asset canonical.Asset
 		want  bool
 	}{
-		"native XLM":  {canonical.NativeAsset(), true},
-		"XLM SAC":     {canonical.Asset{Type: canonical.AssetSoroban, ContractID: nativeXLMSAC}, true},
-		"classic":     {classic, true},
-		"pure SEP-41": {canonical.Asset{Type: canonical.AssetSoroban, ContractID: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"}, false},
-		"fiat":        {canonical.Asset{Type: canonical.AssetFiat, Code: "EUR"}, false},
+		"native XLM": {canonical.NativeAsset(), true},
+		"XLM SAC":    {canonical.Asset{Type: canonical.AssetSoroban, ContractID: nativeXLMSAC}, true},
+		"classic":    {classic, true},
+		// Pure SEP-41 IS eligible: the base anchor values it from a raw
+		// VWAP ratio, in which the token's own decimals cancel — see
+		// baseAnchorEligible's godoc and
+		// TestUSDVolumeIsIndependentOfTokenDecimals.
+		"pure SEP-41": {canonical.Asset{Type: canonical.AssetSoroban, ContractID: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"}, true},
+		// Off-chain asset shapes never reach a SubclassDEX trade.
+		"fiat": {canonical.Asset{Type: canonical.AssetFiat, Code: "EUR"}, false},
 	}
 	for name, tc := range cases {
 		if got := baseAnchorEligible(tc.asset); got != tc.want {
@@ -974,13 +979,23 @@ func TestTradeUSDVolume_Tier4bClassicBaseAnchor(t *testing.T) {
 	}
 }
 
-// TestTradeUSDVolume_Tier4bRejectsPureSEP41Base — the decimals
-// boundary holds: a pure SEP-41 base is left NULL rather than valued
-// at an assumed 1e7.
-func TestTradeUSDVolume_Tier4bRejectsPureSEP41Base(t *testing.T) {
+// TestTradeUSDVolume_PegTiersStillRequireRealDecimals pins the boundary
+// that DOES exist around token decimals.
+//
+// The VWAP-anchored tiers are decimals-independent (the scale cancels),
+// but a declared PEG is a per-WHOLE-UNIT statement — "one of these is
+// worth $1" — and there the token's real decimals are load-bearing. So
+// the peg tiers must keep refusing assets whose 7 decimals are not an
+// invariant, even though the anchor tier now accepts them.
+//
+// Concretely: a pure SEP-41 token must never be read as a USD peg on
+// either leg, because valuing an 18-decimal stablecoin at 1e7 would
+// overstate it by 1e11.
+func TestTradeUSDVolume_PegTiersStillRequireRealDecimals(t *testing.T) {
 	t.Parallel()
 	sep41 := canonical.Asset{Type: canonical.AssetSoroban, ContractID: "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"}
-	other := canonical.Asset{Type: canonical.AssetSoroban, ContractID: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMB"}
+	// Peg list names a CLASSIC asset and no SAC wrappers, so the
+	// contract-id form above resolves to no peg.
 	spec, err := NewUSDVolumeQuoteSpec(
 		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
 		nil,
@@ -988,19 +1003,128 @@ func TestTradeUSDVolume_Tier4bRejectsPureSEP41Base(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
 	}
+	if _, ok := spec.QuoteUSDPegInfo(sep41); ok {
+		t.Error("a pure SEP-41 contract was accepted as a USD peg — its decimals are not an invariant")
+	}
+	// And with no resolver at all it must stay NULL rather than fall
+	// back to an assumed scale.
 	tr := canonical.Trade{
 		Source:      "soroswap",
 		Ledger:      63514245,
 		TxHash:      "mno",
 		OpIndex:     0,
 		Timestamp:   time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC),
-		Pair:        canonical.Pair{Base: sep41, Quote: other},
+		Pair:        canonical.Pair{Base: sep41, Quote: sep41},
 		BaseAmount:  canonical.NewAmount(big.NewInt(10_000_000_000)),
 		QuoteAmount: canonical.NewAmount(big.NewInt(123_456_789)),
 	}
-	// Even with a price available for the base, the scale is unknown.
-	fx := stubFXResolver{prices: map[string]string{sep41.String(): "1.23"}}
-	if got := tradeUSDVolume(context.Background(), tr, spec, fx); got != nil {
-		t.Errorf("pure SEP-41 base was valued at %q; want NULL (decimals unknown)", *got)
+	if got := tradeUSDVolume(context.Background(), tr, spec, nil); got != nil {
+		t.Errorf("unpriceable SEP-41 pair was valued at %q; want NULL", *got)
+	}
+}
+
+// TestUSDVolumeIsIndependentOfTokenDecimals is the proof behind letting
+// pure SEP-41 tokens through the VWAP-anchored tiers, and the guard
+// against anyone "fixing" the 1e7 divisor into a per-token decimals
+// lookup later.
+//
+// The instinct is that valuing a token whose decimals() is 18 by
+// dividing its raw amount by 1e7 must be wrong by 1e11. It is not,
+// because the divisor does not belong to the token being valued — it
+// belongs to the asset the RATE is denominated against, and every
+// anchor we price through (XLM, and the classic/SAC USD pegs) is
+// genuinely 7-decimal.
+//
+// prices_1m stores vwap as a RAW ratio, quote_amount/base_amount
+// straight off the trades table, with no decimals applied to either
+// side. So for a trade of A raw token units at raw rate R = X/A:
+//
+//	usd = (A / 1e7) x R x usdPerXLM
+//	    = (A / 1e7) x (X / A) x usdPerXLM
+//	    = (X / 1e7) x usdPerXLM
+//
+// A cancels identically. What survives is the XLM leg valued at XLM's
+// own 7-decimal scale — which is exactly right, and carries no
+// dependence on the token's declared decimals at all.
+//
+// The test asserts this the only way that really settles it: price the
+// same economic trade through tokens declaring 6, 7, 9 and 18 decimals
+// and require an IDENTICAL usd_volume every time.
+//
+// NOTE the deliberate boundary: this holds only for rates that are raw
+// VWAP ratios. A per-WHOLE-UNIT price (a declared peg, an oracle quote)
+// does not cancel and DOES need real decimals — which is why the peg
+// tiers stay restricted to assets whose 7 decimals are an invariant,
+// and why the served per-unit price for these tokens is a separate
+// (real) bug handled by internal/decimalsguard.
+func TestUSDVolumeIsIndependentOfTokenDecimals(t *testing.T) {
+	t.Parallel()
+	spec, err := NewUSDVolumeQuoteSpec(
+		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
+	}
+	// One economic trade: 250 XLM changed hands for some quantity of a
+	// token. Raw XLM = 250 * 1e7. At $0.18437992688007971271/XLM that
+	// is a fixed dollar value regardless of how the token is scaled.
+	const xlmUSD = "0.18437992688007971271"
+	xlmRaw := big.NewInt(250 * 10_000_000)
+
+	// Real declarations observed on R1 in nonstandard_decimals_assets:
+	// 6, 9 and 18 alongside the classic 7.
+	var want string
+	for _, decimals := range []int{6, 7, 9, 18} {
+		// The token side of the same trade, at its own scale: 1000
+		// whole tokens => 1000 * 10^decimals raw units.
+		tokenRaw := new(big.Int).Mul(big.NewInt(1000), scaleDenominator(decimals))
+		// prices_1m's vwap for TOKEN/XLM is the RAW ratio.
+		rawVWAP := new(big.Rat).SetFrac(xlmRaw, tokenRaw)
+		// bridgeRate composes that raw ratio with USD-per-whole-XLM,
+		// exactly as bridgeViaXLM does.
+		rate, ok := bridgeRate(rawVWAP, xlmUSD)
+		if !ok {
+			t.Fatalf("decimals=%d: bridgeRate declined", decimals)
+		}
+
+		token := canonical.Asset{
+			Type:       canonical.AssetSoroban,
+			ContractID: "CCT4ZYIYZ3TUO2AWQFEOFGBZ6HQP3GW5TA37CK7CRZVFRDXYTHTYX7KP",
+		}
+		other := canonical.Asset{
+			Type:       canonical.AssetSoroban,
+			ContractID: "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J",
+		}
+		tr := canonical.Trade{
+			Source:      "aquarius",
+			Ledger:      63514245,
+			TxHash:      "dec",
+			OpIndex:     0,
+			Timestamp:   time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC),
+			Pair:        canonical.Pair{Base: token, Quote: other},
+			BaseAmount:  canonical.NewAmount(tokenRaw),
+			QuoteAmount: canonical.NewAmount(big.NewInt(123_456_789)),
+		}
+		// Only the BASE token is priceable — forces the base anchor.
+		fx := stubFXResolver{prices: map[string]string{token.String(): rate}}
+
+		got := tradeUSDVolume(context.Background(), tr, spec, fx)
+		if got == nil {
+			t.Fatalf("decimals=%d: pure SEP-41 base left unpriced", decimals)
+		}
+		if want == "" {
+			want = *got
+			continue
+		}
+		if *got != want {
+			t.Errorf("decimals=%d gave usd_volume %s, but decimals=6 gave %s — "+
+				"the token's scale must cancel", decimals, *got, want)
+		}
+	}
+	// And the value must be the XLM leg's true worth: 250 x 0.18437992688007971271.
+	const trueValue = "46.09498172"
+	if want != trueValue {
+		t.Errorf("usd_volume = %s, want %s (250 XLM x %s)", want, trueValue, xlmUSD)
 	}
 }

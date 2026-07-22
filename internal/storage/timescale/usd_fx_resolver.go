@@ -442,11 +442,24 @@ func trimNumericText(s string) string {
 // dust defences agree rather than each picking their own threshold.
 const bridgeLegMinUSDVolume = "0.01"
 
-// bridgeVWAPScale is the decimal scale the bridged rate is rendered at.
-// The bridge multiplies two VWAPs, and Stellar tokens routinely price
-// far below a cent against XLM, so the result can be very small; 18
-// places keeps ample significance without unbounded text.
-const bridgeVWAPScale = 18
+// bridgeRateSigDigits is how many SIGNIFICANT digits a bridged rate is
+// rendered with. Significance, not a fixed decimal scale, is what this
+// needs: prices_1m stores raw ratios, so a token declaring 18 decimals
+// prices against XLM's 7 at around 1e-12, and a fixed 18-place render
+// would leave such a rate barely six significant figures — silently
+// degrading the valuation of exactly the tokens that need the bridge
+// most. (Three tokens confirmed on R1 declare decimals()=18.)
+//
+// 25 digits comfortably exceeds what usd_volume's own 8-decimal render
+// can express for any realistic trade size, so the rate is never the
+// limiting factor. Trailing zeros are trimmed by trimNumericText, so
+// generosity here costs nothing in the common case.
+const bridgeRateSigDigits = 25
+
+// bridgeRateMaxScale caps the decimal places rateScaleFor will ask for,
+// so a pathological or hostile token declaration cannot make us render
+// an unbounded string on the trade-insert hot path.
+const bridgeRateMaxScale = 80
 
 // bridgeViaXLM prices `asset` in USD through XLM when no direct
 // <asset>/<peg> market exists:
@@ -513,7 +526,41 @@ func bridgeRate(xlmPerAsset *big.Rat, usdPerXLMText string) (string, bool) {
 	if !ok || usdPerXLM.Sign() <= 0 {
 		return "", false
 	}
-	return new(big.Rat).Mul(xlmPerAsset, usdPerXLM).FloatString(bridgeVWAPScale), true
+	rate := new(big.Rat).Mul(xlmPerAsset, usdPerXLM)
+	return rate.FloatString(rateScaleFor(rate, bridgeRateSigDigits)), true
+}
+
+// rateScaleFor returns the number of decimal places needed to render r
+// with `sig` significant digits.
+//
+// big.Rat only renders at a FIXED decimal scale, which is the wrong
+// shape for bridged rates: they span roughly 1e0 down to 1e-12 and
+// below depending purely on the token's declared decimals, so any
+// single fixed scale either truncates the small ones or bloats the
+// large ones. This counts the leading zeros and adds the significant
+// digits on top, keeping precision constant in RELATIVE terms — which
+// is what a rate needs, since it is always multiplied by an amount.
+//
+// Deliberately float-free (ADR-0003): a log10 would be the obvious way
+// to find the magnitude, and the obvious way to reintroduce float error
+// into money math.
+func rateScaleFor(r *big.Rat, sig int) int {
+	if r == nil || r.Sign() == 0 {
+		return sig
+	}
+	x := new(big.Rat).Abs(r)
+	one := big.NewRat(1, 1)
+	ten := big.NewRat(10, 1)
+	leadingZeros := 0
+	for x.Cmp(one) < 0 && leadingZeros < bridgeRateMaxScale {
+		x.Mul(x, ten)
+		leadingZeros++
+	}
+	scale := leadingZeros + sig
+	if scale > bridgeRateMaxScale {
+		return bridgeRateMaxScale
+	}
+	return scale
 }
 
 // xlmLegRate turns a prices_1m VWAP row into XLM-per-asset, inverting
