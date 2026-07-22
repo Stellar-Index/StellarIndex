@@ -747,3 +747,85 @@ into the shared JS chunk, not a rendered state. **Discarded as a false
 positive.** Runtime empty states cannot be detected from static markup on
 this site, since every widget hydrates client-side; they require the
 browser, which is how S24 was actually found.
+
+---
+
+## S26 — LOW: all five dashboard sub-pages share one title
+
+```
+/dashboard              <title>Account · Stellar Index</title>
+/dashboard/keys         <title>Account · Stellar Index</title>
+/dashboard/usage        <title>Account · Stellar Index</title>
+/dashboard/settings     <title>Account · Stellar Index</title>
+/dashboard/price-alerts <title>Account · Stellar Index</title>
+/dashboard/admin        <title>Account · Stellar Index</title>
+```
+
+Six routes, one title. Browser tabs and history are indistinguishable for a
+signed-in user with several open.
+
+---
+
+## Authenticated surfaces — verified, and they behave correctly
+
+- `/dashboard/keys/` (and siblings) **redirect an anonymous visitor to
+  `/signin/`**, which renders a clean passwordless magic-link form. The gate
+  works.
+- **No credential or key material leaks into the served HTML.** Scanning
+  `/dashboard/admin` and `/dashboard/keys` anonymously surfaces only the
+  strings `unauthorized` / `forbidden` / UI copy — the shape you want.
+- `/signin`, `/signup`, `/auth/callback` all render correctly and carry
+  distinct, accurate titles.
+
+The only defect on this surface is S26.
+
+---
+
+# Findings index
+
+| # | Sev | Finding |
+|---|---|---|
+| S1 / S1a / S1b | **CRITICAL** | `/markets/[pair]` 404s valid markets — **build-time drift**, not the top-500 limit. `/network`'s widget ranks a different population, so its links are structurally unguaranteed |
+| S2 | HIGH | Dynamic routes fail two opposite ways: `/markets` 404s real entities; `/ledgers`/`/transactions`/`/accounts`/`/contracts` return **200 for nonsense** (soft-404) |
+| S3 | **CRITICAL** | `/v1/accounts` **500 after 8.1 s**; `/v1/liquidity-pools` 500; `?include=stats` is a **60× latency multiplier** |
+| S4 | MEDIUM | `/network` fires 11 API calls; two redundant `/v1/assets`; one still pending after load |
+| S5 | MEDIUM | Dead external links (pkg.go.dev SDK, embed example, 2 vendor docs) |
+| S6 | MEDIUM | **Nine RFC 7807 error `type` URIs all 404** |
+| S7 | HIGH | `/markets` listing links to its own dead pages — **5 of 55, including row 1** |
+| S8 | MEDIUM | Table overflows viewport; untruncated asset IDs clip the chart column |
+| S9 | MEDIUM | Site-wide "Major incident in progress" banner shown to every visitor |
+| S10 | MEDIUM | `/v1/assets` page 2 takes 5.99 s; `/v1/ledgers` + `/v1/contracts` expose no `pagination.next` |
+| S11 / S12 | LOW | `changelog.atom` 1.19 MB; 39 non-Stellar market pages in the sitemap |
+| S13 / S13a | **CRITICAL** | `/embed/asset/*` collapsed to **XLM-only** via a swallowed build error; `/widgets` advertises two embeds that 404 |
+| S14 | **CRITICAL** | `/embed/*` sends **two contradictory CSPs** → framing blocked → the entire widget product cannot work |
+| S15–S17 | LOW | Lowercase embed slugs 404; `og:image` missing on 2 routes; no embed route in the sitemap |
+| S18 / S18a | LOW-MED | `/v1/search` can't resolve any asset by code (**masked in the UI**); result relevance weak |
+| S19 | MEDIUM | **19 fiat currencies lead the Stellar asset directory** (63% of the "verified" strip) |
+| S20 | LOW | 47% of assets have no icon |
+| S21 | HIGH | **Three page types block 8+ s**; two endpoint fixes clear all of them |
+| S22 | MEDIUM | `/accounts` ships **no `<h1>`** |
+| S23 | MEDIUM | On the "All" markets view, **XLM ranks 12th** — behind DOGE and TRX |
+| S24 | HIGH | **`/sources` shows SDEX as 19 days dead** while it is the busiest venue indexed |
+| S25 | MEDIUM | `/v1/diagnostics/cursors` serves **1,483 rows / 117 KB**, one of them live |
+| S26 | LOW | Six dashboard routes share one `<title>` |
+
+**Highest leverage:** four fixes — `?include=stats`, `/v1/accounts`, the
+`/embed/*` CSP rule, and the swallowed `catch` in the embed params — clear
+every 8-second page *and* both defects that make the widget product
+unusable.
+
+## Corrections I made to my own findings during this audit
+
+Kept deliberately visible; each was caught by checking rather than assuming.
+
+1. **S1 diagnosis** — blamed the top-500 limit; it is build-time drift
+   (the 404ing pairs rank 27, 51, 100 in live data). Changes the fix.
+2. **Compression** — reported missing; was a curl artefact. Brotli works.
+3. **Sitemap 404s** — reported 60/60 failing; BSD `sed` built malformed
+   URLs. Actual: 0/50.
+4. **`/assets/EUR/` 404** — tested the wrong URL shape; all 19 fiat chips
+   resolve.
+5. **Assets "missing data"** — misread a screenshot; only icons are sparse.
+6. **S18 severity** — HIGH on API evidence alone; the UI masks it. Downgraded.
+7. **Empty-state sweep** — hit all 56 routes; `couldn't find` is bundled 404
+   copy, not a rendered state. Discarded.
