@@ -506,10 +506,11 @@ func TestBridgeRate(t *testing.T) {
 		t.Fatal("bridgeRate declined")
 	}
 	// 0.03218194209615242009 x 0.18437992688007971271
-	//   = 0.0059337041305475424553467904091784323439 exactly,
-	// truncated to bridgeVWAPScale. Computed independently, not read
-	// back from the implementation.
-	const want = "0.005933704130547542"
+	//   = 0.0059337041305475424553467904091784323439 exactly.
+	// Rendered at rateScaleFor(rate, 25) = 3 leading zeros + 25
+	// significant digits = 28 decimal places. Computed independently,
+	// not read back from the implementation.
+	const want = "0.0059337041305475424553467904"
 	if got != want {
 		t.Errorf("bridged USD per 6T = %s, want %s", got, want)
 	}
