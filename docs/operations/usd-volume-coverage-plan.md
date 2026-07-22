@@ -1,10 +1,35 @@
 ---
 title: USD volume coverage — 100% CEX / 99.5% SDEX
 last_verified: 2026-07-22
-status: diagnosed; plan agreed; implementation pending
+status: IMPLEMENTED + verified live (v0.19.0, 2026-07-22); backfill outstanding
 ---
 
 # USD volume coverage
+
+## Outcome — both bars met (measured live, v0.19.0)
+
+Coverage of trades ingested in the first hours after the v0.19.0 deploy,
+against the same measurement taken on 2026-07-17 before the change:
+
+| source | before | after | bar |
+|---|---|---|---|
+| binance | 98.626% | **100.000%** | 100% |
+| coinbase | 96.319% | **100.000%** | 100% |
+| kraken | 78.118% | **100.000%** | 100% |
+| bitstamp | 91.273% | **100.000%** | 100% |
+| sdex | 83.848% | **99.734%** | 99.5% |
+
+What remains unpriced is the intended tail and nothing else: obscure
+tokenised gold/equity wrappers (`USGOLD/GOLDRESERVE`, `HD/IBM`,
+`RUGOLDMINE/GOLDRESERVE`, `ATME/FiaT`) with no XLM market and no
+priceable counterparty, plus pure SEP-41/SEP-41 pairs, which are
+excluded **deliberately** — their `decimals()` is per-contract and is not
+plumbed through the trade-insert path, so valuing them at an assumed
+1e7 would be a silent money bug, strictly worse than a NULL.
+
+Still outstanding: the **historical backfill** (§Backfill below). Rows
+older than the deploy keep their existing values — including their
+NULLs — until re-derived.
 
 ## The bar (operator, 2026-07-22)
 
@@ -74,18 +99,40 @@ prices_1m (2), base is BTC not XLM (3) ⟹ NULL.
 
 ## Plan
 
-### Tier 2a — fiat quotes via `fx_quotes` (fixes ~100% of the CEX gap)
+### Tier 2a — fiat quotes via `fx_quotes` (fixes ~100% of the CEX gap) ✅
+**Shipped v0.19.0.** Measured: 100.00% of every external-exchange NULL on
+2026-07-17 was fiat-quoted (`fiat:EUR` 121,409 + `fiat:GBP` 22,834 =
+exactly the CEX NULL total), so this alone took all four venues to 100%.
+`fx_quotes` turned out to reach back to **2001-05-11** — 6,462 weekday
+daily buckets across 132 tickers — not 2026-05-10 as first recorded, so
+the historical backfill is not rate-limited by FX history.
+
 When the quote is `fiat:*`, resolve `inverse_usd` at-or-before the trade
 timestamp via `FXQuoteAtOrBefore` and multiply. This alone should close BTC/EUR,
 ETH/EUR, BTC/GBP, ETH/GBP, XLM/EUR, XLM/GBP — i.e. essentially the entire
 external-exchange shortfall.
 
-### Tier 2b — base-side pegs (fixes `USDC/YxT`-class)
+### Tier 2b — base-side pegs (fixes `USDC/YxT`-class) ✅
+**Shipped v0.19.0.** 43,277 on-chain trades on 2026-07-17.
+
 The waterfall only ever inspects the QUOTE. When the **base** is USD/USD-pegged,
 `usd_volume = base_amount` directly. Cheap, exact, and catches 6,193 trades/day
 on one pair alone.
 
-### Tier 3b — XLM bridge for SDEX token/token (the path to 99.5%)
+### Tier 3b/4b — XLM bridge, both legs (the path to 99.5%) ✅
+**Shipped v0.19.0.** Bridging the QUOTE leg alone reached 87.5% of the
+remaining unpriced trades; adding the BASE leg (widening the old
+XLM-only base anchor to any classic asset) took it to **99.2%**. Both
+legs matter because the residual class is token/token: for a `6T/F8`
+trade where F8 has no usable market, 6T does.
+
+The bridge gets its own 24h freshness window rather than the direct
+market's 1h — the tokens it exists to price trade $8–$220 across an
+entire day, so a 1h bound rejected most of their legs (69.9% vs 89.5%
+at 24h). The admitted error is bounded by what it prices: these are
+sub-cent valuations, so a stale rate moves aggregate volume by a
+rounding error while each NULL drops a row outright.
+
 Most Stellar tokens have an XLM market. For a token/token trade where neither
 side is priceable directly, value via `TOKEN/XLM × XLM/USD` at the trade
 timestamp. Prefer the side with the deeper XLM market; require the bridge
@@ -95,12 +142,27 @@ quote to be non-dust (see the dust finding) so a crumb can't set a valuation.
 If either asset has any USD price at that timestamp (CEX, oracle, or SDEX
 USD-peg market), value the trade with it.
 
-### Measurement + enforcement (non-negotiable)
-- Emit `stellarindex_trade_usd_volume_unpriced_total{source,subclass}` and a
-  coverage ratio per source.
-- Alert when CEX coverage < 100% or SDEX coverage < 99.5% over a window.
-- Add the unpriced ratio to the completeness/verdict surface so it is part of the
-  go-live gate, not a side metric.
+### Measurement + enforcement (non-negotiable) ✅ (verdict surface outstanding)
+`stellarindex_trade_inserts_total{source,usd_volume_populated}` already
+existed — but it was emitted from the pipeline sink's `persistTrade`,
+which the dispatcher's PRIMARY on-chain path (`flushTradeBatch` →
+`BatchInsertTrades`) never touches and which no external connector goes
+through at all. It therefore reported on **aquarius alone** while the
+largest gaps were on binance/kraken/coinbase and batch-path SDEX — the
+metric meant to police coverage was blind to almost all of it.
+
+Moved to `InsertTrade`/`BatchInsertTrades`, the choke point every trade
+funnels through exactly once (same argument `isDexUnitRatioTrade`
+already documents). That also removed a duplicated full resolution per
+trade: the sink called `WouldPopulateUSDVolume` purely to derive the
+label.
+
+Alerts `stellarindex_cex_usd_volume_coverage_low` and
+`stellarindex_onchain_usd_volume_coverage_low` enforce the two bars —
+`configs/prometheus/rules.r1/usd-volume-coverage.yml`.
+
+⬜ Still to do: fold the unpriced ratio into the completeness/verdict
+surface so it gates go-live rather than sitting beside it.
 
 ### Backfill
 Forward-fix alone leaves history wrong. `fx_quotes` reaches back to 2026-05-10,

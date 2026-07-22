@@ -1,0 +1,113 @@
+groups:
+  - name: usd-volume-coverage
+    rules:
+      # `usd_volume` is the universal denominator for every volume surface we
+      # publish: DEX volumes, asset volumes, venue rankings, market share,
+      # transaction and transfer volumes. A NULL does not merely omit one row —
+      # it silently deflates every aggregate built on it, and it does so
+      # UNEVENLY across venues, which biases exactly the comparisons the
+      # pricing API exists to answer.
+      #
+      # These alerts are the enforcement half of the coverage work
+      # (docs/operations/usd-volume-coverage-plan.md). The operator bar is
+      # 100% for external exchanges and 99.5%+ for on-chain, with unpriced
+      # acceptable ONLY for genuinely illiquid tokens — and, crucially, only
+      # as a visible measured exception rather than a silent NULL. Without
+      # these rules the bar is an aspiration, not a guarantee.
+      #
+      # Source of the ratio: stellarindex_trade_inserts_total{source,
+      # usd_volume_populated}, incremented in InsertTrade/BatchInsertTrades —
+      # the choke point EVERY trade funnels through exactly once (dispatcher
+      # batch, per-event projector, external connectors, ops backfill and
+      # re-derive alike). It previously lived in the pipeline sink, which the
+      # batch path and every external connector bypass, so it reported on
+      # aquarius alone; do not move it back.
+
+      # External exchanges have no excuse for an unpriced trade: their quote
+      # asset is either USD, a USD-pegged stablecoin, or a fiat currency we
+      # hold a daily rate for going back to 2001. Anything else means a feed
+      # started quoting a pair we cannot price — a new currency absent from
+      # fx_quotes, or a new quote asset entirely. Threshold sits just under 1
+      # so ordinary counter/scrape raggedness cannot flap it.
+      - alert: stellarindex_cex_usd_volume_coverage_low
+        expr: |
+          (
+            sum by (source) (increase(stellarindex_trade_inserts_total{source=~"binance|kraken|bitstamp|coinbase|massive|exchangeratesapi|polygon-forex|ecb",usd_volume_populated="yes"}[1h]))
+            /
+            sum by (source) (increase(stellarindex_trade_inserts_total{source=~"binance|kraken|bitstamp|coinbase|massive|exchangeratesapi|polygon-forex|ecb"}[1h]))
+          ) < 0.999
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: usd-volume-coverage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/usd-volume-coverage-plan.md
+          summary: "External exchange {{ $labels.source }} is inserting trades with NULL usd_volume"
+          description: |
+            {{ $labels.source }} priced only {{ $value | humanizePercentage }} of its trades
+            over the last hour; the bar for external exchanges is 100%.
+
+            Every off-chain quote should resolve: fiat:USD and USD-pegged stablecoins via
+            tier 1, and any other fiat via fx_quotes (tier 2a). A drop here almost always
+            means the venue began quoting in a currency fx_quotes does not carry, or in a
+            new asset the peg list does not recognise.
+
+            Find the offending pairs:
+              SELECT quote_asset, base_asset, count(*) FROM trades
+               WHERE source = '{{ $labels.source }}' AND usd_volume IS NULL
+                 AND ts > now() - interval '1 hour'
+               GROUP BY 1,2 ORDER BY count DESC LIMIT 20;
+
+            If the quote is a fiat ticker, check it exists in fx_quotes. If it is an asset,
+            it needs a peg-list entry or a market to bridge through.
+
+            Plan + measurements: docs/operations/usd-volume-coverage-plan.md
+
+      # On-chain is allowed a genuine tail: tokens with no stablecoin market, no
+      # XLM market, and no priceable counterparty legitimately cannot be valued,
+      # and pure SEP-41/SEP-41 pairs are excluded by design because their
+      # decimals are not plumbed through the insert path (valuing them at an
+      # assumed 1e7 would be a silent money bug, strictly worse than a NULL).
+      # 99.5% is the operator bar; the residual should be dust-scale tokens only.
+      - alert: stellarindex_onchain_usd_volume_coverage_low
+        expr: |
+          (
+            sum (increase(stellarindex_trade_inserts_total{source=~"sdex|soroswap|aquarius|phoenix|comet",usd_volume_populated="yes"}[6h]))
+            /
+            sum (increase(stellarindex_trade_inserts_total{source=~"sdex|soroswap|aquarius|phoenix|comet"}[6h]))
+          ) < 0.995
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: usd-volume-coverage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/usd-volume-coverage-plan.md
+          summary: "On-chain usd_volume coverage is below the 99.5% bar"
+          description: |
+            On-chain sources priced only {{ $value | humanizePercentage }} of their trades
+            over the last 6 hours, against a 99.5% bar.
+
+            Aggregated across venues deliberately: a single thin venue (comet, phoenix)
+            can have a handful of trades in a window, and a per-source ratio there is
+            noise rather than signal.
+
+            Expected causes, cheapest first:
+              - The XLM bridge lost its anchor — check XLM/USD exists in prices_1m; if
+                that is missing, tiers 3b and 4b both fail at once and coverage collapses
+                rather than degrades.
+              - A newly active token with no XLM market and no pegged counterparty.
+              - prices_1m materialisation fell behind, so bridge legs are absent within
+                the 24h bridge-freshness window.
+
+            Find the offending pairs:
+              SELECT base_asset, quote_asset, count(*) FROM trades
+               WHERE usd_volume IS NULL AND ts > now() - interval '6 hours'
+                 AND source IN ('sdex','soroswap','aquarius','phoenix','comet')
+               GROUP BY 1,2 ORDER BY count DESC LIMIT 20;
+
+            A residual of obscure tokenised assets (gold/equity wrappers) and pure
+            SEP-41/SEP-41 pairs is EXPECTED and is not a regression.
+
+            Plan + measurements: docs/operations/usd-volume-coverage-plan.md
