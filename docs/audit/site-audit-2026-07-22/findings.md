@@ -829,3 +829,106 @@ Kept deliberately visible; each was caught by checking rather than assuming.
 6. **S18 severity** — HIGH on API evidence alone; the UI masks it. Downgraded.
 7. **Empty-state sweep** — hit all 56 routes; `couldn't find` is bundled 404
    copy, not a rendered state. Discarded.
+
+---
+
+## S14 — CONFIRMED empirically (upgraded from header inference)
+
+Earlier this was argued from headers plus broken previews. It is now tested.
+
+Framing `/embed/asset/XLM/` from a page on the **same origin**:
+
+```
+onloadFired:       true
+onerrorFired:      false
+contentAccessible: false   (contentDocument reachable, body EMPTY)
+cspViolations:     []      (reported to the framed doc, not the embedder)
+```
+
+And the embed itself is **not** empty — served directly it is 26,268 bytes
+of real rendered content:
+
+```
+"XLM  Stellar  $0.192229  -0.23% 1h  +2.80% 24h  +6.57% 7d
+ Powered by Stellar Index  $2.1M 24h vol"
+```
+
+A page with live content that yields an **empty document when framed** is
+the signature of a blocked frame: the browser loads `about:blank`, `onload`
+fires, and the body is empty. `frame-ancestors 'none'` blocks **same-origin
+framing too**, which is exactly why `/widgets`' own previews are broken —
+they are same-origin iframes.
+
+Headers re-confirmed on the embed route — **two** CSP headers:
+
+```
+frame-ancestors 'none'
+frame-ancestors *
+```
+
+I briefly doubted this finding when the same-origin test loaded without a
+CSP violation event. That was the wrong reading: `frame-ancestors`
+violations are reported to the *framed* resource's policy, not the
+embedder's, so their absence in the parent proves nothing. The empty body
+against known-good content is the real signal. **S14 stands.**
+
+## S27 — MEDIUM: accessibility defects in the rendered DOM
+
+Measured against the live DOM (not static markup, which has no icons):
+
+| check | `/markets` |
+|---|---|
+| `<img>` without `alt` | 0 (there are no `<img>` at all) |
+| **`<svg>` with no `aria-label`, no `aria-hidden`, no `<title>`** | **54 of 86 (63%)** |
+| `<input>`/`<select>` with no accessible name | 0 of 1 |
+| `<button>` with no accessible name | 0 of 8 |
+| **heading-level skip** | **`h1 → h3`** |
+
+Form controls and buttons are properly named — genuinely good. The defects
+are **54 unlabelled SVG icons** (decorative ones need `aria-hidden="true"`,
+meaningful ones need a label; right now a screen reader meets 54 unnamed
+graphics) and a **skipped heading level**, which breaks the document
+outline alongside S22's missing `<h1>` on `/accounts`.
+
+## S28 — refines S8: the table overflows even at 2560 px
+
+The horizontal clipping seen in the screenshots is now measured:
+
+```
+div.overflow-x-auto   client 1662 px   scroll 1807 px   overflow 145 px
+document scrolls horizontally: NO
+```
+
+Two corrections to how I first described S8:
+
+1. It is **handled, not broken** — the wrapper carries `overflow-x-auto`, so
+   the *page* never scrolls sideways; the table scrolls within its own
+   container. The layout is not blown out.
+2. But the content is **1,807 px wide on a 2,560 px viewport**, so the
+   rightmost column (`24H CHART`) is off-screen **by default on a very wide
+   desktop**. Users never see it without discovering the inner scroll.
+
+**Mobile inference (inference, NOT an observation):** 1,807 px of table
+content in a 390 px viewport implies roughly **4.6× horizontal scrolling**.
+This follows arithmetically from the measurement above; it has still not
+been visually confirmed, and the mobile caveat elsewhere in this document
+stands.
+
+---
+
+## Tooling blocks — resolved
+
+Three classes were previously recorded as unverifiable. Two are now done:
+
+- **Accessibility (alt/label):** solved by querying the **rendered DOM** via
+  the JS bridge instead of static HTML. → S27.
+- **Overflow/responsive measurement:** solved the same way. → S28.
+- **Console errors:** still unresolved. The MCP console reader returns
+  nothing across reloads with tracking armed. The JS bridge cannot
+  retroactively recover errors thrown before it was injected, so
+  page-load-time console state remains **unverified**.
+
+Note the JS bridge itself was initially rejected ("Cookie/query string
+data") — that was triggered by URLs with query strings inside the submitted
+code, not by the tool being unavailable. Rewriting the payload without
+query strings made it work, which is what unblocked S27 and S28.
