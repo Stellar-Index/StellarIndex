@@ -1530,3 +1530,91 @@ on the site's own `frame-ancestors` policy.
 instrumentation cannot be injected before hydration through the MCP
 bridge. (Headless Chrome with a CDP client would close this too; not
 attempted here.)
+
+---
+
+## S43 — CRITICAL: the CSP blocks **every** asset icon on the site
+
+Cold-load console capture (see method below) surfaces this on every page:
+
+```
+[security] Loading the image 'https://www.centre.io/images/usdc/usdc-icon-….png'
+violates the following Content Security Policy directive: "img-src 'self' data:".
+The action has been blocked.
+```
+
+…repeated for `ultracapital.xyz` (yXLM, yUSDC), `aqua.network`,
+`stronghold.co`, `afreum.com`, `files.fchain.io` (XRP),
+`projectguardian.digital`, and more.
+
+`web/explorer/public/_headers` sets **`img-src 'self' data:`**, which
+permits only same-origin and inline images. Meanwhile the API serves
+issuer-hosted icon URLs:
+
+```
+28 of 40 asset rows carry an `image`
+28 of 28 point OFF-ORIGIN  →  ALL blocked
+```
+
+**Every asset icon the data provides is blocked by our own CSP.** The
+remaining 12 rows have no image at all, so in practice **no asset icon ever
+renders anywhere on the site**.
+
+### This supersedes S20's diagnosis
+
+S20 recorded "47% of assets have no icon" and attributed it to sparse data.
+That was the symptom, not the cause. The truth is worse and simpler: the
+icons that *do* exist are blocked 100% of the time by our own header
+policy. Fixing the data would change nothing until `img-src` is widened
+(or icons are proxied/cached same-origin, which is the better answer for a
+pricing product — it removes third-party availability and privacy
+dependencies at the same time).
+
+### The `_headers` file now has two product-breaking defects
+
+1. **S14** — duplicated `frame-ancestors` ⟹ no embed can be framed
+2. **S43** — `img-src 'self' data:` ⟹ no asset icon can load
+
+Both are single-line fixes in the same file, and between them they account
+for the broken widget product *and* the iconless asset directory.
+
+## S44 — MEDIUM: Next.js RSC prefetch 404s on every page load
+
+```
+404 /assets/__next._tree.txt?_rsc=…      404 /markets/__next._tree.txt?_rsc=…
+404 /sources/__next._tree.txt?_rsc=…     404 /signin/__next._tree.txt?_rsc=…
+404 /diagnostics/__next._tree.txt?_rsc=… 404 /pricing/__next._tree.txt?_rsc=…
+404 /methodology/__next._tree.txt?_rsc=… 404 /signup/__next._tree.txt?_rsc=…
+```
+
+**8–10 of these per page load**, one per prefetchable nav link. Under
+`output: 'export'` the RSC tree files are not emitted, so every router
+prefetch 404s. Harmless to correctness — the SPA navigations still work —
+but it means every visitor generates ~10 spurious 404s, which pollutes edge
+logs, wastes round-trips, and would mask a real 404 in monitoring.
+
+---
+
+## Cold-load console — VERIFIED (the last open item is now closed)
+
+Previously recorded as unverifiable because the MCP bridge cannot inject
+before hydration. Closed by driving CDP directly:
+
+```sh
+chrome --headless=new --remote-debugging-port=9222 &
+node cold-console.mjs https://stellarindex.io/ 1440
+```
+
+The script (`cold-console.mjs`, kept with the audit artefacts) enables
+`Log`, `Runtime` and `Network` **before** issuing `Page.navigate`, so it
+sees everything from the first byte. Node 24's built-in `WebSocket` means
+no dependencies.
+
+**Results:** zero uncaught exceptions and zero `console.warn` on `/` and
+`/markets`. All console errors are the two classes above (S43 CSP image
+blocks, S44 prefetch 404s) plus the expected anonymous `401 /v1/account/me`.
+No hydration errors, no React warnings.
+
+That is a genuinely clean runtime once those two header/config issues are
+discounted — worth stating plainly, because it means the application code
+is not the problem.
