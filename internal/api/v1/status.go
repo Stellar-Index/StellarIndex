@@ -69,6 +69,34 @@ type StatusLatency struct {
 	P95Ms      float64 `json:"p95_ms"`
 	P99Ms      float64 `json:"p99_ms"`
 	WindowSecs int     `json:"window_secs"`
+
+	// Targets are echoed so the status page renders the same numbers the
+	// roll-up judges against. They used to live only as literals in
+	// StatusPageClient.tsx, which is how the page came to draw two red
+	// SLO bars underneath a green "All systems operational" banner
+	// (site-audit S31) — the frontend knew the targets and the roll-up
+	// did not.
+	P95TargetMs float64 `json:"p95_target_ms"`
+	P99TargetMs float64 `json:"p99_target_ms"`
+}
+
+// Latency SLO targets for the customer-facing status roll-up. These are
+// the numbers the status page has always drawn its threshold bars at;
+// they are now declared once, here, and consumed by both sides.
+const (
+	statusLatencyP95TargetMs = 200
+	statusLatencyP99TargetMs = 500
+)
+
+// breached reports whether either latency percentile is over target.
+// WindowSecs == 0 means the backend returned nothing measurable, which is
+// not a breach — absence of data is handled by the unknown/backendErr
+// paths instead.
+func (l StatusLatency) breached() bool {
+	if l.WindowSecs == 0 {
+		return false
+	}
+	return l.P95Ms > statusLatencyP95TargetMs || l.P99Ms > statusLatencyP99TargetMs
 }
 
 type StatusFreshness struct {
@@ -414,7 +442,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			StatusService{Name: "indexer", Status: "unknown"},
 			StatusService{Name: "aggregator", Status: "unknown"},
 		)
-		out.Overall = rollupOverall(out.Services, false, false)
+		out.Overall = rollupOverall(out.Services, false, false, false)
 		writeJSON(w, out, Flags{Stale: out.Overall != "ok"})
 		return
 	}
@@ -463,6 +491,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	if latErr == nil {
 		out.Latency = latency
+		// Echo the SLO targets the roll-up judges against so the status
+		// page renders the same thresholds rather than its own literals.
+		out.Latency.P95TargetMs = statusLatencyP95TargetMs
+		out.Latency.P99TargetMs = statusLatencyP99TargetMs
 	}
 	if freErr == nil {
 		out.Freshness = freshness
@@ -479,7 +511,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	// service is unknown, overall is "unknown" (not "ok").
 	backendErr := hbErr != nil || latErr != nil || freErr != nil || incErr != nil
 	pageFiring := incErr == nil && incidents.PageCount > 0
-	out.Overall = rollupOverall(out.Services, backendErr, pageFiring)
+	// A breached latency SLO is degradation by definition — see
+	// rollupOverall's godoc (site-audit S31).
+	latencyBreached := latErr == nil && out.Latency.breached()
+	out.Overall = rollupOverall(out.Services, backendErr, pageFiring, latencyBreached)
 
 	// flags.stale reflects whether this envelope is reporting
 	// non-fresh state — any non-"ok" overall trips it so polling
@@ -497,16 +532,24 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 //
 //   - "down": any service is down.
 //   - "degraded": any service is degraded, OR backendErr, OR
-//     a page-severity alert is firing, OR services are in a mixed
-//     known state (e.g. one ok + one unknown — partial visibility
-//     is honest degradation, not "ok").
+//     a page-severity alert is firing, OR a latency SLO is breached,
+//     OR services are in a mixed known state (e.g. one ok + one
+//     unknown — partial visibility is honest degradation, not "ok").
+//
+// The latency input is site-audit S31: the roll-up previously judged
+// only service LIVENESS (api/indexer/aggregator "last seen Ns ago"),
+// so it reported "All systems operational · Every service is reporting
+// healthy" while the very same response carried p95 840ms against a
+// 200ms target and p99 2096ms against 500ms — both rendered in red
+// directly beneath the green banner. A status page that contradicts
+// its own panels is worse than no status page.
 //   - "unknown": every service is unknown (or has a zero LastSeen).
 //     Distinct from "down" — we have no signal at all, rather than
 //     a definite negative one. F-0055: this branch was missing
 //     pre-fix, which caused overall=ok during full metrics-backend
 //     outages.
 //   - "ok": every service is ok and no canary signal trips.
-func rollupOverall(services []StatusService, backendErr, pageFiring bool) string {
+func rollupOverall(services []StatusService, backendErr, pageFiring, latencyBreached bool) string {
 	var anyDown, anyDegraded, anyOK, anyUnknown bool
 	for _, svc := range services {
 		switch svc.Status {
@@ -532,7 +575,7 @@ func rollupOverall(services []StatusService, backendErr, pageFiring bool) string
 	switch {
 	case anyDown:
 		return "down"
-	case anyDegraded, backendErr, pageFiring:
+	case anyDegraded, backendErr, pageFiring, latencyBreached:
 		return "degraded"
 	case anyUnknown && !anyOK:
 		return "unknown"
