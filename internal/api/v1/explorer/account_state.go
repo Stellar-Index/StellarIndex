@@ -107,10 +107,15 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 // the first fix removed the 500s but the latency survived, because there
 // were two slow things stacked, not one).
 //
-// A short TTL is ample: this feeds a ranking that is itself cached for 15
-// minutes, so a price set up to a minute old cannot change what the page
-// shows.
-const usdPriceMapTTL = 60 * time.Second
+// TTL is set ABOVE the prewarm cadence (5 min) on purpose: PrewarmAccounts-
+// Wealth calls usdPriceMap every 5 minutes, so a 10-minute TTL means the
+// entry is always refreshed before it expires and real requests never pay
+// the walk. A 60s TTL (the first cut) expired 4 minutes out of every 5, so
+// most requests still ate the ~8s cold walk even though the wealth ranking
+// itself was warmly cached — the residual attempt-1 latency in the S3
+// production verification. 10 minutes stale is fine: this feeds a ranking
+// cached for 15 minutes, so the price set cannot change what the page shows.
+const usdPriceMapTTL = 10 * time.Minute
 
 type usdPriceMapEntry struct {
 	assets   []string
