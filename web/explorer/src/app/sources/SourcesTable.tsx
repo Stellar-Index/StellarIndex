@@ -58,9 +58,23 @@ export function SourcesTable() {
   // "soroswap"; backfill rows: "<range>:sdex"). Keying by `source`
   // (the prior bug, audit 2026-06-19) meant every venue's "Last
   // ingest" rendered "—". Surface the most-recent row's tip per venue.
+  //
+  // ONE-SHOT CURSORS ARE EXCLUDED (site-audit S24). Picking the highest
+  // last_ledger across all cursor types made SDEX — the busiest venue we
+  // index, ingesting ~24k trades per 20 minutes — render "19d ago" in red
+  // as if it were dead, because its highest-ledger row was a COMPLETED
+  // backfill cursor last touched 19 days earlier. Live SDEX ingest rides
+  // `ledgerstream` and has no per-venue cursor of its own, so the stale
+  // historical job won.
+  //
+  // /v1/diagnostics/cursors is dominated by finished one-shot jobs (1,483
+  // rows, of which exactly one is live; 1,202 projected-rebuild, 194
+  // backfill last touched 2026-05-03). Those describe historical work,
+  // never live freshness, so they must not feed a freshness column.
   const latestBySource = useMemo(() => {
     const m = new Map<string, { last_ledger: number; lag_seconds: number; last_updated: string }>();
     for (const c of cursors.data ?? []) {
+      if (isOneShotCursor(c)) continue;
       const venue = cursorVenue(c);
       if (!venue) continue;
       const prev = m.get(venue);
@@ -342,6 +356,23 @@ function Td({
 // ledgerstream); the venue lives in `sub_source` — projector rows carry
 // it bare ("soroswap"), backfill rows prefix a ledger range
 // ("<from-to>:sdex"), so strip everything up to the last ':'.
+// isOneShotCursor identifies cursors that track FINISHED historical work
+// rather than live ingest. `source` on a cursor row is the cursor TYPE,
+// not the venue. These rows legitimately sit months behind the tip — they
+// recorded where a one-off job stopped — so they must never be read as a
+// venue's ingest freshness (site-audit S24).
+const ONE_SHOT_CURSOR_TYPES = new Set([
+  'backfill',
+  'backfill-router',
+  'census-backfill',
+  'projected-rebuild',
+  'gap-detector-scan',
+]);
+
+function isOneShotCursor(c: { source?: string }): boolean {
+  return ONE_SHOT_CURSOR_TYPES.has((c.source ?? '').trim());
+}
+
 function cursorVenue(c: { sub_source?: string }): string {
   const ss = (c.sub_source ?? '').trim();
   if (!ss) return '';
