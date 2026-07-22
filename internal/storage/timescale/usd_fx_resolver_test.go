@@ -444,3 +444,114 @@ func TestInstallUSDVolumeResolution_NilStore(t *testing.T) {
 		t.Fatal("expected error when store is nil")
 	}
 }
+
+// ─── tier 3b: the XLM bridge (2026-07-22) ────────────────────────────
+
+// TestXLMLegRate_Orientation — a token's XLM market can be stored
+// either way round (trades keep the venue's observed base/quote
+// ordering), and on 2026-07-17 several tokens had BOTH orientations on
+// the same day. Getting the inversion wrong is silent: the rate comes
+// out wrong by a factor of vwap^2 and still looks like a plausible
+// small number.
+func TestXLMLegRate_Orientation(t *testing.T) {
+	t.Parallel()
+	// Real production values: 6T/native VWAP on 2026-07-17 12:00.
+	const sixTPerXLM = "0.03218194209615242009"
+
+	direct, ok := xlmLegRate(sixTPerXLM, false)
+	if !ok {
+		t.Fatal("direct orientation rejected")
+	}
+	if got := direct.FloatString(20); got != sixTPerXLM {
+		t.Errorf("direct = %s, want %s unchanged", got, sixTPerXLM)
+	}
+
+	// The same market stored XLM-first: vwap is asset-per-XLM, so the
+	// leg must invert to XLM-per-asset.
+	invertedInput := new(big.Rat).Inv(direct).FloatString(20)
+	got, ok := xlmLegRate(invertedInput, true)
+	if !ok {
+		t.Fatal("inverted orientation rejected")
+	}
+	// Round-trips back to the direct rate (to within the render scale).
+	if diff := new(big.Rat).Sub(got, direct); diff.Abs(diff).Cmp(big.NewRat(1, 1_000_000_000_000)) > 0 {
+		t.Errorf("inverted round-trip = %s, want ~%s", got.FloatString(20), sixTPerXLM)
+	}
+	// And it must NOT equal the raw stored number — that is the bug.
+	if got.FloatString(20) == invertedInput {
+		t.Error("inverted leg was not inverted")
+	}
+}
+
+func TestXLMLegRate_RejectsBadInput(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{"", "abc", "0", "-1.5"} {
+		if _, ok := xlmLegRate(in, false); ok {
+			t.Errorf("xlmLegRate(%q) accepted a bad rate", in)
+		}
+	}
+}
+
+// TestBridgeRate — the tier-3b multiplication, pinned against the real
+// production legs measured on R1 for 2026-07-17 12:00:
+// 6T/XLM 0.03218194209615242009 x XLM/USD 0.18437992688007971271.
+func TestBridgeRate(t *testing.T) {
+	t.Parallel()
+	xlmPer6T, ok := xlmLegRate("0.03218194209615242009", false)
+	if !ok {
+		t.Fatal("leg rejected")
+	}
+	got, ok := bridgeRate(xlmPer6T, "0.18437992688007971271")
+	if !ok {
+		t.Fatal("bridgeRate declined")
+	}
+	// 0.03218194209615242009 x 0.18437992688007971271
+	//   = 0.0059337041305475424553467904091784323439 exactly,
+	// truncated to bridgeVWAPScale. Computed independently, not read
+	// back from the implementation.
+	const want = "0.005933704130547542"
+	if got != want {
+		t.Errorf("bridged USD per 6T = %s, want %s", got, want)
+	}
+}
+
+func TestBridgeRate_RejectsBadLegs(t *testing.T) {
+	t.Parallel()
+	good := big.NewRat(1, 32)
+	if _, ok := bridgeRate(nil, "0.18"); ok {
+		t.Error("nil asset leg accepted")
+	}
+	if _, ok := bridgeRate(new(big.Rat), "0.18"); ok {
+		t.Error("zero asset leg accepted")
+	}
+	for _, bad := range []string{"", "nope", "0", "-0.18"} {
+		if _, ok := bridgeRate(good, bad); ok {
+			t.Errorf("bridgeRate accepted XLM/USD leg %q", bad)
+		}
+	}
+}
+
+// TestBridgeViaXLM_XLMIsBaseCase — bridging XLM through XLM would be
+// circular. The guard must fire before any query, so the nil DB in
+// &Store{} is itself the assertion.
+func TestBridgeViaXLM_XLMIsBaseCase(t *testing.T) {
+	t.Parallel()
+	r, err := NewVWAPUSDFXResolver(&Store{}, VWAPUSDFXResolverOptions{
+		USDPegs: []string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
+	})
+	if err != nil {
+		t.Fatalf("NewVWAPUSDFXResolver: %v", err)
+	}
+	for name, asset := range map[string]canonical.Asset{
+		"native": canonical.NativeAsset(),
+		"sac":    {Type: canonical.AssetSoroban, ContractID: nativeXLMSAC},
+	} {
+		rate, _, err := r.bridgeViaXLM(context.Background(), asset, time.Now())
+		if err != nil {
+			t.Errorf("%s: bridgeViaXLM errored instead of declining: %v", name, err)
+		}
+		if rate != "" {
+			t.Errorf("%s: bridge returned %q, want a decline (would be circular)", name, rate)
+		}
+	}
+}
