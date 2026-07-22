@@ -25,9 +25,31 @@
   # CSP — restrictive but functional. 'unsafe-inline' is required
   # for Next.js static-export bootstrap scripts and Tailwind inline
   # styles; revisit if Next stops emitting them. connect-src lists
-  # the API origin so fetch() works. frame-ancestors 'none' is the
-  # modern equivalent of X-Frame-Options DENY (browsers prefer the
-  # CSP form when both are set).
+  # the API origin so fetch() works.
+  #
+  # ── frame-ancestors is deliberately ABSENT here (site-audit S14) ──
+  # CF Pages applies EVERY matching rule, so an /embed/* response
+  # receives this CSP *and* the /embed/* one below — and a response
+  # carrying two CSP headers is enforced as their INTERSECTION, not
+  # as an override. With `frame-ancestors 'none'` here, that
+  # intersection was 'none' ∩ * = 'none', which silently blocked
+  # every customer iframe AND the site's own /widgets previews. An
+  # earlier comment on the /embed/* rule asserted _headers rules were
+  # "full replacement (NOT merged)"; production disproves it — both
+  # headers are demonstrably sent.
+  #
+  # Framing for non-embed paths is therefore enforced by
+  # X-Frame-Options: DENY above, which browsers honour precisely
+  # BECAUSE no CSP frame-ancestors is present to supersede it.
+  #
+  # ── img-src allows https: (site-audit S43) ──
+  # Asset icons are issuer-hosted (centre.io, aqua.network,
+  # stronghold.co, …) and the API serves them as absolute URLs.
+  # `img-src 'self' data:` blocked 28 of 28 off-origin icons, i.e.
+  # every asset icon on the site, while looking like sparse data.
+  # TODO: proxy/cache icons same-origin and narrow this back to
+  # 'self' — that also removes the issuer-IP-leak and availability
+  # dependency this widening accepts.
   #
   # F-0054 (audit-2026-05-26): an earlier revision permitted
   # http://localhost:3000 in connect-src as a dev-convenience —
@@ -35,7 +57,7 @@
   # against a local API. The Next dev server doesn't read _headers
   # at all (it serves no production headers), so production
   # leakage is the only effect. Removed.
-  Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.stellarindex.io; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.stellarindex.io; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'
 
 # Fingerprinted Next.js assets — far-future cache. CF Pages already
 # does this by default but the explicit header doubles as
@@ -45,25 +67,27 @@
 
 # /embed/* widgets are explicitly designed to be iframe'd into
 # customer sites — that's the entire product surface (see /widgets).
-# The /* rule above sets `frame-ancestors 'none'` and
-# `X-Frame-Options: DENY`, which would block every customer iframe.
-# Override with a permissive frame-ancestors here. CSP otherwise
-# stays as restrictive as the parent rule (modulo the
-# frame-ancestors swap).
 #
-# X-Frame-Options: DENY from the parent rule is harmless because
-# modern browsers ignore X-Frame-Options whenever a CSP
-# frame-ancestors directive is present (per MDN's
-# X-Frame-Options docs). We set it to ALLOWALL here so even
-# legacy browsers that pre-date CSP frame-ancestors don't
-# refuse to render the iframe.
+# How framing is actually permitted here (site-audit S14): the /*
+# rule deliberately emits NO frame-ancestors, so this rule's
+# `frame-ancestors *` is the only one on the response and there is
+# nothing to intersect it away. Because a CSP frame-ancestors IS
+# present on /embed/* responses, browsers ignore X-Frame-Options
+# entirely for them — which is what makes the parent rule's
+# `X-Frame-Options: DENY` harmless here. ALLOWALL is still set for
+# pre-CSP browsers.
+#
+# DO NOT reintroduce frame-ancestors to the /* rule. CF Pages applies
+# every matching rule, both CSP headers reach the browser, and two
+# CSPs are enforced as an intersection — which is exactly how the
+# entire embed product came to be silently unframeable.
 /embed/*
   X-Content-Type-Options: nosniff
   X-Frame-Options: ALLOWALL
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: accelerometer=(), camera=(), geolocation=(), microphone=(), payment=(), usb=()
-  # HSTS still applies to /embed/* — _headers rules are full
-  # replacement (NOT merged) per CF Pages docs, so we repeat the
-  # parent's HSTS directive here. Same lifetime / same scope.
+  # HSTS repeated so it applies regardless of how the host merges
+  # rules. (The parent's HSTS also reaches these responses; an
+  # identical duplicate is harmless, unlike the CSP case above.)
   Strict-Transport-Security: max-age=31536000; includeSubDomains
-  Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.stellarindex.io; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors *; form-action 'self'
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://api.stellarindex.io; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors *; form-action 'self'
