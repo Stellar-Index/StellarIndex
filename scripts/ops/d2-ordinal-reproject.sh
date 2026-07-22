@@ -25,13 +25,26 @@ CH="${CH:-clickhouse-client --port 9300}"
 STATE="${D2_STATE:-/var/lib/ch-backfill/d2-done-partitions.txt}"
 FIRST="${1:?first partition}"
 LAST="${2:?last partition}"
-CHUNK="${3:-25000}"          # ledgers per INSERT; ~25k kept the window inside CH's memory cap
+# Ledgers per INSERT. 2500 measured at ~16.2M rows in 24s on partition 45.
+# 25000 was tried first and blew the server's 72 GiB cap outright
+# (MEMORY_LIMIT_EXCEEDED while reading the WIDE entry_xdr/key_xdr columns for
+# ~170M rows). Keep this small; the win from bigger chunks is round-trip
+# overhead only, and the loss is a dead run hours in.
+CHUNK="${3:-2500}"
 SEED=4294967295              # MaxUint32 — ledger_entries_current seed rows, if any
 COLS_NO_ORD="ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_type, key_xdr, entry_xdr, ingested_at, account_id, asset, balance"
 
 mkdir -p "$(dirname "$STATE")"; touch "$STATE"
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) d2: $*"; }
-q()   { $CH --max_execution_time 3600 -q "$1"; }
+# Per-query limits: cap well under the server's 72 GiB so a chunk SPILLS to disk
+# instead of being killed, and hold threads down (peak memory scales with them).
+# This job must never be the reason the server OOMs — live ingest shares it.
+q()   { $CH --max_execution_time 3600 \
+            --max_memory_usage 20000000000 \
+            --max_bytes_before_external_sort 4000000000 \
+            --max_bytes_before_external_group_by 4000000000 \
+            --max_threads 4 \
+            -q "$1"; }
 
 for P in $(seq "$FIRST" "$LAST"); do
   if grep -qx "$P" "$STATE"; then log "partition $P already done — skipping"; continue; fi
