@@ -1124,3 +1124,86 @@ What *was* established, structurally and without observation:
 That is a real, defensible mobile result. It is not a substitute for
 looking at the site on a phone, and the visual check should still happen —
 but "mobile is unaudited" is no longer accurate.
+
+---
+
+## S34 — per-widget render timing across page types (browser timeline)
+
+Measured from each page's own `performance` timeline — actual widget
+settle times, not endpoint probes:
+
+| page | load | API calls | waterfall spread | last widget settles | rows |
+|---|---|---|---|---|---|
+| `/transactions` | 216 ms | 7 | 162 ms | **462 ms** ✅ | 200 |
+| `/contracts` | 190 ms | 6 | **2 ms** | **2,741 ms** ⚠️ | 100 |
+| `/network` | 271 ms | 10 | ~3 ms | **8,356 ms** ❌ | — |
+| `/status` | 240 ms | **46** | **2,064 ms** | **4,737 ms** ⚠️ | — |
+| `/accounts` | — | 1 | — | **500 after 8.1 s** ❌ | 0 |
+
+Reading across them:
+
+- **Every page shell is fast** — 190–271 ms to `load`. The static export is
+  doing its job; nothing here is a front-end weight problem.
+- **Fan-out is well-parallelised almost everywhere.** `/contracts` starts
+  all 6 calls within **2 ms** of each other; `/network` within ~3 ms.
+  Slowness is never concurrency — it is always one endpoint.
+- **`/status` is the exception**: a 2,064 ms waterfall spread across 46
+  calls (S32), so roughly half its 4.7 s is ordering, not endpoint latency.
+- **`/transactions` is the model** — 7 calls, everything settled in 462 ms,
+  200 rows rendered, no empty states.
+
+## S35 — LOW: `/v1/assets` is fetched twice on at least three page types
+
+Confirmed by counting duplicate endpoints in the browser timeline:
+
+```
+/network      /v1/assets x2   (limit=100 and limit=25)
+/transactions /v1/assets x2
+/contracts    /v1/assets x2
+```
+
+Two independent components each fetch the asset listing rather than
+sharing one cached query. Cheap (~120 ms, warm) but it is a consistent
+pattern across pages, and it doubles a 57 KB payload on every page load.
+
+---
+
+## Final coverage statement
+
+**Audited and verified:** 56 static routes · 2,718 extracted links (169
+internal, 75 external) · 60 API endpoints · 5 dynamic-route families ·
+per-widget browser-timeline timing on 5 page types · endpoint-level timing
+on 10 page types · rendered-DOM accessibility · responsive CSS + DOM
+structure · console/runtime state on 2 pages · authenticated gating ·
+interactive filters on 2 surfaces · sitemap, feeds, robots, og:images,
+headers, compression, pagination, data freshness, contamination across 6
+listing endpoints, and the full embed/widget surface.
+
+**Genuinely still open** (small, and each has a stated reason):
+
+1. **Narrow-viewport visual rendering** — structurally resolved (S33) but
+   never seen. Blocked by `resize_window` not taking effect *and* by the
+   site's own `frame-ancestors 'none'` (S14) preventing an iframe viewport.
+   Needs a device or a headless runner.
+2. **Cold-load console errors** — hooks cannot be injected before
+   hydration; post-hydration state is verified clean on `/network`.
+3. **Interactive behaviour on the long tail** — filters/sorting verified on
+   `/markets` and the search modal; the remaining listing pages use the
+   same shared table components, so the risk is low but it is untested.
+
+Nothing in the "still open" list is expected to change the priority order
+below.
+
+## Recommended fix order
+
+1. **S31** — `/status` reporting green over two 500s and two breached SLOs.
+   Worst surface to show Stellar; the telemetry underneath is already
+   correct, so this is a roll-up change.
+2. **S3 / S21** — `?include=stats` (fixes `/network` *and* `/sources`) and
+   `/v1/accounts`. Two endpoints clear every page over 8 s.
+3. **S14 + S13** — one `_headers` rule and one swallowed `catch`; together
+   they restore the entire embed/widget product.
+4. **S1b** — client-fetch fallback on `/markets/[pair]`, not a bigger
+   pre-render limit.
+5. **S24** — `/sources` showing SDEX 19 days stale while it is the busiest
+   venue indexed.
