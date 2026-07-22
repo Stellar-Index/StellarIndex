@@ -11,8 +11,16 @@ import (
 // control table backing the dex-nonstandard-decimals serving guard.
 // Written by the aggregator's decimals-guard sweep (internal/decimalsguard)
 // on confirmation; consulted by the API's process-local
-// NonstandardDecimalsCache (internal/api/v1) to decline serving prices for
-// pairs touching Asset. See docs/operations/runbooks/dex-nonstandard-decimals.md.
+// NonstandardDecimalsCache (internal/api/v1) to NORMALIZE served prices for
+// pairs touching Asset — prices_1m stores raw quote/base ratios, so a
+// non-7 leg needs an exact 10^(baseDecimals-quoteDecimals) correction
+// (aggregate.AdjustPrice). Earlier revisions declined to serve instead;
+// that was the placeholder, normalization is the shipped behaviour.
+// See docs/operations/runbooks/dex-nonstandard-decimals.md.
+//
+// NOTE this table is about per-unit PRICE, which does need real decimals.
+// It is deliberately NOT consulted for usd_volume, where the token's
+// scale cancels — see timescale.baseAnchorEligible.
 type NonstandardDecimalsAsset struct {
 	// Asset is the token's C-strkey contract id.
 	Asset string

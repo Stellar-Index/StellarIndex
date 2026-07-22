@@ -118,16 +118,20 @@ type DecimalsResolver interface {
 }
 
 // DecimalsAssetWriter persists a CONFIRMED non-7 decimals() declaration so
-// the API-side READ-TIME serving guard (internal/api/v1) can decline to
-// serve /v1/price, /v1/vwap, /v1/history, /v1/ohlc for any pair touching
-// the asset — turning this package's detection-only signal into an actual
-// stop-serving lever (docs/operations/runbooks/dex-nonstandard-decimals.md
-// "Mitigation" step). Satisfied by *timescale.Store via
-// UpsertNonstandardDecimalsAsset.
+// the API-side READ-TIME path (internal/api/v1) can NORMALIZE /v1/price,
+// /v1/vwap, /v1/history, /v1/ohlc, /v1/price/at and the chart surfaces for
+// any pair touching the asset — turning this package's detection-only
+// signal into a served-value correction
+// (docs/operations/runbooks/dex-nonstandard-decimals.md). Satisfied by
+// *timescale.Store via UpsertNonstandardDecimalsAsset.
+//
+// This started life as a stop-serving lever and the docstrings said so
+// long after the behaviour changed; the surfaces now apply
+// aggregate.AdjustPrice rather than declining. Corrected 2026-07-22.
 //
 // Optional: a nil Writer disables persistence — the guard still fires the
-// metric + ERROR log unconditionally, it just leaves the serving-side guard
-// unfed (the pre-2026-07-09 behaviour).
+// metric + ERROR log unconditionally, it just leaves the serving-side
+// correction unfed, so those pairs serve an uncorrected raw ratio.
 type DecimalsAssetWriter interface {
 	UpsertNonstandardDecimalsAsset(ctx context.Context, asset string, decimals uint32, source string) error
 }

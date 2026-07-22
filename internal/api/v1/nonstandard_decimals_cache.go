@@ -24,11 +24,15 @@ type NonstandardDecimalsReader interface {
 // decimals-guard sweep (internal/decimalsguard) writes confirmed non-7-
 // decimal assets into `nonstandard_decimals_assets` (migration 0093); this
 // cache mirrors that table in-process so /v1/price, /v1/vwap, /v1/history,
-// /v1/ohlc can decline serving a pair touching an offending asset without a
-// per-request DB round trip. 60s keeps the "self-clearing once real
-// normalization ships" promise tight — an operator who removes the row
-// sees the decline disappear within one interval, not a stale
-// process-lifetime cache.
+// /v1/ohlc, /v1/price/at and the chart surfaces can NORMALIZE a pair
+// touching such an asset without a per-request DB round trip.
+//
+// The "real normalization" this originally promised has since shipped:
+// these surfaces no longer decline, they correct, applying
+// aggregate.AdjustPrice's exact 10^(baseDecimals-quoteDecimals) factor
+// (see Server.normalizeRawRatioString). 60s keeps the cache tight so an
+// operator who corrects a row sees serving follow within one interval
+// rather than a process lifetime.
 const NonstandardDecimalsRefreshInterval = 60 * time.Second
 
 // NonstandardDecimalsCache wraps a [NonstandardDecimalsReader] with an
