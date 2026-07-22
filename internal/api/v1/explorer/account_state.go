@@ -55,14 +55,19 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	assets, prices := h.usdPriceMap(ctx)
-	ranked, err := h.Reader.AccountsByWealth(ctx, assets, prices, limit)
-	if err != nil {
-		if h.ClientAborted(r, err) {
-			return
-		}
-		h.Logger.Error("explorer AccountsByWealth failed", "err", err)
-		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal",
-			"Internal error", http.StatusInternalServerError, "")
+	// Served from a background-refreshed cache; the underlying FINAL scan
+	// over 43.6M current-state rows needs 11-20s and can never fit this
+	// handler's deadline. Before this, the scan ran inline and timed out on
+	// EVERY request — 8.1s of waiting followed by a 500, 100% of the time
+	// (site-audit S3/S30).
+	ranked, warm := h.Reader.AccountsByWealthCached(ctx, assets, prices, limit)
+	if !warm {
+		// Honest degraded state instead of a 500. The previous copy blamed
+		// "the current-state projection is still backfilling, or pricing is
+		// offline" — neither was ever true; the query simply timed out.
+		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/warming-up",
+			"Ranking not ready", http.StatusServiceUnavailable,
+			"the account wealth ranking is being computed; retry shortly")
 		return
 	}
 	// Locked-burn detection (Pass-B ACC-1): the SDF burn address ranked
@@ -339,4 +344,29 @@ func looksLikeStellarAccount(s string) bool {
 		}
 	}
 	return true
+}
+
+// AccountsWealthPrewarmLimit is the page size the prewarm loop warms.
+// /v1/accounts defaults to limit=100 and the explorer requests exactly
+// that, so warming this one key covers the real traffic; other limits
+// warm themselves on first use via the cache's miss path.
+const AccountsWealthPrewarmLimit = 100
+
+// PrewarmAccountsWealth primes the wealth-ranking cache so no user ever
+// meets the cold state.
+//
+// The ranking is a FINAL scan over 43.6M current-state rows (11-20 s) and
+// cannot run on a request deadline — before site-audit S3 it was attempted
+// inline and 500'd on 100% of requests. Calling the cached reader here is
+// enough: on a miss it kicks off the detached background refresh and
+// returns immediately, so this is cheap to call on a timer.
+func (h *Handler) PrewarmAccountsWealth(ctx context.Context) {
+	if h.Reader == nil || !h.PricingEnabled {
+		return
+	}
+	assets, prices := h.usdPriceMap(ctx)
+	if len(assets) == 0 {
+		return // pricing not up yet; the next tick retries
+	}
+	h.Reader.AccountsByWealthCached(ctx, assets, prices, AccountsWealthPrewarmLimit)
 }

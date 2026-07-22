@@ -31,6 +31,12 @@ type ExplorerReader struct {
 	// existed.
 	txIndexOnce sync.Once
 	txIndexOK   bool
+
+	// wealthCache backs AccountsByWealthCached. The wealth ranking is a
+	// FINAL scan over 43.6M rows that cannot fit a request deadline
+	// (site-audit S3); it is served from here and refreshed in the
+	// background. Non-nil for every reader built by the constructors.
+	wealthCache *accountsWealthCache
 }
 
 // NewExplorerReader dials ClickHouse (native protocol) with a request-sized
@@ -72,7 +78,7 @@ func NewExplorerReaderAuth(ctx context.Context, addr, username, password string)
 		_ = conn.Close()
 		return nil, fmt.Errorf("clickhouse: ping explorer reader %s: %w", addr, err)
 	}
-	return &ExplorerReader{conn: conn}, nil
+	return &ExplorerReader{conn: conn, wealthCache: newAccountsWealthCache()}, nil
 }
 
 // Close releases the connection pool.

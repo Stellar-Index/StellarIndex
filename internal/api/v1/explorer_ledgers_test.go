@@ -171,6 +171,17 @@ func (s *stubExplorerReader) AccountsByWealth(_ context.Context, _ []string, _ [
 	return s.wealth, s.err
 }
 
+// AccountsByWealthCached mirrors the uncached stub: warm whenever the stub
+// isn't configured to fail, so existing expectations are unchanged. An
+// error case reports cold, which is how the real cache signals "no usable
+// entry" (site-audit S3).
+func (s *stubExplorerReader) AccountsByWealthCached(_ context.Context, _ []string, _ []float64, _ int) ([]clickhouse.AccountWealth, bool) {
+	if s.err != nil {
+		return nil, false
+	}
+	return s.wealth, true
+}
+
 func (s *stubExplorerReader) AccountTransactions(_ context.Context, _ string, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, error) {
 	return s.txs, s.err
 }

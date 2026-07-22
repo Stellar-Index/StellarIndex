@@ -76,6 +76,13 @@ type ExplorerReader interface {
 	AccountState(ctx context.Context, account string) (clickhouse.AccountState, error)
 	AssetHolders(ctx context.Context, asset string, limit int) ([]clickhouse.AssetHolder, int64, error)
 	AccountsByWealth(ctx context.Context, assets []string, prices []float64, limit int) ([]clickhouse.AccountWealth, error)
+	// AccountsByWealthCached serves the ranking from a background-refreshed
+	// cache and NEVER runs the underlying FINAL scan on the caller's
+	// deadline. ok=false means "not warm yet" — render a warming state, do
+	// not fall back to AccountsByWealth on the request path (site-audit S3:
+	// that scan needs 11-20s against an 8s handler deadline, so it 500'd
+	// 100% of the time).
+	AccountsByWealthCached(ctx context.Context, assets []string, prices []float64, limit int) ([]clickhouse.AccountWealth, bool)
 	SoroswapPairReserves(ctx context.Context, pairs []string) (map[string]clickhouse.SoroswapPairState, error)
 	NativeLiquidityPoolReserves(ctx context.Context, poolIDs []string) (map[string]clickhouse.NativeLiquidityPoolState, error)
 	NativeLiquidityPoolsRanked(ctx context.Context, limit int) ([]clickhouse.NativeLiquidityPoolState, error)
