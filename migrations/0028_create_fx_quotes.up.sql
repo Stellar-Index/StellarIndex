@@ -28,9 +28,20 @@
 -- system that uses dash-separated CODE-ISSUER on the Stellar side.
 -- A separate column makes the join semantics explicit.
 --
--- `rate_usd` is "1 unit of <ticker> in USD" (Massive's native form).
+-- `rate_usd` is UNITS-OF-<ticker> PER 1 USD (Massive's native form) —
+-- e.g. rate_usd(JPY) = 163.09 means 1 USD buys ¥163.09, and
+-- rate_usd(EUR) = 0.8766 means 1 USD buys €0.8766.
 -- `inverse_usd` is the reciprocal cached for read-time so callers
--- don't have to divide. Both NUMERIC for precision.
+-- don't have to divide — i.e. "1 unit of <ticker> in USD"
+-- (inverse_usd(EUR) = 1.1407 ⟹ €1 = $1.1407). Both NUMERIC.
+--
+-- ⚠ These two are trivially transposable and inverting them corrupts
+-- every fiat conversion (24,000x for JPY). This comment previously
+-- described rate_usd with inverse_usd's definition; corrected
+-- 2026-07-22 against production (JPY 163.09 / VND 26,335 settle the
+-- orientation unambiguously — no currency is worth >$1 at those
+-- magnitudes). internal/storage/timescale/fx_quotes.go (usdFiatCode,
+-- fxSnapFromRows) is the authority and was always correct.
 --
 -- `source` is the upstream data provider (typically `massive`)
 -- so the row's provenance is auditable. NULL only on backfill rows

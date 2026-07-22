@@ -165,6 +165,12 @@ func NewVWAPUSDFXResolver(store *Store, opts VWAPUSDFXResolverOptions) (*VWAPUSD
 // metrics; the calling trade still inserts, just with usd_volume
 // NULL.
 func (r *VWAPUSDFXResolver) USDPriceAt(ctx context.Context, asset canonical.Asset, at time.Time) (string, bool, error) {
+	// Fiat quotes resolve from fx_quotes, not prices_1m — see
+	// [VWAPUSDFXResolver.usdPriceForFiat]. This branch MUST precede the
+	// peg check below: pricing EUR needs no Stellar USD-peg market.
+	if asset.Type == canonical.AssetFiat {
+		return r.usdPriceForFiat(ctx, asset, at)
+	}
 	if len(r.usdPegs) == 0 {
 		return "", false, nil
 	}
@@ -212,6 +218,82 @@ func (r *VWAPUSDFXResolver) USDPriceAt(ctx context.Context, asset canonical.Asse
 		r.storeCache(key, fxCacheEntry{rate: "", cachedAt: r.clock()})
 		return "", false, nil
 	}
+	r.storeCache(key, fxCacheEntry{rate: rate, cachedAt: r.clock()})
+	return rate, true, nil
+}
+
+// fiatUSDRateScale is the decimal scale used to render a fiat→USD
+// rate from its exact *big.Rat form. The rate is USD per 1 unit of
+// the ticker, which spans ~1.34 (GBP) down to ~3.8e-5 (VND), so 18
+// places keeps at least 13 significant digits even for the weakest
+// currency in the table — far beyond the 8 decimals `usd_volume`
+// itself is rendered at. [trimNumericText] then drops the padding.
+const fiatUSDRateScale = 18
+
+// usdPriceForFiat resolves the USD price of one unit of a fiat asset
+// from `fx_quotes`, and is the reason non-USD-quoted external-exchange
+// trades can be priced at all.
+//
+// A fiat asset can NEVER resolve through [VWAPUSDFXResolver.queryDB]:
+// that path looks for `<asset>/<peg>` in prices_1m, and prices_1m holds
+// crypto markets only — there is no `fiat:EUR/fiat:USD` row and there
+// never will be one. Before this branch existed, every CEX pair quoted
+// in a currency other than USD (binance BTC/EUR, kraken ETH/GBP, …)
+// fell through all four tiers of [tradeUSDVolume] and inserted with
+// `usd_volume` NULL, silently deflating every aggregate built on that
+// column — measured at ~$939M of unpriced volume on 2026-07-17 alone,
+// ~23% of that day's total. See docs/operations/usd-volume-coverage-plan.md.
+//
+// The rate is computed by [fxSnapFromRows] as an exact *big.Rat
+// (rate_usd(USD)/rate_usd(TICKER), with the USD leg an exact 1).
+// The float-derived `inverse_usd` column is deliberately NOT used —
+// ADR-0003 keeps money math out of float space.
+//
+// Two deviations from the prices_1m path, both deliberate:
+//
+//   - **Freshness is NOT applied.** fx_quotes buckets are daily and
+//     weekday-only, so the resolver's default 1h freshness would reject
+//     100% of fiat rates. [fxQuotesSnapAtOrBefore]'s own
+//     [fxQuotesSnapLookback] (7 days — the longest routine
+//     weekend/holiday gap) is the freshness bound instead.
+//   - **The cache key floors to the UTC day, not the minute.** Buckets
+//     are stored at exactly UTC midnight, one per (date, ticker), so a
+//     day floor is the source's true resolution — a minute key would
+//     multiply misses by 1440 and, during a historical backfill, grow
+//     the cache by one entry per traded minute per currency.
+func (r *VWAPUSDFXResolver) usdPriceForFiat(ctx context.Context, asset canonical.Asset, at time.Time) (string, bool, error) {
+	// USD is the anchor rate_usd is expressed against — exactly 1 by
+	// definition, and fx_quotes holds no USD row to look up.
+	if asset.Code == usdFiatCode {
+		return "1", true, nil
+	}
+	key := fxCacheKey{
+		asset:    asset.String(),
+		bucketMs: at.UTC().Truncate(24 * time.Hour).UnixMilli(),
+	}
+	if rate, ok := r.lookupCache(key); ok {
+		if rate == "" {
+			return "", false, nil
+		}
+		return rate, true, nil
+	}
+
+	pair := canonical.Pair{Base: asset, Quote: canonical.Asset{Type: canonical.AssetFiat, Code: usdFiatCode}}
+	price, _, _, err := r.store.fxQuotesSnapAtOrBefore(ctx, pair, at)
+	if err != nil {
+		// No quote in the lookback window is a miss, not a failure:
+		// negative-cache it and let the trade insert with NULL.
+		if errors.Is(err, ErrNoFXQuote) {
+			r.storeCache(key, fxCacheEntry{rate: "", cachedAt: r.clock()})
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if price == nil || price.Sign() <= 0 {
+		r.storeCache(key, fxCacheEntry{rate: "", cachedAt: r.clock()})
+		return "", false, nil
+	}
+	rate := trimNumericText(price.FloatString(fiatUSDRateScale))
 	r.storeCache(key, fxCacheEntry{rate: rate, cachedAt: r.clock()})
 	return rate, true, nil
 }
@@ -321,4 +403,55 @@ func (r *VWAPUSDFXResolver) queryDB(ctx context.Context, asset canonical.Asset, 
 		return "", time.Time{}, fmt.Errorf("timescale: VWAPUSDFXResolver query: %w", err)
 	}
 	return vwap, bucket, nil
+}
+
+// InstallUSDVolumeResolution wires BOTH `usd_volume` resolution tiers
+// onto a store in one call: the operator's [USDVolumeQuoteSpec]
+// (tier 2 — declared USD-pegged classics + their SAC wrappers) and the
+// [VWAPUSDFXResolver] (tiers 3/4 — FX-anchored multiplication, and
+// since 2026-07-22 fiat quotes via fx_quotes).
+//
+// It exists because wiring these separately drifted. Every process that
+// writes trades must install BOTH, but the two calls lived in three
+// hand-maintained copies and two of them were incomplete:
+//
+//   - `internal/ops/chops/ch_rebuild.go` installed NEITHER, while
+//     setting a high `derive_generation`.
+//   - `internal/ops/ingest/backfill_external.go` installed only the
+//     quote spec ("mirror the indexer's wiring (L2.2 phase 1)" — it
+//     mirrored phase 1 and stopped).
+//
+// That combination is actively destructive, not merely incomplete:
+// InsertTrade/BatchInsertTrades resolve `usd_volume` from whatever is
+// installed and then upsert it with an UNCONDITIONAL
+// `usd_volume = EXCLUDED.usd_volume` (trades.go), gated only by
+// `trades.derive_generation <= EXCLUDED.derive_generation`. A re-derive
+// that runs without the resolvers therefore computes NULL and
+// OVERWRITES correct stored values — a high generation guarantees it
+// wins. Wiring both from one place makes that class of drift structural
+// rather than a thing each new call site has to remember.
+//
+// Empty `classicUSDPegs` is a no-op (both tiers stay nil), preserving
+// the documented no-config behaviour.
+func InstallUSDVolumeResolution(store *Store, classicUSDPegs []string, sacWrappers map[string]string) error {
+	if store == nil {
+		return errors.New("timescale: InstallUSDVolumeResolution: store is required")
+	}
+	if len(classicUSDPegs) == 0 {
+		return nil
+	}
+	spec, err := NewUSDVolumeQuoteSpec(classicUSDPegs, sacWrappers)
+	if err != nil {
+		return fmt.Errorf("usd-volume quote spec: %w", err)
+	}
+	store.SetUSDVolumeQuoteSpec(spec)
+
+	fxResolver, err := NewVWAPUSDFXResolver(store, VWAPUSDFXResolverOptions{
+		USDPegs: classicUSDPegs,
+	})
+	if err != nil {
+		return fmt.Errorf("usd-volume fx resolver: %w", err)
+	}
+	store.SetUSDVolumeFXResolver(fxResolver)
+	return nil
 }

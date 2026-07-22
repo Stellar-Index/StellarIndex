@@ -161,6 +161,22 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	// store) — and win over the live gen-0 values.
 	store.SetDeriveGeneration(time.Now().Unix())
 
+	// usd_volume resolution — MANDATORY on this path, not optional.
+	// The generation stamped above means every trade this rebuild writes
+	// WINS the upsert, and InsertTrade/BatchInsertTrades assign
+	// `usd_volume = EXCLUDED.usd_volume` unconditionally. Without the
+	// resolvers installed, tradeUSDVolume returns nil for every DEX trade
+	// and every FX-priced CEX trade, so the rebuild would overwrite
+	// correct stored values with NULL across its whole ledger range.
+	// This wiring was absent entirely until 2026-07-22.
+	if err := timescale.InstallUSDVolumeResolution(
+		store,
+		cfg.Trades.USDPeggedClassicAssets,
+		cfg.Supply.SACWrappers,
+	); err != nil {
+		return err
+	}
+
 	// Warn-level logger: HandleEvent debug-logs per event, which would flood at
 	// rebuild volume. Errors + warns still surface.
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))

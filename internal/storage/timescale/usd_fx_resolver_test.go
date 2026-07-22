@@ -3,6 +3,7 @@ package timescale
 import (
 	"context"
 	"errors"
+	"math/big"
 	"testing"
 	"time"
 
@@ -225,5 +226,221 @@ func TestVWAPUSDFXResolver_FreshnessSentinels(t *testing.T) {
 				t.Errorf("freshness = %v, want %v", r.freshness, tc.want)
 			}
 		})
+	}
+}
+
+// ─── fiat quotes via fx_quotes (usd-volume coverage, 2026-07-22) ─────
+
+// fiatAsset is a test helper for the fx-quote-resolved fiat side.
+func fiatAsset(t *testing.T, code string) canonical.Asset {
+	t.Helper()
+	a, err := canonical.NewFiatAsset(code)
+	if err != nil {
+		t.Fatalf("NewFiatAsset(%q): %v", code, err)
+	}
+	return a
+}
+
+// TestVWAPUSDFXResolver_FiatUSDIsExactlyOne — USD is the anchor
+// rate_usd is expressed against, so it resolves to exactly 1 with no
+// DB access at all (fx_quotes holds no USD row to find). The nil DB in
+// &Store{} is the assertion: a query would panic.
+func TestVWAPUSDFXResolver_FiatUSDIsExactlyOne(t *testing.T) {
+	t.Parallel()
+	r, err := NewVWAPUSDFXResolver(&Store{}, VWAPUSDFXResolverOptions{})
+	if err != nil {
+		t.Fatalf("NewVWAPUSDFXResolver: %v", err)
+	}
+	got, ok, err := r.USDPriceAt(context.Background(), fiatAsset(t, "USD"), time.Now())
+	if err != nil {
+		t.Fatalf("USDPriceAt: %v", err)
+	}
+	if !ok || got != "1" {
+		t.Errorf("USDPriceAt(fiat:USD) = (%q, %t), want ('1', true)", got, ok)
+	}
+}
+
+// TestVWAPUSDFXResolver_FiatResolvesWithoutPegs is the regression
+// guard for the ordering bug this branch was written to avoid: pricing
+// EUR needs no Stellar USD-peg market, so the fiat branch MUST run
+// before the `len(usdPegs) == 0` early return. If that check ever moves
+// back in front, every fiat rate silently returns ok=false on a
+// deployment with no pegs configured — and NULL usd_volume is exactly
+// the failure this whole change exists to remove.
+func TestVWAPUSDFXResolver_FiatResolvesWithoutPegs(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 17, 9, 15, 0, 0, time.UTC)
+	r, err := NewVWAPUSDFXResolver(&Store{}, VWAPUSDFXResolverOptions{
+		USDPegs: nil, // deliberately empty
+		Clock:   func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewVWAPUSDFXResolver: %v", err)
+	}
+	eur := fiatAsset(t, "EUR")
+	r.cache[fxCacheKey{
+		asset:    eur.String(),
+		bucketMs: now.Truncate(24 * time.Hour).UnixMilli(),
+	}] = fxCacheEntry{rate: "1.1407191093265194", cachedAt: now}
+
+	got, ok, err := r.USDPriceAt(context.Background(), eur, now)
+	if err != nil {
+		t.Fatalf("USDPriceAt: %v", err)
+	}
+	if !ok || got != "1.1407191093265194" {
+		t.Errorf("USDPriceAt(fiat:EUR, no pegs) = (%q, %t), want the cached rate + true", got, ok)
+	}
+}
+
+// TestVWAPUSDFXResolver_FiatCacheKeyIsUTCDay — fx_quotes stores one
+// row per (date, ticker) at exactly UTC midnight, so the fiat cache key
+// floors to the UTC day rather than the minute. Every trade on the same
+// UTC day shares one entry: correct (they all resolve to the same
+// daily bucket) and 1440x fewer keys, which is what keeps a
+// months-long historical backfill from growing the cache per traded
+// minute per currency.
+func TestVWAPUSDFXResolver_FiatCacheKeyIsUTCDay(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC)
+	r, err := NewVWAPUSDFXResolver(&Store{}, VWAPUSDFXResolverOptions{
+		Clock: func() time.Time { return now },
+		// Long TTL so expiry can't be confused with a key miss.
+		CacheTTL: 48 * time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("NewVWAPUSDFXResolver: %v", err)
+	}
+	gbp := fiatAsset(t, "GBP")
+	r.cache[fxCacheKey{
+		asset:    gbp.String(),
+		bucketMs: now.UnixMilli(),
+	}] = fxCacheEntry{rate: "1.3386880856760375", cachedAt: now}
+
+	// Both ends of the same UTC day must hit the single entry; the
+	// next day must miss it (and would hit the nil DB, so we only
+	// assert the same-day hits here).
+	for _, at := range []time.Time{
+		time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 7, 17, 12, 30, 45, 0, time.UTC),
+		time.Date(2026, 7, 17, 23, 59, 59, 0, time.UTC),
+	} {
+		got, ok, err := r.USDPriceAt(context.Background(), gbp, at)
+		if err != nil {
+			t.Fatalf("USDPriceAt(%s): %v", at, err)
+		}
+		if !ok || got != "1.3386880856760375" {
+			t.Errorf("USDPriceAt(fiat:GBP, %s) = (%q, %t), want the cached rate + true", at, got, ok)
+		}
+	}
+}
+
+// TestFiatUSDRateOrientation is the arithmetic guard against the
+// single most damaging way this can break: returning rate_usd (units
+// of ticker per USD) where USD-per-unit is wanted. fx_quotes stores
+// rate_usd(JPY) = 163.09 — "1 USD buys ¥163.09" — so the USD price of
+// ONE yen must come out ~0.0061, NOT 163. Inverting it would overstate
+// every yen-quoted trade's volume by ~26,000x.
+//
+// This exercises the exact pair the resolver builds (Base = the fiat
+// asset, Quote = USD) through the same fxSnapFromRows the resolver
+// calls, so it pins the orientation end-to-end without a database.
+// Rates are the real production values read from R1 on 2026-07-22.
+func TestFiatUSDRateOrientation(t *testing.T) {
+	t.Parallel()
+	usd := fiatAsset(t, "USD")
+	bucket := time.Date(2026, 7, 22, 0, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		ticker  string
+		rateUSD string // units of ticker per 1 USD, as stored
+		want    string // USD per 1 unit of ticker, to 10dp
+	}{
+		{"EUR", "0.87664", "1.1407191093"},
+		{"GBP", "0.747", "1.3386880857"},
+		{"CHF", "0.81261", "1.2306026261"},
+		{"JPY", "163.092", "0.0061315086"},
+		{"KRW", "1478.96", "0.0006761508"},
+		{"VND", "26335", "0.0000379723"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.ticker, func(t *testing.T) {
+			t.Parallel()
+			pair := canonical.Pair{Base: fiatAsset(t, tc.ticker), Quote: usd}
+			price, _, _, err := fxSnapFromRows(pair, map[string]fxSnapRow{
+				tc.ticker: {Bucket: bucket, RateUSD: tc.rateUSD, Source: "massive"},
+			})
+			if err != nil {
+				t.Fatalf("fxSnapFromRows: %v", err)
+			}
+			if got := price.FloatString(10); got != tc.want {
+				t.Errorf("USD per 1 %s = %s, want %s (inverted?)", tc.ticker, got, tc.want)
+			}
+			// Belt and braces, independent of the expected digits:
+			// rate_usd and its inverse must sit on opposite sides of
+			// 1. A currency that takes MORE than 1 unit to buy a
+			// dollar (rate_usd > 1, e.g. JPY) must price at LESS than
+			// $1 per unit, and vice versa. An inversion flips both.
+			one := big.NewRat(1, 1)
+			stored, ok := new(big.Rat).SetString(tc.rateUSD)
+			if !ok {
+				t.Fatalf("bad test rate %q", tc.rateUSD)
+			}
+			if stored.Cmp(one) > 0 && price.Cmp(one) >= 0 {
+				t.Errorf("%s: rate_usd %s > 1 (weaker than USD) but priced at %s >= $1 — inverted",
+					tc.ticker, tc.rateUSD, price.FloatString(10))
+			}
+			if stored.Cmp(one) < 0 && price.Cmp(one) <= 0 {
+				t.Errorf("%s: rate_usd %s < 1 (stronger than USD) but priced at %s <= $1 — inverted",
+					tc.ticker, tc.rateUSD, price.FloatString(10))
+			}
+		})
+	}
+}
+
+// TestInstallUSDVolumeResolution_InstallsBothTiers is the structural
+// guard against the drift that motivated the helper. Three processes
+// write trades; each must install the quote spec AND the FX resolver.
+// A store with only one of them does not degrade gracefully — because
+// InsertTrade/BatchInsertTrades upsert `usd_volume = EXCLUDED.usd_volume`
+// unconditionally, a re-derive with a high derive_generation and a
+// half-wired store overwrites correct values with NULL.
+func TestInstallUSDVolumeResolution_InstallsBothTiers(t *testing.T) {
+	t.Parallel()
+	store := &Store{}
+	err := InstallUSDVolumeResolution(
+		store,
+		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
+		map[string]string{},
+	)
+	if err != nil {
+		t.Fatalf("InstallUSDVolumeResolution: %v", err)
+	}
+	if store.usdVolumeQuoteSpec == nil {
+		t.Error("quote spec not installed (tier 2 dead)")
+	}
+	if store.usdVolumeFXResolver == nil {
+		t.Error("fx resolver not installed (tiers 3/4 dead — and fiat quotes unpriceable)")
+	}
+}
+
+// TestInstallUSDVolumeResolution_EmptyPegsIsNoOp — the documented
+// no-config behaviour: no pegs declared leaves both tiers nil rather
+// than erroring, preserving off-chain-only usd_volume.
+func TestInstallUSDVolumeResolution_EmptyPegsIsNoOp(t *testing.T) {
+	t.Parallel()
+	store := &Store{}
+	if err := InstallUSDVolumeResolution(store, nil, nil); err != nil {
+		t.Fatalf("InstallUSDVolumeResolution(no pegs): %v", err)
+	}
+	if store.usdVolumeQuoteSpec != nil || store.usdVolumeFXResolver != nil {
+		t.Error("no-config path should leave both tiers nil")
+	}
+}
+
+// TestInstallUSDVolumeResolution_NilStore — defensive guard.
+func TestInstallUSDVolumeResolution_NilStore(t *testing.T) {
+	t.Parallel()
+	if err := InstallUSDVolumeResolution(nil, []string{"USDC-G..."}, nil); err == nil {
+		t.Fatal("expected error when store is nil")
 	}
 }
