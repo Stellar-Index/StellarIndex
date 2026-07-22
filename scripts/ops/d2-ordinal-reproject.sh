@@ -70,7 +70,21 @@ for P in $(seq "$FIRST" "$LAST"); do
               toUInt32(row_number() OVER (PARTITION BY lec.ledger_seq
                                           ORDER BY t.tx_index, lec.change_index) - 1)
        FROM stellar.ledger_entry_changes AS lec
-       INNER JOIN stellar.transactions AS t
+       INNER JOIN (
+         -- DEDUP THE JOIN SIDE. stellar.transactions is a ReplacingMergeTree and
+         -- the backfill re-ran ranges, so old partitions carry UNMERGED duplicate
+         -- parts — measured exactly 2x for ledger 45000000 (320 rows / 160 hashes).
+         -- Joining raw multiplies every lec row by the duplicate factor, so
+         -- row_number() numbers ~2x as many positions and the ordinals come out
+         -- silently DOUBLED. The staging RMT then collapses the duplicate rows on
+         -- merge, hiding the inflation from a naive row-count check — the counts
+         -- reconcile while every ordinal is wrong. argMax on the sort key gives
+         -- exactly one tx_index per (ledger_seq, tx_hash).
+         SELECT ledger_seq, tx_hash, argMax(tx_index, ingested_at) AS tx_index
+         FROM stellar.transactions
+         WHERE ledger_seq BETWEEN $CLO AND $CHI
+         GROUP BY ledger_seq, tx_hash
+       ) AS t
          ON t.ledger_seq = lec.ledger_seq AND t.tx_hash = lec.tx_hash
        WHERE lec.ledger_seq BETWEEN $CLO AND $CHI AND lec.tx_hash != ''
        UNION ALL
