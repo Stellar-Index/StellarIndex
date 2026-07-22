@@ -44,6 +44,8 @@ Severity maps to [sev-playbook.md §1](sev-playbook.md#1-severity-definitions).
 | `stellarindex_served_value_drift` | `stellarindex_served_value_ok == 0` | sustained 26 h (two daily runs) | P3 | [served-value-drift](runbooks/served-value-drift.md) |
 | `stellarindex_served_value_check_stale` | `time() - stellarindex_served_value_last_run_unix` | > 48 h | P3 | [served-value-drift](runbooks/served-value-drift.md) |
 | `stellarindex_served_value_persistently_skipped` | `stellarindex_served_value_skipped == 1` | sustained 26 h (two daily runs) | P3 | [served-value-drift](runbooks/served-value-drift.md) |
+| `stellarindex_cex_usd_volume_coverage_low` | per-source `increase(stellarindex_trade_inserts_total{usd_volume_populated="yes"}[1h])` / total, external venues | < 99.9% sustained 30 min | P3 | [usd-volume-coverage-plan](usd-volume-coverage-plan.md) |
+| `stellarindex_onchain_usd_volume_coverage_low` | same ratio over `[6h]`, aggregated across on-chain venues | < 99.5% sustained 1 h | P3 | [usd-volume-coverage-plan](usd-volume-coverage-plan.md) |
 | `stellarindex_ingestion_ch_live_sink_drops` | `increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[10m])` | > 0 sustained 10 min | P3 | [ch-live-sink-drops](runbooks/ch-live-sink-drops.md) |
 | `stellarindex_ingestion_ch_live_sink_drops_sustained` | `increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[1h])` | > 0 sustained 1 h | P2 | [ch-live-sink-drops](runbooks/ch-live-sink-drops.md) |
 | `stellarindex_ingestion_trade_insert_backpressure` | `sum(rate(stellarindex_trade_insert_retries_total{outcome="retry"}[5m]))` | > 0 sustained 10 min | P3 | [trade-insert-backpressure](runbooks/trade-insert-backpressure.md) |

@@ -488,6 +488,30 @@ func recordDexTradeUnitRatio(t canonical.Trade) {
 	}
 }
 
+// usdPopulatedLabel maps the resolved-or-not decision to the stable
+// Prometheus label values the coverage dashboards and alerts filter on.
+//
+// The counter lives here, beside the tradeUSDVolume call, rather than
+// in the pipeline sink where it started. The sink's copy was blind to
+// most of what it claimed to measure: it sat in persistTrade, which
+// the dispatcher's PRIMARY on-chain path (flushTradeBatch ->
+// BatchInsertTrades) never touches, and which no external CEX/FX
+// connector goes through at all — so the metric reported only aquarius
+// while the largest coverage gaps were on binance/kraken/coinbase and
+// on batch-path SDEX. That is the same choke-point argument
+// [isDexUnitRatioTrade] already documents for the unit-ratio metric.
+//
+// Measuring at the choke point also drops a duplicated resolution:
+// the sink called WouldPopulateUSDVolume purely for this label, which
+// ran the whole waterfall a second time per trade (2 PG round-trips
+// per row on the re-derive path, as ch_rebuild.go notes).
+func usdPopulatedLabel(populated bool) string {
+	if populated {
+		return "yes"
+	}
+	return "no"
+}
+
 // InsertTrade writes one trade. Returns nil for a successful insert
 // OR a duplicate-key clash (idempotent by storage identity — the
 // current conflict target is source+ledger+tx_hash+op_index+ts).
@@ -567,9 +591,11 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
         SELECT count(*) FILTER (WHERE inserted) FROM ins
     `
 	var usdVolume any // sql NULL when nil; pq accepts the *string form too
-	if v := tradeUSDVolume(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver); v != nil {
+	v := tradeUSDVolume(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
+	if v != nil {
 		usdVolume = *v
 	}
+	obs.TradeInsertsTotal.WithLabelValues(t.Source, usdPopulatedLabel(v != nil)).Inc()
 	var rowsInserted int64
 	if err := s.db.QueryRowContext(ctx, q,
 		t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
@@ -681,9 +707,11 @@ func (s *Store) tradeBatchValues(ctx context.Context, insertRows []canonical.Tra
 			base, base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12,
 		))
 		var usdVolume any
-		if v := tradeUSDVolume(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver); v != nil {
+		v := tradeUSDVolume(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
+		if v != nil {
 			usdVolume = *v
 		}
+		obs.TradeInsertsTotal.WithLabelValues(t.Source, usdPopulatedLabel(v != nil)).Inc()
 		args = append(args,
 			t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
 			t.Pair.Base.String(), t.Pair.Quote.String(),

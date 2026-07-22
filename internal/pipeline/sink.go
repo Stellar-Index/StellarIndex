@@ -860,19 +860,13 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 // the majority of on-chain trades. See
 // timescale.isDexUnitRatioTrade's godoc for the actual choke point.
 func persistTrade(ctx context.Context, logger *slog.Logger, w tradeWriter, t canonical.Trade) {
-	// Check populated-ness BEFORE InsertTrade so the metric counts
-	// every attempt — including the ON CONFLICT DO NOTHING dedupe
-	// case, which from this layer's POV is still "we tried, with
-	// this populate state".
-	//
-	// Phase 2 fallback (USDVolumeFXResolver, when wired) makes this
-	// predicate consult the resolver synchronously. Production
-	// resolvers are in-memory cache lookups; a slow resolver here
-	// would slow the trade-insert hot path by 2× (predicate +
-	// InsertTrade both call it). Treat resolver latency as a
-	// constraint when wiring one.
-	populated := w.WouldPopulateUSDVolume(ctx, t)
-
+	// usd_volume coverage is counted inside InsertTrade /
+	// BatchInsertTrades (see timescale.usdPopulatedLabel), NOT here.
+	// This function is only one of the paths trades take — the
+	// dispatcher's primary batch path and every external connector
+	// bypass it — so a counter here measured a small, unrepresentative
+	// slice. Counting at the storage choke point also removes the
+	// second full resolution this used to run per trade.
 	if err := retryInfra(ctx, logger, "insert_trade", func(c context.Context) error {
 		return w.InsertTrade(c, t)
 	}); err != nil {
@@ -894,21 +888,11 @@ func persistTrade(ctx context.Context, logger *slog.Logger, w tradeWriter, t can
 		)
 		return
 	}
-	obs.TradeInsertsTotal.WithLabelValues(t.Source, usdPopulatedLabel(populated)).Inc()
 	logger.Debug("trade ingested",
 		"source", t.Source,
 		"ledger", t.Ledger,
 		"pair", t.Pair.String(),
 	)
-}
-
-// usdPopulatedLabel maps the WouldPopulateUSDVolume bool to the
-// stable Prometheus label values the dashboards filter on.
-func usdPopulatedLabel(populated bool) string {
-	if populated {
-		return "yes"
-	}
-	return "no"
 }
 
 func persistOracle(ctx context.Context, logger *slog.Logger, store *timescale.Store, u canonical.OracleUpdate) error {
