@@ -1001,3 +1001,62 @@ instead of a full page load.
 The remaining true gap is errors thrown *before* hooks can be injected on a
 cold page load; those still cannot be captured with this tooling. Everything
 after hydration is now covered.
+
+---
+
+## S31 — HIGH: `/status` says "All systems operational" while its own panels disagree
+
+The status page — the surface you would point an evaluator or customer at —
+leads with a green banner:
+
+> **All systems operational** · Operational
+> *Every service is reporting healthy.*
+
+Directly beneath it, **on the same screen**:
+
+| panel | value | target | state |
+|---|---|---|---|
+| Request latency **P95** | **840.5 ms** | 200 ms | **red, 4.2× over** |
+| Request latency **P99** | **2096.4 ms** | 500 ms | **red, 4.2× over** |
+| Active sources | **23 / 25** | 25 | 2 inactive |
+
+And contradicted by three things this audit established independently:
+
+1. `/v1/accounts` returns **HTTP 500** (S3)
+2. `/v1/liquidity-pools` returns **HTTP 500** (S3)
+3. Every other page on the site carries a red banner reading **"Major
+   incident in progress. 6 active alerts"** (S9)
+
+So the site simultaneously tells a visitor "major incident in progress" on
+`/markets` and "all systems operational, every service is reporting
+healthy" on `/status`. The headline is computed from service liveness
+(`Api / Indexer / Aggregator — last seen Ns ago`) alone and ignores its own
+latency SLO panel, its own active-source count, and the endpoint health the
+rest of the site is alarming on.
+
+A green status page over two 500ing public endpoints and two breached SLOs
+is the single most damaging surface in this audit to show to Stellar — it
+is not merely wrong, it is confidently wrong on the page whose entire job
+is to be trustworthy.
+
+*(Positive note from the same panel: it correctly reports `r1 PRODUCTION ·
+Hetzner Frankfurt · v0.19.2`, ingest lag `0s`, latest ledger 63,597,854 —
+so the underlying telemetry is right. It is the roll-up that is wrong.)*
+
+## S32 — MEDIUM: `/status` fires 46 API calls with a 2-second waterfall
+
+```
+load event            240 ms
+API calls               46      <- vs 10 on /network
+first call starts     254 ms
+last call STARTS     2318 ms    <- 2,064 ms waterfall spread
+last settles         4737 ms
+```
+
+Unlike `/network` (which fires everything in parallel — S29), `/status`
+serialises: `/v1/observations` is called twice, the second starting at
+2,318 ms, one millisecond after the first finishes at 2,317 ms. That is a
+sequential dependency, not concurrency.
+
+Net effect: the status page takes **4.7 s** to finish populating, roughly
+half of which is avoidable ordering rather than slow endpoints.
