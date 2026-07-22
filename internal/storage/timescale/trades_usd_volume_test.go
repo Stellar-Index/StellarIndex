@@ -768,3 +768,131 @@ func TestStore_WouldPopulateUSDVolume(t *testing.T) {
 		})
 	}
 }
+
+// ─── tier 2b: USD-pegged BASE leg (2026-07-22) ───────────────────────
+
+// TestTradeUSDVolume_Tier2bUSDBase — a `USDC/TOKEN`-oriented on-chain
+// market carries its USD value in base_amount. The waterfall used to
+// inspect only the quote leg, so these fell through every tier and
+// inserted NULL (43,277 on-chain trades on 2026-07-17 alone).
+func TestTradeUSDVolume_Tier2bUSDBase(t *testing.T) {
+	t.Parallel()
+	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatalf("NewClassicAsset USDC: %v", err)
+	}
+	yxt, err := canonical.NewClassicAsset("YxT", "GDQJXPESRTKBHMTLPHKZNVFGQA77HPCGYW2NPUORVMDMPJBCFGGBYNS2")
+	if err != nil {
+		t.Fatalf("NewClassicAsset YxT: %v", err)
+	}
+	spec, err := NewUSDVolumeQuoteSpec(
+		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
+	}
+
+	// 250.5 USDC (2_505_000_000 stroops) base for some amount of YxT.
+	tr := canonical.Trade{
+		Source:      "sdex",
+		Ledger:      63514245,
+		TxHash:      "abc",
+		OpIndex:     0,
+		Timestamp:   time.Date(2026, 7, 17, 9, 0, 0, 0, time.UTC),
+		Pair:        canonical.Pair{Base: usdc, Quote: yxt},
+		BaseAmount:  canonical.NewAmount(big.NewInt(2_505_000_000)),
+		QuoteAmount: canonical.NewAmount(big.NewInt(987_654_321)),
+	}
+
+	// No FX resolver at all: tier 2b must stand on its own, since the
+	// quote leg (YxT) has no USD market to resolve through.
+	got := tradeUSDVolume(context.Background(), tr, spec, nil)
+	if got == nil {
+		t.Fatal("tier 2b did not fire — usd_volume would insert NULL")
+	}
+	if *got != "250.50000000" {
+		t.Errorf("usd_volume = %q, want 250.50000000 (base_amount/1e7)", *got)
+	}
+}
+
+// TestTradeUSDVolume_Tier2bPrefersExactBaseOverFXEstimate — when BOTH
+// a USD-pegged base and a quote-side FX rate are available, the exact
+// dollar amount wins. The FX route is an estimate through a VWAP; on
+// 2026-07-17 the two agreed to 0.69% on average across 111,617 trades
+// but diverged up to 134.92%, and the error is the VWAP's.
+func TestTradeUSDVolume_Tier2bPrefersExactBaseOverFXEstimate(t *testing.T) {
+	t.Parallel()
+	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatalf("NewClassicAsset USDC: %v", err)
+	}
+	xlm := canonical.NativeAsset()
+	spec, err := NewUSDVolumeQuoteSpec(
+		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
+	}
+
+	// 100 USDC base; quote 1000 XLM. A deliberately wrong XLM rate
+	// ($5) so the two routes cannot be confused: FX would say $5000,
+	// the exact base says $100.
+	tr := canonical.Trade{
+		Source:      "sdex",
+		Ledger:      63514245,
+		TxHash:      "def",
+		OpIndex:     0,
+		Timestamp:   time.Date(2026, 7, 17, 9, 0, 0, 0, time.UTC),
+		Pair:        canonical.Pair{Base: usdc, Quote: xlm},
+		BaseAmount:  canonical.NewAmount(big.NewInt(1_000_000_000)),
+		QuoteAmount: canonical.NewAmount(big.NewInt(10_000_000_000)),
+	}
+	fx := stubFXResolver{prices: map[string]string{xlm.String(): "5"}}
+
+	got := tradeUSDVolume(context.Background(), tr, spec, fx)
+	if got == nil {
+		t.Fatal("expected a usd_volume")
+	}
+	if *got != "100.00000000" {
+		t.Errorf("usd_volume = %q, want 100.00000000 (exact base), not the FX estimate", *got)
+	}
+}
+
+// TestTradeUSDVolume_Tier2bDoesNotDisplaceQuoteSidePeg — when the
+// QUOTE leg is pegged, tier 1/2 still owns the answer. Guards the
+// ordering: tier 2b must not intercept trades the quote side handles.
+func TestTradeUSDVolume_Tier2bDoesNotDisplaceQuoteSidePeg(t *testing.T) {
+	t.Parallel()
+	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatalf("NewClassicAsset USDC: %v", err)
+	}
+	spec, err := NewUSDVolumeQuoteSpec(
+		[]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewUSDVolumeQuoteSpec: %v", err)
+	}
+	// Both legs USDC (degenerate but the clearest ordering probe):
+	// distinct amounts, so whichever leg was used is identifiable.
+	tr := canonical.Trade{
+		Source:      "sdex",
+		Ledger:      63514245,
+		TxHash:      "ghi",
+		OpIndex:     0,
+		Timestamp:   time.Date(2026, 7, 17, 9, 0, 0, 0, time.UTC),
+		Pair:        canonical.Pair{Base: usdc, Quote: usdc},
+		BaseAmount:  canonical.NewAmount(big.NewInt(1_000_000_000)), // 100
+		QuoteAmount: canonical.NewAmount(big.NewInt(2_000_000_000)), // 200
+	}
+	got := tradeUSDVolume(context.Background(), tr, spec, nil)
+	if got == nil {
+		t.Fatal("expected a usd_volume")
+	}
+	if *got != "200.00000000" {
+		t.Errorf("usd_volume = %q, want 200.00000000 (quote leg) — tier 2b displaced tier 2", *got)
+	}
+}
