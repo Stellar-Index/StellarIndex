@@ -1,7 +1,7 @@
 ---
 title: Finding — dust trades set OHLC chart extremes
 last_verified: 2026-07-22
-status: diagnosed, fix designed, NOT yet implemented
+status: diagnosed; DECIDED — notional filter, band removed; implementation pending
 ---
 
 # Dust trades set OHLC chart extremes
@@ -113,6 +113,50 @@ intermediate hops should contribute to price discovery at all, or whether only
 the end-to-end rate is a real observation. That is a broader modelling decision
 (it affects VWAP and volume too, not just extremes) and should be taken
 deliberately.
+
+
+## DECISION (2026-07-22, operator)
+
+**Filter on trade SIZE, never on price divergence.** A genuine fat-finger — say a
+$100,000 sale at a terrible price — is a real market event and MUST still show,
+even though it was a mistake. Suppressing it because it sits far from VWAP is
+editing reality. What must be excluded is dust: fills whose total value is below
+a meaningful floor.
+
+Consequently `combinedOutlierBandRatio` (the 2x VWAP band) is to be **REMOVED**,
+not retuned.
+
+### Why the band can go — every case it existed for was dust
+
+Verified against production:
+
+| case | amounts | price | usd_volume | caught by notional floor? |
+|---|---|---|---|---|
+| $0.56 high wick (S-012 class) | 1 ↔ 1 stroop | 1.000000 | $0.0000001 | ✅ |
+| $0.1333 low (this finding) | 2 ↔ 15 stroops | 7.5000 | $0.00000027 | ✅ |
+| absurd high | 128 ↔ 4.9e9 stroops | 38,252,788 | $0.0000129 | ✅ |
+| hypothetical $100k fat-finger | large | far off market | $100,000 | ❌ — correctly SHOWN |
+
+The band was treating the symptom (divergence from VWAP) when the cause was
+always size. The notional floor subsumes it entirely and, unlike the band, never
+suppresses a real event.
+
+### Supporting rationale: below a few thousand stroops the price is unmeasurable
+
+Amounts are integers (stroops), so price = quote/base carries a quantisation
+error of roughly `1/base + 1/quote`. At 1↔1 or 2↔15 stroops that error is ~50-100%
+— the "price" is an artifact of dividing two tiny integers, not an observation.
+This is why a size floor is principled rather than arbitrary: it removes fills
+that are below the measurement resolution of the ledger itself.
+
+Distribution on 2026-07-17 (6,018,245 trades):
+
+| filter | excluded | share |
+|---|---|---|
+| `least(base,quote) < 100` stroops | 310,539 | 5.2% |
+| `least(base,quote) < 1,000` | 563,764 | 9.4% |
+| `least(base,quote) < 10,000` | 1,226,222 | 20.4% |
+| `usd_volume < $0.01` | 1,448,695 | 24.1% |
 
 ## Fix (designed, not implemented)
 
