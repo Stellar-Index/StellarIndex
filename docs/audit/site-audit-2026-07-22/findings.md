@@ -345,3 +345,103 @@ Recording these because two of my own checks produced false results:
   S1 is still what drives the sitemap (S12) and the pre-render population,
   so S1 stands — but the listing page itself is not showing users a wall of
   Binance pairs by default.
+
+---
+
+## S13 — CRITICAL: the entire `/embed/asset/*` surface collapsed to XLM-only
+
+`/embed/asset/[slug]`'s `generateStaticParams` builds its route list from
+`/v1/assets`, and explicitly emits lowercase/uppercase variants because a
+prior audit (2026-06-19) found `/embed/asset/xlm` 404ing. Live, **only one
+route exists**:
+
+```
+200  /embed/asset/XLM/
+404  /embed/asset/xlm/      404  /embed/asset/native/
+404  /embed/asset/USDC/     404  /embed/asset/AQUA/    404  /embed/asset/EURC/
+404  /embed/asset/SHX/      404  /embed/asset/yXLM/    404  /embed/asset/VELO/
+```
+
+The absence of the *case variants* is the tell: the code always emits them,
+so the deployed build must have taken the `catch` branch and returned
+`fallback = [{ slug: 'XLM' }]` — a single route, no variants. The asset
+index fetch failed at build time and **the failure was swallowed silently**.
+
+`/assets/USDC/`, `/assets/AQUA/` etc. all return 200, so this is specific to
+the embed route's param generation, not the data.
+
+This is a **policy inconsistency with a product cost**: `/markets/[pair]`
+deliberately calls `requireRows(...)` so that "an unreachable or empty
+markets listing throws so the build fails instead of exporting only the
+fallback route". The embed route does the opposite — it catches and degrades
+silently. The route that fails loudly is the one nobody noticed; the route
+that fails quietly took out an entire product surface.
+
+### S13a — `/widgets/` advertises embeds that 404
+
+The `/widgets/` marketing page ships three copy-paste asset-card examples:
+**XLM, USDC (Centre), and AQUA**. Two of the three are 404s. A customer
+copying the USDC snippet gets a dead iframe.
+
+## S14 — CRITICAL: `/embed/*` sends two contradictory CSPs, so framing is blocked
+
+Every `/embed/*` response carries **duplicated, opposing headers**:
+
+```
+content-security-policy: … frame-ancestors 'none' …    <- from the /* rule
+content-security-policy: … frame-ancestors *     …    <- from the /embed/* override
+x-frame-options: DENY
+x-frame-options: ALLOWALL
+```
+
+`_headers` intends the second rule to *override* the first, and its comment
+reasons that "X-Frame-Options: DENY from the parent rule is harmless because
+modern browsers ignore X-Frame-Options whenever a CSP [frame-ancestors] is
+present". The X-Frame-Options half of that is right. The CSP half is the
+bug: CF Pages **appends** the header rather than replacing it, and when a
+response carries multiple CSP headers the browser enforces **all of them —
+the intersection, not the last one**. `'none'` ∩ `*` = `'none'`.
+
+**So no third party can iframe these widgets — the entire embed product is
+non-functional**, independently of S13.
+
+Evidence: on `/widgets/` the previews are live `<iframe>` elements
+(`widgets/page.tsx:217`), and **all of them render broken — including the
+XLM card, whose URL returns 200**. A 200 response that still won't frame
+isolates the cause to frame policy rather than the missing routes in S13.
+
+**Fix:** the `/embed/*` rule must emit a *single* CSP with
+`frame-ancestors *` (i.e. the parent `/*` rule cannot also apply), not a
+second CSP alongside it.
+
+## S15 — MEDIUM: lowercase embed slugs 404 (regression)
+
+`/embed/currency/USD/` 200 but `/embed/currency/usd/` 404; same for `eur`.
+The 2026-06-19 audit fixed exactly this for `/embed/asset` by emitting case
+variants — S13's fallback silently dropped them again, and `/embed/currency`
+appears never to have had the fix. Embeds are hand-typed into `src=`
+attributes, where lowercase is the natural instinct.
+
+## S16 — LOW: `og:image` missing on `/sdex/` and `/docs/`
+
+13 routes sampled; the other 11 have a reachable card. No broken images.
+
+## S17 — LOW: no `/embed/*` route appears in the sitemap
+
+0 of 1,140 sitemap entries are embeds, so the widget surface is entirely
+unindexed.
+
+---
+
+## Additional "checked, not a finding"
+
+- **Data freshness is good.** `as_of` on `/v1/status`, `/v1/network/stats`,
+  `/v1/markets`, `/v1/assets`, `/v1/ledgers`, `/v1/pools` is all within a
+  few seconds of now. No staleness anywhere.
+- **Contamination is confined to `/v1/markets`.** `/v1/assets` (100 rows),
+  `/v1/issuers` (50), `/v1/contracts` (50), `/v1/external/assets`,
+  `/v1/sources`, `/v1/pools` contain **zero** off-chain references.
+- **`/v1/anomalies` returning nothing is correct** — `firing_count: 0`,
+  `events: []`. Genuinely no anomalies firing, not a broken widget.
+- **`/embed/pair/*` works** for every pair tested, including non-top pairs.
+- **`status.stellarindex.io` and `/status/` both 200** and are fast.
