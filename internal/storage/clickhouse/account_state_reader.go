@@ -237,6 +237,13 @@ func (r *ExplorerReader) AssetHolders(ctx context.Context, asset string, limit i
 type AccountWealth struct {
 	AccountID string
 	USD       float64
+	// Locked marks a provably-unspendable account (a locked burn address —
+	// master weight 0 and all thresholds 0). Resolved by the background
+	// refresh so it is served from cache; do NOT resolve it on the request
+	// path (site-audit S3: AccountsUnspendable is a FINAL scan, 6-8s, and it
+	// was the residual /v1/accounts latency after the ranking itself was
+	// cached).
+	Locked bool
 }
 
 // AccountsByWealth ranks accounts by total USD value of their holdings —
