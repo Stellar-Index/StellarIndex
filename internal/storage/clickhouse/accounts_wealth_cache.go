@@ -165,7 +165,10 @@ func (r *ExplorerReader) refreshAccountsWealth(assets []string, prices []float64
 		return // someone else is already scanning; don't pile on
 	}
 	// Detached from the request context on purpose: the whole point is to
-	// outlive the request that noticed the miss.
+	// outlive the request that noticed the miss. A refresh tied to the
+	// caller's 8s deadline would be cancelled before the ~11-20s scan
+	// finished — which is exactly the failure this cache exists to fix.
+	//nolint:contextcheck // deliberate detach; see above and the type godoc
 	go func() {
 		defer r.wealthCache.endFlight(limit, ch)
 		ctx, cancel := context.WithTimeout(context.Background(), AccountsWealthRefreshTimeout)
