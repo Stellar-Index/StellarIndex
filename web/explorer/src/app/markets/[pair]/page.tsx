@@ -5,7 +5,10 @@ import { buildFetchData, requireRows } from '@/lib/buildFetch';
 import { formatCompact } from '@/lib/format';
 import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
 import { Breadcrumbs } from '@/components/ui';
+import { Suspense } from 'react';
+
 import { PairChart } from './PairChart';
+import { PairPathView } from './PairPathView';
 import { SourceBreakdown } from './SourceBreakdown';
 
 type Params = Promise<{ pair: string }>;
@@ -128,7 +131,18 @@ export async function generateStaticParams() {
   const out = markets
     .filter((m) => m.base && m.quote)
     .map((m) => ({ pair: pairSlug(m.base, m.quote) }));
-  return out.length > 0 ? out : fallback;
+  // 'shell' is the runtime-fallback sentinel: functions/markets/[[path]].js
+  // serves its HTML for any pair outside this build-time snapshot. Without
+  // it, markets that entered the ranking since the last deploy hard-404'd
+  // — including pairs the /markets listing itself was linking to (row 1 of
+  // its own table) and 2 of the 8 rows in /network's "Top Stellar markets"
+  // widget. Same pattern as accounts/contracts/issuers/ledgers/transactions.
+  //
+  // Note this is NOT a cutoff problem: the 404ing pairs ranked 27, 51 and
+  // 100 in live data, well inside the 500 limit. The snapshot was stale,
+  // not small, which is why the 2026-05-08 fix (raising 100 -> 500)
+  // recurred. See site-audit S1b.
+  return [{ pair: 'shell' }, ...(out.length > 0 ? out : fallback)];
 }
 
 export async function generateMetadata({
@@ -252,6 +266,17 @@ async function fetchSourceBreakdown(base: string, quote: string): Promise<PoolRo
 
 export default async function PairPage({ params }: { params: Params }) {
   const { pair } = await params;
+  // Runtime-fallback shell for pairs outside the build-time pre-render.
+  // functions/markets/[[path]].js serves this HTML for any unmatched
+  // /markets/* path, and the client view reads the pair from the URL
+  // (site-audit S1b — the pre-render is a stale snapshot, not a small one).
+  if (pair === 'shell') {
+    return (
+      <Suspense fallback={null}>
+        <PairPathView />
+      </Suspense>
+    );
+  }
   const decoded = decodePairSlug(pair);
   if (!decoded) {
     return <PairNotFound />;
