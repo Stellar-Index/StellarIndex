@@ -1457,3 +1457,76 @@ Nothing else is outstanding. Neither gap changes the recommended fix order.
 | 4 | S39 stuck spinners | `/dexes` + `/aggregators` show "loading" beside populated tables after their data arrived in <60 ms |
 | 5 | S14 + S13 embed | One `_headers` rule and one swallowed `catch` restore the entire widget product |
 | 6 | S1b `/markets/[pair]` | Client-fetch fallback, **not** a bigger pre-render limit — the set is stale, not too small |
+
+---
+
+## S42 — HIGH: mobile OBSERVED — the page overflows horizontally and clips content mid-word
+
+**The mobile gap is now closed by direct observation**, not inference. The
+MCP browser could not be resized, but the machine has Chrome, and headless
+Chrome accepts a real viewport:
+
+```sh
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --headless=new --window-size=390,844 --virtual-time-budget=20000 \
+  --screenshot=out.png https://stellarindex.io/markets/
+```
+
+At **390 × 844** the result is worse than S33 predicted. S33 inferred
+*table-contained* horizontal scroll. What actually happens is that **the
+page itself overflows and prose is truncated mid-word**:
+
+**Home (`/`):**
+- Hero headline renders as `The protocol explore` / `for the Stellar netwo`
+  — cut off mid-word, both lines
+- Every body line is clipped at the right edge: `…every trade`,
+  `…on-chain DEXes,`, `…per-protocol da`, `…public REST AP`,
+  `…Every panel b`
+- The CTA row runs off-screen — `Browse assets`, `Pricing API`, `API do…`
+- Stat cards clip: `ACTIVE MARKETS 26,293 trading in last 24h` and
+  `SOURCES ONLINE 12 exchange feeds li…`
+
+**Markets (`/markets`):**
+- Only `#` and `Base` are visible; **Quote, Last price, 24h volume,
+  24h trades, 24h chart and Last trade are all off-screen**
+- Row 3's identifier `USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM…` runs off the
+  edge (the S8/S28 untruncated-asset-ID problem, far worse at 390 px)
+- Panel description clipped: `ordered by 24h USD volum`,
+  `Reference feeds are off-chain CEX pairs used for pricing conte`
+- The row counter reads `55 of 10` — the total is cut off
+
+So this is **not** a contained inner-scroll (S28's desktop finding). At
+mobile width the layout does not reflow: content wider than the viewport
+pushes the whole page, and text is clipped rather than wrapped.
+
+This upgrades S33 from "the markets table doesn't adapt" to "**the site
+does not render usably at phone width**", and it is now evidence rather
+than arithmetic. Screenshots: `mobile-markets.png`, `mob-home.png`,
+`mob-network.png`, `mob-assets.png`.
+
+### Correction — "24H VOLUME —" was my artefact, not a finding
+
+The mobile home capture showed the hero `24H VOLUME` card as an em-dash,
+which I nearly filed as a missing-data bug on the site's most important
+number. Checking desktop first: it reads **`24H VOLUME $17.72M`**, and the
+other three hero stats match `/v1/network/stats` exactly.
+
+The em-dash was headless Chrome's `--virtual-time-budget` ending the
+capture before that card resolved — **a screenshot-timing artefact of my
+own method**. Not a finding. It does indicate that card settles later than
+its three siblings, which is consistent with S38 but not itself a defect.
+
+---
+
+## Coverage — mobile now VERIFIED
+
+The final coverage statement above listed narrow-viewport rendering as the
+first of two unverified items. **That is now closed** (S42). The technique
+— local headless Chrome with `--window-size` — also removes the blocker
+permanently for future audits, and does not depend on the MCP browser or
+on the site's own `frame-ancestors` policy.
+
+**One item remains unverified:** cold-load console errors, because
+instrumentation cannot be injected before hydration through the MCP
+bridge. (Headless Chrome with a CDP client would close this too; not
+attempted here.)
