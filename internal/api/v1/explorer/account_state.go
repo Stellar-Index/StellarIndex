@@ -76,21 +76,17 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	// as the richest account — $11.3B of provably unspendable XLM
 	// presented as wealth. Badge, don't hide: the balance is real, the
 	// spendability isn't.
-	ids := make([]string, len(ranked))
-	for i, a := range ranked {
-		ids[i] = a.AccountID
-	}
-	locked, lockErr := h.Reader.AccountsUnspendable(ctx, ids)
-	if lockErr != nil {
-		h.Logger.Warn("accounts unspendable", "err", lockErr)
-	}
+	// The locked-burn flag is resolved by the background refresh and cached
+	// on each row (a.Locked), NOT re-queried here — AccountsUnspendable is a
+	// FINAL scan that was the residual 6-8s of /v1/accounts latency once the
+	// ranking itself was cached (site-audit S3).
 	wmLedger, stale, _ := h.LakeWatermark(ctx)
 	out := AccountsListView{PricedAssets: len(assets), Accounts: make([]AccountWealthRow, len(ranked)), AsOfLedger: wmLedger}
 	for i, a := range ranked {
 		out.Accounts[i] = AccountWealthRow{
 			AccountID: a.AccountID,
 			USDValue:  strconv.FormatFloat(a.USD, 'f', 2, 64),
-			Locked:    locked[a.AccountID],
+			Locked:    a.Locked,
 		}
 	}
 	h.WriteJSON(w, out, stale)

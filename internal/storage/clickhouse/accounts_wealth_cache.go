@@ -175,8 +175,31 @@ func (r *ExplorerReader) PrewarmAccountsByWealth(
 	if err != nil {
 		return err
 	}
-	r.wealthCache.put(rows, time.Now())
+	r.wealthCache.put(r.withLocked(ctx, rows), time.Now())
 	return nil
+}
+
+// withLocked resolves the locked-burn flag for the ranked accounts and
+// stamps it onto the rows, so the request path never runs the
+// AccountsUnspendable FINAL scan (site-audit S3). A failure here degrades
+// to unbadged rather than failing the whole refresh — the ranking is the
+// important part; the badge is advisory.
+func (r *ExplorerReader) withLocked(ctx context.Context, rows []AccountWealth) []AccountWealth {
+	if len(rows) == 0 {
+		return rows
+	}
+	ids := make([]string, len(rows))
+	for i, a := range rows {
+		ids[i] = a.AccountID
+	}
+	locked, err := r.AccountsUnspendable(ctx, ids)
+	if err != nil {
+		return rows
+	}
+	for i := range rows {
+		rows[i].Locked = locked[rows[i].AccountID]
+	}
+	return rows
 }
 
 // refreshAccountsWealth runs one detached refresh, collapsing concurrent
@@ -193,6 +216,9 @@ func (r *ExplorerReader) refreshAccountsWealth(assets []string, prices []float64
 		ctx, cancel := context.WithTimeout(context.Background(), AccountsWealthRefreshTimeout)
 		defer cancel()
 		rows, err := r.AccountsByWealth(ctx, assets, prices, accountsWealthMaxLimit)
+		if err == nil {
+			rows = r.withLocked(ctx, rows)
+		}
 		if err != nil {
 			// Log rather than swallow: a persistently-failing refresh keeps
 			// /v1/accounts on its 503 warming state indefinitely, and a
