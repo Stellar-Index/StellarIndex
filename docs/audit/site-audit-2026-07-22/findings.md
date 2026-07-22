@@ -1207,3 +1207,46 @@ below.
    pre-render limit.
 5. **S24** — `/sources` showing SDEX 19 days stale while it is the busiest
    venue indexed.
+
+---
+
+## S36 — MEDIUM: the asset directory cannot be sorted; `/markets` can
+
+`/assets` renders 92 rows across 11 columns — `#`, Asset, Class, **Price,
+1h %, 24h %, 7d %, Market cap, Volume 24h, Circulating**, 7d chart — and
+**not one of them is sortable**:
+
+```
+every <th>:  hasButton false · hasLink false · role null
+             aria-sort null  · tabIndex -1
+             class "whitespace-nowrap px-4 py-2.5 font-medium"
+```
+
+No click target, no sort affordance, no keyboard access. Meanwhile
+`/markets` — the sibling listing built from the same table primitives — is
+sortable, and advertises it (`Base ↕`, `24h volume ↓`).
+
+So the two flagship directories behave differently: on Markets you can rank
+by volume; on Assets, which carries market cap and four change columns
+expressly inviting comparison, you cannot rank by anything. A user wanting
+"biggest Stellar assets by market cap" has no way to get it.
+
+Also an a11y consequence: sortable-looking data columns with `tabIndex -1`
+and no `aria-sort` give assistive tech nothing to work with (compare S27).
+
+---
+
+## Interactive behaviour — coverage now
+
+| surface | control | result |
+|---|---|---|
+| `/markets` | source filter (`On Stellar`/`Reference feeds`/`All`) | ✅ works, counts update honestly (55→100) |
+| `/markets` | column sort | ✅ present (`↕` / `↓` affordances) |
+| search modal | `⌘K`, type-to-filter | ✅ works, emits valid links |
+| `/assets` | column sort | ❌ **absent entirely** (S36) |
+| `/assets` | text filter + per-page select | ✅ present (1 input, 1 select) |
+| `/assets` | class tabs (`All`/`Crypto`/`Stablecoin`) | ✅ present (5 buttons) |
+
+The remaining listing pages reuse these same table primitives, so the
+inconsistency to chase is S36's specific one — Markets got sorting wired
+up and Assets did not.
