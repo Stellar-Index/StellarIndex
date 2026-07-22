@@ -1389,3 +1389,71 @@ Empty/stuck states: `/dexes`, `/aggregators` (S39), `/bridges`, `/mev`
 
 Not walked: `/sdex`, `/amm` (S41 — no nav path), and the static content
 routes, which carry no data widgets.
+
+---
+
+# FINAL COVERAGE STATEMENT (supersedes all earlier coverage sections)
+
+Earlier "Coverage status" sections in this document listed classes as NOT
+verified. Most were subsequently closed. **This section is authoritative;
+read it in preference to the earlier ones.**
+
+## Verified
+
+**Routes.** All 56 static routes probed (status, latency, size). All 5
+dynamic route families probed for both nonsense and valid-unlisted params.
+
+**Per-widget render timing (browser `performance` timeline): 21 routes** —
+`/network` `/status` `/transactions` `/contracts` `/accounts` `/assets`
+`/ledgers` `/operations` `/issuers` `/oracles` `/dexes` `/lending`
+`/bridges` `/aggregators` `/mev` `/divergences` `/markets`
+`/liquidity-pools` `/sources` `/sdex` `/amm`.
+That is **every data-bearing route**. `/sdex` and `/amm` turned out to be
+prose/protocol explainers (0 tables by design), not listings.
+
+**Links.** 2,718 extracted → 169 internal + 75 external checked; generated
+(hydrated) links checked by reconstructing them from live API data.
+
+**API.** 60 endpoints timed warm; contamination measured across 6 listing
+endpoints; pagination on 4; data freshness on 6.
+
+**Accessibility.** Rendered-DOM audit: img/alt, input labelling, button
+naming, heading order, SVG labelling (S27, S22).
+
+**Responsive.** CSS breakpoints enumerated; DOM checked for the adaptation
+mechanism; sidebar confirmed responsive, markets table confirmed not (S33).
+
+**Console/runtime.** Post-hydration state verified on `/network` (clean),
+`/accounts` (S30), `/sdex`, `/amm` (both clean).
+
+**Interactive.** Source filter, column sorting, search modal, class tabs,
+text filter, per-page select — exercised; sorting checked on all 9 listings
+(S36).
+
+**Also:** sitemap, feeds, robots, og:images, titles, security + cache
+headers, compression, embed surface, widgets product, authenticated gating.
+
+## NOT verified — two items, both with a stated blocker
+
+1. **Narrow-viewport *visual* rendering.** Structurally resolved (S33 —
+   the markets table has no responsive columns; the sidebar does), but
+   never seen rendered. Blocked twice over: `resize_window` reports success
+   while `window.innerWidth` stays 2560, and an iframe viewport is blocked
+   by the site's own `frame-ancestors 'none'` (S14 obstructing its own
+   audit). **Needs a real device or a headless runner with a set viewport.**
+2. **Cold-load console errors.** Instrumentation cannot be injected before
+   hydration, so anything thrown during initial hydration is unobservable
+   here. Post-hydration state is verified clean on four pages.
+
+Nothing else is outstanding. Neither gap changes the recommended fix order.
+
+## Recommended fix order (final)
+
+| # | Fix | Why first |
+|---|---|---|
+| 1 | `/v1/sources?include=stats` | Slowest call on **five** page types, contributes to a sixth. 8.1 s worst case. No other endpoint gates more than one page |
+| 2 | S31 `/status` roll-up | Reports "all systems operational" over two 500s and two breached SLOs. Telemetry beneath it is already correct — this is a roll-up change, not a data fix |
+| 3 | `/v1/accounts` | 8.1 s → HTTP 500. Worst possible shape: full wait, then nothing |
+| 4 | S39 stuck spinners | `/dexes` + `/aggregators` show "loading" beside populated tables after their data arrived in <60 ms |
+| 5 | S14 + S13 embed | One `_headers` rule and one swallowed `catch` restore the entire widget product |
+| 6 | S1b `/markets/[pair]` | Client-fetch fallback, **not** a bigger pre-render limit — the set is stale, not too small |
