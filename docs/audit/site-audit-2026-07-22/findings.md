@@ -635,3 +635,58 @@ Mobile prerequisites are present and correct on the routes checked
 (`<html lang="en">`, `<meta name="viewport" content="width=device-width,
 initial-scale=1">`) — but per the coverage-status section, actual
 narrow-viewport rendering was never observed.
+
+---
+
+## S23 — MEDIUM: on the "All" view of the Markets page, XLM ranks 12th
+
+Exercising the `On Stellar` / `Reference feeds` / `All` filter (all three
+work correctly — see Interactive behaviour below), the `All` view orders by
+24h USD volume and produces this as the Markets page of a **Stellar**
+explorer:
+
+```
+ 1 BTC/USDT  $1.28B     2 BTC/USD  $545.98M    3 ETH/USDT $492.49M
+ 4 ETH/USD   $256.43M   5 SOL/USDT $104.77M    6 XRP/USD   $96.39M
+ 7 XRP/USDT   $77.21M   8 SOL/USD   $66.32M    9 BNB/USDT  $45.94M
+10 DOGE/USDT  $26.86M  11 TRX/USDT  $23.88M   12 XLM/USD   $20.80M
+13 NEAR/USDT  $20.64M  14 ADA/USDT  $14.07M   15 USDCAllow $14.04M
+```
+
+**XLM — the native asset of the chain this explorer covers — is 12th,
+behind Dogecoin and Tron.** The `On Stellar` default (S1) keeps this off the
+initial view, but the tab is one click away and is what "All" naturally
+invites. It is the same off-chain reference-feed data that drives S1's
+pre-render population and S12's sitemap entries.
+
+Not a defect in the filter — the filter is correct and useful. It is a
+positioning question about whether reference-feed pairs belong in the same
+ranked table as on-chain markets at all, or whether they should live only
+under `/external/assets` and `External Markets` (both of which already
+exist in the nav).
+
+---
+
+## Interactive behaviour — verified
+
+- **`/markets` source filter** (`On Stellar` / `Reference feeds` / `All`):
+  all three states work, update the row count honestly ("55 of 100 rows" →
+  "100 of 100 rows"), and update the panel title.
+- **Search modal** (`⌘K`): opens, filters, and emits valid
+  `/assets/<CODE>` links (see S18 correction).
+
+## Mobile — CONFIRMED NOT OBSERVABLE with the available tooling
+
+Second attempt, different dimensions (414×896 as well as 390×844):
+`resize_window` reports success both times, but every subsequent capture
+returns 1568×776 desktop layout. The narrow-viewport rendering was never
+seen.
+
+**This audit therefore contains no mobile evidence whatsoever — neither
+positive nor negative.** Responsive behaviour needs a real device, a
+browser devtools device-emulation session, or a headless runner with a set
+viewport. It should not be signed off on the strength of anything here.
+
+The only mobile-adjacent facts established are that `<meta name="viewport">`
+and `<html lang>` are correctly set — necessary but nowhere near
+sufficient.
