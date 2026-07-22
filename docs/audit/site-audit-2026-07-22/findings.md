@@ -52,10 +52,35 @@ curl -sL -o /dev/null -w '%{http_code}\n' \
   "https://stellarindex.io/markets/GoogleLiquid-GCYYXO7FEIY6ZMGOIDLUGXPLTBESCY5ZPYJSMGUPFFA5CTOAWEW7IRKH~native/"   # 404
 ```
 
-This already recurred once: `generateStaticParams`' own comment records the
-2026-05-08 audit where AQUA pairs 404'd at top-100 and the limit was raised
-to 500. **Raising the number is a treadmill, not a fix** — the population
-being ranked is wrong, not the cutoff.
+### S1b — CORRECTED DIAGNOSIS: it is build-time drift, not the limit
+
+My first read blamed the top-500 cutoff. That is wrong, and the correction
+matters because it changes the fix.
+
+`generateStaticParams` fetches the **same** endpoint the listing uses
+(`/v1/markets?limit=500&order_by=volume_24h_usd_desc`). Checking the two
+404ing pairs against the **live** top-500:
+
+```
+rank  27  USDCAllow-GDIEKKIQ… / USDC-GA5ZSEJY…   vol $6,382,566
+rank  51  GoogleLiquid-GCYYXO7F… / native        vol $40,578
+rank 100  HBAR-GACZWLOZ… / native                vol $1,893
+```
+
+All three are comfortably **inside** the 500 limit, and all three 404. The
+set is therefore not too small — it is **stale**. A static export freezes
+the market list at build time while markets churn continuously (new pairs
+list, volumes reorder), so any pair that enters the ranks after the last
+build 404s until the next build.
+
+This is why the 2026-05-08 fix recurred: raising 100 → 500 treated the
+cutoff, but the cause is that the set is a build-time snapshot of live,
+moving data. **Raising it to 1000 would not fix this either.**
+
+The durable fix is to give `/markets/[pair]` the same client-fetch
+fallback `/ledgers/[seq]` and `/transactions/[hash]` already have (S2) —
+those never 404 precisely because they do not depend on a build-time
+snapshot. That also removes the CI-build coupling entirely.
 
 ### S1a — the `/network` "Top Stellar markets" widget is structurally guaranteed to emit dead links
 
@@ -241,3 +266,82 @@ Carried forward, not yet executed:
 - [ ] Status page (`web/status`) as a separate app
 - [ ] Mobile/responsive breakage
 - [ ] Accessibility pass
+
+
+---
+
+## S7 — HIGH: the `/markets` listing links to its own dead pages
+
+The listing page renders "55 Stellar markets (top 100 by volume)" with an
+`On Stellar` / `Reference feeds` / `All` filter (so the contamination in
+S1 is at least partly mitigated in the UI — see Corrections).
+
+But **5 of those 55 rows link to a detail page that 404s (9%)**, including
+**row 1**:
+
+```
+404  USDCAllow-GDIEKKIQ…        / USDC-GA5ZSEJY…     <- row 1 of the listing
+404  GoogleLiquid-GCYYXO7F…     / native             <- row 7, operator-reported
+404  CAUP7NFABXE5TJRL…          / CBIJBDNZNF4X…
+404  GOLD-GBLP6EEEUPLP3DC4EHYHZNF / native
+404  HBAR-GACZWLOZCENULENM…     / native
+```
+
+A user landing on the primary markets page and clicking the top row gets a
+404. Same root cause as S1b.
+
+## S8 — MEDIUM: table data overflows the viewport
+
+On `/markets` the table is clipped horizontally — the `24H CHART` column
+header is cut mid-word and its sparklines are sliced. Full asset
+identifiers are rendered untruncated
+(`USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`,
+`AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA`), blowing
+out the Base/Quote column widths and pushing the rest off-screen. Screenshot
+captured.
+
+## S9 — MEDIUM: a "Major incident in progress" banner is showing to all visitors
+
+Site-wide red banner: *"Major incident in progress. 6 active alerts · top:
+stellarindex_slo_availability_burn_fast"*. Whether or not the incident is
+real, this is the first thing every visitor sees. Given `/v1/accounts` and
+`/v1/liquidity-pools` are genuinely 500ing (S3), the alerts are plausibly
+real — but the public-facing default should be reconsidered before showing
+this to Stellar.
+
+## S10 — MEDIUM: pagination gaps
+
+- `/v1/assets?limit=5` **page 2 takes 5.99 s** (page 1 is 0.2 s)
+- `/v1/ledgers` and `/v1/contracts` return **no `pagination.next`** — there
+  is no way to page beyond the first result set on either
+
+## S11 — LOW: `changelog.atom` is 1.19 MB
+
+151 entries, 1.19 MB. Feed readers poll this repeatedly. `/changelog/`
+itself is 1.51 MB raw (301 KB brotli) — the heaviest page on the site by an
+order of magnitude.
+
+## S12 — LOW: 39 non-Stellar market pages are in the sitemap
+
+Of 501 `/markets/` entries submitted to search engines, 39 are
+`crypto:`/`fiat:` pairs (e.g. `/markets/crypto%3AETH~crypto%3AUSDT/`). We
+are actively asking Google to index Binance pairs as Stellar Index content.
+
+---
+
+## Corrections to earlier findings in this document
+
+Recording these because two of my own checks produced false results:
+
+- **Compression is fine.** I initially recorded "NO content-encoding" on
+  every page. That was a curl artefact — curl does not request compression
+  unless asked. With `--compressed`, brotli is served everywhere
+  (`/changelog/` 1,514,012 → 301,400 bytes). **Not a finding.**
+- **The sitemap is clean.** An early run reported 60/60 sitemap URLs
+  failing; BSD `sed` does not support `\?`, so I was requesting malformed
+  URLs. Corrected sample: **0 failures / 50**. **Not a finding.**
+- **`/markets` contamination is partly mitigated in the UI.** The listing
+  defaults to an `On Stellar` filter. The API-level 88%-off-chain figure in
+  S1 is still what drives the sitemap (S12) and the pre-render population,
+  so S1 stands — but the listing page itself is not showing users a wall of
+  Binance pairs by default.
