@@ -118,18 +118,18 @@ func backfillExternal(args []string) error {
 	// row in place (usd_volume et al.) and wins over the live gen-0 value.
 	store.SetDeriveGeneration(time.Now().Unix())
 
-	// Mirror the indexer's USD-volume wiring (L2.2 phase 1) so an
-	// ops-driven backfill of on-chain trades populates usd_volume
-	// the same way live ingest does.
-	if len(cfg.Trades.USDPeggedClassicAssets) > 0 {
-		spec, err := timescale.NewUSDVolumeQuoteSpec(
-			cfg.Trades.USDPeggedClassicAssets,
-			cfg.Supply.SACWrappers,
-		)
-		if err != nil {
-			return fmt.Errorf("usd-volume quote spec: %w", err)
-		}
-		store.SetUSDVolumeQuoteSpec(spec)
+	// Mirror the indexer's USD-volume wiring so an ops-driven backfill
+	// populates usd_volume exactly the way live ingest does. This MUST
+	// install every tier: combined with the positive derive_generation
+	// above, a store missing the FX resolver computes NULL and then wins
+	// the upsert, overwriting correct stored values. (It previously
+	// mirrored L2.2 phase 1 only — see InstallUSDVolumeResolution.)
+	if err := timescale.InstallUSDVolumeResolution(
+		store,
+		cfg.Trades.USDPeggedClassicAssets,
+		cfg.Supply.SACWrappers,
+	); err != nil {
+		return err
 	}
 
 	inserted, skipped := 0, 0
