@@ -23,7 +23,7 @@ func TestWealthCacheServesAnyLimitFromOneEntry(t *testing.T) {
 	}
 	c.put(ranking, time.Now())
 
-	rows, ok := c.get(AccountsWealthCacheTTL)
+	rows, ok := c.get()
 	if !ok {
 		t.Fatal("get after put returned miss")
 	}
@@ -52,7 +52,7 @@ func TestWealthCacheTTLExpiry(t *testing.T) {
 	t.Parallel()
 	c := newAccountsWealthCache()
 	c.put([]AccountWealth{{AccountID: "a", USD: 1}}, time.Now().Add(-2*AccountsWealthCacheTTL))
-	if _, ok := c.get(AccountsWealthCacheTTL); ok {
+	if _, ok := c.get(); ok {
 		t.Error("expired entry returned as fresh")
 	}
 }
@@ -62,7 +62,7 @@ func TestWealthCacheTTLExpiry(t *testing.T) {
 func TestWealthCacheNilSafe(t *testing.T) {
 	t.Parallel()
 	var c *accountsWealthCache
-	if _, ok := c.get(AccountsWealthCacheTTL); ok {
+	if _, ok := c.get(); ok {
 		t.Error("nil cache reported a hit")
 	}
 	c.put([]AccountWealth{{AccountID: "a", USD: 1}}, time.Now()) // must not panic
