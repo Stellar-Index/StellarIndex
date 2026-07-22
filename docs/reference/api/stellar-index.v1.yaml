@@ -289,6 +289,8 @@ paths:
                     p95_ms: 3.85
                     p99_ms: 4.77
                     window_secs: 300
+                    p95_target_ms: 200
+                    p99_target_ms: 500
                   freshness:
                     last_aggregator_tick: "2026-05-05T15:08:57Z"
                     active_sources: 13
@@ -9082,6 +9084,16 @@ components:
             p95_ms:      { type: number }
             p99_ms:      { type: number }
             window_secs: { type: integer }
+            p95_target_ms:
+              type: number
+              description: >-
+                p95 latency SLO target in milliseconds. Echoed so callers
+                (and the status page) judge against the same threshold the
+                `overall` roll-up uses — a breach of either target rolls
+                `overall` to "degraded".
+            p99_target_ms:
+              type: number
+              description: p99 latency SLO target in milliseconds. See p95_target_ms.
         freshness:
           type: object
           properties:

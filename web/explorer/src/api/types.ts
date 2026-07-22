@@ -321,7 +321,9 @@ export interface paths {
                          *           "p50_ms": 0.6,
                          *           "p95_ms": 3.85,
                          *           "p99_ms": 4.77,
-                         *           "window_secs": 300
+                         *           "window_secs": 300,
+                         *           "p95_target_ms": 200,
+                         *           "p99_target_ms": 500
                          *         },
                          *         "freshness": {
                          *           "last_aggregator_tick": "2026-05-05T15:08:57Z",
@@ -12340,6 +12342,10 @@ export interface components {
                 p95_ms?: number;
                 p99_ms?: number;
                 window_secs?: number;
+                /** @description p95 latency SLO target in milliseconds. Echoed so callers (and the status page) judge against the same threshold the `overall` roll-up uses — a breach of either target rolls `overall` to "degraded". */
+                p95_target_ms?: number;
+                /** @description p99 latency SLO target in milliseconds. See p95_target_ms. */
+                p99_target_ms?: number;
             };
             freshness?: {
                 /** Format: date-time */

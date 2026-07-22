@@ -811,9 +811,23 @@ function LatencyStrip({ latency }: { latency: StatusResponse['latency'] }) {
         Request latency
       </SectionHead>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {/* Targets come from the API so the bars are drawn against the
+            same thresholds the `overall` roll-up judges against. They were
+            page-local literals, which is how a green "All systems
+            operational" banner came to sit above two red SLO bars
+            (site-audit S31). Literals retained only as a fallback for a
+            response predating the field. */}
         <LatencyCell label="p50" value={latency?.p50_ms ?? 0} target={50} />
-        <LatencyCell label="p95" value={latency?.p95_ms ?? 0} target={200} />
-        <LatencyCell label="p99" value={latency?.p99_ms ?? 0} target={500} />
+        <LatencyCell
+          label="p95"
+          value={latency?.p95_ms ?? 0}
+          target={latency?.p95_target_ms ?? 200}
+        />
+        <LatencyCell
+          label="p99"
+          value={latency?.p99_ms ?? 0}
+          target={latency?.p99_target_ms ?? 500}
+        />
       </div>
     </section>
   );

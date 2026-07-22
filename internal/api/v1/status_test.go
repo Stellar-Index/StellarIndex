@@ -521,7 +521,7 @@ func TestRollupOverall_AllUnknownBranch(t *testing.T) {
 		{Name: "indexer", Status: "unknown"},
 		{Name: "aggregator", Status: "unknown"},
 	}
-	if got := rollupOverall(services, false, false); got != "unknown" {
+	if got := rollupOverall(services, false, false, false); got != "unknown" {
 		t.Errorf("all-unknown rollup = %q, want unknown", got)
 	}
 
@@ -531,7 +531,7 @@ func TestRollupOverall_AllUnknownBranch(t *testing.T) {
 	services = []StatusService{
 		{Name: "indexer", Status: "ok"}, // zero LastSeen
 	}
-	if got := rollupOverall(services, false, false); got != "unknown" {
+	if got := rollupOverall(services, false, false, false); got != "unknown" {
 		t.Errorf("zero-time ok rollup = %q, want unknown", got)
 	}
 
@@ -540,7 +540,56 @@ func TestRollupOverall_AllUnknownBranch(t *testing.T) {
 		{Name: "api", Status: "ok", LastSeen: time.Now()},
 		{Name: "indexer", Status: "degraded", LastSeen: time.Now()},
 	}
-	if got := rollupOverall(services, false, false); got != "degraded" {
+	if got := rollupOverall(services, false, false, false); got != "degraded" {
 		t.Errorf("any-degraded rollup = %q, want degraded", got)
+	}
+}
+
+// TestRollupOverallLatencyBreach is the site-audit S31 regression guard:
+// a green roll-up must be impossible while the latency SLO the same
+// response advertises is breached.
+//
+// Production on 2026-07-22 served overall="ok" — headline "All systems
+// operational · Every service is reporting healthy" — alongside p95 840ms
+// against a 200ms target and p99 2096ms against 500ms, both drawn in red
+// directly beneath that banner. The roll-up judged only service liveness.
+func TestRollupOverallLatencyBreach(t *testing.T) {
+	t.Parallel()
+	healthy := []StatusService{
+		{Name: "api", Status: "ok", LastSeen: time.Now()},
+		{Name: "indexer", Status: "ok", LastSeen: time.Now()},
+		{Name: "aggregator", Status: "ok", LastSeen: time.Now()},
+	}
+	if got := rollupOverall(healthy, false, false, false); got != "ok" {
+		t.Fatalf("healthy + within-SLO rollup = %q, want ok", got)
+	}
+	if got := rollupOverall(healthy, false, false, true); got != "degraded" {
+		t.Errorf("healthy services but breached latency SLO = %q, want degraded", got)
+	}
+}
+
+// TestStatusLatencyBreached pins the threshold arithmetic, including the
+// no-data case: WindowSecs==0 means the backend returned nothing
+// measurable, which must NOT read as a breach (absence of data is handled
+// by the unknown/backendErr paths).
+func TestStatusLatencyBreached(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   StatusLatency
+		want bool
+	}{
+		{"no data", StatusLatency{WindowSecs: 0, P95Ms: 9999, P99Ms: 9999}, false},
+		{"within both", StatusLatency{WindowSecs: 300, P95Ms: 120, P99Ms: 400}, false},
+		{"exactly at target", StatusLatency{WindowSecs: 300, P95Ms: 200, P99Ms: 500}, false},
+		{"p95 over", StatusLatency{WindowSecs: 300, P95Ms: 201, P99Ms: 400}, true},
+		{"p99 over", StatusLatency{WindowSecs: 300, P95Ms: 120, P99Ms: 501}, true},
+		// The values actually observed in production.
+		{"observed prod", StatusLatency{WindowSecs: 300, P95Ms: 840.5, P99Ms: 2096.4}, true},
+	}
+	for _, tc := range cases {
+		if got := tc.in.breached(); got != tc.want {
+			t.Errorf("%s: breached() = %t, want %t", tc.name, got, tc.want)
+		}
 	}
 }
