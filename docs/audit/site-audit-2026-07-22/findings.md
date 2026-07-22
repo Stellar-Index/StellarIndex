@@ -690,3 +690,60 @@ viewport. It should not be signed off on the strength of anything here.
 The only mobile-adjacent facts established are that `<meta name="viewport">`
 and `<html lang>` are correctly set — necessary but nowhere near
 sufficient.
+
+---
+
+## S24 — HIGH: `/sources` shows SDEX as 19 days stale while it is ingesting normally
+
+The `/sources` page renders a `LAST INGEST` column. Every venue reads
+`5s ago @ ledger 63,597,719` — except **`sdex`, which reads `19d ago @
+ledger 63,301,500`, highlighted in red** as a staleness warning.
+
+It is wrong. Ground truth from the database at the same moment:
+
+```
+sdex      latest trade 2026-07-22 16:27:38+00   23,782 trades in 20 minutes
+aquarius  latest trade 2026-07-22 16:26:54+00      138 trades in 20 minutes
+```
+
+SDEX is ingesting thousands of trades a minute. `/v1/sources?include=stats`
+independently reports `trade_count_24h: 1,450,756` and
+`markets_count_24h: 26,008` for it — healthy on every other measure, and
+the page renders those same healthy numbers *in the adjacent columns*.
+
+So the flagship Stellar DEX — the single most important on-chain source on
+a Stellar explorer — is publicly displayed as dead while it is the busiest
+venue we index. This is worse than a missing value: it is a **confident,
+colour-coded false negative** on the one page an evaluator would open to
+judge pipeline health.
+
+Note `/v1/diagnostics/cursors` contains **no `sdex` cursor at all**, so
+whatever the page derives this from, the derivation has no live input for
+sdex and is falling back to something 19 days old rather than declining to
+render.
+
+## S25 — MEDIUM: `/v1/diagnostics/cursors` serves 1,483 rows / 117 KB, almost all dead
+
+```
+1202  projected-rebuild     194  backfill        36  gap-detector-scan
+  31  census-backfill        15  projector        3  backfill-router
+   1  ledgerstream            1  tag-routed-via
+```
+
+Only `ledgerstream` is live (lag 3 s). The rest are abandoned one-shot job
+cursors — `backfill` entries last touched **2026-05-03**, `census-backfill`
+**2026-06-02** — reported with lags of 4–6 *million* seconds. A public
+diagnostics endpoint returning 117 KB of months-dead job state makes the
+one genuinely useful row (`ledgerstream`) impossible to find, and would
+read to an outsider as a pipeline full of stalled work.
+
+---
+
+## Method note on the empty-state sweep
+
+I scanned all 56 routes' served HTML for empty/error strings. It produced a
+hit on **every** route — because `couldn't find` is the 404 copy bundled
+into the shared JS chunk, not a rendered state. **Discarded as a false
+positive.** Runtime empty states cannot be detected from static markup on
+this site, since every widget hydrates client-side; they require the
+browser, which is how S24 was actually found.
