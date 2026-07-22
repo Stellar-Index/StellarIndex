@@ -1250,3 +1250,65 @@ and no `aria-sort` give assistive tech nothing to work with (compare S27).
 The remaining listing pages reuse these same table primitives, so the
 inconsistency to chase is S36's specific one — Markets got sorting wired
 up and Assets did not.
+
+---
+
+## S36 — BROADENED: sorting is missing from *every* listing except `/markets`
+
+I first framed this as an Assets-vs-Markets inconsistency. Walking the
+remaining listing pages via SPA navigation with instrumentation attached
+shows it is far wider:
+
+| listing | columns | sortable | rows |
+|---|---|---|---|
+| `/markets` | 8 | **yes** (`↕`, `↓`) | 55–100 |
+| `/assets` | 11 | **0** | 92 |
+| `/ledgers` | 5 | **0** | 50 |
+| `/operations` | 6 | **0** | 50 |
+| `/contracts` | 4 | **0** | 100 |
+| `/issuers` | 6 | **0** | 100 |
+| `/oracles` | 9 | **0** | 106 |
+
+**41 columns across six listing pages, none sortable.** `/markets` is the
+only listing in the explorer where a user can reorder data — and the pages
+that most invite it (`/assets` with market cap and four change columns,
+`/issuers`, `/oracles`) are precisely the ones that cannot.
+
+## S37 — per-page timing, remaining listings
+
+Captured during the same walk (SPA navigation, so these are warm — a cold
+load would be slower):
+
+| page | API calls | slowest | endpoint | rows | empty/loading |
+|---|---|---|---|---|---|
+| `/ledgers` | 2 | 104 ms | `/v1/network/throughput` | 50 | clean |
+| `/issuers` | 0 (cached) | — | — | 100 | clean |
+| `/operations` | 2 | **1,856 ms** | `/v1/operations` | 50 | clean |
+| `/contracts` | 3 | **3,093 ms** | `/v1/contracts` | 100 | clean |
+| `/oracles` | 3 | **3,217 ms** | `/v1/sources` | 106 | clean |
+
+Three more page types over 1.8 s, and `/oracles` at 3.2 s on `/v1/sources`
+— the same endpoint behind `/network` and `/sources` (S3). That endpoint
+now demonstrably gates **four** page types.
+
+**No empty states, no stuck loading spinners, and no failed fetches on any
+of these five.** They render their data correctly; they are just slow.
+
+---
+
+## Page-type coverage — final
+
+Data-bearing page types with per-widget timing captured: `/network`,
+`/status`, `/transactions`, `/contracts`, `/accounts`, `/assets`,
+`/ledgers`, `/operations`, `/issuers`, `/oracles`, `/markets`,
+`/liquidity-pools`, `/sources` — **13 of the ~20 data-bearing routes**.
+The remainder (`/dexes`, `/lending`, `/bridges`, `/aggregators`, `/amm`,
+`/mev`, `/anomalies`, `/divergences`, `/yield`, `/external/assets`,
+`/exchanges`, `/protocols`, `/diagnostics`) had their **endpoints** timed
+(S21/S3) and their **links, meta, headers and empty-state strings** checked,
+but not a per-widget browser-timeline capture.
+
+The remaining static/content routes (`/docs`, `/pricing`, `/methodology`,
+`/research/*`, `/blog`, `/changelog`, `/careers`, `/company`, `/contact`,
+`/sdk`, `/widgets`, `/dev/*`) carry no data widgets; they were covered by
+the link, meta, payload and compression sweeps.
