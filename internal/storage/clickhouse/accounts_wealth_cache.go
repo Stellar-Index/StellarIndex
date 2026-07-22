@@ -135,7 +135,13 @@ func (r *ExplorerReader) AccountsByWealthCached(
 	}
 	// Miss: start a background refresh and tell the caller we have nothing
 	// yet. Deliberately does not block — see the godoc.
-	r.refreshAccountsWealth(assets, prices, limit)
+	//
+	// contextcheck: the refresh must NOT inherit this request's context.
+	// Bound to the caller's 8s deadline it would be cancelled before the
+	// ~11-20s FINAL scan completed, so the cache would never populate and
+	// every request would keep paying the timeout — exactly the failure
+	// this cache exists to fix (site-audit S3).
+	r.refreshAccountsWealth(assets, prices, limit) //nolint:contextcheck // intentional detach; see above
 	return nil, false
 }
 
@@ -165,10 +171,7 @@ func (r *ExplorerReader) refreshAccountsWealth(assets []string, prices []float64
 		return // someone else is already scanning; don't pile on
 	}
 	// Detached from the request context on purpose: the whole point is to
-	// outlive the request that noticed the miss. A refresh tied to the
-	// caller's 8s deadline would be cancelled before the ~11-20s scan
-	// finished — which is exactly the failure this cache exists to fix.
-	//nolint:contextcheck // deliberate detach; see above and the type godoc
+	// outlive the request that noticed the miss.
 	go func() {
 		defer r.wealthCache.endFlight(limit, ch)
 		ctx, cancel := context.WithTimeout(context.Background(), AccountsWealthRefreshTimeout)
