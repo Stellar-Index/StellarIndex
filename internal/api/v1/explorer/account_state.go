@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -100,7 +102,51 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 // resolve through LookupUSDPrice, so stablecoins pick up the fiat-proxy
 // fallback (USDC/USDT/… → ~$1) rather than dropping out for want of a direct
 // fiat:USD market.
+// usdPriceMapTTL caches the priced-asset set used to rank account wealth.
+//
+// usdPriceMap walks every verified asset and resolves each price with a
+// SEQUENTIAL LookupUSDPrice call. On production that loop measured ~8s on
+// the request path — it, not the wealth scan, was what kept /v1/accounts at
+// 8.1s even once the ranking itself was cached (site-audit S3 follow-up:
+// the first fix removed the 500s but the latency survived, because there
+// were two slow things stacked, not one).
+//
+// A short TTL is ample: this feeds a ranking that is itself cached for 15
+// minutes, so a price set up to a minute old cannot change what the page
+// shows.
+const usdPriceMapTTL = 60 * time.Second
+
+type usdPriceMapEntry struct {
+	assets   []string
+	prices   []float64
+	cachedAt time.Time
+}
+
+var (
+	usdPriceMapMu    sync.Mutex
+	usdPriceMapCache usdPriceMapEntry
+)
+
+// usdPriceMap builds parallel (asset, price) arrays for wealth ranking,
+// memoised for [usdPriceMapTTL]. See the const's doc for why.
 func (h *Handler) usdPriceMap(ctx context.Context) (assets []string, prices []float64) {
+	usdPriceMapMu.Lock()
+	if c := usdPriceMapCache; c.assets != nil && time.Since(c.cachedAt) < usdPriceMapTTL {
+		usdPriceMapMu.Unlock()
+		return c.assets, c.prices
+	}
+	usdPriceMapMu.Unlock()
+
+	assets, prices = h.usdPriceMapUncached(ctx)
+	if len(assets) > 0 {
+		usdPriceMapMu.Lock()
+		usdPriceMapCache = usdPriceMapEntry{assets: assets, prices: prices, cachedAt: time.Now()}
+		usdPriceMapMu.Unlock()
+	}
+	return assets, prices
+}
+
+func (h *Handler) usdPriceMapUncached(ctx context.Context) (assets []string, prices []float64) {
 	for _, key := range h.priceableAssetIDs() {
 		asset, err := canonical.ParseAsset(key)
 		if err != nil {
