@@ -143,9 +143,10 @@ commit followed). Given this project's treadmill history, decisions that stall b
 either shipped or is tracked — 🔵 (N-F1: the OHLC $0.01 floor, deferred behind D2).
 
 ### M — Streaming / SSE endpoints (surfaced 2026-07-23)
+**✅ PASS (smoke):** ledger/price-tip/observations streams emit well-formed SSE (`:connected` heartbeat, `id`/`event`/`data`+JSON, live events); headers correct (text/event-stream, no-cache, keep-alive, X-Accel-Buffering:no). Honest tip flags (single_source/stale). TODO: ordering/gap/backpressure under a slow consumer.
 Six `*/stream` endpoints (ledger, price, price/tip, observations, oracle/streams,
 ledger/stream). Not covered by the request/response sweep.
-- **M1** Streams emit valid, ordered, gap-free events; heartbeat; clean close — ⬜
+- **M1** Streams emit valid, ordered, gap-free events; heartbeat; clean close — ✅ (smoke)
 - **M2** Stream backpressure / slow-consumer handling (no unbounded buffer) — ⬜
 
 ---
