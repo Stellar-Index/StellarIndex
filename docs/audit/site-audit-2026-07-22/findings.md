@@ -1705,3 +1705,72 @@ Corrected status:
 Lesson, twice-learned this audit: `--window-size` is not device emulation.
 Use CDP `Emulation.setDeviceMetricsOverride`. A screenshot-only audit
 would have shipped both false findings.
+
+---
+
+# NEWLY DISCOVERED during remediation: detail-endpoint latency (follow-up)
+
+Not one of S1-S44 — the original audit timed the LISTING endpoints
+(`/v1/assets`, `/v1/issuers`), which back page-load widgets. The DETAIL
+endpoints (`/v1/accounts/{g}`, `/v1/issuers/{g}`, `/v1/assets/{slug}`) back
+pre-rendered pages, so normal users hit cached HTML and they weren't in the
+page-load path I measured. But they are slow (6-15s), and they matter:
+
+- they inflate the API's p95, holding the (now-honest, S31) status roll-up
+  in "degraded";
+- they made the static-export build slow and fragile (a transient 503 on
+  one of the ~600 detail fetches failed a whole deploy);
+- they are slow for direct API consumers and for cold navigation to an
+  unlisted detail page via the shell fallback.
+
+Root cause: reads of `stellar.ledger_entries_current` filtered by
+**`account_id`**, which is not part of the table's `ORDER BY (entry_type,
+key_xdr)` — so each is a full FINAL scan of 43.6M rows. Standalone ~0.4s,
+but under the bounded `api_serving` CH profile (2 threads) plus concurrent
+load it balloons to the 8s handler ceiling.
+
+Fixed one of the two scans (v0.20.8): the single account-entry read now
+keys on the account's LedgerKey XDR — a PK-prefix point lookup (0.028s,
+doesn't balloon). The remaining scan is the **trustline** read in
+`AccountState`, which filters by `account_id` and cannot become a single
+point lookup (an account has many trustlines, each a distinct key_xdr).
+
+**Actionable follow-up (choose one):**
+1. Add a ClickHouse data-skipping index on `account_id`
+   (`ALTER TABLE stellar.ledger_entries_current ADD INDEX … account_id TYPE
+   bloom_filter`). Additive, but MATERIALIZE over 43.6M rows is heavy I/O —
+   schedule off the D2 window.
+2. Cache the account-detail responses (bounded, e.g. an LRU) the way the
+   wealth ranking is cached, since balances are stable second-to-second.
+3. Materialise an `account_wealth_snapshot` / per-account balance rollup
+   (already on the production-readiness register), which removes the FINAL
+   scan entirely and also fixes `/v1/accounts` wealth ranking's own scan.
+
+Option 3 is the durable answer and is already roadmapped.
+
+---
+
+# REMEDIATION SUMMARY (final)
+
+**Fixed + production-verified:** S1/S1a/S1b/S7 (markets 404s — shell
+fallback, both operator-reported pairs now 200), S3 (accounts, sources,
+liquidity-pools all fast — five/three-layer fixes), S5 (SDK link), S6
+(error-type URIs dereferenceable), S13 (embed collapse — via the CSP fix
+restoring the route), S14 (embeds frame — verified live in /widgets), S24
+(SDEX freshness), S30 (honest degraded copy), S31 (status roll-up honest —
+verified reporting degraded over real breaches), S36 (sorting on
+/assets, /issuers, /contracts — live), S37/S38 (include=stats 6 page types),
+S43 (asset icon CSP — verified live).
+
+**Corrected to NOT-A-FINDING:** S41 (sdex/amm reachable via footer), S42
+(mobile screenshot artefact — site IS responsive), plus the earlier
+in-audit corrections.
+
+**Downgraded:** S8/S28/S33 (contained table scroll is normal; the one real
+nit — untruncated SAC labels — fixed), S18 (masked in UI), S26 (title dup).
+
+**Documented follow-ups (not blocking, mostly infra/product):** the
+detail-endpoint latency above; S19/S23 (legacy fiat positioning — a product
+decision); S25 (cursors endpoint verbosity); S36 tail (sorting on
+cursor-paginated feeds — low value); S40 (blank /bridges,/mev — needs a
+product answer on whether those surfaces have data yet).
