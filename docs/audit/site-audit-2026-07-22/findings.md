@@ -1774,3 +1774,22 @@ detail-endpoint latency above; S19/S23 (legacy fiat positioning — a product
 decision); S25 (cursors endpoint verbosity); S36 tail (sorting on
 cursor-paginated feeds — low value); S40 (blank /bridges,/mev — needs a
 product answer on whether those surfaces have data yet).
+
+---
+
+# CORRECTION: S40 ("blank /bridges and /mev") is NOT a finding
+
+Both render correctly. My SPA-navigation walk counted `<tbody tr>` rows;
+these two pages use **card layouts**, not tables, so the walk reported "0
+rows" on fully-populated pages.
+
+Verified with CDP render checks:
+- **/mev** — "Detected MEV events (50)", a full list of arbitrage events
+  (path, account, tx, legs, ledger). `/v1/mev` returns the data; the page
+  renders it as cards.
+- **/bridges** — 2 protocol cards (Circle CCTP + Rozo), sourced from
+  `/v1/protocols?category=bridge`. Renders fine.
+
+Third methodology error this audit (after the two `--window-size` mobile
+artefacts): a table-row selector under-reports card and non-`<table>`
+layouts. S40 downgraded to NOT-A-FINDING.
