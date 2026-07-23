@@ -22,6 +22,16 @@ import { useIssuerLookup, useSACWrappers } from '@/api/hooks';
  * future canonical-form addition (e.g. `lp:…`) only needs to be
  * handled in one place.
  */
+// firstSep returns the index of the first classic-asset separator
+// ('-' or ':') in a canonical string, or -1 if neither is present.
+function firstSep(s: string): number {
+  const d = s.indexOf('-');
+  const c = s.indexOf(':');
+  if (d === -1) return c;
+  if (c === -1) return d;
+  return Math.min(d, c);
+}
+
 export function AssetLabel({
   canonical,
 }: {
@@ -76,8 +86,13 @@ export function AssetLabel({
       );
     }
     if (resolved) {
-      const dashIx = resolved.indexOf('-');
-      const code = dashIx === -1 ? resolved : resolved.slice(0, dashIx);
+      // The SAC map may resolve to either the dash form (USDC-GA5Z…) or
+      // the colon form (USDC:GA5Z…). Split on WHICHEVER separator appears
+      // first (site-audit S8/S33): keying only on '-' meant a colon-form
+      // resolution fell through with indexOf('-') === -1 and rendered the
+      // near-full issuer key in the Base column, blowing out the cell.
+      const sepIx = firstSep(resolved);
+      const code = sepIx === -1 ? resolved : resolved.slice(0, sepIx);
       return (
         <div>
           <div className="font-medium">{code}</div>
