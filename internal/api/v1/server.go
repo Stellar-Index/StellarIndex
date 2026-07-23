@@ -3,9 +3,11 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1627,6 +1629,18 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// explorer subdomain. The Canonical: directive points at the
 	// explorer's copy so the two stay aligned without drift.
 	s.mux.HandleFunc("GET /.well-known/security.txt", s.handleSecurityTxt)
+
+	// /errors/{slug} — dereferenceable RFC 9457 (7807) problem `type`
+	// URIs. Every problem+json response we emit carries
+	// type="https://api.stellarindex.io/errors/<slug>", and RFC 9457 says
+	// that URI SHOULD resolve to documentation of the error. Site-audit S6:
+	// all ~179 of them 404'd — i.e. we published dead documentation links at
+	// exactly the moment an integrator is debugging a failure. This serves a
+	// self-describing page (the slug, humanised, plus a pointer at the full
+	// reference) so the type is dereferenceable without maintaining 179
+	// hand-written docs.
+	s.mux.HandleFunc("GET /errors/{slug}", s.handleErrorDoc)
+	s.mux.HandleFunc("GET /errors/{$}", s.handleErrorIndex)
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────
@@ -1811,6 +1825,79 @@ func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
 		"docs":    "https://docs.stellarindex.io",
 		"openapi": "https://docs.stellarindex.io/openapi.yaml",
 	}, Flags{})
+}
+
+// handleErrorDoc serves a dereferenceable page for one RFC 9457 problem
+// `type` slug (site-audit S6). The slugs are self-descriptive
+// (account-not-found, rate-limited, invalid-max-age), so a page that echoes
+// the slug humanised plus a link to the full reference is genuinely useful
+// to an integrator who followed the `type` URI from an error body — far
+// better than the 404 they previously hit. Content-negotiated: JSON for API
+// clients, a minimal HTML page for a browser.
+func (s *Server) handleErrorDoc(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	human := humaniseErrorSlug(slug)
+	typeURI := "https://api.stellarindex.io/errors/" + slug
+	if strings.Contains(r.Header.Get("Accept"), "text/html") {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		_, _ = fmt.Fprintf(w, errorDocHTML, htmlEscape(human), htmlEscape(slug))
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	writeJSON(w, map[string]string{
+		"type":    typeURI,
+		"slug":    slug,
+		"title":   human,
+		"detail":  "A Stellar Index API error type. The response body that referenced this URI carries the specifics (status, instance, request_id).",
+		"docs":    "https://docs.stellarindex.io",
+		"openapi": "https://docs.stellarindex.io/openapi.yaml",
+	}, Flags{})
+}
+
+// handleErrorIndex serves GET /errors/ (no slug) — a pointer at the docs.
+func (s *Server) handleErrorIndex(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	writeJSON(w, map[string]string{
+		"name":   "stellar-index error types",
+		"detail": "Problem `type` URIs resolve at /errors/{slug}. See the full API reference for the endpoints that emit each.",
+		"docs":   "https://docs.stellarindex.io",
+	}, Flags{})
+}
+
+// humaniseErrorSlug turns "account-not-found" into "Account not found".
+func humaniseErrorSlug(slug string) string {
+	if slug == "" {
+		return "Error"
+	}
+	words := strings.Split(slug, "-")
+	for i, w := range words {
+		if i == 0 && w != "" {
+			words[i] = strings.ToUpper(w[:1]) + w[1:]
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+// errorDocHTML is the minimal browser page for an error type. Kept
+// dependency-free (no template engine) and self-contained.
+const errorDocHTML = `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+	`<meta name="viewport" content="width=device-width,initial-scale=1">` +
+	`<title>%[1]s · Stellar Index API errors</title>` +
+	`<style>body{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#1a1a1a}` +
+	`code{background:#f4f4f5;padding:.1em .3em;border-radius:3px}a{color:#2563eb}</style></head><body>` +
+	`<h1>%[1]s</h1>` +
+	`<p>This is a Stellar Index API error type — <code>%[2]s</code>. The error response that pointed you here ` +
+	`carries the specifics (HTTP status, the request path, and a <code>request_id</code>).</p>` +
+	`<p>For the full API reference, see <a href="https://docs.stellarindex.io">docs.stellarindex.io</a>.</p>` +
+	`</body></html>`
+
+// htmlEscape is a tiny escaper for the two interpolated values above
+// (slug + humanised slug — both from a closed set of ASCII identifiers,
+// but escaped defensively).
+func htmlEscape(s string) string {
+	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
+	return r.Replace(s)
 }
 
 // handleRobotsTxt serves /robots.txt. The API origin holds JSON

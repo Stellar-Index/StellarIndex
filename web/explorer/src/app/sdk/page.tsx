@@ -250,17 +250,12 @@ export default function SDKPage() {
       <section className="rounded-xl border border-line bg-surface p-5 text-sm">
         <h2 className="text-base font-semibold">Reference</h2>
         <ul className="mt-3 space-y-2 text-ink-body">
-          <li>
-            <a
-              href="https://pkg.go.dev/github.com/Stellar-Index/StellarIndex/pkg/client"
-              target="_blank"
-              rel="noreferrer noopener"
-              className="inline-flex items-center gap-1 text-brand-600 hover:underline"
-            >
-              godoc — full API reference
-              <ExternalLink className="h-3 w-3" />
-            </a>
-          </li>
+          {/* site-audit S5: the pkg.go.dev link 404'd. The module IS
+              published (v0.20.x is on proxy.golang.org and `go get` works),
+              but pkg.go.dev does not render this large monorepo — repeated
+              requests still 404. Point the reference at the GitHub source,
+              which renders the package's Go doc comments in-browser and
+              always resolves. Swap back to pkg.go.dev if it ever indexes. */}
           <li>
             <a
               href="https://github.com/Stellar-Index/StellarIndex/tree/main/pkg/client"
@@ -268,7 +263,7 @@ export default function SDKPage() {
               rel="noreferrer noopener"
               className="inline-flex items-center gap-1 text-brand-600 hover:underline"
             >
-              source on GitHub
+              API reference &amp; source (GitHub)
               <ExternalLink className="h-3 w-3" />
             </a>
           </li>
