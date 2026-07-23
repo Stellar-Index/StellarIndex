@@ -7,6 +7,7 @@ import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { useIssuers } from '@/api/hooks';
 import { formatCompact } from '@/lib/format';
+import { useTableSort, SortableTh, type SortColumn } from '@/lib/useTableSort';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
 
 /**
@@ -31,6 +32,19 @@ export function IssuersTable() {
     });
   }, [data, filter]);
 
+
+  // Sortable columns (site-audit S36). Default keeps the API's
+  // observation-count ranking until a header is clicked.
+  const issuerSortColumns: SortColumn<(typeof filtered)[number], string>[] = [
+    { key: 'org', value: (r) => r.org_name ?? '', initialDir: 'asc' },
+    { key: 'domain', value: (r) => r.home_domain ?? '', initialDir: 'asc' },
+    { key: 'assets', value: (r) => r.asset_count },
+    { key: 'observations', value: (r) => r.total_observation_count },
+  ];
+  const { sorted: sortedIssuers, sort, toggle, ariaSort } = useTableSort<
+    (typeof filtered)[number],
+    string
+  >(filtered, issuerSortColumns, null);
   if (isError) {
     return (
       <Panel
@@ -102,11 +116,11 @@ export function IssuersTable() {
           <thead>
             <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
               <Th>#</Th>
-              <Th>Organisation</Th>
+              <SortableTh label="Organisation" sortKey="org" sort={sort} onSort={toggle} ariaSort={ariaSort} />
               <Th>G-strkey</Th>
-              <Th>Home domain</Th>
-              <Th align="right">Assets</Th>
-              <Th align="right">Total observations</Th>
+              <SortableTh label="Home domain" sortKey="domain" sort={sort} onSort={toggle} ariaSort={ariaSort} />
+              <SortableTh label="Assets" sortKey="assets" sort={sort} onSort={toggle} ariaSort={ariaSort} align="right" />
+              <SortableTh label="Total observations" sortKey="observations" sort={sort} onSort={toggle} ariaSort={ariaSort} align="right" />
             </tr>
           </thead>
           <tbody className="divide-y divide-line-subtle">
@@ -117,7 +131,7 @@ export function IssuersTable() {
                 </td>
               </tr>
             )}
-            {filtered.map((row, i) => (
+            {sortedIssuers.map((row, i) => (
               <tr
                 key={row.g_strkey}
                 className="hover:bg-surface-muted"
