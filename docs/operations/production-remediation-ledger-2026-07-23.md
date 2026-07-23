@@ -45,10 +45,17 @@ Per finding, CLOSED requires ALL of:
   hours-long — **must NOT contend with the running D2 backfill** (the design's "schedule
   off the D2 window" constraint; running a 1.1 TB re-mat mid-D2 risks both jobs on the
   single box).
-- **NEXT:** author migration 0115 (drop+recreate 7 caggs with the FILTER, faithful to
-  current defs + policies) + remove the serve-layer band; land the code; **execute the
-  re-mat + end-to-end verification (Jul-17 low no longer 0.1333, known-good bars
-  unchanged) the moment D2 completes (early Fri)**. CLOSE only after that live verify.
+- ✅ **BOUNDED PROOF PASSED (2026-07-23, non-invasive, real data):** the served Jul-17
+  06:00 low (0.1333) is the inverse of ONE dust trade — `USDC-GA5Z…/native @ 7.5`,
+  usd_volume **$0.00000027** (40,000× below the $0.01 floor), a 2↔15-stroop SDEX fill.
+  With the filter the USDC/native bucket high goes **7.500000 → 5.487531** (251/321
+  trades kept), so the **served low corrects 0.1333 → 0.1822** — matching the real CEX
+  low that hour (0.1822) to the digit. Fix confirmed correct end-to-end.
+- **NEXT (deployment only):** author migration 0115 (drop+recreate 7 caggs with the
+  FILTER, faithful to current defs + policies) + remove the serve-layer band; land the
+  code; **execute the 1.1 TB re-mat the moment D2 completes (early Fri)**, then re-run
+  the live OHLC endpoint to confirm 0.1333→0.1822 in the SERVED output + known-good
+  bars byte-unchanged. CLOSE only after that live post-deploy verify.
 | **N-F2** | completeness `retentionStart=tip−1.5M` → `complete:true` only certifies ~100 days | set `retentionStart` = actual-min-served (DECISION item 3) | a synthetic sub-min-served loss flips `complete`→false; full-history reconcile runs | OPEN |
 
 ### 🟠 Mediums
