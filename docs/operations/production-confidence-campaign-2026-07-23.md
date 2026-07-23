@@ -118,9 +118,9 @@ Legend: ✅ proven · 🔵 in progress · ⬜ not started · ⚠️ finding open
   CS-### corpus) is still fixed — ⬜
 
 ### K — Config / schema drift
-- **K1** Ansible drift (deployed config vs repo) — ⬜
-- **K2** CH schema vs migrations — ⬜
-- **K3** Prometheus rules parity (R1 overlay vs multi-host) — ⬜
+- **K1** Ansible drift (deployed config vs repo) — ⬜ (blocked: ansible vault not set)
+- **K2** Schema vs migrations — ✅ (DB @ 114, clean, matches repo head)
+- **K3** Prometheus rules parity (R1 overlay vs multi-host) — ✅ (semantically equivalent)
 
 ### L — Self-instrumentation trustworthiness (surfaced 2026-07-23)
 The product ships rich health diagnostics (`/coverage`, `/divergence`, `/anomalies`,
