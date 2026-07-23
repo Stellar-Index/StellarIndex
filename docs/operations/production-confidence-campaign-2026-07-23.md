@@ -69,11 +69,11 @@ Legend: ✅ proven · 🔵 in progress · ⬜ not started · ⚠️ finding open
 - **B11** Historical / time-series correctness (OHLCV integrity; historical price vs external) — ⬜
 
 ### C — API contract & robustness
-- **C1** OpenAPI schema conformance (every endpoint's live response) — ⬜
-- **C2** Error contract (RFC 7807 problem+json, correct status codes) — 🔵 (invalid-quote ✅)
+- **C1** OpenAPI schema conformance (every endpoint's live response) — 🔵 (98-route smoke ✅; ⚠️ C-F1 two dead endpoints)
+- **C2** Error contract (RFC 7807 problem+json, correct status codes) — ✅ (spot)
 - **C3** Pagination stability (no dup/gap across pages; cursor integrity) — ⬜
 - **C4** Fuzz / abuse (malformed, huge limits, unicode, injection → no 5xx/leak) — ⬜
-- **C5** Latency SLO p95/p99 (normal + under load) — ⬜
+- **C5** Latency SLO p95/p99 (normal + under load) — 🔵 (⚠️ C-F2 15s reserves, C-F3 ~8s detail scans)
 - **C6** Auth + rate-limit enforcement — ⬜
 - **C7** Endpoint determinism / idempotency — ⬜
 
@@ -176,6 +176,38 @@ N random accounts incl. small/dust + trustline balances; control for the ~106-le
 Our served: USDC `total_supply`=300,246,809.67, yXLM=155,011,717.72. Horizon `/assets`
 parse failed this pass — redo with a fixed `_embedded.records[].amount` extraction.
 
-### C2 — Error contract — 🔵 (spot ✅)
-`/v1/price?quote=USD` → RFC 7807 `{type,title,status:400,detail,instance,request_id}`
-well-formed. TODO: systematic bad-input matrix across all endpoints.
+### C2 — Error contract — ✅ PASS (spot)
+`/v1/price?quote=USD`, `/v1/price` (no params), `/v1/ohlc` → RFC 7807
+`{type,title,status,detail,instance,request_id}`, all well-formed with helpful
+`detail`. Even the 500 body is clean RFC 7807 with **no internal leakage**. TODO:
+full bad-input matrix across all endpoints.
+
+### C1/C5 — Live smoke sweep across all 98 GET endpoints — ⚠️ 3 FINDINGS
+Hit every GET route from R1→localhost with real path params. **48 healthy 2xx, 5
+correctly auth-gated (401/403), most 400s are correct "missing required param"** RFC
+7807. But:
+
+- **⚠️ C-F1 (HIGH — two dead public endpoints):** `/v1/accounts/{g}/operations` and
+  `/v1/accounts/{g}/transactions` return **500 for EVERY account** (verified on a
+  whale AND a small account) — both time out at exactly 8s. Root cause: they scan
+  `stellar.operations` / `transactions` (4.8B / 10.2B rows) filtered by
+  `source_account` via a `bloom_filter` skip-index (`idx_op_source`), but those
+  tables are `ORDER BY (ledger_seq,tx_index,op_index)`, so one account's rows scatter
+  across the whole range and the bloom under-prunes → ~8s scan > the handler's 8s
+  ceiling → 500. `/movements` survives (8.05s) only because it reads the per-account
+  `account_movements` table. **Fix class:** give operations/transactions the same
+  account-ordered access (a per-account table like movements, a `(account,ledger_seq)`
+  projection — capacity-sensitive on 4.8B rows — or extend `operation_participants`,
+  which is account-ordered and already 4.2B rows, to include the op's own source so
+  both arms are point-lookups). Ties to the roadmapped `account_wealth_snapshot` /
+  detail-route follow-up. **A "present to Stellar" blocker — two documented endpoints
+  are non-functional.**
+- **⚠️ C-F2 (MED):** `/v1/lending/pools/{pool}/reserves` = **15.0s** (returned 200 —
+  so this path apparently has NO 8s cap, which is its own problem: an endpoint that
+  can run 15s ties up a serving thread).
+- **⚠️ C-F3 (MED, known class):** cold detail scans at/near the ceiling — `/accounts/{g}`
+  7.9s, `/movements` 8.05s, `/positions` 4.1s, `/external/assets` 4.0s. Same
+  account-scan root as C-F1; the AccountState cache only helps repeat views.
+
+Contract endpoints (`/contracts/{id}/*`) not exercised (empty-id discovery bug in the
+sweep — real contract `CAS3J7GY…` found); retest pass queued.
