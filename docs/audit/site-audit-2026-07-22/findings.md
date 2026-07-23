@@ -1793,3 +1793,40 @@ Verified with CDP render checks:
 Third methodology error this audit (after the two `--window-size` mobile
 artefacts): a table-row selector under-reports card and non-`<table>`
 layouts. S40 downgraded to NOT-A-FINDING.
+
+---
+
+# TOP FOLLOW-UP: static-export build saturates the API (root of the detail-endpoint latency)
+
+The detail-endpoint latency (6-8s) and the slow/fragile frontend build are
+the SAME problem, and this is the durable fix.
+
+`output: 'export'` pre-renders every asset, issuer, market and contract
+DETAIL page at build time, so the build fetches all of them — measured
+**1098 API requests/minute from the build**, hitting `/v1/assets/{slug}`
+and `/v1/issuers/{g}`. Each detail read scans the 4.2B-row current-state
+table (account_id-filtered) which is ~0.4s alone but, under the build's own
+1000+ req/min against the bounded 2-thread `api_serving` profile, contends
+to the 8s handler ceiling. The result:
+
+- builds take 30+ minutes and saturate the live API for their duration;
+- a single transient 503 among the ~600 fetches fails the whole deploy
+  (observed);
+- the build load holds the (honest, S31) status roll-up in "degraded";
+- the per-request AccountState cache (v0.20.9) helps STEADY STATE but not a
+  build, where every fetch is a cold, distinct account.
+
+**Durable fix — the same shell-fallback pattern already proven for
+`/markets` (S1b):** give `/assets/[slug]`, `/issuers/[g_strkey]`,
+`/contracts/[id]`, `/dexes/[source]` and `/exchanges/[name]` a
+`functions/<route>/[[path]].js` + client `*PathView`, and pre-render only a
+small SEO core (or nothing). The build then fetches a handful of pages
+instead of ~600, so it is fast, robust to a transient 503, and never
+saturates the API. This ALSO closes the audit's own note that
+`/assets,/dexes,/sources,/exchanges` share `/markets`' 404 class.
+
+Alternative/complement: the roadmapped `account_wealth_snapshot` /
+per-account balance rollup removes the underlying scan entirely.
+
+This is the highest-value remaining item and is a self-contained refactor,
+scoped here for a follow-up pass rather than mid-deploy.
