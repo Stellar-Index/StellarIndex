@@ -98,7 +98,7 @@ Legend: ✅ proven · 🔵 in progress · ⬜ not started · ⚠️ finding open
 
 ### G — Observability / resilience
 - **G1** Alerts actually FIRE (supply divergence, ZFS, ingest lag, crash-loop) — ⬜
-- **G2** Ingest lag (lake tip vs network tip) — ⬜
+- **G2** Ingest lag (lake tip vs network tip) — ✅ (6s, healthy)
 - **G3** Data-pool watchdog proven — ✅ (evidenced 2026-07-18 halt; re-confirm)
 - **G4** Scheduled scans firing — ⬜
 
@@ -120,6 +120,24 @@ Legend: ✅ proven · 🔵 in progress · ⬜ not started · ⚠️ finding open
 - **K1** Ansible drift (deployed config vs repo) — ⬜
 - **K2** CH schema vs migrations — ⬜
 - **K3** Prometheus rules parity (R1 overlay vs multi-host) — ⬜
+
+### L — Self-instrumentation trustworthiness (surfaced 2026-07-23)
+The product ships rich health diagnostics (`/coverage`, `/divergence`, `/anomalies`,
+`/diagnostics/{ingestion,archive,cursors}`). If those are wrong, operators get FALSE
+confidence — so audit the monitors themselves.
+- **L1** Does `/anomalies` actually consume `/divergence`? (`divergence_checked:false`
+  while `/divergence` has data — ⚠️ L1-F1 candidate) — 🔵
+- **L2** Is `/coverage`'s per-source `complete:true` independently true (not just
+  self-asserted)? — ⬜
+- **L3** Is the archive cross-anchor (0 missing) computed against the real archive? — ⬜
+- **L4** Do the diagnostics' freshness stamps (`computed_at`, `scanned_at`) prove they
+  run on cadence, not once-and-stale? — ⬜
+
+### M — Streaming / SSE endpoints (surfaced 2026-07-23)
+Six `*/stream` endpoints (ledger, price, price/tip, observations, oracle/streams,
+ledger/stream). Not covered by the request/response sweep.
+- **M1** Streams emit valid, ordered, gap-free events; heartbeat; clean close — ⬜
+- **M2** Stream backpressure / slow-consumer handling (no unbounded buffer) — ⬜
 
 ---
 
@@ -231,3 +249,68 @@ a −3.2%/day asset — plausibly correct-per-window, NOT proven a bug. **B10-F1
 the headline price on the asset page (`/assets`) can visibly disagree with `/price`;
 reconcile the window/freshness or document it so consumers understand why. Verify each
 is internally correct for its stated window before closing.
+
+### G2 — Ingest lag — ✅ PASS
+`/diagnostics/ingestion`: `latest_ledger 63,611,543, lag_seconds 6`. Live v0.20.9.
+Lake tracks network tip within ~6s — healthy. (The ~106-ledger gap I saw earlier was
+the `ledger_entry_changes` state-diff tip vs the `ledgers` header tip; quantify that
+separately.) 24h volume $2.87B, 22,697 markets, 191,738 assets indexed.
+
+### Archive completeness cross-anchor — ✅ corroborates A1
+`/diagnostics/archive`: range 2→63,603,985, `cross_anchor expected 993,812 found
+993,812 missing_count 0`. The SDF history-archive checkpoint set is fully present —
+an independent-ish completeness signal on top of A1's contiguity.
+
+### E4 — Divergence tracker — 🔵 LIVE (corroborates B1)
+`/divergence`: XLM/USD ours 0.18226 vs coingecko 0.18256 (−0.16%, *clear*), vs band
+0.18464 (−1.29%, *clear*), redstone present. Multi-oracle price divergence is
+monitored live and clear. NOTE: this is *price* divergence — still need the *supply*
+cross-check (`supply_cross_check_divergence`) for E4 proper. Ours sits closest to
+coingecko; band runs high (its own venue mix). TODO: independently confirm the
+divergence math + that "clear" thresholds are sane.
+
+### B6 — Coverage (self-reported) — 🔵
+`/coverage`: aquarius + band report `complete:true, coverage_pct:1, substrate_ok +
+recognition_ok + projection_ok` to tip. Self-reported — TODO: enumerate ALL sources
+and independently corroborate a `complete:true` (Track L2), + measure usd_volume
+NULL-rate per venue against Ash's bar (100% ext, 99.5% SDEX).
+
+### L1 — Anomaly detector wiring — ⚠️ FINDING candidate
+`/anomalies` returns `firing_count:0` with `divergence_warning:false` **and
+`divergence_checked:false`** — yet `/divergence` returns live data with a −1.29% band
+delta. If the anomaly path doesn't actually consume the divergence computation, a real
+future divergence could fire nothing. **L1-F1 (MED, needs code trace):** confirm
+whether `divergence_checked:false` means the anomaly detector skips divergence.
+
+### A5 — Duplicate sweep — ✅ recent clean; historical dupes benign
+Recent [63.4M–63.5M] window: ledgers/transactions/operations/ledger_entry_changes all
+`raw == uniqExact(PK)` (no dupes). The ledgers table's global ~2× (124M/63.6M) is
+therefore **confined to older re-ingested ranges** (D1 archive-walk + D2 backfill
+re-ingests) — benign because reads dedup via FINAL, and RMT collapses on merge. TODO:
+localize which partitions carry them (schedule OPTIMIZE later); + the code-side check
+that EVERY served read of an RMT table uses FINAL/argMax/LIMIT-1-BY (no raw read
+double-counts).
+
+### B6 — Coverage — ⚠️ SEP-41 incomplete
+17 sources via `/coverage`: **15 `complete:true`** (aquarius, band, blend, cctp, comet,
+defindex, phoenix, redstone, reflector-{cex,dex,fx}, rozo, sdex gen→tip, soroswap,
+soroswap-router). **⚠️ B4-F1 (MED): `sep41_supply` + `sep41_transfers` report
+`complete:false`** — Soroban token supply/transfer tracking is NOT complete (ties to
+C2-11 >4-topic event truncation). Independently confirm what's missing + impact on
+served SEP-41 asset supply/volume.
+
+### L4 — Diagnostic freshness — ⚠️ FINDING
+`/coverage` `computed_at` = 05:37 but wall-clock 14:03 → **~8.5h stale**; its watermark
+(63,606,021) trails tip (63,611,543) by ~5.5k ledgers. **L4-F1 (LOW):** the coverage
+diagnostic is a morning snapshot, not live — an operator reading it sees stale
+completeness. Confirm the intended refresh cadence + whether the staleness flag guards it.
+
+### E4/B10 — native vs crypto:XLM internal price split — ⚠️ FINDING
+`/divergence` prices `native` and `crypto:XLM` as SEPARATE assets against the same
+references with different deltas (native/coingecko −0.16% vs crypto:XLM/coingecko
++0.37%) → **~0.5% gap between two internal XLM price representations.** All 22
+observations are `clear` (good — multi-oracle: band/chainlink/coingecko/reflector/
+redstone, max −1.29%), but **B10-F2 (MED): the same underlying asset (XLM) carries two
+prices**; a consumer hitting different endpoints/asset-ids gets different XLM/USD.
+Trace whether `native` (SDEX-anchored) and `crypto:XLM` (CEX-anchored) are meant to
+diverge, and if so document; if not, reconcile.
