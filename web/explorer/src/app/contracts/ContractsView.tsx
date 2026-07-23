@@ -8,6 +8,7 @@ import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { useSACWrappers } from '@/api/hooks';
 import { formatCompact } from '@/lib/format';
+import { useTableSort, SortableTh, type SortColumn } from '@/lib/useTableSort';
 import { Container, PageHeader, Segmented } from '@/components/ui';
 import { categoryTone, protocolMeta } from '../protocols/registry';
 import { formatTimestamp } from '../explorer-shared';
@@ -106,6 +107,20 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
 
   const rows = data?.contracts ?? [];
 
+  // Sortable columns (site-audit S36); default keeps the API's
+  // events-ranked order until a header is clicked.
+  const contractSortColumns: SortColumn<(typeof rows)[number], string>[] = [
+    { key: 'protocol', value: (c) => c.protocol ?? '', initialDir: 'asc' },
+    { key: 'events', value: (c) => c.events },
+    { key: 'last_seen', value: (c) => c.last_seen ?? '' },
+  ];
+  const {
+    sorted: sortedContracts,
+    sort: cSort,
+    toggle: cToggle,
+    ariaSort: cAriaSort,
+  } = useTableSort<(typeof rows)[number], string>(rows, contractSortColumns, null);
+
   return (
     <Panel
       title={rows.length > 0 ? `Most active (${formatCompact(rows.length)})` : 'Most active'}
@@ -135,13 +150,13 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
             <thead>
               <tr className="text-left text-[11px] uppercase tracking-wider text-ink-muted">
                 <th scope="col" className="px-4 py-2">Contract</th>
-                <th scope="col" className="px-4 py-2">Protocol</th>
-                <th scope="col" className="px-4 py-2 text-right">Events (30d)</th>
-                <th scope="col" className="px-4 py-2">Last seen</th>
+                <SortableTh label="Protocol" sortKey="protocol" sort={cSort} onSort={cToggle} ariaSort={cAriaSort} />
+                <SortableTh label="Events (30d)" sortKey="events" sort={cSort} onSort={cToggle} ariaSort={cAriaSort} align="right" />
+                <SortableTh label="Last seen" sortKey="last_seen" sort={cSort} onSort={cToggle} ariaSort={cAriaSort} />
               </tr>
             </thead>
             <tbody className="divide-y divide-line-subtle">
-              {rows.map((c) => (
+              {sortedContracts.map((c) => (
                 <tr key={c.contract_id} className="hover:bg-surface-muted">
                   <td className="px-4 py-3">
                     <Link
