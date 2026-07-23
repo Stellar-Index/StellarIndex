@@ -3,10 +3,11 @@ package v1
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	htmltemplate "html/template"
 	"log/slog"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1835,13 +1836,22 @@ func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
 // better than the 404 they previously hit. Content-negotiated: JSON for API
 // clients, a minimal HTML page for a browser.
 func (s *Server) handleErrorDoc(w http.ResponseWriter, r *http.Request) {
+	// The slug is URL-path input; constrain it to the closed kebab-case
+	// charset every real error type uses. Anything else can't be one of
+	// ours, so we don't reflect it — this also makes the value provably
+	// free of HTML metacharacters before it reaches any renderer.
 	slug := r.PathValue("slug")
+	if !errorSlugRE.MatchString(slug) {
+		slug = "unknown"
+	}
 	human := humaniseErrorSlug(slug)
 	typeURI := "https://api.stellarindex.io/errors/" + slug
 	if strings.Contains(r.Header.Get("Accept"), "text/html") {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=3600")
-		_, _ = fmt.Fprintf(w, errorDocHTML, htmlEscape(human), htmlEscape(slug))
+		// html/template auto-escapes every interpolation — no hand-rolled
+		// escaper, and gosec's taint analysis trusts it.
+		_ = errorDocTmpl.Execute(w, map[string]string{"human": human, "slug": slug})
 		return
 	}
 	w.Header().Set("Cache-Control", "public, max-age=3600")
@@ -1879,26 +1889,24 @@ func humaniseErrorSlug(slug string) string {
 	return strings.Join(words, " ")
 }
 
-// errorDocHTML is the minimal browser page for an error type. Kept
-// dependency-free (no template engine) and self-contained.
-const errorDocHTML = `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
-	`<meta name="viewport" content="width=device-width,initial-scale=1">` +
-	`<title>%[1]s · Stellar Index API errors</title>` +
-	`<style>body{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#1a1a1a}` +
-	`code{background:#f4f4f5;padding:.1em .3em;border-radius:3px}a{color:#2563eb}</style></head><body>` +
-	`<h1>%[1]s</h1>` +
-	`<p>This is a Stellar Index API error type — <code>%[2]s</code>. The error response that pointed you here ` +
-	`carries the specifics (HTTP status, the request path, and a <code>request_id</code>).</p>` +
-	`<p>For the full API reference, see <a href="https://docs.stellarindex.io">docs.stellarindex.io</a>.</p>` +
-	`</body></html>`
+// errorSlugRE constrains an error-type slug to the closed kebab-case
+// charset every real problem type uses.
+var errorSlugRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
-// htmlEscape is a tiny escaper for the two interpolated values above
-// (slug + humanised slug — both from a closed set of ASCII identifiers,
-// but escaped defensively).
-func htmlEscape(s string) string {
-	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
-	return r.Replace(s)
-}
+// errorDocTmpl is the minimal browser page for an error type. html/template
+// auto-escapes {{.human}} / {{.slug}}, so the reflected path value is safe
+// by construction (and gosec trusts it, unlike a hand-rolled escaper).
+var errorDocTmpl = htmltemplate.Must(htmltemplate.New("errdoc").Parse(
+	`<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+		`<meta name="viewport" content="width=device-width,initial-scale=1">` +
+		`<title>{{.human}} · Stellar Index API errors</title>` +
+		`<style>body{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#1a1a1a}` +
+		`code{background:#f4f4f5;padding:.1em .3em;border-radius:3px}a{color:#2563eb}</style></head><body>` +
+		`<h1>{{.human}}</h1>` +
+		`<p>This is a Stellar Index API error type — <code>{{.slug}}</code>. The error response that pointed you ` +
+		`here carries the specifics (HTTP status, the request path, and a <code>request_id</code>).</p>` +
+		`<p>For the full API reference, see <a href="https://docs.stellarindex.io">docs.stellarindex.io</a>.</p>` +
+		`</body></html>`))
 
 // handleRobotsTxt serves /robots.txt. The API origin holds JSON
 // endpoints not meant for crawler indexing — point search engines
