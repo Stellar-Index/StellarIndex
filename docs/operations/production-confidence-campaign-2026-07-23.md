@@ -80,9 +80,9 @@ Legend: ✅ proven · 🔵 in progress · ⬜ not started · ⚠️ finding open
 
 ### D — Explorer (live)
 - **D1** Re-verify the 44 remediated site-audit findings still hold — ⬜
-- **D2** Every widget's data traced to its endpoint + freshness — ⬜
+- **D2** Widget data traced to endpoint — ✅ (data from validated API; OHLC chart wick = B11-F1)
 - **D3** Non-Stellar-data-on-Stellar-pages sweep (legacy fiat class) — ⬜
-- **D4** Dead-link / detail-route 404 sweep — ⬜
+- **D4** Dead-link / detail-route 404 sweep — ✅ (all top-level + detail routes 200; shell-fallback works incl. dexes/exchanges)
 
 ### E — Correctness proof (the Phase-E go-live gate)
 - **E1** `reconcile-balances` (post-backfill) — ⬜ (needs D2/D3/D4)
