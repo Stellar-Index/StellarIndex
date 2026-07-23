@@ -50,7 +50,7 @@ Legend: ✅ proven · 🔵 in progress · ⬜ not started · ⚠️ finding open
 - **A2** Extraction completeness (header tx/op == our rows; vs Horizon) — ✅ (sampled)
 - **A3** Fidelity map (ops vs *successful* ops vs real-op changes; no degraded windows) — ✅
 - **A4** Ordinal contiguity everywhere (bad_ledgers==0) — 🔵 (blocked on D2/D3 completing)
-- **A5** Global duplicate sweep (re-ingest dup class, all tables) + "do all served reads dedup?" — 🔵
+- **A5** Global duplicate sweep (re-ingest dup class, all tables) + "do all served reads dedup?" — ✅ (recent clean; historical benign)
 - **A6** Census-row DELETE safety (no real-op rows share those keys) — ⬜
 - **A7** Soroban / contract-event completeness (>4-topic truncation, C2-11) — ⬜
 - **A8** Cross-table referential integrity (every op has its tx; every change has its op) — ✅
@@ -58,13 +58,13 @@ Legend: ✅ proven · 🔵 in progress · ⬜ not started · ⚠️ finding open
 ### B — Served money correctness (crown jewel)
 - **B1** Price accuracy vs CoinGecko/Chainlink/exchanges (broad asset set) — 🔵 (XLM/USDC ✅)
 - **B2** XLM supply (void-address reconciliation) — ✅
-- **B3** Classic asset supply (Algorithm 2) vs issuer/Horizon `/assets` — ⬜
-- **B4** SEP-41 / Soroban asset supply — ⬜
+- **B3** Classic asset supply (Algorithm 2) vs issuer/Horizon `/assets` — 🔵 (ours resolved; oracle parse pending)
+- **B4** SEP-41 / Soroban asset supply — ⚠️ (B4-F1: sep41 coverage incomplete)
 - **B5** Balance reconciliation (N accounts vs Horizon live) — ✅ (3 accounts exact; broaden N)
-- **B6** USD-volume waterfall + coverage (100% ext exchanges, 99.5%+ SDEX) — ⬜
-- **B7** Independent VWAP recompute vs served — ⬜
-- **B8** Decimal / i128 / FX precision fixtures (JPY-inversion, 10^decimals, i128 bounds) — ⬜
-- **B9** Aggregate / rollup correctness (every total == sum of its parts) — ⬜
+- **B6** USD-volume waterfall + coverage (100% ext exchanges, 99.5%+ SDEX) — 🔵 (15/17 sources complete)
+- **B7** Independent VWAP recompute vs served — ✅
+- **B8** Decimal / i128 / FX precision fixtures (JPY-inversion, 10^decimals, i128 bounds) — 🔵 (FX cross-currency ✅)
+- **B9** Aggregate / rollup correctness (every total == sum of its parts) — ✅
 - **B10** Cross-endpoint consistency (same fact agrees on every endpoint + the explorer) — 🔵 (⚠️ B10-F1 ~0.16% price spread)
 - **B11** Historical / time-series correctness (OHLCV integrity; historical price vs external) — ⬜
 
@@ -250,6 +250,19 @@ the headline price on the asset page (`/assets`) can visibly disagree with `/pri
 reconcile the window/freshness or document it so consumers understand why. Verify each
 is internally correct for its stated window before closing.
 
+### B7 — Independent VWAP recompute — ✅ PASS (validates core pricing math)
+Recomputed XLM/USD VWAP from the raw 535M-row PG `trades` table (5-min window):
+fiat:USD 0.18208 (320 trades), crypto:USDT 0.18218 (62). **Served = 0.18211 →
+0.016% vs recomputed.** The VWAP the API serves is faithful to the underlying trades.
+BONUS (B8/FX): XLM/EUR 0.16025 and XLM/GBP 0.13668 both convert to ~0.182 USD — the
+FX waterfall reconciles across currencies. Data model note: raw trades live in PG
+Timescale (`trades` 535M rows / 73 GB hypertable), NOT CH; CH is the substrate lake.
+
+### B8 — FX / precision — 🔵 (FX cross-currency ✅ via B7)
+XLM priced in EUR/GBP converts to the same USD as XLM/USD (±rounding) → FX conversion
+correct in the live path. TODO: the explicit fixtures (JPY 163.09 non-inversion,
+10^decimals supply, i128 boundary amounts, dust) as targeted cases.
+
 ### G2 — Ingest lag — ✅ PASS
 `/diagnostics/ingestion`: `latest_ledger 63,611,543, lag_seconds 6`. Live v0.20.9.
 Lake tracks network tip within ~6s — healthy. (The ~106-ledger gap I saw earlier was
@@ -314,3 +327,21 @@ redstone, max −1.29%), but **B10-F2 (MED): the same underlying asset (XLM) car
 prices**; a consumer hitting different endpoints/asset-ids gets different XLM/USD.
 Trace whether `native` (SDEX-anchored) and `crypto:XLM` (CEX-anchored) are meant to
 diverge, and if so document; if not, reconcile.
+
+**→ B10-F2 RESOLVED (benign):** `/v1/price?asset={native,crypto:XLM,XLM}` all return the
+IDENTICAL price (0.18198684526717308339) + `asset_id:crypto:XLM`. The /divergence delta
+gap was a sampling-time artifact (per-pair cadence), not two prices. No serving-layer
+inconsistency.
+
+### B9 — Aggregate / rollup correctness — ✅ PASS
+`/network/stats` `volume_24h_usd`=$2,820,338,210 vs Σ(top-200 markets' 24h vol)
+=$2,819,693,072 → **0.02% diff**, the residual being the 22,069 long-tail markets not
+in the top-200 sample. The headline network total reconciles to the sum of its market
+parts. TODO: extend to per-source volume rollup + DEX pool aggregates.
+
+### L1 — Anomaly wiring — ✅ RESOLVED (honest instrumentation, not a bug)
+`DivergenceChecked` is a deliberate CS-087 discipline (`envelope.go`, `score.go`):
+`false` means "no live cross-oracle check ran for THIS response," and consumers "MUST
+NOT read false as references agree." Divergence IS monitored (22 live `/divergence`
+observations, all clear). Residual: prove a real divergence actually FIRES an anomaly
+→ folded into **G1** (inject-and-observe).
