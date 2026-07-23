@@ -1664,3 +1664,44 @@ scan → price walk → CH exec cap → per-limit keying → second FINAL scan).
 - **S19/S23** legacy fiat/CEX positioning on Stellar surfaces (product decision)
 - **S5/S6** dead SDK link; unresolvable RFC 7807 error URIs
 - **S1 (assets/dexes/sources/exchanges)** same 404 class, lower traffic
+
+---
+
+# MAJOR CORRECTION (2026-07-23): the mobile findings were largely a screenshot artifact
+
+S42 ("the site does not render usably at phone width; clips content
+mid-word") is **WRONG**, and S8/S28/S33 were overstated. All of them traced
+to my screenshot method, not the site.
+
+The mobile screenshots in this audit were captured with headless Chrome
+`--window-size=390,844`. **That flag sets a window size; it does NOT emulate
+a mobile device** — no mobile viewport handling, no device metrics — so it
+renders the desktop layout and crops it, which *looks* like content clipped
+mid-word. This is the same class of error as the "24H VOLUME —" false alarm
+already recorded: my capture method, not the product.
+
+Re-checked with proper CDP `Emulation.setDeviceMetricsOverride`
+(width 390, mobile: true) plus a DOM overflow probe:
+
+```
+homepage @ 390px:  pageOverflow = FALSE   (docScrollWidth == viewport)
+```
+
+The homepage renders correctly on mobile — hamburger menu, hero fully
+wrapped ("The protocol explorer for the Stellar network."), body text
+wrapped, all CTAs visible, stat cards clean. `/markets` likewise: header,
+description, filter tabs and search all fit; only the data table scrolls
+horizontally **within its own `overflow-x-auto` container**, which is the
+standard, acceptable responsive-table pattern — the *page* never scrolls
+sideways.
+
+Corrected status:
+- **S42** — NOT A FINDING (screenshot artifact).
+- **S8 / S28 / S33** — the markets table requires horizontal scroll on
+  mobile, but it is CONTAINED (page doesn't overflow), which is normal.
+  Downgraded to LOW. The one genuine nit: long SAC/contract asset IDs
+  render untruncated in the Base column, widening it more than necessary.
+
+Lesson, twice-learned this audit: `--window-size` is not device emulation.
+Use CDP `Emulation.setDeviceMetricsOverride`. A screenshot-only audit
+would have shipped both false findings.
