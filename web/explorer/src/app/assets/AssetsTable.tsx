@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
 
 import { useAssets, type AssetClassFilter, type Coin } from '@/api/hooks';
+import { useTableSort, SortableTh, type SortColumn } from '@/lib/useTableSort';
 import { formatCompact, formatPriceSmall } from '@/lib/format';
 import {
   Badge,
@@ -134,6 +135,29 @@ export function AssetsTable({
 
   const assets = data?.assets ?? [];
 
+  // Sortable columns (site-audit S36). Value accessors mirror the row's
+  // rendered numbers so the visible order matches the header the user
+  // clicked. Nulls sort last (useTableSort), so unpriced/newer assets don't
+  // jump to the top of an ascending sort.
+  const sortColumns: SortColumn<Coin, string>[] = [
+    { key: 'asset', value: (c) => c.code ?? c.slug, initialDir: 'asc' },
+    { key: 'class', value: (c) => c.kind ?? c.type, initialDir: 'asc' },
+    { key: 'price', value: (c) => parseDec(c.price_usd) },
+    { key: 'change_1h', value: (c) => parseDec(c.change_1h_pct) },
+    { key: 'change_24h', value: (c) => parseDec(c.change_24h_pct) },
+    { key: 'change_7d', value: (c) => parseDec(c.change_7d_pct) },
+    { key: 'market_cap', value: (c) => parseDec(c.market_cap_usd) },
+    { key: 'volume', value: (c) => parseDec(c.volume_24h_usd) },
+    { key: 'circulating', value: (c) => parseDec(c.circulating_supply) },
+  ];
+  // Default: leave the API's incoming order (market-cap-ish rank) until the
+  // user clicks a header.
+  const { sorted: sortedAssets, sort, toggle, ariaSort } = useTableSort<Coin, string>(
+    assets,
+    sortColumns,
+    null,
+  );
+
   function setQuery(
     updates: Partial<{
       cursor: string;
@@ -189,15 +213,15 @@ export function AssetsTable({
             <THead>
               <tr>
                 <Th>#</Th>
-                <Th>Asset</Th>
-                <Th>Class</Th>
-                <Th align="right">Price</Th>
-                <Th align="right">1h %</Th>
-                <Th align="right">24h %</Th>
-                <Th align="right">7d %</Th>
-                <Th align="right">Market cap</Th>
-                <Th align="right">Volume 24h</Th>
-                <Th align="right">Circulating</Th>
+                <SortableTh label="Asset" sortKey="asset" sort={sort} onSort={toggle} ariaSort={ariaSort} />
+                <SortableTh label="Class" sortKey="class" sort={sort} onSort={toggle} ariaSort={ariaSort} />
+                <SortableTh label="Price" sortKey="price" sort={sort} onSort={toggle} ariaSort={ariaSort} align="right" />
+                <SortableTh label="1h %" sortKey="change_1h" sort={sort} onSort={toggle} ariaSort={ariaSort} align="right" />
+                <SortableTh label="24h %" sortKey="change_24h" sort={sort} onSort={toggle} ariaSort={ariaSort} align="right" />
+                <SortableTh label="7d %" sortKey="change_7d" sort={sort} onSort={toggle} ariaSort={ariaSort} align="right" />
+                <SortableTh label="Market cap" sortKey="market_cap" sort={sort} onSort={toggle} ariaSort={ariaSort} align="right" />
+                <SortableTh label="Volume 24h" sortKey="volume" sort={sort} onSort={toggle} ariaSort={ariaSort} align="right" />
+                <SortableTh label="Circulating" sortKey="circulating" sort={sort} onSort={toggle} ariaSort={ariaSort} align="right" />
                 <Th align="right">7d chart</Th>
               </tr>
             </THead>
@@ -213,7 +237,7 @@ export function AssetsTable({
                 </tr>
               )}
               {!isLoading &&
-                assets.map((coin, idx) => (
+                sortedAssets.map((coin, idx) => (
                   <AssetRow
                     key={coin.asset_id}
                     coin={coin}
