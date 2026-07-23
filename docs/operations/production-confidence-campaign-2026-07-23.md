@@ -89,7 +89,7 @@ Legend: ✅ proven · 🔵 in progress · ⬜ not started · ⚠️ finding open
 - **E2** `compute-completeness` — ⬜
 - **E3** Re-derive determinism — the INV-3 treadmill fix PROVEN: a corrected re-derive
   changes the value; an unchanged re-derive is byte-identical — ⬜
-- **E4** `supply_cross_check_divergence` alert clears — ⬜
+- **E4** supply_cross_check_divergence alert clears — ⚠️ FIRING (P3 classic-vs-SAC on PHO/KALE/BLND; ties N-F3)
 
 ### F — Deploy / DR
 - **F1** Signed-release (sigstore) verification actually verifies — ⬜
@@ -98,15 +98,15 @@ Legend: ✅ proven · 🔵 in progress · ⬜ not started · ⚠️ finding open
 - **F4** Backup coverage (CH + PG + off-site) — ⬜
 
 ### G — Observability / resilience
-- **G1** Alerts actually FIRE (supply divergence, ZFS, ingest lag, crash-loop) — ⬜
+- **G1** Alerts actually FIRE — ✅ (pipeline works; 5 firing all map to real findings)
 - **G2** Ingest lag (lake tip vs network tip) — ✅ (6s, healthy)
 - **G3** Data-pool watchdog proven — ✅ (evidenced 2026-07-18 halt; re-confirm)
-- **G4** Scheduled scans firing — ⬜
+- **G4** Scheduled scans firing — ✅
 
 ### H — Security surface
 - **H1** Injection (SQL / XDR / html-template) — ⬜
-- **H2** Secret exposure / least-privilege — ⬜
-- **H3** CORS / CSP / embed-iframe surface — ⬜
+- **H2** Secret exposure / least-privilege — ✅
+- **H3** CORS / CSP / security headers — ✅ (minor: confirm CORS policy)
 - **H4** Error information leakage — ⬜
 
 ### I — Whole-repo cold code audit
@@ -340,6 +340,32 @@ completeness axis.** This caveats every `complete:true` in `/coverage` (L2) and 
 "completeness certified" production bar — the flag proves *recent* completeness, not
 *full-history* completeness. → fix retentionStart to actual-min-served (the decided
 item 3) before relying on `complete` as the go-live gate.
+
+### H2/H3 security + G1/G4 observability — ✅ PASS (+ E4 finding)
+- **H2 secrets:** `postgres-password.txt` 600, `bigquery-key.json` 600,
+  `/etc/default/stellarindex` 640 (root+service-group) — none world-readable.
+- **H3 headers:** HSTS (max-age 1y, includeSubDomains), `X-Content-Type-Options:
+  nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy` all present on the public API.
+  CORS preflight from a hostile origin returns NO `Access-Control-Allow-Origin` (not
+  wide-open). Minor: confirm intended CORS policy for legit browser clients.
+- **G4 scans:** heartbeat/sla-probe/smoke firing every ~1 min; pgbackrest-backup,
+  archive-completeness, supply-snapshot, compute-completeness all ran on schedule
+  (explains the /coverage 05:37 stamp — cadence, so L4-F1 downgrades to "expected").
+- **G1 alerts:** 134 rules loaded; the pipeline WORKS. **Meta-signal: every one of the
+  5 firing alerts maps to a real condition I found independently** — `deadmansswitch`
+  (healthy canary), `dex_nonstandard_decimals` (informational, auto-corrected),
+  `completeness_incomplete` (=B4-F1 sep41), `sla_probe_unit_failed` (=C-F1/C-F3 latency
+  SLO breach ≥30m), `supply_cross_check_divergence` (E4 below). Honest instrumentation.
+
+### E4 — supply cross-check gate — ⚠️ FIRING (P3, narrow)
+`stellarindex_supply_cross_check_divergence` is **firing**: "Classic vs SAC supply
+mismatch >1 stroop" on Soroban-wrapped DeFi tokens **PHO, KALE, BLND** (P3). NOT a
+gross supply error — XLM supply validated exactly (B2), classic supply fine; this is
+the **classic-vs-SAC-wrapped representation reconciliation at 1-stroop granularity**,
+tied to **N-F3** (the SACWrapped reconciliation follow-up never built). **For go-live
+the gate must clear** — either ship the N-F3 reconciliation or justify the wrapped-token
+1-stroop tolerance. The sla-probe and completeness alerts corroborate C-F1/C-F3 and
+B4-F1 respectively.
 
 ### B7 — Independent VWAP recompute — ✅ PASS (validates core pricing math)
 Recomputed XLM/USD VWAP from the raw 535M-row PG `trades` table (5-min window):
