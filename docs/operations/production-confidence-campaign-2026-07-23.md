@@ -92,10 +92,10 @@ Legend: ✅ proven · 🔵 in progress · ⬜ not started · ⚠️ finding open
 - **E4** supply_cross_check_divergence alert clears — ⚠️ FIRING (P3 classic-vs-SAC on PHO/KALE/BLND; ties N-F3)
 
 ### F — Deploy / DR
-- **F1** Signed-release (sigstore) verification actually verifies — ⬜
+- **F1** Signed-release (sigstore) verification — ✅ (CI-signed; rollback binaries on host)
 - **F2** Migration up/down rehearsal (0109–0114+) — ⬜
-- **F3** DR restore drill — ACTUALLY EXECUTE (dataset is empty, never tested — real gap) — ⬜
-- **F4** Backup coverage (CH + PG + off-site) — ⬜
+- **F3** DR restore drill — ⚠️ F3-F1 never drilled (backups exist, restore untested)
+- **F4** Backup coverage (CH + PG + off-site) — ⚠️ F4-F1 CH UNBACKED, F4-F3 local-only, F4-F2 unencrypted (PG healthy)
 
 ### G — Observability / resilience
 - **G1** Alerts actually FIRE — ✅ (pipeline works; 5 firing all map to real findings)
@@ -340,6 +340,26 @@ completeness axis.** This caveats every `complete:true` in `/coverage` (L2) and 
 "completeness certified" production bar — the flag proves *recent* completeness, not
 *full-history* completeness. → fix retentionStart to actual-min-served (the decided
 item 3) before relying on `complete` as the go-live gate.
+
+### F — Deploy / DR — ⚠️ resilience gaps (backups)
+- **F1 release — ✅ OK:** v0.20.9 deployed; `.prev-v0.18.0/.prev-v0.18.1` rollback
+  binaries on host (binary-revert rollback path exists); sigstore verify runs in CI
+  (cosign not on host — by design). Minor: no on-host signature re-verify.
+- **PG backup — ✅ HEALTHY:** pgbackrest 13 backups, weekly full + daily diffs, most
+  recent **today 00:21Z**, timer succeeded. (Earlier "stale" read was a truncation
+  artifact — retracted.)
+- **⚠️ F4-F1 (HIGH): ClickHouse (8.7 TiB primary lake) has NO backup** —
+  `clickhouse-backup` not installed, no timer, no backup dir. Recoverable only via a
+  multi-day galexie re-ingest. Exactly the ha-plan §8 gap the master plan flagged;
+  still open. A go-live resilience gap.
+- **⚠️ F4-F3 (MED): backups LOCAL-only** — `repo1-path=/var/lib/pgbackrest`, no S3/
+  off-site repo; `/srv/history-archive` (galexie) also local. Box/DC loss = total loss.
+  (`off-site-backup-plan.md` exists → likely another N-class designed-not-shipped.)
+- **F4-F2 (LOW):** PG backups unencrypted (`cipher: none`).
+- **⚠️ F3-F1 (MED): restore NEVER drilled** — backups exist but an actual restore has
+  never been executed/verified. The production bar requires a *tested* restore. Do a
+  drill into a scratch instance (do NOT touch prod) before go-live.
+- **F2 migrations — ⬜** (up/down rehearsal not yet re-run this campaign).
 
 ### H2/H3 security + G1/G4 observability — ✅ PASS (+ E4 finding)
 - **H2 secrets:** `postgres-password.txt` 600, `bigquery-key.json` 600,
