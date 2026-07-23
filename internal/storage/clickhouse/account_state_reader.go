@@ -70,16 +70,31 @@ func (r *ExplorerReader) AccountState(ctx context.Context, account string) (Acco
 	// Account entry — the current-state projection (ledger_entries_current)
 	// already holds the latest entry per key (ReplacingMergeTree); FINAL forces
 	// read-time dedup. A trailing 'removed' = merged away.
+	// Query by key_xdr, NOT account_id (site-audit follow-up). The table
+	// is ORDER BY (entry_type, key_xdr), so account_id — not a sort-key
+	// column — cannot use the primary index and every read did a full
+	// FINAL scan of the 43.6M-row current-state table. Measured on R1:
+	// 0.42s standalone, but under the bounded api_serving profile
+	// (2 threads) plus concurrent load it ballooned to the handler's 8s
+	// ceiling, which kept /v1/issuers/{g} and /v1/accounts/{g} at 8s and
+	// held the whole site's p95 SLO in breach. The account's LedgerKey
+	// XDR is a PK prefix, so this is a point lookup — 0.028s, and it does
+	// not balloon. Same fix class as NativeLiquidityPoolReserves /
+	// TokenDecimals, which already key on key_xdr.
+	keyXDR, err := accountKeyXDR(account)
+	if err != nil {
+		return st, err
+	}
 	const accQ = `SELECT entry_xdr, change_type, balance, ledger_seq
 		FROM stellar.ledger_entries_current FINAL
-		WHERE account_id = ? AND entry_type = 'account'
+		WHERE key_xdr = ? AND entry_type = 'account'
 		LIMIT 1`
 	var (
 		entryXDR, changeType string
 		bal                  int64
 		ledgerSeq            uint32
 	)
-	row := r.conn.QueryRow(ctx, accQ, account)
+	row := r.conn.QueryRow(ctx, accQ, keyXDR)
 	if err := row.Scan(&entryXDR, &changeType, &bal, &ledgerSeq); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// Unknown account / not in the captured window — the empty
@@ -389,4 +404,24 @@ func (r *ExplorerReader) AccountHomeDomains(ctx context.Context, accounts []stri
 		}
 	}
 	return out, rows.Err()
+}
+
+// accountKeyXDR returns the base64 LedgerKey XDR for an account G-strkey —
+// the primary-key form of stellar.ledger_entries_current, so a lookup on
+// it is a PK-prefix point read rather than a full-column scan on
+// account_id. Mirrors liquidityPoolKeyXDR / instanceKeyXDR.
+func accountKeyXDR(gStrkey string) (string, error) {
+	var aid xdr.AccountId
+	if err := aid.SetAddress(gStrkey); err != nil {
+		return "", fmt.Errorf("clickhouse: account key %q: %w", gStrkey, err)
+	}
+	lk := xdr.LedgerKey{
+		Type:    xdr.LedgerEntryTypeAccount,
+		Account: &xdr.LedgerKeyAccount{AccountId: aid},
+	}
+	b64, err := xdr.MarshalBase64(lk)
+	if err != nil {
+		return "", fmt.Errorf("clickhouse: marshal account key: %w", err)
+	}
+	return b64, nil
 }
