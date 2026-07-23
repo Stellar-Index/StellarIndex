@@ -64,8 +64,16 @@ for P in $(seq "$FIRST" "$LAST"); do
   STAGE="stellar.lec_stage_${P}"
   log "=== partition $P  ledgers [$LO,$HI] ==="
 
-  SRC_TOTAL=$(q "SELECT count() FROM stellar.ledger_entry_changes WHERE ledger_seq BETWEEN $LO AND $HI")
-  SRC_CENSUS=$(q "SELECT count() FROM stellar.ledger_entry_changes WHERE ledger_seq BETWEEN $LO AND $HI AND tx_hash = ''")
+  # Counts read with FINAL so they are the DEDUPED (RMT-collapsed) row
+  # counts. A re-ingested ledger range leaves exact-duplicate rows across
+  # unmerged parts (measured 2x for ledgers 44,115,806-44,117,805 in
+  # partition 44, 11.18M dup rows). Staging is built from the deduped source
+  # (`AS lec FINAL` below), so the verification must compare against the
+  # deduped source count — a raw count would always exceed staging and abort
+  # a correct run. Same failure class as the transactions-side dup the join
+  # subquery already handles, but on the ledger_entry_changes source itself.
+  SRC_TOTAL=$(q "SELECT count() FROM stellar.ledger_entry_changes FINAL WHERE ledger_seq BETWEEN $LO AND $HI")
+  SRC_CENSUS=$(q "SELECT count() FROM stellar.ledger_entry_changes FINAL WHERE ledger_seq BETWEEN $LO AND $HI AND tx_hash = ''")
   SRC_SEED=$(q "SELECT count() FROM stellar.ledger_entry_changes WHERE ledger_seq BETWEEN $LO AND $HI AND intra_ledger_seq = $SEED")
   log "source rows=$SRC_TOTAL census=$SRC_CENSUS seed=$SRC_SEED"
   if [ "$SRC_TOTAL" = "0" ]; then log "partition $P empty — recording done"; echo "$P" >> "$STATE"; continue; fi
@@ -93,7 +101,7 @@ for P in $(seq "$FIRST" "$LAST"); do
               lec.account_id, lec.asset, lec.balance,
               toUInt32(row_number() OVER (PARTITION BY lec.ledger_seq
                                           ORDER BY t.tx_index, lec.change_index) - 1)
-       FROM stellar.ledger_entry_changes AS lec
+       FROM stellar.ledger_entry_changes AS lec FINAL
        INNER JOIN (
          -- DEDUP THE JOIN SIDE. stellar.transactions is a ReplacingMergeTree and
          -- the backfill re-ran ranges, so old partitions carry UNMERGED duplicate
@@ -113,7 +121,7 @@ for P in $(seq "$FIRST" "$LAST"); do
        WHERE lec.ledger_seq BETWEEN $CLO AND $CHI AND lec.tx_hash != ''
        UNION ALL
        SELECT $COLS_NO_ORD, intra_ledger_seq
-       FROM stellar.ledger_entry_changes
+       FROM stellar.ledger_entry_changes FINAL
        WHERE ledger_seq BETWEEN $CLO AND $CHI AND tx_hash = ''"
     log "  chunk [$CLO,$CHI] inserted"
   done

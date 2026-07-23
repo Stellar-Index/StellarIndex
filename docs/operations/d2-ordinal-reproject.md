@@ -1,7 +1,7 @@
 ---
 title: D2 — in-CH intra_ledger_seq reproject
-last_verified: 2026-07-21
-status: validated, not yet executed
+last_verified: 2026-07-23
+status: in progress — partitions 39–43, 45 done; 44, 46–53 running (FINAL-dedup fix)
 ---
 
 # D2 — in-CH `intra_ledger_seq` reproject
@@ -82,19 +82,57 @@ INSERT INTO stellar.lec_stage_<P>
 SELECT <all columns>,
        row_number() OVER (PARTITION BY lec.ledger_seq
                           ORDER BY t.tx_index, lec.change_index) - 1 AS intra_ledger_seq
-FROM stellar.ledger_entry_changes lec
+FROM stellar.ledger_entry_changes lec FINAL   -- FINAL: dedup re-ingested rows (see below)
 INNER JOIN stellar.transactions t
   ON t.ledger_seq = lec.ledger_seq AND t.tx_hash = lec.tx_hash
 WHERE lec.ledger_seq BETWEEN <lo> AND <hi> AND lec.tx_hash != ''
 UNION ALL
 -- (2) census rows: preserved verbatim, excluded from the window
 SELECT <all columns>, intra_ledger_seq
-FROM stellar.ledger_entry_changes
+FROM stellar.ledger_entry_changes FINAL         -- FINAL here too
 WHERE ledger_seq BETWEEN <lo> AND <hi> AND tx_hash = '';
 ```
 
 No `MaxUint32` seed rows exist in this range (measured 0), so they need no special
 handling here — but assert that rather than assume it.
+
+## CRITICAL: dedup the source with `FINAL`
+
+Both source reads — real rows and census — MUST read `stellar.ledger_entry_changes
+FINAL` (the transactions join subquery already dedups the tx side with
+`argMax(tx_index, ingested_at)`). `ledger_entry_changes` is a
+`ReplacingMergeTree`, so a **re-ingested ledger range leaves exact-duplicate rows**
+in unmerged parts until a background merge collapses them. Every `FINAL`-less query
+already returns the deduped set, but a raw physical read does not.
+
+If the source is read raw when duplicates are present:
+
+- `row_number() OVER (PARTITION BY ledger_seq ...)` counts the duplicated rows, so
+  ordinals run `0..2N-1` instead of `0..N-1`;
+- the staging `ReplacingMergeTree` then collapses the duplicate keys back down, so
+  the stage row count comes out **short** of a raw source count and the contiguity
+  check finds gaps — the verification gate aborts (correctly refusing to replace),
+  but on a partition that is actually fine once deduped.
+
+This happened on **partition 44** (2026-07-22): ledgers 44,115,806–44,117,805 were
+re-ingested, leaving **11,181,201 duplicate rows** (an exact 2× for the affected
+ledgers). The run aborted with `stage rows=6,326,108,758 (src 6,337,289,959) …
+bad_ledgers=2000` — the 11.18M gap is precisely the dup count. Reading the source
+`FINAL` fixed it: deduped source == stage == 6,326,108,758, `bad_ledgers=0`.
+
+Two consequences for the verification gate:
+
+- the source counts (`SRC_TOTAL`, `SRC_CENSUS`) must ALSO be `FINAL` counts, so the
+  gate compares stage against the *deduped* source, not the raw doubled count;
+- because the stage is built from `FINAL` source and then `REPLACE PARTITION`d in,
+  the physical duplicates are **removed** from the lake as a side effect — the
+  on-disk partition ends up matching what `FINAL` queries always returned. This is
+  correct (RMT would have collapsed them on the next merge anyway) and needs no
+  separate `OPTIMIZE` (which is blocked here regardless: the ~300 GiB partitions
+  exceed `max_bytes_to_merge_at_max_space_in_pool`).
+
+`FINAL` on a partition with no duplicates is a no-op on the result, so this is safe
+for every partition, not just re-ingested ones.
 
 ## Chunking is mandatory
 
@@ -111,7 +149,8 @@ to a few tens of millions of rows.
 2. INSERT the UNION ALL above, chunked by ledger sub-range, until the partition
    is covered.
 3. **Verify before replacing** — all must hold:
-   - `count(stage) == count(live partition)` (no rows lost, census included)
+   - `count(stage) == count(source FINAL)` (no rows lost, census included; the
+     source count is a `FINAL`/deduped count — see the `FINAL` section above)
    - per-ledger ordinals over non-census rows are contiguous `0..N-1`:
      `GROUP BY ledger_seq HAVING max(intra_ledger_seq)+1 != count() OR uniqExact(intra_ledger_seq) != count()` returns 0 rows
    - census row count in stage == census row count in source
