@@ -267,7 +267,7 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	st, err := h.Reader.AccountState(ctx, g)
+	st, err := h.Reader.AccountStateCached(ctx, g)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return

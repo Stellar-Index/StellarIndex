@@ -155,6 +155,13 @@ func (r *capReader) AccountState(ctx context.Context, _ string) (clickhouse.Acco
 	return clickhouse.AccountState{}, nil
 }
 
+// AccountStateCached records the deadline like its uncached sibling, so
+// the timeout-propagation probes still see this call.
+func (r *capReader) AccountStateCached(ctx context.Context, _ string) (clickhouse.AccountState, error) {
+	r.probe.record(ctx)
+	return clickhouse.AccountState{}, nil
+}
+
 func (r *capReader) AssetHolders(ctx context.Context, _ string, _ int) ([]clickhouse.AssetHolder, int64, error) {
 	r.probe.record(ctx)
 	return nil, 0, nil

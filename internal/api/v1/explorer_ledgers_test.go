@@ -126,6 +126,10 @@ func (s *stubExplorerReader) AccountState(_ context.Context, _ string) (clickhou
 	return s.accountState, s.err
 }
 
+func (s *stubExplorerReader) AccountStateCached(_ context.Context, _ string) (clickhouse.AccountState, error) {
+	return s.accountState, s.err
+}
+
 func (s *stubExplorerReader) AssetHolders(_ context.Context, _ string, _ int) ([]clickhouse.AssetHolder, int64, error) {
 	return s.holders, s.holderCount, s.err
 }

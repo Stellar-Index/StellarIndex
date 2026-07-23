@@ -55,6 +55,13 @@ type ExplorerReader struct {
 	// as before. Wired by the API so a persistently-failing refresh (which
 	// would pin /v1/accounts on its 503 warming state) is visible in logs.
 	wealthRefreshErr func(error)
+
+	// stateCache + stateFlight back AccountStateCached. Account/issuer
+	// detail reads scan the 4.2B-row current-state table under the bounded
+	// serving profile, so concurrent detail requests contended into 8s
+	// (site-audit follow-up); the cache serves repeats and cuts that load.
+	stateCache  *accountStateCache
+	stateFlight *perKeyFlight
 }
 
 // SetWealthRefreshErrorHandler installs a callback for background
@@ -102,7 +109,12 @@ func NewExplorerReaderAuth(ctx context.Context, addr, username, password string)
 		_ = conn.Close()
 		return nil, fmt.Errorf("clickhouse: ping explorer reader %s: %w", addr, err)
 	}
-	return &ExplorerReader{conn: conn, wealthCache: newAccountsWealthCache()}, nil
+	return &ExplorerReader{
+		conn:        conn,
+		wealthCache: newAccountsWealthCache(),
+		stateCache:  newAccountStateCache(),
+		stateFlight: newPerKeyFlight(),
+	}, nil
 }
 
 // Close releases the connection pool.
