@@ -288,7 +288,26 @@ Complements the 2× band; does not trade off clipping real moves.
 
 Broader implication (new **sub-track B12**): junk-asset SDEX trades against `native`
 may pollute other non-volume-weighted XLM metrics — sweep for max/min/last aggregations
-that lack the notional floor.
+that lack the notional floor. **Confirmed live 2026-07-23:** the wick propagates to the
+DAILY candle and recurs (Jul 15 & 16 dailies h=0.2000, Jul 17 l=0.1333); the asset
+page's `price_history_24h` line (VWAP) is clean, but the OHLC candle chart is not.
+
+**STATUS — the fix is DESIGNED-NOT-IMPLEMENTED, deferred behind D2 (not a new bug).**
+`docs/operations/finding-dust-trades-set-chart-extremes.md` §"Fix (designed, not
+implemented)" already specifies the exact remedy Ash remembered: **remove
+`combinedOutlierBandRatio` (the 2× band) and add a `usd_volume >= $0.01` notional
+floor** to the OHLC continuous aggregates —
+`COALESCE(max(price) FILTER (WHERE usd_volume >= 0.01), max(price))`. Verified there
+that every observed wick (the $0.56, this $0.1333 = a 2↔15-stroop path-payment
+remainder at usd_volume $2.7e-7, the absurd highs) has usd_volume < $0.01 → all caught;
+a real $100k fat-finger is correctly kept. Commit history: diagnosed (`098d10c6`,
+`51202874`), decided (`d87a857b`), but **NO implementation commit followed** (`git log
+d87a857b..HEAD -- ohlc*.go` is empty). Stalled because it needs re-materialising 7
+caggs (1m→1mo) over full history, which the doc says must be "scheduled off the D2
+window" — i.e. it was waiting on the D2 backfill that is running now. **→ implement in
+the post-D2 fix wave; money-surface change, verify against known-good bars.** Open
+design questions already listed: threshold sweep, usd_volume-NULL fallback (stroop
+floor), cagg FILTER support, re-mat cost.
 
 ### B7 — Independent VWAP recompute — ✅ PASS (validates core pricing math)
 Recomputed XLM/USD VWAP from the raw 535M-row PG `trades` table (5-min window):
