@@ -267,11 +267,28 @@ exceeded 0.1848 that hour (binance-USDT 0.1848, coinbase-USD 0.1846, kraken 0.18
 (`LG-GDI7NW2H…`, `HUGH-GDI7NW2H…`) at absurd ratios (up to 414e9 quote/base) — 6,283
 such trades, total **$1,796 USD volume (~0 each)**. VWAP is protected (volume-weighted,
 so B7 passed), but **OHLC high/low take max/min with no liquidity/recognition filter**,
-so scam-token SDEX prints leak a phantom spike into the XLM/USD chart. **Fix class:**
-filter OHLC (and any max/min metric) by quote-asset recognition + a min-liquidity/USD-
-volume floor, the same way VWAP effectively is. Broader implication (new **sub-track
-B12**): junk-asset SDEX trades against `native` may pollute other non-volume-weighted
-XLM metrics — sweep for max/min/last aggregations that lack the filter.
+so scam-token SDEX prints leak a phantom spike into the XLM/USD chart.
+
+**ROOT CAUSE (fully traced 2026-07-23, confirmed by a 2nd wick Ash spotted — Jul 17
+06:00 low = 0.1333333333 = 2/15, real low ~0.1827):** the combined XLM/USD OHLC series
+folds in thin SDEX/stablecoin/fiat books, and its ONLY guard on per-constituent
+high/low is `combinedOutlierBandRatio = 2` (`ohlc_fiat_combine.go:selectExtreme` /
+`outlierBound`): a candidate is dropped only if `> 2×VWAP` (high) or `< VWAP/2` (low).
+Both spurious wicks are IN-band — 0.1333 = 0.73×VWAP (floor 0.0914), 0.20 = 1.10×VWAP
+(ceiling 0.3654) — so they survive. The per-pair `FilterOutliers` (median+MAD, 4σ) is
+robust but runs per-constituent; the `$10k min_usd_volume` gate is on the VWAP-PUBLISH
+path, not the OHLC trade/constituent set. **The defect is a price-distance filter with
+NO volume/notional floor** — a thin-book constituent (XLM/GBP ~$19/h, dust SDEX <$1)
+whose low is a round-number limit order (2/15, 3/16) is only ~27% off VWAP, so no
+distance band can distinguish it from a real move.
+**FIX (Ash's instinct, correct):** add a per-constituent / per-trade **min-USD-notional
+floor** in `selectExtreme` (reuse the `MinUSDVolume` concept) — drop books/prints below
+~$X BEFORE choosing extremes, distinguishing artifacts by their ≈$0 volume not price.
+Complements the 2× band; does not trade off clipping real moves.
+
+Broader implication (new **sub-track B12**): junk-asset SDEX trades against `native`
+may pollute other non-volume-weighted XLM metrics — sweep for max/min/last aggregations
+that lack the notional floor.
 
 ### B7 — Independent VWAP recompute — ✅ PASS (validates core pricing math)
 Recomputed XLM/USD VWAP from the raw 535M-row PG `trades` table (5-min window):
