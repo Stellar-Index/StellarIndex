@@ -65,14 +65,14 @@ Legend: ✅ proven · 🔵 in progress · ⬜ not started · ⚠️ finding open
 - **B7** Independent VWAP recompute vs served — ⬜
 - **B8** Decimal / i128 / FX precision fixtures (JPY-inversion, 10^decimals, i128 bounds) — ⬜
 - **B9** Aggregate / rollup correctness (every total == sum of its parts) — ⬜
-- **B10** Cross-endpoint consistency (same fact agrees on every endpoint + the explorer) — ⬜
+- **B10** Cross-endpoint consistency (same fact agrees on every endpoint + the explorer) — 🔵 (⚠️ B10-F1 ~0.16% price spread)
 - **B11** Historical / time-series correctness (OHLCV integrity; historical price vs external) — ⬜
 
 ### C — API contract & robustness
 - **C1** OpenAPI schema conformance (every endpoint's live response) — 🔵 (98-route smoke ✅; ⚠️ C-F1 two dead endpoints)
 - **C2** Error contract (RFC 7807 problem+json, correct status codes) — ✅ (spot)
 - **C3** Pagination stability (no dup/gap across pages; cursor integrity) — ⬜
-- **C4** Fuzz / abuse (malformed, huge limits, unicode, injection → no 5xx/leak) — ⬜
+- **C4** Fuzz / abuse (malformed, huge limits, unicode, injection → no 5xx/leak) — ✅ (extend to POST/auth)
 - **C5** Latency SLO p95/p99 (normal + under load) — 🔵 (⚠️ C-F2 15s reserves, C-F3 ~8s detail scans)
 - **C6** Auth + rate-limit enforcement — ⬜
 - **C7** Endpoint determinism / idempotency — ⬜
@@ -209,5 +209,25 @@ correctly auth-gated (401/403), most 400s are correct "missing required param"**
   7.9s, `/movements` 8.05s, `/positions` 4.1s, `/external/assets` 4.0s. Same
   account-scan root as C-F1; the AccountState cache only helps repeat views.
 
-Contract endpoints (`/contracts/{id}/*`) not exercised (empty-id discovery bug in the
-sweep — real contract `CAS3J7GY…` found); retest pass queued.
+Contract retest (real ID `CAS3J7GY…`): `/contracts/{id}` 200 (1.5s), `/interactions`
+200 (0.95s), `/transfers` 200 (0.12s), `/wasm` 404 (no wasm — plausibly correct);
+**`/code-history` → 500 at 8s** → **folds into C-F1**: the dead set is now
+operations + transactions + code-history — i.e. *every endpoint that scans a big
+fact-table by a non-primary key.* Indexed contract endpoints are fast; that confirms
+the root cause and the fix boundary.
+
+### C4 — Fuzz / abuse — ✅ PASS
+8 hostile inputs (SQLi `'OR'1'='1`, `<script>`, `%00` null-byte, `DROP TABLE`,
+`limit=999999999`, `limit=-5`, ledger `-1`, ledger 20-digit-overflow) → **all 400,
+zero 5xx, zero internal leakage** (grepped bodies for panic/goroutine/sql/clickhouse/
+hex-addr/paths). Input validation + error handling are robust. TODO: extend to POST
+bodies + auth-token fuzz.
+
+### B10 — Cross-endpoint price consistency — 🔵 (minor finding B10-F1)
+Same asset (XLM/USD), three endpoints, three slightly different prices:
+`/assets/native` 0.18211 · `/price?asset=native` 0.18240 (bucket 13:55:00) ·
+`/price/tip` 0.18230 (13:56:38). ~0.16% spread, ordered by freshness (tip newest) on
+a −3.2%/day asset — plausibly correct-per-window, NOT proven a bug. **B10-F1 (LOW):**
+the headline price on the asset page (`/assets`) can visibly disagree with `/price`;
+reconcile the window/freshness or document it so consumers understand why. Verify each
+is internally correct for its stated window before closing.
