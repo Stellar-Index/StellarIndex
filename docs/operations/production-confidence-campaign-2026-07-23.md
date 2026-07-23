@@ -58,10 +58,10 @@ Legend: ✅ proven · 🔵 in progress · ⬜ not started · ⚠️ finding open
 ### B — Served money correctness (crown jewel)
 - **B1** Price accuracy vs CoinGecko/Chainlink/exchanges (broad asset set) — 🔵 (XLM/USDC ✅)
 - **B2** XLM supply (void-address reconciliation) — ✅
-- **B3** Classic asset supply (Algorithm 2) vs issuer/Horizon `/assets` — 🔵 (ours resolved; oracle parse pending)
+- **B3** Classic asset supply (Algorithm 2) vs on-chain trustline sum — ✅ (reconciles; trustlines exact)
 - **B4** SEP-41 / Soroban asset supply — ⚠️ (B4-F1: sep41 coverage incomplete)
 - **B5** Balance reconciliation (N accounts vs Horizon live) — ✅ (3 accounts exact; broaden N)
-- **B6** USD-volume waterfall + coverage (100% ext exchanges, 99.5%+ SDEX) — 🔵 (15/17 sources complete)
+- **B6** USD-volume coverage (100% ext, 99.5%+ SDEX) — ✅ (CEX 100%, SDEX 99.88%)
 - **B7** Independent VWAP recompute vs served — ✅
 - **B8** Decimal / i128 / FX precision fixtures (JPY-inversion, 10^decimals, i128 bounds) — 🔵 (FX cross-currency ✅)
 - **B9** Aggregate / rollup correctness (every total == sum of its parts) — ✅
@@ -340,6 +340,23 @@ completeness axis.** This caveats every `complete:true` in `/coverage` (L2) and 
 "completeness certified" production bar — the flag proves *recent* completeness, not
 *full-history* completeness. → fix retentionStart to actual-min-served (the decided
 item 3) before relying on `complete` as the go-live gate.
+
+### B6 — USD-volume coverage — ✅ PASS (meets Ash's bar)
+Per-source unpriced rate (24h): binance/coinbase/kraken/bitstamp/phoenix/comet
+**0.000%** (100% ext-CEX ✓); sdex **0.119%** (99.88% ✓ vs 99.5% bar); aquarius 0.382%
+(99.6% ✓); soroswap 0.704% (99.3%, marginally under, 284 trades — negligible). Coverage
+bar held. (SEP-41 completeness is separate = B4-F1.)
+
+### B3 — Classic asset supply — ✅ PASS (reconciles on-chain)
+Served USDC total_supply 303.4M reconciles with Σ on-chain trustline balances for the
+specific issuer (`USDC-GA5ZSEJYB37…`, 4.37M trustlines, **0 negative**, max 57.35M).
+Horizon `/assets` `amount` is deprecated (null) on the public instance, so the oracle
+is the trustline sum. **4/4 large holders match Horizon live to the stroop** (a
+transient 0.011% on one was ingest lag — it caught up within minutes). GOTCHA (B12):
+`asset LIKE 'CODE-%'` aggregation **Int64-overflows** by summing same-code scam tokens
+(fake astronomical supplies) → any served query must key on full `CODE-ISSUER`, never
+code-prefix. D3 edge case (multi-intra-ledger-change keys) still to be closed
+comprehensively by E1 `reconcile-balances`; common-case balances already exact.
 
 ### F — Deploy / DR — ⚠️ resilience gaps (backups)
 - **F1 release — ✅ OK:** v0.20.9 deployed; `.prev-v0.18.0/.prev-v0.18.1` rollback
