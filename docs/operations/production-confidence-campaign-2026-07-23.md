@@ -134,6 +134,14 @@ confidence — so audit the monitors themselves.
 - **L4** Do the diagnostics' freshness stamps (`computed_at`, `scanned_at`) prove they
   run on cadence, not once-and-stale? — ⬜
 
+### N — Decided-but-unimplemented fixes (surfaced 2026-07-23)
+B11-F1 revealed a fix that was **diagnosed + decided + fully designed in a doc, but
+never coded** (the `$0.01` OHLC notional floor — `d87a857b` was docs-only, no impl
+commit followed). Given this project's treadmill history, decisions that stall between
+"designed" and "shipped" are a real class. **N1:** grep `docs/` + commit history for
+"designed, not implemented" / "DECISION" / "TODO" / "deferred" fixes and confirm each
+either shipped or is tracked — 🔵 (N-F1: the OHLC $0.01 floor, deferred behind D2).
+
 ### M — Streaming / SSE endpoints (surfaced 2026-07-23)
 Six `*/stream` endpoints (ledger, price, price/tip, observations, oracle/streams,
 ledger/stream). Not covered by the request/response sweep.
