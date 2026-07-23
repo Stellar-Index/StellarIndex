@@ -66,16 +66,17 @@ Legend: ✅ proven · 🔵 in progress · ⬜ not started · ⚠️ finding open
 - **B8** Decimal / i128 / FX precision fixtures (JPY-inversion, 10^decimals, i128 bounds) — 🔵 (FX cross-currency ✅)
 - **B9** Aggregate / rollup correctness (every total == sum of its parts) — ✅
 - **B10** Cross-endpoint consistency (same fact agrees on every endpoint + the explorer) — 🔵 (⚠️ B10-F1 ~0.16% price spread)
-- **B11** Historical / time-series correctness (OHLCV integrity; historical price vs external) — ⬜
+- **B11** Historical / time-series correctness (OHLCV integrity) — ⚠️ (B11-F1 OHLC outlier pollution)
+- **B12** Junk/scam-asset trades polluting native-XLM non-volume-weighted metrics (surfaced) — 🔵
 
 ### C — API contract & robustness
 - **C1** OpenAPI schema conformance (every endpoint's live response) — 🔵 (98-route smoke ✅; ⚠️ C-F1 two dead endpoints)
 - **C2** Error contract (RFC 7807 problem+json, correct status codes) — ✅ (spot)
-- **C3** Pagination stability (no dup/gap across pages; cursor integrity) — ⬜
+- **C3** Pagination stability (no dup/gap across pages; cursor integrity) — ✅
 - **C4** Fuzz / abuse (malformed, huge limits, unicode, injection → no 5xx/leak) — ✅ (extend to POST/auth)
 - **C5** Latency SLO p95/p99 (normal + under load) — 🔵 (⚠️ C-F2 15s reserves, C-F3 ~8s detail scans)
-- **C6** Auth + rate-limit enforcement — ⬜
-- **C7** Endpoint determinism / idempotency — ⬜
+- **C6** Auth + rate-limit enforcement — ✅ (auth rejects; rate-limit TODO)
+- **C7** Endpoint determinism / idempotency — ✅
 
 ### D — Explorer (live)
 - **D1** Re-verify the 44 remediated site-audit findings still hold — ⬜
@@ -249,6 +250,28 @@ a −3.2%/day asset — plausibly correct-per-window, NOT proven a bug. **B10-F1
 the headline price on the asset page (`/assets`) can visibly disagree with `/price`;
 reconcile the window/freshness or document it so consumers understand why. Verify each
 is internally correct for its stated window before closing.
+
+### C3/C6/C7 — pagination / auth / determinism — ✅ PASS
+- **C3:** `/v1/assets` paginated 3×5 via `pagination.next` cursor → 15 unique assets,
+  0 dupes, cursor advances monotonically. Stable.
+- **C6:** protected endpoints (`/account/me`, `/account/keys`, `/account/usage`) all
+  return **401 without a token**. Auth enforced.
+- **C7:** two calls to `/v1/ledgers/63000000` (immutable historical) are
+  **byte-identical except the envelope `as_of` stamp** → deterministic.
+
+### B11 — OHLCV integrity — ⚠️ FINDING B11-F1 (MED-HIGH, data quality)
+48 XLM/USD hourly candles all satisfy OHLC invariants (h≥o,c,l; l≤o,c,h). **BUT the
+04:00 candle `high`=0.2000000000 is fabricated** — no XLM trade on ANY CEX venue
+exceeded 0.1848 that hour (binance-USDT 0.1848, coinbase-USD 0.1846, kraken 0.1845).
+**Root cause:** SDEX XLM (`base_asset='native'`) trades against **junk/scam tokens**
+(`LG-GDI7NW2H…`, `HUGH-GDI7NW2H…`) at absurd ratios (up to 414e9 quote/base) — 6,283
+such trades, total **$1,796 USD volume (~0 each)**. VWAP is protected (volume-weighted,
+so B7 passed), but **OHLC high/low take max/min with no liquidity/recognition filter**,
+so scam-token SDEX prints leak a phantom spike into the XLM/USD chart. **Fix class:**
+filter OHLC (and any max/min metric) by quote-asset recognition + a min-liquidity/USD-
+volume floor, the same way VWAP effectively is. Broader implication (new **sub-track
+B12**): junk-asset SDEX trades against `native` may pollute other non-volume-weighted
+XLM metrics — sweep for max/min/last aggregations that lack the filter.
 
 ### B7 — Independent VWAP recompute — ✅ PASS (validates core pricing math)
 Recomputed XLM/USD VWAP from the raw 535M-row PG `trades` table (5-min window):
