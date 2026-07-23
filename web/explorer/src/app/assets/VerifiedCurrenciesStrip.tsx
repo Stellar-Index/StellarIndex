@@ -4,7 +4,7 @@ import { API_BASE_URL } from '@/api/client';
 import { Badge, SectionHeader } from '@/components/ui';
 
 /**
- * Mirror of `VerifiedCurrencyListItem` on the wire.
+ * Mirror of `VerifiedItemListItem` on the wire.
  * See `internal/api/v1/assets_global.go`.
  */
 export interface VerifiedItem {
@@ -71,14 +71,24 @@ export function VerifiedCurrenciesStrip({
   // of fractional digits, so character-by-character compare works
   // up to the integer-part length. For our M2 figures (≤ 15-digit
   // integer parts) this is exact without parseFloat losing precision.
-  const sorted = [...verified].sort((a, b) => {
+  // site-audit S19: on a STELLAR asset directory, native assets must lead —
+  // not the FX reference currencies. The prior single sort ranked purely by
+  // market_cap_usd, and fiat rows carry huge FX-derived caps, so 19 national
+  // currencies (CNY, USD, EUR, …) pushed XLM/AQUA/USDC below the fold. Split
+  // by class: Stellar-native (crypto + stablecoin) first, fiat reference
+  // second and visually set apart. Within each group, cap-desc then seed
+  // order.
+  const byCapDesc = (a: VerifiedItem, b: VerifiedItem) => {
     const ac = a.market_cap_usd ?? '';
     const bc = b.market_cap_usd ?? '';
     if (ac === '' && bc === '') return 0;
-    if (ac === '') return 1; // empties last
+    if (ac === '') return 1;
     if (bc === '') return -1;
     return compareDecimalDesc(ac, bc);
-  });
+  };
+  const isFiat = (vc: VerifiedItem) => vc.class === 'fiat';
+  const stellarChips = verified.filter((vc) => !isFiat(vc)).sort(byCapDesc);
+  const fiatChips = verified.filter(isFiat).sort(byCapDesc);
 
   return (
     <section className="space-y-4">
@@ -91,7 +101,7 @@ export function VerifiedCurrenciesStrip({
         }
       />
       <div className="flex flex-wrap gap-2">
-        {sorted.map((vc) => (
+        {stellarChips.map((vc) => (
           <Link
             key={vc.slug}
             href={`/assets/${vc.slug}`}
@@ -119,6 +129,30 @@ export function VerifiedCurrenciesStrip({
           </Link>
         ))}
       </div>
+
+      {fiatChips.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-[11px] uppercase tracking-wider text-ink-faint">
+            Fiat reference rates · not Stellar assets
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {fiatChips.map((vc) => (
+              <Link
+                key={vc.slug}
+                href={`/assets/${vc.slug}`}
+                className="inline-flex items-center rounded-md border border-line bg-surface-subtle px-2.5 py-1 text-xs font-medium text-ink-muted transition hover:border-line hover:text-ink"
+                title={
+                  vc.verified_issuer
+                    ? `${vc.name} — ${vc.verified_issuer}`
+                    : vc.name
+                }
+              >
+                {vc.ticker}
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
