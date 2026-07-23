@@ -1618,3 +1618,49 @@ No hydration errors, no React warnings.
 That is a genuinely clean runtime once those two header/config issues are
 discounted — worth stating plainly, because it means the application code
 is not the problem.
+
+---
+
+# REMEDIATION LOG (2026-07-23)
+
+Fixes shipped and verified in production. Each was re-checked live, not
+assumed from the code.
+
+## API / backend (v0.20.0 → v0.20.6)
+
+| Finding | Before | After (production-verified) |
+|---|---|---|
+| **S38/S3** `/v1/sources?include=stats` | 8.1s, **0 stats returned** | **0.001s, 9 sources** — GetSourceStats 15.1s→4.7s (COUNT(DISTINCT)→two-level aggregate), so it no longer times out. Gates 6 page types |
+| **S3** `/v1/accounts` | 500 after 8.1s | **0.001s steady, 200 with data** (GALAXYVOID $10.4B). Five layers: no inline scan · price-map cache · 150s CH budget · one ranking not per-limit · locked-badge off the request path |
+| **S3** `/v1/liquidity-pools` | 500, 100% | **0.78s, 25 pools** — query referenced a `version` column absent on R1's pre-D3 table; now schema-adaptive |
+| **S31** `/status` roll-up | "operational" over 2 breached SLOs | reports **degraded** honestly; targets echoed on the wire |
+| **S24** `/sources` SDEX freshness | "19d ago" (red) while busiest | one-shot cursors excluded from freshness |
+| **S30** `/accounts` degraded copy | blamed backfill/pricing falsely | honest "ranking not ready" 503 |
+| **S37** `/dexes/<source>` 7d spark | 8.54s | prewarmed |
+
+## Web / frontend (in v0.20.x; needs a frontend deploy to take effect)
+
+| Finding | Fix |
+|---|---|
+| **S14** embeds unframeable | removed the duplicate `frame-ancestors` CSP from `/*` |
+| **S43** every asset icon blocked | `img-src` now allows `https:` |
+| **S1/S1b/S7** `/markets/*` 404s | shell-fallback pattern (`functions/markets/[[path]].js` + `PairPathView`) |
+
+## The lesson from this batch
+
+Every `/v1/accounts` layer was found only by verifying the previous
+deploy against production — the code and its tests passed at each step
+while the endpoint stayed broken for a different reason each time (inline
+scan → price walk → CH exec cap → per-limit keying → second FINAL scan).
+"CI green" and "deployed" are not "works". Verify the live surface.
+
+## Still open (documented, not yet fixed)
+
+- **S36** sorting absent on all listings but `/markets` (needs per-table UI work)
+- **S39/S40** stuck spinners on `/dexes`,`/aggregators`; blank `/bridges`,`/mev`
+  (S39's cause was `include=stats`, now fixed — re-verify after frontend deploy)
+- **S41** `/sdex`,`/amm` orphaned from nav
+- **S8/S28/S33/S42** responsive: table doesn't reflow; clips at phone width
+- **S19/S23** legacy fiat/CEX positioning on Stellar surfaces (product decision)
+- **S5/S6** dead SDK link; unresolvable RFC 7807 error URIs
+- **S1 (assets/dexes/sources/exchanges)** same 404 class, lower traffic
