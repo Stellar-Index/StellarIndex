@@ -317,6 +317,30 @@ the post-D2 fix wave; money-surface change, verify against known-good bars.** Op
 design questions already listed: threshold sweep, usd_volume-NULL fallback (stroop
 floor), cagg FILTER support, re-mat cost.
 
+### N — Decided-but-unimplemented fixes (sweep of docs/) — ⚠️ 8 FOUND
+The docs flag fixes that were designed/decided but whose code never landed. Assuming
+these are done = false confidence. Catalogued:
+
+| N-F | item | relevance | verified |
+|---|---|---|---|
+| **N-F1** | OHLC `$0.01` notional floor (remove 2× band) | money surface | ✅ not impl (`d87a857b` docs-only); deferred behind D2 |
+| **N-F2** | completeness `retentionStart = tip−1.5M` hardcoded (DECISION item 3, "fix to actual-min-served") | **completeness axis** | ✅ **still hardcoded** (`compute_completeness.go:227`) |
+| **N-F3** | supply cross-check follow-up + `SACWrapped` snapshot field not built | **E4 / Phase-E gate** | per `runbooks/supply-cross-check-divergence.md:53,252` |
+| **N-F4** | `RateLimitPerMin` on payment/paid tiers not built | C6 / security | per `r1-deployment-state.md:305` |
+| **N-F5** | ADR-0027 LCM cold-tier not shipped (~3–4 TB reclaim, monthly trim timer) | **capacity** | `lcm-cache-tiering.md:153`, `launch-todo.md:233` |
+| **N-F6** | anomaly 30-min-extension (`_sustained`) state machine not implemented | G1 / anomaly response | `runbooks/anomaly-freeze-engaged.md:60` |
+| N-F7 | CH-native completeness preseed | lower | `45b-verify-first-findings.md:71` |
+| N-F8 | SEP-1 P3 alert designed, not shipping v1 | lower | `sep1-resolution.md:94` |
+
+**N-F2 is the sharp one** — VERIFIED still live (`if *useCH && tip>1_500_000 {
+retentionStart = tip - 1_500_000 }`, and `row_counts.go:12` admits it "can fall BELOW
+the oldest data"). Consequence: **`complete:true` certifies only the last ~1.5M
+ledgers (~100 days); served-tier history loss older than that is INVISIBLE to the
+completeness axis.** This caveats every `complete:true` in `/coverage` (L2) and the
+"completeness certified" production bar — the flag proves *recent* completeness, not
+*full-history* completeness. → fix retentionStart to actual-min-served (the decided
+item 3) before relying on `complete` as the go-live gate.
+
 ### B7 — Independent VWAP recompute — ✅ PASS (validates core pricing math)
 Recomputed XLM/USD VWAP from the raw 535M-row PG `trades` table (5-min window):
 fiat:USD 0.18208 (320 trades), crypto:USDT 0.18218 (62). **Served = 0.18211 →
