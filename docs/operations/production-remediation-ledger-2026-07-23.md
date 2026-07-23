@@ -92,3 +92,24 @@ SEP-41 deep-dive (B4), precision fixtures (B8), census/soroban (A6/A7), the Phas
 gate (E1–E3, backfill-gated), and **the multi-agent cold code audit (I)** — the last
 of which is the real completeness check on "did we find everything." **The ledger is
 not provably complete until discovery + the audit are done.**
+
+---
+
+## Audit code-findings (chunk 1 — money surface, 2026-07-23)
+
+The multi-agent cold code audit found what live-probing structurally couldn't. Chunk 1 = 55 skeptic-CONFIRMED (1 crit, 7 high, 40 med, 6 low). Full list: `docs/audit/audit-2026-07-23/findings.md`. Chunk 1 hit the session limit mid-verify (not converged — resume pending); chunks 2–6 (ingest/api/completeness/web/plan) not yet run.
+
+| ID | Sev | Finding | Fix | Status |
+|---|---|---|---|---|
+| **A-CRIT-1** (DAT-15) | CRIT | `projected-rebuild -write` re-derives DEX trades with `derive_generation=now()` but never `InstallUSDVolumeResolution` → overwrites correct `usd_volume` with NULL, unrecoverable (gen guard blocks live gen-0 restore) | add `InstallUSDVolumeResolution` after `SetDeriveGeneration` in `projected_rebuild.go:137`; best: fail-closed if resolvers absent when gen>0 | OPEN |
+| A-H-1 (MNY-06 ×3) | HIGH | Served VWAP combines SDEX both-directions by **trade-count not volume**; `/v1/history`,`/v1/chart` drop reverse orientation → wrong served price | volume-weight the union across directions; read both orientations | OPEN |
+| A-H-2 (COR-14) | HIGH | Confidence = normalized geometric mean, but ADR-0019 + freeze threshold need un-normalized product → wrong freeze decisions | align to ADR-0019 (un-normalized) or fix the threshold | OPEN |
+| A-H-3 (MNY-22 ×2) | HIGH | USD-vol gate ignores USDT/USDC/DAI/PYUSD legs; baseline slow-drift defense self-defeats (z-scores its own drifting baseline) | count stablecoin legs in the gate; anchor drift detection to an external ref | OPEN |
+| A-H-4 (MNY-04 ×2) | HIGH | Freshness gate accepts a stalled observer's frozen supply re-stamped at current ledger; /coverage has no live-tip gate | require component-observer freshness ≤ threshold; add live-tip gate | OPEN |
+| **A5-REVISED** (DAT-10 ×12) | HIGH | **CONTRADICTS my A5 "benign" call:** 7+ served reads (`RecentOperations`,`AccountOperations/Transactions`,`StreamEntryChanges`,`BuildTxHashIndex`,`backfillClassicOpsWindow`…) read RMT tables WITHOUT FINAL → over-count unmerged-part duplicates | add FINAL/LIMIT-1-BY/argMax to each; chokepoint a deduped reader | OPEN |
+| A-M-8 (MNY-08) | MED | XLM circulating can go **negative** — Alg-1 lacks the zero-clamp classic+SEP-41 have | clamp circulating ≥ 0 | OPEN |
+| A-M-COR14b (COR-14) | MED | Non-USD fiat asset-detail serves `price_usd=null` AND `market_cap_usd=null` (detail path never got the fx-cross fix) | wire the fx-cross into the detail path | OPEN |
+| A-M-5 (MNY-05) | MED | On-chain DEX confidence USD-volume uses **1e8 instead of 1e7** (decimals bug) | use 1e7 for on-chain 7-dp | OPEN |
+| A-M-SEC08 (SEC-08) | MED | `isSafeImageURL` scheme-only, docstring falsely guarantees XSS-safety for issuer SEP-1 fields | validate/deny, fix docstring | OPEN |
+| **B11-F1 EXPANDED** | — | audit confirms + expands: OHLC **open/close also unfiltered**, non-fiat `?interval=` serves raw CAGG high/low, stablecoin fallback no depeg bound | extend the `$0.01` notional floor to open/close + non-fiat path + depeg bound | folds into B11-F1 |
+| **N-F2 CONFIRMED** (MNY-02) | — | independent confirm: /coverage `complete` certifies only ~100 days | (= N-F2) | folds into N-F2 |
