@@ -114,7 +114,7 @@ Legend: ✅ proven · 🔵 in progress · ⬜ not started · ⚠️ finding open
   ⬜ (multi-agent workflow; needs explicit opt-in, else scaled-down inline pass)
 
 ### J — Regression suite (prior findings stay fixed)
-- **J1** Re-verify every prior audit finding (INV-3, FX inversion, 10^decimals SAC,
+- **J1** Prior money fixes still fixed — ✅ (INV-3 guard, FX dual-field, 10^7 scaling present; supply/confidence/baseline tests pass)
   CS-### corpus) is still fixed — ⬜
 
 ### K — Config / schema drift
