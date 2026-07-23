@@ -51,15 +51,15 @@ Legend: ✅ proven · 🔵 in progress · ⬜ not started · ⚠️ finding open
 - **A3** Fidelity map (ops vs *successful* ops vs real-op changes; no degraded windows) — ✅
 - **A4** Ordinal contiguity everywhere (bad_ledgers==0) — 🔵 (blocked on D2/D3 completing)
 - **A5** Global duplicate sweep (re-ingest dup class, all tables) + "do all served reads dedup?" — ✅ (recent clean; historical benign)
-- **A6** Census-row DELETE safety (no real-op rows share those keys) — ⬜
-- **A7** Soroban / contract-event completeness (>4-topic truncation, C2-11) — ⬜
+- **A6** Census-row DELETE safety — ✅ (predicate hits only census; real-op state rows protected by op_index)
+- **A7** Soroban topic completeness — ✅ (topics_xdr Array, 0 truncation, max 8 stored; C2-11 resolved)
 - **A8** Cross-table referential integrity (every op has its tx; every change has its op) — ✅
 
 ### B — Served money correctness (crown jewel)
 - **B1** Price accuracy vs CoinGecko/Chainlink/exchanges (broad asset set) — 🔵 (XLM/USDC ✅)
 - **B2** XLM supply (void-address reconciliation) — ✅
 - **B3** Classic asset supply (Algorithm 2) vs on-chain trustline sum — ✅ (reconciles; trustlines exact)
-- **B4** SEP-41 / Soroban asset supply — ⚠️ (B4-F1: sep41 coverage incomplete)
+- **B4** SEP-41 supply — ⚠️ B4-F1 projection LAGS ~15K ledgers (substrate+recognition OK, projection behind at recent range)
 - **B5** Balance reconciliation (N accounts vs Horizon live) — ✅ (3 accounts exact; broaden N)
 - **B6** USD-volume coverage (100% ext, 99.5%+ SDEX) — ✅ (CEX 100%, SDEX 99.88%)
 - **B7** Independent VWAP recompute vs served — ✅
