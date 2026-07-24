@@ -69,6 +69,24 @@ func FiatProxy(a canonical.Asset) (canonical.Asset, bool) {
 	return proxy, true
 }
 
+// IsFiatProxyFor reports whether asset a is a `crypto:<STABLE>`
+// ticker whose peg target is the given fiat code ("USD", "EUR",
+// "MXN"). Thin predicate over [FiatProxy] for callers that only
+// need the yes/no — notably the aggregator's USD-volume accounting,
+// which must recognise `crypto:USDT`/`USDC`/`DAI`/`PYUSD`/`USDP`
+// quote legs as dollar-denominated when it values a window against
+// the MinUSDVolume floor.
+//
+// Derives from the SAME [stablecoinFiatProxy] map the expansion
+// path uses, so a peg added at the top of this file is picked up by
+// every consumer at once — the alternative (a second hard-coded
+// ticker list at the call site) is exactly the drift that let
+// proxy-fetched stablecoin legs value at $0 against the floor.
+func IsFiatProxyFor(a canonical.Asset, fiatCode string) bool {
+	proxy, ok := FiatProxy(a)
+	return ok && proxy.Code == fiatCode
+}
+
 // ProxyPair rewrites the quote side of a pair through the
 // stablecoin→fiat map. Returns ok=false when the quote isn't a
 // known stablecoin, i.e. the pair is already fiat-denominated,

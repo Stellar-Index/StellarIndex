@@ -1,6 +1,10 @@
 package orchestrator
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
+)
 
 // defaultThresh returns the package-default thresholds via the
 // zero-value's `withDefaults` merge — keeps the tests aligned with
@@ -116,5 +120,71 @@ func TestPhase2FreezeFires_PartialOverrideMergesDefaults(t *testing.T) {
 		Confidence: 0.08, ZScore: 8.0, SourceCount: 1,
 	}, override) {
 		t.Error("confidence=0.08 with override threshold 0.05 should NOT freeze")
+	}
+}
+
+// TestPhase2FreezeFires_ConfidenceConditionIsNotVacuous — R-003
+// (audit-2026-07-23, COR-14). The freeze is a THREE-signal AND, and
+// the confidence signal only carries information because
+// confidence.Compute normalises the weighted geometric mean.
+//
+// This test feeds real [confidence.Compute] output (not a literal)
+// for a single-source bucket that is otherwise unremarkable — a low
+// z, one source class, mature baseline, no cross-oracle reference,
+// and $12K of window liquidity (just over the production
+// min_usd_volume floor). Under the shipped combiner it scores 0.530,
+// so the confidence sub-condition does NOT hold and the bucket does
+// NOT freeze on source-count alone.
+//
+// Under the bare product ADR-0019's formula block shows, the same
+// bucket scores 0.0223 — below the 0.10 threshold before z is even
+// considered, because source_count_factor(1) = 0.119 and
+// diversity_factor(1) = 0.5 multiply to 0.06 on their own. Every
+// single-source window would satisfy the confidence condition, the
+// AND would collapse to two signals, and freezes (serving stale LKG
+// prices on /v1/price) would fire far more often. Changing the
+// combiner without changing this threshold is therefore NOT a
+// documentation-only change — that is what this test guards.
+func TestPhase2FreezeFires_ConfidenceConditionIsNotVacuous(t *testing.T) {
+	singleSourceButOrdinary := confidence.Inputs{
+		ZScore:                   0.5,
+		SourceCount:              1,
+		SourceClassCount:         1,
+		LiquidityUSD:             12_000, // just over the $10k publish floor
+		CrossOracleDivergencePct: -1,     // no external reference
+		BaselineAgeDays:          200,
+	}
+	score := confidence.Compute(singleSourceButOrdinary, confidence.DefaultWeights())
+
+	if score.Confidence < DefaultPhase2ConfidenceMaxFreeze {
+		t.Fatalf("single-source-but-ordinary bucket scored %v, below the %v freeze "+
+			"threshold — the confidence sub-condition is vacuous for single-source "+
+			"windows and the 3-signal AND has collapsed to 2 signals",
+			score.Confidence, DefaultPhase2ConfidenceMaxFreeze)
+	}
+
+	// Same bucket, deeply anomalous z: still no freeze, because the
+	// confidence signal has not agreed. (Two of three is not enough —
+	// that is the documented ADR-0019 semantic.)
+	if phase2FreezeFires(confidenceWithSourceCount{
+		Confidence: score.Confidence, ZScore: 8.0, SourceCount: 1,
+	}, defaultThresh()) {
+		t.Errorf("bucket with confidence=%v froze on z + source_count alone", score.Confidence)
+	}
+
+	// And the signal is live, not dead: drive a factor to zero
+	// (sub-$1K liquidity → liquidity_factor 0) and confidence craters
+	// to 0, so the same z + source_count DOES freeze.
+	crater := singleSourceButOrdinary
+	crater.LiquidityUSD = 500
+	cratered := confidence.Compute(crater, confidence.DefaultWeights())
+	if cratered.Confidence >= DefaultPhase2ConfidenceMaxFreeze {
+		t.Fatalf("dust-liquidity bucket scored %v, expected below %v",
+			cratered.Confidence, DefaultPhase2ConfidenceMaxFreeze)
+	}
+	if !phase2FreezeFires(confidenceWithSourceCount{
+		Confidence: cratered.Confidence, ZScore: 8.0, SourceCount: 1,
+	}, defaultThresh()) {
+		t.Error("dust-liquidity + z=8 + single-source should freeze")
 	}
 }
