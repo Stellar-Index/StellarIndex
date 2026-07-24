@@ -551,18 +551,40 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	if doCheckpoint {
 		if checkpointsOK == 0 && checkpointsMissed > 0 {
 			fmt.Fprintf(os.Stderr, "verify-archive: checkpoint anchor INCONCLUSIVE — %d missed, 0 matched (archive mirror may be stale)\n", checkpointsMissed)
-			if failOnMissed {
-				return 0, "", fmt.Errorf("verification FAILED: checkpoint anchor inconclusive — %d missed, 0 matched (with -fail-on-missed)", checkpointsMissed)
-			}
 		} else {
 			fmt.Fprintf(os.Stderr, "verify-archive: checkpoint anchor OK ✓  (%d matched, %d missed)\n", checkpointsOK, checkpointsMissed)
 		}
-		if failOnMissed && checkpointsMissed > 0 {
-			return 0, "", fmt.Errorf("verification FAILED: %d checkpoint(s) missing from cross-anchor archive (with -fail-on-missed per ADR-0017 X1.7)", checkpointsMissed)
+		if err := checkpointAnchorDecision(checkpointsOK, checkpointsMissed, failOnMissed); err != nil {
+			return 0, "", err
 		}
 	}
 	_ = mismatches // reserved for future exit-code semantics
 	return highestLedger, highestHashHex, nil
+}
+
+// checkpointAnchorDecision is the DB/archive-free core of the
+// checkpoint-tier verdict: it decides whether the accumulated
+// OK/Missed tallies are acceptable, independent of failOnMissed
+// where that flag doesn't apply. Pure — unit-testable without a live
+// archive walk.
+//
+// DAT-09: checkpointsOK == 0 && checkpointsMissed > 0 (every
+// checkpoint anchor missed — the run verified NOTHING against the
+// cross-anchor archive) is fatal REGARDLESS of failOnMissed. This is
+// distinct from a PARTIAL miss (some matched, some missed), which
+// only fails when the operator opted into -fail-on-missed. An
+// all-missed range was never actually anchored, so it must not be
+// certified complete or advance the checkpoint tier's
+// LastVerifiedLedger — the caller skips the state-persist on any
+// non-nil error returned here.
+func checkpointAnchorDecision(checkpointsOK, checkpointsMissed int, failOnMissed bool) error {
+	if checkpointsOK == 0 && checkpointsMissed > 0 {
+		return fmt.Errorf("verification FAILED: checkpoint anchor inconclusive — %d missed, 0 matched — nothing was anchored", checkpointsMissed)
+	}
+	if failOnMissed && checkpointsMissed > 0 {
+		return fmt.Errorf("verification FAILED: %d checkpoint(s) missing from cross-anchor archive (with -fail-on-missed per ADR-0017 X1.7)", checkpointsMissed)
+	}
+	return nil
 }
 
 // defaultTier1Peers is a representative set of tier-1 validator
