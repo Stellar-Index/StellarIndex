@@ -18,7 +18,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { apiGet } from './client';
+import { apiGet, timeoutSignal } from './client';
 import type { components, paths } from './types';
 
 // ---------------------------------------------------------------------------
@@ -206,6 +206,10 @@ export function useMe() {
       const res = await fetch(url, {
         credentials: 'include',
         headers: { Accept: 'application/json' },
+        // [absence: timeouts] a hung /v1/account/me request used to leave
+        // this query — and AccountGate, which gates every /dashboard/*
+        // page on it — stuck in "loading" forever with no escape hatch.
+        signal: timeoutSignal(),
       });
       if (res.status === 401) return null;
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);

@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, type ReactNode } from 'react';
 
 import { useMe, type MeResponse } from '@/api/hooks';
-import { Container, Section, Skeleton } from '@/components/ui';
+import { Button, Container, EmptyState, Section, Skeleton } from '@/components/ui';
 
 // AccountGate is the client auth gate for every /dashboard/* page. It
 // reuses `useMe()` — the same cookie-authed `/v1/account/me` probe the
@@ -41,13 +41,40 @@ export function AccountGate({
     // Once the probe settles and the visitor isn't signed in, bounce
     // to the magic-link sign-in. While `isLoading` we hold (the cookie
     // may yet resolve); `me.data === null` after settle = anonymous.
-    if (!me.isLoading && !signedIn) {
+    // error/auth availability: an ERRORED probe (timeout, network
+    // failure, 5xx) is NOT the same signal as "signed out" — useMe's
+    // queryFn only resolves to `null` on an authoritative 401. Bouncing
+    // on error would sign a legitimately-authenticated visitor out just
+    // because the API was momentarily unreachable, so isError is
+    // excluded here and handled as its own terminal state below.
+    if (!me.isLoading && !me.isError && !signedIn) {
       router.replace('/signin');
     }
-  }, [me.isLoading, signedIn, router]);
+  }, [me.isLoading, me.isError, signedIn, router]);
 
   if (me.isLoading) {
     return <AccountGateSkeleton />;
+  }
+
+  if (me.isError) {
+    // error/auth availability: previously there was no third state — a
+    // timed-out/errored auth probe left the visitor stuck on the loading
+    // skeleton forever (before the [absence: timeouts] fix, the request
+    // itself could also hang indefinitely with no bound at all). Give
+    // them a way out instead of a silent dead end.
+    return (
+      <Container>
+        <Section>
+          <EmptyState
+            title="Couldn't verify your sign-in"
+            description="The account service didn't respond in time. Check your connection and try again."
+            action={
+              <Button onClick={() => me.refetch()}>Retry</Button>
+            }
+          />
+        </Section>
+      </Container>
+    );
   }
 
   if (!signedIn || !me.data) {
