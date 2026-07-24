@@ -176,6 +176,54 @@ func TestParseStalledCursor_RoundTripsBackfillCursorSub(t *testing.T) {
 	}
 }
 
+// TestResumeChunkFrom_SequentialReproducesOriginalCursorSub is the
+// AGT-01 / DAT-12 / REL-09 regression: at parallel<=1 (the default),
+// runOneCursorPlan must key the resumed chunk on the ORIGINAL declared
+// `from` so backfillCursorSub reproduces the exact sub_source of the
+// stalled cursor row — advancing that row in place — rather than a
+// sibling row keyed on [last_ledger+1, to] that the stalled row's
+// -resume path will never touch again.
+func TestResumeChunkFrom_SequentialReproducesOriginalCursorSub(t *testing.T) {
+	orig := timescale.Cursor{
+		Sub:        "62200000-62210000:aquarius,band,sdex",
+		LastLedger: 62205555,
+	}
+	p := parseStalledCursor(orig)
+	if p.skip {
+		t.Fatalf("unexpected skip: %s", p.skipReason)
+	}
+
+	chunkFrom := resumeChunkFrom(p, 1) // parallel=1, the resume-stalled default
+	gotSub := backfillCursorSub(backfillOpts{from: chunkFrom, to: p.rangeTo, sources: p.sources})
+	if gotSub != orig.Sub {
+		t.Fatalf("resumed cursor sub_source = %q, want the ORIGINAL %q (a mismatch forks a sibling cursor row and the stalled row is never advanced/cleared)",
+			gotSub, orig.Sub)
+	}
+
+	// And the chunk base must be the DECLARED from, not last_ledger+1.
+	if chunkFrom != 62200000 {
+		t.Fatalf("chunkFrom = %d, want the original declared from 62200000", chunkFrom)
+	}
+}
+
+// TestResumeChunkFrom_ParallelUsesRemainingRange: at parallel>1 the
+// resumed range is split into independent sub-chunks that each need
+// their own cursor row, so the chunk base stays the REMAINING range
+// (last_ledger+1), not the original declared from.
+func TestResumeChunkFrom_ParallelUsesRemainingRange(t *testing.T) {
+	orig := timescale.Cursor{
+		Sub:        "62200000-62210000:aquarius,band,sdex",
+		LastLedger: 62205555,
+	}
+	p := parseStalledCursor(orig)
+	if p.skip {
+		t.Fatalf("unexpected skip: %s", p.skipReason)
+	}
+	if got := resumeChunkFrom(p, 4); got != p.rangeFrom {
+		t.Fatalf("resumeChunkFrom(parallel=4) = %d, want rangeFrom %d", got, p.rangeFrom)
+	}
+}
+
 // TestOverlapsAnyDataGap covers the small interval-overlap helper.
 // The function is the gate's primitive — a bug here would let
 // false-positive plans through (act on cursors that aren't real
