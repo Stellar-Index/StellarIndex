@@ -22,7 +22,13 @@
 
 # ───── Region ────────────────────────────────────────────────────────
 # [Per-region: r1=FSN1 (Hetzner Falkenstein), r2=US-East-1, r3=Singapore]
-region_id:           "r1"
+# No default on purpose (audit-2026-07-23 CFG-02): region_id feeds the
+# rendered stellarindex.toml [region] id, the galexie S3 region, and
+# per-region ADR-0016 data-path decisions. A previous "r1" default
+# meant a new-region inventory that forgot to override it would
+# silently mislabel the host as r1 — the 01-preflight.yml assert below
+# now requires every inventory to set this explicitly instead.
+region_id:           ""
 region_name:         "FSN1"
 home_domain:         "stellarindex.io"
 
