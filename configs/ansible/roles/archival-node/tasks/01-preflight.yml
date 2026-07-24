@@ -16,6 +16,21 @@
     that:
       - ansible_facts.architecture == "x86_64"
 
+# audit-2026-07-23 CFG-02: region_id has no role default (see
+# defaults/main.yml) — every inventory must set it explicitly so a
+# new-region provisioning that forgets the override fails loudly here
+# instead of silently mislabelling the host with a stale default.
+- name: Verify region_id is set to a known region code
+  ansible.builtin.assert:
+    that:
+      - region_id | default('') != ''
+      - region_id in ['r1', 'r2', 'r3']
+    fail_msg: >-
+      region_id must be set in inventory to one of r1/r2/r3 (see
+      inventory/r1.example.yml) — got {{ region_id | default('(unset)') }}.
+      A new region beyond r1-r3 should extend this list deliberately,
+      not fall through to a default.
+
 - name: Check that ZFS data devices are declared
   ansible.builtin.assert:
     that:
