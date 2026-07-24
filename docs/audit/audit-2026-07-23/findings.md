@@ -112,3 +112,131 @@
 - **minimal fix:** In usdVolumeForPairPerTrade, when usdQuoteDecimals(src.Quote) returns ok=false but src.Quote is a proxiable stablecoin (aggregate.FiatProxy(src.Quote) succeeds to USD), value the leg at that source's per-trade scale (external.Lookup(trade.Source).AmountScaleDecimals()) treating 1 stablecoin unit = $1, so crypto:USDT/USDC legs count toward survivorUSD and volume_usd.
 - **best fix:** Make USD valuation a per-trade, per-source computation (scale = external.AmountScaleDecimals(source); peg = FiatProxy OR classic/soroban peg OR fiat:USD) rather than a single per-pair-quote scale, and unit-test a proxy window whose volume is dominated by a crypto:USDT leg to prove it clears an equal min_usd_volume floor.
 
+
+---
+
+## Confirmed — chunk 2 (ingest/sources, 2026-07-24)
+
+> PARTIAL (hit session limit mid-verify, 26/219 agents failed incl. all 9 convergence finders). First-pass confirmed set below.
+
+| # | Sev | Exp | Dim | Finding |
+|---|---|---|---|---|
+| 1 | HIGH | LIVE | RFC-2 | Soroban events batch insert drops rows on failure without dead-letter queue |
+| 2 | HIGH | LIVE | CON-10 | Sink shutdown-drain budget (90s) exceeds main's shutdown deadline (30s), so the undrained-ledger-range recovery log can never fire and buffered trades |
+| 3 | HIGH | LIVE | COR-01 | Negative/invalid SEP-41 transfer or approve amount permanently wedges the sole-writer transfers projector (poison pill) |
+| 4 | HIGH | LIVE | COR-11 | Deterministic store validation errors are classified transient, so any non-pq validation failure on a sole-writer domain retries forever |
+| 5 | HIGH | LIVE | DAT-10 | claimable_balances + liquidity_pools observers never emit removals → served total/circulating supply permanently over-reported (and the doc's 'conserv |
+| 6 | HIGH | LIVE | DAT-09 | TolerateTrailingMissing masks real mid-range archive holes as 'walk-complete' because the tolerance window is anchored to the chunk's `to`, not the li |
+| 7 | HIGH | LIVE | REL-08 | On-chain trades are DROPPED (not block-retried) on disk-full / out-of-memory Postgres faults because IsInfraError omits SQLSTATE class-53 members 5310 |
+| 8 | HIGH | LIVE | REL-08 | externalRetryBuffer.drainOnce permanently drops external trades that hit an INFRA fault during the data-fault per-row isolation pass, mislabelling rec |
+| 9 | HIGH | LIVE | DAT-09 | blend_backstop genesis ledger set ~5.1M ledgers too late (56.6M vs real ~51.5M), blinding gap-detection, reconciliation, and completeness to a window  |
+| 10 | HIGH | LIVE | INT-01 | Census counts SDEX trades that the decoder deterministically drops (stricter asset-code validation) → real trade loss + permanent reconcile false-inco |
+| 11 | HIGH | LIVE | COR-11 | A Validate-failing OracleUpdate from a live oracle source permanently wedges the sole-writer oracle projector (poison pill via transient misclassifica |
+| 12 | HIGH | LIVE | REL-08 | Non-trade served-tier events are dropped on any Postgres infrastructure fault in the dispatcher drain (HandleEvent error discarded, no retry/block/dea |
+| 13 | HIGH | GATED | MNY-03 | projected-rebuild -write overwrites stored usd_volume with NULL (missing USD-volume resolver + high derive_generation) |
+| 14 | MEDIUM | LIVE | DAT-04 | Pervasive outdated docstrings describe old DO NOTHING behavior while code implements new DO UPDATE with derive_generation guard |
+| 15 | MEDIUM | LIVE | REL-02 | Soroban events batch write failures permanently lose events with no recovery |
+| 16 | MEDIUM | LIVE | MNY-05 | Streamer dust filter is denominated in raw quote-asset units but assumes the quote leg is ~USD, so it silently drops legitimate BTC-quoted (XLM/BTC) t |
+| 17 | MEDIUM | LIVE | REL-01 | WebSocket read loop has no application-level read deadline or ping keepalive; a stalled-but-open venue feed is only detected by OS TCP keepalive |
+| 18 | MEDIUM | LIVE | DAT-04 | Stale ON CONFLICT DO NOTHING comments across per-source insert paths the projector writes through now actually DO UPDATE — a claim/code disagreement t |
+| 19 | MEDIUM | LIVE | REL-02 | On-chain trades are dropped (not retried) on transient deadlock/serialization contention, contradicting the ADR-0041 'on-chain never dropped' invarian |
+| 20 | MEDIUM | LIVE | COR-08 | Phoenix/Soroswap correlation buffers key only on (ledger,tx,op); a sub-complete multi-field emission within one op reuses the stale key and merges two |
+| 21 | MEDIUM | LIVE | DAT-06 | Oracle op_index fanout keyed on OperationIndex (always 0 for Soroban) instead of EventIndex — two same-source oracle events in one tx silently overwri |
+| 22 | MEDIUM | LIVE | DAT-09 | soroban_events AsyncSink silently discards the entire batch on any write error — permanent raw-landing-zone gap, contradicting its documented never-lo |
+| 23 | MEDIUM | LIVE | DAT-09 | Fee-debit LedgerEntryChanges from failed transactions are never delivered to LedgerEntryChangeDecoders, so watched-account balance observations can be |
+| 24 | MEDIUM | LIVE | DAT-13 | decoder_stats_5m silently undercounts across a process restart and can drop/merge buckets under ticker jitter |
+| 25 | MEDIUM | LIVE | DAT-09 | SDEX keeps one-side-zero claim atoms 'for completeness' but they are unconditionally rejected downstream (DB CHECK + Trade.Validate), causing batch-in |
+| 26 | MEDIUM | LIVE | DAT-09 | Archive→live seam can silently drop up to a full 64k-ledger partition: TolerateTrailingMissing swallows a genuine archive hole, then live resumes at a |
+| 27 | MEDIUM | LIVE | REL-01 | Live handoff at a fixed `seam` hangs forever if the rolling live bucket has trimmed ledgers below `seam` |
+| 28 | MEDIUM | LIVE | DAT-09 | Projector cursor advances past ledgers whose soroban_events rows are not yet durable (async-sink flush lag / drop), silently losing sole-writer sep41  |
+| 29 | MEDIUM | LIVE | CON-10 | Pipeline shutdown-drain budget is structurally larger than — and uncoordinated with — the caller's 30s deadline: three stacked independent drainTimeou |
+| 30 | MEDIUM | LIVE | MNY-22 | Active fiat-FX feed writes upstream rates into fx_quotes with no deviation/sanity band, so one bad upstream bar mis-scales every fiat-quoted usd_volum |
+| 31 | MEDIUM | LIVE | REL-06 | WebSocket read loop has no idle/stall watchdog, so a connected-but-silent venue feed stops delivering trades indefinitely with no reconnect and no dis |
+| 32 | MEDIUM | LIVE | INT-11 | IntraLedgerSeq interleaves per-tx fee changes with op changes, inverting the true fee-phase-before-apply-phase order → wrong final balance for watched |
+| 33 | MEDIUM | LIVE | DAT-03 | Reflector op_index is computed over the unknown-symbol-COMPACTED vector, unlike band/redstone, so an allow-list change plus re-derive orphans/duplicat |
+| 34 | MEDIUM | LIVE | COR-01 | Single-ledger bounded request for ledger < 2 returns success while delivering nothing (from-clamp vs loop bound) |
+| 35 | MEDIUM | LIVE | REL-08 | Projector permanently drops (skips) a sink-rejected sole-writer sep41 event on a class-22/23 fault with no dead-letter capture — recoverable only via  |
+| 36 | MEDIUM | LIVE | COR-11 | Reflector CEX/FX decoder can emit a self-priced fiat:USD OracleUpdate that fails Validate and wedges the sole-writer oracle projector (poison pill) |
+| 37 | MEDIUM | LIVE | trap-15 | Oracle op_index fanout uses OperationIndex only — ignores EventIndex/CallPath — so multiple same-source oracle events or calls in one operation collid |
+| 38 | MEDIUM | LIVE | REL-04 | Comment claims the enqueue-advance cursor is 'held behind un-landed writes, nothing dropped', but the cursor advances at enqueue while up to 256 chann |
+| 39 | MEDIUM | LIVE | INT-11 | Event-path OpArgs enrichment attaches the operation's top-level InvokeContract args, so an event decoder whose contract is invoked as a nested sub-cal |
+| 40 | MEDIUM | LIVE | INT-01 | Dispatcher skips failed-tx entry changes while the lake extract processes them, so live account-balance observations silently miss failed-tx fee debit |
+| 41 | MEDIUM | GATED | MNY-06 | InvertScaled uses integer truncation (Div) rather than rounding, introducing a systematic downward bias on every inverted FX rate |
+| 42 | MEDIUM | GATED | REL-05 | runPoller goroutines are bound to the parent ctx while teardown only cancels the derived streamer ctx, so a late poller-config error deadlocks Run at  |
+| 43 | MEDIUM | GATED | MNY-22 | Coinbase and Bitstamp backfill stamp the entire candle's base volume at the close price (not VWAP), and Coinbase parses close from a JSON float64, bia |
+| 44 | MEDIUM | GATED | COR-14 | Census ClassicTradeEffectCount overcounts real trades — it does not mirror the sdex decoder's asset-code / pair validation drops, so its documented "M |
+| 45 | MEDIUM | GATED | MNY-13 | Backfill candle-trades and live-stream trades are never deduplicated against each other, so re-backfilling a live-covered window double-counts that vo |
+| 46 | MEDIUM | GATED | REL-01 | Live phase blocks ingest indefinitely if LiveSeamLedger is below the live bucket's first ledger |
+| 47 | MEDIUM | GATED | DAT-09 | Archive→live seam handoff silently skips up to 64k ledgers when the archive phase tolerates a trailing-missing file (production live indexer, no log,  |
+| 48 | MEDIUM | GATED | INT-01 | Cold-tier fallback silently defeated when the cold bucket's galexie schema differs from hot's (schema loaded only from hot) |
+| 49 | MEDIUM | GATED | MNY-22 | Chainlink feed decimals are taken from operator config and never cross-checked against the on-chain decimals() value, so a mis-set or upgraded feed em |
+| 50 | MEDIUM | GATED | AGT-09 | Soroswap un-seeded-pair swaps are silently dropped at Matches() with no metric; the skippedUnknownPair counter that appears to record them is unreacha |
+| 51 | MEDIUM | BRANCH | DAT-09 | CAP-0038 auto-liquidated claimable balances are unresolvable, so their later claim/clawback movements are permanently dropped from the account_movemen |
+| 52 | MEDIUM | BRANCH | DAT-09 | LiquidityPoolWithdraw with a zero-rounding leg drops the ENTIRE withdraw movement (both legs), losing a real on-chain event |
+| 53 | LOW | LIVE | COR-06 | Aquarius: 11 recognized event kinds are dropped by Matches while Decode's default branch decodes any unrouted-but-recognized event as a fabricated Tra |
+| 54 | LOW | LIVE | COR-14 | Census SorobanEventCount can exceed the soroban_events row count because captureEligible omits the marshal-failure drops that contractEventToEventsEve |
+| 55 | LOW | LIVE | AGT-08 | walkDataStore claims backend.Close() closes the underlying datastore; it does not — the store is never closed on the success path |
+| 56 | LOW | LIVE | COR-01 | Single-ledger bounded Stream with TolerateTrailingMissing returns success while delivering ZERO ledgers when that ledger is missing |
+| 57 | LOW | LIVE | INT-01 | BatchInsertTrades godoc claims 'ON CONFLICT DO NOTHING' idempotency but the executed SQL is 'ON CONFLICT DO UPDATE … usd_volume = EXCLUDED.usd_volume' |
+| 58 | LOW | LIVE | REL-02 | drainBufferedEvents' final-pass counts projector-SKIPPED trades in undrained_events/undrained_trades and the re-derive ledger range because skipInSink |
+| 59 | LOW | LIVE | CON-09 | Racy select in persistWorker can pick the flushTicker or normal `<-in` arm after ctx cancellation and flush an on-chain batch under the already-cancel |
+| 60 | LOW | LIVE | COR-01 | Auth-tree walk omits the true top-level InvokeContract call and mislabels a nested call as top-level when the top-level requires no auth |
+| 61 | LOW | LIVE | INT-05 | statsflush advances its `last` snapshot even when the Postgres write fails, permanently losing that window's decoder-stats deltas |
+| 62 | LOW | LIVE | REL-05 | External trade enqueued to the retry buffer after the buffer's run() goroutine has already finalDrained at shutdown is silently retained and never per |
+| 63 | LOW | LIVE | AGT-08 | Comet events.go package doc claims the decoder matches by topic bytes 'not at dispatch time', contradicting the load-bearing contract-identity gate th |
+| 64 | INFO | LIVE | AGT-08 | IsNotFound cold-fallback string matching is dead for the S3/MinIO backend and its documenting comment inverts the SDK's actual behavior |
+
+### Detail — chunk-2 CRITICAL + HIGH
+
+**[HIGH/LIVE] RFC-2 — Soroban events batch insert drops rows on failure without dead-letter queue**
+- loc: internal/sources/sorobanevents/dispatcher_adapter.go:254-270
+- fix: On insert failure, preserve the batch in a dead-letter queue or retry buffer instead of clearing it. Return an error so the caller can decide whether to retry, drop, or halt.
+
+**[HIGH/LIVE] CON-10 — Sink shutdown-drain budget (90s) exceeds main's shutdown deadline (30s), so the undrained-ledger-range recovery log can never fire and buffered trades are lost silently**
+- loc: cmd/stellarindex-indexer/main.go:688, cmd/stellarindex-indexer/main.go:733-738, internal/pipeline/sink.go:566-575
+- fix: Make main's shutdownCtx (main.go:688) >= the sink's drainTimeout (>= 90s), or derive drainTimeout from a shared constant that is strictly less than main's budget, so worker 0's deadline arm (and its ledger-range ERROR log) always fires before the process exits.
+
+**[HIGH/LIVE] COR-01 — Negative/invalid SEP-41 transfer or approve amount permanently wedges the sole-writer transfers projector (poison pill)**
+- loc: internal/sources/sep41_transfers/decode.go:64-96, internal/storage/timescale/sep41_transfers.go:77-79, internal/storage/timescale/errors.go:130-150
+- fix: In decodeTransferAmount and decodeApprove reject a negative amount at decode time (return an error), matching sep41_supply/decode.go:61 — a decode error is a deterministic decodeFail that the projector skips (cursor advances) instead of holding.
+
+**[HIGH/LIVE] COR-11 — Deterministic store validation errors are classified transient, so any non-pq validation failure on a sole-writer domain retries forever**
+- loc: internal/storage/timescale/errors.go:130-150, internal/projector/projector.go:398-421
+- fix: Introduce a recognizable permanent-validation error type/sentinel from the store's own validators and have IsPermanentDataError return true for it (skip + alert) so a deterministic fault cannot wedge the cursor.
+
+**[HIGH/LIVE] DAT-10 — claimable_balances + liquidity_pools observers never emit removals → served total/circulating supply permanently over-reported (and the doc's 'conservative' justification is inverted)**
+- loc: internal/sources/claimable_balances/dispatcher_adapter.go:96-112, internal/sources/claimable_balances/decode.go:22-32, internal/sources/claimable_balances/doc.go:14-33
+- fix: Make Matches/Decode handle Removed for both observers: emit an Observation with Balance=0, IsRemoval=true. Because a Removed LedgerKey for a claimable balance carries only BalanceId (no asset) and an LP LedgerKey carries only PoolId (no asset pair), the writer must resolve the prior asset_key from t
+
+**[HIGH/LIVE] DAT-09 — TolerateTrailingMissing masks real mid-range archive holes as 'walk-complete' because the tolerance window is anchored to the chunk's `to`, not the live tip — chunked parallel backfills report success while silently skipping up to 64k ledgers**
+- loc: internal/ledgerstream/ledgerstream.go:259-306, internal/ops/opsutil/opsutil.go:211-226, internal/ops/ingest/backfill.go:392
+- fix: Bound the tolerance to only the FINAL chunk whose `to` equals the current live tip: pass TolerateTrailingMissing=true only when the caller knows `to` is at/above the galexie tip, and false for every interior chunk. In chunked callers, set it only on the last chunk.
+
+**[HIGH/LIVE] REL-08 — On-chain trades are DROPPED (not block-retried) on disk-full / out-of-memory Postgres faults because IsInfraError omits SQLSTATE class-53 members 53100/53200/53000; the cursor then advances, producing a silent served-tier gap — the exact class ADR-0041 was built to prevent**
+- loc: internal/storage/timescale/errors.go:66-76, internal/pipeline/trade_sink.go:139-168, internal/pipeline/sink.go:862-896
+- fix: Add 53000, 53100, 53200 to the recognised SQLSTATE switch in IsInfraError (errors.go:66-73) — or match on `pqErr.Code.Class()=="53"` — so insufficient-resource faults route to block-and-retry like 53300.
+
+**[HIGH/LIVE] REL-08 — externalRetryBuffer.drainOnce permanently drops external trades that hit an INFRA fault during the data-fault per-row isolation pass, mislabelling recoverable infra failures as permanent 'dropped'**
+- loc: internal/pipeline/trade_sink.go:296-332
+- fix: In the drainOnce per-row loop, re-queue rows whose InsertTrade error IsInfraError/isCtxErr (requeueFrontLocked) and only count-and-drop rows that are positively permanent data faults (IsPermanentDataError).
+
+**[HIGH/LIVE] DAT-09 — blend_backstop genesis ledger set ~5.1M ledgers too late (56.6M vs real ~51.5M), blinding gap-detection, reconciliation, and completeness to a window that contains real V1 backstop events**
+- loc: internal/sources/blend_backstop/events.go:40, internal/storage/timescale/per_source_gaps.go:257, internal/ops/chops/reconciliation_catalogue.go:209
+- fix: Change `BackstopGenesisLedger` in blend_backstop/events.go:40 to the true first-possible backstop ledger (~51_499_546, matching FactoryGenesisLedger / the earliest observed lake event) and update the literal at per_source_gaps.go:257 to match.
+
+**[HIGH/LIVE] INT-01 — Census counts SDEX trades that the decoder deterministically drops (stricter asset-code validation) → real trade loss + permanent reconcile false-incomplete (treadmill)**
+- loc: internal/dispatcher/census.go:167-219, internal/sdexclaim/sdexclaim.go:34-42, internal/sources/sdex/decode.go:181-192
+- fix: Make the census counter and the decoder agree: have claimAtomCount/RealTradeCount count only atoms that would actually decode (validate the asset code the same way), OR relax validateClassicAssetCode to accept every protocol-valid asset code so no real trade is dropped.
+
+**[HIGH/LIVE] COR-11 — A Validate-failing OracleUpdate from a live oracle source permanently wedges the sole-writer oracle projector (poison pill via transient misclassification)**
+- loc: internal/sources/redstone/decode.go:73, internal/sources/redstone/decode.go:101-121, internal/sources/reflector/decode.go:96-121
+- fix: In the source decoders, drop/normalise a non-G observer to empty before emitting (band already skips USD; add the same USD self-price skip to reflector/decode.go and coerce Observer to "" when scval.AsAddressStrkey yields a non-account strkey).
+
+**[HIGH/LIVE] REL-08 — Non-trade served-tier events are dropped on any Postgres infrastructure fault in the dispatcher drain (HandleEvent error discarded, no retry/block/dead-letter) — the ADR-0041 resilience only covers trades**
+- loc: internal/pipeline/sink.go:325-329, internal/pipeline/sink.go:292, internal/pipeline/sink.go:494
+- fix: In the four dispatcher-drain call sites, stop discarding the HandleEvent error when it is infra-classified: wrap the non-trade HandleEvent call in retryInfra (block-and-retry, same as persistTrade) so an infra fault gates the drain instead of dropping the write; keep discard only for IsPermanentData
+
+**[HIGH/GATED] MNY-03 — projected-rebuild -write overwrites stored usd_volume with NULL (missing USD-volume resolver + high derive_generation)**
+- loc: internal/ops/chops/projected_rebuild.go:127-137, internal/storage/timescale/trades.go:606-631, internal/storage/timescale/trades.go:913-921
+- fix: In projected_rebuild.go, after timescale.Open and before any -write, call timescale.InstallUSDVolumeResolution(store, cfg.Trades.USDPeggedClassicAssets, cfg.Supply.SACWrappers) exactly as cmd/stellarindex-indexer/main.go:196 and ch_rebuild.go:172 do.
+
