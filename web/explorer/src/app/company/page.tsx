@@ -137,8 +137,8 @@ export default function CompanyPage() {
       <section className="space-y-3">
         <h2 className="text-2xl font-semibold tracking-tight">What&apos;s next</h2>
         <p className="text-sm text-ink-body">
-          v1 ships in the coming weeks. The roadmap that gets us there
-          lives in{' '}
+          We&apos;re still pre-v1 and shipping continuously rather than
+          against a fixed date. The roadmap that gets us to v1 lives in{' '}
           <a
             href="https://github.com/Stellar-Index/StellarIndex/blob/main/docs/architecture/launch-readiness-backlog.md"
             target="_blank"
