@@ -48,6 +48,13 @@ func confidenceCacheTTL(window time.Duration) time.Duration {
 // confidenceComputation bundles the score with the z-score that
 // produced it. Returned by [Orchestrator.computeConfidence] so the
 // Phase 2 freeze check can read both without recomputing.
+//
+// ZScore is deliberately the OBSERVATION-based score
+// ([baseline.MultiBaseline.MaxZScore] of this bucket's return), not
+// the wider score that fed [confidence.Compute]. The two differ when
+// the sustained-drift signal is the larger of the pair — see
+// [Orchestrator.computeConfidence] for why the freeze leg must stay
+// observation-based.
 type confidenceComputation struct {
 	Score  confidence.Score
 	ZScore float64
@@ -89,15 +96,45 @@ func (o *Orchestrator) computeConfidence(
 	}
 	returnPct := (currF - prevF) / prevF
 
-	z, _, valid := multi.MaxZScore(returnPct)
+	observedZ, _, valid := multi.MaxZScore(returnPct)
 	if !valid {
 		obs.AggregatorConfidenceComputeTotal.WithLabelValues("baseline_missing").Inc()
 		return confidenceComputation{}, false
 	}
 
+	// Frog-boiling (ADR-0019 §"Multi-window safeguard"): MaxZScore
+	// only asks whether THIS bucket's return is unusual, so a slow
+	// sustained push — every bucket individually unremarkable, the
+	// window medians drifting along with the attack — scores ~0 at
+	// every window length. MaxDriftZScore scores the sustained drift
+	// itself, and the larger of the two becomes the confidence input.
+	//
+	// It feeds the SCORE ONLY — never the freeze leg below. That is a
+	// hard structural constraint, not a tuning preference:
+	// MaxDriftZScore takes no observation, so it is a pure function of
+	// the hourly-refreshed baseline row. A publication decision gated
+	// on it cannot self-clear when the current bucket is fine — it
+	// stays engaged until the drift ages out of all three windows.
+	// Measured on the real path (SplitByLookback -> NewMultiBaseline),
+	// one genuine +50%-over-7-days repricing of a quiet asset holds
+	// driftZ above 5 for 30 days, 24 of them AFTER the move finished:
+	// a month of serving a pre-repricing last-known-good price.
+	//
+	// Nor can that be repaired by demanding the current bucket
+	// corroborate before drift may freeze — corroboration means
+	// observedZ is itself over the threshold, which is exactly the
+	// pre-existing spike check. A window-level statistic can either
+	// latch or add nothing to a per-bucket decision, so drift stays
+	// out of the freeze path entirely and expresses itself as reduced
+	// confidence, which is graded, self-correcting and non-destructive.
+	scoringZ := observedZ
+	if dz, _, ok := multi.MaxDriftZScore(); ok && dz > scoringZ {
+		scoringZ = dz
+	}
+
 	xo := o.lookupCrossOracle(ctx, pair)
 	score := confidence.Compute(confidence.Inputs{
-		ZScore:                    z,
+		ZScore:                    scoringZ,
 		SourceCount:               distinctSourceCount(trades),
 		SourceClassCount:          distinctSourceClassCount(trades),
 		LiquidityUSD:              approxUSDVolume(trades, pair),
@@ -106,7 +143,18 @@ func (o *Orchestrator) computeConfidence(
 		BaselineAgeDays:           baselineAgeDays(multi, computedAt),
 	}, confidence.DefaultWeights())
 
-	return confidenceComputation{Score: score, ZScore: z}, true
+	// ZScore carries the OBSERVATION-based score to the Phase 2
+	// freeze. Widening it to scoringZ would let drift alone freeze a
+	// pair, and for a large population the other two legs of the
+	// 3-signal AND are pinned true by construction: approxUSDVolume
+	// returns 0 for every non-USD-quoted pair (and for any bucket at
+	// or below the $1,000 liquidity floor), LiquidityFactor(0) is 0,
+	// and a single zero factor drives the geometric mean to 0 — so
+	// `confidence < 0.10` is permanently satisfied there regardless of
+	// every other input. 8 of the 12 pairs in defaultPairs() are
+	// non-USD-quoted. For them the AND would collapse to `z > 5`
+	// alone, and drift would be a single-signal freeze.
+	return confidenceComputation{Score: score, ZScore: observedZ}, true
 }
 
 // cacheConfidence writes a previously-computed [confidence.Score]
