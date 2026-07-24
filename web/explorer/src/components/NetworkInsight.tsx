@@ -147,11 +147,21 @@ export function ThroughputPanel({
   });
 
   const buckets = tpQ.data?.buckets ?? [];
-  const points = buckets.map((b) => ({
+  // UXP-16: `partial` marks a bucket that doesn't cover a whole UTC day
+  // (in practice only "today", still accumulating) — the API contract
+  // (openapi/stellar-index.v1.yaml, GET /network/throughput) says to
+  // EXCLUDE it from window totals and render it distinctly. We drop it
+  // from the chart series entirely rather than style a single point
+  // distinctly (LineChart is a shared, uniformly-styled primitive used
+  // elsewhere) — a still-filling "today" bar reads as a misleading dip at
+  // the end of a daily series anyway, so omitting it until the day
+  // completes is the safer default.
+  const completeBuckets = buckets.filter((b) => !b.partial);
+  const points = completeBuckets.map((b) => ({
     time: Math.floor(Date.parse(`${b.day ?? ''}T00:00:00Z`) / 1000),
     value: b[metric] ?? 0,
   }));
-  const total = buckets.reduce((s, b) => s + (b[metric] ?? 0), 0);
+  const total = completeBuckets.reduce((s, b) => s + (b[metric] ?? 0), 0);
   const labels: Record<ThroughputMetric, string> = {
     ops: 'Operations',
     txs: 'Transactions',
