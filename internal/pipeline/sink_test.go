@@ -1,11 +1,13 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"go/ast"
 	"go/token"
 	"io"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/reflector"
 )
 
 // fakeEvent is a consumer.Event that hits the sink's default
@@ -281,3 +284,126 @@ func TestPersistEvents_NormalCloseStillWorks(t *testing.T) {
 var processedCount atomic.Int64
 
 func init() { processedCount.Store(0) }
+
+// TestDrainFinalPass_SkipInSinkExcludedFromReport is the regression
+// test for REL-02 (audit-2026-07-23, low): drainBufferedEvents' final
+// best-effort pass used to bump undrained_events/undrained_trades
+// (and widen the ledger range) for EVERY event still in the channel,
+// including ones skipInSink was about to skip — a projector-owned
+// event that was never going to be persisted by this drain even on a
+// clean shutdown. That inflated the drain-timeout recovery hint,
+// telling an operator to re-derive a range the projector already
+// durably owns.
+//
+// Calls drainFinalPass directly (extracted from drainBufferedEvents'
+// ctx.Done() case) rather than racing drainBufferedEvents' outer
+// select against its own already-expired ctx.Done() — see
+// drainFinalPass's godoc for why that race can't be made
+// deterministic through the public API.
+func TestDrainFinalPass_SkipInSinkExcludedFromReport(t *testing.T) {
+	in := make(chan consumer.Event, 2)
+	// Projector-owned under SinkModeSkipProjected (see
+	// IsProjectedEvent) — must never count toward the report.
+	in <- reflector.UpdateEvent{}
+	// NOT projector-owned; guaranteed permanent data fault WITHOUT
+	// touching the DB (OracleUpdate.Validate rejects a bare Source),
+	// the same trick TestPersistEvents_DataFaultEventIsCountedAsDropped
+	// uses — safe with a nil store.
+	in <- band.UpdateEvent{Update: canonical.OracleUpdate{Source: band.SourceName}}
+	close(in)
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+
+	drainFinalPass(in, logger, nil, SinkModeSkipProjected)
+
+	out := buf.String()
+	if !strings.Contains(out, "undrained_events=1") {
+		t.Errorf("log output = %q; want undrained_events=1 — the skipInSink event must be excluded from the count", out)
+	}
+	if strings.Contains(out, "undrained_events=2") {
+		t.Errorf("log output = %q; the skipped projector-owned event inflated undrained_events to 2", out)
+	}
+}
+
+// TestShutdownSafeCtx_LiveCtxPassedThroughUnchanged pins the
+// no-op-on-live-ctx half of CON-09's fix: a still-live parent context
+// must be returned as-is (not wrapped), so the normal (non-racy) path
+// through persistWorker is unaffected.
+func TestShutdownSafeCtx_LiveCtxPassedThroughUnchanged(t *testing.T) {
+	ctx := context.Background()
+	got, cancel := shutdownSafeCtx(ctx)
+	defer cancel()
+	if got != ctx {
+		t.Errorf("shutdownSafeCtx(live ctx) returned a different context; want the same ctx passed through unchanged")
+	}
+}
+
+// TestShutdownSafeCtx_CancelledParentGetsFreshBoundedCtx is the
+// regression test for CON-09 (audit-2026-07-23): persistWorker's
+// flushTicker and `<-in` arms used to pass the worker's ctx straight
+// into flush()/persistEventResilient() with no check. Go's select has
+// no priority, so on the exact iteration the parent ctx is cancelled,
+// one of those arms can still win the race against `<-ctx.Done()` —
+// passing the already-dead ctx through makes every write fail
+// instantly (ctx.Err() short-circuits before the DB is ever touched),
+// silently abandoning work that the worker's own shutdown path a
+// moment later would have given a fair shot at landing within
+// [drainTimeout].
+//
+// Asserts the corrected behaviour: given an ALREADY-CANCELLED parent,
+// shutdownSafeCtx must return a DIFFERENT, still-LIVE context (so the
+// caller's next write isn't dead on arrival) with a real deadline
+// roughly [drainTimeout] out.
+func TestShutdownSafeCtx_CancelledParentGetsFreshBoundedCtx(t *testing.T) {
+	parent, parentCancel := context.WithCancel(context.Background())
+	parentCancel() // simulate the racy-select window: ctx already done
+
+	got, cancel := shutdownSafeCtx(parent)
+	defer cancel()
+
+	if got == parent {
+		t.Fatalf("shutdownSafeCtx(cancelled ctx) returned the SAME dead context — every write through it fails instantly (ctx.Err() short-circuits), reproducing CON-09")
+	}
+	if err := got.Err(); err != nil {
+		t.Errorf("shutdownSafeCtx(cancelled ctx).Err() = %v, want nil — the fresh context must be usable for a write attempt", err)
+	}
+	deadline, ok := got.Deadline()
+	if !ok {
+		t.Fatalf("shutdownSafeCtx(cancelled ctx) has no deadline — want one bounded by drainTimeout so a stuck write can't hang shutdown forever")
+	}
+	if remaining := time.Until(deadline); remaining <= 0 || remaining > drainTimeout+time.Second {
+		t.Errorf("shutdownSafeCtx(cancelled ctx) deadline %v from now; want roughly drainTimeout (%v) out", remaining, drainTimeout)
+	}
+}
+
+// TestPersistWorker_UsesShutdownSafeCtxOnFlushAndPersistArms is a
+// structural pin (same style as TestSinkDrain_NonTradeWritesAreResilient)
+// that persistWorker actually WIRES shutdownSafeCtx into its
+// flushTicker and `<-in` select arms, rather than the fix regressing
+// to a direct `flush(ctx)` / `persistEventResilient(ctx, ...)` call —
+// which would compile and pass every other test while silently
+// reopening CON-09.
+func TestPersistWorker_UsesShutdownSafeCtxOnFlushAndPersistArms(t *testing.T) {
+	fset := token.NewFileSet()
+	sink := parseFile(t, fset, "sink.go")
+	decl := funcDecl(t, sink, "persistWorker")
+
+	calls := 0
+	ast.Inspect(decl, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "shutdownSafeCtx" {
+			calls++
+		}
+		return true
+	})
+	// One call in the flushTicker arm, one in the batch-full flush
+	// inside the `<-in` arm, one guarding persistEventResilient in the
+	// `<-in` arm's non-trade branch.
+	if calls < 3 {
+		t.Errorf("persistWorker calls shutdownSafeCtx %d times, want >= 3 (flushTicker arm, `<-in` batch-flush branch, `<-in` persistEventResilient branch) — CON-09's fix must guard every flush/persist call reachable from the racy select, not just ctx.Done()'s own arm", calls)
+	}
+}
