@@ -137,7 +137,11 @@ export function SortableTh<K extends string>({
   const base = `whitespace-nowrap px-4 py-2.5 font-medium ${alignCls} ${className}`;
 
   if (!sortKey || !onSort || !sort || !ariaSort) {
-    return <th className={base}>{label}</th>;
+    return (
+      <th className={base} scope="col">
+        {label}
+      </th>
+    );
   }
 
   const active = sort.key === sortKey;
@@ -145,7 +149,7 @@ export function SortableTh<K extends string>({
     align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start';
 
   return (
-    <th className={base} aria-sort={ariaSort(sortKey)}>
+    <th className={base} scope="col" aria-sort={ariaSort(sortKey)}>
       <button
         type="button"
         onClick={() => onSort(sortKey)}
