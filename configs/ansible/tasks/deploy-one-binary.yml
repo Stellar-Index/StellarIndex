@@ -82,6 +82,20 @@
         cmd: "mv {{ install_dir }}/{{ binary }} {{ install_dir }}/{{ binary }}.prev-{{ backup_tag }}"
       when: current_stat.stat.exists
 
+    - name: "[{{ binary }}] Stamp backup mtime to now (backup time, not the binary's original copy time)"
+      # `mv` on the same filesystem is a rename — it does NOT touch the
+      # file's mtime, so the backup above inherits whatever mtime the
+      # now-superseded binary already had (its own deploy/copy time,
+      # possibly much older than "now"). The prune task below sorts
+      # backups by mtime to decide what's oldest; without this stamp, a
+      # revert-to-an-older-version run creates a backup that already
+      # LOOKS old and can be pruned in this same run — the opposite of
+      # "keep the latest 5" (audit-2026-07-23 AGT-08).
+      ansible.builtin.file:
+        path: "{{ install_dir }}/{{ binary }}.prev-{{ backup_tag }}"
+        state: touch
+      when: current_stat.stat.exists
+
     - name: "[{{ binary }}] Atomic rename .new → live"
       ansible.builtin.command:
         cmd: "mv {{ install_dir }}/{{ binary }}.new {{ install_dir }}/{{ binary }}"
@@ -148,6 +162,17 @@
       delay: 3
       until: svc_state.rc == 0 and (svc_state.stdout | trim) == 'active'
 
+    # audit-2026-07-23 CID-14: migrations are applied once for the whole
+    # deploy up-front, but each binary swap+probe is independent — record
+    # every binary that reached a HEALTHY new version in this run so that
+    # if a LATER binary in binary_list fails, the rescue block below can
+    # roll ALL of them back together, not just the failing one. Facts
+    # persist across include_tasks loop iterations (host-scoped, not
+    # loop-scoped), so this accumulates across the whole binary_list loop.
+    - name: "[{{ binary }}] Record successful swap (for whole-deploy rollback if a LATER binary fails)"
+      ansible.builtin.set_fact:
+        swapped_binaries: "{{ (swapped_binaries | default({})) | combine({binary: backup_tag}) }}"
+
   rescue:
     - name: "[{{ binary }}] FAILURE — rolling back"
       ansible.builtin.debug:
@@ -190,9 +215,72 @@
         state: restarted
       ignore_errors: true
 
+    # audit-2026-07-23 CID-14: this binary failing its health probe means
+    # the whole deploy failed — don't leave EARLIER binaries in this same
+    # run stranded on the new version while this one reverts. Roll every
+    # binary recorded in swapped_binaries (built up by the "Record
+    # successful swap" task above, across prior loop iterations) back to
+    # its own pre-deploy state too. Best-effort (ignore_errors) — we're
+    # already in the failure path and want to revert as much as possible
+    # rather than abort partway through cleanup.
+    - name: "[{{ binary }}] Whole-deploy rollback — stop other newly-swapped services"
+      ansible.builtin.systemd:
+        name: "{{ item.key }}.service"
+        state: stopped
+      loop: "{{ (swapped_binaries | default({})) | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: item.key not in cli_binaries
+      ignore_errors: true
+
+    - name: "[{{ binary }}] Whole-deploy rollback — move other newly-live binaries aside"
+      ansible.builtin.command:
+        cmd: "mv {{ install_dir }}/{{ item.key }} {{ install_dir }}/{{ item.key }}.rolledback-{{ version }}"
+      loop: "{{ (swapped_binaries | default({})) | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      ignore_errors: true
+
+    - name: "[{{ binary }}] Whole-deploy rollback — restore each one's previous binary"
+      ansible.builtin.command:
+        cmd: "mv {{ install_dir }}/{{ item.key }}.prev-{{ item.value }} {{ install_dir }}/{{ item.key }}"
+      loop: "{{ (swapped_binaries | default({})) | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      ignore_errors: true
+
+    - name: "[{{ binary }}] Whole-deploy rollback — restore each one's sidecar version marker"
+      ansible.builtin.copy:
+        content: "{{ item.value }}"
+        dest: "/var/lib/stellarindex/deployed-versions/{{ item.key }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ (swapped_binaries | default({})) | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      ignore_errors: true
+
+    - name: "[{{ binary }}] Whole-deploy rollback — restart each one with its previous binary"
+      ansible.builtin.systemd:
+        name: "{{ item.key }}.service"
+        state: restarted
+      loop: "{{ (swapped_binaries | default({})) | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: item.key not in cli_binaries
+      ignore_errors: true
+
     - name: "[{{ binary }}] FAIL the play"
       ansible.builtin.fail:
-        msg: "{{ binary }} health probe failed; rolled back to {{ backup_tag }}. Bad binary preserved at {{ install_dir }}/{{ binary }}.failed-{{ version }} for forensics."
+        msg: >-
+          {{ binary }} health probe failed; rolled back to {{ backup_tag }}.
+          Bad binary preserved at {{ install_dir }}/{{ binary }}.failed-{{ version }}
+          for forensics.
+          {% if (swapped_binaries | default({})) | length > 0 %}
+          Also rolled back these earlier-in-this-run binaries to keep the
+          host on one consistent version set: {{ (swapped_binaries | default({})) | dict2items | map(attribute='key') | join(', ') }}.
+          {% endif %}
 
   always:
     - name: "[{{ binary }}] Clean up stale .new"
