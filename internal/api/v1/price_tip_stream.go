@@ -56,6 +56,20 @@ const tipStreamTickTimeout = 8 * time.Second
 // after the stream body starts there's no way to set status, so
 // failures must be detected pre-flight.
 func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
+	// REL-05: admit against the concurrency caps FIRST, before the
+	// synchronous pre-flight compute below (computeTip) runs. Without
+	// this, a client already at its stream cap still paid for the full
+	// pre-flight tip computation before being rejected. release is
+	// idempotent and deferred here so every return path releases
+	// exactly once; the stream is handed off via
+	// StreamFromChannelPreAdmitted below so it doesn't also acquire a
+	// second slot.
+	release, ok := streaming.TryAcquireStreamSlot(w, r)
+	if !ok {
+		return
+	}
+	defer release()
+
 	if s.prices == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/price-unavailable",
@@ -119,7 +133,7 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 
 	go s.runTipStreamProducer(prodCtx, ch, &gen, asset, quote, window, first, firstSources)
 
-	streaming.StreamFromChannel(w, r, ch, streaming.StreamOptions{})
+	streaming.StreamFromChannelPreAdmitted(w, r, ch, streaming.StreamOptions{})
 }
 
 // runTipStreamProducer is the per-connection compute + push loop.
