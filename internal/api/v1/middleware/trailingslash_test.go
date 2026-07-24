@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -75,6 +76,35 @@ func TestTrailingSlashRedirect_noSlashPassesThrough(t *testing.T) {
 
 	if !called {
 		t.Error("inner handler should have been called for no-slash path")
+	}
+}
+
+// TestTrailingSlashRedirect_refusesProtocolRelativeTarget is the
+// SEC-16 regression: a request path of "//evil.com/" must NOT redirect
+// to "//evil.com" (a protocol-relative Location a browser resolves as
+// an absolute redirect off the API origin — an unauthenticated open
+// redirect). The middleware must instead fall through to next (which
+// 404s / lets the mux apply its own safe same-origin cleanup) rather
+// than ever emitting that Location.
+func TestTrailingSlashRedirect_refusesProtocolRelativeTarget(t *testing.T) {
+	called := false
+	mw := TrailingSlashRedirect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNotFound)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "//evil.com/", nil)
+	rec := httptest.NewRecorder()
+	mw.ServeHTTP(rec, req)
+
+	if loc := rec.Header().Get("Location"); strings.HasPrefix(loc, "//") {
+		t.Fatalf("open redirect: Location = %q resolves off the API origin (SEC-16)", loc)
+	}
+	if rec.Code == http.StatusPermanentRedirect {
+		t.Errorf("status = 308 — middleware redirected to a protocol-relative target instead of refusing")
+	}
+	if !called {
+		t.Error("expected the request to fall through to next (no safe redirect target)")
 	}
 }
 
