@@ -349,11 +349,12 @@ func run(cfgPath string, dryRun bool) error {
 	// rather than hours of MinIO re-walking. See
 	// internal/sources/sorobanevents + migration 0041.
 	rawEventSink := sorobanevents.NewAsyncSink(store, sorobanevents.AsyncSinkOptions{
-		BufferSize:    4096,
-		BatchSize:     1000,
-		FlushInterval: time.Second,
-		WriteTimeout:  10 * time.Second,
-		Logger:        logger.With("component", "soroban-events"),
+		IsPermanentFault: timescale.IsPermanentDataError,
+		BufferSize:       4096,
+		BatchSize:        1000,
+		FlushInterval:    time.Second,
+		WriteTimeout:     10 * time.Second,
+		Logger:           logger.With("component", "soroban-events"),
 	})
 	rawEventSink.Start()
 	// Ctx-cancel safety net (see backfill.go for rationale):
