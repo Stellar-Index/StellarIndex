@@ -142,3 +142,20 @@ The multi-agent cold code audit found what live-probing structurally couldn't. C
 | A3-H-absence (negative-space) | HIGH | no kill-switch to suspend/close an account; no billing-downgrade rate-limit enforcement; no per-account active-key quota; Stripe 'paid-but-no-keys' no dead-letter | build the kill-switch, downgrade enforcement, key quota, dead-letter |
 
 **229 confirmed across chunks 1–3 (1 crit, 36 high). Chunks 4–6 pending.**
+
+## Audit code-findings (chunk 4 — completeness/ops, 2026-07-24)
+
+99 CONFIRMED (3 crit, 12 high, 70 med). **A-CRIT-1 TRIPLE-confirmed** + broadened to a class. Key:
+
+| ID | Sev | Finding | Fix |
+|---|---|---|---|
+| A-CRIT-1 (DAT-15) | CRIT | projected-rebuild NULLs usd_volume — triple-confirmed; documented aquarius rewards-catchup also triggers it | InstallUSDVolumeResolution in projected_rebuild.go:137 |
+| **A-CRIT-2** (DAT-15) | CRIT | **main on-chain backfill** also lacks the resolver/positive-generation → same NULL-usd_volume class | same fix, main backfill path |
+| **A-CRIT-3** (REL-05) | CRIT | backfill/resume-stalled HANG after completing range; teardown under a dead context | fix teardown ctx / add liveness timeout |
+| A4-H-completeness (DAT-09/11/15 ×4) | HIGH | completeness reconcile hard-floored tip−1.5M (N-F2 from 4 angles); CH-path verdict silently regresses complete=false→true (INV-5 violation); source-level floor un-verifies full history | retentionStart=actual-min-served; forbid verdict regression |
+| A4-H-exit0 (REL-02 ×2) | HIGH | backfill-external returns exit 0 when every trade insert fails; projected-rebuild checkpoints window complete when non-trade writes failed | non-zero exit on write failure; gate checkpoint on write success |
+| A4-H-dsn (CFG-04) | HIGH | STELLARINDEX_POSTGRES_DSN env silently replaces config, no validation/audit (trap #11) | validate + log the override source |
+| A4-H-healthz (OBS-07) | HIGH | cross-region-monitor /healthz reports healthy forever after first tick even if check loop dies | tie /healthz to a liveness heartbeat |
+| A4-H-identity (DAT-12) | HIGH | XLM has 3 canonical identities (native/crypto:XLM/SAC-addr), canonical layer never unifies → SAC-wrapped supply/volume split | add a unifying canonical primitive |
+
+**328 confirmed across chunks 1–4 (~3 distinct crit, ~48 high). Chunks 5–6 (web, plan/infra) pending 2:40pm London reset.**
