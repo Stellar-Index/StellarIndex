@@ -106,6 +106,82 @@ func TestFiatProxy_NonCryptoAssetsReturnFalse(t *testing.T) {
 	}
 }
 
+// TestIsFiatProxyFor — R-008 (audit 2026-07-23). The aggregator's
+// USD-volume accounting asks "is this quote leg dollar-denominated?"
+// and MUST answer yes for the abstract USD-pegged stablecoin tickers
+// the proxy expansion fetches under. The predicate reads the same
+// peg map as FiatProxy so a peg added there is recognised by the
+// MinUSDVolume floor without a second hard-coded list.
+func TestIsFiatProxyFor(t *testing.T) {
+	classicUSDC, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+	fiatUSD, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatalf("NewFiatAsset: %v", err)
+	}
+
+	mustCrypto := func(code string) canonical.Asset {
+		t.Helper()
+		a, err := canonical.NewCryptoAsset(code)
+		if err != nil {
+			t.Fatalf("NewCryptoAsset(%q): %v", code, err)
+		}
+		return a
+	}
+
+	tests := []struct {
+		name  string
+		asset canonical.Asset
+		fiat  string
+		want  bool
+	}{
+		{"crypto:USDT is USD", mustCrypto("USDT"), "USD", true},
+		{"crypto:USDC is USD", mustCrypto("USDC"), "USD", true},
+		{"crypto:DAI is USD", mustCrypto("DAI"), "USD", true},
+		{"crypto:PYUSD is USD", mustCrypto("PYUSD"), "USD", true},
+		{"crypto:USDP is USD", mustCrypto("USDP"), "USD", true},
+		{"crypto:EURC is EUR, not USD", mustCrypto("EURC"), "USD", false},
+		{"crypto:EURC is EUR", mustCrypto("EURC"), "EUR", true},
+		{"crypto:MXNe is MXN", mustCrypto("MXNe"), "MXN", true},
+		{"crypto:XLM has no peg", mustCrypto("XLM"), "USD", false},
+		{"crypto:BTC has no peg", mustCrypto("BTC"), "USD", false},
+		{"fiat:USD is not a proxy ticker", fiatUSD, "USD", false},
+		{"classic USDC is not the abstract ticker", classicUSDC, "USD", false},
+		{"native is not a proxy ticker", canonical.NativeAsset(), "USD", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsFiatProxyFor(tc.asset, tc.fiat); got != tc.want {
+				t.Errorf("IsFiatProxyFor(%s, %q) = %v, want %v",
+					tc.asset.String(), tc.fiat, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestIsFiatProxyFor_CoversEveryUSDBacker pins the predicate to the
+// USD peg set the expansion path fetches: every ticker FiatBackers
+// enumerates for "USD" must be recognised as USD-denominated by the
+// volume accounting, or that leg's dollars vanish at the
+// MinUSDVolume floor (R-008).
+func TestIsFiatProxyFor_CoversEveryUSDBacker(t *testing.T) {
+	backers := FiatBackers("USD")
+	if len(backers) == 0 {
+		t.Fatal("FiatBackers(USD) empty — peg map regressed")
+	}
+	for _, code := range backers {
+		a, err := canonical.NewCryptoAsset(code)
+		if err != nil {
+			t.Fatalf("NewCryptoAsset(%q): %v", code, err)
+		}
+		if !IsFiatProxyFor(a, "USD") {
+			t.Errorf("IsFiatProxyFor(crypto:%s, USD) = false, want true — proxy-fetched leg would value at $0", code)
+		}
+	}
+}
+
 func TestProxyPair_RewritesQuoteOnly(t *testing.T) {
 	xlm, _ := canonical.NewCryptoAsset("XLM")
 	usdt, _ := canonical.NewCryptoAsset("USDT")
