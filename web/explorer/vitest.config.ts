@@ -24,7 +24,10 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./vitest.setup.ts'],
-    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    // `functions/**` (Cloudflare Pages edge functions) is plain JS with its
+    // own small test suite colocated the same way `src/**` component tests
+    // are — no jsdom DOM APIs needed, but the shared config/setup applies.
+    include: ['src/**/*.{test,spec}.{ts,tsx}', 'functions/**/*.{test,spec}.js'],
     css: false,
     restoreMocks: true,
   },
