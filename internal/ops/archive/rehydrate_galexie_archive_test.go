@@ -1,10 +1,59 @@
 package archive
 
 import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 )
+
+// fakeRehydrateStore is a DB/S3-free rehydrateStore: canned per-path
+// responses so the not-found-vs-transient distinction in
+// copyColdToHot is exercisable without live S3/MinIO.
+type fakeRehydrateStore struct {
+	exists      map[string]bool  // path -> exists (checked only if existsErr[path] unset)
+	existsErr   map[string]error // path -> Exists error
+	getFileErr  map[string]error // path -> GetFile error
+	getFileBody map[string][]byte
+	putErr      map[string]error
+	putOK       map[string]bool // path -> PutFileIfNotExists ok result (default true)
+
+	putCalls []string // paths PutFileIfNotExists was invoked for
+}
+
+func (f *fakeRehydrateStore) Exists(_ context.Context, path string) (bool, error) {
+	if err, ok := f.existsErr[path]; ok {
+		return false, err
+	}
+	return f.exists[path], nil
+}
+
+func (f *fakeRehydrateStore) GetFile(_ context.Context, path string) (io.ReadCloser, int64, error) {
+	if err, ok := f.getFileErr[path]; ok {
+		return nil, 0, err
+	}
+	body := f.getFileBody[path]
+	return io.NopCloser(bytes.NewReader(body)), int64(len(body)), nil
+}
+
+func (f *fakeRehydrateStore) PutFileIfNotExists(_ context.Context, path string, _ io.WriterTo, _ map[string]string) (bool, error) {
+	f.putCalls = append(f.putCalls, path)
+	if err, ok := f.putErr[path]; ok {
+		return false, err
+	}
+	if ok, has := f.putOK[path]; has {
+		return ok, nil
+	}
+	return true, nil
+}
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
 
 // TestRehydratePaths_AlignsDownToFileBoundary verifies that a -from
 // value sitting mid-file expands down to the file's start boundary
@@ -88,6 +137,107 @@ func TestRehydratePaths_SingleLedgerFile_DefaultCase(t *testing.T) {
 	paths := rehydratePaths(schema, 50000000, 50000010)
 	if len(paths) != 11 {
 		t.Errorf("expected 11 paths for an 11-ledger range at LPF=1; got %d", len(paths))
+	}
+}
+
+// TestRehydrateFiles_TransientColdErrorIsNotMissing is the DAT-09
+// regression: a transient cold-tier fault (Exists errors, or GetFile
+// fails despite Exists having just confirmed presence) must be
+// counted as an error — NOT as "missing" — so the command's
+// `errs > 0` non-zero exit actually fires. Silently folding a
+// transient fault into "missing" both mislabels a real infra problem
+// as a data gap and (previously) still exited 0.
+func TestRehydrateFiles_TransientColdErrorIsNotMissing(t *testing.T) {
+	hot := &fakeRehydrateStore{exists: map[string]bool{}} // nothing in hot
+	cold := &fakeRehydrateStore{
+		existsErr: map[string]error{"a": errors.New("dial tcp: connection refused")},
+	}
+	skipped, copied, missing, errs, err := rehydrateFiles(context.Background(), discardLogger(), hot, cold, []string{"a"}, false)
+	if err != nil {
+		t.Fatalf("rehydrateFiles: %v", err)
+	}
+	if missing != 0 {
+		t.Fatalf("transient cold.Exists error must NOT be counted as missing, got missing=%d", missing)
+	}
+	if errs != 1 {
+		t.Fatalf("transient cold.Exists error must be counted as an error, got errs=%d", errs)
+	}
+	if skipped != 0 || copied != 0 {
+		t.Fatalf("unexpected skipped=%d copied=%d", skipped, copied)
+	}
+}
+
+// TestRehydrateFiles_GenuineGapIsMissing: cold.Exists definitively
+// returning false (no error) is the ONLY path that should increment
+// missing.
+func TestRehydrateFiles_GenuineGapIsMissing(t *testing.T) {
+	hot := &fakeRehydrateStore{exists: map[string]bool{}}
+	cold := &fakeRehydrateStore{exists: map[string]bool{"a": false}}
+	_, _, missing, errs, err := rehydrateFiles(context.Background(), discardLogger(), hot, cold, []string{"a"}, false)
+	if err != nil {
+		t.Fatalf("rehydrateFiles: %v", err)
+	}
+	if missing != 1 {
+		t.Fatalf("genuine cold absence must be counted as missing, got missing=%d", missing)
+	}
+	if errs != 0 {
+		t.Fatalf("genuine gap must not be counted as an error, got errs=%d", errs)
+	}
+}
+
+// TestRehydrateFiles_GetFileErrorAfterExistsIsError: cold.Exists
+// confirms presence but the subsequent GetFile still fails — a
+// transient read fault on a file that IS there, not a gap.
+func TestRehydrateFiles_GetFileErrorAfterExistsIsError(t *testing.T) {
+	hot := &fakeRehydrateStore{exists: map[string]bool{}}
+	cold := &fakeRehydrateStore{
+		exists:     map[string]bool{"a": true},
+		getFileErr: map[string]error{"a": errors.New("i/o timeout")},
+	}
+	_, _, missing, errs, err := rehydrateFiles(context.Background(), discardLogger(), hot, cold, []string{"a"}, false)
+	if err != nil {
+		t.Fatalf("rehydrateFiles: %v", err)
+	}
+	if missing != 0 {
+		t.Fatalf("a GetFile error after Exists confirmed presence must NOT be counted as missing, got missing=%d", missing)
+	}
+	if errs != 1 {
+		t.Fatalf("expected errs=1, got errs=%d", errs)
+	}
+}
+
+// TestRehydrateFiles_HappyPathCopies: the successful copy path still
+// works end to end (regression guard against over-correcting into
+// always-error).
+func TestRehydrateFiles_HappyPathCopies(t *testing.T) {
+	hot := &fakeRehydrateStore{exists: map[string]bool{}}
+	cold := &fakeRehydrateStore{
+		exists:      map[string]bool{"a": true},
+		getFileBody: map[string][]byte{"a": []byte("lcm-bytes")},
+	}
+	skipped, copied, missing, errs, err := rehydrateFiles(context.Background(), discardLogger(), hot, cold, []string{"a"}, false)
+	if err != nil {
+		t.Fatalf("rehydrateFiles: %v", err)
+	}
+	if copied != 1 || skipped != 0 || missing != 0 || errs != 0 {
+		t.Fatalf("copied=%d skipped=%d missing=%d errs=%d, want copied=1 rest=0", copied, skipped, missing, errs)
+	}
+	if len(cold.putCalls) != 0 { // put happens on hot, not cold
+		t.Fatalf("unexpected calls on cold: %v", cold.putCalls)
+	}
+}
+
+// TestRehydrateFiles_AlreadyInHotIsSkipped: hot.Exists=true short-
+// circuits before ever touching cold.
+func TestRehydrateFiles_AlreadyInHotIsSkipped(t *testing.T) {
+	hot := &fakeRehydrateStore{exists: map[string]bool{"a": true}}
+	cold := &fakeRehydrateStore{}
+	skipped, copied, missing, errs, err := rehydrateFiles(context.Background(), discardLogger(), hot, cold, []string{"a"}, false)
+	if err != nil {
+		t.Fatalf("rehydrateFiles: %v", err)
+	}
+	if skipped != 1 || copied != 0 || missing != 0 || errs != 0 {
+		t.Fatalf("skipped=%d copied=%d missing=%d errs=%d, want skipped=1 rest=0", skipped, copied, missing, errs)
 	}
 }
 
