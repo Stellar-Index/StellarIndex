@@ -45,7 +45,28 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
       - name: Install ansible
-        run: pipx install --include-deps ansible && pipx inject ansible passlib
+        # DEP-01 (audit-2026-07-23): EXACT pins. This job holds the root
+        # SSH key for r1 AND the decrypted production vault; an
+        # unpinned `pipx install ansible` handed whatever PyPI served at
+        # 06:17 UTC that Monday full execution rights over both. A
+        # yanked, hijacked or simply broken upstream release became a
+        # production-credential incident with no diff to review.
+        #
+        # Pinned to the versions this job was already resolving to, so
+        # the pin is behaviour-preserving; bumps are now a reviewable
+        # one-line diff. Note deploy.yml pins ansible-core 2.18.4
+        # separately (F-1299) — that is the DEPLOY path's pin and moves
+        # on its own schedule; this is the drift-check controller.
+        #
+        # PyPI forbids re-uploading a version's files, so `==` closes
+        # the yanked/hijacked-new-release vector. Full transitive hash
+        # pinning (`pip install --require-hashes`) would need a
+        # generated constraints file covering ansible's entire closure;
+        # tracked as follow-up, not hand-maintainable here.
+        run: |
+          set -euo pipefail
+          pipx install --include-deps 'ansible==14.2.0'
+          pipx inject ansible 'passlib==1.7.4'
 
       - name: SSH key + known_hosts
         # Mirrors deploy.yml's "Set up SSH" step (F-1297/F-1298):
