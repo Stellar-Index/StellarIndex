@@ -65,6 +65,11 @@ type RedisSignupIPThrottle struct {
 
 	mu              sync.Mutex
 	redisErrorSince time.Time
+	// healthySince: start of the current unbroken Redis-success run; any failure
+	// resets it. redisErrorSince clears only after dwellTime of unbroken success —
+	// a single stray success must NOT reopen the throttle (REL-06; identical fix
+	// to ratelimit.Bucket, which this deliberately mirrors).
+	healthySince time.Time
 }
 
 // SignupIPThrottleOptions tunes a [RedisSignupIPThrottle].
@@ -183,6 +188,7 @@ func (t *RedisSignupIPThrottle) observeRedisFailure() bool {
 	now := t.nowFn()
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.healthySince = time.Time{} // any failure breaks the recovery streak (REL-06)
 	if t.redisErrorSince.IsZero() {
 		t.redisErrorSince = now
 		return false
@@ -190,13 +196,24 @@ func (t *RedisSignupIPThrottle) observeRedisFailure() bool {
 	return now.Sub(t.redisErrorSince) > t.dwellTime
 }
 
-// observeRedisSuccess resets the dwell-time clock. A single
-// successful Redis round-trip is sufficient to flip back to the
-// fail-open window — operators inspecting the post-incident
-// timeline want "first OK after outage" as the recovery marker,
-// not "DwellTime of consecutive OKs."
+// observeRedisSuccess clears the fail-closed clock only after dwellTime of
+// UNBROKEN successes (REL-06) — NOT on a single success, which under a flapping
+// Redis (occasional OK amid sustained errors) would keep the signup throttle
+// fail-open indefinitely. The "first OK after outage" recovery marker operators
+// want comes from the success-path metric, not from weakening the throttle.
+// Mirrors ratelimit.Bucket.observeRedisSuccess.
 func (t *RedisSignupIPThrottle) observeRedisSuccess() {
+	now := t.nowFn()
 	t.mu.Lock()
-	t.redisErrorSince = time.Time{}
-	t.mu.Unlock()
+	defer t.mu.Unlock()
+	if t.redisErrorSince.IsZero() {
+		return
+	}
+	if t.healthySince.IsZero() {
+		t.healthySince = now
+	}
+	if now.Sub(t.healthySince) >= t.dwellTime {
+		t.redisErrorSince = time.Time{}
+		t.healthySince = time.Time{}
+	}
 }

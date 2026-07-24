@@ -216,11 +216,13 @@ func TestRedisSignupIPThrottle_DwellTime_FailsClosedAfterWindow(t *testing.T) {
 	}
 }
 
-// TestRedisSignupIPThrottle_DwellTime_SuccessResetsClock pins the
-// recovery semantics: a single Redis success after an error window
-// clears the dwell-clock so a later error starts a fresh window —
-// transient blips don't accumulate across recoveries.
-func TestRedisSignupIPThrottle_DwellTime_SuccessResetsClock(t *testing.T) {
+// TestRedisSignupIPThrottle_DwellTime_FlapVsSustainedRecovery pins the REL-06
+// recovery semantic: a single Redis success must NOT reset the fail-closed dwell
+// clock (a flapping Redis still trips fail-closed after dwellTime); only a
+// sustained healthy streak (dwellTime of unbroken successes) clears it and
+// restores fail-open. The prior behaviour — one success wipes the clock — let a
+// flapping Redis keep this signup throttle fail-open indefinitely.
+func TestRedisSignupIPThrottle_DwellTime_FlapVsSustainedRecovery(t *testing.T) {
 	mr := miniredis.RunT(t)
 	defer mr.Close()
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -234,40 +236,49 @@ func TestRedisSignupIPThrottle_DwellTime_SuccessResetsClock(t *testing.T) {
 		NowFn:     func() time.Time { return fakeNow },
 	})
 
-	// 1. Force a Redis error by setting the bucket's key to a string
-	//    that INCR can't increment — miniredis returns
-	//    "value is not an integer or out of range".
+	// A poison value makes INCR fail (miniredis "value is not an integer");
+	// deleting it heals Redis. Window=1h ⇒ windowStart = unix/3600; the ≤76s the
+	// clock advances below stays in the same window, so the key is stable.
 	const ip = "203.0.113.42"
-	// Build the same key shape CheckIP uses to plant a poison value.
-	// Window=1h ⇒ windowStart = unix/3600.
 	windowStart := fakeNow.Unix() / 3600
-	mr.Set("signup-ip:"+ip+":"+strconv.FormatInt(windowStart, 10), "not-a-number")
+	key := "signup-ip:" + ip + ":" + strconv.FormatInt(windowStart, 10)
+	poison := func() { mr.Set(key, "not-a-number") }
+	heal := func() { mr.Del(key) }
+	check := func() error { return tt.CheckIP(context.Background(), ip) }
 
-	err := tt.CheckIP(context.Background(), ip)
+	// Arm the fail-closed clock with an error.
+	poison()
+	if err := check(); err == nil {
+		t.Fatal("arm: want INCR err, got nil")
+	}
+
+	// FLAPPING: one lucky success, then continued error past the dwell window.
+	// The stray success must NOT reset the clock → fail-CLOSED (the REL-06 fix).
+	heal()
+	_ = check() // single success
+	poison()
+	fakeNow = fakeNow.Add(45 * time.Second)
+	err := check()
 	if err == nil {
-		t.Fatal("step 1: want INCR err, got nil")
+		t.Fatal("flap: want INCR err, got nil")
+	}
+	if !errors.Is(err, auth.ErrThrottleUnavailable) {
+		t.Fatalf("flap: a stray success must not reset the dwell clock — want fail-CLOSED, got %v", err)
+	}
+
+	// SUSTAINED RECOVERY: heal and succeed continuously past dwellTime → the clock
+	// clears, so a later error opens a fresh window and falls open (not 503).
+	heal()
+	_ = check()                             // healthySince starts here
+	fakeNow = fakeNow.Add(31 * time.Second) // unbroken healthy > dwellTime
+	_ = check()                             // clears redisErrorSince
+	poison()
+	err = check()
+	if err == nil {
+		t.Fatal("recovered: want INCR err, got nil")
 	}
 	if errors.Is(err, auth.ErrThrottleUnavailable) {
-		t.Fatalf("step 1: must NOT be ErrThrottleUnavailable (clock just armed): %v", err)
-	}
-
-	// 2. Heal Redis (delete the poison key) and run a success.
-	mr.Del("signup-ip:" + ip + ":" + strconv.FormatInt(windowStart, 10))
-	if err := tt.CheckIP(context.Background(), ip); err != nil {
-		t.Fatalf("step 2: want nil after heal, got %v", err)
-	}
-
-	// 3. Re-poison Redis and advance past the ORIGINAL dwell-time —
-	//    the success in step 2 should have reset the clock so this
-	//    error starts a fresh window and falls open (not 503).
-	mr.Set("signup-ip:"+ip+":"+strconv.FormatInt(windowStart, 10), "not-a-number")
-	fakeNow = fakeNow.Add(60 * time.Second)
-	err = tt.CheckIP(context.Background(), ip)
-	if err == nil {
-		t.Fatal("step 3: want INCR err, got nil")
-	}
-	if errors.Is(err, auth.ErrThrottleUnavailable) {
-		t.Fatalf("step 3: success in step 2 should have reset the dwell-clock; got ErrThrottleUnavailable")
+		t.Fatalf("recovered: sustained recovery should have cleared the clock — want fail-OPEN, got ErrThrottleUnavailable")
 	}
 }
 

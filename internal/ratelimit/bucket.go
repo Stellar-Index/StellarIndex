@@ -74,6 +74,14 @@ type Bucket struct {
 
 	mu              sync.Mutex
 	redisErrorSince time.Time
+	// healthySince marks the start of the CURRENT unbroken run of Redis
+	// successes; any failure resets it to zero. redisErrorSince (the fail-closed
+	// clock) is cleared only once this streak has lasted dwellTime. A single
+	// stray success under a flapping Redis must NOT reset the clock (REL-06:
+	// otherwise 1 success/<dwellTime keeps the limiter — and the auth
+	// brute-force + signup throttles that share this Bucket type — fail-open
+	// indefinitely while Redis is effectively down).
+	healthySince time.Time
 }
 
 // Option configures a Bucket at construction.
@@ -184,6 +192,7 @@ func (b *Bucket) observeRedisFailure() bool {
 	now := b.nowFn()
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.healthySince = time.Time{} // any failure breaks the recovery streak
 	if b.redisErrorSince.IsZero() {
 		b.redisErrorSince = now
 		return false
@@ -191,14 +200,29 @@ func (b *Bucket) observeRedisFailure() bool {
 	return now.Sub(b.redisErrorSince) > b.dwellTime
 }
 
-// observeRedisSuccess clears the dwell-time clock. One successful
-// round-trip is sufficient to flip back to the fail-open window —
-// the post-incident timeline marker operators want is "first OK
-// after outage" not "DwellTime of consecutive OKs."
+// observeRedisSuccess advances the recovery streak. The fail-closed clock
+// (redisErrorSince) is cleared only after dwellTime of UNBROKEN successes —
+// NOT on a single success (REL-06). Under a flapping Redis the interspersed
+// failures keep resetting healthySince via observeRedisFailure, so the streak
+// never reaches dwellTime, redisErrorSince stays armed, and observeRedisFailure
+// trips fail-CLOSED as designed instead of failing open forever. A genuine,
+// sustained recovery (dwellTime of continuous OKs) clears it and fail-open
+// resumes. Operators still get their "first OK after outage" marker from the
+// success-path metric; correctness of the throttle must not hinge on one OK.
 func (b *Bucket) observeRedisSuccess() {
+	now := b.nowFn()
 	b.mu.Lock()
-	b.redisErrorSince = time.Time{}
-	b.mu.Unlock()
+	defer b.mu.Unlock()
+	if b.redisErrorSince.IsZero() {
+		return // not in the error state; nothing to recover
+	}
+	if b.healthySince.IsZero() {
+		b.healthySince = now
+	}
+	if now.Sub(b.healthySince) >= b.dwellTime {
+		b.redisErrorSince = time.Time{}
+		b.healthySince = time.Time{}
+	}
 }
 
 // Max returns the configured per-window limit. Useful for surfacing
