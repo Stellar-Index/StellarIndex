@@ -1,7 +1,9 @@
 name: release
 
 # Triggered by pushing a v*.*.* tag to the repo. Cuts a GitHub
-# Release containing cross-compiled Linux binaries (+ SHA256SUMS,
+# Release containing cross-compiled Linux binaries + migrations.tar.gz
+# (the tag's migrations/ tree, which deploy.yml applies before the
+# binary swap — see "Package the tag's migrations" below) (+ SHA256SUMS,
 # keyless-signed via cosign v3: SHA256SUMS.sigstore.json is the
 # durable artifact (sigstore bundle format, BACKLOG #51b). This
 # release ALSO publishes the retiring SHA256SUMS.sig / SHA256SUMS.pem
@@ -192,6 +194,31 @@ jobs:
 
       - name: List downloaded artifacts
         run: ls -la dist/
+
+      - name: Package the tag's migrations alongside the binaries
+        # artifact-integrity-verification (audit-2026-07-23): deploy.yml
+        # applies this tag's migrations as DDL on production, but it
+        # fetched them from the `repos/…/tarball/<tag>` API — an
+        # UNSIGNED path, while the binaries beside them were covered by
+        # cosign. The signed chain stopped short of the SQL. Packing
+        # migrations/ into dist/ HERE, before SHA256SUMS is computed,
+        # puts the migration set under the same signature as the
+        # binaries; deploy.yml verifies it against the signed manifest
+        # and stops using the tarball API.
+        #
+        # Deterministic flags (sorted names, fixed mtime/owner, gzip -n)
+        # so the archive is byte-reproducible from the tag — a
+        # third party can rebuild it and compare against SHA256SUMS.
+        run: |
+          set -euo pipefail
+          tar --sort=name \
+              --mtime='UTC 1970-01-01' \
+              --owner=0 --group=0 --numeric-owner \
+              -cf - migrations | gzip -n > dist/migrations.tar.gz
+          ls -la dist/migrations.tar.gz
+          # `| head` closes early, SIGPIPEs tar and — under pipefail —
+          # fails the step for no reason (F-1300). `sed -n` drains.
+          tar -tzf dist/migrations.tar.gz | sed -n '1,5p'
 
       - name: Compute SHA256SUMS
         working-directory: dist

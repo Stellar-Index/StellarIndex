@@ -222,6 +222,29 @@ jobs:
         # never BIGINT/INT8/DOUBLE PRECISION/FLOAT/REAL. Escapes need an
         # inline `-- lint-money:ok <reason>`.
         run: ./scripts/ci/lint-migrations.sh
+      - name: lint-migration-compat
+        # CID-14 (audit-2026-07-23): migrations/README.md rule 9 —
+        # every up-migration must be additive + old-binary-safe. The
+        # deploy pipeline applies `migrate up` BEFORE the binary swap
+        # and a failed health probe rolls back the BINARY ONLY
+        # (CS-099), so a destructive migration turns a rollback into an
+        # outage the pipeline cannot clear. Rule 9 was prose only; this
+        # enforces it. Escapes need an inline
+        # `-- migration-compat:ok <reason>`; pre-existing violations are
+        # grandfathered (shrink-only) in
+        # scripts/ci/migration-compat.baseline.
+        run: ./scripts/ci/lint-migration-compat.sh
+      - name: lint-migration-compat self-test
+        # The gate's own fixtures: each violation class fires, the
+        # inline escape needs a reason, `NOT NULL DEFAULT` stays
+        # additive-safe. A rule-9 gate that silently stops matching is
+        # worse than none.
+        run: ./scripts/ci/lint-migration-compat-test.sh
+      - name: check-deploy-protection self-test
+        # deploy-approval-gate (audit-2026-07-23): fixtures for the
+        # fail-closed environment-approval assertion deploy.yml runs
+        # before it touches production. No network, no token.
+        run: ./scripts/ci/check-deploy-protection-test.sh
       - name: lint-lexicon
         # Maintainability audit 2026-07-01 (D2+D6): domain-lexicon +
         # idiom ratchet. Zero rules (no Fetch/Make verbs, slog is the
@@ -550,7 +573,14 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - name: Install ansible + lint
-        run: pipx install --include-deps ansible && pipx install ansible-lint
+        # DEP-01 (audit-2026-07-23): exact pins, same reasoning as
+        # ansible-drift.yml — this job carries no secrets, but an
+        # unpinned install still runs arbitrary upstream code in CI on
+        # every PR. Pinned to what it already resolved to.
+        run: |
+          set -euo pipefail
+          pipx install --include-deps 'ansible==14.2.0'
+          pipx install 'ansible-lint==26.6.0'
       - name: Syntax check (secrets stubbed — structure only)
         working-directory: configs/ansible
         run: |
