@@ -62,6 +62,14 @@ type Store struct {
 	// a subsequent live gen-0 replay. Set via [SetDeriveGeneration] after
 	// [Open]; leaving it 0 keeps live ingest unchanged.
 	deriveGeneration int64
+
+	// usdVolumeResolutionInstalled records that InstallUSDVolumeResolution was
+	// CALLED on this store (regardless of whether it then wired resolvers — a
+	// no-pegs deployment installs none but still counts). It is the signal
+	// [reDeriveResolverGuard] uses to fail trade writes closed when a re-derive
+	// entry point stamps a generation but forgets to enter USD-volume-resolution
+	// mode (A-CRIT-1). Set only by InstallUSDVolumeResolution.
+	usdVolumeResolutionInstalled bool
 }
 
 // SetUSDVolumeQuoteSpec installs the operator-configured quote-asset
@@ -100,6 +108,36 @@ func (s *Store) SetUSDVolumeFXResolver(r USDVolumeFXResolver) {
 // writers.
 func (s *Store) SetDeriveGeneration(gen int64) {
 	s.deriveGeneration = gen
+}
+
+// reDeriveResolverGuard fails the trade-write choke point CLOSED when the store
+// is in re-derive mode (deriveGeneration > 0) but the USD-volume resolvers were
+// never installed. A-CRIT-1 (audit-2026-07-24): a positive generation makes every
+// written trade WIN the ON CONFLICT guard, so InsertTrade/BatchInsertTrades assign
+// `usd_volume = EXCLUDED.usd_volume`; with no resolver installed, tradeUSDVolume
+// returns nil for every on-chain DEX / FX-priced trade, silently overwriting the
+// correct stored usd_volume with NULL — and because the row now carries a high
+// generation, a later live gen-0 replay can NEVER restore it. Two ops entry points
+// (projected-rebuild and the main on-chain backfill) shipped exactly this
+// destructive combination. Rather than trust every present and future re-derive
+// tool to remember InstallUSDVolumeResolution, this makes the combination
+// unrepresentable: any trade write in re-derive mode without resolvers fails loudly
+// at the first row. Live ingest (generation == 0) and non-trade re-derives (which
+// never call InsertTrade/BatchInsertTrades) are unaffected.
+func (s *Store) reDeriveResolverGuard() error {
+	// Track that InstallUSDVolumeResolution was CALLED, not that a resolver is
+	// non-nil: a no-pegs deployment (usd_pegged_classic_assets = [], the default)
+	// legitimately installs no resolver and correctly writes NULL usd_volume, so
+	// checking for a non-nil resolver would false-positive and break re-derive
+	// there (and in the sibling tools). Install is the sole installer, so a flag
+	// set at its entry is the exact "resolution was wired" signal.
+	if s.deriveGeneration > 0 && !s.usdVolumeResolutionInstalled {
+		return fmt.Errorf("timescale: refusing to write trades in re-derive mode "+
+			"(generation=%d) without USD-volume resolvers installed — call "+
+			"InstallUSDVolumeResolution before writing trades (A-CRIT-1 fail-closed guard)",
+			s.deriveGeneration)
+	}
+	return nil
 }
 
 // Pool-tuning constants. Exposed so [store_test.go] can assert
