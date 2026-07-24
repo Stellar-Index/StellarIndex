@@ -6,6 +6,22 @@ import (
 	"time"
 )
 
+// txHashIndexBackfillQuery backs BackfillTxHashIndex's per-window
+// INSERT…SELECT. FINAL on the source read (audit DAT-10): stellar.transactions
+// is ReplacingMergeTree(ingested_at), so a window that has already seen a
+// re-ingest (retry, or a decode-fix re-derive) can hold un-merged duplicate
+// PARTS for the same (ledger_seq, tx_index) key; without FINAL, this INSERT…
+// SELECT would enqueue BOTH — including, on a genuine correction, the STALE
+// pre-fix tx_hash alongside the corrected one — into stellar.tx_hash_index,
+// which is itself keyed on tx_hash and just as exposed to the same
+// ingested_at-tie ambiguity documented on txByLedgerAndHash. Cheap here: this
+// is an operator-run backfill (not a per-request path) and FINAL is bounded
+// by the SAME `ledger_seq >= ? AND ledger_seq <= ?` window predicate that
+// already caps this function's per-iteration work — no new full-scan.
+const txHashIndexBackfillQuery = `INSERT INTO stellar.tx_hash_index (tx_hash, ledger_seq, tx_index)
+	SELECT tx_hash, ledger_seq, tx_index FROM stellar.transactions FINAL
+	WHERE ledger_seq >= ? AND ledger_seq <= ?`
+
 // BackfillTxHashIndex fills stellar.tx_hash_index (the hash-ordered
 // GET /v1/tx/{hash} lookup table, perf-todo §4) from stellar.transactions in
 // inclusive [from, to] ledger windows of `window` ledgers each — one
@@ -29,10 +45,6 @@ func BackfillTxHashIndex(ctx context.Context, addr string, from, to, window uint
 	}
 	defer func() { _ = conn.Close() }()
 
-	const q = `INSERT INTO stellar.tx_hash_index (tx_hash, ledger_seq, tx_index)
-		SELECT tx_hash, ledger_seq, tx_index FROM stellar.transactions
-		WHERE ledger_seq >= ? AND ledger_seq <= ?`
-
 	start := time.Now()
 	for lo := from; ; {
 		hi := to
@@ -40,7 +52,7 @@ func BackfillTxHashIndex(ctx context.Context, addr string, from, to, window uint
 			hi = lo + window - 1
 		}
 		wStart := time.Now()
-		if err := conn.Exec(ctx, q, lo, hi); err != nil {
+		if err := conn.Exec(ctx, txHashIndexBackfillQuery, lo, hi); err != nil {
 			return fmt.Errorf("clickhouse: tx-hash-index window [%d,%d]: %w — resume with -from %d", lo, hi, err, lo)
 		}
 		logf("window [%d,%d] done in %s (total %s; resume point -from %d)",
