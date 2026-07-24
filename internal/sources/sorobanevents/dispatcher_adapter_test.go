@@ -1,9 +1,12 @@
 package sorobanevents
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"math/big"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -326,6 +329,7 @@ func TestAsyncSink_FlushBatch_RetriesInfraFaultUntilItLands(t *testing.T) {
 func TestAsyncSink_FlushBatch_PermanentFaultCountsLostNotRetried(t *testing.T) {
 	t.Parallel()
 
+	var logBuf bytes.Buffer
 	permErr := &pq.Error{Code: "23505", Message: "duplicate key value violates unique constraint"}
 	w := &flakyWriter{failErr: permErr, failN: -1} // always fails
 	sink := NewAsyncSink(w, AsyncSinkOptions{
@@ -333,6 +337,24 @@ func TestAsyncSink_FlushBatch_PermanentFaultCountsLostNotRetried(t *testing.T) {
 		BatchSize:     2,
 		FlushInterval: 10 * time.Second,
 		WriteTimeout:  time.Second,
+		Logger:        slog.New(slog.NewTextHandler(&logBuf, nil)),
+		// IsPermanentFault is injected by the app layer in production
+		// (the indexer / ops backfill wire timescale.IsPermanentDataError
+		// — see ARCH-import-boundaries, 9b033ff0: a source package must
+		// not import internal/storage itself). Wire the same pq class-23
+		// predicate here so this test exercises the intended contract —
+		// left unset, IsPermanentFault defaults to "nothing is permanent"
+		// and this pq error would instead retry-until-shutdown, which
+		// would make the count-only assertions below pass for the WRONG
+		// reason (racing sink.Stop()'s shutdown-abandon path — see
+		// TestAsyncSink_FlushBatch_UnwiredIsPermanentFault_RetriesEvenAPqError)
+		// instead of proving immediate, deterministic abandonment on a
+		// positively-classified permanent fault. The log-reason
+		// assertion below pins that distinction directly.
+		IsPermanentFault: func(err error) bool {
+			var pqErr *pq.Error
+			return errors.As(err, &pqErr) && pqErr.Code.Class() == "23"
+		},
 	})
 	sink.Start()
 
@@ -349,5 +371,50 @@ func TestAsyncSink_FlushBatch_PermanentFaultCountsLostNotRetried(t *testing.T) {
 	}
 	if got := w.callCount(); got != 1 {
 		t.Errorf("writer called %d times, want exactly 1 — a permanent fault must not be retried", got)
+	}
+	if out := logBuf.String(); !strings.Contains(out, `reason="permanent data fault"`) {
+		t.Errorf("log output = %q; want it to contain reason=\"permanent data fault\" — a wired IsPermanentFault must abandon on the FIRST attempt, not retry until shutdown", out)
+	}
+}
+
+// TestAsyncSink_FlushBatch_UnwiredIsPermanentFault_RetriesEvenAPqError
+// pins the safe-default half of the ARCH-import-boundaries injection
+// (9b033ff0): a caller that does NOT wire AsyncSinkOptions.IsPermanentFault
+// must never drop a row — even one that a real IsPermanentDataError
+// predicate would classify as permanent — because leaving it unwired
+// must fail toward "retry forever", not "silently discard rows from
+// ADR-0029's catch-all landing zone". Proves this via Stop()'s
+// shutdown-abandon path (LostCount rises) rather than infinite
+// retry — this test does not block forever waiting for a real DB.
+func TestAsyncSink_FlushBatch_UnwiredIsPermanentFault_RetriesEvenAPqError(t *testing.T) {
+	t.Parallel()
+
+	permErr := &pq.Error{Code: "23505", Message: "duplicate key value violates unique constraint"}
+	w := &flakyWriter{failErr: permErr, failN: -1} // always fails
+	sink := NewAsyncSink(w, AsyncSinkOptions{
+		BufferSize:    4,
+		BatchSize:     2,
+		FlushInterval: 10 * time.Second,
+		WriteTimeout:  time.Second,
+		// IsPermanentFault deliberately left unset.
+	})
+	sink.Start()
+
+	for i := 0; i < 2; i++ {
+		sink.PushEvent(captureableEvent(t, uint32(6_000_000+i)))
+	}
+	sink.Stop()
+
+	if got := sink.WrittenCount(); got != 0 {
+		t.Errorf("WrittenCount = %d, want 0", got)
+	}
+	// The unwired default must have retried at least once (backoff
+	// window) before the shutdown-abandon path took over — proving it
+	// did NOT immediately treat the pq error as permanent.
+	if got := w.callCount(); got < 1 {
+		t.Errorf("writer called %d times, want >= 1", got)
+	}
+	if got := sink.LostCount(); got != 2 {
+		t.Errorf("LostCount = %d, want 2 (abandoned at shutdown, not immediately dropped as permanent)", got)
 	}
 }
