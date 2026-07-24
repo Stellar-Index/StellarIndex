@@ -120,8 +120,8 @@ type ohlcBucketAcc struct {
 	closeNum *big.Rat   // Σ(close · base_vol)
 	baseVol  *big.Rat   // Σ base_vol (weight denominator)
 	quoteVol *big.Rat   // Σ quote_vol
-	highs    []*big.Rat // per-constituent candidate highs (outliers dropped at finalize)
-	lows     []*big.Rat // per-constituent candidate lows
+	highs    []*big.Rat // per-constituent highs (bucket high = max)
+	lows     []*big.Rat // per-constituent lows  (bucket low  = min)
 	n        int64
 }
 
@@ -152,23 +152,12 @@ func (a *ohlcBucketAcc) add(b *OHLCSeriesBar) {
 		a.quoteVol.Add(a.quoteVol, qv)
 	}
 	a.n += b.N
-	// Collect the per-constituent extremes as candidates; finalize DROPS the
-	// out-of-band ones (thin-book / fat-finger prints) against the bucket VWAP.
+	// Collect the per-constituent extremes; the bucket extreme is simply the
+	// max/min across them (each constituent's own extreme already excludes
+	// dust — see selectExtreme).
 	a.highs = append(a.highs, high)
 	a.lows = append(a.lows, low)
 }
-
-// combinedOutlierBandRatio bounds a combined bar's high/low against the
-// bucket's volume-weighted price. The USD-peg expansion folds thin SDEX
-// stablecoin books into the fiat series, and a single fat-finger print there
-// (site audit S-012: one 1.00-USDC-per-XLM fill, 5.6× market; and the 2026-07
-// XLM/USD >$0.50 wicks) would otherwise set the served high for the flagship
-// pair. Prints beyond this band are DROPPED — not clamped to the ceiling, which
-// still served a visible ~3× wick ($0.56 on a $0.187 XLM). 2× never clips a
-// plausible intra-bucket move (largest observed XLM/USD 1h range is well under
-// 2×) while removing dust wicks entirely. Applies ONLY to the synthetic
-// combined series — direct venue series serve their true extremes untouched.
-var combinedOutlierBandRatio = big.NewRat(2, 1)
 
 func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
 	open, closeP := new(big.Rat), new(big.Rat)
@@ -176,15 +165,8 @@ func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
 		open.Quo(a.openNum, a.baseVol)
 		closeP.Quo(a.closeNum, a.baseVol)
 	}
-	// Anchor the outlier band on the bucket VWAP (the high-volume CEX
-	// constituents dominate it, so it's the real price even when a single
-	// thin-book print skews one constituent's high/low).
-	var vwap *big.Rat
-	if a.baseVol.Sign() > 0 && a.quoteVol.Sign() > 0 {
-		vwap = new(big.Rat).Quo(a.quoteVol, a.baseVol)
-	}
-	high := selectExtreme(a.highs, vwap, true)
-	low := selectExtreme(a.lows, vwap, false)
+	high := selectExtreme(a.highs, true)
+	low := selectExtreme(a.lows, false)
 	return OHLCSeriesBar{
 		T:      t,
 		O:      ratToDecimal(open, ohlcPriceDigits),
@@ -197,60 +179,37 @@ func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
 	}
 }
 
-// selectExtreme returns the bucket high (isHigh=true) or low from the candidate
-// per-constituent extremes, DROPPING dust/fat-finger prints: a high above
-// combinedOutlierBandRatio × vwap (or a low below vwap / band) is a thin-book
-// artifact and is excluded, so the served extreme is the true market extreme
-// among the in-band prints — not a synthetic clamp ceiling. Falls back to the
-// least-outlier candidate when every print is out of band (pathological) or vwap
-// is unavailable, and to a zero Rat when there are no candidates (defensive:
-// finalize only runs with ≥1 bar).
-func selectExtreme(cands []*big.Rat, vwap *big.Rat, isHigh bool) *big.Rat {
+// selectExtreme returns the bucket high (isHigh=true) or low across the
+// per-constituent extremes: the plain max / min, with NO price-distance
+// filtering.
+//
+// It used to drop candidates outside `combinedOutlierBandRatio` (2×) of the
+// bucket VWAP. That band is GONE (audit B11-F1; operator decision 2026-07-22 in
+// docs/operations/finding-dust-trades-set-chart-extremes.md): every wick it was
+// built for was DUST, and dust is now excluded upstream by the $0.01 notional
+// floor on the CAGG extremes (migration 0115) — at the individual-trade level
+// the band could never reach. The band was also both too weak and too strong: it
+// missed the 2026-07-17 XLM/USD 0.1333 wick (0.73× VWAP, comfortably in band)
+// while being able to clip a genuine large move. Filter on trade SIZE, never on
+// price divergence: a $100,000 fat-finger is a real market event and must show.
+//
+// Returns a zero Rat when there are no candidates (defensive: finalize only
+// runs with ≥1 bar).
+func selectExtreme(cands []*big.Rat, isHigh bool) *big.Rat {
 	if len(cands) == 0 {
 		return new(big.Rat)
 	}
-	// Collapse the high/low direction into two comparators up front so the
-	// scan below is direction-agnostic: `moreExtreme` picks the bucket
-	// extreme, `inBand` decides whether a print survives the outlier filter.
 	moreExtreme := func(a, b *big.Rat) bool { return a.Cmp(b) > 0 } // higher wins
-	inBand := func(c, bound *big.Rat) bool { return c.Cmp(bound) <= 0 }
 	if !isHigh {
 		moreExtreme = func(a, b *big.Rat) bool { return a.Cmp(b) < 0 } // lower wins
-		inBand = func(c, bound *big.Rat) bool { return c.Cmp(bound) >= 0 }
 	}
-	bound := outlierBound(vwap, isHigh)
-
-	var best, fallback *big.Rat
-	for _, c := range cands {
-		// fallback = the LEAST extreme candidate (min high / max low) so an
-		// all-outlier bucket still serves something bounded, not the wick.
-		if fallback == nil || moreExtreme(fallback, c) {
-			fallback = c
-		}
-		if bound != nil && !inBand(c, bound) {
-			continue // dust / fat-finger print — drop it
-		}
-		if best == nil || moreExtreme(c, best) {
+	best := cands[0]
+	for _, c := range cands[1:] {
+		if moreExtreme(c, best) {
 			best = c
 		}
 	}
-	if best != nil {
-		return best
-	}
-	return fallback
-}
-
-// outlierBound returns the in-band ceiling (highs) or floor (lows) around the
-// bucket VWAP, or nil when VWAP is unavailable — in which case nothing is
-// dropped and the raw extreme stands.
-func outlierBound(vwap *big.Rat, isHigh bool) *big.Rat {
-	if vwap == nil {
-		return nil
-	}
-	if isHigh {
-		return new(big.Rat).Mul(vwap, combinedOutlierBandRatio)
-	}
-	return new(big.Rat).Quo(vwap, combinedOutlierBandRatio)
+	return best
 }
 
 // ratFromDecimal parses a NUMERIC decimal string (e.g. "0.19056",
