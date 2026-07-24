@@ -212,7 +212,11 @@ func TestLockstep_ProjectedEventsHavePersistArms(t *testing.T) {
 	fset := token.NewFileSet()
 	sink := parseFile(t, fset, "sink.go")
 
-	handle := caseTypeNames(t, funcDecl(t, sink, "HandleEvent"))
+	// `handleEvent` (unexported) holds the dispatch type-switch;
+	// HandleEvent is the exported one-line wrapper over it (REL-08 split
+	// it out so an infra RETRY can suppress the once-per-event source
+	// counters). The guard walks the switch wherever it lives.
+	handle := caseTypeNames(t, funcDecl(t, sink, "handleEvent"))
 	projected := caseTypeNames(t, funcDecl(t, sink, "IsProjectedEvent"))
 	trades := caseTypeNames(t, funcDecl(t, sink, "tradeFromEvent"))
 
@@ -355,7 +359,9 @@ func allSourceEventTypes(t *testing.T) map[string]bool {
 func TestLockstep_EveryConsumerEventHasSinkArm(t *testing.T) {
 	fset := token.NewFileSet()
 	sink := parseFile(t, fset, "sink.go")
-	handle := caseTypeNames(t, funcDecl(t, sink, "HandleEvent"))
+	// See TestLockstep_ProjectedEventsHavePersistArms: the dispatch
+	// type-switch lives in the unexported handleEvent body.
+	handle := caseTypeNames(t, funcDecl(t, sink, "handleEvent"))
 
 	all := allSourceEventTypes(t)
 	for _, full := range sortedKeys(all) {

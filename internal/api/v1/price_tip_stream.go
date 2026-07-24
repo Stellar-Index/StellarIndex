@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
@@ -129,6 +131,23 @@ func (s *Server) runTipStreamProducer(
 	first PriceSnapshot,
 	firstSources []string,
 ) {
+	// AGT-12 (audit-2026-07-24): this producer runs in its OWN goroutine, so an
+	// unrecovered panic in the compute path below terminates the WHOLE process —
+	// middleware.Recoverer only wraps the handler goroutine, not this one, and the
+	// stream is reachable unauthenticated. Recover here so a panic tears down only
+	// this connection. Registered BEFORE `defer close(ch)` so that close runs FIRST
+	// (defers are LIFO): the SSE writer sees the channel close and ends the response
+	// cleanly, then this logs. Never swallow it silently — a crash turning into an
+	// invisible dropped connection is its own bug.
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.Error("sse producer panicked",
+				"stream", "price_tip",
+				"panic", fmt.Sprintf("%v", r),
+				"stack", string(debug.Stack()),
+			)
+		}
+	}()
 	defer close(ch)
 
 	if firstEv, ok := tipStreamEvent(gen, first, firstSources); ok {

@@ -676,7 +676,7 @@ func run(cfgPath string, dryRun bool) error {
 	streamExited := false
 	select {
 	case <-rootCtx.Done():
-		logger.Info("shutdown signal received — draining for up to 30s")
+		logger.Info("shutdown signal received — draining", "budget", pipeline.ShutdownDeadline.String())
 	case err := <-streamErr:
 		streamExited = true
 		if err != nil && !errors.Is(err, context.Canceled) {
@@ -685,7 +685,16 @@ func run(cfgPath string, dryRun bool) error {
 		}
 	}
 
-	shutdownCtx, stopDrain := context.WithTimeout(context.Background(), 30*time.Second)
+	// CON-10 (audit-2026-07-23): the process-level drain budget is
+	// [pipeline.ShutdownDeadline], and the sink DERIVES its own drain
+	// budgets from that same constant. When this was a bare 30s literal
+	// the sink independently gave itself 90s per drain phase, so the
+	// deadline arm that logs the exact undrained ledger range — the one
+	// artifact telling an operator what to re-derive — could never fire
+	// before this function returned and the process died. Do not replace
+	// it with a literal: TestShutdownDeadline_MainUsesConstant fails if
+	// the two ever drift apart again.
+	shutdownCtx, stopDrain := context.WithTimeout(context.Background(), pipeline.ShutdownDeadline)
 	defer stopDrain()
 
 	if metricsSrv != nil {
