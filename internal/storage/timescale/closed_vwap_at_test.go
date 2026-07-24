@@ -95,9 +95,23 @@ func TestClosedVWAPAtOrBeforeQueryShape(t *testing.T) {
 		!strings.Contains(q, "base_asset = $2 AND quote_asset = $1") {
 		t.Error("query does not combine both stored directions of the pair")
 	}
-	// Flipped rows invert the vwap so the answer expresses base-in-quote.
-	if !strings.Contains(q, "1.0 / NULLIF(vwap, 0)") {
-		t.Error("query missing flipped-direction vwap inversion")
+	// The query hands each direction's raw (base_asset, vwap, volume) to
+	// Go: the direction fold is [combineDirVWAP]'s exact volume-weighted
+	// union (R-004/R-007, audit-2026-07-23), not SQL. `volume` is what
+	// makes that possible, so it MUST be selected.
+	if !strings.Contains(q, "COALESCE(volume, 0)::text AS volume") {
+		t.Error("query does not select each direction's volume (needed for the volume-weighted union)")
+	}
+	// The SQL must NOT weight or invert the directions itself. Both of
+	// these were the pre-fix shape: `1.0 / vwap` rounded the flipped leg
+	// to the division's NUMERIC scale before weighting, and the weight
+	// was trade COUNT — a trade-count-weighted mean of {vwap, 1/vwap}
+	// is not the union VWAP.
+	if strings.Contains(q, "1.0 / NULLIF(vwap, 0)") {
+		t.Error("query still inverts the flipped leg in SQL; the exact combine belongs to combineDirVWAP")
+	}
+	if strings.Contains(q, "* tc") || strings.Contains(q, "SUM(tc)") {
+		t.Error("query still weights the two directions by trade count (not a VWAP)")
 	}
 }
 
@@ -149,9 +163,10 @@ func TestRecentClosedVWAP1mExistsQueryShape(t *testing.T) {
 // query that feeds the /v1/price serving-sanity guard. It MUST stay
 // sargable (closed-bucket guard as a constant on the RHS, never a function
 // on the indexed bucket column), literal-cutoff-bounded (plan-time chunk
-// pruning), both-directions (a flipped-only pair still contributes), with
-// the flipped-row vwap inversion — otherwise the guard's baseline drifts
-// off the served value's own combine and would false-positive.
+// pruning), both-directions (a flipped-only pair still contributes), and
+// it MUST hand the raw per-direction rows to the same Go combine the
+// served candidate uses — otherwise the guard's baseline drifts off the
+// served value's own combine and would false-positive.
 func TestRecentClosedVWAP1mCombinedQueryShape(t *testing.T) {
 	lower := "AND bucket >= TIMESTAMPTZ '2026-06-01 00:00:00+00'\n"
 	q := fmt.Sprintf(recentClosedVWAP1mCombinedTemplate, lower)
@@ -169,21 +184,27 @@ func TestRecentClosedVWAP1mCombinedQueryShape(t *testing.T) {
 		!strings.Contains(q, "base_asset = $2 AND quote_asset = $1") {
 		t.Error("combined query does not read both stored directions")
 	}
-	if !strings.Contains(q, "1.0 / NULLIF(vwap, 0)") {
-		t.Error("combined query missing flipped-direction vwap inversion")
+	// Raw per-direction rows: base_asset tells Go which rows are flipped
+	// and volume is the weight [combineDirVWAP] folds them with. The
+	// baseline and the served candidate MUST run the identical combine.
+	if !strings.Contains(q, "COALESCE(volume, 0)::text") {
+		t.Error("combined query does not select each direction's volume (needed for the volume-weighted union)")
 	}
-	// Trade-count-weighted combine — must match the served value's combine
-	// (LatestClosedVWAP1mForPair) so candidate and baseline are comparable.
-	if !strings.Contains(q, "COALESCE(trade_count, 0)") {
-		t.Error("combined query missing trade-count weighting")
+	if !strings.Contains(q, "SELECT bucket, base_asset, vwap::text") {
+		t.Error("combined query does not return the raw per-direction rows the Go combine needs")
 	}
-	// Distinct sources aggregated separately (so the unnest can't inflate
-	// the trade-count SUM).
-	if !strings.Contains(q, "array_agg(DISTINCT src)") {
-		t.Error("combined query missing distinct-source aggregation")
+	// The SQL must NOT fold the directions itself. Pre-fix it inverted the
+	// flipped leg (`1.0 / vwap`, rounding it before it was weighted) and
+	// weighted by trade COUNT — which is not a VWAP, and diverged from the
+	// served candidate on every two-sided market.
+	if strings.Contains(q, "1.0 / NULLIF(vwap, 0)") {
+		t.Error("combined query still inverts the flipped leg in SQL; the exact combine belongs to combineDirVWAP")
+	}
+	if strings.Contains(q, "* COALESCE(trade_count, 0))") {
+		t.Error("combined query still weights the two directions by trade count (not a VWAP)")
 	}
 	// Newest-first so trailing[0] is the most recent closed bucket.
-	if !strings.Contains(q, "ORDER BY b.bucket DESC") {
+	if !strings.Contains(q, "ORDER BY bucket DESC") {
 		t.Error("combined query must return newest-first")
 	}
 }
