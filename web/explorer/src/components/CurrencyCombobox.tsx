@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+import { useDialog } from '@/lib/useDialog';
 
 /**
  * CurrencyCombobox — searchable picker over a list of tickers.
@@ -67,9 +69,18 @@ export function CurrencyCombobox({
     return () => document.removeEventListener('mousedown', onClickOutside);
   }, [open]);
 
-  useEffect(() => {
-    if (open) inputRef.current?.focus();
-  }, [open]);
+  // ACC-06: close must be stable (useDialog re-runs its effect otherwise
+  // and re-steals focus every render).
+  const close = useCallback(() => {
+    setOpen(false);
+    setQuery('');
+  }, []);
+  // ACC-06: focus-trap + focus-move-in + focus-restore (was hand-rolled
+  // with none of those — Tab could escape the open panel into the rest
+  // of the page, and closing never returned focus to the trigger).
+  // Escape-to-close and initial focus are now owned by useDialog too, so
+  // the input's own keydown handler no longer needs an Escape branch.
+  const panelRef = useDialog<HTMLDivElement>(open, close);
 
   function commit(t: string) {
     onChange(t);
@@ -88,7 +99,14 @@ export function CurrencyCombobox({
         {value} ▾
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-md border border-line bg-surface shadow-lg">
+        <div
+          ref={panelRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label={placeholder}
+          tabIndex={-1}
+          className="absolute right-0 top-full z-20 mt-1 w-56 overflow-hidden rounded-md border border-line bg-surface shadow-lg outline-hidden"
+        >
           <input
             ref={inputRef}
             value={query}
@@ -103,11 +121,8 @@ export function CurrencyCombobox({
               } else if (e.key === 'Enter') {
                 e.preventDefault();
                 if (filtered[highlight]) commit(filtered[highlight]);
-              } else if (e.key === 'Escape') {
-                e.preventDefault();
-                setOpen(false);
-                setQuery('');
               }
+              // Escape-to-close is handled by useDialog (panelRef) above.
             }}
             placeholder={placeholder}
             className="w-full border-b border-line bg-surface px-3 py-2 text-sm focus:outline-hidden"
