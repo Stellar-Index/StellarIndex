@@ -72,7 +72,13 @@ type BlendBackstopEvent struct {
 // InsertBlendBackstopEvent appends one backstop event row, idempotent
 // on the PK (ledger_close_time, ledger, tx_hash, op_index, event_index).
 // Re-running the indexer or a replay over the same range writes the
-// same rows; ON CONFLICT DO NOTHING makes the replay a no-op.
+// same rows. ON CONFLICT ... DO UPDATE, guarded by
+// `derive_generation <= EXCLUDED.derive_generation` (DAT-04): a replay
+// at an equal-or-higher generation OVERWRITES the stored value
+// columns, a lower-generation one is refused. Idempotent in row count,
+// NOT inert in value — the corrective upsert exists so a re-derive can
+// repair a wrong stored row, so a replay wired with different inputs
+// will rewrite them.
 //
 // Defensive: rejects empty ContractID / TxHash and an invalid
 // EventType before touching the DB. Amount / Amount2 pass straight to
