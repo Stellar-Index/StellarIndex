@@ -334,7 +334,15 @@ func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.St
 			}
 			return
 		case <-flushTicker.C:
-			flush(ctx)
+			// CON-09 (audit-2026-07-23): Go's select has no priority, so on
+			// the very iteration ctx is cancelled this arm can still win the
+			// race against `<-ctx.Done()` above. shutdownSafeCtx swaps in a
+			// fresh bounded context when that happens, so the flush gets its
+			// fair share of the drain budget instead of failing every insert
+			// instantly against the already-dead parent.
+			fctx, fcancel := shutdownSafeCtx(ctx)
+			flush(fctx)
+			fcancel()
 		case ev, ok := <-in:
 			if !ok {
 				flushShutdown(time.Now().Add(drainTimeout))
@@ -348,17 +356,39 @@ func persistWorker(ctx context.Context, logger *slog.Logger, store *timescale.St
 				obs.SourceLastEventUnix.WithLabelValues(t.Source).Set(float64(time.Now().Unix()))
 				tradeBuf = append(tradeBuf, t)
 				if len(tradeBuf) >= tradeBatchSize {
-					flush(ctx)
+					// CON-09: see the flushTicker arm above.
+					fctx, fcancel := shutdownSafeCtx(ctx)
+					flush(fctx)
+					fcancel()
 				}
 				continue
 			}
 			// Dispatcher drain for non-trade served-tier writes (oracle
 			// updates, supply observations, blend / cctp / rozo rows):
 			// same ADR-0041 failure policy as trades — see
-			// persistEventResilient.
-			persistEventResilient(ctx, logger, store, ev)
+			// persistEventResilient. CON-09: see the flushTicker arm above.
+			fctx, fcancel := shutdownSafeCtx(ctx)
+			persistEventResilient(fctx, logger, store, ev)
+			fcancel()
 		}
 	}
+}
+
+// shutdownSafeCtx returns ctx unchanged when it is still live. When ctx
+// has ALREADY been cancelled it returns a FRESH context bounded by
+// [drainTimeout] instead (CON-09, audit-2026-07-23): the racy select in
+// [persistWorker]'s main loop can pick the flushTicker or `<-in` arm on
+// the exact same iteration ctx.Done() fires, and passing the dead
+// parent straight through to a flush/persist call would fail every
+// write instantly — abandoning it — rather than giving it the same
+// bounded shot at landing the worker's `<-ctx.Done()` arm would have
+// given it. The caller must always call the returned CancelFunc (a
+// no-op when ctx was live).
+func shutdownSafeCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx.Err() == nil {
+		return ctx, func() {}
+	}
+	return context.WithDeadline(context.Background(), time.Now().Add(drainTimeout))
 }
 
 // tradeBatchSize caps the trades-per-batch in BatchInsertTrades.
@@ -530,71 +560,92 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 		case <-drainCtx.Done():
 			flushTrades()
 			// C2-17 + G15-08: the bounded drain deadline tripped with events
-			// possibly still buffered. Make a FINAL best-effort pass to
-			// PERSIST the immediately-available remainder under a FRESH short
-			// context (the parent drainCtx is done; passing it would fail every
-			// insert instantly). Non-blocking (default arm) so the producer
-			// having stopped means we drain the fixed buffered set and exit,
-			// never block on a fresh arrival. Anything this STILL can't land is
-			// recoverable — under ADR-0034 every raw op is durably in the
-			// ClickHouse lake — so it's surfaced at ERROR with its exact ledger
-			// span for `stellarindex-ops ch-rebuild -sdex-gaps` + the
-			// completeness timer, instead of becoming a silent served-tier gap.
-			//
-			// Count EVERY undrained event, not just trade-shaped ones (G15-08):
-			// oracle updates, supply observations, blend / cctp / rozo rows are
-			// served-tier writes too. Trade ledger bounds come from trade-shaped
-			// events (only they carry a Ledger we can range on) so the re-derive
-			// hint stays actionable.
-			finalCtx, finalCancel := context.WithTimeout(context.Background(), drainFinalPassBudget)
-			finalTrades := make([]canonical.Trade, 0, tradeBatchSize)
-			var total, trades int
-			var minL, maxL uint32
-		drainRemainder:
-			for {
-				select {
-				case ev, ok := <-in:
-					if !ok {
-						break drainRemainder
-					}
-					total++
-					t, isTrade := tradeFromEvent(ev)
-					if isTrade {
-						trades++
-						if minL == 0 || t.Ledger < minL {
-							minL = t.Ledger
-						}
-						if t.Ledger > maxL {
-							maxL = t.Ledger
-						}
-					}
-					if skipInSink(ev, mode) {
-						continue
-					}
-					if isTrade {
-						finalTrades = append(finalTrades, t)
-						continue
-					}
-					persistEventResilient(finalCtx, logger, store, ev)
-				default:
-					break drainRemainder
-				}
-			}
-			if len(finalTrades) > 0 {
-				// nil extBuf: same shutdown block-and-retry posture as flushTrades.
-				flushTradeBatch(finalCtx, logger, store, nil, finalTrades, -1)
-			}
-			finalCancel()
-			if total > 0 {
-				logger.Error("PersistEvents drain deadline exceeded — made a final best-effort persist pass; any residual is recoverable from the CH lake, re-derive this ledger range if the served tier is short",
-					"undrained_events", total, "undrained_trades", trades,
-					"ledger_from", minL, "ledger_to", maxL)
-			} else {
-				logger.Warn("PersistEvents drain deadline exceeded — no events undrained",
-					"buffered", len(in))
-			}
+			// possibly still buffered. drainFinalPass makes one last
+			// best-effort NON-BLOCKING pass over whatever's immediately
+			// available and reports exactly what's left undrained.
+			drainFinalPass(in, logger, store, mode)
 			return
 		}
+	}
+}
+
+// drainFinalPass makes one last best-effort NON-BLOCKING sweep over
+// whatever is immediately available in `in` once the drain deadline
+// has expired, persisting what it can under a FRESH short context
+// (the parent drainCtx is already done; passing it would fail every
+// insert instantly) and reporting exactly what's left undrained.
+// Non-blocking (default arm) so it drains the fixed buffered set and
+// exits rather than blocking on a fresh arrival. Anything this STILL
+// can't land is recoverable — under ADR-0034 every raw op is durably
+// in the ClickHouse lake — so it's surfaced at ERROR with its exact
+// ledger span for `stellarindex-ops ch-rebuild -sdex-gaps` + the
+// completeness timer, instead of becoming a silent served-tier gap.
+//
+// Count EVERY undrained event, not just trade-shaped ones (G15-08):
+// oracle updates, supply observations, blend / cctp / rozo rows are
+// served-tier writes too. Trade ledger bounds come from trade-shaped
+// events (only they carry a Ledger we can range on) so the re-derive
+// hint stays actionable.
+//
+// Extracted from drainBufferedEvents' ctx.Done() case (REL-02,
+// audit-2026-07-23) so the skip-before-count ordering invariant below
+// is unit-testable by calling this function directly with a
+// pre-filled `in`, without racing the outer select's
+// ctx.Done()-vs-`<-in` non-determinism.
+//
+//nolint:contextcheck // intentional fresh context; see godoc above.
+func drainFinalPass(in <-chan consumer.Event, logger *slog.Logger, store *timescale.Store, mode SinkMode) {
+	finalCtx, finalCancel := context.WithTimeout(context.Background(), drainFinalPassBudget)
+	defer finalCancel()
+	finalTrades := make([]canonical.Trade, 0, tradeBatchSize)
+	var total, trades int
+	var minL, maxL uint32
+drainRemainder:
+	for {
+		select {
+		case ev, ok := <-in:
+			if !ok {
+				break drainRemainder
+			}
+			// REL-02 (audit-2026-07-23): skip-check FIRST. A
+			// projector-owned event (skipInSink) was never going to be
+			// persisted by this drain even on a clean shutdown, so it
+			// must not inflate undrained_events/undrained_trades or
+			// widen the re-derive ledger range — that would send an
+			// operator re-deriving a range the projector already owns
+			// and durably wrote.
+			if skipInSink(ev, mode) {
+				continue
+			}
+			total++
+			t, isTrade := tradeFromEvent(ev)
+			if isTrade {
+				trades++
+				if minL == 0 || t.Ledger < minL {
+					minL = t.Ledger
+				}
+				if t.Ledger > maxL {
+					maxL = t.Ledger
+				}
+				finalTrades = append(finalTrades, t)
+				continue
+			}
+			persistEventResilient(finalCtx, logger, store, ev)
+		default:
+			break drainRemainder
+		}
+	}
+	if len(finalTrades) > 0 {
+		// nil extBuf: same shutdown block-and-retry posture as flushTrades.
+		flushTradeBatch(finalCtx, logger, store, nil, finalTrades, -1)
+	}
+	if total > 0 {
+		logger.Error("PersistEvents drain deadline exceeded — made a final best-effort persist pass; any residual is recoverable from the CH lake, re-derive this ledger range if the served tier is short",
+			"undrained_events", total, "undrained_trades", trades,
+			"ledger_from", minL, "ledger_to", maxL)
+	} else {
+		logger.Warn("PersistEvents drain deadline exceeded — no events undrained",
+			"buffered", len(in))
 	}
 }
 
