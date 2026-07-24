@@ -113,3 +113,16 @@ The multi-agent cold code audit found what live-probing structurally couldn't. C
 | A-M-SEC08 (SEC-08) | MED | `isSafeImageURL` scheme-only, docstring falsely guarantees XSS-safety for issuer SEP-1 fields | validate/deny, fix docstring | OPEN |
 | **B11-F1 EXPANDED** | — | audit confirms + expands: OHLC **open/close also unfiltered**, non-fiat `?interval=` serves raw CAGG high/low, stablecoin fallback no depeg bound | extend the `$0.01` notional floor to open/close + non-fiat path + depeg bound | folds into B11-F1 |
 | **N-F2 CONFIRMED** (MNY-02) | — | independent confirm: /coverage `complete` certifies only ~100 days | (= N-F2) | folds into N-F2 |
+
+## Audit code-findings (chunk 2 — ingest/sources, 2026-07-24)
+
+64 skeptic-CONFIRMED (13 high, 39 med, 11 low). Full list appended to `docs/audit/audit-2026-07-23/findings.md`. Partial (session limit mid-verify). **A-CRIT-1 DOUBLE-CONFIRMED here (MNY-03) — cross-chunk double-find.** Key highs:
+
+| ID | Sev | Finding | Fix |
+|---|---|---|---|
+| A2-H-drainloss (RFC-2/CON-10) | HIGH | sorobanevents batch drops rows on insert-fail (no dead-letter, cursor advances past); sink drain 90s > shutdown 30s → buffered trades silently lost on SIGTERM | dead-letter/retry on insert-fail; align drain budget ≤ shutdown deadline |
+| A2-H-infradrop (REL-08 ×3) | HIGH | on-chain trades + external-retry-buffer + non-trade events DROPPED (not block-retried) on Postgres INFRA fault (disk-full/OOM) | classify infra vs data fault; block-retry infra faults |
+| A2-H-wedge (COR-11 ×2, COR-01) | HIGH | deterministic Validate-fail (oracle/transfer) misclassified transient → permanently wedges the sole-writer projector; negative SEP-41 amount same | classify deterministic errors as data-fault; skip+count, don't wedge |
+| A2-H-supplydrift (DAT-10) | HIGH | claimable_balances + liquidity_pools observers never emit removals → served total/circulating supply over-counts | emit removal events |
+| A2-H-gapblind (DAT-09 ×2) | HIGH | TolerateTrailingMissing masks mid-range archive holes; blend_backstop genesis 5.1M ledgers too late → gap-detect blinded | fix tolerance to trailing-only; correct genesis ledgers |
+| A2-H-census (INT-01) | HIGH | census counts SDEX trades the decoder drops → count vs served mismatch | align census to decoder's drop rules |
