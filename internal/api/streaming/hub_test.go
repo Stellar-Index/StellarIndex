@@ -1,6 +1,7 @@
 package streaming_test
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -315,4 +316,87 @@ func TestHub_PublishVsCancelRace(t *testing.T) {
 	}()
 	wg.Wait()
 	// If we got here without a panic, the race is fixed.
+}
+
+// TestHub_SubscribeKeepsEventsPublishedDuringSubscribe pins the
+// subscribe/publish gap: an event published while Subscribe is running
+// must end up in EITHER the replay OR the live fanout — never neither.
+//
+// Before the fix Subscribe snapshotted every topic's buffer first and
+// only then registered as a live listener, so an event that landed in
+// between was in no snapshot and had no listener: silently dropped,
+// and indistinguishable at the client from a buffer overrun.
+//
+// The subscription covers many topics because that is what makes the
+// window wide enough to hit reliably (the pre-fix code did ALL the
+// replay work before ANY registration). The same gap exists on the
+// single-topic production path — it is just microseconds wide, which
+// is a flaky test, not a safe one. Post-fix the invariant is
+// structural, so the assertion is an exact zero.
+func TestHub_SubscribeKeepsEventsPublishedDuringSubscribe(t *testing.T) {
+	const iterations = 200
+	const perIteration = 5
+
+	lost := 0
+	for i := 0; i < iterations; i++ {
+		hub := streaming.NewHub(0)
+
+		// Seed a buffer so Subscribe has replay work to do, and resume
+		// from the newest seeded ID so replay carries only the events
+		// the publisher below races in.
+		var resumeFrom string
+		for j := 0; j < 8; j++ {
+			resumeFrom = hub.Publish("topic-0", "x", []byte("seed"))
+		}
+		topics := []string{"topic-0"}
+		for j := 1; j < 64; j++ {
+			topics = append(topics, fmt.Sprintf("topic-%d", j))
+		}
+
+		var (
+			wg        sync.WaitGroup
+			mu        sync.Mutex
+			published []string
+		)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for k := 0; k < perIteration; k++ {
+				id := hub.Publish("topic-0", "x", []byte("live"))
+				mu.Lock()
+				published = append(published, id)
+				mu.Unlock()
+			}
+		}()
+
+		ch, cancel := hub.Subscribe(topics, resumeFrom)
+		wg.Wait() // every Publish has returned → every delivery is done
+
+		got := make(map[string]bool, perIteration)
+	drain:
+		for {
+			select {
+			case ev, ok := <-ch:
+				if !ok {
+					break drain
+				}
+				got[ev.ID] = true
+			default:
+				break drain
+			}
+		}
+		mu.Lock()
+		for _, id := range published {
+			if !got[id] {
+				lost++
+			}
+		}
+		mu.Unlock()
+		cancel()
+	}
+
+	if lost != 0 {
+		t.Fatalf("%d of %d events published during Subscribe were delivered neither as replay "+
+			"nor live", lost, iterations*perIteration)
+	}
 }

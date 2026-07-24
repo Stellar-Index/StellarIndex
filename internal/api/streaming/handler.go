@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -25,6 +26,8 @@ var maxConcurrentStreams int64 = 8192
 
 var activeStreams int64
 
+var rejectedStreams int64
+
 // SetMaxConcurrentStreams overrides the global concurrent-SSE-connection
 // cap. Pass <= 0 to disable. Call once at startup.
 func SetMaxConcurrentStreams(n int64) { atomic.StoreInt64(&maxConcurrentStreams, n) }
@@ -32,6 +35,65 @@ func SetMaxConcurrentStreams(n int64) { atomic.StoreInt64(&maxConcurrentStreams,
 // ActiveStreams reports the current number of open SSE connections (for
 // diagnostics / a gauge).
 func ActiveStreams() int64 { return atomic.LoadInt64(&activeStreams) }
+
+// StreamsRejected reports the cumulative number of SSE connections
+// refused by the concurrency caps (global or per-IP) since process
+// start — the counter that makes a connection flood visible, next to
+// the [ActiveStreams] gauge.
+func StreamsRejected() int64 { return atomic.LoadInt64(&rejectedStreams) }
+
+// admitStream reserves one connection slot against the global and
+// per-IP concurrency caps, writing the 503 itself when either refuses.
+//
+// It runs BEFORE any per-connection allocation — in particular before
+// [Hub.Subscribe], whose topic key is client-supplied on
+// /v1/price/stream. Admitting first is what makes the caps bound Hub
+// memory and not just socket count: a refused connection must never
+// mint a topic (REL-05).
+//
+// The returned release MUST be called exactly once when the stream
+// ends; it is idempotent.
+func admitStream(w http.ResponseWriter, r *http.Request) (release func(), ok bool) {
+	releaseGlobal, ok := acquireGlobalStreamSlot()
+	if !ok {
+		atomic.AddInt64(&rejectedStreams, 1)
+		http.Error(w, "too many concurrent streams", http.StatusServiceUnavailable)
+		return nil, false
+	}
+	// Per-IP cap (C3-8): the global cap alone lets one client hold the
+	// entire budget, so a single stalled/hostile address can starve the
+	// streams for everyone. Give each client its own small ceiling.
+	releaseIP, ok := acquireIPStreamSlot(r)
+	if !ok {
+		releaseGlobal()
+		atomic.AddInt64(&rejectedStreams, 1)
+		http.Error(w, "too many concurrent streams from your address", http.StatusServiceUnavailable)
+		return nil, false
+	}
+	return func() {
+		releaseIP()
+		releaseGlobal()
+	}, true
+}
+
+// acquireGlobalStreamSlot reserves one slot against
+// [maxConcurrentStreams] (CS-013), so a connection flood can't exhaust
+// FDs/goroutines. A cap of <= 0 disables the ceiling but still counts
+// the stream, so [ActiveStreams] stays truthful.
+func acquireGlobalStreamSlot() (release func(), ok bool) {
+	if limit := atomic.LoadInt64(&maxConcurrentStreams); limit > 0 {
+		if atomic.AddInt64(&activeStreams, 1) > limit {
+			atomic.AddInt64(&activeStreams, -1)
+			return nil, false
+		}
+	} else {
+		atomic.AddInt64(&activeStreams, 1)
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() { atomic.AddInt64(&activeStreams, -1) })
+	}, true
+}
 
 // DefaultHeartbeatInterval is the cadence at which Stream emits
 // SSE comment heartbeats (`:keepalive\n\n`) when no real events are
@@ -66,9 +128,20 @@ type StreamOptions struct {
 // endpoints (/v1/price/tip/stream, /v1/observations/stream) bypass
 // the Hub and feed events through [StreamFromChannel] directly.
 func Stream(w http.ResponseWriter, r *http.Request, hub *Hub, topics []string, opts StreamOptions) {
+	// Admission FIRST. hub.Subscribe allocates a Hub topic keyed by
+	// `topics` — client-controlled on /v1/price/stream — so a
+	// connection the caps are going to refuse must never get that far;
+	// otherwise the caps bound sockets while the topic map grows
+	// unchecked (REL-05).
+	release, ok := admitStream(w, r)
+	if !ok {
+		return
+	}
+	defer release()
+
 	ch, cancel := hub.Subscribe(topics, LastEventIDFrom(r))
 	defer cancel()
-	StreamFromChannel(w, r, ch, opts)
+	writeStream(w, r, ch, opts)
 }
 
 // StreamFromChannel is the lower-level SSE writer: given any
@@ -81,38 +154,25 @@ func Stream(w http.ResponseWriter, r *http.Request, hub *Hub, topics []string, o
 // The caller is responsible for closing `ch` to signal "no more
 // events"; closing terminates the stream cleanly.
 func StreamFromChannel(w http.ResponseWriter, r *http.Request, ch <-chan Event, opts StreamOptions) {
+	release, ok := admitStream(w, r)
+	if !ok {
+		return
+	}
+	defer release()
+	writeStream(w, r, ch, opts)
+}
+
+// writeStream is the post-admission SSE writer: headers, the rolling
+// write deadline, and the heartbeat-aware event loop. Split out of
+// [StreamFromChannel] so [Stream] can take its connection slot before
+// subscribing (and therefore before allocating a Hub topic) while both
+// entry points share one event loop.
+func writeStream(w http.ResponseWriter, r *http.Request, ch <-chan Event, opts StreamOptions) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
 		return
 	}
-
-	// Global concurrent-stream cap (CS-013): refuse new connections past
-	// the ceiling so a connection flood can't exhaust FDs/goroutines.
-	if limit := atomic.LoadInt64(&maxConcurrentStreams); limit > 0 {
-		if atomic.AddInt64(&activeStreams, 1) > limit {
-			atomic.AddInt64(&activeStreams, -1)
-			http.Error(w, "too many concurrent streams", http.StatusServiceUnavailable)
-			return
-		}
-		defer atomic.AddInt64(&activeStreams, -1)
-	} else {
-		atomic.AddInt64(&activeStreams, 1)
-		defer atomic.AddInt64(&activeStreams, -1)
-	}
-
-	// Per-IP concurrent-stream cap (C3-8): the global cap alone lets one
-	// client hold the entire budget, so a single stalled/hostile address
-	// can starve the streams for everyone. Give each client its own small
-	// ceiling. Rejected over the cap with 503; the global counter's defer
-	// above releases on this return, so no slot leaks. Disabled (cap 0)
-	// yields a no-op release.
-	releaseIPSlot, ok := acquireIPStreamSlot(r)
-	if !ok {
-		http.Error(w, "too many concurrent streams from your address", http.StatusServiceUnavailable)
-		return
-	}
-	defer releaseIPSlot()
 
 	// F-1228 + CS-013: the API's http.Server sets `WriteTimeout: 30s` to
 	// keep short handlers honest, but that fixed deadline would reset an
