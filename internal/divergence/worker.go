@@ -47,9 +47,21 @@ type CachedResult struct {
 	Median        float64 `json:"median"`
 	DivergencePct float64 `json:"divergence_pct"`
 
-	// WarningFired is `SuccessCount >= MinSourcesForWarning AND
-	// DivergencePct > Threshold` evaluated by the worker. Cached so
-	// API readers don't need to know the threshold values.
+	// WarningFired is evaluated by the worker and cached so API
+	// readers don't need to know the threshold values. It fires when
+	// SuccessCount >= MinSourcesForWarning AND EITHER
+	//
+	//   - DivergencePct > Threshold — the median of the references
+	//     disagrees with our price; or
+	//   - AgreementCount == 0 — NO responding reference corroborates
+	//     our price within Threshold (MNY-22).
+	//
+	// The second leg exists because the median gate alone is blind to
+	// symmetric disagreement: references straddling our price (one
+	// +8%, one −8%) produce a median equal to our price and a
+	// DivergencePct of ~0, so total disagreement read as agreement.
+	// See [Service.RefreshPair] for why the leg is "nobody agrees"
+	// rather than "somebody disagrees".
 	WarningFired bool `json:"warning_fired"`
 
 	// Sources / Failures mirror Result, kept for operator
@@ -264,20 +276,38 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 		MinSuccessForMedian: 1, // surface even single-source signals; threshold gate handles trustworthiness
 	})
 
+	// Agreement uses the same threshold as the per-reference firing
+	// test in flushObservations, so "agrees" is exactly "would not
+	// fire" for that reference.
+	agreeing := CountAgreeing(ourPrice, res.Sources, s.threshold)
+
+	// MNY-22: the warning gate is median-vs-ourPrice OR nobody-agrees.
+	// The median leg alone masks symmetric disagreement — two
+	// references at ±8% put the median exactly on our price, so
+	// DivergencePct ≈ 0 and the warning stayed silent while NO
+	// reference actually corroborated us. AgreementCount was already
+	// computed for the confidence score and captured precisely that,
+	// but nothing gated on it.
+	//
+	// The leg is "AgreementCount == 0" (no responding reference
+	// corroborates us), NOT "any reference disagrees": with three or
+	// more references a single flaky one would otherwise pin the
+	// warning on permanently, which is a false-positive machine rather
+	// than a signal. Both legs are gated on SuccessCount >= minSources
+	// per CS-087 — with no responses, AgreementCount == 0 means
+	// "unchecked", not "unanimous disagreement".
+	checked := res.SuccessCount >= s.minSources
 	cached := CachedResult{
-		PairID:        pair.String(),
-		OurPrice:      ourPrice,
-		Median:        res.Median,
-		DivergencePct: res.DivergencePct,
-		WarningFired:  res.SuccessCount >= s.minSources && res.DivergencePct > s.threshold,
-		Sources:       res.Sources,
-		Failures:      res.Failures,
-		SuccessCount:  res.SuccessCount,
-		FailureCount:  res.FailureCount,
-		// Agreement uses the same threshold as the per-reference
-		// firing test in flushObservations, so "agrees" is exactly
-		// "would not fire" for that reference.
-		AgreementCount: CountAgreeing(ourPrice, res.Sources, s.threshold),
+		PairID:         pair.String(),
+		OurPrice:       ourPrice,
+		Median:         res.Median,
+		DivergencePct:  res.DivergencePct,
+		WarningFired:   checked && (res.DivergencePct > s.threshold || agreeing == 0),
+		Sources:        res.Sources,
+		Failures:       res.Failures,
+		SuccessCount:   res.SuccessCount,
+		FailureCount:   res.FailureCount,
+		AgreementCount: agreeing,
 		ComputedAt:     time.Now().UTC(),
 	}
 
@@ -317,7 +347,20 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 	// load-bearing operation that drives flags.divergence_warning
 	// on the API response — has already succeeded.
 	if s.sink != nil {
-		s.flushObservations(ctx, pair, ourPrice, res, cached.ComputedAt)
+		// COR-12: stamp the durable observation with the COMPARISON
+		// time — the same instant handed to Compare, and therefore the
+		// instant each reference priced — not the wall clock at write
+		// time, which trails it by the whole reference fan-out (up to
+		// PerReferenceTimeout). observed_at is also part of the row's
+		// conflict key, so this additionally makes a re-run of the same
+		// comparison idempotent instead of inserting a near-duplicate.
+		// A caller that supplies no comparison time falls back to the
+		// previous behaviour rather than persisting a zero timestamp.
+		stampedAt := observedAt.UTC()
+		if observedAt.IsZero() {
+			stampedAt = cached.ComputedAt
+		}
+		s.flushObservations(ctx, pair, ourPrice, res, stampedAt)
 	}
 
 	// F-1249 (codex audit-2026-05-12): edge-triggered warning hook.

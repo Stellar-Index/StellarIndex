@@ -480,3 +480,65 @@ func TestRefreshPair_NoSinkIsLegacyBehaviour(t *testing.T) {
 	// No sink, no records — but no panic, no error. Legacy
 	// behaviour preserved.
 }
+
+// TestRefreshPair_ObservationStampedWithComparisonTime is the COR-12
+// regression. The durable divergence_observations row answers "when
+// did this divergence occur", and observed_at is part of its conflict
+// key — so it must carry the comparison instant the caller supplied
+// (the same instant handed to every Reference), not the wall clock at
+// flush time, which trails it by the whole reference fan-out.
+func TestRefreshPair_ObservationStampedWithComparisonTime(t *testing.T) {
+	// A comparison time deliberately far from wall-clock now, so a
+	// time.Now() stamp cannot coincidentally pass.
+	comparedAt := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+
+	sink := &recordingObservationSink{}
+	svc, _, _ := newTestService(t, []divergence.Reference{
+		&stubReference{name: "chainlink", price: 1.00},
+	}, divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 1,
+		ObservationSink:      sink,
+	})
+
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, comparedAt); err != nil {
+		t.Fatalf("RefreshPair: %v", err)
+	}
+	if len(sink.records) != 1 {
+		t.Fatalf("sink got %d records, want 1", len(sink.records))
+	}
+	if got := sink.records[0].ObservedAt; !got.Equal(comparedAt) {
+		t.Errorf("ObservedAt = %v, want the comparison time %v (wall-clock write time misattributes when the divergence occurred)",
+			got, comparedAt)
+	}
+}
+
+// TestRefreshPair_ObservationFallsBackWhenNoComparisonTime — a caller
+// that supplies no comparison time keeps the previous behaviour (the
+// worker's own computed-at) rather than persisting a zero timestamp
+// into observed_at, which is part of the row's conflict key.
+func TestRefreshPair_ObservationFallsBackWhenNoComparisonTime(t *testing.T) {
+	sink := &recordingObservationSink{}
+	svc, _, _ := newTestService(t, []divergence.Reference{
+		&stubReference{name: "chainlink", price: 1.00},
+	}, divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 1,
+		ObservationSink:      sink,
+	})
+
+	before := time.Now().UTC()
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Time{}); err != nil {
+		t.Fatalf("RefreshPair: %v", err)
+	}
+	if len(sink.records) != 1 {
+		t.Fatalf("sink got %d records, want 1", len(sink.records))
+	}
+	got := sink.records[0].ObservedAt
+	if got.IsZero() {
+		t.Fatal("ObservedAt is zero; a zero comparison time must fall back to the computed-at stamp")
+	}
+	if got.Before(before) {
+		t.Errorf("ObservedAt = %v, want at/after the call start %v", got, before)
+	}
+}
