@@ -26,20 +26,50 @@ import (
 //
 // # Memory bound
 //
-// Stale entries (whose window has rolled over) are swept lazily: at
-// most once per window under normal load, or immediately once the map
-// grows past [localStoreMaxKeys]. So resident memory is bounded to the
-// distinct keys seen in the CURRENT window (plus at most one window of
-// lag). Anonymous keys resolve to the forge-resistant client IP, so
-// distinct keys track distinct real clients — not attacker-rotatable
-// values. Under an extreme distinct-IP flood the current window's
-// entries cannot be swept (they are still live), but each key is a few
-// dozen bytes and every key remains individually limited; the fallback
-// degrades gracefully without ever falling open.
+// Stale entries (whose window has rolled over) are swept lazily at most
+// once per window — never more often, because a second sweep inside the
+// SAME window is provably incapable of freeing anything (every entry
+// left after a sweep names the current window, and every entry written
+// since names it too). REL-05 / CON-04 (audit-2026-07-23): the previous
+// size-triggered branch re-ran a full O(n) map scan under the global
+// mutex on EVERY call once the map passed [localStoreMaxKeys], deleting
+// nothing and turning the fallback limiter into a self-inflicted DoS at
+// exactly the moment it was under flood.
+//
+// Growth inside a window is bounded instead by a hard cap: once the map
+// holds [localStoreMaxKeys] entries, a key that isn't already tracked is
+// routed to ONE shared overflow bucket ([localOverflowKey]) rather than
+// inserted. Overflow is therefore fail-CLOSED — past the cap the whole
+// overflow population shares a single limit-sized budget for the rest of
+// the window — which is the right degradation for a limiter whose only
+// job is to survive a flood: >100k distinct keys inside one window on a
+// single process IS the flood, and already-tracked clients keep their
+// own independent counters. Resident memory is bounded to
+// localStoreMaxKeys+1 entries (a few MB), full stop.
+//
+// Anonymous keys resolve to the forge-resistant client IP, so distinct
+// keys track distinct real clients — not attacker-rotatable values.
 type localStore struct {
 	mu      sync.Mutex
 	entries map[string]localEntry
 	lastGC  time.Time
+
+	// lastSweptWindow is the window value gcLocked last ran a full scan
+	// for. A second scan at the same value can only re-walk live
+	// entries, so it is skipped (REL-05 / CON-04).
+	lastSweptWindow int64
+
+	// maxKeys is the hard cap on tracked entries; newLocalStore sets it
+	// to [localStoreMaxKeys]. A field rather than a bare const so the
+	// package's own tests can drive the overflow path at a small size
+	// instead of allocating 100k entries.
+	maxKeys int
+
+	// sweeps counts completed full scans. Observability for the
+	// invariant test that pins "at most one sweep per window" — the
+	// property REL-05 / CON-04 is about. Cheap: incremented at most
+	// once per window.
+	sweeps int
 }
 
 // localEntry is one key's counter for the window it names.
@@ -48,14 +78,20 @@ type localEntry struct {
 	count  int
 }
 
-// localStoreMaxKeys forces a stale-entry sweep once the map grows past
-// this size even if a full window hasn't elapsed since the last sweep.
-// A backstop against unbounded growth; the common case sweeps on the
-// per-window cadence below.
+// localStoreMaxKeys is the hard cap on distinct tracked keys. Past it,
+// new keys share [localOverflowKey]'s bucket instead of growing the map.
 const localStoreMaxKeys = 100_000
 
+// localOverflowKey is the shared bucket every key beyond the cap is
+// folded into. The NUL bytes make it unreachable as a real limiter key
+// (callers pass IPs, API-key hashes and `<prefix>:<value>` strings), so
+// a client can never aim itself at the overflow bucket to dodge its own
+// counter — and could not gain anything if it did, the overflow budget
+// being strictly smaller than a private one.
+const localOverflowKey = "\x00overflow\x00"
+
 func newLocalStore() *localStore {
-	return &localStore{entries: make(map[string]localEntry)}
+	return &localStore{entries: make(map[string]localEntry), maxKeys: localStoreMaxKeys}
 }
 
 // take increments key's counter for the named window and reports the
@@ -63,13 +99,20 @@ func newLocalStore() *localStore {
 // caller's `unix / window_seconds` bucket; a key whose stored entry
 // names an older window is reset to the new one (that is the
 // window-rollover that makes this a FIXED-window limiter).
+//
+// A key that is not already tracked once the map is at capacity is
+// counted against the shared overflow bucket — see [localStore].
 func (s *localStore) take(key string, window int64, limit int, now time.Time, windowDur time.Duration) (count int, allowed bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.gcLocked(window, now, windowDur)
 
-	e := s.entries[key]
+	e, tracked := s.entries[key]
+	if !tracked && len(s.entries) >= s.maxKeys {
+		key = localOverflowKey
+		e = s.entries[key]
+	}
 	if e.window != window {
 		e = localEntry{window: window, count: 0}
 	}
@@ -79,12 +122,22 @@ func (s *localStore) take(key string, window int64, limit int, now time.Time, wi
 }
 
 // gcLocked deletes entries belonging to a window strictly older than
-// current. Runs at most once per window (nowFn - lastGC >= windowDur)
-// unless the map has grown past [localStoreMaxKeys], in which case it
-// sweeps immediately. Current-window entries are always retained — they
-// are the live counters. Caller holds s.mu.
+// current. Current-window entries are always retained — they are the
+// live counters. Caller holds s.mu.
+//
+// Runs at most once per window: after a scan at window W every surviving
+// entry names W, and every entry written afterwards names W as well
+// (window is derived from the same clock for all callers), so re-scanning
+// at W can only walk live entries and delete none — that is exactly the
+// wasted O(n)-per-request scan REL-05 / CON-04 flagged. Past that guard
+// the sweep runs either on the per-window cadence or immediately when the
+// map is at capacity (so a flood's stale entries are reclaimed on the
+// first call of the next window rather than a full windowDur later).
 func (s *localStore) gcLocked(current int64, now time.Time, windowDur time.Duration) {
-	if len(s.entries) < localStoreMaxKeys && now.Sub(s.lastGC) < windowDur {
+	if current == s.lastSweptWindow {
+		return // a scan here is provably incapable of freeing anything
+	}
+	if now.Sub(s.lastGC) < windowDur && len(s.entries) < s.maxKeys {
 		return
 	}
 	for k, e := range s.entries {
@@ -93,4 +146,6 @@ func (s *localStore) gcLocked(current int64, now time.Time, windowDur time.Durat
 		}
 	}
 	s.lastGC = now
+	s.lastSweptWindow = current
+	s.sweeps++
 }
