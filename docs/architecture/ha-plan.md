@@ -1,7 +1,7 @@
 ---
 title: High-Availability Infrastructure Plan
-last_verified: 2026-07-18
-status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for ClickHouse; §3 still lacks a CH tier (see top amendment)
+last_verified: 2026-07-24
+status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for ClickHouse (§4.3's hardware-expansion claim corrected 2026-07-24, audit-2026-07-23 DOC-05); §3 still lacks a CH tier (see top amendment)
 ---
 
 > **DEPLOYMENT STATE (audit 2026-07-16):** the HAProxy/Patroni/Redis-Sentinel HA
@@ -414,17 +414,24 @@ host for lightweight handlers. Our handlers are mostly
 "Redis GET → JSON encode → return." Hitting 2 000 rps per pod with 3
 pods is comfortable.
 
-### 4.3 Storage growth — REWRITTEN 2026-07-18 (the original was pre-ClickHouse and wrong)
+### 4.3 Storage growth — REWRITTEN 2026-07-18, corrected 2026-07-24 (the original was pre-ClickHouse and wrong; the 2026-07-18 rewrite then re-asserted a hardware fix that's since been explicitly ruled out — audit-2026-07-23 DOC-05)
 
 > ⚠️ The original estimate here ("~500 GB/year, a single TB NVMe lasts 2 years, storage is not a constraint") sized storage off the Timescale `trades` table and **predates the ADR-0034 ClickHouse tier-1 lake.** It is the likely root cause of R1 reaching **94% unplanned** — the capacity model was never redone after the architecture changed. Real, live-verified numbers:
 
-**Actual footprint (R1, 2026-07-18):** ZFS pool `data` = 27.7 TB raw (4× 7.68 TB NVMe, **raidz1**), **94% full**. Datasets: **ClickHouse 8.6 TiB** (the tier-1 lake — the dominant store), MinIO galexie-archive **5.56 TiB**, Postgres **676 GiB**, pgBackRest **2.6 TiB**, rest small. **Storage is the binding production constraint**, not an afterthought.
+**Actual footprint (R1, 2026-07-18):** ZFS pool `data` = 27.7 TB raw (4× 7.68 TB NVMe, **raidz1**), **94% full**. Datasets: **ClickHouse 8.6 TiB** (the tier-1 lake — the dominant store), MinIO galexie-archive **5.56 TiB**, Postgres **676 GiB**, pgBackRest **2.6 TiB**, rest small. **Storage is the binding production constraint**, not an afterthought. **Update:** Phase A of the capacity-relief campaign (ZSTD-recompressing the four largest ClickHouse tables) has since **completed**, reclaiming ~3.8 TiB and taking the pool from 94% to ~75% before Phase D's comprehensive backfill began drawing that headroom back down — see `docs/operations/production-readiness-master-plan-2026-07-18.md` §0 for the current live number; this architecture doc intentionally doesn't chase the day-to-day figure.
 
-**Growth:** live ingest adds ~10–20 GiB/day (full-fidelity `ledger_entry_changes` dominate) + a one-time ~1.5 TiB from the Phase-D comprehensive backfill.
+**Growth:** live ingest adds ~10–20 GiB/day (full-fidelity `ledger_entry_changes` dominate) + a one-time multi-TiB draw from the Phase-D comprehensive backfill.
 
-**Headroom levers:** (1) **ZSTD recompress** of the CH XDR columns — measured **1.75×** on `entry_xdr`, ~1.5 TiB reclaim (in progress); other big tables still LZ4 (more TBD). (2) pgBackRest diff-retention prune (~1 TiB, deferred until off-site exists). (3) **A 5th NVMe** — the pool supports raidz-expansion (already used once) → +~6.9 TiB, 94%→~65%; the durable fix. All 4 current drives are fully allocated — no spare, no unpartitioned space.
+**Headroom levers — software-only. Hardware expansion is ruled out, not a lever:** `docs/operations/production-readiness-remaining.md` §4 states it plainly — *"⛔ R1 is NOT hardware-upgradeable. Fixed 4× 7.68 TB NVMe, no 5th drive, no raidz expansion. Never propose a drive upgrade."* — a standing operator constraint also recorded verbatim in [ADR-0027](../adr/0027-lcm-cache-tiering.md): *"I cannot expand the capacity of this server."* **Correction:** this section previously listed "(3) A 5th NVMe … the durable fix" as a live option. That was wrong and is removed. The real levers, in priority order:
 
-Detail + live capacity table: `docs/operations/runbooks/phase-a-capacity-relief-2026-07-18.md`. Campaign source of truth: `docs/operations/production-readiness-master-plan-2026-07-18.md`.
+1. **`galexie-archive` → cold S3, then trim local** — the biggest single lever (**~5.5 TiB**). Already config-supported (`s3_cold_bucket_archive`; reads fall through transparently, cold default = the free AWS public dataset) via [ADR-0027](../adr/0027-lcm-cache-tiering.md)'s dual-source hot/cold tiering — implemented and in-tree, gated behind an operator flag not yet enabled in production. Scheduled for after the Phase-D backfill completes.
+2. **`tx_hash` → `FixedString(32)`** (~0.6–1 TiB) — stored as 64-char hex today; a Stellar tx hash is 32 raw bytes, so this is a real schema + binary migration, not yet started.
+3. **ZSTD recompress** of the CH XDR columns — measured **1.75×** on `entry_xdr`; the four biggest tables are **done** (~3.8 TiB reclaimed, see the Update above); `tx_hash`/`tx_hash_index` and other still-LZ4 columns remain (~0.3–0.5 TiB more).
+4. **TimescaleDB compression policies** (~0.2–0.4 TiB) — 19 hypertables are compression-eligible but have no policy attached yet.
+5. **pgBackRest diff-retention prune** (~1 TiB, deferred until off-site backup exists — see §8).
+6. **Horizontal growth — a second server, not a bigger R1.** R1 is one region of the multi-region design in §2; the durable answer to R1 filling up is R2 coming online (per [ADR-0016](../adr/0016-per-region-storage-strategy.md); `production-readiness-remaining.md` §5c: "R2 provisioning … unblocks HA/DR *and* capacity") and eventual R1 retirement — not more drives in this chassis.
+
+Detail + live capacity table: `docs/operations/runbooks/phase-a-capacity-relief-2026-07-18.md` (note: that runbook's own "5th NVMe" line is the same stale claim corrected here — don't follow it) + `docs/operations/production-readiness-remaining.md` §4 (the current, hardware-ruled-out version). Campaign source of truth: `docs/operations/production-readiness-master-plan-2026-07-18.md`.
 
 ---
 
