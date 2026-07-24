@@ -246,7 +246,10 @@ func TestCoinGecko_HappyPath(t *testing.T) {
 			t.Errorf("vs_currencies = %q, want to contain 'usd'", quotes)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintln(w, `{"stellar": {"usd": 0.07142}}`)
+		// last_updated_at mirrors the real /simple/price shape: the
+		// reference always requests include_last_updated_at=true and
+		// rejects a response that omits it (MNY-22 fail-closed gate).
+		_, _ = fmt.Fprintf(w, `{"stellar": {"usd": 0.07142, "last_updated_at": %d}}`, time.Now().Unix())
 	}))
 	defer ts.Close()
 
@@ -305,7 +308,7 @@ func TestCoinGecko_DefaultIDMapCoversCommonPairs(t *testing.T) {
 			t.Errorf("ids = %q, want to contain stellar (default IDMap missed XLM)", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"stellar":{"usd":0.16475}}`))
+		_, _ = fmt.Fprintf(w, `{"stellar":{"usd":0.16475,"last_updated_at":%d}}`, time.Now().Unix())
 	}))
 	defer ts.Close()
 
@@ -417,11 +420,12 @@ func TestCoinGecko_BatchedAcrossPairs(t *testing.T) {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"stellar":  {"usd": 0.16, "eur": 0.14},
-			"bitcoin":  {"usd": 67000, "eur": 62000},
-			"ethereum": {"usd": 4100,  "eur": 3800}
-		}`))
+		now := time.Now().Unix()
+		_, _ = fmt.Fprintf(w, `{
+			"stellar":  {"usd": 0.16, "eur": 0.14, "last_updated_at": %[1]d},
+			"bitcoin":  {"usd": 67000, "eur": 62000, "last_updated_at": %[1]d},
+			"ethereum": {"usd": 4100,  "eur": 3800, "last_updated_at": %[1]d}
+		}`, now)
 	}))
 	defer ts.Close()
 
@@ -475,10 +479,11 @@ func TestCoinGecko_LookupPricesBatched(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt64(&hits, 1)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"stellar": {"usd": 0.16},
-			"bitcoin": {"usd": 67000}
-		}`))
+		now := time.Now().Unix()
+		_, _ = fmt.Fprintf(w, `{
+			"stellar": {"usd": 0.16, "last_updated_at": %[1]d},
+			"bitcoin": {"usd": 67000, "last_updated_at": %[1]d}
+		}`, now)
 	}))
 	defer ts.Close()
 
@@ -515,7 +520,7 @@ func TestCoinGecko_BatchTTLExpires(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		atomic.AddInt64(&hits, 1)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"stellar": {"usd": 0.16}}`))
+		_, _ = fmt.Fprintf(w, `{"stellar": {"usd": 0.16, "last_updated_at": %d}}`, time.Now().Unix())
 	}))
 	defer ts.Close()
 
@@ -756,4 +761,103 @@ func TestCoinGecko_StalenessGate(t *testing.T) {
 			t.Errorf("Failures[coingecko] = %q, want price_unavailable", got)
 		}
 	})
+}
+
+// blockingReference ignores context cancellation entirely — the
+// REL-01 hazard. Real-world shapes: a third-party SDK doing a blocking
+// socket read, a cgo call, an operator-supplied Reference that forgets
+// to select on ctx.Done(). release lets the test unblock it at the end
+// so the goroutine doesn't outlive the run.
+type blockingReference struct {
+	name    string
+	release chan struct{}
+}
+
+func (b *blockingReference) Name() string { return b.name }
+
+func (b *blockingReference) LookupPrice(_ context.Context, _ canonical.Pair, _ time.Time) (float64, error) {
+	<-b.release // deliberately NOT selecting on ctx.Done()
+	return 1.00, nil
+}
+
+// TestCompare_OverallDeadlineReturnsPartial is the REL-01 regression.
+// Compare used to wait on a WaitGroup, so a single reference that
+// ignores cancellation blocked the comparison — and the aggregator's
+// whole divergence refresh loop behind it — forever. It must instead
+// return the partial result within the overall budget, recording the
+// stuck reference as a failure.
+func TestCompare_OverallDeadlineReturnsPartial(t *testing.T) {
+	blocked := &blockingReference{name: "stuck", release: make(chan struct{})}
+	defer close(blocked.release)
+
+	refs := []divergence.Reference{
+		&stubReference{name: "good", price: 0.10},
+		blocked,
+	}
+
+	done := make(chan divergence.Result, 1)
+	go func() {
+		done <- divergence.Compare(context.Background(), refs, xlmUSD(t), 0.10,
+			time.Now(), divergence.CompareOptions{
+				PerReferenceTimeout: 20 * time.Millisecond,
+				OverallTimeout:      50 * time.Millisecond,
+			})
+	}()
+
+	var res divergence.Result
+	select {
+	case res = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Compare never returned: one uncancellable reference stalled the whole comparison")
+	}
+
+	if res.SuccessCount != 1 {
+		t.Errorf("SuccessCount = %d, want 1 — the responsive reference's price must survive", res.SuccessCount)
+	}
+	if got, ok := res.Sources["good"]; !ok || got != 0.10 {
+		t.Errorf("Sources[good] = %v (present=%v), want 0.10", got, ok)
+	}
+	if got := res.Failures["stuck"]; got != "overall_deadline_exceeded" {
+		t.Errorf("Failures[stuck] = %q, want %q", got, "overall_deadline_exceeded")
+	}
+	if res.Median != 0.10 {
+		t.Errorf("Median = %g, want 0.10 (the one price that arrived)", res.Median)
+	}
+}
+
+// TestCoinGecko_MissingUpstreamTimestampIsRejected (MNY-22) — every
+// request sets include_last_updated_at=true and /simple/price returns
+// it, so a response WITHOUT the field means the freshness contract the
+// CS-089 gate rests on was not honoured. Waving it through silently
+// disabled the staleness gate for that id and served a possibly-frozen
+// price as fresh; fail closed instead.
+func TestCoinGecko_MissingUpstreamTimestampIsRejected(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// No last_updated_at — an intermediary stripped it, or the
+		// upstream schema drifted.
+		_, _ = fmt.Fprintln(w, `{"stellar": {"usd": 0.16}}`)
+	}))
+	defer ts.Close()
+
+	ref := divergence.NewCoinGeckoReference(divergence.CoinGeckoOptions{
+		BaseURL:  ts.URL,
+		IDMap:    map[string]string{"native": "stellar"},
+		QuoteMap: map[string]string{"fiat:USD": "usd"},
+	})
+
+	_, err := ref.LookupPrice(context.Background(), xlmUSD(t), time.Now())
+	if !errors.Is(err, divergence.ErrPriceUnavailable) {
+		t.Fatalf("LookupPrice err = %v, want ErrPriceUnavailable — an unverifiable-freshness price must not drive divergence", err)
+	}
+
+	// And it must be excluded from Compare, not merely flagged.
+	res := divergence.Compare(context.Background(),
+		[]divergence.Reference{ref}, xlmUSD(t), 0.16, time.Now(), divergence.CompareOptions{})
+	if res.SuccessCount != 0 {
+		t.Errorf("SuccessCount = %d, want 0", res.SuccessCount)
+	}
+	if got := res.Failures["coingecko"]; got != "price_unavailable" {
+		t.Errorf("Failures[coingecko] = %q, want price_unavailable", got)
+	}
 }
