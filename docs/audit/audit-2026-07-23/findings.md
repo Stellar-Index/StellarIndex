@@ -597,3 +597,53 @@
 - loc: internal/ops/chops/compute_completeness.go:500-502, internal/ops/chops/compute_completeness.go:585-599, internal/ops/chops/compute_completeness.go:840-847
 - fix: Compute the retention floor per TARGET, not per source: only raise `lo` to retentionStart for the target whose table == "trades" (and other genuinely retention-dropped tables), leaving each non-retention target reconciled from genesis. E.g. inside the per-target loops, choose lo 
 
+
+---
+
+## Confirmed — chunk 5 (web/explorer, 2026-07-24)
+
+> Full clean run, converged.
+
+| # | Sev | Exp | Dim | Finding |
+|---|---|---|---|---|
+| 1 | HIGH | LIVE | AGT-02 | /assets/[slug] has no runtime shell fallback — long-tail asset detail pages (and internal links to them from in-scope issuer/market pages) hard-404 |
+| 2 | HIGH | LIVE | legal-affordance | [absence] There is no privacy policy, terms of service, or any data-handling / data-processing notice anywhere in the explorer, and no link to one fro |
+| 3 | MEDIUM | LIVE | I18N-01 / LC-001 | Stale product-readiness claim: 'v1 ships in the coming weeks' remains user-visible on company page |
+| 4 | MEDIUM | LIVE | SEC-15 | OG-image endpoint is an unauthenticated, cache-bustable compute + upstream-fetch vector with no rate limit |
+| 5 | MEDIUM | LIVE | SEC-08 | OG kicker/label resolve user-influenced object keys against a plain object, surfacing inherited prototype properties as rendered text |
+| 6 | MEDIUM | LIVE | SEC-13 | Site-wide CSP uses script-src 'unsafe-inline', neutralizing CSP as an XSS mitigation |
+| 7 | MEDIUM | LIVE | REL-02 | Shell fallback forces HTTP 200 on the shell fetch regardless of its real status, converting a missing/failed shell into a soft-200 error page |
+| 8 | MEDIUM | LIVE | SEC-10 | Issuer-controlled SEP-1 icon URL rendered as <img src> with scheme-only validation → client-side SSRF / cross-site tracking beacon / viewer deanonymiz |
+| 9 | MEDIUM | LIVE | UXP-10 / UXP-16 | /markets presents a hard-capped top-100 list as 'every' active pair — the same file's own comment documents ~5,000 real active pairs |
+| 10 | MEDIUM | LIVE | COR-04 / COR-12 / AGT-02 | History tab divides the XLM quote amount by the base asset's own decimals instead of native's fixed 7 — every trade row for a non-7-decimal Soroban as |
+| 11 | MEDIUM | LIVE | AGT-06 | buildFetchData discards the API envelope's `flags`/`as_of`, permanently disabling the 'Stale' price warning and silently mislabeling server-side-trian |
+| 12 | MEDIUM | LIVE | COR-09 | PairPathView.tsx decodes the already-decoded (or already-failed-to-decode) last path segment a second time with no guard, throwing an uncaught URIErro |
+| 13 | MEDIUM | LIVE | UXP-16 | ThroughputPanel includes the still-accumulating partial-day bucket in its total and chart, contradicting the API's own documented contract |
+| 14 | MEDIUM | LIVE | ACC-12 | Field (ui/Input.tsx) renders validation errors with no aria-describedby/aria-invalid association to the control |
+| 15 | MEDIUM | LIVE | AGT-06 | DirectionPill's own docstring ('Fraction; 0.05 = +5%') disagrees with its own render code (no *100 conversion), and this plus 4 sibling primitives + P |
+| 16 | MEDIUM | LIVE | ACC-03 | Breadcrumbs never marks the current/last crumb with aria-current="page", inconsistent with the equivalent pattern already used in Sidebar's nav Row |
+| 17 | MEDIUM | LIVE | timeouts | [absence] No request timeout on any runtime (client-side) API fetch: the shared apiGet client, the credentialed useMe auth probe, the accountFetch das |
+| 18 | MEDIUM | LIVE | rate-limit | [absence] The dynamic OG image Cloudflare Pages Function (GET /og/{type}/{id}) has no rate limiting, no request/abuse quota, and no cache-key normaliz |
+| 19 | MEDIUM | LIVE | error handling / auth availability | [absence] AccountGate (the auth gate for every /dashboard/* page) has no timeout/error escape hatch: its only terminal states are 'loading skeleton' ( |
+| 20 | MEDIUM | LIVE | error handling / fallback | [absence] The Cloudflare Pages Functions for /transactions,/accounts,/markets,/ledgers,/contracts,/issuers never check the status of the shell fetch a |
+| 21 | MEDIUM | LIVE | health-check | [absence] The in-product DegradedBanner health-check surface fails silent precisely during a total outage. Its poll of GET /v1/status swallows every e |
+| 22 | MEDIUM | LIVE | data-subject-rights | [absence] There is no self-service data-export or account/data-deletion affordance. The dashboard 'Danger zone' only offers Sign out; account deletion |
+| 23 | MEDIUM | LIVE | kill-switch | [absence] The public OG-image edge function has no rate limit, no per-IP cap, no kill-switch/feature-flag, and no allow-list on the id segment. Every  |
+| 24 | MEDIUM | GATED | COR-01 | formatPriceSmall silently renders negative or non-positive prices as the bare string '0', masking bad data behind a legitimate-looking price |
+| 25 | MEDIUM | GATE | COR-14 / AGT-05 | Price/volume compact-number formatting is hand-copied into multiple components instead of reusing the shared lib/format.ts helpers, with visibly diffe |
+| 26 | MEDIUM | GATE | AGT-06 | formatPctChange is dead code whose fraction-based unit contract (0.0123 → "+1.23%") conflicts with every real percentage field in the app, which are a |
+| 27 | LOW | LIVE | ACC-06 | CurrencyCombobox and Sidebar's AccountMenu are hand-rolled dropdowns missing focus-trap and focus-restore, unlike the shared useDialog hook already us |
+| 28 | LOW | LIVE | ACC-01 | (Excursion, outside strict components/ scope but explicitly named in task) useTableSort's SortableTh omits scope="col" on its <th>, unlike ui/Table.ts |
+| 29 | LOW | LIVE | ACC-21 | RequestReveal and SearchModal 'Close' buttons render at 16x16 CSS px with no padding, below the WCAG 2.2 SC 2.5.8 24x24 minimum target size |
+| 30 | LOW | LIVE | input-validation | [absence] The OG Function does not bound the length or shape of rawId (or the base/quote split from it) before decoding it and building the upstream / |
+| 31 | LOW | LIVE | retries / reconciliation | [absence] createKey mints an API key whose plaintext secret is shown exactly once, with no delivery confirmation, idempotency key, or reconciliation p |
+| 32 | INFO | GATED | I18N-01 | No i18n infrastructure: all user-facing strings hardcoded with no translation layer (systemic I18N-01 violation) |
+
+### Detail — chunk-5 HIGH
+
+**[HIGH/LIVE] AGT-02 — /assets/[slug] has no runtime shell fallback — long-tail asset detail pages (and internal links to them from in-scope issuer/market pages) hard-404**
+- fix: Add web/explorer/functions/assets/[[path]].js mirroring functions/issuers/[[path]].js (serve the built /assets/shell/ HTML on ASSETS 404), and add a 'shell' branch to assets/[slug]/page.tsx generateStaticParams + default export that renders a client 
+
+**[HIGH/LIVE] legal-affordance — [absence] There is no privacy policy, terms of service, or any data-handling / data-processing notice anywhere in the explorer, and no link to one from the point where personal data is collected (the **
+- fix: add the missing control
+
