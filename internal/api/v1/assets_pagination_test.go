@@ -64,6 +64,36 @@ func TestAssetList_AssetsPaginationEmitsCursor(t *testing.T) {
 	}
 }
 
+// TestAssetList_RejectsMalformedCursor is the AGT-06 regression:
+// ValidateAssetsCursor existed but was never called, so a malformed
+// cursor silently fell through to the keyset predicate's degenerate
+// (0, "") case — which matches no rows and looks exactly like a quiet
+// end-of-pagination (empty page, 200 OK) instead of the 400 client
+// error it should be.
+func TestAssetList_RejectsMalformedCursor(t *testing.T) {
+	srv := v1.New(v1.Options{AssetsReader: &paginatingAssetsReader{total: 1000}})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/assets?limit=50&cursor=not-a-valid-cursor")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for a malformed cursor (AGT-06)", resp.StatusCode)
+	}
+}
+
+// TestAssetListUnified_RejectsMalformedClassicCursor is the AGT-06
+// regression for the unified (asset_class=all) listing's classic
+// phase, which shares the same never-validated cursor path via
+// fetchClassicUnifiedRows.
+func TestAssetListUnified_RejectsMalformedClassicCursor(t *testing.T) {
+	srv := v1.New(v1.Options{AssetsReader: &paginatingAssetsReader{total: 1000}})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/assets?asset_class=all&limit=50&cursor=classic:not-a-valid-cursor")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for a malformed classic-phase cursor (AGT-06)", resp.StatusCode)
+	}
+}
+
 // TestAssetList_AssetsPaginationLastPageNoCursor confirms the tail page
 // (rows ≤ limit) correctly omits the cursor.
 func TestAssetList_AssetsPaginationLastPageNoCursor(t *testing.T) {
