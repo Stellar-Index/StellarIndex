@@ -258,15 +258,16 @@ func bucketKeyAndOverrideForRequest(r *http.Request, anonBucket, authBucket *rat
 
 // anonymousRateLimitKey derives the per-IP throttle key for an
 // anonymous caller. IP-ONLY by design (F-1335) — see
-// [bucketKeyAndOverrideForRequest]. Uses [remoteIPFor] (the
-// forge-resistant XFF resolver, F-1338) rather than [RemoteIPFrom]
+// [bucketKeyAndOverrideForRequest]. Uses [remoteIPPrefixFor] (the
+// forge-resistant XFF resolver, F-1338, aggregated to a /64 network
+// prefix for IPv6 per SEC-15 — see its doc) rather than [RemoteIPFrom]
 // so the key is populated even when the Logger middleware that
 // caches remote_ip in context hasn't run. Falls back to "anon" only
 // when no IP can be resolved at all — collapsing such requests into a
 // single shared bucket is the safe (fail-closed) choice for a
 // throttle.
 func anonymousRateLimitKey(r *http.Request) string {
-	ip := remoteIPFor(r)
+	ip := remoteIPPrefixFor(r)
 	if ip == "" {
 		return "anon"
 	}
