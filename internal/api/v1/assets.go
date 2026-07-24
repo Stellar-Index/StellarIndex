@@ -878,8 +878,17 @@ func (s *Server) refreshClassicSupply(er classicSupplyReader, done chan struct{}
 // computeMarketCapUSD = (circulating / 10^decimals) × priceUSD, as a
 // 2-dp decimal string. circulating is raw integer units (stroops-scale);
 // dividing by 10^decimals yields whole-asset units before the price
-// multiply. Returns "" on unparseable input. big.Float throughout so a
-// 50-billion-unit supply doesn't lose precision (ADR-0003).
+// multiply. Returns "" on unparseable input or a negative result (bad
+// data — a legitimate supply/price is never negative). big.Float
+// throughout so a 50-billion-unit supply doesn't lose precision
+// (ADR-0003).
+//
+// A ZERO result renders as "0.00", not "" (COR-03): [usdMarketValue],
+// this function's sibling on the asset-detail endpoint, documents
+// amount==0 → "0.00" as "a legitimate 'asset has no circulating
+// supply' reading, not an error" — the listing endpoint must agree,
+// or the same zero-supply asset shows market_cap_usd:"0.00" on its
+// detail page and a missing/null field on the listing.
 func computeMarketCapUSD(circRaw, priceRaw string, decimals int) string {
 	circ, ok := new(big.Float).SetPrec(128).SetString(circRaw)
 	if !ok {
@@ -894,7 +903,7 @@ func computeMarketCapUSD(circRaw, priceRaw string, decimals int) string {
 	)
 	mc := new(big.Float).SetPrec(128).Quo(circ, scale)
 	mc.Mul(mc, price)
-	if mc.Sign() <= 0 {
+	if mc.Sign() < 0 {
 		return ""
 	}
 	return mc.Text('f', 2)
