@@ -567,9 +567,6 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	if err := t.Validate(); err != nil {
 		return err
 	}
-	if err := s.reDeriveResolverGuard(); err != nil {
-		return err
-	}
 
 	// One statement, two effects, fully atomic:
 	//   1. Upsert the trade (idempotent-corrective on its PK). On
@@ -629,6 +626,9 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
     `
 	var usdVolume any // sql NULL when nil; pq accepts the *string form too
 	v := tradeUSDVolume(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
+	if err := s.reDeriveNullVolumeGuard(t, v); err != nil {
+		return err
+	}
 	if v != nil {
 		usdVolume = *v
 	}
@@ -733,7 +733,7 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 // the flat positional-arg slice for BatchInsertTrades. Each row contributes 13
 // params (source, ledger, tx_hash, op_index, ts, base_asset, quote_asset,
 // base_amount, quote_amount, usd_volume, maker, taker, derive_generation).
-func (s *Store) tradeBatchValues(ctx context.Context, insertRows []canonical.Trade) ([]string, []any) {
+func (s *Store) tradeBatchValues(ctx context.Context, insertRows []canonical.Trade) ([]string, []any, error) {
 	const colsPerRow = 13
 	args := make([]any, 0, len(insertRows)*colsPerRow)
 	valuesParts := make([]string, 0, len(insertRows))
@@ -745,6 +745,9 @@ func (s *Store) tradeBatchValues(ctx context.Context, insertRows []canonical.Tra
 		))
 		var usdVolume any
 		v := tradeUSDVolume(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
+		if err := s.reDeriveNullVolumeGuard(t, v); err != nil {
+			return nil, nil, err
+		}
 		if v != nil {
 			usdVolume = *v
 		}
@@ -756,7 +759,7 @@ func (s *Store) tradeBatchValues(ctx context.Context, insertRows []canonical.Tra
 			t.Maker, t.Taker, s.deriveGeneration,
 		)
 	}
-	return valuesParts, args
+	return valuesParts, args, nil
 }
 
 // scanBatchTradeOutcome runs the batch INSERT..RETURNING query and folds the
@@ -837,9 +840,6 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 	if len(trades) == 0 {
 		return nil
 	}
-	if err := s.reDeriveResolverGuard(); err != nil {
-		return err
-	}
 
 	// Deterministic PK order WITHIN the batch (2026-07-05 deadlock
 	// storm, 918 in one afternoon; recurred 2026-07-08 as a CEX-specific
@@ -889,7 +889,10 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 	// Build VALUES placeholders + args slice (13 params/row incl.
 	// derive_generation) — extracted to keep this function under the length
 	// budget without splitting the deadlock/dedup narrative above.
-	valuesParts, args := s.tradeBatchValues(ctx, insertRows)
+	valuesParts, args, err := s.tradeBatchValues(ctx, insertRows)
+	if err != nil {
+		return err
+	}
 
 	// CTE shape:
 	//   ins → multi-row INSERT, RETURNING source (+ ledger/amounts for
