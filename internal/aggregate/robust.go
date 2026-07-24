@@ -53,17 +53,48 @@ func madRat(vals []*big.Rat, centre *big.Rat) *big.Rat {
 	return medianRat(devs)
 }
 
+// zeroScaleRelFloor is the fraction of the centre used as the robust
+// scale when the measured MAD is 0 (MNY-22).
+//
+// MAD is 0 whenever a strict MAJORITY of vals sit at one exact price —
+// a routine shape for a bucket of trades filling against the same
+// resting order, or a pegged pair. Left at 0 the σ-equivalent band
+// collapses to the single point `centre`, so the filter dropped EVERY
+// honestly-differing print in the window (a 100.01 next to four 100s)
+// and handed VWAP the majority price alone. Substituting a relative
+// floor keeps the outlier rejection that the zero-MAD case exists to
+// provide while letting genuine price discovery through.
+//
+// This mirrors [robustBand] in served_guard.go, which already solved
+// the same degeneracy by UNIONing the MAD band with a ratio band so a
+// collapsed MAD can never shrink the acceptance interval to a point.
+//
+// 1/200 = 0.5% of the centre. At the shipped default sigma of 4
+// (config `aggregate.outlier_sigma_threshold`) that is a ±2%
+// acceptance band around the majority price: comfortably wider than
+// the spread honest fills sit inside, and far tighter than the
+// fat-finger / wash prints the filter exists to remove (the M5 proof
+// case, a 2× print, is 100% away and is still dropped).
+var zeroScaleRelFloor = big.NewRat(1, 200)
+
 // robustCentreScale returns the robust centre (median) and the
 // σ-equivalent scale (madToStd · MAD) of vals, all exact. vals must be
 // non-empty.
 //
-// The scale is 0 exactly when a strict majority of vals are equal
-// (MAD == 0); callers decide how to treat a zero scale — the guards
-// here treat any deviation from that majority centre as an outlier,
-// matching the codebase's MAD convention (baseline.ZScore reports any
-// deviation from a zero-spread baseline as anomalous).
+// MAD is 0 exactly when a strict majority of vals are equal. Rather
+// than return a zero scale — which collapses every caller's band to
+// the centre point and rejects all honest dispersion — the scale
+// falls back to [zeroScaleRelFloor]·|centre|. A zero centre has no
+// relative floor to compute, so it keeps the zero scale.
 func robustCentreScale(vals []*big.Rat) (centre, scale *big.Rat) {
 	centre = medianRat(vals)
 	scale = new(big.Rat).Mul(madToStd, madRat(vals, centre))
+	if scale.Sign() == 0 {
+		floor := new(big.Rat).Mul(zeroScaleRelFloor, centre)
+		floor.Abs(floor)
+		if floor.Sign() > 0 {
+			scale = floor
+		}
+	}
 	return centre, scale
 }

@@ -1,6 +1,7 @@
 package aggregate_test
 
 import (
+	"math/big"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
@@ -175,6 +176,58 @@ func TestFilterOutliers_MADCatchesMaskedOutlier(t *testing.T) {
 		if tr.QuoteAmount.BigInt().Int64() >= 200 {
 			t.Fatalf("masked outlier 200 survived the filter: quote=%s", tr.QuoteAmount.String())
 		}
+	}
+}
+
+// TestFilterOutliers_ZeroMADKeepsHonestDispersion is the MNY-22
+// regression, asserted on the SERVED VALUE (the VWAP the filter feeds).
+//
+// A trade-count majority at one exact price — four fills against the
+// same resting order — drives MAD to 0. The band then collapsed to
+// that single price and every honestly-differing print was dropped, so
+// VWAP served the majority price alone (100) instead of the window's
+// real volume-weighted price (100.2). Erasing price discovery is not
+// outlier rejection.
+func TestFilterOutliers_ZeroMADKeepsHonestDispersion(t *testing.T) {
+	trades := []canonical.Trade{
+		mkTrade(1, 100), mkTrade(1, 100), mkTrade(1, 100), mkTrade(1, 100),
+		mkTrade(1, 101), // honest print 1% off the majority price
+	}
+	got := aggregate.FilterOutliers(trades, 4.0)
+	if len(got) != len(trades) {
+		t.Errorf("kept %d/%d — the 101 is honest dispersion, not an outlier", len(got), len(trades))
+	}
+
+	vwap, err := aggregate.VWAP(got)
+	if err != nil {
+		t.Fatalf("VWAP: %v", err)
+	}
+	// (100+100+100+100+101) / 5 = 100.2 exactly.
+	if want := big.NewRat(501, 5); vwap.Cmp(want) != 0 {
+		t.Errorf("served VWAP = %s, want %s (%s) — dropping the 101 serves the majority price, not the market's",
+			vwap.RatString(), want.RatString(), want.FloatString(2))
+	}
+}
+
+// TestFilterOutliers_ZeroMADStillDropsFatFinger pins the other half of
+// the MNY-22 fix: relaxing the zero-MAD band must NOT reopen the M5
+// masking hole, and must not degenerate into a no-op. A print well
+// outside the relative floor is still rejected.
+func TestFilterOutliers_ZeroMADStillDropsFatFinger(t *testing.T) {
+	trades := []canonical.Trade{
+		mkTrade(1, 100), mkTrade(1, 100), mkTrade(1, 100), mkTrade(1, 100),
+		mkTrade(1, 110), // 10% off — outside the ±2% band at sigma=4
+	}
+	got := aggregate.FilterOutliers(trades, 4.0)
+	if len(got) != 4 {
+		t.Fatalf("kept %d/5, want 4 — a 10%% print off a zero-MAD majority is an outlier", len(got))
+	}
+	vwap, err := aggregate.VWAP(got)
+	if err != nil {
+		t.Fatalf("VWAP: %v", err)
+	}
+	if want := big.NewRat(100, 1); vwap.Cmp(want) != 0 {
+		t.Errorf("served VWAP = %s, want 100 — the fat-finger print must not reach VWAP", vwap.RatString())
 	}
 }
 
