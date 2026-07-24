@@ -547,9 +547,21 @@ func usdPopulatedLabel(populated bool) string {
 }
 
 // InsertTrade writes one trade. Returns nil for a successful insert
-// OR a duplicate-key clash (idempotent by storage identity — the
-// current conflict target is source+ledger+tx_hash+op_index+ts).
-// Other errors propagate.
+// OR a conflict on the storage identity (source+ledger+tx_hash+
+// op_index+ts). Other errors propagate.
+//
+// Conflict semantics are ON CONFLICT DO UPDATE, guarded by
+// `trades.derive_generation <= EXCLUDED.derive_generation` (INV-3,
+// migration 0109) — NOT DO NOTHING (AGT-08: the docs here said
+// DO NOTHING long after the SQL changed). A conflicting write from an
+// equal-or-higher generation therefore OVERWRITES the stored value
+// columns, `usd_volume` among them; a lower-generation write is
+// refused by the guard and leaves the row untouched. That overwrite is
+// the whole point of the corrective upsert — a re-derive must be able
+// to repair a wrong stored value — but it also means any re-derive
+// path that runs WITHOUT the USD-volume resolvers installed will
+// overwrite correct usd_volume with NULL, which is why
+// [InstallUSDVolumeResolution] and the reDeriveResolverGuard exist.
 //
 // The trade is validated via [canonical.Trade.Validate] before
 // touching the DB; a Validate failure returns [canonical.ErrInvalidTrade].
@@ -655,8 +667,9 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	obs.TradeInsertOutcomeTotal.WithLabelValues(t.Source, outcome).Inc()
 
 	// F-1243 (codex audit-2026-05-13) second half: skip the
-	// registry hook when the trade was a duplicate (rowsInserted
-	// = 0 from the `ON CONFLICT DO NOTHING`). The wave-47 TTL fix
+	// registry hook when no row landed (rowsInserted = 0 — the
+	// conflicting row lost the derive_generation guard on the
+	// `ON CONFLICT ... DO UPDATE`). The wave-47 TTL fix
 	// already addressed the freeze; this guard fixes the
 	// observation_count drift on backfill replays / process
 	// restarts that re-encounter already-stored trades.
@@ -711,11 +724,15 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 // Batching collapses N roundtrips into 1, lifting throughput by
 // roughly the batch factor.
 //
-// Same idempotency semantics as [Store.InsertTrade]:
-// `ON CONFLICT DO NOTHING` on the trade PK, and the
-// `source_entry_counts` UPSERT only bumps the per-source tally by
-// the number of rows actually inserted (so re-runs over already-
-// stored ledgers don't inflate the count).
+// Same conflict semantics as [Store.InsertTrade] (INT-01): ON
+// CONFLICT ... DO UPDATE on the trade PK, guarded by
+// `trades.derive_generation <= EXCLUDED.derive_generation` — an
+// equal-or-higher generation OVERWRITES the stored value columns
+// including `usd_volume`, a lower one is refused. Re-running a batch
+// over already-stored ledgers is therefore idempotent in ROW COUNT
+// but not inert in VALUE. The `source_entry_counts` UPSERT bumps the
+// per-source tally only by the number of rows actually written, so
+// re-runs don't inflate the count.
 //
 // Caller-side filtering: rows are NOT pre-validated by this
 // function — callers MUST `Validate` each trade before queueing it

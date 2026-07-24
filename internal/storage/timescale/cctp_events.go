@@ -102,7 +102,13 @@ type CCTPEvent struct {
 // InsertCCTPEvent appends one CCTP event row, idempotent on the
 // (contract_id, ledger, tx_hash, op_index, event_type, ts) PK.
 // Re-running the indexer or a backfill over the same range writes
-// the same rows; ON CONFLICT DO NOTHING makes the replay a no-op.
+// the same rows. ON CONFLICT ... DO UPDATE, guarded by
+// `derive_generation <= EXCLUDED.derive_generation` (DAT-04): a replay
+// at an equal-or-higher generation OVERWRITES the stored value
+// columns, a lower-generation one is refused. Idempotent in row count,
+// NOT inert in value — the corrective upsert exists so a re-derive can
+// repair a wrong stored row, so a replay wired with different inputs
+// will rewrite them.
 //
 // Defensive: rejects empty ContractID / TxHash and an invalid
 // EventType before touching the DB. Amount / Fee are passed straight

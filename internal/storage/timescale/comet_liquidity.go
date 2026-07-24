@@ -77,8 +77,13 @@ type CometLiquidityEvent struct {
 // tx_hash, op_index, event_kind, token, event_index) PK (event_index
 // added by migration 0059 / F-1324 so two same-(kind,token) events
 // from one op don't collide). Re-running the indexer or a backfill
-// over the same range writes the same rows; ON CONFLICT DO NOTHING
-// makes the replay a no-op.
+// over the same range writes the same rows. ON CONFLICT ... DO UPDATE, guarded by
+// `derive_generation <= EXCLUDED.derive_generation` (DAT-04): a replay
+// at an equal-or-higher generation OVERWRITES the stored value
+// columns, a lower-generation one is refused. Idempotent in row count,
+// NOT inert in value — the corrective upsert exists so a re-derive can
+// repair a wrong stored row, so a replay wired with different inputs
+// will rewrite them.
 //
 // Defensive: rejects empty ContractID / TxHash / Caller / Token, an
 // invalid Kind, and a non-positive Amount before touching the DB —
