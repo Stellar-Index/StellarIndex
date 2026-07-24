@@ -2,8 +2,19 @@
 
 Prometheus alerting rules that correspond 1:1 to the rows in
 [docs/operations/alerts-catalog.md](../../docs/operations/alerts-catalog.md).
-Loaded by AlertManager; routed to PagerDuty per
+Loaded by AlertManager; routed per
 [sev-playbook.md §3](../../docs/operations/sev-playbook.md#3-detection-channels).
+**Reality check (audit-2026-07-23 OBS-08):** on the live single-host
+R1 config ([`configs/alertmanager/alertmanager.r1.yml`](../../configs/alertmanager/alertmanager.r1.yml))
+the page tier fans out to Discord ONLY — `chat-page` has no
+`pagerduty_configs`. The multi-host template
+([`alertmanager.yml.j2`](../../configs/ansible/roles/prometheus/templates/alertmanager.yml.j2))
+supports PagerDuty conditionally via `alertmanager_pagerduty_key`,
+but no tracked inventory sets that var, so PagerDuty is not wired
+anywhere in this repo today. Until a PagerDuty integration key is
+provisioned and wired, "page" severity means "post to Discord
+#stellarindex-pages" — it does not itself wake anyone the way a
+phone-call/SMS PagerDuty escalation would.
 
 ## Layout
 
@@ -34,16 +45,20 @@ deploy/monitoring/
 
 Every alert carries:
 
-- `severity: page` → SEV-1 (P1) — wakes oncall.
+- `severity: page` → SEV-1 (P1) — intended to wake oncall; on R1
+  today this is Discord-only (see the reality check above), not a
+  phone/SMS page, until PagerDuty is provisioned.
 - `severity: ticket` → SEV-2 (P2) — business-hours page, after-hours ticket.
 - `severity: informational` → SEV-3 (P3) — ticketed, weekly review.
 
-AlertManager routes by label. The config template lives at
-[`configs/ansible/roles/prometheus/templates/alertmanager.yml.j2`](../../configs/ansible/roles/prometheus/templates/alertmanager.yml.j2)
+AlertManager routes by label. The multi-host config template lives
+at [`configs/ansible/roles/prometheus/templates/alertmanager.yml.j2`](../../configs/ansible/roles/prometheus/templates/alertmanager.yml.j2)
 — rendered to `/etc/alertmanager/alertmanager.yml` on `mon-01..02`
-by the `prometheus` ansible role. Routes split by `severity:` to
-Discord #pages + PagerDuty (page) / Discord #alerts (ticket) /
-informational digest (Alertmanager UI only).
+by the `prometheus` ansible role; R1's single-host equivalent is
+[`configs/alertmanager/alertmanager.r1.yml`](../../configs/alertmanager/alertmanager.r1.yml).
+Routes split by `severity:` to Discord #pages + PagerDuty-if-configured
+(page) / Discord #alerts (ticket) / informational digest (Alertmanager
+UI only) — see the reality check above for R1's actual current wiring.
 
 ## Validating locally
 

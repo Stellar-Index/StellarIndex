@@ -150,9 +150,12 @@ usd_pegged_classic_assets = [
 # with X-Forwarded-{For,Proto,Host} set. Trusting 127.0.0.1/32 makes
 # the API honour those headers (so request logs show the real client IP
 # instead of 127.0.0.1, and rate-limiting buckets per real client).
-# Listen-addr stays 0.0.0.0:3000 — Caddy is the public surface, but
-# direct access via :3000 still works for stellarindex-sla-probe and
-# ad-hoc operator curl.
+# Listen-addr is set to 127.0.0.1:3000 (loopback only) — Caddy is the
+# public surface and proxies to localhost:3000; stellarindex-sla-probe
+# and ad-hoc operator curl reach the API over loopback on the box
+# itself, not via a public 0.0.0.0 bind (audit-2026-07-23 INF-19: this
+# comment previously said 0.0.0.0:3000, which no longer matches the
+# rendered value below).
 # ──────────────────────────────────────────────────────────────────
 [api]
 listen_addr = "127.0.0.1:3000"
