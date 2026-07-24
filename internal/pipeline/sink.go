@@ -188,12 +188,27 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 	// the buffer + its goroutine entirely.
 	var extBuf *externalRetryBuffer
 	var bufWG sync.WaitGroup
+	var bufCancel context.CancelFunc
 	if store != nil {
 		extBuf = newExternalRetryBuffer(store, logger, externalRetryBufferMaxDepth)
+		// A-CRIT-3 (audit-2026-07-24): run the retry buffer under a context DERIVED
+		// from ctx and tied to worker lifetime, not ctx itself. extBuf.run only
+		// returns on <-ctx.Done() (→ finalDrain). Under ctx, a BACKFILL — whose
+		// input channel closes when the range completes but whose process ctx is
+		// never canceled (no SIGTERM on a clean range-complete) — would leave run()
+		// spinning forever, so bufWG.Wait() below hangs, the chunk never logs
+		// complete, the cursor + CAGG materialisation never run, and the inserted
+		// rows are eventually lost to the trades-retention window. Cancelling this
+		// derived context once the workers have drained lets run() exit via its
+		// fresh-context finalDrain (no buffered external trades lost). Live ingest
+		// is unaffected: its workers only exit when the source closes `in` (i.e. at
+		// shutdown), which is when the old ctx cancel fired anyway.
+		var bufCtx context.Context
+		bufCtx, bufCancel = context.WithCancel(ctx)
 		bufWG.Add(1)
 		go func() {
 			defer bufWG.Done()
-			extBuf.run(ctx)
+			extBuf.run(bufCtx)
 		}()
 	}
 
@@ -206,8 +221,11 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 		}(i)
 	}
 	wg.Wait()
-	// Workers have drained + block-retried their buffers; let the
-	// external buffer's background retrier finish its final drain.
+	// Workers have drained + block-retried their buffers; signal the external
+	// buffer to finish its final drain and exit (see A-CRIT-3 above), then wait.
+	if bufCancel != nil {
+		bufCancel()
+	}
 	bufWG.Wait()
 }
 

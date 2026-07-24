@@ -180,6 +180,24 @@ func backfill(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
+	// A-CRIT-2 (audit-2026-07-24): the main on-chain backfill re-processes ledgers
+	// that may overlap live ingest (gap-fill within the trades window / running
+	// alongside live). It writes the same trade PKs, so ON CONFLICT UPDATEs the
+	// existing rows. Without the USD-volume resolvers installed it computes
+	// usd_volume=NULL and — at the default gen 0 — still wins the guard (0<=0),
+	// overwriting live-ingested correct values with NULL. Mirror the indexer /
+	// backfill_external / ch_rebuild wiring: a positive generation so a corrected
+	// re-derive is authoritative, AND the resolvers so it writes real values (not
+	// NULL). The reDeriveResolverGuard now backstops any future omission.
+	store.SetDeriveGeneration(time.Now().Unix())
+	if err := timescale.InstallUSDVolumeResolution(
+		store,
+		cfg.Trades.USDPeggedClassicAssets,
+		cfg.Supply.SACWrappers,
+	); err != nil {
+		return fmt.Errorf("install usd-volume resolution: %w", err)
+	}
+
 	chunks := planBackfillChunks(opts.from, opts.to, opts.parallel)
 	logger.Info("backfill starting",
 		"from", opts.from,
