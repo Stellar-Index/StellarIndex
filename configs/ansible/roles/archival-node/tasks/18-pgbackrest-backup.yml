@@ -9,6 +9,29 @@
 # Sunday, daily at 02:00, which satisfies both the 24h (page) and 25h
 # (ticket) thresholds in rules.r1/storage.yml. WAL archiving (archive-async)
 # carries the 5-min RPO between backups.
+
+# Offsite (repo2) DR guard (audit-2026-07-23 REL-DR): repo1 lives on the
+# SAME host/pool as the database it backs up, so it shares its failure
+# domain (host loss, pool loss, ransomware on the box all take out both
+# the DB and its only backup copy). Fail loud at role-apply time rather
+# than let that gap ship silently: either repo2 is declared (S3 vars
+# set — pgbackrest.conf.j2 wires it when pgbackrest_manage_conf is
+# true) or the operator explicitly acknowledges the gap with
+# pgbackrest_offsite_ack=true (see docs/operations/off-site-backup-plan.md
+# for the deferred-offsite decision this currently documents for r1).
+- name: Refuse to proceed without an offsite (repo2) backup or an explicit ack of the gap
+  ansible.builtin.assert:
+    that:
+      - (pgbackrest_repo2_s3_bucket | default('') != '') or (pgbackrest_offsite_ack | default(false) | bool)
+    fail_msg: >-
+      No pgBackRest offsite (repo2) backup is configured for this host, and
+      pgbackrest_offsite_ack is not set. repo1-only backups share the DB's
+      failure domain (REL-DR). Either set pgbackrest_repo2_s3_bucket (+ the
+      other repo2 vars) to provision an offsite copy, or set
+      pgbackrest_offsite_ack: true to explicitly accept the gap (see
+      docs/operations/off-site-backup-plan.md).
+    quiet: true
+
 - name: Install pgBackRest backup wrapper
   ansible.builtin.template:
     src: pgbackrest-backup.sh.j2
@@ -46,15 +69,13 @@
 # after reviewing the rendered diff. When repo2 vars are set, run
 # `pgbackrest --stanza=stellarindex stanza-upgrade` then a full backup
 # to repo2 (see the operator register).
-- name: Install pgBackRest core config (repo1 + optional offsite repo2)
-  ansible.builtin.template:
-    src: pgbackrest.conf.j2
-    dest: /etc/pgbackrest/pgbackrest.conf
-    owner: postgres
-    group: postgres
-    mode: "0640"
-  when: pgbackrest_manage_conf | default(false)
-
+#
+# This precondition MUST run before the template task below (audit-
+# 2026-07-23 AGT-ordering): pgbackrest.conf.j2 consumes the same
+# repo2 vars, so running the assert after the template would only
+# ever fire once the (possibly half-configured) config had already
+# been rendered — too late for the friendly precondition to do its
+# job.
 - name: Refuse repo2 without its cipher pass (offsite copies are encrypted by us)
   ansible.builtin.assert:
     that:
@@ -67,3 +88,55 @@
   when:
     - pgbackrest_manage_conf | default(false)
     - pgbackrest_repo2_s3_bucket | default('') != ''
+
+- name: Install pgBackRest core config (repo1 + optional offsite repo2)
+  ansible.builtin.template:
+    src: pgbackrest.conf.j2
+    dest: /etc/pgbackrest/pgbackrest.conf
+    owner: postgres
+    group: postgres
+    mode: "0640"
+  when: pgbackrest_manage_conf | default(false)
+
+# ─── Restore-drill (audit-2026-07-23 REL-backup-restore) ──────────────
+# CS-110: a backup that has never been restored is a hope, not a
+# backup. scripts/ops/restore-drill.sh already exists (non-destructive,
+# self-contained — see its own header) and the "restore-drill" ZFS
+# dataset is already provisioned (defaults/main.yml zfs_datasets), but
+# nothing installed or scheduled it. Wire it up here.
+- name: Install restore-drill script
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../scripts/ops/restore-drill.sh"
+    dest: /usr/local/bin/restore-drill.sh
+    owner: root
+    group: root
+    mode: "0755"
+  when: pgbackrest_backup_enabled | default(true)
+
+- name: Install restore-drill systemd units
+  ansible.builtin.template:
+    src: "systemd/{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - restore-drill.service
+    - restore-drill.timer
+  register: restore_drill_units
+  when: pgbackrest_backup_enabled | default(true)
+
+- name: Reload systemd for restore-drill units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: restore_drill_units is changed
+
+# restore-drill.timer is INTENTIONALLY NOT enabled here (mirrors
+# galexie-archive-trim.timer's pattern below in 14-stellarindex-
+# services.yml). R1 was mid Phase-A capacity relief (ZFS pool ~94%
+# full, docs/operations/runbooks/phase-a-capacity-relief-2026-07-18.md)
+# when this landed; the drill needs MIN_FREE_GB=200 free and the
+# script refuses to run below that (safe), but starting a NEW weekly
+# heavy job while capacity is this tight is an operator call. Enable
+# once Phase A clears:
+#   systemctl enable --now restore-drill.timer
