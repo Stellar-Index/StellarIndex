@@ -230,6 +230,112 @@ func TestDecodeUpdate_OpIndexStrideIsFixed(t *testing.T) {
 	}
 }
 
+// TestDecodeUpdate_EventIndexPreventsSameOpCollision is the
+// regression test for DAT-06/trap-15 (audit-2026-07-23): two
+// Reflector update events emitted by the SAME operation
+// (OperationIndex equal) but at DIFFERENT positions in that
+// operation's contract-event list (EventIndex differs) used to
+// collide, because the synthetic OpIndex's fanout base was
+// OperationIndex ALONE. The fix must incorporate EventIndex too, so
+// two same-source events within one op get disjoint 1024-wide
+// OpIndex blocks.
+func TestDecodeUpdate_EventIndexPreventsSameOpCollision(t *testing.T) {
+	prev, prevTS := decodeUpdateBody, decodeUpdateTimestamp
+	defer func() { decodeUpdateBody, decodeUpdateTimestamp = prev, prevTS }()
+	decodeUpdateTimestamp = func(_ string) (uint64, error) { return 0, nil }
+
+	xlm := canonical.NativeAsset()
+	v := func(s string) canonical.Amount {
+		n, _ := new(big.Int).SetString(s, 10)
+		return canonical.NewAmount(n)
+	}
+	decodeUpdateBody = func(_ string) ([]PriceEntry, error) {
+		return []PriceEntry{{Asset: xlm, Price: v("100")}}, nil
+	}
+
+	base := events.Event{
+		Topic:      []string{TopicSymbolReflector, TopicSymbolUpdate, "ts"},
+		ContractID: dexContractID,
+		Ledger:     1, TxHash: reflectorTxHash,
+		LedgerClosedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	closedAt, _ := time.Parse(time.RFC3339, base.LedgerClosedAt)
+
+	eFirst := base
+	eFirst.OperationIndex = 7
+	eFirst.EventIndex = 0
+	updatesFirst, err := decodeUpdate(&eFirst, VariantDEX, DefaultDecimals, "", closedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	eSecond := base
+	eSecond.OperationIndex = 7 // SAME operation as eFirst
+	eSecond.EventIndex = 1     // a DIFFERENT event within it
+	updatesSecond, err := decodeUpdate(&eSecond, VariantDEX, DefaultDecimals, "", closedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(updatesFirst) != 1 || len(updatesSecond) != 1 {
+		t.Fatalf("expected 1 update each, got %d and %d", len(updatesFirst), len(updatesSecond))
+	}
+	if updatesFirst[0].OpIndex == updatesSecond[0].OpIndex {
+		t.Errorf("two events in the SAME operation (OperationIndex=7) with different EventIndex (0 vs 1) collided on OpIndex=%d — the fanout base must incorporate EventIndex, not just OperationIndex",
+			updatesFirst[0].OpIndex)
+	}
+}
+
+// TestDecodeUpdate_OpIndexStableAcrossAllowlistSkip is the regression
+// test for DAT-03 (audit-2026-07-23): decodeUpdateBody used to
+// COMPACT unknown-symbol slots out of the returned vector, so
+// decodeUpdate's vector-position-derived OpIndex for entries AFTER a
+// skipped slot shifted depending on allow-list state — an allow-list
+// change plus a re-derive would orphan/duplicate the surviving rows'
+// identity. A Skip placeholder must consume its raw vector slot
+// instead of being omitted.
+func TestDecodeUpdate_OpIndexStableAcrossAllowlistSkip(t *testing.T) {
+	prev, prevTS := decodeUpdateBody, decodeUpdateTimestamp
+	defer func() { decodeUpdateBody, decodeUpdateTimestamp = prev, prevTS }()
+	decodeUpdateTimestamp = func(_ string) (uint64, error) { return 0, nil }
+
+	xlm := canonical.NativeAsset()
+	usdc, _ := canonical.NewFiatAsset("USD")
+	v := func(s string) canonical.Amount {
+		n, _ := new(big.Int).SetString(s, 10)
+		return canonical.NewAmount(n)
+	}
+	// Raw update_data vector had 3 slots: [known, UNKNOWN(skip), known].
+	// The surviving entry at raw position 2 must keep an OpIndex
+	// derived from position 2, not the compacted position 1.
+	decodeUpdateBody = func(_ string) ([]PriceEntry, error) {
+		return []PriceEntry{
+			{Asset: xlm, Price: v("100")},
+			{Skip: true},
+			{Asset: usdc, Price: v("100")},
+		}, nil
+	}
+
+	e := &events.Event{
+		Topic:      []string{TopicSymbolReflector, TopicSymbolUpdate, "ts"},
+		ContractID: dexContractID,
+		Ledger:     1, TxHash: reflectorTxHash, OperationIndex: 0, EventIndex: 0,
+		LedgerClosedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	closedAt, _ := time.Parse(time.RFC3339, e.LedgerClosedAt)
+	updates, err := decodeUpdate(e, VariantDEX, DefaultDecimals, "", closedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updates) != 2 {
+		t.Fatalf("expected 2 updates (1 skipped), got %d", len(updates))
+	}
+	if got, want := updates[1].OpIndex, uint32(2); got != want {
+		t.Errorf("second surviving entry OpIndex = %d, want %d (raw vector position 2, not compacted position 1) — an allow-list change must not shift a surviving entry's OpIndex",
+			got, want)
+	}
+}
+
 func TestDecodeUpdate_skipsZeroPrices(t *testing.T) {
 	prev, prevTS := decodeUpdateBody, decodeUpdateTimestamp
 	defer func() { decodeUpdateBody, decodeUpdateTimestamp = prev, prevTS }()
