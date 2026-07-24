@@ -19,3 +19,10 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 ReadWritePaths=/var/lib/node_exporter/textfile_collector
+
+# Hourly probe of a handful of host commands (nft/zpool/apt-mark); a
+# normal run is seconds. Bound a hang (e.g. a wedged `zpool status`)
+# so it fails and frees the next hourly tick instead of leaving the
+# config-assertion textfile gauge silently stuck.
+TimeoutStartSec=5min
+RuntimeMaxSec=5min
