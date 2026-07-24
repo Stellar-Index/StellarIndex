@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 
+import { isSafePublicImageUrl } from '@/lib/safe-domain';
+
 // SidebarAssetIcon — the asset-detail sidebar avatar. Renders the SEP-1
 // icon when it's a well-formed https URL and the image actually loads;
 // a missing/non-https/blocked URL (onError) falls back to the letter
@@ -18,8 +20,10 @@ export function SidebarAssetIcon({
   code: string;
 }) {
   const [broken, setBroken] = useState(false);
-  const safe = typeof image === 'string' && /^https:\/\//i.test(image);
-  if (safe && !broken) {
+  // SEC-10: host-validated, not just scheme-validated — see
+  // lib/safe-domain.ts (isSafePublicImageUrl) for the threat this closes.
+  const safe = isSafePublicImageUrl(image) && !broken;
+  if (safe) {
     return (
       // eslint-disable-next-line @next/next/no-img-element -- remote SEP-1 icons; next/image needs a domain allowlist we can't enumerate under static export
       <img

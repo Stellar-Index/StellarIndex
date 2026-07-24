@@ -16,6 +16,7 @@ import {
   TR,
 } from '@/components/ui';
 import { formatCompact } from '@/lib/format';
+import { isSafePublicImageUrl } from '@/lib/safe-domain';
 
 /**
  * HomeTopAssets — the activity-ranked top 10 from /v1/coins.
@@ -284,8 +285,11 @@ function ChangePct({ raw }: { raw: string | null | undefined }) {
 // next/image domain allowlist under static export.
 function AssetIcon({ image, code }: { image?: string | null; code: string }) {
   const [broken, setBroken] = useState(false);
-  const safe = typeof image === 'string' && /^https?:\/\//i.test(image);
-  if (safe && !broken) {
+  // SEC-10: host-validated, https-only — scheme-only validation let a
+  // hostile issuer's SEP-1 image URL point every viewer's browser at an
+  // arbitrary (including private/internal) host. See lib/safe-domain.ts.
+  const safe = isSafePublicImageUrl(image) && !broken;
+  if (safe) {
     return (
       // eslint-disable-next-line @next/next/no-img-element -- remote SEP-1 icons; next/image needs a domain allowlist we can't enumerate under static export
       <img
