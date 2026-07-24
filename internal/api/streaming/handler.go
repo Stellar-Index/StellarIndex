@@ -1,7 +1,6 @@
 package streaming
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -305,9 +304,3 @@ func WriteFrame(w http.ResponseWriter, ev Event) error {
 	_, err := w.Write([]byte(b.String()))
 	return err
 }
-
-// Compile-time assertion that ResponseWriters returned by
-// httptest.NewRecorder satisfy http.Flusher (they don't, by
-// default — that's why server tests use httptest.NewServer +
-// http.Get instead of recorders for Stream).
-var _ = func() context.Context { return context.Background() }()
