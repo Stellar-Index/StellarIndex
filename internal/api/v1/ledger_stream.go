@@ -29,6 +29,16 @@ const (
 	// looks healthy; with it the client keeps seeing the (truthfully
 	// growing) lag every ~10s during a stall.
 	ledgerStreamRefreshInterval = 10 * time.Second
+
+	// ledgerStreamTickTimeout bounds a single per-tick cursors read
+	// (REL-01, partial fix of G2-04). RequestTimeout deliberately
+	// excludes `/stream` paths (the connection is long-lived by
+	// design), so without a per-tick bound a slow ListCursors call
+	// could hold this producer's goroutine — and its DB connection —
+	// open indefinitely, once per open connection. Mirrors
+	// observationsScanTimeout's 8s ceiling, the same fix already
+	// applied to the observations-stream producer.
+	ledgerStreamTickTimeout = 8 * time.Second
 )
 
 // handleLedgerStream serves GET /v1/ledger/stream — the SSE
@@ -164,7 +174,9 @@ func (s *Server) nextLedgerEvent(
 	lastLedger uint32,
 	lastEmit time.Time,
 ) (streaming.Event, LedgerTipView, bool) {
-	view, ok, err := s.ledgerTip(ctx)
+	tickCtx, cancel := context.WithTimeout(ctx, ledgerStreamTickTimeout)
+	defer cancel()
+	view, ok, err := s.ledgerTip(tickCtx)
 	if err != nil {
 		if ctx.Err() == nil {
 			s.logger.Warn("ledgerTip failed (stream tick) — skipping emit", "err", err)

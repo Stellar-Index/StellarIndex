@@ -21,6 +21,16 @@ import (
 // signals teardown).
 const tipStreamProducerQueueDepth = 4
 
+// tipStreamTickTimeout bounds a single per-tick computeTip call
+// (REL-01, partial fix of G2-04). RequestTimeout deliberately excludes
+// `/stream` paths (the connection is long-lived by design), so without
+// a per-tick bound a slow tip computation could hold this producer's
+// goroutine — and whatever DB connection it's using — open
+// indefinitely, once per open connection. Mirrors observationsScanTimeout's
+// 8s ceiling, the same fix already applied to the observations-stream
+// producer.
+const tipStreamTickTimeout = 8 * time.Second
+
 // handlePriceTipStream serves GET /v1/price/tip/stream — the SSE
 // counterpart to /v1/price/tip per ADR-0018 §"SSE stream wires onto
 // the tip surface" and the Wk-7 plan row L3.7.
@@ -166,7 +176,9 @@ func (s *Server) runTipStreamProducer(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			snap, sources, err := s.computeTip(ctx, asset, quote, windowSeconds)
+			tickCtx, cancel := context.WithTimeout(ctx, tipStreamTickTimeout)
+			snap, sources, err := s.computeTip(tickCtx, asset, quote, windowSeconds)
+			cancel()
 			if err != nil {
 				if ctx.Err() == nil {
 					s.logger.Warn("computeTip failed (stream tick) — skipping emit",

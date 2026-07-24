@@ -138,6 +138,83 @@ func TestLedgerStream_EmitsOnAdvance(t *testing.T) {
 	}
 }
 
+// deadlineCapturingCursorsReader advances the ledger like
+// advancingCursorsReader, but records whether each ListCursors call
+// after the first (the stream's synchronous prelude read, which is
+// intentionally unbounded by RequestTimeout on `/stream` paths) was
+// given a ctx with a Deadline.
+type deadlineCapturingCursorsReader struct {
+	mu    sync.Mutex
+	calls int
+	// tickHadDeadline receives one bool per call after the first —
+	// true iff that call's ctx carried a Deadline.
+	tickHadDeadline chan bool
+}
+
+func (d *deadlineCapturingCursorsReader) ListCursors(ctx context.Context) ([]timescale.Cursor, error) {
+	d.mu.Lock()
+	d.calls++
+	call := d.calls
+	d.mu.Unlock()
+
+	if call > 1 {
+		_, hasDeadline := ctx.Deadline()
+		select {
+		case d.tickHadDeadline <- hasDeadline:
+		default:
+		}
+	}
+
+	c := timescale.Cursor{
+		Source:     "ledgerstream",
+		LastLedger: uint32(1000 + call),
+		UpdatedAt:  time.Now().UTC(),
+	}
+	return []timescale.Cursor{c}, nil
+}
+
+// TestLedgerStream_TickIsBoundedByATimeout is the REL-01 regression:
+// the per-tick cursors read in the ledger-stream producer must run
+// under its OWN bounded deadline, not the raw per-connection context
+// (which RequestTimeout deliberately leaves undeadlined on `/stream`
+// paths because the connection itself is long-lived by design).
+// Without a per-tick bound, a slow ListCursors call could hold the
+// producer goroutine — and its DB connection — open indefinitely, once
+// per open connection, for as long as the client stays connected.
+func TestLedgerStream_TickIsBoundedByATimeout(t *testing.T) {
+	reader := &deadlineCapturingCursorsReader{tickHadDeadline: make(chan bool, 1)}
+	srv := v1.New(v1.Options{Cursors: reader})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/v1/ledger/stream", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+
+	br := bufio.NewReader(resp.Body)
+	// Drain the synchronous initial event (prelude read, call #1 —
+	// deliberately not asserted on).
+	_ = readTipStreamEvent(t, br, 2*time.Second)
+	// Drain the first TICK event (ledgerStreamPollInterval = 2s) so the
+	// producer goroutine has actually made its second ListCursors call.
+	_ = readTipStreamEvent(t, br, 4*time.Second)
+
+	select {
+	case hadDeadline := <-reader.tickHadDeadline:
+		if !hadDeadline {
+			t.Error("per-tick ListCursors call ran with an undeadlined context — " +
+				"a slow/hung read can block the producer indefinitely (REL-01)")
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("timed out waiting for a per-tick ListCursors call")
+	}
+}
+
 // decodeLedgerEvent parses one ledger_update SSE data payload and
 // returns the embedded LedgerTipView, failing the test on a
 // malformed payload.
