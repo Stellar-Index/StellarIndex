@@ -52,11 +52,15 @@
 // registered scope; this package does not re-decode them.
 //
 // `POOL` is a shared topic namespace across every Comet pool contract
-// — the decoder matches by topic bytes, not pool contract ID, same
-// pattern as Soroswap/Aquarius/Phoenix. Operators who want narrow
-// coverage (e.g. only Blend's backstop) filter downstream by
-// `Trade.Source == "comet"` or `LiquidityEvent.ContractID`, not at
-// dispatch time.
+// — ROUTING (which decoder claims the event) is by topic bytes, but
+// ATTRIBUTION is gated on contract identity AT DISPATCH TIME
+// (ADR-0035/0040, CS-026): Decoder.Matches (dispatcher_adapter.go)
+// only claims an event whose ContractID is in the curated registry
+// (MainnetGatedSet + protocol_contracts warm) — the bare topic tuple
+// is forgeable by any pubnet contract built from (or mimicking) the
+// Balancer-v1 WASM, so topic bytes alone are never sufficient. A
+// comet-shaped event from an unregistered contract is left unclaimed
+// for the recognition audit to surface, never silently attributed.
 package comet
 
 import (
