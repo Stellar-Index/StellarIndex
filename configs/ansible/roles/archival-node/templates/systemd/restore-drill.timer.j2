@@ -1,0 +1,23 @@
+# systemd timer: weekly pgBackRest restore-drill (ADR-0043 / CS-110).
+#
+# Rendered by Ansible. Installed but NOT enabled by default — see
+# restore-drill.service.j2's header + 18-pgbackrest-backup.yml.
+#
+# Time slot: Saturday 04:00 UTC + up to 30 min jitter — after the
+# Saturday differential backup (pgbackrest-backup.timer, 02:00 UTC)
+# so the drill exercises that day's freshest backup, and well
+# outside the Sunday 02:17/03:23 archive-completeness / verify-
+# archive window.
+
+[Unit]
+Description=Weekly pgBackRest restore-drill (ADR-0043 / CS-110)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/adr/0043-backup-and-restore-strategy.md
+
+[Timer]
+OnCalendar=Sat *-*-* 04:00:00 UTC
+RandomizedDelaySec=1800
+Persistent=true
+Unit=restore-drill.service
+
+[Install]
+WantedBy=timers.target
