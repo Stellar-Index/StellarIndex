@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
-	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // RawEventSink is the contract a sink must satisfy to receive
@@ -42,6 +41,20 @@ type BatchWriter interface {
 
 // AsyncSinkOptions configures a [NewAsyncSink].
 type AsyncSinkOptions struct {
+	// IsPermanentFault positively classifies an error as a PERMANENT data
+	// fault (a row that will never land no matter how many times it is
+	// retried). Only such an error is isolated and dropped; everything else
+	// blocks-and-retries, per the asymmetric ADR-0041 policy.
+	//
+	// Injected rather than imported: a source package must not reach up into
+	// internal/storage (import-boundary rule L/sources-app-purity, D8 rule 3).
+	// The app layer supplies timescale.IsPermanentDataError here.
+	//
+	// Defaults to "nothing is permanent" — i.e. retry forever rather than
+	// drop. That is the safe side: an unclassified error must never silently
+	// discard a row from ADR-0029's catch-all landing zone.
+	IsPermanentFault func(error) bool
+
 	// BufferSize is the channel depth. Defaults to 4096. Sized so a
 	// few seconds of peak Soroban event volume (typically 100-500
 	// events/s) fits even during a Postgres write hiccup. When the
@@ -91,9 +104,10 @@ type AsyncSinkOptions struct {
 // The worker goroutine is single, so writes don't compete with each
 // other.
 type AsyncSink struct {
-	w       BatchWriter
-	logger  *slog.Logger
-	timeout time.Duration
+	w                BatchWriter
+	isPermanentFault func(error) bool
+	logger           *slog.Logger
+	timeout          time.Duration
 
 	ch       chan Row
 	flush    time.Duration
@@ -112,6 +126,9 @@ type AsyncSink struct {
 // NewAsyncSink constructs an AsyncSink. Returns the sink in stopped
 // state — callers must call Start before PushEvent will drain.
 func NewAsyncSink(w BatchWriter, opts AsyncSinkOptions) *AsyncSink {
+	if opts.IsPermanentFault == nil {
+		opts.IsPermanentFault = func(error) bool { return false }
+	}
 	if opts.BufferSize <= 0 {
 		opts.BufferSize = 4096
 	}
@@ -129,14 +146,15 @@ func NewAsyncSink(w BatchWriter, opts AsyncSinkOptions) *AsyncSink {
 		logger = slog.Default()
 	}
 	return &AsyncSink{
-		w:        w,
-		logger:   logger,
-		timeout:  opts.WriteTimeout,
-		ch:       make(chan Row, opts.BufferSize),
-		flush:    opts.FlushInterval,
-		batchSz:  opts.BatchSize,
-		stopping: make(chan struct{}),
-		done:     make(chan struct{}),
+		w:                w,
+		isPermanentFault: opts.IsPermanentFault,
+		logger:           logger,
+		timeout:          opts.WriteTimeout,
+		ch:               make(chan Row, opts.BufferSize),
+		flush:            opts.FlushInterval,
+		batchSz:          opts.BatchSize,
+		stopping:         make(chan struct{}),
+		done:             make(chan struct{}),
 	}
 }
 
@@ -330,7 +348,7 @@ func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
 // failure policy the trades path uses (REL-08 / audit-2026-07-23
 // REL-02, DAT-09): a write failure blocks-and-retries with capped
 // backoff by DEFAULT; only a POSITIVELY-classified permanent data
-// fault ([timescale.IsPermanentDataError] — pq class 22/23) is
+// fault (the injected IsPermanentFault predicate — pq class 22/23) is
 // isolated and dropped. Before this, ANY error — including a
 // transient infra fault during a Postgres outage — silently
 // discarded the whole batch after one Warn log, permanently losing
@@ -366,7 +384,7 @@ func (s *AsyncSink) flushBatch(rows []Row) {
 			s.mu.Unlock()
 			return
 		}
-		if timescale.IsPermanentDataError(err) {
+		if s.isPermanentFault(err) {
 			s.abandonBatch(rows, err, "permanent data fault")
 			return
 		}

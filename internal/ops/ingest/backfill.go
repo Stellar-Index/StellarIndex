@@ -304,11 +304,12 @@ func buildChunkDispatcher(
 	// gets N independent sinks each with their own batch buffer.
 	// Stop()'d at chunk end to flush any partial batch.
 	rawSink := sorobanevents.NewAsyncSink(store, sorobanevents.AsyncSinkOptions{
-		BufferSize:    4096,
-		BatchSize:     1000,
-		FlushInterval: time.Second,
-		WriteTimeout:  10 * time.Second,
-		Logger:        logger.With("component", "soroban-events-sink"),
+		IsPermanentFault: timescale.IsPermanentDataError,
+		BufferSize:       4096,
+		BatchSize:        1000,
+		FlushInterval:    time.Second,
+		WriteTimeout:     10 * time.Second,
+		Logger:           logger.With("component", "soroban-events-sink"),
 	})
 	rawSink.Start()
 	disp.SetRawEventSink(rawSink)

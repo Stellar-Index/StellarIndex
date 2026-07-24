@@ -118,6 +118,7 @@ RULES = [
             "internal/scval/",                  # the Soroban-event scval wrapper
             "internal/canonical/sac.go",        # SAC address derivation is a protocol-defined hash over xdr.Asset/HashIdPreimage (CAP-46) — xdr types ARE the spec here, no SCVal decoding (site-audit #40, 2026-07-03)
             "internal/ledgerstream/",           # transport layer — exposes xdr.LedgerCloseMeta
+            "internal/archivecompleteness/",    # reads REAL ledger headers out of history-archive checkpoint files (xdr.LedgerHeaderHistoryEntry via NewGzStream) to prove a present file actually contains the ledgers it claims — the valid-gzip-wrong-content class. Same non-SCVal ledger-meta category as ledgerstream (audit-2026-07-23)
             "internal/dispatcher/",             # routes tx / events (PR 165b)
             "internal/pipeline/",               # shared ledger-meta plumbing (indexer + backfill)
             "internal/storage/clickhouse/",     # Tier-1 raw-lake structural decoder: walks LCM, stores raw XDR blobs (NOT SCVal decoding) (ADR-0034)
