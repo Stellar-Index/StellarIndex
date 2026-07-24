@@ -351,6 +351,41 @@ groups:
             loss: a permanent data fault (kind=trade) or external-buffer
             overflow (kind=dropped). Escalate quickly if the rate is high.
 
+      # Mirror of the rule in deploy/monitoring/rules/ingestion.yml (the
+      # wave-96 monitoring-rules CI dual-validation pattern). ADR-0041
+      # companion to trade_insert_backpressure above: kind="dropped" is
+      # GENUINE, PERMANENT loss — the external (CEX/FX) retry buffer
+      # trimmed its oldest entry because an infra fault (sick DB) outlasted
+      # the bounded buffer, or a per-row isolation pass hit a permanent data
+      # fault. The stellarindex_ingestion_insert_errors alert above only
+      # fires above 0.1/s summed across EVERY kind fleet-wide, so a slow
+      # trickle of buffer-overflow drops during a sustained-but-not-total DB
+      # outage could sit below that threshold indefinitely. Sensitive (any
+      # nonzero increase).
+      - alert: stellarindex_ingestion_trade_buffer_drop
+        expr: increase(stellarindex_source_insert_errors_total{kind="dropped"}[15m]) > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+          summary: "External trade(s) permanently dropped on {{ $labels.source }} — buffer overflow or data fault during backpressure"
+          description: |
+            stellarindex_source_insert_errors_total{source="{{ $labels.source }}",kind="dropped"}
+            incremented: at least one external (CEX/FX) trade was
+            permanently dropped — either the bounded retry buffer
+            overflowed while Postgres was unreachable (see
+            stellarindex_ingestion_trade_insert_backpressure) or a
+            permanent data fault surfaced during per-row isolation. This
+            IS genuine, unrecoverable loss for that trade (vendor-
+            refillable, not lake-refillable). Any nonzero rate needs eyes —
+            the coarse stellarindex_ingestion_insert_errors alert only
+            trips above 0.1/s fleet-wide and can miss a slow trickle.
+
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+
       # Detects cursor-replay / stuck-tip pattern via the
       # trade_insert_outcome_total counter (added 2026-05-28).
       # Mirror of the rule in deploy/monitoring/rules/ingestion.yml;
