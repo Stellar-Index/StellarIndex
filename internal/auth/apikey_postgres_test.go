@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/netip"
@@ -620,5 +621,99 @@ func TestPostgresValidator_ScopesPopulateAndRoundTrip(t *testing.T) {
 	}
 	if len(second.Scopes) != 2 || second.Scopes[1] != platform.KeyScopeAccount {
 		t.Errorf("cache-hit Subject.Scopes = %v (cache shed the field)", second.Scopes)
+	}
+}
+
+// TestPostgresValidator_CacheHit_CarriesEmailVerifiedAt is the API-03
+// regression (audit-2026-07-23).
+//
+// The failure it encodes: this validator's Redis cache shares its key
+// namespace with the legacy `/v1/signup` store (both use
+// cachekeys.APIKey(hash)), so a `signup-` key — the ONLY population
+// `middleware.RequireEmailVerified` gates — authenticates through the
+// cache path here. That path dropped EmailVerifiedAt, so a customer who
+// had clicked the verification link still presented as unverified and
+// the gate 403'd them on every request, permanently, with no way to
+// self-serve out of it. Asserts the corrected VALUE (the record's
+// timestamp), not merely that the field is set.
+func TestPostgresValidator_CacheHit_CarriesEmailVerifiedAt(t *testing.T) {
+	keys, accounts, rdb := newStubs()
+	v, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{
+		Keys: keys, Accounts: accounts, Cache: rdb,
+	})
+
+	verifiedAt := time.Date(2026, 7, 1, 9, 30, 0, 0, time.UTC)
+	plaintext := "sip_legacy_signup_key"
+	rec := auth.APIKeyRecord{
+		KeyID:           "kid_legacy",
+		Identifier:      "signup-0011223344556677",
+		Tier:            auth.TierAPIKey,
+		RateLimitPerMin: 60,
+		EmailVerifiedAt: verifiedAt,
+		PermissionsAll:  true,
+	}
+	body, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatalf("marshal record: %v", err)
+	}
+	if err := rdb.Set(context.Background(),
+		cachekeys.APIKey(hexHashOf(plaintext)).String(), body, time.Hour).Err(); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	sub, err := v.Lookup(context.Background(), plaintext)
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if !sub.EmailVerifiedAt.Equal(verifiedAt) {
+		t.Fatalf("Subject.EmailVerifiedAt = %v, want %v — a verified signup key served from "+
+			"the cache must not present as unverified to RequireEmailVerified (API-03)",
+			sub.EmailVerifiedAt, verifiedAt)
+	}
+}
+
+// TestPostgresValidator_ActiveDecisionMatchesPlatformIsActive is the
+// COR-14 drift guard (NOT a red-before-fix test: the refactor it guards
+// is behaviour-preserving by construction). It pins that the hot path's
+// accept/reject decision agrees with [platform.APIKey.IsActive] across
+// the revoked / expired / boundary matrix, so a future change to the
+// platform predicate that this validator does not inherit fails here
+// instead of silently authenticating a dead credential.
+func TestPostgresValidator_ActiveDecisionMatchesPlatformIsActive(t *testing.T) {
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name      string
+		revokedAt time.Time
+		expiresAt time.Time
+	}{
+		{"active, no expiry", time.Time{}, time.Time{}},
+		{"active, expiry in the future", time.Time{}, now.Add(time.Hour)},
+		{"expired one second ago", time.Time{}, now.Add(-time.Second)},
+		{"expiry exactly now (boundary — not before, so dead)", time.Time{}, now},
+		{"revoked", now.Add(-time.Hour), time.Time{}},
+		{"revoked and expired", now.Add(-time.Hour), now.Add(-time.Hour)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			keys, accounts, _ := newStubs()
+			v, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{
+				Keys: keys, Accounts: accounts, Now: func() time.Time { return now },
+			})
+			plaintext := "sip_isactive_" + tc.name
+			acct := seedActiveAccount(accounts, "isactive")
+			rec := seedKey(keys, plaintext, acct.ID, platform.APIKeyTierAPIKey, 100)
+			rec.RevokedAt = tc.revokedAt
+			rec.ExpiresAt = tc.expiresAt
+			keys.byID[rec.ID] = rec
+			keys.byHash[hexHashOf(plaintext)] = rec
+
+			_, err := v.Lookup(context.Background(), plaintext)
+			authenticated := err == nil
+			if want := rec.IsActive(now); authenticated != want {
+				t.Fatalf("Lookup authenticated = %v (err %v), but platform.APIKey.IsActive = %v "+
+					"— the auth hot path must not carry its own copy of this rule (COR-14)",
+					authenticated, err, want)
+			}
+		})
 	}
 }

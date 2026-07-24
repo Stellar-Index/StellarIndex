@@ -113,10 +113,19 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 		}
 		return Subject{}, fmt.Errorf("auth: postgres lookup: %w", err)
 	}
-	if !pgKey.RevokedAt.IsZero() {
-		return Subject{}, ErrUnauthorized
-	}
-	if !pgKey.ExpiresAt.IsZero() && !v.now().Before(pgKey.ExpiresAt) {
+	// COR-14 (audit-2026-07-23): [platform.APIKey.IsActive] is the single
+	// source of truth for "may this key authenticate". Re-implementing its
+	// revoked/expired predicate inline here — as this hot path used to —
+	// created a second copy that a future change to the platform rule
+	// (grace periods, a `disabled_at` column, an inclusive-vs-exclusive
+	// expiry boundary) would silently leave behind, on the one path where
+	// being wrong means authenticating a dead credential. The field checks
+	// below only CLASSIFY an already-made rejection into the right
+	// sentinel; they never decide it.
+	if !pgKey.IsActive(v.now()) {
+		if !pgKey.RevokedAt.IsZero() {
+			return Subject{}, ErrUnauthorized
+		}
 		return Subject{}, ErrTokenExpired
 	}
 
@@ -249,14 +258,25 @@ func (v *PostgresAPIKeyValidator) cacheLookup(ctx context.Context, hexHash strin
 		return Subject{}, false, nil //nolint:nilerr // deliberate degrade-not-fail
 	}
 	return Subject{
-		Identifier:          rec.Identifier,
-		Tier:                tier,
-		Scopes:              rec.Scopes,
-		KeyID:               rec.KeyID,
-		RateLimitPerMin:     rec.RateLimitPerMin,
-		CreatedAt:           rec.CreatedAt,
-		Label:               rec.Label,
-		KeyPrefix:           rec.KeyPrefix,
+		Identifier:      rec.Identifier,
+		Tier:            tier,
+		Scopes:          rec.Scopes,
+		KeyID:           rec.KeyID,
+		RateLimitPerMin: rec.RateLimitPerMin,
+		CreatedAt:       rec.CreatedAt,
+		Label:           rec.Label,
+		KeyPrefix:       rec.KeyPrefix,
+		// API-03 (audit-2026-07-23): carry the verification timestamp
+		// through. This validator's cache reads the SAME Redis records the
+		// legacy `/v1/signup` store writes (both key on
+		// cachekeys.APIKey(hash)), so a `signup-`-identifier key — the only
+		// population `middleware.RequireEmailVerified` gates — can and does
+		// authenticate down this path. Dropping the field made every such
+		// customer look permanently unverified: a caller who HAD clicked
+		// the link was 403'd for as long as the deployment ran with the
+		// gate on. [RedisAPIKeyValidator.Lookup] has always mapped it;
+		// this is the same mapping, not a new policy.
+		EmailVerifiedAt:     rec.EmailVerifiedAt,
 		IPAllowlist:         ipAllow,
 		RefererAllowlist:    rec.RefererAllowlist,
 		AllowAllPermissions: rec.PermissionsAll,
