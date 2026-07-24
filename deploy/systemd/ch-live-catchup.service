@@ -13,6 +13,13 @@ Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=6
 
+# Fires every 10 min (see ch-live-catchup.timer) over just the new gap,
+# so a normal run is seconds. Bound a hung run so it fails and frees the
+# next tick instead of wedging catch-up indefinitely — safe to kill
+# mid-run since the script is idempotent (ReplacingMergeTree dedups).
+TimeoutStartSec=20min
+RuntimeMaxSec=20min
+
 # Runs as root: the script sources /etc/default/stellarindex-ops
 # (Postgres DSN + credentials) directly, which is root-readable only.
 # It writes nothing to local disk — all output goes to ClickHouse and
