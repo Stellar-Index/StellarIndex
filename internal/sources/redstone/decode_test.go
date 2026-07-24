@@ -284,6 +284,57 @@ func TestDecode_HappyPath_TwoKnownFeeds(t *testing.T) {
 	}
 }
 
+// TestDecodeWritePrices_EventIndexPreventsSameOpCollision is the
+// regression test for DAT-06/trap-15 (audit-2026-07-23): two REDSTONE
+// events emitted by the SAME operation (OperationIndex equal) but at
+// different positions in that operation's contract-event list
+// (EventIndex differs) used to collide, because the fanout base was
+// OperationIndex ALONE. The fix must incorporate EventIndex too, so
+// two events within one op get disjoint 1024-wide OpIndex blocks.
+func TestDecodeWritePrices_EventIndexPreventsSameOpCollision(t *testing.T) {
+	const pkgTs = uint64(1_745_000_000_000)
+	const wrTs = uint64(1_745_000_060_000)
+	body := encodeWritePricesBody(t, relayerG, []*big.Int{big.NewInt(oneBTCAt8)}, pkgTs, wrTs)
+	args := []string{
+		encodeAddressArg(t, relayerG),
+		encodeStringVecArg(t, []string{"BTC"}),
+		encodePayloadArg(t),
+	}
+
+	evFirst := &events.Event{
+		Topic:          []string{TopicSymbolRedstone},
+		Value:          body,
+		OpArgs:         args,
+		ContractID:     adapterC,
+		Ledger:         52_000_000,
+		TxHash:         "abcd",
+		OperationIndex: 3,
+		EventIndex:     0,
+		LedgerClosedAt: "2026-04-23T12:00:00Z",
+	}
+	closedAt, _ := time.Parse(time.RFC3339, evFirst.LedgerClosedAt)
+	updatesFirst, err := decodeWritePrices(evFirst, closedAt)
+	if err != nil {
+		t.Fatalf("decodeWritePrices (first): %v", err)
+	}
+
+	evSecond := *evFirst
+	evSecond.OperationIndex = 3 // SAME operation as evFirst
+	evSecond.EventIndex = 1     // a DIFFERENT event within it
+	updatesSecond, err := decodeWritePrices(&evSecond, closedAt)
+	if err != nil {
+		t.Fatalf("decodeWritePrices (second): %v", err)
+	}
+
+	if len(updatesFirst) != 1 || len(updatesSecond) != 1 {
+		t.Fatalf("expected 1 update each, got %d and %d", len(updatesFirst), len(updatesSecond))
+	}
+	if updatesFirst[0].OpIndex == updatesSecond[0].OpIndex {
+		t.Errorf("two events in the SAME operation (OperationIndex=3) with different EventIndex (0 vs 1) collided on OpIndex=%d — the fanout base must incorporate EventIndex, not just OperationIndex",
+			updatesFirst[0].OpIndex)
+	}
+}
+
 func TestDecode_FeedIDCountMismatch(t *testing.T) {
 	// 2 prices, 1 feed id — simulates the freshness verifier dropping
 	// one submitted feed.

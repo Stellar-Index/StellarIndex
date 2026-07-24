@@ -17,6 +17,24 @@ import (
 // grow; well within uint32 since Stellar caps ops/tx at 100.
 const opIndexFanoutStride = 1024
 
+// eventFanoutStride bounds how many contract events ONE operation can
+// emit before their per-event op_index blocks would collide.
+// DAT-06/trap-15 (audit-2026-07-23): the fanout base used to be
+// OperationIndex ALONE, so two Reflector update events within the
+// SAME operation collided on their whole 1024-wide OpIndex block —
+// the second event's rows silently landed on top of (or lost to
+// ON CONFLICT DO NOTHING against) the first's. EventIndex ALONE isn't
+// a safe replacement either: per events.Event's own doc it is scoped
+// PER-OPERATION (resets to 0 for each new op), so swapping it straight
+// in would instead collide two DIFFERENT operations that each emit a
+// single event. Combining both dimensions — OperationIndex and
+// EventIndex — keeps every event's OpIndex block disjoint regardless
+// of whether the collision risk is same-op or cross-op. 64 is well
+// beyond any observed Reflector-adjacent event fanout (single digits)
+// and keeps the whole synthesized value comfortably inside uint32
+// even at Stellar's 100-ops/tx cap: (100*64+63)*1024+1023 ≈ 6.6M.
+const eventFanoutStride = 64
+
 // reflectorTopicArity is the minimum topic count on a Reflector
 // UpdateEvent: ["REFLECTOR", "update", <timestamp: u64>]. Anything
 // shorter is by definition not our event.
@@ -72,6 +90,10 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 		// See ErrPriceVectorOverflow for rationale.
 		return nil, fmt.Errorf("%w: got %d prices", ErrPriceVectorOverflow, len(prices))
 	}
+	if e.EventIndex < 0 || e.EventIndex >= eventFanoutStride {
+		// See ErrEventIndexOverflow for rationale.
+		return nil, fmt.Errorf("%w: got %d", ErrEventIndexOverflow, e.EventIndex)
+	}
 
 	// Timestamp: the contract puts it in topic[2] as u64
 	// MILLISECONDS (not seconds — verified against mainnet capture
@@ -94,6 +116,13 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 	sourceName := variant.SourceName()
 	out := make([]canonical.OracleUpdate, 0, len(prices))
 	for i, entry := range prices {
+		if entry.Skip {
+			// DAT-03 (audit-2026-07-23): an unknown-symbol slot from
+			// sdkDecodeUpdateBody. It still occupies vector position
+			// `i` — see PriceEntry.Skip's godoc for why the slot must
+			// consume an index rather than being omitted.
+			continue
+		}
 		if entry.Price.Sign() <= 0 {
 			// Reflector filters zero-price entries at the contract
 			// level (oracle/src/events.rs:24 — zero prices skipped
@@ -107,11 +136,10 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 			ContractID: e.ContractID,
 			Ledger:     e.Ledger,
 			TxHash:     e.TxHash,
-			// OpIndex uses a FIXED stride, not len(prices) —
-			// otherwise two events in the same tx with different
-			// vector sizes could collide on identity. See
-			// ErrPriceVectorOverflow for the guard.
-			OpIndex:   uint32(e.OperationIndex)*opIndexFanoutStride + uint32(i),
+			// OpIndex packs (OperationIndex, EventIndex, vector
+			// position) — see eventFanoutStride's godoc for why both
+			// index dimensions are needed, not just one.
+			OpIndex:   (uint32(e.OperationIndex)*eventFanoutStride+uint32(e.EventIndex))*opIndexFanoutStride + uint32(i),
 			Timestamp: ts,
 			Asset:     entry.Asset,
 			Quote:     quoteForVariant(variant),
@@ -184,6 +212,21 @@ func mustUSDFiat() canonical.Asset {
 type PriceEntry struct {
 	Asset canonical.Asset
 	Price canonical.Amount
+
+	// Skip marks a vector slot that failed to decode into a known
+	// asset (ErrUnknownSymbol). sdkDecodeUpdateBody keeps the SLOT
+	// COUNT stable — one PriceEntry per raw update_data[] position,
+	// even for symbols we don't recognise — as a Skip placeholder
+	// rather than omitting the slot outright (DAT-03, audit-2026-07-23):
+	// decodeUpdate's synthetic OpIndex is derived from vector
+	// POSITION, so compacting the slice on unknown-symbol skips made
+	// every OTHER entry's position — and thus OpIndex — shift
+	// whenever the fiat/crypto allow-list changed, orphaning or
+	// duplicating rows on a re-derive instead of updating them in
+	// place. Unlike Band and Redstone (which already index over the
+	// raw, uncompacted vector), Reflector's decodeUpdateBody used to
+	// filter unknown symbols out of the slice entirely.
+	Skip bool
 }
 
 // ─── Real SCVal decoders ────────────────────────────────────────
@@ -254,10 +297,14 @@ func sdkDecodeUpdateBody(valueB64 string) ([]PriceEntry, error) {
 		if err != nil {
 			if errors.Is(err, ErrUnknownSymbol) {
 				// Unknown symbol = gap in our canonical asset
-				// model, not a structural event problem. Skip this
-				// one entry and continue — losing a single asset
-				// slot in a mixed-payload event is strictly better
-				// than dropping all prices in that event.
+				// model, not a structural event problem. Land a
+				// Skip placeholder and continue — losing a single
+				// asset slot in a mixed-payload event is strictly
+				// better than dropping all prices in that event,
+				// and the placeholder keeps every OTHER entry's
+				// vector position (and thus decodeUpdate's
+				// synthetic OpIndex) stable regardless of allow-list
+				// state (DAT-03 — see PriceEntry.Skip's godoc).
 				// F-1234 (codex audit-2026-05-12): count the skip
 				// on stellarindex_source_unknown_symbols_total so
 				// operators can spot upstream coverage drift
@@ -267,6 +314,7 @@ func sdkDecodeUpdateBody(valueB64 string) ([]PriceEntry, error) {
 				// dispatcher attributes per-contract context if
 				// needed.
 				obs.SourceUnknownSymbolsTotal.WithLabelValues("reflector").Inc()
+				out = append(out, PriceEntry{Skip: true})
 				continue
 			}
 			return nil, fmt.Errorf("update_data[%d]: %w", i, err)
