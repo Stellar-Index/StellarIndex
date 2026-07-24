@@ -208,10 +208,21 @@ func Stream(
 		ledgerRange = ledgerbackend.BoundedRange(from, to)
 	}
 
+	// delivered counts every ledger actually handed to the caller's
+	// callback, regardless of which path below produced it. COR-01
+	// (audit-2026-07-23): maybeTolerateTrailingMissing must know
+	// whether ANYTHING landed before converting a missing-file error
+	// into a clean success — see its godoc.
+	var delivered uint32
+	countingCallback := func(lcm xdr.LedgerCloseMeta) error {
+		delivered++
+		return callback(lcm)
+	}
+
 	var err error
 	switch {
 	case cfg.tieringEnabled():
-		err = streamTiered(ctx, cfg, ledgerRange, buffered, callback)
+		err = streamTiered(ctx, cfg, ledgerRange, buffered, countingCallback)
 	case ledgerRange.Bounded() && ledgerRange.To() == ledgerRange.From():
 		// The SDK's ingest.ApplyLedgerMetadata rejects a bounded
 		// range of exactly one ledger (producer.go: `To() <=
@@ -219,7 +230,7 @@ func Stream(
 		// Walk it with our own backend loop instead — this is
 		// ch-live-catchup's tip-extend case whenever the timer
 		// fires exactly one ledger behind the galexie tip.
-		err = streamHot(ctx, cfg, ledgerRange, buffered, callback)
+		err = streamHot(ctx, cfg, ledgerRange, buffered, countingCallback)
 	default:
 		err = ingest.ApplyLedgerMetadata(
 			ledgerRange,
@@ -231,10 +242,10 @@ func Stream(
 				Log:                   cfg.Logger,
 			},
 			ctx,
-			callback,
+			countingCallback,
 		)
 	}
-	return maybeTolerateTrailingMissing(cfg, to, err)
+	return maybeTolerateTrailingMissing(cfg, from, to, delivered, err)
 }
 
 // validateRange rejects malformed ranges before PrepareRange. A
@@ -262,11 +273,30 @@ func validateRange(r ledgerbackend.Range) error {
 // sequence is within the trailing window of the bounded To. All
 // other error shapes pass through unchanged. Always returns nil
 // for nil err.
-func maybeTolerateTrailingMissing(cfg Config, to uint32, err error) error {
+//
+// A single-ledger bounded range (from == to) whose one ledger IS the
+// missing one requires delivered > 0 to tolerate (COR-01,
+// audit-2026-07-23): that used to tolerate unconditionally, so Stream
+// returned nil having invoked the callback ZERO times — a silent
+// no-op indistinguishable from a genuinely empty, successfully-walked
+// range. A wider bounded range is NOT held to this: the SDK's
+// BufferedStorageBackend can legitimately race-cancel its prefetch
+// buffer on a trailing-edge miss and deliver anywhere from zero to
+// all of the ledgers that were actually present on disk before the
+// gap (see TestStream_TolerateTrailingMissing_HappyPath) — treating
+// THAT delivered==0 as "never tolerate" would make an already-
+// materialised, otherwise-successful backfill range flaky depending
+// on prefetch-worker scheduling. Single-ledger is unambiguous: there
+// is only one possible outcome (delivered) and "0" always means
+// "nothing exists here at all", never a race artifact.
+func maybeTolerateTrailingMissing(cfg Config, from, to, delivered uint32, err error) error {
 	if err == nil {
 		return nil
 	}
 	if !cfg.TolerateTrailingMissing || to == 0 {
+		return err
+	}
+	if from == to && delivered == 0 {
 		return err
 	}
 	seq, ok := parseTrailingMissingSeq(err)
@@ -284,6 +314,7 @@ func maybeTolerateTrailingMissing(cfg Config, to uint32, err error) error {
 		cfg.Logger.WithFields(map[string]interface{}{
 			"missing_ledger": seq,
 			"range_to":       to,
+			"delivered":      delivered,
 			"gap_to_tip":     to - seq,
 			"window":         window,
 		}).Warn("ledgerstream: bounded walk hit trailing-edge missing file — treating as walk-complete (TolerateTrailingMissing=true)")
@@ -454,6 +485,30 @@ func walkDataStore(
 	from := ledgerRange.From()
 	if from < 2 {
 		from = 2
+	}
+	// COR-01 (audit-2026-07-23): a single-ledger (or any) bounded
+	// request entirely below genesis — e.g. from=0/1, to=1 — used to
+	// PrepareRange against the UNCLAMPED range (which accepted it)
+	// while the walk loop below started at the CLAMPED `from`. With
+	// clamped-from > To, the loop condition was false on its very
+	// first check, so the function returned nil (success) having
+	// delivered ZERO ledgers — a silent no-op indistinguishable from
+	// "walked an empty range on purpose". Refuse loudly instead: every
+	// ledger the caller asked for predates what the SDK's
+	// ApplyLedgerMetadata contract will ever serve.
+	if ledgerRange.Bounded() && from > ledgerRange.To() {
+		return fmt.Errorf("ledgerstream: requested range [%d,%d] is entirely before genesis ledger 2",
+			ledgerRange.From(), ledgerRange.To())
+	}
+	// Rebuild the range from the CLAMPED from so PrepareRange (which
+	// stages/validates the range against the datastore) and the walk
+	// loop below always agree on the same bounds.
+	if from != ledgerRange.From() {
+		if ledgerRange.Bounded() {
+			ledgerRange = ledgerbackend.BoundedRange(from, ledgerRange.To())
+		} else {
+			ledgerRange = ledgerbackend.UnboundedRange(from)
+		}
 	}
 	if err := backend.PrepareRange(ctx, ledgerRange); err != nil {
 		return fmt.Errorf("ledgerstream: prepare range: %w", err)

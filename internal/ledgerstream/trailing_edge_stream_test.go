@@ -134,6 +134,47 @@ func TestStream_TolerateTrailingMissing_DisabledStrictMode(t *testing.T) {
 	}
 }
 
+// TestStream_TolerateTrailingMissing_SingleLedgerZeroDelivery_Errors
+// is the regression test for COR-01 (audit-2026-07-23, low): a
+// single-ledger bounded Stream (from == to) whose one ledger IS the
+// missing one used to tolerate unconditionally under
+// TolerateTrailingMissing — Stream returned nil having invoked the
+// callback ZERO times, a silent success indistinguishable from "there
+// was nothing to walk". Unlike a wider bounded range (see the
+// HappyPath test's documented SDK prefetch-cancel raciness), a
+// single-ledger range has no ambiguity: delivered==0 always means the
+// ledger genuinely doesn't exist, never a race artifact.
+func TestStream_TolerateTrailingMissing_SingleLedgerZeroDelivery_Errors(t *testing.T) {
+	tmp := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cfg, store := tolerateTrailingEdgeStore(t, tmp)
+	t.Cleanup(func() { _ = store.Close() })
+
+	if _, _, err := datastore.PublishConfig(ctx, store, cfg); err != nil {
+		t.Fatalf("publish config: %v", err)
+	}
+	// Deliberately materialise NOTHING — ledger 9 doesn't exist.
+
+	lsCfg := ledgerstream.Config{
+		DataStore:               cfg,
+		TolerateTrailingMissing: true,
+		TrailingMissingWindow:   16,
+	}
+	callCount := 0
+	err := ledgerstream.Stream(ctx, lsCfg, 9, 9, func(_ xdr.LedgerCloseMeta) error {
+		callCount++
+		return nil
+	})
+	if err == nil {
+		t.Fatalf("Stream(from=to=9, TolerateTrailingMissing=true) returned nil with %d callback invocations — want an error; a single-ledger range that delivers nothing must never be silently tolerated", callCount)
+	}
+	if callCount != 0 {
+		t.Errorf("callback invoked %d times, want 0", callCount)
+	}
+}
+
 // tolerateTrailingEdgeStore creates a fresh filesystem datastore
 // shaped like Galexie's default (1 ledger per file, 1 file per
 // partition for test compactness). Returns the config + opened
