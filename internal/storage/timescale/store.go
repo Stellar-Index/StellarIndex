@@ -8,6 +8,8 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // Store is the handle on our TimescaleDB connection pool.
@@ -124,18 +126,23 @@ func (s *Store) SetDeriveGeneration(gen int64) {
 // unrepresentable: any trade write in re-derive mode without resolvers fails loudly
 // at the first row. Live ingest (generation == 0) and non-trade re-derives (which
 // never call InsertTrade/BatchInsertTrades) are unaffected.
-func (s *Store) reDeriveResolverGuard() error {
-	// Track that InstallUSDVolumeResolution was CALLED, not that a resolver is
-	// non-nil: a no-pegs deployment (usd_pegged_classic_assets = [], the default)
-	// legitimately installs no resolver and correctly writes NULL usd_volume, so
-	// checking for a non-nil resolver would false-positive and break re-derive
-	// there (and in the sibling tools). Install is the sole installer, so a flag
-	// set at its entry is the exact "resolution was wired" signal.
-	if s.deriveGeneration > 0 && !s.usdVolumeResolutionInstalled {
-		return fmt.Errorf("timescale: refusing to write trades in re-derive mode "+
-			"(generation=%d) without USD-volume resolvers installed — call "+
+// It is deliberately PRECISE rather than blanket: it fires only when this
+// trade's usd_volume actually resolved to NULL *and* resolution was never
+// wired. A blanket "re-derive without Install ⇒ refuse" is wrong, because
+// tier 1 prices CEX USD-quoted trades from the quote decimals alone (no
+// resolver needed), so a blanket guard would refuse writes that compute a
+// perfectly correct usd_volume. Firing only on (computed == nil && !installed)
+// targets exactly the destructive case — about to write NULL over a value that
+// resolution might have priced — while a genuinely-unpriceable trade in a
+// properly-wired re-derive (installed, still nil) writes its honest NULL.
+func (s *Store) reDeriveNullVolumeGuard(t canonical.Trade, computed *string) error {
+	if s.deriveGeneration > 0 && computed == nil && !s.usdVolumeResolutionInstalled {
+		return fmt.Errorf("timescale: refusing to write trade %s/%s (source=%s ledger=%d) "+
+			"with NULL usd_volume in re-derive mode (generation=%d) without USD-volume "+
+			"resolution installed — the write would overwrite a correct stored value with "+
+			"NULL and the generation guard would make it unrecoverable; call "+
 			"InstallUSDVolumeResolution before writing trades (A-CRIT-1 fail-closed guard)",
-			s.deriveGeneration)
+			t.Pair.Base, t.Pair.Quote, t.Source, t.Ledger, s.deriveGeneration)
 	}
 	return nil
 }
