@@ -38,9 +38,13 @@ User=root
 # ExecStartPre writes TRIM_CUTOFF to /run/galexie-archive-trim.env.
 # /run is tmpfs so the file is fresh each fire (correct: we want
 # the cutoff recomputed against the current indexer cursor every
-# month, not a stale value from a year-ago run).
+# month, not a stale value from a year-ago run). The `-` prefix is
+# required: on the first activation after a reboot (or if
+# ExecStartPre has never run), the file does not exist yet, and a
+# missing EnvironmentFile without the `-` prefix fails the unit
+# start entirely (matches archive-completeness.service).
 ExecStartPre=/usr/local/sbin/compute-trim-cutoff.sh
-EnvironmentFile=/run/galexie-archive-trim.env
+EnvironmentFile=-/run/galexie-archive-trim.env
 
 # --verify-upstream is the default per the trim binary but spelled
 # out here so the unit file documents the safety guarantee. --commit
