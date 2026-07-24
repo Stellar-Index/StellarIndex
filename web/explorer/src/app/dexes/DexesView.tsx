@@ -7,7 +7,7 @@ import Link from 'next/link';
 import { Panel } from '@/components/reveal';
 import { AssetLabel } from '@/components/AssetLabel';
 import { apiGet, asExample } from '@/api/client';
-import { formatCompact, formatRelative } from '@/lib/format';
+import { formatCompact, formatPairPrice, formatRelative } from '@/lib/format';
 import {
   Button,
   Container,
@@ -431,11 +431,12 @@ function LastPriceCell({ raw }: { raw?: string | null }) {
   if (!raw) return <span className="text-ink-faint">—</span>;
   const n = Number(raw);
   if (!Number.isFinite(n)) return <span className="text-ink-faint">—</span>;
-  const fixed =
-    n >= 1000 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n >= 0.0001 ? n.toFixed(6) : n.toExponential(3);
+  // COR-14/AGT-05: was a hand-copied reimplementation of formatPairPrice
+  // (@/lib/format) — three components had independently forked this exact
+  // threshold ladder, risking visible drift between them.
   return (
     <span className="font-mono tabular-nums text-ink-body">
-      {fixed}
+      {formatPairPrice(n)}
     </span>
   );
 }
