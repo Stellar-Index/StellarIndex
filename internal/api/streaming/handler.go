@@ -41,6 +41,35 @@ func ActiveStreams() int64 { return atomic.LoadInt64(&activeStreams) }
 // the [ActiveStreams] gauge.
 func StreamsRejected() int64 { return atomic.LoadInt64(&rejectedStreams) }
 
+// TryAcquireStreamSlot reserves one connection slot against the
+// global and per-IP concurrency caps, writing the 503 itself when
+// either refuses. It is [admitStream] exported for callers OUTSIDE
+// this package whose own pre-flight work (before switching into SSE
+// mode) is itself expensive.
+//
+// REL-05 (pre-flight-compute ordering): [StreamFromChannel] already
+// admits before doing anything else, but a caller like
+// handleObservationsStream runs its OWN synchronous compute (the
+// initial event) BEFORE ever calling StreamFromChannel — so a client
+// already at its concurrency cap still paid for that full compute
+// before being rejected. Calling TryAcquireStreamSlot at the very top
+// of the handler, before that compute, closes the gap: admission is
+// now the very first thing that happens, full stop.
+//
+// The returned release MUST be called exactly once (typically via
+// `defer release()` immediately after a successful acquire, covering
+// every return path — validation errors, a failed pre-flight compute,
+// and the eventual stream teardown alike); it is idempotent, so it is
+// safe to also flow it into [StreamFromChannelPreAdmitted] or let a
+// deferred call and an explicit one both fire. Callers that pre-admit
+// this way MUST switch their eventual stream call from
+// [StreamFromChannel] to [StreamFromChannelPreAdmitted] — the plain
+// [StreamFromChannel] would acquire a SECOND slot for the same
+// connection.
+func TryAcquireStreamSlot(w http.ResponseWriter, r *http.Request) (release func(), ok bool) {
+	return admitStream(w, r)
+}
+
 // admitStream reserves one connection slot against the global and
 // per-IP concurrency caps, writing the 503 itself when either refuses.
 //
@@ -158,6 +187,19 @@ func StreamFromChannel(w http.ResponseWriter, r *http.Request, ch <-chan Event, 
 		return
 	}
 	defer release()
+	writeStream(w, r, ch, opts)
+}
+
+// StreamFromChannelPreAdmitted is [StreamFromChannel] for a caller
+// that already reserved its concurrency-cap slot via
+// [TryAcquireStreamSlot] — e.g. because it has its own expensive
+// pre-flight compute that must run AFTER admission, not before
+// (REL-05). Unlike StreamFromChannel, this does NOT acquire (or
+// release) a slot itself: the caller's own TryAcquireStreamSlot +
+// deferred release own that lifecycle end to end. Calling this
+// instead of StreamFromChannel after a manual TryAcquireStreamSlot
+// avoids reserving a SECOND slot for the same connection.
+func StreamFromChannelPreAdmitted(w http.ResponseWriter, r *http.Request, ch <-chan Event, opts StreamOptions) {
 	writeStream(w, r, ch, opts)
 }
 

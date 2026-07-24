@@ -8,9 +8,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -212,6 +214,67 @@ func TestLedgerStream_TickIsBoundedByATimeout(t *testing.T) {
 		}
 	case <-time.After(4 * time.Second):
 		t.Fatal("timed out waiting for a per-tick ListCursors call")
+	}
+}
+
+// capOrderingCursorsReader counts ListCursors calls so a test can
+// assert whether the handler's pre-flight compute ran at all.
+type capOrderingCursorsReader struct{ calls int32 }
+
+func (c *capOrderingCursorsReader) ListCursors(context.Context) ([]timescale.Cursor, error) {
+	atomic.AddInt32(&c.calls, 1)
+	return []timescale.Cursor{{Source: "ledgerstream", LastLedger: 1000, UpdatedAt: time.Now().UTC()}}, nil
+}
+
+// TestLedgerStream_CapRejectsBeforePreflightCompute is the REL-05
+// regression (pre-flight-compute ordering): a client rejected by the
+// global concurrency cap must never reach handleLedgerStream's
+// synchronous pre-flight ledgerTip read at all. Before the fix, the
+// cap was only checked inside StreamFromChannel, AFTER that read had
+// already run — so a caller already at the cap still paid for a full
+// cursors read on every rejected request, turning the cap into a
+// counter rather than an actual admission gate.
+func TestLedgerStream_CapRejectsBeforePreflightCompute(t *testing.T) {
+	streaming.SetMaxConcurrentStreams(1)
+	t.Cleanup(func() { streaming.SetMaxConcurrentStreams(8192) })
+
+	reader := &capOrderingCursorsReader{}
+	srv := v1.New(v1.Options{Cursors: reader})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// Connection #1 occupies the one available global slot. Do()
+	// returns only once headers are flushed, by which point admission,
+	// the prelude read, and the switch into SSE mode have all already
+	// happened — so the slot is provably held before we fire #2.
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel1()
+	req1, _ := http.NewRequestWithContext(ctx1, http.MethodGet, ts.URL+"/v1/ledger/stream", nil)
+	resp1, err := http.DefaultClient.Do(req1)
+	if err != nil {
+		t.Fatalf("connection 1: %v", err)
+	}
+	defer resp1.Body.Close()
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("connection 1 status = %d, want 200 (should hold the one available slot)", resp1.StatusCode)
+	}
+
+	// Reset the call counter now that connection #1's own prelude read
+	// has already landed — only calls from here on are attributable to
+	// connection #2.
+	atomic.StoreInt32(&reader.calls, 0)
+
+	resp2, err := http.Get(ts.URL + "/v1/ledger/stream")
+	if err != nil {
+		t.Fatalf("connection 2: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("connection 2 status = %d, want 503 (cap already at 1/1)", resp2.StatusCode)
+	}
+	if got := atomic.LoadInt32(&reader.calls); got != 0 {
+		t.Errorf("ledgerTip's ListCursors was called %d time(s) for a request the cap already rejected — "+
+			"the pre-flight compute ran BEFORE admission (REL-05 ordering)", got)
 	}
 }
 

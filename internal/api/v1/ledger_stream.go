@@ -62,6 +62,20 @@ const (
 // established) are returned as problem+json with the right status —
 // once the SSE body starts there is no way to set a non-200 code.
 func (s *Server) handleLedgerStream(w http.ResponseWriter, r *http.Request) {
+	// REL-05: admit against the concurrency caps FIRST, before the
+	// synchronous pre-flight read below (ledgerTip) runs. Without this,
+	// a client already at its stream cap still paid for the full
+	// pre-flight cursors read before being rejected. release is
+	// idempotent and deferred here so every return path releases
+	// exactly once; the stream is handed off via
+	// StreamFromChannelPreAdmitted below so it doesn't also acquire a
+	// second slot.
+	release, ok := streaming.TryAcquireStreamSlot(w, r)
+	if !ok {
+		return
+	}
+	defer release()
+
 	if s.cursors == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/ledger-tip-unavailable",
@@ -98,7 +112,7 @@ func (s *Server) handleLedgerStream(w http.ResponseWriter, r *http.Request) {
 
 	go s.runLedgerStreamProducer(prodCtx, ch, first)
 
-	streaming.StreamFromChannel(w, r, ch, streaming.StreamOptions{})
+	streaming.StreamFromChannelPreAdmitted(w, r, ch, streaming.StreamOptions{})
 }
 
 // runLedgerStreamProducer is the per-connection poll loop. It emits
