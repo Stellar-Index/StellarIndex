@@ -46,11 +46,14 @@ import (
 // ERROR rate exceeds -max-error-rate ALSO fails non-zero (C2-15 fail-open guard
 // — an all-errored run verified nothing and must not look clean), as does a
 // -sample run that MATCHED zero accounts (F4 — a vacuous run that confirmed
-// nothing), mirroring scripts/dev/r1-smoke.sh's "exit code = number of failed
-// checks" convention so cron/Healthchecks.io can consume it directly
-// — see opsutil.ExitCodeError's doc comment for how a Go subcommand
-// reports a non-1 exit code without breaking realMain's flush-on-exit
-// discipline.
+// nothing), a single -account run whose only result is NO_DATA (MNY-04 — the
+// operator asserted THIS account should be covered), or any account that is
+// MERGED_OR_ABSENT on Horizon while we still hold a positive balance for it
+// (MNY-04 — stale data, not report-only), mirroring scripts/dev/r1-smoke.sh's
+// "exit code = number of failed checks" convention so cron/Healthchecks.io
+// can consume it directly — see opsutil.ExitCodeError's doc comment for how a
+// Go subcommand reports a non-1 exit code without breaking realMain's
+// flush-on-exit discipline.
 func reconcileBalances(args []string) error { //nolint:funlen // linear: flag parse+validate, resolve account set, per-account loop, report.
 	fs := flag.NewFlagSet("reconcile-balances", flag.ContinueOnError)
 	account := fs.String("account", "", "reconcile exactly this account (G...); mutually exclusive with -sample")
@@ -100,9 +103,14 @@ func reconcileBalances(args []string) error { //nolint:funlen // linear: flag pa
 		}
 	}
 
-	mismatches, errored := printReconcileReport(os.Stdout, results)
+	mismatches, errored, staleMergedHeld := printReconcileReport(os.Stdout, results)
 
-	reason, exitErr := reconcileExitError(mismatches, errored, len(results), haveSample, sampleConfirmedNothing(results), *maxErrorRate)
+	// MNY-04: a single -account run asserts "verify THIS account" — if
+	// our lake has zero rows for it, that's a coverage gap the
+	// operator explicitly asked about, not a clean pass.
+	singleAccountNoData := haveAccount && len(results) == 1 && results[0].Outcome == outcomeNoData
+
+	reason, exitErr := reconcileExitError(mismatches, errored, len(results), haveSample, sampleConfirmedNothing(results), *maxErrorRate, singleAccountNoData, staleMergedHeld)
 	if reason != "" {
 		fmt.Fprintf(os.Stderr, "reconcile-balances: FAIL — %s\n", reason)
 	}
@@ -144,12 +152,17 @@ const (
 	// outcomeMismatch: balances disagree by more than -tolerance-stroops.
 	outcomeMismatch reconcileOutcome = "MISMATCH"
 	// outcomeNoData: zero rows in our lake for this account — outside
-	// our coverage. Reported, not counted as a mismatch.
+	// our coverage. Reported, not counted as a mismatch UNLESS this is
+	// the sole result of a single -account run, in which case it fails
+	// the run (MNY-04: the operator asserted this specific account
+	// should be covered).
 	outcomeNoData reconcileOutcome = "NO_DATA"
 	// outcomeMergedOrAbsent: Horizon 404'd. If we hold a balance>0 for
-	// this account, that's itself a signal worth an operator's eye
-	// (the account existed in our data but is gone from the chain now)
-	// — reported separately, never a hard failure.
+	// this account (OurStroops > 0 — the account existed in our data but
+	// is gone from the chain now), that's a real data-staleness signal
+	// and reconcileExitError fails the run on it (MNY-04); a merged
+	// account with a zero recorded balance is the expected/healthy shape
+	// and stays report-only.
 	outcomeMergedOrAbsent reconcileOutcome = "MERGED_OR_ABSENT"
 	// outcomeError: an OUR-SIDE failure — the ClickHouse read for this
 	// account failed. This is the only outcome counted toward the C2-15
@@ -417,12 +430,22 @@ func clampExitCode(n int) int {
 
 // reconcileExitError maps a completed run's tally to its exit error (nil =
 // clean) plus a human-readable reason for stderr, consolidating the mismatch
-// exit code with the C2-15 and F4 fail-open guards so all three are decided —
-// and tested — in one pure place. `errored` counts OUR-side (ClickHouse)
-// failures ONLY; Horizon/truth outages are outcomeTruthUnavailable and excluded,
-// so a Horizon rate-limit episode can't fail an otherwise-healthy -sample gate
-// (consistent with F5). Pure — unit-testable.
-func reconcileExitError(mismatches, errored, n int, haveSample, confirmedNothing bool, maxErrorRate float64) (reason string, err error) {
+// exit code with the C2-15, F4, MNY-04-no-data, and MNY-04-stale-merged
+// fail-open guards so all four are decided — and tested — in one pure place.
+// `errored` counts OUR-side (ClickHouse) failures ONLY; Horizon/truth outages
+// are outcomeTruthUnavailable and excluded, so a Horizon rate-limit episode
+// can't fail an otherwise-healthy -sample gate (consistent with F5). Pure —
+// unit-testable.
+//
+// singleAccountNoData: a single -account run whose sole result is NO_DATA —
+// the operator asserted this specific account should be covered, so an
+// empty lake for it is a coverage gap, not a clean pass (MNY-04).
+//
+// staleMergedHeld: count of MERGED_OR_ABSENT accounts (any mode) where we
+// still hold a positive recorded balance — Horizon says the account is gone
+// but our lake claims it has funds, a correctness signal worth failing on
+// rather than report-only (MNY-04).
+func reconcileExitError(mismatches, errored, n int, haveSample, confirmedNothing bool, maxErrorRate float64, singleAccountNoData bool, staleMergedHeld int) (reason string, err error) {
 	// C2-15: too many OUR-side errors ⟹ verified nothing reliable; fail even at
 	// zero mismatches.
 	if n > 0 && float64(errored)/float64(n) > maxErrorRate {
@@ -432,6 +455,23 @@ func reconcileExitError(mismatches, errored, n int, haveSample, confirmedNothing
 		}
 		return fmt.Sprintf("%d/%d accounts (%.0f%%) errored on OUR side, over -max-error-rate %.0f%% — result unreliable, not a clean pass",
 				errored, n, float64(errored)/float64(n)*100, maxErrorRate*100),
+			&opsutil.ExitCodeError{Code: code}
+	}
+	// MNY-04: -account asserted coverage for a SPECIFIC account; we have
+	// nothing for it.
+	if singleAccountNoData {
+		return "the requested -account has NO_DATA in our lake — the operator asserted this account should be covered, not a clean pass",
+			&opsutil.ExitCodeError{Code: 255}
+	}
+	// MNY-04: a merged/absent account where we still hold a positive
+	// balance is a real data-staleness signal, not a report-only footnote.
+	if staleMergedHeld > 0 {
+		code := clampExitCode(mismatches)
+		if code == 0 {
+			code = clampExitCode(staleMergedHeld)
+		}
+		return fmt.Sprintf("%d account(s) are MERGED_OR_ABSENT on Horizon but we still hold a positive balance for them — stale data, not a clean pass",
+				staleMergedHeld),
 			&opsutil.ExitCodeError{Code: code}
 	}
 	// F4: a -sample run that MATCHED nothing confirmed nothing (single -account
@@ -467,11 +507,14 @@ func sampleConfirmedNothing(results []reconcileResult) bool {
 }
 
 // printReconcileReport writes the full per-account + summary report to w and
-// returns the MISMATCH count (the caller's exit code) and the ERROR count (used
-// by the caller's C2-15 fail-open guard — a mostly-errored run isn't a pass).
-func printReconcileReport(w io.Writer, results []reconcileResult) (int, int) {
-	var matched, mismatched, noData, mergedAbsent, errored, truthUnavail int
-	var mismatchRows, errorRows []reconcileResult
+// returns the MISMATCH count (the caller's exit code), the ERROR count (used
+// by the caller's C2-15 fail-open guard — a mostly-errored run isn't a pass),
+// and staleMergedHeld — the count of MERGED_OR_ABSENT accounts where we still
+// hold a positive recorded balance (MNY-04: Horizon says gone, we say funded
+// — a data-staleness signal, not report-only).
+func printReconcileReport(w io.Writer, results []reconcileResult) (mismatched, errored, staleMergedHeld int) {
+	var matched, noData, mergedAbsent, truthUnavail int
+	var mismatchRows, errorRows, staleMergedRows []reconcileResult
 	for _, r := range results {
 		switch r.Outcome {
 		case outcomeMatch:
@@ -483,6 +526,10 @@ func printReconcileReport(w io.Writer, results []reconcileResult) (int, int) {
 			noData++
 		case outcomeMergedOrAbsent:
 			mergedAbsent++
+			if r.OurStroops > 0 {
+				staleMergedHeld++
+				staleMergedRows = append(staleMergedRows, r)
+			}
 		case outcomeTruthUnavailable:
 			truthUnavail++
 			errorRows = append(errorRows, r) // listed under Errors for the detail, but NOT counted as our-side error
@@ -517,9 +564,15 @@ func printReconcileReport(w io.Writer, results []reconcileResult) (int, int) {
 			_, _ = fmt.Fprintf(w, "  %s  %v\n", r.Account, r.Err)
 		}
 	}
+	if len(staleMergedRows) > 0 {
+		_, _ = fmt.Fprintln(w, "\nStale (MERGED_OR_ABSENT on Horizon, we still hold a positive balance):")
+		for _, r := range staleMergedRows {
+			_, _ = fmt.Fprintf(w, "  %s  our=%d@ledger_%d\n", r.Account, r.OurStroops, r.AtLedger)
+		}
+	}
 
-	_, _ = fmt.Fprintf(w, "\nreconcile-balances: %d checked, %d matched, %d mismatch, %d no_data, %d merged_or_absent, %d truth_unavailable, %d error\n",
-		len(results), matched, mismatched, noData, mergedAbsent, truthUnavail, errored)
+	_, _ = fmt.Fprintf(w, "\nreconcile-balances: %d checked, %d matched, %d mismatch, %d no_data, %d merged_or_absent (%d stale-held), %d truth_unavailable, %d error\n",
+		len(results), matched, mismatched, noData, mergedAbsent, staleMergedHeld, truthUnavail, errored)
 
-	return mismatched, errored
+	return mismatched, errored, staleMergedHeld
 }
