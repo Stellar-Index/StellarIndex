@@ -29,7 +29,7 @@ Type=oneshot
 User=root
 
 ExecStartPre=/usr/local/sbin/compute-trim-cutoff.sh
-EnvironmentFile=/run/galexie-archive-trim.env
+EnvironmentFile=-/run/galexie-archive-trim.env
 
 ExecStart=/usr/local/sbin/run-heavy-job.sh galexie-archive-trim \
   /usr/local/bin/stellarindex-ops trim-galexie-archive \
