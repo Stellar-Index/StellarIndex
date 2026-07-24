@@ -1,6 +1,6 @@
 ---
 title: Runbook — supply-refresh-error-dominant
-last_verified: 2026-06-11
+last_verified: 2026-07-24
 status: ratified
 severity: P3
 ---
@@ -48,9 +48,15 @@ curl -s http://aggregator:9464/metrics | \
 #
 # NOTE: outcome="dormant" is NOT an error — it means the asset is quiet and
 # its last observation was (correctly) re-stamped as current (F-1320). It
-# does NOT count toward the error fraction; do not chase it. A SUSTAINED
+# does NOT count toward the error fraction; do not chase it — PROVIDED the
+# component anchor (MinComponentLedger) last moved within ~24h (17,280
+# ledgers, DefaultMaxDormantComponentLedgers, R-002 audit-2026-07-23).
+# Past that horizon a frozen anchor is indistinguishable from a dead
+# component observer, so the gate fails closed to outcome="stale_component"
+# instead — publishing stops and the alert fires. A SUSTAINED
 # outcome="stale_component" on one asset IS the actionable signal (see the
-# per-outcome section below).
+# per-outcome section below) — including a formerly-dormant asset that has
+# just crossed the 24h horizon.
 
 # 3. Logs corroborate per-asset failures with the wrapped error text.
 sudo journalctl -u stellarindex-aggregator --since "30 min ago" -n 200 | \
@@ -144,30 +150,71 @@ gap alone — you must look at whether `MinComponentLedger` is
      route to the ingest-pipeline runbooks. Do NOT relax the gate
      to mask a genuinely stalled producer.
 
-2. **Dormant asset (NOT staleness — see F-1320).** A low-activity
-   asset (governance tokens like **PHO**, niche classic credits)
-   simply had no balance change, so `MinComponentLedger` is
-   *frozen* — its last observation IS the current supply. Because
-   the chain tip keeps advancing, the gap grows monotonically and,
-   under the pre-F-1320 gate, **every future tick was permanently
-   rejected** and the asset's supply row went silently, permanently
-   stale (observed live on PHO: gap grew 1017 → 1324 and kept
-   climbing). The refresher now recognises an *unchanged*
-   `MinComponentLedger` as dormant and **accepts** the snapshot
-   (`outcome="dormant"`, the row is inserted). You will still see a
-   **single** `stale_component` on the first tick after an
+2. **Dormant asset (NOT staleness — see F-1320 — but bounded to
+   ~24h, see R-002 below).** A low-activity asset (governance
+   tokens like **PHO**, niche classic credits) simply had no
+   balance change, so `MinComponentLedger` is *frozen* — its last
+   observation IS the current supply. Because the chain tip keeps
+   advancing, the gap grows monotonically and, under the
+   pre-F-1320 gate, **every future tick was permanently rejected**
+   and the asset's supply row went silently, permanently stale
+   (observed live on PHO: gap grew 1017 → 1324 and kept climbing).
+   The refresher now recognises an *unchanged* `MinComponentLedger`
+   as dormant and **accepts** the snapshot (`outcome="dormant"`,
+   the row is inserted) — but only while the gap since
+   `MinComponentLedger` last moved stays within
+   `DefaultMaxDormantComponentLedgers` (17,280 ledgers ≈ 24h at 5s
+   ledger close cadence; R-002, audit-2026-07-23). You will still
+   see a **single** `stale_component` on the first tick after an
    aggregator restart for a quiet asset (cold start — dormant vs
    stalled is indistinguishable until we see a second tick), then
-   it flips to `dormant`. A *sustained* `stale_component` stream
-   for one asset is therefore case (1), not case (2).
+   it flips to `dormant`.
+
+   **Past the 24h horizon the gate fails closed.** A frozen
+   `MinComponentLedger` is exactly what a dead component observer
+   also looks like, so once the gap exceeds
+   `DefaultMaxDormantComponentLedgers` the refresher stops giving
+   it the benefit of the doubt: the tick is rejected with
+   `outcome="stale_component"` (not `dormant`), publishing STOPS
+   for that asset, and the per-asset
+   `supply_refresh_error_dominant` alert fires — the same outcome
+   as case (1). A *sustained* `stale_component` stream for one
+   asset is therefore case (1) **or** a dormant asset that has
+   crossed the 24h horizon; see Signal below to tell them apart.
    - Signal: in the WARN log the `min_component_ledger` value is
      constant across ticks while `gap` climbs; `first_observation`
-     is logged on the cold-start tick.
-   - Mitigation (only if you want to suppress the cold-start
-     `stale_component` blip entirely, or if you are on a binary
-     predating the F-1320 dormancy fix): raise the per-asset
-     threshold for that asset (see **Per-asset threshold override**
-     below) so the gap never trips.
+     is logged on the cold-start tick. If `min_component_ledger`
+     is still frozen once `gap` exceeds the ~24h horizon, the log
+     line changes to `supply refresh: rejecting snapshot —
+     component ledger frozen past the dormancy horizon (stalled
+     observer, not a dormant asset)` and carries a
+     `dormancy_horizon` field instead of `first_observation` —
+     that tells you you're in the post-horizon dormant case, not a
+     fresh case-(1) rejection.
+   - Discriminator (genuinely quiet asset vs. dead component
+     observer): both look identical from the refresher's own gap
+     alone, so check the *component observer itself* — when did
+     `min_component_ledger` last advance, and is the indexer's
+     per-source freshness for the relevant observer hypertable
+     (trustlines / claimable_balances / liquidity_pools /
+     sac_balances for classic; sep41_supply for SEP-41) otherwise
+     healthy? If the observer is healthy and simply has nothing to
+     write for this low-activity asset, it's dormant; if the
+     observer's own ingest is stalled, it's case (1) even though
+     the alert now looks identical — route to the ingest-pipeline
+     runbooks as in case (1). Do not just widen the horizon to
+     silence the alert without checking.
+   - Mitigation: for the pre-horizon cold-start blip (or on a
+     binary predating the F-1320 dormancy fix), raise the
+     per-asset threshold for that asset (see **Per-asset threshold
+     override** below) so the gap never trips. For an asset you
+     have *confirmed* is legitimately dormant for longer than 24h
+     (and you monitor its component observer by some other means),
+     the escape hatch is `supply.WithMaxDormantComponentLedgers(0)`,
+     which restores the legacy unbounded dormancy posture — note
+     this is a global option (no per-asset equivalent), so prefer
+     raising that one asset's per-asset `stale_component_ledgers`
+     threshold instead when only one asset needs it.
 
 ### `outcome="missing_freshness"`
 
@@ -268,3 +315,14 @@ fix.
   `[supply.stale_component_ledgers_by_asset]` /
   `WithStaleComponentLedgersFor` remedy and how to identify the
   failing asset from the `asset_key` label.
+- 2026-07-24 — R-002 (audit-2026-07-23): corrected the doc to
+  reflect that the F-1320 dormancy carve-out is now BOUNDED —
+  `DefaultMaxDormantComponentLedgers` (17,280 ledgers ≈ 24h) caps
+  how long an unchanged `MinComponentLedger` is accepted as
+  `outcome="dormant"`. Past the horizon the gate fails closed to
+  `outcome="stale_component"`, publishing stops, and this alert
+  fires — so a sustained `stale_component` stream is case (1)
+  (stalled producer) OR a dormant asset that has crossed the
+  horizon, not case (1) alone. Added the discriminator (check
+  whether the component observer itself is advancing) and the
+  `WithMaxDormantComponentLedgers(0)` escape hatch.
