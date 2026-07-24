@@ -149,6 +149,17 @@ func resolveSession(r *http.Request, cfg *Config, tracker *touchTracker) (Sessio
 	if tracker.shouldTouch(sess.ID, cfg.Now()) {
 		parent := r.Context()
 		go func(parent context.Context, id uuid.UUID, ip string, ua string) {
+			// AGT-12: this fire-and-forget write runs in its OWN
+			// goroutine, so an unrecovered panic here terminates the
+			// WHOLE process — nothing upstream (middleware.Recoverer
+			// et al) wraps a bare `go func(){}()`. Recover so a panic
+			// only drops this one touch-write instead of taking down
+			// every in-flight request.
+			defer func() {
+				if r := recover(); r != nil {
+					cfg.Logger.Error("touch session panic", "err", r, "session_id", id)
+				}
+			}()
 			ctx, cancel := newTouchCtx(parent)
 			defer cancel()
 			ipParsed := parseIP(ip)
@@ -164,9 +175,10 @@ func resolveSession(r *http.Request, cfg *Config, tracker *touchTracker) (Sessio
 // a process restart resets it (worst case: one extra write per
 // session post-restart, which is fine).
 type touchTracker struct {
-	mu       sync.Mutex
-	last     map[uuid.UUID]time.Time
-	interval time.Duration
+	mu        sync.Mutex
+	last      map[uuid.UUID]time.Time
+	interval  time.Duration
+	lastSweep time.Time
 }
 
 func newTouchTracker(interval time.Duration) *touchTracker {
@@ -183,5 +195,34 @@ func (t *touchTracker) shouldTouch(id uuid.UUID, now time.Time) bool {
 		return false
 	}
 	t.last[id] = now
+	t.sweepLocked(now)
 	return true
+}
+
+// sweepLocked opportunistically evicts entries whose last-touch has
+// aged past interval (REL-05). resolveSession has no "session ended"
+// signal to delete on, so without this every distinct session ID ever
+// seen stays in the map for the lifetime of the process — one
+// permanent entry per session, unbounded growth. An entry this old can
+// no longer suppress a touch anyway (shouldTouch's own staleness check
+// already treats it as due again), so it's pure dead weight; evicting
+// it bounds the map to roughly "sessions active within the last
+// interval" instead.
+//
+// Rate-limited to once per interval (checked against lastSweep) so a
+// request-heavy deployment doesn't pay an O(map size) scan on every
+// single touch — only on the (at most) one touch per interval that
+// already does a map write.
+//
+// Caller must hold t.mu.
+func (t *touchTracker) sweepLocked(now time.Time) {
+	if now.Sub(t.lastSweep) < t.interval {
+		return
+	}
+	t.lastSweep = now
+	for id, last := range t.last {
+		if now.Sub(last) >= t.interval {
+			delete(t.last, id)
+		}
+	}
 }
