@@ -23,7 +23,12 @@ import (
 //
 // Cache key prefix:
 //
-//	sep10:seen:<sha256-base64-url-no-pad of signedXDR>
+//	sep10:seen:<hex transaction hash>
+//
+// The suffix is the challenge TRANSACTION's canonical hash (see
+// [challengeTxHash]), never a digest of the caller-supplied XDR string:
+// the same transaction has many valid spellings, and keying on the
+// spelling let one redemption be replayed by re-encoding it (CON-05).
 //
 // Owned by this file rather than internal/cachekeys/ because the
 // SEP-10 replay set is conceptually an auth concern, not a price-
