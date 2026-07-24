@@ -61,7 +61,8 @@ var stalledCursorSubRE = regexp.MustCompile(stalledCursorSubPattern)
 // runBackfillChunk call is made.
 type stalledCursorPlan struct {
 	cursor     timescale.Cursor
-	rangeFrom  uint32   // last_ledger + 1
+	origFrom   uint32   // declared `from` parsed from sub_source (m[1]) — the ORIGINAL cursor key's start, distinct from rangeFrom
+	rangeFrom  uint32   // last_ledger + 1 — the actual remaining-work start
 	rangeTo    uint32   // parsed `to` from sub_source
 	sources    []string // decoder CSV, sorted
 	skip       bool
@@ -296,6 +297,7 @@ func parseStalledCursor(c timescale.Cursor) stalledCursorPlan {
 		return p
 	}
 	sort.Strings(srcs)
+	p.origFrom = uint32(fromN)
 	p.rangeFrom = c.LastLedger + 1
 	p.rangeTo = uint32(toN)
 	p.sources = srcs
@@ -486,6 +488,32 @@ func executeResumePlans(
 	return failures
 }
 
+// resumeChunkFrom picks the range base handed to planBackfillChunks for
+// a resumed cursor. At parallel<=1 (the default — resume-stalled's
+// documented "first cut" is sequential per cursor) it MUST be the
+// ORIGINAL declared `from` (p.origFrom), not rangeFrom (last_ledger+1):
+// planBackfillChunks with parallel<=1 returns the whole [chunkFrom,
+// rangeTo] as ONE chunk, and backfillCursorSub keys the durable cursor
+// row on that chunk's own (from, to, sources) — so origFrom here
+// reproduces the EXACT sub_source of the stalled row we read, and
+// runBackfillChunk's built-in `-resume` path (GetCursor → last_ledger+1)
+// does the walk-forward to the real remaining range for us. Without
+// this, opts.from = rangeFrom (last_ledger+1) makes backfillCursorSub
+// key a NEW sub_source (last_ledger+1 .. to), so UpsertCursor writes a
+// SIBLING row and the real stalled row is never advanced or completed
+// (AGT-01 / DAT-12 / REL-09).
+//
+// At parallel>1 the range is split into multiple independent
+// sub-chunks that each need their OWN cursor row regardless (a single
+// last_ledger scalar can't distribute across N concurrent trackers),
+// so that path keeps chunking the remaining range from rangeFrom.
+func resumeChunkFrom(p stalledCursorPlan, parallel int) uint32 {
+	if parallel <= 1 {
+		return p.origFrom
+	}
+	return p.rangeFrom
+}
+
 // runOneCursorPlan wires one stalledCursorPlan through the regular
 // backfill chunk path. Same shape the `backfill` subcommand uses for
 // a single user-specified range — just driven from the cursor row
@@ -501,9 +529,10 @@ func runOneCursorPlan(
 	cfg config.Config,
 	store *timescale.Store,
 ) error {
+	chunkFrom := resumeChunkFrom(p, parallel)
 	opts := backfillOpts{
 		cfgPath:      cfgPath,
-		from:         p.rangeFrom,
+		from:         chunkFrom,
 		to:           p.rangeTo,
 		sources:      p.sources,
 		bucket:       bucket,
