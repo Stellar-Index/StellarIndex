@@ -287,6 +287,41 @@ func TestPlanHasSorobanDecoder(t *testing.T) {
 	}
 }
 
+// TestHasNonSorobanDecoder_AndGateSelection verifies hasNonSorobanDecoder
+// (used both to select the mixed-plan gate path and to decide whether
+// anyPlanNeedsClassicGate must build the classicGapGate at all).
+func TestHasNonSorobanDecoder_AndGateSelection(t *testing.T) {
+	cases := []struct {
+		name    string
+		sources []string
+		want    bool
+	}{
+		{name: "sdex only", sources: []string{"sdex"}, want: true},
+		{name: "soroban only", sources: []string{"aquarius"}, want: false},
+		{name: "mixed", sources: []string{"aquarius", "sdex"}, want: true},
+		{name: "unknown decoder counts as non-soroban", sources: []string{"some-future-source"}, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hasNonSorobanDecoder(tc.sources); got != tc.want {
+				t.Errorf("hasNonSorobanDecoder(%v) = %v, want %v", tc.sources, got, tc.want)
+			}
+		})
+	}
+
+	// anyPlanNeedsClassicGate must fire for a MIXED plan too (DAT-11) —
+	// not just classic-only — or the classicGapGate is never built and
+	// gateMixedPlan always sees classic.available=false.
+	mixedOnly := []stalledCursorPlan{{sources: []string{"aquarius", "sdex"}}}
+	if !anyPlanNeedsClassicGate(mixedOnly) {
+		t.Fatal("anyPlanNeedsClassicGate must return true for a mixed (soroban+sdex) plan")
+	}
+	sorobanOnly := []stalledCursorPlan{{sources: []string{"aquarius"}}}
+	if anyPlanNeedsClassicGate(sorobanOnly) {
+		t.Fatal("anyPlanNeedsClassicGate must return false when no plan has an SDEX portion")
+	}
+}
+
 // TestGateAgainstDataGaps_HappyPath puts the F-0020 cascade signature
 // + a false-positive cursor + an SDEX-only cursor through the gate
 // and pins the expected post-gate skip state. The whole point of
@@ -374,6 +409,75 @@ func TestGateAgainstDataGaps_ForceClassic(t *testing.T) {
 	if out[0].skip {
 		t.Errorf("with --force-classic-cursors the SDEX plan must stay actionable; got skip=%v reason=%q", out[0].skip, out[0].skipReason)
 	}
+}
+
+// TestGateAgainstDataGaps_MixedPlanChecksBothSides is the DAT-11
+// regression: a plan with BOTH a Soroban decoder and an SDEX decoder
+// must not be skipped as a cursor-inventory false positive on a clean
+// soroban_events check alone — the SDEX side needs its own
+// independent confirmation via the same data-derived gate a
+// classic-only plan gets.
+func TestGateAgainstDataGaps_MixedPlanChecksBothSides(t *testing.T) {
+	mixedPlan := func() stalledCursorPlan {
+		return stalledCursorPlan{
+			cursor:    timescale.Cursor{Sub: "61000000-61600000:aquarius,sdex"},
+			rangeFrom: 61_100_000,
+			rangeTo:   61_500_000,
+			sources:   []string{"aquarius", "sdex"},
+		}
+	}
+
+	t.Run("soroban side has a real gap — actionable without even checking classic", func(t *testing.T) {
+		gaps := []timescale.LedgerGap{{Start: 61_200_000, End: 61_300_000, Size: 100_001}}
+		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, gaps, classicGapGate{}, false)
+		if out[0].skip {
+			t.Fatalf("soroban-side real gap must keep the mixed plan actionable; got skip=%v reason=%q", out[0].skip, out[0].skipReason)
+		}
+	})
+
+	t.Run("soroban clean, classic gate unavailable — must SKIP, not silently act (and must not claim false-positive)", func(t *testing.T) {
+		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, nil, classicGapGate{}, false)
+		if !out[0].skip {
+			t.Fatalf("soroban-clean + SDEX-gate-unavailable must SKIP a mixed plan (unverified SDEX side); got actionable")
+		}
+		if !strings.Contains(out[0].skipReason, "sdex data-gap gate unavailable") {
+			t.Fatalf("skip reason must explain the unverified SDEX side, got %q", out[0].skipReason)
+		}
+		if strings.Contains(out[0].skipReason, "false-positive") {
+			t.Fatalf("must NOT be labeled a false-positive when the SDEX side was never checked, got %q", out[0].skipReason)
+		}
+	})
+
+	t.Run("soroban clean, classic gate shows a real SDEX gap — actionable", func(t *testing.T) {
+		gate := classicGapGate{
+			available: true,
+			floor:     60_000_000,
+			gaps:      []timescale.LedgerGap{{Start: 61_150_000, End: 61_250_000, Size: 100_001}},
+		}
+		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, nil, gate, false)
+		if out[0].skip {
+			t.Fatalf("a real SDEX-side gap must keep the mixed plan actionable; got skip=%v reason=%q", out[0].skip, out[0].skipReason)
+		}
+	})
+
+	t.Run("BOTH sides independently confirmed clean — genuine false positive, skip", func(t *testing.T) {
+		gate := classicGapGate{
+			available: true,
+			floor:     60_000_000,
+			gaps:      nil, // no sdex gap anywhere in the retained window
+		}
+		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, nil, gate, false)
+		if !out[0].skip {
+			t.Fatalf("both sides clean must skip the mixed plan; got actionable")
+		}
+	})
+
+	t.Run("force-classic opts the SDEX side out of the gate — actionable on soroban-clean alone", func(t *testing.T) {
+		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, nil, classicGapGate{}, true)
+		if out[0].skip {
+			t.Fatalf("--force-classic-cursors must make a soroban-clean mixed plan actionable even with no classic gate; got skip=%v reason=%q", out[0].skip, out[0].skipReason)
+		}
+	})
 }
 
 // TestGateClassicPlan_DataDerived pins the SDEX data-derived gate's
