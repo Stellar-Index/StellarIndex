@@ -1,10 +1,17 @@
 package ingest
 
 import (
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // writeMinimalConfig drops a TOML config that has just enough fields
@@ -363,4 +370,89 @@ func TestParseBackfillFlags_Parallel(t *testing.T) {
 			t.Fatal("expected error for parallel=-3")
 		}
 	})
+}
+
+// fakeCAGGRefresher is a DB-free caggRefresher: canned
+// LedgerRangeToTimeRange + per-view RefreshContinuousAggregate
+// results, so refreshCAGGsForChunk's failure-aggregation logic
+// (DAT-09 / REL-08) is exercisable without live Postgres.
+type fakeCAGGRefresher struct {
+	tsFrom, tsTo time.Time
+	rangeErr     error
+	failViews    map[string]error // view name -> error to return
+
+	refreshedViews []string // every view name RefreshContinuousAggregate was called for
+}
+
+func (f *fakeCAGGRefresher) LedgerRangeToTimeRange(_ context.Context, _, _ uint32) (time.Time, time.Time, error) {
+	return f.tsFrom, f.tsTo, f.rangeErr
+}
+
+func (f *fakeCAGGRefresher) RefreshContinuousAggregate(_ context.Context, name string, _, _ time.Time) error {
+	f.refreshedViews = append(f.refreshedViews, name)
+	return f.failViews[name]
+}
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// TestRefreshCAGGsForChunk_ViewFailurePropagates is the DAT-09 / REL-08
+// regression: a single failing CAGG view must make the WHOLE function
+// return a non-nil error (previously it logged and returned nil),
+// so the caller does not advance the durable cursor past an
+// unmaterialised chunk. Every OTHER view must still be attempted —
+// one wedged view must not block refreshing the rest.
+func TestRefreshCAGGsForChunk_ViewFailurePropagates(t *testing.T) {
+	// timescale.CAGGsLiveForever always has at least "prices_1h" —
+	// fail exactly that one and confirm every configured view was
+	// still attempted.
+	if len(timescale.CAGGsLiveForever) == 0 {
+		t.Fatal("timescale.CAGGsLiveForever is empty — test needs at least one CAGG spec")
+	}
+	failing := timescale.CAGGsLiveForever[0].Name
+	fake := &fakeCAGGRefresher{
+		tsFrom:    time.Now().Add(-time.Hour),
+		tsTo:      time.Now(),
+		failViews: map[string]error{failing: fmt.Errorf("view refresh failed: statement timeout")},
+	}
+	err := refreshCAGGsForChunk(context.Background(), discardLogger(), fake, chunkRange{from: 100, to: 200})
+	if err == nil {
+		t.Fatal("expected a non-nil error when a CAGG view failed to refresh, got nil")
+	}
+	if !strings.Contains(err.Error(), failing) {
+		t.Errorf("error should name the failing view %q, got: %v", failing, err)
+	}
+	if len(fake.refreshedViews) != len(timescale.CAGGsLiveForever) {
+		t.Errorf("expected every configured CAGG view attempted despite one failure, got %d/%d: %v",
+			len(fake.refreshedViews), len(timescale.CAGGsLiveForever), fake.refreshedViews)
+	}
+}
+
+// TestRefreshCAGGsForChunk_AllSucceedIsNil: the happy path must still
+// return nil (regression guard against over-correcting into
+// always-error).
+func TestRefreshCAGGsForChunk_AllSucceedIsNil(t *testing.T) {
+	fake := &fakeCAGGRefresher{tsFrom: time.Now().Add(-time.Hour), tsTo: time.Now()}
+	err := refreshCAGGsForChunk(context.Background(), discardLogger(), fake, chunkRange{from: 100, to: 200})
+	if err != nil {
+		t.Fatalf("expected nil error when every view refreshed cleanly, got %v", err)
+	}
+	if len(fake.refreshedViews) != len(timescale.CAGGsLiveForever) {
+		t.Errorf("expected every configured CAGG view attempted, got %d/%d", len(fake.refreshedViews), len(timescale.CAGGsLiveForever))
+	}
+}
+
+// TestRefreshCAGGsForChunk_NoTradesIsNil: an empty chunk (no trades
+// inserted — ErrNotFound from LedgerRangeToTimeRange) is a legitimate
+// skip, not a failure.
+func TestRefreshCAGGsForChunk_NoTradesIsNil(t *testing.T) {
+	fake := &fakeCAGGRefresher{rangeErr: timescale.ErrNotFound}
+	err := refreshCAGGsForChunk(context.Background(), discardLogger(), fake, chunkRange{from: 100, to: 200})
+	if err != nil {
+		t.Fatalf("expected nil error when the chunk had no trades, got %v", err)
+	}
+	if len(fake.refreshedViews) != 0 {
+		t.Errorf("expected no views attempted when there's no ts range to refresh, got %v", fake.refreshedViews)
+	}
 }
