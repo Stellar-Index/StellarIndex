@@ -10,17 +10,52 @@ import (
 )
 
 // TestCacheKey_ScalarGrammar pins the wire format so a future edit
-// that changes the separator or dimension order is caught (the key is
-// an in-process detail, but stability makes the prewarm/handler
-// equality tests below meaningful).
+// that changes the field encoding or dimension order is caught (the
+// key is an in-process detail, but stability makes the prewarm/handler
+// equality tests below meaningful). Length-prefixed netstring-style
+// fields (API-05 / COR-14): "<op-len>:<op><field-len>:<field>…".
 func TestCacheKey_ScalarGrammar(t *testing.T) {
 	got := newCacheKey("SourceMarkets").
 		str("binance").str("cur").int(200).
 		order(int(timescale.MarketsOrderVolume24hDesc)).build()
-	want := "SourceMarkets|binance|cur|200|" +
-		strconv.Itoa(int(timescale.MarketsOrderVolume24hDesc))
+	orderStr := strconv.Itoa(int(timescale.MarketsOrderVolume24hDesc))
+	want := "13:SourceMarkets" +
+		"7:binance" +
+		"3:cur" +
+		"3:200" +
+		strconv.Itoa(len(orderStr)) + ":" + orderStr
 	if got != want {
 		t.Errorf("scalar grammar\n got %q\nwant %q", got, want)
+	}
+}
+
+// TestCacheKey_SeparatorByteCannotForgeFieldBoundary is the API-05 /
+// COR-14 regression: a value containing the byte the OLD '|'-delimited
+// grammar used as a field separator must NOT let two different
+// dimension splits collide onto the same key. Pre-fix,
+// str("a|b").str("c") and str("a").str("b|c") both rendered as
+// "...a|b|c..." — one caller's cached page could be served to another
+// caller whose (issuer, code) pair split the same raw bytes
+// differently.
+func TestCacheKey_SeparatorByteCannotForgeFieldBoundary(t *testing.T) {
+	crossed := newCacheKey("ListAssetsExt").str("a|b").str("c").build()
+	straight := newCacheKey("ListAssetsExt").str("a").str("b|c").build()
+	if crossed == straight {
+		t.Fatalf("field-boundary forgery: str(%q).str(%q) collided with str(%q).str(%q): both = %q",
+			"a|b", "c", "a", "b|c", crossed)
+	}
+}
+
+// TestCacheKey_StrSetCommaCannotForgeMemberBoundary is the strSet
+// analogue: a single member containing the OLD ','-joined separator
+// must not collide with two members that split the same bytes
+// differently.
+func TestCacheKey_StrSetCommaCannotForgeMemberBoundary(t *testing.T) {
+	oneMember := newCacheKey("AllPools").strSet([]string{"a,b"}).build()
+	twoMembers := newCacheKey("AllPools").strSet([]string{"a", "b"}).build()
+	if oneMember == twoMembers {
+		t.Fatalf("set-member-boundary forgery: strSet([%q]) collided with strSet([%q,%q]): both = %q",
+			"a,b", "a", "b", oneMember)
 	}
 }
 
