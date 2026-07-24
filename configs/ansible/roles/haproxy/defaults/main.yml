@@ -17,6 +17,15 @@ keepalived_priority: 99            # 100 on lb-01, 99 on lb-02 (per-host overrid
 # Vault-supplied. Note: keepalived truncates auth_pass beyond 8
 # bytes silently — keep this <=8 chars to avoid surprises.
 keepalived_vrrp_password: ""
+# VRRP unicast (audit-2026-07-23 REL-HA): default keepalived VRRP uses
+# multicast (224.0.0.18), which some cloud/VPC networks silently drop —
+# each node then believes it's the sole MASTER, a dual-MASTER split
+# brain on the shared VIP. Set BOTH of these (per-host override — this
+# host's own IP + the OTHER lb node's IP(s)) to switch to unicast VRRP;
+# left empty (the default), the template falls back to unchanged
+# multicast behaviour.
+keepalived_unicast_src_ip: ""      # this host's IP, e.g. lb-01's on lb-01's host_vars
+keepalived_unicast_peer_ips: []    # the OTHER lb node(s)' IP(s)
 
 # ── HAProxy backend ────────────────────────────────────────────
 # Default health-check path. /v1/readyz is the deep ready probe.
