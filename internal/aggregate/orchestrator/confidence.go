@@ -82,7 +82,10 @@ func (o *Orchestrator) computeConfidence(
 		return confidenceComputation{}, false
 	}
 
-	multi, computedAt, err := o.cfg.Baselines.LatestBaseline(ctx, pair)
+	// computedAt (when the refresher last WROTE the row) is
+	// deliberately unused: it measures the refresh loop's cadence, not
+	// the asset's maturity — see [baselineAgeDays].
+	multi, _, err := o.cfg.Baselines.LatestBaseline(ctx, pair)
 	if err != nil {
 		obs.AggregatorConfidenceComputeTotal.WithLabelValues("baseline_missing").Inc()
 		return confidenceComputation{}, false
@@ -140,7 +143,7 @@ func (o *Orchestrator) computeConfidence(
 		LiquidityUSD:              approxUSDVolume(trades, pair),
 		CrossOracleDivergencePct:  xo.divergencePct,
 		CrossOracleAgreementCount: xo.agreementCount,
-		BaselineAgeDays:           baselineAgeDays(multi, computedAt),
+		BaselineAgeDays:           baselineAgeDays(multi),
 	}, confidence.DefaultWeights())
 
 	// ZScore carries the OBSERVATION-based score to the Phase 2
@@ -342,19 +345,28 @@ func isUSDQuoted(pair canonical.Pair) bool {
 }
 
 // baselineAgeDays returns how much real history backs the 30d
-// baseline, in days. Uses Day30.N (count of returns that fed the
-// MAD computation) divided by 1440 (1m buckets per 24h). Returns
-// -1 (the [confidence.BaselineQualityFactor] sentinel) when the
-// 30d window is in bootstrap.
-func baselineAgeDays(multi baseline.MultiBaseline, computedAt time.Time) float64 {
+// baseline, in DAYS-EQUIVALENT of 1-minute buckets: Day30.N (the
+// count of bucket-to-bucket returns that fed the median/MAD) divided
+// by 1440 (1m buckets per 24h). Returns -1 (the
+// [confidence.BaselineQualityFactor] sentinel) when the 30d window is
+// in bootstrap.
+//
+// This is sample DENSITY, not calendar age, and the name is
+// historical (COR-14). It deliberately takes no wall-clock input:
+// LatestBaseline's computedAt says when the refresher last WROTE the
+// row, which is a property of the refresh loop's cadence rather than
+// of the asset, and nothing available here carries the asset's
+// first-observation time — so a true calendar maturity is not
+// derivable at this layer. Density is also the better signal: a
+// baseline is trustworthy in proportion to the observations behind
+// it, so a calendar-mature but sparsely-traded pair SHOULD score low.
+// See [confidence.Inputs.BaselineAgeDays] for the consumer-side
+// framing.
+func baselineAgeDays(multi baseline.MultiBaseline) float64 {
 	if multi.Day30 == nil {
 		return -1
 	}
 	// 1440 = minutes per day. Day30.N is the number of bucket-to-
 	// bucket returns in the window (one per 1m bucket pair).
-	days := float64(multi.Day30.N) / 1440.0
-	// computedAt is the wall-clock when the refresher last wrote
-	// the baseline — useful sanity check, not used in the math.
-	_ = computedAt
-	return days
+	return float64(multi.Day30.N) / 1440.0
 }
