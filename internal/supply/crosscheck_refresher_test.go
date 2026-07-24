@@ -219,6 +219,67 @@ func TestCrossCheckRefresher_PartialWrapOverMintFires(t *testing.T) {
 	}
 }
 
+// TestCrossCheckRefresher_MisalignedLedgersNeitherPassesNorPages is
+// the MNY-04 guard. Each side's snapshot is read as "the LATEST for
+// this asset_key" from its own per-asset refresher, so nothing makes
+// them contemporaneous. A SAC snapshot 50k ledgers (~3 days) ahead of
+// a stalled classic snapshot made the subset bound report an
+// over-mint that never happened — a P3 page on a stale read. It must
+// instead report `misaligned`: no verdict, no gauge.
+func TestCrossCheckRefresher_MisalignedLedgersNeitherPassesNorPages(t *testing.T) {
+	t.Parallel()
+	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
+		// Classic snapshot stalled at ledger 50,000,000 with a total
+		// that has since grown; SAC is current at 50,050,000.
+		"USDC:G...": {AssetKey: "USDC:G...", TotalSupply: big.NewInt(100_000_000_000), LedgerSequence: 50_000_000},
+		"CCONTRACT": {AssetKey: "CCONTRACT", TotalSupply: big.NewInt(100_000_000_002), LedgerSequence: 50_050_000},
+	}}
+	emitter := &captureEmitter{}
+	r, _ := supply.NewCrossCheckRefresher(
+		[]supply.CrossCheckPair{{ClassicKey: "USDC:G...", SACKey: "CCONTRACT", WrapClass: supply.WrapClassPartial}},
+		reader, emitter, newSilentLogger(),
+	)
+	got := r.Tick(context.Background())
+	if len(got) != 1 || got[0].Kind != supply.CrossCheckOutcomeMisaligned {
+		t.Fatalf("Tick: got %#v, want one Misaligned", got)
+	}
+	if got[0].Err == nil {
+		t.Error("Misaligned outcome carries no Err; operators need the gap in the log line")
+	}
+	// Neither passes nor pages: no divergence gauge emission at all —
+	// recording 0 would read as "checked, agreed", recording 2 pages.
+	if len(emitter.divergences) != 0 {
+		t.Errorf("emitted divergence gauge on a misaligned pair: %#v", emitter.divergences)
+	}
+	if len(emitter.outcomes) != 1 || emitter.outcomes[0].Kind != supply.CrossCheckOutcomeMisaligned {
+		t.Errorf("outcomes = %#v, want one misaligned", emitter.outcomes)
+	}
+}
+
+// TestCrossCheckRefresher_AlignedLedgersStillCompare — the alignment
+// gate must not swallow the real check: a gap inside
+// [supply.CrossCheckLedgerTolerance] still produces a verdict, and a
+// genuine over-mint at aligned ledgers still pages.
+func TestCrossCheckRefresher_AlignedLedgersStillCompare(t *testing.T) {
+	t.Parallel()
+	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
+		"USDC:G...": {AssetKey: "USDC:G...", TotalSupply: big.NewInt(100_000_000_000), LedgerSequence: 50_000_000},
+		"CCONTRACT": {AssetKey: "CCONTRACT", TotalSupply: big.NewInt(100_000_000_002), LedgerSequence: 50_000_000 + supply.CrossCheckLedgerTolerance},
+	}}
+	emitter := &captureEmitter{}
+	r, _ := supply.NewCrossCheckRefresher(
+		[]supply.CrossCheckPair{{ClassicKey: "USDC:G...", SACKey: "CCONTRACT", WrapClass: supply.WrapClassPartial}},
+		reader, emitter, newSilentLogger(),
+	)
+	got := r.Tick(context.Background())
+	if len(got) != 1 || got[0].Kind != supply.CrossCheckOutcomeOver {
+		t.Fatalf("Tick: got %#v, want one Over — the boundary gap is still comparable", got)
+	}
+	if got[0].Result.DivergenceStroops.Cmp(big.NewInt(2)) != 0 {
+		t.Fatalf("divergence stroops: got %s, want 2", got[0].Result.DivergenceStroops)
+	}
+}
+
 // TestCrossCheckRefresher_FullWrapStillAlertsOnMismatch — an operator-
 // attested [supply.WrapClassFull] pair keeps the ORIGINAL ADR-0011
 // equality semantics: classic exceeding sac by more than tolerance

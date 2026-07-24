@@ -81,7 +81,45 @@ const (
 	// is the counter so operators can chart sustained read failure
 	// rate on this pair.
 	CrossCheckOutcomeReadError CrossCheckOutcomeKind = "read_error"
+
+	// CrossCheckOutcomeMisaligned — both snapshots loaded, but their
+	// LedgerSequences are further apart than
+	// [CrossCheckLedgerTolerance], so the invariant is not evaluable
+	// (MNY-04). Neither passes nor pages: the gauge is NOT updated
+	// (a stale reading must not be recorded as agreement) and no
+	// divergence is computed (a lagging snapshot on either side makes
+	// the subset bound meaningless in BOTH directions — a stale
+	// classic total can sit below a fresh SAC total with no over-mint
+	// whatsoever, and a stale SAC total can hide a real one).
+	// Operators chart this via the counter.
+	CrossCheckOutcomeMisaligned CrossCheckOutcomeKind = "misaligned"
 )
+
+// CrossCheckLedgerTolerance is the largest |classic.LedgerSequence −
+// sac.LedgerSequence| gap at which the two snapshots are still treated
+// as describing the same moment.
+//
+// The refresher reads each side's LATEST snapshot independently, so
+// nothing in the read path guarantees they were computed at the same
+// ledger; without a bound the comparison silently pits an hours-old
+// total against a fresh one.
+//
+// 1000 ledgers (~1.4h at 5s close times) is
+// [DefaultStaleComponentLedgers] — the lag this package already
+// declares acceptable for a supply component. Reusing it makes the two
+// freshness defences agree rather than each picking its own number,
+// and it is comfortably wider than the 5m aggregator refresh cadence
+// that produces both sides, so steady state never trips it.
+const CrossCheckLedgerTolerance uint32 = DefaultStaleComponentLedgers
+
+// ledgerGap returns |a − b| for two ledger sequences without the
+// uint32 underflow a bare subtraction would produce.
+func ledgerGap(a, b uint32) uint32 {
+	if a > b {
+		return a - b
+	}
+	return b - a
+}
 
 // CrossCheckOutcome is the per-pair result of one tick. The
 // refresher emits one Outcome per configured pair regardless of
@@ -92,7 +130,7 @@ type CrossCheckOutcome struct {
 	Pair   CrossCheckPair
 	Kind   CrossCheckOutcomeKind
 	Result CrossCheckResult // populated on Within / Over
-	Err    error            // populated on Missing / ReadError
+	Err    error            // populated on Missing / ReadError / Misaligned
 }
 
 // CrossCheckEmitter is the metric-emission seam — kept as an
@@ -229,6 +267,33 @@ func (r *CrossCheckRefresher) tickOne(ctx context.Context, p CrossCheckPair) Cro
 			"sac_key", p.SACKey, "err", err)
 		return CrossCheckOutcome{Pair: p, Kind: CrossCheckOutcomeReadError, Err: err}
 	}
+	// MNY-04: both snapshots loaded — but each is the LATEST for its own
+	// asset_key, written by its own per-asset refresher, so they can
+	// describe wildly different ledgers. Comparing arbitrarily-aged
+	// totals makes the subset bound unsound in both directions, so
+	// refuse to evaluate rather than publish a verdict the data can't
+	// support. A zero LedgerSequence on either side means "no ledger
+	// anchor recorded" (bootstrap / static-fallback snapshot) and takes
+	// the legacy permissive path, mirroring the MinComponentLedger==0
+	// convention the freshness gate uses.
+	if classic.LedgerSequence > 0 && sac.LedgerSequence > 0 {
+		if gap := ledgerGap(classic.LedgerSequence, sac.LedgerSequence); gap > CrossCheckLedgerTolerance {
+			r.logger.Warn("cross-check: snapshots misaligned, comparison skipped",
+				"classic_key", p.ClassicKey,
+				"sac_key", p.SACKey,
+				"classic_ledger", classic.LedgerSequence,
+				"sac_ledger", sac.LedgerSequence,
+				"gap_ledgers", gap,
+				"tolerance_ledgers", CrossCheckLedgerTolerance)
+			return CrossCheckOutcome{
+				Pair: p,
+				Kind: CrossCheckOutcomeMisaligned,
+				Err: fmt.Errorf("supply: cross-check snapshots %d ledgers apart (classic=%d sac=%d), tolerance %d",
+					gap, classic.LedgerSequence, sac.LedgerSequence, CrossCheckLedgerTolerance),
+			}
+		}
+	}
+
 	result, err := CrossCheckForClass(classic, sac, p.WrapClass)
 	if err != nil {
 		r.logger.Warn("cross-check: compare failed",
