@@ -224,6 +224,49 @@ func TestRun_RejectsNonPositivePollInterval(t *testing.T) {
 	}
 }
 
+// TestRun_LatePollerConfigErrorDoesNotDeadlock is the regression test
+// for REL-05 (audit-2026-07-23): runPoller goroutines used to be
+// bound to the raw parent ctx, while teardown() (triggered when a
+// LATER poller in the same Run call fails config validation) only
+// cancels the derived streamerCtx. An earlier poller's goroutine
+// bound to the raw ctx never observes that cancellation, so
+// teardown's wg.Wait() — and thus Run() itself — would hang forever
+// whenever the caller's own ctx isn't independently cancelled (the
+// normal case for a startup-time config error, matched here by
+// context.Background()).
+func TestRun_LatePollerConfigErrorDoesNotDeadlock(t *testing.T) {
+	good := &mockPoller{
+		name:     "good-poller",
+		interval: 10 * time.Millisecond,
+	}
+	bad := &mockPoller{
+		name:     "bad-poller",
+		interval: 0, // triggers Run's non-positive-PollInterval validation error
+	}
+
+	done := make(chan struct{})
+	var runErr error
+	go func() {
+		_, runErr = Run(context.Background(),
+			nil,
+			[]PollerSpec{
+				{Poller: good, Pairs: []canonical.Pair{newTestPair(t)}},
+				{Poller: bad, Pairs: []canonical.Pair{newTestPair(t)}},
+			},
+			make(chan consumer.Event, 8), nil)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return within 2s — teardown() deadlocked waiting for the earlier poller's goroutine, which was bound to the un-cancelled parent ctx instead of the derived streamerCtx")
+	}
+	if runErr == nil {
+		t.Error("expected Run to return an error for the non-positive PollInterval poller")
+	}
+}
+
 func TestRun_CtxCancelClosesForwarders(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &mockStreamer{name: "mock-exchange-2"} // no trades — will hang until ctx done
