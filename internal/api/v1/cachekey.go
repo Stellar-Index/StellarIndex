@@ -28,10 +28,19 @@ import (
 //     exact Sources-order footgun the AllPools prewarm relied on a
 //     convention to avoid — can no longer land on different slots.
 //
-// Grammar: `<op>|<part>|<part>…`. `|` cannot appear in an asset_id,
-// source name, cursor, or code, so it is an unambiguous field
-// separator; set members are joined with `,` (also absent from those
-// alphabets) inside their field.
+// Grammar: each field is length-prefixed — `<len>:<bytes>` — and
+// fields are simply concatenated, netstring-/Bencode-style. Because
+// every field carries its own length, two different sequences of
+// fields can never serialize to the same string no matter what bytes
+// a field contains: there is no separator byte for content to forge.
+//
+// (Earlier revisions used a `|`-delimited grammar on the assumption
+// that '|' "cannot appear in an asset_id, source name, cursor, or
+// code" — an assumption a hostile filter value or cursor could
+// violate: str("a|b").str("c") and str("a").str("b|c") both rendered
+// as ".../a|b|c...", so one caller's request could be served another
+// caller's cached page. API-05 / COR-14. Length-prefixing removes the
+// assumption instead of trying to escape around it.)
 //
 // This is the in-process analogue of internal/cachekeys (the Redis
 // key grammar mandated by ADR-0007). It is kept local to package v1
@@ -46,25 +55,32 @@ type cacheKey struct {
 // which also namespaces the key so two methods can't collide).
 func newCacheKey(op string) *cacheKey {
 	k := &cacheKey{}
-	k.b.WriteString(op)
+	k.field(op)
 	return k
 }
 
-func (k *cacheKey) sep() { k.b.WriteByte('|') }
-
-// str appends a scalar string dimension (cursor, asset_id, source,
-// issuer, code, free-text query, …).
-func (k *cacheKey) str(s string) *cacheKey {
-	k.sep()
+// field appends s as one length-prefixed segment: "<len(s)>:<s>". The
+// length prefix is the sole boundary marker — s itself is written
+// verbatim, so no character in s (including ':' or a digit sequence
+// that could be mistaken for a length) can ever shift a field
+// boundary: the decoder (if there were one) always reads exactly
+// len(s) bytes after the ':', full stop.
+func (k *cacheKey) field(s string) *cacheKey {
+	k.b.WriteString(strconv.Itoa(len(s)))
+	k.b.WriteByte(':')
 	k.b.WriteString(s)
 	return k
 }
 
+// str appends a scalar string dimension (cursor, asset_id, source,
+// issuer, code, free-text query, …).
+func (k *cacheKey) str(s string) *cacheKey {
+	return k.field(s)
+}
+
 // int appends a scalar integer dimension (limit, …).
 func (k *cacheKey) int(n int) *cacheKey {
-	k.sep()
-	k.b.WriteString(strconv.Itoa(n))
-	return k
+	return k.field(strconv.Itoa(n))
 }
 
 // order appends a sort-order enum (a markets or asset-listing sort
@@ -79,16 +95,24 @@ func (k *cacheKey) order(o int) *cacheKey {
 // strSet appends a SET-valued dimension (a Sources filter, an
 // asset_id batch). The slice is defensively copied and SORTED so
 // element order can never drift between call sites — the structural
-// half of the Sources-order fix. nil and empty both render as the
-// empty fragment (both mean "no filter"). Callers pass the original
+// half of the Sources-order fix. nil and empty both render as a
+// zero-length set (both mean "no filter"). Callers pass the original
 // unsorted slice to the upstream query; only the key is normalised,
 // which is sound because every consumer of these sets treats them as
 // order-independent (an IN-filter / a map keyed by asset_id).
+//
+// Each member is its own length-prefixed field (preceded by the
+// member count), rather than a ','-joined string — the same
+// content-cannot-forge-a-boundary property [field] gives str/int, now
+// applied to set members too (a member containing ',' could otherwise
+// collide two different sets, e.g. {"a,b"} vs {"a","b"}).
 func (k *cacheKey) strSet(ss []string) *cacheKey {
 	sorted := append([]string(nil), ss...)
 	sort.Strings(sorted)
-	k.sep()
-	k.b.WriteString(strings.Join(sorted, ","))
+	k.field(strconv.Itoa(len(sorted)))
+	for _, s := range sorted {
+		k.field(s)
+	}
 	return k
 }
 
