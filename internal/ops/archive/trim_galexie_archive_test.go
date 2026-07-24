@@ -30,14 +30,54 @@ func TestParseTrimFlags_Defaults(t *testing.T) {
 	}
 }
 
-func TestParseTrimFlags_NoVerifyUpstream(t *testing.T) {
+// TestParseTrimFlags_NoVerifyUpstreamAloneIsRefused is the REL-05
+// regression: --no-verify-upstream disables the ONLY check that the
+// cold tier actually holds the files hot is about to lose, so it must
+// NOT be usable on its own — a second explicit acknowledgement flag
+// (--i-have-verified-cold-out-of-band) is required.
+func TestParseTrimFlags_NoVerifyUpstreamAloneIsRefused(t *testing.T) {
 	t.Parallel()
-	opts, err := parseTrimFlags([]string{"-older-than-ledger", "1000", "-no-verify-upstream"})
+	_, err := parseTrimFlags([]string{"-older-than-ledger", "1000", "-no-verify-upstream"})
+	if err == nil {
+		t.Fatal("expected -no-verify-upstream ALONE (no second ack) to be refused, got nil error")
+	}
+	if !strings.Contains(err.Error(), "i-have-verified-cold-out-of-band") {
+		t.Errorf("error should name the required second flag, got: %v", err)
+	}
+}
+
+// TestParseTrimFlags_NoVerifyUpstreamWithAck: the safety-primitive
+// bypass IS usable once both flags are set together.
+func TestParseTrimFlags_NoVerifyUpstreamWithAck(t *testing.T) {
+	t.Parallel()
+	opts, err := parseTrimFlags([]string{
+		"-older-than-ledger", "1000",
+		"-no-verify-upstream",
+		"-i-have-verified-cold-out-of-band",
+	})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	if opts.verifyUpstream {
 		t.Errorf("-no-verify-upstream should flip verifyUpstream to false")
+	}
+	if !opts.iHaveVerifiedOutOfBand {
+		t.Errorf("iHaveVerifiedOutOfBand should be true")
+	}
+}
+
+// TestParseTrimFlags_AckAloneWithoutNoVerifyIsHarmless: the ack flag
+// by itself (verify-upstream still on) is not an error — it's only
+// meaningful paired with -no-verify-upstream, but passing it alone
+// must not break the default safe path.
+func TestParseTrimFlags_AckAloneWithoutNoVerifyIsHarmless(t *testing.T) {
+	t.Parallel()
+	opts, err := parseTrimFlags([]string{"-older-than-ledger", "1000", "-i-have-verified-cold-out-of-band"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !opts.verifyUpstream {
+		t.Errorf("verifyUpstream must still default to true when -no-verify-upstream isn't passed")
 	}
 }
 
