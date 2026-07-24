@@ -1,7 +1,7 @@
 ---
 title: Loki + Promtail ansible role — design note
-last_verified: 2026-05-02
-status: shipped (Task #72 / #84 — configs/ansible/roles/loki; closes Task #72)
+last_verified: 2026-07-24
+status: NOT shipped (corrected 2026-07-24, audit-2026-07-23 DOC-05) — role code exists at configs/ansible/roles/loki/ but no playbook invokes it; R1 runs a hand-installed single-host Loki instead
 related:
   - docs/architecture/ha-plan.md §7 (observability)
   - docs/architecture/{patroni,redis-sentinel,haproxy,prometheus}-ansible-role-design-note.md (sister roles)
@@ -9,6 +9,19 @@ related:
 
 # Loki + Promtail ansible role — design note
 
+> **NOT shipped (corrected 2026-07-24, audit-2026-07-23 DOC-05).** The
+> frontmatter previously read `status: shipped, closes Task #72`; that was
+> false. The role's files exist under `configs/ansible/roles/loki/`, but
+> **no playbook invokes it** (the repo's only two playbooks,
+> `archival-node.yml` and `monitoring.yml`, don't reference `loki`) and it
+> has never been applied to any host. Per `configs/loki/README.md`: "The
+> full HA Loki topology lives at `configs/ansible/roles/loki` ... R1 alone
+> runs a single instance ... via system packages" (hand-installed, not this
+> role). Only the Promtail *agent* half is ansible-managed today, via
+> `archival-node` role's `10-observability.yml` — the Loki *server* remains
+> a hand-install. Task #72 has not closed. Everything below is the
+> pre-implementation design record.
+>
 > Closes Task #72's five-sub-role sweep (Patroni #344, Redis
 > Sentinel #350, HAProxy #362, Prometheus #363, Loki this PR).
 > Per ha-plan §7 the metrics + logs + tracing trio is "Prometheus
