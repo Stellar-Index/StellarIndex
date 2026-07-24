@@ -13,6 +13,69 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
+// TestAuth_FailedAuthThrottle_FailsClosedOnSustainedOutage pins the
+// SEC-15 / C3-5 fix: once the failed-auth Bucket has been erroring for
+// longer than its dwell-time (Take returns
+// [ratelimit.ErrThrottleUnavailable]), the credential-stuffing throttle
+// must fail CLOSED (still block the request) instead of silently
+// disabling brute-force protection for the rest of the outage. On the
+// unfixed code takeFailedAuth returns (false, 0) for ANY limiter error
+// — including ErrThrottleUnavailable — so a bad key keeps returning a
+// plain 401 forever during a sustained Redis outage.
+func TestAuth_FailedAuthThrottle_FailsClosedOnSustainedOutage(t *testing.T) {
+	if err := middleware.SetTrustedProxyCIDRs([]string{}); err != nil {
+		t.Fatalf("SetTrustedProxyCIDRs: %v", err)
+	}
+
+	rdb, mr := newRLRedis(t)
+	fakeNow := time.Unix(1_750_000_000, 0)
+	limiter := ratelimit.New(rdb, 3, time.Minute,
+		ratelimit.WithClock(func() time.Time { return fakeNow }),
+		ratelimit.WithDwellTime(30*time.Second),
+	)
+
+	mw := middleware.Auth(middleware.AuthOptions{
+		Mode:              middleware.AuthModeAPIKey,
+		APIKey:            stubAPIKeyValidator{knownKey: "good-key"},
+		FailedAuthLimiter: limiter,
+	})
+	h := mw(okHandler())
+
+	badReq := func() *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+		r.RemoteAddr = "203.0.113.55:44440"
+		r.Header.Set("X-API-Key", "wrong-key")
+		return r
+	}
+
+	// Blow up the backing miniredis — every future Take() call errors.
+	mr.Close()
+
+	// First failure only ARMS the dwell-time clock (elapsed=0 < 30s):
+	// the bucket still returns a plain wrapped error, so the throttle
+	// stays fail-open for this one request — matches the main
+	// RateLimit middleware's grace window (F-0050/F-0150).
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, badReq())
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("first failure inside dwell window: status = %d, want 401", w.Code)
+	}
+
+	// Advance the fake clock past the dwell-time: Take() now returns
+	// ErrThrottleUnavailable. The failed-auth throttle must fail CLOSED
+	// (block with 429 + Retry-After) rather than let credential
+	// guessing continue unbounded for the rest of the outage.
+	fakeNow = fakeNow.Add(31 * time.Second)
+	w2 := httptest.NewRecorder()
+	h.ServeHTTP(w2, badReq())
+	if w2.Code != http.StatusTooManyRequests {
+		t.Fatalf("sustained outage: status = %d, want 429 (fail-closed, not a bare 401)", w2.Code)
+	}
+	if ra := w2.Header().Get("Retry-After"); ra == "" {
+		t.Error("fail-closed response during sustained outage must carry Retry-After")
+	}
+}
+
 // TestAuth_FailedAuthThrottle is the C3-5 regression: invalid-credential
 // attempts must be throttled PER IP. Auth runs before the main rate
 // limiter, so without this a wrong key is rejected (401) before reaching
