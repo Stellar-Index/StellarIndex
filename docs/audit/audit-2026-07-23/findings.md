@@ -426,3 +426,174 @@
 - loc: internal/api/v1/stripe_webhook.go:355-368, internal/api/v1/stripe_webhook.go:870-893
 - fix: add the missing control
 
+
+---
+
+## Confirmed — chunk 4 (completeness/ops, 2026-07-24)
+
+> Near-full run (3 negspace agents hit limit). 
+
+| # | Sev | Exp | Dim | Finding |
+|---|---|---|---|---|
+| 1 | CRITICAL | LIVE | DAT-15 | projected-rebuild -write destroys trades.usd_volume for on-chain DEX sources (A-CRIT-1 sibling not fixed) |
+| 2 | CRITICAL | LIVE | DAT-15 | Main on-chain backfill never installs the USD-volume resolver or a positive derive_generation, so it overwrites live-ingested usd_volume with NULL |
+| 3 | CRITICAL | LIVE | REL-05 | Backfill/resume-stalled hang after completing their ledger range; the only reachable teardown runs under a canceled ctx, so CAGG materialisation alway |
+| 4 | HIGH | LIVE | A-CRIT-1 | Re-derived projected trades lose USD volume when projection sources emit trade events |
+| 5 | HIGH | LIVE | DAT-09 | Completeness projection reconcile hard-floored at tip-1.5M hides data loss in older ranges |
+| 6 | HIGH | LIVE | CFG-04 | STELLARINDEX_POSTGRES_DSN env override silently replaces config without audit trail or validation error message |
+| 7 | HIGH | LIVE | OBS-07 | cross-region-monitor /healthz reports healthy forever after the first tick even if the check loop dies or stalls |
+| 8 | HIGH | LIVE | DAT-15 | CH-path completeness verdict silently regresses complete=false→true: incremental -from skips the projection gap because the stored watermark is the la |
+| 9 | HIGH | LIVE | DAT-11 | Projection reconcile is scoped to the last ~1.5M ledgers for every trade source, but `trades` retention was removed in migration 0031 (now full-histor |
+| 10 | HIGH | LIVE | REL-02 | backfill-external returns exit 0 even when every trade insert fails, and its 30-minute context budget covers the whole insert loop — a DB outage or sl |
+| 11 | HIGH | LIVE | DAT-09 | soroban-events backfill advances the resume cursor past rows whose batch insert was silently dropped, permanently certifying gapped ranges as complete |
+| 12 | HIGH | LIVE | DAT-12 | XLM has three canonical identities (native / crypto:XLM / SAC C-address) and no unifying primitive; the VWAP/price read-path omits the SAC form that s |
+| 13 | HIGH | LIVE | DAT-identity-split | SAC-wrapped classic/native assets get a second on-chain identity that the canonical layer never unifies, splitting XLM and every SAC-traded classic ac |
+| 14 | HIGH | GATED | REL-02 | projected-rebuild -write checkpoints a window as complete even when non-trade persist writes in it failed, so -resume permanently skips the dropped ro |
+| 15 | HIGH | GATE | DAT-09 | compute-completeness applies the trades-retention floor at SOURCE level, silently un-verifying full-history non-trade sibling tables (soroswap_skim, p |
+| 16 | MEDIUM | LIVE | CFG-02 | CORS allows any origin (wildcard) by default, bypassing same-origin policy enforcement |
+| 17 | MEDIUM | LIVE | REL-02 | Cursor metric (Prometheus gauge) advanced despite DB write failure |
+| 18 | MEDIUM | LIVE | CFG-02 | Postgres DSN defaults with sslmode=disable, disabling TLS encryption on database connection |
+| 19 | MEDIUM | LIVE | MNY-22 | CoinGecko CS-089 staleness gate silently no-ops when upstream omits (or zeroes) last_updated_at, serving a frozen price as fresh |
+| 20 | MEDIUM | LIVE | MNY-22 | CrossOracleAgreementCount is computed and cached but never gates the warning or the confidence score; both key solely on distance-from-median, so a pr |
+| 21 | MEDIUM | LIVE | COR-14 | DivergenceChecked=true is reported for a single below-quorum source; the API 'checked' predicate (SuccessCount>0) disagrees with the warning/confidenc |
+| 22 | MEDIUM | LIVE | REL-01 | Compare has no overall deadline independent of per-reference context; a Reference that ignores ctx cancellation blocks wg.Wait() and stalls the whole  |
+| 23 | MEDIUM | LIVE | CFG-01 | Environment-variable overrides silently replace TOML-configured DSN/secrets with no log of which fields the environment changed, so a wrongly-inherite |
+| 24 | MEDIUM | LIVE | COR-09 | projected-rebuild checkpoints a window as done even when non-trade HandleEvent inserts failed, so -resume permanently skips lost rows |
+| 25 | MEDIUM | LIVE | DAT-10 | retention floor derived from the served table's own MinLedger can hide a bottom-anchored served-tier hole (complete reads OK over a sub-floor gap) |
+| 26 | MEDIUM | LIVE | REL-02 | backfill-external counts real insert failures as skipped and exits 0, hiding a total write failure and dropping rows with no dead-letter |
+| 27 | MEDIUM | LIVE | COR-10 | AsyncSink permanently skips a contract first-seen during a recorder outage (seen-mark not rolled back on Record failure) |
+| 28 | MEDIUM | LIVE | AGT-01 | resume-stalled writes a new cursor keyed on last_ledger+1 instead of advancing the stalled cursor it read, so the stalled cursor is never completed an |
+| 29 | MEDIUM | LIVE | DAT-09 | Backfill cursor advances unconditionally after drain even when the raw-events sink dropped rows or an on-chain batch was abandoned on shutdown, perman |
+| 30 | MEDIUM | LIVE | DAT-09 | verify-archive `-tier all -from-last-verified` silently never advances — always re-walks from genesis, so the trailing edge may never be verified |
+| 31 | MEDIUM | LIVE | DAT-09 | rehydrate-galexie-archive counts a transient cold-tier read error as a genuine 'missing in cold' gap and still exits 0 (success) |
+| 32 | MEDIUM | LIVE | OBS-01 | supply verify-rollup reports 'OK: 0 checkpoint(s) reconcile' and exits 0 when -contracts matches nothing (or no rollup rows exist) — a scoping typo re |
+| 33 | MEDIUM | LIVE | DAT-11 | resolveSnapshotLedger attributes the snapshot to MAX(last_ledger) across ALL ingestion cursors, so one ahead/lagging or non-chain cursor can persisten |
+| 34 | MEDIUM | LIVE | DAT-09 | Oracle sources (reflector-dex/cex/fx, redstone) use an aggregate/totals projection compare that lets a real dropped row net against a phantom overcoun |
+| 35 | MEDIUM | LIVE | DAT-11 | combineWatermark leaves CoveragePct=1.0, watermark=tip and FirstProblem=0 when projOK=false, producing self-contradictory snapshots and disabling the  |
+| 36 | MEDIUM | LIVE | DAT-09 | ReconcileCounts per-ledger count equality masks a same-ledger, same-table drop+phantom, so a dropped row can coexist with a leftover duplicate and rec |
+| 37 | MEDIUM | LIVE | AGT-06 | Repair metrics mislabel failures and undercount attempts, making the per-source degradation alert structurally unfireable |
+| 38 | MEDIUM | LIVE | AGT-08 | archive-completeness staleness alert goes silent during persistent residuals because the last_success gauge is dropped from the rewritten textfile |
+| 39 | MEDIUM | LIVE | DAT-09 | Archive-completeness staleness heartbeat metric is dropped from the textfile on every non-clean run, so the alert meant to catch persistent failure ca |
+| 40 | MEDIUM | LIVE | DAT-15 | ADR-0033 Claim 2b projection reconcile compares per-ledger row COUNTS only, so complete=true is certified over rows whose derived columns are corrupte |
+| 41 | MEDIUM | LIVE | DAT-11 | Cross-anchor 'complete' certifies checkpoint file PRESENCE only, not content correctness; a valid-gzip-but-wrong-content fetch is counted as Found |
+| 42 | MEDIUM | LIVE | DAT-09 | projected-rebuild discards non-trade HandleEvent errors then checkpoints the window, so a transient infra fault silently drops skim/liquidity/reserves |
+| 43 | MEDIUM | LIVE | CFG-11 | Classic/SEP-41 circulating-supply locked-set is never configurable — aggregator hardcodes empty supply.Policy{}, so operator-intended treasury/vesting |
+| 44 | MEDIUM | LIVE | CFG-08 | api anon/key rate-limit value of 0 silently disables the limiter (fail-open) while Validate accepts it as a normal value |
+| 45 | MEDIUM | LIVE | DAT-09 | Chunk cursor is durably advanced BEFORE CAGG materialisation, and CAGG-refresh failures are swallowed, so a chunk is certified complete while its trad |
+| 46 | MEDIUM | LIVE | AGT-08 | resume-stalled -max-resumes caps CANDIDATES gathered before the data-gap gate, so it can act on zero real gaps while genuinely-actionable cursors past |
+| 47 | MEDIUM | LIVE | AGT-08 | resume-stalled -source-filter matches against the full sub_source string (including the numeric ledger range), not just the decoder CSV, so numeric or |
+| 48 | MEDIUM | LIVE | DAT-11 | AsyncSink does not roll back its in-process seen-set when Recorder.Record fails, so contracts first-sighted during a recorder outage are permanently d |
+| 49 | MEDIUM | LIVE | OBS-07 | verify-archive systemd watchdog pings WATCHDOG=1 unconditionally, decoupled from actual walk progress |
+| 50 | MEDIUM | LIVE | DAT-11 | resume-stalled skips a mixed soroban+SDEX stalled cursor whenever its soroban portion is clean, mislabeling a possibly-real SDEX gap as a false positi |
+| 51 | MEDIUM | LIVE | MNY-22 | Divergence warning gate is median-vs-ourPrice, so references straddling our price symmetrically mask total disagreement (AgreementCount captures it bu |
+| 52 | MEDIUM | LIVE | COR-09 | anomaly ActionWarn verdict is discarded — the documented anomaly producer of flags.divergence_warning does not exist |
+| 53 | MEDIUM | LIVE | DAT-11 | Cross-anchor completeness verdict is existence-only: a present-but-corrupt/truncated/empty checkpoint file is certified 'complete' and never repaired |
+| 54 | MEDIUM | LIVE | AGT-08 | Staleness alert defeated: a residual-missing verify run rewrites the textfile WITHOUT last_success_timestamp, erasing the series, so archive_completen |
+| 55 | MEDIUM | LIVE | DAT-10 | The completeness/verification suite is entirely row-count based and value-blind: no tool reconciles trades.usd_volume, so complete=true certifies a ta |
+| 56 | MEDIUM | LIVE | DOM-11 | SupplyConfig.Validate unconditionally requires a static ReserveBalancesStroops entry for every SDF reserve account, making the documented observer-onl |
+| 57 | MEDIUM | LIVE | DAT-15 | compute-completeness substrate claim is scoped to the incremental -from window while lake_complete/coverage extend to tip, so a substrate hole below t |
+| 58 | MEDIUM | LIVE | DAT-09 | AsyncSink marks a discovery hit 'seen' before enqueue but only rolls back on channel-full drop, not on Record failure, so a transient recorder outage  |
+| 59 | MEDIUM | LIVE | DAT-09 | Projection reconcile soft-fails Decode errors identically on both sides, so a decoder bug nets to zero and certifies complete — and the claimed recogn |
+| 60 | MEDIUM | LIVE | DAT-09 | Present-but-wrong checkpoint files are counted as archive-complete: CrossAnchorChecker uses os.Stat only, and the filler accepts any valid-gzip body a |
+| 61 | MEDIUM | LIVE | OBS-07 | verify-archive -tier peers with default -to 0 samples only genesis-era checkpoints (63..703) and reports 'peer cross-check OK', contradicting its own  |
+| 62 | MEDIUM | LIVE | DAT-09 | verify-archive -tier checkpoint exits 0 AND advances the incremental high-water when every checkpoint anchor is missed, certifying an un-anchored rang |
+| 63 | MEDIUM | LIVE | AGT-06 | Anomaly Phase-1 ActionWarn is computed then discarded — the documented flags.divergence_warning on inter-bucket deviation is never produced |
+| 64 | MEDIUM | LIVE | DAT-12 | resume-stalled forks a new cursor keyed on [last_ledger+1, to] instead of advancing the original [from, to] cursor, so stalled cursors are never clear |
+| 65 | MEDIUM | LIVE | DAT-13 | resume-stalled gates Soroban-decoder plans against soroban_events (raw landing zone) gaps, but decoder backfills write the decoded trades tables — a r |
+| 66 | MEDIUM | LIVE | MNY-04 | No reconciliation verifies trades.usd_volume VALUE — completeness/verify-reconciliation compare row COUNTS only, so the A-CRIT-1/DAT-15 usd_volume NUL |
+| 67 | MEDIUM | LIVE | SEC-B12-collision | quoteRank keys stablecoin classification on the bare asset CODE, so any scam classic token whose code equals a real stablecoin ticker is ranked as a n |
+| 68 | MEDIUM | LIVE | DAT-read-coupling | Asset.Scan enforces the crypto/fiat/rwa allow-list on READ, so shrinking an allow-list makes already-persisted rows unscannable and Scan(nil) yields a |
+| 69 | MEDIUM | GATED | DOM-11 | The SDF reserve-account list that drives XLM circulating supply is an unvalidated config-encoded domain rule with no diff against SDF's authoritative  |
+| 70 | MEDIUM | GATED | CFG-05 | Anomaly per-asset classification class names are never validated, so a typo silently applies the loose default thresholds and lets an anomalous (e.g.  |
+| 71 | MEDIUM | GATED | CFG-01 | config.Validate unconditionally requires reserve_balances_stroops for every sdf_reserve_account, contradicting the documented observer-only path and f |
+| 72 | MEDIUM | GATED | DAT-15 | backfill-external stamps a positive derive_generation unconditionally but skips resolver install when USDPeggedClassicAssets is empty, letting a NULL  |
+| 73 | MEDIUM | GATED | DAT-11 | verify reports 'clean' and stamps last_success when the requested range contains no checkpoint position (vacuous completeness) |
+| 74 | MEDIUM | GATED | DAT-09 | checkpoint-tier parallel verify-archive silently certifies an archive with interior gaps as complete |
+| 75 | MEDIUM | GATED | REL-02 | supply verify-rollup reports OK and exits 0 when zero checkpoints are checked (empty rollup table / non-matching -contracts) |
+| 76 | MEDIUM | GATED | DAT-09 | Resumed parallel verify-archive never chain-checks the seam between prior-run Done chunks and this-run chunks, so a chain break at a resume boundary i |
+| 77 | MEDIUM | GATED | OBS-07 | cross-region-check returns exit 0 "all consistent" when no sampled bucket had >=2 responding regions (total inability to compare reads as success) |
+| 78 | MEDIUM | GATED | REL-05 | trim-galexie-archive --no-verify-upstream deletes hot LCM files with no check that the cold tier actually holds them; the cold-tiering guard only veri |
+| 79 | MEDIUM | GATED | CFG-05 | The entire [divergence] config section is never validated, so refresh_interval_seconds=0 (or negative) panics the aggregator at startup via time.NewTi |
+| 80 | MEDIUM | GATED | REL-05 | verify-archive -from-last-verified -safety-overlap 0 (strict cross-run boundary mode) always fails with a false 'resume-from-hash boundary mismatch' d |
+| 81 | MEDIUM | GATED | DAT-09 | projected-rebuild -write swallows HandleEvent errors for non-trade projected rows then checkpoints the window as done — a transient DB fault silently  |
+| 82 | MEDIUM | GATED | AGT-lifecycle-race | AsyncSink.Push can panic on send-to-closed-channel if a Push races Stop |
+| 83 | MEDIUM | BRANCH | DAT-11 | stitchChunks silently skips the cross-chunk boundary check around any zero-ledger chunk, so a mid-range hole is not surfaced as the boundary mismatch  |
+| 84 | MEDIUM | GATE | MNY-04 | reconcile-balances treats an un-tracked single account (NO_DATA) and stale-positive-balance merged accounts as a clean/non-failing result, so those da |
+| 85 | MEDIUM | GATE | DAT-09 | verify-contiguity/verify-lake Check 2 nets tx_count=0 entry-change ledgers against genuinely-missing coverage within a 1M window, so real EC-coverage  |
+| 86 | LOW | LIVE | REL-04 | Cursor advanced before events are durably persisted (ledgerstream indexer) |
+| 87 | LOW | LIVE | COR-12 | Durable divergence observations are stamped with wall-clock write time, not the bucket comparison time, misattributing 'when the divergence occurred'  |
+| 88 | LOW | LIVE | CFG-05 | aggregate.outlier_sigma_threshold field doc says '0 disables it' but Validate() rejects <= 0, so the documented disable path is unreachable through a  |
+| 89 | LOW | LIVE | CFG-03 | Two conflicting *_env conventions in StorageConfig with no guard: redis_password_env / clickhouse_serving_password_env hold the secret VALUE, while s3 |
+| 90 | LOW | LIVE | REL-09 | resume-stalled resumes a cursor under a NEW sub_source key (last_ledger+1..to) instead of the original range, so the stalled cursor is never advanced  |
+| 91 | LOW | LIVE | REL-08 | Backfill advances the resume cursor BEFORE CAGG materialisation and the resume gate short-circuits before the CAGG block, so any CAGG-refresh failure  |
+| 92 | LOW | LIVE | CFG-05 | request_timeout vs serving_statement_timeout ordering (documented as 'statement_timeout must be longer') is not enforced, so an inverted pair makes SQ |
+| 93 | LOW | LIVE | CFG-05 | history_archive_url is validated only by url.Parse (which accepts scheme-less and empty strings), unlike its sibling URL fields, so a malformed archiv |
+| 94 | LOW | LIVE | CFG-03 | Two opposite TOML conventions share the identical `_env` suffix (literal-value vs name-of-env-var) with no validation, inviting a secret to be shipped |
+| 95 | LOW | LIVE | COR-parse-ambiguity | ParseAsset prefix dispatch shadows the CODE:ISSUER classic alias for classic assets whose code is 'fiat', 'crypto', or 'rwa' |
+| 96 | LOW | BRANCH | DOC-06 | Recognition audit incomplete in Postgres path — excludes non-Symbol topic[0] shapes |
+| 97 | INFO | LIVE | AGT-08 | stitchChunks skips any adjacent pair touching a zero-verified chunk, so a gap represented by a fully-empty intermediate chunk is not boundary-checked  |
+| 98 | INFO | LIVE | AGT-08 | supply seed-observations doc claims ON CONFLICT DO NOTHING but the storage write is corrective DO UPDATE |
+| 99 | INFO | LIVE | CORE-off-by-one | ComputeWatermark reports positive coverage and Ledger=0 when the earliest problem is AT a genesis of 0, instead of the genesis-1 'nothing verified' se |
+
+### Detail — chunk-4 CRITICAL + HIGH
+
+**[CRITICAL/LIVE] DAT-15 — projected-rebuild -write destroys trades.usd_volume for on-chain DEX sources (A-CRIT-1 sibling not fixed)**
+- loc: internal/ops/chops/projected_rebuild.go:137, internal/ops/chops/projected_rebuild.go:149-165, internal/ops/chops/projected_rebuild.go:498-503
+- fix: In projectedRebuild(), after store.SetDeriveGeneration(...), add the same call ch_rebuild.go makes: `if err := timescale.InstallUSDVolumeResolution(store, cfg.Trades.USDPeggedClassicAssets, cfg.Supply.SACWrappers); err != nil { return err }` (projected_rebuild.go, near line 137).
+
+**[CRITICAL/LIVE] DAT-15 — Main on-chain backfill never installs the USD-volume resolver or a positive derive_generation, so it overwrites live-ingested usd_volume with NULL**
+- loc: internal/ops/ingest/backfill.go:155-237, internal/ops/ingest/backfill.go:308-350, internal/storage/timescale/trades.go:606-615
+- fix: In runBackfillChunk (or once in backfill()/buildChunkDispatcher before streaming) call timescale.InstallUSDVolumeResolution(store, cfg.Trades.USDPeggedClassicAssets, cfg.Supply.SACWrappers) and store.SetDeriveGeneration(time.Now().Unix()), exactly as backfill_external.go:119-133 
+
+**[CRITICAL/LIVE] REL-05 — Backfill/resume-stalled hang after completing their ledger range; the only reachable teardown runs under a canceled ctx, so CAGG materialisation always fails and data is lost to retention**
+- loc: internal/ops/ingest/backfill.go:342-351, internal/ops/ingest/backfill.go:410-529, internal/pipeline/sink.go:189-212
+- fix: In pipeline.PersistEvents, run the external retry buffer on a derived context and cancel it once the workers have drained: `bufCtx, bufCancel := context.WithCancel(ctx)`; `go extBuf.run(bufCtx)`; after `wg.Wait()` call `bufCancel()` before `bufWG.Wait()`. This makes extBuf.run ex
+
+**[HIGH/LIVE] A-CRIT-1 — Re-derived projected trades lose USD volume when projection sources emit trade events**
+- loc: internal/ops/chops/projected_rebuild.go:137, internal/ops/chops/projected_rebuild.go:162, internal/ops/chops/projected_rebuild.go:502
+- fix: Add `if err := timescale.InstallUSDVolumeResolution(store, cfg.Trades.USDPeggedClassicAssets, cfg.Supply.SACWrappers); err != nil { return err }` after line 137 in projected_rebuild.go, matching the pattern in ch_rebuild.go lines 172-178.
+
+**[HIGH/LIVE] DAT-09 — Completeness projection reconcile hard-floored at tip-1.5M hides data loss in older ranges**
+- loc: internal/ops/chops/compute_completeness.go:227-229, internal/ops/chops/compute_completeness.go:222-225, internal/ops/chops/compute_completeness.go:498-502
+- fix: Before per-source loop (line 226), compute actual minimum served ledger across all targets: actualMinServed := findMinServedAcrossTargets(). Replace hardcoded retentionStart assignment with: if *useCH && actualMinServed > 0 { retentionStart = actualMinServed }. This scopes reconc
+
+**[HIGH/LIVE] CFG-04 — STELLARINDEX_POSTGRES_DSN env override silently replaces config without audit trail or validation error message**
+- loc: internal/config/load.go:69-71, internal/config/config.go:711
+- fix: Log at INFO level when an env override is applied: 'config: env override STELLARINDEX_POSTGRES_DSN replaced postgres_dsn from TOML'. This makes the override visible in startup logs.
+
+**[HIGH/LIVE] OBS-07 — cross-region-monitor /healthz reports healthy forever after the first tick even if the check loop dies or stalls**
+- loc: internal/ops/archive/cross_region_monitor.go:139-148, internal/ops/archive/cross_region_monitor.go:216-217
+- fix: In /healthz, return 503 when time.Now().Unix()-lastRunUnix.Load() exceeds a small multiple of the interval (e.g. 3×interval), not just when it is zero.
+
+**[HIGH/LIVE] DAT-15 — CH-path completeness verdict silently regresses complete=false→true: incremental -from skips the projection gap because the stored watermark is the lake tip, not the projection gap**
+- loc: internal/ops/chops/compute_completeness.go:301, internal/ops/chops/compute_completeness.go:327, internal/ops/chops/compute_completeness.go:424-428
+- fix: In combineWatermark, when projOK==false pin the served watermark below the earliest projection gap: have reconcileProjectionAggregate return the first mismatched ledger and set w.Ledger = firstProjGap-1, w.FirstProblem = firstProjGap, w.CoveragePct = (w.Ledger-genesis+1)/(tip-gen
+
+**[HIGH/LIVE] DAT-11 — Projection reconcile is scoped to the last ~1.5M ledgers for every trade source, but `trades` retention was removed in migration 0031 (now full-history) — so complete=true certifies untested history for the flagship served table**
+- loc: internal/ops/chops/compute_completeness.go:226-229, internal/ops/chops/compute_completeness.go:498-502, internal/ops/chops/compute_completeness.go:585-600
+- fix: Delete the retention-based scoping (retentionStart / the hasTradesTarget branch at :500) now that trades has no retention (migration 0031); reconcile every target over [projFrom, hi]. If a genuine retention table is reintroduced later, apply the floor per-target (only to the spec
+
+**[HIGH/LIVE] REL-02 — backfill-external returns exit 0 even when every trade insert fails, and its 30-minute context budget covers the whole insert loop — a DB outage or slow run silently truncates and reports success**
+- loc: internal/ops/ingest/backfill_external.go:72-73, internal/ops/ingest/backfill_external.go:135-149
+- fix: After the loop, return a non-nil error when skipped > 0 (or above a small threshold), e.g. `if skipped > 0 { return fmt.Errorf("backfill-external: %d of %d trades failed to insert", skipped, len(trades)) }`, so the process exits non-zero.
+
+**[HIGH/LIVE] DAT-09 — soroban-events backfill advances the resume cursor past rows whose batch insert was silently dropped, permanently certifying gapped ranges as complete**
+- loc: internal/ops/ingest/backfill.go:405, internal/ops/ingest/backfill.go:422-469, internal/sources/sorobanevents/dispatcher_adapter.go:254-269
+- fix: Make the soroban rawSink drain failure-aware before the cursor advances: after rawSink.Stop() in runBackfillChunk, check a persisted-failure signal (e.g. rawSink exposing an InsertFailureCount / last-failed-ledger) and refuse to advance the cursor to lastFullyEnqueued when any fl
+
+**[HIGH/LIVE] DAT-12 — XLM has three canonical identities (native / crypto:XLM / SAC C-address) and no unifying primitive; the VWAP/price read-path omits the SAC form that soroban DEXes write, so XLM markets recorded under the SAC are silently missed**
+- loc: internal/canonical/asset.go:221, internal/canonical/orientation.go:5-9, internal/canonical/orientation.go:47
+- fix: Add the XLM SAC form to the Go read-path equivalence set: in both assetAliases (internal/api/v1/price.go:579 and internal/aggregate/global.go:234) append canonical.NewSorobanAsset(nativeSAC) when the asset is native/crypto:XLM (and its inverse), so the three forms cross-expand id
+
+**[HIGH/LIVE] DAT-identity-split — SAC-wrapped classic/native assets get a second on-chain identity that the canonical layer never unifies, splitting XLM and every SAC-traded classic across two market keys**
+- loc: internal/canonical/asset.go:58-62, internal/canonical/asset.go:221-226, internal/canonical/orientation.go:5-9
+- fix: Add a canonical normalization primitive (e.g. Asset.NormalizeSAC(registry) that maps a Soroban ContractID equal to the derived SAC of a classic/native back to the classic/native form) and call it in the Soroban DEX decode path before building the Pair, so stored asset_ids are alw
+
+**[HIGH/GATED] REL-02 — projected-rebuild -write checkpoints a window as complete even when non-trade persist writes in it failed, so -resume permanently skips the dropped rows**
+- loc: internal/ops/chops/projected_rebuild.go:498-519, internal/pipeline/sink.go:626-663, internal/pipeline/sink.go:796-803
+- fix: Accumulate HandleEvent's returned error inside the callback (e.g. capture the first non-nil error into a window-scoped var) and, when Write is set, skip the UpsertCursor checkpoint for any window whose persist path returned an error — forcing -resume to retry it. Do NOT swallow t
+
+**[HIGH/GATE] DAT-09 — compute-completeness applies the trades-retention floor at SOURCE level, silently un-verifying full-history non-trade sibling tables (soroswap_skim, phoenix_liquidity/stake, comet_liquidity) below tip-1.5M**
+- loc: internal/ops/chops/compute_completeness.go:500-502, internal/ops/chops/compute_completeness.go:585-599, internal/ops/chops/compute_completeness.go:840-847
+- fix: Compute the retention floor per TARGET, not per source: only raise `lo` to retentionStart for the target whose table == "trades" (and other genuinely retention-dropped tables), leaving each non-retention target reconciled from genesis. E.g. inside the per-target loops, choose lo 
+
