@@ -61,6 +61,34 @@ func TestUsdMarketValue_BadInputs(t *testing.T) {
 	}
 }
 
+// TestComputeMarketCapUSD_ZeroSupplyMatchesUsdMarketValue is the
+// COR-03 regression: computeMarketCapUSD (the /v1/assets LISTING
+// path) and usdMarketValue (the /v1/assets/{id} DETAIL path, tested
+// above) must agree that a zero circulating supply is a legitimate
+// "0.00" reading, not an error/omitted field. Before the fix,
+// computeMarketCapUSD's `mc.Sign() <= 0` guard treated an exact zero
+// the same as a parse failure and returned "" — so the identical
+// zero-supply asset showed market_cap_usd:"0.00" on its detail page
+// and a missing field on the listing.
+func TestComputeMarketCapUSD_ZeroSupplyMatchesUsdMarketValue(t *testing.T) {
+	got := computeMarketCapUSD("0", "0.07", 7)
+	if got != "0.00" {
+		t.Errorf(`computeMarketCapUSD("0", "0.07", 7) = %q, want "0.00" (must match usdMarketValue's zero-supply reading)`, got)
+	}
+}
+
+// TestComputeMarketCapUSD_NegativeStillRejected pins that the fix
+// narrowed the guard from `<= 0` to `< 0`, not removed it: a negative
+// result (malformed/corrupt input — never a legitimate supply or
+// price) must still return "" rather than a nonsensical negative
+// market cap.
+func TestComputeMarketCapUSD_NegativeStillRejected(t *testing.T) {
+	got := computeMarketCapUSD("-5", "1", 0)
+	if got != "" {
+		t.Errorf(`computeMarketCapUSD("-5", "1", 0) = %q, want "" (negative result must still be rejected)`, got)
+	}
+}
+
 // TestPctChange covers the trailing-24h percentage helper. The
 // signed-leading-"+" convention is part of the wire contract — a
 // regression here would silently flip the field's interpretation
