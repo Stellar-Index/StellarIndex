@@ -375,3 +375,52 @@ func TestSkipHealthAndMetrics(t *testing.T) {
 		}
 	}
 }
+
+// TestRateLimitBySubject_AnonymousIPv6Slash64SharesBucket is the SEC-15
+// regression: an anonymous caller's throttle key must aggregate IPv6
+// addresses to their /64 network prefix, not the full /128. Without
+// the fix, an attacker who controls an entire delegated /64 (typical
+// residential/mobile ISP allocation) mints a fresh throttle bucket for
+// every address in that block and the per-IP anonymous cap never
+// engages. Here two requests carry DIFFERENT IPv6 addresses that share
+// the same /64; with a budget of 1 the second MUST be 429'd because
+// both addresses key to the same bucket.
+func TestRateLimitBySubject_AnonymousIPv6Slash64SharesBucket(t *testing.T) {
+	if err := middleware.SetTrustedProxyCIDRs([]string{}); err != nil {
+		t.Fatalf("SetTrustedProxyCIDRs: %v", err)
+	}
+
+	rdb, _ := newRLRedis(t)
+	anonBucket := ratelimit.New(rdb, 1, time.Minute)
+	authBucket := ratelimit.New(rdb, 3, time.Minute)
+
+	h := middleware.RateLimitBySubject(anonBucket, authBucket, nil, nil)(okHandler())
+
+	reqFromIPv6 := func(addr string) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.RemoteAddr = "[" + addr + "]:5555"
+		subject := auth.Anonymous("anon-hash-for-" + addr)
+		return r.WithContext(auth.WithSubject(r.Context(), subject))
+	}
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, reqFromIPv6("2001:db8:1234:5678::1"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("first request status = %d, want 200", w.Code)
+	}
+
+	// Different address, SAME /64 (2001:db8:1234:5678::/64).
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, reqFromIPv6("2001:db8:1234:5678:ffff:ffff:ffff:ffff"))
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("second request (different address, same /64) status = %d, want 429 — "+
+			"per-/64 IPv6 aggregation bypassed (SEC-15)", w.Code)
+	}
+
+	// A genuinely different /64 must still have its own fresh budget.
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, reqFromIPv6("2001:db8:1234:9999::1"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("request from a different /64 status = %d, want 200 (independent bucket)", w.Code)
+	}
+}

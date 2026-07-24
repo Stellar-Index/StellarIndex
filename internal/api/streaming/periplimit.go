@@ -6,6 +6,7 @@ package streaming
 import (
 	"net"
 	"net/http"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 )
@@ -75,7 +76,31 @@ func resolveStreamClientIP(r *http.Request) string {
 		// exempting the request (fail-closed for the cap).
 		return "unknown"
 	}
-	return ip
+	return maskStreamClientIP(ip)
+}
+
+// maskStreamClientIP aggregates the resolved client IP to its per-IP
+// cap identity: unchanged for IPv4, the /64 network prefix for IPv6.
+//
+// SEC-rate-limit: keying the cap on the full IPv6 /128 lets a client
+// with any routable IPv6 prefix (residential/mobile ISPs commonly
+// delegate a /64 or larger to one subscriber) open an unbounded number
+// of concurrent streams by rotating its source address within that
+// prefix — one fresh bucket key per address, the cap never engages.
+// Aggregating to /64 makes the cap key match the block an attacker can
+// actually rotate through cheaply, mirroring the same policy applied
+// to the HTTP-layer per-IP throttles (SEC-15,
+// middleware.remoteIPPrefixFor). ip is returned unchanged (including
+// "unknown"/non-address sentinels) if it doesn't parse as an IP.
+func maskStreamClientIP(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	if addr.Is4() || addr.Is4In6() {
+		return addr.String()
+	}
+	return netip.PrefixFrom(addr, 64).Masked().Addr().String()
 }
 
 // acquireIPStreamSlot reserves one per-IP stream slot for r's client.
