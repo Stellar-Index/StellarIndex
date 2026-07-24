@@ -132,3 +132,10 @@ gcp-key*.json
 
 # Local working notes (backlog inventories, scratch plans) — never published.
 /notes/
+
+# ── LOCAL-ONLY: audit/remediation findings (public-repo incident 2026-07-24) ──
+# These enumerate live/unpatched security detail — NEVER publish. Kept local +
+# backed up at ~/code/stellarindex-audit-private/. Do not remove these ignores.
+/docs/operations/production-remediation-ledger-2026-07-23.md
+/docs/operations/production-confidence-campaign-2026-07-23.md
+/docs/audit/audit-2026-07-23/
