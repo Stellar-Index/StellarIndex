@@ -64,6 +64,47 @@ superseded_by: null
 > records which combiner ships. Filed alongside R-003 in the
 > audit-2026-07-23 remediation.
 
+> **Amendment (2026-07-24, audit-2026-07-23 wave5 AGT-08).** The
+> "Factor shapes" bullet list below (`source_count_factor:
+> 1/(1+exp(-(n-3))) — caps confidence at ~0.3 for single-source
+> assets`) is imprecise. The shipped default
+> (`sourceCountInflectionN = 3.0` in
+> `internal/aggregate/confidence/factors.go`) computes
+> `SourceCountFactor(1) ≈ 0.119`, not `~0.3` — a ~2.5x difference,
+> already the number used (not flagged as a correction at the time)
+> in the R-003/COR-14 worked example above. No behaviour change is
+> made here: retuning the inflection constant so `n=1 → ~0.3` (e.g.
+> `k ≈ 1.85`) — or accepting 0.119 as the correct shipped shape and
+> updating the bullet instead — is a live tuning decision for
+> `internal/aggregate/confidence`'s owner, not made in this doc pass.
+> Until that decision lands, read `~0.3` in the bullet list below as
+> the ORIGINAL authoring-time intent, not the shipped value.
+
+> **Amendment (2026-07-24, audit-2026-07-23 wave5 DOC-05).** The
+> "Bootstrap (warmup) policy for new assets" section below describes
+> Option C (hybrid): compute z-scores against a peer-class average
+> baseline and cap `confidence` at 0.5. **This is not what ships.**
+> `Orchestrator.computeConfidence`
+> (`internal/aggregate/orchestrator/confidence.go`) returns early with
+> NO score at all — `confidence.Compute` (which contains
+> `BootstrapConfidenceCap`) is never reached — whenever
+> `Baselines.LatestBaseline` errors (no baseline row yet for the pair)
+> or `MultiBaseline.MaxZScore` reports `!valid` (no window has enough
+> samples). There is no peer-class-average synthesis anywhere in
+> `internal/aggregate/baseline`. Practical effect: a genuinely new or
+> low-history asset publishes with **no `confidence` field and no
+> Phase-2 freeze eligibility** — the freeze condition
+> (`confidence < 0.10 AND z_score > 5.0 AND source_count <= 1`) can
+> never evaluate true because it never evaluates at all — which is the
+> exact single-source, no-history corner this ADR was written to
+> catch. `docs/architecture/launch-readiness-backlog.md` L2.9 marks
+> this item "✅ shipped"; that status is likewise inaccurate for the
+> zero-baseline case. Whether to build the peer-class bootstrap path,
+> or synthesize a capped score with `ZScore=0` when no baseline
+> exists, is an implementation decision for
+> `internal/aggregate/orchestrator` / `internal/aggregate/confidence`'s
+> owner — not made in this doc pass.
+
 ## Context
 
 [ADR-0017](0017-archive-completeness-invariants.md) protects us

@@ -12,6 +12,22 @@ superseded_by: null
 - **Extends:** [ADR-0035](0035-factory-anchored-contract-gating.md)
 - **Closes:** CS-026 (audit 2026-06-30) — the last four topic-shape-gated decoders
 
+> **Amendment (2026-07-24, audit-2026-07-23 wave5 AGT-06).** The
+> "Implementation tracking" section's Comet gate line below says "the
+> WASM-hash sweep is the registered upkeep loop." No such sweep exists
+> in the codebase — there is no scheduled job, ops subcommand, cron,
+> or systemd timer anywhere that walks `ledger_entries_current` /
+> `contract_code` hashes to auto-register new comet pools. What
+> shipped is exactly the curated one-pool allowlist
+> (`comet.MainnetGatedSet`, seeded via `seed-protocol-contracts
+> -source comet`) — mechanism #2 in §1 below, not mechanism #3. The
+> code comments in `internal/sources/comet/dispatcher_adapter.go` and
+> `events.go` carry the same "registered upkeep loop" claim and are
+> equally aspirational. A new mainnet comet pool today requires a
+> manual `seed-protocol-contracts -source comet` re-run, not automatic
+> discovery. Building the sweep (§1 mechanism #3's "operator sweep,
+> off the hot path") remains open work; not made here.
+
 ## Context
 
 ADR-0035 established that Soroban decoders must gate `Matches()` on

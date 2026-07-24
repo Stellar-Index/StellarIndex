@@ -54,6 +54,30 @@ superseded_by: null
 > declared values. The decision below is preserved as the original
 > record.
 
+> **Amendment (2026-07-24, audit-2026-07-23 wave5 DOC-01/DAT-14).**
+> The "API + schema" section's hypertable note below —
+> "Append-only; latest row per `asset_key` is the queryable current
+> state" — and migration 0005's table `COMMENT` ("append-only") are no
+> longer accurate. Migration 0109 (the INV-3 re-derive-trap fix) added
+> a generation-guarded `ON CONFLICT ... DO UPDATE` to the
+> `asset_supply_history` writer
+> (`internal/storage/timescale/supply.go`): a re-derive at the same
+> `(asset_key, ledger_sequence)` now overwrites the existing row
+> in-place when `derive_generation` is >= the stored value, rather
+> than being silently discarded by `DO NOTHING` against stale data.
+> The table is therefore **idempotent-corrective** (in-place UPDATE
+> guarded by generation, not pure append), not append-only. A follow-up
+> migration to update the migration-0005 `COMMENT ON TABLE` text
+> accordingly is tracked separately (DAT-14) and not made here.
+>
+> Separately, DAT-14 also flags that this invariant — like the
+> "single-writer by construction" claims elsewhere in the codebase —
+> is enforced by application code only, with no corresponding
+> Postgres-role `REVOKE`/`GRANT` split restricting `UPDATE`/`DELETE`
+> on `asset_supply_history` (or `trades`, `oracle_updates`,
+> `soroban_events`) to a distinct migration/ops role. That hardening
+> is infrastructure + migration work, out of scope for this doc pass.
+
 ## Context
 
 The V2 spec (requirement F2.4 in

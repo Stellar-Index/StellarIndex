@@ -18,6 +18,20 @@ superseded_by: null
 > is aspirational. The decision below is preserved as the original
 > record.
 
+> **Reality note update (2026-07-24, audit-2026-07-23 wave5 RFC-7).**
+> The note above is itself now stale. `internal/hashdb` was wired into
+> production on 2026-07-09 (see `CLAUDE.md` §repo-map): the indexer's
+> live LCM read loop appends on ingest, and a periodic sweep (also in
+> the indexer) re-verifies a trailing window, alerting on
+> `stellarindex_hashdb_drift_detected`
+> (`docs/operations/runbooks/hashdb-drift-detected.md`). It ships
+> **off by default** (`[hashdb].enabled = false`, opt-in first
+> deploy). This closes the "zero production callers" gap, but NOT the
+> ADR's "feeder of `ledger_ingest_log`" role described in the Decision
+> below — hashdb still only detects drift against itself; it does not
+> yet feed the substrate-continuity verdict. That role remains
+> aspirational, per the 2026-06-12 note above.
+
 ## Context
 
 We want **100% confidence that we have 100% coverage** of every

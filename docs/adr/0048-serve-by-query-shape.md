@@ -13,6 +13,21 @@ Amends ADR-0047 D1 (storage) and sharpens ADR-0034's lake/served
 split. Decided with @ash 2026-07-10 after a week of replay operations
 made the cost model visible.
 
+> **Amendment (2026-07-24, audit-2026-07-23 wave5 DOC-05).** D3 below
+> says the bulk path "rewinds/parks the source cursor while it owns
+> the range." That is not what `stellarindex-ops projected-rebuild`
+> does (`internal/ops/chops/projected_rebuild.go`). It never touches
+> the live projector's cursor at all. Instead it enforces a
+> point-in-time **live-cursor floor check**: it refuses to run unless
+> the live projector's cursor for the source is already AT OR ABOVE
+> the rebuild's `-to` (i.e. the live tail has already passed the
+> range being backfilled and will never walk into it again). If the
+> live cursor is still inside `[-from,-to]`, the tool errors out
+> unless the operator passes `-allow-live-overlap` — an explicit,
+> documented "I have independently verified this is safe" escape
+> hatch. One-writer-per-domain is preserved by this refusal-by-default
+> guard, not by pausing or rewinding the live projector.
+
 ## Context
 
 ADR-0034 split storage by ROLE: ClickHouse is the certified raw lake,
