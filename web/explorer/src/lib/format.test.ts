@@ -1,10 +1,9 @@
 import { describe, it, expect } from 'vitest';
 
+import * as format from './format';
 import {
   formatPrice,
   formatCompact,
-  formatPctChange,
-  formatLedger,
   formatPriceSmall,
   formatPairPrice,
   formatRelative,
@@ -35,20 +34,10 @@ describe('formatCompact', () => {
   });
 });
 
-describe('formatPctChange', () => {
-  it('signs (except zero) and suffixes %', () => {
-    expect(formatPctChange(0.0123)).toBe('+1.23%');
-    expect(formatPctChange(-0.05)).toBe('-5.00%');
-    expect(formatPctChange(0)).toBe('0.00%');
-  });
-  it('returns an em-dash for NaN', () => {
-    expect(formatPctChange(NaN)).toBe('—');
-  });
-});
-
-describe('formatLedger', () => {
-  it('prefixes # and groups digits', () => {
-    expect(formatLedger(1_234_567)).toBe('#1,234,567');
+describe('AGT-06: dead-code percentage footgun removed', () => {
+  it('does not export formatPctChange/formatLedger — every real percentage field in the app is already a percentage point, not a fraction, so a fraction-based helper is a footgun, not a utility', () => {
+    expect('formatPctChange' in format).toBe(false);
+    expect('formatLedger' in format).toBe(false);
   });
 });
 
@@ -57,6 +46,17 @@ describe('formatPriceSmall / formatPairPrice', () => {
     expect(formatPriceSmall(150)).toBe('150.00');
     expect(formatPriceSmall(0.0005)).toBe((0.0005).toExponential(3));
     expect(formatPairPrice(1500)).toBe('1500.00');
+  });
+
+  it('renders a real zero as the bare "0"', () => {
+    expect(formatPriceSmall(0)).toBe('0');
+  });
+
+  it('COR-01: does not mask a negative price as a legitimate "0"', () => {
+    // A negative price is bad data, not a zero — it must render
+    // distinguishably (and not identically to a healthy zero-price row).
+    expect(formatPriceSmall(-0.5)).not.toBe('0');
+    expect(formatPriceSmall(-0.5)).toBe((-0.5).toExponential(3));
   });
 });
 
