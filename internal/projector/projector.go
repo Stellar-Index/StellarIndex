@@ -88,24 +88,43 @@ const PerSourceTimeout = 60 * time.Second
 //
 // The error return is load-bearing (audit-2026-07-16 C2-1/D1): a sink
 // write can fail transiently (a Postgres deadlock / connection reset /
-// statement-timeout) or permanently (a CHECK violation on a poison row).
-// The projector consumes the error to decide whether to advance its
-// cursor past the event's ledger:
+// statement-timeout) or permanently (a CHECK violation, a negative
+// SEP-41 amount, a Validate-rejected OracleUpdate). The projector
+// classifies the error ([classifySinkFault]) to decide whether to
+// advance its cursor past the event's ledger:
 //
-//   - a TRANSIENT failure ([timescale.IsPermanentDataError] false) holds
-//     the cursor at the last fully-committed ledger, so the next cycle
-//     re-reads and retries the row. ON CONFLICT in the downstream Insert*
-//     (DO NOTHING, or DO UPDATE since migration 0109) makes the retry
-//     idempotent / corrective.
-//   - a PERMANENT data fault ([timescale.IsPermanentDataError] true) is
-//     logged loudly, counted, and SKIPPED (the cursor advances past it) —
-//     blocking forever on a poison row is a worse outage than dropping it.
+//   - a TRANSIENT failure ([dispositionRetry]) holds the cursor at the
+//     last fully-committed ledger, so the next cycle re-reads and retries
+//     the row. ON CONFLICT in the downstream Insert* (DO NOTHING, or DO
+//     UPDATE since migration 0109) makes the retry idempotent /
+//     corrective.
+//   - a PERMANENT data fault ([dispositionSkip]) is logged loudly,
+//     counted, and SKIPPED (the cursor advances past it) — blocking
+//     forever on a poison row is a worse outage than dropping it.
+//   - an UNCLASSIFIED failure ([dispositionUnclassified]) is retried like
+//     a transient one but under a budget, then quarantined; see
+//     [QuarantineAfterCycles].
 //
 // Before this signature carried an error the projector could not see a
 // sink failure at all: it advanced the cursor unconditionally on stream
 // success, so a transient fault during a sole-writer (sep41) cycle
 // permanently dropped that row (the loss C2-1 documents).
 type SinkFunc func(ctx context.Context, ev consumer.Event) error
+
+// eventStore is the projector's slice of *timescale.Store: the per-source
+// cursor read/write pair plus the soroban_events tail scan. Declared on the
+// CONSUMER side (Go's "accept interfaces" idiom) so the cursor-durability
+// state machine — which decides when the cursor may advance past a failing
+// row, the property COR-11/COR-01 turn on — is exercisable in unit tests
+// without a live Postgres. Production always passes a real *timescale.Store
+// through [New].
+type eventStore interface {
+	GetCursor(ctx context.Context, source, sub string) (timescale.Cursor, error)
+	UpsertCursor(ctx context.Context, source, sub string, lastLedger uint32) error
+	StreamSorobanEvents(ctx context.Context, from, to uint32,
+		contractIDs, topic0Syms, excludeTopic0Syms []string,
+		fn func(row sorobanevents.Row) error) error
+}
 
 // Source describes one protocol's projection target. The
 // projector keeps an independent cursor per source so one stuck
@@ -154,7 +173,7 @@ type Registry struct {
 // Projector reads soroban_events and routes decoded events to
 // the sink for each registered source.
 type Projector struct {
-	store    *timescale.Store
+	store    eventStore
 	registry Registry
 	sink     SinkFunc
 	logger   *slog.Logger
@@ -180,12 +199,18 @@ func New(store *timescale.Store, registry Registry, sink SinkFunc, logger *slog.
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Projector{
-		store:    store,
+	p := &Projector{
 		registry: registry,
 		sink:     sink,
 		logger:   logger,
 	}
+	// Assign through the nil check: a nil *timescale.Store stored into the
+	// eventStore interface is a NON-nil interface value, which would defeat
+	// Run's "nil store" guard (the typed-nil trap).
+	if store != nil {
+		p.store = store
+	}
+	return p
 }
 
 // Run blocks until ctx is cancelled. Drives one goroutine per
@@ -276,17 +301,75 @@ func (p *Projector) runOneSource(ctx context.Context, src Source) {
 	// at BatchLimit, halves on a deadline-exceeded cycle, doubles back
 	// on success. See cycleOneSource.
 	window := uint32(BatchLimit)
+	// Per-row consecutive-failure counts for the poison-row escape hatch,
+	// owned by this goroutine for the same reason as `window`.
+	var tracker poisonTracker
 	// First cycle runs immediately so a fresh deploy starts
 	// catching up without waiting Interval.
-	p.cycleOneSource(ctx, src, &window)
+	p.cycleOneSource(ctx, src, &window, &tracker)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			p.cycleOneSource(ctx, src, &window)
+			p.cycleOneSource(ctx, src, &window, &tracker)
 		}
 	}
+}
+
+// heldRow is one sink failure that HOLDS the cursor this cycle: the row's
+// identity, why we are holding (its [sinkDisposition]), how many consecutive
+// cycles it has now failed, and the error itself (for the log).
+type heldRow struct {
+	id          rowIdentity
+	disposition sinkDisposition
+	fails       int
+	err         error
+}
+
+// quarantineCandidate returns the index of the ONE held row this cycle should
+// give up on, or -1 for "keep holding everything".
+//
+// Only [dispositionUnclassified] rows are eligible — a positively-identified
+// infra fault is never dropped, however long it lasts. `madeProgress` (some
+// other event durably committed this cycle) is the sink-health proof that
+// separates "this row is poison" from "the whole sink is broken": with it the
+// budget is [QuarantineAfterCycles]; without it, the far longer
+// [QuarantineAfterCyclesNoProgress], so a global fault produces a visible
+// stall rather than a shedding storm.
+//
+// At most one row per cycle, always the lowest ledger, so a global fault that
+// does eventually exhaust the long budget sheds at a bounded, loud rate.
+func quarantineCandidate(held []heldRow, madeProgress bool) int {
+	budget := QuarantineAfterCyclesNoProgress
+	if madeProgress {
+		budget = QuarantineAfterCycles
+	}
+	best := -1
+	var bestLedger uint32
+	for i := range held {
+		if held[i].disposition != dispositionUnclassified || held[i].fails < budget {
+			continue
+		}
+		if best < 0 || held[i].id.ledger < bestLedger {
+			best, bestLedger = i, held[i].id.ledger
+		}
+	}
+	return best
+}
+
+// lowestHeldLedger returns the lowest ledger still held for retry, and whether
+// anything is held at all. The cursor may advance to (that ledger - 1).
+func lowestHeldLedger(held []heldRow) (uint32, bool) {
+	lowest := uint32(0)
+	found := false
+	for i := range held {
+		if !found || held[i].id.ledger < lowest {
+			lowest = held[i].id.ledger
+			found = true
+		}
+	}
+	return lowest, found
 }
 
 // cycleOneSource runs one read-decode-write cycle for one source.
@@ -300,8 +383,25 @@ func (p *Projector) runOneSource(ctx context.Context, src Source) {
 //     next cycle; the idempotent downstream Insert* absorbs the retry. NEVER
 //     advances past an un-committed row — the anti-silent-loss property this
 //     cycle now actually implements (the SinkFunc godoc's old claim).
-//   - PERMANENT sink data faults (CHECK / numeric) → log LOUD + count + SKIP,
+//   - PERMANENT sink data faults (SQLSTATE 22/23, or a canonical value-shape
+//     rejection raised before the statement ran) → log LOUD + count + SKIP,
 //     because a poison row must not wedge the source forever.
+//   - UNCLASSIFIED sink failures → held like a transient one, but only for a
+//     bounded number of consecutive cycles; then quarantined (COR-11 /
+//     COR-01, audit-2026-07-23). Under INV-4 each Soroban-derived domain has
+//     exactly ONE writer, so a row nobody can classify — a store validation
+//     error such as a negative SEP-41 transfer amount — used to halt the
+//     entire domain forever from a single hostile or malformed on-chain
+//     value. See [quarantineCandidate] for the give-up rule and
+//     [QuarantineAfterCycles] for the budget.
+//
+// A quarantined row is NOT evidence-destroying: the raw event stays in the
+// authoritative landing zone (soroban_events / the ClickHouse lake), the
+// ERROR log carries its full identity (source, ledger, tx, op_index,
+// event_index, error, consecutive-cycle count), and
+// `stellarindex-ops projector-replay` re-drives the range once the underlying
+// defect is fixed. What the cursor advance buys is that the OTHER rows of a
+// sole-writer domain keep flowing meanwhile.
 //
 // cycleOneSource is intentionally a single linear cycle: read cursor → resolve
 // durable tip → scan the window → classify each event's sink outcome (decode
@@ -312,7 +412,7 @@ func (p *Projector) runOneSource(ctx context.Context, src Source) {
 // invariant, so it is suppressed rather than fragmented.
 //
 //nolint:gocognit,funlen // linear cycle (cursor read → tip → scan → cursor write) with a source branch (soroban_events vs CH); splitting into helpers would scatter the cycle's success/failure metric emissions and make the control flow harder to audit.
-func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint32) { //nolint:gocyclo // essential, cohesive durability classification (C2-1)
+func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint32, tracker *poisonTracker) { //nolint:gocyclo // essential, cohesive durability classification (C2-1)
 	start := time.Now()
 	cycleCtx, cancel := context.WithTimeout(ctx, PerSourceTimeout)
 	defer cancel()
@@ -368,25 +468,28 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		decodeErrors   int
 		lastSeenLedger uint32
 
-		// Sink-durability tracking (audit-2026-07-16 C2-1). A TRANSIENT
-		// sink write failure must NOT let the cursor advance past its
-		// ledger, or that row is permanently lost for a sole-writer (sep41)
-		// domain. firstTransientFailLedger is the LOWEST ledger with such a
-		// failure this cycle; the cursor is then capped at
-		// firstTransientFailLedger-1 (the last FULLY-committed ledger) so the
-		// next cycle re-reads and retries [firstTransientFailLedger, …]. A
-		// PERMANENT data fault (poison row) does NOT hold the cursor — it is
-		// counted + skipped so it can't wedge the source forever.
-		firstTransientFailLedger uint32
-		sinkTransientFails       int
-		sinkPermanentFails       int
+		// Sink-durability tracking (audit-2026-07-16 C2-1). A sink write
+		// failure that is NOT a positively-identified permanent data fault
+		// must NOT let the cursor advance past its ledger, or that row is
+		// permanently lost for a sole-writer (sep41) domain. `held` collects
+		// those failures with their row identity; the cursor is then capped
+		// at (lowest held ledger - 1) so the next cycle re-reads and retries
+		// from there. A PERMANENT data fault (poison row) does NOT hold the
+		// cursor — it is counted + skipped so it can't wedge the source
+		// forever — and an UNCLASSIFIED failure stops holding once its retry
+		// budget is exhausted (COR-11 / COR-01).
+		held               []heldRow
+		failedThisCycle    = make(map[rowIdentity]bool)
+		sinkPermanentFails int
+		sinkQuarantined    int
 	)
 	// process runs the per-event decode + route, identical regardless of the
 	// read source (soroban_events or CH contract_events). Decode failures
 	// soft-fail (cursor still advances; the row is deterministically broken so
 	// a retry would re-fail) and are counted for visibility. A SINK failure is
-	// classified: transient → cap the cursor below ev.Ledger for retry;
-	// permanent → count + skip.
+	// classified ([classifySinkFault]): permanent → count + skip; transient or
+	// unclassified → hold the cursor below ev.Ledger for retry, counting the
+	// consecutive failing cycles for this exact row.
 	process := func(ev events.Event) {
 		emitted, decodeFail, sinkErr := processEventSafely(src, ev,
 			func(out consumer.Event) error { return p.sink(cycleCtx, out) }, p.logger)
@@ -398,26 +501,34 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		if sinkErr == nil {
 			return
 		}
-		if timescale.IsPermanentDataError(sinkErr) {
+		id := rowIdentity{
+			ledger:     ev.Ledger,
+			txHash:     ev.TxHash,
+			opIndex:    ev.OperationIndex,
+			eventIndex: ev.EventIndex,
+		}
+		disposition := classifySinkFault(sinkErr)
+		if disposition == dispositionSkip {
 			// Poison row: retrying can never succeed, so skipping (letting
 			// the cursor advance past it) is safer than stalling the source
 			// forever. Log LOUD + count so it surfaces as an alert.
 			sinkPermanentFails++
+			tracker.forget(id)
 			p.logger.Error("projector: PERMANENT sink failure — skipping poison row (cursor advances past it)",
 				"source", src.Name, "ledger", ev.Ledger, "tx", ev.TxHash,
 				"op_index", ev.OperationIndex, "event_index", ev.EventIndex, "err", sinkErr)
 			return
 		}
-		// Transient fault (deadlock / reset / statement-timeout / ctx /
-		// unknown): hold the cursor below this ledger so the next cycle
-		// re-reads and retries. Track the lowest such ledger.
-		sinkTransientFails++
-		if firstTransientFailLedger == 0 || ev.Ledger < firstTransientFailLedger {
-			firstTransientFailLedger = ev.Ledger
-		}
-		p.logger.Warn("projector: transient sink failure — holding cursor for retry (NOT advancing past this ledger)",
+		// Transient (DB down / restarting / ctx) or unclassified (deadlock,
+		// statement-timeout, a store validation error, anything new): hold the
+		// cursor below this ledger so the next cycle re-reads and retries.
+		failedThisCycle[id] = true
+		fails := tracker.fail(id)
+		held = append(held, heldRow{id: id, disposition: disposition, fails: fails, err: sinkErr})
+		p.logger.Warn("projector: sink failure — holding cursor for retry (NOT advancing past this ledger)",
 			"source", src.Name, "ledger", ev.Ledger, "tx", ev.TxHash,
-			"op_index", ev.OperationIndex, "event_index", ev.EventIndex, "err", sinkErr)
+			"op_index", ev.OperationIndex, "event_index", ev.EventIndex,
+			"disposition", disposition.String(), "consecutive_cycles", fails, "err", sinkErr)
 	}
 
 	if p.chAddr != "" {
@@ -473,34 +584,63 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		return
 	}
 
+	// Drop the failure history of every row that did NOT re-fail in the scan
+	// just finished: the retry budget counts cycles in which the row was
+	// re-read AND re-failed, so a row that healed (or that the window no
+	// longer covers) starts from zero.
+	tracker.retain(failedThisCycle)
+
+	// Poison-row escape hatch (COR-11 / COR-01, audit-2026-07-23): give up on
+	// at most ONE held row whose retry budget is exhausted, so a deterministic
+	// failure nobody classified cannot hold a sole-writer domain's cursor
+	// forever. The raw event survives in the lake; `projector-replay` re-drives
+	// it once the underlying defect is fixed.
+	if i := quarantineCandidate(held, eventsEmitted > 0); i >= 0 {
+		h := held[i]
+		sinkQuarantined++
+		tracker.forget(h.id)
+		held = append(held[:i], held[i+1:]...)
+		p.logger.Error("projector: QUARANTINED un-processable row after exhausting the retry budget — cursor advances past it; re-drive with `stellarindex-ops projector-replay` once fixed",
+			"source", src.Name, "ledger", h.id.ledger, "tx", h.id.txHash,
+			"op_index", h.id.opIndex, "event_index", h.id.eventIndex,
+			"consecutive_cycles", h.fails, "sink_healthy_this_cycle", eventsEmitted > 0,
+			"err", h.err)
+	}
+	sinkTransientFails := len(held)
+
 	// Cursor watermark (audit-2026-07-16 C2-1): advance only to the highest
-	// ledger for which EVERY event fully committed. With no transient sink
-	// failure that is `toLedger` — a source silent in a range still moves the
-	// cursor so we don't rescan empty stretches, and decode failures + skipped
-	// poison rows don't hold it back. A transient sink failure caps the cursor
-	// at firstTransientFailLedger-1 so the failing ledger (and everything
+	// ledger for which EVERY event fully committed. With nothing held that is
+	// `toLedger` — a source silent in a range still moves the cursor so we
+	// don't rescan empty stretches, and decode failures, skipped poison rows
+	// and quarantined rows don't hold it back. A held sink failure caps the
+	// cursor at (lowest held ledger - 1) so the failing ledger (and everything
 	// after it in this window) is re-read + retried next cycle; the idempotent
 	// downstream Insert* absorbs the repeats. lastSeenLedger is only logged.
 	commitTo := toLedger
-	if firstTransientFailLedger != 0 {
-		commitTo = firstTransientFailLedger - 1
-	}
-	if commitTo < fromLedger {
-		// The window's FIRST ledger failed transiently — nothing new is
-		// durably committed, so DON'T move the cursor; the next cycle retries
-		// the identical range. This is a VISIBLE stall (rising lag + the
+	firstHeldLedger, holding := lowestHeldLedger(held)
+	if holding && firstHeldLedger <= fromLedger {
+		// The window's FIRST ledger is still held — nothing new is durably
+		// committed, so DON'T move the cursor; the next cycle retries the
+		// identical range. This is a VISIBLE stall (rising lag + the
 		// sink_retry metrics below), never a silent advance-past-loss.
 		obs.ProjectorLagLedgers.WithLabelValues(src.Name).Set(float64(tip - fromLedger + 1))
 		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_retry").Add(float64(sinkTransientFails))
 		if sinkPermanentFails > 0 {
 			obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_permanent").Add(float64(sinkPermanentFails))
 		}
+		if sinkQuarantined > 0 {
+			obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_quarantined").Add(float64(sinkQuarantined))
+		}
 		obs.ProjectorRunsTotal.WithLabelValues(src.Name, "sink_retry").Inc()
-		p.logger.Warn("projector: no fully-committed progress (transient sink failure at the window's first ledger) — holding cursor for retry",
+		p.logger.Warn("projector: no fully-committed progress (sink failure at the window's first ledger) — holding cursor for retry",
 			"source", src.Name, "from", fromLedger, "to", toLedger,
-			"first_transient_fail_ledger", firstTransientFailLedger,
-			"transient_fails", sinkTransientFails, "permanent_fails", sinkPermanentFails)
+			"first_held_ledger", firstHeldLedger,
+			"transient_fails", sinkTransientFails, "permanent_fails", sinkPermanentFails,
+			"quarantined", sinkQuarantined)
 		return
+	}
+	if holding {
+		commitTo = firstHeldLedger - 1
 	}
 	if err := p.store.UpsertCursor(cycleCtx, "projector", src.Name, commitTo); err != nil {
 		p.logger.Warn("projector: cursor advance failed", "source", src.Name, "err", err)
@@ -527,6 +667,9 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	if sinkPermanentFails > 0 {
 		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_permanent").Add(float64(sinkPermanentFails))
 	}
+	if sinkQuarantined > 0 {
+		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_quarantined").Add(float64(sinkQuarantined))
+	}
 	// A partially-failed cycle made forward progress (commitTo >= fromLedger)
 	// but still has a pending retry above commitTo — surface it as a distinct
 	// run outcome so a genuinely-stuck source alerts rather than silently
@@ -538,7 +681,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	obs.ProjectorRunsTotal.WithLabelValues(src.Name, runOutcome).Inc()
 	obs.ProjectorCycleDurationSeconds.WithLabelValues(src.Name).Observe(time.Since(start).Seconds())
 
-	if eventsEmitted > 0 || decodeErrors > 0 || sinkTransientFails > 0 || sinkPermanentFails > 0 {
+	if eventsEmitted > 0 || decodeErrors > 0 || sinkTransientFails > 0 || sinkPermanentFails > 0 || sinkQuarantined > 0 {
 		p.logger.Info("projector cycle",
 			"source", src.Name,
 			"from", fromLedger, "to", toLedger, "committed_to", commitTo,
@@ -547,6 +690,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 			"decode_errors", decodeErrors,
 			"sink_transient_fails", sinkTransientFails,
 			"sink_permanent_fails", sinkPermanentFails,
+			"sink_quarantined", sinkQuarantined,
 			"lag_ledgers", tip-commitTo,
 			"elapsed", time.Since(start).Round(time.Millisecond),
 		)
