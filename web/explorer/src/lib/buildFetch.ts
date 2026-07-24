@@ -61,6 +61,18 @@
  */
 
 import { API_BASE_URL } from '@/api/client';
+import type { components } from '@/api/types';
+
+// AGT-06: the envelope's `flags`/`as_of` siblings (see EnvelopeMeta in the
+// generated spec) used to be discarded entirely — only `data` survived
+// buildFetchData's return. buildFetchEnvelope preserves them for callers
+// that need the server's own stale/triangulated signal (e.g. the price
+// enrichment on /assets/[slug]) instead of a client-synthesized guess.
+export type BuildFetchEnvelope<T> = {
+  data: T | null;
+  flags?: components['schemas']['Flags'];
+  as_of?: string;
+};
 
 /** True when the build host has no real API (CI placeholder URL). */
 export const isCIStub =
@@ -108,7 +120,21 @@ export function buildFetchData<T>(
   path: string,
   opts?: { timeoutMs?: number; attempts?: number; softFail?: boolean },
 ): Promise<T | null> {
-  if (isCIStub) return Promise.resolve(null);
+  return buildFetchEnvelope<T>(path, opts).then((r) => r.data);
+}
+
+/**
+ * buildFetchEnvelope is buildFetchData's full-envelope sibling: same
+ * transport/retry/fail-hard contract, but resolves `{data, flags, as_of}`
+ * instead of discarding everything but `data`. Use this when a caller
+ * needs the server's own `flags` (e.g. `flags.stale`) rather than a
+ * client-synthesized guess.
+ */
+export function buildFetchEnvelope<T>(
+  path: string,
+  opts?: { timeoutMs?: number; attempts?: number; softFail?: boolean },
+): Promise<BuildFetchEnvelope<T>> {
+  if (isCIStub) return Promise.resolve({ data: null });
   const base = `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
   // EDGE-CACHE BYPASS (2026-07-10): static-export builds must read the
   // ORIGIN's current truth, not whatever mix of Cloudflare cache entries
@@ -121,7 +147,7 @@ export function buildFetchData<T>(
   // origin load per build is unchanged (one request per distinct path).
   const url = `${base}${base.includes('?') ? '&' : '?'}b=${BUILD_NONCE}`;
   const hit = memo.get(url);
-  if (hit) return hit as Promise<T | null>;
+  if (hit) return hit as Promise<BuildFetchEnvelope<T>>;
   const p = fetchWithRetry<T>(url, {
     timeoutMs: opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     maxAttempts: opts?.attempts ?? MAX_ATTEMPTS,
@@ -134,7 +160,7 @@ export function buildFetchData<T>(
 async function fetchWithRetry<T>(
   url: string,
   opts: { timeoutMs: number; maxAttempts: number; softFail: boolean },
-): Promise<T | null> {
+): Promise<BuildFetchEnvelope<T>> {
   const { timeoutMs, maxAttempts, softFail } = opts;
   let lastErr: unknown = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -155,7 +181,7 @@ async function fetchWithRetry<T>(
       if (res.status >= 400 && res.status < 500) {
         // Authoritative "does not exist" — the ONLY null-returning path
         // besides the CI stub. No retry.
-        return null;
+        return { data: null };
       }
       if (!res.ok) {
         lastErr = new Error(`HTTP ${res.status}`);
@@ -164,8 +190,12 @@ async function fetchWithRetry<T>(
       }
       // A 200 with a non-JSON or non-envelope body is an error payload,
       // not data — let it throw into the retry loop.
-      const env = (await res.json()) as { data?: T };
-      return env.data ?? null;
+      const env = (await res.json()) as {
+        data?: T;
+        flags?: components['schemas']['Flags'];
+        as_of?: string;
+      };
+      return { data: env.data ?? null, flags: env.flags, as_of: env.as_of };
     } catch (err) {
       lastErr = err;
       if (attempt < maxAttempts) await sleep(500 * attempt);
@@ -175,7 +205,7 @@ async function fetchWithRetry<T>(
     // Opt-in non-fatal caller (build-time live-price enrichment): the
     // value is refreshed client-side, so degrade the page rather than
     // abort the export. See the softFail note in the module header.
-    return null;
+    return { data: null };
   }
   throw new BuildFetchError(
     `GET ${url} failed after ${maxAttempts} attempts — refusing to bake fallback HTML; fix the API (or the URL) and re-run the build. Last error: ${
