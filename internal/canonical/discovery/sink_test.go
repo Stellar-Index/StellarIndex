@@ -286,3 +286,114 @@ func TestAsyncSink_DefaultBufferAndTimeout(t *testing.T) {
 		t.Errorf("DroppedCount = %d, want 0", got)
 	}
 }
+
+// errorOnceRecorder fails the first N Record calls then succeeds —
+// a transient recorder outage (Postgres restart, connection storm).
+type errorOnceRecorder struct {
+	mu      sync.Mutex
+	fails   int
+	calls   int
+	success []string
+}
+
+func (r *errorOnceRecorder) Record(_ context.Context, hit discovery.Hit) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls++
+	if r.fails > 0 {
+		r.fails--
+		return errors.New("postgres down")
+	}
+	r.success = append(r.success, hit.ContractID)
+	return nil
+}
+
+func (r *errorOnceRecorder) IsKnown(_ context.Context, _ string) (bool, error) { return false, nil }
+
+func (r *errorOnceRecorder) recorded() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.success...)
+}
+
+// TestAsyncSink_RecordFailureRollsBackSeen is the DAT-09 / DAT-11
+// regression. The seen-set is marked at Push time, so a Record that
+// FAILS left the key marked forever — and every later event for that
+// contract was silently skipped as a duplicate. A contract first
+// sighted during a recorder outage was therefore dropped from
+// discovery permanently, for the life of the process, which the
+// buffer-full path already knew to roll back.
+func TestAsyncSink_RecordFailureRollsBackSeen(t *testing.T) {
+	rec := &errorOnceRecorder{fails: 1}
+	sink := discovery.NewAsyncSink(rec, discovery.AsyncSinkOptions{BufferSize: 8})
+	sink.Start()
+
+	hit := discovery.Hit{ContractID: "C-outage", EventType: discovery.EventMint}
+
+	// First sighting — lands during the outage and fails.
+	sink.Push(hit)
+	deadline := time.Now().Add(2 * time.Second)
+	for sink.FailedCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if sink.FailedCount() != 1 {
+		t.Fatalf("FailedCount = %d, want 1 (the outage write must have failed)", sink.FailedCount())
+	}
+
+	// The recorder is healthy again and the contract emits another
+	// event. It must be re-enqueued, not skipped as already-seen.
+	for time.Now().Before(deadline) {
+		sink.Push(hit)
+		if len(rec.recorded()) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	sink.Stop()
+
+	got := rec.recorded()
+	if len(got) == 0 || got[0] != "C-outage" {
+		t.Fatalf("recorded = %v, want C-outage — a contract first sighted during a recorder "+
+			"outage stayed marked seen and was never discovered (skipped=%d, failed=%d)",
+			got, sink.SkippedCount(), sink.FailedCount())
+	}
+}
+
+// TestAsyncSink_PushRacingStopDoesNotPanic is the
+// AGT-lifecycle-race regression: Push sent on s.ch with no guard
+// against Stop having closed it, so a dispatcher still pushing while
+// shutdown ran could panic on send-to-closed-channel — taking the
+// indexer down at exactly the moment it was trying to exit cleanly.
+// Run under -race.
+func TestAsyncSink_PushRacingStopDoesNotPanic(t *testing.T) {
+	for attempt := 0; attempt < 50; attempt++ {
+		rec := &fakeRecorder{}
+		sink := discovery.NewAsyncSink(rec, discovery.AsyncSinkOptions{BufferSize: 4})
+		sink.Start()
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i := 0; i < 4; i++ {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				<-start
+				for j := 0; j < 50; j++ {
+					sink.Push(discovery.Hit{
+						ContractID: fmt.Sprintf("C-%d-%d-%d", attempt, id, j),
+						EventType:  discovery.EventMint,
+					})
+				}
+			}(i)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			sink.Stop()
+		}()
+
+		close(start)
+		wg.Wait() // a panic in any goroutine fails the test process
+	}
+}
