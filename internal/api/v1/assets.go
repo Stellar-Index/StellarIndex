@@ -628,6 +628,18 @@ func (s *Server) handleAssetListFromAssets(
 	cursor string,
 	limit int,
 ) {
+	// AGT-06: this path's cursor is the raw `<observation_count>:<asset_id>`
+	// shape ListAssetsExt emits (see the Next: fmt.Sprintf below) — reject a
+	// malformed one up front instead of letting it silently fall through to
+	// the keyset predicate's degenerate (0, "") case, which matches no rows
+	// and looks like a quiet end-of-pagination rather than the client error
+	// it actually is.
+	if err := timescale.ValidateAssetsCursor(cursor, timescale.AssetsOrderObservationCountDesc); err != nil {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-cursor",
+			"Invalid cursor", http.StatusBadRequest, err.Error())
+		return
+	}
 	if filters.typ != "" && filters.typ != "classic" {
 		writeEnvelope(w, Envelope{Data: []AssetDetail{}, Flags: Flags{}})
 		return
@@ -1576,6 +1588,16 @@ func (s *Server) serveClassicUnifiedPage(w http.ResponseWriter, r *http.Request,
 // to return just the 11-row catalogue tail regardless of limit,
 // making the curated sliver look like the asset universe).
 func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request, limit int, innerCursor string) ([]AssetDetail, string, bool) {
+	// AGT-06: this phase's cursor is the `<vol_or_blank>:<asset_id>` shape
+	// this function itself emits below — reject a malformed one (e.g. a
+	// hand-edited or truncated cursor) with 400 rather than letting it
+	// silently fall through to a keyset predicate that matches no rows.
+	if err := timescale.ValidateAssetsCursor(innerCursor, timescale.AssetsOrderVolume24hUSDDesc); err != nil {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-cursor",
+			"Invalid cursor", http.StatusBadRequest, err.Error())
+		return nil, "", false
+	}
 	if s.assetsReader == nil {
 		// No AssetsReader wired → empty terminator.
 		writeJSON(w, []AssetDetail{}, Flags{})
