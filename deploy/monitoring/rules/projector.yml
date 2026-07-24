@@ -55,3 +55,36 @@ groups:
             for 15+ minutes. Cursor is not advancing — backlog is growing.
 
             Runbook: docs/operations/runbooks/projector-lag.md
+
+      # COR-11/COR-01 (audit-2026-07-23): the projector's poison-row escape
+      # hatch (quarantineCandidate) gives up on at most ONE un-processable
+      # row per cycle once its retry budget is exhausted, then advances the
+      # cursor past it so a deterministic sink failure can't wedge a
+      # sole-writer domain forever. The raw event survives in the lake and
+      # is re-driveable via `stellarindex-ops projector-replay`, but a
+      # quarantine is otherwise SILENT data-completeness debt — the row is
+      # out of the served tier until an operator notices and re-drives it.
+      # Sensitive (any nonzero increase over the window fires), same
+      # posture as stellarindex_ingestion_persist_drop in ingestion.yml —
+      # a rare, low-rate signal that still needs eyes.
+      - alert: stellarindex_projector_row_quarantined
+        expr: increase(stellarindex_projector_events_decoded_total{outcome="sink_quarantined"}[15m]) > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: projector
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-row-quarantined.md
+          summary: "Projector quarantined a row on {{ $labels.source }} — poison-row escape hatch fired"
+          description: |
+            stellarindex_projector_events_decoded_total{source="{{ $labels.source }}",outcome="sink_quarantined"}
+            incremented: the projector gave up on ONE un-processable row
+            after exhausting its retry budget and advanced the cursor past
+            it. The row is durably skipped from the served tier — not
+            lost (the raw event is still in the lake) — until it is
+            re-driven with `stellarindex-ops projector-replay -source
+            {{ $labels.source }}` after the underlying defect is fixed.
+            Any nonzero rate needs eyes.
+
+            Runbook: docs/operations/runbooks/projector-row-quarantined.md
