@@ -1,6 +1,6 @@
 ---
 title: API performance follow-ups
-last_verified: 2026-07-05
+last_verified: 2026-07-16
 status: living doc
 ---
 
