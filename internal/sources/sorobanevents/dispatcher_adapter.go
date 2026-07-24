@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // RawEventSink is the contract a sink must satisfy to receive
@@ -105,6 +106,7 @@ type AsyncSink struct {
 	dropped uint64
 	skipped uint64
 	written uint64
+	lost    uint64
 }
 
 // NewAsyncSink constructs an AsyncSink. Returns the sink in stopped
@@ -237,6 +239,32 @@ func (s *AsyncSink) WrittenCount() uint64 {
 	return s.written
 }
 
+// LostCount returns the total number of rows permanently lost — a
+// batch that either hit a positively-classified permanent data fault
+// or never landed before shutdown gave up on it (audit-2026-07-23
+// REL-02/DAT-09: soroban_events is the raw catch-all landing zone and
+// used to drop a failed batch outright with only a Warn log; a
+// sustained infra fault silently ate whole windows of raw events with
+// no operator-visible signal and no re-derive hint). Operators alert
+// on this rising the same way they do on the trades path's
+// SourceInsertErrorsTotal{kind="dropped"}.
+func (s *AsyncSink) LostCount() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lost
+}
+
+// asyncSinkRetryInitialBackoff / asyncSinkRetryMaxBackoff bound the
+// capped exponential backoff [flushBatch] applies to a batch insert
+// failure that is not positively classified as permanent — mirroring
+// the block-and-retry policy [internal/pipeline] applies to the
+// trades path (ADR-0041 / REL-08's asymmetric default: a drop
+// requires positive proof of permanence, retry is the default).
+const (
+	asyncSinkRetryInitialBackoff = 100 * time.Millisecond
+	asyncSinkRetryMaxBackoff     = 5 * time.Second
+)
+
 // run drains the channel and flushes batches.
 //
 // Deliberately uses a fresh context per batch rather than a
@@ -255,18 +283,9 @@ func (s *AsyncSink) run() {
 		if len(batch) == 0 {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
-		err := s.w.InsertSorobanEventsBatch(ctx, batch)
-		cancel()
-		if err != nil {
-			s.logger.Warn("sorobanevents: batch insert failed",
-				"err", err, "rows", len(batch))
-		} else {
-			s.mu.Lock()
-			s.written += uint64(len(batch))
-			s.mu.Unlock()
-		}
-		batch = batch[:0]
+		b := batch
+		batch = make([]Row, 0, s.batchSz)
+		s.flushBatch(b)
 	}
 
 	for {
@@ -305,4 +324,88 @@ func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
 			return
 		}
 	}
+}
+
+// flushBatch writes one batch with the same asymmetric ADR-0041
+// failure policy the trades path uses (REL-08 / audit-2026-07-23
+// REL-02, DAT-09): a write failure blocks-and-retries with capped
+// backoff by DEFAULT; only a POSITIVELY-classified permanent data
+// fault ([timescale.IsPermanentDataError] — pq class 22/23) is
+// isolated and dropped. Before this, ANY error — including a
+// transient infra fault during a Postgres outage — silently
+// discarded the whole batch after one Warn log, permanently losing
+// that window of raw soroban_events rows with no operator signal and
+// no re-derive hint (this table is ADR-0029's catch-all landing
+// zone, the last-resort source of truth Row.Ledger the census +
+// completeness tooling reconcile against).
+//
+// The retry loop is bounded by s.stopping: an in-flight attempt is
+// cancelled the instant Stop() fires (so shutdown isn't held hostage
+// by a stuck write), and a batch that still hasn't landed at that
+// point is abandoned loudly via [AsyncSink.abandonBatch] rather than
+// retried forever.
+func (s *AsyncSink) flushBatch(rows []Row) {
+	backoff := asyncSinkRetryInitialBackoff
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
+		attemptDone := make(chan struct{})
+		go func() {
+			select {
+			case <-s.stopping:
+				cancel() // unblock a write stuck past its own WriteTimeout
+			case <-attemptDone:
+			}
+		}()
+		err := s.w.InsertSorobanEventsBatch(ctx, rows)
+		close(attemptDone)
+		cancel()
+
+		if err == nil {
+			s.mu.Lock()
+			s.written += uint64(len(rows))
+			s.mu.Unlock()
+			return
+		}
+		if timescale.IsPermanentDataError(err) {
+			s.abandonBatch(rows, err, "permanent data fault")
+			return
+		}
+		select {
+		case <-s.stopping:
+			s.abandonBatch(rows, err, "shutdown before the write landed")
+			return
+		case <-time.After(backoff):
+		}
+		s.logger.Warn("sorobanevents: batch insert failed — retrying with backpressure",
+			"err", err, "rows", len(rows), "backoff", backoff)
+		backoff = min(backoff*2, asyncSinkRetryMaxBackoff)
+	}
+}
+
+// abandonBatch counts + loudly logs rows[] as permanently lost, with
+// the ledger range so an operator knows exactly what to re-derive
+// (the raw ops are durable in the CH lake per ADR-0034).
+func (s *AsyncSink) abandonBatch(rows []Row, err error, reason string) {
+	lo, hi := rowLedgerRange(rows)
+	s.mu.Lock()
+	s.lost += uint64(len(rows))
+	s.mu.Unlock()
+	s.logger.Error("sorobanevents: batch insert failed — rows lost, re-derive this range from the CH lake (ADR-0034)",
+		"reason", reason, "err", err, "rows", len(rows),
+		"ledger_from", lo, "ledger_to", hi)
+}
+
+// rowLedgerRange returns the min/max Ledger across rows, for the
+// re-derive hint in [AsyncSink.abandonBatch]. lo==0 means rows was
+// empty.
+func rowLedgerRange(rows []Row) (lo, hi uint32) {
+	for _, r := range rows {
+		if lo == 0 || r.Ledger < lo {
+			lo = r.Ledger
+		}
+		if r.Ledger > hi {
+			hi = r.Ledger
+		}
+	}
+	return lo, hi
 }
