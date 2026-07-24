@@ -240,3 +240,189 @@
 - loc: internal/ops/chops/projected_rebuild.go:127-137, internal/storage/timescale/trades.go:606-631, internal/storage/timescale/trades.go:913-921
 - fix: In projected_rebuild.go, after timescale.Open and before any -write, call timescale.InstallUSDVolumeResolution(store, cfg.Trades.USDPeggedClassicAssets, cfg.Supply.SACWrappers) exactly as cmd/stellarindex-indexer/main.go:196 and ch_rebuild.go:172 do.
 
+
+---
+
+## Confirmed — chunk 3 (api/auth/security, 2026-07-24)
+
+> Full run, 0 session-limit failures; converged:false (wave-cap, still-hot). 
+
+| # | Sev | Exp | Dim | Finding |
+|---|---|---|---|---|
+| 1 | HIGH | LIVE | REL-06 | Dwell-time fail-closed never engages under a flapping/intermittent Redis — a single success per <30s keeps the limiter fail-open (near-unlimited) inde |
+| 2 | HIGH | LIVE | PRF-03 | Unauthenticated /v1/assets/{asset_id}/holders runs two uncached FINAL scans of the 43.6M-row current-state table on the request path, bounded only by  |
+| 3 | HIGH | LIVE | AGT-12 | Per-connection SSE producer goroutines have no panic recovery — one panic in the compute path crashes the entire API process |
+| 4 | HIGH | LIVE | REL-05 | Hub topic map grows without bound — idle topics with zero subscribers retain a full ring buffer forever |
+| 5 | HIGH | LIVE | NTF-13 | Delivery retry budget is ~8h, not the documented 72h — customer events dropped far sooner than the runbook implies |
+| 6 | HIGH | LIVE | REL-05-resource-exhaustion | SSE concurrency caps are enforced only after the Hub topic (attacker-controlled key) has already been created, so the caps do not bound Hub topic-map  |
+| 7 | HIGH | LIVE | PRF-03 | AccountState still runs two account_id-keyed FINAL reads (trustlines + offers) per uncached account — the site-audit remediation only fixed the accoun |
+| 8 | HIGH | LIVE | AGT-12 | Ledger + observations SSE producer goroutines have no panic recovery — same process-crash class as the confirmed AGT-12 tip-stream instance |
+| 9 | HIGH | LIVE | PRF-03 | GET /v1/contracts runs an unauthenticated, uncached, up-to-365-day GROUP BY over the billions-row contract_events table on the 8-connection pool — poo |
+| 10 | HIGH | LIVE | kill-switch | [absence] There is no operator/admin API affordance to suspend, disable, or close a customer account, nor to revoke an arbitrary (leaked/abused) API k |
+| 11 | HIGH | GATED | AGT-11 | SEP-10 auth is dead-on-arrival: the two-phase validator build errors on the nil-rdb first pass, so a configured SEP-10 deployment either refuses to bo |
+| 12 | HIGH | GATED | NTF-11 | Missing Resend API key silently drops all magic-link email while the API reports 'sent' |
+| 13 | HIGH | GATED | API-05 | GET /v1/accounts/{g}/movements with ?asset= silently skips post-P23 (Postgres-tail) rows once pagination crosses into the ClickHouse archive range |
+| 14 | HIGH | GATED | billing-downgrade-enforcement | [absence] There is no path that LOWERS a customer's per-key rate-limit budget when their Stripe subscription is cancelled or lapses. handleStripeSubsc |
+| 15 | HIGH | GATED | rate-limit-quota | [absence] POST /v1/account/keys (self-service, Redis-backed) has no per-account active-key quota. handleAccountKeysCreate (internal/api/v1/account.go: |
+| 16 | HIGH | GATED | error-handling-deadletter | [absence] The 'customer paid but has no keys for identifier' webhook outcome (stripe_webhook.go:355-368) and the permanently-failing per-key/platform  |
+| 17 | MEDIUM | LIVE | OBS-04 | Email address logged unmasked in signup verification error path |
+| 18 | MEDIUM | LIVE | CON-05 | Price alert worker creates duplicate webhook deliveries on MarkPriceAlertFired failure |
+| 19 | MEDIUM | LIVE | API-03 | PostgresAPIKeyValidator does not populate EmailVerifiedAt in Subject |
+| 20 | MEDIUM | LIVE | CON-05 | Dashboard webhook create handler has no idempotency on concurrent POST |
+| 21 | MEDIUM | LIVE | SEC-15 | Failed-auth (credential-stuffing) throttle ignores ErrThrottleUnavailable and always fails open, so brute-force protection is fully disabled during an |
+| 22 | MEDIUM | LIVE | NTF-13 | Transient DB error on GetWebhook permanently drops a webhook delivery (no retry) |
+| 23 | MEDIUM | LIVE | NTF-13 | Global fan-out silently and permanently drops a subscriber's operational event on enqueue error |
+| 24 | MEDIUM | LIVE | DAT-13 | Contracts-directory `events` and interaction-map `shared_txs` counts are computed with count() over ReplacingMergeTree contract_events WITHOUT FINAL — |
+| 25 | MEDIUM | LIVE | API-03 | AccountState returns HTTP 500 (with a per-request error log) instead of 400 for a shape-valid but checksum-invalid G-strkey — validator inconsistency  |
+| 26 | MEDIUM | LIVE | SEC-11 | Explorer ClickHouse queries run as the unrestricted `default` user with no readonly/resource profile, and per-query overrides raise max_execution_time |
+| 27 | MEDIUM | LIVE | REL-01 | tip/ledger SSE producers omit the per-tick query timeout the sibling observations producer added (partial fix of G2-04) |
+| 28 | MEDIUM | LIVE | SEC-14 | Default config ships CORS AllowedOrigins=["*"], so every out-of-the-box deployment is fully cross-origin readable |
+| 29 | MEDIUM | LIVE | SEC-13 | /metrics loopback guard is defeated by any reverse proxy running on the same host — the exact topology it claims to defend |
+| 30 | MEDIUM | LIVE | SEC-16 | Login CSRF: GET /v1/auth/callback lets an attacker silently log a victim into the attacker's account |
+| 31 | MEDIUM | LIVE | SEC-14 | Dashboard CSRF protection rests solely on SameSite=Lax with a registrable-domain-wide session cookie and no CSRF token |
+| 32 | MEDIUM | LIVE | SEC-15 | verify-code 6-digit login code is brute-forceable: the maxCodeAttempts=5 cap bounds neither total guesses nor match probability |
+| 33 | MEDIUM | LIVE | HLT-01 | Usage subject-key derivation is duplicated between the writer (middleware.usageKeyForSubject) and one of its readers (account.go's handleAccountUsage) |
+| 34 | MEDIUM | LIVE | API-08 | Unauthenticated cache-cardinality bypass on /v1/assets?asset_class=all lets any client defeat the ListAssetsExt cache and force unbounded ~1.1s DB que |
+| 35 | MEDIUM | LIVE | API-05 | Cache-key delimiter injection in CachedAssetsReader.ListAssetsExt lets one request silently receive a different request's cached page (cross-query cac |
+| 36 | MEDIUM | LIVE | COR-10 | Usage rollup worker can permanently and silently drop a day's per-endpoint data with no backfill path if the API process is down across a full day bou |
+| 37 | MEDIUM | LIVE | AGT-08 | Package-level docs describe the Postgres auth cutover and KeyPolicy enforcement as unshipped future work; both have already shipped and are live |
+| 38 | MEDIUM | LIVE | COR-03 | ObservationCount / FirstSeenLedger / LastSeenLedger use a bare `!= 0` check as an is-set sentinel, conflating a legitimately-zero value with 'no catal |
+| 39 | MEDIUM | LIVE | COR-08 | AppendStripeEvent's dedupe/claim query does not actually exclude two concurrent callers from both being told to proceed for the same stripe_event_id,  |
+| 40 | MEDIUM | LIVE | SEC-11 | Customer webhook signing secrets are persisted in Postgres with no application-layer encryption, unlike the MFA secrets in the same package |
+| 41 | MEDIUM | LIVE | SEC-15 | Anonymous per-IP rate limit, signup-IP cap, and failed-auth throttle all key on the full IPv6 /128 address, so an attacker with any routable IPv6 pref |
+| 42 | MEDIUM | LIVE | REL-06 | Signup-IP dwell-time fail-closed never engages under a flapping Redis (single success resets the clock) — bulk-account-mint window stays open indefini |
+| 43 | MEDIUM | LIVE | NTF-05 | Price-alert partial fan-out re-delivers to already-notified webhooks (no delivery-level idempotency) |
+| 44 | MEDIUM | LIVE | NTF-04 | Price alerts are level-triggered with a zero-cooldown default → unbounded duplicate deliveries and unbounded webhook_deliveries growth |
+| 45 | MEDIUM | LIVE | DAT-11 | AccountPositions silently returns partial/empty results when any per-protocol read errors or the shared deadline fires — no coverage signal, unlike th |
+| 46 | MEDIUM | LIVE | DAT-10 | RecentOperations (the default /v1/operations directory) reads the ReplacingMergeTree operations table without FINAL, so re-ingested operations appear  |
+| 47 | MEDIUM | LIVE | API-03 | AccountState uses a checksum-blind shape check, so a well-formed-but-invalid G-strkey returns 500 (not 400) and error-logs on every request |
+| 48 | MEDIUM | LIVE | SEC-ratelimit-bypass | Per-IP SSE stream cap keys on the full /128 address, so a single IPv6 /64 trivially bypasses it and can hold the entire global stream budget |
+| 49 | MEDIUM | LIVE | PRF-01 | windowFloorLedger silently converts a transient tip-read failure into sinceLedger=0, turning bounded /v1/contracts and /interactions into full-table a |
+| 50 | MEDIUM | LIVE | DAT-11 | ContractInteractions 'shared_txs' counts contract EVENTS, not distinct transactions — the ranked number is inflated by events-per-tx and mislabeled |
+| 51 | MEDIUM | LIVE | REL-05 | SSE concurrency caps are checked only inside StreamFromChannel, AFTER each handler's synchronous pre-flight compute, so a client already at its stream |
+| 52 | MEDIUM | LIVE | DAT-10 | RecentContracts.events and ContractInteractions.shared counts omit FINAL over the ReplacingMergeTree contract_events table — served counts over-inflat |
+| 53 | MEDIUM | LIVE | REL-isolation | Webhook deliveries are POSTed sequentially by a single shared worker with a 10s per-request timeout and no per-tenant isolation → one slow/black-hole  |
+| 54 | MEDIUM | LIVE | AGT-12 | Async TouchSession goroutine has no panic recovery — a panic in the fire-and-forget last-seen write crashes the whole API process |
+| 55 | MEDIUM | LIVE | REL-05 | touchTracker in-memory map grows without bound — one permanent entry per session ID ever seen, never evicted |
+| 56 | MEDIUM | LIVE | PRV-24 | Staff PII lookup records access only to the application log, not the durable audit sink used by the other admin surfaces |
+| 57 | MEDIUM | LIVE | SEC-14 | Dashboard mutations are protected by SameSite=Lax alone — any same-site subdomain (docs/explorer/compromised host) can forge credentialed state-changi |
+| 58 | MEDIUM | LIVE | API-01 | AccountState detail handler validates the G-strkey with a checksum-blind shape check, so malformed-but-shaped strkeys become 500s + unbounded Error-lo |
+| 59 | MEDIUM | LIVE | DAT-10 | RMT no-FINAL over-count: contract directory event counts and interaction shared-tx counts are inflated (and mis-ranked) by un-merged duplicate parts,  |
+| 60 | MEDIUM | LIVE | SEC-16 | TrailingSlashRedirect emits a protocol-relative Location, giving an unauthenticated open redirect on the API origin |
+| 61 | MEDIUM | LIVE | SEC-rate-limit | Per-IP SSE cap keys on the full client address, so an IPv6 /64 (or any multi-IP client) bypasses it entirely |
+| 62 | MEDIUM | LIVE | AGT-claim-vs-code | Misleading comment claims a compile-time Flusher assertion that the code does not implement |
+| 63 | MEDIUM | LIVE | AGT-06 | ValidateAssetsCursor is dead code: the handler never rejects malformed cursors, so a bad cursor silently returns an empty page instead of the document |
+| 64 | MEDIUM | LIVE | HLT-01 | GetAssetsPriceHistory24hBatch/7dBatch's cache silently drops the stale-while-revalidate branch its sibling has, blocking every request on the slow ups |
+| 65 | MEDIUM | LIVE | COR-05 | Monthly usage quota counts platform-caused 5xx failures as billable requests, letting an outage lock customers out of their own quota |
+| 66 | MEDIUM | LIVE | HLT-09 | assetDetailResponseCache and CachedAssetsReader's entries/swrEntries maps grow without bound — no eviction beyond opportunistic same-key overwrite |
+| 67 | MEDIUM | LIVE | alerts | [absence] Audit-log write failures on privileged, money/security-relevant mutations emit only a WARN log line — no metric, no alertable signal. record |
+| 68 | MEDIUM | LIVE | legally-required affordance | [absence] There is no account-deletion / data-erasure or data-export endpoint on any surface. The account self-service routes (server.go:1543-1546, ac |
+| 69 | MEDIUM | GATED | REL-10 | In-process fallback localStore grows unbounded and does an O(n) full-map scan under the mutex on every request during a distinct-key (IPv6/botnet) flo |
+| 70 | MEDIUM | GATED | NTF-04 | Price-alert delivery enqueue and MarkPriceAlertFired are not atomic — duplicate deliveries on mark failure |
+| 71 | MEDIUM | GATED | NTF-04 | Price alerts are level-triggered with a zero-default cooldown, producing a per-tick notification storm |
+| 72 | MEDIUM | GATED | SEC-02 | SEP-10 Verify does not check on-chain account signers/thresholds, so a rotated-away master key still authenticates and multisig accounts are locked ou |
+| 73 | MEDIUM | GATED | SEC-15 | Magic-link login throttle fails OPEN indefinitely on Redis errors, so during a Redis outage the per-target-email bomb cap it exists to enforce is full |
+| 74 | MEDIUM | GATED | SEC-01 | Auth middleware exempts no infra endpoints — auth_mode=apikey/sep10 makes /v1/healthz, /v1/readyz, /metrics, /, /robots.txt and /errors/* require cred |
+| 75 | MEDIUM | GATED | AGT-06 | platform.UsageStore (UsageEvent/UsageRollup/UsageQuery) is a fully-documented interface with zero implementations and zero callers anywhere in the cod |
+| 76 | MEDIUM | GATED | REL-05 | In-process fallback limiter degrades to an O(n) full-map scan under the shared mutex on every request once >100k distinct in-window keys accumulate, a |
+| 77 | MEDIUM | GATED | CON-04 | In-process fallback GC does a full O(n) map scan under the global mutex on every request once >100k current-window keys exist, deleting nothing — a lo |
+| 78 | MEDIUM | GATED | REL-06 | Failed-auth (credential-stuffing) throttle silently swallows ErrThrottleUnavailable and fails fully open under a sustained Redis outage, defeating the |
+| 79 | MEDIUM | GATED | NTF-08 | Magic-link and signup emails have no per-recipient send throttle when Redis is absent, enabling inbox email-bombing and Resend quota burn |
+| 80 | MEDIUM | GATED | REL-availability | Per-IP SSE cap collapses to a single shared 20-slot bucket for all clients when the API runs behind a proxy without TrustedProxyCIDRs configured |
+| 81 | MEDIUM | GATED | reconciliation | [absence] There is no reconciliation job anywhere in the binary set that periodically re-syncs Stripe billing state (active subscriptions, plan tier,  |
+| 82 | MEDIUM | GATED | alerts | [absence] The monthly-quota enforcement middleware fails open on a Redis read error with no observability — only a logger.Debug line, no metric (month |
+| 83 | MEDIUM | GATED | circuit-breaker-fail-closed | [absence] The failed-auth per-IP throttle (C3-5) has no sustained-outage fail-closed. takeFailedAuth returns `(false, 0)` (not throttled) for ANY limi |
+| 84 | LOW | LIVE | CON-05 | Dashboard webhook update handler has no idempotency on concurrent PATCH |
+| 85 | LOW | LIVE | CON-05 | Dashboard API key create handler has no idempotency on concurrent POST |
+| 86 | LOW | LIVE | REL-05 | FixedWindowCounter's non-atomic INCR-then-EXPIRE leaks TTL-less keys in Redis whenever the best-effort EXPIRE is dropped |
+| 87 | LOW | LIVE | AGT-06 | Worker docstring falsely claims no SKIP-LOCKED dedup, inviting an unsafe future change |
+| 88 | LOW | LIVE | AGT-08 | APIKeyRecord.Scopes documents 'NOT enforced at any runtime endpoint' but KeyPolicy middleware does enforce scopes, so an operator minting scoped keys  |
+| 89 | LOW | LIVE | API-08 | CORS default AllowedMethods omits DELETE and PATCH and main.go never sets them, so cross-origin browser preflights for DELETE /v1/account/keys and PAT |
+| 90 | LOW | LIVE | HLT-04 | CachedAssetsReader's production TTL comment (30s) disagrees with its actual production wiring (2 minutes) |
+| 91 | LOW | LIVE | COR-14 | APIKey.IsActive's expiry/revocation logic is re-implemented inline in the production auth hot path instead of being called, creating a second copy tha |
+| 92 | LOW | LIVE | REL-02 | Failed-auth throttle (C3-5) discards ErrThrottleUnavailable and fails open on every error, so the dwell-time fail-closed backstop the Bucket computes  |
+| 93 | LOW | LIVE | REL-supervision | The redispub Subscriber has no restart supervision and its own error path leads to a permanently silent closed-bucket stream, contradicting its doc cl |
+| 94 | LOW | LIVE | CS-concurrency-state | Hub.Subscribe replays buffered events and then registers for live events in two unsynchronized steps, so an event published in the gap is silently and |
+| 95 | LOW | LIVE | REL-06 | Login magic-link throttle has no dwell-time fail-closed, so any Redis fail-open window permits unbounded outbound email (bomb + sender-reputation burn |
+| 96 | LOW | LIVE | API-01 | AccountState accepts CRC-invalid G-strkeys (looksLikeStellarAccount) while every sibling account endpoint requires a checksum-valid IsAccountID — inco |
+| 97 | LOW | LIVE | AGT-04 | Explorer handlers collapse server-side read-timeout (context.DeadlineExceeded) into 500 + Error log instead of the documented 503 + Warn, amplifying l |
+| 98 | LOW | LIVE | AGT-dead-code | Global concurrent-stream cap is hardcoded at 8192; SetMaxConcurrentStreams is dead code and no config field wires it |
+| 99 | LOW | LIVE | AGT-08 | Comment says 5 parallel reader calls, code spawns 6 — minor doc/code drift in the asset-detail extension fan-out |
+| 100 | LOW | LIVE | COR-14 | Cache key collision via unescaped '\|' delimiter lets one caller's asset-catalogue results poison another's (cross-request cache poisoning) |
+| 101 | LOW | LIVE | HLT-03 | api_usage_events / internal/platform.UsageStore is dead code — the interface and hypertable exist but nothing ever writes to them |
+| 102 | LOW | LIVE | timeouts | [absence] Pre-handler middleware that performs backend I/O (Auth API-key Lookup, KeyPolicy, MonthlyQuota, RateLimit, UsageTracker) runs OUTSIDE the Re |
+| 103 | LOW | GATED | CON-06 | All rate-limit buckets and the failed-auth bucket use per-process state in the in-process fallback; a multi-instance deployment multiplies every limit |
+| 104 | LOW | GATED | CON-05 | Replay guard dedupe key is the SHA-256 of the raw signed XDR, which is signature-malleable, so a captured challenge can be redeemed more than once |
+| 105 | LOW | GATED | COR-15 | TokenStore's injected clock (WithClock) is dead code, and one method ignores it entirely, while the doc's claim about tests using it is false |
+| 106 | LOW | GATED | CFG-04 | /metrics loopback guard is inert in the documented same-host reverse-proxy topology it claims to backstop |
+| 107 | LOW | GATED | audit-reason-capture | [absence] POST /v1/admin/keys (handleAdminKeysCreate, internal/api/v1/admin_keys.go:63) does not require or capture an X-Reason header, and recordAdmi |
+| 108 | LOW | GATE | HLT-03 | api_usage_events hypertable + internal/platform.UsageStore (the documented per-request billing/forensic audit trail) is entirely dead code: no impleme |
+| 109 | INFO | LIVE | AGT-06 | Global concurrent-stream cap is effectively hardcoded (no config/wiring) and is enforced after the pre-flight compute |
+| 110 | INFO | BRANCH | CS-009 | SSRF blocklist does not cover the NAT64 well-known prefix 64:ff9b::/96, which embeds blocked IPv4 destinations |
+
+### Detail — chunk-3 CRITICAL + HIGH
+
+**[HIGH/LIVE] REL-06 — Dwell-time fail-closed never engages under a flapping/intermittent Redis — a single success per <30s keeps the limiter fail-open (near-unlimited) indefinitely**
+- loc: internal/ratelimit/bucket.go:180-202, internal/ratelimit/bucket.go:303-309, internal/auth/signup_ip_throttle.go:156-202
+- fix: Trip fail-closed on elapsed wall-time OR a consecutive-failure count, and do not reset the dwell clock on a single stray success — require either N consecutive successes or arm a separate 'errors seen in the last window' gauge. Minimal: in observeRedisFailure, keep a firstErrorSi
+
+**[HIGH/LIVE] PRF-03 — Unauthenticated /v1/assets/{asset_id}/holders runs two uncached FINAL scans of the 43.6M-row current-state table on the request path, bounded only by the shared 8-connection pool + 8s timeout — aggregate pool-exhaustion DoS across every explorer endpoint**
+- loc: internal/api/v1/explorer/accounts.go:330, internal/api/v1/explorer/accounts.go:360, internal/storage/clickhouse/account_state_reader.go:215
+- fix: Add a short-TTL cache for AssetHolders results (as already done for account-state and wealth), keyed by (asset, limit), so repeated/hot assets don't re-scan.
+
+**[HIGH/LIVE] AGT-12 — Per-connection SSE producer goroutines have no panic recovery — one panic in the compute path crashes the entire API process**
+- loc: internal/api/v1/price_tip_stream.go:108, internal/api/v1/observations_stream.go:122, internal/api/v1/ledger_stream.go:87
+- fix: Wrap each producer body in `defer func(){ if p:=recover(); p!=nil { s.logger.Error("panic in SSE producer", "panic", p); } }()` at the top of runTipStreamProducer / runObservationsStreamProducer / runLedgerStreamProducer (the ch is closed by the existing `defer close(ch)` so the 
+
+**[HIGH/LIVE] REL-05 — Hub topic map grows without bound — idle topics with zero subscribers retain a full ring buffer forever**
+- loc: internal/api/streaming/hub.go:187, internal/api/streaming/hub.go:164, internal/api/streaming/redispub/subscriber.go:117
+- fix: In dropSubscriber, after removing the sub, if `len(t.subs)==0` delete the topic from h.topics under h.mu (accepting that the replay buffer for that pair is lost until the next publish recreates it).
+
+**[HIGH/LIVE] NTF-13 — Delivery retry budget is ~8h, not the documented 72h — customer events dropped far sooner than the runbook implies**
+- loc: internal/customerwebhook/worker.go:63-66, internal/customerwebhook/worker.go:289-327
+- fix: Raise MaxAttempts (or the cap) so the cumulative window actually reaches 72h, or correct the docblock to state the true ~8h budget.
+
+**[HIGH/LIVE] REL-05-resource-exhaustion — SSE concurrency caps are enforced only after the Hub topic (attacker-controlled key) has already been created, so the caps do not bound Hub topic-map memory and rejected connections still leak permanent topics**
+- loc: internal/api/streaming/handler.go:68-72, internal/api/streaming/handler.go:92-114, internal/api/v1/price_stream.go:72
+- fix: Enforce the global + per-IP concurrency caps BEFORE hub.Subscribe() (move the cap acquisition into Stream() ahead of Subscribe, or gate handlePriceStream on a cheap admission check first) so a rejected connection never allocates a topic.
+
+**[HIGH/LIVE] PRF-03 — AccountState still runs two account_id-keyed FINAL reads (trustlines + offers) per uncached account — the site-audit remediation only fixed the account-entry read, leaving the ballooning cost in place**
+- loc: internal/storage/clickhouse/account_state_reader.go:67-146, internal/storage/clickhouse/account_state_reader.go:148-215, internal/api/v1/explorer/account_state.go:255-308
+- fix: Re-key accountTrustlines and accountOffers off a primary-key/sort-key prefix instead of the non-sort-key account_id (as was done for the account-entry read), so they seek rather than bloom-scan-and-FINAL-merge.
+
+**[HIGH/LIVE] AGT-12 — Ledger + observations SSE producer goroutines have no panic recovery — same process-crash class as the confirmed AGT-12 tip-stream instance**
+- loc: internal/api/v1/observations_stream.go:122, internal/api/v1/observations_stream.go:163-209, internal/api/v1/ledger_stream.go:87
+- fix: Wrap each producer body in `defer func(){ if p := recover(); p != nil { s.logger.Error("sse producer panic", "err", p, "stack", debug.Stack()); } }()` at the top of runObservationsStreamProducer and runLedgerStreamProducer (and price_tip_stream's runTipStreamProducer), before `de
+
+**[HIGH/LIVE] PRF-03 — GET /v1/contracts runs an unauthenticated, uncached, up-to-365-day GROUP BY over the billions-row contract_events table on the 8-connection pool — pool-exhaustion DoS**
+- loc: internal/api/v1/explorer/contracts_list.go:40-92, internal/storage/clickhouse/explorer_reader.go:854-878
+- fix: Cap ?days to a much smaller max for the network-wide directory (e.g. 30) and/or add a short-TTL first-page cache keyed by (days,limit) exactly like operationsDirectory's opsDir cache, so the expensive aggregation is amortized across concurrent callers.
+
+**[HIGH/LIVE] kill-switch — [absence] There is no operator/admin API affordance to suspend, disable, or close a customer account, nor to revoke an arbitrary (leaked/abused) API key. The whole suspension machinery exists and is enforced on read paths — postgresstore.AccountStore.Suspend() (account_store.go:180), the Postgres API-key validator rejecting non-active accounts (apikey_postgres.go:129), and the dashboard session middleware denying suspended/closed accounts (dashboardauth/middleware.go:140) — but nothing in the HTTP surface triggers it. The only caller of Suspend() is the internal signup-race recovery path (dashboardauth/handlers.go:611). The admin surface (server.go:1549-1562) offers only key-mint (POST /v1/admin/keys), account tier/rate-limit/quota overrides (PATCH /v1/admin/accounts/{id}, which never touches Status), and status-notice CRUD. The dashboard staff customer-lookup is explicitly read-only (dashboardauth/handlers_admin.go:54). Self-service key revoke (account.go:545) requires the account's OWN credential, so an operator cannot kill a compromised customer's key. Worse: the DEFAULT auth_backend is 'redis' (config.go:1378), and the Redis validator (apikey_redis.go:216) checks only the per-key RevokedAt — it never reads account Status — so even a manual DB `UPDATE accounts SET status='suspended'` does NOT stop legacy /v1/signup keys from authenticating.**
+- loc: internal/api/v1/server.go:1549-1562, internal/api/v1/admin_accounts.go:150, internal/platform/postgresstore/account_store.go:180
+- fix: add the missing control
+
+**[HIGH/GATED] AGT-11 — SEP-10 auth is dead-on-arrival: the two-phase validator build errors on the nil-rdb first pass, so a configured SEP-10 deployment either refuses to boot or 503s every SEP-10 endpoint**
+- loc: cmd/stellarindex-api/main.go:158, cmd/stellarindex-api/main.go:164-169, cmd/stellarindex-api/main.go:250-260
+- fix: At main.go:158 do not pass nil; either skip the early construction entirely and build once after rdb exists, or make the early call tolerate nil by returning a guard-free validator that the :250 block unconditionally rebuilds. Also change the :251 gate so a validator that failed 
+
+**[HIGH/GATED] NTF-11 — Missing Resend API key silently drops all magic-link email while the API reports 'sent'**
+- loc: cmd/stellarindex-api/main.go:1538-1543, internal/notify/noop.go:28-36, internal/api/v1/dashboardauth/handlers.go:285-293
+- fix: In production mode, treat an unconfigured transactional-email provider as a hard boot failure (or a loud recurring alert) rather than a silent Noop fallback.
+
+**[HIGH/GATED] API-05 — GET /v1/accounts/{g}/movements with ?asset= silently skips post-P23 (Postgres-tail) rows once pagination crosses into the ClickHouse archive range**
+- loc: internal/api/v1/explorer/movements.go:210-224, internal/api/v1/explorer/movements.go:236-250, internal/api/v1/explorer/movements.go:271-317
+- fix: Push the asset filter into the Postgres query (like direction) so PG pages are not under-filled, or keep separate per-store cursors so an exhausted-looking side is not advanced past unread rows.
+
+**[HIGH/GATED] billing-downgrade-enforcement — [absence] There is no path that LOWERS a customer's per-key rate-limit budget when their Stripe subscription is cancelled or lapses. handleStripeSubscriptionEvent (customer.subscription.deleted) only sets account.Tier=Free; it never walks the account's Redis- or Postgres-backed keys to reduce RateLimitPerMin. The only mutator that can lower a limit (RedisAPIKeyStore.UpdateRateLimit / platform.APIKeyStore.Update) is called exclusively on the UP path (upgradeAllKeys / applyAccountTierAndKeyUpgrade). The enforced limit is read straight from the key record (apikey_postgres.go:179-182 `rateLimit := pgKey.RateLimitPerMin`, account override is an upward FLOOR only; apikey_redis.go:242 returns the stored value) with no clamp to account.Tier.**
+- loc: internal/api/v1/stripe_webhook.go:496-553, internal/auth/apikey_postgres.go:179-182, internal/auth/apikey_redis.go:242
+- fix: add the missing control
+
+**[HIGH/GATED] rate-limit-quota — [absence] POST /v1/account/keys (self-service, Redis-backed) has no per-account active-key quota. handleAccountKeysCreate (internal/api/v1/account.go:381-471) mints a key on every call with no count check, and RedisAPIKeyStore.Create (internal/auth/store.go:133-191) writes the record unconditionally — no SCAN/count of existing keys for the identifier, no cap passed in. The parallel dashboard mint path (dashboardkeys.HandleCreate) DOES enforce a tier quota via checkQuota + the store's atomic maxKeys gate; the self-service path does not.**
+- loc: internal/api/v1/account.go:381, internal/api/v1/account.go:439, internal/auth/store.go:133
+- fix: add the missing control
+
+**[HIGH/GATED] error-handling-deadletter — [absence] The 'customer paid but has no keys for identifier' webhook outcome (stripe_webhook.go:355-368) and the permanently-failing per-key/platform upgrade outcome are terminated by acking 200 + a single WARN log + marking the dedupe row processed. There is no durable dead-letter queue, follow-up task, or alert-backed remediation that guarantees the paid customer is eventually reconciled — once processed_at is stamped, Stripe stops retrying and the successful-payment-without-provisioning is only recoverable by a human noticing a log line.**
+- loc: internal/api/v1/stripe_webhook.go:355-368, internal/api/v1/stripe_webhook.go:870-893
+- fix: add the missing control
+

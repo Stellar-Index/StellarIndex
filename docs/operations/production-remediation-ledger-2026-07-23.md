@@ -126,3 +126,19 @@ The multi-agent cold code audit found what live-probing structurally couldn't. C
 | A2-H-supplydrift (DAT-10) | HIGH | claimable_balances + liquidity_pools observers never emit removals → served total/circulating supply over-counts | emit removal events |
 | A2-H-gapblind (DAT-09 ×2) | HIGH | TolerateTrailingMissing masks mid-range archive holes; blend_backstop genesis 5.1M ledgers too late → gap-detect blinded | fix tolerance to trailing-only; correct genesis ledgers |
 | A2-H-census (INT-01) | HIGH | census counts SDEX trades the decoder drops → count vs served mismatch | align census to decoder's drop rules |
+
+## Audit code-findings (chunk 3 — api/auth/security, 2026-07-24)
+
+110 CONFIRMED (16 high, 67 med, 25 low) — full run, no limit. Full list in findings.md. Key highs:
+
+| ID | Sev | Finding | Fix |
+|---|---|---|---|
+| A3-H-rlfailopen (REL-06) | HIGH | rate-limiter fails OPEN under flapping Redis (1 success/<30s resets dwell clock) → defeats rate-limit + auth brute-force + signup throttle (runtime-verified) | trip fail-closed on consecutive-failure count / error-rate, not last-success timestamp; circuit breaker shared across limiters |
+| A3-H-unauthDoS (PRF-03 ×3) | HIGH | unauth /holders (2 FINAL scans 43.6M rows), AccountState (2 account_id FINAL reads), /contracts (365d GROUP BY billions) exhaust 8-conn pool → whole-API DoS | cache + bound + auth/ratelimit these; account-ordered access (ties C-F1) |
+| A3-H-ssecrash (AGT-12 ×2, REL-05 ×2) | HIGH | SSE producer goroutines no panic-recovery → one panic crashes process; Hub topic map unbounded; caps enforced after attacker-keyed topic created | recover() per producer; bound topic map; enforce caps before topic create |
+| A3-H-sep10dead (AGT-11) | HIGH | SEP-10 auth dead-on-arrival: two-phase validator build errors on nil-rdb first pass | fix the nil-rdb build path |
+| A3-H-emaildrop (NTF-11, NTF-13) | HIGH | missing Resend key silently drops magic-link email while reporting 'sent'; retry budget 8h not documented 72h | fail-closed on missing key; fix retry budget |
+| A3-H-movetail (API-05) | HIGH | /accounts/{g}/movements ?asset= silently skips post-P23 Postgres-tail rows after pagination | paginate across both stores |
+| A3-H-absence (negative-space) | HIGH | no kill-switch to suspend/close an account; no billing-downgrade rate-limit enforcement; no per-account active-key quota; Stripe 'paid-but-no-keys' no dead-letter | build the kill-switch, downgrade enforcement, key quota, dead-letter |
+
+**229 confirmed across chunks 1–3 (1 crit, 36 high). Chunks 4–6 pending.**
