@@ -485,11 +485,16 @@ func streamHot(
 
 // walkDataStore builds the buffered storage backend over `store`
 // and runs the GetLedger walk — the shared tail of [streamTiered]
-// and [streamHot]. Closes the backend (and thereby the store) on
-// return. Behavioural parity with the SDK's
-// ingest.ApplyLedgerMetadata loop: same from-clamp (max(2, From)),
-// same GetLedger loop, same error wrapping — except single-ledger
-// bounded ranges are accepted (see [validateRange]).
+// and [streamHot]. Closes `store` itself on every return path (AGT-08,
+// audit-2026-07-23): the SDK's BufferedStorageBackend.Close only
+// closes its internal ledger buffer, NOT the underlying
+// datastore.DataStore it was built over — this docstring previously
+// claimed backend.Close() closed the store "thereby", which was
+// false, and walkDataStore leaked the store's open connections/file
+// handles on every non-early-return path. Behavioural parity with the
+// SDK's ingest.ApplyLedgerMetadata loop: same from-clamp (max(2,
+// From)), same GetLedger loop, same error wrapping — except
+// single-ledger bounded ranges are accepted (see [validateRange]).
 func walkDataStore(
 	ctx context.Context,
 	cfg Config,
@@ -498,16 +503,16 @@ func walkDataStore(
 	buffered ledgerbackend.BufferedStorageBackendConfig,
 	callback func(xdr.LedgerCloseMeta) error,
 ) error {
+	defer func() { _ = store.Close() }()
+
 	schema, err := datastore.LoadSchema(ctx, store, cfg.DataStore)
 	if err != nil {
-		_ = store.Close()
 		return fmt.Errorf("ledgerstream: load schema: %w", err)
 	}
 
 	var backend ledgerbackend.LedgerBackend
 	backend, err = ledgerbackend.NewBufferedStorageBackend(buffered, store, schema)
 	if err != nil {
-		_ = store.Close()
 		return fmt.Errorf("ledgerstream: new buffered storage backend: %w", err)
 	}
 	if cfg.Registry != nil {
