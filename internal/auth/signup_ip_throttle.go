@@ -158,7 +158,14 @@ func (t *RedisSignupIPThrottle) CheckIP(ctx context.Context, ip string) error {
 	// most 2× the cap during a window-crossing burst, which is
 	// acceptable for an abuse-prevention threshold (not for a strict
 	// billing meter).
-	count, err := t.counter.Incr(ctx, t.keyPrefix+ip)
+	//
+	// The address is masked to its throttle-key identity first — see
+	// [throttleIPKey]. Keying on the caller's exact IPv6 /128 made this
+	// cap free to bypass: one delegated /64 is 2^64 distinct addresses,
+	// each landing on its own empty bucket, so the bulk-account-mint
+	// vector F-1232 exists to close was open to anyone with IPv6
+	// (audit-2026-07-23).
+	count, err := t.counter.Incr(ctx, t.keyPrefix+throttleIPKey(ip))
 	if err != nil {
 		if t.observeRedisFailure() {
 			return ErrThrottleUnavailable
