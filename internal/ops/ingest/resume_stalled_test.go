@@ -459,16 +459,19 @@ func TestSdexGapTarget(t *testing.T) {
 
 // TestPlanResumeStalled_FilterSemantics verifies the cursor-list →
 // plan-list filter chain without touching Postgres: it operates on a
-// pre-built slice that mimics what ListCursors would return. (The
-// real planResumeStalled wraps store.ListCursors; this test exercises
-// the post-list filter logic via a parallel helper to avoid the
-// testcontainers cost for what is pure CPU work.)
+// pre-built slice that mimics what ListCursors would return, and
+// calls the REAL matchesSourceFilter helper planResumeStalled uses
+// (not a re-implementation) so this test can't drift from the actual
+// filter behaviour. (The real planResumeStalled wraps
+// store.ListCursors; this test exercises the post-list filter logic
+// via a parallel helper to avoid the testcontainers cost for what is
+// pure CPU work.)
 //
-// Filter precedence: source-prefix → min-lag → source-filter substring
-// → max-resumes cap. The order matters: a stalled defindex cursor
-// behind a min-lag cutoff is filtered out before the substring
-// check applies, so an operator's --max-resumes count covers the
-// post-filter population (not the raw row count).
+// Filter precedence: source-prefix → min-lag → source-filter (decoder
+// portion only — see matchesSourceFilter / AGT-08). -max-resumes is
+// NOT part of this chain any more: it is applied by applyMaxResumesCap
+// AFTER the data-gap gate, so it is covered by
+// TestApplyMaxResumesCap_AppliesAfterGate instead.
 func TestPlanResumeStalled_FilterSemantics(t *testing.T) {
 	now := time.Now().UTC()
 	rows := []timescale.Cursor{
@@ -482,22 +485,25 @@ func TestPlanResumeStalled_FilterSemantics(t *testing.T) {
 		{Source: "ledgerstream", Sub: "", LastLedger: 62000000, UpdatedAt: now.Add(-5 * time.Hour)},
 		// 4: backfill, stale 3 h, defindex substring
 		{Source: "backfill", Sub: "700-800:defindex", LastLedger: 750, UpdatedAt: now.Add(-3 * time.Hour)},
+		// 5: backfill, stale 6 h, "800" only appears in the ledger-range
+		// prefix (900-800800 is contrived but the point stands: a
+		// sourceFilter of "800" must NOT match on digits in the range).
+		{Source: "backfill", Sub: "900000800-901000000:aquarius", LastLedger: 900000900, UpdatedAt: now.Add(-6 * time.Hour)},
 	}
 
-	// We test the post-store-call filter logic in isolation by
-	// re-implementing the same selection rules planResumeStalled does
-	// after the store call returns. Keeps the test pure-Go.
 	cases := []struct {
 		name         string
 		minLag       time.Duration
 		sourceFilter string
-		maxResumes   int
 		wantSubs     []string
 	}{
 		{
-			name:     "all backfill stalls over 1h",
-			minLag:   time.Hour,
-			wantSubs: []string{"300-400:sdex,aquarius", "500-600:defindex,soroswap-router", "700-800:defindex"},
+			name:   "all backfill stalls over 1h",
+			minLag: time.Hour,
+			wantSubs: []string{
+				"300-400:sdex,aquarius", "500-600:defindex,soroswap-router",
+				"700-800:defindex", "900000800-901000000:aquarius",
+			},
 		},
 		{
 			name:         "filter to defindex substring",
@@ -506,15 +512,15 @@ func TestPlanResumeStalled_FilterSemantics(t *testing.T) {
 			wantSubs:     []string{"500-600:defindex,soroswap-router", "700-800:defindex"},
 		},
 		{
-			name:       "max-resumes caps after filter",
-			minLag:     time.Hour,
-			maxResumes: 2,
-			wantSubs:   []string{"300-400:sdex,aquarius", "500-600:defindex,soroswap-router"},
+			name:         "filter digits that only appear in the ledger range must NOT match (AGT-08)",
+			minLag:       time.Hour,
+			sourceFilter: "800",
+			wantSubs:     nil,
 		},
 		{
 			name:     "raised min-lag prunes more",
 			minLag:   4 * time.Hour,
-			wantSubs: []string{"500-600:defindex,soroswap-router"},
+			wantSubs: []string{"500-600:defindex,soroswap-router", "900000800-901000000:aquarius"},
 		},
 		{
 			name:     "min-lag above any stall — empty",
@@ -523,7 +529,7 @@ func TestPlanResumeStalled_FilterSemantics(t *testing.T) {
 		},
 	}
 
-	filter := func(rows []timescale.Cursor, minLag time.Duration, src string, maxResumes int) []string {
+	filter := func(rows []timescale.Cursor, minLag time.Duration, src string) []string {
 		var out []string
 		for _, c := range rows {
 			if len(c.Source) < len("backfill") || c.Source[:8] != "backfill" {
@@ -532,24 +538,98 @@ func TestPlanResumeStalled_FilterSemantics(t *testing.T) {
 			if now.Sub(c.UpdatedAt) < minLag {
 				continue
 			}
-			if src != "" && !contains(c.Sub, src) {
+			if !matchesSourceFilter(c.Sub, src) {
 				continue
 			}
 			out = append(out, c.Sub)
-			if maxResumes > 0 && len(out) >= maxResumes {
-				break
-			}
 		}
 		return out
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := filter(rows, tc.minLag, tc.sourceFilter, tc.maxResumes)
+			got := filter(rows, tc.minLag, tc.sourceFilter)
 			if !reflect.DeepEqual(got, tc.wantSubs) {
 				t.Errorf("subs = %v, want %v", got, tc.wantSubs)
 			}
 		})
+	}
+}
+
+// TestMatchesSourceFilter_DecoderPortionOnly is the AGT-08 regression:
+// the filter must match only the decoder-CSV portion of sub_source,
+// never the numeric <from>-<to> range prefix.
+func TestMatchesSourceFilter_DecoderPortionOnly(t *testing.T) {
+	cases := []struct {
+		name   string
+		sub    string
+		filter string
+		want   bool
+	}{
+		{"empty filter matches everything", "100-200:sdex", "", true},
+		{"decoder substring matches", "62200000-62210000:aquarius,band,sdex", "band", true},
+		{"digits present ONLY in the ledger range must not match", "900000800-901000000:aquarius", "800", false},
+		{"digits present in the decoder portion DO match", "100-200:reflector-cex", "cex", true},
+		{"no colon — degrades to whole-string match", "not-a-range-800", "800", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := matchesSourceFilter(tc.sub, tc.filter); got != tc.want {
+				t.Errorf("matchesSourceFilter(%q, %q) = %v, want %v", tc.sub, tc.filter, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestApplyMaxResumesCap_AppliesAfterGate is the AGT-08 regression for
+// the OTHER half of the finding: the cap must count only genuinely
+// actionable (non-skip) plans, and any actionable plan past the cap
+// is marked skip (not silently dropped or, worse, never gathered).
+func TestApplyMaxResumesCap_AppliesAfterGate(t *testing.T) {
+	plans := []stalledCursorPlan{
+		{cursor: timescale.Cursor{Sub: "a"}, skip: true, skipReason: "gated out"},
+		{cursor: timescale.Cursor{Sub: "b"}}, // actionable #1
+		{cursor: timescale.Cursor{Sub: "c"}}, // actionable #2
+		{cursor: timescale.Cursor{Sub: "d"}}, // actionable #3 — should be capped
+		{cursor: timescale.Cursor{Sub: "e"}, skip: true, skipReason: "gated out"},
+	}
+	got := applyMaxResumesCap(plans, 2)
+
+	var actionable []string
+	for _, p := range got {
+		if !p.skip {
+			actionable = append(actionable, p.cursor.Sub)
+		}
+	}
+	if want := []string{"b", "c"}; !reflect.DeepEqual(actionable, want) {
+		t.Fatalf("actionable after cap = %v, want %v", actionable, want)
+	}
+	// "d" was genuinely actionable (not gate-skipped) but past the cap
+	// — it must be marked skip WITH a distinct reason, not silently
+	// vanish and not be conflated with a real gate-skip.
+	if !got[3].skip || got[3].skipReason == "" || got[3].skipReason == "gated out" {
+		t.Fatalf("plan 'd' (past cap) = skip=%v reason=%q, want skip=true with a cap-specific reason", got[3].skip, got[3].skipReason)
+	}
+	// Already-gate-skipped plans are untouched and don't count toward
+	// the cap.
+	if !got[0].skip || got[0].skipReason != "gated out" {
+		t.Fatalf("plan 'a' must remain untouched, got skip=%v reason=%q", got[0].skip, got[0].skipReason)
+	}
+}
+
+// TestApplyMaxResumesCap_ZeroMeansNoCap: -max-resumes 0 (the default)
+// must not skip anything.
+func TestApplyMaxResumesCap_ZeroMeansNoCap(t *testing.T) {
+	plans := []stalledCursorPlan{
+		{cursor: timescale.Cursor{Sub: "a"}},
+		{cursor: timescale.Cursor{Sub: "b"}},
+		{cursor: timescale.Cursor{Sub: "c"}},
+	}
+	got := applyMaxResumesCap(plans, 0)
+	for i, p := range got {
+		if p.skip {
+			t.Fatalf("plan %d unexpectedly skipped with cap=0: %+v", i, p)
+		}
 	}
 }
 

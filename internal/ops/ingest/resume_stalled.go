@@ -252,6 +252,61 @@ func overlapsAnyDataGap(from, to uint32, gaps []timescale.LedgerGap) bool {
 	return false
 }
 
+// applyMaxResumesCap truncates the ACTIONABLE (non-skip) subset of
+// plans to at most maxResumes, marking any excess actionable plans as
+// skipped with a clear reason rather than dropping them from the
+// printed plan. maxResumes<=0 means no cap. MUST run AFTER
+// gateAgainstDataGaps (AGT-08): applying the cap to raw candidates
+// before gating could act on zero real gaps while cursors past the
+// cap boundary that WERE genuinely actionable never even got a
+// chance to run.
+func applyMaxResumesCap(plans []stalledCursorPlan, maxResumes int) []stalledCursorPlan {
+	if maxResumes <= 0 {
+		return plans
+	}
+	out := make([]stalledCursorPlan, len(plans))
+	copy(out, plans)
+	kept := 0
+	for i := range out {
+		if out[i].skip {
+			continue
+		}
+		if kept >= maxResumes {
+			out[i].skip = true
+			out[i].skipReason = fmt.Sprintf("max-resumes cap (%d) reached — genuinely actionable, deferred to a future run", maxResumes)
+			continue
+		}
+		kept++
+	}
+	return out
+}
+
+// decoderPortion returns the decoder-CSV portion of a backfill
+// cursor's sub_source ("<from>-<to>:<decoders>") — everything after
+// the first ':'. Falls back to the whole string when there is no
+// colon (a malformed sub_source that parseStalledCursor will reject
+// on its own merits; matchesSourceFilter just degrades gracefully
+// rather than never matching).
+func decoderPortion(sub string) string {
+	if i := strings.IndexByte(sub, ':'); i >= 0 {
+		return sub[i+1:]
+	}
+	return sub
+}
+
+// matchesSourceFilter reports whether a cursor's sub_source should be
+// selected under -source-filter. The filter is matched ONLY against
+// the decoder-CSV portion, never the numeric `<from>-<to>` ledger
+// range prefix — otherwise a filter substring that happens to appear
+// in a ledger number (e.g. "22") could sweep in unrelated cursors
+// whose FROM/TO digits merely contain it (AGT-08).
+func matchesSourceFilter(sub, filter string) bool {
+	if filter == "" {
+		return true
+	}
+	return strings.Contains(decoderPortion(sub), filter)
+}
+
 // parseStalledCursor extracts the from/to/decoder triple from a
 // backfill cursor's sub_source ("<from>-<to>:<decoders>") and
 // computes the remaining resume range. Returns a plan with
@@ -387,7 +442,14 @@ func resumeStalled(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	plans, err := planResumeStalled(rootCtx, store, opts.minLag, opts.sourceFilter, opts.maxResumes)
+	// maxResumes is intentionally NOT passed to planResumeStalled: it
+	// gathers every matching candidate, and the cap is applied AFTER
+	// gateAgainstDataGaps below (AGT-08) — capping candidates before
+	// gating could exhaust the cap on cursors the gate would have
+	// skipped as false-positives, silently acting on zero real gaps
+	// while genuinely-actionable cursors past the raw-candidate cap
+	// boundary were never even gathered.
+	plans, err := planResumeStalled(rootCtx, store, opts.minLag, opts.sourceFilter)
 	if err != nil {
 		return fmt.Errorf("plan: %w", err)
 	}
@@ -419,6 +481,7 @@ func resumeStalled(args []string) error {
 		}
 	}
 	plans = gateAgainstDataGaps(plans, dataGaps, classicGate, opts.forceClassic)
+	plans = applyMaxResumesCap(plans, opts.maxResumes)
 
 	actionable := 0
 	for _, p := range plans {
@@ -601,12 +664,16 @@ func runResumeForCursor(
 // planResumeStalled is the read-side of the subcommand: gather + filter
 // + compute plans, no side effects. Split out so the dry-run path uses
 // the exact same logic as the apply path.
+//
+// Gathers EVERY matching candidate — no -max-resumes cap here. The cap
+// is applied by applyMaxResumesCap, AFTER gateAgainstDataGaps, so it
+// counts genuinely-actionable cursors rather than raw candidates
+// (AGT-08).
 func planResumeStalled(
 	ctx context.Context,
 	store *timescale.Store,
 	minLag time.Duration,
 	sourceFilter string,
-	maxResumes int,
 ) ([]stalledCursorPlan, error) {
 	rows, err := store.ListCursors(ctx)
 	if err != nil {
@@ -622,13 +689,10 @@ func planResumeStalled(
 		if lag < minLag {
 			continue
 		}
-		if sourceFilter != "" && !strings.Contains(c.Sub, sourceFilter) {
+		if !matchesSourceFilter(c.Sub, sourceFilter) {
 			continue
 		}
 		plans = append(plans, parseStalledCursor(c))
-		if maxResumes > 0 && len(plans) >= maxResumes {
-			break
-		}
 	}
 	return plans, nil
 }
