@@ -111,28 +111,37 @@ type chunkResult struct {
 	CheckpointsMissed int
 }
 
-// stitchChunks validates the boundary between adjacent chunks: the
-// last hash of chunk[i] must equal the first PreviousLedgerHash of
-// chunk[i+1], AND chunk[i].LastSeq + 1 must equal chunk[i+1].FirstSeq
-// (no gap). Returns nil when every adjacent pair stitches cleanly.
+// stitchChunks validates the boundary between adjacent NON-EMPTY
+// chunks: the last hash of the left chunk must equal the first
+// PreviousLedgerHash of the right chunk, AND left.LastSeq + 1 must
+// equal right.FirstSeq (no gap). Returns nil when every consecutive
+// non-empty pair stitches cleanly.
 //
-// Single-chunk results have no boundary to check; they pass.
+// Single-chunk (or single-non-empty-chunk) results have no boundary
+// to check; they pass.
 //
-// Empty chunks (zero ledgers processed) are skipped — the SDK's
-// stream may legitimately yield zero ledgers for ranges before a
-// bucket exists. Two adjacent empty chunks pass; an empty chunk
-// between two non-empty chunks creates a hole that surfaces as a
-// boundary mismatch on the surrounding pair.
+// Empty chunks (zero ledgers processed — the SDK's stream may
+// legitimately yield zero ledgers for ranges before a bucket exists)
+// are skipped when choosing WHICH pairs to compare, but never skip
+// the check itself (DAT-11): the boundary is re-targeted at the
+// nearest non-empty neighbours on each side, so an empty chunk
+// sitting between two non-empty chunks — which would mask a genuine
+// mid-range hole if the check were skipped outright — still surfaces
+// as a seq/hash mismatch between those surrounding chunks. An empty
+// chunk cannot silently absorb an interior gap.
 func stitchChunks(results []chunkResult) error {
-	if len(results) <= 1 {
+	nonEmpty := make([]chunkResult, 0, len(results))
+	for _, r := range results {
+		if r.Verified > 0 {
+			nonEmpty = append(nonEmpty, r)
+		}
+	}
+	if len(nonEmpty) <= 1 {
 		return nil
 	}
-	for i := 0; i < len(results)-1; i++ {
-		left := results[i]
-		right := results[i+1]
-		if left.Verified == 0 || right.Verified == 0 {
-			continue
-		}
+	for i := 0; i < len(nonEmpty)-1; i++ {
+		left := nonEmpty[i]
+		right := nonEmpty[i+1]
 		if left.LastSeq+1 != right.FirstSeq {
 			return fmt.Errorf("chunk[%d→%d] boundary gap: chunk[%d].LastSeq=%d, chunk[%d].FirstSeq=%d",
 				left.Idx, right.Idx, left.Idx, left.LastSeq, right.Idx, right.FirstSeq)
