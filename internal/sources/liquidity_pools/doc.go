@@ -19,12 +19,24 @@
 // (none on the protocol roadmap at v1) would extend the type
 // switch in `extractFromChange`.
 //
-// # Removed-variant
+// # Removed-variant (pool emptied and deleted)
 //
 // LedgerKey for an LP carries only the PoolId — not the asset
-// pair. So Removed-variant changes can't be asset-key-filtered
-// at the observer level. Same handling as claimable_balances:
-// Match returns false for all Removed pool changes; the writer-
-// side lookup follow-up lands when the Sum overcount is
-// measurable in production.
+// pair. So a Removed-variant change can't be asset-key-filtered
+// from the change itself.
+//
+// Same handling as claimable_balances: stellar-core emits the full
+// pre-image as a LEDGER_ENTRY_STATE change immediately before the
+// LEDGER_ENTRY_REMOVED for the same entry, so the observer consumes
+// State changes, memoizes pool_id → watched asset_keys for the
+// duration of the ledger walk, and emits one removal Observation per
+// watched side (Balance zero, IsRemoval true) when the pool entry is
+// deleted. Removals it cannot attribute stay unmatched.
+//
+// This matters for money: the served total is
+// Trustline + Claimable + LPReserve + SACWrapped
+// ([supply.ClassicComputer.Compute]), so reserves of a withdrawn-and-
+// deleted pool would otherwise be counted forever, drifting total and
+// circulating supply (and market cap / FDV) upward without bound.
+// (audit-2026-07-23 DAT-10)
 package liquidity_pools
