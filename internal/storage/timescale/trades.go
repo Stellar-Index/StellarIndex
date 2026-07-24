@@ -567,6 +567,9 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	if err := t.Validate(); err != nil {
 		return err
 	}
+	if err := s.reDeriveResolverGuard(); err != nil {
+		return err
+	}
 
 	// One statement, two effects, fully atomic:
 	//   1. Upsert the trade (idempotent-corrective on its PK). On
@@ -833,6 +836,9 @@ func (s *Store) scanBatchTradeOutcome(ctx context.Context, query string, args []
 func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade) error {
 	if len(trades) == 0 {
 		return nil
+	}
+	if err := s.reDeriveResolverGuard(); err != nil {
+		return err
 	}
 
 	// Deterministic PK order WITHIN the batch (2026-07-05 deadlock

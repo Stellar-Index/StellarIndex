@@ -136,6 +136,24 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	// Harmless in the default dry-run (no writes occur until -write).
 	store.SetDeriveGeneration(time.Now().Unix())
 
+	// A-CRIT-1 (audit-2026-07-24): the positive generation stamped above makes
+	// every trade this rebuild writes WIN the ON CONFLICT guard, and
+	// InsertTrade/BatchInsertTrades then assign `usd_volume = EXCLUDED.usd_volume`
+	// unconditionally. Without the USD-volume resolvers installed, tradeUSDVolume
+	// returns nil for every on-chain DEX trade and every FX-priced CEX trade, so a
+	// -write run would OVERWRITE correct stored usd_volume with NULL across its
+	// whole range (soroswap/aquarius/phoenix/comet all emit TradeEvents — even the
+	// documented `-source aquarius` rewards catch-up decodes trades in-range).
+	// Install them exactly as ch_rebuild.go / backfill_external.go do; this wiring
+	// was absent here (the destructive combination the sibling tools already fixed).
+	if err := timescale.InstallUSDVolumeResolution(
+		store,
+		cfg.Trades.USDPeggedClassicAssets,
+		cfg.Supply.SACWrappers,
+	); err != nil {
+		return fmt.Errorf("install usd-volume resolution: %w", err)
+	}
+
 	logger := opsutil.MkBackfillLogger()
 
 	// Build the SAME decoder the live projector uses for this source.
