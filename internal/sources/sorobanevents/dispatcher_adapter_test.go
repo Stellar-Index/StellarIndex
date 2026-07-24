@@ -2,10 +2,13 @@ package sorobanevents
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/lib/pq"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
@@ -228,5 +231,123 @@ func TestAsyncSink_StopReleasesBlockedProducers(t *testing.T) {
 	// past the stopping check at close time).
 	if got := sink.DroppedCount(); got == 0 {
 		t.Errorf("DroppedCount = 0, want >0 after shutdown-race")
+	}
+}
+
+// flakyWriter fails its first failN calls with failWith, then
+// succeeds. failN == -1 means "always fail" (used to pin the
+// permanent-fault path, which must never retry).
+type flakyWriter struct {
+	mu      sync.Mutex
+	failErr error
+	failN   int
+	calls   int
+	written [][]Row
+}
+
+func (w *flakyWriter) InsertSorobanEventsBatch(_ context.Context, rows []Row) error {
+	w.mu.Lock()
+	w.calls++
+	call := w.calls
+	w.mu.Unlock()
+	if w.failN < 0 || call <= w.failN {
+		return w.failErr
+	}
+	w.mu.Lock()
+	cp := make([]Row, len(rows))
+	copy(cp, rows)
+	w.written = append(w.written, cp)
+	w.mu.Unlock()
+	return nil
+}
+
+func (w *flakyWriter) callCount() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.calls
+}
+
+// TestAsyncSink_FlushBatch_RetriesInfraFaultUntilItLands is the
+// regression test for audit-2026-07-23 REL-02/DAT-09: before the
+// fix, [AsyncSink.run]'s flush closure made exactly ONE
+// InsertSorobanEventsBatch attempt and, on ANY error — including a
+// plain transient infra fault like "connection refused" — logged a
+// Warn and permanently discarded the batch. There was no retry, no
+// lost-rows counter, and no ERROR-level signal: a sustained Postgres
+// blip silently ate a window of raw soroban_events rows with nothing
+// for an operator to alert on or a range to re-derive.
+//
+// Asserts the CORRECTED behaviour: an unclassified/infra fault is
+// retried with backpressure until it lands — WrittenCount reaches the
+// full row count and LostCount stays zero — matching the ADR-0041
+// asymmetric policy the trades path already has (retry is the
+// default; drop requires positive proof of permanence).
+func TestAsyncSink_FlushBatch_RetriesInfraFaultUntilItLands(t *testing.T) {
+	t.Parallel()
+
+	w := &flakyWriter{failErr: errors.New("dial tcp: connection refused"), failN: 2}
+	sink := NewAsyncSink(w, AsyncSinkOptions{
+		BufferSize:    4,
+		BatchSize:     2,
+		FlushInterval: 10 * time.Second, // disable time-based flush in test
+		WriteTimeout:  time.Second,
+	})
+	sink.Start()
+
+	for i := 0; i < 2; i++ {
+		sink.PushEvent(captureableEvent(t, uint32(4_000_000+i)))
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for sink.WrittenCount() != 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("WrittenCount = %d after 3s, want 2 — infra fault was not retried until it landed (LostCount=%d, writer calls=%d)",
+				sink.WrittenCount(), sink.LostCount(), w.callCount())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	sink.Stop()
+
+	if got := sink.LostCount(); got != 0 {
+		t.Errorf("LostCount = %d, want 0 — a retryable infra fault must never be counted as a permanent loss", got)
+	}
+	if got := w.callCount(); got < 3 {
+		t.Errorf("writer called %d times, want >= 3 (2 induced failures + the attempt that landed)", got)
+	}
+}
+
+// TestAsyncSink_FlushBatch_PermanentFaultCountsLostNotRetried pins
+// the other half of the REL-02/DAT-09 contract: a POSITIVELY
+// classified permanent data fault (pq class 23, e.g. a unique
+// constraint violation) must be counted on LostCount and must NOT be
+// retried forever — retrying a deterministic constraint violation
+// can never succeed and would wedge the sink on a single poison
+// batch.
+func TestAsyncSink_FlushBatch_PermanentFaultCountsLostNotRetried(t *testing.T) {
+	t.Parallel()
+
+	permErr := &pq.Error{Code: "23505", Message: "duplicate key value violates unique constraint"}
+	w := &flakyWriter{failErr: permErr, failN: -1} // always fails
+	sink := NewAsyncSink(w, AsyncSinkOptions{
+		BufferSize:    4,
+		BatchSize:     2,
+		FlushInterval: 10 * time.Second,
+		WriteTimeout:  time.Second,
+	})
+	sink.Start()
+
+	for i := 0; i < 2; i++ {
+		sink.PushEvent(captureableEvent(t, uint32(5_000_000+i)))
+	}
+	sink.Stop()
+
+	if got := sink.LostCount(); got != 2 {
+		t.Errorf("LostCount = %d, want 2 — a permanent data fault must be counted, not silently dropped with no signal", got)
+	}
+	if got := sink.WrittenCount(); got != 0 {
+		t.Errorf("WrittenCount = %d, want 0", got)
+	}
+	if got := w.callCount(); got != 1 {
+		t.Errorf("writer called %d times, want exactly 1 — a permanent fault must not be retried", got)
 	}
 }
