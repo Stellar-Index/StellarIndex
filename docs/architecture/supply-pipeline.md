@@ -1,6 +1,6 @@
 ---
 title: Supply pipeline — three-algorithm derivation, per-asset refresh
-last_verified: 2026-07-10
+last_verified: 2026-07-24
 status: binding
 ---
 
@@ -372,8 +372,9 @@ not just a source-label claim. This table is a pure audit trail — it is
 never read by `ClassicSupplyAt` / `SumSACBalancesAtOrBefore` / the
 computed `Supply` — its purpose is letting an operator (or a future
 `supply_cross_check_divergence` downgrade decision, see
-`notes/ROADMAP.md` §2 "Supply cross-check downgrade") distinguish "this
-pair's divergence is expected — never full-history seeded" from
+`notes/ROADMAP.md` §2 "Supply cross-check downgrade" — a local,
+gitignored working note, not present on a fresh clone) distinguish
+"this pair's divergence is expected — never full-history seeded" from
 "actually anomalous — already full-history seeded and still diverging".
 
 **Operator post-deploy verification.**
