@@ -10,27 +10,36 @@
 // (LedgerEntryTypeClaimableBalance) + asset variant + asset_key
 // map lookup.
 //
-// # Removed-variant scope
+// # Removed-variant handling (a claim)
 //
 // The XDR LedgerKey for claimable balances carries only the
-// BalanceId — not the asset. So a Removed change can't be
-// asset-key-filtered at the observer level (we'd need the prior
-// Created/Updated row's asset to know which watched asset this
-// one belonged to). Two possible handlings:
+// BalanceId — not the asset. So a Removed change cannot be
+// asset-key-filtered from the change itself.
 //
-//  1. Match returns false for all Removed changes. The Sum
-//     query will overcount by the claimed-but-not-recorded
-//     amount per watched asset. For circulating-supply this is
-//     a CONSERVATIVE error (we under-report circulating, treating
-//     claimed-and-gone-from-claimable as "still in claimable") —
-//     better than over-reporting.
-//  2. Match returns true for all Removed; the writer looks up
-//     the prior asset_key from claimable_observations to
-//     populate the removal row.
+// The asset is nevertheless available in the substrate: stellar-core
+// emits the full pre-image as a LEDGER_ENTRY_STATE change
+// immediately before the LEDGER_ENTRY_REMOVED for the same entry
+// (LedgerTxn::getChanges; the SDK's
+// ingest.GetChangesFromLedgerEntryChanges pairs on exactly that
+// adjacency). The observer therefore consumes State changes for
+// watched assets, memoizes claimable_id → asset_key for the
+// duration of the ledger walk, and uses it to attribute the
+// removal. Removals it still cannot attribute (unwatched asset, or
+// no pre-image seen) stay unmatched.
 //
-// This PR ships option 1. If/when the Sum overcount becomes
-// measurable in production, option 2 lands as a writer-side
-// follow-up — the observer interface stays unchanged.
+// Emitting the removal is not optional bookkeeping: the served
+// total is Trustline + Claimable + LPReserve + SACWrapped
+// ([supply.ClassicComputer.Compute]), so a claimable balance that is
+// created and never removed is counted forever — total AND
+// circulating supply (and market cap / FDV downstream) drift upward
+// without bound. The pre-fix behaviour OVER-reported both; it was
+// not the conservative direction. (audit-2026-07-23 DAT-10)
+//
+// Removal is written as an absorbing state (is_removal=true,
+// balance 0) rather than a decrement, so re-ingesting a ledger
+// rewrites the identical row instead of double-subtracting, and a
+// create+claim inside one ledger collapses to the removal via the
+// writer's intra_ledger_seq-guarded upsert.
 //
 // # Why classic-only
 //
