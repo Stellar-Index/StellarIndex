@@ -382,15 +382,18 @@ func TestBucket_DwellTime_FailsClosedAfterWindow(t *testing.T) {
 	}
 }
 
-// TestBucket_DwellTime_SuccessResetsClock pins the recovery
-// semantic: a single Redis success after the clock arms wipes it,
-// so a later error starts a fresh window.
+// TestBucket_DwellTime_FlapVsSustainedRecovery pins the REL-06 recovery
+// semantic: a SINGLE Redis success must NOT reset the fail-closed dwell clock
+// (a flapping Redis with occasional successes still trips fail-closed after
+// dwellTime); only a SUSTAINED healthy streak (dwellTime of unbroken successes)
+// clears it and restores fail-open. The prior behaviour — one success wipes the
+// clock — let a flapping Redis (1 success/<dwellTime) keep this throttle, and the
+// auth brute-force + signup throttles that share the Bucket type, fail-open
+// indefinitely while Redis was effectively down.
 //
-// We can't toggle a real Redis connection mid-test, so this uses
-// a faultInjector wrapping the redis.Cmdable interface — phases
-// of the test flip its `fail` flag to drive error / success
-// sequences deterministically.
-func TestBucket_DwellTime_SuccessResetsClock(t *testing.T) {
+// A faultInjector wrapping redis.Cmdable + a fake clock drive the sequences
+// deterministically (we can't toggle a real Redis mid-test).
+func TestBucket_DwellTime_FlapVsSustainedRecovery(t *testing.T) {
 	rdb, _ := newRedis(t)
 	fi := &faultInjector{Cmdable: rdb}
 	fakeNow := time.Unix(1_750_000_000, 0)
@@ -398,30 +401,43 @@ func TestBucket_DwellTime_SuccessResetsClock(t *testing.T) {
 		ratelimit.WithClock(func() time.Time { return fakeNow }),
 		ratelimit.WithDwellTime(30*time.Second),
 	)
+	take := func() error { _, err := b.Take(context.Background(), "k"); return err }
 
-	// Phase 1: force error to arm the clock.
+	// Arm the clock with a failure.
 	fi.fail = true
-	if _, err := b.Take(context.Background(), "k"); err == nil {
-		t.Fatal("step 1: want injected err, got nil")
+	if err := take(); err == nil {
+		t.Fatal("arm: want injected err, got nil")
 	}
 
-	// Phase 2: heal Redis + run a success.
+	// FLAPPING: one lucky success, then continued failure past the dwell window.
+	// The stray success must NOT reset the clock → fail-CLOSED (the REL-06 fix).
 	fi.fail = false
-	if _, err := b.Take(context.Background(), "k"); err != nil {
-		t.Fatalf("step 2: want nil after heal, got %v", err)
+	_ = take() // single success
+	fi.fail = true
+	fakeNow = fakeNow.Add(45 * time.Second) // > dwellTime since errors began
+	err := take()
+	if err == nil {
+		t.Fatal("flap: want injected err, got nil")
+	}
+	if !errors.Is(err, ratelimit.ErrThrottleUnavailable) {
+		t.Fatalf("flap: a stray success must not reset the dwell clock — want fail-CLOSED (ErrThrottleUnavailable), got %v", err)
 	}
 
-	// Phase 3: re-break + advance past original dwell window.
-	// Step 2's success cleared the clock, so this error starts a
-	// fresh window and must fail-OPEN (wrapped Redis err), not 503.
+	// SUSTAINED RECOVERY: heal Redis and keep succeeding for > dwellTime. The
+	// first success starts the healthy streak; after dwellTime of unbroken
+	// successes the clock clears, so a later failure opens a fresh window and
+	// fails OPEN (wrapped err), not 503.
+	fi.fail = false
+	_ = take()                              // healthySince starts here
+	fakeNow = fakeNow.Add(31 * time.Second) // sustained healthy streak > dwellTime
+	_ = take()                              // clears redisErrorSince
 	fi.fail = true
-	fakeNow = fakeNow.Add(45 * time.Second)
-	_, err := b.Take(context.Background(), "k")
+	err = take()
 	if err == nil {
-		t.Fatal("step 3: want injected err, got nil")
+		t.Fatal("recovered: want injected err, got nil")
 	}
 	if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
-		t.Fatalf("step 3: success in step 2 should have reset the dwell-clock; got ErrThrottleUnavailable")
+		t.Fatalf("recovered: a sustained recovery should have cleared the clock — want fail-OPEN, got ErrThrottleUnavailable")
 	}
 }
 
