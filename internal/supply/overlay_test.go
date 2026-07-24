@@ -269,6 +269,71 @@ func TestOverlay_RejectsZeroOrBelowCirculating(t *testing.T) {
 	})
 }
 
+// TestOverlay_RejectsBelowTotalDeclaration is the DOM-02 guard. The
+// M14 floor was CIRCULATING, but circulating is total minus the
+// issuer/admin/locked exclusions — so an issuer declaring a max that
+// sits BETWEEN circulating and total cleared the old guard while still
+// asserting the impossible max_supply < total_supply. The floor must
+// be total.
+func TestOverlay_RejectsBelowTotalDeclaration(t *testing.T) {
+	usdc, _ := canonical.NewClassicAsset("USDC", validIssuer)
+	// 1000 minted, 400 of it sitting on the issuer → circulating 600.
+	newSnap := func() supply.Supply {
+		return supply.Supply{
+			AssetKey: "USDC:GA1", TotalSupply: big.NewInt(1000),
+			CirculatingSupply: big.NewInt(600),
+			MaxSupply:         nil, Basis: supply.BasisIssuerExclusion,
+		}
+	}
+
+	t.Run("max between circulating and total is not applied", func(t *testing.T) {
+		resolver := &stubMetadataResolver{raw: "800", ok: true}
+		got, applied, err := supply.Overlay(context.Background(), newSnap(), usdc, resolver)
+		if err != nil {
+			t.Fatalf("Overlay: %v", err)
+		}
+		if applied {
+			t.Error("applied=true for max=800 with total=1000; expected false")
+		}
+		if got.MaxSupply != nil {
+			t.Errorf("MaxSupply = %s, want nil — 800 < total 1000 is self-contradictory", got.MaxSupply)
+		}
+		if got.Basis != supply.BasisIssuerExclusion {
+			t.Errorf("Basis = %q, want unchanged %q", got.Basis, supply.BasisIssuerExclusion)
+		}
+	})
+
+	t.Run("max == total is applied (boundary)", func(t *testing.T) {
+		resolver := &stubMetadataResolver{raw: "1000", ok: true}
+		got, applied, err := supply.Overlay(context.Background(), newSnap(), usdc, resolver)
+		if err != nil {
+			t.Fatalf("Overlay: %v", err)
+		}
+		if !applied {
+			t.Fatal("applied=false for max == total; the boundary is legitimate")
+		}
+		if got.MaxSupply == nil || got.MaxSupply.String() != "1000" {
+			t.Errorf("MaxSupply = %v, want 1000", got.MaxSupply)
+		}
+	})
+
+	t.Run("no total: circulating still bounds the declaration", func(t *testing.T) {
+		// TotalSupply nil (not computed for this snapshot) — the
+		// circulating bound must still reject a below-circulating max.
+		snap := newSnap()
+		snap.TotalSupply = nil
+		resolver := &stubMetadataResolver{raw: "500", ok: true}
+		got, applied, err := supply.Overlay(context.Background(), snap, usdc, resolver)
+		if err != nil {
+			t.Fatalf("Overlay: %v", err)
+		}
+		if applied || got.MaxSupply != nil {
+			t.Errorf("applied=%v MaxSupply=%v, want the 500 < circulating 600 declaration rejected",
+				applied, got.MaxSupply)
+		}
+	})
+}
+
 // TestOverlay_RejectsUnparseableDeclaration — a non-decimal value
 // (e.g. "TBD" or "~21M") in stellar.toml falls through with
 // applied=false, no error.
