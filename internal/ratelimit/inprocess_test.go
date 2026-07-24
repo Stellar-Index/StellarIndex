@@ -5,6 +5,7 @@ package ratelimit_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -95,6 +96,56 @@ func TestInProcess_WindowRollover(t *testing.T) {
 	fakeNow = fakeNow.Add(61 * time.Second)
 	if r, _ := b.Take(ctx, "k"); !r.Allowed {
 		t.Fatal("after the window rolls over the budget must reset (fixed-window)")
+	}
+}
+
+// TestInProcess_FloodBeyondKeyCap_SharesFailClosedBucket is the REL-05
+// regression, driven through the exported API at the real cap.
+//
+// The attack: a distinct-key flood (>100k unique keys inside one window
+// on one process — well past any real client population) against the
+// Redis-less fallback limiter. Pre-fix every one of those keys was
+// inserted into the map, so the flood chose the limiter's memory
+// footprint and, worse, each insert past 100k dragged a full O(n) scan
+// under the shared mutex. Post-fix the map stops growing at
+// `localStoreMaxKeys` and everything beyond it is folded into ONE shared,
+// fail-CLOSED bucket: the first overflow key consumes the shared budget,
+// the next is denied.
+//
+// The `strconv` key shape mirrors the anon-IP keys the fallback really
+// sees. 100k inserts is ~10 MB and well under a second.
+func TestInProcess_FloodBeyondKeyCap_SharesFailClosedBucket(t *testing.T) {
+	fakeNow := time.Unix(1_700_000_000, 0)
+	b := ratelimit.New(nil, 1, time.Minute,
+		ratelimit.WithClock(func() time.Time { return fakeNow }),
+	)
+	ctx := context.Background()
+
+	// Fill exactly to the cap (localStoreMaxKeys, unexported).
+	const keyCap = 100_000
+	for i := 0; i < keyCap; i++ {
+		if r, _ := b.Take(ctx, "anon:flood-"+strconv.Itoa(i)); !r.Allowed {
+			t.Fatalf("fill %d: first touch of a distinct key must be allowed", i)
+		}
+	}
+
+	// Past the cap: the first overflow key takes the shared bucket's only
+	// slot (limit 1)…
+	if r, _ := b.Take(ctx, "anon:overflow-a"); !r.Allowed {
+		t.Fatal("first key past the cap should still get the shared bucket's first slot")
+	}
+	// …and the next distinct key is DENIED because it shares that bucket
+	// rather than minting its own. This is the line that is RED pre-fix
+	// (every flood key got a private counter and an unbounded map entry).
+	if r, _ := b.Take(ctx, "anon:overflow-b"); r.Allowed {
+		t.Fatal("a distinct key past the key cap must be fail-CLOSED into the shared " +
+			"overflow bucket, not granted a private counter (REL-05)")
+	}
+
+	// A client tracked before the flood keeps its own budget — the cap
+	// must not punish the population it was protecting.
+	if r, _ := b.TakeN(ctx, "anon:flood-0", 2); !r.Allowed {
+		t.Error("a key tracked before the cap must keep its private counter")
 	}
 }
 
