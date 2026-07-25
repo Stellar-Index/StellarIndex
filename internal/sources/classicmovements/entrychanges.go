@@ -347,7 +347,35 @@ func DecodeCAP0038Revocation(ledger uint32, closedAt time.Time, txHash string, o
 		return nil, nil // the common case: no CAP-0038 liquidation triggered here
 	}
 
-	movements := make([]Movement, 0, len(created))
+	// TWO movements per liquidated asset, because two things genuinely
+	// happened on-chain: the trustor exited the pool, AND a claimable
+	// balance was created to hold the proceeds.
+	//
+	// Emitting only the pool-exit leg (the original shape) made the
+	// created balance UNRESOLVABLE, and not for one reason but three
+	// (audit DAT-09): the movement was tagged KindLiquidityPoolWithdraw
+	// so the resolver's `Kind == KindClaimableBalanceCreate` index gate
+	// skipped it; the id lived under `claimable_balance_id` while every
+	// other site — and the ClickHouse lookup's external table — keys on
+	// `balance_id`; and cbLookupCreatesQuery filters
+	// `movement_kind = 'claimable_balance_create'`, structurally
+	// excluding it. A later legitimate claim or clawback against that
+	// balance therefore resolved to nothing and was dropped, silently and
+	// permanently, even though the asset/amount/id were all known here.
+	//
+	// Fixing it by broadening the ClickHouse predicate was the obvious
+	// route and is the wrong one: that `movement_kind` filter is a
+	// LowCardinality PREWHERE doing real work — it scopes the semijoin to
+	// the cb-create rows (~2.5 min over 695M rows at 4 threads, per its
+	// own measurement). Widening it to include every liquidity-pool
+	// withdraw would regress the hot path to fix a rare case. Emitting the
+	// row that actually describes reality costs nothing on the read side
+	// and needs no query change at all.
+	//
+	// LegIndex: the pool-exit legs keep indices [0, len(created)), exactly
+	// as before, so rows already written retain their primary key. The
+	// create legs are appended above that range rather than interleaved.
+	movements := make([]Movement, 0, 2*len(created))
 	for i, cb := range created {
 		movements = append(movements, Movement{
 			Kind:            KindLiquidityPoolWithdraw,
@@ -362,9 +390,37 @@ func DecodeCAP0038Revocation(ledger uint32, closedAt time.Time, txHash string, o
 			FromAddress:     trustor,
 			ToAddress:       "",
 			Attributes: map[string]any{
-				"revocation":           true,
-				"trigger_op_type":      triggerType,
+				"revocation":      true,
+				"trigger_op_type": triggerType,
+				// Canonical key, matching every other emitter and the
+				// ClickHouse external table. `claimable_balance_id` is kept
+				// alongside it because rows written before this change carry
+				// only that spelling.
+				"balance_id":           cb.BalanceIDHex,
 				"claimable_balance_id": cb.BalanceIDHex,
+			},
+		})
+	}
+	for i, cb := range created {
+		movements = append(movements, Movement{
+			Kind:            KindClaimableBalanceCreate,
+			Provenance:      ProvenanceClassicDerived,
+			Ledger:          ledger,
+			LedgerCloseTime: closedAt,
+			TxHash:          txHash,
+			OpIndex:         opIndex,
+			LegIndex:        uint32(len(created) + i), //nolint:gosec // a handful of pool assets; never near uint32 overflow.
+			Asset:           cb.Asset,
+			Amount:          cb.Amount,
+			FromAddress:     trustor,
+			ToAddress:       "",
+			Attributes: map[string]any{
+				"balance_id": cb.BalanceIDHex,
+				// Marks this create as protocol-derived rather than the
+				// result of an explicit CreateClaimableBalance op, so the
+				// two are distinguishable downstream.
+				"revocation":      true,
+				"trigger_op_type": triggerType,
 			},
 		})
 	}

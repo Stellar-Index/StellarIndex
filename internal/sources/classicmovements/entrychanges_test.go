@@ -329,10 +329,17 @@ func TestDecodeCAP0038Revocation_liquidation_emitsTwoLegs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeCAP0038Revocation: %v", err)
 	}
-	if len(movements) != 2 {
-		t.Fatalf("got %d movements, want 2", len(movements))
+	// Two assets liquidated => FOUR movements: a pool-exit leg and a
+	// claimable-balance-create leg for each. This assertion used to read
+	// `want 2` — it pinned the pool-exit legs only, which is the shape
+	// that made the created balances unresolvable (DAT-09). The per-asset
+	// fan-out it was really testing is unchanged and still checked below.
+	if len(movements) != 4 {
+		t.Fatalf("got %d movements, want 4 (a withdraw leg + a create leg per liquidated asset)", len(movements))
 	}
-	for i, m := range movements {
+	// Pool-exit legs keep indices [0, len(created)) so rows already
+	// written retain their primary key.
+	for i, m := range movements[:2] {
 		if m.Kind != KindLiquidityPoolWithdraw {
 			t.Errorf("movements[%d].Kind = %q, want %q", i, m.Kind, KindLiquidityPoolWithdraw)
 		}
@@ -348,9 +355,45 @@ func TestDecodeCAP0038Revocation_liquidation_emitsTwoLegs(t *testing.T) {
 		if m.LegIndex != uint32(i) { //nolint:gosec // i is a tiny loop index in a test.
 			t.Errorf("movements[%d].LegIndex = %d, want %d", i, m.LegIndex, i)
 		}
+		// The canonical key every other emitter and the ClickHouse
+		// external table use. Its absence was one of the three reasons
+		// these balances could not be resolved.
+		if m.Attributes["balance_id"] == nil || m.Attributes["balance_id"] == "" {
+			t.Errorf("movements[%d] withdraw leg has no balance_id attribute", i)
+		}
+		if m.Attributes["claimable_balance_id"] != m.Attributes["balance_id"] {
+			t.Errorf("movements[%d] legacy claimable_balance_id must mirror balance_id", i)
+		}
+	}
+	// Create legs are appended above the withdraw range.
+	for j, m := range movements[2:] {
+		i := j + 2
+		if m.Kind != KindClaimableBalanceCreate {
+			t.Errorf("movements[%d].Kind = %q, want %q — without a create leg the balance "+
+				"cannot be resolved by the cb-create index or the ClickHouse lookup, both of "+
+				"which key on that kind (DAT-09)", i, m.Kind, KindClaimableBalanceCreate)
+		}
+		if m.Attributes["balance_id"] == nil || m.Attributes["balance_id"] == "" {
+			t.Errorf("movements[%d] create leg has no balance_id attribute", i)
+		}
+		// Distinguishable from an explicit CreateClaimableBalance op.
+		if m.Attributes["revocation"] != true {
+			t.Errorf("movements[%d].Attributes[revocation] = %v, want true", i, m.Attributes["revocation"])
+		}
+		if m.LegIndex != uint32(i) { //nolint:gosec // tiny loop index in a test.
+			t.Errorf("movements[%d].LegIndex = %d, want %d", i, m.LegIndex, i)
+		}
+		// Each create leg must carry the SAME id as its paired withdraw.
+		if m.Attributes["balance_id"] != movements[j].Attributes["balance_id"] {
+			t.Errorf("create leg %d balance_id %v does not match its withdraw leg %v",
+				i, m.Attributes["balance_id"], movements[j].Attributes["balance_id"])
+		}
 	}
 	if movements[0].Amount.String() != "800" || movements[1].Amount.String() != "4000" {
-		t.Errorf("amounts = %s/%s, want 800/4000", movements[0].Amount.String(), movements[1].Amount.String())
+		t.Errorf("withdraw amounts = %s/%s, want 800/4000", movements[0].Amount.String(), movements[1].Amount.String())
+	}
+	if movements[2].Amount.String() != "800" || movements[3].Amount.String() != "4000" {
+		t.Errorf("create amounts = %s/%s, want 800/4000", movements[2].Amount.String(), movements[3].Amount.String())
 	}
 }
 
@@ -369,14 +412,23 @@ func TestDecodeCAP0038Revocation_setTrustLineFlags_triggerType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeCAP0038Revocation: %v", err)
 	}
-	if len(movements) != 2 {
-		t.Fatalf("got %d movements, want 2", len(movements))
+	// 2 assets => 2 withdraw legs + 2 create legs (DAT-09). This test is
+	// about the trigger_op_type discriminator, not the leg count; the
+	// count is asserted so the shape stays pinned somewhere.
+	if len(movements) != 4 {
+		t.Fatalf("got %d movements, want 4 (a withdraw leg + a create leg per liquidated asset)", len(movements))
 	}
-	if movements[0].Attributes["trigger_op_type"] != "set_trustline_flags" {
-		t.Errorf("trigger_op_type = %v, want set_trustline_flags", movements[0].Attributes["trigger_op_type"])
-	}
-	if movements[0].FromAddress != trustorAddr {
-		t.Errorf("FromAddress = %q, want %q", movements[0].FromAddress, trustorAddr)
+	// trigger_op_type must be stamped on BOTH leg kinds — it is what
+	// distinguishes a protocol-derived create from an explicit
+	// CreateClaimableBalance op.
+	for i, m := range movements {
+		if m.Attributes["trigger_op_type"] != "set_trustline_flags" {
+			t.Errorf("movements[%d].trigger_op_type = %v, want set_trustline_flags",
+				i, m.Attributes["trigger_op_type"])
+		}
+		if m.FromAddress != trustorAddr {
+			t.Errorf("movements[%d].FromAddress = %q, want %q", i, m.FromAddress, trustorAddr)
+		}
 	}
 }
 
