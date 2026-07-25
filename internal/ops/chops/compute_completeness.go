@@ -240,6 +240,18 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		priorProj[s.Source] = priorProjection{known: true, ok: s.ProjectionOK, tip: s.Tip}
 	}
 
+	// Durable per-target projection floors (migration 0116). Loaded once and
+	// FAILING CLOSED on error, exactly as the prior verdicts above do: these
+	// are the only record of how far back each target has ever been verified,
+	// so a run that cannot read them cannot honestly judge whether the served
+	// tier has lost its oldest rows. Continuing without them would silently
+	// downgrade every target to the pre-0116 behaviour — the reconcile floor
+	// tracking the loss — which is the failure this table exists to close.
+	targetFloors, err := store.CompletenessTargetFloors(ctx)
+	if err != nil {
+		return fmt.Errorf("durable projection floors (failing closed — cannot distinguish served-tier loss from never-projected without them): %w", err)
+	}
+
 	// ── Per-source watermark ────────────────────────────────────────
 	for _, src := range catalogue {
 		if *only != "" && src.name != *only {
@@ -322,13 +334,29 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		if *useCH {
 			if srW.Ledger >= projFrom {
 				streamer := clickhouse.ReconcileEventStreamer{Addr: *chAddr, NeedOpArgs: src.needsOpArgs}
-				scopes, servedFrom, runFrom, serr := projectionScopes(ctx, store, src, genesis, projFrom, srW.Ledger)
+				scopes, servedMins, servedFrom, runFrom, serr := projectionScopes(ctx, store, src, genesis, projFrom, srW.Ledger)
 				if serr != nil {
 					return fmt.Errorf("%s: served floor: %w", src.name, serr)
 				}
+				// N-F2 residual: a bottom-edge truncation is invisible to the
+				// reconcile itself, because the reconcile's own floor moves with
+				// it. Compare against the durable floor BEFORE reconciling, and
+				// treat loss as a hard projection failure — the surviving rows
+				// will reconcile perfectly and would otherwise read complete.
+				floorLoss := detectFloorLoss(src, servedMins, targetFloors)
 				delta, pdetail, perr := reconcileProjectionAggregate(ctx, store, streamer, *chAddr, src, scopes)
 				if perr != nil {
 					return fmt.Errorf("%s: projection: %w", src.name, perr)
+				}
+				// Only a clean reconcile earns the right to record verified
+				// ground; a run that found a mismatch must not enshrine its
+				// range as verified. A run that DETECTED loss must not record
+				// either, or it would immediately adopt the post-loss floor as
+				// the new truth and erase the evidence on the very next run.
+				if delta == 0 && len(floorLoss) == 0 {
+					if ferr := recordFloors(ctx, store, src, scopes); ferr != nil {
+						return fmt.Errorf("%s: record projection floors: %w", src.name, ferr)
+					}
 				}
 				// The scope travels WITH the verdict: a run may only claim the
 				// range it actually reconciled (ADR-0033 — a source is complete
@@ -336,6 +364,10 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 				var claimDetail string
 				projOK, claimDetail = projectionClaim(servedFrom, runFrom, srW.Ledger, delta == 0, pdetail, priorProj[src.name])
 				detail = append(detail, claimDetail)
+				if len(floorLoss) > 0 {
+					projOK = false
+					detail = append(detail, floorLoss...)
+				}
 			} else {
 				detail = append(detail, "projection: not evaluated (earlier claim failed at genesis)")
 			}
@@ -525,17 +557,19 @@ func targetScope(servedMin uint32, haveServedRows bool, genesis, runFrom, hi uin
 //
 // One indexed MIN(ledger) per target (trades_source_ledger_idx et al); the same
 // query buildClassicGapGate already runs from genesis in production.
-func projectionScopes(ctx context.Context, store *timescale.Store, src reconSource, genesis, runFrom, hi uint32) ([]projectionScope, uint32, uint32, error) {
+func projectionScopes(ctx context.Context, store *timescale.Store, src reconSource, genesis, runFrom, hi uint32) (scopes []projectionScope, servedMins []servedFloor, servedFromOut, runFromOut uint32, err error) {
 	if len(src.targets) == 0 {
-		return nil, genesis, genesis, nil
+		return nil, nil, genesis, genesis, nil
 	}
-	scopes := make([]projectionScope, len(src.targets))
+	scopes = make([]projectionScope, len(src.targets))
+	servedMins = make([]servedFloor, len(src.targets))
 	servedFrom, runLo := hi, hi
 	for i, tgt := range src.targets {
 		minL, ok, err := store.MinLedger(ctx, tgt.table, "ledger", tgt.whereFilter, genesis, hi)
 		if err != nil {
-			return nil, 0, 0, fmt.Errorf("%s min served ledger: %w", tgt.table, err)
+			return nil, nil, 0, 0, fmt.Errorf("%s min served ledger: %w", tgt.table, err)
 		}
+		servedMins[i] = servedFloor{min: minL, present: ok}
 		if served := targetScope(minL, ok, genesis, 0, hi).From; served < servedFrom {
 			servedFrom = served
 		}
@@ -544,7 +578,93 @@ func projectionScopes(ctx context.Context, store *timescale.Store, src reconSour
 			runLo = scopes[i].From
 		}
 	}
-	return scopes, servedFrom, runLo, nil
+	return scopes, servedMins, servedFrom, runLo, nil
+}
+
+// servedFloor is one target's live bottom edge: `MIN(ledger)` over the
+// reconcile window, and whether the target held anything at all. Carried out
+// of projectionScopes so the caller can compare it against the DURABLE floor
+// (completeness_target_floors, migration 0116) — the comparison targetScope
+// itself cannot make, because it derives its floor from this very value.
+type servedFloor struct {
+	min     uint32
+	present bool
+}
+
+// detectFloorLoss compares each target's LIVE bottom edge against the durable
+// floor recorded by previous runs (completeness_target_floors, migration
+// 0116) and returns a detail line per target whose oldest rows have gone
+// missing.
+//
+// This is the check targetScope structurally cannot make. targetScope floors
+// the reconcile at MIN(ledger) of the target itself, so when the oldest rows
+// are deleted the floor RISES with the loss and the surviving rows reconcile
+// perfectly — "someone dropped the oldest 10M ledgers" and "we never
+// projected below there" produce identical verdicts. Only a floor the served
+// tier cannot rewrite can tell them apart.
+//
+// A target with no recorded floor is skipped, not failed: that is the
+// first-run case, and treating an absent row as floor=0 would report
+// loss-below-zero for every target at once on the first run after the
+// migration.
+//
+// An EMPTY target that previously had a floor is the maximal case — every
+// row below the floor is gone — and is reported as such rather than skipped.
+func detectFloorLoss(src reconSource, servedMins []servedFloor, floors map[string]timescale.CompletenessTargetFloor) []string {
+	var out []string
+	for i, tgt := range src.targets {
+		if i >= len(servedMins) {
+			break
+		}
+		prior, ok := floors[timescale.TargetFloorKey(src.name, tgt.table, tgt.whereFilter)]
+		if !ok {
+			continue // no floor recorded yet — nothing to compare against
+		}
+		sm := servedMins[i]
+		if !sm.present {
+			out = append(out, fmt.Sprintf(
+				"projection: %s holds NO rows but was previously verified from ledger %d — "+
+					"the served tier lost everything below the recorded floor",
+				tgt.table, prior.VerifiedFrom))
+			continue
+		}
+		if sm.min > prior.VerifiedFrom {
+			out = append(out, fmt.Sprintf(
+				"projection: %s now begins at ledger %d but was previously verified from %d — "+
+					"%d ledgers of served rows below the recorded floor are GONE (not a scope "+
+					"change: no reconcile target has a retention policy)",
+				tgt.table, sm.min, prior.VerifiedFrom, sm.min-prior.VerifiedFrom))
+		}
+	}
+	return out
+}
+
+// recordFloors persists what this run actually verified, per target.
+//
+// It records scopes[i].From — the ledger the reconcile genuinely started at —
+// NOT the target's raw MIN(ledger). On a narrowed `-from` run those differ,
+// and claiming to have verified from MIN when the run began higher would be a
+// lie the next run then trusts. The store applies LEAST(), so a narrowed run's
+// higher value is a harmless no-op and only a genuinely deeper run lowers the
+// floor.
+//
+// Called ONLY after a clean reconcile (delta == 0). Recording a floor from a
+// run that found a mismatch would enshrine an unverified range as verified.
+func recordFloors(ctx context.Context, store *timescale.Store, src reconSource, scopes []projectionScope) error {
+	for i, tgt := range src.targets {
+		if i >= len(scopes) {
+			break
+		}
+		if err := store.UpsertCompletenessTargetFloor(ctx, timescale.CompletenessTargetFloor{
+			Source:       src.name,
+			Table:        tgt.table,
+			Filter:       tgt.whereFilter,
+			VerifiedFrom: scopes[i].From,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // scopeUnion is the range the expected side must be re-derived over to serve
