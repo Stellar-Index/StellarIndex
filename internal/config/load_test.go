@@ -1,6 +1,8 @@
 package config_test
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -389,5 +391,88 @@ postgres_dsn = "postgres://valid@host/db"
 	}
 	if !strings.Contains(err.Error(), "postgres_dsn") {
 		t.Errorf("err should name the offending field: %v", err)
+	}
+}
+
+// TestApplyEnvOverrides_ReturnsOverriddenFieldPaths — CFG-01
+// (audit-2026-07-23). Asserts the corrected value: ApplyEnvOverrides
+// returns exactly the config-path of each field an env var actually
+// replaced, and nothing for vars that were unset/empty — the data
+// LoadWithEnv logs so an operator can see WHICH fields the
+// environment silently won over the TOML file.
+func TestApplyEnvOverrides_ReturnsOverriddenFieldPaths(t *testing.T) {
+	t.Setenv("STELLARINDEX_POSTGRES_DSN", "postgres://from-env/db")
+	t.Setenv("STELLARINDEX_REDIS_PASSWORD", "s3cr3t")
+	// Deliberately left unset: STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD,
+	// EXCHANGERATESAPI_KEY, etc. — must NOT appear in the result.
+
+	c := cfg.Default()
+	got := c.ApplyEnvOverrides()
+
+	want := []string{"storage.postgres_dsn", "storage.redis_password_env"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ApplyEnvOverrides() = %v, want %v", got, want)
+	}
+}
+
+// TestApplyEnvOverrides_NoOverridesReturnsEmpty confirms the common
+// case (no relevant env vars set) returns an empty/nil list rather
+// than a slice of empty strings or similar placeholder noise.
+func TestApplyEnvOverrides_NoOverridesReturnsEmpty(t *testing.T) {
+	for _, name := range []string{
+		"STELLARINDEX_POSTGRES_DSN", "STELLARINDEX_REDIS_PASSWORD",
+		"STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD", "EXCHANGERATESAPI_KEY",
+		"POLYGON_API_KEY", "COINMARKETCAP_API_KEY", "CRYPTOCOMPARE_API_KEY",
+		"COINGECKO_API_KEY", "CHAINLINK_RPC_URL", "STELLARINDEX_STRIPE_WEBHOOK_SECRET",
+	} {
+		t.Setenv(name, "")
+	}
+	c := cfg.Default()
+	if got := c.ApplyEnvOverrides(); len(got) != 0 {
+		t.Errorf("ApplyEnvOverrides() with nothing set = %v, want empty", got)
+	}
+}
+
+// TestLoadWithEnv_LogsOverriddenFieldsWithoutValues — CFG-01
+// (audit-2026-07-23). LoadWithEnv must log which fields an env
+// override touched, and must NEVER log the field's value (most
+// overridden fields are secrets by construction).
+func TestLoadWithEnv_LogsOverriddenFieldsWithoutValues(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "c.toml")
+	good := `
+[region]
+id = "r1"
+home_domain = "stellarindex.io"
+
+[stellar]
+network = "pubnet"
+rpc_endpoints = ["http://rpc:8000"]
+
+[storage]
+postgres_dsn = "postgres://valid@host/db"
+`
+	if err := os.WriteFile(path, []byte(good), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	const secretValue = "postgres://SECRET-CREDS-MUST-NOT-BE-LOGGED@evil-host/db"
+	t.Setenv("STELLARINDEX_POSTGRES_DSN", secretValue)
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	if _, err := cfg.LoadWithEnv(path); err != nil {
+		t.Fatalf("LoadWithEnv: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "storage.postgres_dsn") {
+		t.Errorf("expected the overridden field path in the log output, got: %s", out)
+	}
+	if strings.Contains(out, secretValue) {
+		t.Errorf("secret value leaked into the log output: %s", out)
 	}
 }

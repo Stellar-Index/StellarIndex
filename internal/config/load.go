@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -53,7 +54,14 @@ func LoadReader(r io.Reader, origin string) (Config, error) {
 }
 
 // ApplyEnvOverrides mutates c in place, replacing any field that has
-// an `env:` tag with the env-var's value if that var is set.
+// an `env:` tag with the env-var's value if that var is set. Returns
+// the config-path (dotted, e.g. "storage.postgres_dsn") of every
+// field an env var actually overrode, in override order — NEVER the
+// values themselves (most of these fields are secrets). CFG-01
+// (audit-2026-07-23): callers that want to know WHICH fields the
+// environment silently replaced — without echoing a secret — use
+// this return value; see [LoadWithEnv] for the standard "log it at
+// boot" consumer.
 //
 // Secret fields follow the `env: "NAME"` convention where NAME is
 // the var holding the actual secret — see
@@ -65,15 +73,19 @@ func LoadReader(r io.Reader, origin string) (Config, error) {
 // Does NOT re-validate. Callers that want env-driven values held to
 // the same invariants as file-driven values should use [LoadWithEnv]
 // or call [Config.Validate] after this.
-func (c *Config) ApplyEnvOverrides() {
+func (c *Config) ApplyEnvOverrides() []string {
+	var overridden []string
 	if v := os.Getenv("STELLARINDEX_POSTGRES_DSN"); v != "" {
 		c.Storage.PostgresDSN = v
+		overridden = append(overridden, "storage.postgres_dsn")
 	}
 	if v := os.Getenv("STELLARINDEX_REDIS_PASSWORD"); v != "" {
 		c.Storage.RedisPassword = v
+		overridden = append(overridden, "storage.redis_password_env")
 	}
 	if v := os.Getenv("STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD"); v != "" {
 		c.Storage.ClickHouseServingPassword = v
+		overridden = append(overridden, "storage.clickhouse_serving_password_env")
 	}
 	// NOTE: STELLARINDEX_S3_ACCESS_KEY / STELLARINDEX_S3_SECRET_KEY are
 	// deliberately NOT overridden here. StorageConfig.S3AccessKeyEnv holds the
@@ -84,21 +96,26 @@ func (c *Config) ApplyEnvOverrides() {
 	// reason — see config.go StorageConfig.
 	if v := os.Getenv("EXCHANGERATESAPI_KEY"); v != "" {
 		c.External.ExchangeRatesApi.APIKey = v
+		overridden = append(overridden, "external.exchangeratesapi.api_key")
 	}
 	if v := os.Getenv("POLYGON_API_KEY"); v != "" {
 		c.External.PolygonForex.APIKey = v
+		overridden = append(overridden, "external.polygon_forex.api_key")
 	}
 	if v := os.Getenv("COINMARKETCAP_API_KEY"); v != "" {
 		c.External.CoinMarketCap.APIKey = v
+		overridden = append(overridden, "external.coinmarketcap.api_key")
 	}
 	if v := os.Getenv("CRYPTOCOMPARE_API_KEY"); v != "" {
 		c.External.CryptoCompare.APIKey = v
+		overridden = append(overridden, "external.cryptocompare.api_key")
 	}
 	if v := os.Getenv("COINGECKO_API_KEY"); v != "" {
 		// Feeds the divergence supply cross-check's CoinGecko reference
 		// (internal/divergence/supply.go) — the Pro key that lifts the
 		// free-tier 429 ceiling the reference otherwise hits.
 		c.Divergence.Supply.CoinGecko.APIKey = v
+		overridden = append(overridden, "divergence.supply.coingecko.api_key")
 	}
 	if v := os.Getenv("CHAINLINK_RPC_URL"); v != "" {
 		c.External.Chainlink.RPCUrl = v
@@ -112,10 +129,13 @@ func (c *Config) ApplyEnvOverrides() {
 		// consumers at the one operator-provided endpoint so a single
 		// CHAINLINK_RPC_URL keeps the cross-check working.
 		c.Divergence.Chainlink.RPCURL = v
+		overridden = append(overridden, "external.chainlink.rpc_url", "divergence.chainlink.rpc_url")
 	}
 	if v := os.Getenv("STELLARINDEX_STRIPE_WEBHOOK_SECRET"); v != "" {
 		c.API.Stripe.SigningSecret = v
+		overridden = append(overridden, "api.stripe.signing_secret")
 	}
+	return overridden
 }
 
 // LoadWithEnv is [Load] + [ApplyEnvOverrides] + a second [Validate].
@@ -124,12 +144,24 @@ func (c *Config) ApplyEnvOverrides() {
 // fails fast with the same ErrInvalidConfig error as a bad file,
 // instead of opening the pool and getting a confusing DB error
 // at connect time.
+//
+// CFG-01 (audit-2026-07-23): env overrides used to apply completely
+// silently — an operator debugging "why is this deployment using the
+// wrong DSN" had no signal that the environment, not the TOML file,
+// won. Logs (at Info, via the package-default slog logger — this runs
+// before the binary constructs its own obs-configured logger from
+// [Config.Obs]) the field-path list [ApplyEnvOverrides] returns.
+// Field VALUES are never logged, only paths — most overridden fields
+// are secrets by construction (see ApplyEnvOverrides's doc).
 func LoadWithEnv(path string) (Config, error) {
 	c, err := Load(path)
 	if err != nil {
 		return Config{}, err
 	}
-	c.ApplyEnvOverrides()
+	if overridden := c.ApplyEnvOverrides(); len(overridden) > 0 {
+		slog.Info("config: environment overrides applied (values redacted)",
+			"path", path, "fields", overridden)
+	}
 	if err := c.Validate(); err != nil {
 		return Config{}, fmt.Errorf("config: %s (with env overrides): %w", path, err)
 	}
