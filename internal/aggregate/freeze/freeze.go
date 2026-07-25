@@ -43,15 +43,30 @@ type Marker struct {
 	Reason string `json:"reason,omitempty"`
 
 	// FrozenAt is when the writer wrote this marker. RFC 3339 UTC.
+	// This is the WRITE time, refreshed on every lifecycle tick — not
+	// the freeze's age. Read [State.FiredAt] for that.
 	FrozenAt time.Time `json:"frozen_at"`
+
+	// State is the ADR-0019 freeze-lifecycle state (fired_at,
+	// hold_until, extensions_used, escalated, unfreeze_streak). Zero
+	// for markers written by the pre-lifecycle [Writer.Mark] path.
+	//
+	// Carried in the marker for two reasons: an operator dumping
+	// `freeze:*` can see how far up the extension ladder a pair is
+	// without reading logs, and the aggregator re-hydrates the ladder
+	// from here after a restart instead of silently starting the
+	// 2-hour escalation clock over.
+	State State `json:"state,omitempty"`
 }
 
-// RedisCache is the subset of the Redis client both the Writer and
-// Looker need. Declared as an interface so tests can substitute
-// miniredis without pulling the full UniversalClient surface.
+// RedisCache is the subset of the Redis client the Writer, Looker and
+// Recovery worker need. Declared as an interface so tests can
+// substitute miniredis without pulling the full UniversalClient
+// surface.
 type RedisCache interface {
 	Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd
 	Get(ctx context.Context, key string) *redis.StringCmd
+	Del(ctx context.Context, keys ...string) *redis.IntCmd
 }
 
 // EventSink is the optional durable-mirror seam for freeze events.
@@ -106,8 +121,9 @@ type Writer struct {
 }
 
 // NewWriter constructs a Writer. ttl=0 falls back to
-// cachekeys.FreezeTTL; operators tune up only when a custom
-// deployment needs longer freeze persistence (rare).
+// cachekeys.FreezeTTL — the TTL for the lifecycle-free [Writer.Mark]
+// path only; [Writer.MarkHold] takes its TTL from the caller's
+// lifecycle [Outcome] instead.
 //
 // sink is optional (nil = legacy Redis-only behaviour); production
 // passes the timescale-backed implementation.
@@ -139,9 +155,18 @@ func WithEventSink(sink EventSink) WriterOption {
 }
 
 // Mark records a freeze for (asset, quote) backed by the supplied
-// anomaly Decision. Idempotent — overwriting an existing marker
-// refreshes its TTL, which matches the desired semantics ("freeze
-// stays in effect as long as the underlying anomaly persists").
+// anomaly Decision, with the writer's flat TTL and no lifecycle
+// state. Idempotent — overwriting an existing marker refreshes its
+// TTL.
+//
+// This is NOT the freeze-duration policy. "The freeze lives as long
+// as something keeps re-marking it" was the pre-lifecycle behaviour
+// and it is exactly the defect ADR-0019's extension ladder exists to
+// prevent: it makes the release condition the negation of the fire
+// condition, evaluated on a single bucket. Callers that own a pair's
+// freeze lifecycle call [Writer.MarkHold]; this entry point remains
+// for the composite/triangulation refusal, which is a genuinely
+// per-tick decision about a derived price.
 //
 // frozenValue is the last-known-good VWAP being frozen on, encoded
 // as a fixed-precision decimal string (orchestrator passes
@@ -153,6 +178,34 @@ func WithEventSink(sink EventSink) WriterOption {
 // Returns the underlying error wrapped when the Redis write fails;
 // callers log + continue (the next bucket close retries the write).
 func (w *Writer) Mark(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) error {
+	return w.MarkHold(ctx, asset, quote, frozenValue, decision, State{}, w.ttl)
+}
+
+// MarkHold is [Writer.Mark] plus the ADR-0019 lifecycle: it stamps
+// the freeze's [State] into the marker and sets the marker's TTL from
+// the lifecycle's [Outcome.MarkerTTL] (the remaining hold plus the
+// silence grace) instead of the writer's flat default.
+//
+// This is the call the orchestrator's freeze path uses. The flat-TTL
+// [Writer.Mark] remains for callers with no lifecycle of their own —
+// today the triangulated-composite freeze, whose refusal is a
+// per-tick decision about a DERIVED price rather than a freeze on an
+// observed pair.
+//
+// ttl <= 0 falls back to the writer's default, so a caller that
+// forgets to plumb the outcome's TTL degrades to the old behaviour
+// rather than writing a marker that never expires.
+func (w *Writer) MarkHold(
+	ctx context.Context,
+	asset, quote canonical.Asset,
+	frozenValue string,
+	decision anomaly.Decision,
+	state State,
+	ttl time.Duration,
+) error {
+	if ttl <= 0 {
+		ttl = w.ttl
+	}
 	marker := Marker{
 		AssetID:      asset.String(),
 		QuoteID:      quote.String(),
@@ -161,6 +214,7 @@ func (w *Writer) Mark(ctx context.Context, asset, quote canonical.Asset, frozenV
 		DeviationPct: decision.DeviationPct,
 		Reason:       decision.Reason,
 		FrozenAt:     time.Now().UTC(),
+		State:        state,
 	}
 	body, err := json.Marshal(marker)
 	if err != nil {
@@ -169,7 +223,7 @@ func (w *Writer) Mark(ctx context.Context, asset, quote canonical.Asset, frozenV
 		return fmt.Errorf("freeze: marshal marker: %w", err)
 	}
 	key := cachekeys.Freeze(asset, quote)
-	if err := w.cache.Set(ctx, key.String(), body, w.ttl).Err(); err != nil {
+	if err := w.cache.Set(ctx, key.String(), body, ttl).Err(); err != nil {
 		return fmt.Errorf("freeze: cache set %s: %w", key, err)
 	}
 
@@ -185,6 +239,59 @@ func (w *Writer) Mark(ctx context.Context, asset, quote canonical.Asset, frozenV
 			// to log its own failures with full context.
 			_ = sinkErr
 		}
+	}
+	return nil
+}
+
+// LoadState reads the ADR-0019 lifecycle state a previous
+// [Writer.MarkHold] stamped into the marker for (asset, quote).
+//
+// Returns (State{}, false, nil) when no marker exists — which the
+// caller must read as BOTH "never frozen" and "the operator force-
+// unfroze this pair out of band". Deleting the marker is the
+// operator override ADR-0019 §"Freeze duration" requires, so a
+// missing marker under a live freeze is a deliberate signal, not a
+// lost write; the orchestrator drops its in-memory ladder when it
+// sees one.
+//
+// A marker that is PRESENT but does not decode is reported as
+// (State{}, true, nil) — present, lifecycle unknown — not as absent.
+// The distinction is load-bearing: "absent" is the operator override,
+// so reporting a corrupt marker as absent would let a stray byte in
+// diagnostic JSON silently unfreeze a pair. Present-with-zero-state
+// keeps the freeze and merely forgets where it was on the ladder,
+// which is also exactly how a marker written by a pre-lifecycle build
+// reads.
+func (w *Writer) LoadState(ctx context.Context, asset, quote canonical.Asset) (State, bool, error) {
+	key := cachekeys.Freeze(asset, quote)
+	raw, err := w.cache.Get(ctx, key.String()).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return State{}, false, nil
+	}
+	if err != nil {
+		return State{}, false, fmt.Errorf("freeze: cache get %s: %w", key, err)
+	}
+	var marker Marker
+	if err := json.Unmarshal(raw, &marker); err != nil {
+		return State{}, true, nil //nolint:nilerr // deliberate: present-but-undecodable must not read as unfrozen
+	}
+	return marker.State, true, nil
+}
+
+// Clear deletes the freeze marker for (asset, quote), ending the
+// freeze on the serving path immediately.
+//
+// Called on auto-unfreeze and on operator override. Deleting rather
+// than letting the TTL lapse matters now that the TTL encodes the
+// remaining HOLD: a released freeze whose marker still had 25 minutes
+// of hold on it would keep `flags.frozen` true for 25 minutes after
+// the price was republished as healthy.
+//
+// Idempotent — deleting an absent key is not an error.
+func (w *Writer) Clear(ctx context.Context, asset, quote canonical.Asset) error {
+	key := cachekeys.Freeze(asset, quote)
+	if err := w.cache.Del(ctx, key.String()).Err(); err != nil {
+		return fmt.Errorf("freeze: cache del %s: %w", key, err)
 	}
 	return nil
 }

@@ -134,6 +134,32 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			"anomaly.classifications",
 		},
 
+		// ADR-0019 §"Freeze duration" (N-F6): the auto-unfreeze band
+		// must not overlap the fire band on the z axis, or a signal
+		// hovering at the trigger flaps the pair frozen/unfrozen every
+		// bucket — republishing, each time it unfreezes, the value the
+		// freeze just refused. That IS the pre-lifecycle behaviour, so
+		// it must not be reachable by config.
+		"anomaly phase2 unfreeze z band overlaps the fire band": {
+			func(c *config.Config) {
+				c.Anomaly.Phase2.ZScoreMinFreeze = 5.0
+				c.Anomaly.Phase2.UnfreezeZScoreMax = 6.0
+			},
+			"anomaly.phase2.unfreeze_z_score_max",
+		},
+		"anomaly phase2 negative initial hold": {
+			func(c *config.Config) { c.Anomaly.Phase2.InitialHoldMinutes = -1 },
+			"anomaly.phase2.initial_hold_minutes",
+		},
+		"anomaly phase2 negative max extensions": {
+			func(c *config.Config) { c.Anomaly.Phase2.MaxExtensions = -2 },
+			"anomaly.phase2.max_extensions",
+		},
+		"anomaly phase2 unfreeze confidence out of range": {
+			func(c *config.Config) { c.Anomaly.Phase2.UnfreezeConfidenceMin = 1.5 },
+			"anomaly.phase2.unfreeze_confidence_min",
+		},
+
 		// CFG-05 (audit-2026-07-23): divergence.supply.refresh_interval_seconds<=0
 		// while enabled used to reach time.NewTicker(0) and panic the
 		// aggregator at startup.

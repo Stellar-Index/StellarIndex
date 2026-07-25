@@ -13,6 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -775,11 +776,21 @@ func intToStr(n int) string {
 
 // ─── Anomaly evaluator + freeze writer ─────────────────────────────
 
-// recordingFreezeMarker captures Mark calls so tests can assert on
+// recordingFreezeMarker captures marker writes so tests can assert on
 // them without spinning up Redis. Implements FreezeMarker.
+//
+// It models the real Redis marker's PRESENCE, not just the call log:
+// `present` flips false on Clear, and LoadState reports it. Without
+// that, a fake would answer "marker still there" after an unfreeze
+// and the orchestrator's operator-override detection (a missing
+// marker under a live in-memory freeze) would be untestable — and a
+// test of a mock rather than of the behaviour.
 type recordingFreezeMarker struct {
-	marks []recordedMark
-	err   error
+	marks   []recordedMark
+	clears  int
+	present bool
+	state   freeze.State
+	err     error
 }
 
 type recordedMark struct {
@@ -787,16 +798,43 @@ type recordedMark struct {
 	quote       canonical.Asset
 	frozenValue string
 	decision    anomaly.Decision
+	state       freeze.State
+	ttl         time.Duration
 }
 
-func (r *recordingFreezeMarker) Mark(_ context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) error {
+func (r *recordingFreezeMarker) Mark(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) error {
+	return r.MarkHold(ctx, asset, quote, frozenValue, decision, freeze.State{}, 0)
+}
+
+func (r *recordingFreezeMarker) MarkHold(_ context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision, state freeze.State, ttl time.Duration) error {
 	r.marks = append(r.marks, recordedMark{
 		asset:       asset,
 		quote:       quote,
 		frozenValue: frozenValue,
 		decision:    decision,
+		state:       state,
+		ttl:         ttl,
 	})
-	return r.err
+	if r.err != nil {
+		return r.err
+	}
+	r.present = true
+	r.state = state
+	return nil
+}
+
+func (r *recordingFreezeMarker) LoadState(_ context.Context, _, _ canonical.Asset) (freeze.State, bool, error) {
+	if !r.present {
+		return freeze.State{}, false, nil
+	}
+	return r.state, true, nil
+}
+
+func (r *recordingFreezeMarker) Clear(_ context.Context, _, _ canonical.Asset) error {
+	r.clears++
+	r.present = false
+	r.state = freeze.State{}
+	return nil
 }
 
 // newAnomalyChecker builds a Checker with stablecoin-tight thresholds
@@ -921,18 +959,30 @@ func TestTick_AnomalyFreeze_SkipsCacheAndMarks(t *testing.T) {
 	}
 
 	// F-1345 (G13-03): the LKG VWAP key was pre-Set with a 1-minute
-	// TTL; the freeze must have re-armed it to cachekeys.FreezeTTL so
-	// the value survives as long as the freeze marker. Without the
-	// fix the key keeps its original (shorter) TTL and can expire out
-	// of Redis mid-freeze, leaving the API with frozen=true and no
-	// value to serve.
+	// TTL; the freeze must have re-armed it to the freeze marker's own
+	// lifetime so the value survives as long as flags.frozen is set.
+	// Without the fix the key keeps its original (shorter) TTL and can
+	// expire out of Redis mid-freeze, leaving the API with
+	// frozen=true and no value to serve.
+	//
+	// The bound is the ADR-0019 hold + silence grace, NOT the flat
+	// cachekeys.FreezeTTL this asserted until the freeze lifecycle
+	// landed. A 5-minute cap here would re-open F-1345 one order of
+	// magnitude later: the LKG would evaporate 5 minutes into a hold
+	// that runs for 10 (uncorroborated first hold — Phase 1 carries
+	// no corroboration signal) or 30 minutes.
+	wantTTL := freeze.DefaultUncorroboratedInitialHold + freeze.DefaultMarkerGrace
 	ttl := mr.TTL(cacheKey)
 	if ttl <= time.Minute {
 		t.Errorf("LKG VWAP TTL = %v after freeze; want refreshed to ~%v (> original 1m)",
-			ttl, cachekeys.FreezeTTL)
+			ttl, wantTTL)
 	}
-	if ttl > cachekeys.FreezeTTL {
-		t.Errorf("LKG VWAP TTL = %v after freeze; want ≤ %v", ttl, cachekeys.FreezeTTL)
+	if ttl > wantTTL {
+		t.Errorf("LKG VWAP TTL = %v after freeze; want ≤ %v (hold + silence grace)", ttl, wantTTL)
+	}
+	if ttl < wantTTL-time.Minute {
+		t.Errorf("LKG VWAP TTL = %v after freeze; want ≈ %v — the LKG must cover the whole hold",
+			ttl, wantTTL)
 	}
 }
 
@@ -974,12 +1024,20 @@ func TestTick_AnomalyFreeze_RefreshesLKGTTL(t *testing.T) {
 		t.Fatalf("freeze should have fired once; Mark called %d times", len(marker.marks))
 	}
 
+	// Bound is the freeze marker's own lifetime (ADR-0019 hold +
+	// silence grace) — see the sibling assertion in
+	// TestTick_AnomalyFreeze_SkipsCacheAndMarks for why this is no
+	// longer the flat cachekeys.FreezeTTL.
+	wantTTL := freeze.DefaultUncorroboratedInitialHold + freeze.DefaultMarkerGrace
 	ttl := mr.TTL(cacheKey.String())
 	if ttl <= 10*time.Second {
 		t.Errorf("LKG VWAP TTL = %v; freeze did not extend the near-expiry key", ttl)
 	}
-	if ttl > cachekeys.FreezeTTL {
-		t.Errorf("LKG VWAP TTL = %v; want ≤ FreezeTTL %v", ttl, cachekeys.FreezeTTL)
+	if ttl > wantTTL {
+		t.Errorf("LKG VWAP TTL = %v; want ≤ hold+grace %v", ttl, wantTTL)
+	}
+	if ttl < wantTTL-time.Minute {
+		t.Errorf("LKG VWAP TTL = %v; want ≈ %v — the LKG must cover the whole hold", ttl, wantTTL)
 	}
 	// Value must still be intact (not overwritten by the frozen tick).
 	got, err := mr.Get(cacheKey.String())

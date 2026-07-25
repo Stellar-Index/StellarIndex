@@ -271,13 +271,21 @@ func (o *Orchestrator) legPriceFromCache(
 // triangulated TARGET whose chain could not publish because a leg was
 // frozen this tick (MNY-22).
 //
-// It mirrors [Orchestrator.markPhase2Freeze] deliberately, because the
+// It mirrors [Orchestrator.engageFreeze] deliberately, because the
 // consumer-visible situation is the same one: we are declining to
 // publish a new value and continuing to serve the prior one, so the
 // prior one's TTL must be kept alive and the pair must carry
 // flags.frozen=true. Without the marker the target would serve a stale
 // derived price with no indication that anything is wrong — worse than
 // the frozen leg it descends from, which at least tells the truth.
+//
+// It deliberately does NOT enter the ADR-0019 freeze lifecycle (no
+// hold, no extension ladder, flat [cachekeys.FreezeTTL] marker). This
+// refusal is not a judgement about the target pair's own price — it
+// is inherited, per tick, from whichever leg is frozen, and the LEG's
+// lifecycle already owns the hold. Giving the derived pair a second,
+// independent 30-minute ladder would keep a target frozen long after
+// its leg was released, and would page twice for one event.
 //
 // Best-effort throughout: the target's LKG is read from cache to stamp
 // the freeze_events row, and both the read and the marker write log
@@ -310,7 +318,7 @@ func (o *Orchestrator) inheritLegFreeze(
 	// The chain skipped its value write, so the target's prior value
 	// must outlive its ordinary TTL exactly as a directly-frozen pair's
 	// does (F-1345).
-	o.keepFrozenVWAPAlive(ctx, chain.Target, window)
+	o.keepFrozenVWAPAlive(ctx, chain.Target, window, cachekeys.FreezeTTL)
 
 	if o.cfg.FreezeWriter == nil {
 		return

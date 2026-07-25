@@ -155,6 +155,13 @@ the `env:` column.
 | `anomaly.phase2.confidence_max_freeze` | `float64` | `0.45` | — | Freeze fires when confidence is strictly less than this. 0.45 (operator decision 2026-07-25, coupled with the COR-14 fix); ADR-0019 originally said 0.10, which in practice required z ~= 15 and never fired. |
 | `anomaly.phase2.z_score_min_freeze` | `float64` | `5.0` | — | Freeze fires when z-score is strictly greater than this. ADR-0019 default 5.0 (the documented 5σ trigger). |
 | `anomaly.phase2.source_count_max_freeze` | `int` | `1` | — | Freeze fires when source count is at or below this. ADR-0019 default 1 (single-source pattern). |
+| `anomaly.phase2.initial_hold_minutes` | `int` | `30` | — | Minimum freeze duration for a pair that had a corroborating lens (a checked triangulation composite or a trusted cross-oracle reading) in the bucket that froze it. ADR-0019 §'Freeze duration': 30 minutes. 0 = use the default. |
+| `anomaly.phase2.uncorroborated_initial_hold_minutes` | `int` | `10` | — | Minimum freeze duration for a pair with NO corroborating lens at all — one venue and its own history. Deliberately shorter than ADR-0019's flat 30 min: that population is where false freezes concentrate, and a false freeze bills the customer 100% of its duration in stale last-known-good price. Must stay comfortably above the longest window that can carry a spike so a one-bucket spike cannot be waited out. 0 = use the default. |
+| `anomaly.phase2.extension_minutes` | `int` | `30` | — | Added to the hold at each expiry the freeze has not earned its auto-unfreeze at. ADR-0019: 30 minutes. 0 = use the default. |
+| `anomaly.phase2.max_extensions` | `int` | `4` | — | Extensions granted before the freeze escalates to operator review (a P1 alert) and stops auto-unfreezing. ADR-0019: 4, i.e. 2 hours of extensions on top of the initial hold. 0 = use the default. |
+| `anomaly.phase2.unfreeze_confidence_min` | `float64` | `0.30` | — | Auto-unfreeze requires confidence strictly ABOVE this. ADR-0019 §'Auto-unfreeze trigger': 0.30. Note the deliberate hysteresis against confidence_max_freeze (0.45) — a freeze must not be released by the same score band that would still fire it. 0 = use the default. |
+| `anomaly.phase2.unfreeze_z_score_max` | `float64` | `3.0` | — | Auto-unfreeze requires z strictly BELOW this. ADR-0019: 3.0, against the 5.0 fire threshold — the gap is the hysteresis band that stops a freeze flapping on a signal hovering at the trigger. 0 = use the default. |
+| `anomaly.phase2.unfreeze_buckets` | `int` | `2` | — | How many CONSECUTIVE buckets must meet both auto-unfreeze conditions before the freeze ends. ADR-0019: 2. A bucket that cannot be scored at all resets the count. 0 = use the default. |
 
 ### `[api]`
 

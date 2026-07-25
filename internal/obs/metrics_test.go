@@ -394,6 +394,16 @@ func TestZeroSeed_F0033(t *testing.T) {
 		`stellarindex_usage_rollup_sweeps_total{outcome="ok"}`,
 		`stellarindex_usage_rollup_sweeps_total{outcome="scan_error"} 0`,
 		`stellarindex_usage_rollup_sweeps_total{outcome="sink_error"} 0`,
+		// ADR-0019 freeze lifecycle. The escalation counter drives a
+		// severity:page rule, so "no data" vs "zero" is the difference
+		// between an operator believing the P1 is armed and it being
+		// dead. Unlabelled counters/gauges seed on registration; the
+		// released_total label set is seeded explicitly.
+		`stellarindex_anomaly_freeze_escalated_total 0`,
+		`stellarindex_anomaly_freeze_extensions_total 0`,
+		`stellarindex_anomaly_freeze_active 0`,
+		`stellarindex_anomaly_freeze_released_total{mode="auto"} 0`,
+		`stellarindex_anomaly_freeze_released_total{mode="operator"} 0`,
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(s, want) {

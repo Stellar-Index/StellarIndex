@@ -101,6 +101,10 @@ func registerAppMetrics() {
 		SupplyDivergenceTotal,
 
 		AnomalyFreezeEngagedTotal,
+		AnomalyFreezeEscalatedTotal,
+		AnomalyFreezeExtensionsTotal,
+		AnomalyFreezeReleasedTotal,
+		AnomalyFreezeActive,
 		AnomalyFreezeRecoveredTotal,
 		AnomalyFreezeRecoverySweepsTotal,
 		AggregatorTriangulationsTotal,
@@ -241,6 +245,14 @@ func registerAppMetricsTail() {
 		HashdbVerifyRunsTotal.WithLabelValues(outcome)
 	}
 	HashdbVerifyRunsTotal.WithLabelValues("drift")
+	// ADR-0019 freeze-lifecycle release modes. Bounded set of two;
+	// `operator` in particular is the one an on-call reads as "the
+	// calibration is producing freezes humans keep undoing", and until
+	// the first manual unfreeze it would otherwise be absent from
+	// scrape output — indistinguishable from a dead metric.
+	for _, mode := range []string{"auto", "operator"} {
+		AnomalyFreezeReleasedTotal.WithLabelValues(mode)
+	}
 }
 
 // Handler returns an http.Handler that serves Prometheus-formatted
@@ -1941,6 +1953,86 @@ var AnomalyWarnTotal = prometheus.NewCounterVec(
 		Help: "ActionWarn decisions emitted by the aggregator anomaly checker, labelled by asset class.",
 	},
 	[]string{"class"},
+)
+
+// AnomalyFreezeEscalatedTotal — counter of freezes that exhausted
+// ADR-0019's extension ladder (4 × 30 min after the initial hold =
+// 2 hours) and escalated to operator review. P1 by construction:
+// the freeze does NOT auto-unfreeze once escalated ("freeze stays
+// active until manual unfreeze"), so every increment is a pair whose
+// /v1/price is pinned to a last-known-good value until a human acts.
+//
+// One increment per escalation transition, not per frozen tick — so
+// `increase(...[15m]) > 0` reads as "a new pair escalated", and the
+// steady state of an un-actioned escalation is a flat line rather
+// than a climbing one. Pair identity is in the WARN log line and in
+// the `freeze:<asset>:<quote>` marker's `state` object; the metric
+// stays unlabelled so an escalation storm cannot blow up cardinality
+// on the aggregator's hot path.
+//
+// Unlabelled also means the series exists at zero from process start
+// (F-0033): a counter with no label combinations registers
+// immediately, so the alert's increase() reads a real 0 rather than
+// "no data" before the first escalation.
+var AnomalyFreezeEscalatedTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_anomaly_freeze_escalated_total",
+		Help: "Freezes that exhausted the ADR-0019 extension ladder (2h) and escalated to operator review. Stays frozen until manual unfreeze.",
+	},
+)
+
+// AnomalyFreezeExtensionsTotal — counter of ADR-0019 hold extensions
+// granted (each +30 min after a hold expired without the pair earning
+// its auto-unfreeze). Rate is the operator's early-warning signal
+// that freezes are climbing the ladder toward escalation; a sustained
+// non-zero rate with no escalations means pairs are recovering in the
+// 30–120 minute band, which is normal for a real market event and
+// abnormal for a calibration that is firing on noise.
+var AnomalyFreezeExtensionsTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_anomaly_freeze_extensions_total",
+		Help: "ADR-0019 freeze-hold extensions granted (+30 min each, max 4 before escalation).",
+	},
+)
+
+// AnomalyFreezeReleasedTotal — counter of freezes that ended,
+// labelled by how: `auto` (ADR-0019's auto-unfreeze condition —
+// confidence > 0.30 AND z < 3.0 for two consecutive buckets — held at
+// hold expiry) or `operator` (the marker was cleared out of band,
+// which is the ADR's "operator override always available").
+//
+// Pairs with AnomalyFreezeEngagedTotal: engaged increments on every
+// frozen tick, this one only on the ending transition, so the two are
+// NOT expected to balance. What an operator watches here is the
+// `operator` label — a rising manual-unfreeze rate means the
+// calibration is producing freezes humans keep having to undo.
+var AnomalyFreezeReleasedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_anomaly_freeze_released_total",
+		Help: "Freezes ended, by mode. Mode ∈ {auto, operator}.",
+	},
+	[]string{"mode"},
+)
+
+// AnomalyFreezeActive — gauge of (pair, window) freezes the
+// aggregator is currently holding, set at the end of every tick.
+//
+// A gauge, unlike the engaged counter, distinguishes "one pair frozen
+// for an hour" from "sixty pairs frozen for one tick each" — the
+// counter reads identically for both, which is what made the
+// pre-lifecycle `anomaly_freeze_sustained` alert so hard to triage
+// (see the anomaly.yml header's "Why a counter (not a gauge)"
+// paragraph: the answer was "the orchestrator doesn't track per-pair
+// is-this-frozen-now state", and now it does).
+//
+// Unlabelled by pair on purpose: len(Pairs) × len(Windows) is
+// operator-configured and unbounded in principle. Per-pair identity
+// lives in the marker JSON.
+var AnomalyFreezeActive = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_anomaly_freeze_active",
+		Help: "(pair, window) freezes currently held by the aggregator's ADR-0019 lifecycle.",
+	},
 )
 
 // AnomalyFreezeRecoveredTotal — counter of freeze rows the recovery
