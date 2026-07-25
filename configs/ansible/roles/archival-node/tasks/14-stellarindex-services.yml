@@ -319,6 +319,7 @@
       # non-root heavy scripts already self-guard memory — e.g.
       # CHSUPPLY_MEMGUARD / 25k-ledger chunking.)
       if [ "$(id -u)" -ne 0 ]; then
+        echo "run-heavy-job: WARNING running as non-root — the systemd-run MemoryMax=20G scope cap and the root-FS/DATA-POOL disk watchdog are INACTIVE for this job (only the singleton lock applies). The caller must self-guard memory/disk (e.g. CHSUPPLY_MEMGUARD / chunking)." >&2
         exec "$@"
       fi
 

@@ -148,13 +148,23 @@ func CrossOracleFactor(divergencePct float64) float64 {
 	return clamp01(math.Exp(-excess * math.Ln2 / crossOracleHalfLifePct))
 }
 
-// BaselineQualityFactor maps the age of a per-asset baseline (in
-// days) to a confidence factor. 0 days → 0.5 (bootstrap penalty per
-// ADR-0019 §"Bootstrap policy"); 30 days → 1.0; linear in between.
+// BaselineQualityFactor maps how much history backs a per-asset
+// baseline, in DAYS-EQUIVALENT of 1-minute buckets, to a confidence
+// factor. 0 → 0.5 (bootstrap penalty per ADR-0019 §"Bootstrap
+// policy"); 30 → 1.0; linear in between.
 //
-// Negative or NaN ages return 0.5 (treat as bootstrap rather than
-// failing closed — a clock-skew-induced negative age is a transient
-// error, not an attack).
+// The input is sample density, not calendar age (COR-14) — see
+// [Inputs.BaselineAgeDays]. A sparsely-traded pair therefore sits low
+// on this factor indefinitely, which is the intended reading: its
+// median/MAD rest on few observations however long it has existed.
+//
+// Negative is the caller's explicit "no baseline yet" sentinel and
+// returns 0.5 — the same bootstrap value as zero history, because
+// "not trained" and "barely trained" deserve the same treatment. NaN
+// returns 0.5 for the same reason rather than poisoning the
+// geometric mean. (This used to be justified as tolerating a
+// "clock-skew-induced negative age"; no wall clock is involved in
+// this input at all.)
 func BaselineQualityFactor(daysHistory float64) float64 {
 	if math.IsNaN(daysHistory) || daysHistory < 0 {
 		return 0.5

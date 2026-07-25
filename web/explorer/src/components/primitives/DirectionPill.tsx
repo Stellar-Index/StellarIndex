@@ -2,7 +2,15 @@ import { ArrowDown, ArrowRight, ArrowUp } from 'lucide-react';
 import { twMerge } from 'tailwind-merge';
 
 export type DirectionPillProps = {
-  /** Fraction; 0.05 = +5%. Pass null for "no data". */
+  // AGT-06: this used to read "Fraction; 0.05 = +5%", which disagreed with
+  // the render code below (no *100 conversion — deltaPct.toFixed(2) is used
+  // directly) and with the app-wide convention (every real percentage
+  // field, e.g. change_24h_pct, already arrives as a percentage-point
+  // number — see the AGT-06 removal of the fraction-based formatPctChange
+  // footgun in lib/format.ts). Fixed the doc to match the code, not the
+  // other way around: doing the reverse would have broken every existing
+  // caller (dev/primitives styleguide, MultiWindowDelta).
+  /** Already a percentage-point number — 5 = +5%. Pass null for "no data". */
   deltaPct: number | null;
   /** Tightens to a smaller chip when used in dense tables. */
   compact?: boolean;

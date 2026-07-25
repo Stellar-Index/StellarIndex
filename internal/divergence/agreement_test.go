@@ -189,3 +189,93 @@ func TestRefreshPair_AllReferencesDark_AgreementZeroMeansUnchecked(t *testing.T)
 		t.Errorf("AgreementCount = %d, want 0 on a dark run", cached.AgreementCount)
 	}
 }
+
+// TestRefreshPair_SymmetricStraddleFiresWarning is the MNY-22
+// regression on the SERVED value (flags.divergence_warning, read
+// straight off CachedResult.WarningFired).
+//
+// Two references straddle our price symmetrically — one 20% above,
+// one 20% below. Their median lands exactly ON our price, so the
+// median-only gate computed DivergencePct ≈ 0 and stayed silent while
+// NEITHER reference corroborated us within the 5% threshold. Total
+// external disagreement was served as agreement.
+func TestRefreshPair_SymmetricStraddleFiresWarning(t *testing.T) {
+	refs := []divergence.Reference{
+		&stubReference{name: "high", price: 1.20},
+		&stubReference{name: "low", price: 0.80},
+	}
+	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 2,
+	})
+
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now()); err != nil {
+		t.Fatalf("RefreshPair: %v", err)
+	}
+	body, err := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
+	if err != nil {
+		t.Fatalf("redis get: %v", err)
+	}
+	var cached divergence.CachedResult
+	if uerr := json.Unmarshal(body, &cached); uerr != nil {
+		t.Fatalf("unmarshal: %v", uerr)
+	}
+
+	// The straddle is real: median == our price, so the median leg is
+	// silent by construction. Pin that, so this test can never pass
+	// for the wrong reason.
+	if cached.Median != 1.00 {
+		t.Fatalf("Median = %g, want exactly 1.00 — the straddle fixture is what makes the median gate blind", cached.Median)
+	}
+	if cached.DivergencePct != 0 {
+		t.Fatalf("DivergencePct = %g, want 0 — the median leg must be silent here", cached.DivergencePct)
+	}
+	if cached.SuccessCount != 2 {
+		t.Fatalf("SuccessCount = %d, want 2", cached.SuccessCount)
+	}
+	if cached.AgreementCount != 0 {
+		t.Fatalf("AgreementCount = %d, want 0 — neither reference is within 5%% of us", cached.AgreementCount)
+	}
+
+	if !cached.WarningFired {
+		t.Error("WarningFired = false: two references 20% either side of us, NOT ONE corroborating, " +
+			"served as 'no divergence' because their median happened to equal our price")
+	}
+}
+
+// TestRefreshPair_OneDissenterDoesNotFireWarning pins the deliberate
+// limit of the MNY-22 agreement leg: it fires on "nobody agrees", NOT
+// on "somebody disagrees". With three references and one outlier, two
+// still corroborate us and the warning must stay silent — otherwise a
+// single flaky reference would pin the customer-visible flag on
+// permanently.
+func TestRefreshPair_OneDissenterDoesNotFireWarning(t *testing.T) {
+	refs := []divergence.Reference{
+		&stubReference{name: "a", price: 1.00},
+		&stubReference{name: "b", price: 1.01},
+		&stubReference{name: "flaky", price: 1.40},
+	}
+	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 2,
+	})
+
+	if err := svc.RefreshPair(context.Background(), xlmUSD(t), 1.00, time.Now()); err != nil {
+		t.Fatalf("RefreshPair: %v", err)
+	}
+	body, err := rdb.Get(context.Background(), cachekeys.Divergence(xlmUSD(t)).String()).Bytes()
+	if err != nil {
+		t.Fatalf("redis get: %v", err)
+	}
+	var cached divergence.CachedResult
+	if uerr := json.Unmarshal(body, &cached); uerr != nil {
+		t.Fatalf("unmarshal: %v", uerr)
+	}
+	if cached.AgreementCount != 2 {
+		t.Fatalf("AgreementCount = %d, want 2", cached.AgreementCount)
+	}
+	if cached.WarningFired {
+		t.Error("WarningFired = true on a single dissenting reference; the agreement leg must " +
+			"require that NO reference corroborates us")
+	}
+}

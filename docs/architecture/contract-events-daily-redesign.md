@@ -1,6 +1,6 @@
 ---
 title: contract_events_daily MV redesign — uniqExact → uniqCombined(17)
-last_verified: 2026-07-10
+last_verified: 2026-07-24
 status: accepted
 ---
 
@@ -27,7 +27,9 @@ tens of millions of events for a busy contract on a busy day serialize
 to tens of megabytes, and merging N such states allocates all of them
 at once. The merge failed with an allocator exception, the background
 executor retried in a loop, and the retry storm starved the live sink +
-queries for hours (see `notes/BACKLOG.md` / CHANGELOG `[Unreleased]`).
+queries for hours (see `notes/BACKLOG.md` — a local, gitignored working
+note, not present on a fresh clone — or the CHANGELOG `[Unreleased]`
+entry for the tracked record).
 
 Two mitigations are live on r1 (`configs/ansible/roles/archival-node/tasks/15-log-discipline.yml`,
 commit `adeaef46`):
@@ -131,7 +133,8 @@ Measured accuracy (same states, `uniqCombinedMerge(17)`/`(14)` vs.
 | 4,000,000 | 4,016,122 | 0.403% | 3,991,651 | 0.209% |
 
 Both precisions land inside the "~0.1-0.5%" estimate already carried in
-`notes/ROADMAP.md`'s incident row. **Chose precision 17** (ClickHouse's
+`notes/ROADMAP.md`'s incident row (a local, gitignored working note —
+not present on a fresh clone). **Chose precision 17** (ClickHouse's
 own default for the bare `uniqCombined(...)` form, the most
 battle-tested parameterization) over 14: the state-size difference
 (~80KB vs ~10KB max) is immaterial to solving the incident — both are

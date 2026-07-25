@@ -347,3 +347,61 @@ func TestRedisSignupIPThrottle_DwellTime_DefaultApplied(t *testing.T) {
 // keep strconv import live in case future tests want explicit
 // window-bucket assertions.
 var _ = strconv.Itoa
+
+// TestRedisSignupIPThrottle_IPv6RotationWithinSlash64CannotEvadeCap is
+// the IPv6-keying regression (audit-2026-07-23; same class the API
+// rate-limit middleware closed as SEC-15).
+//
+// Attack: bulk-mint accounts from a single delegated IPv6 /64 — the
+// standard residential / VPS allocation — sourcing every signup from a
+// different /128 inside it. Pre-fix the Redis key was the caller's exact
+// address, so each of the 2^64 addresses in that one allocation got its
+// own pristine 5/hour bucket and F-1232's whole purpose (stopping
+// bulk-mint of email→key_id pairs) cost the attacker nothing to defeat.
+// Post-fix the key is the /64: the entire allocation shares one budget.
+func TestRedisSignupIPThrottle_IPv6RotationWithinSlash64CannotEvadeCap(t *testing.T) {
+	mr := miniredis.RunT(t)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	tt := auth.NewRedisSignupIPThrottle(rdb, auth.SignupIPThrottleOptions{
+		Max:    2,
+		Window: time.Hour,
+	})
+	ctx := context.Background()
+
+	// Three distinct /128s, all inside 2001:db8:abcd:1234::/64.
+	rotated := []string{
+		"2001:db8:abcd:1234::1",
+		"2001:db8:abcd:1234::dead:beef",
+		"2001:db8:abcd:1234:ffff:ffff:ffff:ffff",
+	}
+	minted := 0
+	for _, ip := range rotated {
+		if err := tt.CheckIP(ctx, ip); err == nil {
+			minted++
+		} else if !errors.Is(err, auth.ErrSignupRateLimited) {
+			t.Fatalf("CheckIP(%s): unexpected error %v", ip, err)
+		}
+	}
+	if minted != 2 {
+		t.Fatalf("%d signups got through from 3 addresses inside ONE /64 against a 2/window "+
+			"cap; rotating the /128 must not mint fresh buckets", minted)
+	}
+
+	// A different /64 is a different subscriber and keeps its own budget
+	// — the aggregation must not over-collapse into a shared limit.
+	if err := tt.CheckIP(ctx, "2001:db8:abcd:9999::1"); err != nil {
+		t.Errorf("a different /64 must have its own budget, got %v", err)
+	}
+
+	// IPv4 is untouched: no cheap-rotation problem at attacker scale, so
+	// it keeps full-address granularity.
+	if err := tt.CheckIP(ctx, "203.0.113.10"); err != nil {
+		t.Errorf("IPv4 first signup: %v", err)
+	}
+	if err := tt.CheckIP(ctx, "203.0.113.11"); err != nil {
+		t.Errorf("a neighbouring IPv4 address must keep its own bucket: %v", err)
+	}
+}

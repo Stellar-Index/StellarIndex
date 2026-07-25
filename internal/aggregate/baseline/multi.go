@@ -20,11 +20,24 @@ const (
 // three time scales (1d / 7d / 30d) per ADR-0019 §"Multi-window
 // safeguard against frog-boiling".
 //
-// The defence: a coordinated attacker who slowly drifts an asset
-// over weeks would defeat the 1d window (the median + MAD have
-// drifted with the attack), and possibly the 7d window, but the
-// 30d window — which still includes pre-attack data — would still
-// flag the drifted price as anomalous.
+// The defence has two halves, and they detect different things:
+//
+//   - [MultiBaseline.MaxZScore] scores one bucket's return against
+//     each window. This catches sudden spikes.
+//   - [MultiBaseline.MaxDriftZScore] scores each window's own
+//     persistent drift. This catches frog-boiling.
+//
+// The second half is not optional. ADR-0019 originally reasoned that
+// a slow drift "defeats the 1d window, but the 30d window still
+// includes pre-attack data, so it still flags the drifted price".
+// That holds for price LEVELS — but these baselines are built from
+// bucket-to-bucket RETURNS, which keep no level memory. A drift of
+// 0.5%/day is a per-bucket return of ~3e-6, far inside every
+// window's return-MAD, so all three windows score it ~0 no matter
+// how far the price has actually travelled, and the window medians
+// drift along with the attack besides. Adding window lengths cannot
+// recover a signal that is not in the return series; see
+// [Baseline.DriftZScore] for the statistic that is.
 //
 // Conversely, a legitimate regime change (asset matures, gains
 // liquidity) shows up proportionally across all three windows, so
@@ -81,10 +94,16 @@ func (m MultiBaseline) HasAnyValid() bool {
 // duration so callers can attribute "which window detected this".
 //
 // "Fires when any window flags as anomalous" (ADR-0019) maps to
-// `MaxZScore(x) >= threshold`. The 30d window dominates for
-// drifted-attack detection (it sees pre-drift baseline); the 1d
-// window dominates for sudden-spike detection (the longer windows
-// average a single spike out among 30k samples).
+// `MaxZScore(x) >= threshold`. The 1d window dominates for
+// sudden-spike detection (the longer windows average a single spike
+// out among 30k samples).
+//
+// This method detects SPIKES only. It is structurally blind to a
+// slow drift at every window length — the drifted returns are tiny
+// and each window's median has moved with them. Callers that need
+// the frog-boiling defence must also consult
+// [MultiBaseline.MaxDriftZScore] and take the max; see
+// [Baseline.DriftZScore].
 //
 // The third return value is `valid` — false when [HasAnyValid]
 // would return false. Callers branch to the bootstrap policy on
@@ -136,6 +155,64 @@ func (m MultiBaseline) MaxZScore(x float64) (z float64, window time.Duration, va
 			z, window, valid = zb, Window30d, true
 		}
 	}
+	return z, window, valid
+}
+
+// MaxDriftZScore returns the largest [Baseline.DriftZScore] across
+// every window that has one, plus the window it came from. This is
+// the working half of ADR-0019 §"Multi-window safeguard against
+// frog-boiling": [MultiBaseline.MaxZScore] scores a single bucket's
+// return and is blind to a slow drift at EVERY window length (see
+// [Baseline.DriftZScore] for why more windows don't help there);
+// this method scores the drift itself.
+//
+// Unlike MaxZScore it takes no observation — the signal is a property
+// of the training window, not of the newest bucket.
+//
+// That difference is load-bearing, so read it before wiring this
+// anywhere: MUST NOT gate a per-bucket decision (publication,
+// freezing, serving). Because the result is a pure function of the
+// persisted baseline row, a decision gated on it cannot be cleared by
+// a subsequent good bucket — it stays engaged until the drift ages
+// out of all three windows. Measured on the real path, one genuine
+// +50%-over-7-days repricing of a quiet asset holds this above 5 for
+// 30 days, 24 of them after the move already finished. Requiring the
+// current bucket to corroborate does not rescue it either: that means
+// MaxZScore is over the threshold too, which is just the spike check.
+//
+// Use it for graded, reversible signals — the confidence score, which
+// is what the orchestrator does — where a stale-by-a-few-hours
+// reading costs a slightly pessimistic number rather than a month of
+// frozen price.
+//
+// The three window lengths are genuinely complementary here, which
+// is what the return-space version only claimed to be. A window
+// detects a drift once the drift covers most of it (the median needs
+// a majority) and its sensitivity grows as sqrt(N), so the windows
+// form a detection ladder over attack duration: 1d catches a fast
+// ramp within hours, 7d a multi-day push, 30d the patient
+// weeks-long drift that is invisible to both shorter scales. Taking
+// the max means the attacker must evade all three.
+//
+// `valid` is false when no window cleared [MinDriftSamples] — the
+// caller keeps whatever return-based signal it has rather than
+// treating 0 as "no drift".
+func (m MultiBaseline) MaxDriftZScore() (z float64, window time.Duration, valid bool) {
+	consider := func(b *Baseline, w time.Duration) {
+		if b == nil {
+			return
+		}
+		zb, ok := b.DriftZScore()
+		if !ok {
+			return
+		}
+		if !valid || zb > z {
+			z, window, valid = zb, w, true
+		}
+	}
+	consider(m.Day1, Window1d)
+	consider(m.Day7, Window7d)
+	consider(m.Day30, Window30d)
 	return z, window, valid
 }
 

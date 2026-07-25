@@ -188,7 +188,7 @@ func backfill(args []string) error {
 	// overwriting live-ingested correct values with NULL. Mirror the indexer /
 	// backfill_external / ch_rebuild wiring: a positive generation so a corrected
 	// re-derive is authoritative, AND the resolvers so it writes real values (not
-	// NULL). The reDeriveResolverGuard now backstops any future omission.
+	// NULL). The reDeriveNullVolumeGuard now backstops any future omission.
 	store.SetDeriveGeneration(time.Now().Unix())
 	if err := timescale.InstallUSDVolumeResolution(
 		store,
@@ -304,11 +304,12 @@ func buildChunkDispatcher(
 	// gets N independent sinks each with their own batch buffer.
 	// Stop()'d at chunk end to flush any partial batch.
 	rawSink := sorobanevents.NewAsyncSink(store, sorobanevents.AsyncSinkOptions{
-		BufferSize:    4096,
-		BatchSize:     1000,
-		FlushInterval: time.Second,
-		WriteTimeout:  10 * time.Second,
-		Logger:        logger.With("component", "soroban-events-sink"),
+		IsPermanentFault: timescale.IsPermanentDataError,
+		BufferSize:       4096,
+		BatchSize:        1000,
+		FlushInterval:    time.Second,
+		WriteTimeout:     10 * time.Second,
+		Logger:           logger.With("component", "soroban-events-sink"),
 	})
 	rawSink.Start()
 	disp.SetRawEventSink(rawSink)
@@ -451,43 +452,44 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		}
 	}
 
-	// C2-14 (durability): advance the resume cursor ONLY now. The sink
-	// goroutine has fully drained (<-sinkDone: every enqueued event either
-	// committed or block-and-retried per ADR-0041) and the soroban rawSink
-	// has flushed its final batch (Stop above), so every row for ledgers
-	// [startFrom, lastFullyEnqueued] is durably persisted. The cursor is the
-	// last FULLY-COMMITTED ledger, never the last enqueued — so a crash
-	// before this point leaves the cursor at (or before) the last persisted
-	// ledger and the next run re-reads the gap rather than striding past it.
-	//
-	// This checkpoints even when streamErr is set: everything enqueued
-	// before the stream aborted is drained and committed above, so recording
-	// the last fully-enqueued ledger lets a resume continue from the failure
-	// point instead of restarting the whole chunk. On a graceful ctx-cancel
-	// (SIGINT) the interrupted ledger's ProcessLedger returns before this
-	// runs, so lastFullyEnqueued stays at the last ledger that fully drained.
-	// (A hard crash before the drain completes checkpoints nothing this run —
-	// resume restarts from the prior checkpoint; all writes are idempotent
-	// via ON CONFLICT, so the re-read is safe. Finer hard-crash granularity
-	// would require a per-window drain barrier: stream the chunk in bounded
-	// sub-windows, each with its own drain+flush before checkpointing — a
-	// future refinement, not needed for correctness.)
-	if lastFullyEnqueued > 0 && lastFullyEnqueued >= startFrom {
-		// Use a FRESH bounded context: on a graceful SIGINT the parent ctx is
-		// already canceled by the time we get here, and passing it would make
-		// this final checkpoint fail instantly — silently discarding the
-		// resume watermark for the ledgers we just drained (F-1318 pattern).
-		cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
-		if err := store.UpsertCursor(cctx, backfillCursorSource, cursorSub, lastFullyEnqueued); err != nil { //nolint:contextcheck // deliberate fresh ctx: the parent is already canceled on a graceful SIGINT (F-1318) — using it would silently drop the resume watermark; see the comment above
-			logger.Warn("backfill cursor upsert (post-drain)",
-				"ledger", lastFullyEnqueued,
-				"err", err)
-		}
-		ccancel()
-	}
-
+	// C2-14 (durability): the resume cursor advances ONLY after this
+	// point, and (DAT-09 / REL-08) ONLY after a successful — or
+	// explicitly-skipped — CAGG refresh below. The sink goroutine has
+	// fully drained (<-sinkDone: every enqueued event either committed
+	// or block-and-retried per ADR-0041) and the soroban rawSink has
+	// flushed its final batch (Stop above), so every row for ledgers
+	// [startFrom, lastFullyEnqueued] is durably persisted — but a chunk
+	// is not "complete" for resume purposes until its CAGGs are
+	// materialised too: the resume gate below (`c.LastLedger >=
+	// chunk.to` → short-circuit, skip re-walk AND re-refresh) would
+	// otherwise trust a chunk whose trades are durably inserted but
+	// still invisible to the served price views, and a crash between
+	// the old early cursor-advance and materialisation left them
+	// un-refreshed forever (the May 2026 ~80M-trade loss this refresh
+	// exists to prevent, reintroduced one layer up).
 	if streamErr != nil && !errors.Is(streamErr, context.Canceled) {
+		// The stream itself aborted. Still checkpoint whatever fully
+		// drained before the abort — those rows are durably committed
+		// above — so a resume continues from the failure point instead
+		// of restarting the whole chunk. This does NOT wait for a CAGG
+		// refresh: the chunk failed outright (the returned error fails
+		// the run visibly), and a subsequent successful resume performs
+		// its own CAGG refresh before ITS checkpoint.
+		checkpointBackfillChunk(logger, store, cursorSub, lastFullyEnqueued, startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment (F-1318)
 		return fmt.Errorf("stream: %w", streamErr)
+	}
+	if ctx.Err() != nil {
+		// Graceful shutdown (SIGINT): streamErr is context.Canceled (or
+		// the last ledger just finished as cancellation landed).
+		// Checkpoint whatever fully drained and stop HERE rather than
+		// falling through to the CAGG-refresh block below: `ctx` is
+		// already dead, so a Postgres refresh call against it would
+		// just fail spuriously — and per DAT-09/REL-08 that failure
+		// must not block checkpointing ledgers that DID fully commit.
+		// A subsequent resume re-walks the remainder and performs its
+		// own CAGG refresh before its own checkpoint.
+		checkpointBackfillChunk(logger, store, cursorSub, lastFullyEnqueued, startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment (F-1318)
+		return nil                                                                      //nolint:nilerr // deliberate: a graceful ctx-cancel (streamErr may be context.Canceled here) is a clean shutdown, not a chunk failure — matches the pre-existing behaviour this function has always had for SIGINT
 	}
 
 	// F-0159: report BOTH the chunk's range size and the count of
@@ -517,41 +519,86 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	// CAGG refresh path: skipped for the soroban-events pseudo-source
 	// (the soroban_events hypertable has no CAGGs built on top of it
 	// — future per-source decoders read from it directly via SELECT).
-	if pseudo {
+	// Nothing to materialise, so the checkpoint below is unconditional.
+	switch {
+	case pseudo:
 		logger.Info("skipping CAGG refresh — soroban-events has no CAGGs")
-		return nil
-	}
-
-	// Force-materialise the long-lived CAGGs over the chunk's
-	// timestamp range. Without this, historical inserts get dropped
-	// by the 90-day retention policy on the raw trades table BEFORE
-	// the policy refresher's natural cadence picks them up — which
-	// is what happened to the May 2026 SDEX backfill (cursors
-	// completed, trades inserted, retention dropped them within 24h,
-	// no CAGG materialisation, ~80M trades of work lost).
-	//
-	// We refresh prices_1h / 4h / 1d / 1w / 1mo (the no-retention
-	// CAGGs per migration 0002). prices_1m and prices_15m have
-	// 30-day retention by design, so refreshing them for historical
-	// ranges would just be wasted work.
-	if opts.refreshCAGGs {
+	case opts.refreshCAGGs:
+		// Force-materialise the long-lived CAGGs over the chunk's
+		// timestamp range. Without this, historical inserts get dropped
+		// by the 90-day retention policy on the raw trades table BEFORE
+		// the policy refresher's natural cadence picks them up — which
+		// is what happened to the May 2026 SDEX backfill (cursors
+		// completed, trades inserted, retention dropped them within 24h,
+		// no CAGG materialisation, ~80M trades of work lost).
+		//
+		// We refresh prices_1h / 4h / 1d / 1w / 1mo (the no-retention
+		// CAGGs per migration 0002). prices_1m and prices_15m have
+		// 30-day retention by design, so refreshing them for historical
+		// ranges would just be wasted work.
+		//
+		// DAT-09 / REL-08: a refresh failure here is FATAL to the
+		// chunk — the function returns before the checkpoint below, so
+		// the durable cursor does NOT advance past an unmaterialised
+		// chunk. A resume re-walks and re-attempts the refresh.
 		if err := refreshCAGGsForChunk(ctx, logger, store, chunk); err != nil {
 			return fmt.Errorf("post-chunk CAGG refresh: %w", err)
 		}
-	} else {
+	default:
 		logger.Warn("skipping CAGG refresh (-refresh-caggs=false)",
 			"impact", "historical inserts will be dropped by 90-day retention before CAGG policy materialises them",
 		)
 	}
+
+	checkpointBackfillChunk(logger, store, cursorSub, lastFullyEnqueued, startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment (F-1318)
 	return nil
+}
+
+// checkpointBackfillChunk durably advances the backfill cursor to
+// lastFullyEnqueued. No-op when nothing was fully enqueued (or
+// enqueued below startFrom — nothing new to record). Uses a FRESH
+// bounded context: on a graceful SIGINT the parent ctx is already
+// canceled by the time callers reach this point, and passing it would
+// make the checkpoint fail instantly — silently discarding the resume
+// watermark for the ledgers just drained (F-1318 pattern).
+func checkpointBackfillChunk(logger *slog.Logger, store *timescale.Store, cursorSub string, lastFullyEnqueued, startFrom uint32) {
+	if lastFullyEnqueued == 0 || lastFullyEnqueued < startFrom {
+		return
+	}
+	cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer ccancel()
+	if err := store.UpsertCursor(cctx, backfillCursorSource, cursorSub, lastFullyEnqueued); err != nil { //nolint:contextcheck // deliberate fresh ctx: the parent is already canceled on a graceful SIGINT (F-1318) — using it would silently drop the resume watermark; see the doc comment above
+		logger.Warn("backfill cursor upsert (post-drain)",
+			"ledger", lastFullyEnqueued,
+			"err", err)
+	}
+}
+
+// caggRefresher is the storage seam refreshCAGGsForChunk depends on —
+// split out so its failure-aggregation logic (DAT-09 / REL-08: a
+// per-view failure must make the WHOLE refresh fail, not just log and
+// continue) is unit-testable with a fake, without a live Postgres.
+// *timescale.Store satisfies this structurally.
+type caggRefresher interface {
+	LedgerRangeToTimeRange(ctx context.Context, from, to uint32) (time.Time, time.Time, error)
+	RefreshContinuousAggregate(ctx context.Context, name string, from, to time.Time) error
 }
 
 // refreshCAGGsForChunk derives the ts range covered by the just-
 // inserted trades and force-refreshes every long-lived CAGG over
 // that range. Idempotent — re-refreshing an already-materialised
-// range is a no-op. Soft-degrades on individual view failures so
-// one wedged CAGG doesn't leave the others un-materialised.
-func refreshCAGGsForChunk(ctx context.Context, logger *slog.Logger, store *timescale.Store, chunk chunkRange) error {
+// range is a no-op.
+//
+// Every CAGG is still attempted even after one fails — a single
+// wedged view must not leave the REST un-materialised — but
+// (DAT-09 / REL-08) any view failure now makes the function return a
+// non-nil error, so the caller (runBackfillChunk) treats the whole
+// chunk as unmaterialised and does NOT advance the durable cursor
+// past it. The historical "log and continue, always return nil"
+// shape let a chunk get certified complete (cursor advanced) while
+// its CAGGs were silently un-refreshed — the same class of loss this
+// refresh exists to prevent, one layer up.
+func refreshCAGGsForChunk(ctx context.Context, logger *slog.Logger, store caggRefresher, chunk chunkRange) error {
 	tsFrom, tsTo, err := store.LedgerRangeToTimeRange(ctx, chunk.from, chunk.to)
 	if err != nil {
 		// No trades inserted in the chunk — nothing to refresh.
@@ -570,6 +617,7 @@ func refreshCAGGsForChunk(ctx context.Context, logger *slog.Logger, store *times
 		"ts_from", tsFrom.UTC().Format(time.RFC3339),
 		"ts_to", tsTo.UTC().Format(time.RFC3339),
 	)
+	var failed []string
 	for _, spec := range timescale.CAGGsLiveForever {
 		// Pad the chunk's ts range to the per-CAGG minimum so the
 		// refresh procedure doesn't reject with "refresh window
@@ -580,12 +628,13 @@ func refreshCAGGsForChunk(ctx context.Context, logger *slog.Logger, store *times
 		if err := store.RefreshContinuousAggregate(ctx, spec.Name, padFrom, padTo); err != nil {
 			logger.Error("CAGG refresh failed",
 				"view", spec.Name, "err", err)
-			// Don't abort the chunk — log and continue. An
-			// operator can re-refresh manually via psql; the
-			// trade rows are still in the hypertable until next
-			// retention run, so a same-day re-attempt works.
+			failed = append(failed, spec.Name)
 			continue
 		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("CAGG refresh failed for %d/%d view(s): %s — trade rows are still in the hypertable (not lost); re-run to retry",
+			len(failed), len(timescale.CAGGsLiveForever), strings.Join(failed, ", "))
 	}
 	return nil
 }

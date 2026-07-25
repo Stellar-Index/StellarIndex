@@ -1,7 +1,7 @@
 ---
 title: Finding — dust trades set OHLC chart extremes
-last_verified: 2026-07-22
-status: diagnosed; DECIDED — notional filter, band removed; implementation pending
+last_verified: 2026-07-24
+status: FIXED in code (migration 0115 + band removed) — AWAITING operator re-materialization
 ---
 
 # Dust trades set OHLC chart extremes
@@ -158,7 +158,39 @@ Distribution on 2026-07-17 (6,018,245 trades):
 | `least(base,quote) < 10,000` | 1,226,222 | 20.4% |
 | `usd_volume < $0.01` | 1,448,695 | 24.1% |
 
-## Fix (designed, not implemented)
+## Fix (IMPLEMENTED 2026-07-24 — deploy pending)
+
+Shipped as:
+
+- `migrations/0115_ohlc_extremes_notional_floor.up.sql` — the notional
+  floor on all four extremes (open/high/low/close) of all seven
+  `prices_*` CAGGs. `twap_1h`/`twap_1d` are recreated unchanged as
+  dependents of `prices_1m`.
+- `internal/api/v1/ohlc_fiat_combine.go` — `combinedOutlierBandRatio`
+  (the 2× VWAP band) REMOVED per the decision below.
+- `test/integration/ohlc_dust_floor_test.go` — DB-backed proof on
+  TimescaleDB 2.26.4: the seeded 2↔15-stroop crumb serves `0.1333333333`
+  before the migration and `0.1822` after, on every grain.
+
+Open questions 1–4 as resolved at implementation time:
+
+1. **Threshold** — $0.01, as designed. Defined ONCE, in the migration's
+   `ohlc_extreme_min_usd_volume` constant.
+2. **`usd_volume` NULLs** — NULL never satisfies `>= 0.01`, so an
+   entirely unpriced bucket falls through the `COALESCE` to today's
+   unfiltered extreme (unchanged behaviour, and the option that cannot
+   suppress a real extreme). A bucket MIXING priced and unpriced trades
+   takes its extremes from the priced ones only. A stroop-based floor
+   for unpriced pairs remains a separate, deliberate decision.
+3. **CAGG support** — verified: TimescaleDB 2.26.4 (the deployed
+   version) accepts `COALESCE(agg(...) FILTER (WHERE ...), agg(...))`
+   for `first`/`last`/`max`/`min` inside a continuous aggregate.
+4. **Re-materialisation cost** — unchanged and still the gating step:
+   the migration is `WITH NO DATA`, so applying it EMPTIES the seven
+   price views plus `twap_1h`/`twap_1d` (~1.1 TB, hours). Operator step,
+   off the D2 window; refresh sequence is in the migration header.
+
+## Fix (as designed)
 
 The extremes must be computed over economically meaningful trades only. This has
 to happen in the **continuous aggregate**, because the cagg stores only the

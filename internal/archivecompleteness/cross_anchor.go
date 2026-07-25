@@ -110,10 +110,16 @@ func (c *CrossAnchorChecker) Check(from, to uint32) (CrossAnchorResult, error) {
 
 	for seq := firstCP; seq <= lastCP; seq += 64 {
 		path := checkpointPath(c.archiveRoot, seq)
-		_, err := os.Stat(path)
+		st, err := os.Stat(path)
 		switch {
 		case err == nil:
-			res.Found++
+			if probeCheckpointFile(path, st) {
+				res.Found++
+			} else if len(res.Missing) < MaxMissingReported {
+				res.Missing = append(res.Missing, seq)
+			} else if !res.Truncated {
+				res.Truncated = true
+			}
 		case errors.Is(err, fs.ErrNotExist):
 			if len(res.Missing) < MaxMissingReported {
 				res.Missing = append(res.Missing, seq)
@@ -127,6 +133,30 @@ func (c *CrossAnchorChecker) Check(from, to uint32) (CrossAnchorResult, error) {
 		}
 	}
 	return res, nil
+}
+
+// probeCheckpointFile reports whether a PRESENT checkpoint file at
+// path passes a cheap structural probe: non-empty on disk, and a
+// valid gzip stream that decompresses to non-empty content
+// (DAT-09 / DAT-11). Existence alone (the old behaviour) let a
+// truncated, corrupt, or zero-byte file be certified "Found" and
+// never repaired — the fill path only re-fetches entries in
+// Missing, so a present-but-broken file was invisible to it.
+//
+// Deliberately does NOT decode the checkpoint XDR content or check
+// its ledger sequence — that full validation runs once, on the
+// small number of freshly-FETCHED candidates, in
+// validateCheckpointContent (called from fetchAndValidate). Doing
+// the same full decode for every EXISTING file on every scan would
+// turn a Stat-bound walk over a potentially six-figure checkpoint
+// count into a gzip-decode-bound one; the cheap probe here is the
+// right cost/benefit trade for the steady-state scan.
+func probeCheckpointFile(path string, st os.FileInfo) bool {
+	if st.Size() == 0 {
+		return false
+	}
+	n, err := validateGzip(path)
+	return err == nil && n > 0
 }
 
 // alignFirstCheckpoint returns the smallest checkpoint sequence

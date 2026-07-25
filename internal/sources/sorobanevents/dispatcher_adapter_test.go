@@ -1,11 +1,17 @@
 package sorobanevents
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"math/big"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/lib/pq"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
@@ -228,5 +234,270 @@ func TestAsyncSink_StopReleasesBlockedProducers(t *testing.T) {
 	// past the stopping check at close time).
 	if got := sink.DroppedCount(); got == 0 {
 		t.Errorf("DroppedCount = 0, want >0 after shutdown-race")
+	}
+}
+
+// flakyWriter fails its first failN calls with failWith, then
+// succeeds. failN == -1 means "always fail" (used to pin the
+// permanent-fault path, which must never retry).
+type flakyWriter struct {
+	mu      sync.Mutex
+	failErr error
+	failN   int
+	calls   int
+	written [][]Row
+}
+
+func (w *flakyWriter) InsertSorobanEventsBatch(_ context.Context, rows []Row) error {
+	w.mu.Lock()
+	w.calls++
+	call := w.calls
+	w.mu.Unlock()
+	if w.failN < 0 || call <= w.failN {
+		return w.failErr
+	}
+	w.mu.Lock()
+	cp := make([]Row, len(rows))
+	copy(cp, rows)
+	w.written = append(w.written, cp)
+	w.mu.Unlock()
+	return nil
+}
+
+func (w *flakyWriter) callCount() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.calls
+}
+
+// TestAsyncSink_FlushBatch_RetriesInfraFaultUntilItLands is the
+// regression test for audit-2026-07-23 REL-02/DAT-09: before the
+// fix, [AsyncSink.run]'s flush closure made exactly ONE
+// InsertSorobanEventsBatch attempt and, on ANY error — including a
+// plain transient infra fault like "connection refused" — logged a
+// Warn and permanently discarded the batch. There was no retry, no
+// lost-rows counter, and no ERROR-level signal: a sustained Postgres
+// blip silently ate a window of raw soroban_events rows with nothing
+// for an operator to alert on or a range to re-derive.
+//
+// Asserts the CORRECTED behaviour: an unclassified/infra fault is
+// retried with backpressure until it lands — WrittenCount reaches the
+// full row count and LostCount stays zero — matching the ADR-0041
+// asymmetric policy the trades path already has (retry is the
+// default; drop requires positive proof of permanence).
+func TestAsyncSink_FlushBatch_RetriesInfraFaultUntilItLands(t *testing.T) {
+	t.Parallel()
+
+	w := &flakyWriter{failErr: errors.New("dial tcp: connection refused"), failN: 2}
+	sink := NewAsyncSink(w, AsyncSinkOptions{
+		BufferSize:    4,
+		BatchSize:     2,
+		FlushInterval: 10 * time.Second, // disable time-based flush in test
+		WriteTimeout:  time.Second,
+	})
+	sink.Start()
+
+	for i := 0; i < 2; i++ {
+		sink.PushEvent(captureableEvent(t, uint32(4_000_000+i)))
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for sink.WrittenCount() != 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("WrittenCount = %d after 3s, want 2 — infra fault was not retried until it landed (LostCount=%d, writer calls=%d)",
+				sink.WrittenCount(), sink.LostCount(), w.callCount())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	sink.Stop()
+
+	if got := sink.LostCount(); got != 0 {
+		t.Errorf("LostCount = %d, want 0 — a retryable infra fault must never be counted as a permanent loss", got)
+	}
+	if got := w.callCount(); got < 3 {
+		t.Errorf("writer called %d times, want >= 3 (2 induced failures + the attempt that landed)", got)
+	}
+}
+
+// TestAsyncSink_FlushBatch_PermanentFaultCountsLostNotRetried pins
+// the other half of the REL-02/DAT-09 contract: a POSITIVELY
+// classified permanent data fault (pq class 23, e.g. a unique
+// constraint violation) must be counted on LostCount and must NOT be
+// retried forever — retrying a deterministic constraint violation
+// can never succeed and would wedge the sink on a single poison
+// batch.
+func TestAsyncSink_FlushBatch_PermanentFaultCountsLostNotRetried(t *testing.T) {
+	t.Parallel()
+
+	var logBuf bytes.Buffer
+	permErr := &pq.Error{Code: "23505", Message: "duplicate key value violates unique constraint"}
+	w := &flakyWriter{failErr: permErr, failN: -1} // always fails
+	sink := NewAsyncSink(w, AsyncSinkOptions{
+		BufferSize:    4,
+		BatchSize:     2,
+		FlushInterval: 10 * time.Second,
+		WriteTimeout:  time.Second,
+		Logger:        slog.New(slog.NewTextHandler(&logBuf, nil)),
+		// IsPermanentFault is injected by the app layer in production
+		// (the indexer / ops backfill wire timescale.IsPermanentDataError
+		// — see ARCH-import-boundaries, 9b033ff0: a source package must
+		// not import internal/storage itself). Wire the same pq class-23
+		// predicate here so this test exercises the intended contract —
+		// left unset, IsPermanentFault defaults to "nothing is permanent"
+		// and this pq error would instead retry-until-shutdown, which
+		// would make the count-only assertions below pass for the WRONG
+		// reason (racing sink.Stop()'s shutdown-abandon path — see
+		// TestAsyncSink_FlushBatch_UnwiredIsPermanentFault_RetriesEvenAPqError)
+		// instead of proving immediate, deterministic abandonment on a
+		// positively-classified permanent fault. The log-reason
+		// assertion below pins that distinction directly.
+		IsPermanentFault: func(err error) bool {
+			var pqErr *pq.Error
+			return errors.As(err, &pqErr) && pqErr.Code.Class() == "23"
+		},
+	})
+	sink.Start()
+
+	for i := 0; i < 2; i++ {
+		sink.PushEvent(captureableEvent(t, uint32(5_000_000+i)))
+	}
+	sink.Stop()
+
+	if got := sink.LostCount(); got != 2 {
+		t.Errorf("LostCount = %d, want 2 — a permanent data fault must be counted, not silently dropped with no signal", got)
+	}
+	if got := sink.WrittenCount(); got != 0 {
+		t.Errorf("WrittenCount = %d, want 0", got)
+	}
+	if got := w.callCount(); got != 1 {
+		t.Errorf("writer called %d times, want exactly 1 — a permanent fault must not be retried", got)
+	}
+	if out := logBuf.String(); !strings.Contains(out, `reason="permanent data fault"`) {
+		t.Errorf("log output = %q; want it to contain reason=\"permanent data fault\" — a wired IsPermanentFault must abandon on the FIRST attempt, not retry until shutdown", out)
+	}
+}
+
+// TestAsyncSink_FlushBatch_UnwiredIsPermanentFault_RetriesEvenAPqError
+// pins the safe-default half of the ARCH-import-boundaries injection
+// (9b033ff0): a caller that does NOT wire AsyncSinkOptions.IsPermanentFault
+// must never drop a row — even one that a real IsPermanentDataError
+// predicate would classify as permanent — because leaving it unwired
+// must fail toward "retry forever", not "silently discard rows from
+// ADR-0029's catch-all landing zone". Proves this via Stop()'s
+// shutdown-abandon path (LostCount rises) rather than infinite
+// retry — this test does not block forever waiting for a real DB.
+func TestAsyncSink_FlushBatch_UnwiredIsPermanentFault_RetriesEvenAPqError(t *testing.T) {
+	t.Parallel()
+
+	permErr := &pq.Error{Code: "23505", Message: "duplicate key value violates unique constraint"}
+	w := &flakyWriter{failErr: permErr, failN: -1} // always fails
+	sink := NewAsyncSink(w, AsyncSinkOptions{
+		BufferSize:    4,
+		BatchSize:     2,
+		FlushInterval: 10 * time.Second,
+		WriteTimeout:  time.Second,
+		// IsPermanentFault deliberately left unset.
+	})
+	sink.Start()
+
+	for i := 0; i < 2; i++ {
+		sink.PushEvent(captureableEvent(t, uint32(6_000_000+i)))
+	}
+	sink.Stop()
+
+	if got := sink.WrittenCount(); got != 0 {
+		t.Errorf("WrittenCount = %d, want 0", got)
+	}
+	// The unwired default must have retried at least once (backoff
+	// window) before the shutdown-abandon path took over — proving it
+	// did NOT immediately treat the pq error as permanent.
+	if got := w.callCount(); got < 1 {
+		t.Errorf("writer called %d times, want >= 1", got)
+	}
+	if got := sink.LostCount(); got != 2 {
+		t.Errorf("LostCount = %d, want 2 (abandoned at shutdown, not immediately dropped as permanent)", got)
+	}
+}
+
+// transientOnceWriter fails its first batch write with a transient
+// (non-permanent) error and succeeds on every attempt after that.
+// This is the shape that distinguishes "the retry loop is alive during
+// the shutdown drain" from "the drain abandons on first error", with no
+// dependence on scheduler races.
+type transientOnceWriter struct {
+	mu      sync.Mutex
+	calls   int
+	written int
+}
+
+func (w *transientOnceWriter) InsertSorobanEventsBatch(_ context.Context, rows []Row) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.calls++
+	if w.calls == 1 {
+		return errors.New("transient: connection reset by peer")
+	}
+	w.written += len(rows)
+	return nil
+}
+
+func (w *transientOnceWriter) WrittenRows() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.written
+}
+
+// TestAsyncSink_ShutdownDrainRetriesTransientFailure pins the fix for the
+// shutdown-drain data-loss bug.
+//
+// flushBatch aborts an in-flight/retrying write when its abort signal
+// fires, so a stuck write cannot hold shutdown hostage. That signal used
+// to be s.stopping — but the shutdown DRAIN runs entirely AFTER
+// s.stopping is closed, so every batch the drain flushed hit the
+// abandon branch the moment its first attempt returned any error. A
+// single transient blip (a Postgres restart, a reset connection) at
+// shutdown therefore discarded the final buffered rows, logged them as
+// lost, and exited 0. That is the ADR-0029 catch-all table: the rows the
+// completeness census reconciles against.
+//
+// The drain now gets its own bounded grace window, so "stop was
+// requested" and "stop has waited long enough" are finally distinct.
+//
+// Proven red: with abortFlush left as s.stopping, this fails with
+// WrittenCount = 0 / LostCount = 10 and the "shutdown before the write
+// landed" abandon log.
+func TestAsyncSink_ShutdownDrainRetriesTransientFailure(t *testing.T) {
+	t.Parallel()
+
+	w := &transientOnceWriter{}
+	const total = 10
+	sink := NewAsyncSink(w, AsyncSinkOptions{
+		BufferSize: 64,
+		// Big batch + long interval: nothing flushes before Stop, so the
+		// ONLY flush in this test is the shutdown drain's.
+		BatchSize:     1000,
+		FlushInterval: time.Hour,
+		WriteTimeout:  time.Second,
+		DrainGrace:    5 * time.Second,
+	})
+	sink.Start()
+	for i := 0; i < total; i++ {
+		sink.PushEvent(captureableEvent(t, uint32(3_000_000+i)))
+	}
+	sink.Stop()
+
+	if got := sink.LostCount(); got != 0 {
+		t.Errorf("LostCount = %d, want 0 — the drain abandoned rows on a transient error "+
+			"instead of retrying within the grace window", got)
+	}
+	if got := sink.WrittenCount(); got != total {
+		t.Errorf("WrittenCount = %d, want %d", got, total)
+	}
+	if got := w.WrittenRows(); got != total {
+		t.Errorf("writer received %d rows, want %d", got, total)
+	}
+	if w.calls < 2 {
+		t.Errorf("writer saw %d attempts, want >=2 — the retry never happened, "+
+			"so this test is not exercising the drain retry path", w.calls)
 	}
 }

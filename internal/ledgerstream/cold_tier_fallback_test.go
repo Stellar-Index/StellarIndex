@@ -97,6 +97,79 @@ func TestStream_ColdTierInitFailure_FallsBackToHotOnly(t *testing.T) {
 	}
 }
 
+// TestStream_ColdSchemaMismatch_ReturnsError is the regression test
+// for INT-01 (audit-2026-07-23): when hot and cold both construct
+// successfully but their Galexie export shapes disagree (here,
+// LedgersPerFile), object keys computed from hot's schema are simply
+// wrong for cold's layout — cold fallback would silently 404 forever
+// instead of ever actually serving a trimmed-from-hot range. Stream
+// must refuse loudly rather than wrap a TieredDataStore whose cold
+// side can never be reached.
+func TestStream_ColdSchemaMismatch_ReturnsError(t *testing.T) {
+	hotDir := t.TempDir()
+	coldDir := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	hotStore, err := datastore.NewFilesystemDataStoreWithPath(hotDir)
+	if err != nil {
+		t.Fatalf("open hot filesystem datastore: %v", err)
+	}
+	t.Cleanup(func() { _ = hotStore.Close() })
+
+	coldStore, err := datastore.NewFilesystemDataStoreWithPath(coldDir)
+	if err != nil {
+		t.Fatalf("open cold filesystem datastore: %v", err)
+	}
+	t.Cleanup(func() { _ = coldStore.Close() })
+
+	hotCfg := datastore.DataStoreConfig{
+		Type:   "Filesystem",
+		Params: map[string]string{"destination_path": hotDir},
+		Schema: datastore.DataStoreSchema{
+			LedgersPerFile:    1,
+			FilesPerPartition: 1,
+		},
+		NetworkPassphrase: "Test SDF Network ; September 2015",
+		Compression:       "zstd",
+	}
+	// Cold uses a DIFFERENT LedgersPerFile — a real-world shape a
+	// separately-configured archive export could plausibly have.
+	coldCfg := datastore.DataStoreConfig{
+		Type:   "Filesystem",
+		Params: map[string]string{"destination_path": coldDir},
+		Schema: datastore.DataStoreSchema{
+			LedgersPerFile:    64,
+			FilesPerPartition: 1,
+		},
+		NetworkPassphrase: "Test SDF Network ; September 2015",
+		Compression:       "zstd",
+	}
+	if _, _, err := datastore.PublishConfig(ctx, hotStore, hotCfg); err != nil {
+		t.Fatalf("publish hot config: %v", err)
+	}
+	if _, _, err := datastore.PublishConfig(ctx, coldStore, coldCfg); err != nil {
+		t.Fatalf("publish cold config: %v", err)
+	}
+	writeLedgerFixture(t, ctx, hotStore, hotCfg.Schema, 5)
+
+	lsCfg := ledgerstream.Config{
+		DataStore:     hotCfg,
+		ColdDataStore: coldCfg,
+	}
+	got := 0
+	err = ledgerstream.Stream(ctx, lsCfg, 5, 6, func(_ xdr.LedgerCloseMeta) error {
+		got++
+		return nil
+	})
+	if err == nil {
+		t.Fatalf("Stream returned nil with a hot/cold LedgersPerFile mismatch (1 vs 64) and %d callback invocations — want an explicit error, not a silently-defeated cold fallback", got)
+	}
+	if !strings.Contains(err.Error(), "differs from hot") {
+		t.Errorf("err = %v; want it to name the schema mismatch", err)
+	}
+}
+
 // TestStream_ColdTierInitFailure_SingleLedgerRange covers the other
 // half of streamTiered's cold-init-failure branch: a single-ledger
 // bounded range (From == To) reuses the already-open hot store via

@@ -1,0 +1,64 @@
+name: deploy-protection
+
+# Does the production deploy environment actually require a human
+# approval? (deploy-approval-gate, audit-2026-07-23.)
+#
+# deploy.yml declares `environment: r1`, which looks like a gate but
+# enforces nothing on its own: an environment with no
+# `required_reviewers` protection rule deploys unattended. When the
+# audit ran, `gh api repos/<repo>/environments/r1` returned
+# `"protection_rules": []` — the declaration was decoration.
+#
+# The reviewer list lives in GitHub repo settings and CANNOT be set
+# from any file in this repository. What the repo can do is (a) refuse
+# to deploy while the gate is absent — deploy.yml's "Assert the
+# production approval gate is configured" step — and (b) notice the
+# gate disappearing without waiting for someone to attempt a deploy,
+# which is this workflow.
+#
+# Run it by hand (Actions → deploy-protection → Run workflow) after
+# configuring reviewers; it is also the cheapest way to confirm the
+# token can read the environments API BEFORE a real deploy depends on
+# it. If the default GITHUB_TOKEN cannot, set DEPLOY_PROTECTION_TOKEN
+# to a read-only PAT — that supplies the credential, it never relaxes
+# the assertion.
+#
+# SCHEDULING CAVEAT (corrected 2026-07-25, CID-24, audit-2026-07-23):
+# this comment used to claim scheduled workflows "have never fired" for
+# this repository, citing a note in ansible-drift.yml. That note was
+# itself wrong — `gh run list` shows ansible-drift.yml, security.yml and
+# ci-health.yml all firing on schedule; ansible-drift.yml's scheduled
+# runs were failing at a credential-loading step, not silently absent.
+# Treat the cron here as the primary mechanism; manual dispatch remains
+# available as a fallback (e.g. to confirm the token can read the
+# environments API before a real deploy depends on it).
+
+on:
+  schedule:
+    - cron: "43 7 * * 1" # Mondays 07:43 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  deployments: read
+
+jobs:
+  environment-approval:
+    name: r1 requires a human approval
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Assert required reviewers on the r1 environment
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_PROTECTION_TOKEN || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          REGION: r1
+        run: |
+          set -euo pipefail
+          if ! gh api "repos/${REPO}/environments/${REGION}" > env-protection.json; then
+            echo "::error::Could not read the '${REGION}' environment protection config. If the default GITHUB_TOKEN lacks access, set the DEPLOY_PROTECTION_TOKEN secret to a read-only PAT and re-run."
+            exit 1
+          fi
+          bash scripts/ci/check-deploy-protection.sh env-protection.json "$REGION"

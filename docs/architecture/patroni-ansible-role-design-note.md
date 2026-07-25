@@ -1,7 +1,7 @@
 ---
 title: Patroni ansible role — design note
-last_verified: 2026-05-02
-status: shipped (Task #72 — configs/ansible/roles/patroni)
+last_verified: 2026-07-24
+status: NOT shipped (corrected 2026-07-24, audit-2026-07-23 DOC-05) — role code exists at configs/ansible/roles/patroni/ but no playbook invokes it; never applied to any host
 related:
   - docs/architecture/ha-plan.md §3.3 (TimescaleDB cluster topology)
   - docs/operations/runbooks/timescale-primary-down.md (the runbook this role makes work)
@@ -10,6 +10,18 @@ implementation: configs/ansible/roles/patroni/
 ---
 
 # Patroni ansible role — design note
+
+> **NOT shipped (corrected 2026-07-24, audit-2026-07-23 DOC-05).** The
+> frontmatter previously read `status: shipped`; that was false. The role's
+> files exist under `configs/ansible/roles/patroni/`, but **no playbook
+> invokes it** (verified: neither `configs/ansible/playbooks/archival-node.yml`
+> nor `monitoring.yml` — the only two playbooks in the repo — reference it),
+> and it has never been applied to any host. R1 still runs a single
+> unclustered Postgres today — see the DEPLOYMENT STATE banner atop
+> `docs/architecture/ha-plan.md` and `docs/operations/r1-deployment-state.md`
+> (`postgresql@15-main`, single node, no Patroni/etcd). Everything below is
+> the pre-implementation design record; read "Once Patroni lands" language
+> as still-future.
 
 Companions the role implementation at
 [`configs/ansible/roles/patroni/`](../../configs/ansible/roles/patroni/).

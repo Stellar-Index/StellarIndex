@@ -1,7 +1,7 @@
 ---
 title: Redis Sentinel ansible role — design note
-last_verified: 2026-05-13
-status: shipped (Task #72 / #79 — configs/ansible/roles/redis-sentinel)
+last_verified: 2026-07-24
+status: NOT shipped (corrected 2026-07-24, audit-2026-07-23 DOC-05) — the ansible role exists at configs/ansible/roles/redis-sentinel/ but no playbook invokes it and it has never been applied to any host; R1 runs a single-node, no-AUTH redis-server. The Go client-side FailoverClient support IS shipped (see banner).
 related:
   - docs/architecture/ha-plan.md §3.4 (Redis cluster topology)
   - docs/operations/runbooks/redis-master-down.md (the runbook this role makes work)
@@ -10,31 +10,40 @@ related:
 
 # Redis Sentinel ansible role — design note
 
-> **Shipped — this doc is the pre-shipping design conversation.**
-> The role at `configs/ansible/roles/redis-sentinel/` is now
-> live, plus the Sentinel-aware client at
-> [`internal/storage/redisclient/`](../../internal/storage/redisclient/redisclient.go)
-> (NOT in `internal/cachekeys/` as the doc body still suggests
-> in places — the connection-factory work landed in its own
-> package). For shipped-state references see:
+> **NOT shipped (corrected 2026-07-24, audit-2026-07-23 DOC-05).** This
+> banner previously read "Shipped"; that was false for the ansible role,
+> and it self-contradicted the very next paragraph, which called this
+> "**Working draft on local-only branch** `design/…`." Split the claim in
+> two, because the two halves are genuinely different:
 >
-> - Live ACL + listener-auth posture: F-1271 (wave 106)
->   added `requirepass` to `sentinel.conf.j2`; F-1272 (wave 106/107)
->   added the `redis_exporter` ACL user gated on
->   `redis_acl_lockdown`.
-> - Body sections below describing "future work" or "PR shape"
->   are preserved as the original design record. The actual
->   commit landed differently in places — defer to the source
->   tree when prose conflicts. F-1273 (2026-05-13) tracked the
->   residual prose drift in this doc.
+> - **The ansible role is NOT shipped.** `configs/ansible/roles/redis-sentinel/`
+>   has the templates (including the F-1271/F-1272 `requirepass` + ACL
+>   work below), but **no playbook invokes it** (verified against the
+>   repo's only two playbooks) and it has never run against any host. R1's
+>   actual `redis-server` is the hand-installed single-node package with
+>   **no AUTH configured** (`configs/ansible/roles/archival-node/tasks/
+>   16-prometheus-exporters.yml`: "r1's redis-server has no AUTH set
+>   today"), matching the DEPLOYMENT STATE banner atop
+>   `docs/architecture/ha-plan.md`. The Auth row in the decision table
+>   below is corrected accordingly.
+> - **The Go client-side Sentinel support genuinely IS shipped** and
+>   running in production: [`internal/storage/redisclient/`](../../internal/storage/redisclient/redisclient.go)
+>   (NOT `internal/cachekeys/`, as the doc body still suggests in places —
+>   the connection-factory work landed in its own package) is called from
+>   `cmd/stellarindex-api`, `cmd/stellarindex-aggregator`, and
+>   `cmd/stellarindex-ops`. Because r1's config sets no
+>   `redis.sentinel_addrs`, production today exercises only the plain
+>   `redis.NewClient` branch — the `FailoverClient` branch is correct code
+>   but dormant until an ansible-role deploy actually stands up Sentinel.
+> - Body sections below describing "future work" or "PR shape" are
+>   preserved as the original design record; F-1273 (2026-05-13) tracked
+>   residual prose drift.
 
-**Working draft on local-only branch
-`design/redis-sentinel-ansible-role-design-note`. Bootstraps the
-Redis Sentinel sub-role of Task #72 — second-priority after the
-Patroni piece.** Pairs with the Patroni note: both roles
-collectively make `redis-master-down.md` and
+Bootstraps the Redis Sentinel sub-role of Task #72 —
+second-priority after the Patroni piece. Pairs with the Patroni
+note: both roles collectively make `redis-master-down.md` and
 `timescale-primary-down.md` runbooks' "happy path" sections
-actually apply.
+actually apply, once deployed.
 
 ## Tension in the existing design — Cluster vs Sentinel
 
@@ -80,7 +89,7 @@ role lands so the source-of-truth stops contradicting itself.
 | Failover RTO | ha-plan §3.4 | 15-30 s |
 | Cross-region replication | ha-plan §3.4 | Explicitly NO — cache-only, re-hydrates from Timescale |
 | Front | **shipped** | Client-side Sentinel-aware discovery via go-redis `FailoverClient` in `internal/storage/redisclient/`. Application binaries pass `redis_sentinel_addrs` + `redis_master_name` + `redis_username` + `redis_password` and the client resolves the current primary automatically. No HAProxy or VIP required. |
-| Auth | This role decides | **shipped**. `requirepass` + `masterauth` on the Redis instance, `requirepass` on the Sentinel listener (F-1271, wave 106), optional ACL lockdown via `redis_acl_lockdown` flag with named `stellarindex` + `redis_exporter` users (F-1272, waves 106-107). Vault-supplied; no public listener. |
+| Auth | This role decides | **role template exists, NOT deployed** (corrected 2026-07-24, audit-2026-07-23 DOC-05). `requirepass` + `masterauth` on the Redis instance, `requirepass` on the Sentinel listener (F-1271, wave 106), optional ACL lockdown via `redis_acl_lockdown` flag with named `stellarindex` + `redis_exporter` users (F-1272, waves 106-107) — all landed in `configs/ansible/roles/redis-sentinel/templates/`, vault-supplied, no public listener. But the role has never been applied: r1's actual `redis-server` has **no AUTH configured** today. |
 
 ## Layout
 

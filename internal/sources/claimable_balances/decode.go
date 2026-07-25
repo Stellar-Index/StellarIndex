@@ -16,9 +16,10 @@ var (
 )
 
 // extractFromChange returns (claimable_id, asset_key, balance)
-// for a Created/Updated/Restored ClaimableBalanceEntry-delta.
-// Removed variants are filtered out at the [Observer.Matches]
-// level (see package doc).
+// for a State/Created/Updated/Restored ClaimableBalanceEntry-delta.
+// Removed variants carry no entry body — they are decoded from the
+// LedgerKey via [removedClaimableID] plus the pre-image memo (see
+// package doc).
 func extractFromChange(change xdr.LedgerEntryChange) (claimableID, assetKey string, balance *big.Int, err error) {
 	switch change.Type {
 	case xdr.LedgerEntryChangeTypeLedgerEntryCreated:
@@ -27,8 +28,27 @@ func extractFromChange(change xdr.LedgerEntryChange) (claimableID, assetKey stri
 		return decodePresent(change.Updated.Data.ClaimableBalance)
 	case xdr.LedgerEntryChangeTypeLedgerEntryRestored:
 		return decodePresent(change.Restored.Data.ClaimableBalance)
+	case xdr.LedgerEntryChangeTypeLedgerEntryState:
+		return decodePresent(change.State.Data.ClaimableBalance)
 	}
 	return "", "", nil, fmt.Errorf("%w: change type %d not supported by this observer", ErrNotClaimable, change.Type)
+}
+
+// removedClaimableID pulls the claimable_id hex off a Removed
+// change's LedgerKey. Returns ok=false when the change is not a
+// claimable-balance removal (or the key is malformed) — the asset
+// is NOT recoverable here, which is why the observer pairs this with
+// the pre-image memo.
+func removedClaimableID(change xdr.LedgerEntryChange) (string, bool) {
+	key := change.Removed
+	if key == nil || key.Type != xdr.LedgerEntryTypeClaimableBalance || key.ClaimableBalance == nil {
+		return "", false
+	}
+	id, err := claimableIDHex(key.ClaimableBalance.BalanceId)
+	if err != nil {
+		return "", false
+	}
+	return id, true
 }
 
 func decodePresent(cb *xdr.ClaimableBalanceEntry) (string, string, *big.Int, error) {

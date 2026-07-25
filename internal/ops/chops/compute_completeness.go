@@ -57,7 +57,12 @@ func sourceSubstrateOK(problem uint32, hasProblem bool, genesis uint32) bool {
 // (topic-based sources can't attribute an unhandled topic to themselves).
 //
 // Projection is bounded to the substrate∧recognition-verified region:
-// no point re-deriving where an earlier claim already failed.
+// no point re-deriving where an earlier claim already failed. Its LOWER
+// bound is derived from the served tier's own data, per target
+// (projectionScopes) — never a hardcoded retention guess — and the range
+// it actually covered is stated in the verdict detail, so `complete=true`
+// is a claim about exactly what was reconciled and nothing more
+// (DAT-09/N-F2 + INV-5; see targetScope and projectionClaim).
 func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo // linear computor; one block per claim.
 	fs := flag.NewFlagSet("compute-completeness", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -67,7 +72,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address (with -ch)")
 	skipSubstrate := fs.Bool("skip-substrate", false, "Trust the prior substrate certification (substrate_ok=true) instead of re-scanning the hash-chain — fast per-source iteration once substrate is proven")
 	skipRecognition := fs.Bool("skip-recognition", false, "Trust the prior recognition audit (recognition_ok=true) instead of re-scanning all topic shapes — the global DistinctTopicShapes scan is the load-heaviest step; skip it for gentle projection-only iteration once recognition is verified")
-	fromLedger := fs.Uint("from", 0, "INCREMENTAL verify: only check [from, tip], trusting [genesis, from] as already verified (substrate + recognition + projection all scoped to [from, tip]); the watermark still extends to tip when the window is clean. 0 = full verify from each source's genesis. The completeness timer passes min(watermark) from the prior snapshots so each run re-checks only new ledgers — minutes, not hours.")
+	fromLedger := fs.Uint("from", 0, "INCREMENTAL verify: only check [from, tip], trusting [genesis, from] as already verified (substrate + recognition + projection all scoped to [from, tip]); the watermark still extends to tip when the window is clean. 0 = full verify from each source's genesis. The completeness timer passes min(watermark) from the prior snapshots so each run re-checks only new ledgers — minutes, not hours. An incremental run can only CONFIRM or DOWNGRADE the served `complete` axis, never upgrade it: a range it did not reconcile is carried from the prior verdict, and a FAILING prior verdict is cleared only by a full run (INV-5 — see projectionClaim).")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -218,14 +223,21 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		}
 	}
 
-	// Retention boundary for trade-target sources: trades is right-sized to
-	// ~90d (~1.55M ledgers), so projection for trade-protocols is verified
-	// within [retentionStart, tip] (where the served tier keeps decoded rows);
-	// the full-history coverage claim rests on the proven substrate. ~87d keeps
-	// the window safely inside the retained range (no boundary undercount).
-	var retentionStart uint32
-	if *useCH && tip > 1_500_000 {
-		retentionStart = tip - 1_500_000
+	// Prior verdicts (INV-5). An INCREMENTAL run (-from) reconciles only a
+	// SUFFIX of each source's served range, so it may CONFIRM or DOWNGRADE the
+	// served (`complete`) axis but must NEVER upgrade it: the only evidence for
+	// the prefix it did not touch is the previously published verdict. Read
+	// those verdicts BEFORE the loop overwrites them, and fail CLOSED on a read
+	// error (same discipline as runRecognitionScan) — publishing verdicts while
+	// blind to the prior ones is exactly how a `complete=false` silently became
+	// `complete=true` (see projectionClaim).
+	priorSnaps, err := store.ListCompletenessSnapshots(ctx)
+	if err != nil {
+		return fmt.Errorf("prior completeness verdicts (failing closed — an incremental run cannot gate its claim without them): %w", err)
+	}
+	priorProj := make(map[string]priorProjection, len(priorSnaps))
+	for _, s := range priorSnaps {
+		priorProj[s.Source] = priorProjection{known: true, ok: s.ProjectionOK, tip: s.Tip}
 	}
 
 	// ── Per-source watermark ────────────────────────────────────────
@@ -310,14 +322,20 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		if *useCH {
 			if srW.Ledger >= projFrom {
 				streamer := clickhouse.ReconcileEventStreamer{Addr: *chAddr, NeedOpArgs: src.needsOpArgs}
-				delta, pdetail, perr := reconcileProjectionAggregate(ctx, store, streamer, *chAddr, src, projFrom, srW.Ledger, retentionStart)
+				scopes, servedFrom, runFrom, serr := projectionScopes(ctx, store, src, genesis, projFrom, srW.Ledger)
+				if serr != nil {
+					return fmt.Errorf("%s: served floor: %w", src.name, serr)
+				}
+				delta, pdetail, perr := reconcileProjectionAggregate(ctx, store, streamer, *chAddr, src, scopes)
 				if perr != nil {
 					return fmt.Errorf("%s: projection: %w", src.name, perr)
 				}
-				projOK = delta == 0
-				if !projOK {
-					detail = append(detail, "projection: "+pdetail)
-				}
+				// The scope travels WITH the verdict: a run may only claim the
+				// range it actually reconciled (ADR-0033 — a source is complete
+				// through W iff every claim holds contiguously to W).
+				var claimDetail string
+				projOK, claimDetail = projectionClaim(servedFrom, runFrom, srW.Ledger, delta == 0, pdetail, priorProj[src.name])
+				detail = append(detail, claimDetail)
 			} else {
 				detail = append(detail, "projection: not evaluated (earlier claim failed at genesis)")
 			}
@@ -427,6 +445,184 @@ func combineWatermark(srW completeness.Watermark, projOK bool) completeness.Wate
 	return w
 }
 
+// projectionScope is the ledger range a Claim-2b reconcile ACTUALLY covered for
+// one target. It travels with the verdict so a run can never publish
+// completeness over ledgers it did not reconcile (ADR-0033: a source is
+// complete through W iff every claim holds contiguously to W).
+type projectionScope struct {
+	From uint32 // inclusive
+	To   uint32 // inclusive
+}
+
+// targetScope derives one target's reconcile range from the SERVED TIER'S OWN
+// DATA — servedMin is `MIN(ledger)` of that target over [genesis, hi], and
+// haveServedRows is false when the target holds nothing in range.
+//
+// This REPLACES the hardcoded `retentionStart = tip - 1_500_000` floor
+// (DAT-09 / N-F2). That constant was a stale assumption: `trades` has had NO
+// retention policy since migration 0031 ("operator wants every raw trade
+// preserved forever"), so the served tier keeps full history while the verdict
+// only ever reconciled the last ~1.5M ledgers (~100 days). Served-tier loss
+// OLDER than that was structurally invisible to the `complete` axis. Worse, the
+// floor was applied at SOURCE level, so a trades source's FULL-HISTORY targets
+// (soroswap_skim_events, phoenix_liquidity/phoenix_stake_events,
+// comet_liquidity) were silently un-verified below it too. Per TARGET is the
+// correct granularity: each table is checked over exactly what the served tier
+// holds for it, whether that is full history (trades, no retention), a real
+// drop_chunks boundary (oracle_updates, 90d per migration 0003), or a
+// never-backfilled prefix (soroswap/sdex trades begin ~61.5M — see
+// notes/DECISION-genesis-complete-verdict-2026-07-16.md, which lists this fix
+// as decision item 3).
+//
+// An EMPTY target floors at `genesis` — fail CLOSED. A wiped table must
+// reconcile expected>0 against served=0 and FAIL; "there is no data, so there
+// is nothing to check" is the fail-open this whole verdict exists to prevent.
+//
+// runFrom is the incremental -from floor (0 for a full run): it can only RAISE
+// the scope, and whatever it excludes is handled by projectionClaim, never
+// silently claimed.
+//
+// KNOWN RESIDUAL — a BOTTOM-EDGE truncation is self-erasing: if the oldest
+// served rows are deleted (a rogue retention policy re-appearing on `trades` is
+// the exact drift migration 0031's down-migration warns about), MIN(ledger)
+// rises with the loss and the reconcile follows it up. Distinguishing "lost"
+// from "never projected" needs a REMEMBERED floor, which needs a durable column
+// (`completeness_snapshots.projection_verified_from` + migration) — out of scope
+// for this fix. Until then the floor is at least VISIBLE: projectionClaim prints
+// it in every verdict detail and on the per-source stderr line, so a floor that
+// tracks tip is observable instead of silent.
+func targetScope(servedMin uint32, haveServedRows bool, genesis, runFrom, hi uint32) projectionScope {
+	lo := servedMin
+	if !haveServedRows || lo < genesis {
+		lo = genesis
+	}
+	if runFrom > lo {
+		lo = runFrom
+	}
+	if lo > hi {
+		lo = hi + 1 // degenerate/empty scope; reconcileProjectionAggregate skips it
+	}
+	return projectionScope{From: lo, To: hi}
+}
+
+// projectionScopes resolves every target's reconcile scope against the served
+// tier, and returns (a) the scopes, parallel to src.targets, (b) servedFrom —
+// the lowest ledger the served tier holds for ANY of this source's targets,
+// i.e. the full range the served axis claims to be faithful over — and (c)
+// runFrom, where THIS run's reconcile actually starts. servedFrom < runFrom is
+// exactly the "-from skipped a range" case projectionClaim gates.
+//
+// One indexed MIN(ledger) per target (trades_source_ledger_idx et al); the same
+// query buildClassicGapGate already runs from genesis in production.
+func projectionScopes(ctx context.Context, store *timescale.Store, src reconSource, genesis, runFrom, hi uint32) ([]projectionScope, uint32, uint32, error) {
+	if len(src.targets) == 0 {
+		return nil, genesis, genesis, nil
+	}
+	scopes := make([]projectionScope, len(src.targets))
+	servedFrom, runLo := hi, hi
+	for i, tgt := range src.targets {
+		minL, ok, err := store.MinLedger(ctx, tgt.table, "ledger", tgt.whereFilter, genesis, hi)
+		if err != nil {
+			return nil, 0, 0, fmt.Errorf("%s min served ledger: %w", tgt.table, err)
+		}
+		if served := targetScope(minL, ok, genesis, 0, hi).From; served < servedFrom {
+			servedFrom = served
+		}
+		scopes[i] = targetScope(minL, ok, genesis, runFrom, hi)
+		if scopes[i].From < runLo {
+			runLo = scopes[i].From
+		}
+	}
+	return scopes, servedFrom, runLo, nil
+}
+
+// scopeUnion is the range the expected side must be re-derived over to serve
+// every target's scope in one lake pass. Assumes a non-empty slice.
+func scopeUnion(scopes []projectionScope) (uint32, uint32) {
+	lo, hi := scopes[0].From, scopes[0].To
+	for _, s := range scopes[1:] {
+		if s.From < lo {
+			lo = s.From
+		}
+		if s.To > hi {
+			hi = s.To
+		}
+	}
+	return lo, hi
+}
+
+// clipCounts drops per-ledger counts outside sc. The expected side is
+// re-derived ONCE over the union of the source's target scopes, so each target
+// must compare only the ledgers inside its own scope (the served side is
+// already bounded by CountRowsByLedger's range). Returns a new map.
+func clipCounts(m map[uint32]int, sc projectionScope) map[uint32]int {
+	out := make(map[uint32]int, len(m))
+	for ledger, n := range m {
+		if ledger < sc.From || ledger > sc.To {
+			continue
+		}
+		out[ledger] = n
+	}
+	return out
+}
+
+// priorProjection is what the LAST published verdict knows about a source's
+// served-tier projection axis (completeness_snapshots.projection_ok /
+// tip_ledger). known=false means no verdict has ever been written.
+type priorProjection struct {
+	known bool
+	ok    bool
+	tip   uint32
+}
+
+// projectionClaim gates what a run is ALLOWED to publish on the served
+// (`complete`) axis, given the range it ACTUALLY reconciled — the structural
+// fix for INV-5 (a verdict that silently regressed from complete=false to
+// complete=true).
+//
+// The regression was real and in the hot path: completeness-incremental.sh
+// passes `-from = min(watermark)`, but watermark_ledger is the LAKE
+// (substrate∧recognition) axis, which sits AT tip whenever the lake is clean.
+// So the hourly run reconciled only the newest ~hour of ledgers, never re-saw
+// the projection mismatch that had pinned `complete=false`, and wrote
+// complete=true — a verdict improving with no evidence, which ADR-0033 forbids
+// (complete through W requires every claim to hold contiguously to W).
+//
+// Rules, fail-closed, in order:
+//  1. A mismatch found by THIS run always fails — nothing can launder it.
+//  2. A run whose reconcile started at or below servedFrom covered the WHOLE
+//     served range: self-evidencing, may publish true. This is the only way a
+//     failing verdict is ever cleared — deliberately, by a full re-verify.
+//  3. A partial (incremental) run may CARRY FORWARD a prior clean verdict for
+//     the prefix it skipped, but only if that prior verdict is contiguous with
+//     this run's window (prior.tip+1 >= runFrom). Confirm, never upgrade.
+//  4. Anything else — no prior verdict, a FAILING prior verdict, or a stale
+//     prior that leaves an unverified band — publishes false.
+//
+// The returned detail ALWAYS states the range actually verified, so
+// `complete=true` can never be read as a genesis-to-tip claim (DAT-09: the
+// served tier legitimately holds no trades below ~61.5M; the genesis claim is
+// the separate lake_complete axis).
+func projectionClaim(servedFrom, runFrom, hi uint32, runClean bool, runDetail string, prior priorProjection) (bool, string) {
+	if !runClean {
+		return false, "projection: " + runDetail
+	}
+	if runFrom <= servedFrom {
+		return true, fmt.Sprintf("projection: verified [%d,%d] — the full range the served tier holds", servedFrom, hi)
+	}
+	skipped := fmt.Sprintf("[%d,%d]", servedFrom, runFrom-1)
+	switch {
+	case !prior.known:
+		return false, fmt.Sprintf("projection: verified only [%d,%d]; %s was NOT reconciled by this run and no prior verdict exists to carry — not claiming it (re-run without -from)", runFrom, hi, skipped)
+	case !prior.ok:
+		return false, fmt.Sprintf("projection: verified only [%d,%d]; %s was NOT reconciled by this run and the prior verdict's projection was FAILING — refusing to upgrade without evidence (re-run without -from)", runFrom, hi, skipped)
+	case runFrom > prior.tip+1:
+		return false, fmt.Sprintf("projection: verified only [%d,%d]; the prior clean verdict only reached tip=%d, leaving [%d,%d] verified by nobody — not claiming it (re-run without -from)", runFrom, hi, prior.tip, prior.tip+1, runFrom-1)
+	default:
+		return true, fmt.Sprintf("projection: verified [%d,%d]; %s carried from the prior clean verdict (tip=%d), not re-verified this run", runFrom, hi, skipped, prior.tip)
+	}
+}
+
 // reconcileSourceProjection reconciles every table a source writes over
 // [genesis, hi] and returns the union of mismatched ledgers. SDEX uses
 // the LCM census; event sources re-derive (by kind) and project each
@@ -489,57 +685,57 @@ func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chSt
 // across targets (0 = clean); the name keeps its historical
 // "Aggregate" for grep continuity with older run logs.
 //
-// Scope: a source with a `trades` target is scoped to [retentionStart, hi] —
-// trades is right-sized to ~90d, so its decoded rows >retention don't exist in
-// the served tier (the raw events ARE captured: substrate proves that). We
-// verify the served tier is faithful within what it retains; the full-history
-// coverage claim rests on substrate. Pure entity/oracle sources verify the
-// whole [genesis, hi].
-func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, chAddr string, src reconSource, genesis, hi, retentionStart uint32) (int, string, error) { //nolint:gocognit,gocyclo // three linear reconcile branches (callDec / census / event re-derive) over the target list + the factory preseed; clearer unsplit, the retention floor is already extracted.
-	lo := genesis
-	if hasTradesTarget(src) && retentionStart > genesis {
-		lo = retentionStart
+// Scope: each target is reconciled over ITS OWN scope (projectionScopes /
+// targetScope) — the range the served tier ACTUALLY holds for that table,
+// derived from the data, raised to the incremental -from floor. scopes is
+// parallel to src.targets. The expected side is re-derived ONCE over the union
+// of those scopes and clipped per target, so a source that mixes a
+// late-starting table (trades) with a full-history one (soroswap_skim_events)
+// verifies each over its true range instead of flooring the whole source at the
+// latest — the DAT-09/N-F2 source-level-floor defect.
+func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, chAddr string, src reconSource, scopes []projectionScope) (int, string, error) {
+	if len(scopes) == 0 {
+		return 0, "", nil
+	}
+	lo, hi := scopeUnion(scopes)
+	if lo > hi {
+		return 0, "", nil // every target's scope is empty
+	}
+	expectedFor, eerr := expectedProjection(ctx, store, chStreamer, chAddr, src, lo, hi)
+	if eerr != nil {
+		return 0, "", eerr
 	}
 	var totalDelta int
 	var details []string
+	for i, tgt := range src.targets {
+		d, detail, terr := reconcileTarget(ctx, store, src, tgt, expectedFor(tgt), scopes[i])
+		if terr != nil {
+			return 0, "", terr
+		}
+		if d != 0 {
+			totalDelta += d
+			details = append(details, detail)
+		}
+	}
+	return totalDelta, strings.Join(details, "; "), nil
+}
 
-	if src.callDec != nil {
+// expectedProjection re-derives the EXPECTED side of Claim 2b once over
+// [lo, hi] and returns a per-target accessor. Three oracles, by source class.
+func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, chAddr string, src reconSource, lo, hi uint32) (func(reconTarget) map[uint32]int, error) {
+	switch {
+	case src.callDec != nil:
 		// Event-less ContractCall source (band, soroswap-router): re-derive the
 		// census from the lake's InvokeContract ops (no soroban_events landing
 		// zone) and reconcile against the served tier (oracle_updates /
 		// soroswap_router_swaps) by the SAME decoder the live dispatcher routes.
-		// retentionFloor scopes to where served data begins (these tables are
-		// full-history, so it's just the first-call ledger, not a 90d boundary).
-		flo, ferr := retentionFloor(ctx, store, src, lo, hi)
-		if ferr != nil {
-			return 0, "", ferr
+		expected, err := reDeriveContractCallCensus(ctx, chAddr, src.callContract, src.callDec, lo, hi)
+		if err != nil {
+			return nil, err
 		}
-		expected, eerr := reDeriveContractCallCensus(ctx, chAddr, src.callContract, src.callDec, flo, hi)
-		if eerr != nil {
-			return 0, "", eerr
-		}
-		for _, tgt := range src.targets {
-			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, flo, hi)
-			if aerr != nil {
-				return 0, "", aerr
-			}
-			if d, detail := projectionDelta(src, tgt.table, expected, actual, flo, hi); d != 0 {
-				totalDelta += d
-				details = append(details, detail)
-			}
-		}
-		return totalDelta, strings.Join(details, "; "), nil
-	}
+		return func(reconTarget) map[uint32]int { return expected }, nil
 
-	if src.census {
-		// Floor at the ACTUAL retained boundary (drop_chunks can retain less than
-		// retentionStart; census>0 vs served=0 below the oldest chunk is a
-		// retention artifact, not a gap — see retentionFloor).
-		var ferr error
-		lo, ferr = retentionFloor(ctx, store, src, lo, hi)
-		if ferr != nil {
-			return 0, "", ferr
-		}
+	case src.census:
 		// Re-derive the census by running the SDEX decoder over the certified CH
 		// operations and counting its trade output — the SAME decode the indexer
 		// applies to live ops. This matches served by identical logic, so the
@@ -548,75 +744,51 @@ func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, c
 		// later drops as malformed-asset). Independent SOURCE (the lake's full op
 		// set, substrate-proven) vs the live-ingested ops — catches drops, never
 		// passes by construction.
-		expected, eerr := reDeriveSDEXCensusViaDecoder(ctx, chAddr, lo, hi)
-		if eerr != nil {
-			return 0, "", eerr
+		expected, err := reDeriveSDEXCensusViaDecoder(ctx, chAddr, lo, hi)
+		if err != nil {
+			return nil, err
 		}
-		for _, tgt := range src.targets {
-			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, lo, hi)
-			if aerr != nil {
-				return 0, "", aerr
-			}
-			if d, detail := projectionDelta(src, tgt.table, expected, actual, lo, hi); d != 0 {
-				totalDelta += d
-				details = append(details, detail)
-			}
-		}
-		return totalDelta, strings.Join(details, "; "), nil
-	}
+		return func(reconTarget) map[uint32]int { return expected }, nil
 
-	// Factory-anchored sources (ADR-0035): seed the gate registry from the
-	// factory's creation events [genesis, lo) before the re-derive, so children
-	// deployed before this window aren't dropped — exactly as
-	// verify-reconciliation does (verify_reconciliation.go). Without this the
-	// daily verdict's child gate was only the static protocol_contracts seed and
-	// went STALE as new pools deployed: blend reported complete=false
-	// (expected=0) on windows whose activity was on pools missing from the seed,
-	// while the live decoder (which self-seeds from deploy events) captured them.
-	// Adding it here makes the watchdog self-maintaining. (Reads the Postgres
-	// soroban_events landing zone for the rare, indexed creation events; a
-	// CH-native preseed for full -ch purity is a follow-up.)
-	if len(src.factories) > 0 {
-		if perr := preseedFactoryChildren(ctx, store, src, lo); perr != nil {
-			return 0, "", fmt.Errorf("%s preseed: %w", src.name, perr)
+	default:
+		// Factory-anchored sources (ADR-0035): seed the gate registry from the
+		// factory's creation events [genesis, lo) before the re-derive, so children
+		// deployed before this window aren't dropped — exactly as
+		// verify-reconciliation does (verify_reconciliation.go). Without this the
+		// daily verdict's child gate was only the static protocol_contracts seed and
+		// went STALE as new pools deployed: blend reported complete=false
+		// (expected=0) on windows whose activity was on pools missing from the seed,
+		// while the live decoder (which self-seeds from deploy events) captured them.
+		// Adding it here makes the watchdog self-maintaining. (Reads the Postgres
+		// soroban_events landing zone for the rare, indexed creation events; a
+		// CH-native preseed for full -ch purity is a follow-up.)
+		if len(src.factories) > 0 {
+			if err := preseedFactoryChildren(ctx, store, src, lo); err != nil {
+				return nil, fmt.Errorf("%s preseed: %w", src.name, err)
+			}
 		}
-	}
-
-	byKind, derr := completeness.ReDeriveOutputCountsByKindFromEvents(ctx, chStreamer, src.dec, src.contractIDs, src.topic0Syms, lo, hi)
-	if derr != nil {
-		return 0, "", derr
-	}
-	for _, tgt := range src.targets {
-		expected := completeness.SumKinds(byKind, tgt.kinds...)
-		actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, lo, hi)
-		if aerr != nil {
-			return 0, "", aerr
+		byKind, err := completeness.ReDeriveOutputCountsByKindFromEvents(ctx, chStreamer, src.dec, src.contractIDs, src.topic0Syms, lo, hi)
+		if err != nil {
+			return nil, err
 		}
-		if d, detail := projectionDelta(src, tgt.table, expected, actual, lo, hi); d != 0 {
-			totalDelta += d
-			details = append(details, detail)
-		}
+		// Each table receives only the kinds it is registered for; counting
+		// every output would overcount any table that receives a subset.
+		return func(tgt reconTarget) map[uint32]int { return completeness.SumKinds(byKind, tgt.kinds...) }, nil
 	}
-	return totalDelta, strings.Join(details, "; "), nil
 }
 
-// retentionFloor raises lo to the actual oldest retained ledger of the source's
-// served table(s). trades is drop_chunks-managed (~90d) and can retain LESS
-// than retentionStart: tip-1.5M is ~100d at the current ledger rate, ~10d / 150k
-// ledgers below the oldest retained chunk (min served ≈ 2026-03-12). Counting
-// census>0 vs served=0 for those retention-dropped ledgers is a false gap, so we
-// scope the reconcile to where served data actually begins.
-func retentionFloor(ctx context.Context, store *timescale.Store, src reconSource, lo, hi uint32) (uint32, error) {
-	for _, tgt := range src.targets {
-		minL, ok, err := store.MinLedger(ctx, tgt.table, "ledger", tgt.whereFilter, lo, hi)
-		if err != nil {
-			return 0, err
-		}
-		if ok && minL > lo {
-			lo = minL
-		}
+// reconcileTarget compares one target's re-derived expected counts (clipped to
+// the target's own scope) against its served counts over that same scope.
+func reconcileTarget(ctx context.Context, store *timescale.Store, src reconSource, tgt reconTarget, expected map[uint32]int, sc projectionScope) (int, string, error) {
+	if sc.From > sc.To {
+		return 0, "", nil
 	}
-	return lo, nil
+	actual, err := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, sc.From, sc.To)
+	if err != nil {
+		return 0, "", err
+	}
+	d, detail := projectionDelta(src, tgt.table, clipCounts(expected, sc), actual, sc.From, sc.To)
+	return d, detail, nil
 }
 
 // reDeriveSDEXCensusViaDecoder re-derives the expected SDEX trade count per
@@ -835,15 +1007,6 @@ func forEachContractCallEvent(ctx context.Context, chAddr, contractStrkey string
 		}
 	}
 	return nil
-}
-
-func hasTradesTarget(src reconSource) bool {
-	for _, t := range src.targets {
-		if t.table == "trades" {
-			return true
-		}
-	}
-	return src.census // sdex census also writes trades
 }
 
 func absDiff(a, b int) int {

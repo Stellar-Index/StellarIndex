@@ -244,6 +244,18 @@ func CrossCheck(classic, sac Supply) (CrossCheckResult, error) {
 // possibly back, which cannot happen under correct accounting and is
 // therefore a genuine "escrow != minted" violation.
 //
+// ONE-SIDED — NOT A RECONCILIATION (MNY-04). This is an over-mint
+// tripwire and nothing more. It fires on sac_total > classic_total and
+// is structurally blind to the opposite failure: a mint/escrow
+// SHORTFALL (sac_total < classic_total — SAC-wrapped balances that
+// were escrowed classically but whose mints were never indexed, or
+// burns double-counted) is the NORMAL state of a partially-wrapped
+// asset and is therefore indistinguishable from corruption here. A
+// green cross-check consequently means "the SAC has not over-minted",
+// NOT "the two sides reconcile". Closing the other direction needs the
+// per-wrap escrow-balance accounting (E4/N-F3), which is not built;
+// operators must not read this gauge as two-sided assurance.
+//
 // Pure, same pre-conditions as [CrossCheck].
 func CrossCheckSubsetBound(classic, sac Supply) (CrossCheckResult, error) {
 	if classic.TotalSupply == nil || sac.TotalSupply == nil {

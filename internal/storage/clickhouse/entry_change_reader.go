@@ -29,6 +29,30 @@ type EntryChange struct {
 	Entry       *xdr.LedgerEntry
 }
 
+// streamEntryChangesQuery backs StreamEntryChanges. FINAL (audit DAT-10):
+// stellar.ledger_entry_changes is ReplacingMergeTree(ingested_at); a
+// re-derived/re-ingested window leaves un-merged duplicate PARTS —
+// byte-identical rows bar ingested_at — until a background merge, and
+// without dedup StreamEntryChanges invoked fn TWICE for the same op-scoped
+// change (a genuine over-count into ADR-0047 Phase 4's movement
+// reconstruction, not just a display artifact). FINAL, not `LIMIT 1 BY`:
+// this is an operator-run backfill utility (classic-movements-backfill),
+// not a per-request serving path, entry_xdr is KB-scale (this repo has
+// measured `LIMIT n BY` breaching memory budgets specifically on wide
+// columns — see sac_balance_seed.go's StreamSACBalanceSeedsFullHistory
+// history), and the existing `ledger_seq BETWEEN ? AND ?` window already
+// bounds FINAL's merge cost to that window, exactly like
+// BackfillTxHashIndex's FINAL fix. Preserves the existing ORDER BY (the
+// per-op grouping order callers rely on) unchanged.
+const streamEntryChangesQuery = `
+	SELECT ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_xdr
+	FROM stellar.ledger_entry_changes FINAL
+	WHERE ledger_seq BETWEEN ? AND ?
+	  AND op_index >= 0
+	  AND entry_type = ?
+	ORDER BY ledger_seq, tx_hash, op_index, change_index
+`
+
 // StreamEntryChanges reads OP-SCOPED (op_index >= 0 — fee/tx-level
 // changes at op_index=-1 are never relevant to a single op's
 // movement reconstruction) ledger_entry_changes rows for [from,to]
@@ -61,15 +85,7 @@ func StreamEntryChanges(ctx context.Context, addr string, from, to uint32, entry
 	}
 	defer func() { _ = conn.Close() }()
 
-	const query = `
-		SELECT ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_xdr
-		FROM stellar.ledger_entry_changes
-		WHERE ledger_seq BETWEEN ? AND ?
-		  AND op_index >= 0
-		  AND entry_type = ?
-		ORDER BY ledger_seq, tx_hash, op_index, change_index
-	`
-	rows, err := conn.Query(ctx, query, from, to, entryType)
+	rows, err := conn.Query(ctx, streamEntryChangesQuery, from, to, entryType)
 	if err != nil {
 		return fmt.Errorf("clickhouse: query entry changes [%d,%d] entry_type=%s: %w", from, to, entryType, err)
 	}
@@ -133,6 +149,17 @@ func StreamEntryChanges(ctx context.Context, addr string, from, to uint32, entry
 // — the clickhouse-go driver rejects scanning a UInt64 column into
 // *int64 (confirmed against a real r1 query during implementation;
 // gate.go's TotalLedgers/rowCount follow the same uint64 convention).
+//
+// uniqExact(ledger_seq, tx_hash, op_index, change_index), not count()
+// (audit DAT-10): stellar.ledger_entry_changes is ReplacingMergeTree, so a
+// re-derived window's un-merged duplicate parts inflated this probe's count
+// until a background merge — a false fidelity signal (a window could read
+// as "fidelity present, N rows" from duplicate parts alone, or over-report
+// how much was captured). uniqExact counts the table's actual PRIMARY KEY
+// tuple, so a duplicate (byte-identical bar ingested_at) row collapses to
+// one — the same idiom VerifyAccountMovementsWindow already uses for this
+// table family (account_movements.go). Cheap: no wide column (entry_xdr) is
+// touched, only four narrow key columns over the bounded window.
 func CountOpScopedEntryChanges(ctx context.Context, addr string, from, to uint32) (uint64, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -140,15 +167,18 @@ func CountOpScopedEntryChanges(ctx context.Context, addr string, from, to uint32
 	}
 	defer func() { _ = conn.Close() }()
 
-	const query = `
-		SELECT count()
-		FROM stellar.ledger_entry_changes
-		WHERE ledger_seq BETWEEN ? AND ?
-		  AND op_index >= 0
-	`
 	var n uint64
-	if err := conn.QueryRow(ctx, query, from, to).Scan(&n); err != nil {
+	if err := conn.QueryRow(ctx, countOpScopedEntryChangesQuery, from, to).Scan(&n); err != nil {
 		return 0, fmt.Errorf("clickhouse: count op-scoped entry changes [%d,%d]: %w", from, to, err)
 	}
 	return n, nil
 }
+
+// countOpScopedEntryChangesQuery backs CountOpScopedEntryChanges — see its
+// doc comment for the uniqExact-over-count() dedup rationale (audit DAT-10).
+const countOpScopedEntryChangesQuery = `
+	SELECT uniqExact(ledger_seq, tx_hash, op_index, change_index)
+	FROM stellar.ledger_entry_changes
+	WHERE ledger_seq BETWEEN ? AND ?
+	  AND op_index >= 0
+`

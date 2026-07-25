@@ -17,7 +17,7 @@ Make room for the comprehensive backfill (Phase D) **without hitting the disk wa
 
 ## Capacity math (live-updated 2026-07-18 — supersedes the first estimate)
 
-**Hardware reality (verified):** all 4× 7.68 TB NVMes are fully allocated — 2 hold OS (boot/swap/root on md-RAID1) + a 6.9 TB ZFS partition, 2 are whole-disk in the pool; `parted` shows **0 GB unpartitioned** and there is **no spare drive**. Adding *raw* capacity needs a **5th NVMe** — this pool already did a ZFS raidz-expansion, so a 5th drive can join the vdev (+~6.9 TiB usable → pool 94% → ~65%). Durable fix; a Hetzner/`[OP]` action (not doable from software).
+**Hardware reality (verified):** all 4× 7.68 TB NVMes are fully allocated — 2 hold OS (boot/swap/root on md-RAID1) + a 6.9 TB ZFS partition, 2 are whole-disk in the pool; `parted` shows **0 GB unpartitioned** and there is **no spare drive**. **⛔ Adding raw capacity is NOT an option.** A 5th NVMe / raidz-expansion is ruled out by a standing operator constraint: *"R1 is NOT hardware-upgradeable. Fixed 4× 7.68 TB NVMe, no 5th drive, no raidz expansion. Never propose a drive upgrade."* (`production-readiness-remaining.md` §4; verbatim in ADR-0027: *"I cannot expand the capacity of this server."*) This runbook previously called a 5th NVMe the "durable fix" and an `[OP]` action — that was wrong and is corrected (audit-2026-07-23 DOC-05). **Every lever below is software-only**, and the long-term answer to genuine growth is a separate second server, not a bigger R1.
 
 **Software reclaim levers (no hardware):**
 | Lever | ΔFree | Status |

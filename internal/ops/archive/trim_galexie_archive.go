@@ -53,12 +53,13 @@ import (
 //      every "trim" is unrecoverable data loss.
 
 type trimOpts struct {
-	cfgPath        string
-	olderThan      uint32 // ledger sequence boundary; files entirely below this are candidates
-	verifyUpstream bool
-	dryRun         bool
-	commit         bool
-	maxFiles       int
+	cfgPath                string
+	olderThan              uint32 // ledger sequence boundary; files entirely below this are candidates
+	verifyUpstream         bool
+	iHaveVerifiedOutOfBand bool // required alongside --no-verify-upstream (REL-05)
+	dryRun                 bool
+	commit                 bool
+	maxFiles               int
 }
 
 func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen // CLI plumbing + filter + delete loop; six helpers would scatter the safety guard chain
@@ -95,6 +96,18 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	if !opts.verifyUpstream {
+		// REL-05: --no-verify-upstream disables the ONLY check that the
+		// cold tier actually holds what we're about to delete from hot.
+		// Loud + unmissable, naming the exact span, since this is a
+		// destructive run with the primary safety primitive off.
+		logger.Warn("!!! trim-galexie-archive: --no-verify-upstream is set — deleting hot files below the cutoff with NO check that the cold tier holds them !!!",
+			"older_than_ledger", opts.olderThan,
+			"commit", opts.commit,
+			"acknowledged_out_of_band", opts.iHaveVerifiedOutOfBand,
+		)
+	}
 
 	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -278,7 +291,8 @@ func parseTrimFlags(args []string) (trimOpts, error) {
 	fs.Int64Var(&olderThan, "older-than-ledger", 0, "REQUIRED. Files whose entire ledger range is below this sequence become deletion candidates. No default to prevent unintentional trims.")
 	fs.BoolVar(&opts.dryRun, "dry-run", false, "List would-delete candidates without deleting. Default when neither --dry-run nor --commit is set.")
 	fs.BoolVar(&opts.commit, "commit", false, "Actually delete. Requires explicit opt-in (default behaviour is dry-run).")
-	fs.BoolVar(&noVerify, "no-verify-upstream", false, "Skip the HEAD-against-cold check. NOT RECOMMENDED — disables the primary safety primitive.")
+	fs.BoolVar(&noVerify, "no-verify-upstream", false, "Skip the HEAD-against-cold check. NOT RECOMMENDED — disables the primary safety primitive. Requires --i-have-verified-cold-out-of-band too.")
+	fs.BoolVar(&opts.iHaveVerifiedOutOfBand, "i-have-verified-cold-out-of-band", false, "Required alongside --no-verify-upstream: an explicit second acknowledgement that you have confirmed the cold tier holds these files by some other means. --no-verify-upstream alone is refused.")
 	fs.IntVar(&opts.maxFiles, "max-files", 100000, "Hard cap on candidates per run. Default 100000 — a typo can never delete the full archive in one invocation.")
 	if err := fs.Parse(args); err != nil {
 		return trimOpts{}, err
@@ -288,6 +302,9 @@ func parseTrimFlags(args []string) (trimOpts, error) {
 	}
 	opts.olderThan = uint32(olderThan)
 	opts.verifyUpstream = !noVerify
+	if noVerify && !opts.iHaveVerifiedOutOfBand {
+		return trimOpts{}, fmt.Errorf("--no-verify-upstream disables the primary safety primitive and requires --i-have-verified-cold-out-of-band as a second explicit acknowledgement — refusing to proceed with only one flag set")
+	}
 	return opts, nil
 }
 

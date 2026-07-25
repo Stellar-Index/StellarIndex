@@ -5,7 +5,7 @@ import { Suspense } from 'react';
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import type { components } from '@/api/types';
-import { buildFetchData, failBuild } from '@/lib/buildFetch';
+import { buildFetchData, buildFetchEnvelope, failBuild } from '@/lib/buildFetch';
 import { formatCompact, formatPrice } from '@/lib/format';
 import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
 import {
@@ -455,7 +455,9 @@ async function fetchGlobalAsset(slug: string): Promise<GlobalAssetView | null> {
   return lookupGlobalAsset(slug);
 }
 
-function fetchPriceDirect(
+// Exported for unit tests only (fetchPriceDirect.test.ts) — not part of
+// the page's public surface (this is a server component build-time module).
+export async function fetchPriceDirect(
   asset: string,
   quote: string,
 ): Promise<PriceResp | null> {
@@ -464,10 +466,23 @@ function fetchPriceDirect(
   // been seen hanging ~25s on a cold-cache asset). A persistent failure
   // degrades this page to no build-time price rather than throwing; short
   // timeout + few attempts keep a hung endpoint from stalling the build.
-  return buildFetchData<PriceResp>(
+  //
+  // AGT-06: buildFetchEnvelope (not buildFetchData) so the envelope's real
+  // `flags.stale`/`flags.triangulated` reach the page instead of being
+  // discarded — the "Stale" badge below was permanently dead without this
+  // (the only path that ever set `flags` was the client-synthesized
+  // triangulation fallback, which never sets `stale` at all).
+  const env = await buildFetchEnvelope<Pick<PriceResp, 'price' | 'quote'>>(
     `/v1/price?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}`,
     { softFail: true, timeoutMs: 6_000, attempts: 2 },
   );
+  if (!env.data) return null;
+  return {
+    ...env.data,
+    flags: env.flags
+      ? { stale: env.flags.stale, triangulated: env.flags.triangulated }
+      : undefined,
+  };
 }
 
 // fetchPrice tries direct asset→USD first; on 404 it triangulates
@@ -479,7 +494,7 @@ function fetchPriceDirect(
 //
 // XLM (asset_id "native") short-circuits — its direct USD VWAP
 // is the canonical answer.
-async function fetchPrice(assetId: string): Promise<PriceResp | null> {
+export async function fetchPrice(assetId: string): Promise<PriceResp | null> {
   if (assetId === 'native') {
     return fetchPriceDirect('native', 'fiat:USD');
   }
@@ -504,7 +519,13 @@ async function fetchPrice(assetId: string): Promise<PriceResp | null> {
       vsXlm.age_seconds ?? 0,
       xlmUsd.age_seconds ?? 0,
     ),
-    flags: { triangulated: true },
+    // AGT-06: a triangulated price built from a stale leg is itself
+    // stale — propagate the real per-leg `flags.stale` rather than only
+    // ever reporting `triangulated: true`.
+    flags: {
+      triangulated: true,
+      stale: Boolean(vsXlm.flags?.stale || xlmUsd.flags?.stale),
+    },
   };
 }
 

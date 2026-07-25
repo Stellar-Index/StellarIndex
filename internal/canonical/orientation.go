@@ -37,6 +37,25 @@ func assetCode(assetID string) string {
 // fiat (4) > stablecoin (3) > XLM (2) > any other token (1). This is
 // what makes XLM/USDC orient as base=XLM, quote=USDC (price in USDC),
 // while XLM/AQUA orients as base=AQUA, quote=XLM (AQUA priced in XLM).
+//
+// ISSUER-AGNOSTIC BY DESIGN (SEC-B12). Rank 3 keys on the bare asset
+// CODE, so ANY classic token calling itself "USDC" — including a scam
+// issued by an attacker — ranks as a stablecoin here. That is
+// deliberate and safe ONLY because ranking decides ORIENTATION and
+// nothing else: which side of a market is quoted in the other. It
+// never asserts the asset is worth a dollar.
+//
+// The safety therefore rests on an invariant OUTSIDE this function:
+// every downstream substitution of a stablecoin for its fiat peg
+// re-checks issuer identity. Concretely, aggregate.FiatProxy accepts
+// only the abstract `crypto:<TICKER>` form and refuses every classic
+// asset — even Circle's real USDC — precisely so a code match can
+// never become a USD claim (pinned by
+// TestFiatProxy_NonCryptoAssetsReturnFalse), and the classic USD-peg
+// path is an operator-declared spec carrying full CODE-ISSUER
+// identity. If you ever add a path that maps a rank-3 asset to a
+// fiat value, it MUST do its own issuer check; this ranking is not
+// one.
 func quoteRank(assetID string) int {
 	if strings.HasPrefix(assetID, "fiat:") {
 		return 4

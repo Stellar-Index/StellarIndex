@@ -7,6 +7,40 @@
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://api.stellarindex.io';
 
+// [absence: timeouts] Every runtime (client-side) fetch used to have no
+// upper bound at all — a hung connection left a query (and anything
+// gating on it, e.g. AccountGate) in "loading" forever with no escape
+// hatch. 15s is generous for a live-data round trip but still bounded.
+export const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
+
+/**
+ * timeoutSignal — an AbortSignal that fires on whichever comes first: the
+ * given timeout, or (when provided) an external signal aborting first
+ * (e.g. TanStack Query cancelling a superseded/unmounted request). Use
+ * this instead of passing an external signal straight through, so every
+ * request keeps a hard upper bound even when the caller doesn't think to
+ * set one.
+ */
+export function timeoutSignal(
+  ms: number = DEFAULT_FETCH_TIMEOUT_MS,
+  external?: AbortSignal,
+): AbortSignal {
+  if (!external) return AbortSignal.timeout(ms);
+  const controller = new AbortController();
+  const abort = (reason: unknown) => controller.abort(reason);
+  if (external.aborted) {
+    abort(external.reason);
+  } else {
+    external.addEventListener('abort', () => abort(external.reason), { once: true });
+  }
+  const timer = setTimeout(
+    () => abort(new DOMException('Request timed out', 'TimeoutError')),
+    ms,
+  );
+  controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true });
+  return controller.signal;
+}
+
 export type RequestExample = {
   method: 'GET' | 'POST';
   url: string;
@@ -30,6 +64,7 @@ export async function apiGet<T>(
   const res = await fetch(buildUrl(path, params), {
     headers: { Accept: 'application/json' },
     next: { revalidate: 60 },
+    signal: timeoutSignal(),
   });
   if (!res.ok) {
     // Surface the RFC-9457 problem `title` (and `detail`) in the error so

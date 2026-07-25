@@ -3,6 +3,7 @@
 package integration_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -477,6 +478,74 @@ func TestPlatformPostgresStores(t *testing.T) {
 		// Accepting a revoked invite → ErrNotFound.
 		if _, err := tokens.AcceptInvite(ctx, hash2[:]); !errors.Is(err, platform.ErrNotFound) {
 			t.Errorf("accept-after-revoke: expected ErrNotFound, got %v", err)
+		}
+	})
+
+	// COR-15 (audit-2026-07-23): ListInvitesForAccount used to filter
+	// on SQL `now()` (the Postgres server's clock) instead of the
+	// injected [postgresstore.TokenStore.WithClock] like every other
+	// expiry check in the file — so WithClock had NO effect on this
+	// method despite the type's doc claiming tests use it, and no
+	// test exercised WithClock at all. Asserts the corrected value: a
+	// TokenStore whose injected clock has advanced past an invite's
+	// expiry excludes it from the pending list, while the SAME invite
+	// still appears through a real-clock store (real time hasn't
+	// actually passed).
+	t.Run("Invite/ListRespectsInjectedClock", func(t *testing.T) {
+		acct, err := accounts.Create(ctx, platform.Account{
+			Name: "Clocked Co", Slug: "clocked-" + strings.ToLower(uuid.New().String()[:8]),
+			BillingEmail: "c@c.example",
+			Tier:         platform.TierFree, Status: platform.AccountActive,
+		})
+		if err != nil {
+			t.Fatalf("create account: %v", err)
+		}
+		inviter, err := users.CreateUser(ctx, platform.User{
+			AccountID: acct.ID,
+			Email:     "clock-inviter-" + uuid.New().String() + "@x.example",
+			Role:      platform.RoleOwner,
+		})
+		if err != nil {
+			t.Fatalf("create inviter: %v", err)
+		}
+
+		hash := sha256.Sum256([]byte("clock-invite-1"))
+		expiresAt := time.Now().Add(1 * time.Hour) // not yet expired in real time
+		if err := tokens.CreateInvite(ctx, platform.Invite{
+			TokenHash:       hash[:],
+			AccountID:       acct.ID,
+			Email:           "clocked-newcomer@i.example",
+			Role:            platform.RoleMember,
+			InvitedByUserID: inviter.ID,
+			ExpiresAt:       expiresAt,
+		}); err != nil {
+			t.Fatalf("create invite: %v", err)
+		}
+
+		// Real-clock store: real time hasn't passed the 1h expiry —
+		// the invite is still pending.
+		realClockPending, err := tokens.ListInvitesForAccount(ctx, acct.ID)
+		if err != nil {
+			t.Fatalf("list invites (real clock): %v", err)
+		}
+		if !containsInviteHash(realClockPending, hash[:]) {
+			t.Fatal("real-clock store: expected the not-yet-expired invite to be pending")
+		}
+
+		// Clock-shifted store (same underlying Postgres connection):
+		// injected "now" is 2h past creation, i.e. 1h past the
+		// invite's expiry. If WithClock actually governs this query,
+		// the invite must be excluded even though the DB's own
+		// now() hasn't moved.
+		futureClock := func() time.Time { return time.Now().Add(2 * time.Hour) }
+		clockedTokens := postgresstore.NewTokenStore(store).WithClock(futureClock)
+		clockedPending, err := clockedTokens.ListInvitesForAccount(ctx, acct.ID)
+		if err != nil {
+			t.Fatalf("list invites (shifted clock): %v", err)
+		}
+		if containsInviteHash(clockedPending, hash[:]) {
+			t.Error("clock-shifted store: expected the invite to be excluded as expired per the injected clock, " +
+				"but it was returned — ListInvitesForAccount is not honouring WithClock")
 		}
 	})
 
@@ -1154,4 +1223,15 @@ func TestPlatformPostgresStores(t *testing.T) {
 			t.Errorf("Resolve absent: expected ErrNotFound, got %v", err)
 		}
 	})
+}
+
+// containsInviteHash reports whether any invite in the list carries
+// the given token hash.
+func containsInviteHash(invites []platform.Invite, hash []byte) bool {
+	for _, inv := range invites {
+		if bytes.Equal(inv.TokenHash, hash) {
+			return true
+		}
+	}
+	return false
 }

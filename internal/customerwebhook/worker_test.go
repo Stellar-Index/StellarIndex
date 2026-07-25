@@ -30,6 +30,9 @@ type fakeStore struct {
 	webhooks  map[uuid.UUID]platform.CustomerWebhook
 	delivered map[uuid.UUID]int    // delivery id → response status
 	failures  map[uuid.UUID][]fail // delivery id → ordered fail records
+	// getErr, when set, is returned by GetWebhook instead of consulting
+	// the map — used to simulate a transient store failure (NTF-13).
+	getErr error
 }
 
 type fail struct {
@@ -74,6 +77,9 @@ func (s *fakeStore) ListPendingDeliveries(_ context.Context, limit int) ([]platf
 func (s *fakeStore) GetWebhook(_ context.Context, id uuid.UUID) (platform.CustomerWebhook, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.getErr != nil {
+		return platform.CustomerWebhook{}, s.getErr
+	}
 	if w, ok := s.webhooks[id]; ok {
 		return w, nil
 	}
@@ -371,5 +377,77 @@ func TestWorker_DeliveryDurationMetricRecorded(t *testing.T) {
 
 	if after <= before {
 		t.Errorf("delivery duration histogram did not advance: before=%d after=%d", before, after)
+	}
+}
+
+// TestWorker_TransientGetWebhookError_LeavesDeliveryForRetry is the
+// NTF-13 regression.
+//
+// The failure it encodes: GetWebhook fails with a TRANSPORT error — a
+// connection reset, a fail-over, a statement timeout — while the webhook
+// row is perfectly intact. Pre-fix the worker treated every GetWebhook
+// error identically to "row deleted" and called MarkAttemptFailed with a
+// zero next_attempt_at, which removes the row from the pending predicate
+// FOREVER. One postgres blip therefore silently and permanently dropped
+// a customer's SEV-1 / freeze / divergence notification, with no retry
+// and no alert path other than reading the delivery log by hand.
+//
+// Post-fix only platform.ErrNotFound is terminal; a transient error
+// leaves the row untouched so the store's 5-minute claim lease expires
+// and the next poll re-delivers it.
+func TestWorker_TransientGetWebhookError_LeavesDeliveryForRetry(t *testing.T) {
+	store := newFakeStore()
+	webhookID := uuid.New()
+	store.addWebhook(platform.CustomerWebhook{
+		ID: webhookID, URL: "https://customer.example.com/hook",
+		SecretHash: []byte("test-secret-bytes"), Enabled: true,
+	})
+	// The row exists; the READ is what fails.
+	store.getErr = errors.New("read tcp 10.0.0.2:5432: connection reset by peer")
+
+	deliveryID := uuid.New()
+	store.enqueue(platform.WebhookDelivery{
+		ID: deliveryID, WebhookID: webhookID,
+		EventType:     string(platform.WebhookEventIncidentSEV1),
+		Payload:       []byte(`{}`),
+		NextAttemptAt: time.Now().Add(-time.Second),
+	})
+
+	runOneTick(t, store, customerwebhook.Options{PollInterval: 30 * time.Millisecond})
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if got := store.failures[deliveryID]; len(got) != 0 {
+		t.Fatalf("delivery was marked failed (%+v) on a TRANSIENT store error; the row must be "+
+			"left alone so the claim lease expires and it is retried (NTF-13)", got)
+	}
+	if _, ok := store.delivered[deliveryID]; ok {
+		t.Error("delivery must not be marked delivered when the webhook lookup failed")
+	}
+}
+
+// TestWorker_MissingWebhook_IsStillTerminal guards the other side of the
+// NTF-13 split: a genuinely deleted webhook must still terminate the
+// delivery, or the row retries until its attempt budget burns out.
+func TestWorker_MissingWebhook_IsStillTerminal(t *testing.T) {
+	store := newFakeStore() // no webhook registered → platform.ErrNotFound
+	deliveryID := uuid.New()
+	store.enqueue(platform.WebhookDelivery{
+		ID: deliveryID, WebhookID: uuid.New(),
+		EventType:     string(platform.WebhookEventIncidentSEV1),
+		Payload:       []byte(`{}`),
+		NextAttemptAt: time.Now().Add(-time.Second),
+	})
+
+	runOneTick(t, store, customerwebhook.Options{PollInterval: 30 * time.Millisecond})
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	got := store.failures[deliveryID]
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 terminal failure record for a deleted webhook, got %d", len(got))
+	}
+	if !got[0].terminal {
+		t.Error("a deleted webhook must fail the delivery TERMINALLY (zero next_attempt_at)")
 	}
 }

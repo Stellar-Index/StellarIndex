@@ -84,7 +84,7 @@ export function RequestReveal({
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="text-ink-faint hover:text-ink-body"
+                className="p-1 text-ink-faint hover:text-ink-body"
                 aria-label="Close"
               >
                 <X className="h-4 w-4" />

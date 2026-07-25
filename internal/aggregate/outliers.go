@@ -40,11 +40,16 @@ import (
 //     centre, so it returns the usable trades unchanged.
 //   - Zero-base / zero-quote trades have no defined price and are
 //     dropped before the statistics.
-//   - MAD == 0 (a strict majority of prices identical) makes the scale
-//     zero: any price differing from that majority centre is an
-//     outlier and is dropped. This is exactly the masking case the
-//     finding cites (e.g. [100,100,100,100,200]) and is consistent
-//     with the codebase's MAD convention.
+//   - MAD == 0 (a strict majority of prices identical — a routine
+//     shape when a bucket's fills all hit the same resting order, and
+//     the steady state of a pegged pair) no longer collapses the band
+//     to a point (MNY-22). The σ-equivalent scale falls back to
+//     [zeroScaleRelFloor]·centre, giving a ±2% band at the default
+//     sigma=4: a 100.01 alongside four 100s survives, while the
+//     masking case the M5 finding cites ([100,100,100,100,200]) is
+//     still dropped. Dropping every non-majority price was itself a
+//     defect — it handed VWAP the majority price alone and erased
+//     honest price discovery from the served value.
 func FilterOutliers(trades []canonical.Trade, sigma float64) []canonical.Trade {
 	if sigma <= 0 || len(trades) < 3 {
 		out := make([]canonical.Trade, len(trades))

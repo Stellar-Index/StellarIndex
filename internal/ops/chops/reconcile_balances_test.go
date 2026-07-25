@@ -295,12 +295,15 @@ func TestPrintReconcileReport_CountsAndExitCode(t *testing.T) {
 		{Account: "G5", Outcome: outcomeMergedOrAbsent},
 	}
 	var buf bytes.Buffer
-	got, errored := printReconcileReport(&buf, results)
+	got, errored, staleMergedHeld := printReconcileReport(&buf, results)
 	if got != 2 {
 		t.Fatalf("printReconcileReport mismatches = %d, want 2 (the exit code)", got)
 	}
 	if errored != 0 {
 		t.Fatalf("printReconcileReport errored = %d, want 0", errored)
+	}
+	if staleMergedHeld != 0 {
+		t.Fatalf("printReconcileReport staleMergedHeld = %d, want 0", staleMergedHeld)
 	}
 	out := buf.String()
 	for _, want := range []string{"G2", "G3", "MATCHED", "MISMATCH", "NO_DATA", "MERGED_OR_ABSENT"} {
@@ -316,8 +319,8 @@ func TestPrintReconcileReport_AllMatchZeroExitCode(t *testing.T) {
 		{Account: "G2", Outcome: outcomeMatch},
 	}
 	var buf bytes.Buffer
-	if got, errored := printReconcileReport(&buf, results); got != 0 || errored != 0 {
-		t.Fatalf("printReconcileReport = (%d mismatch, %d error), want (0, 0)", got, errored)
+	if got, errored, staleMergedHeld := printReconcileReport(&buf, results); got != 0 || errored != 0 || staleMergedHeld != 0 {
+		t.Fatalf("printReconcileReport = (%d mismatch, %d error, %d stale), want (0, 0, 0)", got, errored, staleMergedHeld)
 	}
 }
 
@@ -331,7 +334,7 @@ func TestPrintReconcileReport_CountsErrors(t *testing.T) {
 		{Account: "G3", Outcome: outcomeMatch},
 	}
 	var buf bytes.Buffer
-	mismatches, errored := printReconcileReport(&buf, results)
+	mismatches, errored, _ := printReconcileReport(&buf, results)
 	if mismatches != 0 {
 		t.Fatalf("mismatches = %d, want 0", mismatches)
 	}
@@ -340,6 +343,31 @@ func TestPrintReconcileReport_CountsErrors(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "ERROR") {
 		t.Fatalf("report should surface the ERROR count; got:\n%s", buf.String())
+	}
+}
+
+// TestPrintReconcileReport_StaleMergedHeld is the MNY-04 regression: a
+// MERGED_OR_ABSENT account where we still hold a positive balance must be
+// counted separately (not silently folded into the report-only
+// MERGED_OR_ABSENT bucket), and a MERGED_OR_ABSENT account with a ZERO
+// balance must NOT be counted (that's the expected/healthy shape — we
+// correctly show nothing for a gone account).
+func TestPrintReconcileReport_StaleMergedHeld(t *testing.T) {
+	results := []reconcileResult{
+		{Account: "G1", Outcome: outcomeMergedOrAbsent, OurStroops: 0},   // healthy: nothing held
+		{Account: "G2", Outcome: outcomeMergedOrAbsent, OurStroops: 500}, // stale: we still show a balance
+		{Account: "G3", Outcome: outcomeMatch},
+	}
+	var buf bytes.Buffer
+	mismatches, errored, staleMergedHeld := printReconcileReport(&buf, results)
+	if mismatches != 0 || errored != 0 {
+		t.Fatalf("mismatches=%d errored=%d, want 0, 0", mismatches, errored)
+	}
+	if staleMergedHeld != 1 {
+		t.Fatalf("staleMergedHeld = %d, want 1 (only G2)", staleMergedHeld)
+	}
+	if out := buf.String(); !strings.Contains(out, "G2") || !strings.Contains(out, "Stale") {
+		t.Fatalf("report should surface the stale account G2 under a Stale section; got:\n%s", out)
 	}
 }
 
@@ -354,27 +382,34 @@ func TestReconcileExitError(t *testing.T) {
 		mismatches, errored, n   int
 		haveSample, confirmedNil bool // confirmedNil = sampleConfirmedNothing
 		maxErrorRate             float64
+		singleAccountNoData      bool
+		staleMergedHeld          int
 		wantExit                 bool
 		wantCode                 int // only checked when wantExit
 	}{
-		{"clean sample pass", 0, 0, 100, true, false, 0.25, false, 0},
-		{"mismatches exit with count", 3, 0, 100, true, false, 0.25, true, 3},
-		{"mismatch count capped at 255", 900, 0, 1000, true, false, 0.25, true, 255},
+		{"clean sample pass", 0, 0, 100, true, false, 0.25, false, 0, false, 0},
+		{"mismatches exit with count", 3, 0, 100, true, false, 0.25, false, 0, true, 3},
+		{"mismatch count capped at 255", 900, 0, 1000, true, false, 0.25, false, 0, true, 255},
 		// C2-15: our-side error rate
-		{"our-error rate over threshold fails even at 0 mismatch", 0, 30, 100, true, false, 0.25, true, 255},
-		{"our-error rate at threshold stays clean", 0, 25, 100, true, false, 0.25, false, 0},
-		{"our-error over threshold WITH mismatches keeps mismatch code", 4, 30, 100, true, false, 0.25, true, 4},
+		{"our-error rate over threshold fails even at 0 mismatch", 0, 30, 100, true, false, 0.25, false, 0, true, 255},
+		{"our-error rate at threshold stays clean", 0, 25, 100, true, false, 0.25, false, 0, false, 0},
+		{"our-error over threshold WITH mismatches keeps mismatch code", 4, 30, 100, true, false, 0.25, false, 0, true, 4},
 		// C2-15 Horizon-split: truth-unavailable is NOT in `errored`, so a run
 		// with 70 match + 30 truth-dark has errored=0 → passes the rate guard.
-		{"30% Horizon-dark does NOT trip C2-15 (errored=0)", 0, 0, 100, true, false, 0.25, false, 0},
+		{"30% Horizon-dark does NOT trip C2-15 (errored=0)", 0, 0, 100, true, false, 0.25, false, 0, false, 0},
 		// F4: -sample matched nothing
-		{"sample matched nothing fails", 0, 0, 100, true, true, 0.25, true, 255},
-		{"single -account matched nothing is exempt", 0, 0, 1, false, true, 0.25, false, 0},
-		{"empty run is clean", 0, 0, 0, true, false, 0.25, false, 0},
+		{"sample matched nothing fails", 0, 0, 100, true, true, 0.25, false, 0, true, 255},
+		{"single -account matched nothing is exempt (F4)", 0, 0, 1, false, true, 0.25, false, 0, false, 0},
+		{"empty run is clean", 0, 0, 0, true, false, 0.25, false, 0, false, 0},
+		// MNY-04: single -account NO_DATA is NOT exempt (distinct from F4)
+		{"single -account NO_DATA fails", 0, 0, 1, false, true, 0.25, true, 0, true, 255},
+		// MNY-04: stale MERGED_OR_ABSENT-with-held-balance fails even with 0 mismatches
+		{"stale merged-held balance fails", 0, 0, 100, true, false, 0.25, false, 2, true, 2},
+		{"stale merged-held balance with a mismatch keeps the mismatch code", 5, 0, 100, true, false, 0.25, false, 2, true, 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := reconcileExitError(tc.mismatches, tc.errored, tc.n, tc.haveSample, tc.confirmedNil, tc.maxErrorRate)
+			_, err := reconcileExitError(tc.mismatches, tc.errored, tc.n, tc.haveSample, tc.confirmedNil, tc.maxErrorRate, tc.singleAccountNoData, tc.staleMergedHeld)
 			if tc.wantExit != (err != nil) {
 				t.Fatalf("reconcileExitError = %v, wantExit=%v", err, tc.wantExit)
 			}
@@ -402,7 +437,7 @@ func TestPrintReconcileReport_TruthUnavailableNotCountedAsError(t *testing.T) {
 		{Account: "G4", Outcome: outcomeError},
 	}
 	var buf bytes.Buffer
-	mismatches, errored := printReconcileReport(&buf, results)
+	mismatches, errored, _ := printReconcileReport(&buf, results)
 	if mismatches != 0 {
 		t.Fatalf("mismatches = %d, want 0", mismatches)
 	}

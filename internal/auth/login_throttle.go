@@ -24,14 +24,35 @@ import (
 // never needs >5 links/hour to their own inbox; an IP fronting a small team
 // stays under 10. Operators tune via [LoginThrottleOptions].
 //
-// Fail-open: on a Redis transport error Allow returns (false, err); the
-// handler checks the error first and falls open (sends), preferring login
-// availability over a brief abuse window — the global rate-limit still caps
-// per-IP volume. (Unlike the signup throttle there is no dwell-time
-// fail-CLOSED inversion: a magic-link flood is a nuisance, not the
-// bulk-account-mint vector signup guards.)
+// # Redis outage: degrade, don't disappear (SEC-15 / REL-06)
+//
+// Pre-fix (audit-2026-07-23) every Redis transport error returned
+// (false, err) and the handler fell open on the error — so for as long as
+// Redis was down the per-target-email cap this type exists to enforce was
+// simply absent, and one IP could pump unbounded magic-link mail at one
+// inbox (victim harassment, plus sender-reputation and email-quota burn
+// that outlives the outage). An attacker who can hold Redis down, or who
+// merely waits for a fail-over, disables the control by definition.
+//
+// Every increment is now also applied to an in-process fixed-window
+// counter with the SAME caps. While Redis answers it stays authoritative
+// (fleet-wide accounting); when it errors, the in-process count decides.
+// A legitimate user needs ≤5 links/hour and never notices; a bomber is
+// capped per process instead of not at all. That is deliberately chosen
+// over the signup throttle's dwell-time fail-CLOSED inversion, which
+// would have taken dashboard login fully offline for the duration of a
+// Redis blip — a worse outcome than the nuisance it prevents, and
+// unnecessary when the cap can simply keep being enforced locally.
+//
+// Consequently Allow returns (false, nil) — a definitive DENY, not a
+// fall-open error — once the degraded cap is exhausted, because the
+// handler inspects the error first and would otherwise send anyway. The
+// handler's over-quota branch already skips the send while still
+// returning the generic 200 {status:"sent"}, so the anti-enumeration
+// contract is unchanged.
 type RedisLoginThrottle struct {
 	counter    *ratelimit.FixedWindowCounter
+	fallback   *ratelimit.LocalFixedWindowCounter
 	maxPerIP   int
 	maxPerMail int
 	keyPrefix  string
@@ -71,6 +92,7 @@ func NewRedisLoginThrottle(rdb redis.UniversalClient, opts LoginThrottleOptions)
 	}
 	return &RedisLoginThrottle{
 		counter:    ratelimit.NewFixedWindowCounter(rdb, opts.Window, nowFn),
+		fallback:   ratelimit.NewLocalFixedWindowCounter(opts.Window, nowFn),
 		maxPerIP:   opts.MaxPerIP,
 		maxPerMail: opts.MaxPerEmail,
 		keyPrefix:  opts.KeyPrefix,
@@ -78,44 +100,74 @@ func NewRedisLoginThrottle(rdb redis.UniversalClient, opts LoginThrottleOptions)
 }
 
 // Allow increments the per-IP and per-email counters for the current window
-// and reports whether BOTH are within their caps. Returns (false, err) on a
-// Redis transport failure — the handler falls open on a non-nil error. The
-// email is hashed (sha256, 16-hex prefix) before it becomes a Redis key, so
-// plaintext addresses never land in Redis.
+// and reports whether BOTH are within their caps. The email is hashed
+// (sha256, 16-hex prefix) before it becomes a Redis key, so plaintext
+// addresses never land in Redis.
+//
+// Return contract:
+//
+//   - (true, nil)   — within quota; send.
+//   - (false, nil)  — over quota on at least one dimension; skip the send.
+//     Also the answer once the in-process fallback's cap is
+//     exhausted during a Redis outage (SEC-15 / REL-06) — the
+//     Redis error is deliberately NOT returned in that case,
+//     because the handler falls open on any non-nil error and
+//     would send anyway.
+//   - (true, err)   — Redis is unreachable but the degraded in-process
+//     cap still has room; the handler logs and sends.
 func (t *RedisLoginThrottle) Allow(ctx context.Context, ip, email string) (bool, error) {
 	allowed := true
+	var firstErr error
 
 	// Per-target-email cap (the email-bomb dimension). An empty email
 	// shouldn't reach here (handler validates first) but guard anyway.
 	if email != "" {
 		ok, err := t.incrUnderCap(ctx, t.keyPrefix+"mail:"+hashEmail(email), t.maxPerMail)
-		if err != nil {
-			return false, err
-		}
 		allowed = allowed && ok
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 
 	// Per-IP cap (the spray-many-addresses dimension). An IP-less direct
 	// call (production shouldn't see one — Caddy/Cloudflare populate it)
-	// skips the IP dimension, same as the signup throttle.
+	// skips the IP dimension, same as the signup throttle. The address is
+	// masked to its throttle-key identity first — see [throttleIPKey];
+	// without that an attacker with any IPv6 /64 rotates the /128 and
+	// never shares a bucket with themselves.
 	if ip != "" {
-		ok, err := t.incrUnderCap(ctx, t.keyPrefix+"ip:"+ip, t.maxPerIP)
-		if err != nil {
-			return false, err
-		}
+		ok, err := t.incrUnderCap(ctx, t.keyPrefix+"ip:"+throttleIPKey(ip), t.maxPerIP)
 		allowed = allowed && ok
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 
-	return allowed, nil
+	if !allowed {
+		// Definitive deny. Swallow any Redis error: this decision came
+		// from a counter that answered (Redis, or the in-process
+		// fallback), and surfacing the error would route the handler
+		// into its fall-open branch and send the mail anyway.
+		return false, nil
+	}
+	return true, firstErr
 }
 
-// incrUnderCap bumps the shared fixed-window counter (which appends the
-// window bucket + owns the drain TTL) and reports whether the
-// post-increment count is within limit.
+// incrUnderCap bumps BOTH the Redis fixed-window counter (which appends
+// the window bucket + owns the drain TTL) and the in-process fallback,
+// then reports whether the send is within limit.
+//
+// Redis is authoritative whenever it answers — it accounts fleet-wide and
+// its count is always >= the local one. The fallback is incremented on
+// every call regardless, so its window is already warm when Redis drops:
+// otherwise the first N requests after an outage began would each get a
+// fresh local budget. On a transport error the local verdict is what the
+// caller gets, alongside the error (SEC-15 / REL-06).
 func (t *RedisLoginThrottle) incrUnderCap(ctx context.Context, keyBase string, limit int) (bool, error) {
+	localOK := t.fallback.Allow(keyBase, limit)
 	count, err := t.counter.Incr(ctx, keyBase)
 	if err != nil {
-		return false, fmt.Errorf("login throttle: %w", err)
+		return localOK, fmt.Errorf("login throttle: %w", err)
 	}
 	return int(count) <= limit, nil
 }

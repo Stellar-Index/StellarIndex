@@ -87,3 +87,44 @@ default_text_search_config = 'pg_catalog.english'
 # all depend on the extension being available at startup. Matches
 # r1's live config; a rebuild without it breaks every CAGG.
 shared_preload_libraries  = 'timescaledb,pg_stat_statements'
+
+# ─── Background workers ─────────────────────────────────────────────
+# These three are a SET, and the relationship between them is the
+# whole point of pinning them here.
+#
+# TimescaleDB defaults timescaledb.max_background_workers to 16;
+# PostgreSQL defaults max_worker_processes to 8. Left untuned — which
+# is what r1 was, both reading `source = default` in pg_settings —
+# Timescale is licensed to run twice as many background workers as
+# Postgres has worker slots, and those slots are shared with parallel
+# query workers on top. The scheduler then loses the race for a slot
+# and the job dies with "failed to start job".
+#
+# This was not theoretical on r1: across 46 scheduled jobs (23
+# compression policies, 20 continuous-aggregate refresh policies, 3
+# retention/telemetry) EVERY refresh policy was failing 37–69% of its
+# runs, ~134k failures on the busiest. It stayed invisible because the
+# jobs did eventually get a slot on a later tick, so `last_run_status`
+# read Success and the caggs were never actually stale — and because
+# the alert that would have caught staleness has no producer and is
+# INERT (see deploy/monitoring/rules/storage.yml).
+#
+# Sizing, per Timescale's documented rule
+# (max_worker_processes >= timescaledb.max_background_workers +
+#  max_parallel_workers + a few spare for the launcher/extensions):
+#
+#     16 (timescale bg) + 8 (parallel) + 8 spare = 32
+#
+# max_parallel_workers and max_parallel_workers_per_gather are
+# deliberately LEFT AT THEIR DEFAULTS (8 / 2). Raising them changes
+# query plans across the whole API read path, which is a separate
+# decision with its own latency risk; this change is scoped to
+# stopping the scheduler from starving. Unused worker slots cost only
+# a little shared memory, so 32 is cheap headroom rather than a
+# commitment to run 32 workers.
+#
+# NOTE: max_worker_processes is postmaster-level — it needs a Postgres
+# RESTART, not a reload. Until that restart it stays at 8 and the job
+# failures continue.
+max_worker_processes      = 32
+timescaledb.max_background_workers = 16

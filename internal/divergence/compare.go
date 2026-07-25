@@ -7,7 +7,6 @@ import (
 	"math"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -63,7 +62,34 @@ type CompareOptions struct {
 	// Default 1 (any reference is better than none); operators
 	// can require 2+ for stronger consensus.
 	MinSuccessForMedian int
+
+	// OverallTimeout caps the WHOLE comparison, independent of the
+	// per-reference contexts. <= 0 defaults to
+	// [overallTimeoutFactor] × PerReferenceTimeout.
+	//
+	// The per-reference timeout is only advisory: it is delivered by
+	// cancelling a context, and a Reference that ignores ctx (a
+	// third-party SDK doing a blocking read, an operator-supplied
+	// implementation, a cgo call) simply never returns. Since the
+	// references run concurrently, this budget is the wall-clock
+	// ceiling on Compare as a whole — see [Compare] for what a
+	// reference that blows it is recorded as.
+	OverallTimeout time.Duration
 }
+
+// overallTimeoutFactor multiplies PerReferenceTimeout to get the
+// default overall budget. References run CONCURRENTLY, so a healthy
+// run finishes in about one per-reference timeout; 2× leaves generous
+// slack for scheduling and response parsing while still bounding the
+// call.
+const overallTimeoutFactor = 2
+
+// overallDeadlineLabel is the Failures value recorded for a reference
+// that had not reported by the overall deadline. Distinct from a
+// per-reference context timeout (which surfaces as the underlying
+// "context deadline exceeded") precisely so operators can tell "slow
+// upstream" from "this reference ignores cancellation".
+const overallDeadlineLabel = "overall_deadline_exceeded"
 
 // Compare gathers prices from each reference in parallel and
 // computes the divergence between ourPrice and the median of the
@@ -81,6 +107,15 @@ type CompareOptions struct {
 //     "this source is down" from "we disagree with this source".
 //   - Other errors (network timeout, panic recovered, etc.) are
 //     recorded in Failures with the verbatim error message.
+//   - A reference that has not reported by opts.OverallTimeout is
+//     recorded as [overallDeadlineLabel] and Compare returns the
+//     PARTIAL result (REL-01). Waiting on the WaitGroup alone made a
+//     single reference that ignores context cancellation able to
+//     block the comparison — and, through it, the aggregator's
+//     divergence refresh — indefinitely. The abandoned goroutine is
+//     left to finish on its own; its send cannot block or panic
+//     because the results channel is buffered to len(refs) and is
+//     never closed.
 //
 // The aggregator's caller-side gating logic typically reads:
 //
@@ -102,6 +137,9 @@ func Compare(
 	if opts.MinSuccessForMedian <= 0 {
 		opts.MinSuccessForMedian = 1
 	}
+	if opts.OverallTimeout <= 0 {
+		opts.OverallTimeout = overallTimeoutFactor * opts.PerReferenceTimeout
+	}
 
 	res := Result{
 		Pair:     pair,
@@ -114,18 +152,18 @@ func Compare(
 		return res
 	}
 
-	type fetchOutcome struct {
-		name  string
-		price float64
-		err   error
-	}
 	results := make(chan fetchOutcome, len(refs))
 
-	var wg sync.WaitGroup
+	// Names are resolved on THIS goroutine, before the fan-out, so a
+	// reference that never reports can still be attributed at the
+	// overall deadline below.
+	pending := make(map[string]struct{}, len(refs))
 	for _, ref := range refs {
-		wg.Add(1)
+		pending[safeName(ref)] = struct{}{}
+	}
+
+	for _, ref := range refs {
 		go func(r Reference) {
-			defer wg.Done()
 			// Capture the reference's name once up-front so we can
 			// report the failure even if r.Name() itself is what
 			// panics (cheap defence; references are operator-supplied
@@ -155,22 +193,8 @@ func Compare(
 			results <- fetchOutcome{name: name, price: price, err: err}
 		}(ref)
 	}
-	wg.Wait()
-	close(results)
+	prices := collectOutcomes(results, pending, len(refs), opts.OverallTimeout, &res)
 
-	prices := make([]float64, 0, len(refs))
-	for o := range results {
-		if o.err != nil {
-			res.Failures[o.name] = classifyError(o.err)
-			continue
-		}
-		if !isFinitePositive(o.price) {
-			res.Failures[o.name] = "non-positive or non-finite price"
-			continue
-		}
-		res.Sources[o.name] = o.price
-		prices = append(prices, o.price)
-	}
 	res.SuccessCount = len(res.Sources)
 	res.FailureCount = len(res.Failures)
 
@@ -183,6 +207,57 @@ func Compare(
 		res.DivergencePct = math.Abs(ourPrice-res.Median) / res.Median * 100.0
 	}
 	return res
+}
+
+// fetchOutcome is one reference's reply on [Compare]'s fan-in channel.
+type fetchOutcome struct {
+	name  string
+	price float64
+	err   error
+}
+
+// collectOutcomes drains `total` replies into res, or gives up after
+// `overall` and records everyone still in `pending` as an
+// overall-deadline failure. Returns the successful prices, unsorted.
+//
+// The channel is NEVER closed: a goroutine abandoned at the deadline
+// may still send afterwards, and a send on a closed channel panics.
+// It is buffered to the reference count, so that late send neither
+// blocks nor leaks the goroutine.
+func collectOutcomes(
+	results <-chan fetchOutcome,
+	pending map[string]struct{},
+	total int,
+	overall time.Duration,
+	res *Result,
+) []float64 {
+	deadline := time.NewTimer(overall)
+	defer deadline.Stop()
+
+	prices := make([]float64, 0, total)
+	for outstanding := total; outstanding > 0; outstanding-- {
+		select {
+		case o := <-results:
+			delete(pending, o.name)
+			switch {
+			case o.err != nil:
+				res.Failures[o.name] = classifyError(o.err)
+			case !isFinitePositive(o.price):
+				res.Failures[o.name] = "non-positive or non-finite price"
+			default:
+				res.Sources[o.name] = o.price
+				prices = append(prices, o.price)
+			}
+		case <-deadline.C:
+			// Partial result: record everyone still outstanding as a
+			// deadline failure and serve what did arrive.
+			for name := range pending {
+				res.Failures[name] = overallDeadlineLabel
+			}
+			return prices
+		}
+	}
+	return prices
 }
 
 // CountAgreeing returns how many references in `sources` corroborate

@@ -16,6 +16,21 @@ import (
 // set with headroom for growth and stays inside uint32.
 const opIndexFanoutStride = 1024
 
+// eventFanoutStride bounds how many contract events ONE operation can
+// emit before their per-event op_index blocks would collide.
+// DAT-06/trap-15 (audit-2026-07-23): the fanout base used to be
+// OperationIndex ALONE, so two REDSTONE events within the SAME
+// operation collided on their whole 1024-wide OpIndex block.
+// EventIndex ALONE isn't a safe replacement either: per events.Event's
+// own doc it is scoped PER-OPERATION (resets to 0 for each new op), so
+// swapping it straight in would instead collide two DIFFERENT
+// operations that each emit a single event. Combining both dimensions
+// — OperationIndex and EventIndex — keeps every event's OpIndex block
+// disjoint regardless of whether the collision risk is same-op or
+// cross-op. See the identical rationale + bound arithmetic in
+// internal/sources/reflector/decode.go.
+const eventFanoutStride = 64
+
 // classify reports whether this is a Redstone "REDSTONE" event.
 // topic[0] is byte-compared against the pre-encoded constant.
 func classify(e *events.Event) bool {
@@ -69,6 +84,10 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 		return nil, fmt.Errorf("redstone: feed count %d exceeds fanout stride %d",
 			len(prices), opIndexFanoutStride)
 	}
+	if e.EventIndex < 0 || e.EventIndex >= eventFanoutStride {
+		// See ErrEventIndexOverflow for rationale.
+		return nil, fmt.Errorf("%w: got %d", ErrEventIndexOverflow, e.EventIndex)
+	}
 
 	observer := updater // relayer address from op args — strkey form already
 
@@ -103,10 +122,11 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 			ContractID: e.ContractID,
 			Ledger:     e.Ledger,
 			TxHash:     e.TxHash,
-			// OpIndex uses a fixed stride per-event so two Redstone
-			// events in one tx (unlikely but possible) can't collide
-			// on the oracle_updates PK.
-			OpIndex: uint32(e.OperationIndex)*opIndexFanoutStride + uint32(i),
+			// OpIndex packs (OperationIndex, EventIndex, vector
+			// position) so two Redstone events anywhere in the tx —
+			// same operation or different — can't collide on the
+			// oracle_updates PK. See eventFanoutStride's godoc.
+			OpIndex: (uint32(e.OperationIndex)*eventFanoutStride+uint32(e.EventIndex))*opIndexFanoutStride + uint32(i),
 			// canonical.SafeUnixMillis prefers the contract-supplied
 			// PackageTimestamp but clamps 0 / sentinel / far-future
 			// garbage (incl. the >MaxInt64 wrap class of the router

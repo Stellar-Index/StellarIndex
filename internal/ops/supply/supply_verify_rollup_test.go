@@ -185,6 +185,42 @@ func TestReportRollupDrifts_OKAndDrift(t *testing.T) {
 	}
 }
 
+// TestRollupExitDecision_ZeroCheckedIsError: an empty sep41_supply_rollup
+// table or a -contracts filter that matched nothing must not be certified
+// clean — checked==0 must produce a non-nil error even though drifts is
+// empty (OBS-01 / REL-02: "OK: 0 checkpoint(s) reconcile" previously exited
+// 0, indistinguishable from a genuine all-clean run).
+func TestRollupExitDecision_ZeroCheckedIsError(t *testing.T) {
+	if err := rollupExitDecision(nil, 0); err == nil {
+		t.Fatal("checked=0, drifts=nil must return a non-nil error, got nil")
+	}
+}
+
+// TestRollupExitDecision_CleanNonZeroIsOK: a genuine all-clean run (at
+// least one checkpoint checked, zero drift) must still exit 0.
+func TestRollupExitDecision_CleanNonZeroIsOK(t *testing.T) {
+	if err := rollupExitDecision(nil, 3); err != nil {
+		t.Fatalf("checked=3, drifts=nil must return nil, got %v", err)
+	}
+}
+
+// TestRollupExitDecision_DriftIsErrorRegardlessOfChecked: drift always
+// wins even if checked also happens to be 0 (defensive; drift can't
+// actually occur with checked=0, but the error must not be masked).
+func TestRollupExitDecision_DriftIsError(t *testing.T) {
+	r := &fakeRollupReader{
+		checkpoints: []timescale.SEP41RollupCheckpoint{{ContractID: "KALE", Fold: kt(2000, 0, 0), LastLedger: 1}},
+		truth:       map[string]timescale.SEP41KindTotals{"KALE": kt(1000, 0, 0)},
+	}
+	drifts, checked, err := verifyRollupDrifts(context.Background(), r, nil, big.NewInt(0), time.Minute)
+	if err != nil {
+		t.Fatalf("verifyRollupDrifts: %v", err)
+	}
+	if err := rollupExitDecision(drifts, checked); err == nil {
+		t.Fatal("drift present must return a non-nil error, got nil")
+	}
+}
+
 func TestParseContractsCSV(t *testing.T) {
 	if got := parseContractsCSV(""); got != nil {
 		t.Fatalf("empty → nil, got %v", got)

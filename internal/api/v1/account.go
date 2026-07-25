@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
@@ -272,8 +273,9 @@ func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 // unwired, errors, or hasn't produced rows for this subject yet
 // (fresh deployment / worker not yet swept).
 //
-// Subject keying matches `middleware.UsageTracker`'s
-// `usageKeyForSubject` so the writer + both readers stay in
+// Subject keying calls [middleware.UsageKeyForSubject] directly (HLT-01:
+// this used to reimplement the derivation inline, which could silently
+// drift from the writer's copy) so the writer + both readers stay in
 // lock-step (`key:<KeyID>` for API-key callers; `id:<Identifier>`
 // when KeyID is empty). Anonymous callers receive 401. The
 // `?from=` / `?to=` query params are reserved in the OpenAPI spec
@@ -295,17 +297,10 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 			"/v1/account/usage requires an API key or SEP-10 token")
 		return
 	}
-	// Mirror UsageTracker's subject derivation (key:<KeyID> or
-	// id:<Identifier>). MUST stay in sync — if the writer and
-	// reader pick different keys, /v1/account/usage returns []
-	// despite incoming requests being recorded.
-	key := ""
-	switch {
-	case subject.KeyID != "":
-		key = "key:" + subject.KeyID
-	case subject.Identifier != "":
-		key = "id:" + subject.Identifier
-	}
+	// The single UsageTracker-shared derivation (key:<KeyID> or
+	// id:<Identifier>) — calling it directly instead of reimplementing
+	// it here means the writer and this reader can never drift apart.
+	key := middleware.UsageKeyForSubject(subject)
 	if key == "" {
 		writeJSON(w, []UsageRow{}, Flags{})
 		return

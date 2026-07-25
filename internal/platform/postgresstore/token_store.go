@@ -327,16 +327,23 @@ func (r *TokenStore) RevokeInvite(ctx context.Context, tokenHash []byte) error {
 // ListInvitesForAccount returns active (unrevoked, unaccepted)
 // invites — used by the team-management UI.
 func (r *TokenStore) ListInvitesForAccount(ctx context.Context, accountID uuid.UUID) ([]platform.Invite, error) {
+	// COR-15 (audit-2026-07-23): this used to filter on SQL `now()`
+	// (Postgres server time) instead of `r.now()` like every other
+	// expiry check in this file — the one method [WithClock]'s
+	// injected clock had no effect on, contradicting both the
+	// convention every sibling method follows and this type's own
+	// "tests use WithClock" doc claim.
+	now := r.now()
 	const q = `
 		SELECT ` + inviteColumns + `
 		FROM invites
 		WHERE account_id = $1
 		  AND accepted_at IS NULL
 		  AND revoked_at IS NULL
-		  AND expires_at > now()
+		  AND expires_at > $2
 		ORDER BY created_at DESC
 	`
-	rows, err := r.s.db.QueryContext(ctx, q, accountID)
+	rows, err := r.s.db.QueryContext(ctx, q, accountID, now)
 	if err != nil {
 		return nil, fmt.Errorf("list invites: %w", err)
 	}

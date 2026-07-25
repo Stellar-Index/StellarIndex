@@ -89,13 +89,35 @@ func SciDecimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error)
 }
 
 // InvertScaled returns the multiplicative inverse of a positive
-// scaled integer at the same scale: 10^(2*decimals) / v. The FX
-// pollers use it to flip a vendor's "1 base = X quote" rate into our
-// canonical "price of quote-currency in base units". v must be > 0
-// (callers skip non-positive rates before inverting).
+// scaled integer at the same scale: 10^(2*decimals) / v, ROUNDED
+// HALF-UP. The FX pollers use it to flip a vendor's "1 base = X
+// quote" rate into our canonical "price of quote-currency in base
+// units". v must be > 0 (callers skip non-positive rates before
+// inverting).
+//
+// The rounding is the point. This used to be a plain Div, which
+// truncates toward zero — so every inverted rate landed at or below
+// the true value and never above it. Unlike ordinary rounding error
+// that averages out, a truncation bias is systematic and one-signed:
+// it accumulates in the same direction across every poll of every
+// inverted pair, on all three FX venues that call this (ECB,
+// exchangeratesapi, polygonforex). At DefaultDecimals the per-rate
+// error is at most 1 ulp, so this is a small bias rather than a
+// visible mispricing — but it is a free correction and a biased
+// estimator has no business in the money path (ADR-0003: exact
+// big.Int arithmetic, never float, never silent truncation).
+//
+// The formula mirrors [redstone.reciprocalAtScale], which already did
+// this correctly for its Invert feeds — same operation, and the two
+// implementations disagreeing was the actual defect (audit MNY-06).
 func InvertScaled(v *big.Int, decimals int) *big.Int {
 	p := Pow10(decimals)
-	return new(big.Int).Div(new(big.Int).Mul(p, p), v)
+	num := new(big.Int).Mul(p, p) // 10^(2*decimals)
+	// round half-up = floor((2*num + v) / (2*v)) for v > 0.
+	twoNum := new(big.Int).Lsh(num, 1)
+	twoNum.Add(twoNum, v)
+	twoV := new(big.Int).Lsh(v, 1)
+	return twoNum.Quo(twoNum, twoV)
 }
 
 // SyntheticTxHash derives a stable 64-char lowercase-hex pseudo

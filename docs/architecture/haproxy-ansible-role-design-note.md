@@ -1,7 +1,7 @@
 ---
 title: HAProxy ansible role — design note
-last_verified: 2026-05-13
-status: shipped (Task #72 / #82 — configs/ansible/roles/haproxy)
+last_verified: 2026-07-24
+status: NOT shipped (corrected 2026-07-24, audit-2026-07-23 DOC-05) — role code exists at configs/ansible/roles/haproxy/ but no playbook invokes it; never applied to any host
 related:
   - docs/architecture/ha-plan.md §3.1 (api-tier topology)
   - docs/architecture/patroni-ansible-role-design-note.md (sister role)
@@ -11,6 +11,17 @@ related:
 
 # HAProxy ansible role — design note
 
+> **NOT shipped (corrected 2026-07-24, audit-2026-07-23 DOC-05).** The
+> frontmatter previously read `status: shipped`; that was false. The role's
+> files exist under `configs/ansible/roles/haproxy/`, but **no playbook
+> invokes it** (verified against the repo's only two playbooks,
+> `archival-node.yml` and `monitoring.yml` — neither references `haproxy`),
+> and it has never been applied to any host. R1's actual public TLS edge is
+> Caddy (`configs/ansible/roles/archival-node/tasks/19-caddy.yml`), a
+> single-host reverse proxy, not the 2-host HAProxy+keepalived topology
+> described below. Everything below is the pre-implementation design
+> record.
+>
 > Bootstraps the third launch-critical sub-role of Task #72 after
 > Patroni (#344) and Redis Sentinel (#350). HAProxy is the
 > api-tier load balancer fronting the `stellarindex-api` pool;

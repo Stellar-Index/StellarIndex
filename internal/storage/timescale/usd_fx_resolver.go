@@ -750,7 +750,7 @@ func InstallUSDVolumeResolution(store *Store, classicUSDPegs []string, sacWrappe
 	if store == nil {
 		return errors.New("timescale: InstallUSDVolumeResolution: store is required")
 	}
-	// Mark USD-volume-resolution mode as entered (the A-CRIT-1 reDeriveResolverGuard
+	// Mark USD-volume-resolution mode as entered (the A-CRIT-1 reDeriveNullVolumeGuard
 	// signal), even on the no-pegs no-op path below: the guard checks "was Install
 	// called", not "is a resolver wired", so a legitimate no-pegs re-derive still
 	// passes while a re-derive that forgot Install entirely is refused.

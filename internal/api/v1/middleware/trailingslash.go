@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"strings"
 )
 
 // TrailingSlashRedirect 308-redirects any non-root request whose
@@ -35,6 +36,19 @@ func TrailingSlashRedirect(next http.Handler) http.Handler {
 		p := r.URL.Path
 		if len(p) > 1 && p[len(p)-1] == '/' {
 			target := p[:len(p)-1]
+			// SEC-16: refuse to emit a Location that isn't a clean
+			// same-origin absolute path. A request path of "//evil.com/"
+			// strips to "//evil.com" here — a PROTOCOL-RELATIVE URL that
+			// browsers resolve as an absolute redirect to evil.com, an
+			// unauthenticated open redirect on the API origin (this
+			// middleware sits OUTSIDE the mux, so it runs before
+			// net/http's own ServeMux path-cleaning would otherwise catch
+			// the double slash). Falling through to next lets the mux
+			// either 404 or apply its own safe same-origin path cleanup.
+			if !isCleanSameOriginPath(target) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			if r.URL.RawQuery != "" {
 				target += "?" + r.URL.RawQuery
 			}
@@ -43,4 +57,17 @@ func TrailingSlashRedirect(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isCleanSameOriginPath reports whether target is safe to redirect a
+// caller to: a same-origin absolute path with exactly one leading '/'
+// (not "//…", which a browser resolves as a protocol-relative absolute
+// URL to whatever host follows) and no backslash (some browsers treat
+// '\' as equivalent to '/', so "/\evil.com" is the same bypass spelled
+// differently).
+func isCleanSameOriginPath(target string) bool {
+	if !strings.HasPrefix(target, "/") || strings.HasPrefix(target, "//") {
+		return false
+	}
+	return !strings.Contains(target, "\\")
 }

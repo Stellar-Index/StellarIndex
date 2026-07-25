@@ -1,7 +1,9 @@
 name: release
 
 # Triggered by pushing a v*.*.* tag to the repo. Cuts a GitHub
-# Release containing cross-compiled Linux binaries (+ SHA256SUMS,
+# Release containing cross-compiled Linux binaries + migrations.tar.gz
+# (the tag's migrations/ tree, which deploy.yml applies before the
+# binary swap — see "Package the tag's migrations" below) (+ SHA256SUMS,
 # keyless-signed via cosign v3: SHA256SUMS.sigstore.json is the
 # durable artifact (sigstore bundle format, BACKLOG #51b). This
 # release ALSO publishes the retiring SHA256SUMS.sig / SHA256SUMS.pem
@@ -193,6 +195,31 @@ jobs:
       - name: List downloaded artifacts
         run: ls -la dist/
 
+      - name: Package the tag's migrations alongside the binaries
+        # artifact-integrity-verification (audit-2026-07-23): deploy.yml
+        # applies this tag's migrations as DDL on production, but it
+        # fetched them from the `repos/…/tarball/<tag>` API — an
+        # UNSIGNED path, while the binaries beside them were covered by
+        # cosign. The signed chain stopped short of the SQL. Packing
+        # migrations/ into dist/ HERE, before SHA256SUMS is computed,
+        # puts the migration set under the same signature as the
+        # binaries; deploy.yml verifies it against the signed manifest
+        # and stops using the tarball API.
+        #
+        # Deterministic flags (sorted names, fixed mtime/owner, gzip -n)
+        # so the archive is byte-reproducible from the tag — a
+        # third party can rebuild it and compare against SHA256SUMS.
+        run: |
+          set -euo pipefail
+          tar --sort=name \
+              --mtime='UTC 1970-01-01' \
+              --owner=0 --group=0 --numeric-owner \
+              -cf - migrations | gzip -n > dist/migrations.tar.gz
+          ls -la dist/migrations.tar.gz
+          # `| head` closes early, SIGPIPEs tar and — under pipefail —
+          # fails the step for no reason (F-1300). `sed -n` drains.
+          tar -tzf dist/migrations.tar.gz | sed -n '1,5p'
+
       - name: Compute SHA256SUMS
         working-directory: dist
         run: |
@@ -335,11 +362,23 @@ jobs:
           if [ "${{ needs.resolve-tag.outputs.is_prerelease }}" = "true" ]; then
             PRE="--prerelease"
           fi
-          # If a release already exists for this tag (manual re-run),
-          # delete it first so we can re-upload assets cleanly.
+          # CID-21 (audit-2026-07-23): a published release must be
+          # immutable — the same tag can only ever ship one set of
+          # bytes. Pre-fix, a manual re-run of this job for a tag that
+          # already had a release DELETED it and re-created it from
+          # whatever `dist/` this run happened to produce, so the same
+          # version string could silently ship different binaries +
+          # migrations.tar.gz than the first cut (or than what a
+          # consumer already downloaded, verified, and pinned via
+          # SHA256SUMS). Refuse instead: an existing release for this
+          # tag is a hard stop, not a thing to clear and retry. If the
+          # release genuinely needs different bytes, cut a NEW version
+          # — that is the whole point of SemVer immutability, and is
+          # also why release-process.md's re-cut guidance is "bump the
+          # version", not "re-run this workflow".
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG exists — deleting before re-creating"
-            gh release delete "$TAG" --yes
+            echo "::error::Release $TAG already exists — refusing to delete and re-create it. Published releases are immutable: cut a new version (e.g. a patch bump) instead of re-running this workflow for an existing tag. If this release is genuinely broken (e.g. a bad cut that was never installed anywhere), delete it by hand via 'gh release delete' after confirming no consumer depends on it, then re-run — this workflow will not do that step for you."
+            exit 1
           fi
           gh release create "$TAG" \
             --title "Stellar Index $TAG" \

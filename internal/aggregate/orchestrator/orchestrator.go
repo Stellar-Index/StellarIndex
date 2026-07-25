@@ -225,18 +225,28 @@ type Config struct {
 	// Applies to every target pair whose quote leg [usdQuoteDecimals]
 	// can resolve to a USD value: fiat:USD directly (every
 	// contributing trade originates off-chain at the uniform 10^8
-	// quote-decimal convention, so sum/1e8 is exact), a classic asset
-	// on USDPeggedClassicAssets (7-decimal Stellar-classic
-	// invariant), or a Soroban SAC wrapper on USDPeggedSorobanAssets
-	// (same 7-decimal invariant, transitively). Before 2026-07-10 the
-	// floor applied ONLY to fiat:USD-quoted pairs — a directly-
-	// configured Soroban- or classic-quoted target pair (e.g.
-	// "native/CCW6…", a SAC-USDC-quoted pair) served VWAP unguarded
-	// at any volume, so a single dust trade could set the price. The
-	// stablecoin-fiat-proxy expansion path (EnableStablecoinFiatProxy)
-	// was never affected by that gap — it rewrites fetched trades onto
-	// the fiat:USD target BEFORE this gate runs, so the target pair
-	// the gate sees was always fiat:USD on that path.
+	// quote-decimal convention, so sum/1e8 is exact), an abstract
+	// USD-pegged stablecoin ticker (crypto:USDT/USDC/DAI/PYUSD/USDP —
+	// same off-chain 10^8 convention), a classic asset on
+	// USDPeggedClassicAssets (7-decimal Stellar-classic invariant), or
+	// a Soroban SAC wrapper on USDPeggedSorobanAssets (same 7-decimal
+	// invariant, transitively). Before 2026-07-10 the floor applied
+	// ONLY to fiat:USD-quoted pairs — a directly-configured Soroban-
+	// or classic-quoted target pair (e.g. "native/CCW6…", a
+	// SAC-USDC-quoted pair) served VWAP unguarded at any volume, so a
+	// single dust trade could set the price.
+	//
+	// R-008 (audit 2026-07-23): the stablecoin-fiat-proxy expansion
+	// path (EnableStablecoinFiatProxy) WAS affected, in the opposite
+	// direction, and this comment used to claim otherwise. The gate's
+	// APPLICABILITY was never in doubt on that path (fetchForTarget
+	// rewrites trades onto the fiat:USD target before the gate runs),
+	// but its INPUT was: the per-trade USD values are computed against
+	// the SOURCE pair's quote (`BASE/crypto:USDT`, …) before the
+	// rewrite, and the abstract stablecoin tickers weren't a
+	// recognised USD surface — so every proxy-fetched CEX leg counted
+	// as $0 and windows carrying real dollar volume were dropped as
+	// "below floor". Tier 2 of [usdQuoteDecimals] closes that.
 	//
 	// Non-USD fiat pairs (fiat:EUR, fiat:GBP, …) remain exempt — the
 	// $10k-style threshold is a USD figure and converting a EUR- or
@@ -1236,24 +1246,44 @@ func usdVolumeForPairPerTrade(pair canonical.Pair, batch []canonical.Trade, clas
 
 // usdQuoteDecimals resolves the fixed-point decimal scale needed to
 // read a trade's QuoteAmount as a USD figure, for a pair whose quote
-// leg is one of the three shapes this package can value in USD
+// leg is one of the four shapes this package can value in USD
 // without a live price lookup:
 //
 //  1. fiat:USD directly — decimals 8 (the uniform off-chain
 //     CEX/FX external-source convention).
-//  2. A classic Stellar credit on `classicUSDPegs` — decimals 7
+//  2. An abstract USD-pegged stablecoin ticker (`crypto:USDT`,
+//     `crypto:USDC`, `crypto:DAI`, `crypto:PYUSD`, `crypto:USDP` —
+//     whatever [aggregate.IsFiatProxyFor] maps to "USD") — decimals 8
+//     as well, because only off-chain sources ever stamp the ABSTRACT
+//     ticker (Binance XLMUSDT, Kraken XLM/USDT, …; the on-chain legs
+//     carry classic/Soroban identity instead) and those all emit at
+//     the 1e8 convention, same as tier 1.
+//  3. A classic Stellar credit on `classicUSDPegs` — decimals 7
 //     (the Stellar-classic invariant).
-//  3. A Soroban SAC wrapper on `sorobanUSDPegs` — decimals 7 (a SAC
+//  4. A Soroban SAC wrapper on `sorobanUSDPegs` — decimals 7 (a SAC
 //     always mirrors the 7-decimal scale of the classic asset it
 //     wraps; Guard 1, 2026-07-10).
 //
-// ok=false means none of the three tiers apply — the quote asset has
+// Tier 2 is R-008 (audit 2026-07-23). It is the shape the
+// stablecoin-fiat-proxy expansion fetches under
+// (`ExpandTargetPairWithClassicPegs` emits `BASE/crypto:USDT` &
+// friends for a fiat:USD target), and it used to fall through to
+// ok=false — so [usdVolumeForPairPerTrade] valued the WHOLE batch at
+// $0, [survivorUSDVolume] summed $0 for those trades, and the
+// fiat:USD target window was measured against MinUSDVolume as if the
+// CEX stablecoin legs carried no dollars at all. A window whose
+// volume was mostly (or entirely) USDT-quoted was dropped every tick.
+// The peg set is read from the aggregate stablecoin map rather than
+// re-listed here so the two can't drift.
+//
+// ok=false means none of the four tiers apply — the quote asset has
 // no USD valuation this package can compute cleanly. That covers
 // non-USD fiat (fiat:EUR, fiat:GBP, …; would need a live FX rate),
-// an un-pegged classic/Soroban quote (would need a live price
-// lookup — "rare" per the Guard 1 finding, and deliberately NOT
-// built here; see dropForMinUSDVolume's unvaluable branch), and any
-// crypto/RWA/native quote shape.
+// non-USD stablecoin tickers (crypto:EURC → fiat:EUR; same missing
+// FX rate), an un-pegged classic/Soroban quote (would need a live
+// price lookup — "rare" per the Guard 1 finding, and deliberately
+// NOT built here; see dropForMinUSDVolume's unvaluable branch), and
+// any other crypto/RWA/native quote shape.
 //
 // Both [usdVolumeForPairPerTrade] (valuation) and
 // [dropForMinUSDVolume] (MinUSDVolume applicability) call this so
@@ -1268,6 +1298,8 @@ func usdVolumeForPairPerTrade(pair canonical.Pair, batch []canonical.Trade, clas
 func usdQuoteDecimals(quote canonical.Asset, classicUSDPegs, sorobanUSDPegs []canonical.Asset) (decimals int, ok bool) {
 	switch {
 	case quote.Type == canonical.AssetFiat && quote.Code == "USD":
+		return 8, true
+	case aggregate.IsFiatProxyFor(quote, "USD"):
 		return 8, true
 	case quote.Type == canonical.AssetClassic && isUSDPeggedClassic(quote, classicUSDPegs):
 		return 7, true

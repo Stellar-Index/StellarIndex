@@ -62,6 +62,35 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
+      - name: Assert the production approval gate is configured
+        # deploy-approval-gate (audit-2026-07-23, CID-20): this job
+        # declares `environment: explorer-${environment}`, which is not
+        # a gate by itself — an environment with no `required_reviewers`
+        # rule deploys unattended, exactly like deploy.yml's `r1` gate
+        # before that assertion landed. This job holds
+        # CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID and can repoint the
+        # live explorer, so it gets the same fail-closed check. Scoped
+        # to `production` only — `preview` is a low-stakes, non-public
+        # target and gating it too would block routine hotfix previews
+        # without a matching security benefit.
+        #
+        # DEPLOY_PROTECTION_TOKEN is the same optional escape hatch
+        # deploy.yml documents: if the default GITHUB_TOKEN cannot read
+        # the environments API on this repo, set that secret to a
+        # read-only PAT. It never relaxes the assertion.
+        if: github.event.inputs.environment == 'production'
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_PROTECTION_TOKEN || secrets.GITHUB_TOKEN }}
+          ENV_NAME: explorer-${{ github.event.inputs.environment }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if ! gh api "repos/${REPO}/environments/${ENV_NAME}" > env-protection.json; then
+            echo "::error::Could not read the '${ENV_NAME}' environment protection config. Refusing to deploy on an unverified approval gate. If the default GITHUB_TOKEN lacks access, set the DEPLOY_PROTECTION_TOKEN secret to a read-only PAT and re-run."
+            exit 1
+          fi
+          bash scripts/ci/check-deploy-protection.sh env-protection.json "$ENV_NAME"
+
       - name: Set up pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271  # v6
         with:

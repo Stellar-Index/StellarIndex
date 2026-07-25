@@ -165,8 +165,13 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     change_index UInt32,
     change_type  LowCardinality(String),
     entry_type   LowCardinality(String),
-    key_xdr      String,
-    entry_xdr    String,
+    -- CODEC(ZSTD(3)) applied on R1 2026-07-18/19 (Phase A capacity relief,
+    -- docs/operations/runbooks/phase-a-capacity-relief-2026-07-18.md Step 2)
+    -- — measured 1.75x over the LZ4 default on entry_xdr. Keep this in sync
+    -- with the live ALTER so schema and new-ingest match (audit-2026-07-23
+    -- DAT-04: this had drifted).
+    key_xdr      String CODEC(ZSTD(3)),
+    entry_xdr    String CODEC(ZSTD(3)),
     -- Queryable owner + asset (ADR-0038 Phase C account-state / asset-holder
     -- reads). account_id = owning G-strkey for account-owned entries (account
     -- / trustline / offer / data); asset = canonical "CODE-ISSUER" / "native"

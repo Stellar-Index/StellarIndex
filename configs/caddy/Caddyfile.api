@@ -83,6 +83,23 @@ api.stellarindex.io {
 		-Server
 	}
 
+	# Manual serving kill-switch (audit-2026-07-23 serving-killswitch).
+	# Divergence/anomaly conditions only raise alerts today — there was
+	# no way to actually stop serving during a live data-integrity
+	# incident short of stopping the API systemd unit (which also kills
+	# /v1/healthz + /metrics observability). Engage:
+	#   sudo touch /etc/caddy/MAINTENANCE_MODE
+	# Disengage:
+	#   sudo rm /etc/caddy/MAINTENANCE_MODE
+	# No reload needed either way — `file` is evaluated per-request.
+	# `root` below only scopes the file-existence check; it does not
+	# enable static file serving (no file_server directive is present).
+	root * /etc/caddy
+	@maintenance file /MAINTENANCE_MODE
+	respond @maintenance "Stellar Index is temporarily in maintenance mode. Please check https://status.stellarindex.io for updates." 503 {
+		close
+	}
+
 	# Block the Prometheus metrics endpoint from the public domain.
 	# The API binary serves /metrics on :3000 alongside /v1/* (one
 	# port = one ServeMux), and the catch-all reverse_proxy below

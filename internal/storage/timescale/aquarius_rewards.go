@@ -71,8 +71,14 @@ type AquariusRewardsEvent struct {
 // InsertAquariusRewardsEvent appends one rewards-gauge event to
 // aquarius_rewards_events. Idempotent on the (ledger_close_time,
 // contract_id, ledger, tx_hash, op_index, event_kind, event_index) PK
-// — a projector-replay over the same range writes the same rows
-// (ON CONFLICT DO NOTHING).
+// — a projector-replay over the same range writes the same rows.
+// ON CONFLICT ... DO UPDATE, guarded by
+// `derive_generation <= EXCLUDED.derive_generation` (DAT-04): a replay
+// at an equal-or-higher generation OVERWRITES the stored value
+// columns, a lower-generation one is refused. Idempotent in row count,
+// NOT inert in value — the corrective upsert exists so a re-derive can
+// repair a wrong stored row, so a replay wired with different inputs
+// will rewrite them.
 func (s *Store) InsertAquariusRewardsEvent(ctx context.Context, e AquariusRewardsEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertAquariusRewardsEvent: ContractID is empty")

@@ -169,19 +169,72 @@ func TestCheckResumeFromHash_BadHex(t *testing.T) {
 	}
 }
 
-// TestStitchChunks_EmptyChunkSkipped — a chunk that processed zero
-// ledgers (no LCMs in its range — uncommon but legal) is skipped
-// in the boundary check; the chunks on either side are stitched
-// as if the empty chunk weren't there. The stitch only validates
-// PRESENT pairs, so this devolves to "no adjacent non-empty pair
-// exists" → pass.
-func TestStitchChunks_EmptyChunkSkipped(t *testing.T) {
+// TestStitchChunks_EmptyChunkInMiddleWithRealGapErrors is the DAT-11
+// regression: a chunk that processed zero ledgers is excluded from
+// the pairwise comparison, but the check is re-targeted at the
+// nearest non-empty neighbours on EITHER side — it must NOT be
+// skipped outright. Here chunk[0].LastSeq=199 and chunk[2].FirstSeq=
+// 300 (a real 100-ledger gap the empty middle chunk was supposed to
+// cover but verified nothing in), so stitching the surrounding
+// non-empty chunks must surface it as a boundary gap.
+func TestStitchChunks_EmptyChunkInMiddleWithRealGapErrors(t *testing.T) {
 	results := []chunkResult{
 		{Idx: 0, FirstSeq: 100, LastSeq: 199, LastHash: hashFrom(0xAA), Verified: 100},
-		{Idx: 1, Verified: 0}, // empty chunk
+		{Idx: 1, Verified: 0}, // empty chunk — masked a real gap in the old behaviour
 		{Idx: 2, FirstSeq: 300, FirstPrevHash: hashFrom(0xBB), LastSeq: 399, LastHash: hashFrom(0xCC), Verified: 100},
 	}
+	err := stitchChunks(results)
+	if err == nil {
+		t.Fatal("expected a boundary-gap error surfaced across the empty middle chunk; got nil")
+	}
+	if !strings.Contains(err.Error(), "boundary gap") {
+		t.Errorf("expected 'boundary gap', got: %v", err)
+	}
+	// Must name the actual surrounding chunk indices (0 and 2), not
+	// the skipped empty one (1).
+	if !strings.Contains(err.Error(), "chunk[0") || !strings.Contains(err.Error(), "2]") {
+		t.Errorf("expected the error to name chunks 0 and 2 (surrounding the empty chunk 1): %v", err)
+	}
+}
+
+// TestStitchChunks_EmptyChunkInMiddleNoRealGapPasses: when the
+// surrounding non-empty chunks DO connect cleanly across the empty
+// middle chunk (the empty chunk's range genuinely had zero LCMs, not
+// a hole), the stitch still passes — the fix must not turn every
+// legitimate empty chunk into a false failure.
+func TestStitchChunks_EmptyChunkInMiddleNoRealGapPasses(t *testing.T) {
+	results := []chunkResult{
+		{Idx: 0, FirstSeq: 100, LastSeq: 199, LastHash: hashFrom(0xAA), Verified: 100},
+		{Idx: 1, Verified: 0}, // empty chunk, but no real gap
+		{Idx: 2, FirstSeq: 200, FirstPrevHash: hashFrom(0xAA), LastSeq: 299, LastHash: hashFrom(0xBB), Verified: 100},
+	}
 	if err := stitchChunks(results); err != nil {
-		t.Errorf("empty-chunk-in-the-middle should not stitch-error; got %v", err)
+		t.Errorf("empty middle chunk with a clean surrounding boundary should not stitch-error; got %v", err)
+	}
+}
+
+// TestStitchChunks_AllEmptyPasses: every chunk empty (e.g. -from/-to
+// entirely before any bucket exists) has no non-empty pair to check
+// — passes trivially.
+func TestStitchChunks_AllEmptyPasses(t *testing.T) {
+	results := []chunkResult{
+		{Idx: 0, Verified: 0},
+		{Idx: 1, Verified: 0},
+	}
+	if err := stitchChunks(results); err != nil {
+		t.Errorf("all-empty chunks should not stitch-error; got %v", err)
+	}
+}
+
+// TestStitchChunks_TrailingEmptyChunkPasses: an empty chunk at the
+// END with no non-empty chunk after it has nothing to compare
+// against — passes.
+func TestStitchChunks_TrailingEmptyChunkPasses(t *testing.T) {
+	results := []chunkResult{
+		{Idx: 0, FirstSeq: 100, LastSeq: 199, LastHash: hashFrom(0xAA), Verified: 100},
+		{Idx: 1, Verified: 0},
+	}
+	if err := stitchChunks(results); err != nil {
+		t.Errorf("trailing empty chunk should not stitch-error; got %v", err)
 	}
 }

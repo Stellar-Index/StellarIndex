@@ -146,12 +146,21 @@ func isCredentialRejection(err error) bool {
 // takeFailedAuth consumes one token from the per-IP failed-auth bucket
 // and reports whether the caller is now over budget (and the
 // Retry-After seconds to advertise). Keyed on the resolved client IP
-// (forge-resistant XFF, F-1338) under a "failauth:" prefix so it shares
-// no key space with the main per-IP request limiter. Fails OPEN on a
-// limiter/backend error — a Redis blip must not convert every failed
-// login into a 429; the auth error itself still returns.
+// (forge-resistant XFF, F-1338; aggregated to a /64 network prefix for
+// IPv6 per SEC-15 — see [remoteIPPrefixFor]) under a "failauth:" prefix
+// so it shares no key space with the main per-IP request limiter.
+//
+// Fails OPEN on a transient limiter/backend error — a brief Redis blip
+// must not convert every failed login into a 429; the auth error itself
+// still returns. But once [ratelimit.Bucket.Take] reports
+// [ratelimit.ErrThrottleUnavailable] (sustained backend outage past the
+// dwell-time), the credential-stuffing throttle must fail CLOSED like
+// the main RateLimit middleware does (SEC-15 / C3-5): otherwise a
+// sustained Redis outage silently disables brute-force protection for
+// as long as it lasts, which is exactly when an attacker is most likely
+// to be probing.
 func takeFailedAuth(r *http.Request, limiter *ratelimit.Bucket) (throttled bool, retryAfter int) {
-	ip := remoteIPFor(r)
+	ip := remoteIPPrefixFor(r)
 	if ip == "" {
 		// No resolvable IP → collapse into one shared bucket rather than
 		// skip the throttle (fail-closed for the throttle itself).
@@ -159,6 +168,13 @@ func takeFailedAuth(r *http.Request, limiter *ratelimit.Bucket) (throttled bool,
 	}
 	res, err := limiter.Take(r.Context(), "failauth:"+ip)
 	if err != nil {
+		if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
+			// Sustained outage: fail CLOSED, mirroring
+			// writeThrottleUnavailableProblem's Retry-After — matches
+			// [ratelimit.DefaultDwellTime] so clients that obey it
+			// naturally space retries past a typical Redis fail-over.
+			return true, int(ratelimit.DefaultDwellTime.Seconds())
+		}
 		return false, 0
 	}
 	if res.Allowed {

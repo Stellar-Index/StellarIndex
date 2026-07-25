@@ -18,6 +18,11 @@ func newRing(capacity int) *ring {
 	}
 }
 
+// empty reports whether the ring holds no events — i.e. the topic has
+// never been published to (or was reaped and recreated), so there is
+// nothing a reconnecting client could replay from it.
+func (r *ring) empty() bool { return len(r.events) == 0 }
+
 // push appends ev. When the ring is at capacity, the oldest event
 // is discarded. The slice is kept ordered ascending by ID so that
 // snapshotAfter can do a linear scan.

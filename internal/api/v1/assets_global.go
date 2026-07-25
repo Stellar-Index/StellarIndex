@@ -488,10 +488,17 @@ func projectVerifiedCurrencyList(entries []*currency.VerifiedCurrency) []Verifie
 }
 
 // attachFiatMarketCaps computes market_cap_usd for fiat rows in
-// parallel via fiatMarketCapUSD (M2 × FX rate). No-op when no
-// PriceReader is wired.
+// parallel via fiatMarketCapUSD (M2 × FX rate). No-op only when
+// NEITHER rate source is wired.
+//
+// COR-14: fiatMarketCapUSD tries fxHistory FIRST and only falls back
+// to PriceReader (or skips it entirely for the USD ticker itself) —
+// so gating the whole fan-out on `s.prices == nil` alone skipped every
+// fiat market cap on a deployment that wired fxHistory but not
+// PriceReader, even though fiatMarketCapUSD would have served them
+// fine from fxHistory or the USD shortcut.
 func (s *Server) attachFiatMarketCaps(ctx context.Context, entries []*currency.VerifiedCurrency, out []VerifiedCurrencyListItem) {
-	if s.prices == nil {
+	if s.prices == nil && s.fxHistory == nil {
 		return
 	}
 	forEachBounded(len(entries), readFanoutConcurrency, func(i int) {

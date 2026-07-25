@@ -37,6 +37,7 @@ Severity maps to [sev-playbook.md §1](sev-playbook.md#1-severity-definitions).
 | `stellarindex_ingestion_source_stopped_low_volume_dex` | `rate(stellarindex_source_events_total[6h])` for comet / phoenix / soroswap / blend | == 0 for > 30 min | P2 | [source-stopped](runbooks/source-stopped.md) |
 | `stellarindex_ingestion_source_stopped_daily_publisher` | `rate(stellarindex_source_events_total[30h])` for ecb / band | == 0 for > 1 h | P2 | [source-stopped](runbooks/source-stopped.md) |
 | `stellarindex_ingestion_all_sources_stopped` | `sum(rate(stellarindex_source_events_total[5m]))` | == 0 for > 3 min | **P1** | [all-ingestion-down](runbooks/all-ingestion-down.md) |
+| `stellarindex_ingestion_trade_buffer_drop` | `increase(stellarindex_source_insert_errors_total{kind="dropped"}[15m])` | > 0 for 15 min (any trade permanently dropped after the retry buffer overflowed) | ticket | [trade-insert-backpressure](runbooks/trade-insert-backpressure.md) |
 | `stellarindex_ingestion_cursor_stuck` | `increase(stellarindex_cursor_last_ledger[5m])` per source | == 0 while source is live | P2 | [cursor-stuck](runbooks/cursor-stuck.md) |
 | `stellarindex_ingestion_orphan_events` | `rate(stellarindex_source_orphan_events_total[10m])` | > 10/min per source | P3 | [orphan-events](runbooks/orphan-events.md) |
 | `stellarindex_ingestion_decode_error` | `rate(stellarindex_source_decode_errors_total[5m])` | > 1/s sustained 5 min | P3 | [decode-errors](runbooks/decode-errors.md) |
@@ -59,6 +60,7 @@ Severity maps to [sev-playbook.md §1](sev-playbook.md#1-severity-definitions).
 | `stellarindex_ingest_gap_detector_silent` | `(time() - stellarindex_ingest_gap_detector_last_success_unix) > 8h` OR detector metric absent for 15 min | for ≥ 10 min | P2 | [ingest-gap-detector-silent](runbooks/ingest-gap-detector-silent.md) |
 | `stellarindex_projector_lag_high` | `max by (source) (stellarindex_projector_lag_ledgers)` | > 256 ledgers sustained 10 min | P3 | [projector-lag](runbooks/projector-lag.md) |
 | `stellarindex_projector_error_rate_high` | `rate(stellarindex_projector_runs_total{outcome="error"}[15m])` per source | > 0.05/s sustained 15 min | P3 | [projector-lag](runbooks/projector-lag.md) |
+| `stellarindex_projector_row_quarantined` | `increase(stellarindex_projector_events_decoded_total{outcome="sink_quarantined"}[15m])` | > 0 for 15 min (a poison row was skipped so the sole-writer projector could advance) | ticket | [projector-row-quarantined](runbooks/projector-row-quarantined.md) |
 | `stellarindex_external_poller_stale` | `time() - stellarindex_external_poller_last_success_unix{source!="ecb"}` | > 1800 s for > 5 min | P2 | [external-poller-stale](runbooks/external-poller-stale.md) |
 | `stellarindex_external_poller_stale_ecb` | `time() - stellarindex_external_poller_last_success_unix{source="ecb"}` | > 43200 s (12h) for > 10 min | P3 | [external-poller-stale](runbooks/external-poller-stale.md) |
 | `stellarindex_external_poller_error_rate_high` | `rate(stellarindex_external_poller_polls_total{outcome="error"}[15m]) / sum(...) ` | > 0.5 sustained 15 min | P3 | [external-poller-error-rate-high](runbooks/external-poller-error-rate-high.md) |
@@ -357,6 +359,9 @@ override.
 | `stellarindex_zfs_pool_critical_space` | `min by (instance) (node_filesystem_avail_bytes{fstype="zfs"})` | < 650 GB free for > 5 min | **P1** | [zfs-pool-full](runbooks/zfs-pool-full.md) |
 | `stellarindex_nvme_smart_warn` | `node_disk_io_errors_total` or SMART attributes | > 0 increase in 1 h | P2 | [nvme-smart](runbooks/nvme-smart.md) |
 | `stellarindex_nvme_thermal_throttle` | NVMe `composite_temperature` | > 70 °C for > 5 min | P2 | [nvme-thermal](runbooks/nvme-thermal.md) |
+| `stellarindex_nvme_wear_high` | `nvme_percentage_used_ratio` | > 0.80 for > 1 h | P3 | [nvme-smart](runbooks/nvme-smart.md) |
+| `stellarindex_nvme_spare_low` | `nvme_available_spare_ratio` | < 0.20 for > 30 min | **P1** | [nvme-smart](runbooks/nvme-smart.md) |
+| `stellarindex_nvme_media_errors` | `increase(nvme_media_errors_total[24h])` | > 0 for > 5 min | P2 | [nvme-smart](runbooks/nvme-smart.md) |
 
 ## Observability / meta alerts
 

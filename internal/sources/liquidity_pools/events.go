@@ -26,7 +26,11 @@ type Observation struct {
 	// Balance is the post-change reserve for this side.
 	Balance *big.Int
 
-	// IsRemoval reserved for v2 (writer-side lookup follow-up).
+	// IsRemoval is true when the change deleted the pool entry (last
+	// liquidity withdrawn). Balance is zeroed and the row lands with
+	// is_removal=true, which the served aggregate
+	// (SumLPReservesAtOrBefore) excludes — so the vanished reserves
+	// stop counting toward total supply.
 	IsRemoval bool
 
 	// IntraLedgerSeq is the within-ledger position of the change that

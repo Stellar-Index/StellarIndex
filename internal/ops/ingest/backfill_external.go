@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strconv"
@@ -132,20 +133,48 @@ func backfillExternal(args []string) error {
 		return err
 	}
 
+	return insertBackfilledTrades(ctx, store, trades, *progressEvery, os.Stderr, t0)
+}
+
+// tradeInserter is the storage seam insertBackfilledTrades depends on —
+// split out so the insert-loop's failure policy (infra-abort vs
+// data-fault-skip, and the non-zero exit on any drop) is unit-testable
+// with a fake, without a live Postgres.
+type tradeInserter interface {
+	InsertTrade(ctx context.Context, t canonical.Trade) error
+}
+
+// insertBackfilledTrades is the DB-seamed core of the insert loop: an
+// infra fault (DB unreachable/restarting/out of capacity) affects every
+// remaining insert identically, so looping through the rest and counting
+// each as "skipped" would misreport a total write outage as a pile of
+// per-row data faults and still exit 0 — it aborts immediately instead,
+// so the operator sees ONE clear error and can re-run once the DB
+// recovers. A per-row data fault is skipped and logged, but ANY skip
+// makes the command return a non-nil error: a dropped row has no
+// dead-letter, so "some rows didn't make it" must never exit 0.
+func insertBackfilledTrades(ctx context.Context, store tradeInserter, trades []canonical.Trade, progressEvery int, log io.Writer, t0 time.Time) error {
 	inserted, skipped := 0, 0
 	for i, tr := range trades {
 		if err := store.InsertTrade(ctx, tr); err != nil {
+			if timescale.IsInfraError(err) {
+				return fmt.Errorf("backfill-external: aborting at trade %d/%d (%s) after infra fault — %d inserted, %d skipped so far, %d not attempted: %w",
+					i, len(trades), tr.TxHash, inserted, skipped, len(trades)-i, err)
+			}
 			skipped++
-			fmt.Fprintf(os.Stderr, "insert trade %d (%s): %v\n", i, tr.TxHash, err)
+			_, _ = fmt.Fprintf(log, "insert trade %d (%s): %v\n", i, tr.TxHash, err)
 			continue
 		}
 		inserted++
-		if *progressEvery > 0 && inserted%*progressEvery == 0 {
-			fmt.Fprintf(os.Stderr, "  ... %d inserted, %d skipped\n", inserted, skipped)
+		if progressEvery > 0 && inserted%progressEvery == 0 {
+			_, _ = fmt.Fprintf(log, "  ... %d inserted, %d skipped\n", inserted, skipped)
 		}
 	}
-	fmt.Fprintf(os.Stderr, "backfill-external: done — %d inserted, %d skipped in %v\n",
+	_, _ = fmt.Fprintf(log, "backfill-external: done — %d inserted, %d skipped in %v\n",
 		inserted, skipped, time.Since(t0).Round(time.Millisecond))
+	if skipped > 0 {
+		return fmt.Errorf("backfill-external: %d of %d trade(s) failed to insert (see per-row errors above) — rows were dropped with no dead-letter; refusing to exit 0", skipped, len(trades))
+	}
 	return nil
 }
 

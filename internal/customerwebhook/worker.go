@@ -9,13 +9,27 @@
 //
 // F-1270 (audit-2026-05-12). Architecture: one poll loop per
 // process, configurable poll interval (default 5s), one HTTP
-// client shared across deliveries. The worker is safe to run
-// alongside a second instance — postgres `FOR UPDATE SKIP LOCKED`
-// would normally be the deduplication primitive, but since the
-// expected concurrency is "operator runs one worker" we rely on
-// the worker's idempotent MarkDelivered / MarkAttemptFailed
-// semantics + the dashboard's per-account scope to make
-// double-delivery cosmetically harmless.
+// client shared across deliveries.
+//
+// # Concurrency contract (AGT-06, audit-2026-07-23)
+//
+// The worker is safe to run alongside a second instance because the
+// STORE guarantees at-most-one-in-flight delivery per row: the
+// [DeliveryStore.ListPendingDeliveries] implementation claims rows with
+// `FOR UPDATE SKIP LOCKED` and, in the same statement, pushes
+// `next_attempt_at` 5 minutes out as a lease (F-1247, see
+// internal/platform/postgresstore/webhook_store.go). Two workers never
+// hand the same row to two HTTP POSTs, and a worker that dies
+// mid-delivery releases the row when its lease expires.
+//
+// That guarantee is part of the DeliveryStore CONTRACT, not an
+// implementation detail: any substitute implementation MUST claim-and-
+// lease atomically. This docstring previously claimed the opposite —
+// that no SKIP LOCKED dedup existed and double-delivery was merely
+// "cosmetically harmless" — which was both false about the store and an
+// invitation to write a replacement without the primitive the design
+// depends on. MarkDelivered / MarkAttemptFailed idempotency is a
+// second line of defence, not the first.
 package customerwebhook
 
 import (
@@ -41,6 +55,19 @@ import (
 // DeliveryStore is the worker's subset of [platform.WebhookStore].
 // Pulled out so tests can substitute an in-memory fake without
 // pulling the full CRUD surface.
+//
+// Implementations MUST honour two contracts the worker relies on:
+//
+//   - ListPendingDeliveries claims each returned row atomically and
+//     leases it (postgres: `FOR UPDATE SKIP LOCKED` + `next_attempt_at =
+//     now() + 5m` in one statement), so at most one worker has a given
+//     delivery in flight and an abandoned claim self-heals when the
+//     lease expires. See the package doc.
+//   - GetWebhook returns [platform.ErrNotFound], and ONLY that, when the
+//     row is genuinely absent. The worker treats not-found as terminal
+//     and every other error as transient/retryable, so an implementation
+//     that flattens transport failures into ErrNotFound would silently
+//     discard deliveries (NTF-13).
 type DeliveryStore interface {
 	ListPendingDeliveries(ctx context.Context, limit int) ([]platform.WebhookDelivery, error)
 	GetWebhook(ctx context.Context, id uuid.UUID) (platform.CustomerWebhook, error)
@@ -194,10 +221,25 @@ func (w *Worker) tick(ctx context.Context) {
 func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 	wh, err := w.store.GetWebhook(ctx, d.WebhookID)
 	if err != nil {
-		// Webhook was deleted between enqueue + delivery; mark
-		// the delivery as terminally failed so it drops out of
-		// the pending listing.
-		w.opts.Logger.Warn("customer-webhook: GetWebhook failed; permanently failing delivery",
+		if !errors.Is(err, platform.ErrNotFound) {
+			// NTF-13 (audit-2026-07-23): a TRANSIENT store failure — a
+			// connection reset, a fail-over, a statement timeout — is not
+			// evidence the webhook is gone. Terminally failing the row on
+			// it (as this path used to, for every error alike) silently and
+			// PERMANENTLY dropped a customer's delivery on a blip: the row
+			// leaves the pending predicate and nothing ever revisits it.
+			// Return WITHOUT marking, so the store's 5-minute claim lease
+			// expires and the row is picked up again — the same recovery
+			// path a worker crash uses.
+			w.opts.Logger.Warn("customer-webhook: GetWebhook failed (transient); leaving delivery for lease expiry",
+				"err", err, "delivery_id", d.ID, "webhook_id", d.WebhookID)
+			obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("lookup_error").Inc()
+			return
+		}
+		// Genuine not-found: the webhook was deleted between enqueue +
+		// delivery. Mark the delivery terminally failed so it drops out
+		// of the pending listing — retrying can never succeed.
+		w.opts.Logger.Warn("customer-webhook: webhook not found; permanently failing delivery",
 			"err", err, "delivery_id", d.ID, "webhook_id", d.WebhookID)
 		_ = w.store.MarkAttemptFailed(ctx, d.ID,
 			fmt.Sprintf("webhook lookup: %v", err), 0, time.Time{})

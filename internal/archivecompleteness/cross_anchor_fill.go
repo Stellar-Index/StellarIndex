@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 )
 
 // Source is one upstream URL from which a missing checkpoint file
@@ -280,7 +282,7 @@ func (f *CrossAnchorFiller) fetchOne(ctx context.Context, seq uint32, rng *rand.
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
-		err := f.fetchAndValidate(ctx, src, relPath, tmpPath)
+		err := f.fetchAndValidate(ctx, src, relPath, tmpPath, seq)
 		if err == nil {
 			if err := os.Rename(tmpPath, finalPath); err != nil {
 				_ = os.Remove(tmpPath)
@@ -299,10 +301,13 @@ func (f *CrossAnchorFiller) fetchOne(ctx context.Context, seq uint32, rng *rand.
 }
 
 // fetchAndValidate performs one source GET and writes the response
-// to tmpPath atomically. Validates gzip integrity before returning
-// nil. On any failure leaves tmpPath in an unspecified state; the
-// caller is responsible for cleanup.
-func (f *CrossAnchorFiller) fetchAndValidate(ctx context.Context, src Source, relPath, tmpPath string) error {
+// to tmpPath atomically. Validates gzip integrity AND checkpoint
+// CONTENT (DAT-11: a valid-gzip-but-wrong-content body — a stale
+// mirror serving a different checkpoint, or a truncated write that
+// happens to still gzip-decompress — must not be placed) before
+// returning nil. On any failure leaves tmpPath in an unspecified
+// state; the caller is responsible for cleanup.
+func (f *CrossAnchorFiller) fetchAndValidate(ctx context.Context, src Source, relPath, tmpPath string, seq uint32) error {
 	url := src.URL + "/" + relPath
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -347,8 +352,22 @@ func (f *CrossAnchorFiller) fetchAndValidate(ctx context.Context, src Source, re
 
 	// gzip-validate the placed file. Cheap insurance against a
 	// truncated download or a 200-with-html-body case.
-	if err := validateGzip(tmpPath); err != nil {
+	n, err := validateGzip(tmpPath)
+	if err != nil {
 		return fmt.Errorf("gzip validate: %w", err)
+	}
+	if n == 0 {
+		return errors.New("gzip validate: decompressed to 0 bytes")
+	}
+
+	// DAT-11: gzip validity alone doesn't prove this is checkpoint
+	// `seq` — decode the XDR content and confirm an entry with the
+	// expected LedgerSeq is actually present. A source serving the
+	// wrong file (misconfigured mirror, stale cache) or a corrupt
+	// body that happens to still gzip-decompress must fall through
+	// to the next source, not get placed.
+	if err := validateCheckpointContent(tmpPath, seq); err != nil {
+		return fmt.Errorf("checkpoint content validate: %w", err)
 	}
 	return nil
 }
@@ -361,20 +380,24 @@ func (f *CrossAnchorFiller) fetchAndValidate(ctx context.Context, src Source, re
 const maxDecompressedBytes = 4 << 20
 
 // validateGzip reads the file, attempts to decompress it, and
-// confirms the gzip footer is intact. Returns nil if valid.
+// confirms the gzip footer is intact. Returns the decompressed byte
+// count and nil on success — callers that need to reject an
+// empty-but-technically-valid gzip stream (DAT-09 / DAT-11: a
+// present, valid-gzip, EMPTY file must not count as a real
+// checkpoint) check the returned size themselves.
 //
 // Decompression is bounded to [maxDecompressedBytes] to prevent
 // a malicious source from sending a tiny compressed payload that
 // decompresses to gigabytes (G110 zip-bomb DoS).
-func validateGzip(path string) error {
+func validateGzip(path string) (int64, error) {
 	f, err := os.Open(path) //nolint:gosec // path constructed from validated archiveRoot
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { _ = f.Close() }()
 	gz, err := gzip.NewReader(f)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { _ = gz.Close() }()
 	// Cap the decompressed read; +1 so we can detect when the
@@ -382,12 +405,53 @@ func validateGzip(path string) error {
 	limited := io.LimitReader(gz, maxDecompressedBytes+1)
 	n, err := io.Copy(io.Discard, limited)
 	if err != nil {
-		return err
+		return n, err
 	}
 	if n > maxDecompressedBytes {
-		return fmt.Errorf("decompressed size > %d bytes (zip-bomb guard)", maxDecompressedBytes)
+		return n, fmt.Errorf("decompressed size > %d bytes (zip-bomb guard)", maxDecompressedBytes)
 	}
-	return nil
+	return n, nil
+}
+
+// maxCheckpointEntries bounds how many LedgerHeaderHistoryEntry
+// records validateCheckpointContent will read before giving up. A
+// real checkpoint file holds exactly 64 (one per ledger in the
+// window); a hostile or corrupt stream that never contains the
+// target seq must not spin forever.
+const maxCheckpointEntries = 64
+
+// validateCheckpointContent opens the gzip'd XDR checkpoint file at
+// path and confirms it decodes to a stream of LedgerHeaderHistoryEntry
+// records containing an entry whose LedgerSeq equals wantSeq
+// (DAT-11). Presence + valid gzip alone don't prove a fetched body is
+// the RIGHT checkpoint — a misconfigured/stale mirror can serve 200 +
+// valid-gzip content for the wrong ledger range, or a corrupted
+// stream can still happen to decompress cleanly.
+func validateCheckpointContent(path string, wantSeq uint32) error {
+	f, err := os.Open(path) //nolint:gosec // path constructed from validated archiveRoot + checkpoint hex
+	if err != nil {
+		return fmt.Errorf("open: %w", err)
+	}
+	stream, err := sdkxdr.NewGzStream(f)
+	if err != nil {
+		_ = f.Close()
+		return fmt.Errorf("open gz stream: %w", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	var entry sdkxdr.LedgerHeaderHistoryEntry
+	for i := 0; i < maxCheckpointEntries; i++ {
+		if rerr := stream.ReadOne(&entry); rerr != nil {
+			if errors.Is(rerr, io.EOF) {
+				return fmt.Errorf("stream ended after %d entries without ledger %d", i, wantSeq)
+			}
+			return fmt.Errorf("read entry %d: %w", i, rerr)
+		}
+		if uint32(entry.Header.LedgerSeq) == wantSeq {
+			return nil
+		}
+	}
+	return fmt.Errorf("exceeded %d entries without finding ledger %d", maxCheckpointEntries, wantSeq)
 }
 
 // applyOwnership chowns the placed file when chown is enabled.

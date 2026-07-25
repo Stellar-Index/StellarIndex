@@ -1097,6 +1097,12 @@ func TestUSDQuoteDecimals(t *testing.T) {
 	usd, _ := canonical.NewFiatAsset("USD")
 	eur, _ := canonical.NewFiatAsset("EUR")
 	usdt, _ := canonical.NewCryptoAsset("USDT")
+	usdc, _ := canonical.NewCryptoAsset("USDC")
+	dai, _ := canonical.NewCryptoAsset("DAI")
+	pyusd, _ := canonical.NewCryptoAsset("PYUSD")
+	usdp, _ := canonical.NewCryptoAsset("USDP")
+	eurc, _ := canonical.NewCryptoAsset("EURC")
+	cryptoXLM, _ := canonical.NewCryptoAsset("XLM")
 
 	classicUSDC, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {
@@ -1126,7 +1132,21 @@ func TestUSDQuoteDecimals(t *testing.T) {
 	}{
 		{"fiat:USD always valuable", usd, 8, true},
 		{"fiat:EUR unvaluable (non-USD fiat)", eur, 0, false},
-		{"crypto:USDT unvaluable (abstract ticker, not on-chain)", usdt, 0, false},
+		// R-008 (audit 2026-07-23): the abstract USD-pegged tickers
+		// ARE valuable at the off-chain 1e8 convention. This case
+		// asserted (0, false) until 2026-07-24 — which is precisely
+		// the defect: the stablecoin-proxy expansion fetches
+		// `BASE/crypto:USDT` and every dollar on that leg was scored
+		// as $0 against MinUSDVolume. Not a loosened expectation: the
+		// floor now SEES that volume, so it gates strictly more pairs
+		// than before (see TestTick_MinUSDVolumeFilter_StablecoinProxyLegs).
+		{"crypto:USDT valuable (abstract USD peg, off-chain 1e8)", usdt, 8, true},
+		{"crypto:USDC valuable (abstract USD peg)", usdc, 8, true},
+		{"crypto:DAI valuable (abstract USD peg)", dai, 8, true},
+		{"crypto:PYUSD valuable (abstract USD peg)", pyusd, 8, true},
+		{"crypto:USDP valuable (abstract USD peg)", usdp, 8, true},
+		{"crypto:EURC unvaluable (EUR peg needs a live FX rate)", eurc, 0, false},
+		{"crypto:XLM unvaluable (not a stablecoin)", cryptoXLM, 0, false},
 		{"classic pegged USDC valuable", classicUSDC, 7, true},
 		{"classic un-pegged asset unvaluable", classicUnpegged, 0, false},
 		{"Soroban SAC pegged USDC valuable", sacUSDC, 7, true},
@@ -1385,6 +1405,198 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 			t.Errorf("key %q exists after rejection", key)
 		}
 	})
+}
+
+// TestTick_MinUSDVolumeFilter_StablecoinProxyLegs — R-008 (audit
+// 2026-07-23) regression. With EnableStablecoinFiatProxy on, a
+// fiat:USD target is fetched as `XLM/fiat:USD` PLUS one abstract
+// stablecoin backer pair per peg (`XLM/crypto:USDT`, …). Per-trade
+// USD values are computed against the SOURCE pair's quote BEFORE the
+// rewrite onto the target, and `crypto:USDT` & friends were not a
+// recognised USD surface — so every CEX stablecoin leg valued at $0,
+// `survivorUSDVolume` summed $0 for it, and the window was measured
+// against MinUSDVolume as if those dollars didn't exist.
+//
+// On r1 (enable_stablecoin_fiat_proxy = true, min_usd_volume =
+// 10000) that means: a window whose volume is USDT-quoted was dropped
+// every tick, and a mixed window published only on the non-stablecoin
+// remainder. Binance XLMUSDT — the single largest XLM/USD venue we
+// ingest — contributed exactly zero to the floor.
+//
+// The last sub-test pins the other direction: the gate must still
+// BITE on a genuinely thin stablecoin window. The fix makes the floor
+// see more volume, not less gating.
+func TestTick_MinUSDVolumeFilter_StablecoinProxyLegs(t *testing.T) {
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	target, _ := canonical.NewPair(xlm, usd)
+	vwapKey := "vwap:" + xlm.String() + ":" + usd.String() + ":300"
+
+	// Off-chain CEX convention: 1e8 for both legs. XLM @ $0.20.
+	usdtTrade := func(txHash string, baseAmt, quoteAmt *big.Int) canonical.Trade {
+		tr := backerTrade(t, "USDT", "binance", baseAmt, quoteAmt, time.Now().Add(-time.Minute))
+		tr.TxHash = txHash
+		return tr
+	}
+	directUSDTrade := func(txHash string, baseAmt, quoteAmt *big.Int) canonical.Trade {
+		return canonical.Trade{
+			Source:      "coinbase", // ClassExchange + IncludeInVWAP=true
+			TxHash:      txHash,
+			Timestamp:   time.Now().Add(-2 * time.Minute),
+			Pair:        target,
+			BaseAmount:  canonical.NewAmount(baseAmt),
+			QuoteAmount: canonical.NewAmount(quoteAmt),
+		}
+	}
+
+	newOrch := func(t *testing.T, perPair map[string][]canonical.Trade) (*Orchestrator, *miniredis.Miniredis) {
+		t.Helper()
+		rdb, mr := newTestRedis(t)
+		return New(&mockStore{perPair: perPair}, rdb, Config{
+			Pairs:                     []canonical.Pair{target},
+			Windows:                   []time.Duration{5 * time.Minute},
+			MinUSDVolume:              10_000,
+			EnableStablecoinFiatProxy: true,
+		}), mr
+	}
+
+	t.Run("USDT-only window worth $12k publishes", func(t *testing.T) {
+		// 60,000 XLM @ 0.20 USDT = $12,000 at the 1e8 convention.
+		orch, mr := newOrch(t, map[string][]canonical.Trade{
+			"crypto:XLM/crypto:USDT": {usdtTrade(
+				"1111111111111111111111111111111111111111111111111111111111111111",
+				big.NewInt(6_000_000_000_000), big.NewInt(1_200_000_000_000))},
+		})
+
+		before := testutil.ToFloat64(obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume"))
+		if err := orch.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		after := testutil.ToFloat64(obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume"))
+		if after-before != 0 {
+			t.Errorf("min_usd_volume drop counter delta = %v, want 0 — $12k of USDT-quoted volume clears the $10k floor", after-before)
+		}
+		if orch.Stats().VWAPWrites != 1 {
+			t.Fatalf("VWAPWrites = %d, want 1 (proxy-fetched $12k window must publish)", orch.Stats().VWAPWrites)
+		}
+		got, err := mr.Get(vwapKey)
+		if err != nil {
+			t.Fatalf("miniredis Get %q: %v", vwapKey, err)
+		}
+		if want := "0.200000000000"; got != want {
+			t.Errorf("published VWAP = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("mixed window: stablecoin leg counts toward the floor", func(t *testing.T) {
+		// $6k direct fiat:USD + $6k USDT = $12k. Pre-fix only the
+		// $6k direct leg counted, so the window was dropped despite
+		// carrying $12k of real dollar volume.
+		orch, mr := newOrch(t, map[string][]canonical.Trade{
+			"crypto:XLM/fiat:USD": {directUSDTrade(
+				"2222222222222222222222222222222222222222222222222222222222222222",
+				big.NewInt(3_000_000_000_000), big.NewInt(600_000_000_000))},
+			"crypto:XLM/crypto:USDT": {usdtTrade(
+				"3333333333333333333333333333333333333333333333333333333333333333",
+				big.NewInt(3_000_000_000_000), big.NewInt(600_000_000_000))},
+		})
+
+		before := testutil.ToFloat64(obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume"))
+		if err := orch.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		after := testutil.ToFloat64(obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume"))
+		if after-before != 0 {
+			t.Errorf("min_usd_volume drop counter delta = %v, want 0 — $6k direct + $6k USDT = $12k clears the floor", after-before)
+		}
+		if orch.Stats().VWAPWrites != 1 {
+			t.Fatalf("VWAPWrites = %d, want 1", orch.Stats().VWAPWrites)
+		}
+		got, err := mr.Get(vwapKey)
+		if err != nil {
+			t.Fatalf("miniredis Get %q: %v", vwapKey, err)
+		}
+		if want := "0.200000000000"; got != want {
+			t.Errorf("published VWAP = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("thin USDT window is still gated", func(t *testing.T) {
+		// 49,995 XLM @ 0.20 USDT = $9,999 — genuinely below the floor.
+		orch, mr := newOrch(t, map[string][]canonical.Trade{
+			"crypto:XLM/crypto:USDT": {usdtTrade(
+				"4444444444444444444444444444444444444444444444444444444444444444",
+				big.NewInt(4_999_500_000_000), big.NewInt(999_900_000_000))},
+		})
+
+		before := testutil.ToFloat64(obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume"))
+		if err := orch.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		after := testutil.ToFloat64(obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume"))
+		if after-before != 1 {
+			t.Errorf("min_usd_volume drop counter delta = %v, want 1 — $9,999 of USDT volume must still fail the $10k floor", after-before)
+		}
+		if orch.Stats().VWAPWrites != 0 {
+			t.Errorf("VWAPWrites = %d, want 0 (sub-floor stablecoin window must not publish)", orch.Stats().VWAPWrites)
+		}
+		if mr.Exists(vwapKey) {
+			t.Errorf("key %q exists after rejection", vwapKey)
+		}
+	})
+}
+
+// TestTick_MinUSDVolumeFilter_DirectStablecoinQuotedTarget pins the
+// SECOND consequence of R-008's classification change, so it can't be
+// mistaken for an accident: a target pair configured directly against
+// an abstract stablecoin quote (`crypto:XLM/crypto:USDT`, no proxy
+// expansion) used to be UNVALUABLE, which made it exempt from the
+// MinUSDVolume floor entirely — it served VWAP at any volume, and
+// unlike the classic/Soroban unvaluable branch it didn't even WARN
+// (that branch only fires for on-chain quote types). Now the quote is
+// valuable, so the floor applies and a dust window is refused.
+//
+// This is a deliberate TIGHTENING, in the same direction as Guard 1
+// (2026-07-10) for Soroban/classic quotes: a USDT-quoted window is
+// dollar-denominated, so the anti-manipulation floor belongs on it.
+// No pair shipped in cmd/stellarindex-aggregator's defaultPairs() or
+// any checked-in TOML is stablecoin-quoted today (all are
+// fiat:USD/EUR/GBP), so no deployed pair changes behaviour — but an
+// operator who adds one gets the floor, not silence.
+func TestTick_MinUSDVolumeFilter_DirectStablecoinQuotedTarget(t *testing.T) {
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usdt, _ := canonical.NewCryptoAsset("USDT")
+	target, _ := canonical.NewPair(xlm, usdt)
+
+	// 49,995 XLM @ 0.20 USDT = $9,999 at the off-chain 1e8 scale.
+	dust := backerTrade(t, "USDT", "binance",
+		big.NewInt(4_999_500_000_000), big.NewInt(999_900_000_000), time.Now().Add(-time.Minute))
+
+	rdb, mr := newTestRedis(t)
+	orch := New(&mockStore{trades: []canonical.Trade{dust}}, rdb, Config{
+		Pairs:        []canonical.Pair{target},
+		Windows:      []time.Duration{5 * time.Minute},
+		MinUSDVolume: 10_000,
+		// Proxy expansion deliberately OFF: this is the
+		// directly-configured stablecoin-quoted target, not the
+		// fiat:USD-target expansion path.
+	})
+
+	before := testutil.ToFloat64(obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume"))
+	if err := orch.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	after := testutil.ToFloat64(obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume"))
+	if after-before != 1 {
+		t.Errorf("min_usd_volume drop counter delta = %v, want 1 — a $9,999 USDT-quoted window must be gated, not exempt", after-before)
+	}
+	if orch.Stats().VWAPWrites != 0 {
+		t.Errorf("VWAPWrites = %d, want 0 (dust USDT-quoted window must not publish)", orch.Stats().VWAPWrites)
+	}
+	key := "vwap:" + xlm.String() + ":" + usdt.String() + ":300"
+	if mr.Exists(key) {
+		t.Errorf("key %q exists — dust window must not publish", key)
+	}
 }
 
 // TestTick_MinUSDVolumeFilter_SorobanQuotedPair — Guard 1 (2026-07-10):

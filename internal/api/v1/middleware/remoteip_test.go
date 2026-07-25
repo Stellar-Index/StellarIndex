@@ -222,6 +222,42 @@ func TestRemoteIPFor(t *testing.T) {
 	})
 }
 
+// TestMaskIPForThrottleKey pins the SEC-15 fix: IPv4 throttle keys stay
+// exact, but IPv6 throttle keys are aggregated to their /64 network
+// prefix so an attacker who controls an entire delegated /64 (common
+// for residential/mobile ISPs) can't mint one throttle bucket per
+// address by rotating within it.
+func TestMaskIPForThrottleKey(t *testing.T) {
+	cases := []struct {
+		name string
+		ip   string
+		want string
+	}{
+		{"ipv4 unchanged", "203.0.113.7", "203.0.113.7"},
+		{"ipv6 masked to /64 — address 1", "2001:db8:1234:5678::1", "2001:db8:1234:5678::"},
+		{"ipv6 masked to /64 — address 2 in same /64", "2001:db8:1234:5678:ffff:ffff:ffff:ffff", "2001:db8:1234:5678::"},
+		{"ipv6 different /64 masks differently", "2001:db8:1234:9999::1", "2001:db8:1234:9999::"},
+		{"invalid input passed through", "not-an-ip", "not-an-ip"},
+		{"empty passed through", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := maskIPForThrottleKey(tc.ip); got != tc.want {
+				t.Errorf("maskIPForThrottleKey(%q) = %q, want %q", tc.ip, got, tc.want)
+			}
+		})
+	}
+
+	// The two same-/64 IPv6 addresses above must produce an IDENTICAL
+	// key — that's the actual anti-bypass property, not just "some
+	// transformation happened".
+	a := maskIPForThrottleKey("2001:db8:1234:5678::1")
+	b := maskIPForThrottleKey("2001:db8:1234:5678:ffff:ffff:ffff:ffff")
+	if a != b {
+		t.Fatalf("two addresses in the same /64 produced different throttle keys: %q vs %q", a, b)
+	}
+}
+
 // resetTrustedProxyConfig clears the package-level allow-list at
 // the start AND end of a test, so tests don't leak state to each
 // other and don't poison subsequent test runs.

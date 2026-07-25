@@ -257,10 +257,15 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 		h.unavailable(w, r)
 		return
 	}
-	g := r.PathValue("g_strkey")
-	if !looksLikeStellarAccount(g) {
-		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-account",
-			"Invalid account", http.StatusBadRequest, "g_strkey must be a 56-character G-strkey")
+	// Checksum-valid strkey (canonical.IsAccountID via parseAccountStrkey),
+	// matching every sibling account endpoint (AccountTransactions,
+	// AccountOperations, AccountMovements, AccountPositions). The former
+	// looksLikeStellarAccount check only validated shape (length + base32
+	// alphabet), so a well-formed-but-corrupted-checksum G-strkey sailed
+	// through to the lake read, which then 500'd + error-logged on every
+	// such request instead of 400ing up front (API-01 / API-03).
+	g, ok := h.parseAccountStrkey(w, r)
+	if !ok {
 		return
 	}
 
@@ -374,23 +379,6 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 		out.Holders[i] = AssetHolderV{AccountID: hh.AccountID, Balance: strconv.FormatInt(hh.Balance, 10)}
 	}
 	h.WriteJSON(w, out, stale)
-}
-
-// looksLikeStellarAccount is a cheap shape check for a G-strkey (the real
-// validation is the lake lookup). 56 chars, leading 'G'.
-func looksLikeStellarAccount(s string) bool {
-	if len(s) != 56 || s[0] != 'G' {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		upper := c >= 'A' && c <= 'Z'
-		base32Digit := c >= '2' && c <= '7'
-		if !upper && !base32Digit {
-			return false
-		}
-	}
-	return true
 }
 
 // PrewarmAccountsWealth primes the wealth-ranking cache so no user ever

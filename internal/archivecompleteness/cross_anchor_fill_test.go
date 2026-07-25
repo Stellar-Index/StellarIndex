@@ -9,21 +9,70 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
+
 	"github.com/Stellar-Index/StellarIndex/internal/archivecompleteness"
 )
 
-// goodGzipBody is a minimal valid gzip stream the fake source
-// returns when "the file exists upstream".
+// goodGzipBody is a minimal valid-gzip-but-NOT-a-real-checkpoint
+// stream — used only by tests that exercise the gzip-integrity guard
+// specifically (TestFill_RejectsInvalidGzip's contrast case, and
+// anywhere content correctness genuinely doesn't matter). Most tests
+// use checkpointGzipBody below, which also passes the DAT-11 XDR
+// content check.
 func goodGzipBody() []byte {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	_, _ = gz.Write([]byte("ok"))
 	_ = gz.Close()
 	return buf.Bytes()
+}
+
+// checkpointGzipBody builds a REAL gzip'd, framed-XDR checkpoint
+// file body for ledger `seq` — a single LedgerHeaderHistoryEntry
+// record with Header.LedgerSeq = seq, matching what
+// validateCheckpointContent (DAT-11) requires before a fetched file
+// is placed. Real archive files hold 64 such records (one per ledger
+// in the checkpoint window); one record naming the target seq is
+// sufficient for these tests since validateCheckpointContent stops
+// at the first match.
+func checkpointGzipBody(seq uint32) []byte {
+	entry := sdkxdr.LedgerHeaderHistoryEntry{
+		Header: sdkxdr.LedgerHeader{LedgerSeq: sdkxdr.Uint32(seq)},
+	}
+	var framed bytes.Buffer
+	if err := sdkxdr.MarshalFramed(&framed, entry); err != nil {
+		panic(fmt.Sprintf("checkpointGzipBody: MarshalFramed: %v", err))
+	}
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write(framed.Bytes()); err != nil {
+		panic(fmt.Sprintf("checkpointGzipBody: gzip write: %v", err))
+	}
+	_ = gz.Close()
+	return buf.Bytes()
+}
+
+// seqFromRelPath extracts the checkpoint sequence encoded in a
+// fetch URL path of the form
+// "/ledger/XX/YY/ZZ/ledger-XXYYZZWW.xdr.gz" — the inverse of the
+// production checkpointPath layout. Used by fakeSource behaviour
+// callbacks that need to serve content matching the REQUESTED seq
+// (DAT-11: content must match, not just be valid gzip).
+func seqFromRelPath(t *testing.T, relPath string) uint32 {
+	t.Helper()
+	base := relPath[strings.LastIndex(relPath, "-")+1:]
+	base = strings.TrimSuffix(base, ".xdr.gz")
+	seq, err := strconv.ParseUint(base, 16, 32)
+	if err != nil {
+		t.Fatalf("seqFromRelPath(%q): %v", relPath, err)
+	}
+	return uint32(seq)
 }
 
 // fakeSource wraps an httptest.Server with per-checkpoint behaviour.
@@ -64,7 +113,7 @@ func TestFill_HappyPath(t *testing.T) {
 		if !strings.HasPrefix(relPath, "/ledger/") {
 			return http.StatusBadRequest, nil
 		}
-		return http.StatusOK, goodGzipBody()
+		return http.StatusOK, checkpointGzipBody(seqFromRelPath(t, relPath))
 	})
 
 	f, root := makeFiller(t, []archivecompleteness.Source{
@@ -99,8 +148,8 @@ func TestFill_FallbackToSecondSource(t *testing.T) {
 	src1 := fakeSource(t, func(_ string) (int, []byte) {
 		return http.StatusNotFound, nil
 	})
-	src2 := fakeSource(t, func(_ string) (int, []byte) {
-		return http.StatusOK, goodGzipBody()
+	src2 := fakeSource(t, func(relPath string) (int, []byte) {
+		return http.StatusOK, checkpointGzipBody(seqFromRelPath(t, relPath))
 	})
 
 	f, _ := makeFiller(t, []archivecompleteness.Source{
@@ -153,6 +202,82 @@ func TestFill_AllSourcesFail(t *testing.T) {
 	}
 }
 
+// TestFill_RejectsWrongCheckpointContent is the DAT-11 regression: a
+// source returns 200 + perfectly valid gzip content, but it's the
+// WRONG checkpoint (a misconfigured/stale mirror serving a different
+// ledger range). The filler must reject it via
+// validateCheckpointContent and fall through to the next source —
+// gzip validity alone is not enough.
+func TestFill_RejectsWrongCheckpointContent(t *testing.T) {
+	src1 := fakeSource(t, func(_ string) (int, []byte) {
+		// Always serves checkpoint 127's content, regardless of what
+		// was actually requested — simulates a stale/misconfigured
+		// mirror.
+		return http.StatusOK, checkpointGzipBody(127)
+	})
+	src2 := fakeSource(t, func(relPath string) (int, []byte) {
+		return http.StatusOK, checkpointGzipBody(seqFromRelPath(t, relPath))
+	})
+
+	f, root := makeFiller(t, []archivecompleteness.Source{
+		{Name: "stale-mirror", URL: src1.URL},
+		{Name: "correct-source", URL: src2.URL},
+	})
+
+	// Request checkpoint 63 — src1 will serve 127's content instead.
+	res := f.Fill(context.Background(), []uint32{63})
+	if res.Filled != 1 {
+		t.Fatalf("Filled = %d, want 1 (should fall through to the correct source)", res.Filled)
+	}
+	if res.PerSourceSuccess["stale-mirror"] != 0 {
+		t.Errorf("stale-mirror must NOT be credited a success (served wrong content); PerSourceSuccess=%v", res.PerSourceSuccess)
+	}
+	if res.PerSourceSuccess["correct-source"] != 1 {
+		t.Errorf("correct-source should be credited the success; PerSourceSuccess=%v", res.PerSourceSuccess)
+	}
+
+	// The placed file must be checkpoint 63's content, not 127's.
+	hex := fmt.Sprintf("%08x", uint32(63))
+	path := filepath.Join(root, "ledger", hex[0:2], hex[2:4], hex[4:6], "ledger-"+hex+".xdr.gz")
+	placed, err := os.ReadFile(path) //nolint:gosec // test-controlled path
+	if err != nil {
+		t.Fatalf("read placed file: %v", err)
+	}
+	if !bytes.Equal(placed, checkpointGzipBody(63)) {
+		t.Errorf("placed file content does not match checkpoint 63's expected bytes")
+	}
+}
+
+// TestFill_RejectsWrongCheckpointContent_AllSourcesWrong: every
+// source serves the wrong checkpoint — the fetch must fail entirely
+// rather than place mismatched content.
+func TestFill_RejectsWrongCheckpointContent_AllSourcesWrong(t *testing.T) {
+	src1 := fakeSource(t, func(_ string) (int, []byte) {
+		return http.StatusOK, checkpointGzipBody(127)
+	})
+
+	f, root := makeFiller(t, []archivecompleteness.Source{
+		{Name: "stale-mirror", URL: src1.URL},
+	})
+
+	res := f.Fill(context.Background(), []uint32{63})
+	if res.Filled != 0 {
+		t.Errorf("Filled = %d, want 0 (only source serves wrong content)", res.Filled)
+	}
+	if len(res.Failed) != 1 {
+		t.Fatalf("Failed count = %d, want 1", len(res.Failed))
+	}
+	if !strings.Contains(res.Failed[0].Reason, "checkpoint content validate") {
+		t.Errorf("failure reason should mention content validation, got: %q", res.Failed[0].Reason)
+	}
+
+	hex := fmt.Sprintf("%08x", uint32(63))
+	path := filepath.Join(root, "ledger", hex[0:2], hex[2:4], hex[4:6], "ledger-"+hex+".xdr.gz")
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("wrong-content file should not be placed; err=%v", err)
+	}
+}
+
 // TestFill_RejectsInvalidGzip — source returns 200 with garbage
 // (not a gzip stream). Filler must NOT place the file (gzip
 // validation guard).
@@ -187,8 +312,8 @@ func TestFill_RejectsEmptyBody(t *testing.T) {
 	src1 := fakeSource(t, func(_ string) (int, []byte) {
 		return http.StatusOK, nil // empty body
 	})
-	src2 := fakeSource(t, func(_ string) (int, []byte) {
-		return http.StatusOK, goodGzipBody()
+	src2 := fakeSource(t, func(relPath string) (int, []byte) {
+		return http.StatusOK, checkpointGzipBody(seqFromRelPath(t, relPath))
 	})
 
 	f, _ := makeFiller(t, []archivecompleteness.Source{
@@ -206,8 +331,8 @@ func TestFill_RejectsEmptyBody(t *testing.T) {
 // archive layout (ledger/XX/YY/ZZ/ledger-XXYYZZWW.xdr.gz). Pinning
 // this so a refactor doesn't quietly rename the subdirectory shape.
 func TestFill_PathStructure(t *testing.T) {
-	ts := fakeSource(t, func(_ string) (int, []byte) {
-		return http.StatusOK, goodGzipBody()
+	ts := fakeSource(t, func(relPath string) (int, []byte) {
+		return http.StatusOK, checkpointGzipBody(seqFromRelPath(t, relPath))
 	})
 	f, root := makeFiller(t, []archivecompleteness.Source{
 		{Name: "s", URL: ts.URL},
@@ -232,9 +357,9 @@ func TestFill_PathStructure(t *testing.T) {
 // them); in-flight ones may complete or fail as ctx unwinds.
 func TestFill_ContextCancellation(t *testing.T) {
 	var seen int64
-	ts := fakeSource(t, func(_ string) (int, []byte) {
+	ts := fakeSource(t, func(relPath string) (int, []byte) {
 		atomic.AddInt64(&seen, 1)
-		return http.StatusOK, goodGzipBody()
+		return http.StatusOK, checkpointGzipBody(seqFromRelPath(t, relPath))
 	})
 
 	f, _ := makeFiller(t, []archivecompleteness.Source{

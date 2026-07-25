@@ -51,7 +51,7 @@ const (
 	OutcomeKindStaleComponent   OutcomeKind = "stale_component"   // F-1236: a component observation lags the snapshot ledger past the configured threshold (and the observation is itself advancing past the gate — a genuinely stalled producer, not a dormant asset; see F-1320)
 	OutcomeKindMissingFreshness OutcomeKind = "missing_freshness" // F-1236 wave 60 (codex audit-2026-05-13): strict mode + MinComponentLedger==0 (no signal); reject rather than publish without a freshness anchor
 	OutcomeKindMissingBaseline  OutcomeKind = "missing_baseline"  // incident 2026-07-06 / migration 0088: SEP-41 total negative because the pre-Soroban genesis baseline hasn't been seeded yet — a range-scoped-baseline-missing condition (needs `stellarindex-ops supply seed-sep41-genesis`), NOT indexer corruption. Benign: excluded from error_dominant.
-	OutcomeKindDormant          OutcomeKind = "dormant"           // F-1320: MinComponentLedger lags past threshold but is UNCHANGED tick-over-tick — the asset simply had no balance change, so its last observation IS the current supply; accepted (snapshot inserted)
+	OutcomeKindDormant          OutcomeKind = "dormant"           // F-1320: MinComponentLedger lags past threshold but is UNCHANGED tick-over-tick — the asset simply had no balance change, so its last observation IS the current supply; accepted (snapshot inserted). BOUNDED by [DefaultMaxDormantComponentLedgers] since R-002 — past that horizon the same signal is indistinguishable from a dead observer and we fail closed to stale_component instead.
 	OutcomeKindWriteError       OutcomeKind = "write_error"       // InsertSupply failed
 )
 
@@ -68,6 +68,37 @@ const (
 // observer before the supply table accrues misleading rows.
 const DefaultStaleComponentLedgers uint32 = 1000
 
+// DefaultMaxDormantComponentLedgers bounds how long the F-1320
+// dormancy carve-out will keep re-stamping an unchanged component
+// observation as the current supply: 17280 ledgers (~24 h at 5s
+// ledger close cadence). Operators tune via
+// [WithMaxDormantComponentLedgers].
+//
+// R-002 (audit-2026-07-23, MNY-04): "MinComponentLedger unchanged
+// tick-over-tick" does NOT actually separate a dormant asset from a
+// STALLED component observer — a producer that dies stops advancing
+// its observation ledger too, and looks dormant forever. Unbounded,
+// the carve-out therefore republishes a frozen circulating supply at
+// the ever-advancing chain tip for as long as the observer stays
+// dead, under the benign `dormant` outcome the supply-refresh alert
+// deliberately excludes. The gap is that a dormant asset and a dead
+// observer are genuinely indistinguishable from this signal alone,
+// so we bound the benefit of the doubt in time instead of guessing:
+// inside the horizon a quiet asset keeps publishing (F-1320 stays
+// fixed); past it we can no longer defend "the last observation IS
+// the current supply", so the snapshot is refused and surfaced as
+// stale_component (ADR-0011: we don't fabricate — and re-stamping an
+// unverified figure at the current ledger fabricates freshness on
+// the market-cap/FDV surface).
+//
+// 24 h is deliberately generous: the live-PHO dormancy that motivated
+// F-1320 sat ~1000-1300 ledgers (~2 h) behind, an order of magnitude
+// inside this horizon, so genuinely quiet assets are unaffected. An
+// operator watching an asset dormant for longer than a day either
+// raises this bound (or its per-asset stale threshold) deliberately,
+// or accepts a supply gap rather than a fresh-looking stale number.
+const DefaultMaxDormantComponentLedgers uint32 = 17_280
+
 // Refresher runs one supply-snapshot cycle per [Refresher.Tick]
 // call. Composes ledger resolution + computer + inserter; the
 // aggregator drives it via a ticker in its own goroutine,
@@ -79,13 +110,14 @@ const DefaultStaleComponentLedgers uint32 = 1000
 // is single-keyed in practice; we still key by AssetKey for
 // safety against a future shared-Refresher caller.
 type Refresher struct {
-	ledgers                 LedgerLookup
-	computer                SnapshotComputer
-	inserter                SnapshotInserter
-	logger                  *slog.Logger
-	staleComponentLedger    uint32
-	staleComponentByAsset   map[string]uint32
-	strictFreshnessRequired bool
+	ledgers                   LedgerLookup
+	computer                  SnapshotComputer
+	inserter                  SnapshotInserter
+	logger                    *slog.Logger
+	staleComponentLedger      uint32
+	staleComponentByAsset     map[string]uint32
+	strictFreshnessRequired   bool
+	maxDormantComponentLedger uint32
 
 	// lastComponentLedger remembers, per asset_key, the
 	// MinComponentLedger of the most recent snapshot the gate
@@ -142,6 +174,25 @@ func WithStaleComponentLedgersFor(assetKey string, maxLag uint32) RefresherOptio
 	}
 }
 
+// WithMaxDormantComponentLedgers overrides the R-002
+// (audit-2026-07-23) dormancy horizon: how far the snapshot ledger
+// may run ahead of a FROZEN MinComponentLedger before the Refresher
+// stops treating it as a dormant asset and starts treating it as a
+// stalled component observer (rejecting with
+// [OutcomeKindStaleComponent] rather than re-stamping the frozen
+// value at the current ledger).
+//
+// Set to 0 to disable the horizon and restore the unbounded
+// pre-R-002 posture — appropriate only for deployments that watch
+// assets legitimately dormant for very long stretches AND monitor
+// their component observers by some other means, since it re-opens
+// the "dead observer looks dormant forever" hole this bound closes.
+func WithMaxDormantComponentLedgers(maxDormant uint32) RefresherOption {
+	return func(r *Refresher) {
+		r.maxDormantComponentLedger = maxDormant
+	}
+}
+
 // WithStrictFreshnessRequired flips the Refresher into the
 // stricter F-1236 wave-60 (codex audit-2026-05-13) posture:
 // a snapshot whose `MinComponentLedger == 0` is rejected with
@@ -172,12 +223,13 @@ func NewRefresher(ledgers LedgerLookup, computer SnapshotComputer, inserter Snap
 		logger = slog.Default()
 	}
 	r := &Refresher{
-		ledgers:              ledgers,
-		computer:             computer,
-		inserter:             inserter,
-		logger:               logger,
-		staleComponentLedger: DefaultStaleComponentLedgers,
-		lastComponentLedger:  make(map[string]uint32),
+		ledgers:                   ledgers,
+		computer:                  computer,
+		inserter:                  inserter,
+		logger:                    logger,
+		staleComponentLedger:      DefaultStaleComponentLedgers,
+		maxDormantComponentLedger: DefaultMaxDormantComponentLedgers,
+		lastComponentLedger:       make(map[string]uint32),
 	}
 	for _, o := range opts {
 		o(r)
@@ -293,6 +345,13 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 //     last observation IS the current supply, re-stamp it (accept,
 //     OutcomeKindDormant). Operators who want a quiet asset to stay
 //     strict raise its per-asset threshold so the gap never trips.
+//
+// R-002 (audit-2026-07-23): that dormant/stalled split is only valid
+// for a bounded stretch — a STALLED observer also freezes
+// MinComponentLedger, so beyond [DefaultMaxDormantComponentLedgers]
+// the "dormant" reading is no longer defensible and the gate fails
+// closed with OutcomeKindStaleComponent instead of republishing a
+// frozen supply at the current ledger.
 func (r *Refresher) applyStaleComponentGate(ctx context.Context, snap Supply) (Outcome, bool) {
 	threshold := r.staleComponentLedger
 	thresholdSource := "default"
@@ -333,6 +392,32 @@ func (r *Refresher) applyStaleComponentGate(ctx context.Context, snap Supply) (O
 			"first_observation", !seen)
 		return Outcome{Kind: OutcomeKindStaleComponent, Err: err, Snapshot: snap}, true
 	}
+	// R-002 (audit-2026-07-23): the dormancy carve-out is BOUNDED. A
+	// frozen MinComponentLedger is exactly what a dead component
+	// observer looks like, so past the horizon we stop giving it the
+	// benefit of the doubt and fail closed rather than republish a
+	// frozen supply stamped at the current tip. Reported as
+	// stale_component (not the alert-excluded `dormant`) so the
+	// existing per-asset supply-refresh alert fires on it, and logged
+	// at WARN with the knob name so the operator can tell a genuinely
+	// long-dormant asset from a stalled producer and act.
+	if r.maxDormantComponentLedger > 0 &&
+		snap.LedgerSequence-snap.MinComponentLedger > r.maxDormantComponentLedger {
+		err := fmt.Errorf("supply: stalled component observer — min component ledger %d frozen for %d ledgers (snapshot ledger %d), past dormancy horizon %d",
+			snap.MinComponentLedger, snap.LedgerSequence-snap.MinComponentLedger,
+			snap.LedgerSequence, r.maxDormantComponentLedger)
+		r.logger.Warn("supply refresh: rejecting snapshot — component ledger frozen past the dormancy horizon (stalled observer, not a dormant asset)",
+			"asset", snap.AssetKey,
+			"snapshot_ledger", snap.LedgerSequence,
+			"min_component_ledger", snap.MinComponentLedger,
+			"gap", snap.LedgerSequence-snap.MinComponentLedger,
+			"threshold", threshold,
+			"threshold_source", thresholdSource,
+			"dormancy_horizon", r.maxDormantComponentLedger,
+			"remedy", "check the component observer is advancing; raise WithMaxDormantComponentLedgers only for genuinely long-dormant assets")
+		return Outcome{Kind: OutcomeKindStaleComponent, Err: err, Snapshot: snap}, true
+	}
+
 	// Dormant: last observation is current — insert and report the
 	// benign outcome so the per-asset counter shows the asset is quiet,
 	// not failing.
