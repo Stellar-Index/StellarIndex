@@ -57,6 +57,7 @@ fi
 # never the full bucket.
 if [ "$PARTIAL_CHECK_WINDOW" -gt 0 ]; then
   echo "=== $(date -Iseconds) Phase 1b: scan latest $PARTIAL_CHECK_WINDOW partitions for partials ===" | tee -a "$LOG"
+  : > /tmp/galexie-fill.incomplete.txt
   # Galexie partitions are named with a DESCENDING-hex prefix so that
   # alphabetical sort puts the most recent (highest-ledger) partition
   # FIRST. e.g. FC42F7FF--62720000-... sorts BEFORE FFFFFFFF--0-63999
@@ -71,8 +72,24 @@ if [ "$PARTIAL_CHECK_WINDOW" -gt 0 ]; then
     aws_n=$(mc ls --recursive "aws-public/aws-public-blockchain/v1.1/stellar/ledgers/pubnet/$p/" 2>/dev/null | wc -l)
     local_n=$(mc ls --recursive "local/galexie-archive/$p/" 2>/dev/null | wc -l)
     if [ "$local_n" -gt 0 ] && [ "$local_n" -lt "$aws_n" ]; then
-      echo "  partial detected: $p  local=$local_n  aws=$aws_n  -> deleting + re-mirroring" | tee -a "$LOG"
-      mc rm --recursive --force "local/galexie-archive/$p/" >/dev/null 2>&1 || true
+      # Queue it for Phase 3 instead of DELETING it. `mc mirror` is
+      # already incremental — it copies only the objects absent from the
+      # destination — so the delete bought nothing and cost everything.
+      #
+      # 2026-07-25: the delete made this pathological. The TIP partition
+      # is partial BY DEFINITION (it is the one currently filling), so
+      # `local_n < aws_n` is permanently true for it and every hourly run
+      # deleted and re-downloaded the whole thing. Measured over 62h:
+      # 51 of 63 runs hit this branch, ~4.3 GiB re-pulled each time —
+      # roughly 85 GiB/day of AWS egress to re-fetch data we already had,
+      # rising toward ~11 GiB/run as the partition fills to 64,000 files.
+      #
+      # The F-0158 bug this branch exists for is REAL and still fixed:
+      # Phase 2's `comm -23` is a presence-only set diff, so a partition
+      # that exists locally but is incomplete is never revisited. Adding
+      # it to the needs-work list closes that hole without the delete.
+      echo "  incomplete: $p  local=$local_n  aws=$aws_n  -> queued for incremental mirror" | tee -a "$LOG"
+      echo "$p" >> /tmp/galexie-fill.incomplete.txt
     else
       echo "  ok: $p  local=$local_n  aws=$aws_n" | tee -a "$LOG"
     fi
@@ -85,14 +102,25 @@ mc ls aws-public/aws-public-blockchain/v1.1/stellar/ledgers/pubnet/ \
 mc ls local/galexie-archive/ \
   | awk '{print $NF}' | sed 's:/$::' | sort > /tmp/galexie-fill.local.txt
 comm -23 /tmp/galexie-fill.aws.txt /tmp/galexie-fill.local.txt \
+  > /tmp/galexie-fill.missing.txt
+# needs-work = MISSING (never mirrored) + INCOMPLETE (present but short,
+# from Phase 1b). Before 2026-07-25 the incomplete set was handled by
+# deleting those partitions so they showed up as missing here; they are
+# now unioned in directly and mirrored incrementally.
+touch /tmp/galexie-fill.incomplete.txt
+sort -u /tmp/galexie-fill.missing.txt /tmp/galexie-fill.incomplete.txt \
   > /tmp/galexie-fill.needs-work.txt
 echo "  AWS partitions: $(wc -l < /tmp/galexie-fill.aws.txt)" | tee -a "$LOG"
 echo "  local partitions present: $(wc -l < /tmp/galexie-fill.local.txt)" | tee -a "$LOG"
-echo "  needs work (missing): $(wc -l < /tmp/galexie-fill.needs-work.txt)" | tee -a "$LOG"
+echo "  missing entirely: $(wc -l < /tmp/galexie-fill.missing.txt)" | tee -a "$LOG"
+echo "  incomplete (queued by Phase 1b): $(wc -l < /tmp/galexie-fill.incomplete.txt)" | tee -a "$LOG"
+echo "  needs work (total): $(wc -l < /tmp/galexie-fill.needs-work.txt)" | tee -a "$LOG"
 
 echo "=== $(date -Iseconds) Phase 3: mirror per-partition (parallel=$PARALLEL) ===" | tee -a "$LOG"
-# Each partition is fully missing locally (we just deleted any partials),
-# so mc mirror has no mtime conflicts. --skip-errors is belt-and-braces.
+# Partitions here are either fully missing or incomplete; `mc mirror`
+# copies only the objects absent from the destination in both cases, so
+# an incomplete partition costs one listing plus the genuinely-missing
+# objects rather than a full re-download. --skip-errors is belt-and-braces.
 # Parallel=8 is conservative — 100 MB/s observed link saturation, so
 # more workers won't help.
 xargs -a /tmp/galexie-fill.needs-work.txt -P "$PARALLEL" -I {} bash -c '
