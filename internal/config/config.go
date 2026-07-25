@@ -966,8 +966,8 @@ type APIConfig struct {
 	TLSCertProbeHosts   []string `toml:"tls_cert_probe_hosts" doc:"Public hostnames whose TLS leaf cert NotAfter the API binary should periodically probe and surface as stellarindex_tls_cert_not_after_unix{host}. Each entry may include :port; bare hostnames default to :443. The probe goroutine ticks every 6h. F-0051 (audit-2026-05-26): Caddy auto-renews Let's Encrypt 30d before expiry but silent renewal failures (DNS, rate limit, ACME quota) would otherwise only surface at cert expiry. Empty list disables the probe." default:"[\"api.stellarindex.io\",\"status.stellarindex.io\",\"stellarindex.io\"]"`
 	AuthMode            string   `toml:"auth_mode" doc:"Authentication mode — none / apikey / apikey_optional / sep10. 'none' attaches anonymous Subject to every request. 'apikey' requires Authorization: Bearer <key> on every request; missing → 401. 'apikey_optional' is the freemium shape — anonymous floor (60/min) without a key, per-key tier (1000/min default) with a valid key, invalid key → 401. 'sep10' requires a SEP-10 JWT. The API binary wires real validators when the required dependencies are present; deployments that opt into auth without satisfying those fail loud rather than silently demoting to anonymous." default:"none"`
 	AuthBackend         string   `toml:"auth_backend" doc:"Backing store for API-key validation. 'redis' (default) uses the legacy apikey:<hash> JSON records minted by /v1/signup. 'postgres' uses the platform.api_keys table (the dashboard's source of truth) with Redis as a read-through cache — required for keys minted from the dashboard to authenticate against the runtime API. Cutover knob: deployments running both /v1/signup keys and dashboard-minted keys should use 'postgres' (the validator falls back to Postgres on Redis cache miss + writes back, so existing legacy keys keep working transparently). CUTOVER PROCEDURE — this is the hot auth path on a live API, so flip after a soak, not blind: (1) leave 'redis' running and confirm the dashboard bundle is wired (api.dashboard.base_url set, Postgres reachable) — the Postgres validator is constructed regardless of this flag, so its InvalidateCachedKey path is already active on dashboard revoke; (2) flip a canary instance to 'postgres' and watch that authenticated traffic still 200s and that dashboard-minted keys now authenticate; (3) soak, then roll the fleet. ROLLBACK is instant and lossless: set 'redis' and restart — no data migration either direction (Postgres stays the dashboard's source of truth, Redis keeps the legacy /v1/signup records; the two populations coexist). Invalidation on revoke/update works in BOTH modes: 'redis' rewrites the canonical record in place; 'postgres' evicts the read-through cache entry (dashboard revoke + Stripe tier-upgrade both call InvalidateCachedKey). NOTE: 'postgres' disables the legacy /v1/account/keys self-service surface (it writes only to Redis, which the Postgres validator does not read as canonical) — customers manage keys via /v1/dashboard/keys instead." default:"redis"`
-	AnonRateLimitPerMin int      `toml:"anon_rate_limit_per_min" doc:"Per-IP rate limit for anonymous requests." default:"60"`
-	KeyRateLimitPerMin  int      `toml:"key_rate_limit_per_min" doc:"Per-API-key rate limit, default tier." default:"1000"`
+	AnonRateLimitPerMin int      `toml:"anon_rate_limit_per_min" doc:"Per-IP rate limit for anonymous requests. 0 DISABLES the anonymous tier entirely (fail-open, unbounded) — Validate() accepts 0 as a deliberate opt-out, but the API binary logs a boot-time WARN so the choice isn't silent (CFG-08, audit-2026-07-23)." default:"60"`
+	KeyRateLimitPerMin  int      `toml:"key_rate_limit_per_min" doc:"Per-API-key rate limit, default tier. 0 DISABLES the authenticated tier entirely (fail-open, unbounded) — Validate() accepts 0 as a deliberate opt-out, but the API binary logs a boot-time WARN so the choice isn't silent (CFG-08, audit-2026-07-23)." default:"1000"`
 
 	// FailedAuthRateLimitPerMin caps invalid-credential attempts per IP
 	// (C3-5, audit-2026-07-16). Auth runs before the main rate limiter,
@@ -998,7 +998,7 @@ type APIConfig struct {
 	// their verification link.
 	SignupRequireEmailVerification bool            `toml:"signup_require_email_verification" doc:"F-1218: when true, /v1/signup-minted API keys must complete email-ownership-proof (clicking the link emailed at signup) before they can authenticate. Default true (2026-05-13): we are still pre-launch with no consumer traffic, so the safe default is to require verification — operators who want to allow unverified signup must opt in explicitly. Pre-launch default-flip narrows the launch-blocker surface; F-1218 closure required this." default:"true"`
 	CDNEnabled                     bool            `toml:"cdn_enabled" doc:"Emit CDN-friendly Cache-Control headers on long-immutable endpoints." default:"true"`
-	AllowedOrigins                 []string        `toml:"allowed_origins" doc:"CORS allow-list for browser clients." default:"[\"*\"]"`
+	AllowedOrigins                 []string        `toml:"allowed_origins" doc:"CORS allow-list for browser clients. Empty (default) is same-origin only — no cross-origin browser client can read responses. SEC-14 (audit-2026-07-23): a wildcard here is fully cross-origin readable by every website out of the box; operators opt into cross-origin explicitly by listing their own hostnames." default:"[]"`
 	AllowCredentials               bool            `toml:"allow_credentials" doc:"Emit Access-Control-Allow-Credentials: true on CORS responses to allowed origins. Required for cookie-bearing cross-origin requests (magic-link session on /v1/account/me, /v1/account/keys). Browser-incompatible with allowed_origins=[\"*\"]; the API panics at boot if both are set." default:"false"`
 	TrustedProxyCIDRs              []string        `toml:"trusted_proxy_cidrs" doc:"Immediate peer CIDR allow-list that is permitted to supply X-Forwarded-For. Empty means the API ignores that header and uses the socket peer address for logging, anonymous identity, and IP-based rate limiting." default:"[]"`
 	SEP10                          SEP10Config     `toml:"sep10" doc:"SEP-10 Web Auth — server signing seed, JWT secret, TTLs. Active when auth_mode=sep10 OR when /v1/auth/sep10/* endpoints are exposed."`
@@ -1090,6 +1090,16 @@ type StreamingConfig struct {
 	// whole budget. Over the cap, a new SSE connection is rejected with
 	// 503. 0 disables the per-IP cap (the global cap still applies).
 	MaxStreamsPerIP int `toml:"max_streams_per_ip" doc:"Maximum concurrently-held SSE stream connections per client IP across all stream endpoints (/v1/price/stream, /v1/price/tip/stream, /v1/observations/stream, /v1/ledger/stream). Guards against a single client exhausting file descriptors / goroutines by holding many stalled streams (C3-8 / CS-013). Over the cap a new stream is rejected with 503. 0 disables the per-IP cap; a separate global cap still bounds total concurrent streams." default:"20"`
+
+	// MaxConcurrentStreams caps simultaneous SSE connections GLOBALLY
+	// across every stream endpoint, independent of MaxStreamsPerIP's
+	// per-client cap — the backstop against a flood of DISTINCT
+	// client IPs (a botnet) rather than one client holding many
+	// connections. AGT-dead-code (audit-2026-07-23): the underlying
+	// streaming.SetMaxConcurrentStreams knob has existed since CS-013
+	// but nothing called it, so every deployment silently ran the
+	// package-level hardcoded default (8192) with no operator control.
+	MaxConcurrentStreams int64 `toml:"max_concurrent_streams" doc:"Global cap on simultaneous SSE connections across all stream endpoints, independent of the per-IP cap (guards against a flood of DISTINCT client IPs). Over the cap, a new connection is rejected with 503. <= 0 disables the global cap." default:"8192"`
 }
 
 // SEP10Config configures the SEP-10 Web Auth validator. Both
@@ -1260,15 +1270,68 @@ type SupplyConfig struct {
 	// cadence isn't yet wired and the operator wants to publish
 	// snapshots while accepting unbounded staleness.
 	StaleComponentLedgersByAsset map[string]uint32 `toml:"stale_component_ledgers_by_asset" doc:"Per-asset override of the F-1236 stale-component-ledger threshold. Map keys are asset_key (CODE-ISSUER for classic, bare contract id for SEP-41); values are ledger counts. Empty map (default) keeps every asset on the global 1000-ledger threshold. F-0040 (audit-2026-05-26)." default:"{}"`
+
+	// PerAssetLockedSets overrides the per-algorithm default
+	// locked-set (issuer-only balance for classic Algorithm 2,
+	// admin-only balance for SEP-41 Algorithm 3) for specific
+	// assets — treasury/vesting accounts and contracts an operator
+	// wants excluded from circulating_supply beyond the default.
+	// Map key mirrors internal/supply.Policy.PerAsset's asset_key
+	// shape: "XLM" for native, "CODE:G..." for classic credit
+	// assets, "C..." for SEP-41 Soroban tokens. Missing key falls
+	// back to the per-algorithm default; a present-but-empty entry
+	// means "no exclusions for this asset" (explicit opt-out of the
+	// default).
+	//
+	// CFG-11 (audit-2026-07-23): this field + MaxSupplyOverrides
+	// were dead config prior to this fix — internal/supply.Policy
+	// already implements per-asset locked sets end to end
+	// (including its own Validate()), but both aggregator call
+	// sites (buildClassicRefreshers, buildSEP41Refreshers)
+	// hardcoded supply.Policy{}, so an operator-intended
+	// treasury/vesting exclusion silently never applied.
+	PerAssetLockedSets map[string]SupplyLockedSetConfig `toml:"per_asset_locked_sets" doc:"Per-asset override of the default locked-set (issuer-only for classic, admin-only for SEP-41) excluded from circulating_supply. Map key: 'XLM' | 'CODE:G...' | SEP-41 contract C-strkey. Empty map preserves the per-algorithm default for every asset." default:"{}"`
+
+	// MaxSupplyOverrides forces max_supply for a specific asset,
+	// beating both the SEP-1 declaration and the per-algorithm
+	// default. Value is a decimal string in the asset's base unit
+	// (stroops for XLM/classic, contract-defined units for SEP-41).
+	// Empty string means "fall through to the next source"
+	// (equivalent to omitting the key) — see
+	// internal/supply.Policy.MaxSupplyOverride.
+	MaxSupplyOverrides map[string]string `toml:"max_supply_overrides" doc:"Per-asset max_supply override, beating the SEP-1 declaration and the per-algorithm default. Map key mirrors per_asset_locked_sets; value is a decimal string in base units. Empty string value falls through to the next source." default:"{}"`
+}
+
+// SupplyLockedSetConfig is the TOML-friendly mirror of
+// internal/supply.LockedSet — see that type's doc for the
+// classic/SEP-41 Algorithm 2/3 semantics. Kept as a separate config
+// type (rather than embedding supply.LockedSet directly) so this
+// package's TOML tags stay independent of the domain type's shape,
+// matching the AnomalyThreshold / anomaly.Thresholds mirror pattern
+// elsewhere in this file.
+type SupplyLockedSetConfig struct {
+	Accounts  []string `toml:"accounts" doc:"G-strkey accounts whose balance is excluded from circulating supply for this asset (treasury / reserve multisigs)." default:"[]"`
+	Contracts []string `toml:"contracts" doc:"C-strkey contracts whose balance is excluded from circulating supply for this asset (vesting / treasury contracts)." default:"[]"`
 }
 
 // Validate reports inconsistencies in the supply block. Currently
 // checks:
 //
-//  1. Every configured SDF reserve account has a balance entry —
-//     silently publishing an over-stated circulating supply
-//     because an operator forgot a balance is the failure mode
-//     worth guarding.
+//  1. Every configured SDF reserve account is a syntactically valid
+//     G-strkey (DOM-11, audit-2026-07-23) — a typo'd address is a
+//     config mistake, not "this account happens to have zero
+//     reserves." NOTE: this method deliberately does NOT require a
+//     matching reserve_balances_stroops entry for every account —
+//     see the type doc's "two reserve-balance sources" note. Whether
+//     the static map is required depends on live LCM-observer
+//     coverage in Postgres, which Validate() (static config only,
+//     no DB access) can't see; ConfigReserveBalanceReader.
+//     ReserveBalanceTotal (internal/supply/config_reader.go) already
+//     rejects at the point it's actually consulted — i.e. only when
+//     the observer path DOESN'T cover the account — so an
+//     unconditional requirement here would incorrectly block the
+//     documented observer-only deployment (a prior version of this
+//     check did exactly that).
 //  2. The aggregator-refresh cadence is at least 30s — tighter
 //     than that costs more than it buys (the chain hasn't
 //     advanced, the refresh writes a no-op snapshot).
@@ -1285,11 +1348,9 @@ type SupplyConfig struct {
 //     FullyWrappedSACs membership for ids it already pulled from
 //     SACWrappers).
 func (sc SupplyConfig) Validate() error {
-	if len(sc.SDFReserveAccounts) != 0 {
-		for _, acc := range sc.SDFReserveAccounts {
-			if _, ok := sc.ReserveBalancesStroops[acc]; !ok {
-				return fmt.Errorf("supply: reserve_balances_stroops missing balance for account %q", acc)
-			}
+	for i, acc := range sc.SDFReserveAccounts {
+		if !accountIDPattern.MatchString(acc) {
+			return fmt.Errorf("supply: sdf_reserve_accounts[%d] %q is not a valid G-strkey", i, acc)
 		}
 	}
 	if sc.AggregatorRefreshEnabled && sc.AggregatorRefreshCadence < 30*time.Second {
@@ -1386,7 +1447,7 @@ func defaultAPIConfig() APIConfig {
 		RequestTimeout:          15 * time.Second,
 		ServingStatementTimeout: 30 * time.Second,
 		CDNEnabled:              true,
-		AllowedOrigins:          []string{"*"},
+		AllowedOrigins:          []string{},
 		TrustedProxyCIDRs:       []string{},
 		// F-0051: probe the public TLS leaf certs by default so silent
 		// Let's Encrypt renewal failures surface before expiry (the alert
@@ -1415,9 +1476,10 @@ func defaultAPIConfig() APIConfig {
 			CookieSecure:        true, // dev (http://localhost) overrides to false
 		},
 		Streaming: StreamingConfig{
-			Pairs:           [][]string{},
-			PollInterval:    5 * time.Second,
-			MaxStreamsPerIP: 20,
+			Pairs:                [][]string{},
+			PollInterval:         5 * time.Second,
+			MaxStreamsPerIP:      20,
+			MaxConcurrentStreams: 8192,
 		},
 	}
 }

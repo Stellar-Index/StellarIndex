@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -75,6 +76,13 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.Anomaly.validate(); err != nil {
+		return err
+	}
+	// CFG-05 (audit-2026-07-23): the [divergence] section was never
+	// wired into Validate() at all, so refresh_interval_seconds<=0
+	// reached time.NewTicker(0) at aggregator startup and panicked —
+	// the same failure mode G19-02 already fixed for c.Supply above.
+	if err := c.Divergence.validate(); err != nil {
 		return err
 	}
 	if err := c.API.validate(); err != nil {
@@ -213,9 +221,20 @@ func (s StellarConfig) validate() error {
 				ErrInvalidConfig, s.CoreHTTPEndpoint)
 		}
 	}
-	if _, err := url.Parse(s.HistoryArchiveURL); err != nil {
-		return fmt.Errorf("%w: stellar.history_archive_url %q: %w",
-			ErrInvalidConfig, s.HistoryArchiveURL, err)
+	// CFG-05 (audit-2026-07-23): history_archive_url backs the
+	// backfill-catchup archive read path and has a mandatory
+	// non-empty default (unlike the optional core_http_endpoint) —
+	// treat it as required, and apply the same scheme-check its
+	// sibling URL fields (rpc_endpoints, core_http_endpoint) already
+	// get. Bare url.Parse accepts scheme-less and even empty strings,
+	// which let a malformed archive URL reach the archive client
+	// unnoticed until the first backfill request failed.
+	if s.HistoryArchiveURL == "" {
+		return fmt.Errorf("%w: stellar.history_archive_url required", ErrInvalidConfig)
+	}
+	if _, err := url.Parse(s.HistoryArchiveURL); err != nil || !strings.Contains(s.HistoryArchiveURL, "://") {
+		return fmt.Errorf("%w: stellar.history_archive_url %q must be a full URL",
+			ErrInvalidConfig, s.HistoryArchiveURL)
 	}
 	return nil
 }
@@ -223,6 +242,34 @@ func (s StellarConfig) validate() error {
 func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduce linearity
 	if s.PostgresDSN == "" {
 		return fmt.Errorf("%w: storage.postgres_dsn required", ErrInvalidConfig)
+	}
+	// CFG-03 (audit-2026-07-23): two conflicting `_env`-suffixed
+	// conventions share the identical toml suffix with nothing
+	// stopping an operator from swapping them — redis_password_env /
+	// clickhouse_serving_password_env hold the secret VALUE (C3-15
+	// legacy misnomer; see field docs), while s3_access_key_env /
+	// s3_secret_key_env hold the NAME of an env var to dereference.
+	// Catch the swap heuristically: a "holds the value" field that
+	// itself looks like one of this project's own env-var names is
+	// almost certainly a copy-paste of the wrong convention.
+	if envVarNameLikePattern.MatchString(s.RedisPassword) {
+		return fmt.Errorf("%w: storage.redis_password_env looks like an env-var NAME (%q), not a secret value — "+
+			"this field holds the password itself (see field doc); did you mean to export that variable "+
+			"instead of pasting its name?", ErrInvalidConfig, s.RedisPassword)
+	}
+	if envVarNameLikePattern.MatchString(s.ClickHouseServingPassword) {
+		return fmt.Errorf("%w: storage.clickhouse_serving_password_env looks like an env-var NAME (%q), not a secret "+
+			"value — this field holds the password itself (see field doc)", ErrInvalidConfig, s.ClickHouseServingPassword)
+	}
+	if s.S3AccessKeyEnv != "" && !envVarNameShapePattern.MatchString(s.S3AccessKeyEnv) {
+		return fmt.Errorf("%w: storage.s3_access_key_env %q doesn't look like an env-var NAME (expected "+
+			"UPPER_SNAKE_CASE) — this field holds the NAME to dereference, not the credential itself",
+			ErrInvalidConfig, s.S3AccessKeyEnv)
+	}
+	if s.S3SecretKeyEnv != "" && !envVarNameShapePattern.MatchString(s.S3SecretKeyEnv) {
+		return fmt.Errorf("%w: storage.s3_secret_key_env %q doesn't look like an env-var NAME (expected "+
+			"UPPER_SNAKE_CASE) — this field holds the NAME to dereference, not the credential itself",
+			ErrInvalidConfig, s.S3SecretKeyEnv)
 	}
 	if !strings.HasPrefix(s.PostgresDSN, "postgres://") &&
 		!strings.HasPrefix(s.PostgresDSN, "postgresql://") {
@@ -396,11 +443,32 @@ func (a AggregateConfig) validate() error {
 	return nil
 }
 
-// validate checks the AnomalyConfig's Phase 2 thresholds. Most of
-// AnomalyConfig is loose-typed (Thresholds + Classifications maps
-// validated at consumer time); the Phase 2 thresholds have a
-// well-defined shape and are checked here.
+// validate checks the AnomalyConfig's Phase 2 thresholds plus the
+// Thresholds / Classifications map shapes. CFG-05 (audit-2026-07-23):
+// Thresholds/Classifications used to be validated only at consumer
+// time by silently falling through to the loose ClassDefault
+// thresholds — so a typo'd class name (e.g. "stablecoins") in EITHER
+// map applied the wrong (looser) thresholds to that class/asset with
+// no error anywhere, defeating the anomaly-freeze safety net for
+// exactly the assets an operator thought they'd tightened. Rejecting
+// unknown class names at config-load time closes that gap.
 func (a AnomalyConfig) validate() error {
+	known := make(map[string]struct{}, len(anomaly.AllClasses()))
+	for _, c := range anomaly.AllClasses() {
+		known[c.String()] = struct{}{}
+	}
+	for class := range a.Thresholds {
+		if _, ok := known[class]; !ok {
+			return fmt.Errorf("%w: anomaly.thresholds has unknown class %q (see anomaly.AllClasses)",
+				ErrInvalidConfig, class)
+		}
+	}
+	for assetID, class := range a.Classifications {
+		if _, ok := known[class]; !ok {
+			return fmt.Errorf("%w: anomaly.classifications[%q] has unknown class %q (see anomaly.AllClasses)",
+				ErrInvalidConfig, assetID, class)
+		}
+	}
 	return a.Phase2.validate()
 }
 
@@ -420,6 +488,24 @@ func (p Phase2FreezeConfig) validate() error {
 	if p.SourceCountMaxFreeze < 0 {
 		return fmt.Errorf("%w: anomaly.phase2.source_count_max_freeze must be >= 0 (got %d)",
 			ErrInvalidConfig, p.SourceCountMaxFreeze)
+	}
+	return nil
+}
+
+// validate checks the [divergence] section for boot-time crashers.
+// Threshold / MinSourcesForWarning / PerReferenceTimeoutSeconds (both
+// here and in Supply) are all clamped to sane defaults by
+// divergence.NewService / SupplyService when <=0, so they're left
+// unchecked here. Supply.RefreshIntervalSeconds is the exception: it
+// feeds time.NewTicker(interval) directly in
+// runSupplyDivergenceRefresh (cmd/stellarindex-aggregator/main.go)
+// with no downstream clamp, so <=0 panics the aggregator at startup
+// — the identical NewTicker(0) failure mode G19-02 already fixed for
+// SupplyConfig.AggregatorRefreshCadence.
+func (d DivergenceConfig) validate() error {
+	if d.Supply.Enabled && d.Supply.RefreshIntervalSeconds <= 0 {
+		return fmt.Errorf("%w: divergence.supply.refresh_interval_seconds must be > 0 when "+
+			"divergence.supply.enabled is true (got %d)", ErrInvalidConfig, d.Supply.RefreshIntervalSeconds)
 	}
 	return nil
 }
@@ -556,6 +642,20 @@ func (a APIConfig) validate() error {
 				ErrInvalidConfig, i, raw, err)
 		}
 	}
+	// CFG-05 (audit-2026-07-23): request_timeout is documented as the
+	// PRIMARY bound and serving_statement_timeout as the SQL-side
+	// backstop, which only works as defense-in-depth when the
+	// statement timeout is the longer of the two (so the app-layer
+	// deadline fires first). An inverted pair silently swaps which
+	// layer actually governs — the DB kills the query first, so a
+	// batch/admin caller relying on the documented request_timeout
+	// ceiling gets cut off early instead. 0 on either side disables
+	// that layer entirely and is unaffected by this check.
+	if a.RequestTimeout > 0 && a.ServingStatementTimeout > 0 && a.ServingStatementTimeout <= a.RequestTimeout {
+		return fmt.Errorf("%w: api.serving_statement_timeout (%v) must be longer than api.request_timeout (%v) — "+
+			"the SQL-side backstop only works as defense-in-depth when it fires AFTER the app-layer deadline",
+			ErrInvalidConfig, a.ServingStatementTimeout, a.RequestTimeout)
+	}
 	return nil
 }
 
@@ -611,6 +711,29 @@ var (
 	// identical to canonical.IsContractID, duplicated here so config
 	// doesn't depend on canonical (cycle avoidance).
 	contractIDPattern = regexp.MustCompile(`^C[A-Z2-7]{55}$`)
+
+	// accountIDPattern matches the Stellar classic G-strkey (ed25519
+	// public key) format. Same shallow shape-only check as
+	// contractIDPattern (no checksum verification) — good enough to
+	// catch a typo'd/truncated address at config-load time (DOM-11,
+	// audit-2026-07-23); a byte-flip that still checksums is caught
+	// downstream when the account doesn't resolve on-chain.
+	accountIDPattern = regexp.MustCompile(`^G[A-Z2-7]{55}$`)
+
+	// envVarNameLikePattern matches this project's own STELLARINDEX_*
+	// env-var naming convention. Used to catch the "holds the VALUE"
+	// `_env`-suffixed fields (redis_password_env,
+	// clickhouse_serving_password_env — see their field docs, C3-15)
+	// being populated with an env-var NAME by mistake instead of the
+	// secret itself (CFG-03, audit-2026-07-23).
+	envVarNameLikePattern = regexp.MustCompile(`^STELLARINDEX_[A-Z0-9_]+$`)
+
+	// envVarNameShapePattern matches the general shape of an
+	// UPPER_SNAKE_CASE identifier — what a "holds the NAME of an env
+	// var" field (s3_access_key_env, s3_secret_key_env) should look
+	// like. Catches the inverse CFG-03 mistake: a literal secret (or
+	// anything else) shipped where a name was expected.
+	envVarNameShapePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
 	// s3BucketPattern — AWS S3 DNS-compatible bucket naming rules:
 	// lowercase, 3–63 chars, alnum + hyphen, must start/end alnum.
