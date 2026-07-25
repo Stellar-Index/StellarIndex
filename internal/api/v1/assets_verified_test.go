@@ -389,3 +389,64 @@ func TestAssetGet_WarningSerialisationShape(t *testing.T) {
 		t.Error("flags.unverified_ticker_collision missing from JSON body")
 	}
 }
+
+// TestAssetGet_NonUSDFiat_ServesPriceFromFXQuotes pins the COR-14 fix: the
+// asset DETAIL page for a non-USD fiat must resolve price_usd (and hence
+// market_cap_usd) through the same fx_quotes-first chain the asset LISTING
+// already used.
+//
+// The two paths had drifted. The listing path was fixed under COR-14
+// (50c93ecd) to try fx_quotes before PriceReader; populateFiatView was never
+// updated and called PriceReader alone. storePriceReader fast-paths ANY
+// fiat-quoted request to ErrPriceNotFound — no on-chain trades exist for a
+// fiat/fiat pair — so the detail endpoint served price_usd: null and
+// market_cap_usd: null for every non-USD currency, while the listing beside
+// it showed correct values for the same asset.
+//
+// Fiats are non-Stellar, so the detail page is /v1/external/assets/{slug}
+// (LC-001 routes them off /v1/assets). This test wires an FX reader and NO PriceReader at all, so a non-null price
+// proves the fx_quotes path ran rather than a price reader happening to
+// answer.
+//
+// Proven red: against the pre-fix populateFiatView both fields are null.
+func TestAssetGet_NonUSDFiat_ServesPriceFromFXQuotes(t *testing.T) {
+	// 1 EUR = 1.17 USD.
+	const inverse = 1.17
+	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{
+		{Bucket: time.Now().UTC().Add(-24 * time.Hour), RateUSD: 1 / inverse, InverseUSD: inverse},
+	}}
+	srv := v1.New(v1.Options{
+		VerifiedCurrencies: newTestCatalogue(t),
+		FXHistory:          fx,
+		// Prices deliberately nil: the fiat->USD answer must come from
+		// fx_quotes, which is the whole point of the fix.
+	})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/external/assets/euro")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data struct {
+			PriceUSD     *string  `json:"price_usd"`
+			MarketCapUSD *string  `json:"market_cap_usd"`
+			PriceSources []string `json:"price_sources"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Data.PriceUSD == nil {
+		t.Fatalf("price_usd = null — the fiat detail page must resolve a price via " +
+			"fx_quotes; PriceReader alone always fails for a fiat/fiat pair (COR-14)")
+	}
+	if got := *env.Data.PriceUSD; !strings.HasPrefix(got, "1.17") {
+		t.Errorf("price_usd = %q, want ~1.17 (the fx_quotes InverseUSD, not RateUSD — "+
+			"swapping them is a 24000x error for JPY)", got)
+	}
+	// market_cap_usd is derived from the same price, so it must follow.
+	if env.Data.MarketCapUSD == nil {
+		t.Errorf("market_cap_usd = null despite a resolved price_usd")
+	}
+}

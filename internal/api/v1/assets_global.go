@@ -215,26 +215,16 @@ func (s *Server) populateFiatView(ctx context.Context, view GlobalAssetView, vc 
 		view.MarketCapUSD = computeFiatMarketCap(vc.CirculatingSupply, identity)
 		return view
 	}
-	if s.prices == nil {
+	// Shared with the listing path — see [Server.fiatUSDPriceFor]. Calling
+	// PriceReader directly here is what made this endpoint serve null
+	// price_usd / market_cap_usd for every non-USD fiat (COR-14).
+	price, obs, sources, ok := s.fiatUSDPriceFor(ctx, vc.Ticker)
+	if !ok {
 		return view
 	}
-	base, err := canonical.NewFiatAsset(vc.Ticker)
-	if err != nil {
-		return view
-	}
-	quote, err := canonical.NewFiatAsset("USD")
-	if err != nil {
-		return view
-	}
-	snap, sources, _, err := s.prices.LatestPrice(ctx, base, quote)
-	if err != nil {
-		return view
-	}
-	price := snap.Price
 	view.PriceUSD = &price
 	view.PriceAuthority = aggregate.AuthorityVWAPNative
 	view.PriceSources = sources
-	obs := snap.ObservedAt
 	view.PriceAsOf = &obs
 	view.MarketCapUSD = computeFiatMarketCap(vc.CirculatingSupply, price)
 	return view
@@ -254,6 +244,66 @@ func assetForCurrency(vc *currency.VerifiedCurrency) (canonical.Asset, bool) {
 		return a, true
 	}
 	return globalBaseForTicker(vc.Ticker)
+}
+
+// fiatUSDPriceFor resolves a non-USD fiat's price in USD, plus when it was
+// observed and what produced it. It is the single source of truth for the
+// fiat→USD fallback chain, shared by the asset LISTING path
+// ([Server.fiatMarketCapUSD]) and the asset DETAIL path
+// ([Server.populateFiatView]).
+//
+// It exists because those two paths had DRIFTED. The listing path was fixed
+// under COR-14 (50c93ecd) to try fx_quotes before PriceReader; the detail
+// path was never updated and still called PriceReader alone — which
+// storePriceReader fast-paths to ErrPriceNotFound for any fiat-quoted
+// request, since no on-chain trades exist for a fiat/fiat pair. So
+// GET /v1/assets/{fiat-slug} served price_usd: null and market_cap_usd:
+// null for every non-USD currency, while the listing beside it showed
+// correct values for the same asset. Sharing the resolver is the fix AND
+// the guard against the two drifting apart again.
+//
+// Order is load-bearing: fx_quotes first (Frankfurter-backed daily ECB
+// reference rates — the authoritative store both the backfill and the
+// forex worker land in), PriceReader only as a last resort for deployments
+// without fx_quotes wiring.
+//
+// InverseUSD, not RateUSD: rate_usd is UNITS-OF-TICKER PER 1 USD (JPY
+// 163.09), inverse_usd is "1 unit in USD". Swapping them is a 24,000x error
+// for JPY.
+func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price string, asOf time.Time, sources []string, ok bool) {
+	// Path 1: fx_quotes.
+	if s.fxHistory != nil {
+		now := time.Now().UTC()
+		points, err := s.fxHistory.ListFXHistory(ctx, ticker, now.AddDate(0, 0, -7), now)
+		if err == nil && len(points) > 0 {
+			// oldest→newest; take the most recent usable point.
+			for i := len(points) - 1; i >= 0; i-- {
+				if points[i].InverseUSD > 0 {
+					// FXQuotePoint carries no source label; fx_quotes is
+					// Frankfurter/ECB-backed by construction.
+					return strconv.FormatFloat(points[i].InverseUSD, 'f', -1, 64),
+						points[i].Bucket, []string{"fx_quotes"}, true
+				}
+			}
+		}
+	}
+	// Path 2: PriceReader fallback.
+	if s.prices == nil {
+		return "", time.Time{}, nil, false
+	}
+	base, err := canonical.NewFiatAsset(ticker)
+	if err != nil {
+		return "", time.Time{}, nil, false
+	}
+	quote, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		return "", time.Time{}, nil, false
+	}
+	snap, srcs, _, err := s.prices.LatestPrice(ctx, base, quote)
+	if err != nil {
+		return "", time.Time{}, nil, false
+	}
+	return snap.Price, snap.ObservedAt, srcs, true
 }
 
 // fiatMarketCapUSD computes market_cap_usd for a fiat catalogue
@@ -284,40 +334,11 @@ func (s *Server) fiatMarketCapUSD(ctx context.Context, vc *currency.VerifiedCurr
 	if strings.EqualFold(vc.Ticker, "USD") {
 		return computeFiatMarketCap(vc.CirculatingSupply, "1.00000000000000")
 	}
-	// Path 1: fx_quotes (authoritative for fiat→USD rates).
-	if s.fxHistory != nil {
-		now := time.Now().UTC()
-		from := now.AddDate(0, 0, -7)
-		points, err := s.fxHistory.ListFXHistory(ctx, vc.Ticker, from, now)
-		if err == nil && len(points) > 0 {
-			// ListFXHistory returns oldest→newest; take the most
-			// recent point with a usable InverseUSD.
-			for i := len(points) - 1; i >= 0; i-- {
-				if points[i].InverseUSD > 0 {
-					price := strconv.FormatFloat(points[i].InverseUSD, 'f', -1, 64)
-					return computeFiatMarketCap(vc.CirculatingSupply, price)
-				}
-			}
-		}
-	}
-	// Path 2: PriceReader fallback (kept for deployments without
-	// fx_quotes wiring — e.g. test fixtures).
-	if s.prices == nil {
+	price, _, _, ok := s.fiatUSDPriceFor(ctx, vc.Ticker)
+	if !ok {
 		return nil
 	}
-	base, err := canonical.NewFiatAsset(vc.Ticker)
-	if err != nil {
-		return nil
-	}
-	quote, err := canonical.NewFiatAsset("USD")
-	if err != nil {
-		return nil
-	}
-	snap, _, _, err := s.prices.LatestPrice(ctx, base, quote)
-	if err != nil {
-		return nil
-	}
-	return computeFiatMarketCap(vc.CirculatingSupply, snap.Price)
+	return computeFiatMarketCap(vc.CirculatingSupply, price)
 }
 
 // computeFiatMarketCap returns market_cap_usd = supplyStr × priceStr
