@@ -89,6 +89,17 @@ func TestAsyncSink_PushEventBacksPressure_BufferFull_NoDrops(t *testing.T) {
 		BatchSize:     batchSz,
 		FlushInterval: 10 * time.Second, // disable time-based flush in test
 		WriteTimeout:  time.Second,
+		// Explicit generous drain grace: the default (2xWriteTimeout =
+		// 2s) is a REAL-TIME bound, and this test's final Stop() drain
+		// races it against a loaded scheduler — under CI + race
+		// detector the release->flush cycle exceeded 2s and the drain
+		// correctly gave up, losing the last batch and failing the
+		// no-drops assertion (observed: WrittenCount 6/8, one flake in
+		// CI run 30178983905, 2026-07-25; 8/8 green locally). The
+		// invariant under test is back-pressure/no-drops, not drain
+		// latency, so the grace is not load-bearing here — pin it far
+		// above any plausible scheduler stall.
+		DrainGrace: 30 * time.Second,
 	})
 	sink.Start()
 
