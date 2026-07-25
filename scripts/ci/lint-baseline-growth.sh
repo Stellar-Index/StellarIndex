@@ -83,7 +83,23 @@ fi
 
 # Growth found — permitted only with an explicit declaration in a
 # commit message within the range.
-if git log --format=%B "${BASE_SHA}..HEAD" | grep -qE '^Baseline-Growth:\s*\S'; then
+# NB: the log is captured into a variable rather than piped straight
+# into `grep -q`. Under `set -o pipefail`, `grep -q` exits at the FIRST
+# match and closes the pipe; `git log` — which emits ~160KB here, far
+# more than the 64KB pipe buffer — then takes SIGPIPE and reports 141,
+# which pipefail surfaces as the pipeline's status. The `if` would read
+# that as "no trailer found" and fail a PR that HAD declared its growth.
+# It only ever misfires in the fail-safe direction (SIGPIPE requires a
+# match to have been found), but it made the gate nondeterministic:
+# whether git finished writing before grep exited depended on scheduling,
+# and this repo's branch history sits right on that boundary. Real
+# instance: PR #38 passed locally and failed in CI on identical inputs.
+# The here-string matters: it is a REDIRECTION, not a pipeline element,
+# so `grep -q` closing its input early cannot make pipefail see a
+# SIGPIPE'd writer. Piping into `grep -q` — in any form, `git log | ...`
+# or `printf | ...` — reintroduces the bug.
+log_body="$(git log --format=%B "${BASE_SHA}..HEAD")"
+if grep -qE '^Baseline-Growth:\s*\S' <<<"$log_body"; then
   echo "lint-baseline-growth: growth declared via 'Baseline-Growth:' trailer — allowed (audit trail in git log)."
   exit 0
 fi
