@@ -14,6 +14,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 )
 
 // ─── stellarindex-ops rehydrate-galexie-archive ──────────────────
@@ -90,16 +91,15 @@ func rehydrateGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,fu
 	}
 	defer func() { _ = hot.Close() }()
 
-	cold, err := datastore.NewDataStore(rootCtx, datastore.DataStoreConfig{
-		Type: "S3",
-		Params: map[string]string{
-			"destination_bucket_path": cfg.Storage.S3ColdBucketArchive,
-			"region":                  cfg.Storage.S3ColdRegion,
-			"endpoint_url":            cfg.Storage.S3ColdEndpoint,
-		},
-		NetworkPassphrase: cfg.Stellar.Passphrase(),
-		Compression:       "zstd",
-	})
+	// pipeline.NewColdDataStore, NOT datastore.NewDataStore: the SDK
+	// builds every S3 client from the ambient AWS credential chain,
+	// which on r1 carries local MinIO's keys (the hot tier
+	// authenticates through it). Presenting those to real AWS failed
+	// every cold read with `InvalidAccessKeyId ... does not exist in
+	// our records` (diagnosed 2026-07-25) — which for THIS operator
+	// meant the disaster-recovery path (re-pull a range trimmed too
+	// aggressively) could never have worked either.
+	cold, err := pipeline.NewColdDataStore(rootCtx, cfg.Storage)
 	if err != nil {
 		return fmt.Errorf("cold datastore: %w", err)
 	}

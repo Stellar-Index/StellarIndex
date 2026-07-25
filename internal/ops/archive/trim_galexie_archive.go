@@ -19,6 +19,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 )
 
 // ─── stellarindex-ops trim-galexie-archive ──────────────────────
@@ -129,16 +130,16 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 
 	var cold datastore.DataStore
 	if opts.verifyUpstream {
-		cold, err = datastore.NewDataStore(rootCtx, datastore.DataStoreConfig{
-			Type: "S3",
-			Params: map[string]string{
-				"destination_bucket_path": cfg.Storage.S3ColdBucketArchive,
-				"region":                  cfg.Storage.S3ColdRegion,
-				"endpoint_url":            cfg.Storage.S3ColdEndpoint,
-			},
-			NetworkPassphrase: cfg.Stellar.Passphrase(),
-			Compression:       "zstd",
-		})
+		// pipeline.NewColdDataStore, NOT datastore.NewDataStore: the
+		// SDK builds every S3 client from the ambient AWS credential
+		// chain, which on r1 carries local MinIO's keys (the hot tier
+		// authenticates through it). Presenting those to real AWS
+		// failed every cold read with `InvalidAccessKeyId ... does not
+		// exist in our records` (diagnosed 2026-07-25). That matters
+		// doubly HERE: this operator DELETES hot files, and a cold
+		// tier that cannot authenticate is a cold tier that cannot
+		// prove the upstream copy exists.
+		cold, err = pipeline.NewColdDataStore(rootCtx, cfg.Storage)
 		if err != nil {
 			return fmt.Errorf("cold datastore: %w", err)
 		}
@@ -154,6 +155,15 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 	// interactively). Hot is local MinIO; the env vars
 	// STELLARINDEX_S3_ACCESS_KEY + STELLARINDEX_S3_SECRET_KEY map
 	// to MinIO's root creds via the systemd EnvironmentFile.
+	//
+	// This client is HOT-ONLY and therefore does NOT share the
+	// cold-tier credential bug (2026-07-25): every argument below
+	// comes from cfg.Storage.S3* (the MinIO block), it only ever
+	// DeleteObjects out of hotBucket, and the ambient AWS_* chain it
+	// may fall back to holds MinIO's credentials — the right ones for
+	// this endpoint. It is also the reason the cold path could not
+	// simply reuse buildS3Client: a single ambient chain is correct
+	// for exactly one of the two backends.
 	hotBucket, hotKeyPrefix, err := splitBucketPath(cfg.Storage.S3BucketArchive)
 	if err != nil {
 		return fmt.Errorf("parse archive bucket path: %w", err)

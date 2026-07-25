@@ -2,6 +2,7 @@ package ledgerstream_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -231,6 +232,163 @@ func TestStream_ColdTierInitFailure_SingleLedgerRange(t *testing.T) {
 		t.Fatalf("callback invoked %d times, want 1", got)
 	}
 
+	foundWarn := false
+	for _, e := range entries {
+		if e.Level == sdklog.WarnLevel && strings.Contains(e.Message, "cold datastore init failed") {
+			foundWarn = true
+			break
+		}
+	}
+	if !foundWarn {
+		t.Errorf("expected a WARN log containing %q; got entries: %+v", "cold datastore init failed", entries)
+	}
+}
+
+// TestStream_ColdDataStoreFactory_TakesPrecedence proves the ADR-0027
+// cold-tier credential fix is actually reachable from Stream: when
+// Config.ColdDataStoreFactory is set, streamTiered must open the cold
+// tier through it and NOT through datastore.NewDataStore.
+//
+// Why that matters (2026-07-25 incident): datastore.NewDataStore builds
+// every S3 client from the ambient AWS credential chain, which on r1
+// carries local MinIO's credentials because the HOT tier authenticates
+// through it. Those keys were then presented to real AWS and every cold
+// read failed with `InvalidAccessKeyId: The AWS Access Key Id you
+// provided does not exist in our records`. The factory is how
+// pipeline.NewColdDataStore — which resolves the cold credentials
+// explicitly — gets injected here.
+//
+// The test is arranged so the two paths are distinguishable by outcome
+// rather than by inspection: ColdDataStore.Type is an unsupported type,
+// so a datastore.NewDataStore call would fail and degrade to hot-only,
+// which cannot serve ledger 6 (hot holds only 5). Delivering both
+// ledgers is only possible if the factory opened the cold store.
+func TestStream_ColdDataStoreFactory_TakesPrecedence(t *testing.T) {
+	hotDir := t.TempDir()
+	coldDir := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	hotStore, err := datastore.NewFilesystemDataStoreWithPath(hotDir)
+	if err != nil {
+		t.Fatalf("open hot filesystem datastore: %v", err)
+	}
+	t.Cleanup(func() { _ = hotStore.Close() })
+	coldStore, err := datastore.NewFilesystemDataStoreWithPath(coldDir)
+	if err != nil {
+		t.Fatalf("open cold filesystem datastore: %v", err)
+	}
+	t.Cleanup(func() { _ = coldStore.Close() })
+
+	schema := datastore.DataStoreSchema{LedgersPerFile: 1, FilesPerPartition: 1}
+	hotCfg := datastore.DataStoreConfig{
+		Type:              "Filesystem",
+		Params:            map[string]string{"destination_path": hotDir},
+		Schema:            schema,
+		NetworkPassphrase: "Test SDF Network ; September 2015",
+		Compression:       "zstd",
+	}
+	// Same schema/passphrase/compression as hot (LoadSchema compares
+	// manifests), but a Type datastore.NewDataStore cannot construct —
+	// so the only way cold opens is via the factory.
+	coldCfg := hotCfg
+	coldCfg.Type = "Bogus-Unsupported-Type"
+	coldCfg.Params = map[string]string{"destination_path": coldDir}
+
+	if _, _, err := datastore.PublishConfig(ctx, hotStore, hotCfg); err != nil {
+		t.Fatalf("publish hot config: %v", err)
+	}
+	fsColdCfg := coldCfg
+	fsColdCfg.Type = "Filesystem"
+	if _, _, err := datastore.PublishConfig(ctx, coldStore, fsColdCfg); err != nil {
+		t.Fatalf("publish cold config: %v", err)
+	}
+	writeLedgerFixture(t, ctx, hotStore, schema, 5)
+	writeLedgerFixture(t, ctx, coldStore, schema, 6)
+
+	factoryCalls := 0
+	lsCfg := ledgerstream.Config{
+		DataStore:     hotCfg,
+		ColdDataStore: coldCfg,
+		ColdDataStoreFactory: func(context.Context) (datastore.DataStore, error) {
+			factoryCalls++
+			return datastore.NewFilesystemDataStoreWithPath(coldDir)
+		},
+	}
+
+	var seen []uint32
+	err = ledgerstream.Stream(ctx, lsCfg, 5, 6, func(lcm xdr.LedgerCloseMeta) error {
+		seen = append(seen, lcm.LedgerSequence())
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if factoryCalls != 1 {
+		t.Errorf("ColdDataStoreFactory called %d times, want 1 — streamTiered must prefer it over datastore.NewDataStore", factoryCalls)
+	}
+	if len(seen) != 2 || seen[0] != 5 || seen[1] != 6 {
+		t.Fatalf("delivered ledgers %v, want [5 6] — ledger 6 exists only in the cold tier, so anything else means "+
+			"the cold store was opened through datastore.NewDataStore (which fails on this Type) instead of the factory", seen)
+	}
+}
+
+// TestStream_ColdDataStoreFactoryError_FallsBackToHotOnly keeps the
+// ADR-0027 "cold tier is optional" invariant across the new hook: a
+// factory that fails (e.g. pipeline.NewColdDataStore refusing a
+// half-configured credential pair) must degrade to hot-only exactly
+// like a datastore.NewDataStore failure does, not abort the walk.
+func TestStream_ColdDataStoreFactoryError_FallsBackToHotOnly(t *testing.T) {
+	tmp := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	store, err := datastore.NewFilesystemDataStoreWithPath(tmp)
+	if err != nil {
+		t.Fatalf("open filesystem datastore: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	hotCfg := datastore.DataStoreConfig{
+		Type:              "Filesystem",
+		Params:            map[string]string{"destination_path": tmp},
+		Schema:            datastore.DataStoreSchema{LedgersPerFile: 1, FilesPerPartition: 1},
+		NetworkPassphrase: "Test SDF Network ; September 2015",
+		Compression:       "zstd",
+	}
+	if _, _, err := datastore.PublishConfig(ctx, store, hotCfg); err != nil {
+		t.Fatalf("publish config: %v", err)
+	}
+	writeLedgerFixture(t, ctx, store, hotCfg.Schema, 5)
+	writeLedgerFixture(t, ctx, store, hotCfg.Schema, 6)
+
+	logger := sdklog.New()
+	stopTest := logger.StartTest(sdklog.WarnLevel)
+
+	coldCfg := hotCfg
+	coldCfg.Type = "S3"
+	lsCfg := ledgerstream.Config{
+		DataStore:     hotCfg,
+		ColdDataStore: coldCfg,
+		ColdDataStoreFactory: func(context.Context) (datastore.DataStore, error) {
+			return nil, errors.New("cold datastore: s3_cold_access_key_env names STELLARINDEX_S3_COLD_ACCESS_KEY but it is unset")
+		},
+		Logger: logger,
+	}
+
+	got := 0
+	err = ledgerstream.Stream(ctx, lsCfg, 5, 6, func(_ xdr.LedgerCloseMeta) error {
+		got++
+		return nil
+	})
+	entries := stopTest()
+
+	if err != nil {
+		t.Fatalf("Stream returned err=%v; want nil — a cold-factory failure must degrade to hot-only", err)
+	}
+	if got != 2 {
+		t.Fatalf("callback invoked %d times, want 2", got)
+	}
 	foundWarn := false
 	for _, e := range entries {
 		if e.Level == sdklog.WarnLevel && strings.Contains(e.Message, "cold datastore init failed") {

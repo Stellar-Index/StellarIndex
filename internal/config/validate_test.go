@@ -151,6 +151,35 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			},
 			"divergence.supply.refresh_interval_seconds",
 		},
+
+		// ADR-0027 cold tier (2026-07-25 incident): the *_key_env pair
+		// is all-or-nothing, because EMPTY is a meaningful value here
+		// (it selects anonymous reads on the public
+		// aws-public-blockchain bucket). Half a pair would force
+		// pipeline.NewColdDataStore to guess, and guessing "anonymous"
+		// against a private bucket is a silent downgrade.
+		"cold access key env without secret": {
+			func(c *config.Config) { c.Storage.S3ColdAccessKeyEnv = "STELLARINDEX_S3_COLD_ACCESS_KEY" },
+			"s3_cold_access_key_env",
+		},
+		"cold secret key env without access": {
+			func(c *config.Config) { c.Storage.S3ColdSecretKeyEnv = "STELLARINDEX_S3_COLD_SECRET_KEY" },
+			"s3_cold_secret_key_env",
+		},
+		"cold access key env holds a literal secret value": {
+			func(c *config.Config) {
+				c.Storage.S3ColdAccessKeyEnv = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYzEXAMPLE"
+				c.Storage.S3ColdSecretKeyEnv = "STELLARINDEX_S3_COLD_SECRET_KEY"
+			},
+			"s3_cold_access_key_env",
+		},
+		"cold secret key env holds a lowercase value": {
+			func(c *config.Config) {
+				c.Storage.S3ColdAccessKeyEnv = "STELLARINDEX_S3_COLD_ACCESS_KEY"
+				c.Storage.S3ColdSecretKeyEnv = "not-an-env-var-name"
+			},
+			"s3_cold_secret_key_env",
+		},
 	}
 
 	for name, tc := range cases {
@@ -217,6 +246,29 @@ func TestValidate_S3BlockOptional(t *testing.T) {
 	c.Storage.S3Region = ""
 	if err := c.Validate(); err != nil {
 		t.Fatalf("empty S3 block should validate: %v", err)
+	}
+}
+
+// TestValidate_ColdTierCredentialPairs pins both accepted shapes of the
+// ADR-0027 cold-tier credential pair, so the all-or-nothing rule above
+// can't be satisfied by simply rejecting everything.
+func TestValidate_ColdTierCredentialPairs(t *testing.T) {
+	// Production shape: cold tier enabled, both *_key_env empty =>
+	// anonymous reads of the public aws-public-blockchain bucket.
+	anon := config.Default()
+	anon.Storage.S3ColdEndpoint = "https://s3.us-east-2.amazonaws.com"
+	anon.Storage.S3ColdRegion = "us-east-2"
+	anon.Storage.S3ColdBucketArchive = "aws-public-blockchain/v1.1/stellar/ledgers/pubnet"
+	if err := anon.Validate(); err != nil {
+		t.Fatalf("anonymous cold tier (both *_key_env empty) rejected: %v", err)
+	}
+
+	// Private-bucket shape: both names set, UPPER_SNAKE_CASE.
+	static := anon
+	static.Storage.S3ColdAccessKeyEnv = "STELLARINDEX_S3_COLD_ACCESS_KEY"
+	static.Storage.S3ColdSecretKeyEnv = "STELLARINDEX_S3_COLD_SECRET_KEY"
+	if err := static.Validate(); err != nil {
+		t.Fatalf("static-credential cold tier (both *_key_env named) rejected: %v", err)
 	}
 }
 

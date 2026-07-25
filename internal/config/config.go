@@ -745,11 +745,29 @@ type StorageConfig struct {
 	// tiering and the legacy single-source path is used unchanged
 	// (default — flip the bucket field on as part of ADR-0027
 	// §Sequencing step 3, not earlier).
-	S3ColdEndpoint      string `toml:"s3_cold_endpoint" doc:"Cold-tier S3 endpoint. Empty disables tiering. Production: https://s3.amazonaws.com" default:""`
-	S3ColdRegion        string `toml:"s3_cold_region" doc:"Cold-tier S3 region. Production (aws-public-blockchain): us-east-1" default:""`
+	//
+	// The region is us-east-2, NOT us-east-1 — these doc strings said
+	// us-east-1 until 2026-07-25 and that value cannot work: the SDK
+	// builds this client with UsePathStyle=true, so the REGIONAL
+	// endpoint is required and s3.us-east-1.amazonaws.com answers 301
+	// PermanentRedirect for this bucket. Verified live 2026-07-25:
+	// `curl -sI https://aws-public-blockchain.s3.amazonaws.com/` →
+	// `x-amz-bucket-region: us-east-2`; s3.us-east-2.amazonaws.com → 200.
+	//
+	// Credentials: the *_key_env pair holds env-var NAMES (the same
+	// convention as S3AccessKeyEnv above), and both-empty is the
+	// production shape — aws-public-blockchain is public-read, so the
+	// cold client signs nothing. pipeline.NewColdDataStore resolves
+	// them; it must NOT be routed through datastore.NewDataStore,
+	// which takes credentials from the ambient AWS chain and would
+	// send local MinIO's keys (the hot tier's) to real AWS — the
+	// 2026-07-25 `InvalidAccessKeyId` incident. See that function's
+	// package note.
+	S3ColdEndpoint      string `toml:"s3_cold_endpoint" doc:"Cold-tier S3 endpoint — must be the REGIONAL endpoint (the client is path-style). Empty disables tiering. Production (aws-public-blockchain): https://s3.us-east-2.amazonaws.com" default:""`
+	S3ColdRegion        string `toml:"s3_cold_region" doc:"Cold-tier S3 region. Production (aws-public-blockchain): us-east-2 (verified 2026-07-25 — us-east-1 is wrong and 301s)" default:""`
 	S3ColdBucketArchive string `toml:"s3_cold_bucket_archive" doc:"Cold-tier bucket + prefix for historical LCMs. Empty disables tiering. Production: aws-public-blockchain/v1.1/stellar/ledgers/pubnet" default:""`
-	S3ColdAccessKeyEnv  string `toml:"s3_cold_access_key_env" doc:"Env var holding cold-tier S3 access key. Empty = anonymous reads (correct for public buckets)." env:"" default:""`
-	S3ColdSecretKeyEnv  string `toml:"s3_cold_secret_key_env" doc:"Env var holding cold-tier S3 secret key. Empty = anonymous reads." env:"" default:""`
+	S3ColdAccessKeyEnv  string `toml:"s3_cold_access_key_env" doc:"NAME of the env var holding the cold-tier S3 access key (the value lives in that env var, not here). Empty = anonymous reads, which is correct for the public aws-public-blockchain bucket. Must be set together with s3_cold_secret_key_env." env:"" default:""`
+	S3ColdSecretKeyEnv  string `toml:"s3_cold_secret_key_env" doc:"NAME of the env var holding the cold-tier S3 secret key (the value lives in that env var, not here). Empty = anonymous reads. Must be set together with s3_cold_access_key_env; a named-but-unset env var is a startup error, never a silent downgrade to anonymous." env:"" default:""`
 
 	// ClickHouse Tier-1 lake (ADR-0034). When ClickHouseLiveSink is true the
 	// indexer's real-time dual-sink (internal/storage/clickhouse.LiveSink)

@@ -126,6 +126,55 @@ all:
     galexie_s3_bucket:    "galexie-live"
     galexie_s3_region:    "{{ region_id }}"
 
+    # ───── Cold tier (ADR-0027) ────────────────────────────────────
+    # Enabled 2026-07-25 to reclaim local pool headroom: the pool was
+    # at 94% (1.57T raw free) with data/minio holding 5.59T of
+    # galexie-archive. Reads cascade hot (local MinIO) → cold (this
+    # bucket) on NoSuchKey, so trimmed history stays reachable.
+    #
+    # Anonymous reads are correct here: aws-public-blockchain is an
+    # AWS Open Data bucket, public-read, no credentials — hence both
+    # *_key_env values stay empty (a non-empty value would make the
+    # SDK look for an env var that does not exist and fail the read).
+    #
+    # VERIFIED byte-identical to our own archive before enabling
+    # (2026-07-25), not assumed:
+    #   - 995 partitions on each side, zero empty partitions on ours
+    #   - .config.json identical on both:
+    #       ledgersPerBatch=1, batchesPerPartition=64000, zstd, v1.0
+    #   - md5 identical on sampled files across three eras —
+    #       genesis      FFFF0600--63999.xdr.zst
+    #       ledger ~128K FFFE0C00--127999.xdr.zst
+    #       ledger ~63.6M FC354C00--63615999.xdr.zst
+    #   - both reach genesis AND share the same newest partition
+    #     (FC354BFF--63616000-63679999) — no lag at either end
+    # The match is meaningful because galexie export is DETERMINISTIC:
+    # our archive was re-exported by our own galexie (confirmed by
+    # Ash), so identical bytes are two independent exports agreeing,
+    # not a mirror agreeing with itself.
+    #
+    # Dependency risk is bounded: aws-public-blockchain is a mirror of
+    # the same deterministic export, NOT the canonical source — SDF's
+    # history archives are (which is what `verify-archive -peers` /
+    # stellar-archivist check against). If this bucket disappeared, a
+    # full re-export takes ~37h, measured from our own archive's build
+    # timestamps (genesis 2026-04-25 07:41 → ~9.9M 2026-04-26 20:31).
+    # That is a re-export cost, not data loss.
+    #
+    # Intended follow-up: clone this bucket to our own S3 and re-point
+    # these vars, which is an S3→S3 copy costing no Hetzner egress.
+    # REGION IS us-east-2, NOT us-east-1. ADR-0027 and the config.go doc
+    # strings both said us-east-1; that value 301s (PermanentRedirect) and
+    # would have blocked anyone following the ADR. Verified live 2026-07-25:
+    #   curl -sI https://aws-public-blockchain.s3.amazonaws.com/
+    #     -> x-amz-bucket-region: us-east-2
+    #   s3.us-east-1.amazonaws.com -> 301   s3.us-east-2.amazonaws.com -> 200
+    # The regional endpoint (not the global s3.amazonaws.com) is required
+    # because the SDK builds this client with UsePathStyle=true.
+    stellarindex_s3_cold_endpoint:       "https://s3.us-east-2.amazonaws.com"
+    stellarindex_s3_cold_region:         "us-east-2"
+    stellarindex_s3_cold_bucket_archive: "aws-public-blockchain/v1.1/stellar/ledgers/pubnet"
+
     # ───── Backups ───────────────────────────────────────────────
     # No pgBackRest offsite (repo2) copy exists yet on r1 — the S3
     # off-site offload is a deferred capacity lever, not yet

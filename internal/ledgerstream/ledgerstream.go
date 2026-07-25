@@ -65,6 +65,30 @@ type Config struct {
 	// behaviour exactly matches pre-#7-step-1.
 	ColdDataStore datastore.DataStoreConfig
 
+	// ColdDataStoreFactory — optional. When non-nil, [Stream] calls
+	// this INSTEAD OF datastore.NewDataStore(ctx, ColdDataStore) to
+	// open the cold tier; ColdDataStore is still required (its
+	// non-empty Type is the tiering opt-in, and its NetworkPassphrase
+	// / Schema still drive datastore.LoadSchema on the cold side).
+	//
+	// It exists because the SDK's datastore.NewDataStore builds every
+	// S3 client through config.LoadDefaultConfig, i.e. the ambient AWS
+	// credential chain — and on r1 that chain carries local MinIO's
+	// credentials (the HOT tier authenticates through it). Those keys
+	// were then presented to real AWS, so every cold read failed with
+	// `InvalidAccessKeyId: The AWS Access Key Id you provided does not
+	// exist in our records` and the tier silently degraded to hot-only
+	// (2026-07-25 diagnosis; the tier had never worked). One process
+	// cannot serve two S3 backends with different credentials through
+	// datastore.NewDataStore.
+	//
+	// This package takes datastore.DataStoreConfig, not our
+	// config.Config, so it cannot resolve the storage.s3_cold_*_key_env
+	// names itself — hence a hook rather than more fields. Production
+	// wires pipeline.NewColdDataStore in via
+	// pipeline.LedgerstreamConfig.
+	ColdDataStoreFactory func(ctx context.Context) (datastore.DataStore, error)
+
 	// Buffered — optional. If nil, Stream derives sensible defaults
 	// from DataStore.Schema.LedgersPerFile via
 	// ingest.DefaultBufferedStorageBackendConfig. Override only when
@@ -380,7 +404,7 @@ func streamTiered(
 	if err != nil {
 		return fmt.Errorf("ledgerstream: hot datastore: %w", err)
 	}
-	cold, err := datastore.NewDataStore(ctx, cfg.ColdDataStore)
+	cold, err := openColdDataStore(ctx, cfg)
 	if err != nil {
 		// Cold tier is OPTIONAL by design (ADR-0027) — it's a
 		// fallback for ledger ranges trimmed from local
@@ -460,6 +484,20 @@ func streamTiered(
 
 	tiered := NewTieredDataStore(hot, cold, cfg.Registry)
 	return walkDataStore(ctx, cfg, tiered, ledgerRange, buffered, callback)
+}
+
+// openColdDataStore opens the cold tier, preferring
+// [Config.ColdDataStoreFactory] when the caller supplied one. The
+// datastore.NewDataStore path remains for callers that construct a
+// ledgerstream.Config directly (tests, Filesystem-backed fixtures)
+// and for whom the ambient AWS credential chain is either irrelevant
+// or already correct — see ColdDataStoreFactory's godoc for why the
+// production S3 path cannot use it.
+func openColdDataStore(ctx context.Context, cfg Config) (datastore.DataStore, error) {
+	if cfg.ColdDataStoreFactory != nil {
+		return cfg.ColdDataStoreFactory(ctx)
+	}
+	return datastore.NewDataStore(ctx, cfg.ColdDataStore)
 }
 
 // streamHot is the hot-only counterpart of [streamTiered]: same
