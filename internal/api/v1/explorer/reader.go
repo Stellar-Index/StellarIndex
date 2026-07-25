@@ -206,6 +206,16 @@ type Handler struct {
 	// pointless recomputes/hour and the dominant cause of /v1/operations
 	// blowing its read deadline under load.
 	opTypeStats opTypeStatsCache
+
+	// assetHolders + contractsDir are the bounded-TTL, single-flighted
+	// caches in front of the two UNAUTHENTICATED reads whose cost scales
+	// with the lake rather than the request — GET /v1/assets/{id}/holders
+	// (two current-state FINAL scans) and the GET /v1/contracts directory
+	// (a multi-day GROUP BY over contract_events). Both zero values are
+	// ready to use; see hot_reads.go for the full rationale (C3-002 +
+	// C3-009, audit-2026-07-23).
+	assetHolders assetHoldersCache
+	contractsDir contractsDirCache
 }
 
 // unavailable writes the standard 503 when no explorer reader is wired

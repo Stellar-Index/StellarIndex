@@ -368,7 +368,12 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	holders, total, err := h.Reader.AssetHolders(ctx, asset, limit)
+	// Cached + single-flighted (C3-002, audit-2026-07-23): this is an
+	// unauthenticated route over two ledger_entries_current FINAL scans on
+	// the shared 8-connection explorer pool, so a single client looping it
+	// could hold every connection and stall every other lake-backed
+	// endpoint. See hot_reads.go.
+	holders, total, err := h.assetHoldersCached(ctx, asset, limit)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return

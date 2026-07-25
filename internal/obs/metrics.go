@@ -108,6 +108,7 @@ func registerAppMetrics() {
 		AnomalyFreezeRecoveredTotal,
 		AnomalyFreezeRecoverySweepsTotal,
 		AggregatorTriangulationsTotal,
+		StripeDeadLettersOpen,
 		AggregatorFXSnapFallbackTotal,
 		AggregatorBaselineRefreshTotal,
 		AggregatorSupplyRefreshTotal,
@@ -2085,6 +2086,18 @@ var AnomalyFreezeRecoverySweepDurationSeconds = prometheus.NewHistogramVec(
 	},
 	[]string{"outcome"},
 )
+
+// StripeDeadLettersOpen — gauge of stripe_event_log rows that are
+// dead-lettered and unresolved: money arrived and provisioning did
+// not complete (C3-016). Incremented when a dead-letter opens,
+// decremented on resolution, and re-seeded from the durable table at
+// API boot so a restart cannot zero a real backlog. A sustained
+// non-zero value is a paged state — the customer paid and got
+// nothing.
+var StripeDeadLettersOpen = prometheus.NewGauge(prometheus.GaugeOpts{
+	Name: "stellarindex_stripe_dead_letters_open",
+	Help: "Open (unresolved) Stripe dead-letter events: payment processed but provisioning failed (C3-016). Non-zero = a paying customer without their entitlement.",
+})
 
 // AggregatorTriangulationsTotal — counter of triangulation
 // computations per outcome. The aggregator runs one row per

@@ -31,10 +31,18 @@ import (
 type fakeStripeEventStore struct {
 	mu     sync.Mutex
 	events map[string]platform.StripeEvent // event_id → row
+	// deadLettered mirrors the C3-016 dead_lettered_at /
+	// dead_letter_reason columns: event_id → reason, entries only
+	// present while the dead-letter is OPEN (the processed-mark
+	// resolves it, exactly as the store's UPDATE does).
+	deadLettered map[string]platform.DeadLetterReason
 }
 
 func newFakeStripeEventStore() *fakeStripeEventStore {
-	return &fakeStripeEventStore{events: map[string]platform.StripeEvent{}}
+	return &fakeStripeEventStore{
+		events:       map[string]platform.StripeEvent{},
+		deadLettered: map[string]platform.DeadLetterReason{},
+	}
 }
 
 func (f *fakeStripeEventStore) AppendStripeEvent(_ context.Context, e platform.StripeEvent) error {
@@ -62,8 +70,47 @@ func (f *fakeStripeEventStore) MarkStripeEventProcessed(_ context.Context, id st
 		return nil // best-effort; prod ignores missing rows
 	}
 	row.ProcessedAt = time.Now()
+	row.Error = ""
+	f.events[id] = row
+	// Mirrors the store's dead_letter_resolved_at stamp: a later
+	// delivery that completes the work closes the open dead-letter.
+	delete(f.deadLettered, id)
+	return nil
+}
+
+func (f *fakeStripeEventStore) MarkStripeEventDeadLettered(_ context.Context, id string, reason platform.DeadLetterReason) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.deadLettered == nil {
+		f.deadLettered = map[string]platform.DeadLetterReason{}
+	}
+	f.deadLettered[id] = reason
+	row, ok := f.events[id]
+	if !ok {
+		return nil
+	}
+	row.Error = string(reason)
 	f.events[id] = row
 	return nil
+}
+
+// openDeadLetters returns a copy of the currently-open dead-letter set.
+func (f *fakeStripeEventStore) openDeadLetters() map[string]platform.DeadLetterReason {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make(map[string]platform.DeadLetterReason, len(f.deadLettered))
+	for k, v := range f.deadLettered {
+		out[k] = v
+	}
+	return out
+}
+
+// processedAt reports the dedupe row's processed_at (zero = the row is
+// still reprocessable, the F-1322 contract).
+func (f *fakeStripeEventStore) processedAt(id string) time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.events[id].ProcessedAt
 }
 
 func (f *fakeStripeEventStore) MarkStripeEventFailed(_ context.Context, id, msg string) error {
@@ -938,6 +985,10 @@ func (*fakePlatformBillingForBridge_UpsertErr) MarkStripeEventProcessed(_ contex
 }
 
 func (*fakePlatformBillingForBridge_UpsertErr) MarkStripeEventFailed(_ context.Context, _, _ string) error {
+	panic("unused")
+}
+
+func (*fakePlatformBillingForBridge_UpsertErr) MarkStripeEventDeadLettered(_ context.Context, _ string, _ platform.DeadLetterReason) error {
 	panic("unused")
 }
 

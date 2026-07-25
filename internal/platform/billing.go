@@ -84,4 +84,37 @@ type BillingStore interface {
 	// processed_at stays zero so the next retry triggers a
 	// fresh attempt.
 	MarkStripeEventFailed(ctx context.Context, stripeEventID string, err string) error
+
+	// MarkStripeEventDeadLettered records that the event was
+	// acknowledged but this system provisioned NOTHING for it —
+	// money landed at Stripe and no credential exists to show for
+	// it. Sticky: processed_at stays zero so a manual re-send can
+	// still complete the work, and only
+	// [BillingStore.MarkStripeEventProcessed] closes the row (by
+	// stamping dead_letter_resolved_at).
+	//
+	// C3-016 (audit-2026-07-23). Distinct from MarkStripeEventFailed,
+	// which marks a transient, still-retrying failure and whose
+	// `error` column the processed-mark clears.
+	MarkStripeEventDeadLettered(ctx context.Context, stripeEventID string, reason DeadLetterReason) error
 }
+
+// DeadLetterReason classifies why a Stripe event provisioned nothing.
+// The value is persisted verbatim into
+// `stripe_event_log.dead_letter_reason`, so an alert can name the class
+// without parsing free text.
+type DeadLetterReason string
+
+const (
+	// DeadLetterNoKeys — the paid checkout session named an identifier
+	// that holds no API keys ("customer paid but never signed up").
+	// Retrying the webhook cannot help; a human must reconcile
+	// (refund, or provision after the customer signs up).
+	DeadLetterNoKeys DeadLetterReason = "no_keys_for_identifier"
+
+	// DeadLetterKeyUpgradeFailed — the customer HAS keys but every
+	// per-key budget update failed, so the paid tier was never
+	// applied. Usually transient (key-store outage); the row stays
+	// reprocessable so a re-delivery completes it.
+	DeadLetterKeyUpgradeFailed DeadLetterReason = "key_upgrade_failed"
+)

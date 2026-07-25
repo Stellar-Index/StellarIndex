@@ -190,7 +190,7 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 		rateLimit = acct.RateLimitPerMinOverride
 	}
 	sub := Subject{
-		Identifier:          "acct:" + acct.Slug,
+		Identifier:          AccountIdentifier(acct.Slug),
 		Tier:                pgTierToAuthTier(pgKey.Tier),
 		KeyID:               pgKey.ID,
 		RateLimitPerMin:     rateLimit,

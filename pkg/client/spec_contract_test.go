@@ -195,6 +195,7 @@ var uncoveredOperations = map[string]string{
 	// operator-tier credentials only; not a machine-SDK surface.
 	"GET /admin/accounts/{id}":                "operator surface — staff-issued credential only",
 	"PATCH /admin/accounts/{id}":              "operator surface — staff-issued credential only",
+	"DELETE /admin/keys/{keyID}":              "operator kill switch — staff-issued credential only",
 	"GET /admin/status-notices":               "operator surface — staff-issued credential only",
 	"POST /admin/status-notices":              "operator surface — staff-issued credential only",
 	"POST /admin/status-notices/{id}/resolve": "operator surface — staff-issued credential only",

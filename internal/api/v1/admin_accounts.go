@@ -77,6 +77,22 @@ type adminAccountOverrideRequest struct {
 	// comp / enterprise path (Stripe normally drives tier; this is the
 	// manual override for accounts not on self-service billing).
 	Tier *string `json:"tier,omitempty"`
+	// Status, when set, moves the account's lifecycle state:
+	// active | suspended | closed. This is the operator KILL SWITCH
+	// (C3-010, audit-2026-07-23) — the whole suspension machinery
+	// already existed and was already enforced on the read paths
+	// (postgresstore.AccountStore.Suspend, the Postgres API-key
+	// validator's `acct.Status != AccountActive` rejection, the
+	// dashboard session middleware's suspended/closed denial), but
+	// nothing in the HTTP surface could TRIGGER it: this PATCH covered
+	// tier + the two overrides and never touched Status, and Suspend()'s
+	// only caller was an internal signup-race recovery path.
+	Status *string `json:"status,omitempty"`
+	// SuspendedReason is the customer-visible-ish note stored alongside
+	// a suspension (distinct from the mandatory X-Reason audit header,
+	// which records why the OPERATOR acted). Ignored when Status is
+	// absent; cleared on a move back to active.
+	SuspendedReason *string `json:"suspended_reason,omitempty"`
 	// RateLimitPerMinOverride: 0 clears the override (inherit tier
 	// default); a positive value sets an account-wide per-key floor.
 	RateLimitPerMinOverride *int `json:"rate_limit_per_min_override,omitempty"`
@@ -188,7 +204,7 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 	}
 
 	before := adminAccountView(acct)
-	applyAccountOverrides(&acct, req)
+	applyAccountOverrides(&acct, req, time.Now().UTC())
 
 	if err := s.platformAccounts.Update(r.Context(), acct); err != nil {
 		if errors.Is(err, platform.ErrNotFound) {
@@ -216,16 +232,42 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 
 // applyAccountOverrides mutates acct in place from the request's set
 // (non-nil) fields. Validation has already run in
-// parseAccountOverrideRequest, so this is a pure field copy.
-func applyAccountOverrides(acct *platform.Account, req adminAccountOverrideRequest) {
+// parseAccountOverrideRequest, so this is a pure field copy apart from
+// the suspension bookkeeping.
+func applyAccountOverrides(acct *platform.Account, req adminAccountOverrideRequest, now time.Time) {
 	if req.Tier != nil {
 		acct.Tier = platform.Tier(*req.Tier)
+	}
+	if req.Status != nil {
+		applyAccountStatus(acct, platform.AccountStatus(*req.Status), req.SuspendedReason, now)
 	}
 	if req.RateLimitPerMinOverride != nil {
 		acct.RateLimitPerMinOverride = *req.RateLimitPerMinOverride
 	}
 	if req.MonthlyRequestQuotaOverride != nil {
 		acct.MonthlyRequestQuotaOverride = *req.MonthlyRequestQuotaOverride
+	}
+}
+
+// applyAccountStatus moves the account's lifecycle state and keeps the
+// SuspendedAt / SuspendedReason bookkeeping consistent with it —
+// mirroring what postgresstore.AccountStore's Suspend / Unsuspend do, so
+// a status set through this endpoint is indistinguishable from one set
+// through those. A re-suspension keeps the ORIGINAL SuspendedAt: the age
+// of the suspension is the age of the incident, not of the last edit.
+func applyAccountStatus(acct *platform.Account, status platform.AccountStatus, reason *string, now time.Time) {
+	acct.Status = status
+	switch status {
+	case platform.AccountActive:
+		acct.SuspendedAt = time.Time{}
+		acct.SuspendedReason = ""
+	case platform.AccountSuspended, platform.AccountClosed:
+		if acct.SuspendedAt.IsZero() {
+			acct.SuspendedAt = now
+		}
+		if reason != nil {
+			acct.SuspendedReason = *reason
+		}
 	}
 }
 
@@ -252,11 +294,12 @@ func parseAccountOverrideRequest(w http.ResponseWriter, r *http.Request) (adminA
 			return req, false
 		}
 	}
-	if req.Tier == nil && req.RateLimitPerMinOverride == nil && req.MonthlyRequestQuotaOverride == nil {
+	if req.Tier == nil && req.Status == nil &&
+		req.RateLimitPerMinOverride == nil && req.MonthlyRequestQuotaOverride == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/empty-patch",
 			"No fields to update", http.StatusBadRequest,
-			"set at least one of tier, rate_limit_per_min_override, monthly_request_quota_override")
+			"set at least one of tier, status, rate_limit_per_min_override, monthly_request_quota_override")
 		return req, false
 	}
 	if req.Tier != nil && !validAccountTier(*req.Tier) {
@@ -264,6 +307,20 @@ func parseAccountOverrideRequest(w http.ResponseWriter, r *http.Request) (adminA
 			"https://api.stellarindex.io/errors/invalid-tier",
 			"Invalid tier", http.StatusBadRequest,
 			"tier must be one of free, starter, pro, business, enterprise")
+		return req, false
+	}
+	if req.Status != nil && !validAccountStatus(*req.Status) {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-status",
+			"Invalid status", http.StatusBadRequest,
+			"status must be one of active, suspended, closed")
+		return req, false
+	}
+	if req.SuspendedReason != nil && len(*req.SuspendedReason) > 500 {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-suspended-reason",
+			"suspended_reason too long", http.StatusBadRequest,
+			"suspended_reason must be 500 characters or fewer")
 		return req, false
 	}
 	// Override columns are `> 0` in the schema; 0 is the "clear /
@@ -295,6 +352,18 @@ func validAccountTier(t string) bool {
 	switch platform.Tier(t) {
 	case platform.TierFree, platform.TierStarter, platform.TierPro,
 		platform.TierBusiness, platform.TierEnterprise:
+		return true
+	default:
+		return false
+	}
+}
+
+// validAccountStatus gates the kill-switch vocabulary to the three
+// states the schema's CHECK constraint (migration 0027) and
+// [platform.AccountStatus] recognise.
+func validAccountStatus(st string) bool {
+	switch platform.AccountStatus(st) {
+	case platform.AccountActive, platform.AccountSuspended, platform.AccountClosed:
 		return true
 	default:
 		return false
@@ -346,11 +415,15 @@ func (s *Server) recordAdminAccountAudit(
 		"reason":           reason,
 		"before": map[string]any{
 			"tier":                           before.Tier,
+			"status":                         before.Status,
+			"suspended_reason":               before.SuspendedReason,
 			"rate_limit_per_min_override":    before.RateLimitPerMinOverride,
 			"monthly_request_quota_override": before.MonthlyRequestQuotaOverride,
 		},
 		"after": map[string]any{
 			"tier":                           after.Tier,
+			"status":                         after.Status,
+			"suspended_reason":               after.SuspendedReason,
 			"rate_limit_per_min_override":    after.RateLimitPerMinOverride,
 			"monthly_request_quota_override": after.MonthlyRequestQuotaOverride,
 		},

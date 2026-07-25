@@ -7561,6 +7561,11 @@ export interface paths {
          *     Omitted/empty mints a full-access key — the posture every key
          *     minted before scopes shipped keeps. Scopes only narrow; they
          *     never grant anything the key's tier wouldn't already reach.
+         *
+         *     One caller identifier may hold a bounded number of un-revoked
+         *     keys (25 by default, operator-tunable). A mint that would cross
+         *     the ceiling returns 409 — revoke a key via
+         *     `DELETE /v1/account/keys/{keyID}` and retry.
          */
         post: {
             parameters: {
@@ -7614,6 +7619,18 @@ export interface paths {
                 };
                 400: components["responses"]["BadRequest"];
                 401: components["responses"]["Unauthorized"];
+                /**
+                 * @description Active-key quota reached for this caller identifier. Revoke
+                 *     an existing key and retry.
+                 */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
                 429: components["responses"]["RateLimited"];
                 500: components["responses"]["InternalError"];
                 503: components["responses"]["ServiceUnavailable"];
@@ -7806,6 +7823,83 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/keys/{keyID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Operator — revoke another identifier's API key (kill switch).
+         * @description Revokes a leaked or abused credential belonging to any customer.
+         *     The self-service `DELETE /v1/account/keys/{keyID}` is scoped to
+         *     the caller's OWN identifier, so it requires the compromised
+         *     customer's credential; this is the operator path.
+         *
+         *     `identifier` is required rather than inferred: the revoke is
+         *     scoped to a named owner so a mistyped key id cannot reach a
+         *     different customer's account. Read both values off
+         *     `GET /v1/account/keys` or the mint's audit row.
+         *
+         *     Restricted to operator-tier credentials — other tiers 403.
+         *     Requires an `X-Reason` header captured into the audit log; every
+         *     successful revoke lands a `key.revoke` audit row (staff actor).
+         *
+         *     204 covers both "revoked" and "no such key for that identifier":
+         *     the two are deliberately indistinguishable so the endpoint can't
+         *     be used to enumerate key ids across accounts. To disable a whole
+         *     account instead, PATCH its `status` on
+         *     `/v1/admin/accounts/{id}`.
+         */
+        delete: {
+            parameters: {
+                query: {
+                    /** @description Owner reference the key belongs to (e.g. `acct:<slug>` or `signup-<hash>`). */
+                    identifier: string;
+                };
+                header: {
+                    /** @description Free-form reason captured into the audit log. */
+                    "X-Reason": string;
+                };
+                path: {
+                    /** @description Public-safe `kid_<hex>` identifier of the key to revoke. */
+                    keyID: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Revoked (or no-op when no such key exists for that identifier). */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                400: components["responses"]["BadRequest"];
+                401: components["responses"]["Unauthorized"];
+                /** @description Caller is not operator-tier. */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                500: components["responses"]["InternalError"];
+                503: components["responses"]["ServiceUnavailable"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/accounts/{id}": {
         parameters: {
             query?: never;
@@ -7863,15 +7957,23 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Operator — set an account's tier + rate-limit / quota overrides.
-         * @description Sets the account plan tier and/or the per-account
-         *     `rate_limit_per_min_override` / `monthly_request_quota_override`
-         *     (admin Phase 1.5). All three fields are optional; at least one
-         *     must be present. An override value of `0` clears it (inherit the
-         *     tier default). The rate-limit override acts as an account-wide
-         *     floor applied by the Postgres API-key validator on the next
-         *     Lookup — it raises keys budgeted below it, never lowers a key
-         *     budgeted above.
+         * Operator — set an account's tier, status, and rate-limit / quota overrides.
+         * @description Sets the account plan tier, lifecycle `status`, and/or the
+         *     per-account `rate_limit_per_min_override` /
+         *     `monthly_request_quota_override` (admin Phase 1.5). All fields are
+         *     optional; at least one must be present. An override value of `0`
+         *     clears it (inherit the tier default). The rate-limit override acts
+         *     as an account-wide floor applied by the Postgres API-key validator
+         *     on the next Lookup — it raises keys budgeted below it, never
+         *     lowers a key budgeted above.
+         *
+         *     `status` is the account-level KILL SWITCH. Moving an account to
+         *     `suspended` or `closed` stops its API keys authenticating and
+         *     denies its dashboard sessions; `suspended_reason` is stored
+         *     alongside and `suspended_at` is stamped on the first transition
+         *     away from `active`. Moving back to `active` clears both. To kill a
+         *     single leaked credential instead, use
+         *     `DELETE /v1/admin/keys/{keyID}`.
          *
          *     Operator-tier only (staff-issued via stellarindex-ops; never
          *     granted to public callers) — other tiers 403. Requires an
@@ -7897,6 +7999,20 @@ export interface paths {
                     "application/json": {
                         /** @enum {string} */
                         tier?: "free" | "starter" | "pro" | "business" | "enterprise";
+                        /**
+                         * @description Account lifecycle state — the kill switch. `suspended`
+                         *     / `closed` stop the account's keys authenticating and
+                         *     deny its dashboard sessions.
+                         * @enum {string}
+                         */
+                        status?: "active" | "suspended" | "closed";
+                        /**
+                         * @description Stored alongside a suspension. Ignored when `status`
+                         *     is absent; cleared on a move back to `active`.
+                         *     Distinct from the mandatory `X-Reason` header, which
+                         *     records why the OPERATOR acted.
+                         */
+                        suspended_reason?: string;
                         /** @description 0 clears the override (inherit tier default). */
                         rate_limit_per_min_override?: number;
                         /**
@@ -10284,11 +10400,19 @@ export interface paths {
          *     its owning `protocol` when the contract is in the factory-anchored
          *     registry (ADR-0035) — the attribution hinge that lets the explorer say
          *     "this contract IS a Blend pool". `since_ledger` echoes the window floor.
+         *
+         *     `days` is rounded UP to the nearest supported window — 1, 7, 30, 90 or
+         *     365 — so the response is never narrower than what was asked for. The
+         *     window actually aggregated is returned in `window_days` (with its floor
+         *     in `since_ledger`); read those rather than echoing the request value.
          */
         get: {
             parameters: {
                 query?: {
-                    /** @description Window size in days. */
+                    /**
+                     * @description Window size in days, rounded UP to the nearest supported window
+                     *     (1, 7, 30, 90, 365). The served window is returned in `window_days`.
+                     */
                     days?: number;
                     /** @description Maximum rows to return (1-500, default 100). Out-of-range values return 400. */
                     limit?: number;

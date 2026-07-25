@@ -92,19 +92,61 @@ func (b *BillingStore) AppendStripeEvent(ctx context.Context, e platform.StripeE
 // dedupe row. No-op when the row doesn't exist (e.g. dedupe
 // store cleared mid-flight) — Stripe will retry the original
 // event and the AppendStripeEvent path re-creates the row.
+//
+// It also CLOSES an open dead-letter (C3-016): if an earlier delivery
+// gave up with nothing provisioned and a later one completed the work,
+// the money-in-nothing-provisioned state is resolved, not still open.
+// dead_lettered_at itself is left standing so the incident stays
+// visible in history — only the open-set predicate flips.
 func (b *BillingStore) MarkStripeEventProcessed(ctx context.Context, stripeEventID string) error {
 	if stripeEventID == "" {
 		return errors.New("postgresstore: MarkStripeEventProcessed: stripeEventID is empty")
 	}
 	const q = `
 		UPDATE stripe_event_log
-		   SET processed_at = now(),
-		       error        = NULL
+		   SET processed_at            = now(),
+		       error                   = NULL,
+		       dead_letter_resolved_at = CASE
+		           WHEN dead_lettered_at IS NOT NULL AND dead_letter_resolved_at IS NULL
+		           THEN now() ELSE dead_letter_resolved_at END
 		 WHERE stripe_event_id = $1
 		   AND processed_at IS NULL
 	`
 	if _, err := b.s.db.ExecContext(ctx, q, stripeEventID); err != nil {
 		return fmt.Errorf("postgresstore: MarkStripeEventProcessed %s: %w", stripeEventID, err)
+	}
+	return nil
+}
+
+// MarkStripeEventDeadLettered stamps the sticky
+// money-in-nothing-provisioned state on the dedupe row (C3-016).
+//
+// processed_at is deliberately left NULL: per the F-1322 contract in
+// AppendStripeEvent an unfinished row is REPROCESSABLE, so an operator
+// re-sending the event from the Stripe dashboard (after the customer
+// signs up, or once the key store is healthy) re-runs the provisioning
+// instead of being dup-acked into a no-op. `error` carries the reason
+// too so the pre-existing `WHERE error IS NOT NULL` operator query keeps
+// finding these.
+//
+// dead_lettered_at is set once and never re-stamped, so the age of the
+// open row is the age of the incident rather than of the last retry.
+func (b *BillingStore) MarkStripeEventDeadLettered(ctx context.Context, stripeEventID string, reason platform.DeadLetterReason) error {
+	if stripeEventID == "" {
+		return errors.New("postgresstore: MarkStripeEventDeadLettered: stripeEventID is empty")
+	}
+	if reason == "" {
+		return errors.New("postgresstore: MarkStripeEventDeadLettered: reason is empty")
+	}
+	const q = `
+		UPDATE stripe_event_log
+		   SET dead_lettered_at   = COALESCE(dead_lettered_at, now()),
+		       dead_letter_reason = $2,
+		       error              = $2
+		 WHERE stripe_event_id = $1
+	`
+	if _, err := b.s.db.ExecContext(ctx, q, stripeEventID, string(reason)); err != nil {
+		return fmt.Errorf("postgresstore: MarkStripeEventDeadLettered %s: %w", stripeEventID, err)
 	}
 	return nil
 }
@@ -230,4 +272,22 @@ func (b *BillingStore) GetActiveSubscriptionForAccount(ctx context.Context, acco
 		sub.CanceledAt = canceledAt.Time
 	}
 	return sub, nil
+}
+
+// CountOpenDeadLetters returns the number of dead-lettered,
+// unresolved Stripe events — the C3-016 "money in, nothing
+// provisioned" open set. Serves the boot/periodic re-seed of the
+// stellarindex_stripe_dead_letters_open gauge so a process restart
+// cannot zero away a real backlog (the gauge's Inc at open time only
+// covers the current process's lifetime).
+func (b *BillingStore) CountOpenDeadLetters(ctx context.Context) (int, error) {
+	var n int
+	err := b.s.db.QueryRowContext(ctx, `
+		SELECT count(*) FROM stripe_event_log
+		WHERE dead_lettered_at IS NOT NULL
+		  AND dead_letter_resolved_at IS NULL`).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("postgresstore: CountOpenDeadLetters: %w", err)
+	}
+	return n, nil
 }

@@ -133,6 +133,128 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleAdminKeysRevoke serves DELETE
+// /v1/admin/keys/{keyID}?identifier=<owner> — the operator kill switch
+// for a leaked or abused credential (C3-010, audit-2026-07-23).
+//
+// Pre-fix there was no way for staff to kill an arbitrary key at all:
+// self-service revoke (DELETE /v1/account/keys/{keyID}) is scoped to the
+// caller's OWN identifier, so it requires the compromised customer's
+// credential, and the dashboard staff surface is explicitly read-only.
+// A leaked key could only be stopped by hand-editing Redis.
+//
+// `identifier` is required rather than inferred: the key store is
+// keyed by secret hash and indexed by (identifier, key_id), and scoping
+// the delete to a named owner is what stops a mistyped key id from
+// reaching into a different customer's account. Operators read both off
+// GET /v1/account/keys or the audit row for the mint.
+//
+// Operator-tier only; requires an `X-Reason` header (platform-spec §7.2,
+// same contract as PATCH /v1/admin/accounts). 204 on success AND on
+// "no such key for that identifier" — the store deliberately collapses
+// the two so an operator credential can't be used to enumerate key ids
+// across accounts (same posture as the self-service revoke).
+func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
+	subject, ok := s.requireOperator(w, r, "/v1/admin/keys/{keyID}")
+	if !ok {
+		return
+	}
+	if s.accounts == nil {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/account-store-unavailable",
+			"Account store not configured", http.StatusServiceUnavailable,
+			"this deployment has no AccountStore wired — typically because Redis is unavailable")
+		return
+	}
+	reason := r.Header.Get("X-Reason")
+	if reason == "" {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/missing-reason",
+			"X-Reason header required", http.StatusBadRequest,
+			"every admin write captures an X-Reason header into the audit log")
+		return
+	}
+	keyID := r.PathValue("keyID")
+	if keyID == "" {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/missing-key-id",
+			"Missing key id", http.StatusBadRequest,
+			"path must be /v1/admin/keys/{keyID}")
+		return
+	}
+	identifier := r.URL.Query().Get("identifier")
+	if identifier == "" {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/missing-identifier",
+			"Missing identifier", http.StatusBadRequest,
+			"?identifier= names the key's owner (e.g. acct:<slug> or signup-<hash>); "+
+				"the revoke is scoped to it so a mistyped key id can't reach another customer's account")
+		return
+	}
+
+	if err := s.accounts.RevokeKeyByID(r.Context(), identifier, keyID); err != nil {
+		if clientAborted(r, err) {
+			return
+		}
+		s.logger.Error("admin key revoke failed", "err", err,
+			"actor_key_id", subject.KeyID, "target_identifier", identifier, "key_id", keyID)
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/account-revoke-failed",
+			"Could not revoke key", http.StatusInternalServerError,
+			"see X-Request-ID in server logs")
+		return
+	}
+
+	s.logger.Info("admin key revoke",
+		"actor_key_id", subject.KeyID,
+		"actor_identifier", subject.Identifier,
+		"target_identifier", identifier,
+		"key_id", keyID,
+		"reason", reason)
+	s.recordAdminKeyRevokeAudit(r, subject, identifier, keyID, reason)
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// recordAdminKeyRevokeAudit persists the "key.revoke" audit row.
+// Best-effort, same contract as recordAdminKeyMintAudit — a sink failure
+// logs at WARN and never blocks the revoke, because failing to kill a
+// leaked credential because the audit log is down is the worse outcome.
+func (s *Server) recordAdminKeyRevokeAudit(
+	r *http.Request, actor auth.Subject, identifier, keyID, reason string,
+) {
+	if s.audit == nil {
+		return
+	}
+	meta, err := json.Marshal(map[string]any{
+		"actor_key_id":      actor.KeyID,
+		"actor_identifier":  actor.Identifier,
+		"target_identifier": identifier,
+		"reason":            reason,
+	})
+	if err != nil {
+		s.logger.Warn("admin key revoke: audit metadata marshal failed (skipping audit row)",
+			"err", err, "key_id", keyID)
+		return
+	}
+	entry := platform.AuditEntry{
+		ActorKind:  platform.ActorStaff,
+		Action:     "key.revoke",
+		TargetKind: "api_key",
+		TargetID:   keyID,
+		Metadata:   meta,
+		UserAgent:  r.UserAgent(),
+		Timestamp:  time.Now().UTC(),
+	}
+	if ip := middleware.RemoteIP(r); ip != "" {
+		entry.IP = net.ParseIP(ip)
+	}
+	if err := s.audit.Append(r.Context(), entry); err != nil {
+		s.logger.Warn("admin key revoke: audit append failed (best-effort)",
+			"err", err, "key_id", keyID, "target_identifier", identifier)
+	}
+}
+
 // parseAdminCreateKeyRequest reads + validates the body. ok=false
 // means a problem+json was already written.
 func parseAdminCreateKeyRequest(w http.ResponseWriter, r *http.Request) (adminCreateKeyRequest, bool) {
