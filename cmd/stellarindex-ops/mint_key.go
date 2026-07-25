@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,6 +14,49 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/redisclient"
 )
+
+// mintKeyIdentifierPattern enforces the shape this flag's own help
+// text documents ("kebab-case slug, e.g. customer-acme-corp"):
+// lowercase alphanumeric segments joined by single hyphens.
+//
+// input-validation (audit-2026-07-23): -identifier previously only
+// checked non-empty — store.Create (internal/auth/store.go) does
+// the same. Today the only caller is a trusted operator running this
+// CLI by hand, so an out-of-shape value is low-risk; but this
+// function's own docstring says the future Stripe webhook
+// integration calls the SAME auth.RedisAPIKeyStore.Create path from
+// an HTTP handler, at which point Identifier is attacker-influenced
+// (derived from Stripe customer metadata) rather than operator-typed.
+// Enforcing the documented shape here — at the CLI's input boundary —
+// closes the gap for this call site now, before that reuse happens.
+var mintKeyIdentifierPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+
+const (
+	mintKeyIdentifierMaxLen = 128
+	mintKeyLabelMaxLen      = 256
+)
+
+// validateMintKeyIdentifierAndLabel checks -identifier and -label
+// against the shape their own help text documents. Split out of
+// mintKey to keep that function under the funlen ceiling.
+func validateMintKeyIdentifierAndLabel(identifier, label string) error {
+	if strings.TrimSpace(identifier) == "" {
+		return errors.New("-identifier is required")
+	}
+	if len(identifier) > mintKeyIdentifierMaxLen {
+		return fmt.Errorf("-identifier must be <= %d characters (got %d)", mintKeyIdentifierMaxLen, len(identifier))
+	}
+	if !mintKeyIdentifierPattern.MatchString(identifier) {
+		return fmt.Errorf("-identifier %q must be a kebab-case slug (lowercase alphanumeric segments joined by single hyphens, e.g. customer-acme-corp)", identifier)
+	}
+	if strings.TrimSpace(label) == "" {
+		return errors.New("-label is required")
+	}
+	if len(label) > mintKeyLabelMaxLen {
+		return fmt.Errorf("-label must be <= %d characters (got %d)", mintKeyLabelMaxLen, len(label))
+	}
+	return nil
+}
 
 // mintKey issues an API key directly via the Redis API-key store.
 // Operator-only path used to bootstrap a customer's first key
@@ -57,11 +101,8 @@ func mintKey(args []string) error {
 	if *cfgPath == "" {
 		return errors.New("-config is required")
 	}
-	if strings.TrimSpace(*identifier) == "" {
-		return errors.New("-identifier is required")
-	}
-	if strings.TrimSpace(*label) == "" {
-		return errors.New("-label is required")
+	if err := validateMintKeyIdentifierAndLabel(*identifier, *label); err != nil {
+		return err
 	}
 	parsedTier := auth.Tier(*tier)
 	switch parsedTier {
