@@ -168,9 +168,18 @@ const (
 	MainnetMultihop = "CCLZRD4E72T7JCZCN3P7KNPYNXFYKQCL64ECLX7WP5GNVYPYJGU2IO2G"
 
 	// XLM SAC as referenced by Phoenix's scripts. Note this is
-	// NOT the same address as Aquarius's XLM SAC — Phoenix uses
-	// a different canonical form in its deploy scripts.
-	MainnetXLMSAC = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+	// REMOVED 2026-07-26 (audit C4-012 follow-through): this constant
+	// carried "CDLZFC3SY…", which is NOT the XLM SAC on any network —
+	// it is the synthetic contract id used across test/integration
+	// fixtures. The comment above it ("Phoenix uses a different
+	// canonical form") rationalised a copy-paste error; there is
+	// exactly one native-XLM SAC per network, derivable from
+	// canonical.Asset.SacContractID() and pinned by
+	// internal/canonical/sac_test.go. The constant was never
+	// referenced outside its declaration — kept unused, it was a
+	// booby trap: the moment anything read it, XLM would stop being
+	// XLM. Use aquarius.MainnetXLMSAC (the correct CAS3J7GY… value)
+	// or canonical.SacContractID directly.
 )
 
 // MainnetPools is the curated gated pool set (ADR-0040 §1 mechanism
