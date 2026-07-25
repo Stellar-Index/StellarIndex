@@ -29,6 +29,28 @@ const (
 	liquidityCeilingUSD = 100_000.0
 )
 
+// LiquidityUnmeasured is the [Inputs.LiquidityUSD] sentinel for
+// "this bucket's USD volume could not be measured at all" — as
+// opposed to "measured, and it is thin". Callers that cannot value a
+// pair in USD (the orchestrator's approxUSDVolume for a non-USD-quoted
+// pair) pass this instead of 0.
+//
+// Any negative value is treated as the sentinel, mirroring the
+// [CrossOracleFactor] / [BaselineQualityFactor] no-data convention
+// this package already uses; the named constant exists so call sites
+// read as intent rather than as a magic -1.
+const LiquidityUnmeasured = -1.0
+
+// LiquidityUnmeasuredFactor is what [LiquidityFactor] returns for
+// [LiquidityUnmeasured]. Neutral — it neither credits nor penalises a
+// pair for a measurement we never took.
+//
+// 0.5 is the same "no signal" midpoint [BaselineQualityFactor] uses
+// for its own no-data sentinel (and is stricter than
+// [CrossOracleFactor]'s 0.7, which is anchored to an ADR-0019 worked
+// example this factor has no counterpart for).
+const LiquidityUnmeasuredFactor = 0.5
+
 // crossOracleTolerancePct is the deviation below which the factor
 // reads as full agreement (1.0). Per ADR-0019: "1.0 when within 1%
 // of cross-oracle median".
@@ -100,10 +122,25 @@ func DiversityFactor(classCount int) float64 {
 // boundary value is computed as a log-interpolation between the
 // floor and ceiling.
 //
-// Negative or NaN volumes return 0.
+// A NEGATIVE volume is the [LiquidityUnmeasured] sentinel and returns
+// the neutral [LiquidityUnmeasuredFactor] (COR-14). Zero and any
+// measured volume at or below the floor still return 0: "we looked and
+// there is almost nothing here" is a real, confidence-destroying
+// signal — it is the leg that lets the Phase 2 freeze fire on a thin
+// single-source window — whereas "we never valued this pair" is not a
+// finding about the pair at all. Collapsing the two zeroed the whole
+// geometric mean for every pair this index cannot price in USD (8 of
+// the 12 pairs in the aggregator's defaultPairs() are non-USD-quoted),
+// which both served a permanently meaningless confidence and pinned
+// the freeze's confidence leg true, degrading its 3-signal AND to two.
+//
+// NaN returns 0 — that is a caller bug, not a sentinel.
 func LiquidityFactor(usdVolume float64) float64 {
-	if math.IsNaN(usdVolume) || usdVolume <= 0 {
+	if math.IsNaN(usdVolume) {
 		return 0
+	}
+	if usdVolume < 0 {
+		return LiquidityUnmeasuredFactor
 	}
 	if usdVolume >= liquidityCeilingUSD {
 		return 1.0

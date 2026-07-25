@@ -148,15 +148,21 @@ func (o *Orchestrator) computeConfidence(
 
 	// ZScore carries the OBSERVATION-based score to the Phase 2
 	// freeze. Widening it to scoringZ would let drift alone freeze a
-	// pair, and for a large population the other two legs of the
-	// 3-signal AND are pinned true by construction: approxUSDVolume
-	// returns 0 for every non-USD-quoted pair (and for any bucket at
-	// or below the $1,000 liquidity floor), LiquidityFactor(0) is 0,
-	// and a single zero factor drives the geometric mean to 0 — so
-	// `confidence < 0.10` is permanently satisfied there regardless of
-	// every other input. 8 of the 12 pairs in defaultPairs() are
-	// non-USD-quoted. For them the AND would collapse to `z > 5`
-	// alone, and drift would be a single-signal freeze.
+	// pair: the drift statistic takes no observation, so a freeze
+	// gated on it cannot self-clear when the current bucket is fine —
+	// it stays engaged until the drift ages out of all three windows
+	// (see the paragraph above and [baseline.Baseline.DriftZScore]).
+	//
+	// Until COR-14 that widening was worse still, because the
+	// confidence leg of the 3-signal AND was pinned true for a large
+	// population by construction: approxUSDVolume returned 0 for every
+	// non-USD-quoted pair, LiquidityFactor(0) is 0, and one zero factor
+	// drives the geometric mean to 0 — so the `confidence < threshold` leg held
+	// there regardless of every other input, and 8 of the 12 pairs in
+	// defaultPairs() are non-USD-quoted. That leg is live again now
+	// that an unvaluable pair passes the [confidence.LiquidityUnmeasured]
+	// sentinel instead, but the latching argument above stands on its
+	// own and drift stays out of the freeze path.
 	return confidenceComputation{Score: score, ZScore: observedZ}, true
 }
 
@@ -287,8 +293,15 @@ func distinctSourceClassCount(trades []canonicalTrade) int {
 // approxUSDVolume returns an approximation of bucket USD volume.
 // Best when the pair quotes in fiat:USD or a USD-pegged stablecoin
 // — sums each trade's QuoteAmount scaled by ITS SOURCE's decimals.
-// For non-USD-quoted pairs returns 0 (the LiquidityFactor then reads
-// as 0 — the right signal: "we can't see USD liquidity for this pair").
+//
+// For non-USD-quoted pairs it returns [confidence.LiquidityUnmeasured]
+// — NOT 0 (COR-14). Zero is a measurement ("this bucket carried no
+// dollars"), and a zero LiquidityFactor drives the geometric mean to
+// zero, so returning it for every pair we simply cannot value in USD
+// served a permanently-0 confidence for 8 of the 12 pairs in
+// defaultPairs() and pinned the Phase 2 freeze's confidence leg true
+// for them. The sentinel routes to the neutral factor instead, so the
+// score reflects the factors we DID measure.
 //
 // Scale correctness (M13 / CS-040): the quote amount's smallest-unit
 // scale is a per-SOURCE property, not a constant. Off-chain CEX /
@@ -312,7 +325,7 @@ func distinctSourceClassCount(trades []canonicalTrade) int {
 // and the trade carries an authoritative USD figure.
 func approxUSDVolume(trades []canonicalTrade, pair canonical.Pair) float64 {
 	if !isUSDQuoted(pair) {
-		return 0
+		return confidence.LiquidityUnmeasured
 	}
 	total := new(big.Rat)
 	for i := range trades {

@@ -612,3 +612,67 @@ func TestApproxUSDVolume_OnChainSourcesAreSevenDecimals(t *testing.T) {
 		}
 	})
 }
+
+// TestApproxUSDVolume_NonUSDQuotedIsUnmeasuredNotZero (COR-14) pins the
+// production side of the sentinel: XLM/EUR carries real EUR volume that
+// this package cannot convert to dollars without a live FX rate, so it
+// must report "unmeasured", not "$0 of liquidity".
+//
+// The distinction is not cosmetic. A zero LiquidityFactor dominates the
+// weighted geometric mean, so returning 0 here served confidence=0 for
+// every non-USD-quoted pair (8 of the 12 in defaultPairs()) whatever
+// their z-score, source count, diversity or cross-oracle agreement —
+// and pinned `confidence < 0.10`, one of the three legs the Phase 2
+// freeze ANDs together, permanently true for them.
+//
+// Proven red pre-fix: approxUSDVolume returned 0.00 and the scored
+// confidence came back 0.
+func TestApproxUSDVolume_NonUSDQuotedIsUnmeasuredNotZero(t *testing.T) {
+	xlm, err := canonical.ParseAsset("native")
+	if err != nil {
+		t.Fatalf("parse native: %v", err)
+	}
+	eur, err := canonical.ParseAsset("fiat:EUR")
+	if err != nil {
+		t.Fatalf("parse fiat:EUR: %v", err)
+	}
+	pair, err := canonical.NewPair(xlm, eur)
+	if err != nil {
+		t.Fatalf("new pair: %v", err)
+	}
+	ts := time.Now().UTC()
+	trades := []canonical.Trade{
+		makeXLMUSDTradeWithSource(t, pair, "binance", ts),
+		makeXLMUSDTradeWithSource(t, pair, "soroswap", ts),
+	}
+
+	got := approxUSDVolume(trades, pair)
+	if got != confidence.LiquidityUnmeasured {
+		t.Fatalf("approxUSDVolume(XLM/EUR) = %.2f, want the %.0f unmeasured sentinel — "+
+			"0 would claim we measured no liquidity rather than that we could not measure any",
+			got, confidence.LiquidityUnmeasured)
+	}
+
+	// End-to-end: the same bucket, scored. A healthy two-source,
+	// two-class, low-z, mature-baseline window must not read as
+	// zero-confidence just because its quote is not USD.
+	score := confidence.Compute(confidence.Inputs{
+		ZScore:                   0.3,
+		SourceCount:              6,
+		SourceClassCount:         2,
+		LiquidityUSD:             got,
+		CrossOracleDivergencePct: 0.4,
+		BaselineAgeDays:          187,
+	}, confidence.DefaultWeights())
+	if score.Confidence <= 0 {
+		t.Fatalf("healthy non-USD-quoted bucket scored %v, want > 0", score.Confidence)
+	}
+	// It must also clear the Phase 2 freeze's confidence threshold —
+	// that leg has to be capable of DISAGREEING for the 3-signal AND to
+	// mean anything on these pairs.
+	if score.Confidence < DefaultPhase2ConfidenceMaxFreeze {
+		t.Errorf("healthy non-USD-quoted bucket scored %v, below the %v freeze threshold — "+
+			"the confidence leg of the 3-signal AND is still pinned true for these pairs",
+			score.Confidence, DefaultPhase2ConfidenceMaxFreeze)
+	}
+}

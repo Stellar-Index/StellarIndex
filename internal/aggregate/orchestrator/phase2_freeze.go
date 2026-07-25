@@ -23,7 +23,31 @@ import (
 // (operator hasn't overridden via TOML). Operators tune via the
 // `[anomaly.phase2]` config block.
 const (
-	DefaultPhase2ConfidenceMaxFreeze  = 0.10 // freeze when confidence < this
+	// 0.45, NOT ADR-0019's original 0.10 — operator decision of
+	// 2026-07-25, taken together with the COR-14 fix as this repo's
+	// remediation ledger requires ("R-072/R-078 ... must be fixed as ONE
+	// decision").
+	//
+	// Why the ADR's own z>5 needs a number this high: confidence is a
+	// weighted geometric mean, so it decays gently in z. Measured on the
+	// real combiner for a single-source bucket, mature baseline:
+	//   z=0 -> 0.5241   z=5 -> 0.4674   z=6 -> 0.4215
+	// and sparse/bootstrap-capped: z=0 -> 0.4767, z=5 -> 0.4252.
+	// At 0.10 the freeze needs z ~= 14.95 — roughly a 30% move in one
+	// 1-minute bucket for XLM (return_mad ~2%), i.e. the control was
+	// decorative. 0.45 puts the trigger just past z=5 (~5.4 mature,
+	// ~4.2 sparse), which is what ADR-0019 §"Freeze fires only when all
+	// three of the following hold" actually specifies.
+	//
+	// On the false-fire history: markPhase2Freeze's comment records
+	// "Phase 2 false-fires across many pairs" from the era when
+	// approxUSDVolume returned 0 for non-USD-quoted pairs. That is NOT
+	// evidence against this number — those pairs froze on (z>5 AND
+	// source_count<=1) with the confidence leg pinned permanently true,
+	// so the documented 3-signal AND was really a 2-signal one. With
+	// COR-14 fixed, confidence is a genuine third gate and this is
+	// strictly stricter than the configuration that false-fired.
+	DefaultPhase2ConfidenceMaxFreeze  = 0.45 // freeze when confidence < this
 	DefaultPhase2ZScoreMinFreeze      = 5.0  // freeze when z > this
 	DefaultPhase2SourceCountMaxFreeze = 1    // freeze when source_count <= this
 )

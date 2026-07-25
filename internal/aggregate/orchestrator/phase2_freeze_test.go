@@ -15,7 +15,7 @@ func defaultThresh() Phase2Thresholds { return Phase2Thresholds{} }
 // every input crosses its threshold.
 func TestPhase2FreezeFires_AllThree(t *testing.T) {
 	got := phase2FreezeFires(confidenceWithSourceCount{
-		Confidence:  0.05, // < 0.10
+		Confidence:  0.05, // < DefaultPhase2ConfidenceMaxFreeze
 		ZScore:      8.0,  // > 5.0
 		SourceCount: 1,    // <= 1
 	}, defaultThresh())
@@ -53,11 +53,18 @@ func TestPhase2FreezeFires_MissingOneSignal(t *testing.T) {
 // TestPhase2FreezeFires_BoundaryStrictness — the conditions are
 // strictly > / < / <=. Boundary values don't fire.
 func TestPhase2FreezeFires_BoundaryStrictness(t *testing.T) {
-	// confidence == 0.10 — strictly less-than required.
+	// confidence == the threshold — strictly less-than required.
+	// Deliberately expressed against the constant rather than a literal:
+	// this test is about the STRICTNESS of the comparison, not about
+	// whatever value the freeze is currently calibrated to, so a
+	// recalibration must not be able to silently invalidate it. (It
+	// nearly did — this read `Confidence: 0.10` when the threshold moved
+	// from 0.10 to 0.45 on 2026-07-25.)
 	if phase2FreezeFires(confidenceWithSourceCount{
-		Confidence: 0.10, ZScore: 8.0, SourceCount: 1,
+		Confidence: DefaultPhase2ConfidenceMaxFreeze, ZScore: 8.0, SourceCount: 1,
 	}, defaultThresh()) {
-		t.Error("confidence==0.10 boundary should NOT freeze (strictly <)")
+		t.Errorf("confidence==%v boundary should NOT freeze (strictly <)",
+			DefaultPhase2ConfidenceMaxFreeze)
 	}
 	// z == 5.0 — strictly greater-than required.
 	if phase2FreezeFires(confidenceWithSourceCount{
@@ -186,5 +193,79 @@ func TestPhase2FreezeFires_ConfidenceConditionIsNotVacuous(t *testing.T) {
 		Confidence: cratered.Confidence, ZScore: 8.0, SourceCount: 1,
 	}, defaultThresh()) {
 		t.Error("dust-liquidity + z=8 + single-source should freeze")
+	}
+}
+
+// TestPhase2FreezeFires_CalibratedToADRZBand pins the 2026-07-25
+// operator decision: DefaultPhase2ConfidenceMaxFreeze = 0.45 exists so
+// the freeze actually fires in the neighbourhood of ADR-0019's stated
+// `z > 5`, across every population the aggregator serves.
+//
+// Why this test rather than a comment. Confidence is a weighted
+// geometric mean, so it decays gently in z and the freeze's real
+// trigger point is an EMERGENT property of (threshold x combiner x
+// factor set) — not something any one of them states. At the previous
+// 0.10 the emergent trigger was z ~= 15, roughly a 30% move in one
+// 1-minute bucket for XLM, i.e. the control was decorative while every
+// individual piece still looked correct in isolation. Nothing failed
+// when that happened. This test is what fails.
+//
+// It asserts a BAND (no freeze at z <= 5, freeze by z = 6) rather than
+// an exact crossing point, so ordinary combiner tuning stays free while
+// a change that pushes the trigger back out to z ~= 15 — or pulls it in
+// to z ~= 2 — breaks the build. Both directions are real hazards: a
+// freeze that never fires serves manipulated prices, and one that fires
+// too readily serves stale LKG prices (its own money bug, MNY-22).
+//
+// The three populations are the ones that actually differ:
+//   - mature + measured liquidity: the 4 USD-quoted default pairs
+//   - sparse baseline: any newly-tracked pair (bootstrap-capped)
+//   - unmeasured liquidity: the 8 non-USD-quoted default pairs, which
+//     before COR-14 had confidence pinned to 0 and so froze at z > 0
+func TestPhase2FreezeFires_CalibratedToADRZBand(t *testing.T) {
+	base := func(z, ageDays, liquidity float64) float64 {
+		return confidence.Compute(confidence.Inputs{
+			ZScore:                   z,
+			SourceCount:              1,
+			SourceClassCount:         1,
+			LiquidityUSD:             liquidity,
+			CrossOracleDivergencePct: -1,
+			BaselineAgeDays:          ageDays,
+		}, confidence.DefaultWeights()).Confidence
+	}
+
+	for _, pop := range []struct {
+		name      string
+		ageDays   float64
+		liquidity float64
+	}{
+		{"mature baseline, measured liquidity", 200, 12_000},
+		{"sparse baseline (bootstrap-capped)", 3, 12_000},
+		{"unmeasured liquidity (non-USD-quoted pair)", 200, confidence.LiquidityUnmeasured},
+	} {
+		t.Run(pop.name, func(t *testing.T) {
+			// At the ADR's own threshold value the freeze must NOT yet
+			// fire — z > 5 is strict, so z == 5 is a non-event.
+			if got := base(5.0, pop.ageDays, pop.liquidity); phase2FreezeFires(
+				confidenceWithSourceCount{Confidence: got, ZScore: 5.0, SourceCount: 1},
+				defaultThresh(),
+			) {
+				t.Errorf("froze at z=5.0 (confidence %.4f) — the trigger has drifted BELOW "+
+					"ADR-0019's z>5; freezing serves a stale LKG price, so an over-eager "+
+					"freeze is a money bug in its own right", got)
+			}
+			// By z=6 it must have fired. If this fails the freeze has
+			// drifted back toward the dormant z~=15 regime that the 0.45
+			// calibration exists to correct.
+			if got := base(6.0, pop.ageDays, pop.liquidity); !phase2FreezeFires(
+				confidenceWithSourceCount{Confidence: got, ZScore: 6.0, SourceCount: 1},
+				defaultThresh(),
+			) {
+				t.Errorf("did NOT freeze at z=6.0 (confidence %.4f, threshold %v) — the "+
+					"3-signal AND is not reachable near ADR-0019's z>5 and the phase-2 "+
+					"freeze is effectively dormant again",
+					got, DefaultPhase2ConfidenceMaxFreeze)
+			}
+		})
 	}
 }

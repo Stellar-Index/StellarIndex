@@ -497,3 +497,46 @@ func TestCompute_AgreementCountDoesNotChangeScore(t *testing.T) {
 			sa.Confidence, sb.Confidence)
 	}
 }
+
+// TestCompute_UnmeasuredLiquidityDoesNotZeroTheScore (COR-14) — a pair
+// this index cannot value in USD (every non-USD-quoted pair) must still
+// score on the factors that WERE measured. Passing 0 for it instead of
+// the sentinel drove the geometric mean to exactly 0, so the served
+// confidence carried no information and the Phase 2 freeze's
+// `confidence < 0.10` leg was pinned true for those pairs.
+//
+// Proven red against the pre-fix LiquidityFactor (negative → 0): the
+// unmeasured score came back 0, failing both the ">0" and the
+// "≈ measured-mid-band" assertions below.
+func TestCompute_UnmeasuredLiquidityDoesNotZeroTheScore(t *testing.T) {
+	in := healthyInputs()
+	in.LiquidityUSD = confidence.LiquidityUnmeasured
+	got := confidence.Compute(in, confidence.DefaultWeights())
+
+	if got.Factors.Liquidity != confidence.LiquidityUnmeasuredFactor {
+		t.Fatalf("Liquidity factor = %v, want the neutral %v",
+			got.Factors.Liquidity, confidence.LiquidityUnmeasuredFactor)
+	}
+	if got.Confidence <= 0 {
+		t.Fatalf("unmeasured-liquidity confidence = %v, want > 0", got.Confidence)
+	}
+	// The score must equal what the same bucket scores with a
+	// mid-band MEASURED liquidity — i.e. the neutral factor is the only
+	// difference, nothing else silently changed.
+	mid := healthyInputs()
+	mid.LiquidityUSD = 10_000 // log-midpoint → factor 0.5
+	wantSame := confidence.Compute(mid, confidence.DefaultWeights())
+	if math.Abs(got.Confidence-wantSame.Confidence) > 1e-9 {
+		t.Errorf("unmeasured confidence = %v, want %v (the neutral factor is 0.5, the same as a $10K measured bucket)",
+			got.Confidence, wantSame.Confidence)
+	}
+
+	// And the discrimination the factor exists for is intact: a
+	// MEASURED sub-floor bucket still craters the score to 0.
+	thin := healthyInputs()
+	thin.LiquidityUSD = 500
+	if craterd := confidence.Compute(thin, confidence.DefaultWeights()); craterd.Confidence != 0 {
+		t.Errorf("measured sub-$1K bucket scored %v, want 0 — the thin-liquidity signal must stay live",
+			craterd.Confidence)
+	}
+}
