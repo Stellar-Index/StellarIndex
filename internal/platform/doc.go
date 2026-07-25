@@ -1,18 +1,23 @@
 // Package platform models the customer + staff dashboard primitives
 // from docs/architecture/platform-spec.md.
 //
-// Scope today (Phase 1 Week 1, this PR): types only. Repository
-// interfaces for each aggregate are declared so the auth flow
-// (Week 2), key management (Week 4), and usage ingestion (Week 5)
-// can wire concrete implementations behind them without
-// touching this package's public surface.
+// AGT-08 (audit-2026-07-23): this doc previously narrated the auth
+// flow, key management, and Postgres cutover as future per-week
+// work; all of it has since shipped. Current reality:
 //
-// The runtime API auth path (internal/auth.RedisAPIKeyValidator)
-// is unchanged in this PR. The cutover from Redis-only to
-// Postgres-canonical key storage lands in Week 4 with a
-// write-through migration that mirrors existing Redis records
-// into api_keys and adds Postgres as the read source of truth
-// behind the validator.
+//   - The dashboard auth flow (magic-link + session cookies) is
+//     live — see internal/api/v1/dashboardauth, wired in
+//     cmd/stellarindex-api/main.go's buildDashboardBundle.
+//   - Key management (mint/list/revoke) is live via
+//     internal/api/v1/dashboardkeys atop postgresstore.APIKeyStore.
+//   - The Redis-only → Postgres-canonical key-storage cutover is
+//     live and operator-controlled via api.auth_backend ("redis" |
+//     "postgres" — see [config.APIConfig.AuthBackend]'s doc for the
+//     canary/rollback procedure). auth.NewPostgresAPIKeyValidator
+//     (internal/auth/apikey_postgres.go) is the read-through
+//     validator: Postgres is the dashboard's source of truth
+//     regardless of the flag; "postgres" additionally makes it the
+//     RUNTIME validation path, with Redis as a cache.
 //
 // Package layout:
 //
