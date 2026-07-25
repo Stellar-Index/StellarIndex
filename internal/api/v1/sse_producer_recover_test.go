@@ -105,8 +105,12 @@ func TestSSEProducerGoroutinesRecover(t *testing.T) {
 	}
 }
 
-// bodyRegistersRecover reports whether fn's body contains a deferred call whose
-// body invokes recover().
+// bodyRegistersRecover reports whether fn's body registers panic recovery: either
+// a deferred func literal that calls recover() directly, or a deferred call to the
+// shared (*Server).recoverStreamProducer helper (which calls recover() itself — it
+// is the deferred function, so recover() still fires in the panicking goroutine).
+// Both forms are accepted so the guard survives the complexity-driven extraction
+// without weakening what it asserts: the producer must register SOME recovery.
 func bodyRegistersRecover(fn *ast.FuncDecl) bool {
 	if fn.Body == nil {
 		return false
@@ -123,6 +127,10 @@ func bodyRegistersRecover(fn *ast.FuncDecl) bool {
 				return true
 			}
 			if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == "recover" {
+				found = true
+			}
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel != nil &&
+				sel.Sel.Name == "recoverStreamProducer" {
 				found = true
 			}
 			return true

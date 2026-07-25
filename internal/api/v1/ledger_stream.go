@@ -135,15 +135,7 @@ func (s *Server) runLedgerStreamProducer(
 	// (defers are LIFO): the SSE writer sees the channel close and ends the response
 	// cleanly, then this logs. Never swallow it silently — a crash turning into an
 	// invisible dropped connection is its own bug.
-	defer func() {
-		if r := recover(); r != nil {
-			s.logger.Error("sse producer panicked",
-				"stream", "ledger",
-				"panic", fmt.Sprintf("%v", r),
-				"stack", string(debug.Stack()),
-			)
-		}
-	}()
+	defer s.recoverStreamProducer("ledger")
 	defer close(ch)
 
 	var gen streaming.Generator
@@ -250,4 +242,23 @@ func ledgerStreamEvent(gen *streaming.Generator, view LedgerTipView) (streaming.
 		Type: "ledger_update",
 		Data: body,
 	}, true
+}
+
+// recoverStreamProducer is the deferred panic guard for the SSE producer
+// goroutines (AGT-12, audit-2026-07-24). It MUST be invoked as
+// `defer s.recoverStreamProducer("<stream>")` from the producer itself:
+// recover() only works when called by a function the panicking goroutine
+// deferred, so this cannot be hoisted into a helper the producer merely calls.
+//
+// Extracted from three inline copies so each producer stays under the
+// cognitive-complexity gate without suppressing it (the campaign's precedent is
+// to lower real complexity rather than add //nolint).
+func (s *Server) recoverStreamProducer(stream string) {
+	if r := recover(); r != nil {
+		s.logger.Error("sse producer panicked",
+			"stream", stream,
+			"panic", fmt.Sprintf("%v", r),
+			"stack", string(debug.Stack()),
+		)
+	}
 }
