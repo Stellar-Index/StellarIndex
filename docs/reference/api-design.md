@@ -205,7 +205,9 @@ For Soroban-native tokens:
 | GET | `/v1/price?asset_id=&quote=USD` | Current aggregated price. | F1.2, S5.1-4 |
 | GET | `/v1/price/batch?asset_ids=A,B,C&quote=USD` | Up to 100 assets in one call. | F5.3 |
 | POST | `/v1/price/batch` | Same, body-form; up to 1000 assets. | F5.3 |
+| GET | `/v1/price/tip?asset=&quote=USD` | Rolling-window tip price (ADR-0018 surface 2). | S5.1-4 |
 | GET | `/v1/price/stream?asset_id=…&quote=USD` | Server-Sent Events. | S5.3 |
+| GET | `/v1/observations?asset=&quote=USD` | Raw most-recent trade per source (ADR-0018 surface 3). | S5.1-4 |
 
 Response `data` for `/v1/price`:
 
@@ -228,6 +230,47 @@ Response `data` for `/v1/price`:
   "max_supply": null                      // supply derivation (null if uncapped or no snapshot)
 }
 ```
+
+#### 5.3.1 Why the same asset can read differently across surfaces
+
+Four surfaces serve a "current USD price" and they are **not** required
+to agree to the last digit. Each is pinned to a different window *by
+design* — [ADR-0018](../adr/0018-api-consistency-surfaces.md) makes the
+consistency contract a property of the URL, never of a query parameter.
+On a pair moving ~0.1 %/min the observed spread between them is ~0.1–
+0.2 % (audit B10-F1 measured ~0.16 %); that is the windows differing,
+not an aggregation fault.
+
+| Surface | Window | Cross-region determinism | Typical staleness |
+| ------- | ------ | ------------------------ | ----------------- |
+| `/v1/price` | Last **closed** 1 m VWAP bucket (ADR-0015); `?window=N` → the aggregator's rolling VWAP for that window | **Yes** (byte-identical for the same `(pair, window, from_ts)`) | ~30–120 s by construction |
+| `/v1/price/tip` | Rolling `[now-5s, now)`, escalated to 30 s when empty, then the `/v1/price` snapshot as last-good | No | ≤ 5–30 s while the pair trades |
+| `/v1/observations` | Most-recent trade **per source**, unaggregated | No | one venue's last print |
+| `/v1/assets`, `/v1/assets/{id}` (`price_usd`) | Most recent `prices_1m` bucket in a trailing **24 h** window, quoted via the on-chain USDC / `fiat:USD` proxy and chained through XLM when there's no direct USD market; served behind a 2 min response cache. Falls back to the `/v1/price` closed-bucket read when the catalogue has no row. | No | cache TTL + quote-policy difference; up to 24 h on a quiet pair |
+
+Consequences consumers actually hit:
+
+- **Only `/v1/price` carries the cross-region guarantee.** Anything
+  reconciling two regions, or auditing a historical claim, reads
+  `/v1/price` (or the §5.4 historical surfaces) — never the asset rows,
+  whose response cache alone can put two regions on different buckets.
+- **`flags.stale` is per-surface and not comparable across them.** It
+  means "below *this* surface's baseline contract": `/v1/price` sets it
+  when it degraded off the closed bucket; `/v1/price/tip` never sets it,
+  because both of its branches are in-contract.
+- **Catalogue (verified-currency) rows price globally.** Those
+  `price_usd` values come from the CEX/aggregator tiers, and fiat rows
+  from the **daily** ECB reference series in `fx_quotes` — a fiat
+  `price_usd` can legitimately be ~24 h old, with `price_as_of` saying
+  so.
+- **Historical surfaces are not part of this spread.** `/v1/history`,
+  `/v1/ohlc`, `/v1/twap`, `/v1/vwap`, `/v1/chart` and `/v1/price/at` are
+  bucket-pinned to an explicit `[from, to)` and clamp an implicit "now"
+  to the 30 s closed-bucket boundary, so they reproduce exactly.
+
+The in-code map is the package doc of `internal/api/v1` ("Current-price
+surfaces and their windows"), which names the producer function behind
+each surface.
 
 ### 5.4 Historical price + OHLC
 

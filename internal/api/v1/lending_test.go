@@ -179,6 +179,72 @@ func TestLendingPools_NilSliceFromReaderMarshalsAsEmptyArray(t *testing.T) {
 	}
 }
 
+// TestLendingPoolReserves_AssetsTimeoutReturns503 and its sibling below
+// pin C-F2: the reserves handler's 15s ceiling must surface as a
+// RETRYABLE 503 + `lending-timeout`, exactly like handleLendingPools in
+// the same file already does — not the 500 both sites used to emit.
+//
+// A 500 tells clients "broken, don't retry", costs an availability
+// point in the sla-probe's 5xx accounting, and is not even a status the
+// OpenAPI spec declares for this path (it declares 400 + 503 only).
+//
+// Proven red against the pre-fix handler: status 500, no
+// `lending-timeout` in the body.
+func TestLendingPoolReserves_AssetsTimeoutReturns503(t *testing.T) {
+	pool := mkCStrkey(t, 7)
+	srv := v1.New(v1.Options{
+		Explorer: &stubExplorerReader{},
+		Lending:  &stubLendingReader{err: context.DeadlineExceeded},
+	})
+	base := httpTestServer(t, srv).URL
+
+	resp := mustGet(t, base+"/v1/lending/pools/"+pool+"/reserves")
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503 (BlendPoolAssets deadline is retryable capacity, not an internal fault)", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, "lending-timeout") {
+		t.Errorf("expected `lending-timeout` problem type in body, got: %s", body)
+	}
+}
+
+// Same contract at the second reader hop: the contract_data scan that
+// decodes reserve state.
+func TestLendingPoolReserves_ReservesTimeoutReturns503(t *testing.T) {
+	pool := mkCStrkey(t, 7)
+	asset := mkCStrkey(t, 20)
+	srv := v1.New(v1.Options{
+		Explorer: &stubExplorerReader{err: context.DeadlineExceeded},
+		Lending:  &stubLendingReader{assets: []string{asset}},
+	})
+	base := httpTestServer(t, srv).URL
+
+	resp := mustGet(t, base+"/v1/lending/pools/"+pool+"/reserves")
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503 (BlendPoolReserves deadline is retryable capacity)", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, "lending-timeout") {
+		t.Errorf("expected `lending-timeout` problem type in body, got: %s", body)
+	}
+}
+
+// A NON-deadline storage error must still be a 500 — the fix maps the
+// timeout branch only, it does not blanket-downgrade real faults.
+func TestLendingPoolReserves_StorageErrorStays500(t *testing.T) {
+	pool := mkCStrkey(t, 7)
+	srv := v1.New(v1.Options{
+		Explorer: &stubExplorerReader{},
+		Lending:  &stubLendingReader{err: errors.New("storage broke")},
+	})
+	base := httpTestServer(t, srv).URL
+
+	resp := mustGet(t, base+"/v1/lending/pools/"+pool+"/reserves")
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500 for a non-deadline storage error", resp.StatusCode)
+	}
+}
+
 // TestLendingPoolReserves_Watermark pins ADR-0041 Decision 4 on the
 // Blend per-reserve current-state read: `as_of_ledger` carries the
 // (cached) lake watermark, `flags.stale` fires when its close time

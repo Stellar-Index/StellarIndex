@@ -63,6 +63,13 @@ const (
 // a closed-bucket concept and accepting it on the tip URL would let a
 // stray query string silently turn a tip request into something
 // closed-bucket-shaped (ADR-0018 §"URL discipline").
+//
+// Window semantics vs the other price surfaces: a 5 s (default) rolling
+// window against /v1/price's last CLOSED 1 m bucket and against the
+// trailing-24 h catalogue overlay behind /v1/assets' price_usd. On a
+// moving pair the three legitimately differ by ~0.1–0.2 % — see the
+// "Current-price surfaces and their windows" section in the package
+// doc, which enumerates every producer and its window.
 func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 	// PriceReader is the fallback path; without it the tip surface
 	// can't degrade and there's nothing meaningful to serve. The

@@ -174,6 +174,10 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 		if clientAborted(r, err) {
 			return
 		}
+		if handlerTimedOut(ctx, err) {
+			s.writeLendingReservesTimeout(w, r, "BlendPoolAssets", pool)
+			return
+		}
 		s.logger.Error("BlendPoolAssets failed", "err", err, "pool", pool)
 		writeProblem(w, r, "https://api.stellarindex.io/errors/internal", "Internal error", http.StatusInternalServerError, "")
 		return
@@ -192,6 +196,10 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 	states, err := s.explorer.BlendPoolReserves(ctx, pool, assets, configs)
 	if err != nil {
 		if clientAborted(r, err) {
+			return
+		}
+		if handlerTimedOut(ctx, err) {
+			s.writeLendingReservesTimeout(w, r, "BlendPoolReserves", pool)
 			return
 		}
 		s.logger.Error("BlendPoolReserves failed", "err", err, "pool", pool)
@@ -221,6 +229,22 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 	wmLedger, stale, _ := s.lakeWatermark(ctx)
 	out.AsOfLedger = wmLedger
 	writeJSON(w, out, Flags{Stale: stale})
+}
+
+// writeLendingReservesTimeout is the 503 the reserves handler owes a
+// caller when its 15s ceiling fires, mirroring the `lending-timeout`
+// response [Server.handleLendingPools] already returns in this file
+// (C-F2). A deadline on a ledger-windowed contract_data scan is a
+// RETRYABLE capacity condition, not an internal fault: the 500 these
+// sites used to emit told clients "don't retry, it's broken", burned an
+// availability point in the sla-probe's 5xx accounting, and wasn't even
+// a status the OpenAPI spec declares for this path (400 + 503 only).
+func (s *Server) writeLendingReservesTimeout(w http.ResponseWriter, r *http.Request, stage, pool string) {
+	s.logger.Warn("lending reserves deadline exceeded", "stage", stage, "pool", pool)
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/lending-timeout",
+		"Lending reserves query timed out", http.StatusServiceUnavailable,
+		"the pool's reserve state didn't decode within 15s; retry shortly.")
 }
 
 // buildReserveView maps one decoded reserve state to its wire shape,

@@ -566,18 +566,42 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 		cursorClause = ` AND (ledger_seq, tx_index) < (?, ?)`
 		cursorArgs = []any{cur.Ledger, cur.A}
 	}
+	// Each arm carries its OWN `ORDER BY … LIMIT ?` (audit C-F1a) — without
+	// it only the outer query was bounded, so an account with a long history
+	// materialised EVERY transaction it ever touched before the outer LIMIT
+	// 50 threw all but a page away.
+	//
+	// INVARIANT that makes this exact, not an approximation: the union of two
+	// individually-top-N arms provably CONTAINS the union's top N. Any row in
+	// the true top N has at most N-1 distinct rows ahead of it across both
+	// arms, hence at most N-1 ahead of it WITHIN its own arm, so it survives
+	// that arm's top-N cut. The outer merge-sort + LIMIT then picks the same N
+	// rows it always did.
+	//
+	// The per-arm `LIMIT 1 BY ledger_seq, tx_index` is what keeps the cut
+	// exact rather than merely correct-order: stellar.transactions is
+	// ReplacingMergeTree, so an un-merged duplicate PART could otherwise
+	// consume slots in an arm's top-N and hand back a SHORT page while
+	// further rows existed (no row is lost — the keyset cursor still advances
+	// off the last served row — but a client that stops on a short page would
+	// truncate its own history). It also strengthens the outer DISTINCT,
+	// which only ever collapsed byte-identical duplicates.
 	q := `SELECT DISTINCT ` + txCols + ` FROM (
 		(SELECT ` + txCols + ` FROM stellar.transactions
-		   WHERE source_account = ?` + cursorClause + `)
+		   WHERE source_account = ?` + cursorClause + `
+		   ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?)
 		UNION ALL
 		(SELECT ` + txCols + ` FROM stellar.transactions
 		   WHERE (ledger_seq, tx_index) IN (
-		        SELECT DISTINCT ledger_seq, tx_index FROM stellar.operation_participants WHERE account = ?)` + cursorClause + `)
+		        SELECT DISTINCT ledger_seq, tx_index FROM stellar.operation_participants WHERE account = ?)` + cursorClause + `
+		   ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?)
 	) ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?`
 	args := []any{account}
 	args = append(args, cursorArgs...)
+	args = append(args, limit)
 	args = append(args, account)
 	args = append(args, cursorArgs...)
+	args = append(args, limit)
 	args = append(args, limit)
 	rows, err := r.conn.Query(ctx, q, args...)
 	if err != nil {
@@ -621,18 +645,40 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 		cursorClause = ` AND (ledger_seq, tx_index, op_index) < (?, ?, ?)`
 		cursorArgs = []any{cur.Ledger, cur.A, cur.B}
 	}
+	// Each arm carries its OWN `ORDER BY … LIMIT ?` (audit C-F1a). This
+	// matters more here than on AccountTransactions: opCols carries body_xdr
+	// (KB-scale), and with only the OUTER query bounded a high-activity
+	// account materialised every op it ever sourced — blobs and all — before
+	// the outer LIMIT 50 discarded ~all of it (live-measured 5–6 s on an idle
+	// box). Bounded arms let each side read in reverse primary-key order and
+	// stop after N rows.
+	//
+	// INVARIANT: the union of two individually-top-N arms provably CONTAINS
+	// the union's top N — any row in the true top N has at most N-1 rows
+	// ahead of it across both arms, hence at most N-1 within its own arm, so
+	// it survives that arm's cut. The outer merge-sort + LIMIT then selects
+	// exactly the rows it selected before. The pre-existing per-arm
+	// `LIMIT 1 BY` (DAT-10) runs BEFORE the per-arm LIMIT, so each arm's N
+	// slots hold N DISTINCT primary keys — a duplicate un-merged part can't
+	// eat a slot and shorten the page.
 	q := `SELECT ` + opCols + ` FROM (
 		(SELECT ` + opCols + ` FROM stellar.operations
-		   WHERE source_account = ?` + cursorClause + ` LIMIT 1 BY ledger_seq, tx_index, op_index)
+		   WHERE source_account = ?` + cursorClause + `
+		   ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC
+		   LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?)
 		UNION ALL
 		(SELECT ` + opCols + ` FROM stellar.operations
 		   WHERE (ledger_seq, tx_index, op_index) IN (
-		        SELECT ledger_seq, tx_index, op_index FROM stellar.operation_participants WHERE account = ?)` + cursorClause + ` LIMIT 1 BY ledger_seq, tx_index, op_index)
+		        SELECT ledger_seq, tx_index, op_index FROM stellar.operation_participants WHERE account = ?)` + cursorClause + `
+		   ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC
+		   LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?)
 	) ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?`
 	args := []any{account}
 	args = append(args, cursorArgs...)
+	args = append(args, limit)
 	args = append(args, account)
 	args = append(args, cursorArgs...)
+	args = append(args, limit)
 	args = append(args, limit)
 	rows, err := r.conn.Query(ctx, q, args...)
 	if err != nil {
