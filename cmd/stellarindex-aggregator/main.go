@@ -869,12 +869,53 @@ func buildSupplyRefreshers(cfg config.Config, store *timescale.Store, closeTimes
 	return out, nil
 }
 
+// buildSupplyPolicy resolves the operator-configured
+// [config.SupplyConfig] per-asset locked-set / max-supply overrides
+// into a [supply.Policy] for the classic (Algorithm 2) and SEP-41
+// (Algorithm 3) computers. CFG-11 (audit-2026-07-23): both
+// NewClassicComputer and NewSEP41Computer call sites used to
+// hardcode supply.Policy{} — the config fields existed in intent
+// (docs promised "operator-managed treasury/vesting exclusions") but
+// were never read, and internal/supply.Policy already implements
+// this end to end (including its own Validate()) with nothing
+// wiring it up. Runs policy.Validate() so a malformed override
+// fails the aggregator at startup rather than mid-snapshot.
+//
+// Deliberately does NOT populate Policy.SDFReserveAccounts: that
+// field only feeds Algorithm 1 (native XLM), which buildXLMRefresher
+// wires independently via supply.NewXLMComputer(cfg.Supply.
+// SDFReserveAccounts, …) — ClassicComputer/SEP41Computer never read
+// it (see internal/supply/classic.go, sep41.go), so setting it here
+// would be dead weight that misleads a future reader.
+func buildSupplyPolicy(cfg config.SupplyConfig) (supply.Policy, error) {
+	policy := supply.Policy{
+		MaxSupplyOverrides: cfg.MaxSupplyOverrides,
+	}
+	if len(cfg.PerAssetLockedSets) > 0 {
+		policy.PerAsset = make(map[string]supply.LockedSet, len(cfg.PerAssetLockedSets))
+		for assetKey, ls := range cfg.PerAssetLockedSets {
+			policy.PerAsset[assetKey] = supply.LockedSet{
+				Accounts:  ls.Accounts,
+				Contracts: ls.Contracts,
+			}
+		}
+	}
+	if err := policy.Validate(); err != nil {
+		return supply.Policy{}, fmt.Errorf("supply policy: %w", err)
+	}
+	return policy, nil
+}
+
 func buildClassicRefreshers(cfg config.Config, store *timescale.Store, closeTimes ledgerCloseTimeReader, logger *slog.Logger) ([]supplyRefresherBinding, error) {
 	if len(cfg.Supply.WatchedClassicAssets) == 0 {
 		return nil, nil
 	}
+	policy, err := buildSupplyPolicy(cfg.Supply)
+	if err != nil {
+		return nil, err
+	}
 	classicReader := supply.NewStorageClassicSupplyReader(store)
-	classicComputer, err := supply.NewClassicComputer(supply.Policy{}, classicReader)
+	classicComputer, err := supply.NewClassicComputer(policy, classicReader)
 	if err != nil {
 		return nil, fmt.Errorf("classic computer: %w", err)
 	}
@@ -924,8 +965,12 @@ func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, closeTimes 
 	if len(cfg.Supply.WatchedSEP41Contracts) == 0 {
 		return nil, nil
 	}
+	policy, err := buildSupplyPolicy(cfg.Supply)
+	if err != nil {
+		return nil, err
+	}
 	sep41Reader := supply.NewStorageSEP41SupplyReader(supplyAggregatorSEP41Store{s: store})
-	sep41Computer, err := supply.NewSEP41Computer(supply.Policy{}, sep41Reader)
+	sep41Computer, err := supply.NewSEP41Computer(policy, sep41Reader)
 	if err != nil {
 		return nil, fmt.Errorf("sep41 computer: %w", err)
 	}
