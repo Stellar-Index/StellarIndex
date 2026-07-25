@@ -595,6 +595,19 @@ type Orchestrator struct {
 	// tick after startup unconditionally runs the pass.
 	lastDivergenceRefreshAt time.Time
 
+	// frozenThisTick holds the `<pair>:<window>` stateKeys this tick
+	// refused to publish because Phase 1 or Phase 2 froze them. The
+	// triangulation pass reads it so a chain does not silently
+	// re-publish a frozen leg's last-known-good value as a fresh
+	// derived price (MNY-22) — see [Orchestrator.legPriceFromCache].
+	//
+	// Rebuilt at the top of every [Tick]: a freeze is a per-bucket
+	// decision, and the leg's cache holds LKG only for as long as the
+	// freeze keeps being re-decided. Same single-Tick-at-a-time
+	// invariant as prevVWAPs (refreshPairWindow and triangulateAll run
+	// sequentially inside one Tick), so no lock is needed.
+	frozenThisTick map[string]struct{}
+
 	// Stats exposed for metrics / test assertions. Zero-copy.
 	mu             sync.Mutex
 	lastTickAt     time.Time
@@ -669,6 +682,9 @@ func (o *Orchestrator) Tick(ctx context.Context) error {
 	o.lastTickAt = now
 	o.ticksTotal++
 	o.mu.Unlock()
+
+	// Fresh per-tick freeze set — see [Orchestrator.frozenThisTick].
+	o.frozenThisTick = make(map[string]struct{})
 
 	tickHadError := false
 	for _, pair := range o.cfg.Pairs {
@@ -946,6 +962,43 @@ func (o *Orchestrator) computeNormalizedVWAP(trades []canonical.Trade, pair cano
 		aggregate.ResolveDecimals(o.cfg.DecimalsLookup, pair.Quote)), nil
 }
 
+// markFrozenThisTick records that (pair, window) was refused
+// publication by a freeze on this tick, so
+// [Orchestrator.legPriceFromCache] can refuse to feed its
+// last-known-good value into a triangulated chain (MNY-22).
+//
+// Called from the freeze paths themselves — [Orchestrator.markPhase2Freeze]
+// and [Orchestrator.evaluateAndMaybeFreeze] — rather than from their
+// caller, so a future third freeze path cannot forget to record and
+// silently reopen the laundering route.
+//
+// Tolerates a nil map so an Orchestrator driven by a direct
+// refreshPairWindow call in a test (rather than through Tick) behaves
+// as "nothing frozen" instead of panicking.
+func (o *Orchestrator) markFrozenThisTick(pair canonical.Pair, window time.Duration) {
+	if o.frozenThisTick == nil {
+		o.frozenThisTick = make(map[string]struct{})
+	}
+	o.frozenThisTick[frozenTickKey(pair, window)] = struct{}{}
+}
+
+// frozenLeg reports whether (pair, window) was frozen earlier in this
+// tick.
+func (o *Orchestrator) frozenLeg(pair canonical.Pair, window time.Duration) bool {
+	if len(o.frozenThisTick) == 0 {
+		return false
+	}
+	_, ok := o.frozenThisTick[frozenTickKey(pair, window)]
+	return ok
+}
+
+// frozenTickKey is the [Orchestrator.frozenThisTick] key. Its own key
+// space — deliberately not shared with refreshPairWindow's stateKey,
+// which happens to use the same shape but serves the prevVWAPs map.
+func frozenTickKey(pair canonical.Pair, window time.Duration) string {
+	return pair.String() + ":" + window.String()
+}
+
 // keepFrozenVWAPAlive extends the TTL of the last-known-good VWAP
 // key for (pair, window) so it survives for at least as long as the
 // freeze marker (F-1345, G13-03).
@@ -1055,6 +1108,11 @@ func (o *Orchestrator) evaluateAndMaybeFreeze(
 	o.freezesEngaged++
 	o.mu.Unlock()
 	obs.AnomalyFreezeEngagedTotal.WithLabelValues(string(decision.Class)).Inc()
+
+	// MNY-22: this pair's LKG stays in cache for the rest of the tick;
+	// record the refusal so triangulation can't republish it as a
+	// derived price.
+	o.markFrozenThisTick(pair, window)
 
 	o.logger.Warn("anomaly freeze engaged",
 		"pair", pair.String(),
@@ -1245,17 +1303,27 @@ func usdVolumeForPairPerTrade(pair canonical.Pair, batch []canonical.Trade, clas
 	if len(batch) == 0 {
 		return 0, nil
 	}
-	decimals, ok := usdQuoteDecimals(pair.Quote, classicUSDPegs, sorobanUSDPegs)
-	if !ok {
+	if _, ok := usdQuoteDecimals(pair.Quote, classicUSDPegs, sorobanUSDPegs); !ok {
 		return 0, nil
 	}
-	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
+	// One scale per DISTINCT decimals value, not per trade — a window
+	// carries hundreds of trades across at most three decimal classes.
+	scales := make(map[int]*big.Int, 3)
 	perTrade := make(map[string]float64, len(batch))
 	var total float64
 	for i := range batch {
 		amt := batch[i].QuoteAmount.BigInt()
 		if amt == nil || amt.Sign() == 0 {
 			continue
+		}
+		decimals, ok := usdQuoteDecimalsForTrade(pair.Quote, batch[i].Source, classicUSDPegs, sorobanUSDPegs)
+		if !ok {
+			continue
+		}
+		scale, hit := scales[decimals]
+		if !hit {
+			scale = new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
+			scales[decimals] = scale
 		}
 		rat := new(big.Rat).SetFrac(amt, scale)
 		v, _ := rat.Float64()
@@ -1265,20 +1333,59 @@ func usdVolumeForPairPerTrade(pair canonical.Pair, batch []canonical.Trade, clas
 	return total, perTrade
 }
 
+// usdQuoteDecimalsForTrade resolves the fixed-point scale for ONE
+// trade's QuoteAmount. Same four tiers as [usdQuoteDecimals], but the
+// two OFF-CHAIN tiers read the emitting source's declared scale from
+// the external registry instead of assuming the 1e8 CEX convention
+// (MNY-05 / CS-040 — the same per-source resolution
+// [approxUSDVolume] already uses for the confidence liquidity factor).
+//
+// The off-chain convention is NOT uniform: the CEX pollers stamp 8
+// decimals, but the FX pollers stamp 6
+// ([external.Registry]'s `massive` / `polygon-forex` /
+// `exchangeratesapi` all declare AmountDecimals:6, with the comment
+// "so the USD-volume gate scales them right"). Valuing a 6dp
+// fiat:USD-quoted amount at 1e8 understates it 100× — enough on its own
+// to drop an otherwise-healthy window below MinUSDVolume ($10K by
+// default) every tick, and to persist a 100×-low `volume_usd` on the
+// source-contribution rows. Reading the registry is what makes the
+// declaration the registry already carries actually load-bearing.
+//
+// The two ON-CHAIN tiers keep the structural 7: a classic credit and
+// its SAC wrapper are 7-decimal by Stellar protocol invariant, whoever
+// reports the trade, and [external.Metadata.AmountScaleDecimals]
+// falls back to 8 for any source missing from the registry — so
+// deferring to it there would turn one unregistered on-chain venue
+// into a silent 10× understatement of a real USD peg.
+func usdQuoteDecimalsForTrade(quote canonical.Asset, source string, classicUSDPegs, sorobanUSDPegs []canonical.Asset) (decimals int, ok bool) {
+	switch {
+	case quote.Type == canonical.AssetFiat && quote.Code == "USD",
+		aggregate.IsFiatProxyFor(quote, "USD"):
+		return external.Lookup(source).AmountScaleDecimals(), true
+	default:
+		return usdQuoteDecimals(quote, classicUSDPegs, sorobanUSDPegs)
+	}
+}
+
 // usdQuoteDecimals resolves the fixed-point decimal scale needed to
 // read a trade's QuoteAmount as a USD figure, for a pair whose quote
 // leg is one of the four shapes this package can value in USD
 // without a live price lookup:
 //
-//  1. fiat:USD directly — decimals 8 (the uniform off-chain
-//     CEX/FX external-source convention).
+//  1. fiat:USD directly — decimals 8, the off-chain CEX DEFAULT.
 //  2. An abstract USD-pegged stablecoin ticker (`crypto:USDT`,
 //     `crypto:USDC`, `crypto:DAI`, `crypto:PYUSD`, `crypto:USDP` —
 //     whatever [aggregate.IsFiatProxyFor] maps to "USD") — decimals 8
 //     as well, because only off-chain sources ever stamp the ABSTRACT
 //     ticker (Binance XLMUSDT, Kraken XLM/USDT, …; the on-chain legs
-//     carry classic/Soroban identity instead) and those all emit at
-//     the 1e8 convention, same as tier 1.
+//     carry classic/Soroban identity instead).
+//
+// The 8 on tiers 1-2 is a per-PAIR default, not the per-trade truth:
+// the off-chain convention splits 8 (CEX) vs 6 (FX pollers), so the
+// valuation path resolves it per trade from the emitting source's
+// registry declaration — see [usdQuoteDecimalsForTrade] (MNY-05). This
+// function answers the pair-level question ("is this quote a USD
+// surface at all"), which is source-independent.
 //  3. A classic Stellar credit on `classicUSDPegs` — decimals 7
 //     (the Stellar-classic invariant).
 //  4. A Soroban SAC wrapper on `sorobanUSDPegs` — decimals 7 (a SAC

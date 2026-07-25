@@ -487,3 +487,138 @@ func TestTick_Triangulation_NoChainsConfigured(t *testing.T) {
 			beforeOK, afterOK, beforeMiss, afterMiss)
 	}
 }
+
+// TestTriangulate_FrozenLegDoesNotPublishDerivedPrice (MNY-22) — a
+// freeze must not be launderable through triangulation.
+//
+// When Phase 1 or Phase 2 refuses to publish a pair, the orchestrator
+// deliberately leaves that pair's last-known-good value in Redis (the
+// API serves it with flags.frozen=true, which is the honest answer).
+// The triangulation pass then read that very key as if it were this
+// tick's fresh price, multiplied it by the other legs, and published
+// the product to the TARGET pair — which carries no freeze marker of
+// its own. The price we just declined to serve on XLM/USDT reached
+// consumers on XLM/EUR one multiplication later, looking fresh.
+//
+// Post-fix the chain refuses (outcome "frozen_leg"), keeps the
+// target's own prior value alive, and marks the target frozen so the
+// derived pair tells the same truth as the leg it descends from.
+//
+// Proven red pre-fix: the target key was written with "0.900000000000"
+// (the frozen 1.00 leg × the 0.90 leg) and Mark was called once (the
+// leg only) instead of twice.
+func TestTriangulate_FrozenLegDoesNotPublishDerivedPrice(t *testing.T) {
+	ctx := context.Background()
+	leg1 := xlmUsdtPair(t) // crypto:XLM/crypto:USDT — the pair that freezes
+	leg2 := mkPair(t, "crypto", "USDT", "fiat", "EUR")
+	target := mkPair(t, "crypto", "XLM", "fiat", "EUR")
+	window := 5 * time.Minute
+
+	cache, mr := newTestRedis(t)
+	marker := &recordingFreezeMarker{}
+	o := New(nil, cache, Config{
+		Pairs:        []canonical.Pair{leg1},
+		Windows:      []time.Duration{window},
+		Anomaly:      newAnomalyChecker(t, leg1),
+		FreezeWriter: marker,
+		Triangulations: []TriangulationChain{{
+			Target: target,
+			Legs:   []canonical.Pair{leg1, leg2},
+		}},
+	})
+
+	// Leg 1 holds its last-known-good $1.00 (what the freeze preserves);
+	// leg 2 is a healthy 0.90. Pre-fix the chain published 1.00 × 0.90.
+	leg1Key := cachekeys.VWAP(leg1.Base, leg1.Quote, window).String()
+	leg2Key := cachekeys.VWAP(leg2.Base, leg2.Quote, window).String()
+	targetKey := cachekeys.VWAP(target.Base, target.Quote, window).String()
+	cache.Set(ctx, leg1Key, "1.000000000000", time.Minute)
+	cache.Set(ctx, leg2Key, "0.900000000000", time.Minute)
+
+	// prev = $1.00; this tick's single-source bucket prices XLM at
+	// ~$2.10 — a 110% deviation, well past the 2% freeze threshold.
+	o.prevVWAPs[leg1.String()+":"+window.String()] = big.NewRat(1, 1)
+	o.store = &mockStore{trades: []canonical.Trade{
+		buildTrade(t, big.NewInt(100_000_000), big.NewInt(210_000_000), time.Now()),
+	}}
+
+	before := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues(outcomeFrozenLeg))
+	if err := o.Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	// 1. The derived price must NOT have been published.
+	if mr.Exists(targetKey) {
+		got, _ := mr.Get(targetKey)
+		t.Errorf("target key %q written with %q — the frozen leg's LKG was laundered into a derived price",
+			targetKey, got)
+	}
+
+	// 2. The target inherits the freeze, so the API flags it.
+	var targetMark *recordedMark
+	for i := range marker.marks {
+		if marker.marks[i].asset.Equal(target.Base) && marker.marks[i].quote.Equal(target.Quote) {
+			targetMark = &marker.marks[i]
+		}
+	}
+	if targetMark == nil {
+		t.Fatalf("no freeze marker written for the triangulated target %s (marks: %+v)",
+			target.String(), marker.marks)
+	}
+	if !targetMark.decision.IsFrozen() {
+		t.Errorf("target decision not frozen: %+v", targetMark.decision)
+	}
+	if !strings.Contains(targetMark.decision.Reason, "triangulation:leg_frozen") {
+		t.Errorf("target freeze reason = %q, want it to name the frozen leg", targetMark.decision.Reason)
+	}
+	if !strings.Contains(targetMark.decision.Reason, leg1.String()) {
+		t.Errorf("target freeze reason = %q, want it to identify leg %s",
+			targetMark.decision.Reason, leg1.String())
+	}
+
+	// 3. The outcome is attributed, not silently folded into missing_leg.
+	after := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues(outcomeFrozenLeg))
+	if after-before != 1 {
+		t.Errorf("triangulation outcome %q delta = %v, want 1", outcomeFrozenLeg, after-before)
+	}
+
+	// 4. The leg's own LKG is untouched — the freeze semantics the fix
+	// piggybacks on must still hold.
+	if got, _ := mr.Get(leg1Key); got != "1.000000000000" {
+		t.Errorf("leg LKG = %q, want it preserved at 1.000000000000", got)
+	}
+}
+
+// TestTriangulate_HealthyLegStillPublishes is the other half of the
+// MNY-22 guard: the freeze check must be scoped to the pairs actually
+// frozen this tick, not a blanket refusal that black-holes every
+// chained pair.
+func TestTriangulate_HealthyLegStillPublishes(t *testing.T) {
+	ctx := context.Background()
+	leg1 := mkPair(t, "crypto", "XLM", "crypto", "USDT")
+	leg2 := mkPair(t, "crypto", "USDT", "fiat", "EUR")
+	target := mkPair(t, "crypto", "XLM", "fiat", "EUR")
+	window := 5 * time.Minute
+
+	cache, mr := newTestRedis(t)
+	o := New(nil, cache, Config{
+		Windows: []time.Duration{window},
+		Triangulations: []TriangulationChain{{
+			Target: target,
+			Legs:   []canonical.Pair{leg1, leg2},
+		}},
+	})
+	cache.Set(ctx, cachekeys.VWAP(leg1.Base, leg1.Quote, window).String(), "1.000000000000", time.Minute)
+	cache.Set(ctx, cachekeys.VWAP(leg2.Base, leg2.Quote, window).String(), "0.900000000000", time.Minute)
+
+	if err := o.Tick(ctx); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	got, err := mr.Get(cachekeys.VWAP(target.Base, target.Quote, window).String())
+	if err != nil {
+		t.Fatalf("target key missing — nothing was frozen, the chain must publish: %v", err)
+	}
+	if got != "0.900000000000" {
+		t.Errorf("target = %q, want 0.900000000000 (1.00 × 0.90)", got)
+	}
+}
