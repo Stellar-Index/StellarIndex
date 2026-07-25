@@ -10,6 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -104,7 +105,9 @@ func isFXLeg(leg canonical.Pair) bool {
 // (the most common — the leg's refresh just produced an empty
 // window), "parse_error" on a malformed cached value (rare,
 // indicates upstream regression), "redis_error" on a Get failure
-// (Redis blip).
+// (Redis blip), and [outcomeFrozenLeg] when a leg was frozen earlier
+// in this tick — the chain then refuses to publish and the target
+// inherits the freeze ([Orchestrator.inheritLegFreeze]).
 //
 // For FX legs (Base AND Quote both AssetFiat), [Config.FXStore] is
 // queried for the most recent FX-source quote at-or-before bucketEnd
@@ -118,6 +121,9 @@ func (o *Orchestrator) triangulateOne(ctx context.Context, chain TriangulationCh
 	for _, leg := range chain.Legs {
 		price, outcome := o.legPrice(ctx, chain, leg, window, bucketEnd)
 		if outcome != "" {
+			if outcome == outcomeFrozenLeg {
+				o.inheritLegFreeze(ctx, chain, window, leg)
+			}
 			return outcome
 		}
 		legPrices = append(legPrices, price)
@@ -205,14 +211,32 @@ func (o *Orchestrator) legPrice(
 	return o.legPriceFromCache(ctx, chain, leg, window)
 }
 
+// outcomeFrozenLeg is the [obs.AggregatorTriangulationsTotal] label
+// for "a leg of this chain was frozen this tick, so the chain did not
+// publish" (MNY-22).
+const outcomeFrozenLeg = "frozen_leg"
+
 // legPriceFromCache reads a leg's freshly-cached VWAP. Used for non-
 // FX legs and for FX legs when the snap path produced ErrNoFXQuote.
+//
+// Refuses (MNY-22) when the leg was frozen earlier in this same tick.
+// A freeze means "we do not trust this pair's newest bucket, keep
+// serving its last-known-good and flag it" — and the freeze path
+// deliberately leaves that LKG in the cache (keepFrozenVWAPAlive).
+// Reading it here would launder a value we just declined to publish
+// into a DERIVED pair that carries no frozen flag of its own: the
+// manipulated leg reaches consumers anyway, one multiplication later,
+// looking fresh. The chain is refused instead, and the caller inherits
+// the freeze onto the target ([Orchestrator.inheritLegFreeze]).
 func (o *Orchestrator) legPriceFromCache(
 	ctx context.Context,
 	chain TriangulationChain,
 	leg canonical.Pair,
 	window time.Duration,
 ) (*big.Rat, string) {
+	if o.frozenLeg(leg, window) {
+		return nil, outcomeFrozenLeg
+	}
 	key := cachekeys.VWAP(leg.Base, leg.Quote, window)
 	raw, err := o.cache.Get(ctx, key.String()).Result()
 	switch {
@@ -234,4 +258,73 @@ func (o *Orchestrator) legPriceFromCache(
 		return nil, "parse_error"
 	}
 	return price, ""
+}
+
+// inheritLegFreeze applies the direct-pair freeze semantics to a
+// triangulated TARGET whose chain could not publish because a leg was
+// frozen this tick (MNY-22).
+//
+// It mirrors [Orchestrator.markPhase2Freeze] deliberately, because the
+// consumer-visible situation is the same one: we are declining to
+// publish a new value and continuing to serve the prior one, so the
+// prior one's TTL must be kept alive and the pair must carry
+// flags.frozen=true. Without the marker the target would serve a stale
+// derived price with no indication that anything is wrong — worse than
+// the frozen leg it descends from, which at least tells the truth.
+//
+// Best-effort throughout: the target's LKG is read from cache to stamp
+// the freeze_events row, and both the read and the marker write log
+// rather than propagate — a failure here must not cost the rest of the
+// triangulation pass.
+func (o *Orchestrator) inheritLegFreeze(
+	ctx context.Context,
+	chain TriangulationChain,
+	window time.Duration,
+	leg canonical.Pair,
+) {
+	o.mu.Lock()
+	o.freezesEngaged++
+	o.mu.Unlock()
+
+	class := anomaly.ClassDefault
+	if o.cfg.Anomaly != nil {
+		class = o.cfg.Anomaly.ClassOf(chain.Target.Base)
+	}
+	obs.AnomalyFreezeEngagedTotal.WithLabelValues(string(class)).Inc()
+
+	o.logger.Warn("triangulation: leg frozen — target inherits the freeze",
+		"chain", chain.Target.String(),
+		"leg", leg.String(),
+		"window", window.String(),
+		"class", class,
+		"writer_wired", o.cfg.FreezeWriter != nil,
+	)
+
+	// The chain skipped its value write, so the target's prior value
+	// must outlive its ordinary TTL exactly as a directly-frozen pair's
+	// does (F-1345).
+	o.keepFrozenVWAPAlive(ctx, chain.Target, window)
+
+	if o.cfg.FreezeWriter == nil {
+		return
+	}
+	decision := anomaly.Decision{
+		Action: anomaly.ActionFreeze,
+		Class:  class,
+		// No per-class deviation is computed here — the deviation that
+		// justified the freeze was measured on the LEG. Reason carries
+		// the provenance.
+		Reason: fmt.Sprintf("triangulation:leg_frozen leg=%s window=%s", leg.String(), window.String()),
+	}
+	frozenValue, err := o.cache.Get(ctx, cachekeys.VWAP(chain.Target.Base, chain.Target.Quote, window).String()).Result()
+	if err != nil {
+		// redis.Nil (no prior derived value) is the ordinary first-tick
+		// case; anything else is a blip. Either way an empty frozen
+		// value is a valid marker — the sink stamps NULL.
+		frozenValue = ""
+	}
+	if err := o.cfg.FreezeWriter.Mark(ctx, chain.Target.Base, chain.Target.Quote, frozenValue, decision); err != nil {
+		o.logger.Warn("triangulation: inherited freeze marker write failed",
+			"chain", chain.Target.String(), "err", err)
+	}
 }

@@ -131,6 +131,11 @@ func (o *Orchestrator) markPhase2Freeze(
 	}
 	obs.AnomalyFreezeEngagedTotal.WithLabelValues(string(class)).Inc()
 
+	// MNY-22: this pair's LKG stays in cache for the rest of the tick;
+	// record the refusal so triangulation can't republish it as a
+	// derived price.
+	o.markFrozenThisTick(pair, window)
+
 	// Visibility for the operator: until 2026-05-13 Phase 2 freeze
 	// decisions only manifested as a Prometheus counter +
 	// (optional) Redis marker. Phase 1 logs the same event at

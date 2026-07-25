@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"math"
 	"math/big"
 	"testing"
 	"time"
@@ -1174,7 +1175,9 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 	pair, _ := canonical.NewPair(xlm, usd)
 
 	// Trade from polygon-forex (FX class, registered IncludeInVWAP=true).
-	// 1 trade with quote_amount = 100_000 (= $0.001) — way below $10k.
+	// FX pollers stamp amounts at 1e6, not the CEX 1e8 — the registry
+	// declares AmountDecimals:6 and the gate honours it per trade
+	// (MNY-05), so callers below express `q` in 1e6 units.
 	mkFXTrade := func(q *big.Int, ts time.Time) canonical.Trade {
 		return canonical.Trade{
 			Source:      "polygon-forex",
@@ -1215,7 +1218,8 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 	})
 
 	t.Run("fat window: published", func(t *testing.T) {
-		// Single trade carrying $100k worth of quote_amount.
+		// Single trade carrying $10M of quote_amount (1e13 at the FX
+		// source's 1e6 scale) — comfortably over the $10k floor.
 		store := &mockStore{trades: []canonical.Trade{
 			mkFXTrade(big.NewInt(10_000_000_000_000), time.Now()),
 		}}
@@ -1358,6 +1362,9 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 	// Pre-filter total = $101k; survivor total = $1k. Threshold
 	// $10k: pre-fix the gate would clear (and publish a VWAP from
 	// the $1k survivor); post-fix the gate must reject.
+	//
+	// Each side is expressed at ITS OWN source's scale (MNY-05): the FX
+	// survivor at 1e6, the unknown source at the 1e8 registry fallback.
 	t.Run("class filter gutted window: drops despite pre-filter clearing threshold", func(t *testing.T) {
 		survivor := canonical.Trade{
 			Source:      "polygon-forex", // ClassExchange, IncludeInVWAP=true
@@ -1367,7 +1374,7 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 			Timestamp:   time.Now(),
 			Pair:        pair,
 			BaseAmount:  canonical.NewAmount(big.NewInt(100_000_000)),
-			QuoteAmount: canonical.NewAmount(big.NewInt(100_000_000_000)), // $1,000 at 1e8
+			QuoteAmount: canonical.NewAmount(big.NewInt(1_000_000_000)), // $1,000 at the FX 1e6 scale
 		}
 		discardedByClass := canonical.Trade{
 			// "test-no-vwap" is not in external.Registry → fail-closed
@@ -1987,4 +1994,96 @@ func TestTick_AnomalyWarn_EmitsMetric(t *testing.T) {
 		t.Errorf("AnomalyFreezeEngagedTotal{stablecoin} delta = %v, want 0 — "+
 			"a warn must not be recorded as a freeze", afterFreeze-beforeFreeze)
 	}
+}
+
+// TestUSDVolumeForPairPerTrade_PerSourceDecimals (MNY-05) — the
+// MinUSDVolume manipulation gate must value each trade at ITS OWN
+// source's declared amount scale, not at one hardcoded per-pair
+// constant.
+//
+// The off-chain convention is not uniform. external.Registry declares
+// AmountDecimals:6 for the FX pollers (massive / polygon-forex /
+// exchangeratesapi) with the comment "so the USD-volume gate scales
+// them right" — a declaration the gate did not read: it took 8 for
+// every fiat:USD-quoted trade whoever emitted it, understating a
+// 6dp quote 100×. Understatement is the dangerous direction here: the
+// window is measured against MinUSDVolume ($10k by default), so a
+// genuinely deep FX-sourced window was dropped every tick, and the
+// per-trade map that feeds the persisted source-contribution
+// `volume_usd` carried the same 100×-low figure.
+//
+// The ON-CHAIN tiers deliberately keep the structural 7 — a classic
+// credit and its SAC wrapper are 7-decimal by protocol invariant, and
+// Metadata.AmountScaleDecimals() falls back to 8 for any source not in
+// the registry, so deferring to it there would understate a real peg
+// 10× for one unregistered venue.
+//
+// Proven red pre-fix: the FX case reported $100.00 instead of $10,000
+// and the mixed case $30,100.00 instead of $40,000.
+func TestUSDVolumeForPairPerTrade_PerSourceDecimals(t *testing.T) {
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	usdPair, _ := canonical.NewPair(xlm, usd)
+
+	classicUSDC, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+	classicPair, _ := canonical.NewPair(xlm, classicUSDC)
+	classicPegs := []canonical.Asset{classicUSDC}
+
+	mk := func(pair canonical.Pair, source string, quote int64, opIndex uint32) canonical.Trade {
+		return canonical.Trade{
+			Source:      source,
+			Ledger:      52_500_000,
+			TxHash:      "0000000000000000000000000000000000000000000000000000000000000000",
+			OpIndex:     opIndex,
+			Timestamp:   time.Now(),
+			Pair:        pair,
+			BaseAmount:  canonical.NewAmount(big.NewInt(100_000_000)),
+			QuoteAmount: canonical.NewAmount(big.NewInt(quote)),
+		}
+	}
+
+	t.Run("fiat:USD from a 6dp FX source", func(t *testing.T) {
+		// $10,000 at the FX pollers' 1e6 scale.
+		trades := []canonical.Trade{mk(usdPair, "polygon-forex", 10_000_000_000, 0)}
+		total, per := usdVolumeForPairPerTrade(usdPair, trades, classicPegs, nil)
+		if math.Abs(total-10_000) > 0.01 {
+			t.Fatalf("total = %.2f, want 10000 — a 1e8 divisor yields %.2f", total, 10_000.0/100)
+		}
+		if got := per[trades[0].ID()]; math.Abs(got-10_000) > 0.01 {
+			t.Errorf("per-trade USD = %.2f, want 10000", got)
+		}
+	})
+
+	t.Run("fiat:USD from an 8dp CEX source is unchanged", func(t *testing.T) {
+		trades := []canonical.Trade{mk(usdPair, "binance", 3_000_000_000_000, 0)} // $30,000 at 1e8
+		total, _ := usdVolumeForPairPerTrade(usdPair, trades, classicPegs, nil)
+		if math.Abs(total-30_000) > 0.01 {
+			t.Fatalf("total = %.2f, want 30000", total)
+		}
+	})
+
+	t.Run("mixed 6dp + 8dp bucket sums correctly", func(t *testing.T) {
+		trades := []canonical.Trade{
+			mk(usdPair, "binance", 3_000_000_000_000, 0),    // $30,000 at 1e8
+			mk(usdPair, "polygon-forex", 10_000_000_000, 1), // $10,000 at 1e6
+		}
+		total, _ := usdVolumeForPairPerTrade(usdPair, trades, classicPegs, nil)
+		if math.Abs(total-40_000) > 0.01 {
+			t.Fatalf("total = %.2f, want 40000 ($30k @8dp + $10k @6dp) — one fixed divisor cannot value both", total)
+		}
+	})
+
+	t.Run("classic peg keeps the structural 7 whatever the source", func(t *testing.T) {
+		// $10,000 at the Stellar-classic 1e7 scale, reported by a
+		// venue that declares nothing in the registry (fallback 8).
+		trades := []canonical.Trade{mk(classicPair, "test-unregistered-venue", 100_000_000_000, 0)}
+		total, _ := usdVolumeForPairPerTrade(classicPair, trades, classicPegs, nil)
+		if math.Abs(total-10_000) > 0.01 {
+			t.Fatalf("total = %.2f, want 10000 — the classic peg is 7dp by protocol invariant, "+
+				"not by the reporting source's registry entry", total)
+		}
+	})
 }
