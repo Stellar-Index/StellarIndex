@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"sort"
 )
 
@@ -301,12 +302,45 @@ func (r *CrossCheckRefresher) tickOne(ctx context.Context, p CrossCheckPair) Cro
 		return CrossCheckOutcome{Pair: p, Kind: CrossCheckOutcomeReadError, Err: err}
 	}
 	if result.WithinTolerance {
+		// CS-087: a green partial-wrap check whose escrow leg was NOT
+		// evaluated (classic snapshot predates migration 0117, so it
+		// carries no SACWrapped component) proves only "the SAC has not
+		// over-minted" — the pre-2026-07-25 one-sided claim. Say so at
+		// Debug rather than letting the silence read as two-sided
+		// assurance; it clears itself within one refresh cycle of the
+		// 0117 deploy.
+		if result.WrapClass == WrapClassPartial && !result.SubsetBoundChecked {
+			r.logger.Debug("cross-check: within tolerance, escrow leg UNCHECKED (no sac_wrapped_stroops on the classic snapshot)",
+				"classic_key", p.ClassicKey,
+				"sac_key", p.SACKey,
+				"classic_total", result.ClassicTotal.String(),
+				"sac_total", result.SACTotal.String())
+		}
 		return CrossCheckOutcome{Pair: p, Kind: CrossCheckOutcomeWithin, Result: result}
 	}
 	r.logger.Warn("cross-check: divergence over tolerance",
 		"classic_key", p.ClassicKey,
 		"sac_key", p.SACKey,
 		"wrap_class", string(result.WrapClass),
-		"divergence_stroops", result.DivergenceStroops.String())
+		"divergence_stroops", result.DivergenceStroops.String(),
+		// Which conservation bound broke — the operator's first
+		// question, and the two legs need opposite responses (leg 1:
+		// the classic side is under-observed; leg 2: mints are missing
+		// or burns double-counted). See the supply-cross-check-
+		// divergence runbook.
+		"over_mint_stroops", bigOrUnset(result.OverMintStroops),
+		"escrow_excess_stroops", bigOrUnset(result.EscrowExcessStroops),
+		"subset_bound_checked", result.SubsetBoundChecked,
+		"sac_wrapped_stroops", bigOrUnset(result.SACWrapped))
 	return CrossCheckOutcome{Pair: p, Kind: CrossCheckOutcomeOver, Result: result}
+}
+
+// bigOrUnset renders an optional *big.Int for a log line, mapping nil
+// to "unset" rather than "<nil>" or a misleading "0" — the per-leg
+// fields are nil exactly when that leg was not evaluated.
+func bigOrUnset(v *big.Int) string {
+	if v == nil {
+		return "unset"
+	}
+	return v.String()
 }

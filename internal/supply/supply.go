@@ -113,4 +113,32 @@ type Supply struct {
 	// pre-F-1236 posture for deployments that haven't wired
 	// storage-backed readers yet.
 	MinComponentLedger uint32
+
+	// SACWrappedStroops is Algorithm 2's SACWrapped component —
+	// [ClassicSupplyComponents.SACWrapped], the amount of this classic
+	// asset currently escrowed inside its Stellar-Asset-Contract
+	// wrapper — broken out of TotalSupply (which still includes it as
+	// one of its four addends) and persisted alongside it
+	// (asset_supply_history.sac_wrapped_stroops, migration 0117).
+	//
+	// It exists so [CrossCheckSubsetBound] can run the REAL subset
+	// compare (audit E4/N-F3(b), the "(b) follow-up" of BACKLOG #59):
+	// this component and the SAC's own Algorithm-3 total measure the
+	// SAME quantity via independent data paths — a ledger-entry
+	// snapshot sum here versus an event-flow sum there — so
+	// SACWrapped > sac_total is impossible under correct accounting.
+	// Comparing the folded TotalSupply against sac_total, which is all
+	// the compare site could do before this field existed, can only
+	// catch the opposite direction.
+	//
+	// nil = "this snapshot recorded no SACWrapped component", the
+	// CS-087 unchecked state. Only [ClassicComputer.Compute] populates
+	// it; Algorithm 1 (XLM), Algorithm 3 (SEP-41) and the static
+	// text-file computer have no such component and leave it nil, as do
+	// rows written before migration 0117. Consumers MUST NOT read nil
+	// as zero — zero is a meaningful value (an asset with no SAC
+	// deployment genuinely wraps nothing) and the subset bound
+	// 0 <= sac_total holds vacuously, so treating nil as zero would
+	// report a green check that verified nothing.
+	SACWrappedStroops *big.Int
 }
