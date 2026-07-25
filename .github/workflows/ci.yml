@@ -229,6 +229,14 @@ jobs:
         # grandfathered `Coin*` vocabulary and non-canonical
         # constructor shapes. See docs/architecture/lexicon.md.
         run: ./scripts/ci/lint-lexicon.sh
+      - name: lint-baseline-growth self-test
+        # The tripwire's own fixtures: undeclared growth fails, declared
+        # growth passes, a trailer with no reason after the colon does not
+        # count, absent/zero/unknown BASE_SHA skips rather than failing a
+        # first push — and the verdict does not depend on how large the
+        # commit range is. That last one is the regression this file was
+        # added for; see the script header.
+        run: ./scripts/ci/lint-baseline-growth-test.sh
       - name: lint-baseline-growth
         # CS-098: lint baselines/allowlists are shrink-only. Growing
         # scripts/ci/*.baseline or the KNOWN_INERT allowlist in the
