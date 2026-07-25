@@ -26,6 +26,20 @@ type APIKeyValidator interface {
 	Lookup(ctx context.Context, key string) (Subject, error)
 }
 
+// AccountIdentifierPrefix namespaces a [Subject.Identifier] that
+// belongs to a platform account (as opposed to a legacy
+// `signup-<emailhash>` identifier minted by POST /v1/signup).
+const AccountIdentifierPrefix = "acct:"
+
+// AccountIdentifier renders the [Subject.Identifier] the platform
+// account with the given slug authenticates as. It is the single
+// definition of that shape: [PostgresAPIKeyValidator.Lookup] stamps it
+// onto every Subject it resolves, POST /v1/account/keys copies the
+// Subject's identifier onto the Redis records it mints, and the Stripe
+// downgrade fan-out looks records up by it. Reconstructing the string
+// inline in any of those places is how the three drift apart.
+func AccountIdentifier(slug string) string { return AccountIdentifierPrefix + slug }
+
 // NoopAPIKeyValidator is the placeholder used when auth_mode=apikey
 // is configured but no validator implementation is wired. Every
 // Lookup returns [ErrNotImplemented]; the middleware translates

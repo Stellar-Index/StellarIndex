@@ -37,6 +37,12 @@ type ContractsDirectoryView struct {
 // the most active contracts (by emitted-event count) over a recent window,
 // each tagged with its owning protocol where known. `?days=` sets the window
 // (default 30, max 365); `?limit=` the row count (default 100, max 500).
+//
+// `days` is rounded UP onto [contractsWindowLadder] and the result served
+// from a bounded TTL cache — the endpoint is unauthenticated and each
+// distinct window is a multi-day GROUP BY over contract_events (C3-009,
+// audit-2026-07-23). The response's `window_days` reports the window
+// actually aggregated.
 func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -57,23 +63,29 @@ func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Quantise the window onto the supported ladder before it reaches the
+	// lake (C3-009, audit-2026-07-23). Rounds UP, so the served window is
+	// never smaller than the one asked for; `window_days` below echoes what
+	// was actually aggregated. See contractsWindowLadder in hot_reads.go
+	// for why an unauthenticated endpoint cannot offer 365 distinct
+	// multi-day GROUP BYs.
+	window := contractsWindow(days)
+
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	since := h.windowFloorLedger(ctx, days)
-
-	rows, err := h.Reader.RecentContracts(ctx, limit, since)
+	rows, since, err := h.recentContractsCached(ctx, window, limit)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
 		}
 		if readTimedOut(ctx, err) {
-			h.Logger.Warn("explorer RecentContracts deadline exceeded", "since", since)
+			h.Logger.Warn("explorer RecentContracts deadline exceeded", "window_days", window)
 			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/contracts-timeout",
 				"Contracts directory timed out")
 			return
 		}
-		h.Logger.Error("explorer RecentContracts failed", "err", err, "since", since)
+		h.Logger.Error("explorer RecentContracts failed", "err", err, "window_days", window)
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
@@ -81,7 +93,7 @@ func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 
 	attribution := h.contractAttribution(ctx)
 	out := ContractsDirectoryView{
-		WindowDays:  days,
+		WindowDays:  window,
 		SinceLedger: since,
 		Contracts:   make([]ContractDirectoryEntry, len(rows)),
 	}

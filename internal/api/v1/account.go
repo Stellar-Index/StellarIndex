@@ -434,6 +434,10 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if !s.accountKeyQuotaOK(w, r, subject.Identifier) {
+		return
+	}
+
 	rec, plaintext, err := s.accounts.Create(r.Context(), auth.CreateAPIKeyRequest{
 		Identifier: subject.Identifier,
 		Label:      req.Label,
@@ -466,6 +470,74 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 		AsOf:  rec.CreatedAt,
 		Flags: Flags{},
 	})
+}
+
+// defaultAccountKeyQuota is the self-service active-key ceiling one
+// caller identifier may hold when [Options.AccountKeyQuota] is unset.
+//
+// 25 is the repo's own pre-existing key cap — the flat
+// `MaxKeysPerAccount` the dashboard mint shipped with before F-1257
+// replaced it with the tier ladder ([platform.Tier.MaxActiveKeys], free
+// 5 → enterprise 250). Reusing that number rather than picking a new one
+// means the bound is provably above what any legitimate caller holds
+// (nobody rotates into 25 concurrent self-service credentials) while
+// still turning an unbounded mint loop into a 409 — the conservative
+// direction on a surface where the alternative is an operator-visible
+// regression for a paying customer. Operators tune per deployment via
+// [Options.AccountKeyQuota].
+const defaultAccountKeyQuota = 25
+
+// accountKeyQuotaOK enforces the per-identifier active-key cap before a
+// self-service mint. Returns false when it has already written the
+// response.
+//
+// C3-015 (audit-2026-07-23): POST /v1/account/keys minted on every call
+// with no count check, and [auth.RedisAPIKeyStore.Create] writes the
+// record unconditionally — so one authenticated caller could mint keys in
+// a loop, each one a live credential and a permanent Redis record, until
+// the store filled. The parallel dashboard path has enforced a quota
+// (checkQuota + the store's atomic maxKeys gate) since F-1257; this is
+// the same gate for the surface that never got one.
+//
+// A read failure fails CLOSED (503, no mint): the check exists precisely
+// because an unbounded mint is the abuse, so "couldn't count, mint
+// anyway" would hand the abuser the bypass. That mirrors the dashboard
+// path, whose checkQuota also refuses on a list error.
+func (s *Server) accountKeyQuotaOK(w http.ResponseWriter, r *http.Request, identifier string) bool {
+	quota := s.accountKeyQuota
+	switch {
+	case quota < 0:
+		return true // explicitly disabled by the operator
+	case quota == 0:
+		quota = defaultAccountKeyQuota
+	}
+	existing, err := s.accounts.ListKeysForIdentifier(r.Context(), identifier)
+	if err != nil {
+		if clientAborted(r, err) {
+			return false
+		}
+		s.logger.Error("account key quota check failed", "err", err, "identifier", identifier)
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/account-store-unavailable",
+			"Could not verify key quota", http.StatusServiceUnavailable,
+			"the key store could not be read to count existing keys; retry shortly")
+		return false
+	}
+	active := 0
+	for _, k := range existing {
+		if k.RevokedAt.IsZero() {
+			active++
+		}
+	}
+	if active >= quota {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/key-quota-exceeded",
+			"API key quota reached", http.StatusConflict,
+			fmt.Sprintf("this account already holds %d active API keys (max %d) — revoke one via DELETE /v1/account/keys/{keyID} first",
+				active, quota))
+		return false
+	}
+	return true
 }
 
 // handleAccountKeysList serves GET /v1/account/keys.

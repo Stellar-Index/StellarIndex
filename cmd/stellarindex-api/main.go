@@ -561,7 +561,28 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// idempotent UpdateRateLimit" path stays.
 		if pgDB := store.DB(); pgDB != nil {
 			pgStore := postgresstore.New(pgDB)
-			stripeCfg.Events = postgresstore.NewBillingStore(pgStore)
+			billingStore := postgresstore.NewBillingStore(pgStore)
+			stripeCfg.Events = billingStore
+			// C3-016: seed + refresh the dead-letter gauge from the
+			// durable table so a restart cannot zero a real backlog
+			// (the webhook's Inc covers only this process's opens).
+			go func() {
+				defer recoverBackgroundWorker(logger, "stripe-deadletter-gauge")
+				tick := time.NewTicker(time.Minute)
+				defer tick.Stop()
+				for {
+					cctx, cancel := context.WithTimeout(rootCtx, 10*time.Second)
+					if n, err := billingStore.CountOpenDeadLetters(cctx); err == nil {
+						obs.StripeDeadLettersOpen.Set(float64(n))
+					}
+					cancel()
+					select {
+					case <-rootCtx.Done():
+						return
+					case <-tick.C:
+					}
+				}
+			}()
 			// F-1240: durable audit row per tier upgrade. Same
 			// postgres connection as the dedupe store; both target
 			// the platform schema from migration 0027.
@@ -812,13 +833,21 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// it; downstream code treats absence-of-Subject as anonymous).
 	// Postgres backend opt-in requires the dashboard bundle (which
 	// owns the platform store handles).
-	authMW = buildAuthMiddleware(cfg.API.AuthMode, authValidatorOptions{
+	authOpts := authValidatorOptions{
 		Backend:           cfg.API.AuthBackend,
 		Rdb:               rdb,
 		PostgresValidator: dashboardBundle.pgValidator,
 		SEP10:             sep10Validator,
 		FailedAuthLimiter: failedAuthLimiter,
-	}, logger)
+	}
+	if dashboardBundle.accounts != nil {
+		// C3-010: the account kill switch must bite on the DEFAULT
+		// redis backend too, not just the Postgres validator —
+		// otherwise suspending an account revokes dashboard access
+		// while its API keys keep serving.
+		authOpts.AccountStatus = dashboardBundle.accounts
+	}
+	authMW = buildAuthMiddleware(cfg.API.AuthMode, authOpts, logger)
 
 	// Hoist cache instances out of the Options literal so the
 	// prewarm goroutine can hammer them on startup + on per-query-
@@ -1461,6 +1490,13 @@ type authValidatorOptions struct {
 	// (C3-5). Nil disables it. Attached to the Auth middleware for every
 	// mode that can actually fail auth (i.e. not mode=none).
 	FailedAuthLimiter *ratelimit.Bucket
+	// AccountStatus wires the C3-010 account kill switch into the
+	// REDIS validator (the backend r1 actually runs). Nil when the
+	// dashboard bundle (and thus Postgres) is absent — the gate then
+	// simply stays off, matching the pre-fix behaviour, but a
+	// deployment with Postgres present MUST pass it or a suspended
+	// account keeps authenticating on the default backend.
+	AccountStatus auth.AccountStatusReader
 }
 
 // buildAuthMiddleware translates the configured auth_mode into a
@@ -1527,9 +1563,14 @@ func buildAPIKeyValidator(opts authValidatorOptions, logger *slog.Logger, modeNa
 				"reason", "RedisAPIKeyValidator requires a Redis client")
 			return auth.NoopAPIKeyValidator{}
 		}
+		var ropts []auth.RedisOption
+		if opts.AccountStatus != nil {
+			ropts = append(ropts, auth.WithAccountStatus(opts.AccountStatus))
+		}
 		logger.Info("auth: apikey validator wired",
-			"mode", modeName, "backend", "redis")
-		return auth.NewRedisAPIKeyValidator(opts.Rdb)
+			"mode", modeName, "backend", "redis",
+			"account_status_gate", opts.AccountStatus != nil)
+		return auth.NewRedisAPIKeyValidator(opts.Rdb, ropts...)
 	}
 }
 

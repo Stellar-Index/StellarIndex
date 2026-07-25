@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // RedisAPIKeyValidator implements [APIKeyValidator] backed by Redis.
@@ -39,6 +41,18 @@ import (
 type RedisAPIKeyValidator struct {
 	rdb redis.Cmdable
 	now func() time.Time
+	// accounts, when non-nil, enables the account-level kill switch:
+	// a record whose Identifier names a platform account
+	// ([AccountIdentifier]) is rejected when that account is not
+	// active. See [WithAccountStatus].
+	accounts AccountStatusReader
+}
+
+// AccountStatusReader is the narrow slice of
+// [platform.AccountStore] the Redis validator needs to honour an
+// account-level suspension. *postgresstore.AccountStore satisfies it.
+type AccountStatusReader interface {
+	GetBySlug(ctx context.Context, slug string) (platform.Account, error)
 }
 
 // APIKeyRecord is the JSON shape stored at `apikey:<hash>`. The
@@ -168,6 +182,32 @@ func WithClock(now func() time.Time) RedisOption {
 	return func(v *RedisAPIKeyValidator) { v.now = now }
 }
 
+// WithAccountStatus wires the account-level kill switch (C3-010,
+// audit-2026-07-23).
+//
+// The whole suspension machinery already existed and was already
+// enforced by the Postgres validator (`acct.Status != AccountActive` →
+// [ErrUnauthorized]) and by the dashboard session middleware — but this
+// validator never read account status at all, and it is the DEFAULT
+// backend (`auth_backend=redis`). So an operator suspending an account
+// did not stop its keys from authenticating here: not through the admin
+// API, not through the dashboard, not even through a manual
+// `UPDATE accounts SET status='suspended'`.
+//
+// With a reader wired, a record whose Identifier is
+// [AccountIdentifier](slug) — the shape the Postgres validator stamps
+// and POST /v1/account/keys copies onto every self-service record — has
+// its account resolved and is rejected unless the account is active.
+// Legacy `signup-<emailhash>` records carry no account reference and are
+// unaffected; the operator kill switch for those is the per-key revoke
+// (DELETE /v1/admin/keys/{keyID}).
+//
+// Nil (the default) preserves the pre-fix behaviour exactly: no account
+// lookup, no per-request Postgres read.
+func WithAccountStatus(accounts AccountStatusReader) RedisOption {
+	return func(v *RedisAPIKeyValidator) { v.accounts = accounts }
+}
+
 // NewRedisAPIKeyValidator constructs a validator that reads records
 // from rdb. rdb MUST be non-nil — callers wire this only after
 // confirming Redis is available; the auth middleware fails-loud at
@@ -219,6 +259,9 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 	if !rec.ExpiresAt.IsZero() && !v.now().Before(rec.ExpiresAt) {
 		return Subject{}, ErrTokenExpired
 	}
+	if err := v.accountActive(ctx, rec.Identifier); err != nil {
+		return Subject{}, err
+	}
 
 	// Reuse the Postgres validator's CIDR decode so a malformed
 	// allowlist entry fails closed (401) identically on both stores.
@@ -265,6 +308,38 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 		IPAllowlist:         ipAllowlist,
 		RefererAllowlist:    rec.RefererAllowlist,
 	}, nil
+}
+
+// accountActive enforces the account-level kill switch for a record
+// that names a platform account. Returns nil when the check does not
+// apply (no reader wired, or a non-account identifier).
+//
+// Fails CLOSED on a lookup error, unlike the cache-degradation paths
+// elsewhere in this package: this is the suspension gate, and "the
+// account store blipped, so authenticate the suspended customer anyway"
+// is the one degradation a kill switch must not make. A missing account
+// row for an `acct:`-prefixed identifier is likewise a rejection — the
+// record references an account that no longer exists, which is the
+// closed-account case, not an unknown one.
+func (v *RedisAPIKeyValidator) accountActive(ctx context.Context, identifier string) error {
+	if v.accounts == nil {
+		return nil
+	}
+	slug, ok := strings.CutPrefix(identifier, AccountIdentifierPrefix)
+	if !ok || slug == "" {
+		return nil // legacy signup-<hash> record: no account to check
+	}
+	acct, err := v.accounts.GetBySlug(ctx, slug)
+	if err != nil {
+		if errors.Is(err, platform.ErrNotFound) {
+			return ErrUnauthorized
+		}
+		return fmt.Errorf("auth: apikey account status %q: %w", slug, err)
+	}
+	if acct.Status != platform.AccountActive {
+		return ErrUnauthorized
+	}
+	return nil
 }
 
 // HashAPIKey returns the hex-encoded SHA-256 of key. Exposed for

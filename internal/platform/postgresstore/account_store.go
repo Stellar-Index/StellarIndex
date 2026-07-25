@@ -144,11 +144,20 @@ func (r *AccountStore) GetByStripeCustomerID(ctx context.Context, stripeCustomer
 	return out, nil
 }
 
-// Update writes the mutable fields. Immutable (id, slug,
-// created_at) are ignored; passing different values is a no-op
-// rather than an error so callers can round-trip a Get →
-// mutate → Update pattern.
+// Update writes the mutable fields — including the suspension
+// bookkeeping (status, suspended_at, suspended_reason). Immutable (id,
+// slug, created_at) are ignored; passing different values is a no-op
+// rather than an error so callers can round-trip a Get → mutate →
+// Update pattern.
 func (r *AccountStore) Update(ctx context.Context, a platform.Account) error {
+	// suspended_at / suspended_reason are written here too (C3-010,
+	// audit-2026-07-23). Pre-fix Update wrote `status` but silently
+	// dropped the two columns that explain it, so a caller doing the
+	// documented Get → mutate → Update round-trip could move an account
+	// to `suspended` and leave suspended_at NULL with no reason — the
+	// suspension would be enforced with no record of when or why. Every
+	// reader projects both columns (accountColumns), so an untouched
+	// round-trip rewrites the same values it read.
 	const q = `
 		UPDATE accounts SET
 			name = $2,
@@ -156,13 +165,20 @@ func (r *AccountStore) Update(ctx context.Context, a platform.Account) error {
 			stripe_customer_id = NULLIF($4, ''),
 			tier = $5,
 			status = $6,
-			rate_limit_per_min_override = NULLIF($7, 0),
-			monthly_request_quota_override = NULLIF($8, 0)
+			suspended_at = $7,
+			suspended_reason = NULLIF($8, ''),
+			rate_limit_per_min_override = NULLIF($9, 0),
+			monthly_request_quota_override = NULLIF($10, 0)
 		WHERE id = $1
 	`
+	var suspendedAt any
+	if !a.SuspendedAt.IsZero() {
+		suspendedAt = a.SuspendedAt
+	}
 	res, err := r.s.db.ExecContext(ctx, q,
 		a.ID, a.Name, a.BillingEmail, a.StripeCustomerID,
 		string(a.Tier), string(a.Status),
+		suspendedAt, a.SuspendedReason,
 		a.RateLimitPerMinOverride, a.MonthlyRequestQuotaOverride,
 	)
 	if err != nil {

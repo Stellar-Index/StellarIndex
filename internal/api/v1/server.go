@@ -75,6 +75,7 @@ type Server struct {
 	oracle              OracleReader
 	sep1Cache           Sep1CachedReader
 	accounts            AccountStore
+	accountKeyQuota     int
 	platformAccounts    PlatformAccountStore
 	statusNotices       StatusNoticeStore
 	audit               AuditSink
@@ -350,6 +351,22 @@ type Options struct {
 	// Subject and don't need the store. Wire only when Redis is
 	// reachable; the binary's auth.NewRedisAPIKeyStore enforces that.
 	Accounts AccountStore
+
+	// AccountKeyQuota caps how many un-revoked API keys ONE caller
+	// identifier may hold through the self-service POST
+	// /v1/account/keys path. Zero (the default) selects
+	// [defaultAccountKeyQuota]; a negative value disables the check.
+	//
+	// C3-015 (audit-2026-07-23): the self-service mint had no cap at
+	// all, so a single authenticated caller could mint keys in a loop
+	// until Redis filled — while the parallel dashboard mint path
+	// (dashboardkeys.HandleCreate) has enforced a tier-aware ceiling
+	// since F-1257. It is a flat cap rather than a tier ladder because
+	// this surface's Subjects carry no platform tier: main.go disables
+	// the route entirely under `auth_backend=postgres`, so every caller
+	// that reaches it authenticated through the Redis validator, whose
+	// records have no account row to read a tier from.
+	AccountKeyQuota int
 
 	// PlatformAccounts, when non-nil, backs the operator tier-override
 	// endpoints (GET/PATCH /v1/admin/accounts/{id}). Production wires
@@ -978,6 +995,7 @@ func New(opts Options) *Server {
 		oracle:                  opts.Oracle,
 		sep1Cache:               opts.Sep1Cache,
 		accounts:                opts.Accounts,
+		accountKeyQuota:         opts.AccountKeyQuota,
 		platformAccounts:        opts.PlatformAccounts,
 		statusNotices:           opts.StatusNotices,
 		signups:                 opts.Signups,
@@ -1548,11 +1566,19 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// Operator surface: mint a key for ANOTHER identifier. Gated on
 	// TierOperator inside the handler; audit-logged via Options.Audit.
 	s.mux.HandleFunc("POST /v1/admin/keys", s.handleAdminKeysCreate)
-	// Operator surface: per-account tier + rate-limit / monthly-quota
-	// overrides (admin Phase 1.5). Same TierOperator gate as
+	// Operator surface: revoke ANOTHER identifier's key — the leaked-key
+	// kill switch (C3-010, audit-2026-07-23). Self-service revoke needs
+	// the customer's own credential, so before this there was no
+	// operator path to stop a compromised key. X-Reason + audit-logged
+	// "key.revoke".
+	s.mux.HandleFunc("DELETE /v1/admin/keys/{keyID}", s.handleAdminKeysRevoke)
+	// Operator surface: per-account tier + status + rate-limit /
+	// monthly-quota overrides (admin Phase 1.5). Same TierOperator gate as
 	// /v1/admin/keys; PATCH additionally requires an X-Reason header and
 	// audit-logs "account.override.set". The override takes effect on
-	// the next Postgres API-key validator Lookup for that account.
+	// the next Postgres API-key validator Lookup for that account; a
+	// `status` change to suspended/closed is the account-level kill
+	// switch that same Lookup already enforces.
 	s.mux.HandleFunc("GET /v1/admin/accounts/{id}", s.handleAdminAccountGet)
 	s.mux.HandleFunc("PATCH /v1/admin/accounts/{id}", s.handleAdminAccountOverrides)
 	// Operator surface: customer-facing status banners (incident

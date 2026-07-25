@@ -209,8 +209,8 @@ type AccountStore interface {
 	GetByStripeCustomerID(ctx context.Context, stripeCustomerID string) (Account, error)
 
 	// Update writes mutable fields (name, billing_email, tier,
-	// status, overrides). Immutable fields (id, slug, created_at)
-	// are ignored.
+	// status, suspension bookkeeping, overrides). Immutable fields
+	// (id, slug, created_at) are ignored.
 	Update(ctx context.Context, a Account) error
 
 	// Suspend sets status=suspended with a reason. Idempotent.

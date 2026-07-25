@@ -41,6 +41,7 @@ type StripeEventStore interface {
 	AppendStripeEvent(ctx context.Context, e platform.StripeEvent) error
 	MarkStripeEventProcessed(ctx context.Context, stripeEventID string) error
 	MarkStripeEventFailed(ctx context.Context, stripeEventID string, err string) error
+	MarkStripeEventDeadLettered(ctx context.Context, stripeEventID string, reason platform.DeadLetterReason) error
 }
 
 // StripeWebhookConfig wires the handler. SigningSecret is the
@@ -354,17 +355,23 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 		return
 	}
 	if len(keys) == 0 {
-		s.logger.Warn("stripe webhook: no keys for identifier (customer paid but never signed up?)",
+		s.logger.Error("stripe webhook: no keys for identifier (customer paid but never signed up?)",
 			"identifier", identifier, "event_id", ev.ID,
 			"email", maskEmail(session.CustomerEmail))
-		// Acknowledge — there's nothing to upgrade. Operator triages
-		// out-of-band (refund? ask customer to sign up?). Refusing
-		// would just trigger Stripe retries. Mark processed so a
-		// retry of THIS event doesn't keep firing the no-keys log
-		// line — operators reconcile from the warning, not the
-		// retry stream.
-		s.markStripeEventProcessed(r.Context(), ev.ID)
-		writeJSON(w, map[string]any{"ok": true, "upgraded": 0, "note": "no keys for identifier"}, Flags{})
+		// Money landed at Stripe and this system provisioned nothing.
+		// Acknowledge 200 — refusing would only make Stripe re-deliver an
+		// event that cannot succeed until a human acts (the customer has
+		// never signed up; the webhook is not the blocked resource). But
+		// the state is durable now instead of a log line: the dedupe row
+		// is dead-lettered, which leaves processed_at NULL so an operator
+		// re-sending the event once the customer exists actually re-runs
+		// the provisioning. C3-016 (audit-2026-07-23).
+		s.deadLetterStripeEvent(r.Context(), ev, identifier, platform.DeadLetterNoKeys)
+		writeJSON(w, map[string]any{
+			"ok": true, "upgraded": 0,
+			"note":          "no keys for identifier",
+			"dead_lettered": true,
+		}, Flags{})
 		return
 	}
 
@@ -381,7 +388,32 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 	// counter (incremented per error site) — any non-zero value is
 	// alertable as "Stripe bridge degraded; customer dashboard
 	// state drifting from billing state."
+	//
+	// Runs even when every key update above failed: the two stores are
+	// independent, so a key-store outage must not also cost the customer
+	// their platform-side tier + dashboard-key upgrade.
 	s.applyPlatformSideEffects(r.Context(), ev, session, tierName)
+
+	if upgraded == 0 {
+		// The customer HAS keys and not one budget was applied — the
+		// paid tier is on no credential the customer can use. Pre-fix
+		// this fell through to markStripeEventProcessed, whose statement
+		// is `SET processed_at = now(), error = NULL`: it erased the very
+		// error upgradeAllKeys had just recorded, stamped the event
+		// complete, logged "customer upgraded … keys_upgraded=0", and
+		// wrote a `plan.upgrade` audit row for an upgrade that did not
+		// happen. Dead-letter instead — processed_at stays NULL so the
+		// event remains reprocessable, and the open dead-letter closes
+		// itself when a later delivery succeeds. C3-016
+		// (audit-2026-07-23).
+		s.deadLetterStripeEvent(r.Context(), ev, identifier, platform.DeadLetterKeyUpgradeFailed)
+		writeJSON(w, map[string]any{
+			"ok": true, "upgraded": 0, "keys_total": len(keys),
+			"note":          "no key budget could be applied",
+			"dead_lettered": true,
+		}, Flags{})
+		return
+	}
 
 	s.logger.Info("stripe webhook: customer upgraded",
 		"identifier", identifier, "event_id", ev.ID,
@@ -538,18 +570,165 @@ func (s *Server) handleStripeSubscriptionEvent(ctx context.Context, ev stripeEve
 	}
 	// Tier roll-down on subscription deletion: bump the account
 	// back to Free so the F-1212 tier-clamp prevents the customer
-	// from minting paid-tier keys after their plan ends.
+	// from minting paid-tier keys after their plan ends, and lower
+	// every budget the ended plan paid for.
 	// `customer.subscription.updated` events with a non-active
 	// status (past_due, unpaid) keep the tier intact — Stripe
 	// drives a separate `customer.subscription.deleted` when the
 	// plan actually terminates.
-	if ev.Type == "customer.subscription.deleted" && acct.Tier != platform.TierFree {
-		acct.Tier = platform.TierFree
-		if err := bridge.Accounts.Update(ctx, acct); err != nil {
+	if ev.Type == "customer.subscription.deleted" {
+		s.applyPlanDowngrade(ctx, ev, bridge, acct, platform.TierFree)
+	}
+}
+
+// applyPlanDowngrade rolls an account back to `newTier` when its Stripe
+// subscription terminates and — the half the tier write alone never did
+// — LOWERS every credential the account can still authenticate with to
+// the budget that tier actually pays for.
+//
+// C3-014 (audit-2026-07-23): pre-fix `customer.subscription.deleted`
+// wrote `accounts.tier = free` and stopped. The enforced per-minute
+// budget is read straight off the key record (auth/apikey_postgres.go
+// `rateLimit := pgKey.RateLimitPerMin`; auth/apikey_redis.go returns the
+// stored value), and the only mutators that can lower it
+// (`platform.APIKeyStore.Update`, `RedisAPIKeyStore.UpdateRateLimit`)
+// were called exclusively on the UP path — so an ex-Pro customer kept
+// 10_000/min indefinitely. Three clamps, all against
+// `newTier.MaxRateLimitPerMin()` (the same ladder the dashboard's
+// mint-time `clampRateLimitToTier` uses, so the up and down paths cannot
+// drift):
+//
+//  1. the account-level `rate_limit_per_min_override`, written in the
+//     same Update as the tier. That override is an account-wide FLOOR at
+//     enforcement time, so a comp granted under the paid plan would keep
+//     flooring every key at the old budget after the plan ended. It is
+//     clamped, not cleared: an operator re-comping a Free account
+//     afterwards is a fresh, audited act and stays honoured (the ladder's
+//     own godoc reserves above-tier values for operator approval, so
+//     clamping overrides at ENFORCEMENT time would silently neuter that
+//     affordance — this clamps only at the billing transition).
+//  2. every active Postgres-backed dashboard key, each followed by an
+//     auth read-through cache eviction so the lower budget is enforced on
+//     the next request instead of after the validator's ~1h TTL.
+//  3. every Redis-backed key minted through POST /v1/account/keys by this
+//     account. Those records carry [auth.AccountIdentifier](slug) — the
+//     identifier the Postgres validator stamps on the Subject and the
+//     self-service mint copies verbatim — so they are reachable by name.
+//     Legacy `signup-<emailhash>` records are NOT reachable from a
+//     subscription event (nothing maps a Stripe customer to that
+//     identifier); those are covered by the checkout path's own
+//     identifier and remain a known gap.
+//
+// Best-effort throughout, matching the rest of the bridge: every failure
+// logs + increments `stellarindex_stripe_platform_sync_errors_total` but
+// never 5xxs the webhook, and a failed account Update does not skip the
+// per-key clamps — leaving paid throughput live is the worse outcome.
+func (s *Server) applyPlanDowngrade(
+	ctx context.Context,
+	ev stripeEvent,
+	bridge *StripePlatformBridge,
+	account platform.Account,
+	newTier platform.Tier,
+) {
+	ceiling := newTier.MaxRateLimitPerMin()
+	if account.Tier != newTier || account.RateLimitPerMinOverride > ceiling {
+		account.Tier = newTier
+		if account.RateLimitPerMinOverride > ceiling {
+			account.RateLimitPerMinOverride = ceiling
+		}
+		if err := bridge.Accounts.Update(ctx, account); err != nil {
 			obs.StripePlatformSyncErrorsTotal.WithLabelValues("account_update").Inc()
 			s.logger.Warn("stripe webhook: tier downgrade-to-free failed",
-				"event_id", ev.ID, "account_id", acct.ID, "err", err)
+				"event_id", ev.ID, "account_id", account.ID, "err", err)
 		}
+	}
+	s.downgradePlatformAPIKeys(ctx, ev, bridge, account, ceiling)
+	s.downgradeRedisAPIKeys(ctx, ev, account, ceiling)
+}
+
+// downgradePlatformAPIKeys lowers every active Postgres-backed dashboard
+// key for `account` whose per-minute budget exceeds `ceiling`, evicting
+// each from the auth read-through cache afterwards. The mirror image of
+// [Server.upgradePlatformAPIKeys]: keys already at or below the ceiling
+// are skipped (idempotent under Stripe's at-least-once re-delivery), and
+// revoked keys are left alone.
+func (s *Server) downgradePlatformAPIKeys(
+	ctx context.Context,
+	ev stripeEvent,
+	bridge *StripePlatformBridge,
+	account platform.Account,
+	ceiling int,
+) {
+	if bridge.APIKeys == nil {
+		return
+	}
+	keys, err := bridge.APIKeys.ListForAccount(ctx, account.ID)
+	if err != nil {
+		obs.StripePlatformSyncErrorsTotal.WithLabelValues("list_keys").Inc()
+		s.logger.Warn("stripe webhook: ListForAccount failed; skipping per-key downgrade",
+			"event_id", ev.ID, "account_id", account.ID, "err", err)
+		return
+	}
+	lowered := 0
+	for i := range keys {
+		k := keys[i]
+		if !k.RevokedAt.IsZero() || k.RateLimitPerMin <= ceiling {
+			continue
+		}
+		k.RateLimitPerMin = ceiling
+		if err := bridge.APIKeys.Update(ctx, k); err != nil {
+			obs.StripePlatformSyncErrorsTotal.WithLabelValues("key_update").Inc()
+			s.logger.Warn("stripe webhook: platform-key downgrade Update failed",
+				"event_id", ev.ID, "account_id", account.ID,
+				"key_id", k.ID, "err", err)
+			continue
+		}
+		lowered++
+		s.invalidatePlatformKeyCache(ctx, ev, account, k)
+	}
+	if lowered > 0 {
+		s.logger.Info("stripe webhook: lowered platform-backed dashboard keys to the new tier budget",
+			"event_id", ev.ID, "account_id", account.ID,
+			"tier", string(account.Tier), "rate_limit_per_min", ceiling,
+			"keys_lowered", lowered)
+	}
+}
+
+// downgradeRedisAPIKeys lowers every Redis-backed key the account minted
+// through POST /v1/account/keys (which copies the caller's Subject
+// identifier, i.e. [auth.AccountIdentifier](slug), onto the record and
+// inherits the caller's then-current paid budget) down to `ceiling`.
+// No-op without a Manager or a slug.
+func (s *Server) downgradeRedisAPIKeys(ctx context.Context, ev stripeEvent, account platform.Account, ceiling int) {
+	if s.stripe == nil || s.stripe.Manager == nil || account.Slug == "" {
+		return
+	}
+	identifier := auth.AccountIdentifier(account.Slug)
+	keys, err := s.stripe.Manager.ListKeysForIdentifier(ctx, identifier)
+	if err != nil {
+		obs.StripePlatformSyncErrorsTotal.WithLabelValues("list_keys").Inc()
+		s.logger.Warn("stripe webhook: ListKeysForIdentifier failed; skipping redis-key downgrade",
+			"event_id", ev.ID, "identifier", identifier, "err", err)
+		return
+	}
+	lowered := 0
+	for _, k := range keys {
+		if !k.RevokedAt.IsZero() || k.RateLimitPerMin <= ceiling {
+			continue
+		}
+		if _, err := s.stripe.Manager.UpdateRateLimit(ctx, k.KeyID, ceiling); err != nil {
+			obs.StripePlatformSyncErrorsTotal.WithLabelValues("key_update").Inc()
+			s.logger.Warn("stripe webhook: redis-key downgrade failed",
+				"event_id", ev.ID, "identifier", identifier,
+				"key_id", k.KeyID, "err", err)
+			continue
+		}
+		lowered++
+	}
+	if lowered > 0 {
+		s.logger.Info("stripe webhook: lowered redis-backed self-service keys to the new tier budget",
+			"event_id", ev.ID, "identifier", identifier,
+			"rate_limit_per_min", ceiling, "keys_lowered", lowered)
 	}
 }
 
@@ -998,6 +1177,75 @@ func (s *Server) recordStripeUpgradeAudit(
 	}
 	if err := s.stripe.Audit.Append(ctx, entry); err != nil {
 		s.logger.Warn("stripe webhook: audit append failed (best-effort)",
+			"err", err, "event_id", ev.ID, "identifier", identifier)
+	}
+}
+
+// deadLetterStripeEvent records the sticky
+// money-in-nothing-provisioned state for an event this handler is about
+// to acknowledge (C3-016, audit-2026-07-23).
+//
+// Three durable traces, deliberately, because each survives a different
+// failure:
+//
+//   - the dedupe row's dead_lettered_at / dead_letter_reason — the
+//     queryable open set (`dead_lettered_at IS NOT NULL AND
+//     dead_letter_resolved_at IS NULL`) an operator reconciles from, and
+//     the one that leaves processed_at NULL so a manual Stripe re-send
+//     re-runs the work;
+//   - an audit_log row — the surface staff already read for
+//     billing-affecting events, and the only trace that survives if the
+//     dedupe store itself is the thing that is down;
+//   - an ERROR log line — immediate, and the last resort when neither
+//     store is wired (a Redis-only / billing-disabled deployment).
+//
+// Best-effort throughout: a sink failure must never turn "we already
+// took the customer's money" into a 5xx that makes Stripe re-deliver.
+func (s *Server) deadLetterStripeEvent(ctx context.Context, ev stripeEvent, identifier string, reason platform.DeadLetterReason) {
+	s.logger.Error("stripe webhook: DEAD-LETTERED — payment acknowledged, nothing provisioned",
+		"event_id", ev.ID, "event_type", ev.Type,
+		"identifier", identifier, "reason", string(reason))
+
+	if s.stripe != nil && s.stripe.Events != nil && ev.ID != "" {
+		if err := s.stripe.Events.MarkStripeEventDeadLettered(ctx, ev.ID, reason); err == nil {
+			obs.StripeDeadLettersOpen.Inc()
+		} else {
+			s.logger.Error("stripe webhook: MarkStripeEventDeadLettered failed — the paid-but-unprovisioned state is NOT durable for this event",
+				"err", err, "event_id", ev.ID, "reason", string(reason))
+		}
+	}
+	s.recordStripeDeadLetterAudit(ctx, ev, identifier, reason)
+}
+
+// recordStripeDeadLetterAudit writes the `plan.dead_letter` audit row
+// for a dead-lettered event. Mirrors recordStripeUpgradeAudit's shape +
+// best-effort contract; the metadata carries everything needed to find
+// the payment in the Stripe dashboard.
+func (s *Server) recordStripeDeadLetterAudit(ctx context.Context, ev stripeEvent, identifier string, reason platform.DeadLetterReason) {
+	if s.stripe == nil || s.stripe.Audit == nil {
+		return
+	}
+	meta, err := json.Marshal(map[string]any{
+		"identifier":        identifier,
+		"reason":            string(reason),
+		"stripe_event_id":   ev.ID,
+		"stripe_event_type": ev.Type,
+	})
+	if err != nil {
+		s.logger.Warn("stripe webhook: dead-letter audit metadata marshal failed (skipping audit row)",
+			"err", err, "event_id", ev.ID)
+		return
+	}
+	entry := platform.AuditEntry{
+		ActorKind:  platform.ActorWebhook,
+		Action:     "plan.dead_letter",
+		TargetKind: "stripe_event",
+		TargetID:   ev.ID,
+		Metadata:   meta,
+		Timestamp:  s.stripeNow(),
+	}
+	if err := s.stripe.Audit.Append(ctx, entry); err != nil {
+		s.logger.Warn("stripe webhook: dead-letter audit append failed (best-effort)",
 			"err", err, "event_id", ev.ID, "identifier", identifier)
 	}
 }
