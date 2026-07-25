@@ -581,8 +581,10 @@ var SourceLastEventUnix = prometheus.NewGaugeVec(
 
 // SourceLastInsertUnix — per-source gauge, Unix-epoch wall-clock
 // timestamp of the most recent SUCCESSFUL trade row landed for the
-// source (i.e. InsertTrade returned with rowsInserted==1, not
-// `ON CONFLICT DO NOTHING`).
+// source (i.e. InsertTrade returned with rowsInserted==1). Since INV-3
+// a generation-guarded corrective UPDATE also returns 0 here, so this
+// stamp does not climb during a re-derive that only corrects existing
+// rows — see [TradeInsertOutcomeTotal]'s conflation note.
 //
 // Pairs with [SourceLastEventUnix] to detect the
 // stuck-cursor / replay-loop pattern: when the dispatcher matches
@@ -1262,14 +1264,35 @@ var MEVDetectDurationSeconds = prometheus.NewHistogramVec(
 var TradeInsertsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_trade_inserts_total",
-		Help: "Trade-insert attempts, labelled by source and whether usd_volume was populated (yes|no). Counts attempts not unique-row inserts (ON CONFLICT DO NOTHING dedupe is invisible to this counter).",
+		Help: "Trade-insert attempts, labelled by source and whether usd_volume was populated (yes|no). Counts attempts, not unique-row inserts — on-conflict dedupe AND generation-guarded corrective updates are both invisible to this counter.",
 	},
 	[]string{"source", "usd_volume_populated"},
 )
 
 // TradeInsertOutcomeTotal — per-source counter of trade-insert
-// outcomes. Distinguishes "row actually persisted" (`new`) from
-// "ON CONFLICT DO NOTHING dedupe path" (`duplicate`).
+// outcomes. `new` means a fresh row landed.
+//
+// ⚠ `duplicate` IS A CONFLATION, and the name now understates it. The
+// INV-3 keystone fix replaced the trade upsert's `ON CONFLICT DO NOTHING`
+// with a generation-guarded `DO UPDATE`, so the underlying
+// `count(*) FILTER (WHERE inserted)` returns 0 for THREE different
+// outcomes: a true duplicate, a generation-guarded CORRECTION that
+// updated an existing row, and a guard-SKIPPED write (lower generation).
+// Only the first is what this label's name suggests.
+//
+// Two consequences an operator needs to know:
+//
+//   - The duplicate-flood alert below false-positives during a corrective
+//     re-derive. A re-derive legitimately updates rows in place, which
+//     scores as `duplicate` with zero `new` — byte-identical to the
+//     stuck-cursor signature.
+//   - A landing correction is NOT observable here. The whole point of
+//     INV-3 is that corrected re-derives take effect, and this counter
+//     cannot distinguish "correction applied" from "nothing happened".
+//
+// Splitting the label into new/updated/skipped is the real fix — the SQL
+// already has the `xmax = 0` signal needed to tell them apart — but that
+// touches the hot money-path insert and is deliberately not bundled here.
 //
 // TradeInsertsTotal counts attempts and is silent about dedupe; on
 // a healthy live indexer the two counters track 1:1, but a stuck
@@ -1277,13 +1300,16 @@ var TradeInsertsTotal = prometheus.NewCounterVec(
 // SDEX insert-attempts/min while the trades hypertable's max(ts)
 // is 11 h old) produces a fast-growing `duplicate` rate with zero
 // `new`. Pairing the two lets operators alert on
-// `rate(new[5m]) == 0 AND rate(duplicate[5m]) > 0` — the exact
-// signature of a duplicate-flood. Cardinality: one source × two
-// outcomes per registered source (low-tens of series at maturity).
+// `rate(new[5m]) == 0 AND rate(duplicate[5m]) > 0` — the
+// signature of a duplicate-flood, BUT see the conflation note above:
+// a running corrective re-derive produces the same shape, so correlate
+// with whether a re-derive is in flight before treating it as a stuck
+// cursor. Cardinality: one source × two outcomes per registered source
+// (low-tens of series at maturity).
 var TradeInsertOutcomeTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_trade_insert_outcome_total",
-		Help: "Trade-insert outcomes per source. outcome=new when a fresh row landed; outcome=duplicate when ON CONFLICT DO NOTHING short-circuited (indicates cursor replay or stuck-tip).",
+		Help: "Trade-insert outcomes per source. outcome=new when a fresh row landed; outcome=duplicate when no row was inserted — which since INV-3 conflates a true duplicate, a generation-guarded corrective UPDATE, and a guard-skipped write. A corrective re-derive therefore looks identical to a cursor replay here.",
 	},
 	[]string{"source", "outcome"},
 )
