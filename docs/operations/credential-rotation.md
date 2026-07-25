@@ -42,7 +42,7 @@ backing Galexie's S3-compatible target. Four identities matter:
 |---|---|---|---|
 | MinIO root | `minio_root_user` / `minio_root_password` | full admin | the ansible role's own `mc alias set local ...` bootstrap step (09-minio.yml); not used by any running service |
 | `galexie-writer` | `galexie_s3_access_key` / `galexie_s3_secret_key` | write-only, `galexie-live` bucket (policy `galexie-writer.json`) | `galexie.service` via `/etc/default/galexie` |
-| `galexie-archive-writer` | `galexie_archive_s3_access_key` (fixed literal `"galexie-archive-writer"` in `defaults/main.yml`, not vaulted) / `galexie_archive_s3_secret_key` (vaulted) | write-only, `galexie-archive` bucket | the one-shot archive-backfill galexie instance via `/etc/default/galexie-backfill` |
+| `galexie-archive-writer` | `galexie_archive_s3_access_key` (fixed literal `"galexie-archive-writer"` in `defaults/main.yml`, not vaulted) / `galexie_archive_s3_secret_key` (vaulted) | write (no delete), `galexie-archive` bucket — policy `galexie-archive-writer.json`, **ansible-managed only since 2026-07-25**, see §MinIO identity inventory | the one-shot archive-backfill galexie instance via `/etc/default/galexie-backfill`; the rehydrate procedure in [lcm-cache-tiering.md](lcm-cache-tiering.md) |
 | `stellarindex-reader` (**"the ops user"**) | `stellarindex_reader_access_key` (fixed literal `"stellarindex-reader"`, not vaulted) / `stellarindex_reader_secret_key` → aliased in `defaults/main.yml` to `vault_stellarindex_reader_secret_key` (renamed 2026-07-03 drift audit) | read-only, both `galexie-live` + `galexie-archive` | `stellarindex-ops verify-archive`, and — per `/etc/default/stellarindex-ops` — the indexer/aggregator/api's `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` env for the ledgerstream reader path |
 
 Only the **access key** for `galexie-writer` is vault-sourced (the
@@ -76,9 +76,10 @@ check `configs/ansible/roles/archival-node/defaults/main.yml` (search
    ```
    `09-minio.yml`'s `mc admin user add local <key> <new secret>`
    task (the "Create galexie-writer MinIO user" / "Create
-   stellarindex-reader MinIO user" tasks) **updates the secret in
-   place** if the user already exists — this is the actual rotation
-   step server-side. It is idempotent and safe to re-run.
+   galexie-archive-writer MinIO user" / "Create stellarindex-reader
+   MinIO user" tasks) **updates the secret in place** if the user
+   already exists — this is the actual rotation step server-side. It
+   is idempotent and safe to re-run.
 4. **The env files re-template automatically** as part of the same
    `--tags minio` run:
    - `/etc/default/galexie` (galexie-writer) — has a `notify:
@@ -186,6 +187,75 @@ There is currently no equivalent assertion for the
 `stellarindex-reader` (ops-user) or `galexie-archive-writer`
 credentials — both would follow the same `MC_HOST_*` auth-probe
 pattern against their respective bucket if added.
+
+### MinIO identity inventory + credential hygiene (2026-07-25)
+
+Three findings from the 2026-07-25 rehydrate proof, and what each
+needs. **All three need an operator on the host; none of them can be
+finished from the repository.**
+
+| Identity | Intended authority | Codified? | State |
+| --- | --- | --- | --- |
+| MinIO root (`minio_root_user`, still named `ratesengine-admin` from the pre-rename era) | full admin. Bootstrap + `mc admin` only; **no service should ever run as this** | env file + `local` alias | ⚠️ **exposed in an agent session transcript 2026-07-25 → must be rotated**, and is currently the identity the hourly archive-fill job writes as |
+| `galexie-writer` | write on `galexie-live` | ✅ policy + user + attach | healthy; hourly auth-probe backstop |
+| `galexie-archive-writer` | write (no delete) on `galexie-archive` | ✅ **as of 2026-07-25** — previously the vault var and the env file existed but no MinIO user, policy, or attach was ever created | the `archivewriter` mc alias fails `SignatureDoesNotMatch`; repaired by the next `--tags minio` apply, which re-syncs the secret from vault |
+| `stellarindex-reader` | read-only on both buckets | ✅ policy + user + attach | codified policy grants **no** `s3:DeleteObject`, but the 2026-07-25 live test observed this identity successfully DELETING from `galexie-archive` — i.e. the live policy has drifted from the codified one. Verify with `mc admin policy info local stellarindex-reader` and re-apply if it disagrees |
+
+**1. Rotate MinIO root.** Its credentials appeared in plaintext in an
+agent session transcript on 2026-07-25. Treat as compromised even
+though the endpoint is bound to `127.0.0.1` and the firewall exposes
+:9000 only to `internal_cidrs` — the transcript is the wider blast
+radius, not the port.
+
+```sh
+cd configs/ansible
+ansible-vault edit inventory/r1.secrets.yml   # new minio_root_user / minio_root_password
+ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags minio --check --diff
+ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags minio
+```
+
+Root lives in `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` in
+`/etc/default/minio`, so this **restarts MinIO** (the `Restart minio`
+handler) — a short write outage for galexie. Then, in the same window:
+
+- regenerate the Prometheus bearer token (§Prometheus bearer-token
+  regen above) — root rotation always invalidates it, this is the
+  2026-07-03 incident;
+- re-point the `local` mc alias: `mc alias set local
+  http://127.0.0.1:9000 <new root> <new secret>` (the ansible task does
+  this, but any operator's own `~/.mc/config.json` needs it too);
+- confirm the hourly `galexie-archive-fill.timer` run after the
+  rotation succeeded — it authenticates via the `local` alias.
+
+Take the opportunity to rename the user off `ratesengine-admin` while
+you are creating a new one; the old brand name in an admin credential
+is a small but free thing to retire.
+
+**2. `archivewriter` — fixed, not removed.** The choice was
+fix-or-remove; fix won, because the archive genuinely needs a write
+identity that isn't root. `09-minio.yml` now renders
+`galexie-archive-writer.json` (Put/Get/List + multipart on
+`galexie-archive`, deliberately **no** `s3:DeleteObject`), creates the
+user from the vaulted secret, and attaches the policy. `mc admin user
+add` rewrites the secret of an existing user, so the drifted alias is
+repaired by applying `--tags minio`. Afterwards, re-point the operator
+alias and prove it:
+
+```sh
+mc alias set archivewriter http://127.0.0.1:9000 galexie-archive-writer <vaulted secret>
+mc ls archivewriter/galexie-archive/ | head        # must list, not 403
+```
+
+**3. The hourly fill job still writes as root — least-privilege gap,
+deliberately left open in this change.**
+`galexie-archive-fill.sh` mirrors AWS→MinIO and sweeps empty partitions
+using the `local` (root) alias, including `mc rm --recursive --force`.
+Switching it to `galexie-archive-writer` needs the identity to exist on
+the host first (step 2) and needs the delete sweep separated from the
+mirror, since the writer policy grants no delete — a live cutover with a
+verification step, not a config edit that can be proven in CI. Do it as
+a follow-up after step 2 lands, and confirm one full timer cycle before
+walking away.
 
 ## Related
 

@@ -354,7 +354,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 				// either, or it would immediately adopt the post-loss floor as
 				// the new truth and erase the evidence on the very next run.
 				if delta == 0 && len(floorLoss) == 0 {
-					if ferr := recordFloors(ctx, store, src, scopes); ferr != nil {
+					if ferr := recordFloors(ctx, store, src, scopes, servedMins); ferr != nil {
 						return fmt.Errorf("%s: record projection floors: %w", src.name, ferr)
 					}
 				}
@@ -525,15 +525,16 @@ type projectionScope struct {
 // stale version of this sentence very nearly produced exactly that
 // unnecessary branch.
 //
-// KNOWN RESIDUAL — a BOTTOM-EDGE truncation is self-erasing: if the oldest
-// served rows are deleted (a rogue retention policy re-appearing on `trades` is
-// the exact drift migration 0031's down-migration warns about), MIN(ledger)
-// rises with the loss and the reconcile follows it up. Distinguishing "lost"
-// from "never projected" needs a REMEMBERED floor, which needs a durable column
-// (`completeness_snapshots.projection_verified_from` + migration) — out of scope
-// for this fix. Until then the floor is at least VISIBLE: projectionClaim prints
-// it in every verdict detail and on the per-source stderr line, so a floor that
-// tracks tip is observable instead of silent.
+// A BOTTOM-EDGE truncation is self-erasing HERE and cannot be fixed in this
+// function: if the oldest served rows are deleted (a rogue retention policy
+// re-appearing on `trades` is the exact drift migration 0031's down-migration
+// warns about), MIN(ledger) rises with the loss and this scope follows it up.
+// Distinguishing "lost" from "never projected" needs a floor the served tier
+// cannot rewrite, which is why migration 0116's completeness_target_floors and
+// [detectFloorLoss] exist — that comparison, not this scope, is what fails the
+// projection axis on bottom-edge loss. This function's floor stays
+// data-derived on purpose: it decides what to RECONCILE, and reconciling below
+// where the served tier holds rows would manufacture false gaps.
 func targetScope(servedMin uint32, haveServedRows bool, genesis, runFrom, hi uint32) projectionScope {
 	lo := servedMin
 	if !haveServedRows || lo < genesis {
@@ -639,7 +640,8 @@ func detectFloorLoss(src reconSource, servedMins []servedFloor, floors map[strin
 	return out
 }
 
-// recordFloors persists what this run actually verified, per target.
+// floorsToRecord is what a clean run has EVIDENCE for, per target — the pure
+// half of recordFloors.
 //
 // It records scopes[i].From — the ledger the reconcile genuinely started at —
 // NOT the target's raw MIN(ledger). On a narrowed `-from` run those differ,
@@ -648,19 +650,49 @@ func detectFloorLoss(src reconSource, servedMins []servedFloor, floors map[strin
 // higher value is a harmless no-op and only a genuinely deeper run lowers the
 // floor.
 //
-// Called ONLY after a clean reconcile (delta == 0). Recording a floor from a
-// run that found a mismatch would enshrine an unverified range as verified.
-func recordFloors(ctx context.Context, store *timescale.Store, src reconSource, scopes []projectionScope) error {
+// A target holding NO served rows is SKIPPED, and that skip is the whole
+// reason this is a separate function. targetScope floors an empty target at
+// `genesis` (fail closed, so expected>0 vs served=0 reconciles as loss), and
+// recording THAT as a verified floor asserts something the run never saw: a
+// clean reconcile of an empty target proves only "0 expected, 0 served", not
+// "this table's rows have been verified present from genesis". The next run
+// where the table legitimately acquires its first row at ledger L then reads
+// MIN=L > genesis and detectFloorLoss reports L−genesis ledgers "GONE" — a
+// permanent false projection failure, because UpsertCompletenessTargetFloor's
+// LEAST() can never raise the floor back and detectFloorLoss's own verdict
+// blocks re-recording. Every late-starting target reaches production through
+// exactly this path: a source whose first event has not happened yet (a rare
+// skim, a newly watched SEP-41 contract promoted into the catalogue). No rows
+// means no evidence about where the rows begin — so record nothing and let
+// the first run that actually sees rows establish the floor.
+func floorsToRecord(src reconSource, scopes []projectionScope, servedMins []servedFloor) []timescale.CompletenessTargetFloor {
+	out := make([]timescale.CompletenessTargetFloor, 0, len(src.targets))
 	for i, tgt := range src.targets {
-		if i >= len(scopes) {
+		if i >= len(scopes) || i >= len(servedMins) {
 			break
 		}
-		if err := store.UpsertCompletenessTargetFloor(ctx, timescale.CompletenessTargetFloor{
+		if !servedMins[i].present {
+			continue
+		}
+		out = append(out, timescale.CompletenessTargetFloor{
 			Source:       src.name,
 			Table:        tgt.table,
 			Filter:       tgt.whereFilter,
 			VerifiedFrom: scopes[i].From,
-		}); err != nil {
+		})
+	}
+	return out
+}
+
+// recordFloors persists what this run actually verified, per target — see
+// [floorsToRecord] for which targets earn a floor and why an empty one does
+// not.
+//
+// Called ONLY after a clean reconcile (delta == 0). Recording a floor from a
+// run that found a mismatch would enshrine an unverified range as verified.
+func recordFloors(ctx context.Context, store *timescale.Store, src reconSource, scopes []projectionScope, servedMins []servedFloor) error {
+	for _, floor := range floorsToRecord(src, scopes, servedMins) {
+		if err := store.UpsertCompletenessTargetFloor(ctx, floor); err != nil {
 			return err
 		}
 	}

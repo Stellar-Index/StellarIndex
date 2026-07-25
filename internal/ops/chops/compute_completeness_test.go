@@ -598,3 +598,93 @@ func TestDetectFloorLoss(t *testing.T) {
 		})
 	}
 }
+
+// TestFloorsToRecord_EmptyTargetEarnsNoFloor closes the N-F2 residual left by
+// migration 0116's own wiring: recordFloors banked scopes[i].From for EVERY
+// target, and targetScope floors an EMPTY target at `genesis` (fail closed, so
+// expected>0 vs served=0 reconciles as loss). A source whose target has no
+// rows yet — a rare skim event, a SEP-41 contract newly promoted into the
+// catalogue — reconciles clean (0 expected, 0 served) and banked
+// verified_from=genesis, asserting the rows had been verified present from
+// genesis when the run had never seen a row.
+//
+// The next run, once the table legitimately acquires its first row, then reads
+// MIN=firstRow > genesis and detectFloorLoss reports every ledger between as
+// GONE — projection_ok=false, complete=false, PERMANENTLY: LEAST() can never
+// raise the recorded floor back, and detectFloorLoss's own verdict blocks
+// re-recording. Only a manual DELETE from completeness_target_floors clears it.
+func TestFloorsToRecord_EmptyTargetEarnsNoFloor(t *testing.T) {
+	const (
+		genesis  = uint32(50_746_266)
+		tip1     = uint32(63_000_000)
+		firstRow = uint32(62_000_000) // the target's first-ever row, run 2
+		tip2     = uint32(63_300_000)
+	)
+	src := reconSource{
+		name:    "phoenix",
+		genesis: genesis,
+		targets: []reconTarget{
+			{table: "trades", whereFilter: "source = 'phoenix'"},
+			{table: "phoenix_stake_events"}, // no stake has ever happened
+		},
+	}
+
+	// ── Run 1: the stake table is empty; the reconcile is clean. ──
+	run1Served := []servedFloor{
+		{min: 61_500_000, present: true},
+		{min: 0, present: false},
+	}
+	run1Scopes := []projectionScope{
+		targetScope(run1Served[0].min, true, genesis, 0, tip1),
+		targetScope(0, false, genesis, 0, tip1),
+	}
+	if run1Scopes[1].From != genesis {
+		t.Fatalf("fixture invalid: an empty target must scope from genesis (fail closed), got %d", run1Scopes[1].From)
+	}
+
+	recorded := floorsToRecord(src, run1Scopes, run1Served)
+	for _, f := range recorded {
+		if f.Table == "phoenix_stake_events" {
+			t.Fatalf("floorsToRecord banked verified_from=%d for the EMPTY target %s — "+
+				"a clean reconcile of an empty table proves 0 expected == 0 served, not that its "+
+				"rows were verified present from ledger %d; the first row it ever receives now "+
+				"reads as loss", f.VerifiedFrom, f.Table, f.VerifiedFrom)
+		}
+	}
+	if len(recorded) != 1 || recorded[0].Table != "trades" || recorded[0].VerifiedFrom != 61_500_000 {
+		t.Fatalf("floorsToRecord = %+v, want exactly the non-empty target trades@61500000", recorded)
+	}
+
+	// ── Run 2: the table's first row lands. This must NOT read as loss. ──
+	floors := make(map[string]timescale.CompletenessTargetFloor, len(recorded))
+	for _, f := range recorded {
+		floors[timescale.TargetFloorKey(f.Source, f.Table, f.Filter)] = f
+	}
+	run2Served := []servedFloor{
+		{min: 61_500_000, present: true},
+		{min: firstRow, present: true},
+	}
+	if loss := detectFloorLoss(src, run2Served, floors); len(loss) != 0 {
+		t.Fatalf("a target's FIRST-EVER row was reported as served-tier loss: %v — "+
+			"projection_ok/complete are now false for %s permanently (LEAST() cannot raise the "+
+			"floor and detectFloorLoss blocks re-recording)", loss, src.name)
+	}
+
+	// And the fix must not blunt the real check: once the table HAS a floor,
+	// losing rows below it still fails.
+	run2Scopes := []projectionScope{
+		targetScope(run2Served[0].min, true, genesis, 0, tip2),
+		targetScope(run2Served[1].min, true, genesis, 0, tip2),
+	}
+	for _, f := range floorsToRecord(src, run2Scopes, run2Served) {
+		floors[timescale.TargetFloorKey(f.Source, f.Table, f.Filter)] = f
+	}
+	truncated := []servedFloor{
+		{min: 61_500_000, present: true},
+		{min: firstRow + 1_000_000, present: true},
+	}
+	loss := detectFloorLoss(src, truncated, floors)
+	if len(loss) != 1 || !strings.Contains(loss[0], "1000000 ledgers of served rows") {
+		t.Fatalf("real bottom-edge loss below an established floor must still fail, got: %v", loss)
+	}
+}

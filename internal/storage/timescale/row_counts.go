@@ -7,11 +7,18 @@ import (
 )
 
 // MinLedger returns the smallest ledger present in a per-source table over
-// [from, to] — the ACTUAL retained boundary for drop_chunks-managed tables
-// (trades retains ~90d). Used to floor the projection reconcile at where served
-// data really begins: retentionStart (tip-1.5M ≈ 100d) can fall BELOW the oldest
-// retained chunk, and counting census>0 vs served=0 for those dropped ledgers is
-// a retention artifact, not a coverage gap. Returns ok=false if no rows.
+// [from, to] — where that target's served data ACTUALLY begins. It is the
+// lower bound of the ADR-0033 Claim 2b projection reconcile (chops.targetScope),
+// replacing the old hardcoded `tip - 1_500_000` floor which certified only the
+// last ~100 days while the served tier holds full history (DAT-09/N-F2).
+//
+// No reconcile target has a retention policy (verified against the migrations
+// and r1, 2026-07-25 — 0031 removed it from trades / prices_1m / prices_15m and
+// 0040 from oracle_updates), so a RISING value here is unambiguously served-tier
+// LOSS, not a drop_chunks artifact. chops.detectFloorLoss makes exactly that
+// comparison against the durable floor in completeness_target_floors
+// (migration 0116), which is why this value must stay a raw observation and not
+// be clamped or defaulted. Returns ok=false if no rows.
 //
 // Identifiers are interpolated — callers MUST pass compile-time-trusted values
 // (same discipline as CountRowsByLedger / ADR-0030).

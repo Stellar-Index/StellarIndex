@@ -1,6 +1,6 @@
 ---
 title: Runbook — supply-cross-check-divergence
-last_verified: 2026-07-08
+last_verified: 2026-07-25
 status: living
 severity: P3
 ---
@@ -70,18 +70,59 @@ a genuinely fully-wrapped asset's drift still pages. **No pair is
 flagged `full_wrap` as of 2026-07-08** — real Stellar classic assets
 are essentially never 100% wrapped.
 
-**Known limitation:** the subset-bound check assumes Algorithm 2's
-classic total isn't itself an undercount. PHO/BLND are a documented,
-*separate* case where Algorithm 2 undercounts pool-internal SAC
-balances held in non-standard `contract_data` keys (not SEP-41
-`Balance` entries) — see `docs/architecture/supply-pipeline.md`. If
-such an undercounted pair is ever added to `sac_wrappers`, the
-subset-bound check could false-positive in the `sac_total >
-classic_total` direction. This is NOT a regression from this fix
-(the old equality check was already broken for such a pair too), but
-if you see this alert with `wrap_class="partial_wrap"` on a pair with
-known pool-internal SAC balances, check that structural gap before
-assuming fresh corruption.
+## If this is firing on BLND / EURC / KALE / PHO — read this second
+
+**This is the one standing cause of a `partial_wrap` alert, it is a
+REAL served-supply error, and the fix is an operator command, not a
+code change.** If you are here because the alert has been open for days
+or weeks on one of these four assets, go straight to
+[§Mitigation → dormant pool-held SAC balances](#mitigation--60-min).
+
+Mechanism (verified end-to-end, incident 2026-07-06 "PHO/BLND
+VERDICT"; full write-up in
+[`docs/architecture/supply-pipeline.md`](../../architecture/supply-pipeline.md)
+§"Dormant contract-held SAC balances"):
+
+- Algorithm 3 (the SAC's Σmint−burn−clawback) was independently
+  verified correct to the stroop against the raw ClickHouse lake and
+  stellar.expert. **It is not the wrong side.**
+- Algorithm 2 under-counts. These assets' largest holders are Phoenix /
+  Blend **pool contracts** that received the SAC-wrapped token via an
+  ordinary SEP-41 `transfer` years ago and have been dormant since. The
+  default `supply seed-sac-balances` reads
+  `stellar.ledger_entries_current`, a ClickHouse MV that only ever
+  processed rows inserted after it was created (~ledger 62,000,000), so
+  a Balance entry last written below that floor is invisible to it.
+- So `SACWrapped` — one of Algorithm 2's four addends — is short by the
+  pool's holding, the classic total is short by the same amount, and
+  `sac_total > classic_total` becomes arithmetically possible even
+  though the subset bound is a true invariant. The alert is correct;
+  the data is wrong.
+- **Customer impact is real while this is open:** `total_supply`,
+  `circulating_supply`, `market_cap_usd` and `fdv_usd` on
+  `/v1/assets/{id}` are understated by the dormant balance for these
+  four assets.
+
+> **Superseded hypothesis — do not chase it.** Until 2026-07-06 this
+> runbook (and `internal/supply/crosscheck.go`) said the missing
+> balances lived in Phoenix/Blend's *own internal accounting*:
+> non-standard `contract_data` keys needing a new protocol-specific
+> decoder. That was wrong. Rollup-vs-lake reconciliation traced the
+> shortfall to ordinary `Vec(Symbol("Balance"), Address(pool))` entries
+> on the **SAC's own** storage — the exact shape
+> `sac_balance_observations` already models. No new reader is needed
+> and none should be written.
+
+**Genuine remaining limitation.** The subset bound is ONE-SIDED by
+construction (`CrossCheckSubsetBound`'s "MNY-04" note): it fires only
+on `sac_total > classic_total` and is structurally blind to a mint /
+escrow SHORTFALL, which is indistinguishable from a partially-wrapped
+asset's normal state. A green cross-check means "the SAC has not
+over-minted", **not** "the two sides reconcile". The true
+reconciliation — Algorithm 2's `SACWrapped` component vs Algorithm 3's
+total, which IS an equality — still needs the persisted
+`sac_wrapped_stroops` plumbing described above and is unbuilt. Do not
+read this gauge as two-sided assurance.
 
 ## Symptoms
 
@@ -132,13 +173,59 @@ Decision tree (2026-07-08: read `wrap_class` off the firing series first — it 
 
 | wrap_class | Direction | Likely cause | Mitigation |
 | ---------- | --------- | ------------ | ---------- |
-| `partial_wrap` (the common case) | SAC > Classic (the ONLY direction that can fire for this class) | Algorithm 2 undercounted classic supply (missed a trustline / claimable / LP / SAC-balance entry — including the known PHO/BLND-shaped pool-internal-SAC-balance gap, see above) OR Algorithm 3 double-counted a mint | Replay the affected ledger range through the trustline-delta indexer (Algorithm 2 undercounted, the more common case); if that doesn't close the gap, check Algorithm 3's mint-event replay for a duplicate |
+| `partial_wrap` on **BLND / EURC / KALE / PHO** | SAC > Classic | **Almost certainly the dormant pool-held SAC balance below the ~62M current-state floor** — the standing cause, see the section above | `supply seed-sac-balances -full-history` for that contract, then verify via `sac_balance_seed_provenance`. Check that table FIRST: a pair with no `full_history` row has not had the fix applied yet |
+| `partial_wrap` (any other pair) | SAC > Classic (the ONLY direction that can fire for this class) | Algorithm 2 undercounted classic supply (missed a trustline / claimable / LP / SAC-balance entry) OR Algorithm 3 double-counted a mint | Replay the affected ledger range through the trustline-delta indexer (Algorithm 2 undercounted, the more common case); if that doesn't close the gap, check Algorithm 3's mint-event replay for a duplicate |
 | `partial_wrap` | Classic > SAC | **Not possible — this alert cannot fire in this direction for `partial_wrap`.** If you somehow see this, the metric computation itself regressed; check `internal/supply/crosscheck.go`'s `CrossCheckSubsetBound` first, not the data |
 | `full_wrap` (operator-attested; none configured as of 2026-07-08) | Classic > SAC | Algorithm 3 missed mint events (rare — events are durable) | Replay the SAC contract's event range from Galexie; rerun Algorithm 3 |
 | `full_wrap` | Classic < SAC | Algorithm 2 missed a trustline / claimable / LP entry change | Replay the affected ledger range through the trustline-delta indexer; rerun Algorithm 2 |
 | either | Both readings stale | Aggregator orchestrator stalled; cross-check is comparing old data | Check `stellarindex_aggregator_silent` runbook first |
 
 ## Mitigation (≤ 60 min)
+
+### Dormant pool-held SAC balances (BLND / EURC / KALE / PHO)
+
+Do this first for those four; it is the standing cause and everything
+below is the generic path.
+
+- [ ] **Check whether the fix has ever been applied to this pair.** A
+      pair with no `full_history` row has not been fixed yet, and the
+      alert is expected until it is:
+      ```sql
+      SELECT contract_id, asset_key, source, holders_seeded,
+             min_ledger_seen, max_ledger_seen, seeded_at
+        FROM sac_balance_seed_provenance
+       WHERE asset_key LIKE 'BLND:%' OR asset_key LIKE 'EURC:%'
+          OR asset_key LIKE 'KALE:%' OR asset_key LIKE 'PHO:%'
+       ORDER BY asset_key;
+      ```
+      `source = 'full_history'` **and** `min_ledger_seen` well below
+      62,000,000 is the evidence the floor was actually reached — a
+      `full_history` label with a high `min_ledger_seen` means the scan
+      ran but found nothing old, which is a different (real) finding.
+- [ ] **Re-seed from the complete append-log.** Dry-run first, per the
+      convention; the full-history scan reads
+      `stellar.ledger_entry_changes` (complete to genesis) instead of
+      the floor-limited current-state projection, so it is heavy and
+      **must** run under the heavy-job wrapper:
+      ```sh
+      run-heavy-job.sh stellarindex-ops supply seed-sac-balances \
+        -config /etc/stellarindex.toml -full-history -dry-run
+      run-heavy-job.sh stellarindex-ops supply seed-sac-balances \
+        -config /etc/stellarindex.toml -full-history
+      ```
+      The printed `sum=<stroops>` per contract should rise by the
+      dormant pool holding; that delta is what the gauge was showing.
+- [ ] **Verify convergence** after the aggregator's next refresher tick
+      (`aggregator_refresh_cadence`, default 5m) — the gauge should
+      drop to 0 for the re-seeded pair. If it does NOT drop and
+      provenance shows a genuine `full_history` seed reaching below the
+      floor, then this pair really is anomalous: escalate to the
+      generic path below and treat it as fresh corruption.
+- [ ] **Record the outcome** in
+      [`audit-remediation-operator-actions.md`](../audit-remediation-operator-actions.md)
+      — per-asset, since the four are independent.
+
+### Generic path
 
 - [ ] **Identify which side is wrong** with the audit subcommand
       (#233). Pass the classic asset; supply the SAC counterpart
@@ -239,6 +326,20 @@ Capture for the postmortem:
 
 ## Changelog
 
+- 2026-07-25 — **Corrected the standing-cause section (E4/N-F3).** The
+  "Known limitation" paragraph still carried the pre-2026-07-06
+  hypothesis — that BLND/PHO's missing balances lived in pool-internal
+  `contract_data` keys needing a new protocol-specific decoder — which
+  the final verdict superseded, and it offered no mitigation at all.
+  An operator triaging the P3 that has been open on BLND/EURC/KALE/PHO
+  was therefore sent toward unbuilt, upgrade-brittle work instead of
+  the one command that fixes it (`supply seed-sac-balances
+  -full-history`, shipped 2026-07-10 with the
+  `sac_balance_seed_provenance` audit trail). Added the real mechanism,
+  the per-asset triage query, the mitigation, and an explicit "do not
+  chase the superseded hypothesis" note. No code change: the alert is
+  correct and the served supply for those four assets really is
+  understated until the re-seed runs.
 - 2026-07-08 — **Category-error fix (BACKLOG #59).** Replaced the
   blanket total-vs-total equality compare with a `WrapClass`-aware
   comparison: `partial_wrap` (default) checks the subset bound

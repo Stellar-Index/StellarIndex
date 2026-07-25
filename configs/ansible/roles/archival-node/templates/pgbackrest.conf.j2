@@ -8,12 +8,37 @@
 # (CS-111). Rendered only when pgbackrest_repo2_s3_bucket is set;
 # credentials come from the vault-managed env vars referenced below —
 # never inline in this file.
+#
+# ENCRYPTION (audit-2026-07-23 F4-F2): a pgBackRest repo's cipher is
+# fixed at `stanza-create` time and CANNOT be flipped on an existing
+# repo — `stanza-upgrade` does not re-encrypt, and pgbackrest refuses to
+# read a repo whose cipher-type disagrees with its stored config. So
+# these vars only take effect on a repo created (or re-created) with
+# them set; changing them on a live stanza breaks every existing backup
+# until the repo is rebuilt. The full procedure, including what is lost
+# and in what order, is docs/operations/pgbackrest-encryption.md.
 
 [global]
 repo1-path=/var/lib/pgbackrest
 repo1-retention-full=2
 repo1-bundle=y
 repo1-block=y
+{% if pgbackrest_repo1_cipher_pass | default('') != '' %}
+# repo1 encrypted at rest by US. The passphrase is vault-managed and is
+# THE ONLY WAY to read these backups — losing it loses the repo (see
+# docs/operations/pgbackrest-encryption.md §Key custody).
+repo1-cipher-type=aes-256-cbc
+repo1-cipher-pass={{ pgbackrest_repo1_cipher_pass }}
+{% else %}
+# repo1 is UNENCRYPTED (pgbackrest's default cipher-type=none). Every
+# row of the database — API keys, customer records, Stripe ids — sits in
+# plaintext under repo1-path, protected only by filesystem permissions.
+# This state is reachable only with pgbackrest_repo1_unencrypted_ack
+# explicitly set (18-pgbackrest-backup.yml asserts it); to fix it, set
+# pgbackrest_repo1_cipher_pass from vault and follow
+# docs/operations/pgbackrest-encryption.md — the repo must be re-created,
+# it cannot be converted in place.
+{% endif %}
 {% if pgbackrest_repo2_s3_bucket | default('') != '' %}
 repo2-type=s3
 repo2-s3-endpoint={{ pgbackrest_repo2_s3_endpoint }}
