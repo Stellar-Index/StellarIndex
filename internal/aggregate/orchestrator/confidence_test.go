@@ -558,3 +558,57 @@ func TestApproxUSDVolume_PerSourceDecimals(t *testing.T) {
 		t.Fatalf("approxUSDVolume = %.2f, want ~60000 ($30k @8dp + $30k @6dp)", got)
 	}
 }
+
+// TestApproxUSDVolume_OnChainSourcesAreSevenDecimals (MNY-05) closes the
+// third decimal class. The two tests above cover 8dp CEX and 6dp FX; the
+// on-chain DEXes are 7dp and were the ones actually getting it wrong.
+//
+// Metadata.AmountScaleDecimals() falls back to 8 when AmountDecimals is
+// unset, and soroswap/aquarius/phoenix/comet/sdex declared nothing — so
+// every on-chain quote amount was divided by 1e8 instead of 1e7 and read
+// as a TENTH of its real USD value. That is the direction that matters:
+// LiquidityFactor is log-linear over [1e3, 1e5], so understating $30k as
+// $3k drags the factor down and quietly suppresses confidence on exactly
+// the venues this index is about.
+//
+// TestOnChainSourcesDeclareSevenDecimals (internal/sources/external) pins
+// the registry DECLARATION. This pins the CONSUMPTION — that
+// approxUSDVolume actually honours it. A declaration nothing reads
+// correctly is not a fix, and neither test alone would catch the other's
+// regression.
+//
+// Proven red: with AmountDecimals dropped from the on-chain registry
+// entries, every subtest reports a tenth of its expected value.
+func TestApproxUSDVolume_OnChainSourcesAreSevenDecimals(t *testing.T) {
+	pair := xlmUSDPair(t)
+	ts := time.Now().UTC()
+
+	const usdWhole = 30_000
+	quote7dp := int64(usdWhole) * 10_000_000 // 7dp stroops
+
+	for _, source := range []string{"soroswap", "aquarius", "phoenix", "comet", "sdex"} {
+		t.Run(source, func(t *testing.T) {
+			trades := []canonical.Trade{makeXLMUSDTrade(t, source, 1_000_000, quote7dp, ts)}
+			got := approxUSDVolume(trades, pair)
+			if math.Abs(got-float64(usdWhole)) > 1.0 {
+				t.Fatalf("approxUSDVolume(%s) = %.2f, want ~%d — 7dp on-chain amount "+
+					"scaled by the wrong power of ten (a 1e8 divisor yields %.2f)",
+					source, got, usdWhole, float64(usdWhole)/10)
+			}
+		})
+	}
+
+	// All three decimal classes in one bucket must each read as $30k,
+	// summing to $90k. A single fixed divisor cannot value all three.
+	t.Run("all three decimal classes sum correctly", func(t *testing.T) {
+		trades := []canonical.Trade{
+			makeXLMUSDTrade(t, "soroswap", 1_000_000, quote7dp, ts),            // 7dp on-chain
+			makeXLMUSDTrade(t, "binance", 1_000_000, usdWhole*100_000_000, ts), // 8dp CEX
+			makeXLMUSDTrade(t, "massive", 1_000_000, usdWhole*1_000_000, ts),   // 6dp FX
+		}
+		got := approxUSDVolume(trades, pair)
+		if math.Abs(got-90_000) > 1.0 {
+			t.Fatalf("approxUSDVolume = %.2f, want ~90000 ($30k each at 7dp, 8dp and 6dp)", got)
+		}
+	})
+}
