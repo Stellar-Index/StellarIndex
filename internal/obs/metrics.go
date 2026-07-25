@@ -87,6 +87,7 @@ func registerAppMetrics() {
 		AggregatorEmptyWindowsTotal,
 		AggregatorWindowTruncatedTotal,
 		AggregatorStreamPublishTotal,
+		AnomalyWarnTotal,
 		APIStreamSubscribeTotal,
 		APICORSDecisionsTotal,
 		CustomerWebhookDeliveryAttemptsTotal,
@@ -1879,6 +1880,34 @@ var AnomalyFreezeEngagedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_anomaly_freeze_engaged_total",
 		Help: "ActionFreeze decisions emitted by the aggregator anomaly checker, labelled by asset class.",
+	},
+	[]string{"class"},
+)
+
+// AnomalyWarnTotal — counter of ActionWarn decisions the aggregator's
+// anomaly checker emitted, labelled by asset class, mirroring
+// [AnomalyFreezeEngagedTotal].
+//
+// This exists because ActionWarn was previously computed and then thrown
+// away (audit COR-09 / AGT-06): the orchestrator discarded the returned
+// Action on the non-freeze path, so a bucket deviating past `warn_pct` —
+// enough to be called out, not enough to freeze — left NO trace anywhere.
+// The operator's `warn_pct` knob was tunable and completely inert.
+//
+// Deliberately NOT wired to flags.divergence_warning, which several doc
+// comments claimed it fed. That flag is produced by the cross-reference
+// divergence service and is meaningful ONLY alongside
+// flags.divergence_checked (CS-087: a false warning must not be read as
+// "prices agree"). An anomaly warn runs no cross-reference check, so ORing
+// it in would publish divergence_warning=true with divergence_checked=false
+// — precisely the state CS-087 declares un-interpretable. Surfacing the
+// anomaly warn on the wire needs its own flag; that is an API-shape
+// decision, and until it is made the signal lives here where an operator
+// can alert on it.
+var AnomalyWarnTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_anomaly_warn_total",
+		Help: "ActionWarn decisions emitted by the aggregator anomaly checker, labelled by asset class.",
 	},
 	[]string{"class"},
 )
