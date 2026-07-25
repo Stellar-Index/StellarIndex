@@ -64,8 +64,15 @@ KNOWN_INERT=(
   # see. NOT inert: the probe timer runs daily on r1 (2026-07-09,
   # P27 core-freeze + galexie CAP-0071 crash-loop incidents).
   stellarindex_stellar_stack_version_lag
-  # storage.yml — TimescaleDB job-scheduler state; needs a custom
-  # postgres_exporter query or a textfile SQL exporter (not yet built).
+  # storage.yml — TimescaleDB job-scheduler state, emitted by the
+  # ansible-managed timescale-jobs-probe.sh (node-exporter textfile
+  # collector), same shape as the two entries above: the script is an
+  # inline `content:` block inside configs/ansible/roles/archival-node/
+  # tasks/10-observability.yml, which this lint's EMITTER_PATHS grep
+  # (*.go/*.sh/*.prom) cannot see. NOT inert: the probe timer runs every
+  # minute on r1. Built 2026-07-25 after finding every CAGG refresh
+  # policy failing 37–69% of its runs on background-worker starvation
+  # with nothing exporting the evidence.
   stellarindex_cagg_last_refresh_unix
   stellarindex_cagg_refresh_interval_seconds
   stellarindex_uncompressed_chunks_older_than_7d
