@@ -359,6 +359,9 @@ override.
 | `stellarindex_zfs_pool_critical_space` | `min by (instance) (node_filesystem_avail_bytes{fstype="zfs"})` | < 650 GB free for > 5 min | **P1** | [zfs-pool-full](runbooks/zfs-pool-full.md) |
 | `stellarindex_nvme_smart_warn` | `node_disk_io_errors_total` or SMART attributes | > 0 increase in 1 h | P2 | [nvme-smart](runbooks/nvme-smart.md) |
 | `stellarindex_nvme_thermal_throttle` | NVMe `composite_temperature` | > 70 °C for > 5 min | P2 | [nvme-thermal](runbooks/nvme-thermal.md) |
+| `stellarindex_nvme_wear_high` | `nvme_percentage_used_ratio` | > 0.80 for > 1 h | P3 | [nvme-smart](runbooks/nvme-smart.md) |
+| `stellarindex_nvme_spare_low` | `nvme_available_spare_ratio` | < 0.20 for > 30 min | **P1** | [nvme-smart](runbooks/nvme-smart.md) |
+| `stellarindex_nvme_media_errors` | `increase(nvme_media_errors_total[24h])` | > 0 for > 5 min | P2 | [nvme-smart](runbooks/nvme-smart.md) |
 
 ## Observability / meta alerts
 

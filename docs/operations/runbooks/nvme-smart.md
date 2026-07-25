@@ -1,11 +1,40 @@
 ---
 title: Runbook — nvme-smart
-last_verified: 2026-05-03
+last_verified: 2026-07-25
 status: draft
 severity: P2
 ---
 
-# Runbook — `stellarindex_nvme_smart_warn`
+# Runbook — NVMe drive health
+
+Covers four alerts, all of which end in the same decision — *do we replace a
+drive, and how soon* — but which fire at very different points on that curve:
+
+| Alert | What it means | Urgency |
+| ----- | ------------- | ------- |
+| `stellarindex_nvme_smart_warn` | An IO error reached the kernel | P2 |
+| `stellarindex_nvme_wear_high` | >80% of rated write endurance consumed | P3 — procurement trigger |
+| `stellarindex_nvme_spare_low` | <20% reserve blocks left | **P1** — late-stage, moves shortly before failure |
+| `stellarindex_nvme_media_errors` | New uncorrected media errors in 24h | P2 |
+
+Read `wear_high` and `spare_low` together. `percentage_used` is a *predicted*
+endurance figure and can sit above 80% for a long time without trouble;
+`available_spare` falling is the drive actually running out of blocks to
+remap, which is a much later and more serious signal. Wear high + spare full
+is a planning problem. Spare low is an incident.
+
+This matters more here than the raidz2 tolerance suggests: r1's NVMe is not
+replaceable on demand, so the value of these alerts is lead time. Treat
+`wear_high` as the moment to start a procurement conversation, not the moment
+to watch it.
+
+> **Note (2026-07-25):** until this date the packaged nvme collector wrote to
+> `/var/lib/prometheus/node-exporter` while node_exporter read
+> `/var/lib/node_exporter/textfile_collector`, so `nvme_percentage_used_ratio`,
+> `nvme_available_spare_ratio` and `nvme_media_errors_total` were generated
+> every 5 minutes and discarded — none of the three wear alerts could fire.
+> Fixed with a systemd drop-in in the archival-node role. If these series are
+> missing again, check that redirect first.
 
 ## At a glance
 
