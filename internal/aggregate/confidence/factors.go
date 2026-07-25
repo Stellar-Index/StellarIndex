@@ -23,10 +23,43 @@ const sourceCountInflectionN = 3.0
 
 // liquidityFloorUSD and liquidityCeilingUSD bound [LiquidityFactor]'s
 // log-saturating shape. Below the floor the factor is ~0; above the
-// ceiling it's ~1. The ADR specifies $1K → 0, $100K → ~1.
+// ceiling it's ~1. ADR-0019 specified $1K → 0, $100K → ~1; the ceiling
+// was raised to $1M on 2026-07-25 (see the ADR amendment).
+//
+// Why $100K was the wrong ceiling: it is not a "deep bucket", it is
+// roughly a typical one. Measured on the live index, BTC/USD's 5m
+// bucket volume has p50 ≈ $123,678 — the MEDIAN bucket of our
+// deepest pair already saturates the factor at 1.0, so the factor
+// carried no information across the entire top half of its own
+// population, and $100K of wash volume bought a manipulator the same
+// full credit as $10M of real depth. A ceiling that the median clears
+// is a ceiling that only ever discriminates among the thin.
+//
+// $1M keeps the same log-saturating shape one decade higher, so the
+// deep end regains resolution — LiquidityFactor(123_678) reads 0.697
+// instead of a pinned 1.0, and a wash-trader now needs a full order
+// of magnitude more volume to buy the same credit — while the thin
+// end is unchanged in kind: the floor, and the "measured zero → 0"
+// rule the Phase 2 freeze leans on, are untouched.
+//
+// Freeze-band impact, re-derived against the shipped combiner for the
+// population that can actually freeze (single source, one class, no
+// cross-oracle data, mature baseline, confidence_max_freeze = 0.45):
+// the z at which the CONFIDENCE leg of the 3-signal AND crosses moves
+// from z ≈ 5.54 (at $12K measured volume) / 6.39 ($100K) to z ≈ 4.79 /
+// 5.85. That does NOT move the freeze's trigger point: `z_score > 5.0`
+// is a separate, independently-evaluated leg of the same AND
+// (phase2FreezeFires), so nothing can freeze below z = 5 whatever the
+// confidence leg says. What it moves is WHICH leg binds — below
+// ≈ $15.6K of measured volume the confidence leg now goes true before
+// z reaches 5, so for that thin slice the AND leans on z + source_count.
+// The 8 non-USD-quoted default pairs — the population at highest
+// false-freeze risk — are not affected at all: they pass
+// [LiquidityUnmeasured] and read [LiquidityUnmeasuredFactor], which
+// this change deliberately leaves at 0.5 (see its doc comment).
 const (
 	liquidityFloorUSD   = 1_000.0
-	liquidityCeilingUSD = 100_000.0
+	liquidityCeilingUSD = 1_000_000.0
 )
 
 // LiquidityUnmeasured is the [Inputs.LiquidityUSD] sentinel for
@@ -49,6 +82,34 @@ const LiquidityUnmeasured = -1.0
 // for its own no-data sentinel (and is stricter than
 // [CrossOracleFactor]'s 0.7, which is anchored to an ADR-0019 worked
 // example this factor has no counterpart for).
+//
+// It is NOT tracked to the curve. Until 2026-07-25 this constant had a
+// second justification — `LiquidityFactor(10_000)` was also exactly 0.5,
+// and 10_000 is the production `min_usd_volume` floor, i.e. the single
+// most likely measured value — which made 0.5 the natural midpoint in
+// two independent senses. Raising [liquidityCeilingUSD] to $1M broke
+// the coincidence: the floor now reads LiquidityFactor(10_000) = 0.333,
+// and the curve's log-midpoint moved to sqrt(1_000 × 1_000_000) ≈
+// $31,623.
+//
+// Following the curve down to 0.333 was considered and DELIBERATELY
+// rejected. The unmeasured population is the 8 non-USD-quoted pairs in
+// the aggregator's default set, which are exactly the thin, single-
+// source pairs where a false freeze is most likely and most damaging
+// (a false freeze serves a stale last-known-good price — its own money
+// bug, see MNY-22). Dropping their only substitute factor by a third
+// would lower their confidence for a reason that says nothing about
+// them, pushing the Phase 2 confidence leg true more readily for the
+// worst-suited population. 0.5 survives as what it always primarily
+// was: the deliberate no-signal midpoint of the [0, 1] range, chosen
+// for its neutrality rather than for its position on a curve whose
+// ceiling is a tuning decision.
+//
+// The consequence for consumers is a GOOD one and is the reason
+// [Factors.LiquidityMeasured] exists: 0.5 no longer collides with the
+// factor value of a real bucket at the publish floor, so the two
+// states are further apart on the wire than they used to be. Read the
+// flag anyway — 0.5 is still reachable by a measured ≈ $31.6K bucket.
 const LiquidityUnmeasuredFactor = 0.5
 
 // crossOracleTolerancePct is the deviation below which the factor
@@ -62,6 +123,37 @@ const crossOracleTolerancePct = 1.0
 // the ADR's "decays with divergence" intent without prescribing a
 // specific point.
 const crossOracleHalfLifePct = 4.0
+
+// triangulationTolerancePct is the direct-vs-composite deviation
+// below which [TriangulationAgreementFactor] reads as full agreement.
+//
+// Wider than [crossOracleTolerancePct] (1%) on purpose, and the extra
+// point is not slack — it is the composite's own measurement error.
+// A chained-fiat leg is snapped to the FX quote at-or-before bucket
+// end (ADR-0018's across-region determinism rule), and the fx_quotes
+// feed this repo runs writes DAILY buckets with a 7-day accepted
+// lookback (timescale.fxQuotesSnapLookback). So the FX leg of a
+// composite is routinely up to a day old and, across a holiday
+// weekend, several — while the direct price is seconds old. EUR/USD
+// moving its ordinary ~0.5%/day against a stale leg would otherwise
+// read as "disagreement" every Monday morning.
+const triangulationTolerancePct = 2.0
+
+// triangulationHalfLifePct is the divergence past the tolerance at
+// which the factor decays to 0.5 — same 4 percentage points as
+// [crossOracleHalfLifePct], so the two corroboration factors decay at
+// the same rate and their served values stay comparable. A 6% gap
+// between a direct price and its composite halves the factor; a 20%
+// gap (the shape of a single-venue manipulation on a thin pair)
+// takes it to ~0.05.
+const triangulationHalfLifePct = 4.0
+
+// triangulationNeutralFactor is what [TriangulationAgreementFactor]
+// returns for the "no composite available" sentinel — the same 0.7
+// neutral [CrossOracleFactor] uses, for readability. Unlike that one
+// it never enters the score: [Compute] zeroes the factor's weight when
+// unchecked (see [Factors.TriangulationChecked]).
+const triangulationNeutralFactor = 0.7
 
 // baselineFullDays is the age (in days) at which a baseline is
 // considered fully mature. ADR §"baseline_quality_factor: 0.5 with
@@ -118,9 +210,10 @@ func DiversityFactor(classCount int) float64 {
 }
 
 // LiquidityFactor maps USD bucket volume to a confidence factor on
-// a log-saturating shape. Below $1K → ~0; above $100K → ~1.0. The
-// boundary value is computed as a log-interpolation between the
-// floor and ceiling.
+// a log-saturating shape. Below $1K → ~0; above $1M → ~1.0 (the
+// ceiling was $100K until 2026-07-25 — see [liquidityCeilingUSD] for
+// the measurement that moved it). The boundary value is computed as a
+// log-interpolation between the floor and ceiling.
 //
 // A NEGATIVE volume is the [LiquidityUnmeasured] sentinel and returns
 // the neutral [LiquidityUnmeasuredFactor] (COR-14). Zero and any
@@ -183,6 +276,46 @@ func CrossOracleFactor(divergencePct float64) float64 {
 	// Hits 0.5 at x = tolerance + half_life.
 	excess := divergencePct - crossOracleTolerancePct
 	return clamp01(math.Exp(-excess * math.Ln2 / crossOracleHalfLifePct))
+}
+
+// TriangulationAgreementFactor maps the % absolute deviation between
+// a pair's direct price and the composite price implied by a
+// configured triangulation chain (XLM/EUR direct vs XLM/USD × USD/EUR)
+// to a confidence factor. Same piecewise shape as [CrossOracleFactor]:
+// full credit (1.0) within [triangulationTolerancePct]; exponential
+// decay beyond, halving every [triangulationHalfLifePct]. 0% → 1.0;
+// 2% → 1.0; 6% → ~0.5; 20% → ~0.05; +∞ → 0.
+//
+// Both directions are load-bearing. Agreement is corroboration — a
+// thin, single-venue pair whose price is reproduced by an independent
+// route through deep markets has earned some credit, and as an extra
+// factor in the normalised geometric mean it lifts the score. Large
+// divergence is a MANIPULATION SIGNAL, not merely missing information:
+// one of the two prices is wrong, and on the pairs this is deployed
+// for (87.5% single-source minutes on XLM/EUR, 100% on XLM/GBP as
+// measured 2026-07-25) the thin direct print is the likelier suspect.
+// So it decays hard rather than reverting to neutral.
+//
+// The "no composite available" case is signalled by passing a negative
+// divergence and returns [triangulationNeutralFactor]; [Compute] also
+// zeroes this factor's weight in that case, so an un-triangulated pair
+// scores exactly as it did before this factor existed.
+//
+// NaN returns 0 — a caller bug, not a sentinel (same as every other
+// factor here).
+func TriangulationAgreementFactor(divergencePct float64) float64 {
+	if math.IsNaN(divergencePct) {
+		return 0
+	}
+	if divergencePct < 0 {
+		// Sentinel: "no composite for this pair". Return neutral.
+		return triangulationNeutralFactor
+	}
+	if divergencePct <= triangulationTolerancePct {
+		return 1.0
+	}
+	excess := divergencePct - triangulationTolerancePct
+	return clamp01(math.Exp(-excess * math.Ln2 / triangulationHalfLifePct))
 }
 
 // BaselineQualityFactor maps how much history backs a per-asset

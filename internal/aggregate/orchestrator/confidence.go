@@ -73,6 +73,7 @@ type confidenceComputation struct {
 func (o *Orchestrator) computeConfidence(
 	ctx context.Context,
 	pair canonical.Pair,
+	window time.Duration,
 	vwap *big.Rat,
 	prevVWAP *big.Rat,
 	trades []canonicalTrade,
@@ -136,14 +137,27 @@ func (o *Orchestrator) computeConfidence(
 	}
 
 	xo := o.lookupCrossOracle(ctx, pair)
+	triPct, triChecked := o.triangulationDivergencePct(pair, window, vwap)
 	score := confidence.Compute(confidence.Inputs{
-		ZScore:                    scoringZ,
+		ZScore: scoringZ,
+		// SourceCount counts CONTRIBUTING SOURCES only. The composite
+		// comparison below is corroboration, not a source, and must
+		// never be folded in here — this is the input the freeze's
+		// `source_count <= 1` leg reads, and a derived path that shares
+		// our legs and our pipeline cannot satisfy an independence test
+		// (see triangulate_corroborate.go's header).
 		SourceCount:               distinctSourceCount(trades),
 		SourceClassCount:          distinctSourceClassCount(trades),
 		LiquidityUSD:              approxUSDVolume(trades, pair),
 		CrossOracleDivergencePct:  xo.divergencePct,
 		CrossOracleAgreementCount: xo.agreementCount,
-		BaselineAgeDays:           baselineAgeDays(multi),
+		// Unchecked for every pair without a fresh chain output — which
+		// is every pair until an operator configures
+		// `[[aggregate.triangulations]]`, and by design leaves the score
+		// bit-identical to its pre-corroboration value.
+		TriangulationChecked:       triChecked,
+		TriangulationDivergencePct: triPct,
+		BaselineAgeDays:            baselineAgeDays(multi),
 	}, confidence.DefaultWeights())
 
 	// ZScore carries the OBSERVATION-based score to the Phase 2
@@ -313,13 +327,15 @@ func distinctSourceClassCount(trades []canonicalTrade) int {
 // convention, so the whole valued set was systematically 10×-inflated.
 //
 // That is NOT the benign error the old comment claimed: the
-// LiquidityFactor is log-LINEAR across its [1e3, 1e5] band, so a 10×
-// (one-decade) volume error shifts the factor by
-// ln(10)/ln(100) = 0.5 — HALF the full [0,1] range — for any true
-// volume in that band (it only vanishes once the true volume already
-// saturates ≥ $100K). That materially distorts the per-pair confidence
-// ranking. Resolve the scale the same way the contribution-sink USD
-// valuation does — external.Metadata.AmountScaleDecimals.
+// LiquidityFactor is log-LINEAR across its band, so a 10× (one-decade)
+// volume error shifts the factor by ln(10)/ln(ceiling/floor) for any
+// true volume inside it — a third of the full [0,1] range on today's
+// [1e3, 1e6] band, and HALF of it on the [1e3, 1e5] band that shipped
+// until 2026-07-25 (it only vanishes once the true volume already
+// saturates at the ceiling). That materially distorts the per-pair
+// confidence ranking. Resolve the scale the same way the
+// contribution-sink USD valuation does —
+// external.Metadata.AmountScaleDecimals.
 //
 // Refines once L2.2 (`usd_volume` column populated per trade) ships
 // and the trade carries an authoritative USD figure.

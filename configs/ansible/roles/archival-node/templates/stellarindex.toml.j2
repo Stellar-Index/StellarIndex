@@ -104,6 +104,73 @@ seed_rpc_endpoint = "https://mainnet.sorobanrpc.com"
 enable_stablecoin_fiat_proxy = true
 min_usd_volume = 10000  # per-pair USD-volume floor for VWAP publication (anti-manipulation + confidence). Re-enabled 2026-07-01: the CEX connectors landed and flow live volume (binance/coinbase/kraken/bitstamp, millions of trades), so fiat:USD pairs clear $10k/window easily while thin/manipulable pairs are gated. (Was 0 during the on-chain-only bootstrap.)
 
+# ──────────────────────────────────────────────────────────────────
+# Composite (triangulated) rates — added 2026-07-25.
+#
+# The triangulation machinery has shipped since rc.27 and had NEVER
+# run: `aggregate.triangulations` was empty in every layer of the
+# config (binary default, config.Default(), this template), so all
+# four outcomes of stellarindex_aggregator_triangulations_total sat at
+# exactly 0 on r1. The chains below are the first ones configured.
+#
+# Why these four pairs. Measured on the live index 2026-07-25, share
+# of minutes served from a SINGLE source: XLM/GBP 100%, XLM/EUR 87.5%,
+# ETH/GBP 43.7%, BTC/GBP 25.7% — against XLM/USD and BTC/USD at 0.0%.
+# The non-USD legs of the default coverage set are thin because the
+# venues that quote them are few, not because the underlying assets are
+# illiquid; every one of them is reachable through a USD pivot that is
+# deep and multi-venue. Each chain below prices its target as
+# (crypto/USD) × (USD/fiat), so a pair that had one venue's opinion now
+# also has one routed through the pair's deepest market plus the
+# institutional FX feed.
+#
+# Leg supply — the operational prerequisite. The crypto/USD legs come
+# from the aggregator's own freshly-cached VWAPs (all three are in the
+# binary's default pair set). The fiat/fiat legs do NOT: no fiat/fiat
+# pair is aggregated, so `fiat:USD/fiat:EUR` has no VWAP cache key and
+# never will. They resolve through the X2.5 forex-snap path instead —
+# orchestrator.legPrice sees Base AND Quote both fiat, and asks
+# timescale.FXQuoteAtOrBefore, which reads the `fx_quotes` hypertable
+# (rate_usd = units-of-ticker per 1 USD) written by the `massive` forex
+# worker in the API binary. So these chains publish IF AND ONLY IF
+# fx_quotes carries EUR and GBP rows inside the 7-day snap lookback
+# (timescale.fxQuotesSnapLookback), which requires MASSIVE_API_KEY to be
+# live in /etc/default/stellarindex. Verify before expecting output:
+#   - `stellarindex_external_fx_last_quote_unix{source="massive"}` is
+#     fresh (the external_fx_feed_stale alert watches exactly this), and
+#   - psql: select ticker, max(bucket) from fx_quotes
+#           where ticker in ('EUR','GBP') group by 1;
+# If the feed is dry the chains degrade loudly rather than silently:
+# the snap misses, the cached-VWAP fallback finds nothing for a
+# fiat/fiat pair, and every chain reports outcome="missing_leg" while
+# the direct price keeps serving untouched.
+#
+# Ordering effect worth knowing before the first apply: the chain pass
+# runs AFTER the per-pair refresh and writes the TARGET's own VWAP cache
+# key, so for these four pairs the composite REPLACES the direct print
+# for the tick (with cachekeys.VWAPProvenance set to `triangulated`, so
+# /v1/price reports flags.triangulated=true). That is the intent for
+# pairs this thin, and the direct price is still recomputed from trades
+# every tick — it feeds the anomaly/freeze chain and now also the
+# confidence score's composite-agreement factor. Set
+# `triangulation_enabled = false` to kill the whole pass without
+# editing this table.
+[[aggregate.triangulations]]
+target = "crypto:XLM/fiat:EUR"
+legs   = ["crypto:XLM/fiat:USD", "fiat:USD/fiat:EUR"]
+
+[[aggregate.triangulations]]
+target = "crypto:XLM/fiat:GBP"
+legs   = ["crypto:XLM/fiat:USD", "fiat:USD/fiat:GBP"]
+
+[[aggregate.triangulations]]
+target = "crypto:ETH/fiat:GBP"
+legs   = ["crypto:ETH/fiat:USD", "fiat:USD/fiat:GBP"]
+
+[[aggregate.triangulations]]
+target = "crypto:BTC/fiat:GBP"
+legs   = ["crypto:BTC/fiat:USD", "fiat:USD/fiat:GBP"]
+
 [trades]
 usd_pegged_classic_assets = [
   "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",

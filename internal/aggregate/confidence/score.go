@@ -71,6 +71,47 @@ type Inputs struct {
 	// sentinel.
 	CrossOracleAgreementCount int
 
+	// TriangulationChecked gates [TriangulationDivergencePct]. False —
+	// the ZERO VALUE — means "no composite was compared", and [Compute]
+	// then drops the factor's weight entirely, so an un-triangulated
+	// pair scores exactly as it did before this input existed.
+	//
+	// This is the one place this package does NOT mirror
+	// [CrossOracleDivergencePct]'s negative-sentinel-only shape, and the
+	// deviation is deliberate: a float's zero value is 0.0, which on the
+	// sentinel shape reads as "checked, and the composite agrees
+	// perfectly" — full credit, awarded to every caller that never heard
+	// of this field. Fail-open is the wrong default for a corroboration
+	// signal, and it is the same category of defect as COR-14 (a
+	// measured 0 that was really "not measured"). An explicit flag makes
+	// omission read as ignorance instead of as evidence.
+	TriangulationChecked bool
+
+	// TriangulationDivergencePct — % absolute deviation between the
+	// pair's DIRECT price (this bucket's VWAP) and the COMPOSITE price
+	// implied by a configured triangulation chain for the same pair
+	// (e.g. XLM/EUR direct vs XLM/USD × USD/EUR). Read only when
+	// [TriangulationChecked] is true; a negative value is treated as
+	// unchecked as well, so the sentinel convention still holds for
+	// callers that use it.
+	//
+	// Why this is a confidence input and not a source: a composite is
+	// CORROBORATION, not a second venue. It re-uses our own leg VWAPs,
+	// our own pipeline and (usually) our own upstream sources, so it
+	// cannot carry the independence that [Inputs.SourceCount] asserts.
+	// It therefore feeds this factor only — the freeze's
+	// `source_count <= 1` leg (ADR-0019's 3-signal AND) must NOT count
+	// a triangulated price as a corroborating source, or the AND
+	// silently degrades to two signals on exactly the thin pairs
+	// triangulation is deployed for. See
+	// orchestrator.triangulationDivergencePct for the producer side.
+	//
+	// Direction: agreement gives full credit (1.0) and, being an extra
+	// factor in a normalised geometric mean, lifts the score; a large
+	// divergence is a manipulation signal on one side or the other and
+	// decays the factor toward 0, dragging the score down.
+	TriangulationDivergencePct float64
+
 	// BaselineAgeDays — days-equivalent of baseline DENSITY, not
 	// calendar age (COR-14). The only production caller
 	// (orchestrator.baselineAgeDays) passes Day30.N / 1440, i.e. how
@@ -94,12 +135,13 @@ type Inputs struct {
 // "z=1.0 (ok), src=0.3 (single-source), div=0.5 (one class)" tells
 // you the issue is source coverage, not staleness.
 type Factors struct {
-	ZScore          float64 `json:"z_score"`
-	SourceCount     float64 `json:"source_count"`
-	Diversity       float64 `json:"diversity"`
-	Liquidity       float64 `json:"liquidity"`
-	CrossOracle     float64 `json:"cross_oracle"`
-	BaselineQuality float64 `json:"baseline_quality"`
+	ZScore                 float64 `json:"z_score"`
+	SourceCount            float64 `json:"source_count"`
+	Diversity              float64 `json:"diversity"`
+	Liquidity              float64 `json:"liquidity"`
+	CrossOracle            float64 `json:"cross_oracle"`
+	TriangulationAgreement float64 `json:"triangulation_agreement"`
+	BaselineQuality        float64 `json:"baseline_quality"`
 
 	// CrossOracleChecked disambiguates the CrossOracle factor value
 	// per the CS-087 DivergenceChecked discipline: true means real
@@ -117,13 +159,17 @@ type Factors struct {
 	// pair could not be valued in USD.
 	//
 	// This is load-bearing, not symmetry for its own sake. The neutral
-	// is 0.5, and LiquidityFactor(10_000) is ALSO exactly 0.5 — and
-	// 10_000 is the production min_usd_volume floor, i.e. the single
-	// most likely measured value, since dropForMinUSDVolume rejects
-	// anything below it before confidence is computed. So Liquidity=0.5
-	// is a perfect collision between "unmeasured" and "the weakest
-	// bucket we will ever publish", and a consumer that cannot tell
-	// them apart MUST NOT read 0.5 as evidence of real liquidity.
+	// is 0.5, and SOME measured bucket always maps to 0.5 too — the
+	// log-midpoint of the factor's own band. Until 2026-07-25 that
+	// collision was at its worst: the ceiling was $100K, which put the
+	// midpoint at exactly $10,000 — the production `min_usd_volume`
+	// floor, i.e. the single most likely measured value, since
+	// dropForMinUSDVolume rejects anything below it before confidence is
+	// computed. Raising the ceiling to $1M moved the collision volume to
+	// ≈ $31,623 and the publish floor now reads 0.333, so the two states
+	// are further apart in practice — but they are NOT distinguishable
+	// from the number alone, and a consumer that cannot tell them apart
+	// still MUST NOT read 0.5 as evidence of real liquidity.
 	LiquidityMeasured bool `json:"liquidity_measured"`
 
 	// CrossOracleAgreement is the count of independent external
@@ -131,6 +177,23 @@ type Factors struct {
 	// threshold (ADR-0019 Phase 3 cross-oracle agreement). Always 0
 	// when CrossOracleChecked is false — read it only when checked.
 	CrossOracleAgreement int `json:"cross_oracle_agreement"`
+
+	// TriangulationChecked disambiguates the TriangulationAgreement
+	// factor on the same CS-087 discipline as CrossOracleChecked: true
+	// means a real composite price (a configured triangulation chain's
+	// fresh output for this pair) was compared against the direct price;
+	// false means no composite was available and the neutral placeholder
+	// was served. false MUST NOT be read as "the composite agrees".
+	//
+	// One difference from CrossOracleChecked, and it is deliberate: when
+	// this is false the factor is EXCLUDED from the combined score
+	// entirely (its weight is zeroed in [Compute]), so the served value
+	// is inert rather than merely neutral. A normalised geometric mean
+	// has no truly neutral constant — adding any factor value changes
+	// every score through the 1/sum(weights) exponent — and a
+	// corroboration signal that silently re-scored every pair without a
+	// chain would be a worse defect than the gap it fills.
+	TriangulationChecked bool `json:"triangulation_checked"`
 }
 
 // Weights are the per-factor exponents in the weighted geometric
@@ -142,25 +205,37 @@ type Factors struct {
 // lands with the orchestrator slice. This struct is just the math
 // surface.
 type Weights struct {
-	ZScore          float64
-	SourceCount     float64
-	Diversity       float64
-	Liquidity       float64
-	CrossOracle     float64
-	BaselineQuality float64
+	ZScore                 float64
+	SourceCount            float64
+	Diversity              float64
+	Liquidity              float64
+	CrossOracle            float64
+	TriangulationAgreement float64
+	BaselineQuality        float64
 }
 
-// DefaultWeights returns all-ones — the ADR-0019 default
-// (unweighted geometric mean). Use directly when an operator
-// hasn't supplied a [Weights] override.
+// DefaultWeights returns the ADR-0019 default — all ones except the
+// triangulation-agreement factor, which defaults to 0.5.
+//
+// The half weight IS the "a derived path is not an independent venue"
+// discount, and it lives here rather than in the factor's ceiling on
+// purpose: [TriangulationAgreementFactor] keeps the same shape as
+// [CrossOracleFactor] so the two decomposition values are directly
+// comparable on the wire ("0.8 divergence-decayed" means the same thing
+// in both columns), and the evidence class is expressed where this
+// package already expresses relative influence. A composite re-uses our
+// own leg VWAPs and pipeline, so it corroborates at roughly half the
+// weight of an independent external reference; it never contributes to
+// [Inputs.SourceCount] at all.
 func DefaultWeights() Weights {
 	return Weights{
-		ZScore:          1.0,
-		SourceCount:     1.0,
-		Diversity:       1.0,
-		Liquidity:       1.0,
-		CrossOracle:     1.0,
-		BaselineQuality: 1.0,
+		ZScore:                 1.0,
+		SourceCount:            1.0,
+		Diversity:              1.0,
+		Liquidity:              1.0,
+		CrossOracle:            1.0,
+		TriangulationAgreement: 0.5,
+		BaselineQuality:        1.0,
 	}
 }
 
@@ -194,12 +269,13 @@ type Score struct {
 //     ADR explicitly wants).
 func Compute(in Inputs, w Weights) Score {
 	f := Factors{
-		ZScore:          ZScoreFactor(in.ZScore),
-		SourceCount:     SourceCountFactor(in.SourceCount),
-		Diversity:       DiversityFactor(in.SourceClassCount),
-		Liquidity:       LiquidityFactor(in.LiquidityUSD),
-		CrossOracle:     CrossOracleFactor(in.CrossOracleDivergencePct),
-		BaselineQuality: BaselineQualityFactor(in.BaselineAgeDays),
+		ZScore:                 ZScoreFactor(in.ZScore),
+		SourceCount:            SourceCountFactor(in.SourceCount),
+		Diversity:              DiversityFactor(in.SourceClassCount),
+		Liquidity:              LiquidityFactor(in.LiquidityUSD),
+		CrossOracle:            CrossOracleFactor(in.CrossOracleDivergencePct),
+		TriangulationAgreement: TriangulationAgreementFactor(triangulationInput(in)),
+		BaselineQuality:        BaselineQualityFactor(in.BaselineAgeDays),
 	}
 	// Mirrors the CrossOracleChecked branch below: a negative
 	// LiquidityUSD is the "could not value this pair in USD" sentinel,
@@ -217,8 +293,18 @@ func Compute(in Inputs, w Weights) Score {
 			f.CrossOracleAgreement = in.CrossOracleAgreementCount
 		}
 	}
+	// Same sentinel branch for the composite comparison — but the
+	// unchecked case also drops the factor's WEIGHT to zero, which is
+	// what makes "no chain configured for this pair" a genuine no-op
+	// rather than a re-scoring of every pair in the index. See
+	// [Factors.TriangulationChecked].
+	triWeight := 0.0
+	if in.TriangulationChecked && in.TriangulationDivergencePct >= 0 && !math.IsNaN(in.TriangulationDivergencePct) {
+		f.TriangulationChecked = true
+		triWeight = w.TriangulationAgreement
+	}
 
-	totalWeight := w.ZScore + w.SourceCount + w.Diversity + w.Liquidity + w.CrossOracle + w.BaselineQuality
+	totalWeight := w.ZScore + w.SourceCount + w.Diversity + w.Liquidity + w.CrossOracle + triWeight + w.BaselineQuality
 	if totalWeight <= 0 {
 		return Score{Confidence: 0.5, Factors: f}
 	}
@@ -232,11 +318,25 @@ func Compute(in Inputs, w Weights) Score {
 		safeLog(f.Diversity)*w.Diversity +
 		safeLog(f.Liquidity)*w.Liquidity +
 		safeLog(f.CrossOracle)*w.CrossOracle +
+		safeLog(f.TriangulationAgreement)*triWeight +
 		safeLog(f.BaselineQuality)*w.BaselineQuality
 
 	conf := math.Exp(logSum / totalWeight)
 	conf = applyBootstrapCap(conf, in.BaselineAgeDays)
 	return Score{Confidence: clamp01(conf), Factors: f}
+}
+
+// triangulationInput collapses the (Checked, DivergencePct) pair into
+// the single value [TriangulationAgreementFactor] takes: the raw
+// divergence when a composite really was compared, the negative
+// no-data sentinel otherwise. Keeps the unchecked→neutral mapping in
+// ONE place so the served factor value and the weight-zeroing branch
+// in [Compute] can never disagree about what "unchecked" means.
+func triangulationInput(in Inputs) float64 {
+	if !in.TriangulationChecked {
+		return -1
+	}
+	return in.TriangulationDivergencePct
 }
 
 // applyBootstrapCap caps the final confidence at
