@@ -1448,6 +1448,17 @@ as long as it is held, which is what makes the `rate()`-based
 `stellarindex_anomaly_freeze_active` to count freezes rather than
 frozen ticks.
 
+### `stellarindex_stripe_dead_letters_open`
+
+Gauge, no labels.
+
+Open (unresolved) Stripe dead-letter events: payment processed but
+provisioning failed (C3-016). Incremented when the webhook dead-letters
+an event, re-seeded from `stripe_event_log` at API boot and every 60s
+so a process restart cannot zero a real backlog. Non-zero means a
+paying customer is without their entitlement — paged after 15 minutes
+via `stellarindex_stripe_dead_letter_open`.
+
 ### `stellarindex_anomaly_freeze_active`
 
 Gauge, no labels.
