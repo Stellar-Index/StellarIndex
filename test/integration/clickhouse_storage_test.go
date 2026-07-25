@@ -751,3 +751,120 @@ func TestNetworkThroughput_DedupsReingestedLedger(t *testing.T) {
 		t.Fatalf("no throughput bucket for %v — the test ledger fell outside the window (another test inserted a higher ledger_seq?)", day)
 	}
 }
+
+// TestClickHouseContractDirectoryDedupsDuplicateEvents is the DAT-10 proof for
+// the two contract readers the original DAT-10 sweep (1bac345f) missed:
+// RecentContracts and ContractInteractions. They appear in neither that
+// commit's fixed list nor its re-derived-as-correct list — they were simply
+// not visited, while the sibling operations readers were fixed with LIMIT 1 BY.
+//
+// stellar.contract_events is ReplacingMergeTree(ingested_at), and duplicates
+// are not hypothetical: the sink's own Flush contract is that a partially
+// succeeded flush may be RETRIED over the same range, idempotent under RMT. So
+// the table legitimately holds duplicate un-merged parts until a background
+// merge collapses them — and both readers are window-scoped to recent ledgers,
+// which is exactly where un-merged retries concentrate.
+//
+// This seeds the SAME event twice (a re-flush of the same range) and asserts
+// the served counts do not double. It is a real-ClickHouse test rather than a
+// query-shape assertion because the thing under test IS the engine's
+// duplicate-row behaviour, which a stub cannot reproduce.
+//
+// Proven red: with count() restored in place of uniqExact, events comes back 2
+// (want 1) and shared comes back 2 (want 1).
+func TestClickHouseContractDirectoryDedupsDuplicateEvents(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	const (
+		baseLedger = uint32(73_500_001)
+		subject    = "CDAT10_SUBJECT_AAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+		partner    = "CDAT10_PARTNER_BBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+		txHash     = "7777777777777777777777777777777777777777777777777777777777777777"
+	)
+	closeTime := time.Date(2026, 7, 20, 9, 0, 0, 0, time.UTC)
+
+	mkEvent := func(contractID string, eventIndex uint32) chstore.ContractEventRow {
+		return chstore.ContractEventRow{
+			LedgerSeq: baseLedger, CloseTime: closeTime, TxHash: txHash,
+			OpIndex: 0, EventIndex: eventIndex, ContractID: contractID,
+			EventType: "contract", TopicCount: 1, Topic0Sym: "transfer",
+			TopicsXDR:        []string{scval.MustEncodeString("transfer")},
+			DataXDR:          scval.MustEncodeString("body"),
+			OpArgsXDR:        []string{},
+			InSuccessfulCall: 1,
+		}
+	}
+	// Subject and partner emit one event each, in the SAME tx — one shared tx.
+	ext := chstore.LedgerExtract{
+		Ledger: chstore.LedgerRow{LedgerSeq: baseLedger, CloseTime: closeTime, ProtocolVersion: 22, SorobanEventCount: 2},
+		Events: []chstore.ContractEventRow{mkEvent(subject, 0), mkEvent(partner, 1)},
+	}
+
+	sink, err := chstore.Open(ctx, addr, 1000)
+	if err != nil {
+		t.Fatalf("open sink: %v", err)
+	}
+	t.Cleanup(func() { _ = sink.Close(ctx) })
+
+	// Flush the SAME extract twice — a retried partial flush, byte-identical
+	// rows under the RMT primary key, differing only in ingested_at.
+	for i := 0; i < 2; i++ {
+		if err := sink.Add(ctx, ext); err != nil {
+			t.Fatalf("sink add (pass %d): %v", i, err)
+		}
+		if err := sink.Flush(ctx); err != nil {
+			t.Fatalf("sink flush (pass %d): %v", i, err)
+		}
+	}
+
+	er, err := chstore.NewExplorerReader(ctx, addr)
+	if err != nil {
+		t.Fatalf("new explorer reader: %v", err)
+	}
+	t.Cleanup(func() { _ = er.Close() })
+
+	// ─── RecentContracts: the event tally must not double ────────────────
+	dir, err := er.RecentContracts(ctx, 500, baseLedger)
+	if err != nil {
+		t.Fatalf("RecentContracts: %v", err)
+	}
+	var found bool
+	for _, row := range dir {
+		if row.ContractID != subject {
+			continue
+		}
+		found = true
+		if row.Events != 1 {
+			t.Errorf("RecentContracts events for the subject = %d, want 1 — the same event "+
+				"was flushed twice (a retried partial flush) and the un-merged duplicate "+
+				"inflated the tally, mis-ranking the contracts directory (DAT-10)", row.Events)
+		}
+	}
+	if !found {
+		t.Fatalf("subject contract %s absent from RecentContracts", subject)
+	}
+
+	// ─── ContractInteractions: shared_txs must count TRANSACTIONS ────────
+	edges, err := er.ContractInteractions(ctx, subject, 200, baseLedger)
+	if err != nil {
+		t.Fatalf("ContractInteractions: %v", err)
+	}
+	var edgeFound bool
+	for _, e := range edges {
+		if e.ContractID != partner {
+			continue
+		}
+		edgeFound = true
+		if e.SharedTxs != 1 {
+			t.Errorf("shared_txs = %d, want 1 — the two contracts co-occur in exactly ONE "+
+				"transaction. count() counted co-occurring EVENTS (and double-counted the "+
+				"duplicate flush) despite the field being named shared_txs (DAT-10 + DAT-11 #50)",
+				e.SharedTxs)
+		}
+	}
+	if !edgeFound {
+		t.Fatalf("partner contract %s absent from ContractInteractions", partner)
+	}
+}
