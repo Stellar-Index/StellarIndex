@@ -7392,7 +7392,24 @@ paths:
                           type: object
                           properties:
                             contract_id: { type: string }
-                            shared_txs: { type: integer, format: int64 }
+                            shared_txs:
+                              type: integer
+                              format: int64
+                              description: >-
+                                Number of DISTINCT transactions in which this
+                                contract and the subject both emitted events,
+                                within the query window.
+
+
+                                Corrected 2026-07-25 (audit DAT-10 / DAT-11):
+                                this previously counted co-occurring EVENTS
+                                rather than transactions, so a contract emitting
+                                many events inside one shared transaction scored
+                                its event count. It also double-counted rows from
+                                a retried partial flush that the ReplacingMergeTree
+                                had not yet merged. Values are therefore LOWER
+                                than before for busy pairs — the old figure was an
+                                event count wearing a transaction count's name.
                             protocol: { type: string, description: Owning protocol when attributed; absent otherwise. }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
