@@ -10,21 +10,34 @@
       prometheus role supports Ubuntu 22.04 / 24.04 only;
       detected {{ ansible_distribution }} {{ ansible_distribution_version }}
 
+# OBS-02 (audit-2026-07-23): both asserts below indexed
+# groups['prometheus_pair'] unguarded, so the MOST LIKELY failure —
+# the group is absent entirely — raised a raw
+# "object of type 'dict' has no attribute 'prometheus_pair'" from the
+# conditional evaluator and the fail_msg was never reached. That is
+# exactly what the documented `-i inventory/r1.yml playbooks/monitoring.yml`
+# does today (r1.yml defines only `archival_nodes`). Guarded the same
+# way the scrape-target assert below already guards its groups.
 - name: assert host is in the prometheus_pair inventory group
   assert:
     that:
-      - inventory_hostname in groups['prometheus_pair']
+      - "'prometheus_pair' in groups"
+      - inventory_hostname in groups['prometheus_pair'] | default([])
     fail_msg: >-
       this role must be applied against hosts in the
-      prometheus_pair group (see role README inventory model)
+      prometheus_pair group (see role README inventory model).
+      An inventory with only `archival_nodes` — inventory/r1.yml, the
+      single-box deployment — does not define that group; R1's
+      Prometheus/Alertmanager is managed out-of-band today via
+      configs/prometheus/rules.r1 + configs/alertmanager/apply.sh.
 
 - name: assert prometheus_pair has exactly 2 hosts
   assert:
     that:
-      - groups['prometheus_pair'] | length == 2
+      - groups['prometheus_pair'] | default([]) | length == 2
     fail_msg: >-
       prometheus role assumes a 2-host HA pair (per ha-plan §7);
-      detected {{ groups['prometheus_pair'] | length }} hosts
+      detected {{ groups['prometheus_pair'] | default([]) | length }} hosts
 
 - name: assert at least one scrape-target inventory group is populated
   assert:

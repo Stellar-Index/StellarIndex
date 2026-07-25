@@ -617,8 +617,25 @@ public_allow_ports_base:
 public_allow_ports_primary_core:
   - { port: 11625, proto: "tcp", comment: "stellar-core SCP peer (Phase 3 validator)" }
 
-allowed_ssh_cidrs:
-  - "0.0.0.0/0"     # tighten to jump host / VPN once that exists
+# No default on purpose (audit-2026-07-23 SEC-network / INF-20): SSH is
+# the one port on this box that grants root, and the previous
+# `0.0.0.0/0` default meant an inventory that simply never mentioned
+# allowed_ssh_cidrs got the whole internet — silently, by inheritance.
+# Every inventory must now state its own answer; 01-preflight.yml
+# asserts it (that import carries the `always` tag, so `--tags firewall`
+# cannot skip the check).
+allowed_ssh_cidrs: []
+
+# Break-glass acknowledgement for a genuinely world-open SSH port.
+# Leaving allowed_ssh_cidrs at 0.0.0.0/0 requires setting this to true
+# IN THE INVENTORY, next to the CIDR it excuses — the same shape as
+# pgbackrest_offsite_ack (audit-2026-07-23 REL-DR). It does not narrow
+# anything; it makes the exposure an explicit, greppable, reviewable
+# declaration instead of an unremarked default. r1 sets it today
+# because its operator + the deploy workflow both reach the host from
+# dynamic addresses; retiring it needs a jump host or a VPN, not a
+# guess at a CIDR.
+ssh_world_open_ack: false
 
 # Internal ports accessible from the LAN / VPN CIDRs only.
 # 11626 (stellar-core admin /info) only when primary daemon is running.

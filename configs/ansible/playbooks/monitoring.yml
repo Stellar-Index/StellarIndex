@@ -11,7 +11,23 @@
 #
 # Usage:
 #
-#   ansible-playbook -i inventory/r1.yml playbooks/monitoring.yml
+#   ansible-playbook -i <multi-host inventory> playbooks/monitoring.yml
+#
+# NOT runnable against inventory/r1.yml (OBS-02, audit-2026-07-23 — the
+# line here used to say exactly that, and it never worked). The
+# prometheus role is the MULTI-HOST shape: roles/prometheus/tasks/
+# 01-preflight.yml requires a `prometheus_pair` group with exactly two
+# hosts, plus a populated `stellarindex_api`/`_aggregator`/`_indexer`
+# scrape-target group. r1.yml defines only `archival_nodes` with a
+# single host, so the play fails at the first assert.
+#
+# R1's Prometheus + Alertmanager are managed out-of-band today:
+# configs/prometheus/rules.r1/ (the R1 rule overlay, kept in lockstep
+# with deploy/monitoring/rules/ by scripts/ci/lint-rule-equivalence)
+# and configs/alertmanager/alertmanager.r1.yml + apply.sh. Wiring the
+# single-box path into this playbook needs a single-host code path in
+# the role, not an inventory edit — it is on the L4 cutover backlog
+# with the other multi-host cluster playbooks (configs/ansible/README.md).
 #
 # Per-deployment configuration (set in inventory `vars:`):
 #   - alertmanager_healthchecks_deadmansswitch_url

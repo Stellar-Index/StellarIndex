@@ -152,8 +152,23 @@ all:
     admin_ssh_keys:
       - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPknEhtWeiFH7MRebS0X2A2JdHbmyixmpD0YaJChG/jQ Ashs-MacBook-Pro.local-04-04-2024"
       - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKv511X6TOXxqPw8Dk3LqTZDrViBNkOgsgCUf4UysJdE github-actions-deploy@r1-20260506"
+    # audit-2026-07-23 (SEC-network / INF-20): still world-open. Both
+    # parties that need SSH here reach it from addresses this repo
+    # cannot pin — @ash's laptop on a residential/dynamic IP, and the
+    # deploy.yml GitHub-hosted runner (Azure ranges, rotated, and
+    # documented as subject to change). Narrowing to a guessed CIDR
+    # would lock the operator AND the deploy pipeline out of the only
+    # production host, with SSH as the sole recovery path — so the
+    # value stays, and the exposure is DECLARED instead (the role
+    # asserts one or the other; see 01-preflight.yml).
+    #
+    # Retire by: a jump host / Tailscale subnet for the operator, and
+    # either a self-hosted runner or the GitHub meta-API `actions`
+    # ranges for deploy.yml. Until then this is key-only auth + the
+    # 30/min nftables rate limit, and nothing else.
     allowed_ssh_cidrs:
-      - "0.0.0.0/0"                            # tighten to VPN/jump host later
+      - "0.0.0.0/0"
+    ssh_world_open_ack: true
 
     # ───── Firewall ────────────────────────────────────────────────
     # r1 is a single box: Postgres / MinIO / node_exporter are

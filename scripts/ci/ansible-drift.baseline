@@ -1,0 +1,45 @@
+# ansible-drift.baseline — the ENUMERATED allowance for the weekly
+# `codified = live` dry-run (.github/workflows/ansible-drift.yml, via
+# scripts/ci/check-ansible-drift.sh).
+#
+# One line per archival-node task that reports `changed` on EVERY
+# `--check --diff` run even when nothing has actually diverged:
+#
+#     <task name>  # <why it reports changed every run>
+#
+# The reason is mandatory (the gate fails on an entry without one). The
+# name is ansible's task name with the `<role> : ` prefix stripped.
+#
+# THIS IS NOT A PLACE TO PARK DRIFT. Three things do NOT belong here:
+#
+#   - "repo-ahead-of-r1" tasks (the repo declares config the live host
+#     does not have). That IS drift — the fix is to apply the playbook.
+#     Seven of the eleven tasks the old numeric allowance of 13 was
+#     sized around were this kind (docs/operations/r1-ansible-drift-2026-07-03.md
+#     §"2026-07-06 reconcile": Install r1-smoke.sh + its smoke-timer
+#     handler, Install config-assertions script, heavy-job wrapper, and
+#     three `Ownership — … data dir` 0755→0750 hardenings), and the old
+#     gate passed them week after week without ever naming them.
+#   - a task you have not confirmed is non-idempotent. Fail the gate and
+#     look; a guessed entry is a permanent blind spot on that task.
+#   - a task that could instead be FIXED. Prefer retiring the entry over
+#     keeping it (see the follow-ups below).
+#
+# SHRINK-ONLY (CS-098): scripts/ci/lint-baseline-growth.sh requires an
+# explicit `Baseline-Growth: <why>` commit trailer for any addition, so
+# widening the allowance is an auditable act with a name attached —
+# unlike the `13` it replaces.
+#
+# NOTE — this list has never been validated against a live run. The
+# workflow has produced no verdict since the vault-secret rotation
+# (CID-24); the entries below are derived from the runbook reconcile
+# cited above plus the task definitions in
+# configs/ansible/roles/archival-node/. The first run after an operator
+# restores ANSIBLE_VAULT_PASSWORD / ANSIBLE_VAULT_FILE_B64 is therefore
+# a re-baselining: expect it to name tasks not listed here. Confirm each
+# is genuinely non-idempotent (or codify/apply it) before adding it —
+# do not raise a number to make the red go away.
+
+Ensure migrations dir exists on r1  # `Sync migrations` (below) runs rsync in archive mode with delete:true, which rewrites the destination directory's own owner/mode/times from the runner checkout; this preceding file: task re-asserts root:root 0755 on every run. Retire together with the Sync entry.
+Sync migrations from repo to r1  # ansible.posix.synchronize compares mtime+size in archive mode, and every CI run rsyncs from a FRESH checkout whose mtimes are the clone time — so all ~120 migration files itemize as differing regardless of content. Retire by adding `--checksum` (plus the matching --no-times/--omit-dir-times) to rsync_opts once it can be validated against a live apply.
+Enable + start disable-thp service  # the disable-thp unit (configs/ansible/roles/archival-node/tasks/02-kernel.yml) is `Type=oneshot` with no RemainAfterExit, so systemd reports it inactive the moment it finishes and `state: started` restarts it on every run. Retire by adding `RemainAfterExit=yes` to that unit's [Service] section.
