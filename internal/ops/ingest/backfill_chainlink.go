@@ -45,7 +45,10 @@ func chainlinkFeedSetFromConfig(in map[string]config.ChainlinkFeedSetting) (map[
 // Idempotent: the oracle_updates PK (source, ledger, tx_hash,
 // op_index, ts) plus the deterministic syntheticTxHash(feed,
 // roundId) means re-running this command over an already-backfilled
-// range is a no-op (InsertOracleUpdate uses ON CONFLICT DO NOTHING).
+// range is a no-op at the SAME derive_generation. InsertOracleUpdate is
+// generation-guarded DO UPDATE since migration 0109 (INV-3), NOT the DO
+// NOTHING this comment used to claim — so a re-run at a HIGHER
+// generation deliberately overwrites, which is the point.
 //
 //nolint:gocognit,gocyclo,funlen // ops-CLI subcommand: flag parsing + config load + insert loop in one function is the most readable shape
 func backfillChainlink(args []string) error {
