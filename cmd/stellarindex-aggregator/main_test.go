@@ -379,3 +379,85 @@ func waitForRollup(t *testing.T, cond func() bool) {
 	}
 	t.Fatal("timed out waiting for rollup worker to advance all contracts")
 }
+
+// TestBuildSupplyPolicy_TranslatesConfig — CFG-11 (audit-2026-07-23).
+// buildClassicRefreshers/buildSEP41Refreshers used to hardcode
+// supply.Policy{} at both NewClassicComputer/NewSEP41Computer call
+// sites, so an operator-configured per_asset_locked_sets /
+// max_supply_overrides never reached the computer despite existing
+// in config and being fully implemented in internal/supply.Policy.
+// Asserts the corrected value: the built Policy actually carries the
+// configured PerAsset locked-set entries and a working
+// MaxSupplyOverride lookup — not just "no error."
+func TestBuildSupplyPolicy_TranslatesConfig(t *testing.T) {
+	cfg := config.SupplyConfig{
+		PerAssetLockedSets: map[string]config.SupplyLockedSetConfig{
+			"XLM": {
+				Accounts:  []string{"GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"},
+				Contracts: nil,
+			},
+		},
+		MaxSupplyOverrides: map[string]string{
+			"XLM": "1000000000000",
+		},
+	}
+
+	policy, err := buildSupplyPolicy(cfg)
+	if err != nil {
+		t.Fatalf("buildSupplyPolicy: %v", err)
+	}
+
+	// Deliberately excluded — see buildSupplyPolicy's doc. A regression
+	// here would mean a future edit started passing SDFReserveAccounts
+	// into a policy that ClassicComputer/SEP41Computer never consult
+	// for it.
+	if policy.SDFReserveAccounts != nil {
+		t.Errorf("SDFReserveAccounts = %v, want nil (Algorithm 1 wires it independently)", policy.SDFReserveAccounts)
+	}
+
+	locked, ok := policy.PerAsset["XLM"]
+	if !ok {
+		t.Fatal("policy.PerAsset[\"XLM\"] missing — per_asset_locked_sets was not translated")
+	}
+	if len(locked.Accounts) != 1 || locked.Accounts[0] != "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF" {
+		t.Errorf("policy.PerAsset[\"XLM\"].Accounts = %v, want the one configured account", locked.Accounts)
+	}
+
+	override, ok, err := policy.MaxSupplyOverride("XLM")
+	if err != nil {
+		t.Fatalf("MaxSupplyOverride: %v", err)
+	}
+	if !ok {
+		t.Fatal("MaxSupplyOverride(\"XLM\") not found — max_supply_overrides was not translated")
+	}
+	want := big.NewInt(1000000000000)
+	if override.Cmp(want) != 0 {
+		t.Errorf("MaxSupplyOverride(\"XLM\") = %s, want %s", override.String(), want.String())
+	}
+}
+
+// TestBuildSupplyPolicy_RejectsMalformedOverride confirms
+// buildSupplyPolicy runs policy.Validate() — a config-load-time
+// typo in max_supply_overrides must fail the aggregator at startup,
+// not silently degrade at first supply-snapshot time.
+func TestBuildSupplyPolicy_RejectsMalformedOverride(t *testing.T) {
+	cfg := config.SupplyConfig{
+		MaxSupplyOverrides: map[string]string{"XLM": "not-a-decimal-integer"},
+	}
+	if _, err := buildSupplyPolicy(cfg); err == nil {
+		t.Fatal("expected an error for a non-decimal max_supply_overrides value, got nil")
+	}
+}
+
+// TestBuildSupplyPolicy_EmptyConfigIsValid — the common case (no
+// operator overrides configured) must still produce a usable,
+// validation-clean Policy equivalent to the pre-fix supply.Policy{}.
+func TestBuildSupplyPolicy_EmptyConfigIsValid(t *testing.T) {
+	policy, err := buildSupplyPolicy(config.SupplyConfig{})
+	if err != nil {
+		t.Fatalf("buildSupplyPolicy(empty): %v", err)
+	}
+	if policy.SDFReserveAccounts != nil || policy.PerAsset != nil || policy.MaxSupplyOverrides != nil {
+		t.Errorf("buildSupplyPolicy(empty) = %+v, want every field nil (matching the pre-fix supply.Policy{})", policy)
+	}
+}
