@@ -291,3 +291,76 @@ func mustFiat(t *testing.T, code string) canonical.Asset {
 	}
 	return a
 }
+
+// TestClassic_Compute_PreservesSACWrappedComponent — Algorithm 2 folds
+// SACWrapped into total_supply, and until 2026-07-25 the fold was
+// LOSSY: the component was gone by the time the snapshot reached
+// asset_supply_history, so the cross-check could only compare folded
+// totals and its escrow leg could not exist (audit E4/N-F3(b)).
+// Compute must now carry the component out alongside the fold, with
+// the EXACT value the reader supplied — a truncated or rounded copy
+// would move the escrow bound and either mask a real breach or
+// manufacture one.
+func TestClassic_Compute_PreservesSACWrappedComponent(t *testing.T) {
+	const sacWrapped = 1_236_670_485_295_609 // i128-shaped, > 2^50
+	reader := &stubClassicReader{comps: supply.ClassicSupplyComponents{
+		Trustline:              bigInt(7_000_000_000),
+		Claimable:              bigInt(3_000_000),
+		LPReserve:              bigInt(11_000_000),
+		SACWrapped:             bigInt(sacWrapped),
+		IssuerBalance:          bigInt(0),
+		LockedAccountBalances:  bigInt(0),
+		LockedContractBalances: bigInt(0),
+	}}
+	computer, err := supply.NewClassicComputer(supply.Policy{}, reader)
+	if err != nil {
+		t.Fatalf("NewClassicComputer: %v", err)
+	}
+
+	got, err := computer.Compute(context.Background(), mustClassic(t, "BLND", validIssuer), 70_000_000, time.Now())
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	if got.SACWrappedStroops == nil {
+		t.Fatal("SACWrappedStroops = nil; the component was dropped by the fold, which is exactly the defect E4/N-F3(b) closes — the cross-check reads nil as CS-087 unchecked and skips the escrow leg")
+	}
+	if got.SACWrappedStroops.Cmp(big.NewInt(sacWrapped)) != 0 {
+		t.Errorf("SACWrappedStroops = %s, want %d", got.SACWrappedStroops, sacWrapped)
+	}
+	// The fold itself is unchanged: total still includes the component.
+	wantTotal := big.NewInt(7_000_000_000 + 3_000_000 + 11_000_000)
+	wantTotal.Add(wantTotal, big.NewInt(sacWrapped))
+	if got.TotalSupply.Cmp(wantTotal) != 0 {
+		t.Errorf("TotalSupply = %s, want %s — breaking the component out must not change the fold", got.TotalSupply, wantTotal)
+	}
+}
+
+// TestClassic_Compute_SACWrappedIsDefensiveCopy — the returned Supply
+// must not alias the reader's component. The stub reader here returns
+// the SAME *big.Int on every call (as a caching production reader
+// legitimately might), so an aliasing Compute would let a mutation of
+// one snapshot silently rewrite another's escrow bound.
+func TestClassic_Compute_SACWrappedIsDefensiveCopy(t *testing.T) {
+	shared := bigInt(500_000)
+	reader := &stubClassicReader{comps: supply.ClassicSupplyComponents{
+		Trustline:              bigInt(1_000_000),
+		Claimable:              bigInt(0),
+		LPReserve:              bigInt(0),
+		SACWrapped:             shared,
+		IssuerBalance:          bigInt(0),
+		LockedAccountBalances:  bigInt(0),
+		LockedContractBalances: bigInt(0),
+	}}
+	computer, err := supply.NewClassicComputer(supply.Policy{}, reader)
+	if err != nil {
+		t.Fatalf("NewClassicComputer: %v", err)
+	}
+	got, err := computer.Compute(context.Background(), mustClassic(t, "USDC", validIssuer), 70_000_000, time.Now())
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	shared.SetInt64(999_999_999)
+	if got.SACWrappedStroops.Cmp(big.NewInt(500_000)) != 0 {
+		t.Errorf("SACWrappedStroops = %s after mutating the reader's component, want 500000 — Compute must return a copy", got.SACWrappedStroops)
+	}
+}

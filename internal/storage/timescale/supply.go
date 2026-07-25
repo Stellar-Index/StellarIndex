@@ -53,6 +53,25 @@ func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 		maxSupply = sql.NullString{Valid: true, String: snap.MaxSupply.String()}
 	}
 
+	// sac_wrapped_stroops (migration 0117): Algorithm 2's SACWrapped
+	// component, broken out so the supply cross-check can run the
+	// escrow-vs-minted leg (audit E4/N-F3(b)). nil ⇒ SQL NULL, which the
+	// reader interprets as the CS-087 "unchecked" state — NOT as zero.
+	// Negative is impossible upstream (supply.validateClassicComponents
+	// rejects it before Compute returns), but guard at the write
+	// boundary too: migration 0117 deliberately carries no CHECK
+	// constraint (see its header), so this is the only enforcement point
+	// left, and a negative escrow reading would make the subset bound
+	// pass while the data is nonsense.
+	var sacWrapped sql.NullString
+	if snap.SACWrappedStroops != nil {
+		if snap.SACWrappedStroops.Sign() < 0 {
+			return fmt.Errorf("timescale: InsertSupply %s: SACWrappedStroops is negative (%s)",
+				snap.AssetKey, snap.SACWrappedStroops)
+		}
+		sacWrapped = sql.NullString{Valid: true, String: snap.SACWrappedStroops.String()}
+	}
+
 	// F-1205 follow-up (codex audit-2026-05-12): use the named-
 	// constraint form. Timescale hypertables in PG 16 + TS 2.16
 	// don't expose unique constraints to ON CONFLICT's column-
@@ -69,17 +88,26 @@ func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 	// lower generation (a live gen-0 replay) can never revert a
 	// correction. Live ingest writes generation 0 (the default), so a
 	// same-(asset,ledger) re-observe just re-writes the identical value.
+	//
+	// sac_wrapped_stroops joins the DO UPDATE value list for the same
+	// INV-3 reason every other value column is there: a corrected
+	// re-derive (say, after a `supply seed-sac-balances -full-history`
+	// pass recovers dormant pool balances) must land its new component
+	// in place. Leaving it out of the SET list would freeze the first
+	// value ever written and re-create the re-derive trap for exactly
+	// the column the recovery procedure exists to fix.
 	const q = `
 		INSERT INTO asset_supply_history
-		    (time, asset_key, total_supply, circulating_supply, max_supply, basis, ledger_sequence, derive_generation)
+		    (time, asset_key, total_supply, circulating_supply, max_supply, basis, ledger_sequence, derive_generation, sac_wrapped_stroops)
 		VALUES
-		    ($1, $2, $3::numeric, $4::numeric, $5::numeric, $6, $7, $8)
+		    ($1, $2, $3::numeric, $4::numeric, $5::numeric, $6, $7, $8, $9::numeric)
 		ON CONFLICT ON CONSTRAINT asset_supply_history_asset_ledger_idx DO UPDATE SET
-		    total_supply       = EXCLUDED.total_supply,
-		    circulating_supply = EXCLUDED.circulating_supply,
-		    max_supply         = EXCLUDED.max_supply,
-		    basis              = EXCLUDED.basis,
-		    derive_generation  = EXCLUDED.derive_generation
+		    total_supply        = EXCLUDED.total_supply,
+		    circulating_supply  = EXCLUDED.circulating_supply,
+		    max_supply          = EXCLUDED.max_supply,
+		    basis               = EXCLUDED.basis,
+		    derive_generation   = EXCLUDED.derive_generation,
+		    sac_wrapped_stroops = EXCLUDED.sac_wrapped_stroops
 		  WHERE asset_supply_history.derive_generation <= EXCLUDED.derive_generation
 	`
 	_, err := s.db.ExecContext(ctx, q,
@@ -91,6 +119,7 @@ func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 		string(snap.Basis),
 		int64(snap.LedgerSequence),
 		s.deriveGeneration,
+		sacWrapped,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertSupply %s @ ledger %d: %w",
@@ -105,7 +134,7 @@ func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 // detail handler then publishes nil for every supply field).
 func (s *Store) LatestSupply(ctx context.Context, assetKey string) (supply.Supply, error) {
 	const q = `
-		SELECT time, total_supply::text, circulating_supply::text, max_supply::text, basis, ledger_sequence
+		SELECT time, total_supply::text, circulating_supply::text, max_supply::text, basis, ledger_sequence, sac_wrapped_stroops::text
 		  FROM asset_supply_history
 		 WHERE asset_key = $1
 		 ORDER BY time DESC
@@ -118,9 +147,10 @@ func (s *Store) LatestSupply(ctx context.Context, assetKey string) (supply.Suppl
 		maxStr         sql.NullString
 		basis          string
 		ledger         int64
+		sacWrappedStr  sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx, q, assetKey).Scan(
-		&observedAt, &totalStr, &circulatingStr, &maxStr, &basis, &ledger,
+		&observedAt, &totalStr, &circulatingStr, &maxStr, &basis, &ledger, &sacWrappedStr,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return supply.Supply{}, ErrNotFound
@@ -128,7 +158,7 @@ func (s *Store) LatestSupply(ctx context.Context, assetKey string) (supply.Suppl
 	if err != nil {
 		return supply.Supply{}, fmt.Errorf("timescale: LatestSupply %s: %w", assetKey, err)
 	}
-	return assembleSupply(assetKey, observedAt, totalStr, circulatingStr, maxStr, basis, ledger)
+	return assembleSupply(assetKey, observedAt, totalStr, circulatingStr, maxStr, basis, ledger, sacWrappedStr)
 }
 
 // SupplyHistory returns snapshots for assetKey between [from, to)
@@ -139,7 +169,7 @@ func (s *Store) LatestSupply(ctx context.Context, assetKey string) (supply.Suppl
 // is known but has no supply observations in the requested range.
 func (s *Store) SupplyHistory(ctx context.Context, assetKey string, from, to time.Time, limit int) ([]supply.Supply, error) {
 	q := `
-		SELECT time, total_supply::text, circulating_supply::text, max_supply::text, basis, ledger_sequence
+		SELECT time, total_supply::text, circulating_supply::text, max_supply::text, basis, ledger_sequence, sac_wrapped_stroops::text
 		  FROM asset_supply_history
 		 WHERE asset_key = $1
 		   AND time >= $2
@@ -166,11 +196,12 @@ func (s *Store) SupplyHistory(ctx context.Context, assetKey string, from, to tim
 			maxStr         sql.NullString
 			basis          string
 			ledger         int64
+			sacWrappedStr  sql.NullString
 		)
-		if err := rows.Scan(&observedAt, &totalStr, &circulatingStr, &maxStr, &basis, &ledger); err != nil {
+		if err := rows.Scan(&observedAt, &totalStr, &circulatingStr, &maxStr, &basis, &ledger, &sacWrappedStr); err != nil {
 			return nil, fmt.Errorf("timescale: SupplyHistory %s scan: %w", assetKey, err)
 		}
-		snap, err := assembleSupply(assetKey, observedAt, totalStr, circulatingStr, maxStr, basis, ledger)
+		snap, err := assembleSupply(assetKey, observedAt, totalStr, circulatingStr, maxStr, basis, ledger, sacWrappedStr)
 		if err != nil {
 			return nil, err
 		}
@@ -244,7 +275,13 @@ func (s *Store) DailyCirculatingSupply(ctx context.Context, assetKey string, fro
 // and assembles a supply.Supply. Centralised so InsertSupply's
 // round-trip and SupplyHistory share identical decode logic — a bug
 // in one is a bug in both, easier to fix once.
-func assembleSupply(assetKey string, observedAt time.Time, totalStr, circulatingStr string, maxStr sql.NullString, basis string, ledger int64) (supply.Supply, error) {
+//
+// sacWrappedStr is the nullable sac_wrapped_stroops column (migration
+// 0117). A SQL NULL stays nil on the returned Supply — the CS-087
+// "unchecked" state that makes the cross-check's escrow leg decline to
+// evaluate. It is deliberately NOT coerced to zero here: see
+// [supply.Supply.SACWrappedStroops].
+func assembleSupply(assetKey string, observedAt time.Time, totalStr, circulatingStr string, maxStr sql.NullString, basis string, ledger int64, sacWrappedStr sql.NullString) (supply.Supply, error) {
 	total, ok := new(big.Int).SetString(totalStr, 10)
 	if !ok {
 		return supply.Supply{}, fmt.Errorf("timescale: parse total_supply %q for %s", totalStr, assetKey)
@@ -260,6 +297,13 @@ func assembleSupply(assetKey string, observedAt time.Time, totalStr, circulating
 			return supply.Supply{}, fmt.Errorf("timescale: parse max_supply %q for %s", maxStr.String, assetKey)
 		}
 	}
+	var sacWrapped *big.Int
+	if sacWrappedStr.Valid {
+		sacWrapped, ok = new(big.Int).SetString(sacWrappedStr.String, 10)
+		if !ok {
+			return supply.Supply{}, fmt.Errorf("timescale: parse sac_wrapped_stroops %q for %s", sacWrappedStr.String, assetKey)
+		}
+	}
 	return supply.Supply{
 		AssetKey:          assetKey,
 		TotalSupply:       total,
@@ -268,5 +312,6 @@ func assembleSupply(assetKey string, observedAt time.Time, totalStr, circulating
 		Basis:             supply.Basis(basis),
 		LedgerSequence:    uint32(ledger), //nolint:gosec // ledger is a positive uint32 by domain; CHECK constraint enforces >= 1
 		ObservedAt:        observedAt,
+		SACWrappedStroops: sacWrapped,
 	}, nil
 }

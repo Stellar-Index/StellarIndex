@@ -56,26 +56,33 @@ const (
 	// classic_total is the expected, unremarkable case for a
 	// partially-wrapped asset and must not page.
 	//
-	// This is the "(c) completeness fallback" from the 2026-07-08
-	// decision: the true subset compare — Algorithm 2's SACWrapped
-	// component vs Algorithm 3's total_supply, which per the same
-	// math IS a true equality (both measure the same wrapped amount
-	// via independent data paths: a ledger-entry snapshot sum vs an
-	// event-flow sum) — is NOT available at this compare site today.
-	// [StorageClassicSupplyReader.ClassicSupplyAt] computes
-	// SACWrapped as [ClassicSupplyComponents.SACWrapped] but
-	// [ClassicComputer.Compute] folds it into TotalSupply before
-	// returning a [Supply], and only the folded TotalSupply is
-	// persisted to `asset_supply_history` — the table
-	// [CrossCheckRefresher] reads via [SnapshotReader]. Wiring the
-	// real subset compare would need either (1) a new
-	// `sac_wrapped_stroops` column on `asset_supply_history` +
-	// [Supply] field + [ClassicComputer.Compute] populating it, or
-	// (2) the refresher querying [ClassicSupplyStore.SumSACBalancesAtOrBefore]
-	// directly instead of reading the persisted snapshot. Both are
-	// real schema/plumbing work, tracked as the (b) follow-up in
-	// BACKLOG #59 — not implemented here to avoid faking the subset
-	// with an approximation.
+	// SECOND LEG, added 2026-07-25 (audit E4/N-F3(b) — the "(b)
+	// follow-up" of BACKLOG #59, formerly listed here as unbuilt):
+	// [CrossCheckSubsetBound] now ALSO checks the true subset compare —
+	// Algorithm 2's SACWrapped component vs Algorithm 3's total_supply.
+	// Both measure the SAME quantity (the amount escrowed inside the
+	// SAC) via independent data paths — a ledger-entry snapshot sum
+	// (`sac_balance_observations`) vs an event-flow sum — so
+	// SACWrapped > sac_total is impossible under correct accounting and
+	// is a genuine escrow-exceeds-minted violation.
+	//
+	// The plumbing this comment used to describe as missing is option
+	// (1), now built: `asset_supply_history.sac_wrapped_stroops`
+	// (migration 0117) + [Supply.SACWrappedStroops] +
+	// [ClassicComputer.Compute] populating it from
+	// [ClassicSupplyComponents.SACWrapped]. Option (2) — the refresher
+	// querying [ClassicSupplyStore.SumSACBalancesAtOrBefore] directly —
+	// was NOT taken: it would re-read a component at a ledger unrelated
+	// to the snapshot's own, re-introducing exactly the freshness skew
+	// [CrossCheckLedgerTolerance] exists to bound, and would give the
+	// aggregator a second, divergent read path to the same number.
+	//
+	// The leg is CS-087-gated: a snapshot with a nil SACWrappedStroops
+	// (a pre-0117 row, or a non-classic algorithm that has no such
+	// component) leaves [CrossCheckResult.SubsetBoundChecked] false and
+	// the leg UNEVALUATED. It is deliberately not defaulted to zero —
+	// 0 <= sac_total holds vacuously, so a zero default would publish a
+	// green check that verified nothing.
 	//
 	// KNOWN LIMITATION (2026-07-10 update — see
 	// docs/architecture/supply-pipeline.md "Dormant contract-held SAC
@@ -143,15 +150,16 @@ func normalizeWrapClass(c WrapClass) WrapClass {
 // DivergenceStroops's meaning depends on WrapClass:
 //   - [WrapClassFull]: |classic.TotalSupply − sac.TotalSupply| — the
 //     original ADR-0011 equality compare.
-//   - [WrapClassPartial]: max(0, sac.TotalSupply − classic.TotalSupply)
-//     — zero whenever sac_total ≤ classic_total (the expected state
-//     for a partially-wrapped asset, including exact equality),
-//     positive only when the SAC reports MORE than the classic total
-//     could possibly back — the one direction that is a genuine
-//     violation regardless of wrap fraction.
+//   - [WrapClassPartial]: max(OverMintStroops, EscrowExcessStroops) —
+//     the worse of the two impossibility bounds below. Zero in the
+//     expected state for a partially-wrapped asset; positive only when
+//     one of the two conservation bounds is actually breached.
 //
 // Both shapes report a non-negative *big.Int and WithinTolerance=true
-// when DivergenceStroops ≤ [CrossCheckTolerance].
+// when DivergenceStroops ≤ [CrossCheckTolerance]. Keeping the single
+// gauge as the max of the legs means the existing
+// `stellarindex_supply_cross_check_divergence_stroops` alert fires on
+// EITHER breach with no threshold change; the per-leg fields say which.
 type CrossCheckResult struct {
 	ClassicKey        string
 	SACKey            string
@@ -160,6 +168,39 @@ type CrossCheckResult struct {
 	DivergenceStroops *big.Int
 	WithinTolerance   bool
 	WrapClass         WrapClass
+
+	// OverMintStroops is leg 1: max(0, SACTotal − ClassicTotal). The
+	// SAC cannot have minted more than the classic asset's whole total
+	// supply, because that total already includes the escrowed amount
+	// as one of its four non-negative addends. Populated only under
+	// [WrapClassPartial] (the [WrapClassFull] equality compare reports
+	// a signed-magnitude in DivergenceStroops instead and leaves this
+	// nil).
+	OverMintStroops *big.Int
+
+	// SACWrapped is Algorithm 2's SACWrapped component as recorded on
+	// the classic snapshot ([Supply.SACWrappedStroops]) — the input to
+	// leg 2, preserved for log lines and runbook triage. nil when the
+	// snapshot recorded none.
+	SACWrapped *big.Int
+
+	// SubsetBoundChecked is the CS-087 disambiguator for leg 2: true
+	// means a real SACWrapped component fed the escrow bound; false
+	// means the classic snapshot carried none (a pre-migration-0117
+	// row, or a non-classic algorithm) so the leg was NOT evaluated.
+	//
+	// false MUST NOT be read as "the escrow side agrees". A green
+	// WithinTolerance with SubsetBoundChecked=false means only "the SAC
+	// has not over-minted past the classic total" — the pre-2026-07-25
+	// one-sided claim — not that the two sides reconcile.
+	SubsetBoundChecked bool
+
+	// EscrowExcessStroops is leg 2: max(0, SACWrapped − SACTotal). The
+	// balances escrowed inside the SAC cannot exceed what the SAC has
+	// net-minted, because every escrowed unit got there by a mint. A
+	// positive value means either mints the indexer never captured or
+	// burns it double-counted. nil when !SubsetBoundChecked.
+	EscrowExcessStroops *big.Int
 }
 
 // ErrCrossCheckNilSupply is returned by [CrossCheck] when either
@@ -197,6 +238,17 @@ var ErrCrossCheckNilSupply = errors.New("supply: cross-check requires non-nil To
 // pre-condition (a fully-SAC-represented asset); it is exported
 // directly for tests and for any future WrapClassFull caller.
 //
+// CrossCheck leaves the leg-2 fields ([CrossCheckResult.SACWrapped],
+// SubsetBoundChecked, EscrowExcessStroops) and OverMintStroops at their
+// zero values on purpose: under WrapClassFull the equality compare
+// already SUBSUMES the escrow bound. SACWrapped ≤ classic.TotalSupply
+// holds by construction (it is one of four non-negative addends), and
+// this function only passes when classic.TotalSupply ≤
+// sac.TotalSupply + [CrossCheckTolerance], so SACWrapped ≤
+// sac.TotalSupply + tolerance follows for free. Evaluating leg 2
+// separately here would add a second reading of a bound the equality
+// has already proven.
+//
 // The function is pure: no I/O, no metric emission. The caller emits
 // metrics via [obs.SupplyCrossCheckDivergence] using the returned
 // result. Keeping CrossCheck pure lets unit tests cover the
@@ -231,30 +283,49 @@ func CrossCheck(classic, sac Supply) (CrossCheckResult, error) {
 
 // CrossCheckSubsetBound compares a classic-asset Algorithm 2 reading
 // with its SAC-wrapped Algorithm 3 reading under the [WrapClassPartial]
-// subset-bound invariant (2026-07-08 decision, BACKLOG #59): the SAC's
-// total_supply can never exceed the classic asset's total_supply,
-// because Algorithm 2's total already includes the SAC-wrapped balance
-// as one of its non-negative addends (see [ClassicSupplyComponents]).
+// invariants. It checks TWO conservation bounds, each of which is
+// impossible to breach under correct accounting regardless of how much
+// of the asset is wrapped:
 //
-// DivergenceStroops = max(0, sac.TotalSupply − classic.TotalSupply).
-// Zero whenever the SAC total is within the classic total (the normal
-// case for a partially-wrapped asset, and also for an exactly-fully-
-// wrapped one) — WithinTolerance is then true and nothing pages.
-// Positive only when the SAC reports more than the classic side could
-// possibly back, which cannot happen under correct accounting and is
-// therefore a genuine "escrow != minted" violation.
+//	leg 1 (over-mint, 2026-07-08 decision, BACKLOG #59)
+//	    sac.TotalSupply ≤ classic.TotalSupply
+//	  because Algorithm 2's total already includes the SAC-wrapped
+//	  balance as one of its four non-negative addends (see
+//	  [ClassicSupplyComponents]). OverMintStroops = the excess.
 //
-// ONE-SIDED — NOT A RECONCILIATION (MNY-04). This is an over-mint
-// tripwire and nothing more. It fires on sac_total > classic_total and
-// is structurally blind to the opposite failure: a mint/escrow
-// SHORTFALL (sac_total < classic_total — SAC-wrapped balances that
-// were escrowed classically but whose mints were never indexed, or
-// burns double-counted) is the NORMAL state of a partially-wrapped
-// asset and is therefore indistinguishable from corruption here. A
-// green cross-check consequently means "the SAC has not over-minted",
-// NOT "the two sides reconcile". Closing the other direction needs the
-// per-wrap escrow-balance accounting (E4/N-F3), which is not built;
-// operators must not read this gauge as two-sided assurance.
+//	leg 2 (escrow-exceeds-minted, 2026-07-25, audit E4/N-F3(b))
+//	    classic.SACWrappedStroops ≤ sac.TotalSupply
+//	  because every unit escrowed inside the SAC got there by a mint,
+//	  so the ledger-entry sum of SAC balances cannot exceed the
+//	  event-derived net mint. EscrowExcessStroops = the excess.
+//
+// DivergenceStroops = max(OverMintStroops, EscrowExcessStroops), so the
+// single existing gauge + alert fires on either breach with no
+// threshold change, and the per-leg fields on [CrossCheckResult] say
+// which one. Zero in the expected steady state for a partially-wrapped
+// asset (leg 1's classic ≥ sac and leg 2's SACWrapped ≤ sac are both
+// comfortably satisfied), so nothing pages.
+//
+// Leg 2 is CS-087-gated. When classic.SACWrappedStroops is nil the leg
+// is NOT evaluated and SubsetBoundChecked stays false; it is never
+// defaulted to zero, because 0 ≤ sac_total holds vacuously and a zero
+// default would publish a green check that verified nothing. A caller
+// reading WithinTolerance MUST read SubsetBoundChecked alongside it.
+//
+// STILL NOT A FULL RECONCILIATION (MNY-04, narrowed). What leg 2 closes
+// is the direction that used to be structurally invisible: a mint the
+// indexer never captured, or a burn it double-counted, now shows up as
+// SACWrapped > sac_total instead of hiding inside the benign
+// classic > sac gap. What remains open is the NON-SAC half of Algorithm
+// 2 — trustline / claimable / LP-reserve balances have no independent
+// second observation to reconcile against, so an undercount there is
+// still invisible to this check (it merely widens the benign
+// classic > sac gap). And leg 2 is only as strong as the SACWrapped
+// component itself: an UNDER-counted SACWrapped — the documented
+// BLND/EURC/KALE/PHO dormant-pool-balance case in [WrapClassPartial]'s
+// KNOWN LIMITATION, cured by `supply seed-sac-balances -full-history` —
+// sits BELOW sac_total and so passes leg 2 quietly. Leg 2 is an upper
+// bound on escrow, not a proof that escrow was fully observed.
 //
 // Pure, same pre-conditions as [CrossCheck].
 func CrossCheckSubsetBound(classic, sac Supply) (CrossCheckResult, error) {
@@ -262,20 +333,40 @@ func CrossCheckSubsetBound(classic, sac Supply) (CrossCheckResult, error) {
 		return CrossCheckResult{}, ErrCrossCheckNilSupply
 	}
 
-	over := new(big.Int).Sub(sac.TotalSupply, classic.TotalSupply)
-	if over.Sign() < 0 {
-		over = big.NewInt(0)
-	}
-
-	return CrossCheckResult{
+	overMint := excessOver(sac.TotalSupply, classic.TotalSupply)
+	res := CrossCheckResult{
 		ClassicKey:        classic.AssetKey,
 		SACKey:            sac.AssetKey,
 		ClassicTotal:      new(big.Int).Set(classic.TotalSupply),
 		SACTotal:          new(big.Int).Set(sac.TotalSupply),
-		DivergenceStroops: over,
-		WithinTolerance:   over.Cmp(CrossCheckTolerance) <= 0,
+		OverMintStroops:   overMint,
+		DivergenceStroops: new(big.Int).Set(overMint),
 		WrapClass:         WrapClassPartial,
-	}, nil
+	}
+
+	if classic.SACWrappedStroops != nil {
+		escrowExcess := excessOver(classic.SACWrappedStroops, sac.TotalSupply)
+		res.SACWrapped = new(big.Int).Set(classic.SACWrappedStroops)
+		res.SubsetBoundChecked = true
+		res.EscrowExcessStroops = escrowExcess
+		if escrowExcess.Cmp(res.DivergenceStroops) > 0 {
+			res.DivergenceStroops = new(big.Int).Set(escrowExcess)
+		}
+	}
+
+	res.WithinTolerance = res.DivergenceStroops.Cmp(CrossCheckTolerance) <= 0
+	return res, nil
+}
+
+// excessOver returns max(0, have − bound) as a fresh *big.Int: how far
+// `have` breaches the upper bound `bound`, clamped at zero so a
+// satisfied bound reports 0 rather than a negative gauge reading.
+func excessOver(have, bound *big.Int) *big.Int {
+	excess := new(big.Int).Sub(have, bound)
+	if excess.Sign() < 0 {
+		return big.NewInt(0)
+	}
+	return excess
 }
 
 // CrossCheckForClass dispatches to [CrossCheck] (equality) or

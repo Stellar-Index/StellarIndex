@@ -39,18 +39,17 @@ subset-compare with a completeness fallback, decided 2026-07-08:
 - The real subset compare — Algorithm 2's `SACWrapped` component
   (`ClassicSupplyComponents.SACWrapped`, summed from
   `sac_balance_observations`) vs Algorithm 3's `total_supply`, which
-  per ADR-0011/0022's own math IS a true equality (both measure the
-  same wrapped amount via independent data paths: a ledger-entry
-  snapshot sum vs an event-flow sum) — is **not available at this
-  compare site today**. `ClassicComputer.Compute` folds `SACWrapped`
-  into the classic `TotalSupply` before returning a `Supply`, and
-  only that folded total is persisted to `asset_supply_history` (the
-  table `CrossCheckRefresher` reads). Wiring the real subset compare
-  needs either a `sac_wrapped_stroops` column + `Supply` field +
-  `ClassicComputer.Compute` populating it, or the refresher querying
-  `ClassicSupplyStore.SumSACBalancesAtOrBefore` directly instead of
-  the persisted snapshot. Real schema/plumbing work — tracked as a
-  follow-up, not implemented as an approximation.
+  per ADR-0011/0022's own math measures the same wrapped amount via
+  independent data paths (a ledger-entry snapshot sum vs an
+  event-flow sum) — was **not available at this compare site** in
+  2026-07-08, because `ClassicComputer.Compute` folded `SACWrapped`
+  into the classic `TotalSupply` before returning a `Supply` and only
+  that folded total was persisted to `asset_supply_history` (the table
+  `CrossCheckRefresher` reads). **BUILT 2026-07-25** (audit E4/N-F3(b)):
+  migration 0117 adds `asset_supply_history.sac_wrapped_stroops`,
+  `supply.Supply` gains `SACWrappedStroops`, and `Compute` carries the
+  component out alongside the fold. See
+  [§What is now two-sided, and what still is not](#what-is-now-two-sided-and-what-still-is-not).
 - What IS available, with zero new plumbing, is a mathematically
   true **subset bound**: `SACWrapped` is one of Algorithm 2's own
   non-negative addends (`total = Trustline + Claimable + LPReserve +
@@ -113,16 +112,59 @@ VERDICT"; full write-up in
 > `sac_balance_observations` already models. No new reader is needed
 > and none should be written.
 
-**Genuine remaining limitation.** The subset bound is ONE-SIDED by
-construction (`CrossCheckSubsetBound`'s "MNY-04" note): it fires only
-on `sac_total > classic_total` and is structurally blind to a mint /
-escrow SHORTFALL, which is indistinguishable from a partially-wrapped
-asset's normal state. A green cross-check means "the SAC has not
-over-minted", **not** "the two sides reconcile". The true
-reconciliation — Algorithm 2's `SACWrapped` component vs Algorithm 3's
-total, which IS an equality — still needs the persisted
-`sac_wrapped_stroops` plumbing described above and is unbuilt. Do not
-read this gauge as two-sided assurance.
+## What is now two-sided, and what still is not
+
+Until 2026-07-25 the `partial_wrap` check was ONE-SIDED by
+construction: it fired only on `sac_total > classic_total` and was
+structurally blind to a mint / escrow SHORTFALL, because a shortfall is
+indistinguishable from a partially-wrapped asset's normal state when
+all you can compare is the two folded totals.
+
+Audit **E4/N-F3(b)** (2026-07-25) closed that direction.
+`CrossCheckSubsetBound` now evaluates **two** conservation bounds and
+reports `max` of their excesses in the single
+`stellarindex_supply_cross_check_divergence_stroops` gauge, so the
+existing 1-stroop alert threshold fires on either with no rule change:
+
+| Leg | Bound | Breach means | Result field |
+| --- | ----- | ------------ | ------------ |
+| 1 — over-mint (2026-07-08) | `sac_total ≤ classic_total` | the SAC reports more supply than the classic asset has in total; the classic side is under-observed | `OverMintStroops` |
+| 2 — escrow-exceeds-minted (2026-07-25) | `SACWrapped ≤ sac_total` | more is escrowed inside the SAC than it ever net-minted; **mints the indexer never captured, or burns it double-counted** | `EscrowExcessStroops` |
+
+The `over_mint_stroops` / `escrow_excess_stroops` fields appear on the
+aggregator's `cross-check: divergence over tolerance` WARN line — read
+them first, because the two legs need **opposite** responses (leg 1:
+recover missing classic-side balances, §Mitigation; leg 2: the SEP-41
+event capture for that SAC is incomplete — see
+[`sep41-mint-recovery.md`](../sep41-mint-recovery.md)).
+
+**Leg 2 is CS-087-gated and can report UNCHECKED.** A classic snapshot
+written before migration 0117 carries no `sac_wrapped_stroops`, so the
+leg is not evaluated and `subset_bound_checked=false`. It is
+deliberately NOT defaulted to zero: `0 ≤ sac_total` holds vacuously, so
+a zero default would publish a green check that verified nothing. The
+flag self-clears within one aggregator refresh cycle of the 0117
+deploy; the aggregator logs a Debug line naming the pair until it does.
+**A green check with `subset_bound_checked=false` still means only "the
+SAC has not over-minted", not "the two sides reconcile."**
+
+**What is STILL not covered.** Two things, and neither is closed by
+E4/N-F3(b):
+
+1. **The non-SAC half of Algorithm 2.** Trustline / claimable /
+   LP-reserve balances have no independent second observation to
+   reconcile against. An undercount there is still invisible — it
+   merely widens the benign `classic > sac` gap that leg 1 is required
+   to ignore.
+2. **An UNDER-counted `SACWrapped`.** Leg 2 is an upper bound on
+   escrow, not a proof that escrow was fully observed. The documented
+   BLND/EURC/KALE/PHO dormant-pool-balance case sits *below*
+   `sac_total` and passes leg 2 quietly — it is caught by leg 1
+   instead, and cured by
+   `supply seed-sac-balances -full-history` (§Mitigation). Per-contract
+   seed provenance in `sac_balance_seed_provenance` (migration 0102) is
+   how you tell "expected, never full-history seeded" from "actually
+   anomalous".
 
 ## Symptoms
 

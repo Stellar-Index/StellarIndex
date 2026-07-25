@@ -184,13 +184,22 @@ func (c *ClassicComputer) Compute(ctx context.Context, asset canonical.Asset, le
 	}
 
 	return Supply{
-		AssetKey:           key,
-		TotalSupply:        total,
-		CirculatingSupply:  circulating,
-		MaxSupply:          maxSupply,
-		Basis:              basis,
-		LedgerSequence:     ledger,
-		ObservedAt:         observedAt.UTC(),
+		AssetKey:          key,
+		TotalSupply:       total,
+		CirculatingSupply: circulating,
+		MaxSupply:         maxSupply,
+		Basis:             basis,
+		LedgerSequence:    ledger,
+		ObservedAt:        observedAt.UTC(),
+		// Carry the SACWrapped addend OUT of the fold as well as into
+		// it (audit E4/N-F3(b)): total_supply keeps including it, and
+		// [Supply.SACWrappedStroops] additionally preserves it so the
+		// cross-check can compare it against the SAC's own Algorithm-3
+		// total — the same-quantity, two-independent-paths compare that
+		// the folded total structurally cannot express. Defensive copy:
+		// the returned Supply must not alias the reader's component,
+		// which a caller could otherwise mutate under us.
+		SACWrappedStroops:  new(big.Int).Set(comps.SACWrapped),
 		MinComponentLedger: comps.MinComponentLedger,
 	}, nil
 }

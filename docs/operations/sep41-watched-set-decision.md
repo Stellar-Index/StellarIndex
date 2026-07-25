@@ -1,7 +1,37 @@
-# SEP-41 watched-set — decision doc (operator approval needed)
+# SEP-41 watched-set — decision doc (RETIRED 2026-07-25)
 
-**Status:** awaiting @ash approval of the candidate list below.
-**Context:** `watched_sep41_contracts = []` on r1 — the sep41_transfers +
+> **⚠ RETIRED — HISTORICAL RECORD ONLY. ITS PREMISE IS FALSE.**
+>
+> This document's opening claim, `watched_sep41_contracts = []`, went
+> stale on **2026-07-05** and every recommendation below has since been
+> executed or superseded. It is kept for the candidate-analysis trail
+> only. **Do not plan from it.**
+>
+> Current state:
+>
+> - `stellarindex_watched_sep41_contracts` in
+>   `configs/ansible/roles/archival-node/defaults/main.yml` carries
+>   **39** contracts, not zero — the curated SAC-wrapper roster seeded
+>   by `4290aae6` (2026-07-05), extended with FxDAO FXG by `bba4f1f9` +
+>   `332016e0` (2026-07-10). Both sources are **enabled**, not
+>   config-disabled.
+> - Recommendation step 4's "add sep41×2 to the reconcile catalogue" is
+>   **done and unconditional** — `buildReconciliationCatalogue` promotes
+>   both sources whenever a watched set is configured
+>   (`internal/ops/chops/reconciliation_catalogue.go:300-306`,
+>   2026-07-11).
+> - The `projector-replay` step in recommendation 4 was superseded by
+>   the 2026-07-11 full-history `ch-rebuild -sep41 -write` truncate +
+>   re-derive (windows 50.0M→63.42M, rc=0).
+> - The "17/17" target was **not** reached: both sources sit at
+>   `complete=false` / `lake_complete=true`. That is a live issue with
+>   its own diagnosis —
+>   **[`sep41-completeness-diagnosis-2026-07-25.md`](sep41-completeness-diagnosis-2026-07-25.md)**,
+>   which supersedes this document.
+
+**Status:** RETIRED (superseded by the completeness diagnosis above).
+**Historical context (2026-06-12, no longer true):**
+`watched_sep41_contracts = []` on r1 — the sep41_transfers +
 sep41_supply sources are config-disabled (by design: post-CAP-67 the
 token-event firehose includes every classic-asset movement; the watched
 set is the curated alternative the F-1316 fix locked in).
