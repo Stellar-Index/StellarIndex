@@ -90,7 +90,7 @@ The `ledgerstream` package gains a **fallback source** chain:
 ```go
 type ledgerSource struct {
   hot  s3compat.Reader  // local MinIO galexie-archive
-  cold s3compat.Reader  // aws-public-blockchain (HTTPS, no auth)
+  cold s3compat.Reader  // aws-public-blockchain (HTTPS, anonymous — see Amendment 2026-07-25)
 }
 
 func (s *ledgerSource) ReadLCM(ctx context.Context, seq uint32) (lcm xdr.LedgerCloseMeta, err error) {
@@ -260,3 +260,58 @@ guard, since it deletes local LCM ranges.
 
 Accepting the ADR records the decision + the shipped implementation; it
 does NOT flip the production flag.
+
+## Amendment 2026-07-25 — the cold tier could never authenticate
+
+Enabling §Sequencing step 3 on r1 for the first time surfaced that the
+"HTTPS, no auth" cold reader above was never achievable through the
+code as shipped. Every cold read failed with:
+
+```
+InvalidAccessKeyId: The AWS Access Key Id you provided does not exist in our records
+```
+
+Two independent defects, both now fixed:
+
+1. **Credentials.** The vendored SDK
+   (`go-stellar-sdk@v0.6.0/support/datastore/s3.go`) builds every S3
+   datastore via `config.LoadDefaultConfig`, falling back to
+   `aws.AnonymousCredentials{}` only when the ambient chain is
+   *completely empty*. r1's `/etc/default/stellarindex` exports MinIO's
+   root credentials as `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` /
+   `AWS_REGION` / `AWS_ENDPOINT_URL` — the HOT tier authenticates
+   through exactly that chain — so the anonymous fallback never fired
+   and MinIO's key was signed onto every AWS request. **One process
+   cannot serve two S3 backends with different credentials through
+   `datastore.NewDataStore`.** The cold client is now built by
+   `pipeline.NewColdDataStore`, which constructs the `*s3.Client`
+   itself (from a zero-valued `aws.Config`, so nothing leaks in from
+   the environment — including `AWS_ENDPOINT_URL`) and hands it to the
+   SDK's exported `datastore.FromS3Client`. It is used by all three
+   cold construction sites: `internal/ledgerstream` (via the
+   `Config.ColdDataStoreFactory` hook), `trim-galexie-archive` and
+   `rehydrate-galexie-archive`. `s3_cold_access_key_env` /
+   `s3_cold_secret_key_env` — declared with the tier and until now read
+   by nothing — are what select anonymous (both empty) vs static
+   credentials (both set); half a pair is a config-validation error.
+2. **Region.** The bucket is in **us-east-2**, and the client is
+   path-style so it needs the *regional* endpoint. `us-east-1` /
+   `https://s3.amazonaws.com` answers `301 PermanentRedirect`.
+   Verified live 2026-07-25: `curl -sI
+   https://aws-public-blockchain.s3.amazonaws.com/` →
+   `x-amz-bucket-region: us-east-2`. Working values:
+
+   ```toml
+   s3_cold_endpoint       = "https://s3.us-east-2.amazonaws.com"
+   s3_cold_region         = "us-east-2"
+   s3_cold_bucket_archive = "aws-public-blockchain/v1.1/stellar/ledgers/pubnet"
+   ```
+
+Why this stayed invisible for the tier's whole life: `streamTiered`
+treats cold-init failure as non-fatal by design (WARN + degrade to
+hot-only), which is the correct behaviour for an optional fallback but
+made a permanently-broken tier look like a log line. Any future
+enablement of §3 must therefore confirm
+`stellarindex_ledgerstream_tier_read_total{outcome="cold"}` actually
+increments — a zero cold-read rate is indistinguishable from a cold
+tier that cannot open at all.

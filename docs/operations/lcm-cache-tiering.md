@@ -41,15 +41,43 @@ through the legacy single-source path.
    `[storage]`:
 
    ```toml
-   s3_cold_endpoint        = "https://s3.amazonaws.com"
-   s3_cold_region          = "us-east-1"
+   s3_cold_endpoint        = "https://s3.us-east-2.amazonaws.com"
+   s3_cold_region          = "us-east-2"
    s3_cold_bucket_archive  = "aws-public-blockchain/v1.1/stellar/ledgers/pubnet"
-   # Leave the *_env fields empty — the AWS public bucket needs
-   # anonymous access. The SDK falls back to anonymous creds when
-   # no env vars are set.
+   # Leave the *_env fields empty — the AWS public bucket is
+   # public-read, so the cold client signs nothing. Both must be
+   # empty or both must name an env var; half a pair is a config
+   # error (config.StorageConfig.validate).
    s3_cold_access_key_env  = ""
    s3_cold_secret_key_env  = ""
    ```
+
+   **The region is `us-east-2`, not `us-east-1`** — this runbook
+   said `us-east-1` with the global `https://s3.amazonaws.com`
+   endpoint until 2026-07-25, and neither works. The cold client is
+   built path-style, so it needs the *regional* endpoint, and
+   `s3.us-east-1.amazonaws.com` answers `301 PermanentRedirect` for
+   this bucket. Verified live 2026-07-25:
+
+   ```sh
+   curl -sI https://aws-public-blockchain.s3.amazonaws.com/ | grep bucket-region
+   # x-amz-bucket-region: us-east-2
+   ```
+
+   Note also that the *_env fields hold the **NAME** of an env var
+   (same convention as `s3_access_key_env`), never the credential
+   itself. Empty means anonymous; a named-but-unset env var is a
+   hard startup error rather than a silent downgrade to anonymous
+   — the earlier text here claimed "the SDK falls back to anonymous
+   creds when no env vars are set", which was never true for this
+   deployment: r1's `/etc/default/stellarindex` exports MinIO's
+   credentials as `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` for
+   the HOT tier, so the SDK's chain was never empty and the cold
+   client signed every AWS request with MinIO's key
+   (`InvalidAccessKeyId: The AWS Access Key Id you provided does
+   not exist in our records`). The cold client is now built by
+   `pipeline.NewColdDataStore`, which inherits nothing from the
+   ambient environment.
 
 2. Restart the consumer services:
 

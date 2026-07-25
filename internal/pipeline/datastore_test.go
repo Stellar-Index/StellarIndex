@@ -26,6 +26,9 @@ func TestLedgerstreamConfig_NoColdTier(t *testing.T) {
 	if got.ColdDataStore.Type != "" {
 		t.Errorf("ColdDataStore must be zero when cold tiering disabled; got Type=%q", got.ColdDataStore.Type)
 	}
+	if got.ColdDataStoreFactory != nil {
+		t.Error("ColdDataStoreFactory must be nil when cold tiering is disabled")
+	}
 	if got.DataStore.Type != "S3" {
 		t.Errorf("hot DataStore.Type = %q, want S3", got.DataStore.Type)
 	}
@@ -46,8 +49,8 @@ func TestLedgerstreamConfig_ColdTierArchive(t *testing.T) {
 			S3Region:            "r1",
 			S3BucketArchive:     "galexie-archive",
 			S3BucketLive:        "galexie-live",
-			S3ColdEndpoint:      "https://s3.amazonaws.com",
-			S3ColdRegion:        "us-east-1",
+			S3ColdEndpoint:      "https://s3.us-east-2.amazonaws.com",
+			S3ColdRegion:        "us-east-2",
 			S3ColdBucketArchive: "aws-public-blockchain/v1.1/stellar/ledgers/pubnet",
 		},
 	}
@@ -58,8 +61,15 @@ func TestLedgerstreamConfig_ColdTierArchive(t *testing.T) {
 	if got.ColdDataStore.Params["destination_bucket_path"] != "aws-public-blockchain/v1.1/stellar/ledgers/pubnet" {
 		t.Errorf("cold bucket = %q", got.ColdDataStore.Params["destination_bucket_path"])
 	}
-	if got.ColdDataStore.Params["endpoint_url"] != "https://s3.amazonaws.com" {
+	if got.ColdDataStore.Params["endpoint_url"] != "https://s3.us-east-2.amazonaws.com" {
 		t.Errorf("cold endpoint = %q", got.ColdDataStore.Params["endpoint_url"])
+	}
+	// The cold CLIENT must come from pipeline.NewColdDataStore, not the
+	// SDK's ambient-credential path — see TestColdDataStoreFactory_
+	// SendsUnsignedRequests for the wire-level proof.
+	if got.ColdDataStoreFactory == nil {
+		t.Error("ColdDataStoreFactory not wired; ledgerstream would open cold via datastore.NewDataStore " +
+			"and sign requests with the hot tier's ambient MinIO credentials (2026-07-25 incident)")
 	}
 }
 
@@ -77,14 +87,17 @@ func TestLedgerstreamConfig_ColdTierSkippedForLiveBucket(t *testing.T) {
 			S3Region:            "r1",
 			S3BucketArchive:     "galexie-archive",
 			S3BucketLive:        "galexie-live",
-			S3ColdEndpoint:      "https://s3.amazonaws.com",
-			S3ColdRegion:        "us-east-1",
+			S3ColdEndpoint:      "https://s3.us-east-2.amazonaws.com",
+			S3ColdRegion:        "us-east-2",
 			S3ColdBucketArchive: "aws-public-blockchain/v1.1/stellar/ledgers/pubnet",
 		},
 	}
 	got := LedgerstreamConfig(cfg, cfg.Storage.S3BucketLive)
 	if got.ColdDataStore.Type != "" {
 		t.Errorf("ColdDataStore must be zero for the live bucket; got Type=%q", got.ColdDataStore.Type)
+	}
+	if got.ColdDataStoreFactory != nil {
+		t.Error("ColdDataStoreFactory must be nil for the live bucket")
 	}
 }
 
@@ -96,7 +109,7 @@ func TestStorageConfig_ColdTieringEnabled(t *testing.T) {
 		want bool
 	}{
 		{"all empty", config.StorageConfig{}, false},
-		{"endpoint only", config.StorageConfig{S3ColdEndpoint: "https://s3.amazonaws.com"}, false},
+		{"endpoint only", config.StorageConfig{S3ColdEndpoint: "https://s3.us-east-2.amazonaws.com"}, false},
 		{"bucket only", config.StorageConfig{S3ColdBucketArchive: "aws-public-blockchain/v1.1/stellar/ledgers/pubnet"}, true},
 		{"all set", config.StorageConfig{S3ColdEndpoint: "x", S3ColdRegion: "y", S3ColdBucketArchive: "z"}, true},
 	}

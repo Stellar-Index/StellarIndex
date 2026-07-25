@@ -54,11 +54,11 @@ the `env:` column.
 | `storage.s3_bucket_live` | `string` | `galexie-live` | — | Live Galexie export bucket name. |
 | `storage.s3_access_key_env` | `string` | `STELLARINDEX_S3_ACCESS_KEY` | — | NAME of the env var holding the S3 access key ID (the value lives in that env var, not here). |
 | `storage.s3_secret_key_env` | `string` | `STELLARINDEX_S3_SECRET_KEY` | — | NAME of the env var holding the S3 secret access key (the value lives in that env var, not here). |
-| `storage.s3_cold_endpoint` | `string` | _(required)_ | — | Cold-tier S3 endpoint. Empty disables tiering. Production: https://s3.amazonaws.com |
-| `storage.s3_cold_region` | `string` | _(required)_ | — | Cold-tier S3 region. Production (aws-public-blockchain): us-east-1 |
+| `storage.s3_cold_endpoint` | `string` | _(required)_ | — | Cold-tier S3 endpoint — must be the REGIONAL endpoint (the client is path-style). Empty disables tiering. Production (aws-public-blockchain): https://s3.us-east-2.amazonaws.com |
+| `storage.s3_cold_region` | `string` | _(required)_ | — | Cold-tier S3 region. Production (aws-public-blockchain): us-east-2 (verified 2026-07-25 — us-east-1 is wrong and 301s) |
 | `storage.s3_cold_bucket_archive` | `string` | _(required)_ | — | Cold-tier bucket + prefix for historical LCMs. Empty disables tiering. Production: aws-public-blockchain/v1.1/stellar/ledgers/pubnet |
-| `storage.s3_cold_access_key_env` | `string` | _(required)_ | — | Env var holding cold-tier S3 access key. Empty = anonymous reads (correct for public buckets). |
-| `storage.s3_cold_secret_key_env` | `string` | _(required)_ | — | Env var holding cold-tier S3 secret key. Empty = anonymous reads. |
+| `storage.s3_cold_access_key_env` | `string` | _(required)_ | — | NAME of the env var holding the cold-tier S3 access key (the value lives in that env var, not here). Empty = anonymous reads, which is correct for the public aws-public-blockchain bucket. Must be set together with s3_cold_secret_key_env. |
+| `storage.s3_cold_secret_key_env` | `string` | _(required)_ | — | NAME of the env var holding the cold-tier S3 secret key (the value lives in that env var, not here). Empty = anonymous reads. Must be set together with s3_cold_access_key_env; a named-but-unset env var is a startup error, never a silent downgrade to anonymous. |
 | `storage.clickhouse_addr` | `string` | `127.0.0.1:9300` | — | ClickHouse native address host:port for the Tier-1 lake (ADR-0034); used by the indexer real-time dual-sink. |
 | `storage.clickhouse_live_sink` | `bool` | `true` | — | Enable the real-time ClickHouse dual-sink: the indexer writes each ledger's structural extract to CH inline (non-blocking), keeping the lake within ~seconds of the chain. ON by default (ADR-0041): the certified-lake substrate backs the coverage claim, the CH completeness path, and lake-derived supply — opt out only on deployments that cannot run ClickHouse, accepting the loss of all three. |
 | `storage.clickhouse_projector_source` | `bool` | `true` | — | Feed-switch: the projector reads forward events from the ClickHouse lake (contract_events) instead of Postgres soroban_events, enabling soroban_events decommission. Requires clickhouse_live_sink. ON by default (ADR-0041), matching the production topology. |
@@ -149,10 +149,10 @@ the `env:` column.
 | --- | ---- | ------- | ------------ | ----------- |
 | `anomaly.enabled` | `bool` | `false` | — | Master switch. When false, anomaly checks are disabled and every bucket is published as-is. Flip to true after operator has classified the asset set. |
 | `anomaly.thresholds` | `map[string]AnomalyThreshold` | `{}` | — | Per-class threshold table. Keys are asset class names (stablecoin/treasury/crypto/governance/default). Empty falls back to package defaults; partial maps merge over defaults. The default row is required (loader fills it from package defaults if absent). |
-| `anomaly.thresholds.<key>.warn_pct` | `float64` | `30.0` | — | Deviation above this percentage triggers ActionWarn (publish with divergence_warning flag). |
+| `anomaly.thresholds.<key>.warn_pct` | `float64` | `30.0` | — | Deviation above this percentage triggers ActionWarn: the bucket is still published, and the warning is recorded operator-side via stellarindex_anomaly_warn_total plus a Warn log. It does NOT set the divergence_warning wire flag, which belongs to the cross-reference divergence service. |
 | `anomaly.thresholds.<key>.freeze_pct` | `float64` | `75.0` | — | Deviation above this percentage triggers ActionFreeze when source_count<=1 (don't publish; serve last-known-good). |
 | `anomaly.classifications` | `map` | `{}` | — | Operator-curated map of canonical asset_id → asset class (stablecoin/treasury/crypto/governance). Anything absent falls through to the default class. |
-| `anomaly.phase2.confidence_max_freeze` | `float64` | `0.10` | — | Freeze fires when confidence is strictly less than this. ADR-0019 default 0.10. |
+| `anomaly.phase2.confidence_max_freeze` | `float64` | `0.45` | — | Freeze fires when confidence is strictly less than this. 0.45 (operator decision 2026-07-25, coupled with the COR-14 fix); ADR-0019 originally said 0.10, which in practice required z ~= 15 and never fired. |
 | `anomaly.phase2.z_score_min_freeze` | `float64` | `5.0` | — | Freeze fires when z-score is strictly greater than this. ADR-0019 default 5.0 (the documented 5σ trigger). |
 | `anomaly.phase2.source_count_max_freeze` | `int` | `1` | — | Freeze fires when source count is at or below this. ADR-0019 default 1 (single-source pattern). |
 

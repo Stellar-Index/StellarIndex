@@ -333,6 +333,31 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 			}
 		}
 	}
+	// Cold-tier credentials are all-or-nothing (ADR-0027). Like their
+	// hot counterparts these hold the NAME of an env var, not the
+	// credential; unlike them, EMPTY is a meaningful value — it selects
+	// anonymous reads, which is correct for the production target
+	// (aws-public-blockchain is a public AWS Open Data bucket). Half a
+	// pair is therefore never a sane state: pipeline.NewColdDataStore
+	// would have to guess whether the operator meant "anonymous" or
+	// "static creds", and guessing "anonymous" on a private bucket is
+	// the exact silent-degradation shape the 2026-07-25 cold-tier
+	// incident was made of. Reject at load time instead.
+	if (s.S3ColdAccessKeyEnv == "") != (s.S3ColdSecretKeyEnv == "") {
+		return fmt.Errorf("%w: storage.s3_cold_access_key_env (%q) and storage.s3_cold_secret_key_env (%q) must "+
+			"be set together — leave BOTH empty for anonymous reads (public buckets), or name BOTH env vars for "+
+			"static credentials", ErrInvalidConfig, s.S3ColdAccessKeyEnv, s.S3ColdSecretKeyEnv)
+	}
+	if s.S3ColdAccessKeyEnv != "" && !envVarNameShapePattern.MatchString(s.S3ColdAccessKeyEnv) {
+		return fmt.Errorf("%w: storage.s3_cold_access_key_env %q doesn't look like an env-var NAME (expected "+
+			"UPPER_SNAKE_CASE) — this field holds the NAME to dereference, not the credential itself",
+			ErrInvalidConfig, s.S3ColdAccessKeyEnv)
+	}
+	if s.S3ColdSecretKeyEnv != "" && !envVarNameShapePattern.MatchString(s.S3ColdSecretKeyEnv) {
+		return fmt.Errorf("%w: storage.s3_cold_secret_key_env %q doesn't look like an env-var NAME (expected "+
+			"UPPER_SNAKE_CASE) — this field holds the NAME to dereference, not the credential itself",
+			ErrInvalidConfig, s.S3ColdSecretKeyEnv)
+	}
 	// ClickHouse feed-switch dependency (ADR-0034 #10, C3-20): the
 	// projector reads forward events from the CH lake's contract_events,
 	// so CH must actually be BEING WRITTEN — i.e. the real-time dual-sink

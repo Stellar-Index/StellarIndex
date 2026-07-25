@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/support/datastore"
@@ -82,6 +83,17 @@ func LedgerstreamConfig(cfg config.Config, bucket string) ledgerstream.Config {
 			},
 			NetworkPassphrase: cfg.Stellar.Passphrase(),
 			Compression:       "zstd",
+		}
+		// The Params above still describe the cold tier (schema
+		// discovery reads them), but the CLIENT must not be built by
+		// the SDK's datastore.NewDataStore: that resolves credentials
+		// from the ambient AWS chain, which on r1 holds local MinIO's
+		// keys (the hot tier authenticates through it) and so signs
+		// every cold request to real AWS with them —
+		// `InvalidAccessKeyId ... does not exist in our records`,
+		// diagnosed 2026-07-25. See pipeline.NewColdDataStore.
+		out.ColdDataStoreFactory = func(ctx context.Context) (datastore.DataStore, error) {
+			return NewColdDataStore(ctx, cfg.Storage)
 		}
 	}
 
