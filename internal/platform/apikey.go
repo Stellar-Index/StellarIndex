@@ -92,9 +92,15 @@ func ValidKeyScope(s string) bool {
 }
 
 // KeyPermissions is the per-key capability set. Stored as JSONB
-// in Postgres. v1 default is {All: true} (no enforcement); the
-// scoped-keys feature in Phase 3 wires the per-endpoint
-// allow/deny check.
+// in Postgres. Default is {All: true} (no enforcement); a dashboard
+// customer can restrict a key to specific endpoints via Allow/Deny.
+//
+// AGT-08 (audit-2026-07-23): the per-endpoint allow/deny check has
+// SHIPPED — internal/api/v1/middleware.KeyPolicy() enforces it on
+// every authenticated request (wired in cmd/stellarindex-api/main.go),
+// reading All/Allow/Deny via auth.NewPostgresAPIKeyValidator
+// (internal/auth/apikey_postgres.go: Permissions.All →
+// Subject.AllowAllPermissions). This is live, not future work.
 type KeyPermissions struct {
 	All   bool                 `json:"all"`
 	Allow []KeyPermissionEntry `json:"allow,omitempty"`

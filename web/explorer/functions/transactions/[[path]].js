@@ -23,8 +23,11 @@ export async function onRequest(context) {
   const shell = await env.ASSETS.fetch(
     new Request(new URL('/transactions/shell/', url.origin), request),
   );
+  // REL-02: propagate the shell fetch's real status. Forcing 200
+  // unconditionally turned a missing/broken shell into a soft-200 error
+  // page — indistinguishable from a real one to caches, monitors, and bots.
   return new Response(shell.body, {
-    status: 200,
+    status: shell.ok ? 200 : 503,
     headers: shell.headers,
   });
 }

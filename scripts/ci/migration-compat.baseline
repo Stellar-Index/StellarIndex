@@ -1,0 +1,43 @@
+# migration-compat.baseline — grandfathered rule-9 violations.
+#
+# One `<file>:<class>` per line; see scripts/ci/lint-migration-compat.sh
+# for the class list. Every entry is a migration that already shipped
+# before the rule-9 gate existed (audit-2026-07-23, CID-14) and that the
+# lint cannot mechanically prove is old-binary-safe.
+#
+# Most entries are `add-constraint`: an `ALTER TABLE … ADD CONSTRAINT
+# … CHECK (col IN (…))` that WIDENS an existing enum-ish check (the
+# cctp / blend / mev / phoenix event-kind sets) or a primary-key
+# granularity change. Widening is safe; the lint cannot tell widening
+# from narrowing, so these were grandfathered rather than re-litigated.
+# `0113:drop-table` and `0115:drop-view` are genuine destructive
+# migrations that shipped under the old, unenforced policy.
+#
+# SHRINK-ONLY (CS-098): a stale entry fails the lint, and
+# scripts/ci/lint-baseline-growth.sh requires an explicit
+# `Baseline-Growth:` commit trailer for any addition. NEW migrations
+# should use the inline `-- migration-compat:ok <reason>` marker
+# instead of growing this file.
+0004_relax_trades_ledger_for_offchain.up.sql:add-constraint
+0030_asset_supply_history_unique_constraint.up.sql:add-constraint
+0053_blend_pk_granularity.up.sql:add-constraint
+0054_blend_positions_event_index.up.sql:add-constraint
+0055_defindex_flows_event_index.up.sql:add-constraint
+0056_soroswap_router_swaps_call_sig.up.sql:add-constraint
+0057_sep41_supply_events_event_index.up.sql:add-constraint
+0058_blend_auctions_event_index.up.sql:add-constraint
+0059_comet_liquidity_event_index.up.sql:add-constraint
+0060_phoenix_event_index.up.sql:add-constraint
+0067_mev_arbitrage_dedup.up.sql:add-constraint
+0070_cctp_mint_and_forward_check.up.sql:add-constraint
+0074_mev_new_kinds.up.sql:add-constraint
+0092_cctp_governance_events_check.up.sql:add-constraint
+0094_cctp_full_governance_events_check.up.sql:add-constraint
+0095_blend_backstop_rw_zone_events_check.up.sql:add-constraint
+0097_blend_v1_pool_factory_events_check.up.sql:add-constraint
+0098_phoenix_stake_reward_events.up.sql:add-constraint
+0101_soroswap_router_swaps_call_path.up.sql:add-constraint
+0103_discovery_oracle_broadening.up.sql:add-constraint
+0112_cctp_rozo_event_index.up.sql:add-constraint
+0113_drop_classic_movements.up.sql:drop-table
+0115_ohlc_extremes_notional_floor.up.sql:drop-view

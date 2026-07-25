@@ -13,6 +13,15 @@ Description=Stellar Index — aggregator (VWAP/TWAP/divergence/freeze/supply tic
 After=network-online.target postgresql@{{ postgres_version }}-main.service redis-server.service stellarindex-indexer.service
 Wants=network-online.target
 
+# Restart-storm limit — [Unit] directives per systemd.unit(5); systemd
+# >=230 IGNORES StartLimit* under [Service]. More than StartLimitBurst
+# restarts within StartLimitIntervalSec parks the unit in `failed`,
+# which node_systemd_unit_state{state="failed"} pages on instead of
+# hot-looping forever (audit-2026-07-23 REL-resource-governance — this
+# had drifted from the deploy/systemd/*.service reference copies).
+StartLimitIntervalSec=5min
+StartLimitBurst=10
+
 [Service]
 Type=simple
 User=stellarindex
@@ -25,6 +34,16 @@ ExecStop=/bin/kill -TERM $MAINPID
 LimitNOFILE=1048576
 Restart=on-failure
 RestartSec=10s
+
+# Memory ceiling — bounds a leak so it can't starve Postgres/ClickHouse
+# on this shared, memory-tight host (188 GiB total, already running
+# close to capacity per r1-deployment-state.md F-1209). MemoryHigh
+# throttles (cgroup reclaim) well before the hard MemoryMax kill.
+# Deliberately generous for a lean Go service — conservative starting
+# point to avoid a false-positive OOM-kill outage; tune down once
+# real steady-state RSS is observed.
+MemoryHigh=4G
+MemoryMax=8G
 
 # Hardening — read-only most of the filesystem, write only the
 # working dir. Mirrors deploy/systemd/stellarindex-aggregator.service.

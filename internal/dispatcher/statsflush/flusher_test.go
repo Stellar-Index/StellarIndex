@@ -1,7 +1,15 @@
 package statsflush
 
 import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"testing"
+	"time"
+
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // stubStatsSource is a deterministic StatsSource for tests. The
@@ -14,14 +22,116 @@ type stubStatsSource struct {
 
 func (s *stubStatsSource) Stats() dispatcher.Stats { return s.stats }
 
-// flusher_test currently lives as a stub — adequate test coverage
-// here would require either an integration-style harness against
-// a real timescale.Store (covered downstream once #557 lands and
-// the integration tests can hit the real schema) or a mockable
-// store interface. The flusher's logic is small and well-typed;
-// the dispatcher.Stats package + storage package each have their
-// own tests that pin the inputs/outputs.
+// fakeStatsWriter is a [statsWriter] fake that fails on demand.
+// *timescale.Store can't play this role in a unit test: Store.Open
+// pings the DB before returning, so there's no way to construct one
+// that succeeds and then fails a later call without a real reachable
+// Postgres.
+type fakeStatsWriter struct {
+	fail  bool
+	calls [][]timescale.DecoderStatsBucket
+}
+
+func (w *fakeStatsWriter) InsertDecoderStats(_ context.Context, rows []timescale.DecoderStatsBucket) error {
+	cp := append([]timescale.DecoderStatsBucket(nil), rows...)
+	w.calls = append(w.calls, cp)
+	if w.fail {
+		return errors.New("simulated postgres outage")
+	}
+	return nil
+}
+
+func newTestFlusher(source StatsSource, store statsWriter) *Flusher {
+	return New(source, store, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{Interval: 5 * time.Minute})
+}
+
+// TestFlushAt_WriteFailure_RetainsLastSnapshot is the regression test
+// for INT-05 (audit-2026-07-23): flushAt used to advance f.last
+// unconditionally, even when InsertDecoderStats failed — permanently
+// discarding that window's counter deltas the moment the next tick
+// computed its own delta against the now-advanced (but never durably
+// written) snapshot.
 //
-// Future: when timescale.Store grows a mock-friendly interface,
-// add direct flushAt tests with a fake clock + injected stats.
-var _ = stubStatsSource{}
+// Drives two ticks where the write fails, then a third where it
+// succeeds, and asserts the THIRD (successful) write's row carries
+// the FULL cumulative delta across all three windows — proof that
+// nothing from the two failed windows was silently dropped.
+func TestFlushAt_WriteFailure_RetainsLastSnapshot(t *testing.T) {
+	src := &stubStatsSource{stats: dispatcher.Stats{
+		EventsSeen: map[string]int{"band": 10},
+	}}
+	w := &fakeStatsWriter{fail: true}
+	f := newTestFlusher(src, w)
+
+	base := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+
+	// Tick 1: EventsSeen band=10 (delta vs zero-value last = 10). Write fails.
+	f.flushAt(context.Background(), base)
+	if got := f.last.EventsSeen["band"]; got != 0 {
+		t.Fatalf("after failed flush 1, f.last.EventsSeen[band] = %d, want 0 (must not advance on write failure)", got)
+	}
+
+	// Tick 2: EventsSeen band=25 (cumulative). Write fails again.
+	src.stats = dispatcher.Stats{EventsSeen: map[string]int{"band": 25}}
+	f.flushAt(context.Background(), base.Add(5*time.Minute))
+	if got := f.last.EventsSeen["band"]; got != 0 {
+		t.Fatalf("after failed flush 2, f.last.EventsSeen[band] = %d, want 0 (must still not advance)", got)
+	}
+
+	// Tick 3: EventsSeen band=40 (cumulative). Write succeeds.
+	w.fail = false
+	src.stats = dispatcher.Stats{EventsSeen: map[string]int{"band": 40}}
+	f.flushAt(context.Background(), base.Add(10*time.Minute))
+
+	if got := f.last.EventsSeen["band"]; got != 40 {
+		t.Errorf("after successful flush 3, f.last.EventsSeen[band] = %d, want 40 (snapshot must advance on success)", got)
+	}
+
+	// InsertDecoderStats is attempted on every tick regardless of
+	// outcome (the fake records all 3 attempts), but only the THIRD
+	// call's rows durably landed (fail=false at that point). Its delta
+	// must be the FULL 40 (from the zero-value baseline before flush
+	// 1) — not just 15 (band=40 minus the never-durable band=25
+	// snapshot flush 2 would have left behind under the bug): flush 1
+	// fails but "advances" to 10, flush 2 fails but "advances" to 25 as
+	// its own last, flush 3 succeeds and computes its delta against 25
+	// → reports 15, silently losing the first 25 events forever.
+	if len(w.calls) != 3 {
+		t.Fatalf("InsertDecoderStats called %d times, want 3 (attempted on every tick)", len(w.calls))
+	}
+	lastCall := w.calls[2]
+	found := false
+	for _, row := range lastCall {
+		if row.Source != "band" {
+			continue
+		}
+		found = true
+		if row.EventsSeen != 40 {
+			t.Errorf("landed row EventsSeen = %d, want 40 (the full cumulative delta across both failed windows)", row.EventsSeen)
+		}
+	}
+	if !found {
+		t.Fatalf("no band row in the successful (3rd) InsertDecoderStats call: %+v", lastCall)
+	}
+}
+
+// TestFlushAt_WriteSuccess_AdvancesSnapshot pins the baseline (already
+// correct) behaviour for contrast with the failure-path regression
+// test above: a successful write DOES advance f.last so the next
+// tick's delta starts fresh.
+func TestFlushAt_WriteSuccess_AdvancesSnapshot(t *testing.T) {
+	src := &stubStatsSource{stats: dispatcher.Stats{
+		EventsSeen: map[string]int{"redstone": 7},
+	}}
+	w := &fakeStatsWriter{}
+	f := newTestFlusher(src, w)
+
+	f.flushAt(context.Background(), time.Now())
+
+	if got := f.last.EventsSeen["redstone"]; got != 7 {
+		t.Errorf("f.last.EventsSeen[redstone] = %d, want 7", got)
+	}
+	if len(w.calls) != 1 {
+		t.Fatalf("InsertDecoderStats called %d times, want 1", len(w.calls))
+	}
+}

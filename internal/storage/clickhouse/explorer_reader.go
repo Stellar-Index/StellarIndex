@@ -342,7 +342,18 @@ func (r *ExplorerReader) RecentOperations(ctx context.Context, limit int, cur Ex
 		q += ` WHERE (ledger_seq, tx_index, op_index) < (?, ?, ?)`
 		args = append(args, cur.Ledger, cur.A, cur.B)
 	}
-	q += ` ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?`
+	// LIMIT 1 BY the operations primary key (audit DAT-10): stellar.operations
+	// is ReplacingMergeTree(ingested_at); a re-ingested operation leaves an
+	// un-merged duplicate PART that is byte-identical to the original bar
+	// ingested_at (which opColsLight doesn't even select) until a background
+	// merge — without dedup this directory listing served the SAME operation
+	// twice. LIMIT 1 BY, not FINAL: FINAL would force ClickHouse to merge
+	// every overlapping part to answer this bare `ORDER BY … DESC LIMIT n`
+	// tip query with no lower bound — the exact O(table) trap
+	// recentLedgersTailWindow works around for RecentLedgers. LIMIT 1 BY
+	// composes with the SAME ORDER BY the query already has, so it stays a
+	// cheap streamed reverse scan from the tip, not a full-table merge.
+	q += ` ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?`
 	args = append(args, limit)
 	rows, err := r.conn.Query(ctx, q, args...)
 	if err != nil {
@@ -591,9 +602,19 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	// `OR … IN (…)` is wrong). Arm 1 (sourced) uses the source_account
 	// index; arm 2 (participant) matches operations on its PRIMARY KEY
 	// (ledger_seq, tx_index, op_index) via op-keys from the account-prefixed
-	// operation_participants. No DISTINCT needed: an op is sourced XOR has
-	// the account as a NON-source participant (participants exclude the op's
-	// own source), so the arms never overlap.
+	// operation_participants. No DISTINCT needed for cross-arm overlap: an op
+	// is sourced XOR has the account as a NON-source participant
+	// (participants exclude the op's own source), so the arms never overlap.
+	//
+	// Each arm DOES carry its own `LIMIT 1 BY ledger_seq, tx_index, op_index`
+	// (audit DAT-10): stellar.operations is ReplacingMergeTree(ingested_at),
+	// so a re-ingested op leaves an un-merged duplicate PART — identical to
+	// the original bar ingested_at — until a background merge; unlike
+	// AccountTransactions' outer DISTINCT (which AccountTransactions'
+	// narrower, blob-free txCols makes cheap), opCols here carries body_xdr
+	// (KB-scale), so a DISTINCT comparing full wide rows is the wrong tool —
+	// LIMIT 1 BY only tracks the 3-column primary key and dedups per arm
+	// before the UNION ALL, cheaply.
 	cursorClause := ""
 	var cursorArgs []any
 	if cur.IsSet() {
@@ -602,11 +623,11 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	}
 	q := `SELECT ` + opCols + ` FROM (
 		(SELECT ` + opCols + ` FROM stellar.operations
-		   WHERE source_account = ?` + cursorClause + `)
+		   WHERE source_account = ?` + cursorClause + ` LIMIT 1 BY ledger_seq, tx_index, op_index)
 		UNION ALL
 		(SELECT ` + opCols + ` FROM stellar.operations
 		   WHERE (ledger_seq, tx_index, op_index) IN (
-		        SELECT ledger_seq, tx_index, op_index FROM stellar.operation_participants WHERE account = ?)` + cursorClause + `)
+		        SELECT ledger_seq, tx_index, op_index FROM stellar.operation_participants WHERE account = ?)` + cursorClause + ` LIMIT 1 BY ledger_seq, tx_index, op_index)
 	) ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?`
 	args := []any{account}
 	args = append(args, cursorArgs...)
@@ -693,48 +714,105 @@ func (r *ExplorerReader) txByHashIndexed(ctx context.Context, hash string) (TxSu
 	if err := rows.Scan(&seq); err != nil {
 		return TxSummary{}, false, fmt.Errorf("clickhouse: scan tx index: %w", err)
 	}
+	return r.txByLedgerAndHash(ctx, seq, hash)
+}
 
-	q := `SELECT ` + txCols + ` FROM stellar.transactions
-		WHERE ledger_seq = ? AND tx_hash = ? ORDER BY ingested_at DESC LIMIT 1`
-	trows, err := r.conn.Query(ctx, q, seq, hash)
+// txByLedgerAndHash reads the authoritative stellar.transactions row for a
+// KNOWN (ledger_seq, tx_hash) pair. Both txByHashIndexed and txByHashScan's
+// second step call this once they know which ledger the hash lives in.
+//
+// FINAL, not `ORDER BY ingested_at DESC LIMIT 1` (audit DAT-10, "may return
+// the WRONG row"): ingested_at is `DateTime` — ONE-SECOND resolution — so a
+// batch that re-ingests many rows within the same wall-clock second (a
+// decode-bug-fix backfill re-deriving a ledger range, not just an idempotent
+// retry) leaves two ReplacingMergeTree parts for the same (ledger_seq,
+// tx_index) key that TIE on the version column `ORDER BY ingested_at DESC`
+// sorts by. A plain SELECT has no way to break that tie correctly — it only
+// sees the tied ingested_at values, not true insertion order — so it could
+// silently keep serving the STALE pre-fix row. FINAL resolves the tie
+// correctly: ClickHouse's ReplacingMergeTree merge keeps the row that was
+// PHYSICALLY inserted last among version ties, using real insertion order
+// that isn't exposed to a bare SELECT.
+//
+// This stays cheap: `ledger_seq = ?` is a partition-pruning + primary-key
+// prefix predicate (PARTITION BY intDiv(ledger_seq, 1000000), ORDER BY
+// (ledger_seq, tx_index)), so FINAL only ever merges the handful of parts
+// that touch this one ledger — the same "single-row point read stays cheap
+// under FINAL" reasoning as LedgerBySeq / CloseTimeForLedger above. tx_hash
+// is globally unique, so at most one row can match.
+func (r *ExplorerReader) txByLedgerAndHash(ctx context.Context, seq uint32, hash string) (TxSummary, bool, error) {
+	q := `SELECT ` + txCols + ` FROM stellar.transactions FINAL
+		WHERE ledger_seq = ? AND tx_hash = ?`
+	rows, err := r.conn.Query(ctx, q, seq, hash)
 	if err != nil {
 		return TxSummary{}, false, fmt.Errorf("clickhouse: tx %s in ledger %d: %w", hash, seq, err)
 	}
-	defer func() { _ = trows.Close() }()
-	out, err := scanTxSummaries(trows)
+	defer func() { _ = rows.Close() }()
+	out, err := scanTxSummaries(rows)
 	if err != nil || len(out) == 0 {
 		return TxSummary{}, false, err
 	}
 	return out[0], true, nil
 }
 
-// txByHashScan is the pre-index lookup: relies on the tx_hash bloom
-// skip-index (the table is ORDER BY (ledger_seq, tx_index), so without the
-// index this would full-scan). NOT FINAL — FINAL would defeat the
-// skip-index; instead it takes the latest-ingested row. found=false when
-// the hash is unknown.
+// txByHashScan is the pre-index lookup, in two steps:
+//
+//  1. Locate WHICH ledger the hash lives in via the tx_hash bloom
+//     skip-index (the table is ORDER BY (ledger_seq, tx_index), so without
+//     the index this would full-scan). NOT FINAL — FINAL would defeat the
+//     skip-index over the WHOLE table (this is the un-scoped fallback path;
+//     unlike step 2 below, there is no known ledger yet to bound it to).
+//     Only ledger_seq is read here, and that is safe even from an un-merged
+//     duplicate part: a transaction executes in exactly one historical
+//     ledger, and that fact never changes on re-ingest — every candidate row
+//     for this tx_hash agrees on ledger_seq.
+//
+//     The `ORDER BY ingested_at DESC` is therefore a NO-OP on real data (one
+//     ledger, so nothing to order), and is kept deliberately for the case the
+//     lake can hold but the network cannot: the same hash recorded against two
+//     different ledger_seq values (a mis-seeded or cross-network backfill).
+//     There, "most recently ingested wins" is the long-documented behaviour
+//     this reader has always had, and integration coverage pins it. Dropping
+//     it made the choice arbitrary — whichever granule the skip-index happened
+//     to return first. Note this ordering is NOT what resolves the duplicate-
+//     row case: `ingested_at` is DateTime (1s), so it cannot break a
+//     same-second tie. That is step 2's job, via FINAL.
+//
+//  2. Read the authoritative row via txByLedgerAndHash, now that step 1
+//     narrowed the read to one ledger — cheap FINAL, deterministic, correct
+//     even on an ingested_at tie (audit DAT-10; see txByLedgerAndHash).
+//
+// found=false when the hash is unknown (step 1 comes up empty).
 func (r *ExplorerReader) txByHashScan(ctx context.Context, hash string) (TxSummary, bool, error) {
-	q := `SELECT ` + txCols + ` FROM stellar.transactions
-		WHERE tx_hash = ? ORDER BY ingested_at DESC LIMIT 1`
-	rows, err := r.conn.Query(ctx, q, hash)
+	const seqQ = `SELECT ledger_seq FROM stellar.transactions WHERE tx_hash = ? ORDER BY ingested_at DESC LIMIT 1`
+	rows, err := r.conn.Query(ctx, seqQ, hash)
 	if err != nil {
 		return TxSummary{}, false, fmt.Errorf("clickhouse: tx %s: %w", hash, err)
 	}
-	defer func() { _ = rows.Close() }()
-	out, err := scanTxSummaries(rows)
-	if err != nil {
+	if !rows.Next() {
+		err := rows.Err()
+		_ = rows.Close()
 		return TxSummary{}, false, err
 	}
-	if len(out) == 0 {
-		return TxSummary{}, false, nil
+	var seq uint32
+	scanErr := rows.Scan(&seq)
+	_ = rows.Close()
+	if scanErr != nil {
+		return TxSummary{}, false, fmt.Errorf("clickhouse: scan tx %s ledger: %w", hash, scanErr)
 	}
-	return out[0], true, nil
+	return r.txByLedgerAndHash(ctx, seq, hash)
 }
 
 // OperationsByTx returns a transaction's operations, ledger-scoped (so
 // partition-pruned + fast — the caller passes the ledger from TransactionByHash).
+//
+// FINAL (audit DAT-10): ledger+tx_hash-scoped, so bounded to one partition
+// and a primary-key prefix on ledger_seq — cheap, same reasoning as the
+// sibling OperationsByLedger's FINAL just above. Without it, a re-ingested
+// op left an un-merged duplicate part and this tx-detail view showed the
+// operation twice.
 func (r *ExplorerReader) OperationsByTx(ctx context.Context, seq uint32, hash string) ([]OpRow, error) {
-	q := `SELECT ` + opCols + ` FROM stellar.operations
+	q := `SELECT ` + opCols + ` FROM stellar.operations FINAL
 		WHERE ledger_seq = ? AND tx_hash = ? ORDER BY op_index`
 	rows, err := r.conn.Query(ctx, q, seq, hash)
 	if err != nil {

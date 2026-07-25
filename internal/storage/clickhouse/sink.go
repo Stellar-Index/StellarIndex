@@ -441,16 +441,16 @@ func (s *Sink) flushEvents(ctx context.Context) error {
 
 // flushChanges writes stellar.ledger_entry_changes.
 //
-// KNOWN GAP (G12-03, ADR-0034 accepted exclusion): s.changes is currently
-// ALWAYS empty — ExtractLedger does not populate Extract.Changes (see its
-// docstring). This method therefore runs every Flush over a nil slice and is a
-// no-op in practice. It is kept wired so that, the day per-op LedgerEntry-change
-// attribution is implemented in the extractor, the write path needs no change.
-// Until then the lake has NO substrate to re-derive the LedgerEntry-based
-// supply observers; do not assume stellar.ledger_entry_changes is populated.
+// G12-03 CLOSED (AGT-08): Extract.Changes IS populated — extractEntryChanges
+// walks the per-op LedgerEntry changes (ADR-0038 Phase C, see extract.go) and
+// stellar.ledger_entry_changes is a live table, read by StreamEntryChanges for
+// the ADR-0047 Phase 4 movement reconstruction. The comment this replaces
+// still asserted the opposite ("ALWAYS empty ... a no-op in practice ... do not
+// assume stellar.ledger_entry_changes is populated"), which is exactly the
+// claim a reader would use to decide the table can be ignored.
 func (s *Sink) flushChanges(ctx context.Context) error {
 	if len(s.changes) == 0 {
-		return nil // G12-03: always taken today — Extract.Changes is never populated.
+		return nil // No entry changes in this batch (e.g. a ledger of pure fee bumps).
 	}
 	b, err := s.conn.PrepareBatch(ctx, "INSERT INTO stellar.ledger_entry_changes (ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_type, key_xdr, entry_xdr, account_id, asset, balance, intra_ledger_seq)")
 	if err != nil {

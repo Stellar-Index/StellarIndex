@@ -628,6 +628,18 @@ func (s *Server) handleAssetListFromAssets(
 	cursor string,
 	limit int,
 ) {
+	// AGT-06: this path's cursor is the raw `<observation_count>:<asset_id>`
+	// shape ListAssetsExt emits (see the Next: fmt.Sprintf below) — reject a
+	// malformed one up front instead of letting it silently fall through to
+	// the keyset predicate's degenerate (0, "") case, which matches no rows
+	// and looks like a quiet end-of-pagination rather than the client error
+	// it actually is.
+	if err := timescale.ValidateAssetsCursor(cursor, timescale.AssetsOrderObservationCountDesc); err != nil {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-cursor",
+			"Invalid cursor", http.StatusBadRequest, err.Error())
+		return
+	}
 	if filters.typ != "" && filters.typ != "classic" {
 		writeEnvelope(w, Envelope{Data: []AssetDetail{}, Flags: Flags{}})
 		return
@@ -866,8 +878,17 @@ func (s *Server) refreshClassicSupply(er classicSupplyReader, done chan struct{}
 // computeMarketCapUSD = (circulating / 10^decimals) × priceUSD, as a
 // 2-dp decimal string. circulating is raw integer units (stroops-scale);
 // dividing by 10^decimals yields whole-asset units before the price
-// multiply. Returns "" on unparseable input. big.Float throughout so a
-// 50-billion-unit supply doesn't lose precision (ADR-0003).
+// multiply. Returns "" on unparseable input or a negative result (bad
+// data — a legitimate supply/price is never negative). big.Float
+// throughout so a 50-billion-unit supply doesn't lose precision
+// (ADR-0003).
+//
+// A ZERO result renders as "0.00", not "" (COR-03): [usdMarketValue],
+// this function's sibling on the asset-detail endpoint, documents
+// amount==0 → "0.00" as "a legitimate 'asset has no circulating
+// supply' reading, not an error" — the listing endpoint must agree,
+// or the same zero-supply asset shows market_cap_usd:"0.00" on its
+// detail page and a missing/null field on the listing.
 func computeMarketCapUSD(circRaw, priceRaw string, decimals int) string {
 	circ, ok := new(big.Float).SetPrec(128).SetString(circRaw)
 	if !ok {
@@ -882,7 +903,7 @@ func computeMarketCapUSD(circRaw, priceRaw string, decimals int) string {
 	)
 	mc := new(big.Float).SetPrec(128).Quo(circ, scale)
 	mc.Mul(mc, price)
-	if mc.Sign() <= 0 {
+	if mc.Sign() < 0 {
 		return ""
 	}
 	return mc.Text('f', 2)
@@ -1576,6 +1597,16 @@ func (s *Server) serveClassicUnifiedPage(w http.ResponseWriter, r *http.Request,
 // to return just the 11-row catalogue tail regardless of limit,
 // making the curated sliver look like the asset universe).
 func (s *Server) fetchClassicUnifiedRows(w http.ResponseWriter, r *http.Request, limit int, innerCursor string) ([]AssetDetail, string, bool) {
+	// AGT-06: this phase's cursor is the `<vol_or_blank>:<asset_id>` shape
+	// this function itself emits below — reject a malformed one (e.g. a
+	// hand-edited or truncated cursor) with 400 rather than letting it
+	// silently fall through to a keyset predicate that matches no rows.
+	if err := timescale.ValidateAssetsCursor(innerCursor, timescale.AssetsOrderVolume24hUSDDesc); err != nil {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-cursor",
+			"Invalid cursor", http.StatusBadRequest, err.Error())
+		return nil, "", false
+	}
 	if s.assetsReader == nil {
 		// No AssetsReader wired → empty terminator.
 		writeJSON(w, []AssetDetail{}, Flags{})

@@ -52,3 +52,34 @@ func TestOrient_Symmetric(t *testing.T) {
 		}
 	}
 }
+
+// TestOrient_StablecoinRankIsIssuerAgnostic is the SEC-B12
+// characterization test. A classic token whose CODE collides with a
+// real stablecoin ticker but whose ISSUER is an unrelated (possibly
+// hostile) account still ranks as a quote — orientation deliberately
+// does not know about issuers.
+//
+// This test exists to make that deliberate, not accidental: the
+// behaviour is safe only because no path converts a rank-3 asset into
+// a fiat value without re-checking the issuer (aggregate.FiatProxy
+// refuses every classic asset, including Circle's genuine USDC — see
+// TestFiatProxy_NonCryptoAssetsReturnFalse). Anyone changing this
+// ranking, or adding a code-keyed USD substitution, has to reckon
+// with that invariant first.
+func TestOrient_StablecoinRankIsIssuerAgnostic(t *testing.T) {
+	const scamUSDC = "USDC-GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF5"
+
+	base, quote, _ := Orient("native", scamUSDC)
+	if base != "native" || quote != scamUSDC {
+		t.Errorf("Orient(native, %s) = (%s, %s), want (native, %s) — orientation ranks on CODE alone",
+			scamUSDC, base, quote, scamUSDC)
+	}
+
+	// The genuine issuer orients identically: the two are
+	// indistinguishable HERE, which is the whole point of the
+	// downstream issuer check.
+	const realUSDC = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	if b2, q2, _ := Orient("native", realUSDC); b2 != "native" || q2 != realUSDC {
+		t.Errorf("Orient(native, %s) = (%s, %s), want (native, %s)", realUSDC, b2, q2, realUSDC)
+	}
+}

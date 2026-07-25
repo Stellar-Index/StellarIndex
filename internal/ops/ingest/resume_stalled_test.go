@@ -176,6 +176,54 @@ func TestParseStalledCursor_RoundTripsBackfillCursorSub(t *testing.T) {
 	}
 }
 
+// TestResumeChunkFrom_SequentialReproducesOriginalCursorSub is the
+// AGT-01 / DAT-12 / REL-09 regression: at parallel<=1 (the default),
+// runOneCursorPlan must key the resumed chunk on the ORIGINAL declared
+// `from` so backfillCursorSub reproduces the exact sub_source of the
+// stalled cursor row — advancing that row in place — rather than a
+// sibling row keyed on [last_ledger+1, to] that the stalled row's
+// -resume path will never touch again.
+func TestResumeChunkFrom_SequentialReproducesOriginalCursorSub(t *testing.T) {
+	orig := timescale.Cursor{
+		Sub:        "62200000-62210000:aquarius,band,sdex",
+		LastLedger: 62205555,
+	}
+	p := parseStalledCursor(orig)
+	if p.skip {
+		t.Fatalf("unexpected skip: %s", p.skipReason)
+	}
+
+	chunkFrom := resumeChunkFrom(p, 1) // parallel=1, the resume-stalled default
+	gotSub := backfillCursorSub(backfillOpts{from: chunkFrom, to: p.rangeTo, sources: p.sources})
+	if gotSub != orig.Sub {
+		t.Fatalf("resumed cursor sub_source = %q, want the ORIGINAL %q (a mismatch forks a sibling cursor row and the stalled row is never advanced/cleared)",
+			gotSub, orig.Sub)
+	}
+
+	// And the chunk base must be the DECLARED from, not last_ledger+1.
+	if chunkFrom != 62200000 {
+		t.Fatalf("chunkFrom = %d, want the original declared from 62200000", chunkFrom)
+	}
+}
+
+// TestResumeChunkFrom_ParallelUsesRemainingRange: at parallel>1 the
+// resumed range is split into independent sub-chunks that each need
+// their own cursor row, so the chunk base stays the REMAINING range
+// (last_ledger+1), not the original declared from.
+func TestResumeChunkFrom_ParallelUsesRemainingRange(t *testing.T) {
+	orig := timescale.Cursor{
+		Sub:        "62200000-62210000:aquarius,band,sdex",
+		LastLedger: 62205555,
+	}
+	p := parseStalledCursor(orig)
+	if p.skip {
+		t.Fatalf("unexpected skip: %s", p.skipReason)
+	}
+	if got := resumeChunkFrom(p, 4); got != p.rangeFrom {
+		t.Fatalf("resumeChunkFrom(parallel=4) = %d, want rangeFrom %d", got, p.rangeFrom)
+	}
+}
+
 // TestOverlapsAnyDataGap covers the small interval-overlap helper.
 // The function is the gate's primitive — a bug here would let
 // false-positive plans through (act on cursors that aren't real
@@ -236,6 +284,41 @@ func TestPlanHasSorobanDecoder(t *testing.T) {
 				t.Errorf("planHasSorobanDecoder(%v) = %v, want %v", tc.sources, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestHasNonSorobanDecoder_AndGateSelection verifies hasNonSorobanDecoder
+// (used both to select the mixed-plan gate path and to decide whether
+// anyPlanNeedsClassicGate must build the classicGapGate at all).
+func TestHasNonSorobanDecoder_AndGateSelection(t *testing.T) {
+	cases := []struct {
+		name    string
+		sources []string
+		want    bool
+	}{
+		{name: "sdex only", sources: []string{"sdex"}, want: true},
+		{name: "soroban only", sources: []string{"aquarius"}, want: false},
+		{name: "mixed", sources: []string{"aquarius", "sdex"}, want: true},
+		{name: "unknown decoder counts as non-soroban", sources: []string{"some-future-source"}, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hasNonSorobanDecoder(tc.sources); got != tc.want {
+				t.Errorf("hasNonSorobanDecoder(%v) = %v, want %v", tc.sources, got, tc.want)
+			}
+		})
+	}
+
+	// anyPlanNeedsClassicGate must fire for a MIXED plan too (DAT-11) —
+	// not just classic-only — or the classicGapGate is never built and
+	// gateMixedPlan always sees classic.available=false.
+	mixedOnly := []stalledCursorPlan{{sources: []string{"aquarius", "sdex"}}}
+	if !anyPlanNeedsClassicGate(mixedOnly) {
+		t.Fatal("anyPlanNeedsClassicGate must return true for a mixed (soroban+sdex) plan")
+	}
+	sorobanOnly := []stalledCursorPlan{{sources: []string{"aquarius"}}}
+	if anyPlanNeedsClassicGate(sorobanOnly) {
+		t.Fatal("anyPlanNeedsClassicGate must return false when no plan has an SDEX portion")
 	}
 }
 
@@ -328,6 +411,75 @@ func TestGateAgainstDataGaps_ForceClassic(t *testing.T) {
 	}
 }
 
+// TestGateAgainstDataGaps_MixedPlanChecksBothSides is the DAT-11
+// regression: a plan with BOTH a Soroban decoder and an SDEX decoder
+// must not be skipped as a cursor-inventory false positive on a clean
+// soroban_events check alone — the SDEX side needs its own
+// independent confirmation via the same data-derived gate a
+// classic-only plan gets.
+func TestGateAgainstDataGaps_MixedPlanChecksBothSides(t *testing.T) {
+	mixedPlan := func() stalledCursorPlan {
+		return stalledCursorPlan{
+			cursor:    timescale.Cursor{Sub: "61000000-61600000:aquarius,sdex"},
+			rangeFrom: 61_100_000,
+			rangeTo:   61_500_000,
+			sources:   []string{"aquarius", "sdex"},
+		}
+	}
+
+	t.Run("soroban side has a real gap — actionable without even checking classic", func(t *testing.T) {
+		gaps := []timescale.LedgerGap{{Start: 61_200_000, End: 61_300_000, Size: 100_001}}
+		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, gaps, classicGapGate{}, false)
+		if out[0].skip {
+			t.Fatalf("soroban-side real gap must keep the mixed plan actionable; got skip=%v reason=%q", out[0].skip, out[0].skipReason)
+		}
+	})
+
+	t.Run("soroban clean, classic gate unavailable — must SKIP, not silently act (and must not claim false-positive)", func(t *testing.T) {
+		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, nil, classicGapGate{}, false)
+		if !out[0].skip {
+			t.Fatalf("soroban-clean + SDEX-gate-unavailable must SKIP a mixed plan (unverified SDEX side); got actionable")
+		}
+		if !strings.Contains(out[0].skipReason, "sdex data-gap gate unavailable") {
+			t.Fatalf("skip reason must explain the unverified SDEX side, got %q", out[0].skipReason)
+		}
+		if strings.Contains(out[0].skipReason, "false-positive") {
+			t.Fatalf("must NOT be labeled a false-positive when the SDEX side was never checked, got %q", out[0].skipReason)
+		}
+	})
+
+	t.Run("soroban clean, classic gate shows a real SDEX gap — actionable", func(t *testing.T) {
+		gate := classicGapGate{
+			available: true,
+			floor:     60_000_000,
+			gaps:      []timescale.LedgerGap{{Start: 61_150_000, End: 61_250_000, Size: 100_001}},
+		}
+		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, nil, gate, false)
+		if out[0].skip {
+			t.Fatalf("a real SDEX-side gap must keep the mixed plan actionable; got skip=%v reason=%q", out[0].skip, out[0].skipReason)
+		}
+	})
+
+	t.Run("BOTH sides independently confirmed clean — genuine false positive, skip", func(t *testing.T) {
+		gate := classicGapGate{
+			available: true,
+			floor:     60_000_000,
+			gaps:      nil, // no sdex gap anywhere in the retained window
+		}
+		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, nil, gate, false)
+		if !out[0].skip {
+			t.Fatalf("both sides clean must skip the mixed plan; got actionable")
+		}
+	})
+
+	t.Run("force-classic opts the SDEX side out of the gate — actionable on soroban-clean alone", func(t *testing.T) {
+		out := gateAgainstDataGaps([]stalledCursorPlan{mixedPlan()}, nil, classicGapGate{}, true)
+		if out[0].skip {
+			t.Fatalf("--force-classic-cursors must make a soroban-clean mixed plan actionable even with no classic gate; got skip=%v reason=%q", out[0].skip, out[0].skipReason)
+		}
+	})
+}
+
 // TestGateClassicPlan_DataDerived pins the SDEX data-derived gate's
 // decision table: with an available classicGapGate, SDEX-only plans
 // are gated by (a) the served-tier retention floor and (b) real gap
@@ -411,16 +563,19 @@ func TestSdexGapTarget(t *testing.T) {
 
 // TestPlanResumeStalled_FilterSemantics verifies the cursor-list →
 // plan-list filter chain without touching Postgres: it operates on a
-// pre-built slice that mimics what ListCursors would return. (The
-// real planResumeStalled wraps store.ListCursors; this test exercises
-// the post-list filter logic via a parallel helper to avoid the
-// testcontainers cost for what is pure CPU work.)
+// pre-built slice that mimics what ListCursors would return, and
+// calls the REAL matchesSourceFilter helper planResumeStalled uses
+// (not a re-implementation) so this test can't drift from the actual
+// filter behaviour. (The real planResumeStalled wraps
+// store.ListCursors; this test exercises the post-list filter logic
+// via a parallel helper to avoid the testcontainers cost for what is
+// pure CPU work.)
 //
-// Filter precedence: source-prefix → min-lag → source-filter substring
-// → max-resumes cap. The order matters: a stalled defindex cursor
-// behind a min-lag cutoff is filtered out before the substring
-// check applies, so an operator's --max-resumes count covers the
-// post-filter population (not the raw row count).
+// Filter precedence: source-prefix → min-lag → source-filter (decoder
+// portion only — see matchesSourceFilter / AGT-08). -max-resumes is
+// NOT part of this chain any more: it is applied by applyMaxResumesCap
+// AFTER the data-gap gate, so it is covered by
+// TestApplyMaxResumesCap_AppliesAfterGate instead.
 func TestPlanResumeStalled_FilterSemantics(t *testing.T) {
 	now := time.Now().UTC()
 	rows := []timescale.Cursor{
@@ -434,22 +589,25 @@ func TestPlanResumeStalled_FilterSemantics(t *testing.T) {
 		{Source: "ledgerstream", Sub: "", LastLedger: 62000000, UpdatedAt: now.Add(-5 * time.Hour)},
 		// 4: backfill, stale 3 h, defindex substring
 		{Source: "backfill", Sub: "700-800:defindex", LastLedger: 750, UpdatedAt: now.Add(-3 * time.Hour)},
+		// 5: backfill, stale 6 h, "800" only appears in the ledger-range
+		// prefix (900-800800 is contrived but the point stands: a
+		// sourceFilter of "800" must NOT match on digits in the range).
+		{Source: "backfill", Sub: "900000800-901000000:aquarius", LastLedger: 900000900, UpdatedAt: now.Add(-6 * time.Hour)},
 	}
 
-	// We test the post-store-call filter logic in isolation by
-	// re-implementing the same selection rules planResumeStalled does
-	// after the store call returns. Keeps the test pure-Go.
 	cases := []struct {
 		name         string
 		minLag       time.Duration
 		sourceFilter string
-		maxResumes   int
 		wantSubs     []string
 	}{
 		{
-			name:     "all backfill stalls over 1h",
-			minLag:   time.Hour,
-			wantSubs: []string{"300-400:sdex,aquarius", "500-600:defindex,soroswap-router", "700-800:defindex"},
+			name:   "all backfill stalls over 1h",
+			minLag: time.Hour,
+			wantSubs: []string{
+				"300-400:sdex,aquarius", "500-600:defindex,soroswap-router",
+				"700-800:defindex", "900000800-901000000:aquarius",
+			},
 		},
 		{
 			name:         "filter to defindex substring",
@@ -458,15 +616,15 @@ func TestPlanResumeStalled_FilterSemantics(t *testing.T) {
 			wantSubs:     []string{"500-600:defindex,soroswap-router", "700-800:defindex"},
 		},
 		{
-			name:       "max-resumes caps after filter",
-			minLag:     time.Hour,
-			maxResumes: 2,
-			wantSubs:   []string{"300-400:sdex,aquarius", "500-600:defindex,soroswap-router"},
+			name:         "filter digits that only appear in the ledger range must NOT match (AGT-08)",
+			minLag:       time.Hour,
+			sourceFilter: "800",
+			wantSubs:     nil,
 		},
 		{
 			name:     "raised min-lag prunes more",
 			minLag:   4 * time.Hour,
-			wantSubs: []string{"500-600:defindex,soroswap-router"},
+			wantSubs: []string{"500-600:defindex,soroswap-router", "900000800-901000000:aquarius"},
 		},
 		{
 			name:     "min-lag above any stall — empty",
@@ -475,7 +633,7 @@ func TestPlanResumeStalled_FilterSemantics(t *testing.T) {
 		},
 	}
 
-	filter := func(rows []timescale.Cursor, minLag time.Duration, src string, maxResumes int) []string {
+	filter := func(rows []timescale.Cursor, minLag time.Duration, src string) []string {
 		var out []string
 		for _, c := range rows {
 			if len(c.Source) < len("backfill") || c.Source[:8] != "backfill" {
@@ -484,24 +642,98 @@ func TestPlanResumeStalled_FilterSemantics(t *testing.T) {
 			if now.Sub(c.UpdatedAt) < minLag {
 				continue
 			}
-			if src != "" && !contains(c.Sub, src) {
+			if !matchesSourceFilter(c.Sub, src) {
 				continue
 			}
 			out = append(out, c.Sub)
-			if maxResumes > 0 && len(out) >= maxResumes {
-				break
-			}
 		}
 		return out
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := filter(rows, tc.minLag, tc.sourceFilter, tc.maxResumes)
+			got := filter(rows, tc.minLag, tc.sourceFilter)
 			if !reflect.DeepEqual(got, tc.wantSubs) {
 				t.Errorf("subs = %v, want %v", got, tc.wantSubs)
 			}
 		})
+	}
+}
+
+// TestMatchesSourceFilter_DecoderPortionOnly is the AGT-08 regression:
+// the filter must match only the decoder-CSV portion of sub_source,
+// never the numeric <from>-<to> range prefix.
+func TestMatchesSourceFilter_DecoderPortionOnly(t *testing.T) {
+	cases := []struct {
+		name   string
+		sub    string
+		filter string
+		want   bool
+	}{
+		{"empty filter matches everything", "100-200:sdex", "", true},
+		{"decoder substring matches", "62200000-62210000:aquarius,band,sdex", "band", true},
+		{"digits present ONLY in the ledger range must not match", "900000800-901000000:aquarius", "800", false},
+		{"digits present in the decoder portion DO match", "100-200:reflector-cex", "cex", true},
+		{"no colon — degrades to whole-string match", "not-a-range-800", "800", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := matchesSourceFilter(tc.sub, tc.filter); got != tc.want {
+				t.Errorf("matchesSourceFilter(%q, %q) = %v, want %v", tc.sub, tc.filter, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestApplyMaxResumesCap_AppliesAfterGate is the AGT-08 regression for
+// the OTHER half of the finding: the cap must count only genuinely
+// actionable (non-skip) plans, and any actionable plan past the cap
+// is marked skip (not silently dropped or, worse, never gathered).
+func TestApplyMaxResumesCap_AppliesAfterGate(t *testing.T) {
+	plans := []stalledCursorPlan{
+		{cursor: timescale.Cursor{Sub: "a"}, skip: true, skipReason: "gated out"},
+		{cursor: timescale.Cursor{Sub: "b"}}, // actionable #1
+		{cursor: timescale.Cursor{Sub: "c"}}, // actionable #2
+		{cursor: timescale.Cursor{Sub: "d"}}, // actionable #3 — should be capped
+		{cursor: timescale.Cursor{Sub: "e"}, skip: true, skipReason: "gated out"},
+	}
+	got := applyMaxResumesCap(plans, 2)
+
+	var actionable []string
+	for _, p := range got {
+		if !p.skip {
+			actionable = append(actionable, p.cursor.Sub)
+		}
+	}
+	if want := []string{"b", "c"}; !reflect.DeepEqual(actionable, want) {
+		t.Fatalf("actionable after cap = %v, want %v", actionable, want)
+	}
+	// "d" was genuinely actionable (not gate-skipped) but past the cap
+	// — it must be marked skip WITH a distinct reason, not silently
+	// vanish and not be conflated with a real gate-skip.
+	if !got[3].skip || got[3].skipReason == "" || got[3].skipReason == "gated out" {
+		t.Fatalf("plan 'd' (past cap) = skip=%v reason=%q, want skip=true with a cap-specific reason", got[3].skip, got[3].skipReason)
+	}
+	// Already-gate-skipped plans are untouched and don't count toward
+	// the cap.
+	if !got[0].skip || got[0].skipReason != "gated out" {
+		t.Fatalf("plan 'a' must remain untouched, got skip=%v reason=%q", got[0].skip, got[0].skipReason)
+	}
+}
+
+// TestApplyMaxResumesCap_ZeroMeansNoCap: -max-resumes 0 (the default)
+// must not skip anything.
+func TestApplyMaxResumesCap_ZeroMeansNoCap(t *testing.T) {
+	plans := []stalledCursorPlan{
+		{cursor: timescale.Cursor{Sub: "a"}},
+		{cursor: timescale.Cursor{Sub: "b"}},
+		{cursor: timescale.Cursor{Sub: "c"}},
+	}
+	got := applyMaxResumesCap(plans, 0)
+	for i, p := range got {
+		if p.skip {
+			t.Fatalf("plan %d unexpectedly skipped with cap=0: %+v", i, p)
+		}
 	}
 }
 

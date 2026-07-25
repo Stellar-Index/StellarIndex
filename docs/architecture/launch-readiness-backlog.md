@@ -6,6 +6,25 @@ status: living document
 
 # Launch readiness backlog
 
+> **⚠️ Staleness banner (2026-07-24, audit-2026-07-23 wave5 DOC-06/DOC-07).**
+> This doc's own frontmatter dates its last substantive review to
+> 2026-05-13 — 10+ weeks unreviewed, well past the "living document"
+> self-declared weekly cadence this doc implies. Several per-row
+> statuses below have NOT been re-verified against current code in
+> that window (e.g. L2.9's "shipped" status for the ADR-0019 bootstrap
+> policy — see the ADR-0019 amendment dated 2026-07-24). The current,
+> actively-maintained source of truth for production-readiness status
+> is **`docs/operations/production-readiness-master-plan-2026-07-18.md`**
+> and **`docs/operations/production-remediation-ledger-2026-07-23.md`**
+> (a local, gitignored working file — ask the operator if you need a
+> copy). This page is also linked from the public marketing site
+> (`web/explorer/src/app/company/page.tsx`) as the "canonical" launch
+> roadmap; that link should point at the master plan instead, or this
+> page should be re-verified before the link is trusted again. `make
+> verify-launch-ready-single-region` exists (`scripts/ci/verify-launch-ready`)
+> but is not wired into any CI workflow, so a stale/never-run gate
+> cannot currently fail a build.
+
 The canonical list of outstanding implementation work between
 today and launch. Sourced from:
 

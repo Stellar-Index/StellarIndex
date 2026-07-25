@@ -9,6 +9,102 @@ superseded_by: null
 
 # ADR-0019: Anomaly response policy and confidence scoring
 
+> **Amendment (2026-07-24, audit-2026-07-23 R-003 / COR-14).** The
+> confidence formula block under §"Multi-factor confidence score"
+> writes the weighted product **without** its normalisation exponent,
+> while the prose one paragraph above it says the factors are combined
+> "via weighted geometric mean" — which *is* the normalised form by
+> definition. The shipped combiner
+> (`internal/aggregate/confidence.Compute`) is the normalised one:
+>
+> ```
+> confidence = (
+>   z_score_factor(z_score)               ^ w_z       *
+>   source_count_factor(n_sources)        ^ w_src     *
+>   diversity_factor(class_count)         ^ w_div     *
+>   liquidity_factor(bucket_volume)       ^ w_liq     *
+>   cross_oracle_factor(divergence_pct)   ^ w_xoracle *
+>   baseline_quality_factor(days_history) ^ w_qual
+> ) ^ (1 / (w_z + w_src + w_div + w_liq + w_xoracle + w_qual))
+> ```
+>
+> i.e. `prod(factor_i ^ weight_i) ^ (1 / sum(weights))`. **The code is
+> authoritative; the formula block's omission of the exponent is the
+> error.** Three of this ADR's own commitments only hold in the
+> normalised form: (a) weights are described as tunable knobs of
+> *relative* influence, but in a bare product doubling every weight
+> squares the score; (b) `cross_oracle_factor` returns 0.7 as an
+> explicitly *neutral* no-data value, yet as a bare product that one
+> term would cap every score without an external reference at 0.7 — a
+> penalty, not neutrality; (c) the bootstrap rule caps confidence at
+> 0.5 "regardless of other factors", which presumes ordinary buckets
+> normally score above 0.5. The `0.92` in the worked-example JSON is
+> illustrative of the response *shape* and is closer to the bare
+> product's value — it is not a mathematical anchor, and the
+> `internal/aggregate/confidence` tests pin it as a range, not a point.
+>
+> **What `confidence < 0.10` means on this scale (unchanged by this
+> amendment, but stated so the number isn't read as product units).**
+> With all weights 1.0, `confidence < 0.10` ⟺ the raw product of the
+> six factors `< 1e-6`. Worked example for the USTRY-shape corner this
+> ADR targets — single source (`source_count_factor` 0.119), one
+> source class (0.5), mature baseline (1.0), no cross-oracle data
+> (0.7), and $12K bucket liquidity (0.540, i.e. just over the
+> `min_usd_volume = 10000` floor that already gates publication):
+> the non-z factors multiply to 0.0225, so the confidence condition
+> needs `z_score_factor < 4.4e-5`, i.e. **z ≈ 15** — far past this
+> ADR's `z_score > 5.0` sub-condition, which makes the confidence term
+> the binding one of the three. Under a bare product the same window
+> sits at 0.0225 before z is considered at all, so the confidence term
+> would instead be *vacuous* (any single-source window satisfies it).
+> Neither reading gives three genuinely independent signals at the
+> current constant: **re-calibrating `[anomaly.phase2]
+> .confidence_max_freeze` to the normalised scale is a live operator
+> decision and is deliberately NOT made here** — this amendment only
+> records which combiner ships. Filed alongside R-003 in the
+> audit-2026-07-23 remediation.
+
+> **Amendment (2026-07-24, audit-2026-07-23 wave5 AGT-08).** The
+> "Factor shapes" bullet list below (`source_count_factor:
+> 1/(1+exp(-(n-3))) — caps confidence at ~0.3 for single-source
+> assets`) is imprecise. The shipped default
+> (`sourceCountInflectionN = 3.0` in
+> `internal/aggregate/confidence/factors.go`) computes
+> `SourceCountFactor(1) ≈ 0.119`, not `~0.3` — a ~2.5x difference,
+> already the number used (not flagged as a correction at the time)
+> in the R-003/COR-14 worked example above. No behaviour change is
+> made here: retuning the inflection constant so `n=1 → ~0.3` (e.g.
+> `k ≈ 1.85`) — or accepting 0.119 as the correct shipped shape and
+> updating the bullet instead — is a live tuning decision for
+> `internal/aggregate/confidence`'s owner, not made in this doc pass.
+> Until that decision lands, read `~0.3` in the bullet list below as
+> the ORIGINAL authoring-time intent, not the shipped value.
+
+> **Amendment (2026-07-24, audit-2026-07-23 wave5 DOC-05).** The
+> "Bootstrap (warmup) policy for new assets" section below describes
+> Option C (hybrid): compute z-scores against a peer-class average
+> baseline and cap `confidence` at 0.5. **This is not what ships.**
+> `Orchestrator.computeConfidence`
+> (`internal/aggregate/orchestrator/confidence.go`) returns early with
+> NO score at all — `confidence.Compute` (which contains
+> `BootstrapConfidenceCap`) is never reached — whenever
+> `Baselines.LatestBaseline` errors (no baseline row yet for the pair)
+> or `MultiBaseline.MaxZScore` reports `!valid` (no window has enough
+> samples). There is no peer-class-average synthesis anywhere in
+> `internal/aggregate/baseline`. Practical effect: a genuinely new or
+> low-history asset publishes with **no `confidence` field and no
+> Phase-2 freeze eligibility** — the freeze condition
+> (`confidence < 0.10 AND z_score > 5.0 AND source_count <= 1`) can
+> never evaluate true because it never evaluates at all — which is the
+> exact single-source, no-history corner this ADR was written to
+> catch. `docs/architecture/launch-readiness-backlog.md` L2.9 marks
+> this item "✅ shipped"; that status is likewise inaccurate for the
+> zero-baseline case. Whether to build the peer-class bootstrap path,
+> or synthesize a capped score with `ZScore=0` when no baseline
+> exists, is an implementation decision for
+> `internal/aggregate/orchestrator` / `internal/aggregate/confidence`'s
+> owner — not made in this doc pass.
+
 ## Context
 
 [ADR-0017](0017-archive-completeness-invariants.md) protects us

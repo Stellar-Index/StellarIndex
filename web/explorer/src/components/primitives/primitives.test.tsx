@@ -15,8 +15,14 @@ import {
 // the redesign can restyle freely, but must not break these entry points.
 describe('domain primitives — render without throwing', () => {
   it('DirectionPill: shows the value when present, still renders for no-data', () => {
-    const up = render(<DirectionPill deltaPct={0.052} />);
-    expect(up.container.textContent).toMatch(/5/);
+    // AGT-06: deltaPct is already a percentage-point number (5 = +5%), not
+    // a fraction — pin the exact rendered string so this test can only
+    // pass under the correct (code-matching) interpretation. A stale
+    // fraction-based reading of the same input (0.052 -> "+0.05%") would
+    // fail this assertion, unlike the old /5/ regex, which matched either
+    // interpretation's output and so proved nothing.
+    const up = render(<DirectionPill deltaPct={5.2} />);
+    expect(up.container.textContent).toBe('+5.20%');
     const none = render(<DirectionPill deltaPct={null} />);
     expect(none.container.firstChild).not.toBeNull();
   });

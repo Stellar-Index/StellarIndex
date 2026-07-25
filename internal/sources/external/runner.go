@@ -137,7 +137,17 @@ func Run(
 		wg.Add(1)
 		go func(spec PollerSpec) {
 			defer wg.Done()
-			runPoller(ctx, spec, sink, logger)
+			// REL-05 (audit-2026-07-23): streamerCtx, not the raw
+			// parent ctx. teardown() (used when a LATER poller in
+			// this same loop fails config validation) only cancels
+			// streamerCtx — a poller goroutine bound to the raw ctx
+			// would ignore that cancellation and wg.Wait() below (and
+			// in teardown) would block until the caller's own ctx is
+			// separately cancelled, which on a startup-config error
+			// may never happen. streamerCtx is a child of ctx, so on
+			// the normal shutdown path (ctx cancelled) it propagates
+			// exactly the same as before.
+			runPoller(streamerCtx, spec, sink, logger)
 		}(p)
 	}
 

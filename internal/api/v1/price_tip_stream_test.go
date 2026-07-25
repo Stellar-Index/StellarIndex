@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -220,6 +221,99 @@ func TestPriceTipStream_TickEmitsRepeatedly(t *testing.T) {
 	}
 	if got < want {
 		t.Errorf("got %d events, want >= %d (window_seconds=1 should produce repeat ticks)", got, want)
+	}
+}
+
+// deadlineCapturingTipHistoryReader records whether each TradesInRange
+// call after the first (the stream's synchronous prelude read, which
+// RequestTimeout deliberately leaves undeadlined on `/stream` paths
+// because the connection itself is long-lived by design) ran under a
+// bounded context.
+type deadlineCapturingTipHistoryReader struct {
+	stubHistoryReader
+	mu              sync.Mutex
+	calls           int
+	tickHadDeadline chan bool
+	trade           canonical.Trade
+}
+
+func (r *deadlineCapturingTipHistoryReader) TradesInRange(ctx context.Context, _ canonical.Pair, _, _ time.Time, _ int) ([]canonical.Trade, error) {
+	r.mu.Lock()
+	r.calls++
+	call := r.calls
+	r.mu.Unlock()
+
+	if call > 1 {
+		_, hasDeadline := ctx.Deadline()
+		select {
+		case r.tickHadDeadline <- hasDeadline:
+		default:
+		}
+	}
+	return []canonical.Trade{r.trade}, nil
+}
+
+// TestPriceTipStream_TickIsBoundedByATimeout is the REL-01 regression:
+// the per-tick computeTip call in the tip-stream producer must run
+// under its OWN bounded deadline, not the raw per-connection context
+// (which RequestTimeout deliberately leaves undeadlined on `/stream`
+// paths). Without a per-tick bound, a slow TradesInRange call could
+// hold the producer goroutine — and its DB connection — open
+// indefinitely, once per open connection, for as long as the client
+// stays connected. Uses crypto:BTC/fiat:USD (no alias pair, unlike
+// native) so exactly one TradesInRange call backs each computeTip
+// invocation, making prelude (call 1) vs. tick (call 2+) unambiguous.
+func TestPriceTipStream_TickIsBoundedByATimeout(t *testing.T) {
+	base, err := canonical.ParseAsset("crypto:BTC")
+	if err != nil {
+		t.Fatalf("ParseAsset(crypto:BTC): %v", err)
+	}
+	quote, err := canonical.ParseAsset("fiat:USD")
+	if err != nil {
+		t.Fatalf("ParseAsset(fiat:USD): %v", err)
+	}
+	pair, err := canonical.NewPair(base, quote)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	trade := canonical.Trade{
+		Source: "soroswap", Ledger: 1,
+		TxHash:      "0000000000000000000000000000000000000000000000000000000000000002",
+		Timestamp:   time.Now().UTC().Add(-1 * time.Second),
+		Pair:        pair,
+		BaseAmount:  canonical.NewAmount(big.NewInt(1)),
+		QuoteAmount: canonical.NewAmount(big.NewInt(7)),
+	}
+	hist := &deadlineCapturingTipHistoryReader{trade: trade, tickHadDeadline: make(chan bool, 1)}
+	url := startTipStreamServer(t, &stubPriceReader{}, hist)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		url+"/v1/price/tip/stream?asset=crypto:BTC&quote=fiat:USD&window_seconds=1", nil)
+	resp, doErr := http.DefaultClient.Do(req)
+	if doErr != nil {
+		t.Fatalf("GET: %v", doErr)
+	}
+	defer resp.Body.Close()
+
+	br := bufio.NewReader(resp.Body)
+	// Drain the synchronous initial event (prelude read, call #1 —
+	// deliberately not asserted on: RequestTimeout excludes /stream
+	// paths entirely, so the prelude is out of scope for this fix).
+	_ = readTipStreamEvent(t, br, 2*time.Second)
+	// Drain the first TICK event (window_seconds=1) so the producer
+	// goroutine has actually made its second TradesInRange call.
+	_ = readTipStreamEvent(t, br, 2500*time.Millisecond)
+
+	select {
+	case hadDeadline := <-hist.tickHadDeadline:
+		if !hadDeadline {
+			t.Error("per-tick computeTip call ran with an undeadlined context — " +
+				"a slow/hung read can block the producer indefinitely (REL-01)")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for a per-tick TradesInRange call")
 	}
 }
 

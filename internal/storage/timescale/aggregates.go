@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math/big"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -105,6 +107,154 @@ func (g HistoryGranularity) Seconds() int {
 	return int(g.BucketDuration() / time.Second)
 }
 
+// dirVWAP is ONE stored market direction's contribution to a single
+// CAGG bucket, as scanned from prices_<granularity>. The decoder keeps
+// each trade in the venue's observed base/quote ordering rather than
+// re-orienting it (see [canonical.Trade] / [canonical.Orient]), so the
+// same market lands in the CAGG as BOTH (A,B) and (B,A) rows — every
+// serving read has to fold the two together itself.
+//
+//   - vwapText and volumeText are the row's NUMERIC columns as text
+//     (ADR-0003 — no float round-trip). Per migration 0002,
+//     vwap = Σquote_amount / Σbase_amount and volume = Σbase_amount,
+//     both in THAT ROW's own orientation and raw (smallest-unit) terms.
+//   - flipped marks a row stored (quote, base) relative to the
+//     orientation the caller asked for.
+type dirVWAP struct {
+	vwapText   string
+	volumeText string
+	flipped    bool
+}
+
+// combinedVWAPSigDigits is how many SIGNIFICANT digits a combined VWAP
+// renders with. Prices on this surface span roughly 1e2 (fiat crosses)
+// down to 1e-12 and below (an 18-decimals Soroban token quoted in XLM),
+// so the precision has to be RELATIVE — see [rateScaleFor], which this
+// reuses. 25 digits is comfortably past the ~16–20 fractional digits
+// Postgres gives the CAGG's own NUMERIC division, so rendering never
+// throws away precision the inputs actually carried.
+const combinedVWAPSigDigits = 25
+
+// formatCombinedVWAP renders an exact combined VWAP as a decimal string
+// with trailing zeros trimmed — the money-string house style (mirrors
+// `formatCrossRate` on the API side). This rendering is the ONLY lossy
+// step in the combine; everything upstream of it is exact rational
+// arithmetic.
+func formatCombinedVWAP(r *big.Rat) string {
+	s := r.FloatString(rateScaleFor(r, combinedVWAPSigDigits))
+	if strings.Contains(s, ".") {
+		s = strings.TrimRight(s, "0")
+		s = strings.TrimRight(s, ".")
+	}
+	return s
+}
+
+// combineDirVWAP folds the stored market directions of ONE bucket into
+// the VWAP of their union, expressed in the requested (base, quote)
+// orientation, as a NUMERIC-shaped decimal string.
+//
+// VWAP is Σ(quote leg) / Σ(base leg), so the only correct way to merge
+// two directions is to re-express each row's two legs in the REQUESTED
+// orientation's units and re-divide the sums:
+//
+//	requested base  leg = volume          (flipped row: vwap × volume)
+//	requested quote leg = vwap × volume   (flipped row: volume)
+//
+// A flipped row's `volume` is Σ of the requested QUOTE asset, and its
+// vwap × volume reconstructs Σ of the requested BASE asset — the same
+// Σquote = vwap·Σbase identity [Store.OHLCSeries] already uses to derive
+// quote_amount. Both directions therefore contribute in the same raw
+// units and the quotient is the true union VWAP.
+//
+// This replaces a TRADE-COUNT-weighted mean of {vwap, 1/vwap_flipped}.
+// That is not a VWAP at all: it weights a hundred dust trades above one
+// whale, and it equals the union VWAP only in the degenerate case where
+// both directions happen to carry the identical average trade size. On
+// a real two-sided market it is wrong by an unbounded factor.
+//
+// A single unflipped row is returned VERBATIM: the union of one
+// direction IS that row's stored VWAP, so passing the Postgres NUMERIC
+// text straight through keeps the served bytes byte-identical to a
+// single-direction read.
+//
+// Arithmetic is exact (math/big) — no float64 anywhere near a served
+// money value (ADR-0003), and no `1.0 / vwap` inversion, which would
+// round the flipped leg to whatever scale Postgres picked for that
+// division BEFORE it was ever weighted.
+//
+// ok=false when no row carries a usable (parseable, positive) price and
+// volume; callers treat that as "no data for this bucket".
+func combineDirVWAP(rows []dirVWAP) (string, bool) {
+	if len(rows) == 1 && !rows[0].flipped {
+		if v, ok := new(big.Rat).SetString(rows[0].vwapText); !ok || v.Sign() <= 0 {
+			return "", false
+		}
+		return rows[0].vwapText, true
+	}
+	baseLeg, quoteLeg := new(big.Rat), new(big.Rat)
+	for _, r := range rows {
+		vwap, ok := new(big.Rat).SetString(r.vwapText)
+		if !ok || vwap.Sign() <= 0 {
+			continue
+		}
+		vol, ok := new(big.Rat).SetString(r.volumeText)
+		if !ok || vol.Sign() <= 0 {
+			continue
+		}
+		// The row's OTHER leg, via Σquote = vwap · Σbase.
+		other := new(big.Rat).Mul(vwap, vol)
+		if r.flipped {
+			baseLeg.Add(baseLeg, other)
+			quoteLeg.Add(quoteLeg, vol)
+			continue
+		}
+		baseLeg.Add(baseLeg, vol)
+		quoteLeg.Add(quoteLeg, other)
+	}
+	if baseLeg.Sign() <= 0 || quoteLeg.Sign() <= 0 {
+		return "", false
+	}
+	return formatCombinedVWAP(new(big.Rat).Quo(quoteLeg, baseLeg)), true
+}
+
+// appendSources appends src's entries to dst, skipping any already
+// present. The per-direction rows of one bucket carry their own
+// `sources` arrays; a served row's contributor list is their union.
+// Linear scan — a bucket has a handful of sources, and this avoids a
+// map allocation per bucket on the price hot path. Ordering is settled
+// afterwards by [normalizeVwapSources].
+func appendSources(dst, src []string) []string {
+	for _, s := range src {
+		dup := false
+		for _, have := range dst {
+			if have == s {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			dst = append(dst, s)
+		}
+	}
+	return dst
+}
+
+// bucketRowCap converts a caller's BUCKET limit into the SQL row limit
+// a both-directions read needs. A bucket holds at most two rows (one
+// per stored direction), so 2n+1 rows always contain the first n
+// buckets COMPLETE — the +1 row can only ever start an (n+1)-th bucket,
+// which the caller trims away. Keeping the cap in SQL (rather than
+// selecting DISTINCT buckets in a CTE first) leaves the existing
+// index-ordered plans untouched.
+//
+// Returns 0 for a non-positive limit, meaning "no LIMIT clause".
+func bucketRowCap(limit int) int {
+	if limit <= 0 {
+		return 0
+	}
+	return 2*limit + 1
+}
+
 // HistoryPoints returns every CLOSED bucket for the pair from the
 // CAGG matching `granularity`, ordered chronologically (ASC). Used
 // by /v1/history/since-inception to serve the full historical
@@ -113,10 +263,18 @@ func (g HistoryGranularity) Seconds() int {
 // Per ADR-0015 the in-progress bucket is excluded via a
 // `bucket + <granularity> <= now()` guard.
 //
-// `limit` clamps the row count; passing 0 returns all rows. The
+// `limit` clamps the BUCKET count; passing 0 returns all buckets. The
 // API caller passes the spec-bounded value (default unbounded for
 // since-inception; clients paginate via Pagination.next when we
 // add that surface).
+//
+// BOTH stored directions of the market are read and folded into the
+// requested ($1, $2) orientation by [combineDirVWAP] — the same
+// treatment [Store.LatestClosedVWAP1mForPair] and [Store.OHLCSeries]
+// give. Reading only (base=$1, quote=$2), as this did, silently DROPPED
+// every trade the venue happened to record the other way round, so the
+// served series was a VWAP over an arbitrary subset of the market (and
+// empty for a flipped-only pair).
 //
 // Returns an empty slice + nil error when the pair has no closed
 // buckets at this granularity yet.
@@ -134,17 +292,17 @@ func (s *Store) HistoryPoints(ctx context.Context, p canonical.Pair, granularity
 	// #nosec G201 — table + interval are derived from the validated
 	// enum, not user input. See HistoryGranularity.Validate above.
 	q := fmt.Sprintf(`
-		SELECT bucket, vwap::text, volume_usd::text
+		SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text, volume_usd::text
 		  FROM %s
-		 WHERE base_asset = $1
-		   AND quote_asset = $2
+		 WHERE ((base_asset = $1 AND quote_asset = $2)
+		     OR (base_asset = $2 AND quote_asset = $1))
 		   AND bucket + INTERVAL '%s' <= now()
 		 ORDER BY bucket ASC
 	`, table, interval)
 	args := []any{p.Base.String(), p.Quote.String()}
-	if limit > 0 {
+	if rowCap := bucketRowCap(limit); rowCap > 0 {
 		q += " LIMIT $3"
-		args = append(args, limit)
+		args = append(args, rowCap)
 	}
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -152,23 +310,132 @@ func (s *Store) HistoryPoints(ctx context.Context, p canonical.Pair, granularity
 	}
 	defer func() { _ = rows.Close() }()
 
+	return scanHistoryPoints(rows, p.Base.String(), limit,
+		fmt.Sprintf("HistoryPoints[%s]", granularity))
+}
+
+// scanHistoryPoints folds the raw both-directions rows of a
+// prices_<granularity> read into one [HistoryPoint] per bucket,
+// preserving the query's bucket ordering. Rows of the same bucket are
+// adjacent (every caller orders by bucket), so this is one pass with no
+// map.
+//
+// `base` is the requested pair's base asset id — a row whose base_asset
+// differs is the flipped storage of the same market. `limit` is the
+// caller's BUCKET limit (0 = unbounded); the query fetched
+// [bucketRowCap] rows, so the first `limit` buckets are complete and
+// anything past them is trimmed. `what` labels wrapped errors.
+func scanHistoryPoints(rows *sql.Rows, base string, limit int, what string) ([]HistoryPoint, error) {
 	out := make([]HistoryPoint, 0, 1024)
+	var (
+		curBucket time.Time
+		curDirs   []dirVWAP
+		curUSD    []sql.NullString
+		open      bool
+	)
+	flush := func() {
+		if !open {
+			return
+		}
+		open = false
+		vwap, ok := combineDirVWAP(curDirs)
+		if !ok {
+			return
+		}
+		out = append(out, HistoryPoint{
+			Bucket:    curBucket,
+			VWAP:      vwap,
+			VolumeUSD: sumUSDVolume(curUSD),
+		})
+	}
 	for rows.Next() {
-		var pt HistoryPoint
-		var vusd sql.NullString
-		if err := rows.Scan(&pt.Bucket, &pt.VWAP, &vusd); err != nil {
-			return nil, fmt.Errorf("timescale: HistoryPoints[%s] scan: %w", granularity, err)
+		var (
+			bucket  time.Time
+			rowBase string
+			vwap    string
+			volume  string
+			vusd    sql.NullString
+		)
+		if err := rows.Scan(&bucket, &rowBase, &vwap, &volume, &vusd); err != nil {
+			return nil, fmt.Errorf("timescale: %s scan: %w", what, err)
 		}
-		if vusd.Valid {
-			s := vusd.String
-			pt.VolumeUSD = &s
+		if !open || !bucket.Equal(curBucket) {
+			flush()
+			curBucket, curDirs, curUSD, open = bucket, curDirs[:0], curUSD[:0], true
 		}
-		out = append(out, pt)
+		curDirs = append(curDirs, dirVWAP{
+			vwapText:   vwap,
+			volumeText: volume,
+			flipped:    rowBase != base,
+		})
+		curUSD = append(curUSD, vusd)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: HistoryPoints[%s] rows: %w", granularity, err)
+		return nil, fmt.Errorf("timescale: %s rows: %w", what, err)
+	}
+	flush()
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
+}
+
+// sumUSDVolume adds the per-direction volume_usd columns of one bucket.
+// The two stored directions hold DISJOINT trades (the decoder files each
+// trade once, in the venue's own orientation), so their USD volumes add
+// — no double counting. Both are already USD-denominated, so unlike the
+// price legs no orientation conversion applies.
+//
+// Returns nil when every direction's column is NULL (the "no usd_volume
+// entries" case [HistoryPoint] documents), and the single non-NULL value
+// VERBATIM when only one direction contributes — keeping the served
+// bytes identical to a single-direction read. Summing renders at the
+// widest input scale, which is exactly what a Postgres `SUM(numeric)`
+// would have produced.
+func sumUSDVolume(vals []sql.NullString) *string {
+	var (
+		sum   *big.Rat
+		only  string
+		scale int
+		n     int
+	)
+	for _, v := range vals {
+		if !v.Valid {
+			continue
+		}
+		r, ok := new(big.Rat).SetString(v.String)
+		if !ok {
+			continue
+		}
+		n++
+		only = v.String
+		if s := decimalScale(v.String); s > scale {
+			scale = s
+		}
+		if sum == nil {
+			sum = r
+			continue
+		}
+		sum.Add(sum, r)
+	}
+	switch n {
+	case 0:
+		return nil
+	case 1:
+		return &only
+	}
+	s := sum.FloatString(scale)
+	return &s
+}
+
+// decimalScale counts the fractional digits in a Postgres NUMERIC text
+// value. Postgres never renders NUMERIC in exponent form, so a single
+// '.' scan is exact.
+func decimalScale(s string) int {
+	if i := strings.IndexByte(s, '.'); i >= 0 {
+		return len(s) - i - 1
+	}
+	return 0
 }
 
 // HistoryPointsInRange is [HistoryPoints] with an explicit
@@ -178,7 +445,11 @@ func (s *Store) HistoryPoints(ctx context.Context, p canonical.Pair, granularity
 //
 // `from` zero disables the lower bound (equivalent to since-
 // inception); `to` zero disables the upper bound. `limit` 0 returns
-// all rows.
+// all buckets.
+//
+// Both stored directions are combined into the requested orientation —
+// see [Store.HistoryPoints] for why a one-direction read silently drops
+// liquidity.
 //
 // Empty slice + nil error when the pair has no closed buckets in
 // the requested window.
@@ -197,7 +468,8 @@ func (s *Store) HistoryPointsInRange(
 	// Build args incrementally so the placeholder count matches the
 	// optional from/to/limit clauses.
 	args := []any{p.Base.String(), p.Quote.String()}
-	clauses := "base_asset = $1\n   AND quote_asset = $2\n   AND bucket + INTERVAL '" + interval + "' <= now()"
+	clauses := "((base_asset = $1 AND quote_asset = $2)\n        OR (base_asset = $2 AND quote_asset = $1))" +
+		"\n   AND bucket + INTERVAL '" + interval + "' <= now()"
 	if !from.IsZero() {
 		args = append(args, from.UTC())
 		clauses += fmt.Sprintf("\n   AND bucket >= $%d", len(args))
@@ -209,13 +481,13 @@ func (s *Store) HistoryPointsInRange(
 	// #nosec G201 — table + interval are derived from the validated
 	// enum, not user input. See HistoryGranularity.Validate.
 	q := fmt.Sprintf(`
-		SELECT bucket, vwap::text, volume_usd::text
+		SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text, volume_usd::text
 		  FROM %s
 		 WHERE %s
 		 ORDER BY bucket ASC
 	`, table, clauses)
-	if limit > 0 {
-		args = append(args, limit)
+	if rowCap := bucketRowCap(limit); rowCap > 0 {
+		args = append(args, rowCap)
 		q += fmt.Sprintf(" LIMIT $%d", len(args))
 	}
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -224,23 +496,8 @@ func (s *Store) HistoryPointsInRange(
 	}
 	defer func() { _ = rows.Close() }()
 
-	out := make([]HistoryPoint, 0, 1024)
-	for rows.Next() {
-		var pt HistoryPoint
-		var vusd sql.NullString
-		if err := rows.Scan(&pt.Bucket, &pt.VWAP, &vusd); err != nil {
-			return nil, fmt.Errorf("timescale: HistoryPointsInRange[%s] scan: %w", granularity, err)
-		}
-		if vusd.Valid {
-			s := vusd.String
-			pt.VolumeUSD = &s
-		}
-		out = append(out, pt)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: HistoryPointsInRange[%s] rows: %w", granularity, err)
-	}
-	return out, nil
+	return scanHistoryPoints(rows, p.Base.String(), limit,
+		fmt.Sprintf("HistoryPointsInRange[%s]", granularity))
 }
 
 // twapGranularities is the set of granularities backed by a TWAP
@@ -423,59 +680,49 @@ func (s *Store) RecentClosedVWAP1mForPair(ctx context.Context, p canonical.Pair,
 
 // recentClosedVWAP1mCombinedTemplate is the newest-first, both-directions,
 // LIMIT-N variant of [latestClosedVWAP1mTemplate]. `%[1]s` carries the
-// literal `bucket >=` lower-bound clause for plan-time chunk pruning. CTE
-// `b` computes the per-bucket combined VWAP (flipped rows inverted +
-// trade-count-weighted, so every row is the price of $1 in $2); CTE `s`
-// aggregates the distinct source list for exactly those buckets (kept
-// separate from `b` so the source unnest can't inflate `b`'s trade-count
-// SUM). Both stored directions are read so a flipped-only bucket still
-// contributes.
+// literal `bucket >=` lower-bound clause for plan-time chunk pruning.
+//
+// It selects the RAW per-direction rows (newest bucket first) and leaves
+// the direction combine to [combineDirVWAP] in Go: the fold is exact
+// rational money math (ADR-0003), not a NUMERIC expression whose
+// intermediate `1.0 / vwap` would round the flipped leg before it was
+// weighted. `LIMIT $3` is a ROW cap ([bucketRowCap]) — a bucket has at
+// most two rows, so it still bounds the walk to the requested number of
+// buckets while keeping the plan a plain index-ordered scan (no CTE, no
+// GROUP BY, no source unnest).
 const recentClosedVWAP1mCombinedTemplate = `
-        WITH b AS (
-            SELECT bucket,
-                   (SUM((CASE WHEN base_asset = $1 THEN vwap
-                              ELSE 1.0 / NULLIF(vwap, 0) END) * COALESCE(trade_count, 0))
-                      / NULLIF(SUM(COALESCE(trade_count, 0)), 0))::text AS vwap,
-                   SUM(COALESCE(trade_count, 0))::bigint                 AS trade_count
-              FROM prices_1m
-             WHERE ((base_asset = $1 AND quote_asset = $2)
-                 OR (base_asset = $2 AND quote_asset = $1))
-               AND bucket <= now() - INTERVAL '1 minute'
-               %[1]s
-             GROUP BY bucket
-            HAVING SUM(COALESCE(trade_count, 0)) > 0
-             ORDER BY bucket DESC
-             LIMIT $3
-        ),
-        s AS (
-            SELECT p.bucket, array_agg(DISTINCT src) AS sources
-              FROM prices_1m p, unnest(p.sources) AS src
-             WHERE p.bucket IN (SELECT bucket FROM b)
-               AND ((p.base_asset = $1 AND p.quote_asset = $2)
-                 OR (p.base_asset = $2 AND p.quote_asset = $1))
-             GROUP BY p.bucket
-        )
-        SELECT b.bucket, b.vwap, b.trade_count, COALESCE(s.sources, '{}'::text[])
-          FROM b LEFT JOIN s USING (bucket)
-         ORDER BY b.bucket DESC
+        SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+               COALESCE(trade_count, 0), sources
+          FROM prices_1m
+         WHERE ((base_asset = $1 AND quote_asset = $2)
+             OR (base_asset = $2 AND quote_asset = $1))
+           AND bucket <= now() - INTERVAL '1 minute'
+           %[1]s
+         ORDER BY bucket DESC
+         LIMIT $3
     `
 
 // RecentClosedVWAP1mCombined returns up to `limit` most-recent CLOSED
 // 1-minute buckets from the prices_1m CAGG for the pair, newest-first,
-// each COMBINED across both stored market directions (same invert +
-// trade-count-weight math as [LatestClosedVWAP1mForPair]) so every row
-// expresses the price of Base in Quote.
+// each COMBINED across both stored market directions (the volume-weighted
+// union of [combineDirVWAP], identical to the math
+// [LatestClosedVWAP1mForPair] serves) so every row expresses the price of
+// Base in Quote.
 //
 // This is the trailing-baseline source for the /v1/price serving-sanity
 // guard (aggregate.GuardServedVWAP): the handler compares the latest
 // closed bucket against these recent buckets and serves last-known-good
 // when the latest is grossly off (a fat-finger / manipulation print in a
-// bucket the raw CAGG would otherwise serve unfiltered). It is called
-// ONLY after [LatestClosedVWAP1mForPair] has already confirmed the pair
-// is populated (its cheap recent-existence gate ran first), so this
-// bounded, index-driven LIMIT-N read never pays the empty-pair cold walk
-// — but it still carries the same literal `bucket >=` lower bound for
-// plan-time chunk pruning.
+// bucket the raw CAGG would otherwise serve unfiltered). The baseline
+// MUST use the same combine as the served candidate — otherwise the two
+// disagree systematically on every two-sided market and the guard
+// false-positives.
+//
+// It is called ONLY after [LatestClosedVWAP1mForPair] has already
+// confirmed the pair is populated (its cheap recent-existence gate ran
+// first), so this bounded, index-driven LIMIT-N read never pays the
+// empty-pair cold walk — but it still carries the same literal
+// `bucket >=` lower bound for plan-time chunk pruning.
 //
 // Empty slice + nil error when the pair has no closed buckets in scope.
 func (s *Store) RecentClosedVWAP1mCombined(ctx context.Context, p canonical.Pair, limit int) ([]Vwap1mRow, error) {
@@ -488,26 +735,82 @@ func (s *Store) RecentClosedVWAP1mCombined(ctx context.Context, p canonical.Pair
 	// own time.Time in a fixed layout; pair strings + limit bind as
 	// $1/$2/$3. Same discipline as latestClosedVWAP1m.
 	q := fmt.Sprintf(recentClosedVWAP1mCombinedTemplate, lower) //nolint:gosec // G201: see note above
-	rows, err := s.db.QueryContext(ctx, q, p.Base.String(), p.Quote.String(), limit)
+	rows, err := s.db.QueryContext(ctx, q, p.Base.String(), p.Quote.String(), bucketRowCap(limit))
 	if err != nil {
 		return nil, fmt.Errorf("timescale: RecentClosedVWAP1mCombined: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	out := make([]Vwap1mRow, 0, limit)
-	for rows.Next() {
-		row := Vwap1mRow{BaseAsset: p.Base.String(), QuoteAsset: p.Quote.String()}
-		if err := rows.Scan(
-			&row.Bucket, &row.VWAP, &row.TradeCount,
-			(*stringArray)(&row.Sources),
-		); err != nil {
-			return nil, fmt.Errorf("timescale: RecentClosedVWAP1mCombined scan: %w", err)
+	return scanCombinedVwap1mRows(rows, p, limit, "RecentClosedVWAP1mCombined")
+}
+
+// scanCombinedVwap1mRows folds the raw both-directions rows of a
+// prices_1m read into one [Vwap1mRow] per bucket, preserving the query's
+// bucket ordering. Rows of the same bucket are adjacent (callers order by
+// bucket), so this is one pass with no map.
+//
+// Per bucket the VWAP is the volume-weighted union of the directions
+// ([combineDirVWAP]), the trade count is their sum, and the source list
+// is their de-duplicated union. `limit` is the caller's BUCKET limit
+// (0 = unbounded); the query fetched [bucketRowCap] rows so the first
+// `limit` buckets are complete and any partial tail is trimmed. `what`
+// labels wrapped errors.
+func scanCombinedVwap1mRows(rows *sql.Rows, p canonical.Pair, limit int, what string) ([]Vwap1mRow, error) {
+	base := p.Base.String()
+	capHint := limit
+	if capHint <= 0 {
+		capHint = 16
+	}
+	out := make([]Vwap1mRow, 0, capHint)
+	var (
+		cur  Vwap1mRow
+		dirs []dirVWAP
+		open bool
+	)
+	flush := func() {
+		if !open {
+			return
 		}
-		normalizeVwapSources(&row)
-		out = append(out, row)
+		open = false
+		vwap, ok := combineDirVWAP(dirs)
+		if !ok {
+			return
+		}
+		cur.VWAP = vwap
+		normalizeVwapSources(&cur)
+		out = append(out, cur)
+	}
+	for rows.Next() {
+		var (
+			bucket  time.Time
+			rowBase string
+			vwap    string
+			volume  string
+			tc      int64
+			src     stringArray
+		)
+		if err := rows.Scan(&bucket, &rowBase, &vwap, &volume, &tc, &src); err != nil {
+			return nil, fmt.Errorf("timescale: %s scan: %w", what, err)
+		}
+		if !open || !bucket.Equal(cur.Bucket) {
+			flush()
+			cur = Vwap1mRow{Bucket: bucket, BaseAsset: base, QuoteAsset: p.Quote.String()}
+			dirs, open = dirs[:0], true
+		}
+		dirs = append(dirs, dirVWAP{
+			vwapText:   vwap,
+			volumeText: volume,
+			flipped:    rowBase != base,
+		})
+		cur.TradeCount += tc
+		cur.Sources = appendSources(cur.Sources, src)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: RecentClosedVWAP1mCombined rows: %w", err)
+		return nil, fmt.Errorf("timescale: %s rows: %w", what, err)
+	}
+	flush()
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }
@@ -631,8 +934,10 @@ func (s *Store) ClosedVWAPAtOrBefore(ctx context.Context, p canonical.Pair, ts t
 }
 
 // closedVWAPAtOrBeforeQueryTemplate finds the nearest closed bucket
-// at-or-before an instant for one CAGG resolution and returns its
-// trade-count-weighted VWAP across both stored directions.
+// at-or-before an instant for one CAGG resolution and returns that
+// bucket's RAW per-direction rows. The fold into the requested
+// orientation is [combineDirVWAP] in Go — the volume-weighted union of
+// the two stored directions, in exact rational arithmetic.
 //
 //	%[1]s — table name (prices_<granularity>, from the validated enum)
 //	%[2]s — upper bound literal (ts − resolution: the closed-bucket
@@ -661,19 +966,15 @@ const closedVWAPAtOrBeforeQueryTemplate = `
         ) u
     ),
     r AS (
-        SELECT base_asset, vwap, COALESCE(trade_count, 0) AS tc
+        SELECT base_asset, vwap::text AS vwap, COALESCE(volume, 0)::text AS volume
           FROM %[1]s
          WHERE bucket = (SELECT b FROM latest)
            AND bucket >= TIMESTAMPTZ '%[3]s'
            AND ((base_asset = $1 AND quote_asset = $2)
              OR (base_asset = $2 AND quote_asset = $1))
     )
-    SELECT (SELECT b FROM latest),
-           (SUM((CASE WHEN base_asset = $1 THEN vwap
-                      ELSE 1.0 / NULLIF(vwap, 0) END) * tc)
-              / NULLIF(SUM(tc), 0))::text AS vwap
+    SELECT (SELECT b FROM latest), base_asset, vwap, volume
       FROM r
-     HAVING count(*) > 0
 `
 
 // closedVWAPAtOrBeforeRes runs [closedVWAPAtOrBeforeQueryTemplate] for
@@ -706,21 +1007,33 @@ func (s *Store) closedVWAPAtOrBeforeRes(
 	q := fmt.Sprintf(closedVWAPAtOrBeforeQueryTemplate,
 		table, upper.UTC().Format(layout), lower.UTC().Format(layout))
 
-	var bucket time.Time
-	var vwap sql.NullString
-	err := s.db.QueryRowContext(ctx, q, p.Base.String(), p.Quote.String()).Scan(&bucket, &vwap)
-	if errors.Is(err, sql.ErrNoRows) {
-		return time.Time{}, "", false, nil
-	}
+	rows, err := s.db.QueryContext(ctx, q, p.Base.String(), p.Quote.String())
 	if err != nil {
 		return time.Time{}, "", false, fmt.Errorf("timescale: ClosedVWAPAtOrBefore[%s]: %w", g, err)
 	}
-	if !vwap.Valid {
-		// Degenerate bucket (zero total trade_count → NULL weighted
-		// VWAP): treat as no data on this rung.
+	defer func() { _ = rows.Close() }()
+
+	base := p.Base.String()
+	var bucket time.Time
+	dirs := make([]dirVWAP, 0, 2)
+	for rows.Next() {
+		var rowBase, vwap, volume string
+		if err := rows.Scan(&bucket, &rowBase, &vwap, &volume); err != nil {
+			return time.Time{}, "", false, fmt.Errorf("timescale: ClosedVWAPAtOrBefore[%s] scan: %w", g, err)
+		}
+		dirs = append(dirs, dirVWAP{vwapText: vwap, volumeText: volume, flipped: rowBase != base})
+	}
+	if err := rows.Err(); err != nil {
+		return time.Time{}, "", false, fmt.Errorf("timescale: ClosedVWAPAtOrBefore[%s] rows: %w", g, err)
+	}
+	vwap, ok := combineDirVWAP(dirs)
+	if !ok {
+		// No bucket on this rung, or a degenerate one carrying no usable
+		// price/volume: treat as no data and fall through to the coarser
+		// rung.
 		return time.Time{}, "", false, nil
 	}
-	return bucket, vwap.String, true, nil
+	return bucket, vwap, true, nil
 }
 
 // LatestClosedVWAP1mForPair returns the most-recent CLOSED 1-minute
@@ -909,6 +1222,15 @@ func (s *Store) RecentClosedVWAP1mExists(ctx context.Context, p canonical.Pair) 
 //
 // latestClosedVWAP1mTemplate is the query with a single `%[1]s` slot for the
 // literal lower-bound clause, repeated on all three prices_1m scans.
+//
+// The final SELECT returns the latest closed bucket's RAW per-direction
+// rows (at most two — the market's two stored orientations); the fold
+// into the requested ($1, $2) orientation is [combineDirVWAP] in Go,
+// which is exact rational arithmetic on the served price (ADR-0003)
+// rather than a NUMERIC expression that would round `1.0 / vwap` before
+// weighting it. The `latest` / `r` CTEs — and therefore every
+// sargability + plan-time-pruning property of this query — are
+// unchanged.
 const latestClosedVWAP1mTemplate = `
         WITH latest AS (
             SELECT max(b) AS b FROM (
@@ -924,21 +1246,16 @@ const latestClosedVWAP1mTemplate = `
             ) u
         ),
         r AS (
-            SELECT base_asset, vwap, COALESCE(trade_count, 0) AS tc, sources
+            SELECT base_asset, vwap::text AS vwap, COALESCE(volume, 0)::text AS volume,
+                   COALESCE(trade_count, 0) AS tc, sources
               FROM prices_1m
              WHERE bucket = (SELECT b FROM latest)
                %[1]s
                AND ((base_asset = $1 AND quote_asset = $2)
                  OR (base_asset = $2 AND quote_asset = $1))
         )
-        SELECT (SELECT b FROM latest), $1::text, $2::text,
-               (SUM((CASE WHEN base_asset = $1 THEN vwap
-                          ELSE 1.0 / NULLIF(vwap, 0) END) * tc)
-                  / NULLIF(SUM(tc), 0))::text AS vwap,
-               SUM(tc)::bigint AS trade_count,
-               (SELECT array_agg(DISTINCT sc) FROM r r2, unnest(r2.sources) sc) AS sources
+        SELECT (SELECT b FROM latest), base_asset, vwap, volume, tc, sources
           FROM r
-         HAVING count(*) > 0
     `
 
 func (s *Store) latestClosedVWAP1m(ctx context.Context, p canonical.Pair, since time.Time) (Vwap1mRow, error) {
@@ -952,25 +1269,24 @@ func (s *Store) latestClosedVWAP1m(ctx context.Context, p canonical.Pair, since 
 	// literal (vs a $N bind parameter) is REQUIRED: TimescaleDB only does
 	// plan-time chunk exclusion for a constant, not a bind parameter.
 	q := fmt.Sprintf(latestClosedVWAP1mTemplate, lower) //nolint:gosec // G201: see note above
-	var row Vwap1mRow
-	err := s.db.QueryRowContext(ctx, q,
-		p.Base.String(), p.Quote.String(),
-	).Scan(
-		&row.Bucket,
-		&row.BaseAsset,
-		&row.QuoteAsset,
-		&row.VWAP,
-		&row.TradeCount,
-		(*stringArray)(&row.Sources),
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Vwap1mRow{}, sql.ErrNoRows
-	}
+	rows, err := s.db.QueryContext(ctx, q, p.Base.String(), p.Quote.String())
 	if err != nil {
 		return Vwap1mRow{}, fmt.Errorf("timescale: LatestClosedVWAP1mForPair: %w", err)
 	}
-	normalizeVwapSources(&row)
-	return row, nil
+	defer func() { _ = rows.Close() }()
+
+	// One bucket, so at most two rows (one per stored direction). An
+	// empty result — no closed bucket in the window, or a bucket whose
+	// rows carry no usable price/volume — stays [sql.ErrNoRows], which
+	// the price handler resolves through its fallback chain.
+	out, err := scanCombinedVwap1mRows(rows, p, 1, "LatestClosedVWAP1mForPair")
+	if err != nil {
+		return Vwap1mRow{}, err
+	}
+	if len(out) == 0 {
+		return Vwap1mRow{}, sql.ErrNoRows
+	}
+	return out[0], nil
 }
 
 // TimedVWAPsForPair1m returns chronologically-ordered (oldest-first)
@@ -991,13 +1307,22 @@ func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from,
 	// SDEX decoder records the same market both ways (XLM/USDC and
 	// USDC/XLM); reading only (base=$1, quote=$2) fed the anomaly
 	// baseline half the liquidity (and no rows at all for minutes that
-	// traded only the flipped way). Per bucket we invert the flipped
-	// rows' vwap (1/vwap) and trade-count-weight, so every point
-	// expresses the price of $1 in $2. See canonical.Orient.
+	// traded only the flipped way). See canonical.Orient.
+	//
+	// The combine is the VOLUME-weighted union — Σ(requested quote leg)
+	// / Σ(requested base leg), each row's legs re-expressed in the
+	// requested orientation via Σquote = vwap·Σbase (the identity
+	// [combineDirVWAP] and [Store.OHLCSeries] use). Weighting the two
+	// directions by TRADE COUNT, as this did, is not a VWAP at all and
+	// biased every baseline on a two-sided market. The division stays in
+	// NUMERIC and only the final value casts to float8 — this series
+	// feeds statistical baseline math whose float contract is documented
+	// on [Store.VWAPsForPair1m].
 	const q = `
-        SELECT (SUM((CASE WHEN base_asset = $1 THEN vwap
-                          ELSE 1.0 / NULLIF(vwap, 0) END) * COALESCE(trade_count, 0))
-                  / NULLIF(SUM(COALESCE(trade_count, 0)), 0))::float8 AS vwap,
+        SELECT (SUM(CASE WHEN base_asset = $1 THEN vwap * COALESCE(volume, 0)
+                         ELSE COALESCE(volume, 0) END)
+                  / NULLIF(SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume, 0)
+                                    ELSE vwap * COALESCE(volume, 0) END), 0))::float8 AS vwap,
                bucket + INTERVAL '1 minute'
           FROM prices_1m
          WHERE ((base_asset = $1 AND quote_asset = $2)
@@ -1005,6 +1330,8 @@ func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from,
            AND bucket >= $3
            AND bucket <  $4
          GROUP BY bucket
+        HAVING SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume, 0)
+                        ELSE vwap * COALESCE(volume, 0) END) > 0
          ORDER BY bucket ASC
     `
 	rows, err := s.db.QueryContext(ctx, q,
@@ -1049,20 +1376,23 @@ func (s *Store) VWAPsForPair1m(ctx context.Context, p canonical.Pair, from, to t
 		return nil, fmt.Errorf("timescale: VWAPsForPair1m: to %v <= from %v", to, from)
 	}
 	// Combine BOTH stored directions into the requested ($1, $2)
-	// orientation (invert + trade-count-weight the flipped rows), so the
-	// 30-day baseline training window reflects the full market and not
-	// just the direction the CAGG happened to store. See
-	// TimedVWAPsForPair1m / canonical.Orient.
+	// orientation — the VOLUME-weighted union, so the 30-day baseline
+	// training window reflects the full market and not just the
+	// direction the CAGG happened to store. See TimedVWAPsForPair1m /
+	// combineDirVWAP / canonical.Orient.
 	const q = `
-        SELECT (SUM((CASE WHEN base_asset = $1 THEN vwap
-                          ELSE 1.0 / NULLIF(vwap, 0) END) * COALESCE(trade_count, 0))
-                  / NULLIF(SUM(COALESCE(trade_count, 0)), 0))::float8 AS vwap
+        SELECT (SUM(CASE WHEN base_asset = $1 THEN vwap * COALESCE(volume, 0)
+                         ELSE COALESCE(volume, 0) END)
+                  / NULLIF(SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume, 0)
+                                    ELSE vwap * COALESCE(volume, 0) END), 0))::float8 AS vwap
           FROM prices_1m
          WHERE ((base_asset = $1 AND quote_asset = $2)
              OR (base_asset = $2 AND quote_asset = $1))
            AND bucket >= $3
            AND bucket <  $4
          GROUP BY bucket
+        HAVING SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume, 0)
+                        ELSE vwap * COALESCE(volume, 0) END) > 0
          ORDER BY bucket ASC
     `
 	rows, err := s.db.QueryContext(ctx, q,

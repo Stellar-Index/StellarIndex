@@ -52,8 +52,23 @@ type TieredDataStore struct {
 // NewTieredDataStore builds a TieredDataStore wrapping hot + cold.
 // registry is optional — pass nil for no metrics; pass the same
 // registry used by [Stream] in production.
+//
+// Guards against the classic Go typed-nil-interface footgun: every
+// caller in this codebase stores its registry as a concrete
+// `*prometheus.Registry` (see Config.Registry) — passing a nil
+// *prometheus.Registry through this prometheus.Registerer-typed
+// parameter produces a non-nil INTERFACE value wrapping a nil
+// pointer, so a plain `registry != nil` check is always true and
+// MustRegister panics on the nil receiver. Discovered incidentally
+// while adding [streamTiered]'s cold-schema-parity check (INT-01,
+// audit-2026-07-23), whose regression test is the first path to
+// reach here with tiering enabled, both tiers healthy, and no
+// registry configured.
 func NewTieredDataStore(hot, cold datastore.DataStore, registry prometheus.Registerer) *TieredDataStore {
 	t := &TieredDataStore{hot: hot, cold: cold}
+	if r, ok := registry.(*prometheus.Registry); ok && r == nil {
+		registry = nil
+	}
 	if registry != nil {
 		t.readTotal = prometheus.NewCounterVec(
 			prometheus.CounterOpts{

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
@@ -278,6 +279,58 @@ func TestAssetsVerified_FiatMarketCap(t *testing.T) {
 	usdc := bySlug["usdc"]
 	if usdc.MarketCapUSD != "" {
 		t.Errorf("USDC (stablecoin) market_cap_usd = %q; want empty", usdc.MarketCapUSD)
+	}
+}
+
+// TestAssetsVerified_FiatMarketCap_FXHistoryOnlyNoPriceReader is the
+// COR-14 regression: attachFiatMarketCaps used to skip its ENTIRE
+// fan-out whenever PriceReader (s.prices) was nil, even though
+// fiatMarketCapUSD tries fxHistory FIRST and only falls back to
+// PriceReader. A deployment that wires FXHistory but not PriceReader —
+// or even the USD row itself, which needs NEITHER reader (identity
+// price) — got every fiat market_cap_usd silently blanked out. Here
+// only FXHistory is wired (Prices is omitted/nil) and both USD
+// (identity path, no reader needed at all) and CNY (fxHistory path)
+// must still carry a market_cap_usd.
+func TestAssetsVerified_FiatMarketCap_FXHistoryOnlyNoPriceReader(t *testing.T) {
+	cat := newTestCatalogue(t)
+	// USD-base rate for CNY: 1 USD = 7.14286 CNY → InverseUSD ~= 0.14.
+	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{
+		{Bucket: time.Now().UTC(), RateUSD: 1 / 0.14, InverseUSD: 0.14},
+	}}
+
+	srv := v1.New(v1.Options{
+		VerifiedCurrencies: cat,
+		FXHistory:          fx,
+		// Prices deliberately omitted (nil) — attachFiatMarketCaps must
+		// not gate its fan-out on PriceReader alone.
+	})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/assets/verified")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.VerifiedCurrencyListItem `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+
+	bySlug := map[string]v1.VerifiedCurrencyListItem{}
+	for _, e := range env.Data {
+		bySlug[e.Slug] = e
+	}
+
+	// USD needs no reader at all (identity price) — must still be
+	// populated even though PriceReader is nil.
+	usd := bySlug["us-dollar"]
+	if usd.MarketCapUSD != "21700000000000.00" {
+		t.Errorf("USD market_cap_usd = %q, want 21700000000000.00 (no reader needed at all — COR-14)", usd.MarketCapUSD)
+	}
+	// CNY resolves via fxHistory alone: supply=302T × 0.14 → 42280000000000.00
+	cny := bySlug["chinese-yuan"]
+	if cny.MarketCapUSD != "42280000000000.00" {
+		t.Errorf("CNY market_cap_usd = %q, want 42280000000000.00 (fxHistory-only path — COR-14)", cny.MarketCapUSD)
 	}
 }
 

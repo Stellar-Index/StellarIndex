@@ -69,6 +69,23 @@ const distinctTopicSampleWindow = 30 * 24 * time.Hour
 // full history (that wide-column full-history read, not row count
 // alone, is what made the old query take 2h once soroban_events reached
 // 357GB / ~3.56B rows — see r1 EXPLAIN evidence in the fix's commit).
+//
+// COVERAGE LIMIT (DOC-06). This Postgres path is NOT a complete
+// recognition audit, in TWO ways a caller must not conflate with
+// "no gaps found":
+//
+//   - Shapes whose topic[0] is not a Symbol/String (topic_0_sym IS
+//     NULL) are recovered ONLY if they appear inside the trailing
+//     [distinctTopicSampleWindow]; the pre-window fallback phase rides
+//     a partial index that excludes NULL topic_0_sym by construction
+//     (see [Store.distinctSorobanContractTopicPairs]).
+//   - The window bound itself is a cost ceiling, not a claim about
+//     history.
+//
+// The authoritative full-history ADR-0033 Claim 2a check is the
+// ClickHouse path (computeRecognitionGapsCH /
+// clickhouse.DistinctTopicShapes), which is what r1's
+// compute-completeness timer always runs.
 func (s *Store) DistinctSorobanTopicSamples(ctx context.Context, from, to uint32) ([]TopicSample, error) {
 	return s.distinctSorobanTopicSamplesAt(ctx, from, to, time.Now())
 }

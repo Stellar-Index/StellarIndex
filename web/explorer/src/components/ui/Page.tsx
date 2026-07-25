@@ -69,7 +69,9 @@ export function Breadcrumbs({ items }: { items: Crumb[] }) {
               {c.label}
             </Link>
           ) : (
-            <span className="text-ink-body">{c.label}</span>
+            <span className="text-ink-body" aria-current="page">
+              {c.label}
+            </span>
           )}
         </span>
       ))}

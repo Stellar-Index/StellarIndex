@@ -66,9 +66,20 @@ type Inputs struct {
 	// sentinel.
 	CrossOracleAgreementCount int
 
-	// BaselineAgeDays — days since the per-asset baseline was first
-	// computed. 0 for a brand-new pair (bootstrap penalty). Use
-	// negative to mean "no baseline yet"; the factor returns 0.5.
+	// BaselineAgeDays — days-equivalent of baseline DENSITY, not
+	// calendar age (COR-14). The only production caller
+	// (orchestrator.baselineAgeDays) passes Day30.N / 1440, i.e. how
+	// many 1-minute buckets of real history back the 30d window
+	// expressed in days-worth-of-buckets; a pair that trades in 200
+	// buckets a day reads as 0.14 "days" no matter how many calendar
+	// months it has existed.
+	//
+	// That is deliberate — a baseline is trustworthy in proportion to
+	// the samples that fed its median/MAD, not to how long ago it was
+	// first written — but the NAME says age, so read the factor's
+	// output as "how well-supported is this baseline", never as
+	// "how old is this asset". 0 = no support (bootstrap penalty);
+	// negative means "no baseline at all" and the factor returns 0.5.
 	BaselineAgeDays float64
 }
 

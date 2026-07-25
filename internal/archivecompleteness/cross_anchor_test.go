@@ -14,27 +14,51 @@ import (
 
 // makeTestArchive builds a minimal `<root>/ledger/XX/YY/ZZ/ledger-…xdr.gz`
 // tree with checkpoint files at the supplied sequences. Each file
-// contains a one-byte gzip stream — enough for os.Stat to confirm
-// presence; the package doesn't read content for structural checks.
+// contains a valid, non-empty gzip stream — Check() runs a cheap
+// structural probe (non-empty on disk + valid gzip + non-empty
+// decompressed content, DAT-09/DAT-11) on every present file, so a
+// "present" fixture must pass that probe to be counted as Found.
 func makeTestArchive(t *testing.T, present []uint32) string {
 	t.Helper()
 	root := t.TempDir()
 	for _, seq := range present {
-		hex := fmt.Sprintf("%08x", seq)
-		dir := filepath.Join(root, "ledger", hex[0:2], hex[2:4], hex[4:6])
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", dir, err)
-		}
-		path := filepath.Join(dir, "ledger-"+hex+".xdr.gz")
-		var buf bytes.Buffer
-		gz := gzip.NewWriter(&buf)
-		_, _ = gz.Write([]byte("x"))
-		_ = gz.Close()
-		if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
+		writeCheckpointFile(t, root, seq, gzipBytes(t, "x"))
 	}
 	return root
+}
+
+// gzipBytes gzip-compresses s. Shared by the structural-probe tests
+// below to build both valid and deliberately-corrupt fixtures.
+func gzipBytes(t *testing.T, s string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write([]byte(s)); err != nil {
+		t.Fatalf("gzip write: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// writeCheckpointFile writes raw bytes `content` at the canonical
+// checkpoint path for seq under root, creating parent directories as
+// needed. Used both for valid fixtures (gzipBytes output) and
+// deliberately-corrupt ones (empty, truncated, non-gzip) to exercise
+// the structural-probe rejection paths.
+func writeCheckpointFile(t *testing.T, root string, seq uint32, content []byte) string {
+	t.Helper()
+	hex := fmt.Sprintf("%08x", seq)
+	dir := filepath.Join(root, "ledger", hex[0:2], hex[2:4], hex[4:6])
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	path := filepath.Join(dir, "ledger-"+hex+".xdr.gz")
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	return path
 }
 
 // TestCheck_AllPresent — fully-populated archive across the requested
@@ -141,6 +165,83 @@ func TestCheck_RangeBelowFirstCheckpoint(t *testing.T) {
 	}
 }
 
+// TestCheck_ZeroByteFileIsMissing is the DAT-09/DAT-11 regression: a
+// present-but-zero-length checkpoint file must be counted as
+// Missing, not Found — a zero-byte file proves nothing was ever
+// actually written there.
+func TestCheck_ZeroByteFileIsMissing(t *testing.T) {
+	root := makeTestArchive(t, []uint32{63, 191})
+	writeCheckpointFile(t, root, 127, nil) // present but empty
+
+	c := archivecompleteness.NewCrossAnchorChecker(root)
+	res, err := c.Check(0, 191)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if res.Expected != 3 || res.Found != 2 {
+		t.Fatalf("counts: Expected=%d Found=%d, want 3 / 2", res.Expected, res.Found)
+	}
+	if len(res.Missing) != 1 || res.Missing[0] != 127 {
+		t.Fatalf("Missing = %v, want [127] (the zero-byte file)", res.Missing)
+	}
+}
+
+// TestCheck_CorruptGzipIsMissing: a present file that is NOT valid
+// gzip (truncated download, HTML error page saved verbatim) must be
+// counted as Missing so the fill path re-fetches it.
+func TestCheck_CorruptGzipIsMissing(t *testing.T) {
+	root := makeTestArchive(t, []uint32{63})
+	writeCheckpointFile(t, root, 127, []byte("<html>502 Bad Gateway</html>"))
+
+	c := archivecompleteness.NewCrossAnchorChecker(root)
+	res, err := c.Check(0, 191)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if res.Found != 1 {
+		t.Errorf("Found = %d, want 1 (only the valid file)", res.Found)
+	}
+	if len(res.Missing) != 2 { // 127 (corrupt) + 191 (never written)
+		t.Fatalf("Missing = %v, want 2 entries (corrupt 127 + absent 191)", res.Missing)
+	}
+	found127 := false
+	for _, m := range res.Missing {
+		if m == 127 {
+			found127 = true
+		}
+	}
+	if !found127 {
+		t.Errorf("Missing should include the corrupt file's seq 127; got %v", res.Missing)
+	}
+}
+
+// TestCheck_ZeroDecompressedContentIsMissing: a technically-valid
+// gzip stream that decompresses to ZERO bytes (an empty payload
+// gzip'd) must also be treated as missing — DAT-09's "require
+// decompressed size > 0".
+func TestCheck_ZeroDecompressedContentIsMissing(t *testing.T) {
+	root := makeTestArchive(t, []uint32{63})
+	writeCheckpointFile(t, root, 127, gzipBytes(t, "")) // valid gzip, empty payload
+
+	c := archivecompleteness.NewCrossAnchorChecker(root)
+	res, err := c.Check(0, 191)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if res.Found != 1 {
+		t.Errorf("Found = %d, want 1", res.Found)
+	}
+	found127 := false
+	for _, m := range res.Missing {
+		if m == 127 {
+			found127 = true
+		}
+	}
+	if !found127 {
+		t.Errorf("Missing should include seq 127 (zero decompressed content); got %v", res.Missing)
+	}
+}
+
 // TestCheck_InvalidArchiveRoot — non-existent path returns an error.
 func TestCheck_InvalidArchiveRoot(t *testing.T) {
 	c := archivecompleteness.NewCrossAnchorChecker("/nonexistent/path/that/does/not/exist")
@@ -240,6 +341,44 @@ func TestReport_AnyMissing(t *testing.T) {
 	if !r.AnyMissing() {
 		t.Error("cross-anchor with gap: should report missing")
 	}
+}
+
+// TestReport_Vacuous is the DAT-11 regression: a report whose only
+// populated section scanned ZERO expected checkpoint positions
+// (Expected=0) must be flagged Vacuous — "clean" per AnyMissing() but
+// NOTHING was actually verified. A section that scanned something
+// (Expected > 0, even if clean) is NOT vacuous.
+func TestReport_Vacuous(t *testing.T) {
+	t.Run("no section populated is not vacuous", func(t *testing.T) {
+		r := archivecompleteness.NewReport(2, 191)
+		if r.Vacuous() {
+			t.Error("an empty (no-section) report should not be flagged Vacuous")
+		}
+	})
+	t.Run("Expected=0 cross-anchor section is vacuous", func(t *testing.T) {
+		r := archivecompleteness.NewReport(2, 50) // range with no checkpoint position
+		r.SetCrossAnchor("/r", archivecompleteness.CrossAnchorResult{Expected: 0, Found: 0})
+		if !r.Vacuous() {
+			t.Error("Expected=0 cross-anchor section should be Vacuous")
+		}
+		if r.AnyMissing() {
+			t.Error("sanity: Expected=0/Found=0 must NOT trip AnyMissing (that's the bug this guards against)")
+		}
+	})
+	t.Run("Expected>0 clean section is not vacuous", func(t *testing.T) {
+		r := archivecompleteness.NewReport(2, 191)
+		r.SetCrossAnchor("/r", archivecompleteness.CrossAnchorResult{Expected: 3, Found: 3})
+		if r.Vacuous() {
+			t.Error("a section that scanned something (Expected=3) should not be Vacuous")
+		}
+	})
+	t.Run("Expected>0 with missing is not vacuous", func(t *testing.T) {
+		r := archivecompleteness.NewReport(2, 191)
+		r.SetCrossAnchor("/r", archivecompleteness.CrossAnchorResult{Expected: 3, Found: 2, Missing: []uint32{127}})
+		if r.Vacuous() {
+			t.Error("a section with real missing files should not be Vacuous (it's AnyMissing instead)")
+		}
+	})
 }
 
 // TestReport_TruncatedFlagSurvivesJSON — when a catastrophic gap

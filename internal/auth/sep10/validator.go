@@ -2,8 +2,6 @@ package sep10
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"time"
@@ -36,14 +34,31 @@ type ReplayGuard interface {
 	MarkSeenIfFresh(ctx context.Context, txHash string, ttl time.Duration) error
 }
 
-// challengeTxHash hashes the verified challenge transaction's
-// signed XDR. The hash is the dedupe key the ReplayGuard stores;
-// the SHA-256 keeps the key bounded (44 bytes base64) regardless
-// of XDR length, and constant-time hashing avoids leaking the XDR
-// content into the cache key namespace.
-func challengeTxHash(signedXDR string) string {
-	sum := sha256.Sum256([]byte(signedXDR))
-	return base64.RawURLEncoding.EncodeToString(sum[:])
+// challengeTxHash returns the dedupe key the [ReplayGuard] stores: the
+// PARSED transaction's canonical hash (SHA-256 over the network-id-
+// prefixed signature payload, the same value Stellar itself identifies a
+// transaction by), hex-encoded and therefore bounded at 64 bytes.
+//
+// CON-05 (audit-2026-07-23): this used to be the SHA-256 of the raw
+// caller-supplied base64 string, which is not a canonical identity for a
+// transaction — distinct strings decode to the same envelope, so one
+// redemption could be replayed simply by re-spelling it. Two
+// re-spellings were confirmed against this SDK to pass ReadChallengeTx +
+// VerifyChallengeTxSigners unchanged (see the CON-05 regression test):
+// swapping the order of the envelope's decorated signatures, and
+// inserting a "\n" into the base64 (Go's decoder skips "\r"/"\n"). Each
+// produced a fresh, unused dedupe key for the identical challenge, so
+// the F-1224 guard could be walked straight past: capture one signed XDR
+// (XSS exfil from a client wallet is the threat model that motivated the
+// guard) and mint a JWT stream for the rest of the challenge window.
+// Hashing the parsed transaction removes the whole class — the identity
+// is now the transaction, not its spelling.
+func challengeTxHash(tx *txnbuild.Transaction, networkPassphrase string) (string, error) {
+	h, err := tx.HashHex(networkPassphrase)
+	if err != nil {
+		return "", fmt.Errorf("sep10: hash challenge tx: %w", err)
+	}
+	return h, nil
 }
 
 // Options configures a [Validator].
@@ -229,7 +244,7 @@ func (v *Validator) Verify(ctx context.Context, signedXDR string) (auth.Token, e
 	// (server source account, single sequence number, manage_data
 	// ops with the web auth domain, time bounds present). Returns
 	// the client account id extracted from the first manage_data op.
-	_, clientAccountID, _, _, err := txnbuild.ReadChallengeTx(
+	challengeTx, clientAccountID, _, _, err := txnbuild.ReadChallengeTx(
 		signedXDR,
 		v.serverKP.Address(),
 		v.network,
@@ -260,19 +275,27 @@ func (v *Validator) Verify(ctx context.Context, signedXDR string) (auth.Token, e
 	}
 
 	// F-1224 (audit-2026-05-12): replay defence. After signature
-	// verification succeeded, mark this challenge tx hash as
-	// consumed for the remaining time-bound window. A second
-	// submission of the same signed XDR returns ErrUnauthorized
-	// before we issue a fresh JWT. Marking AFTER VerifyChallengeTxSigners
-	// keeps the dedupe namespace bounded — we never spend a slot
-	// on bogus / unsigned XDR.
+	// verification succeeded, mark this challenge TRANSACTION as
+	// consumed for the remaining time-bound window — keyed on the
+	// parsed tx's canonical hash, not on the caller's spelling of the
+	// XDR (CON-05; see [challengeTxHash]). A second submission of the
+	// same challenge, however re-encoded, returns ErrUnauthorized
+	// before we issue a fresh JWT. Marking AFTER
+	// VerifyChallengeTxSigners keeps the dedupe namespace bounded —
+	// we never spend a slot on bogus / unsigned XDR.
 	//
 	// Falls open (continues to issue JWT) when no ReplayGuard is
 	// configured, preserving prior behaviour for callers that
 	// haven't opted in.
 	if v.replayGuard != nil {
+		txHash, hashErr := challengeTxHash(challengeTx, v.network)
+		if hashErr != nil {
+			// Unreachable for a transaction the SDK just parsed. Fail
+			// CLOSED rather than issue a JWT we could not dedupe.
+			return auth.Token{}, hashErr
+		}
 		if err := v.replayGuard.MarkSeenIfFresh(
-			ctx, challengeTxHash(signedXDR), v.challengeTTL,
+			ctx, txHash, v.challengeTTL,
 		); err != nil {
 			return auth.Token{}, err
 		}

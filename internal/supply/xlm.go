@@ -162,6 +162,16 @@ func (c *XLMComputer) Compute(ctx context.Context, ledger uint32, observedAt tim
 	}
 
 	circulating := new(big.Int).Sub(total, reserved)
+	// CS-038: clamp at zero, exactly as Algorithm 2 (classic.go) and
+	// Algorithm 3 (sep41.go) already do. A reserve total exceeding the
+	// hard-capped XLM total is only reachable through operator misconfig
+	// (a non-SDF whale listed in `reserve_accounts`) or a reader bug, but
+	// the crown-jewel asset is precisely where a negative circulating
+	// supply — and the negative market cap it implies downstream — must
+	// not reach the wire.
+	if circulating.Sign() < 0 {
+		circulating.SetInt64(0)
+	}
 
 	// CS-010: only claim an SDF-reserve exclusion when we actually
 	// excluded reserves. With no reserve accounts configured,

@@ -142,4 +142,14 @@ var (
 	// the wild is ~50 assets/update, so hitting 1024 means either
 	// a feed explosion or a decoder bug.
 	ErrPriceVectorOverflow = errors.New("reflector: price vector exceeds OpIndex fanout stride")
+
+	// ErrEventIndexOverflow — e.EventIndex exceeded eventFanoutStride
+	// (DAT-06/trap-15, audit-2026-07-23). The synthetic OpIndex packs
+	// (OperationIndex, EventIndex, vector position) into one uint32;
+	// an EventIndex this large would spill into the next operation's
+	// synthetic range. Real Reflector-adjacent ops emit at most a
+	// handful of contract events, so hitting the stride means either
+	// a decoder bug or a contract emitting far more events per op
+	// than anything observed.
+	ErrEventIndexOverflow = errors.New("reflector: EventIndex exceeds OpIndex fanout stride")
 )

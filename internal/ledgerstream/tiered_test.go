@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 )
 
@@ -126,6 +127,36 @@ func readAllString(rc io.ReadCloser) string {
 	defer func() { _ = rc.Close() }()
 	b, _ := io.ReadAll(rc)
 	return string(b)
+}
+
+// TestNewTieredDataStore_TypedNilRegistry_DoesNotPanic is the
+// regression test for a typed-nil-interface footgun discovered
+// incidentally while adding streamTiered's cold-schema-parity check
+// (INT-01, audit-2026-07-23): Config.Registry is a concrete
+// *prometheus.Registry, so a caller with metrics disabled (a nil
+// *prometheus.Registry field) passes a NON-nil prometheus.Registerer
+// interface value wrapping that nil pointer — `registry != nil`
+// inside NewTieredDataStore was always true, so MustRegister ran on a
+// nil receiver and panicked. Every path that reaches
+// NewTieredDataStore with tiering enabled and no registry configured
+// (a realistic production shape — cold fallback without metrics
+// wiring) hit this.
+func TestNewTieredDataStore_TypedNilRegistry_DoesNotPanic(t *testing.T) {
+	t.Parallel()
+	hot := newFakeStore("hot")
+	cold := newFakeStore("cold")
+
+	var typedNilRegistry *prometheus.Registry // the exact shape Config.Registry has when unset
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("NewTieredDataStore panicked with a typed-nil *prometheus.Registry: %v", r)
+		}
+	}()
+	ts := NewTieredDataStore(hot, cold, typedNilRegistry)
+	if ts == nil {
+		t.Fatal("NewTieredDataStore returned nil")
+	}
 }
 
 func TestTiered_GetFile_HotHit(t *testing.T) {

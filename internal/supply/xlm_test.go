@@ -221,6 +221,40 @@ func TestCompute_HappyPath(t *testing.T) {
 	}
 }
 
+// TestCompute_ClampsCirculatingAtZero is the MNY-08 / CS-038 guard on
+// Algorithm 1. Classic (classic.go) and SEP-41 (sep41.go) both clamp
+// circulating at zero when the exclusion set exceeds total; XLM — the
+// asset with the largest served market cap — did not, so a reserve
+// total above the hard cap (operator listing a non-SDF whale in
+// `reserve_accounts`, or a reader summing the wrong column) published
+// a NEGATIVE circulating supply, and a negative market cap with it.
+func TestCompute_ClampsCirculatingAtZero(t *testing.T) {
+	// Reserves one whole XLM above the hard-capped total.
+	over := new(big.Int).Add(supply.XLMTotalSupplyStroops(), big.NewInt(10_000_000))
+	reader := &stubReader{balance: over}
+
+	c, err := supply.NewXLMComputer([]string{"GAAA..."}, reader)
+	if err != nil {
+		t.Fatalf("constructor: %v", err)
+	}
+	got, err := c.Compute(context.Background(), 50_000_000, time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	if got.CirculatingSupply.Sign() < 0 {
+		t.Errorf("CirculatingSupply = %s, want it clamped at 0 — a negative circulating supply "+
+			"serves a negative market cap", got.CirculatingSupply)
+	}
+	if got.CirculatingSupply.Sign() != 0 {
+		t.Errorf("CirculatingSupply = %s, want exactly 0", got.CirculatingSupply)
+	}
+	// Total is the constant and must NOT be clamped with it.
+	if got.TotalSupply.Cmp(supply.XLMTotalSupplyStroops()) != 0 {
+		t.Errorf("TotalSupply = %s, want the frozen constant %s",
+			got.TotalSupply, supply.XLMTotalSupplyStroops())
+	}
+}
+
 // TestCompute_PropagatesReaderError — a reader failure must NOT
 // fall back to "circulating == total" (which would silently mask a
 // reserves outage); surface the error so the caller can decide.

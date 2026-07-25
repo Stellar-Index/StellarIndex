@@ -129,10 +129,12 @@ export function HistoryTabPanel({ assetID, decimals = 7 }: { assetID: string; de
                 {r.ledger}
               </td>
               <td className="py-2 pr-3 text-right font-mono text-xs">
-                {formatStroopAmount(r.base_amount, decimals)}
+                {formatStroopAmount(r.base_amount, r.base_decimals ?? decimals)}
               </td>
               <td className="py-2 pr-3 text-right font-mono text-xs">
-                {formatStroopAmount(r.quote_amount, decimals)}
+                {/* quote leg is always DEFAULT_QUOTE ('native' XLM, fixed 7
+                    decimals) — never the base asset's own `decimals` prop. */}
+                {formatStroopAmount(r.quote_amount, r.quote_decimals ?? 7)}
               </td>
               <td className="py-2 pr-3 text-right font-mono text-xs">
                 {r.price ?? deriveAvgPrice(r.base_amount, r.quote_amount)}

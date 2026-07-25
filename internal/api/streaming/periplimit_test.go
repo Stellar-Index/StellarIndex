@@ -5,6 +5,7 @@ package streaming_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -89,6 +90,75 @@ func TestStream_PerIPConcurrentCap(t *testing.T) {
 	// Cleanup remaining held streams.
 	cancel()
 	for _, r := range held[1:] {
+		_ = r.Body.Close()
+	}
+}
+
+// TestStream_PerIPCapAggregatesIPv6Slash64 is the SEC-rate-limit
+// regression: the per-IP SSE cap must key IPv6 clients on their /64
+// network prefix, not the full /128 address. Without the fix, a
+// client that controls an entire delegated /64 (typical
+// residential/mobile ISP allocation) opens an unbounded number of
+// concurrent streams by rotating its source address within that
+// block — each address gets its own bucket and the cap never
+// engages. Here every connection uses a DIFFERENT IPv6 address drawn
+// from the same /64; with capN=3 the 4th MUST be rejected because all
+// of them key to one bucket.
+func TestStream_PerIPCapAggregatesIPv6Slash64(t *testing.T) {
+	const capN = 3
+
+	streaming.SetMaxStreamsPerIP(capN)
+	defer streaming.SetMaxStreamsPerIP(0)
+
+	// Hand out a fresh address within 2001:db8:1234:5678::/64 for each
+	// connection — simulating a client that rotates its address inside
+	// its delegated prefix.
+	var next uint32
+	streaming.SetStreamClientIPResolver(func(*http.Request) string {
+		next++
+		return fmt.Sprintf("2001:db8:1234:5678::%x", next)
+	})
+	defer streaming.SetStreamClientIPResolver(nil)
+
+	hub := streaming.NewHub(0)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		streaming.Stream(w, r, hub, []string{"topic"}, streaming.StreamOptions{
+			HeartbeatInterval: 30 * time.Second,
+		})
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	held := make([]*http.Response, 0, capN)
+	for i := 0; i < capN; i++ {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatalf("open stream %d: %v", i, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("stream %d: status = %d, want 200", i, resp.StatusCode)
+		}
+		held = append(held, resp)
+	}
+
+	// The (capN+1)th connection uses yet another address in the SAME
+	// /64 and must still be refused — the addresses differ, but the
+	// masked bucket key doesn't.
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("open over-cap stream: %v", err)
+	}
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("over-cap stream (different address, same /64) status = %d, want 503", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+
+	cancel()
+	for _, r := range held {
 		_ = r.Body.Close()
 	}
 }

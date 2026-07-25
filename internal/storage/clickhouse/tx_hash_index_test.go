@@ -122,6 +122,9 @@ func TestTransactionByHashFastPath(t *testing.T) {
 }
 
 func TestTransactionByHashIndexMissFallsBackToScan(t *testing.T) {
+	// txByHashScan is now TWO steps (audit DAT-10, deterministic ingested_at
+	// tiebreak): step 1 (isBloomScan) only locates the ledger; step 2
+	// (isLedgerScopedRead, FINAL) reads the authoritative row.
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {
 		switch {
@@ -130,7 +133,9 @@ func TestTransactionByHashIndexMissFallsBackToScan(t *testing.T) {
 		case isIndexLookup(q):
 			return &stubRows{}, nil // pre-backfill history: not in the index
 		case isBloomScan(q):
-			return &stubRows{data: [][]any{txRowFor(50_000_000, testTxHash)}}, nil
+			return &stubRows{data: [][]any{{uint32(50_000_000)}}}, nil // step 1: locate the ledger only
+		case isLedgerScopedRead(q):
+			return &stubRows{data: [][]any{txRowFor(50_000_000, testTxHash)}}, nil // step 2: FINAL point read
 		default:
 			return nil, fmt.Errorf("unexpected query: %s", q)
 		}
@@ -146,6 +151,9 @@ func TestTransactionByHashIndexMissFallsBackToScan(t *testing.T) {
 	}
 	if n := countQueries(conn.queries, isBloomScan); n != 1 {
 		t.Fatalf("scan fallback issued %d bloom scan(s); want 1 (queries: %v)", n, conn.queries)
+	}
+	if n := countQueries(conn.queries, isLedgerScopedRead); n != 1 {
+		t.Fatalf("scan fallback issued %d ledger-scoped FINAL read(s); want 1 (queries: %v)", n, conn.queries)
 	}
 }
 
@@ -183,8 +191,12 @@ func TestTransactionByHashIndexTableAbsent(t *testing.T) {
 func TestTransactionByHashIndexRowWithoutBaseRowFallsBack(t *testing.T) {
 	// An index row whose ledger-scoped read comes up empty (shouldn't happen,
 	// but e.g. a partial re-derive) must fall through to the scan rather than
-	// report not-found off the index alone.
+	// report not-found off the index alone. Both txByHashIndexed's read AND
+	// the scan fallback's step 2 share the SAME isLedgerScopedRead query
+	// shape (txByLedgerAndHash) — a counter tells the first (empty, forcing
+	// the fallback) from the second (the scan fallback's real answer) apart.
 	conn := &stubConn{}
+	lecCalls := 0
 	conn.respond = func(q string) (driver.Rows, error) {
 		switch {
 		case isIndexProbe(q):
@@ -192,9 +204,13 @@ func TestTransactionByHashIndexRowWithoutBaseRowFallsBack(t *testing.T) {
 		case isIndexLookup(q):
 			return &stubRows{data: [][]any{{uint32(61_000_000)}}}, nil
 		case isLedgerScopedRead(q):
-			return &stubRows{}, nil
+			lecCalls++
+			if lecCalls == 1 {
+				return &stubRows{}, nil // txByHashIndexed's read: base row missing
+			}
+			return &stubRows{data: [][]any{txRowFor(61_000_000, testTxHash)}}, nil // scan fallback's step 2
 		case isBloomScan(q):
-			return &stubRows{data: [][]any{txRowFor(61_000_000, testTxHash)}}, nil
+			return &stubRows{data: [][]any{{uint32(61_000_000)}}}, nil // scan fallback's step 1: locate the ledger
 		default:
 			return nil, fmt.Errorf("unexpected query: %s", q)
 		}
@@ -207,5 +223,65 @@ func TestTransactionByHashIndexRowWithoutBaseRowFallsBack(t *testing.T) {
 	}
 	if n := countQueries(conn.queries, isBloomScan); n != 1 {
 		t.Fatalf("bloom scans = %d, want 1 (queries: %v)", n, conn.queries)
+	}
+	if lecCalls != 2 {
+		t.Fatalf("ledger-scoped reads = %d, want 2 (indexed path + scan-fallback step 2)", lecCalls)
+	}
+}
+
+// TestTxByLedgerAndHash_FinalNotIngestedAtTiebreak proves the DAT-10 fix:
+// the ledger-scoped read that both txByHashIndexed and txByHashScan's step 2
+// share is FINAL-deduped, not an `ORDER BY ingested_at DESC LIMIT 1` — which
+// silently picked an UNSPECIFIED row whenever two ReplacingMergeTree parts
+// for the same key tied on ingested_at (DateTime is one-second resolution).
+// Proven red: reverting explorer_reader.go's txByLedgerAndHash to the old
+// `ORDER BY ingested_at DESC LIMIT 1` query makes this test fail (see the
+// fixer's remediation notes) — this test pins the corrected query text.
+func TestTxByLedgerAndHash_FinalNotIngestedAtTiebreak(t *testing.T) {
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		if isLedgerScopedRead(q) {
+			return &stubRows{data: [][]any{txRowFor(70_000_000, testTxHash)}}, nil
+		}
+		return nil, fmt.Errorf("unexpected query: %s", q)
+	}
+	r := &ExplorerReader{conn: conn}
+
+	tx, found, err := r.txByLedgerAndHash(context.Background(), 70_000_000, testTxHash)
+	if err != nil || !found {
+		t.Fatalf("txByLedgerAndHash = (found=%v, err=%v), want hit", found, err)
+	}
+	if tx.Seq != 70_000_000 {
+		t.Fatalf("tx.Seq = %d, want 70000000", tx.Seq)
+	}
+	if len(conn.queries) != 1 {
+		t.Fatalf("issued %d queries, want 1", len(conn.queries))
+	}
+	q := conn.queries[0]
+	if !strings.Contains(q, "stellar.transactions FINAL") {
+		t.Fatalf("query = %q, want a `stellar.transactions FINAL` scoped read", q)
+	}
+	if strings.Contains(q, "ingested_at") {
+		t.Fatalf("query = %q, must NOT tiebreak on ingested_at (DAT-10: DateTime ties pick an unspecified row)", q)
+	}
+}
+
+// TestTxHashIndexBackfillQuery_UsesFinal proves the DAT-10 fix on
+// BackfillTxHashIndex's per-window INSERT…SELECT: it must read
+// stellar.transactions FINAL-deduped so a re-derive backfill window doesn't
+// enqueue an un-merged duplicate (or, worse, a stale pre-correction) row into
+// stellar.tx_hash_index. BackfillTxHashIndex dials a real ClickHouse
+// connection via openRead (not an injectable field), so — like
+// StreamEntryChanges/CountOpScopedEntryChanges — it cannot be driven
+// end-to-end with the stubConn harness in this package; the query was
+// extracted to this package-level const specifically so its SQL text stays
+// independently testable.
+func TestTxHashIndexBackfillQuery_UsesFinal(t *testing.T) {
+	if !strings.Contains(txHashIndexBackfillQuery, "FROM stellar.transactions FINAL") {
+		t.Fatalf("txHashIndexBackfillQuery = %q, want `FROM stellar.transactions FINAL`", txHashIndexBackfillQuery)
+	}
+	// The window predicate that bounds FINAL's cost must survive unchanged.
+	if !strings.Contains(txHashIndexBackfillQuery, "WHERE ledger_seq >= ? AND ledger_seq <= ?") {
+		t.Fatalf("txHashIndexBackfillQuery = %q, want the ledger-window predicate preserved", txHashIndexBackfillQuery)
 	}
 }

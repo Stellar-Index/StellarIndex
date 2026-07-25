@@ -163,7 +163,7 @@ func crossRegionCheck(args []string) error { //nolint:funlen,gocognit,gocyclo //
 
 	httpClient := &http.Client{Timeout: *timeout}
 
-	var totalDivergences int
+	var totalDivergences, totalComparable, totalSamples int
 	for _, pair := range pairs {
 		for i := 0; i < *samples; i++ {
 			// Bucket [n] is [anchor - (i+1)*window, anchor - i*window).
@@ -173,7 +173,12 @@ func crossRegionCheck(args []string) error { //nolint:funlen,gocognit,gocyclo //
 			results := fetchAllRegions(context.Background(), httpClient,
 				regions, pair, metricKind, bucketFrom, bucketTo)
 
-			if div := analyseRegionResults(metricKind, pair, bucketFrom, bucketTo, results, os.Stdout); div {
+			totalSamples++
+			diverged, compared := analyseRegionResults(metricKind, pair, bucketFrom, bucketTo, results, os.Stdout)
+			if compared {
+				totalComparable++
+			}
+			if diverged {
 				totalDivergences++
 			}
 		}
@@ -182,6 +187,14 @@ func crossRegionCheck(args []string) error { //nolint:funlen,gocognit,gocyclo //
 	if totalDivergences > 0 {
 		return fmt.Errorf("found %d divergence(s) across %d region(s) — see diff above",
 			totalDivergences, len(regions))
+	}
+	if totalComparable == 0 {
+		// OBS-07: no sampled bucket ever had >=2 responding regions, so
+		// NOTHING was actually compared — a total inability to compare
+		// (every region down but one, or a total outage) must not read
+		// as "all consistent". See the ERR lines above for which
+		// regions failed to respond.
+		return fmt.Errorf("cross-region-check inconclusive — none of %d sample(s) had >=2 responding regions to compare; see ERR lines above", totalSamples)
 	}
 	_, _ = fmt.Fprintf(os.Stderr,
 		"cross-region-check: OK — %d region(s) × %d pair(s) × %d sample(s), all consistent\n",
@@ -319,9 +332,15 @@ func splitPair(p string) (base, quote string, err error) {
 	return parts[0], parts[1], nil
 }
 
-// analyseRegionResults examines a single (pair, bucket) sample
-// across regions and writes a divergence report (or "OK" line) to w.
-// Returns true when the regions disagreed.
+// analyseRegionResults examines a single (pair, bucket) sample across
+// regions and writes a divergence report (or "OK" line) to w. Returns
+// (diverged, compared): diverged is true when the ≥2 responding
+// regions disagreed; compared is true when there were actually ≥2
+// responding regions to compare at all — false means this sample
+// proves NOTHING (OBS-07: a caller that only tracks `diverged` would
+// read "no divergence" across a run where every sample was
+// incomparable as "all consistent", when in fact nothing was ever
+// checked).
 //
 // functions would obscure the simple "compare → report" flow.
 //
@@ -332,7 +351,7 @@ func analyseRegionResults(
 	from, to time.Time,
 	results []regionResult,
 	w io.Writer,
-) bool {
+) (diverged, compared bool) {
 	// Surface fetch errors: any region we couldn't reach is a partial
 	// failure. We treat fetch errors as non-divergence (operator
 	// chooses whether to alert) but log them so triage can see them.
@@ -356,8 +375,9 @@ func analyseRegionResults(
 		// Not enough successful regions to compare. This happens when
 		// only one region is online or the data isn't replicated yet.
 		// Don't flag as divergence; leave it to the caller to decide
-		// based on the ERR lines above.
-		return false
+		// based on the ERR lines above. NOT compared — the caller
+		// must not count this sample toward "all consistent".
+		return false, false
 	}
 
 	// Compare the stable contract fields. Equality is exact
@@ -389,7 +409,7 @@ func analyseRegionResults(
 		// the comparison itself.
 		_, _ = fmt.Fprintf(w, "OK   %s/%s/[%s, %s) — %d regions agree\n",
 			metric, pair, from.Format(time.RFC3339), to.Format(time.RFC3339), len(good))
-		return false
+		return false, true
 	}
 	if len(disagreements) > 0 {
 		_, _ = fmt.Fprintf(w, "DIVERGENCE  %s/%s/[%s, %s)\n",
@@ -413,9 +433,9 @@ func analyseRegionResults(
 			}
 			_, _ = fmt.Fprintf(w, "    %s: %s\n", k, strings.Join(parts, " "))
 		}
-		return true
+		return true, true
 	}
-	return false
+	return false, true
 }
 
 // comparableKeys returns the stable user-visible fields the

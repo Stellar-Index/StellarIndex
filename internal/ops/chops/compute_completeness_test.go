@@ -240,6 +240,224 @@ func TestCombineWatermark_LakeIncompleteStaysIncomplete(t *testing.T) {
 	}
 }
 
+// oldRetentionStart reproduces the PRE-FIX projection floor exactly as
+// compute-completeness computed it (`retentionStart = tip - 1_500_000`, applied
+// to any source with a trades target). It exists only so the tests below can
+// prove the blind band that floor created — production must never derive a
+// floor from tip again (DAT-09 / N-F2).
+func oldRetentionStart(tip uint32) uint32 { return tip - 1_500_000 }
+
+// TestTargetScope_DataDerivedFloorSeesLossBelowTheOldRetentionWindow pins
+// DAT-09 / N-F2. The projection floor was `tip - 1_500_000` — a hardcoded ~100d
+// retention assumption that has been WRONG since migration 0031 removed the
+// retention policy on `trades` ("operator wants every raw trade preserved
+// forever"). The served tier keeps everything it was ever given, so a real
+// served-tier loss older than ~100 days sat permanently outside the reconcile
+// scope: Δ=0, projection_ok=true, complete=true, over a hole. The floor must
+// instead come from the served tier's OWN data (MIN(ledger) for that target).
+func TestTargetScope_DataDerivedFloorSeesLossBelowTheOldRetentionWindow(t *testing.T) {
+	const (
+		genesis   = uint32(50_746_266) // soroswap
+		tip       = uint32(63_305_532)
+		servedMin = uint32(61_500_000) // real MIN(ledger) of trades WHERE source='soroswap'
+		hole      = uint32(61_600_000) // a REAL served-tier loss, below the old floor
+	)
+	oldFloor := oldRetentionStart(tip) // 61_805_532
+	if hole >= oldFloor || hole < servedMin {
+		t.Fatalf("fixture invalid: the hole (%d) must sit BELOW the old floor (%d) and inside the served range (>= %d)", hole, oldFloor, servedMin)
+	}
+
+	scope := targetScope(servedMin, true, genesis, 0 /* full run */, tip)
+	if scope.From != servedMin {
+		t.Fatalf("projection floor = %d, want the served tier's own MIN(ledger) %d — a floor derived from tip (tip-1_500_000 = %d) leaves every served ledger below it structurally unverifiable (DAT-09/N-F2)", scope.From, servedMin, oldFloor)
+	}
+	if scope.To != tip {
+		t.Fatalf("scope.To = %d, want tip %d", scope.To, tip)
+	}
+
+	// Two rows lost at `hole`; everything else faithful.
+	expected := map[uint32]int{hole: 5, 62_000_000: 3, 63_000_000: 1}
+	served := map[uint32]int{hole: 3, 62_000_000: 3, 63_000_000: 1}
+	src := reconSource{name: "soroswap"} // strict per-ledger default
+
+	delta, detail := projectionDelta(src, "trades",
+		clipCounts(expected, scope), clipCounts(served, scope), scope.From, scope.To)
+	if delta != 2 {
+		t.Fatalf("Σ|Δ| = %d, want 2 (|5-3| at ledger %d) — the served-tier hole must flip projection_ok/complete to false; detail=%q", delta, hole, detail)
+	}
+	if !strings.Contains(detail, "ledger=61600000") {
+		t.Errorf("detail must localize the loss to ledger %d, got: %s", hole, detail)
+	}
+
+	// And prove the fixture is the real defect: under the pre-fix floor the
+	// SAME data reconciles clean, because the hole is outside the scope.
+	oldScope := projectionScope{From: oldFloor, To: tip}
+	if d, _ := projectionDelta(src, "trades",
+		clipCounts(expected, oldScope), clipCounts(served, oldScope), oldScope.From, oldScope.To); d != 0 {
+		t.Fatalf("fixture invalid: the hole must be INVISIBLE under the pre-fix tip-1.5M floor, got Δ=%d", d)
+	}
+}
+
+// TestTargetScope_PerTargetNotPerSource — the pre-fix floor was applied at
+// SOURCE level (`hasTradesTarget(src)`), so a trades source's FULL-HISTORY
+// tables (soroswap_skim_events, phoenix_liquidity, comet_liquidity) were
+// un-verified below tip-1.5M too, purely because a sibling table was named
+// `trades`. Each target must be scoped by its OWN served floor.
+func TestTargetScope_PerTargetNotPerSource(t *testing.T) {
+	const (
+		genesis = uint32(50_746_266)
+		tip     = uint32(63_305_532)
+	)
+	trades := targetScope(61_500_000, true, genesis, 0, tip) // never backfilled below 61.5M
+	skim := targetScope(genesis, true, genesis, 0, tip)      // full history
+	if trades.From != 61_500_000 {
+		t.Errorf("trades floor = %d, want 61500000", trades.From)
+	}
+	if skim.From != genesis {
+		t.Fatalf("soroswap_skim_events floor = %d, want the source genesis %d — a full-history target must not inherit a sibling table's floor (nor tip-1_500_000 = %d)", skim.From, genesis, oldRetentionStart(tip))
+	}
+}
+
+// TestTargetScope_EmptyTargetFailsClosed — a target with NO served rows must
+// scope from genesis so the reconcile compares expected>0 against served=0 and
+// FAILS. Excusing an empty table ("no data, nothing to check") is the exact
+// fail-open shape this verdict exists to prevent.
+func TestTargetScope_EmptyTargetFailsClosed(t *testing.T) {
+	const (
+		genesis = uint32(51_499_546)
+		tip     = uint32(63_305_532)
+	)
+	sc := targetScope(0, false, genesis, 0, tip)
+	if sc.From != genesis {
+		t.Fatalf("empty-target floor = %d, want genesis %d (fail closed)", sc.From, genesis)
+	}
+	src := reconSource{name: "comet"}
+	expected := map[uint32]int{52_000_000: 4}
+	if delta, _ := projectionDelta(src, "comet_liquidity",
+		clipCounts(expected, sc), map[uint32]int{}, sc.From, sc.To); delta != 4 {
+		t.Errorf("a wiped served table must reconcile as a 4-row loss, got Δ=%d", delta)
+	}
+}
+
+// TestTargetScope_IncrementalOnlyRaises — -from may only RAISE the floor; it
+// can never lower it below what the served tier holds (that would re-introduce
+// false "served=0" gaps under a never-backfilled prefix).
+func TestTargetScope_IncrementalOnlyRaises(t *testing.T) {
+	const (
+		genesis = uint32(50_746_266)
+		tip     = uint32(63_305_532)
+	)
+	if sc := targetScope(61_500_000, true, genesis, 63_300_000, tip); sc.From != 63_300_000 {
+		t.Errorf("-from above the served floor must raise the scope: got %d, want 63300000", sc.From)
+	}
+	if sc := targetScope(61_500_000, true, genesis, 51_000_000, tip); sc.From != 61_500_000 {
+		t.Errorf("-from below the served floor must not lower it: got %d, want 61500000", sc.From)
+	}
+}
+
+// TestProjectionClaim_IncrementalRunCannotUpgradeAFailingVerdict pins INV-5:
+// the served (`complete`) axis silently regressed from false to TRUE.
+//
+// completeness-incremental.sh (hourly) passes `-from = min(watermark)`, but
+// watermark_ledger is the LAKE (substrate∧recognition) axis, which sits AT tip
+// whenever the lake is clean. So the run reconciled only the newest ~hour of
+// ledgers, never re-saw the projection mismatch that had pinned complete=false,
+// and published complete=true — a verdict improving with no evidence, which
+// ADR-0033 forbids (complete through W requires every claim to hold
+// contiguously to W). A partial run must be able to CONFIRM or DOWNGRADE, never
+// UPGRADE.
+func TestProjectionClaim_IncrementalRunCannotUpgradeAFailingVerdict(t *testing.T) {
+	const (
+		servedFrom = uint32(61_500_000)
+		hi         = uint32(63_305_532)
+		runFrom    = uint32(63_300_000) // -from = min(watermark) ≈ the prior tip
+	)
+	failingPrior := priorProjection{known: true, ok: false, tip: 63_300_000}
+
+	ok, detail := projectionClaim(servedFrom, runFrom, hi, true /* this run's window is clean */, "", failingPrior)
+	if ok {
+		t.Fatalf("an incremental run that reconciled only [%d,%d] UPGRADED a failing verdict to complete=true without ever re-checking [%d,%d] (INV-5); detail=%q", runFrom, hi, servedFrom, runFrom-1, detail)
+	}
+	if !strings.Contains(detail, "61500000") || !strings.Contains(detail, "63299999") {
+		t.Errorf("detail must name the range that was NOT reconciled, got: %s", detail)
+	}
+
+	// A run that DID cover the whole served range is self-evidencing — this is
+	// the deliberate, full re-verify that clears a failing verdict.
+	if full, d := projectionClaim(servedFrom, servedFrom, hi, true, "", failingPrior); !full {
+		t.Errorf("a full-scope clean run must be able to clear a failing prior verdict, got false: %s", d)
+	}
+
+	// A clean prior contiguous with this run's window may be carried forward.
+	cleanPrior := priorProjection{known: true, ok: true, tip: 63_300_000}
+	carry, carryDetail := projectionClaim(servedFrom, runFrom, hi, true, "", cleanPrior)
+	if !carry {
+		t.Errorf("a contiguous clean prior must carry the skipped prefix, got false: %s", carryDetail)
+	}
+	if !strings.Contains(carryDetail, "carried from the prior clean verdict") {
+		t.Errorf("a carried claim must say so (the operator has to know it was not re-verified), got: %s", carryDetail)
+	}
+
+	// No prior verdict at all → fail closed.
+	if noPrior, d := projectionClaim(servedFrom, runFrom, hi, true, "", priorProjection{}); noPrior {
+		t.Errorf("a partial run with NO prior verdict must not claim the skipped prefix: %s", d)
+	}
+
+	// A stale prior leaves [prior.tip+1, runFrom-1] verified by nobody.
+	if stale, d := projectionClaim(servedFrom, runFrom, hi, true, "", priorProjection{known: true, ok: true, tip: 62_000_000}); stale {
+		t.Errorf("a stale prior leaves an unverified band — must not claim it: %s", d)
+	}
+
+	// A mismatch found by THIS run always fails, whatever the prior said.
+	if found, d := projectionClaim(servedFrom, servedFrom, hi, false, "trades: 1 mismatched ledger(s)", priorProjection{known: true, ok: true, tip: hi}); found {
+		t.Errorf("a mismatch found by this run can never be laundered by a clean prior: %s", d)
+	}
+}
+
+// TestProjectionClaim_DetailAlwaysStatesTheVerifiedRange — `complete=true` must
+// never read as a genesis-to-tip claim. The served tier legitimately holds no
+// trades below ~61.5M (they were never projected — see
+// notes/DECISION-genesis-complete-verdict-2026-07-16.md), so the verdict has to
+// say what it actually reconciled; the genesis claim is the separate
+// lake_complete axis.
+func TestProjectionClaim_DetailAlwaysStatesTheVerifiedRange(t *testing.T) {
+	const (
+		servedFrom = uint32(61_500_000)
+		hi         = uint32(63_305_532)
+	)
+	ok, detail := projectionClaim(servedFrom, servedFrom, hi, true, "", priorProjection{known: true, ok: true, tip: hi})
+	if !ok {
+		t.Fatalf("a clean full-scope run must publish true, got: %s", detail)
+	}
+	for _, want := range []string{"61500000", "63305532"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("a passing projection verdict must state the range it verified (missing %s), got: %s", want, detail)
+		}
+	}
+}
+
+// TestClipCounts_BoundsTheExpectedSideToTheTargetScope — the expected census is
+// re-derived once over the UNION of a source's target scopes, so each target
+// must compare only the ledgers inside its own scope. Without the clip, a
+// full-history sibling target (soroswap_skim_events from genesis) would drag
+// pre-61.5M ledgers into the trades compare and manufacture false gaps.
+func TestClipCounts_BoundsTheExpectedSideToTheTargetScope(t *testing.T) {
+	m := map[uint32]int{50_800_000: 7, 61_500_000: 2, 62_000_000: 1, 64_000_000: 9}
+	got := clipCounts(m, projectionScope{From: 61_500_000, To: 63_305_532})
+	want := map[uint32]int{61_500_000: 2, 62_000_000: 1}
+	if len(got) != len(want) {
+		t.Fatalf("clipCounts = %v, want %v", got, want)
+	}
+	for ledger, n := range want {
+		if got[ledger] != n {
+			t.Errorf("clipCounts[%d] = %d, want %d", ledger, got[ledger], n)
+		}
+	}
+	if len(m) != 4 {
+		t.Error("clipCounts must not mutate its input")
+	}
+}
+
 // TestSourceSubstrateOK pins the F1 consumer fail-open fix (reviewer CONFIRMED):
 // the per-source substrate verdict must fail a high-genesis source when the lake
 // reports a COVERAGE failure (empty/tail → problem = tip). Pre-fix, an empty

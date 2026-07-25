@@ -554,3 +554,130 @@ func TestRefresher_PerAssetStaleComponentDoesNotLoosenOthers(t *testing.T) {
 		t.Errorf("inserter called on stale-component snapshot (want 0, got %d)", inserter.calls)
 	}
 }
+
+// recordingInserter captures the snapshots that actually reached the
+// persistence layer, so a test can assert WHICH supply figure was
+// published at WHICH ledger — not merely how many writes happened.
+type recordingInserter struct {
+	snaps []Supply
+	err   error
+}
+
+func (r *recordingInserter) InsertSupply(_ context.Context, snap Supply) error {
+	if r.err != nil {
+		return r.err
+	}
+	r.snaps = append(r.snaps, snap)
+	return nil
+}
+
+// TestRefresher_StalledObserverNotReStampedForeverAsDormant pins
+// R-002 (MNY-04, audit-2026-07-23): the F-1320 dormancy carve-out
+// accepts a snapshot whenever MinComponentLedger is UNCHANGED
+// tick-over-tick — but a STALLED component observer (one that died
+// and stopped writing observations) produces exactly that signal,
+// forever. Unbounded, the gate therefore re-stamps a frozen
+// circulating supply at the ever-advancing chain tip for as long as
+// the observer stays dead, and reports it as the benign `dormant`
+// outcome the supply-refresh alert deliberately excludes — a stale
+// money figure served as fresh, with nothing paging.
+//
+// The dormancy benefit-of-the-doubt is therefore BOUNDED: within the
+// horizon a quiet asset is still accepted (F-1320 stays fixed), but
+// once the component anchor has been frozen for longer than the
+// horizon we can no longer defend "the last observation IS the
+// current supply", so the gate fails closed with the alertable
+// stale_component outcome instead of publishing.
+func TestRefresher_StalledObserverNotReStampedForeverAsDormant(t *testing.T) {
+	const minComp = 50_000_000
+	ledgers := &mutableLedgers{
+		ledger:     minComp + 1017, // gap 1017 > 1000 threshold
+		observedAt: time.Unix(1_770_000_000, 0).UTC(),
+	}
+	inserter := &recordingInserter{}
+	r := NewRefresher(
+		ledgers,
+		// The observer is DEAD: minComponentLedger never moves again.
+		dynComputer{assetKey: "XLM", minComponentLedger: minComp},
+		inserter,
+		discardLogger(),
+		WithStaleComponentLedgers(1000),
+		// Dormancy horizon left at DefaultMaxDormantComponentLedgers
+		// (17 280 ledgers ≈ 24 h at 5 s close cadence) on purpose, so
+		// this test pins the SHIPPED default posture, not a
+		// test-only tuning.
+	)
+
+	// Tick 1 — cold start, already lagging: rejected (unchanged
+	// pre-existing behaviour).
+	if out := r.Tick(context.Background()); out.Kind != OutcomeKindStaleComponent {
+		t.Fatalf("tick1 kind=%s want %s (cold-start lagging must reject)", out.Kind, OutcomeKindStaleComponent)
+	}
+
+	// Tick 2 — anchor frozen, gap 5000 but still INSIDE the dormancy
+	// horizon: accepted as dormant. This half guards F-1320 — the fix
+	// must bound the carve-out, not delete it.
+	ledgers.ledger = minComp + 5_000
+	if out := r.Tick(context.Background()); out.Kind != OutcomeKindDormant {
+		t.Fatalf("tick2 kind=%s want %s (in-horizon dormancy must still be accepted; F-1320 must not regress)", out.Kind, OutcomeKindDormant)
+	}
+	if len(inserter.snaps) != 1 {
+		t.Fatalf("tick2 inserts=%d want 1 (in-horizon dormant snapshot is published)", len(inserter.snaps))
+	}
+
+	// Tick 3 — the anchor has now been frozen for 20 000 ledgers
+	// (~28 h at 5 s close cadence), past the 17 280 horizon. This is
+	// the stalled-observer shape and MUST fail closed.
+	ledgers.ledger = minComp + 20_000
+	out := r.Tick(context.Background())
+	if out.Kind != OutcomeKindStaleComponent {
+		t.Fatalf("tick3 kind=%s want %s (an anchor frozen past the dormancy horizon is a stalled observer, not a dormant asset — it must not be re-stamped fresh)", out.Kind, OutcomeKindStaleComponent)
+	}
+	if out.Err == nil {
+		t.Error("tick3 Err=nil, want a non-nil rejection error for operator diagnosis")
+	}
+
+	// The money assertion: nothing was published at the far-future
+	// tip. The most recent row remains the in-horizon one, so a
+	// consumer computing market cap can still see the supply figure
+	// stop advancing instead of being handed a frozen number wearing
+	// a fresh ledger stamp.
+	if len(inserter.snaps) != 1 {
+		t.Fatalf("tick3 inserts=%d want 1 (past-horizon snapshot must NOT be published)", len(inserter.snaps))
+	}
+	if got := inserter.snaps[0].LedgerSequence; got != minComp+5_000 {
+		t.Errorf("last published ledger=%d want %d (a frozen supply must never be re-stamped at the current tip)", got, minComp+5_000)
+	}
+}
+
+// TestRefresher_MaxDormantComponentLedgersZeroDisablesHorizon pins
+// the operator escape hatch: passing 0 restores the unbounded
+// pre-R-002 posture for deployments that knowingly watch assets
+// dormant for longer than any horizon and prefer a re-stamped row
+// to a gap. Explicit opt-in, never the default.
+func TestRefresher_MaxDormantComponentLedgersZeroDisablesHorizon(t *testing.T) {
+	const minComp = 50_000_000
+	ledgers := &mutableLedgers{
+		ledger:     minComp + 1017,
+		observedAt: time.Unix(1_770_000_000, 0).UTC(),
+	}
+	inserter := &stubInserter{}
+	r := NewRefresher(
+		ledgers,
+		dynComputer{assetKey: "XLM", minComponentLedger: minComp},
+		inserter,
+		discardLogger(),
+		WithStaleComponentLedgers(1000),
+		WithMaxDormantComponentLedgers(0), // unbounded — legacy posture
+	)
+	if out := r.Tick(context.Background()); out.Kind != OutcomeKindStaleComponent {
+		t.Fatalf("tick1 kind=%s want %s", out.Kind, OutcomeKindStaleComponent)
+	}
+	ledgers.ledger = minComp + 10_000_000 // absurdly far past any horizon
+	if out := r.Tick(context.Background()); out.Kind != OutcomeKindDormant {
+		t.Fatalf("tick2 kind=%s want %s (horizon disabled → unbounded dormancy accept)", out.Kind, OutcomeKindDormant)
+	}
+	if inserter.calls != 1 {
+		t.Errorf("inserter.calls=%d want 1", inserter.calls)
+	}
+}

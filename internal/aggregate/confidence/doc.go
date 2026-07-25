@@ -16,11 +16,35 @@
 //     (Reflector, Chainlink, etc.).
 //   - [BaselineQualityFactor]: how mature the per-asset baseline is.
 //
-// Weighted geometric mean (`prod(factor_i ^ weight_i)`) is the right
-// shape because it gives DOMINATING-FACTOR behaviour: any one
-// near-zero factor pulls the whole score toward zero. That matches
-// the operational intent — a single missing signal is enough to
-// down-rank the score.
+// The combiner is the NORMALISED weighted geometric mean —
+// `prod(factor_i ^ weight_i) ^ (1 / sum(weights))`, implemented in
+// [Compute]. The `^ (1 / sum(weights))` exponent is load-bearing and
+// not optional decoration:
+//
+//   - It keeps weights RELATIVE. Without it, doubling every weight
+//     squares the score, so an operator who raises one weight to
+//     emphasise a factor silently craters every published score.
+//   - It keeps the documented neutral values neutral. The
+//     "no cross-oracle data" factor is 0.7 by design (ADR-0019); as a
+//     bare product that single term would cap every score without an
+//     external reference at 0.7, which is a penalty, not neutrality.
+//   - It keeps the served [0, 1] value interpretable for consumers
+//     gating on `confidence`, and keeps the ADR's bootstrap cap of
+//     0.5 a real ceiling rather than a number ordinary buckets never
+//     reach anyway.
+//
+// ADR-0019's formula block writes the product WITHOUT the exponent
+// while its prose says "weighted geometric mean" (which is the
+// normalised form by definition). The code is authoritative; see the
+// R-003 amendment at the top of
+// docs/adr/0019-anomaly-response-and-confidence-scoring.md for the
+// full reasoning and for what the 0.10 freeze threshold means on this
+// scale.
+//
+// The shape is right because it gives DOMINATING-FACTOR behaviour:
+// any one near-zero factor pulls the whole score toward zero (and an
+// exact zero takes it to zero outright). That matches the operational
+// intent — a single missing signal is enough to down-rank the score.
 //
 // Each factor returns a value strictly in [0, 1]; this package
 // guards inputs against NaN/Inf and clamps outputs at the bounds so

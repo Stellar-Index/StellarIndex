@@ -9,7 +9,7 @@ import { asExample } from '@/api/client';
 import { AssetLabel } from '@/components/AssetLabel';
 import { SourceSparkline } from '@/components/SourceSparkline';
 import { useMarkets } from '@/api/hooks';
-import { formatCompact, formatRelative } from '@/lib/format';
+import { formatCompact, formatPairPrice, formatRelative } from '@/lib/format';
 import { Input, TBody, TR, Table, Td, Th, THead } from '@/components/ui';
 
 /**
@@ -165,8 +165,12 @@ export function MarketsTable() {
         <div className="flex flex-wrap items-center gap-3 text-xs">
           <Input
             type="search"
-            aria-label="Filter markets by base or quote asset"
-            placeholder="Filter by base or quote asset…"
+            aria-label={`Filter the ${data.markets.length} markets shown by base or quote asset (does not search beyond the top ${data.markets.length} by volume)`}
+            // UXP-10/UXP-16: this only filters the fetched top-N page, not
+            // every active pair on Stellar — say so, rather than reading
+            // like a full-network search that silently comes up empty for
+            // a real pair outside the top N.
+            placeholder={`Filter these ${data.markets.length} pairs by base or quote…`}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             className="w-72 font-mono text-[11px]"
@@ -328,11 +332,12 @@ function LastPriceCell({ raw }: { raw?: string | null }) {
   // Pair prices are quote-per-base — they span >9 orders of
   // magnitude across the 5K active pairs (sub-satoshi memecoins
   // through XLM-USD), so digits adapt to keep precision visible.
-  const fixed =
-    n >= 1000 ? n.toFixed(2) : n >= 1 ? n.toFixed(4) : n >= 0.0001 ? n.toFixed(6) : n.toExponential(3);
+  // COR-14/AGT-05: was a hand-copied reimplementation of formatPairPrice
+  // (@/lib/format) — three components had independently forked this exact
+  // threshold ladder, risking visible drift between them.
   return (
     <span className="font-mono tabular-nums text-ink-body">
-      {fixed}
+      {formatPairPrice(n)}
     </span>
   );
 }

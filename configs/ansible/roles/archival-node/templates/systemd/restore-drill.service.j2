@@ -1,0 +1,63 @@
+# systemd unit: pgBackRest restore-drill (ADR-0043 / CS-110).
+#
+# Rendered by Ansible. Runs scripts/ops/restore-drill.sh — a
+# NON-DESTRUCTIVE scratch restore of the pgBackRest stanza into a
+# disposable Postgres, proving the backup chain is actually
+# restorable rather than just "present" (a backup nobody has ever
+# restored is a hope, not a backup — CS-110). Results append to the
+# drill evidence log the script maintains.
+#
+# Sequencing (audit-2026-07-23 REL-backup-restore): this unit is
+# installed but NOT enabled by the ansible role — see
+# 18-pgbackrest-backup.yml. R1 was mid Phase-A capacity relief
+# (ZFS pool ~94% full) when this landed; the drill needs
+# MIN_FREE_GB=200 free on the drill volume and the script itself
+# refuses to run below that (safe-by-construction), but starting a
+# NEW weekly heavy job while capacity is this tight is an operator
+# call, not a default. Enable once Phase A clears:
+#   systemctl enable --now restore-drill.timer
+
+[Unit]
+Description=Stellar Index — pgBackRest restore-drill (ADR-0043 / CS-110)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/adr/0043-backup-and-restore-strategy.md
+After=postgresql.service network-online.target
+Wants=postgresql.service
+
+# Restart-storm limit — matches the stellarindex-*.service.j2 pattern
+# (systemd >=230 ignores StartLimit* under [Service]).
+StartLimitIntervalSec=1h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/stellarindex-ops
+ExecStart=/usr/local/bin/restore-drill.sh
+# The script itself requires root (drops to postgres via sudo -u for
+# the actual pg/pgbackrest operations) — see its own EUID check.
+User=root
+
+# Keep drill I/O off the critical path of live ingest.
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+# WAL replay from the last backup can legitimately take a couple
+# hours on a busy ingest DB (script's own PG_START_TIMEOUT default);
+# cap generously above that so a genuinely wedged drill still fails
+# and frees the next tick instead of running forever.
+TimeoutStartSec=4h
+RuntimeMaxSec=4h
+
+# Hardening — ProtectSystem=full (not strict): the script writes its
+# disposable Postgres data dir + evidence log under DRILL_ROOT
+# (default /var/tmp/restore-drill).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/tmp/restore-drill
+
+[Install]
+WantedBy=multi-user.target

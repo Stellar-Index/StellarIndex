@@ -1,6 +1,6 @@
 ---
 title: Chaos suite — design note (Task #75)
-last_verified: 2026-05-01
+last_verified: 2026-07-24
 status: design ratified (Wave 1 shipped)
 related:
   - test/chaos/README.md
@@ -19,12 +19,16 @@ in documented ways."
 
 ## Goal
 
-One of the strongest guarantees the API makes is this:
-**the API never silently serves bad data.** When a
-backing service fails, the response either degrades-with-flag
-(documented) or 5xxs loud (unmistakable). A 200-with-empty-`data`
-or 200-with-stale-stamps is the nightmare. This suite is the
-behavioural fence.
+One of the strongest guarantees the API makes is this: **when a
+backing service fails, the API never silently serves bad data** — the
+response either degrades-with-flag (documented) or 5xxs loud
+(unmistakable). A 200-with-empty-`data` or 200-with-stale-stamps is
+the nightmare. This suite is the behavioural fence for that specific
+guarantee — backing-service-failure degradation — not a proof that no
+other silent-failure path exists anywhere in the system; see
+`docs/operations/production-confidence-campaign-2026-07-23.md` for the
+tracked ledger of currently-open silent-failure-shaped findings from
+the cold audit.
 
 ## Scope (Wave 1 — this PR)
 

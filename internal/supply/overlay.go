@@ -88,13 +88,22 @@ func Overlay(ctx context.Context, snap Supply, asset canonical.Asset, resolver M
 		// issuer-poisoned number. (M14: was `< 0`, which let 0 through.)
 		return snap, false, nil
 	}
-	// A max_supply BELOW the known circulating supply is self-
-	// contradictory — the served max would be less than the realised
-	// circulating (and any FDV derived from it below the market cap). A
-	// sloppy or hostile issuer must not be able to poison the served
-	// number this way, so treat it as unset, exactly like a missing
-	// declaration. CirculatingSupply may be nil (not computed for this
-	// snapshot); when it is, we have no lower bound to enforce. (M14)
+	// A max_supply BELOW the realised supply is self-contradictory — the
+	// served max would be less than supply that demonstrably exists (and
+	// any FDV derived from it below the market cap). A sloppy or hostile
+	// issuer must not be able to poison the served number this way, so
+	// treat it as unset, exactly like a missing declaration. (M14)
+	//
+	// TOTAL is the floor, not circulating (DOM-02): circulating is total
+	// minus the issuer/admin/locked exclusions, so a max_supply sitting
+	// between the two clears a circulating-only guard while still
+	// asserting max_supply < total_supply — a strictly impossible
+	// reading that the API would then serve. Both bounds are checked
+	// because either may be nil (not computed for this snapshot), and
+	// with total present it already subsumes the circulating bound.
+	if snap.TotalSupply != nil && val.Cmp(snap.TotalSupply) < 0 {
+		return snap, false, nil
+	}
 	if snap.CirculatingSupply != nil && val.Cmp(snap.CirculatingSupply) < 0 {
 		return snap, false, nil
 	}

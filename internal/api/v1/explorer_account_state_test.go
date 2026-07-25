@@ -132,6 +132,35 @@ func TestExplorer_AccountState_RejectsBadStrkey(t *testing.T) {
 	}
 }
 
+// TestExplorer_AccountState_RejectsChecksumInvalidStrkey is the
+// API-01 / API-03 regression: a strkey with the right SHAPE (56 chars,
+// leading 'G', valid base32 alphabet) but a corrupted CRC checksum
+// must be rejected with 400 before it ever reaches the lake reader —
+// matching every sibling account endpoint (AccountTransactions,
+// AccountMovements, AccountPositions, …), which all validate via
+// canonical.IsAccountID. The old looksLikeStellarAccount check only
+// verified shape, so this strkey sailed through to
+// AccountStateCached; on the unfixed code, the stub reader below still
+// answers (200 with configured data) instead of the request having been
+// rejected at all, proving the checksum-invalid input reached the reader.
+func TestExplorer_AccountState_RejectsChecksumInvalidStrkey(t *testing.T) {
+	reader := &stubExplorerReader{accountState: clickhouse.AccountState{Exists: true, Balance: 1}}
+	base := explorerTestServer(t, reader)
+
+	// Same shape as testG (56 chars, 'G'-prefixed, valid base32 alphabet)
+	// but with the last character mutated — breaks the CRC16 checksum
+	// while keeping looksLikeStellarAccount's shape-only check happy.
+	badChecksum := testG[:len(testG)-1] + "A"
+	if badChecksum == testG {
+		t.Fatal("test setup: mutated strkey must differ from testG")
+	}
+
+	resp := mustGet(t, base+"/v1/accounts/"+badChecksum)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (checksum-invalid G-strkey must be rejected before reaching the lake reader)", resp.StatusCode)
+	}
+}
+
 func TestExplorer_AssetHolders(t *testing.T) {
 	reader := &stubExplorerReader{
 		holders: []clickhouse.AssetHolder{

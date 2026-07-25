@@ -54,6 +54,44 @@ func resolveRemoteIP(r *http.Request) string {
 	return remoteIPFor(r)
 }
 
+// remoteIPPrefixFor resolves the client's THROTTLE-KEY identity: the
+// exact address for IPv4, or the /64 network prefix for IPv6.
+//
+// SECURITY (SEC-15): keying a per-IP throttle on the full IPv6 /128
+// address is not equivalent to keying an IPv4 throttle on its /32 —
+// residential and mobile ISPs commonly delegate an entire /64 (or
+// larger) to a single subscriber, so an attacker with any routable
+// IPv6 prefix can mint an unbounded number of distinct /128 addresses
+// and get a fresh throttle bucket for each one, bypassing the limit
+// entirely. Aggregating to /64 — the smallest block a residential ISP
+// typically delegates per RFC 7421 — makes the throttle key match the
+// unit an attacker actually controls cheaply. IPv4 has no equivalent
+// cheap-rotation problem at the scale attackers actually have access
+// to, so it keeps its full address.
+//
+// This must be used ONLY for throttle/rate-limit/cap keys — never for
+// audit logging, admin display, or anything that wants the caller's
+// precise address. [remoteIPFor] / [RemoteIP] remain the exact
+// resolver for those.
+func remoteIPPrefixFor(r *http.Request) string {
+	return maskIPForThrottleKey(remoteIPFor(r))
+}
+
+// maskIPForThrottleKey masks a resolved IP string down to its
+// throttle-key identity per [remoteIPPrefixFor]'s policy: unchanged
+// for IPv4, the /64 network prefix for IPv6. Returns ip unchanged
+// (including "") if it doesn't parse as an address.
+func maskIPForThrottleKey(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	if addr.Is4() || addr.Is4In6() {
+		return addr.String()
+	}
+	return netip.PrefixFrom(addr, 64).Masked().Addr().String()
+}
+
 // RemoteIP returns the request's caller IP, honouring trusted-proxy
 // CIDRs the operator configured via [SetTrustedProxyCIDRs]. When
 // the request arrived via a trusted proxy, `X-Forwarded-For` is

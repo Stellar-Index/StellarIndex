@@ -33,9 +33,10 @@ type MonthToDateReader interface {
 //     check; the middleware is a pass-through. Anonymous /
 //     un-keyed callers fall in here.
 //   - Subject with `MonthlyQuota > 0` and a non-nil reader: read
-//     the month-to-date counter for the subject key (matches
-//     `UsageTracker`'s `usageKeyForSubject` so the writer and
-//     reader stay in lock-step). When the count >= quota, reject
+//     the month-to-date counter for the subject key (via
+//     [UsageKeyForSubject], the same derivation `UsageTracker` writes
+//     under, so the writer and reader stay in lock-step). When the
+//     count >= quota, reject
 //     with `429 Too Many Requests` + Problem-JSON body listing
 //     the cap.
 //   - Reader nil or read error: log + pass through. The cap is
@@ -57,7 +58,7 @@ func MonthlyQuota(reader MonthToDateReader, logger *slog.Logger) Middleware {
 				next.ServeHTTP(w, r)
 				return
 			}
-			id := usageKeyForSubject(subject)
+			id := UsageKeyForSubject(subject)
 			if id == "" {
 				next.ServeHTTP(w, r)
 				return

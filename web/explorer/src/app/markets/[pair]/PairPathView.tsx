@@ -52,7 +52,11 @@ interface PairPrice {
  */
 export function PairPathView() {
   const raw = useLastPathSegment() ?? '';
-  const decoded = decodePairSlug(decodeURIComponent(raw));
+  // COR-09: useLastPathSegment() already decodes the segment once (or
+  // safely falls back to the raw value if decoding failed) — decoding it
+  // again here threw an uncaught URIError for any malformed percent-escape
+  // instead of degrading to the "Unrecognised pair" EmptyState below.
+  const decoded = decodePairSlug(raw);
 
   const base = decoded?.base ?? '';
   const quote = decoded?.quote ?? '';

@@ -28,6 +28,7 @@ import {
   Skeleton,
   Callout,
   Input,
+  Field,
 } from '@/components/ui';
 
 // These assert behaviour and semantics (text, roles, element type) — NOT
@@ -122,6 +123,39 @@ describe('ui primitives — render + semantics', () => {
     render(<Breadcrumbs items={[{ label: 'Home', href: '/' }, { label: 'Markets' }]} />);
     expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('href', '/');
     expect(screen.getByText('Markets')).toBeInTheDocument();
+  });
+
+  it('Breadcrumbs marks the current (last, unlinked) crumb with aria-current="page"', () => {
+    // ACC-03: only the non-linked crumb is "current" — the linked ones are
+    // not the current page and must not carry aria-current.
+    render(<Breadcrumbs items={[{ label: 'Home', href: '/' }, { label: 'Markets' }]} />);
+    expect(screen.getByText('Markets')).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Home' })).not.toHaveAttribute('aria-current');
+  });
+
+  it('ACC-12: Field associates its error text with the control via aria-describedby/aria-invalid', () => {
+    render(
+      <Field label="Name" htmlFor="key-name" error="Name is required">
+        <Input id="key-name" />
+      </Field>,
+    );
+    const input = screen.getByRole('textbox');
+    const errorText = screen.getByText('Name is required');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(input.getAttribute('aria-describedby')).toBe(errorText.id);
+    expect(errorText.id).toBeTruthy();
+  });
+
+  it('ACC-12: Field associates hint text (no error) without aria-invalid', () => {
+    render(
+      <Field label="Description" htmlFor="key-desc" hint="Optional context">
+        <Input id="key-desc" />
+      </Field>,
+    );
+    const input = screen.getByRole('textbox');
+    const hintText = screen.getByText('Optional context');
+    expect(input).not.toHaveAttribute('aria-invalid', 'true');
+    expect(input.getAttribute('aria-describedby')).toBe(hintText.id);
   });
 
   it('Feedback: EmptyState + Callout render content and role', () => {

@@ -33,7 +33,7 @@ services:
       # regardless of host. Matches migrations/0001.
       POSTGRES_INITDB_ARGS: "--locale=C.UTF-8 --encoding=UTF8"
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - timescale_data:/var/lib/postgresql/data
       # Preload TimescaleDB extension into template1 so a fresh DB
@@ -74,7 +74,7 @@ services:
       # Password optional; only set if provided.
       # Override the CMD entirely in your .env if you need auth.
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -97,8 +97,8 @@ services:
       - "--console-address"
       - ":9001"
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"       # S3 API
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"   # Web console
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"       # S3 API
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"   # Web console
     volumes:
       - minio_data:/data
     healthcheck:

@@ -37,11 +37,12 @@ import {
   Zap,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useMe } from '@/api/hooks';
 import { API_BASE_URL } from '@/api/client';
 import { cn } from '@/lib/cn';
+import { useDialog } from '@/lib/useDialog';
 import { SearchModal } from './SearchModal';
 
 type NavItem = { href: string; label: string; icon: LucideIcon; external?: boolean; exact?: boolean };
@@ -278,16 +279,18 @@ function AccountMenu({ email }: { email?: string }) {
     function onDoc(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     }
-    function onEsc(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false);
-    }
     document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onEsc);
-    return () => {
-      document.removeEventListener('mousedown', onDoc);
-      document.removeEventListener('keydown', onEsc);
-    };
+    return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
+  // ACC-06: focus-trap + focus-move-in + focus-restore (was missing —
+  // Tab could escape the open menu into the rest of the page, and
+  // closing never returned focus to the trigger button). Escape-to-close
+  // is now owned by useDialog too, hence dropping the separate onEsc
+  // listener above. Deliberately NOT role="dialog"/aria-modal — see the
+  // role comment below: this is a disclosure, not a modal, so useDialog
+  // is used here only for its focus mechanics.
+  const close = useCallback(() => setOpen(false), []);
+  const panelRef = useDialog<HTMLDivElement>(open, close);
 
   async function signOut() {
     try {
@@ -326,7 +329,9 @@ function AccountMenu({ email }: { email?: string }) {
         // reachable), and Escape closes it (handled above).
         <div
           id="sidebar-account-menu"
-          className="absolute bottom-full left-0 z-50 mb-1 w-full rounded-lg border border-line bg-surface p-2 shadow-elevated"
+          ref={panelRef}
+          tabIndex={-1}
+          className="absolute bottom-full left-0 z-50 mb-1 w-full rounded-lg border border-line bg-surface p-2 shadow-elevated outline-hidden"
         >
           <Link
             href="/dashboard"

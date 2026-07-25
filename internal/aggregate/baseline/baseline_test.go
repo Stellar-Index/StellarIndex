@@ -149,13 +149,72 @@ func TestZScore_ZeroMADExactMatch(t *testing.T) {
 	}
 }
 
-// TestZScore_ZeroMADAnyDeviation — when the baseline has zero spread
-// and the observation differs even slightly, the z-score is +Inf —
-// any threshold check (z >= 5) fires. Important: not NaN.
-func TestZScore_ZeroMADAnyDeviation(t *testing.T) {
+// TestZScore_ZeroMADIsFlooredNotInfinite is the COR-01 regression, and
+// it deliberately REPLACES the former TestZScore_ZeroMADAnyDeviation,
+// which asserted that a 1e-5 deviation from a zero-spread baseline
+// scores +Inf. That expectation was the defect: a zero MAD is the
+// NORMAL state of a pegged or quiet pair (a strict majority of bucket
+// returns are exactly 0), so "any deviation is infinitely anomalous"
+// pinned every such pair at z=+Inf on a rounding wiggle — zeroing its
+// confidence score and satisfying the Phase 2 freeze's `z > 5` leg.
+//
+// This is not a loosened assertion: it pins the exact corrected value
+// AND keeps the half that mattered — a genuinely large move from a
+// flat baseline still clears the 5σ trigger.
+func TestZScore_ZeroMADIsFlooredNotInfinite(t *testing.T) {
 	b := baseline.Baseline{Median: 1.5, MAD: 0, N: 10}
-	if z := b.ZScore(1.50001); !math.IsInf(z, 1) {
-		t.Errorf("ZScore on zero-MAD deviation = %v, want +Inf", z)
+
+	// The exact observation the pre-fix test demanded +Inf for.
+	const wiggle = 1e-5
+	z := b.ZScore(1.5 + wiggle)
+	if want := wiggle / baseline.MinMAD; math.Abs(z-want) > 1e-12 {
+		t.Errorf("ZScore(median+%g) on a zero-MAD baseline = %v, want %v (deviation / MinMAD)", wiggle, z, want)
+	}
+	if z >= 5 {
+		t.Errorf("z = %v for a 1e-5 wiggle; a sub-basis-point move must not reach the 5σ trigger", z)
+	}
+
+	// The detection half is intact: a 1% single-bucket move away from
+	// a perfectly flat baseline still fires.
+	if zBig := b.ZScore(1.5 + 0.01); zBig < 5 {
+		t.Errorf("z = %v for a +1%% move off a flat baseline, want >= 5 — the floor must not blind the spike detector", zBig)
+	}
+}
+
+// TestZScore_PeggedWindowDoesNotSelfTrigger drives the same COR-01
+// regression through the real construction path (FromReturns), on the
+// shape that actually occurs in production: a USD peg whose 1-minute
+// VWAP reprints unchanged in most buckets.
+func TestZScore_PeggedWindowDoesNotSelfTrigger(t *testing.T) {
+	// 1440 buckets of a pegged asset: mostly unchanged, a handful of
+	// sub-basis-point wiggles. A strict majority of returns are 0, so
+	// the median absolute deviation — and hence MAD — is exactly 0.
+	returns := make([]float64, 1440)
+	for i := range returns {
+		if i%5 == 0 {
+			returns[i] = 2e-6 // 0.0002%
+		}
+	}
+	b, err := baseline.FromReturns(returns)
+	if err != nil {
+		t.Fatalf("FromReturns: %v", err)
+	}
+	if b.MAD != 0 {
+		t.Fatalf("fixture no longer reproduces the zero-MAD window (MAD=%v); COR-01 needs that shape", b.MAD)
+	}
+
+	// The next bucket wiggles by the same sub-bp amount.
+	z := b.ZScore(2e-6)
+	if z >= 5 {
+		t.Errorf("pegged asset scored z=%v on a 0.0002%% move — that is a false anomaly, not a depeg", z)
+	}
+	if want := 2e-6 / baseline.MinMAD; math.Abs(z-want) > 1e-12 {
+		t.Errorf("z = %v, want %v", z, want)
+	}
+
+	// A real depeg (−2% in one bucket) must still clear the trigger.
+	if zDepeg := b.ZScore(-0.02); zDepeg < 5 {
+		t.Errorf("z = %v for a −2%% bucket, want >= 5 — a genuine depeg must still fire", zDepeg)
 	}
 }
 

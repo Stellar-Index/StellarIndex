@@ -81,9 +81,10 @@ type CoinGeckoReference struct {
 	// batchUpdatedAt maps cgID → the UPSTREAM publication time
 	// CoinGecko reports for that coin (the `last_updated_at` field
 	// returned when the request sets include_last_updated_at=true).
-	// Absent from the map when CoinGecko omitted the field for an id
-	// (older/compat endpoints); the staleness gate then no-ops for
-	// that id rather than rejecting an otherwise-usable price.
+	// An id absent from this map is REJECTED by the staleness gate
+	// (MNY-22) — every request opts into the field, so its absence
+	// means the response did not honour the contract the gate rests
+	// on, and freshness for that id is unverifiable.
 	batchUpdatedAt map[string]time.Time
 }
 
@@ -288,13 +289,26 @@ func (c *CoinGeckoReference) LookupPrice(ctx context.Context, pair canonical.Pai
 
 // staleness enforces the CS-089 gate for one id's upstream
 // last_updated_at. asOf defaults to wall time when observedAt is zero
-// (matching chainlink.go / oracle.go). A missing upstream timestamp
-// no-ops (nil) — we only reject a price we can PROVE is stale, never
-// one whose freshness the upstream simply didn't report.
+// (matching chainlink.go / oracle.go).
+//
+// A MISSING upstream timestamp is rejected, not waved through
+// (MNY-22). Every request this reference issues sets
+// include_last_updated_at=true, and /simple/price returns the field
+// for every id on the free tier — so an absent timestamp is not a
+// benign older-endpoint case, it means the response did not honour the
+// contract the gate rests on (an intermediary stripping fields, a
+// proxy replaying a truncated body, an upstream schema change). Waving
+// it through disabled the entire staleness gate silently and served a
+// possibly-frozen price as fresh, which is exactly the failure CS-089
+// exists to prevent. Failing closed costs one reference for this tick
+// — visible in Result.Failures as price_unavailable, and in the
+// CS-088 no-reference-responded alert if it becomes total — while
+// failing open costs a wrong divergence verdict with no signal at all.
 func (c *CoinGeckoReference) staleness(cgID string, updatedAt map[string]time.Time, observedAt time.Time) error {
 	ts, ok := updatedAt[cgID]
 	if !ok || ts.IsZero() {
-		return nil
+		return fmt.Errorf("%w: coingecko id %q returned no last_updated_at (freshness unverifiable)",
+			ErrPriceUnavailable, cgID)
 	}
 	asOf := observedAt
 	if asOf.IsZero() {
@@ -446,7 +460,8 @@ func (c *CoinGeckoReference) fetchBatch(ctx context.Context, ids, quotes []strin
 	// Lift last_updated_at out of each id's price object so it can't be
 	// mistaken for a vs_currency quote, and convert to a UTC time for
 	// the staleness gate. A missing/zero/negative value leaves the id
-	// out of updatedAt — the gate then no-ops for that id.
+	// out of updatedAt — the gate then REJECTS that id as
+	// freshness-unverifiable (see staleness).
 	updatedAt := make(map[string]time.Time, len(parsed))
 	for id, entry := range parsed {
 		if raw, ok := entry[coinGeckoLastUpdatedKey]; ok {

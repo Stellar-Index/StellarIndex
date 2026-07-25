@@ -38,13 +38,25 @@ type LedgerSource interface {
 	LatestLedger() uint32
 }
 
+// statsWriter is the narrow subset of [*timescale.Store] the flusher
+// depends on. Declared as an interface — the same pattern
+// internal/pipeline's tradeWriter uses — so the write-failure /
+// retained-snapshot behaviour (INT-05, audit-2026-07-23) is
+// unit-testable with a fake that fails on demand, without a real
+// Postgres: *timescale.Store.Open pings before returning, so there's
+// no way to construct a *Store that succeeds at construction and then
+// fails on a later call without an actual reachable database.
+type statsWriter interface {
+	InsertDecoderStats(ctx context.Context, rows []timescale.DecoderStatsBucket) error
+}
+
 // Flusher snapshots dispatcher counters every interval and writes
 // per-bucket deltas to the decoder_stats_5m hypertable.
 //
 // Run via [Flusher.Run]; caller cancels via context.
 type Flusher struct {
 	source   StatsSource
-	store    *timescale.Store
+	store    statsWriter
 	logger   *slog.Logger
 	interval time.Duration
 	ledger   LedgerSource
@@ -67,7 +79,8 @@ type Options struct {
 
 // New constructs a Flusher. Logger is required — the flusher logs
 // every tick at DEBUG, plus any postgres write failures at WARN.
-func New(source StatsSource, store *timescale.Store, logger *slog.Logger, opts Options) *Flusher {
+// store is typically *timescale.Store, which satisfies [statsWriter].
+func New(source StatsSource, store statsWriter, logger *slog.Logger, opts Options) *Flusher {
 	if logger == nil {
 		// Match the sibling sink constructors (clickhouse.NewLiveSink,
 		// discovery/sorobanevents AsyncSink) which all default the
@@ -184,7 +197,16 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 
 	if len(rows) > 0 {
 		if err := f.store.InsertDecoderStats(ctx, rows); err != nil {
-			f.logger.Warn("decoder-stats flush failed", "rows", len(rows), "err", err)
+			// INT-05 (audit-2026-07-23): do NOT advance f.last on a
+			// write failure. This window's rows never landed, so the
+			// delta they represent must stay live — advancing the
+			// snapshot anyway would make the NEXT tick compute its
+			// delta from `current`, silently discarding this window's
+			// counts forever instead of folding them into the next
+			// successful flush.
+			f.logger.Warn("decoder-stats flush failed — retaining last snapshot so the next successful flush recovers this window's counts",
+				"rows", len(rows), "err", err)
+			return
 		}
 	}
 

@@ -121,8 +121,21 @@ func supplyVerifyRollup(args []string) error {
 		return err
 	}
 	reportRollupDrifts(os.Stdout, drifts, checked, tolerance)
+	return rollupExitDecision(drifts, checked)
+}
+
+// rollupExitDecision is the DB-free core of the command's exit status: a
+// drift is always fatal, and — so "nothing checked" is never conflated
+// with "all clean" — checking zero checkpoints is fatal too. An empty
+// sep41_supply_rollup table or a -contracts filter that matched nothing
+// must not print "OK: 0 checkpoint(s) reconcile" and exit 0; that reads as
+// a clean bill of health when in fact nothing was verified.
+func rollupExitDecision(drifts []completeness.TotalsDrift, checked int) error {
 	if len(drifts) > 0 {
 		return fmt.Errorf("sep41 rollup drift: %d (contract,kind) checkpoint(s) diverge from the authoritative re-sum — reset the fold and re-fold (`ch-rebuild -sep41 -write`, or Store.ResetSEP41SupplyRollupFold for a scoped set)", len(drifts))
+	}
+	if checked == 0 {
+		return fmt.Errorf("verify-rollup checked 0 checkpoints — sep41_supply_rollup is empty or -contracts matched nothing; refusing to certify clean")
 	}
 	return nil
 }

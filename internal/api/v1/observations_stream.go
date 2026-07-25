@@ -52,6 +52,22 @@ const (
 // — its name deliberately differs from `window_seconds` because the
 // raw-observations surface has no aggregation window.
 func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request) {
+	// REL-05: admit against the concurrency caps FIRST, before the
+	// synchronous pre-flight compute below (computeObservations) runs.
+	// Without this, a client already at its stream cap still paid for
+	// the full pre-flight DB scan before being rejected — the caps
+	// bounded connection COUNT but not the compute a rejected client
+	// could still trigger. release is idempotent and deferred here so
+	// every return path (validation errors, a failed pre-flight
+	// compute, or the eventual stream teardown) releases exactly once;
+	// the stream is handed off via StreamFromChannelPreAdmitted below
+	// so it doesn't also try to acquire a second slot.
+	release, ok := streaming.TryAcquireStreamSlot(w, r)
+	if !ok {
+		return
+	}
+	defer release()
+
 	if s.history == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/observations-unavailable",
@@ -123,7 +139,7 @@ func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request
 		prodCtx, ch, &gen, pair, source, aggregate, interval, first,
 	)
 
-	streaming.StreamFromChannel(w, r, ch, streaming.StreamOptions{})
+	streaming.StreamFromChannelPreAdmitted(w, r, ch, streaming.StreamOptions{})
 }
 
 // computeObservations is the shared core of [Server.handleObservations]
@@ -169,6 +185,15 @@ func (s *Server) runObservationsStreamProducer(
 	intervalSeconds int,
 	first []canonical.Trade,
 ) {
+	// AGT-12 (audit-2026-07-24): this producer runs in its OWN goroutine, so an
+	// unrecovered panic in the compute path below terminates the WHOLE process —
+	// middleware.Recoverer only wraps the handler goroutine, not this one, and the
+	// stream is reachable unauthenticated. Recover here so a panic tears down only
+	// this connection. Registered BEFORE `defer close(ch)` so that close runs FIRST
+	// (defers are LIFO): the SSE writer sees the channel close and ends the response
+	// cleanly, then this logs. Never swallow it silently — a crash turning into an
+	// invisible dropped connection is its own bug.
+	defer s.recoverStreamProducer("observations")
 	defer close(ch)
 
 	if firstEv, ok := s.observationsStreamEvent(gen, pair, first); ok {

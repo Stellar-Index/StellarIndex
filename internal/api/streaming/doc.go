@@ -29,4 +29,16 @@
 // forward). Buffer size is configurable per topic; default 256
 // events ≈ 4–5 minutes at the 1m closed-bucket cadence and
 // ≈ 50 minutes at the 5s tip cadence.
+//
+// Topics are reaped, not kept forever. Topic keys come from the
+// request on /v1/price/stream, so an unbounded map is an
+// unauthenticated memory-exhaustion lever (REL-05). A topic with no
+// subscribers is dropped once it has nothing left to offer — right
+// away if it was never published to, or after [DefaultTopicIdleTTL]
+// if it still holds a replay buffer — and [DefaultMaxTopics] caps the
+// map regardless. A topic with a live subscriber is never reaped.
+// Connections are admitted against the concurrency caps BEFORE they
+// can allocate a topic (see [Stream]), so a refused client never
+// leaves one behind. [Hub.TopicCount], [Hub.TopicsReaped],
+// [ActiveStreams] and [StreamsRejected] expose the bounds.
 package streaming

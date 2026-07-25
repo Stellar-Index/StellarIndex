@@ -68,7 +68,7 @@ type Store struct {
 	// usdVolumeResolutionInstalled records that InstallUSDVolumeResolution was
 	// CALLED on this store (regardless of whether it then wired resolvers — a
 	// no-pegs deployment installs none but still counts). It is the signal
-	// [reDeriveResolverGuard] uses to fail trade writes closed when a re-derive
+	// [Store.reDeriveNullVolumeGuard] uses to fail trade writes closed when a re-derive
 	// entry point stamps a generation but forgets to enter USD-volume-resolution
 	// mode (A-CRIT-1). Set only by InstallUSDVolumeResolution.
 	usdVolumeResolutionInstalled bool
@@ -112,7 +112,7 @@ func (s *Store) SetDeriveGeneration(gen int64) {
 	s.deriveGeneration = gen
 }
 
-// reDeriveResolverGuard fails the trade-write choke point CLOSED when the store
+// reDeriveNullVolumeGuard fails the trade-write choke point CLOSED when the store
 // is in re-derive mode (deriveGeneration > 0) but the USD-volume resolvers were
 // never installed. A-CRIT-1 (audit-2026-07-24): a positive generation makes every
 // written trade WIN the ON CONFLICT guard, so InsertTrade/BatchInsertTrades assign

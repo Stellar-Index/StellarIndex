@@ -3,7 +3,9 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
@@ -27,6 +29,16 @@ const (
 	// looks healthy; with it the client keeps seeing the (truthfully
 	// growing) lag every ~10s during a stall.
 	ledgerStreamRefreshInterval = 10 * time.Second
+
+	// ledgerStreamTickTimeout bounds a single per-tick cursors read
+	// (REL-01, partial fix of G2-04). RequestTimeout deliberately
+	// excludes `/stream` paths (the connection is long-lived by
+	// design), so without a per-tick bound a slow ListCursors call
+	// could hold this producer's goroutine — and its DB connection —
+	// open indefinitely, once per open connection. Mirrors
+	// observationsScanTimeout's 8s ceiling, the same fix already
+	// applied to the observations-stream producer.
+	ledgerStreamTickTimeout = 8 * time.Second
 )
 
 // handleLedgerStream serves GET /v1/ledger/stream — the SSE
@@ -50,6 +62,20 @@ const (
 // established) are returned as problem+json with the right status —
 // once the SSE body starts there is no way to set a non-200 code.
 func (s *Server) handleLedgerStream(w http.ResponseWriter, r *http.Request) {
+	// REL-05: admit against the concurrency caps FIRST, before the
+	// synchronous pre-flight read below (ledgerTip) runs. Without this,
+	// a client already at its stream cap still paid for the full
+	// pre-flight cursors read before being rejected. release is
+	// idempotent and deferred here so every return path releases
+	// exactly once; the stream is handed off via
+	// StreamFromChannelPreAdmitted below so it doesn't also acquire a
+	// second slot.
+	release, ok := streaming.TryAcquireStreamSlot(w, r)
+	if !ok {
+		return
+	}
+	defer release()
+
 	if s.cursors == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/ledger-tip-unavailable",
@@ -86,7 +112,7 @@ func (s *Server) handleLedgerStream(w http.ResponseWriter, r *http.Request) {
 
 	go s.runLedgerStreamProducer(prodCtx, ch, first)
 
-	streaming.StreamFromChannel(w, r, ch, streaming.StreamOptions{})
+	streaming.StreamFromChannelPreAdmitted(w, r, ch, streaming.StreamOptions{})
 }
 
 // runLedgerStreamProducer is the per-connection poll loop. It emits
@@ -101,6 +127,15 @@ func (s *Server) runLedgerStreamProducer(
 	ch chan<- streaming.Event,
 	first LedgerTipView,
 ) {
+	// AGT-12 (audit-2026-07-24): this producer runs in its OWN goroutine, so an
+	// unrecovered panic in the compute path below terminates the WHOLE process —
+	// middleware.Recoverer only wraps the handler goroutine, not this one, and the
+	// stream is reachable unauthenticated. Recover here so a panic tears down only
+	// this connection. Registered BEFORE `defer close(ch)` so that close runs FIRST
+	// (defers are LIFO): the SSE writer sees the channel close and ends the response
+	// cleanly, then this logs. Never swallow it silently — a crash turning into an
+	// invisible dropped connection is its own bug.
+	defer s.recoverStreamProducer("ledger")
 	defer close(ch)
 
 	var gen streaming.Generator
@@ -145,7 +180,9 @@ func (s *Server) nextLedgerEvent(
 	lastLedger uint32,
 	lastEmit time.Time,
 ) (streaming.Event, LedgerTipView, bool) {
-	view, ok, err := s.ledgerTip(ctx)
+	tickCtx, cancel := context.WithTimeout(ctx, ledgerStreamTickTimeout)
+	defer cancel()
+	view, ok, err := s.ledgerTip(tickCtx)
 	if err != nil {
 		if ctx.Err() == nil {
 			s.logger.Warn("ledgerTip failed (stream tick) — skipping emit", "err", err)
@@ -205,4 +242,23 @@ func ledgerStreamEvent(gen *streaming.Generator, view LedgerTipView) (streaming.
 		Type: "ledger_update",
 		Data: body,
 	}, true
+}
+
+// recoverStreamProducer is the deferred panic guard for the SSE producer
+// goroutines (AGT-12, audit-2026-07-24). It MUST be invoked as
+// `defer s.recoverStreamProducer("<stream>")` from the producer itself:
+// recover() only works when called by a function the panicking goroutine
+// deferred, so this cannot be hoisted into a helper the producer merely calls.
+//
+// Extracted from three inline copies so each producer stays under the
+// cognitive-complexity gate without suppressing it (the campaign's precedent is
+// to lower real complexity rather than add //nolint).
+func (s *Server) recoverStreamProducer(stream string) {
+	if r := recover(); r != nil {
+		s.logger.Error("sse producer panicked",
+			"stream", stream,
+			"panic", fmt.Sprintf("%v", r),
+			"stack", string(debug.Stack()),
+		)
+	}
 }

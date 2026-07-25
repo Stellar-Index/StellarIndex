@@ -246,6 +246,131 @@ func TestCompute_BootstrapCapWithNoBaselineSentinel(t *testing.T) {
 	}
 }
 
+// ─── R-003 (audit-2026-07-23, COR-14): the combiner is the
+// NORMALISED weighted geometric mean ───────────────────────────────
+
+// TestCompute_IsNormalisedGeometricMeanNotBareProduct pins the
+// combiner ADR-0019's formula block omitted the exponent for:
+//
+//	confidence = prod(factor_i ^ weight_i) ^ (1 / sum(weights))
+//
+// The ADR's R-003 amendment records the code as authoritative, so
+// this is the test that keeps it that way. A future "fix" that makes
+// the code match the ADR's *truncated* formula (a bare product) fails
+// here with a ~0.44 gap — and would ship a silent, unannounced change
+// to every published `confidence` value AND to when assets freeze.
+//
+// Values below are the shape of an ordinary production bucket: mild
+// z, four sources across two classes, $50K liquidity, no cross-oracle
+// reference yet (Phase 3 not universally live), mature baseline.
+func TestCompute_IsNormalisedGeometricMeanNotBareProduct(t *testing.T) {
+	in := confidence.Inputs{
+		ZScore:                   1.0,
+		SourceCount:              4,
+		SourceClassCount:         2,
+		LiquidityUSD:             50_000,
+		CrossOracleDivergencePct: -1, // no cross-oracle data → neutral 0.7
+		BaselineAgeDays:          200,
+	}
+	got := confidence.Compute(in, confidence.DefaultWeights())
+
+	f := got.Factors
+	product := f.ZScore * f.SourceCount * f.Diversity *
+		f.Liquidity * f.CrossOracle * f.BaselineQuality
+
+	// 1. Definitional: the served value is the 6th root of the
+	//    product (all weights 1.0 → sum(weights) = 6).
+	wantNormalised := math.Pow(product, 1.0/6.0)
+	if math.Abs(got.Confidence-wantNormalised) > 1e-12 {
+		t.Errorf("Compute = %.17f, want prod^(1/6) = %.17f (delta %g)",
+			got.Confidence, wantNormalised, got.Confidence-wantNormalised)
+	}
+
+	// 2. Concrete corrected value, so this test pins a number rather
+	//    than a tautology against whatever the code happens to do.
+	const wantConfidence = 0.86773527630883263 // prod = 0.42689740997311271
+	if math.Abs(got.Confidence-wantConfidence) > 1e-9 {
+		t.Errorf("Compute = %.17f, want %.17f", got.Confidence, wantConfidence)
+	}
+
+	// 3. The bare product ADR-0019's formula block shows is a
+	//    materially different number — this is the drift's size.
+	if math.Abs(got.Confidence-product) < 0.4 {
+		t.Errorf("normalised (%v) and bare product (%v) are indistinguishable here; "+
+			"the test can no longer tell the two combiners apart", got.Confidence, product)
+	}
+}
+
+// TestCompute_WeightsAreRelativeNotAbsolute — the property that makes
+// the `^ (1 / sum(weights))` exponent load-bearing: ADR-0019 sells
+// `[anomaly.weights]` as per-factor *influence*, so scaling every
+// weight by a constant must not move the score. Under a bare product
+// doubling the weights squares the result (0.868 → 0.753 here), which
+// would silently push buckets toward the freeze threshold whenever an
+// operator touched the weight block.
+func TestCompute_WeightsAreRelativeNotAbsolute(t *testing.T) {
+	in := confidence.Inputs{
+		ZScore:                   1.0,
+		SourceCount:              4,
+		SourceClassCount:         2,
+		LiquidityUSD:             50_000,
+		CrossOracleDivergencePct: -1,
+		BaselineAgeDays:          200,
+	}
+	base := confidence.Compute(in, confidence.DefaultWeights())
+
+	doubled := confidence.DefaultWeights()
+	doubled.ZScore *= 2
+	doubled.SourceCount *= 2
+	doubled.Diversity *= 2
+	doubled.Liquidity *= 2
+	doubled.CrossOracle *= 2
+	doubled.BaselineQuality *= 2
+	scaled := confidence.Compute(in, doubled)
+
+	if math.Abs(base.Confidence-scaled.Confidence) > 1e-12 {
+		t.Errorf("uniformly doubling weights changed confidence: %.17f → %.17f; "+
+			"weights must be relative influence, not an absolute scale",
+			base.Confidence, scaled.Confidence)
+	}
+}
+
+// TestCompute_NoCrossOracleDataStaysNeutral — ADR-0019 documents 0.7
+// as the NEUTRAL cross-oracle value for "no external reference
+// available". Under the normalised combiner that costs a fully-
+// healthy bucket ~6 points (1.0 → 0.941); under the bare product the
+// same 0.7 would CAP every such bucket at 0.7, i.e. a penalty, not
+// neutrality — and today most pairs have no cross-oracle reference.
+func TestCompute_NoCrossOracleDataStaysNeutral(t *testing.T) {
+	in := confidence.Inputs{
+		ZScore:                   0,
+		SourceCount:              20,
+		SourceClassCount:         2,
+		LiquidityUSD:             1_000_000,
+		CrossOracleDivergencePct: -1, // no data
+		BaselineAgeDays:          365,
+	}
+	got := confidence.Compute(in, confidence.DefaultWeights())
+
+	if got.Factors.CrossOracle != 0.7 {
+		t.Fatalf("CrossOracle factor = %v, want the documented neutral 0.7", got.Factors.CrossOracle)
+	}
+	if got.Factors.CrossOracleChecked {
+		t.Error("CrossOracleChecked = true on the no-data sentinel")
+	}
+	// 0.7^(1/6) ≈ 0.9423, dragged fractionally by the sub-1.0 z and
+	// source factors → 0.9412. Pinning >= 0.90 keeps this a statement
+	// about neutrality (and fails at 0.7 under a bare product).
+	if got.Confidence < 0.90 {
+		t.Errorf("no-cross-oracle confidence = %v, want >= 0.90 — the 0.7 "+
+			"no-data value must stay neutral, not cap the score", got.Confidence)
+	}
+	const wantConfidence = 0.94123253454368350
+	if math.Abs(got.Confidence-wantConfidence) > 1e-9 {
+		t.Errorf("Compute = %.17f, want %.17f", got.Confidence, wantConfidence)
+	}
+}
+
 // TestDefaultWeights — sanity that the default is unweighted.
 func TestDefaultWeights(t *testing.T) {
 	w := confidence.DefaultWeights()

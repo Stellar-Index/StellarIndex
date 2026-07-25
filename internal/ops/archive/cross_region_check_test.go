@@ -46,9 +46,12 @@ func TestAnalyseRegionResults_AllAgree(t *testing.T) {
 		{Region: "r3", Response: resp},
 	}
 	var out bytes.Buffer
-	div := analyseRegionResults(metricVWAP, "native/fiat:USD", from, to, results, &out)
+	div, compared := analyseRegionResults(metricVWAP, "native/fiat:USD", from, to, results, &out)
 	if div {
 		t.Fatalf("divergence flagged when all regions agreed; out=%s", out.String())
+	}
+	if !compared {
+		t.Error("expected compared=true with 3 responding regions")
 	}
 	if !strings.HasPrefix(out.String(), "OK") {
 		t.Errorf("expected OK line, got: %s", out.String())
@@ -67,9 +70,12 @@ func TestAnalyseRegionResults_PriceDisagreement(t *testing.T) {
 		{Region: "r3", Response: &crossRegionResponse{From: from, To: to, Price: "0.1234567890"}},
 	}
 	var out bytes.Buffer
-	div := analyseRegionResults(metricVWAP, "native/fiat:USD", from, to, results, &out)
+	div, compared := analyseRegionResults(metricVWAP, "native/fiat:USD", from, to, results, &out)
 	if !div {
 		t.Fatalf("divergence not flagged; out=%s", out.String())
+	}
+	if !compared {
+		t.Error("expected compared=true with 3 responding regions")
 	}
 	body := out.String()
 	if !strings.Contains(body, "DIVERGENCE") {
@@ -98,9 +104,12 @@ func TestAnalyseRegionResults_FetchErrorTolerated(t *testing.T) {
 		{Region: "r3", Response: resp},
 	}
 	var out bytes.Buffer
-	div := analyseRegionResults(metricVWAP, "native/fiat:USD", from, to, results, &out)
+	div, compared := analyseRegionResults(metricVWAP, "native/fiat:USD", from, to, results, &out)
 	if div {
 		t.Fatalf("divergence flagged on a partial fetch error; out=%s", out.String())
+	}
+	if !compared {
+		t.Error("expected compared=true: r1+r3 both responded (2 >= 2), only r2 failed")
 	}
 	body := out.String()
 	if !strings.Contains(body, "ERR") {
@@ -109,6 +118,101 @@ func TestAnalyseRegionResults_FetchErrorTolerated(t *testing.T) {
 	// r1 + r3 still agree — should also have OK
 	if !strings.Contains(body, "OK") {
 		t.Errorf("expected OK line for the agreeing regions: %s", body)
+	}
+}
+
+// TestAnalyseRegionResults_NotComparable is the OBS-07 regression:
+// when fewer than 2 regions respond (here, only r1 — r2 and r3 both
+// failed), the sample proves NOTHING. It must not be flagged as a
+// divergence, but it MUST be reported as not-compared so a caller
+// tallying "all consistent" across many samples can distinguish
+// "everything agreed" from "nothing was ever actually compared".
+func TestAnalyseRegionResults_NotComparable(t *testing.T) {
+	from := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
+	to := from.Add(30 * time.Second)
+	results := []regionResult{
+		{Region: "r1", Response: &crossRegionResponse{From: from, To: to, Price: "1.00"}},
+		{Region: "r2", Err: fmt.Errorf("connection refused")},
+		{Region: "r3", Err: fmt.Errorf("connection refused")},
+	}
+	var out bytes.Buffer
+	div, compared := analyseRegionResults(metricVWAP, "native/fiat:USD", from, to, results, &out)
+	if div {
+		t.Fatalf("divergence must not be flagged when only 1 region responded; out=%s", out.String())
+	}
+	if compared {
+		t.Fatal("expected compared=false with only 1 responding region")
+	}
+}
+
+// TestAnalyseRegionResults_ZeroRegionsRespond: every region failed —
+// the degenerate case must also be not-compared, not divergence.
+func TestAnalyseRegionResults_ZeroRegionsRespond(t *testing.T) {
+	from := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
+	to := from.Add(30 * time.Second)
+	results := []regionResult{
+		{Region: "r1", Err: fmt.Errorf("connection refused")},
+		{Region: "r2", Err: fmt.Errorf("connection refused")},
+		{Region: "r3", Err: fmt.Errorf("timeout")},
+	}
+	var out bytes.Buffer
+	div, compared := analyseRegionResults(metricVWAP, "native/fiat:USD", from, to, results, &out)
+	if div {
+		t.Fatalf("divergence must not be flagged when zero regions responded; out=%s", out.String())
+	}
+	if compared {
+		t.Fatal("expected compared=false with zero responding regions")
+	}
+}
+
+// TestCrossRegionCheck_InconclusiveWhenNoBucketComparable is the
+// OBS-07 regression at the command level: when EVERY sampled bucket
+// has fewer than 2 responding regions (here, both configured regions
+// are unreachable), crossRegionCheck must return a non-nil
+// "inconclusive" error instead of silently printing "OK" and exiting
+// 0 — a total inability to compare is not the same as "all
+// consistent".
+func TestCrossRegionCheck_InconclusiveWhenNoBucketComparable(t *testing.T) {
+	down := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
+	down.Close() // listener closed — every request now gets connection-refused
+
+	args := []string{
+		"-regions", fmt.Sprintf("r1=%s,r2=%s", down.URL, down.URL),
+		"-pairs", "native/fiat:USD",
+		"-samples", "2",
+		"-window", "1s",
+		"-to", "2026-04-27T12:00:30Z",
+	}
+	err := crossRegionCheck(args)
+	if err == nil {
+		t.Fatal("expected a non-nil error when no sample had >=2 responding regions, got nil")
+	}
+	if !strings.Contains(err.Error(), "inconclusive") {
+		t.Errorf("expected an 'inconclusive' error, got: %v", err)
+	}
+}
+
+// TestCrossRegionCheck_AllAgreeIsOK: the healthy path still exits 0
+// when regions agree (regression guard against over-correcting the
+// OBS-07 fix into always-error).
+func TestCrossRegionCheck_AllAgreeIsOK(t *testing.T) {
+	body := map[string]any{
+		"from": "2026-04-27T12:00:00Z", "to": "2026-04-27T12:00:30Z", "price": "1.00",
+	}
+	r1 := stubServer(t, body)
+	defer r1.Close()
+	r2 := stubServer(t, body)
+	defer r2.Close()
+
+	args := []string{
+		"-regions", fmt.Sprintf("r1=%s,r2=%s", r1.URL, r2.URL),
+		"-pairs", "native/fiat:USD",
+		"-samples", "1",
+		"-window", "1s",
+		"-to", "2026-04-27T12:00:30Z",
+	}
+	if err := crossRegionCheck(args); err != nil {
+		t.Fatalf("expected nil error when all regions agree, got %v", err)
 	}
 }
 
@@ -127,9 +231,12 @@ func TestAnalyseRegionResults_OHLCAllFieldsCompared(t *testing.T) {
 		}},
 	}
 	var out bytes.Buffer
-	div := analyseRegionResults(metricOHLC, "native/fiat:USD", from, to, results, &out)
+	div, compared := analyseRegionResults(metricOHLC, "native/fiat:USD", from, to, results, &out)
 	if !div {
 		t.Fatalf("OHLC high-field divergence not flagged; out=%s", out.String())
+	}
+	if !compared {
+		t.Error("expected compared=true with 2 responding regions")
 	}
 	if !strings.Contains(out.String(), "high:") {
 		t.Errorf("expected 'high:' in diff output: %s", out.String())
@@ -148,9 +255,12 @@ func TestAnalyseRegionResults_SourcesDisagreement(t *testing.T) {
 		}},
 	}
 	var out bytes.Buffer
-	div := analyseRegionResults(metricVWAP, "native/fiat:USD", from, to, results, &out)
+	div, compared := analyseRegionResults(metricVWAP, "native/fiat:USD", from, to, results, &out)
 	if !div {
 		t.Fatalf("sources divergence not flagged; out=%s", out.String())
+	}
+	if !compared {
+		t.Error("expected compared=true with 2 responding regions")
 	}
 	if !strings.Contains(out.String(), "sources:") {
 		t.Fatalf("expected sources diff, got: %s", out.String())
@@ -169,9 +279,12 @@ func TestAnalyseRegionResults_FlagsDisagreement(t *testing.T) {
 		}},
 	}
 	var out bytes.Buffer
-	div := analyseRegionResults(metricVWAP, "native/fiat:USD", from, to, results, &out)
+	div, compared := analyseRegionResults(metricVWAP, "native/fiat:USD", from, to, results, &out)
 	if !div {
 		t.Fatalf("flags divergence not flagged; out=%s", out.String())
+	}
+	if !compared {
+		t.Error("expected compared=true with 2 responding regions")
 	}
 	if !strings.Contains(out.String(), "flags.single_source:") {
 		t.Fatalf("expected single_source diff, got: %s", out.String())
@@ -190,9 +303,12 @@ func TestAnalyseRegionResults_VWAPMetadataDisagreement(t *testing.T) {
 		}},
 	}
 	var out bytes.Buffer
-	div := analyseRegionResults(metricVWAP, "native/fiat:USD", from, to, results, &out)
+	div, compared := analyseRegionResults(metricVWAP, "native/fiat:USD", from, to, results, &out)
 	if !div {
 		t.Fatalf("VWAP metadata divergence not flagged; out=%s", out.String())
+	}
+	if !compared {
+		t.Error("expected compared=true with 2 responding regions")
 	}
 	if !strings.Contains(out.String(), "trade_count:") {
 		t.Fatalf("expected trade_count diff, got: %s", out.String())

@@ -5,9 +5,12 @@ package ratelimit_test
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
@@ -81,5 +84,67 @@ func TestFixedWindowCounter_RedisErrorPropagates(t *testing.T) {
 
 	if _, err := c.Incr(context.Background(), "k"); err == nil {
 		t.Fatal("want error after redis close, got nil")
+	}
+}
+
+// dropExpireHook fails every standalone EXPIRE the client issues and
+// passes everything else through — the observable shape of the REL-05
+// leak: a connection reset / MISCONF / OOM that lands between the INCR
+// and the follow-up EXPIRE. It cannot intercept an EXPIRE issued from
+// INSIDE a Lua script, which is exactly the point: after the fix there
+// is no standalone EXPIRE to drop.
+type dropExpireHook struct{ dropped int }
+
+func (h *dropExpireHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *dropExpireHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if cmd.Name() == "expire" {
+			h.dropped++
+			err := errors.New("simulated transport failure on EXPIRE")
+			cmd.SetErr(err)
+			return err
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (h *dropExpireHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+// TestFixedWindowCounter_TTLSurvivesDroppedExpire is the REL-05
+// regression.
+//
+// The failure it encodes: pre-fix Incr issued INCR and then a separate,
+// best-effort EXPIRE whose error was discarded. Drop that one command —
+// a reset connection, a MISCONF read-only replica, an OOM eviction — and
+// the counter key exists with NO TTL. Nothing ever revisits it (the next
+// window uses a different key suffix), so every dropped EXPIRE leaks one
+// permanent key into the throttle namespace, unbounded over time.
+//
+// Post-fix INCR and EXPIRE are one Lua EVAL: Redis runs both or neither,
+// and a hook that kills standalone EXPIREs cannot separate them.
+func TestFixedWindowCounter_TTLSurvivesDroppedExpire(t *testing.T) {
+	rdb, mr := newRedis(t)
+	hook := &dropExpireHook{}
+	rdb.AddHook(hook)
+
+	fakeNow := time.Unix(1_700_000_000, 0).UTC()
+	c := ratelimit.NewFixedWindowCounter(rdb, time.Hour, func() time.Time { return fakeNow })
+
+	if _, err := c.Incr(context.Background(), "signup-ip:203.0.113.9"); err != nil {
+		t.Fatalf("incr: %v", err)
+	}
+
+	key := "signup-ip:203.0.113.9:" + strconv.FormatInt(fakeNow.Unix()/3600, 10)
+	if ttl := mr.TTL(key); ttl != 2*time.Hour {
+		t.Fatalf("TTL(%s) = %v, want %v — the drain TTL must be set atomically with the "+
+			"increment that creates the key, not by a droppable follow-up EXPIRE (REL-05)",
+			key, ttl, 2*time.Hour)
+	}
+	if hook.dropped != 0 {
+		t.Errorf("client issued %d standalone EXPIRE command(s); the increment must be a "+
+			"single atomic call", hook.dropped)
 	}
 }

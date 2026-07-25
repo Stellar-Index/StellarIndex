@@ -594,3 +594,216 @@
     enabled: true
     state: started
     daemon_reload: true
+
+# ── TimescaleDB job/CAGG health probe ─────────────────────────────
+#
+# Producer for three metrics that deploy/monitoring/rules/storage.yml
+# has referenced since it landed but that NOTHING emitted, leaving
+# stellarindex_timescale_cagg_stale and
+# stellarindex_timescale_compression_lag permanently unable to fire
+# (tracked in scripts/ci/lint-metric-refs.sh KNOWN_INERT). Same shape
+# as the galexie-catchup and stellar-stack-version probes above:
+# script + oneshot service + timer, root-owned, writing to the SAME
+# node_exporter textfile dir with the SAME chmod-644-before-mv
+# discipline — see the galexie probe for why both of those matter.
+#
+# It also emits stellarindex_timescale_job_failures_total, which is
+# not decoration: r1 was silently failing 37–69% of every CAGG refresh
+# run with "failed to start job" (background-worker starvation, fixed
+# in postgresql.conf.j2) and NOTHING surfaced it. The jobs got a slot
+# on a later tick, so last_run_status read Success and the caggs were
+# never stale — the only evidence was a counter nobody exported.
+#
+# Runbook: docs/operations/runbooks/cagg-stale.md
+- name: TimescaleDB job/CAGG health probe (script)
+  ansible.builtin.copy:
+    dest: /usr/local/sbin/timescale-jobs-probe.sh
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      # MUST be the --collector.textfile.directory the running
+      # node_exporter reads, NOT Debian's /var/lib/prometheus/
+      # node-exporter default (which nothing scrapes here — see the
+      # galexie probe's 2026-07-08 note).
+      DIR=/var/lib/node_exporter/textfile_collector
+      mkdir -p "$DIR"
+      TMP=$(mktemp)
+      trap 'rm -f "$TMP"' EXIT
+
+      # Peer-auth as postgres; timescaledb_information.* needs no
+      # superuser but postgres is the account this host already uses
+      # for local maintenance. `|| true` so one failed query degrades
+      # to a missing metric rather than a half-written file.
+      q() { runuser -u postgres -- psql -d stellarindex -At -F'|' -c "$1" 2>/dev/null || true; }
+
+      {
+        echo "# HELP stellarindex_cagg_last_refresh_unix Unix time of the last SUCCESSFUL refresh of each continuous aggregate."
+        echo "# TYPE stellarindex_cagg_last_refresh_unix gauge"
+        echo "# HELP stellarindex_cagg_refresh_interval_seconds Configured refresh schedule interval per continuous aggregate."
+        echo "# TYPE stellarindex_cagg_refresh_interval_seconds gauge"
+      } > "$TMP"
+
+      # For a refresh policy, jobs.hypertable_name is the CAGG VIEW
+      # name (prices_1m), not the _materialized_hypertable_NN — do not
+      # "fix" this into a join on continuous_aggregates, which yields
+      # NULL and silently drops every series.
+      q "SELECT j.hypertable_name,
+                COALESCE(EXTRACT(epoch FROM js.last_successful_finish)::bigint, 0),
+                EXTRACT(epoch FROM j.schedule_interval)::bigint
+         FROM timescaledb_information.jobs j
+         JOIN timescaledb_information.job_stats js USING (job_id)
+         WHERE j.proc_name = 'policy_refresh_continuous_aggregate'" |
+      while IFS='|' read -r cagg last iv; do
+        [ -n "${cagg:-}" ] || continue
+        echo "stellarindex_cagg_last_refresh_unix{cagg=\"$cagg\"} $last"
+        echo "stellarindex_cagg_refresh_interval_seconds{cagg=\"$cagg\"} $iv"
+      done >> "$TMP"
+
+      # Only count hypertables that HAVE a compression policy —
+      # otherwise every uncompressed-by-design table trips the alert.
+      CHUNKS=$(q "SELECT count(*) FROM timescaledb_information.chunks c
+                  WHERE c.is_compressed = false
+                    AND c.range_end < now() - interval '7 days'
+                    AND EXISTS (SELECT 1 FROM timescaledb_information.jobs j
+                                WHERE j.proc_name = 'policy_compression'
+                                  AND j.hypertable_name = c.hypertable_name)")
+      {
+        echo "# HELP stellarindex_uncompressed_chunks_older_than_7d Chunks older than 7d still uncompressed on compression-enabled hypertables."
+        echo "# TYPE stellarindex_uncompressed_chunks_older_than_7d gauge"
+        echo "stellarindex_uncompressed_chunks_older_than_7d ${CHUNKS:-0}"
+        echo "# HELP stellarindex_timescale_job_failures_total Cumulative failed runs per TimescaleDB background job."
+        echo "# TYPE stellarindex_timescale_job_failures_total counter"
+      } >> "$TMP"
+
+      q "SELECT j.proc_name, COALESCE(j.hypertable_name,'-'), js.job_id, js.total_failures
+         FROM timescaledb_information.job_stats js
+         JOIN timescaledb_information.jobs j USING (job_id)" |
+      while IFS='|' read -r proc ht jid fails; do
+        [ -n "${jid:-}" ] || continue
+        echo "stellarindex_timescale_job_failures_total{job_id=\"$jid\",proc=\"$proc\",hypertable=\"$ht\"} ${fails:-0}"
+      done >> "$TMP"
+
+      # mktemp creates 0600; node_exporter runs unprivileged and
+      # SILENTLY skips unreadable textfiles.
+      chmod 644 "$TMP"
+      mv "$TMP" "$DIR/timescale_jobs.prom"
+      trap - EXIT
+  notify: Reload systemd
+
+- name: TimescaleDB job/CAGG health probe service unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/timescale-jobs-probe.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Stellar Index — TimescaleDB job/CAGG health probe
+      Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cagg-stale.md
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/timescale-jobs-probe.sh
+      TimeoutStartSec=60
+      Nice=10
+  notify: Reload systemd
+
+- name: TimescaleDB job/CAGG health probe timer
+  # Every minute. The fastest CAGG here refreshes on a 30s schedule and
+  # the stale rule trips at 5x the interval (150s), so a slower probe
+  # would let the freshness metric itself age past the threshold and
+  # fire a FALSE stale alert — the metric's own staleness must stay
+  # well inside the window it is used to judge.
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/timescale-jobs-probe.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Run the TimescaleDB job/CAGG health probe every minute
+      Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cagg-stale.md
+      [Timer]
+      OnBootSec=2min
+      OnUnitActiveSec=1min
+      AccuracySec=10s
+      Unit=timescale-jobs-probe.service
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd
+
+- name: Enable + start the TimescaleDB job/CAGG probe timer
+  ansible.builtin.systemd:
+    name: timescale-jobs-probe.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# ── Redirect the Debian collectors into the dir we actually read ───
+#
+# `prometheus-node-exporter-collectors` ships apt + nvme probes on
+# 5-minute timers, and both hardcode their output into
+# /var/lib/prometheus/node-exporter — Debian's default textfile dir.
+# This host runs node_exporter with
+# --collector.textfile.directory=/var/lib/node_exporter/textfile_collector
+# (see the ARGS above), so every one of those samples has been written
+# and thrown away: nvme_percentage_used_ratio,
+# nvme_available_spare_ratio, nvme_media_errors_total,
+# apt_upgrades_pending and node_reboot_required all scrape 0 series.
+#
+# That is the same class of failure as the galexie probe writing to the
+# wrong dir in the 2026-07-08 incident, just inherited from the package
+# instead of written here — and it matters more than it looks: r1's
+# NVMe is not replaceable on demand, so drive wear and media errors are
+# exactly what we want a long lead time on.
+#
+# Fixed with systemd drop-ins rather than by editing the packaged units
+# (drop-ins survive package upgrades) and rather than by moving OUR
+# probes to Debian's dir (that would churn 8 working producers). The
+# empty `ExecStart=` is required to clear the packaged value before
+# setting a new one.
+- name: Ensure the drop-in directories exist
+  ansible.builtin.file:
+    path: "/etc/systemd/system/prometheus-node-exporter-{{ item }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - apt
+    - nvme
+
+- name: Redirect packaged apt/nvme textfile collectors to the read dir
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/prometheus-node-exporter-{{ item.name }}.service.d/textfile-dir.conf"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible (archival-node / 10-observability.yml).
+      # Repoints the packaged collector at the textfile dir node_exporter
+      # actually reads. Empty ExecStart= clears the packaged one first.
+      [Service]
+      ExecStart=
+      ExecStart={{ item.cmd }}
+  loop:
+    - name: apt
+      cmd: '/bin/bash -c "/usr/share/prometheus-node-exporter-collectors/apt_info.py | sponge /var/lib/node_exporter/textfile_collector/apt.prom"'
+    - name: nvme
+      cmd: '/bin/sh -c "/usr/share/prometheus-node-exporter-collectors/nvme_metrics.py | sponge /var/lib/node_exporter/textfile_collector/nvme.prom"'
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Reload systemd
+
+- name: Drop the now-stale copies from Debian's unread textfile dir
+  # Left in place they are simply dead files, but a future operator
+  # finding two textfile dirs with overlapping names has no way to tell
+  # which one is live. Removing them makes the answer unambiguous.
+  ansible.builtin.file:
+    path: "/var/lib/prometheus/node-exporter/{{ item }}"
+    state: absent
+  loop:
+    - apt.prom
+    - nvme.prom

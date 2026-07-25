@@ -41,6 +41,20 @@ type BatchWriter interface {
 
 // AsyncSinkOptions configures a [NewAsyncSink].
 type AsyncSinkOptions struct {
+	// IsPermanentFault positively classifies an error as a PERMANENT data
+	// fault (a row that will never land no matter how many times it is
+	// retried). Only such an error is isolated and dropped; everything else
+	// blocks-and-retries, per the asymmetric ADR-0041 policy.
+	//
+	// Injected rather than imported: a source package must not reach up into
+	// internal/storage (import-boundary rule L/sources-app-purity, D8 rule 3).
+	// The app layer supplies timescale.IsPermanentDataError here.
+	//
+	// Defaults to "nothing is permanent" — i.e. retry forever rather than
+	// drop. That is the safe side: an unclassified error must never silently
+	// discard a row from ADR-0029's catch-all landing zone.
+	IsPermanentFault func(error) bool
+
 	// BufferSize is the channel depth. Defaults to 4096. Sized so a
 	// few seconds of peak Soroban event volume (typically 100-500
 	// events/s) fits even during a Postgres write hiccup. When the
@@ -68,6 +82,20 @@ type AsyncSinkOptions struct {
 	// batched write is many-row.
 	WriteTimeout time.Duration
 
+	// DrainGrace bounds the shutdown drain: how long flushBatch may
+	// keep retrying rows that were still buffered when Stop() fired.
+	// Defaults to 2x WriteTimeout.
+	//
+	// This exists because "stop was requested" and "stop has waited
+	// long enough" are different events, and conflating them silently
+	// lost data. The steady-state flush aborts on s.stopping so a
+	// stuck write can't hold shutdown hostage — but the shutdown
+	// DRAIN runs entirely after s.stopping is closed, so reusing that
+	// signal made every drained batch abandon-on-arrival. Stop() still
+	// terminates promptly: the drain is bounded by this grace, not by
+	// unbounded retries.
+	DrainGrace time.Duration
+
 	// Logger is used for warn/error lines from the worker. nil falls
 	// through to slog.Default().
 	Logger *slog.Logger
@@ -90,26 +118,39 @@ type AsyncSinkOptions struct {
 // The worker goroutine is single, so writes don't compete with each
 // other.
 type AsyncSink struct {
-	w       BatchWriter
-	logger  *slog.Logger
-	timeout time.Duration
+	w                BatchWriter
+	isPermanentFault func(error) bool
+	logger           *slog.Logger
+	timeout          time.Duration
 
-	ch       chan Row
-	flush    time.Duration
-	batchSz  int
-	stopOnce sync.Once
-	stopping chan struct{}
-	done     chan struct{}
+	ch         chan Row
+	flush      time.Duration
+	batchSz    int
+	drainGrace time.Duration
+
+	// abortFlush is the signal that aborts an in-flight or retrying
+	// flush. Steady state it is s.stopping; drainOnStop swaps it for a
+	// bounded grace timer so the final batches can actually land.
+	// Written and read ONLY by the single worker goroutine (run ->
+	// drainOnStop -> flushBatch), never concurrently.
+	abortFlush <-chan struct{}
+	stopOnce   sync.Once
+	stopping   chan struct{}
+	done       chan struct{}
 
 	mu      sync.Mutex
 	dropped uint64
 	skipped uint64
 	written uint64
+	lost    uint64
 }
 
 // NewAsyncSink constructs an AsyncSink. Returns the sink in stopped
 // state — callers must call Start before PushEvent will drain.
 func NewAsyncSink(w BatchWriter, opts AsyncSinkOptions) *AsyncSink {
+	if opts.IsPermanentFault == nil {
+		opts.IsPermanentFault = func(error) bool { return false }
+	}
 	if opts.BufferSize <= 0 {
 		opts.BufferSize = 4096
 	}
@@ -122,19 +163,24 @@ func NewAsyncSink(w BatchWriter, opts AsyncSinkOptions) *AsyncSink {
 	if opts.WriteTimeout <= 0 {
 		opts.WriteTimeout = 10 * time.Second
 	}
+	if opts.DrainGrace <= 0 {
+		opts.DrainGrace = 2 * opts.WriteTimeout
+	}
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &AsyncSink{
-		w:        w,
-		logger:   logger,
-		timeout:  opts.WriteTimeout,
-		ch:       make(chan Row, opts.BufferSize),
-		flush:    opts.FlushInterval,
-		batchSz:  opts.BatchSize,
-		stopping: make(chan struct{}),
-		done:     make(chan struct{}),
+		w:                w,
+		isPermanentFault: opts.IsPermanentFault,
+		logger:           logger,
+		timeout:          opts.WriteTimeout,
+		ch:               make(chan Row, opts.BufferSize),
+		flush:            opts.FlushInterval,
+		batchSz:          opts.BatchSize,
+		drainGrace:       opts.DrainGrace,
+		stopping:         make(chan struct{}),
+		done:             make(chan struct{}),
 	}
 }
 
@@ -237,6 +283,32 @@ func (s *AsyncSink) WrittenCount() uint64 {
 	return s.written
 }
 
+// LostCount returns the total number of rows permanently lost — a
+// batch that either hit a positively-classified permanent data fault
+// or never landed before shutdown gave up on it (audit-2026-07-23
+// REL-02/DAT-09: soroban_events is the raw catch-all landing zone and
+// used to drop a failed batch outright with only a Warn log; a
+// sustained infra fault silently ate whole windows of raw events with
+// no operator-visible signal and no re-derive hint). Operators alert
+// on this rising the same way they do on the trades path's
+// SourceInsertErrorsTotal{kind="dropped"}.
+func (s *AsyncSink) LostCount() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lost
+}
+
+// asyncSinkRetryInitialBackoff / asyncSinkRetryMaxBackoff bound the
+// capped exponential backoff [flushBatch] applies to a batch insert
+// failure that is not positively classified as permanent — mirroring
+// the block-and-retry policy [internal/pipeline] applies to the
+// trades path (ADR-0041 / REL-08's asymmetric default: a drop
+// requires positive proof of permanence, retry is the default).
+const (
+	asyncSinkRetryInitialBackoff = 100 * time.Millisecond
+	asyncSinkRetryMaxBackoff     = 5 * time.Second
+)
+
 // run drains the channel and flushes batches.
 //
 // Deliberately uses a fresh context per batch rather than a
@@ -247,6 +319,7 @@ func (s *AsyncSink) WrittenCount() uint64 {
 //nolint:contextcheck // intentional fresh context; see godoc above.
 func (s *AsyncSink) run() {
 	defer close(s.done)
+	s.abortFlush = s.stopping
 	batch := make([]Row, 0, s.batchSz)
 	ticker := time.NewTicker(s.flush)
 	defer ticker.Stop()
@@ -255,18 +328,9 @@ func (s *AsyncSink) run() {
 		if len(batch) == 0 {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
-		err := s.w.InsertSorobanEventsBatch(ctx, batch)
-		cancel()
-		if err != nil {
-			s.logger.Warn("sorobanevents: batch insert failed",
-				"err", err, "rows", len(batch))
-		} else {
-			s.mu.Lock()
-			s.written += uint64(len(batch))
-			s.mu.Unlock()
-		}
-		batch = batch[:0]
+		b := batch
+		batch = make([]Row, 0, s.batchSz)
+		s.flushBatch(b)
 	}
 
 	for {
@@ -293,6 +357,14 @@ func (s *AsyncSink) run() {
 // producer; the stopping signal already unblocked them via
 // PushEvent's select.
 func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
+	// s.stopping is already closed here, so leaving abortFlush pointing
+	// at it would abandon every batch this drain flushes — the bug this
+	// grace window fixes. Bounded, so Stop() still returns promptly.
+	grace := make(chan struct{})
+	timer := time.AfterFunc(s.drainGrace, func() { close(grace) })
+	defer timer.Stop()
+	s.abortFlush = grace
+
 	for {
 		select {
 		case row := <-s.ch:
@@ -305,4 +377,89 @@ func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
 			return
 		}
 	}
+}
+
+// flushBatch writes one batch with the same asymmetric ADR-0041
+// failure policy the trades path uses (REL-08 / audit-2026-07-23
+// REL-02, DAT-09): a write failure blocks-and-retries with capped
+// backoff by DEFAULT; only a POSITIVELY-classified permanent data
+// fault (the injected IsPermanentFault predicate — pq class 22/23) is
+// isolated and dropped. Before this, ANY error — including a
+// transient infra fault during a Postgres outage — silently
+// discarded the whole batch after one Warn log, permanently losing
+// that window of raw soroban_events rows with no operator signal and
+// no re-derive hint (this table is ADR-0029's catch-all landing
+// zone, the last-resort source of truth Row.Ledger the census +
+// completeness tooling reconcile against).
+//
+// The retry loop is bounded by s.stopping: an in-flight attempt is
+// cancelled the instant Stop() fires (so shutdown isn't held hostage
+// by a stuck write), and a batch that still hasn't landed at that
+// point is abandoned loudly via [AsyncSink.abandonBatch] rather than
+// retried forever.
+func (s *AsyncSink) flushBatch(rows []Row) {
+	abort := s.abortFlush
+	backoff := asyncSinkRetryInitialBackoff
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
+		attemptDone := make(chan struct{})
+		go func() {
+			select {
+			case <-abort:
+				cancel() // unblock a write stuck past its own WriteTimeout
+			case <-attemptDone:
+			}
+		}()
+		err := s.w.InsertSorobanEventsBatch(ctx, rows)
+		close(attemptDone)
+		cancel()
+
+		if err == nil {
+			s.mu.Lock()
+			s.written += uint64(len(rows))
+			s.mu.Unlock()
+			return
+		}
+		if s.isPermanentFault(err) {
+			s.abandonBatch(rows, err, "permanent data fault")
+			return
+		}
+		select {
+		case <-abort:
+			s.abandonBatch(rows, err, "shutdown before the write landed")
+			return
+		case <-time.After(backoff):
+		}
+		s.logger.Warn("sorobanevents: batch insert failed — retrying with backpressure",
+			"err", err, "rows", len(rows), "backoff", backoff)
+		backoff = min(backoff*2, asyncSinkRetryMaxBackoff)
+	}
+}
+
+// abandonBatch counts + loudly logs rows[] as permanently lost, with
+// the ledger range so an operator knows exactly what to re-derive
+// (the raw ops are durable in the CH lake per ADR-0034).
+func (s *AsyncSink) abandonBatch(rows []Row, err error, reason string) {
+	lo, hi := rowLedgerRange(rows)
+	s.mu.Lock()
+	s.lost += uint64(len(rows))
+	s.mu.Unlock()
+	s.logger.Error("sorobanevents: batch insert failed — rows lost, re-derive this range from the CH lake (ADR-0034)",
+		"reason", reason, "err", err, "rows", len(rows),
+		"ledger_from", lo, "ledger_to", hi)
+}
+
+// rowLedgerRange returns the min/max Ledger across rows, for the
+// re-derive hint in [AsyncSink.abandonBatch]. lo==0 means rows was
+// empty.
+func rowLedgerRange(rows []Row) (lo, hi uint32) {
+	for _, r := range rows {
+		if lo == 0 || r.Ledger < lo {
+			lo = r.Ledger
+		}
+		if r.Ledger > hi {
+			hi = r.Ledger
+		}
+	}
+	return lo, hi
 }

@@ -56,7 +56,7 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 			if !ok {
 				return
 			}
-			id := usageKeyForSubject(subject)
+			id := UsageKeyForSubject(subject)
 			if id == "" {
 				return
 			}
@@ -76,15 +76,19 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 	}
 }
 
-// usageKeyForSubject picks the stable identifier we count under.
+// UsageKeyForSubject picks the stable identifier we count under.
 // Order of preference:
 //  1. KeyID — distinguishes per-key when one account has many.
 //  2. Identifier — group-by stable identifier across keys.
 //  3. "" — anonymous; skip.
 //
-// Shared with [MonthlyQuota] (reads the same counters) and mirrored
-// by /v1/account/usage's handler-side derivation.
-func usageKeyForSubject(s auth.Subject) string {
+// Exported (HLT-01) so every reader of these counters — [MonthlyQuota]
+// and /v1/account/usage's handler — calls this single implementation
+// instead of reimplementing the derivation. A duplicated copy that
+// drifts from this one silently breaks the reader: it would key off
+// something the writer never wrote under, and /v1/account/usage would
+// return [] despite incoming requests being recorded.
+func UsageKeyForSubject(s auth.Subject) string {
 	if s.Tier == auth.TierAnonymous || s.Tier == "" {
 		return ""
 	}

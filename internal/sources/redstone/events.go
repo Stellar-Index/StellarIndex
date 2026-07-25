@@ -109,4 +109,14 @@ var (
 	// specific feeds. Skip the whole event rather than risk
 	// assigning a BTC price to ETH.
 	ErrFeedIDCountMismatch = errors.New("redstone: feed_ids arity doesn't match updated_feeds; cannot safely zip")
+
+	// ErrEventIndexOverflow — e.EventIndex exceeded eventFanoutStride
+	// (DAT-06/trap-15, audit-2026-07-23). The synthetic OpIndex packs
+	// (OperationIndex, EventIndex, vector position) into one uint32;
+	// an EventIndex this large would spill into the next operation's
+	// synthetic range. Real REDSTONE-adjacent ops emit at most a
+	// handful of contract events, so hitting the stride means either
+	// a decoder bug or a contract emitting far more events per op
+	// than anything observed.
+	ErrEventIndexOverflow = errors.New("redstone: EventIndex exceeds OpIndex fanout stride")
 )

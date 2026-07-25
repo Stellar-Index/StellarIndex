@@ -3,11 +3,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
@@ -326,5 +330,178 @@ func TestWarnUnsafeBind(t *testing.T) {
 	// Unparseable listen addr can't be classified → stay silent.
 	if warnLogged("::", nil) {
 		t.Error(`warnUnsafeBind("::"): bare host with no port is unparseable; must stay silent`)
+	}
+}
+
+// fakeSubscriberRunner implements subscriberRunner for
+// TestRunSubscriberSupervisedWithBackoff_RestartsPastFailures. The
+// first failN calls to Run return failErr immediately (mimicking
+// redispub.Subscriber.Run's "subscribe channel closed unexpectedly"
+// error); every call after that blocks until ctx is cancelled, like
+// the real Subscriber.Run does while the connection stays healthy.
+type fakeSubscriberRunner struct {
+	mu      sync.Mutex
+	calls   int
+	failN   int
+	failErr error
+}
+
+func (f *fakeSubscriberRunner) Run(ctx context.Context) error {
+	f.mu.Lock()
+	f.calls++
+	call := f.calls
+	f.mu.Unlock()
+	if call <= f.failN {
+		return f.failErr
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (f *fakeSubscriberRunner) Channel() string { return "fake-channel" }
+
+func (f *fakeSubscriberRunner) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+// TestRunSubscriberSupervisedWithBackoff_RestartsPastFailures —
+// REL-supervision (audit-2026-07-23). redispub.Subscriber.Run's doc
+// says an unexpected stream-end error lets "the caller decide
+// whether to retry"; prior to this fix the caller (main.go) never
+// did — a single Run failure logged and the goroutine exited for
+// good, leaving /v1/price/stream's closed-bucket feed permanently
+// silent for the rest of the process. This asserts the supervised
+// loop actually restarts past MULTIPLE consecutive failures (not
+// just tolerates one) and reaches a long-lived run. Against the
+// pre-fix single-shot call site this times out: calls never exceeds
+// 1.
+func TestRunSubscriberSupervisedWithBackoff_RestartsPastFailures(t *testing.T) {
+	fake := &fakeSubscriberRunner{
+		failN:   3,
+		failErr: errors.New("redispub: subscribe channel closed unexpectedly"),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	done := make(chan struct{})
+	go func() {
+		runSubscriberSupervisedWithBackoff(ctx, fake, logger, time.Millisecond, 2*time.Millisecond)
+		close(done)
+	}()
+
+	deadline := time.After(3 * time.Second)
+	for {
+		if fake.callCount() > fake.failN {
+			break // restarted past every induced failure into the long-lived run
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("subscriber did not restart past %d induced failures within the deadline (calls=%d)",
+				fake.failN, fake.callCount())
+		case <-time.After(time.Millisecond):
+		}
+	}
+
+	if !strings.Contains(buf.String(), "restarting") {
+		t.Error(`expected a "restarting" log line for each induced failure`)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runSubscriberSupervisedWithBackoff did not return after ctx cancellation")
+	}
+}
+
+// TestInProcessLoginThrottle_EnforcesPerEmailCap — NTF-08
+// (audit-2026-07-23). A single victim inbox must be capped even
+// when every send comes from a DIFFERENT IP (the inbox-bomb
+// dimension a per-IP-only cap can't catch). Asserts the corrected
+// value: the (max+1)th send to the same email is denied.
+func TestInProcessLoginThrottle_EnforcesPerEmailCap(t *testing.T) {
+	th := newInProcessLoginThrottle()
+	ctx := context.Background()
+	const email = "victim@example.com"
+	for i := 0; i < inProcessLoginThrottleMaxPerEmail; i++ {
+		allowed, err := th.Allow(ctx, fmt.Sprintf("203.0.113.%d", i), email)
+		if err != nil {
+			t.Fatalf("call %d: unexpected error: %v", i, err)
+		}
+		if !allowed {
+			t.Fatalf("call %d: expected allowed within the per-email cap (max=%d)", i, inProcessLoginThrottleMaxPerEmail)
+		}
+	}
+	allowed, err := th.Allow(ctx, "203.0.113.250", email)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if allowed {
+		t.Errorf("expected send #%d to %q (beyond the per-email cap of %d) to be DENIED, got allowed",
+			inProcessLoginThrottleMaxPerEmail+1, email, inProcessLoginThrottleMaxPerEmail)
+	}
+	// A different target email, same window, is unaffected.
+	allowed, err = th.Allow(ctx, "203.0.113.250", "someone-else@example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !allowed {
+		t.Error("a different target email must not be throttled by another email's exhausted cap")
+	}
+}
+
+// TestInProcessLoginThrottle_EnforcesPerIPCap — the spray-many-
+// addresses dimension: one IP sending to many DIFFERENT emails must
+// still be capped.
+func TestInProcessLoginThrottle_EnforcesPerIPCap(t *testing.T) {
+	th := newInProcessLoginThrottle()
+	ctx := context.Background()
+	const ip = "198.51.100.9"
+	for i := 0; i < inProcessLoginThrottleMaxPerIP; i++ {
+		allowed, err := th.Allow(ctx, ip, fmt.Sprintf("user%d@example.com", i))
+		if err != nil {
+			t.Fatalf("call %d: unexpected error: %v", i, err)
+		}
+		if !allowed {
+			t.Fatalf("call %d: expected allowed within the per-IP cap (max=%d)", i, inProcessLoginThrottleMaxPerIP)
+		}
+	}
+	allowed, err := th.Allow(ctx, ip, "spray-target@example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if allowed {
+		t.Errorf("expected send #%d from %q (beyond the per-IP cap of %d) to be DENIED, got allowed",
+			inProcessLoginThrottleMaxPerIP+1, ip, inProcessLoginThrottleMaxPerIP)
+	}
+}
+
+// TestInProcessSignupIPThrottle_EnforcesPerIPCap — NTF-08
+// (audit-2026-07-23). Asserts the corrected value: the (max+1)th
+// signup from one IP within the window is denied with
+// auth.ErrSignupRateLimited (what signupIPThrottleOK translates into
+// a 429), while a distinct IP is unaffected.
+func TestInProcessSignupIPThrottle_EnforcesPerIPCap(t *testing.T) {
+	th := newInProcessSignupIPThrottle()
+	ctx := context.Background()
+	const ip = "198.51.100.5"
+	for i := 0; i < inProcessSignupIPThrottleMaxPerHour; i++ {
+		if err := th.CheckIP(ctx, ip); err != nil {
+			t.Fatalf("call %d: expected nil error within the cap (max=%d), got %v",
+				i, inProcessSignupIPThrottleMaxPerHour, err)
+		}
+	}
+	err := th.CheckIP(ctx, ip)
+	if !errors.Is(err, auth.ErrSignupRateLimited) {
+		t.Errorf("expected auth.ErrSignupRateLimited beyond the per-IP cap of %d, got %v",
+			inProcessSignupIPThrottleMaxPerHour, err)
+	}
+	if err := th.CheckIP(ctx, "198.51.100.6"); err != nil {
+		t.Errorf("a different IP must not be throttled by another IP's exhausted cap: %v", err)
 	}
 }

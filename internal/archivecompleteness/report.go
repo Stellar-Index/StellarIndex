@@ -122,3 +122,36 @@ func (r *Report) AnyMissing() bool {
 	}
 	return false
 }
+
+// Vacuous reports whether every POPULATED section scanned ZERO
+// expected checkpoint positions (DAT-11). A requested [from, to]
+// range that contains no checkpoint position at all produces
+// Expected=0, Found=0, MissingCount=0 — AnyMissing() reads that as
+// "clean", but nothing was actually verified. Callers must treat a
+// vacuous report as a distinct failure, not a clean pass, and must
+// NOT stamp a "last success" watermark on it.
+//
+// Returns false when a populated section scanned something
+// (Expected > 0) — one non-vacuous section is enough to call the
+// whole report non-vacuous, since at least SOMETHING was checked.
+// Returns false (not vacuous) when NO section is populated at all —
+// that's the "the caller never ran a scan" case, already the
+// pre-existing empty-report shape AnyMissing() also treats as
+// (uninterestingly) clean; Vacuous only exists to catch the "we DID
+// scan, but there was nothing to scan" case.
+func (r *Report) Vacuous() bool {
+	populated := false
+	if r.CrossAnchor != nil {
+		populated = true
+		if r.CrossAnchor.Expected > 0 {
+			return false
+		}
+	}
+	if r.Primary != nil {
+		populated = true
+		if r.Primary.Expected > 0 {
+			return false
+		}
+	}
+	return populated
+}

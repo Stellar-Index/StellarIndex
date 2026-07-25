@@ -43,10 +43,29 @@ type AsyncSink struct {
 	done     chan struct{}
 
 	mu      sync.Mutex
+	stopped bool
 	dropped uint64
 	skipped uint64
 	failed  uint64
 	seen    map[string]struct{}
+}
+
+// seenKey is the in-process dedup key for a Hit. Single definition
+// because THREE call sites must agree on it byte-for-byte — Push's
+// mark, Push's buffer-full rollback, and run's record-failure rollback
+// — and a drifted key silently disables the rollback rather than
+// failing loudly.
+//
+// The key combines Kind + both symbol-carrying fields rather than just
+// EventType: KindSEP41 hits (from [Sniff]) populate EventType;
+// KindOracleEvent/KindOracleCall hits (from
+// [SniffOracleEvent]/[SniffOracleCall]) populate only Symbol.
+// Concatenating both keeps the legacy SEP-41 dedup key byte-for-byte
+// unchanged (Kind/Symbol are empty on any hand-built Hit that only
+// sets EventType, e.g. existing tests) while still giving every
+// (contract, kind, symbol) tuple its own key for the two new lanes.
+func seenKey(hit Hit) string {
+	return hit.ContractID + "\x00" + string(hit.Kind) + "\x00" + string(hit.EventType) + "\x00" + hit.Symbol
 }
 
 // AsyncSinkOptions configures a [NewAsyncSink].
@@ -100,6 +119,7 @@ func (s *AsyncSink) Start() {
 }
 
 // Push enqueues a Hit. Non-blocking. Behaviour:
+//   - After [AsyncSink.Stop] → dropped, DroppedCount incremented.
 //   - Already-enqueued (ContractID, Kind, EventType, Symbol) →
 //     silently skipped, SkippedCount incremented.
 //   - Channel full → dropped, DroppedCount incremented.
@@ -108,37 +128,41 @@ func (s *AsyncSink) Start() {
 // Implements [dispatcher.DiscoverySink] (structurally; circular
 // import means dispatcher declares its own interface and this method
 // satisfies it).
+//
+// The whole body runs under s.mu, including the non-blocking send.
+// That is what makes Push safe against a concurrent Stop: Stop takes
+// the same mutex to set `stopped` BEFORE closing the channel, so a
+// Push either completes its send first or observes `stopped` and
+// never sends. Without it, a Push racing shutdown could send on a
+// closed channel and panic the dispatcher (AGT-lifecycle-race). Held
+// across the send safely because the send is non-blocking and the
+// drain worker never sends.
 func (s *AsyncSink) Push(hit Hit) {
-	// Dedup key combines Kind + both symbol-carrying fields rather
-	// than just EventType: KindSEP41 hits (from [Sniff]) populate
-	// EventType; KindOracleEvent/KindOracleCall hits (from
-	// [SniffOracleEvent]/[SniffOracleCall]) populate only Symbol.
-	// Concatenating both keeps the legacy SEP-41 dedup key byte-for-
-	// byte unchanged (Kind/Symbol are empty on any hand-built Hit
-	// that only sets EventType, e.g. existing tests) while still
-	// giving every (contract, kind, symbol) tuple its own key for the
-	// two new lanes.
-	key := hit.ContractID + "\x00" + string(hit.Kind) + "\x00" + string(hit.EventType) + "\x00" + hit.Symbol
+	key := seenKey(hit)
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.stopped {
+		// Shutdown in progress; the worker is draining what it has.
+		// Counted as a drop rather than silently vanishing.
+		s.dropped++
+		return
+	}
 	if _, ok := s.seen[key]; ok {
 		s.skipped++
-		s.mu.Unlock()
 		return
 	}
 	s.seen[key] = struct{}{}
-	s.mu.Unlock()
 
 	select {
 	case s.ch <- hit:
 	default:
-		s.mu.Lock()
 		s.dropped++
 		// Roll back the seen-mark so a future Push for this key can
 		// retry; otherwise a transient Postgres outage would leak the
 		// entire stream of new contracts forever.
 		delete(s.seen, key)
-		s.mu.Unlock()
 	}
 }
 
@@ -147,6 +171,11 @@ func (s *AsyncSink) Push(hit Hit) {
 // timeout are flushed; any that error are logged. Idempotent.
 func (s *AsyncSink) Stop() {
 	s.stopOnce.Do(func() {
+		// Mark stopped BEFORE closing so a concurrent Push can never
+		// reach the send — see [AsyncSink.Push].
+		s.mu.Lock()
+		s.stopped = true
+		s.mu.Unlock()
 		close(s.ch)
 		<-s.done
 	})
@@ -201,6 +230,15 @@ func (s *AsyncSink) run() {
 			// this is a failure-RATE signal, not permanent-loss.
 			s.mu.Lock()
 			s.failed++
+			// Roll back the seen-mark, exactly as the buffer-full path
+			// does (DAT-09/DAT-11). Record IS best-effort — but only
+			// because "the contract re-appears on a later event", and
+			// the seen-set suppresses every later Push for this key. So
+			// without this rollback a contract first sighted DURING a
+			// recorder outage was dropped from discovery permanently,
+			// for the lifetime of the process, with nothing but a
+			// failure counter to show for it.
+			delete(s.seen, seenKey(hit))
 			s.mu.Unlock()
 			s.logger.Warn("discovery: record failed",
 				"err", err,

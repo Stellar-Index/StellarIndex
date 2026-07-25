@@ -73,6 +73,84 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 		"usd peg native not classic":   {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{"native"} }, "classic"},
 		"usd peg crypto not classic":   {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{"crypto:USDT"} }, "classic"},
 		"usd peg fiat not classic":     {func(c *config.Config) { c.Trades.USDPeggedClassicAssets = []string{"fiat:USD"} }, "classic"},
+
+		// CFG-05 (audit-2026-07-23): history_archive_url must be a
+		// full URL like its sibling fields, not just anything
+		// url.Parse tolerates (scheme-less, empty).
+		"history archive url empty": {func(c *config.Config) { c.Stellar.HistoryArchiveURL = "" }, "history_archive_url"},
+		"history archive url scheme-less": {func(c *config.Config) {
+			c.Stellar.HistoryArchiveURL = "history.stellar.org/prd/core-live/core_live_001"
+		}, "history_archive_url"},
+
+		// CFG-05 (audit-2026-07-23): serving_statement_timeout must
+		// stay LONGER than request_timeout so the app-layer deadline
+		// fires first (defense-in-depth ordering).
+		"statement timeout equal request timeout": {
+			func(c *config.Config) { c.API.ServingStatementTimeout = c.API.RequestTimeout },
+			"serving_statement_timeout",
+		},
+		"statement timeout shorter than request timeout": {
+			func(c *config.Config) { c.API.ServingStatementTimeout = c.API.RequestTimeout / 2 },
+			"serving_statement_timeout",
+		},
+
+		// CFG-03 (audit-2026-07-23): the two conflicting `_env`
+		// conventions (value-vs-name) getting swapped.
+		"redis password looks like env var name": {
+			func(c *config.Config) { c.Storage.RedisPassword = "STELLARINDEX_REDIS_PASSWORD" },
+			"redis_password_env",
+		},
+		"clickhouse password looks like env var name": {
+			func(c *config.Config) {
+				c.Storage.ClickHouseServingPassword = "STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD"
+			},
+			"clickhouse_serving_password_env",
+		},
+		"s3 access key env holds a literal secret value": {
+			// A realistic AWS SECRET key shape (lowercase + digits + '/')
+			// — definitively not an UPPER_SNAKE_CASE env-var name, unlike
+			// an access-key-ID-shaped string which happens to also look
+			// like a valid identifier.
+			func(c *config.Config) { c.Storage.S3AccessKeyEnv = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYzEXAMPLE" },
+			"s3_access_key_env",
+		},
+		"s3 secret key env holds a lowercase value": {
+			func(c *config.Config) { c.Storage.S3SecretKeyEnv = "not-an-env-var-name" },
+			"s3_secret_key_env",
+		},
+
+		// CFG-05 (audit-2026-07-23): anomaly.thresholds / classifications
+		// keys/values must be real anomaly.AssetClass names.
+		"anomaly thresholds unknown class": {
+			func(c *config.Config) {
+				c.Anomaly.Thresholds = map[string]config.AnomalyThreshold{"stablecoins": {WarnPct: 1, FreezePct: 3}}
+			},
+			"anomaly.thresholds",
+		},
+		"anomaly classifications unknown class": {
+			func(c *config.Config) {
+				c.Anomaly.Classifications = map[string]string{"USDC-GA5Z": "stable"}
+			},
+			"anomaly.classifications",
+		},
+
+		// CFG-05 (audit-2026-07-23): divergence.supply.refresh_interval_seconds<=0
+		// while enabled used to reach time.NewTicker(0) and panic the
+		// aggregator at startup.
+		"divergence supply zero refresh interval while enabled": {
+			func(c *config.Config) {
+				c.Divergence.Supply.Enabled = true
+				c.Divergence.Supply.RefreshIntervalSeconds = 0
+			},
+			"divergence.supply.refresh_interval_seconds",
+		},
+		"divergence supply negative refresh interval while enabled": {
+			func(c *config.Config) {
+				c.Divergence.Supply.Enabled = true
+				c.Divergence.Supply.RefreshIntervalSeconds = -1
+			},
+			"divergence.supply.refresh_interval_seconds",
+		},
 	}
 
 	for name, tc := range cases {
@@ -245,5 +323,46 @@ func TestValidate_CoreHTTPEndpointOptional(t *testing.T) {
 	c.Stellar.CoreHTTPEndpoint = ""
 	if err := c.Validate(); err != nil {
 		t.Fatalf("empty core_http_endpoint should validate: %v", err)
+	}
+}
+
+// TestValidate_SDFReserveAccountObserverOnlyAccepted — DOM-11 / CFG-01
+// (audit-2026-07-23). SupplyConfig.Validate used to unconditionally
+// require a matching reserve_balances_stroops entry for every
+// sdf_reserve_accounts entry, which made the documented "the LCM
+// AccountEntry observer covers it, no static balance needed"
+// deployment shape un-loadable — Validate() has no DB access and
+// can't know whether the observer covers the account, so a blanket
+// requirement was strictly wrong for that (fully supported) path.
+// This asserts the corrected value: a syntactically valid G-strkey
+// account with NO static balance entry passes config validation. The
+// runtime rejection for a genuinely-uncovered account still happens
+// downstream in ConfigReserveBalanceReader.ReserveBalanceTotal
+// (internal/supply/config_reader.go) — see that type's doc.
+func TestValidate_SDFReserveAccountObserverOnlyAccepted(t *testing.T) {
+	c := config.Default()
+	c.Supply.SDFReserveAccounts = []string{"GABBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"}
+	c.Supply.ReserveBalancesStroops = nil
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate: %v (observer-only SDF reserve account must be accepted without a static balance entry)", err)
+	}
+}
+
+// TestValidate_SDFReserveAccountMalformedRejected — DOM-11
+// (audit-2026-07-23): a typo'd sdf_reserve_accounts entry is a
+// config mistake, not "this account happens to have zero reserves."
+// Kept as its own test (not folded into TestValidate_RejectsBadFields)
+// because SupplyConfig.Validate — unlike the lowercase validate()
+// family — doesn't wrap ErrInvalidConfig; asserting that here would
+// test a sentinel this pre-existing method never satisfies.
+func TestValidate_SDFReserveAccountMalformedRejected(t *testing.T) {
+	c := config.Default()
+	c.Supply.SDFReserveAccounts = []string{"not-a-g-strkey"}
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("expected an error for a malformed sdf_reserve_accounts entry, got nil")
+	}
+	if !strings.Contains(err.Error(), "sdf_reserve_accounts") {
+		t.Errorf("err = %v; want substring %q", err, "sdf_reserve_accounts")
 	}
 }

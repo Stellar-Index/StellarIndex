@@ -309,18 +309,22 @@ groups:
       #     stellarindex_cagg_refresh_interval_seconds (cagg-stale)
       #   - stellarindex_uncompressed_chunks_older_than_7d (compression-lag)
       # These describe TimescaleDB job-scheduler state
-      # (timescaledb_information.job_stats / .chunks). No periodic worker in
-      # this repo queries those views and re-exports them as Prometheus
-      # gauges, and postgres_exporter's default queries don't cover them
-      # either. The clean fix is a small custom postgres_exporter query
-      # (queries.yaml) or a textfile-collector SQL script — both real but
-      # larger than a rule edit. Until that producer exists these rules
-      # cannot fire; they are kept (signal matters) but INERT and TRACKED
-      # in scripts/ci/lint-metric-refs.sh's KNOWN_INERT list. To un-inert:
-      # add the producer, then drop the entries from KNOWN_INERT.
+      # (timescaledb_information.job_stats / .chunks). postgres_exporter's
+      # default queries don't cover them, so they had no producer and these
+      # rules could not fire.
+      #
+      # NO LONGER INERT: the timescale-jobs-probe timer (archival-node role,
+      # 10-observability.yml) queries those views every minute and writes
+      # them to the node_exporter textfile collector. They stay listed in
+      # scripts/ci/lint-metric-refs.sh KNOWN_INERT only because that lint
+      # greps *.go/*.sh/*.prom for emitters and cannot see a script that
+      # lives as an inline ansible `content:` block — the same reason
+      # stellarindex_galexie_catchup_refusals_5m is still listed there.
       - alert: stellarindex_timescale_cagg_stale
-        # INERT: stellarindex_cagg_last_refresh_unix /
-        # stellarindex_cagg_refresh_interval_seconds have no producer.
+        # Producer: timescale-jobs-probe.timer (every 60s). The probe
+        # interval is deliberately well inside this rule's 5x-of-30s
+        # (=150s) tightest threshold, so the freshness metric cannot age
+        # past the window it is used to judge and self-trigger.
         expr: |
           (time() - stellarindex_cagg_last_refresh_unix) > 5 * stellarindex_cagg_refresh_interval_seconds
         for: 5m
@@ -337,7 +341,7 @@ groups:
             refreshes; check timescaledb job-scheduler health.
 
       - alert: stellarindex_timescale_compression_lag
-        # INERT: stellarindex_uncompressed_chunks_older_than_7d has no producer.
+        # Producer: timescale-jobs-probe.timer (every 60s).
         expr: stellarindex_uncompressed_chunks_older_than_7d > 0
         for: 24h
         labels:
@@ -397,3 +401,54 @@ groups:
           description: |
             RPO breach. At 24h+ without a backup we exceed the documented
             5-min RPO target by 288×. Escalate immediately.
+
+      # NVMe wear + media health. r1's NVMe is not swappable on demand,
+      # so these exist to give a long lead time rather than to catch a
+      # failure in progress. Produced by the packaged nvme collector,
+      # redirected into the read textfile dir by the archival-node role
+      # (10-observability.yml) — before that redirect these series did
+      # not exist despite being generated every 5 minutes.
+      - alert: stellarindex_nvme_wear_high
+        expr: nvme_percentage_used_ratio > 0.80
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
+          summary: "NVMe {{ $labels.device }} at {{ $value | humanizePercentage }} rated write endurance"
+          description: |
+            Rated endurance consumed on {{ $labels.device }}. Not urgent at
+            80%, deliberately: replacing a drive here is a planned
+            operation, so this is a procurement trigger, not an incident.
+
+      - alert: stellarindex_nvme_spare_low
+        expr: nvme_available_spare_ratio < 0.20
+        for: 30m
+        labels:
+          severity: page
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
+          summary: "NVMe {{ $labels.device }} spare blocks down to {{ $value | humanizePercentage }}"
+          description: |
+            The drive is consuming its reserve block pool, which is a
+            late-stage wear signal — unlike percentage_used this one moves
+            shortly before failure.
+
+      - alert: stellarindex_nvme_media_errors
+        expr: increase(nvme_media_errors_total[24h]) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
+          summary: "NVMe {{ $labels.device }} reported {{ $value }} new media errors in 24h"
+          description: |
+            Uncorrected media errors on a ZFS member. ZFS will surface
+            corruption on scrub, but the drive reporting them first is the
+            earlier signal.

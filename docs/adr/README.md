@@ -5,9 +5,20 @@ here as an **ADR** — a numbered, dated, immutable record.
 
 ## Rules
 
-1. **Immutable.** Once an ADR is `Accepted`, its body is never
-   edited for content. Typo fixes and formatting are allowed; rationale
-   is not.
+1. **Immutable, with clearly-marked amendments.** Once an ADR is
+   `Accepted`, its original Context/Decision/Consequences/Alternatives
+   text is never rewritten or deleted. Typo fixes and formatting are
+   allowed; rationale is not. When new information corrects or
+   updates the ADR's description of reality without reversing the
+   decision itself (a factual drift, an implementation detail that
+   shipped differently, a scoped correction), append a dated
+   `> **Amendment (YYYY-MM-DD, finding/ref)**` blockquote — at the top
+   of the doc, or inline at the specific section it corrects — stating
+   the correction and explicitly preserving the original text as the
+   historical record (see ADR-0011, ADR-0019, ADR-0033, ADR-0040,
+   ADR-0047, ADR-0048 for the established pattern). Amendments do not
+   need a new ADR number. If the DECISION itself changes (not just its
+   description), that is rule 2, not an amendment.
 2. **Supersede, don't rewrite.** If a decision changes, write a new
    ADR that supersedes the old one, and add one line to the old ADR's
    metadata:
@@ -77,6 +88,8 @@ See [_template.md](_template.md) for the boilerplate.
 | [0033](0033-completeness-verification-model.md) | Accepted | Completeness verification — substrate continuity, recognition, projection reconciliation | 2026-06-02 |
 | [0034](0034-tiered-clickhouse-architecture.md) | Accepted | Tiered data architecture — ClickHouse raw lake, Postgres served tier (supersedes 0029) | 2026-06-05 |
 | [0035](0035-factory-anchored-contract-gating.md) | Accepted | Factory-anchored contract gating for Soroban decoders (reverses match-broadly/filter-downstream) | 2026-06-12 |
+| [0036](../archive/0036-stellar-atlas-rebrand.md) | Superseded by 0037 | Rebrand to Stellar Atlas; reposition as a protocol explorer — **kept in `docs/archive/` (gitignored, not present on a fresh clone), not `docs/adr/`** | 2026-06-12 |
+| [0037](../archive/0037-stellar-index-rebrand.md) | Accepted | Rebrand to Stellar Index (Stellar Atlas name was taken) — **kept in `docs/archive/` (gitignored, not present on a fresh clone), not `docs/adr/`** | 2026-06-12 |
 | [0038](0038-network-explorer.md) | Accepted | Network explorer (full Stellar + Soroban) over the certified lake | 2026-06-14 |
 | [0039](0039-soroban-contract-state-reader.md) | Accepted | Soroban contract current-state reader — read-time decode from the lake | 2026-06-18 |
 | [0040](0040-completing-contract-gating.md) | Accepted | Completing contract-identity gating: phoenix/defindex curated-set gates, aquarius enumeration, comet WASM-hash gate (closes CS-026) | 2026-07-02 |
@@ -86,6 +99,8 @@ See [_template.md](_template.md) for the boilerplate.
 | [0044](0044-explorer-edge-rendering.md) | Accepted | Explorer rendering moves from static export to edge SSR | 2026-07-04 |
 | [0045](0045-sep40-oracle-read-adapter.md) | Accepted | SEP-40 on-chain oracle read adapter — defer generic reader; serve surface already ships | 2026-07-06 |
 | [0046](0046-mad-outlier-filter.md) | Accepted | MAD-based outlier filtering for VWAP inputs — log-space modified z-score, shadow-first rollout; thresholds deferred to production traffic | 2026-07-08 |
+| [0047](0047-pre-p23-classic-movement-reconstruction.md) | Accepted | Pre-P23 classic-movement reconstruction from the lake | 2026-07-10 |
+| [0048](0048-serve-by-query-shape.md) | Accepted | Serve by query shape — the account-movement archive is ClickHouse-native (amends 0047 D1) | 2026-07-10 |
 
 ## Related
 

@@ -10,13 +10,6 @@ const COMPACT_FORMATTER = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 2,
 });
 
-const PCT_FORMATTER = new Intl.NumberFormat('en-US', {
-  style: 'percent',
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-  signDisplay: 'exceptZero',
-});
-
 export function formatPrice(value: number | string): string {
   const n = typeof value === 'string' ? parseFloat(value) : value;
   if (!Number.isFinite(n)) return '—';
@@ -40,6 +33,10 @@ export function formatPriceSmall(n: number): string {
   if (n >= 1) return n.toFixed(n >= 100 ? 2 : 4);
   if (n >= 0.001) return n.toFixed(6);
   if (n > 0) return n.toExponential(3);
+  // COR-01: a negative price is bad data, not a legitimate zero — collapsing
+  // both to the bare string '0' made a negative value look like a normal,
+  // healthy zero price instead of surfacing it as the anomaly it is.
+  if (n < 0) return n.toExponential(3);
   return '0';
 }
 
@@ -59,16 +56,13 @@ export function formatPairPrice(n: number): string {
         : n.toExponential(3);
 }
 
-// Pass a fraction (0.0123 → "+1.23%"). Pass a percentage point if you
-// already divided.
-export function formatPctChange(fraction: number): string {
-  if (!Number.isFinite(fraction)) return '—';
-  return PCT_FORMATTER.format(fraction);
-}
-
-export function formatLedger(ledger: number): string {
-  return `#${ledger.toLocaleString('en-US')}`;
-}
+// AGT-06: formatPctChange and formatLedger were removed as dead code —
+// grep confirmed zero callers outside their own tests. formatPctChange in
+// particular was a footgun: it takes a FRACTION (0.0123 → "+1.23%"), but
+// every real percentage field in the app (change_24h_pct, ChangeBadge's
+// `pct`, …) already arrives as a percentage point and is rendered with a
+// plain `.toFixed(2)}%` — reaching for this helper on one of those fields
+// would have silently multiplied the displayed change by 100.
 
 // Relative "time ago" label for an ISO timestamp. Returns '—' for a
 // missing/unparseable value and 'now' for a (near-)future one — so a

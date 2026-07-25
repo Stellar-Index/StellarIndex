@@ -16,8 +16,9 @@ const (
 // creation until claim.
 //
 // Created / Updated / Restored variants populate ClaimableID +
-// AssetKey + Balance. Removed variants are not emitted by this
-// observer at v1 (see package doc).
+// AssetKey + Balance. Removed variants (a claim) populate
+// ClaimableID + AssetKey with Balance zero and IsRemoval true
+// (see package doc).
 type Observation struct {
 	// ClaimableID is the BalanceID's hex form. Unique across the
 	// network — a single claimable balance occupies one ledger
@@ -35,9 +36,11 @@ type Observation struct {
 	// ADR-0003.
 	Balance *big.Int
 
-	// IsRemoval is reserved for future use when the writer-side
-	// lookup path lands (per package doc); v1 always emits
-	// IsRemoval=false.
+	// IsRemoval is true when the change removed the claimable
+	// balance (a ClaimClaimableBalance op). Balance is zeroed and
+	// the row lands with is_removal=true, which the served
+	// aggregate (SumClaimableBalancesAtOrBefore) excludes — so the
+	// claimed amount stops counting toward total supply.
 	IsRemoval bool
 
 	// IntraLedgerSeq is the within-ledger position of the change that

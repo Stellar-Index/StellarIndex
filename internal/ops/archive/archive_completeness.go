@@ -108,12 +108,15 @@ func archiveCompletenessVerify(args []string) error {
 	report.SetCrossAnchor(*archiveRoot, postRes)
 
 	// Populate metrics. LastSuccessTimestamp is set ONLY when the
-	// post-fix state is clean — alert rules rely on this gauge
-	// going stale when something's wrong.
+	// post-fix state is clean AND non-vacuous — alert rules rely on
+	// this gauge going stale when something's wrong, and a range that
+	// contained no checkpoint position at all (DAT-11) verified
+	// nothing, so it must not stamp success either.
 	snapshot.PopulateFromReport(report)
 	snapshot.PopulateFromFillResult(fillRes)
 	snapshot.RunDurationSeconds = time.Since(startedAt).Seconds()
-	if !report.AnyMissing() {
+	vacuous := report.Vacuous()
+	if !report.AnyMissing() && !vacuous {
 		snapshot.LastSuccessTimestamp = startedAt
 	}
 
@@ -131,6 +134,12 @@ func archiveCompletenessVerify(args []string) error {
 			"archive-completeness verify: metrics written to %s\n", *textfileOutput)
 	}
 
+	if vacuous {
+		fmt.Fprintf(os.Stderr,
+			"archive-completeness verify: range [%d, %d] contains no checkpoint position — nothing was verified, not a clean pass\n",
+			*from, *to)
+		return opsutil.ErrExitSilently
+	}
 	if report.AnyMissing() {
 		fmt.Fprintf(os.Stderr,
 			"archive-completeness verify: %d residual missing checkpoint(s); see report\n",
@@ -188,6 +197,18 @@ func archiveCompletenessFix(args []string) error {
 	report := archivecompleteness.NewReport(uint32(*from), uint32(*to))
 	report.SetCrossAnchor(*archiveRoot, res)
 
+	if report.Vacuous() {
+		// DAT-11: [from, to] contained no checkpoint position at all —
+		// nothing to fix because nothing was checked. Do not report
+		// this as "already complete".
+		if err := writeReport(report, *outputFile); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr,
+			"archive-completeness fix: range [%d, %d] contains no checkpoint position — nothing was verified\n",
+			*from, *to)
+		return opsutil.ErrExitSilently
+	}
 	if len(res.Missing) == 0 {
 		// Already complete; nothing to do.
 		return writeReport(report, *outputFile)
@@ -295,6 +316,14 @@ func archiveCompletenessCheck(args []string) error {
 		return err
 	}
 
+	// DAT-11: a range with no checkpoint position at all verified
+	// nothing — must not read as a clean pass.
+	if report.Vacuous() {
+		fmt.Fprintf(os.Stderr,
+			"archive-completeness check: range [%d, %d] contains no checkpoint position — nothing was verified\n",
+			*from, *to)
+		return opsutil.ErrExitSilently
+	}
 	// Non-zero exit when anything is missing so cron / k8s Job
 	// invocations surface gaps as a Prometheus-style probe.
 	if report.AnyMissing() {

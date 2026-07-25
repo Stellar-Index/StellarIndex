@@ -71,6 +71,7 @@ concurrency:
 
 permissions:
   contents: read           # download release artefacts
+  deployments: read        # read the environment's protection rules (approval-gate preflight)
   # F-1296 (codex audit-2026-05-13): `id-token: write` removed.
   # No step currently consumes the OIDC JWT (keyless attestation
   # is planned but not wired yet); a compromised step in this
@@ -91,6 +92,34 @@ jobs:
     steps:
       - name: Checkout (for Ansible playbook)
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Assert the production approval gate is configured
+        # deploy-approval-gate (audit-2026-07-23): the `environment:`
+        # declaration above is not a gate by itself — an environment
+        # with no `required_reviewers` rule deploys unattended, which is
+        # exactly what `gh api repos/<repo>/environments/r1` returned
+        # when the audit ran (`"protection_rules": []`). The reviewer
+        # list lives in repo settings and cannot be set from a file in
+        # this repo, so the strongest in-repo enforcement is to refuse
+        # to deploy while the gate is absent. Runs FIRST: before the SSH
+        # key, the artefacts, or the playbook.
+        #
+        # DEPLOY_PROTECTION_TOKEN is an optional escape hatch: if the
+        # default GITHUB_TOKEN cannot read the environments API on this
+        # repo, set that secret to a read-only PAT. It never relaxes the
+        # assertion — it only supplies the credential to make it.
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_PROTECTION_TOKEN || secrets.GITHUB_TOKEN }}
+          REGION: ${{ inputs.region }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if ! gh api "repos/${REPO}/environments/${REGION}" > env-protection.json; then
+            echo "::error::Could not read the '${REGION}' environment protection config. Refusing to deploy on an unverified approval gate. If the default GITHUB_TOKEN lacks access, set the DEPLOY_PROTECTION_TOKEN secret to a read-only PAT and re-run."
+            exit 1
+          fi
+          bash scripts/ci/check-deploy-protection.sh env-protection.json "$REGION"
+
       - name: Validate inputs
         # F-1298 (codex audit-2026-05-13): pass inputs through
         # `env:` rather than interpolating `${{ inputs.* }}`
@@ -183,7 +212,40 @@ jobs:
           echo "---"
           ls -la dist/
 
-      - name: Verify SHA256SUMS
+      - name: Install cosign
+        # Same pinned pair as release.yml's signing step: the installer
+        # action is SHA-pinned AND the cosign version it installs is
+        # pinned, so neither a tag move on the action nor a change in
+        # the installer's default cosign version can alter what verifies
+        # our releases.
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+        with:
+          cosign-release: 'v3.1.1'
+
+      - name: Verify release signature, then checksums
+        # CID-09 + artifact-integrity-verification (audit-2026-07-23).
+        #
+        # Pre-fix this step downloaded SHA256SUMS from the same release
+        # as the binaries and checked the binaries against it. That
+        # proves internal consistency and nothing else: anyone able to
+        # replace a release asset replaces the manifest in the same
+        # breath. release.yml has cosign-signed SHA256SUMS since the
+        # BACKLOG #51b migration, and NOTHING on the deploy path looked
+        # at that signature — the whole value of signing was unrealised.
+        #
+        # The Fulcio certificate in the sigstore bundle is the anchor an
+        # asset-replacing attacker cannot forge: it binds the manifest
+        # to THIS repository's release.yml workflow (identity) issued by
+        # GitHub's OIDC provider (issuer), and Rekor's transparency log
+        # makes a backdated signature detectable. Verify the signature
+        # FIRST; only then does a checksum mean anything.
+        #
+        # Identity is pinned to the release workflow path, and to either
+        # the tag being deployed (normal `push`-triggered release) or
+        # refs/heads/main (release.yml's documented workflow_dispatch
+        # rebuild path). Both require the ability to run release.yml in
+        # this repo; neither is reachable by replacing assets.
+        #
         # F-1298 (wave 126): inputs through `env:`.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -193,14 +255,39 @@ jobs:
         run: |
           set -euo pipefail
           gh release download "$VERSION" -p SHA256SUMS -O dist/SHA256SUMS -R "$REPO"
+          gh release download "$VERSION" -p SHA256SUMS.sigstore.json \
+            -O dist/SHA256SUMS.sigstore.json -R "$REPO"
+
+          # Regex-escape the interpolated parts. `version` already
+          # passed the SemVer gate in "Validate inputs", so it can only
+          # contain [A-Za-z0-9.+-]; `.` and `+` are the regex-significant
+          # members of that set.
+          REPO_RE="$(printf '%s' "$REPO" | sed -e 's/[.+]/\\&/g')"
+          VER_RE="$(printf '%s' "$VERSION" | sed -e 's/[.+]/\\&/g')"
+          IDENTITY="^https://github\.com/${REPO_RE}/\.github/workflows/release\.yml@refs/(tags/${VER_RE}|heads/main)$"
+          echo "Expected signer identity: $IDENTITY"
+
+          cosign verify-blob \
+            --bundle dist/SHA256SUMS.sigstore.json \
+            --certificate-identity-regexp "$IDENTITY" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            dist/SHA256SUMS
+
           cd dist
-          # SHA256SUMS contains every artefact's sum. Filter to the
-          # binaries we downloaded and verify just those.
+          # SHA256SUMS is now trusted. It contains every artefact's sum;
+          # filter to the binaries we downloaded and verify just those.
+          # A binary with no entry in the signed manifest is a hard fail
+          # (pre-fix the empty grep also failed, but silently and for
+          # the wrong reason).
           IFS=',' read -ra LIST <<< "$(echo "$BINARIES" | tr -d '[:space:]')"
           for b in "${LIST[@]}"; do
-            grep -E "  ${b}-linux-amd64$" SHA256SUMS | sha256sum -c -
+            if ! line="$(grep -E "  ${b}-linux-amd64$" SHA256SUMS)"; then
+              echo "::error::${b}-linux-amd64 has no entry in the signed SHA256SUMS for $VERSION"
+              exit 1
+            fi
+            printf '%s\n' "$line" | sha256sum -c -
           done
-          echo "Checksums OK"
+          echo "Signature + checksums OK"
 
       # F-1220 (codex audit-2026-05-12): ship the migrations dir
       # alongside binaries so the playbook can sync + apply them
@@ -216,19 +303,45 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # ONE tarball fetch of the tag's tree — guarantees binary ↔
-          # migration set parity even if main has advanced since the
-          # tag. Previously this looped `gh api contents` per file
-          # (~180 sequential API calls); on 2026-07-09 that tripped
-          # GitHub's secondary rate limit twice in a row (an HTML
-          # error page mid-loop → "invalid character '<'"), failing
-          # the v0.10.0 deploy before it touched the host. A single
-          # tarball request can't hit the per-request burst limit.
-          mkdir -p dist/migrations tag-tree
-          gh api "repos/$REPO/tarball/$VERSION" > tag.tar.gz
-          tar -xzf tag.tar.gz -C tag-tree --strip-components=1
-          cp -R tag-tree/migrations/. dist/migrations/
-          rm -rf tag-tree tag.tar.gz
+          mkdir -p dist/migrations
+          # artifact-integrity-verification (audit-2026-07-23): prefer
+          # the SIGNED migrations bundle. release.yml packs the tag's
+          # migrations/ into dist/migrations.tar.gz BEFORE computing
+          # SHA256SUMS, so the cosign signature verified above covers
+          # the SQL that is about to run as DDL on production — the
+          # same chain the binaries get.
+          # Asked as a single command substitution, NOT `gh … | grep -q`:
+          # under `pipefail` a `grep -q` that exits early SIGPIPEs gh
+          # (141) and the pipeline reports failure even on a match,
+          # which would silently downgrade to the unsigned path.
+          has_bundle="$(gh release view "$VERSION" -R "$REPO" --json assets \
+            --jq '[.assets[].name] | index("migrations.tar.gz") // empty')"
+          if [ -n "$has_bundle" ]; then
+            gh release download "$VERSION" -p migrations.tar.gz \
+              -O dist/migrations.tar.gz -R "$REPO"
+            (cd dist && grep -E "  migrations\.tar\.gz$" SHA256SUMS | sha256sum -c -)
+            tar -xzf dist/migrations.tar.gz -C dist/migrations --strip-components=1
+            rm -f dist/migrations.tar.gz
+          else
+            # Releases cut before the signed bundle landed. The tag
+            # tarball is served by GitHub but is covered by NO
+            # signature, so this path is announced loudly rather than
+            # taken silently. Re-cut the tag to get a signed bundle.
+            echo "::warning::Release $VERSION has no signed migrations.tar.gz (cut before audit-2026-07-23); falling back to the UNSIGNED tag tarball for migrations. Re-run release.yml for this tag to get a signed bundle."
+            # ONE tarball fetch of the tag's tree — guarantees binary ↔
+            # migration set parity even if main has advanced since the
+            # tag. Previously this looped `gh api contents` per file
+            # (~180 sequential API calls); on 2026-07-09 that tripped
+            # GitHub's secondary rate limit twice in a row (an HTML
+            # error page mid-loop → "invalid character '<'"), failing
+            # the v0.10.0 deploy before it touched the host. A single
+            # tarball request can't hit the per-request burst limit.
+            mkdir -p tag-tree
+            gh api "repos/$REPO/tarball/$VERSION" > tag.tar.gz
+            tar -xzf tag.tar.gz -C tag-tree --strip-components=1
+            cp -R tag-tree/migrations/. dist/migrations/
+            rm -rf tag-tree tag.tar.gz
+          fi
           echo "---"
           # `| head` + pipefail interacts badly: head closes early,
           # ls hits SIGPIPE, pipefail fails the step even though
@@ -236,6 +349,26 @@ jobs:
           # Print the count + the first 10 names via sort+head.
           echo "staged $(ls dist/migrations/ | wc -l) migration files"
           ls dist/migrations/ | sort | head -n 10
+
+      - name: Migration rollback-safety gate
+        # CID-14 (audit-2026-07-23). The playbook applies `migrate up`
+        # in its pre_tasks — BEFORE the binary swap — and a failed
+        # health probe rolls back the BINARY ONLY; the schema stays
+        # forward (CS-099, deliberate: down-migrations are
+        # data-destructive and the pipeline cannot know what already
+        # depends on what it would revert). That is safe if and only if
+        # every migration keeps the PREVIOUS released binary working
+        # against the NEW schema — migrations/README.md rule 9. Prose
+        # said so; nothing checked it.
+        #
+        # This is the LAST gate before DDL runs on production, and it
+        # matters independently of the PR-time run in ci.yml: `main` is
+        # not branch-protected, so a migration can reach a tag without
+        # ever passing CI.
+        run: |
+          set -euo pipefail
+          MIGRATIONS_DIR=dist/migrations \
+            bash scripts/ci/lint-migration-compat.sh --staged
 
       - name: Set up SSH
         env:

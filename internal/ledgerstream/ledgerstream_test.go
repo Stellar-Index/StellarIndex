@@ -162,6 +162,62 @@ func TestStream_singleLedgerBoundedRange(t *testing.T) {
 	}
 }
 
+// TestStream_singleLedgerBoundedRange_BelowGenesis_ReturnsError is the
+// regression test for COR-01 (audit-2026-07-23): a single-ledger
+// bounded request entirely below Stellar genesis (ledger 2) — e.g.
+// Stream(from=1, to=1) — used to PrepareRange against the UNCLAMPED
+// range while the walk loop started at the CLAMPED from=2. Since
+// clamped-from (2) > To (1), the loop's bound check failed on its
+// very first iteration and Stream returned nil (success) having
+// invoked the callback ZERO times — a silent no-op indistinguishable
+// from "there was nothing to walk". It must instead return an error.
+func TestStream_singleLedgerBoundedRange_BelowGenesis_ReturnsError(t *testing.T) {
+	tmp := t.TempDir()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	store, err := datastore.NewFilesystemDataStoreWithPath(tmp)
+	if err != nil {
+		t.Fatalf("open filesystem datastore: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	cfg := datastore.DataStoreConfig{
+		Type: "Filesystem",
+		Params: map[string]string{
+			"destination_path": tmp,
+		},
+		Schema: datastore.DataStoreSchema{
+			LedgersPerFile:    1,
+			FilesPerPartition: 1,
+		},
+		NetworkPassphrase: "Test SDF Network ; September 2015",
+		Compression:       "zstd",
+	}
+	if _, _, err := datastore.PublishConfig(ctx, store, cfg); err != nil {
+		t.Fatalf("publish config: %v", err)
+	}
+	// Deliberately do NOT write a ledger-1 fixture: a correct fix must
+	// reject this range before ever attempting to read a ledger file.
+
+	callCount := 0
+	err = ledgerstream.Stream(ctx,
+		ledgerstream.Config{DataStore: cfg},
+		1, 1,
+		func(xdr.LedgerCloseMeta) error {
+			callCount++
+			return nil
+		},
+	)
+	if err == nil {
+		t.Fatalf("Stream(from=to=1) returned nil error with %d callback invocations — want an explicit error (every requested ledger is below genesis ledger 2), not a silent zero-ledger success", callCount)
+	}
+	if callCount != 0 {
+		t.Errorf("callback invoked %d times, want 0", callCount)
+	}
+}
+
 func TestStream_rejectsNilCallback(t *testing.T) {
 	err := ledgerstream.Stream(
 		context.Background(),

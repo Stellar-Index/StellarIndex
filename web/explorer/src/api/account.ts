@@ -11,7 +11,7 @@
 // the public CORS path deliberately is not — see the long note in
 // `src/api/hooks.ts::useMe`.
 
-import { API_BASE_URL } from './client';
+import { API_BASE_URL, timeoutSignal } from './client';
 import type { components } from './types';
 
 export class ApiError extends Error {
@@ -46,7 +46,10 @@ async function accountFetch<T>(
     headers,
     body,
     credentials: 'include',
-    signal: opts.signal,
+    // [absence: timeouts] preserves caller cancellation (opts.signal) while
+    // still bounding every account request — a caller that doesn't pass a
+    // signal used to get no timeout at all.
+    signal: timeoutSignal(undefined, opts.signal),
   });
 
   if (!res.ok) {

@@ -51,6 +51,14 @@ history_archive_url = "https://history.stellar.org/prd/core-live/core_live_001"
 # ──────────────────────────────────────────────────────────────────
 [storage]
 # DSN — override the password at runtime via STELLARINDEX_POSTGRES_DSN.
+# sslmode=disable is safe here ONLY because the host is 127.0.0.1
+# (loopback — never traverses a network). If you point this at any
+# non-loopback host, also change sslmode to require/verify-full —
+# otherwise credentials and query data go over the wire in cleartext.
+# (audit-2026-07-23 CFG-02: there is currently no config-load-time
+# check for this combination — internal/config/validate.go's
+# StorageConfig.validate() only checks the DSN scheme, not sslmode
+# vs host. Don't rely on this comment alone for a remote Postgres.)
 postgres_dsn       = "postgres://stellarindex@127.0.0.1:5432/stellarindex?sslmode=disable"
 
 redis_addr         = "127.0.0.1:6379"
@@ -228,8 +236,22 @@ windows = [
 # API — public serving plane (api binary only).
 # ──────────────────────────────────────────────────────────────────
 [api]
+# listen_addr defaults to 0.0.0.0:3000 (all interfaces) in both this
+# example and the internal/config/config.go code default. That's fine
+# behind a reverse proxy that's the only thing allowed to reach :3000
+# (the R1 ansible role renders 127.0.0.1:3000 — loopback only, Caddy
+# fronts it; see stellarindex.toml.j2). Running the bare binary
+# directly on a host without an equivalent firewall/proxy in front
+# exposes :3000 (no auth if auth_mode=none) to the network — set this
+# to 127.0.0.1:3000 in that case (audit-2026-07-23 INF-19).
 listen_addr              = "0.0.0.0:3000"
 external_base_url        = "https://api.stellarindex.io/v1"
+# auth_mode=none matches this product's default posture: a public,
+# no-auth read API for market data (see the allowed_origins rationale
+# below — same "public API" design intent). It is NOT a safe default
+# if you're standing this API up as an internal/private service —
+# switch to apikey / apikey_optional / sep10 in that case (audit-
+# 2026-07-23 CFG-01; see docs/operations/pre-launch-hardening.md).
 auth_mode                = "none"            # none | apikey | sep10
 anon_rate_limit_per_min  = 60
 key_rate_limit_per_min   = 1000
