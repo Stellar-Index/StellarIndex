@@ -333,6 +333,52 @@
   # lake sink tolerates them, but merges/queries in flight die).
   tags: [clickhouse, log-discipline]
 
+- name: ClickHouse CLIENT port drop-in (must match the server tcp_port above)
+  # The server moved its native port to 9300 because MinIO owns 9000 on
+  # this box (minio binds 127.0.0.1:9000, [::1]:9000 AND *:9000). The
+  # client's compiled-in default is still 9000 — so a bare
+  # `clickhouse-client` opens a TCP connection to MinIO's S3 API, sends
+  # the ClickHouse native handshake, and MinIO simply never answers.
+  #
+  # The failure mode is the nasty one: it does not refuse and it does not
+  # error, it HANGS FOREVER. An operator following any runbook that says
+  # "run clickhouse-client" gets a dead terminal at the exact moment they
+  # are trying to diagnose an incident, with nothing in any log to say
+  # why. (Cost ~15 minutes of a live investigation on 2026-07-25, which
+  # is how this was found — the box was healthy the whole time.)
+  #
+  # ROOT-ELEMENT GOTCHA, the reason this needs ansible rather than a
+  # one-off file: a drop-in is only merged when its root element matches
+  # the root of the config it merges into. /etc/clickhouse-server/*
+  # is rooted at <clickhouse>, but the packaged
+  # /etc/clickhouse-client/config.xml is rooted at <config>. A
+  # hand-written <clickhouse>-rooted client drop-in is parsed, ignored,
+  # and reported nowhere — which is exactly the state this box was in:
+  # the correct port had been sitting in zz-port.xml since 2026-06-05
+  # doing nothing. Keep this <config>-rooted, and do not "fix" it to
+  # match the server drop-in above.
+  ansible.builtin.copy:
+    dest: /etc/clickhouse-client/config.d/zz-port.xml
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      <config><port>9300</port></config>
+  tags: [clickhouse, log-discipline]
+
+- name: Assert a bare clickhouse-client can actually reach the server
+  # Proves the drop-in above took effect rather than trusting that it
+  # parsed — the whole defect being fixed was a config that looked right
+  # and was silently inert. No --port here ON PURPOSE: this asserts the
+  # operator's bare-command path, which is the one that broke.
+  ansible.builtin.command:
+    cmd: clickhouse-client -q "SELECT 1"
+  register: ch_client_probe
+  changed_when: false
+  failed_when: ch_client_probe.rc != 0 or ch_client_probe.stdout.strip() != "1"
+  timeout: 30
+  tags: [clickhouse, log-discipline]
+
 - name: ClickHouse merge-memory guard drop-in
   # 2026-07-09 incident: the contract_events_daily uniqExact(UInt128)
   # merge's allocation exceeded the KERNEL COMMIT BUDGET

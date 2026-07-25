@@ -7,8 +7,10 @@
 // Storage shape — two key families per (subject, day):
 //
 //	usage:<sub>:<YYYY-MM-DD>     → INCR-counted request total
-//	                               (allowed traffic only; the
-//	                               MonthlyQuota input)
+//	                               (BILLABLE traffic only; the
+//	                               MonthlyQuota input — excludes
+//	                               429 AND 5xx, see ClassThrottled
+//	                               and ClassServerError)
 //	usage:ep:<sub>:<YYYY-MM-DD>  → HASH of per-endpoint outcome
 //	                               counters; fields are
 //	                               "<route-pattern>|<class>" with
@@ -50,8 +52,14 @@ const (
 	// ClassClientError — 4xx except 429.
 	ClassClientError = "4xx"
 	// ClassThrottled — 429 rate-limit rejections. Kept out of the
-	// legacy per-day total so `requests` keeps meaning "allowed
-	// traffic" (MonthlyQuota reads the legacy keys).
+	// legacy per-day total, along with ClassServerError, so
+	// `requests` keeps meaning BILLABLE traffic — outcomes the
+	// CALLER caused (MonthlyQuota reads the legacy keys). A 429 is
+	// our throttle firing and a 5xx is our failure; charging either
+	// against a paid monthly cap means an outage or a rate-limit
+	// storm eats the customer's allowance (audit COR-05). Both are
+	// still counted in full in the per-endpoint detail hash, so
+	// neither becomes invisible — only unbillable.
 	ClassThrottled = "429"
 	// ClassServerError — 5xx.
 	ClassServerError = "5xx"

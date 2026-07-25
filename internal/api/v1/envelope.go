@@ -52,7 +52,9 @@ type Flags struct {
 	Triangulated      bool `json:"triangulated"`
 	DivergenceWarning bool `json:"divergence_warning"`
 	// DivergenceChecked is true only when a live cross-reference check ran
-	// (≥1 responding reference). When false, `divergence_warning` is NOT
+	// (≥ `min_sources_for_warning` responding references — the SAME quorum
+	// the worker gates its verdict on; below it the cross-check reaches no
+	// verdict at all). When false, `divergence_warning` is NOT
 	// meaningful — the check is blind (references dark, or no record yet), so
 	// a `false` warning must not be read as "prices agree" (CS-087).
 	DivergenceChecked bool `json:"divergence_checked"`
