@@ -136,18 +136,44 @@ in real-time.
    before committing.
 
 3. **Run trim in 1M-ledger chunks** so a partial failure leaves
-   a clear position cursor. For each chunk:
+   a clear position cursor.
+
+   > ⚠ **Two corrections (2026-07-25), both from actually running this:**
+   >
+   > **(a) A chunk is done when `enumeration_complete=true`, not after
+   > one invocation.** A 1M-ledger chunk holds ~1M objects but
+   > `-max-files 100000` caps each run at 100k, so a single pass trims
+   > at most 10% of the chunk and the old loop advanced anyway,
+   > silently leaving ~90% behind. Pre-pagination this was invisible
+   > because the tool couldn't see past the SDK's 1000-key listing cap
+   > and deleted nothing at all; now that it works, the inner
+   > repeat-until-complete loop below is load-bearing.
+   >
+   > **(b) Budget for `--verify-upstream` throughput before choosing
+   > this path at bulk scale.** Measured on r1 (2026-07-25): cold HEADs
+   > run ~7/s serial — 2,000 candidates took 4m47s, so 1M-object chunks
+   > cost ~40 h each and a ~50M-object bulk trim would take ~80 days.
+   > This per-file loop is the right tool for SURGICAL trims and for
+   > the one partition that straddles the cutoff. For bulk reclaim,
+   > verify per-PARTITION instead (local vs cold object-count parity
+   > plus a sampled md5 comparison) and delete verified partitions
+   > wholesale; keep this loop for the straddle.
 
    ```sh
    for CHUNK in $(seq 2 1000000 $CUTOFF); do
      CHUNK_END=$(( CHUNK + 999999 ))
      if (( CHUNK_END > CUTOFF )); then CHUNK_END=$CUTOFF; fi
      echo "=== chunk: $CHUNK → $CHUNK_END ==="
-     /usr/local/bin/stellarindex-ops trim-galexie-archive \
-       -config /etc/stellarindex.toml \
-       -older-than-ledger "$CHUNK_END" \
-       -max-files 100000 \
-       -commit
+     # Repeat until the tool reports enumeration_complete=true for
+     # this cutoff — each pass deletes at most -max-files objects.
+     while : ; do
+       OUT=$(/usr/local/bin/stellarindex-ops trim-galexie-archive \
+         -config /etc/stellarindex.toml \
+         -older-than-ledger "$CHUNK_END" \
+         -max-files 100000 \
+         -commit 2>&1 | tee /dev/stderr)
+       echo "$OUT" | grep -q '"enumeration_complete":true' && break
+     done
      # Watch pool capacity between chunks.
      zpool list -H data
      # Stop if capacity climbs unexpectedly (defrag pressure can
