@@ -4849,13 +4849,25 @@ export interface paths {
                                 /** @description money — JSON string per INV-2 */
                                 d30_value?: string | null;
                                 d30_delta_pct?: number | null;
-                                /** @description money — JSON string per INV-2 */
+                                /**
+                                 * @description Highest observed value since this entity entered the index — NOT an all-time high over the asset's full history. money — JSON string per INV-2.
+                                 *
+                                 *     The rollup scans a rolling ~30-day window, but the stored value is merged with GREATEST on every refresh, so it accumulates from the moment tracking began and never decays. It therefore reaches back further than 30 days (the oldest extreme on the reference deployment is ~80 days) but does not reach back before the entity was first indexed, and it is not backfilled from history.
+                                 *
+                                 *     Because the merge is monotonic, a single bad print is permanent: an extreme recorded before a data-quality fix landed stays until the row is rebuilt. Treat it as "high-water mark observed by this index", not as a market all-time high.
+                                 */
                                 ath_value?: string | null;
-                                /** Format: date-time */
+                                /**
+                                 * Format: date-time
+                                 * @description Observation time of ath_value.
+                                 */
                                 ath_at?: string | null;
-                                /** @description money — JSON string per INV-2 */
+                                /** @description Lowest observed value since this entity entered the index — NOT an all-time low over the asset's full history. money — JSON string per INV-2. Same accumulation and single-bad-print caveats as ath_value, via LEAST. */
                                 atl_value?: string | null;
-                                /** Format: date-time */
+                                /**
+                                 * Format: date-time
+                                 * @description Observation time of atl_value.
+                                 */
                                 atl_at?: string | null;
                                 /** @enum {string|null} */
                                 streak_direction?: "up" | "down" | "flat" | null;

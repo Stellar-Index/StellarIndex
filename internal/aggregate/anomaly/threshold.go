@@ -10,8 +10,9 @@ import (
 // Thresholds is the per-class threshold pair for Phase-1 anomaly
 // detection.
 //
-//   - WarnPct: deviation above this triggers [ActionWarn] (publish
-//     with `flags.divergence_warning: true`).
+//   - WarnPct: deviation above this triggers [ActionWarn] (publish,
+//     and count it in obs.AnomalyWarnTotal — NOT a wire flag; see
+//     [ActionWarn]).
 //   - FreezePct: deviation above this AND `source_count <= 1`
 //     triggers [ActionFreeze] (do not publish; serve LKG).
 //

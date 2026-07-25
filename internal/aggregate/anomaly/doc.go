@@ -35,7 +35,9 @@
 // Evaluate returns a [Decision] with one of three actions:
 //
 //   - [ActionAllow]  — publish normally
-//   - [ActionWarn]   — publish with `flags.divergence_warning: true`
+//   - [ActionWarn]   — publish, and count it in obs.AnomalyWarnTotal
+//     (operator-side only; it does NOT set flags.divergence_warning —
+//     see [ActionWarn])
 //   - [ActionFreeze] — DO NOT publish; serve the previous bucket's
 //     LKG with `flags.frozen: true` (caller's
 //     responsibility to maintain the LKG slot)

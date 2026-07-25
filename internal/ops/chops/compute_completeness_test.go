@@ -10,6 +10,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // testConfigWithAllSources enables the config-gated catalogue entries
@@ -486,6 +487,113 @@ func TestSourceSubstrateOK(t *testing.T) {
 			if got := sourceSubstrateOK(tc.problem, tc.hasProblem, tc.genesis); got != tc.want {
 				t.Fatalf("sourceSubstrateOK(problem=%d, has=%v, genesis=%d) = %v, want %v",
 					tc.problem, tc.hasProblem, tc.genesis, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDetectFloorLoss pins the N-F2 residual fix: a bottom-edge truncation of
+// the served tier must FAIL the projection axis instead of quietly becoming
+// the new reconcile scope.
+//
+// The reason this needs its own check at all is that the reconcile cannot
+// catch it. targetScope floors each target at its own MIN(ledger), so when the
+// oldest rows are deleted the floor rises with the loss, the surviving rows
+// reconcile perfectly, and the verdict reads complete. "Someone dropped the
+// oldest 10M ledgers of trades" and "we never projected below there" are
+// indistinguishable from inside the reconcile. Only the durable floor
+// (migration 0116) separates them.
+func TestDetectFloorLoss(t *testing.T) {
+	src := reconSource{
+		name: "soroswap",
+		targets: []reconTarget{
+			{table: "trades", whereFilter: "source = 'soroswap'"},
+			{table: "soroswap_skim_events"},
+		},
+	}
+	keyTrades := timescale.TargetFloorKey("soroswap", "trades", "source = 'soroswap'")
+	keySkim := timescale.TargetFloorKey("soroswap", "soroswap_skim_events", "")
+
+	floors := func(m map[string]uint32) map[string]timescale.CompletenessTargetFloor {
+		out := make(map[string]timescale.CompletenessTargetFloor, len(m))
+		for k, v := range m {
+			out[k] = timescale.CompletenessTargetFloor{VerifiedFrom: v}
+		}
+		return out
+	}
+
+	tests := []struct {
+		name      string
+		served    []servedFloor
+		floors    map[string]timescale.CompletenessTargetFloor
+		wantCount int
+		wantIn    string
+	}{
+		{
+			// First run after the migration. An absent floor must be
+			// "nothing to compare against", never floor=0 — the latter
+			// would fail every target at once.
+			name:      "no recorded floor is not loss",
+			served:    []servedFloor{{min: 61_500_000, present: true}, {min: 61_500_000, present: true}},
+			floors:    floors(nil),
+			wantCount: 0,
+		},
+		{
+			name:      "served min equal to the floor is not loss",
+			served:    []servedFloor{{min: 61_500_000, present: true}, {min: 2, present: true}},
+			floors:    floors(map[string]uint32{keyTrades: 61_500_000, keySkim: 2}),
+			wantCount: 0,
+		},
+		{
+			// Deeper than ever verified — new ground, not loss.
+			name:      "served min BELOW the floor is not loss",
+			served:    []servedFloor{{min: 100, present: true}, {min: 2, present: true}},
+			floors:    floors(map[string]uint32{keyTrades: 61_500_000, keySkim: 2}),
+			wantCount: 0,
+		},
+		{
+			// The case the whole fix exists for.
+			name:      "served min ABOVE the floor is loss",
+			served:    []servedFloor{{min: 71_000_000, present: true}, {min: 2, present: true}},
+			floors:    floors(map[string]uint32{keyTrades: 61_500_000, keySkim: 2}),
+			wantCount: 1,
+			wantIn:    "9500000 ledgers of served rows below the recorded floor are GONE",
+		},
+		{
+			// Maximal loss: the table is empty but we had verified it.
+			// Must be reported, not skipped as "no rows, nothing to check".
+			name:      "empty target with a prior floor is loss",
+			served:    []servedFloor{{min: 0, present: false}, {min: 2, present: true}},
+			floors:    floors(map[string]uint32{keyTrades: 61_500_000, keySkim: 2}),
+			wantCount: 1,
+			wantIn:    "holds NO rows but was previously verified from ledger 61500000",
+		},
+		{
+			// An empty target with NO floor stays the first-run case.
+			name:      "empty target with no floor is not loss",
+			served:    []servedFloor{{min: 0, present: false}, {min: 2, present: true}},
+			floors:    floors(nil),
+			wantCount: 0,
+		},
+		{
+			name:      "both targets can fail independently",
+			served:    []servedFloor{{min: 71_000_000, present: true}, {min: 500, present: true}},
+			floors:    floors(map[string]uint32{keyTrades: 61_500_000, keySkim: 2}),
+			wantCount: 2,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := detectFloorLoss(src, tc.served, tc.floors)
+			if len(got) != tc.wantCount {
+				t.Fatalf("detectFloorLoss returned %d finding(s), want %d: %v", len(got), tc.wantCount, got)
+			}
+			if tc.wantIn != "" {
+				joined := strings.Join(got, " | ")
+				if !strings.Contains(joined, tc.wantIn) {
+					t.Errorf("detail %q does not contain %q", joined, tc.wantIn)
+				}
 			}
 		})
 	}
