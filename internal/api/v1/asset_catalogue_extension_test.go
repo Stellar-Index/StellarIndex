@@ -1,9 +1,11 @@
 package v1_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"testing"
 
@@ -208,5 +210,74 @@ func TestAssetGet_AssetExtension_FiatAsset_Skipped(t *testing.T) {
 	}
 	if len(env.Data.TopMarkets) != 0 {
 		t.Errorf("fiat asset should NOT get top_markets; got %+v", env.Data.TopMarkets)
+	}
+}
+
+// TestAssetGet_ZeroObservationCountIsServedNotDropped — COR-03.
+//
+// `observation_count` is a COUNT column declared `NOT NULL DEFAULT 0`
+// (migrations/0023), so a registered asset that hasn't traded in the
+// window legitimately reads 0. The overlay used to gate the field on
+// `!= 0`, which dropped it from the response — leaving a client unable
+// to distinguish "this asset has zero observations" from "we have no
+// catalogue row for this asset at all", the two states the field's own
+// `omitempty` is supposed to separate.
+//
+// The ledger fields are deliberately NOT included in that change:
+// ledger 0 does not exist on Stellar, so 0 there really does mean
+// unset and must stay omitted. This test pins both halves.
+func TestAssetGet_ZeroObservationCountIsServedNotDropped(t *testing.T) {
+	usdc, err := canonical.NewClassicAsset("USDC", testUSDCIssuer)
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+	assetsReader := &stubAssetsReaderExt{
+		row: timescale.AssetRow{
+			Slug:    "USDC",
+			AssetID: usdc.String(),
+			Code:    "USDC",
+			// A catalogued asset with no observations yet.
+			ObservationCount: 0,
+			FirstSeenLedger:  0,
+			LastSeenLedger:   0,
+		},
+	}
+	reader := &stubAssetReader{
+		byID: map[string]v1.AssetDetail{
+			usdc.String(): {AssetID: usdc.String(), Type: "classic", Code: "USDC"},
+		},
+	}
+	srv := v1.New(v1.Options{Assets: reader, AssetsReader: assetsReader})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/assets/"+usdc.String())
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	var env struct {
+		Data v1.AssetDetail `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Data.ObservationCount == nil {
+		t.Fatalf("observation_count dropped for a catalogued zero-observation asset — "+
+			"indistinguishable from 'no catalogue row'. body: %s", body)
+	}
+	if got := *env.Data.ObservationCount; got != 0 {
+		t.Errorf("observation_count = %d, want 0", got)
+	}
+	if !bytes.Contains(body, []byte(`"observation_count":0`)) {
+		t.Errorf("wire body must carry observation_count:0, got: %s", body)
+	}
+	// Ledger 0 is not a real Stellar ledger — those stay omitted.
+	if env.Data.FirstSeenLedger != nil {
+		t.Errorf("first_seen_ledger = %v, want absent (ledger 0 does not exist)", *env.Data.FirstSeenLedger)
+	}
+	if env.Data.LastSeenLedger != nil {
+		t.Errorf("last_seen_ledger = %v, want absent (ledger 0 does not exist)", *env.Data.LastSeenLedger)
 	}
 }

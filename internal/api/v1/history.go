@@ -22,6 +22,13 @@ type HistoryReader interface {
 	// [from, to). Ordered chronologically (ts ASC). Used by the
 	// aggregation endpoints (/v1/vwap, /v1/twap, /v1/ohlc) which
 	// consume the whole window at once.
+	//
+	// When the window holds more than `limit` trades, implementations
+	// MUST keep the NEWEST `limit` rows (and still return them ts ASC),
+	// not the oldest: a truncated aggregate has to run up to the window
+	// end or a busy 24h VWAP reports a price from hours ago (F-1319).
+	// The handlers' `truncated` flag is documented against this
+	// guarantee — see VWAPResult.Truncated.
 	TradesInRange(ctx context.Context, pair canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error)
 
 	// TradesInRangeAfter is TradesInRange with a full-PK cursor.

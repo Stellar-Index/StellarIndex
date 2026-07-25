@@ -302,7 +302,8 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 	identifier := strings.TrimSpace(session.ClientReferenceID)
 	if identifier == "" {
 		s.logger.Error("stripe webhook: client_reference_id missing",
-			"event_id", ev.ID, "session_id", session.ID, "email", session.CustomerEmail)
+			"event_id", ev.ID, "session_id", session.ID,
+			"email", maskEmail(session.CustomerEmail))
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/stripe-missing-identifier",
 			"client_reference_id missing", http.StatusBadRequest,
@@ -355,7 +356,7 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 	if len(keys) == 0 {
 		s.logger.Warn("stripe webhook: no keys for identifier (customer paid but never signed up?)",
 			"identifier", identifier, "event_id", ev.ID,
-			"email", session.CustomerEmail)
+			"email", maskEmail(session.CustomerEmail))
 		// Acknowledge — there's nothing to upgrade. Operator triages
 		// out-of-band (refund? ask customer to sign up?). Refusing
 		// would just trigger Stripe retries. Mark processed so a

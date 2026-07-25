@@ -2451,8 +2451,12 @@ export interface paths {
          *     1. **Single-bar (default — back-compat)**: no `interval`. Returns
          *        one OHLC bar (`OHLCBar`) for the window `[from, to)` computed
          *        from raw trades. Single-bar mode 404s on an empty window.
-         *        `truncated=true` means the window exceeded the per-request cap
-         *        (10000 trades) and the bar reflects only the first N.
+         *        `truncated=true` means the window hit the per-request cap
+         *        (10000 trades) and the bar reflects only the chronologically
+         *        **last** N trades of the window — the reader drops the
+         *        OLDEST rows under the limit, so `open`/`high`/`low` may not
+         *        be the true window values (`close` is unaffected). Narrow
+         *        the window and retry for an exact bar.
          *        `outlier_sigma` (default 4σ) drops dust before bar computation;
          *        `outlier_sigma=0` to opt into raw extremes.
          *
@@ -2625,10 +2629,13 @@ export interface paths {
          * @description Returns VWAP = Σ(quote) / Σ(base) for every trade in
          *     [from, to) for the given pair. Optional outlier filter
          *     drops prices > N σ from the window mean. When the window
-         *     has more than the server's per-request cap (10000 trades)
-         *     the response carries `truncated: true` — the price
-         *     reflects only the chronologically-first N trades, not the
-         *     full window.
+         *     hits the server's per-request cap (10000 trades) the
+         *     response carries `truncated: true` — the price reflects
+         *     only the chronologically **last** N trades of the window,
+         *     not the full window: the reader drops the OLDEST rows
+         *     under the limit so a truncated result always runs up to
+         *     the window end. Narrow the window and retry for an exact
+         *     VWAP.
          */
         get: {
             parameters: {
@@ -5739,7 +5746,12 @@ export interface paths {
                                     watermark_ledger: number;
                                     /** Format: int64 */
                                     tip_ledger: number;
-                                    /** @description Lake-axis coverage (watermark vs tip) — see watermark_ledger. */
+                                    /**
+                                     * @description Lake-axis coverage (watermark vs tip) — see
+                                     *     watermark_ledger. A FRACTION in [0,1] despite
+                                     *     the `_pct` name: 1.0 means the verdict reaches
+                                     *     the tip, not 100.
+                                     */
                                     coverage_pct: number;
                                     /** Format: int64 */
                                     first_problem_ledger?: number;
@@ -12558,7 +12570,7 @@ export interface components {
             last_seen_ledger?: number | null;
             /**
              * Format: int64
-             * @description Total observed trade rows for this asset.
+             * @description Total observed trade rows for this asset. Emitted as `0` for a catalogued asset with no observations; absent only when the asset has no asset-catalogue row at all (so `0` and "unknown" are distinguishable).
              */
             observation_count?: number | null;
             /** @description Distinct (base, quote) pairs over the trailing 24h. */
@@ -13093,7 +13105,7 @@ export interface components {
             /** @description Σ quote_amount integer stroops. */
             quote_volume: string;
             trade_count: number;
-            /** @description True when window exceeded the per-request trade cap; bar reflects only the first N. */
+            /** @description True when the window hit the per-request trade cap; the bar reflects only the chronologically LAST N trades (the reader drops the oldest rows under the limit), so open/high/low may not be the true window values. */
             truncated: boolean;
         };
         OHLCEnvelope: components["schemas"]["EnvelopeMeta"] & {
@@ -13513,6 +13525,13 @@ export interface components {
             /**
              * @description Allowed requests (all responses except 429). Throttled
              *     calls are reported separately and never eat quota.
+             *
+             *     On the legacy fallback shape (`endpoint` omitted) this
+             *     column is the BILLABLE counter the monthly quota is
+             *     enforced against, so it also excludes platform-caused
+             *     5xx responses: an outage on our side must not consume
+             *     the quota you paid for. Those responses are still
+             *     reported under `errors`.
              */
             requests?: number;
             /** @description 4xx (excluding 429) + 5xx responses. */

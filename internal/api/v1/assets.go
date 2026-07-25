@@ -254,6 +254,13 @@ type AssetDetail struct {
 	// trades-hypertable activity metadata. Mirrored from AssetRow so
 	// the explorer's asset-detail page can drop its parallel
 	// /v1/coins/{slug} fetch.
+	//
+	// Absent means "no asset-catalogue row" for all three. The ledger
+	// fields additionally stay absent when the registry holds 0 (not
+	// a real ledger — genesis is 1), but ObservationCount is emitted
+	// as 0 when the catalogued asset has no observations, because 0
+	// is a legitimate count and a client must be able to tell it
+	// apart from "we have nothing" (COR-03).
 	FirstSeenLedger  *uint32 `json:"first_seen_ledger,omitempty"`
 	LastSeenLedger   *uint32 `json:"last_seen_ledger,omitempty"`
 	ObservationCount *int64  `json:"observation_count,omitempty"`
@@ -1037,6 +1044,12 @@ func assetDetailFromAssetRow(row timescale.AssetRow) AssetDetail {
 	if row.Slug != "" {
 		d.Slug = row.Slug
 	}
+	// COR-03: ledger 0 doesn't exist on Stellar, so a zero there is
+	// genuinely "unset" and stays omitted. observation_count is a
+	// COUNT column (`NOT NULL DEFAULT 0`), so zero is a real reading
+	// and must be served as 0 rather than silently dropped — see
+	// applyAssetRowToDetail for the full rationale. We already have
+	// the row, so presence is not in question.
 	if row.FirstSeenLedger != 0 {
 		v := row.FirstSeenLedger
 		d.FirstSeenLedger = &v
@@ -1045,10 +1058,8 @@ func assetDetailFromAssetRow(row timescale.AssetRow) AssetDetail {
 		v := row.LastSeenLedger
 		d.LastSeenLedger = &v
 	}
-	if row.ObservationCount != 0 {
-		v := row.ObservationCount
-		d.ObservationCount = &v
-	}
+	obs := row.ObservationCount
+	d.ObservationCount = &obs
 	// Asset-catalogue overlay scalars (price / volume / change percentages).
 	if row.PriceUSD != nil {
 		d.PriceUSD = row.PriceUSD

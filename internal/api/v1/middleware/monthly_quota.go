@@ -38,7 +38,10 @@ type MonthToDateReader interface {
 //     under, so the writer and reader stay in lock-step). When the
 //     count >= quota, reject
 //     with `429 Too Many Requests` + Problem-JSON body listing
-//     the cap.
+//     the cap. The counter this reads is BILLABLE traffic only —
+//     `UsageTracker` keeps 429s and 5xx out of it (see
+//     [billableClass]), so neither our throttle nor our outage can
+//     consume the customer's cap.
 //   - Reader nil or read error: log + pass through. The cap is
 //     not a security boundary — it's a billing fairness
 //     mechanism, so a transient Redis blip must not 500 paying

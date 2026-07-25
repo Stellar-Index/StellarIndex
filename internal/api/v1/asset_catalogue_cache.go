@@ -508,19 +508,59 @@ func (c *CachedAssetsReader) refreshRows(
 	}
 }
 
+// fetchHistoryMap is [CachedAssetsReader.fetchRows] for the batched
+// price-history maps. The branch structure is deliberately identical,
+// (A)/(A')/(B)/(C) in the same order — HLT-01: the two used to
+// diverge, this one missing (A') entirely, so an EXPIRED history batch
+// fell straight through to the blocking cold-leader path and every
+// caller during the refetch waited on the slow upstream. That is the
+// exact stampede-on-expiry #22 fixed for the listing rows, still live
+// on the sibling the same handler calls in the same request
+// (/v1/assets?include=sparkline fans out to both).
 func (c *CachedAssetsReader) fetchHistoryMap(
 	ctx context.Context,
 	op, key string,
 	upstream func(context.Context) (map[string][]timescale.AssetPricePoint, error),
 ) (map[string][]timescale.AssetPricePoint, error) {
 	c.mu.Lock()
-	if e, ok := c.entries[key]; ok && e.flight == nil && time.Since(e.at) < c.ttl {
+	e, ok := c.entries[key]
+
+	// (A) Fresh hit.
+	if ok && e.flight == nil && time.Since(e.at) < c.ttl {
 		out := e.historyByAsset
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("coins", op, "hit").Inc()
 		return out, nil
 	}
-	if e, ok := c.entries[key]; ok && e.flight != nil {
+
+	// (A') Stale-while-revalidate. A prior SUCCESSFUL fetch exists
+	// (e.at non-zero — failed cold fetches delete the entry) but has
+	// expired. Serve the stale map IMMEDIATELY and kick at most one
+	// background refresh. Nobody waits on the upstream call.
+	if ok && !e.at.IsZero() {
+		stale := e.historyByAsset
+		if e.flight == nil {
+			done := make(chan struct{})
+			e.flight = done
+			entry := e
+			c.mu.Unlock()
+			obs.APICacheOpsTotal.WithLabelValues("coins", op, "stale").Inc()
+			//nolint:gosec,contextcheck // G118 / contextcheck:
+			// intentional, same as fetchRows — the SWR refresh MUST
+			// use a fresh context (refreshHistoryMap ->
+			// context.Background), NOT the request ctx, which is
+			// cancelled the instant the stale response is written.
+			go c.refreshHistoryMap(op, entry, done, upstream)
+			return stale, nil
+		}
+		c.mu.Unlock()
+		obs.APICacheOpsTotal.WithLabelValues("coins", op, "stale").Inc()
+		return stale, nil
+	}
+
+	// (B) Cold fetch already in flight (no prior success to serve) —
+	// join it rather than stampede upstream.
+	if ok && e.flight != nil {
 		entry := e
 		ch := e.flight
 		c.mu.Unlock()
@@ -536,6 +576,8 @@ func (c *CachedAssetsReader) fetchHistoryMap(
 			return nil, ctx.Err()
 		}
 	}
+
+	// (C) Cold leader: nothing stale to serve, so block inline.
 	done := make(chan struct{})
 	entry := &assetsCacheEntry{flight: done}
 	c.entries[key] = entry
@@ -556,4 +598,33 @@ func (c *CachedAssetsReader) fetchHistoryMap(
 	c.mu.Unlock()
 	close(done)
 	return hist, err
+}
+
+// refreshHistoryMap is [CachedAssetsReader.refreshRows] for the
+// history-map entries: fresh background context, swap on success, KEEP
+// the existing stale value on failure (retry next request), clear the
+// in-flight marker either way.
+func (c *CachedAssetsReader) refreshHistoryMap(
+	op string,
+	entry *assetsCacheEntry,
+	done chan struct{},
+	upstream func(context.Context) (map[string][]timescale.AssetPricePoint, error),
+) {
+	defer close(done)
+	ctx, cancel := context.WithTimeout(context.Background(), assetsRefreshBudget)
+	defer cancel()
+
+	hist, err := upstream(ctx)
+
+	c.mu.Lock()
+	if err == nil {
+		entry.at = time.Now()
+		entry.historyByAsset = hist
+	}
+	entry.flight = nil
+	c.mu.Unlock()
+
+	if err != nil {
+		obs.APICacheOpsTotal.WithLabelValues("coins", op, "refresh_error").Inc()
+	}
 }
