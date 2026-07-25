@@ -561,7 +561,7 @@ func usdPopulatedLabel(populated bool) string {
 // to repair a wrong stored value — but it also means any re-derive
 // path that runs WITHOUT the USD-volume resolvers installed will
 // overwrite correct usd_volume with NULL, which is why
-// [InstallUSDVolumeResolution] and the reDeriveResolverGuard exist.
+// [InstallUSDVolumeResolution] and [Store.reDeriveNullVolumeGuard] exist.
 //
 // The trade is validated via [canonical.Trade.Validate] before
 // touching the DB; a Validate failure returns [canonical.ErrInvalidTrade].

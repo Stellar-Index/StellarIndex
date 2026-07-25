@@ -188,7 +188,7 @@ func backfill(args []string) error {
 	// overwriting live-ingested correct values with NULL. Mirror the indexer /
 	// backfill_external / ch_rebuild wiring: a positive generation so a corrected
 	// re-derive is authoritative, AND the resolvers so it writes real values (not
-	// NULL). The reDeriveResolverGuard now backstops any future omission.
+	// NULL). The reDeriveNullVolumeGuard now backstops any future omission.
 	store.SetDeriveGeneration(time.Now().Unix())
 	if err := timescale.InstallUSDVolumeResolution(
 		store,
