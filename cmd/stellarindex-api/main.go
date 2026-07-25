@@ -621,7 +621,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		if err != nil {
 			return fmt.Errorf("divergence service: %w", err)
 		}
-		divergenceLooker = divergenceAdapter{svc: divSvc}
+		divergenceLooker = newDivergenceAdapter(divSvc, cfg.Divergence.MinSourcesForWarning)
 		names := make([]string, len(refs))
 		for i, r := range refs {
 			names[i] = r.Name()
@@ -2036,7 +2036,28 @@ func buildOracleDivergenceReferences(cfg config.DivergenceConfig, oracles diverg
 // shim is the wire between them.
 type divergenceAdapter struct {
 	svc *divergence.Service
+	// minSources mirrors the worker's ServiceOptions.MinSourcesForWarning
+	// so the `checked` predicate below is the SAME quorum the worker used
+	// when it decided whether WarningFired was computable at all. Clamped
+	// by newDivergenceAdapter exactly as divergence.NewService clamps it.
+	minSources int
 }
+
+// newDivergenceAdapter builds the adapter with the effective source
+// quorum. cfgMinSources is the raw `divergence.min_sources_for_warning`
+// value; <=0 takes the same default divergence.NewService applies, so an
+// unset config can't silently drop the adapter's quorum to "any single
+// reference".
+func newDivergenceAdapter(svc *divergence.Service, cfgMinSources int) divergenceAdapter {
+	if cfgMinSources <= 0 {
+		cfgMinSources = defaultDivergenceMinSources
+	}
+	return divergenceAdapter{svc: svc, minSources: cfgMinSources}
+}
+
+// defaultDivergenceMinSources mirrors the fallback inside
+// divergence.NewService for an unset/invalid min_sources_for_warning.
+const defaultDivergenceMinSources = 2
 
 func (a divergenceAdapter) DivergenceFiringFor(ctx context.Context, asset canonical.Asset) (firing, checked bool, err error) {
 	cached, found, err := a.svc.LookupCached(ctx, asset)
@@ -2046,10 +2067,22 @@ func (a divergenceAdapter) DivergenceFiringFor(ctx context.Context, asset canoni
 	if !found {
 		return false, false, nil
 	}
-	// checked only when the cached result had a live reference — a
-	// SuccessCount of 0 means every reference was dark, so WarningFired
-	// (necessarily false) is not meaningful (CS-087).
-	return cached.WarningFired, cached.SuccessCount > 0, nil
+	// COR-14 (audit-2026-07-23): `checked` must use the SAME quorum the
+	// worker gates WarningFired on (SuccessCount >= minSources), not
+	// SuccessCount > 0. The worker treats a below-quorum run as UNCHECKED
+	// — CachedResult.WarningFired is hard-false there regardless of how
+	// far the single reference diverged (worker.go: `checked :=
+	// res.SuccessCount >= s.minSources`). Reporting divergence_checked=true
+	// alongside that forced-false warning told consumers "we cross-checked
+	// this price and it agrees" when no cross-check verdict was ever
+	// reached — the exact misreading CS-087 added the flag to prevent.
+	//
+	// This can only move the flag true→false (the safe direction: "we
+	// don't know" instead of a false all-clear). It can never produce the
+	// incoherent (warning=true, checked=false) pair: LookupCached prefers
+	// a firing pair as the representative row, and a firing pair
+	// necessarily met the quorum.
+	return cached.WarningFired, cached.SuccessCount >= a.minSources, nil
 }
 
 // storeChecker adapts *timescale.Store to the v1.ReadyChecker
