@@ -102,7 +102,14 @@ type CoverageVerdictsView struct {
 // ledgers: three audit periods, so one skipped or slow run can't flap
 // the flag, while an audit that has STOPPED surfaces within a few
 // hours instead of never.
-const coverageVerdictStaleLedgers uint32 = 2160
+// CALIBRATED TO THE DEPLOYED CADENCE (2026-07-26): the original 2160
+// (~3h) assumed an hourly compute-completeness timer; r1's timer is
+// DAILY (07:32), so a 3h bound would read stale ~90% of every day —
+// noisy-honest at best. 34560 ≈ 2 audit periods at the daily cadence:
+// one whole missed run plus most of a second before the flag trips,
+// which is the "the audit stopped" signal this gate exists for rather
+// than "the audit hasn't run yet today".
+const coverageVerdictStaleLedgers uint32 = 34560
 
 // coverageVerdictStaleAge is the wall-clock twin of
 // [coverageVerdictStaleLedgers] — the same three-audit-period horizon
@@ -110,7 +117,10 @@ const coverageVerdictStaleLedgers uint32 = 2160
 // with no CursorsReader wired (or before the ledgerstream cursor
 // exists) and on the pathological case where the live tip itself is
 // frozen alongside a stalled audit.
-const coverageVerdictStaleAge = 3 * time.Hour
+// 26h = the daily cadence plus a two-hour grace: catches a missed run
+// on the first morning it fails, without flagging the ordinary gap
+// between yesterday's run and today's. Same calibration note as above.
+const coverageVerdictStaleAge = 26 * time.Hour
 
 // handleCoverageVerdicts serves GET /v1/coverage — every source's
 // latest ADR-0033 completeness verdict. Verdicts change only when the
