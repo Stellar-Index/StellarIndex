@@ -262,7 +262,7 @@ Freeze fires only when **all three** of the following hold:
 
 ```
 freeze_condition = (
-  confidence < 0.10
+  confidence < 0.45          # amended 2026-07-25; was 0.10 — see below
   AND z_score > 5.0
   AND source_count <= 1
 )
@@ -271,6 +271,50 @@ freeze_condition = (
 Three signals must agree. Catches USTRY-shape attacks; does NOT
 fire on legitimate market events (those have multi-source
 coverage, so `source_count > 1`).
+
+> **Amendment 2026-07-25 — the confidence bound is 0.45, not 0.10.**
+>
+> The `z_score > 5.0` above is the intent, and it was not being met.
+> `confidence` is a weighted geometric mean, so it decays *gently* in z:
+> the freeze's real trigger point is emergent from (threshold × combiner
+> × factor set), and no single one of those states it. Measured on the
+> shipped combiner for a single-source bucket at the $12K publish floor:
+>
+> | z | confidence (mature) | confidence (sparse baseline) |
+> |---|---|---|
+> | 0 | 0.5308 | 0.4804 |
+> | 5 | 0.4734 | 0.4285 |
+> | 6 | 0.4269 | 0.3864 |
+> | 8 | 0.3197 | 0.2894 |
+>
+> At `0.10` the freeze needed **z ≈ 15** — about a 30% move inside one
+> 1-minute bucket for XLM (`return_mad ≈ 2%`). The control was
+> decorative. `0.45` puts the trigger at z ≈ 5.5–6 across all three
+> populations (mature, sparse, and non-USD-quoted), which is what the
+> `z > 5` line above always meant.
+>
+> This was taken as ONE decision together with the COR-14 fix, as the
+> audit-2026-07-23 remediation ledger required. Before COR-14, the 8
+> non-USD-quoted default pairs had `confidence` pinned to exactly 0 (a
+> bug: `approxUSDVolume` returned 0 for pairs it could not value in USD,
+> and 0 is indistinguishable from "worst possible"), so this leg was
+> permanently true for them and the three-signal AND above silently
+> collapsed to two signals. Fixing that alone would have moved every
+> pair to the dormant z ≈ 15 regime — hence the coupling.
+>
+> On the false-fire history recorded in `markPhase2Freeze` ("Phase 2
+> false-fires across many pairs"): that is *not* evidence against 0.45.
+> Those were the conf≡0 pairs, freezing on `z > 5 AND source_count <= 1`
+> with no third signal at all. With COR-14 fixed the confidence leg is a
+> genuine third gate, so this configuration is strictly stricter than
+> the one that false-fired.
+>
+> Both directions are hazards and the calibration sits between them: a
+> freeze that never fires serves manipulated prices; one that fires too
+> readily serves a stale last-known-good price, which is its own money
+> bug (see MNY-22, where a frozen leg was laundered into a derived pair
+> via triangulation). `TestPhase2FreezeFires_CalibratedToADRZBand` pins
+> the band in both directions.
 
 When freeze fires:
 - The closed-bucket surface (`/v1/price`) returns the

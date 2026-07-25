@@ -41,9 +41,14 @@ type Inputs struct {
 	// oracle / aggregator). 0 when no sources contributed.
 	SourceClassCount int
 
-	// LiquidityUSD — bucket volume in USD. Negative or zero means
-	// "no liquidity signal"; the [LiquidityFactor] handles that
-	// branch.
+	// LiquidityUSD — bucket volume in USD, or [LiquidityUnmeasured]
+	// (negative) when the caller cannot value the pair in USD at all.
+	//
+	// Zero is NOT the unmeasured state: it means "measured, and this
+	// bucket carried no USD volume", which zeroes [LiquidityFactor]
+	// and — the geometric mean being dominated by any zero factor —
+	// the whole score. Pass the sentinel rather than 0 for an
+	// unpriceable pair (COR-14).
 	LiquidityUSD float64
 
 	// CrossOracleDivergencePct — % absolute deviation between our
@@ -104,6 +109,22 @@ type Factors struct {
 	// mildly diverging" — and MUST NOT read false as "references
 	// agree".
 	CrossOracleChecked bool `json:"cross_oracle_checked"`
+
+	// LiquidityMeasured disambiguates the Liquidity factor value on
+	// exactly the same CS-087 discipline as CrossOracleChecked above:
+	// true means a real USD volume fed the factor, false means the
+	// neutral [LiquidityUnmeasuredFactor] was substituted because the
+	// pair could not be valued in USD.
+	//
+	// This is load-bearing, not symmetry for its own sake. The neutral
+	// is 0.5, and LiquidityFactor(10_000) is ALSO exactly 0.5 — and
+	// 10_000 is the production min_usd_volume floor, i.e. the single
+	// most likely measured value, since dropForMinUSDVolume rejects
+	// anything below it before confidence is computed. So Liquidity=0.5
+	// is a perfect collision between "unmeasured" and "the weakest
+	// bucket we will ever publish", and a consumer that cannot tell
+	// them apart MUST NOT read 0.5 as evidence of real liquidity.
+	LiquidityMeasured bool `json:"liquidity_measured"`
 
 	// CrossOracleAgreement is the count of independent external
 	// references that corroborated our price within the divergence
@@ -180,6 +201,10 @@ func Compute(in Inputs, w Weights) Score {
 		CrossOracle:     CrossOracleFactor(in.CrossOracleDivergencePct),
 		BaselineQuality: BaselineQualityFactor(in.BaselineAgeDays),
 	}
+	// Mirrors the CrossOracleChecked branch below: a negative
+	// LiquidityUSD is the "could not value this pair in USD" sentinel,
+	// so the served decomposition marks it unmeasured.
+	f.LiquidityMeasured = in.LiquidityUSD >= 0
 	// Checked mirrors CrossOracleFactor's sentinel branch exactly:
 	// a negative divergence means "no cross-oracle data" (neutral
 	// factor), so the served decomposition marks unchecked and the

@@ -266,12 +266,21 @@ func TestDriftZScore_GenuineRallyDoesNotFire(t *testing.T) {
 // reading anyway — and never a withheld price.
 //
 // It must NOT be re-wired into the freeze on the strength of a
-// "3-signal AND protects us" argument. That argument is false as the
-// code stands: approxUSDVolume returns 0 for every non-USD-quoted
-// pair, LiquidityFactor(0) is 0, and one zero factor drives the
-// geometric mean to 0, so `confidence < 0.10` is pinned true for 8 of
-// the 12 pairs in defaultPairs() no matter what else is true. For
-// them the AND degenerates to `z > 5` alone.
+// "3-signal AND protects us" argument. The reason is that a freeze
+// gated on this statistic cannot self-clear — it takes no observation,
+// so a good current bucket does not release it (that is what
+// TestMaxDriftZScore_PersistsLongAfterTheMoveEnds below measures).
+//
+// Until COR-14 there was a second, independent reason: the AND's
+// confidence leg was not even live for most pairs. approxUSDVolume
+// returned 0 for every non-USD-quoted pair, LiquidityFactor(0) is 0,
+// and one zero factor drives the geometric mean to 0, so
+// `confidence < 0.10` was pinned true for 8 of the 12 pairs in
+// defaultPairs() no matter what else was true, degenerating the AND to
+// `z > 5` alone. An unvaluable pair now passes the
+// confidence.LiquidityUnmeasured sentinel and scores on the factors we
+// did measure, so that leg discriminates again — which removes the
+// second reason, not the first.
 func TestDriftZScore_QuietAssetLargeMoveFires_AcceptedFalsePositive(t *testing.T) {
 	// +25% in a week on a ~21%-annualized-volatility asset.
 	b, err := baseline.FromReturns(rallyReturns(7, 0.25, 0.0005))

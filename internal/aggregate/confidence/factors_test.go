@@ -126,14 +126,48 @@ func TestLiquidityFactor_LogShape(t *testing.T) {
 	}
 }
 
+// TestLiquidityFactor_GuardsBadInputs — NaN is a caller bug, not a
+// sentinel, and must not poison the geometric mean. A MEASURED zero
+// stays 0: "we looked and there is nothing here" is a real signal.
+// (Negative inputs moved to TestLiquidityFactor_UnmeasuredIsNeutral
+// when COR-14 made them the explicit "unmeasured" sentinel.)
 func TestLiquidityFactor_GuardsBadInputs(t *testing.T) {
-	for _, in := range []float64{math.NaN(), -1.0, 0.0, math.Inf(-1)} {
+	for _, in := range []float64{math.NaN(), 0.0} {
 		got := confidence.LiquidityFactor(in)
 		if got != 0 {
 			t.Errorf("LiquidityFactor(%v) = %v, want 0", in, got)
 		}
 	}
 }
+
+// TestLiquidityFactor_UnmeasuredIsNeutral (COR-14) — the negative
+// sentinel means "we could not value this pair in USD at all", which
+// is not a finding about the pair's liquidity and must NOT zero the
+// factor (and with it, the whole geometric mean).
+//
+// Proven red against the pre-fix factor, which returned 0 for every
+// negative input: each case reported 0 instead of 0.5.
+func TestLiquidityFactor_UnmeasuredIsNeutral(t *testing.T) {
+	for _, in := range []float64{confidence.LiquidityUnmeasured, -1.0, -0.5, math.Inf(-1)} {
+		got := confidence.LiquidityFactor(in)
+		if got != confidence.LiquidityUnmeasuredFactor {
+			t.Errorf("LiquidityFactor(%v) = %v, want the neutral %v",
+				in, got, confidence.LiquidityUnmeasuredFactor)
+		}
+	}
+	// The neutral value must sit strictly between "measured thin" and
+	// "measured deep" — a neutral that equalled either end would make
+	// the sentinel indistinguishable from a real measurement.
+	if confidence.LiquidityUnmeasuredFactor <= confidence.LiquidityFactor(liquidityFloorForTest) ||
+		confidence.LiquidityUnmeasuredFactor >= confidence.LiquidityFactor(1_000_000) {
+		t.Errorf("neutral %v is not strictly between the floor and ceiling factors",
+			confidence.LiquidityUnmeasuredFactor)
+	}
+}
+
+// liquidityFloorForTest mirrors the package's unexported
+// liquidityFloorUSD; the factor at (and below) it is 0.
+const liquidityFloorForTest = 1_000.0
 
 // ─── CrossOracleFactor ────────────────────────────────────────────
 
