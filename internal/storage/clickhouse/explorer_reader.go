@@ -777,6 +777,7 @@ func (r *ExplorerReader) txByLedgerAndHash(ctx context.Context, seq uint32, hash
 //     to return first. Note this ordering is NOT what resolves the duplicate-
 //     row case: `ingested_at` is DateTime (1s), so it cannot break a
 //     same-second tie. That is step 2's job, via FINAL.
+//
 //  2. Read the authoritative row via txByLedgerAndHash, now that step 1
 //     narrowed the read to one ledger — cheap FINAL, deterministic, correct
 //     even on an ingested_at tie (audit DAT-10; see txByLedgerAndHash).

@@ -418,3 +418,86 @@ func TestAsyncSink_FlushBatch_UnwiredIsPermanentFault_RetriesEvenAPqError(t *tes
 		t.Errorf("LostCount = %d, want 2 (abandoned at shutdown, not immediately dropped as permanent)", got)
 	}
 }
+
+// transientOnceWriter fails its first batch write with a transient
+// (non-permanent) error and succeeds on every attempt after that.
+// This is the shape that distinguishes "the retry loop is alive during
+// the shutdown drain" from "the drain abandons on first error", with no
+// dependence on scheduler races.
+type transientOnceWriter struct {
+	mu      sync.Mutex
+	calls   int
+	written int
+}
+
+func (w *transientOnceWriter) InsertSorobanEventsBatch(_ context.Context, rows []Row) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.calls++
+	if w.calls == 1 {
+		return errors.New("transient: connection reset by peer")
+	}
+	w.written += len(rows)
+	return nil
+}
+
+func (w *transientOnceWriter) WrittenRows() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.written
+}
+
+// TestAsyncSink_ShutdownDrainRetriesTransientFailure pins the fix for the
+// shutdown-drain data-loss bug.
+//
+// flushBatch aborts an in-flight/retrying write when its abort signal
+// fires, so a stuck write cannot hold shutdown hostage. That signal used
+// to be s.stopping — but the shutdown DRAIN runs entirely AFTER
+// s.stopping is closed, so every batch the drain flushed hit the
+// abandon branch the moment its first attempt returned any error. A
+// single transient blip (a Postgres restart, a reset connection) at
+// shutdown therefore discarded the final buffered rows, logged them as
+// lost, and exited 0. That is the ADR-0029 catch-all table: the rows the
+// completeness census reconciles against.
+//
+// The drain now gets its own bounded grace window, so "stop was
+// requested" and "stop has waited long enough" are finally distinct.
+//
+// Proven red: with abortFlush left as s.stopping, this fails with
+// WrittenCount = 0 / LostCount = 10 and the "shutdown before the write
+// landed" abandon log.
+func TestAsyncSink_ShutdownDrainRetriesTransientFailure(t *testing.T) {
+	t.Parallel()
+
+	w := &transientOnceWriter{}
+	const total = 10
+	sink := NewAsyncSink(w, AsyncSinkOptions{
+		BufferSize: 64,
+		// Big batch + long interval: nothing flushes before Stop, so the
+		// ONLY flush in this test is the shutdown drain's.
+		BatchSize:     1000,
+		FlushInterval: time.Hour,
+		WriteTimeout:  time.Second,
+		DrainGrace:    5 * time.Second,
+	})
+	sink.Start()
+	for i := 0; i < total; i++ {
+		sink.PushEvent(captureableEvent(t, uint32(3_000_000+i)))
+	}
+	sink.Stop()
+
+	if got := sink.LostCount(); got != 0 {
+		t.Errorf("LostCount = %d, want 0 — the drain abandoned rows on a transient error "+
+			"instead of retrying within the grace window", got)
+	}
+	if got := sink.WrittenCount(); got != total {
+		t.Errorf("WrittenCount = %d, want %d", got, total)
+	}
+	if got := w.WrittenRows(); got != total {
+		t.Errorf("writer received %d rows, want %d", got, total)
+	}
+	if w.calls < 2 {
+		t.Errorf("writer saw %d attempts, want >=2 — the retry never happened, "+
+			"so this test is not exercising the drain retry path", w.calls)
+	}
+}

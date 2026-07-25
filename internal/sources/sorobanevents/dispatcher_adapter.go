@@ -82,6 +82,20 @@ type AsyncSinkOptions struct {
 	// batched write is many-row.
 	WriteTimeout time.Duration
 
+	// DrainGrace bounds the shutdown drain: how long flushBatch may
+	// keep retrying rows that were still buffered when Stop() fired.
+	// Defaults to 2x WriteTimeout.
+	//
+	// This exists because "stop was requested" and "stop has waited
+	// long enough" are different events, and conflating them silently
+	// lost data. The steady-state flush aborts on s.stopping so a
+	// stuck write can't hold shutdown hostage — but the shutdown
+	// DRAIN runs entirely after s.stopping is closed, so reusing that
+	// signal made every drained batch abandon-on-arrival. Stop() still
+	// terminates promptly: the drain is bounded by this grace, not by
+	// unbounded retries.
+	DrainGrace time.Duration
+
 	// Logger is used for warn/error lines from the worker. nil falls
 	// through to slog.Default().
 	Logger *slog.Logger
@@ -109,12 +123,20 @@ type AsyncSink struct {
 	logger           *slog.Logger
 	timeout          time.Duration
 
-	ch       chan Row
-	flush    time.Duration
-	batchSz  int
-	stopOnce sync.Once
-	stopping chan struct{}
-	done     chan struct{}
+	ch         chan Row
+	flush      time.Duration
+	batchSz    int
+	drainGrace time.Duration
+
+	// abortFlush is the signal that aborts an in-flight or retrying
+	// flush. Steady state it is s.stopping; drainOnStop swaps it for a
+	// bounded grace timer so the final batches can actually land.
+	// Written and read ONLY by the single worker goroutine (run ->
+	// drainOnStop -> flushBatch), never concurrently.
+	abortFlush <-chan struct{}
+	stopOnce   sync.Once
+	stopping   chan struct{}
+	done       chan struct{}
 
 	mu      sync.Mutex
 	dropped uint64
@@ -141,6 +163,9 @@ func NewAsyncSink(w BatchWriter, opts AsyncSinkOptions) *AsyncSink {
 	if opts.WriteTimeout <= 0 {
 		opts.WriteTimeout = 10 * time.Second
 	}
+	if opts.DrainGrace <= 0 {
+		opts.DrainGrace = 2 * opts.WriteTimeout
+	}
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -153,6 +178,7 @@ func NewAsyncSink(w BatchWriter, opts AsyncSinkOptions) *AsyncSink {
 		ch:               make(chan Row, opts.BufferSize),
 		flush:            opts.FlushInterval,
 		batchSz:          opts.BatchSize,
+		drainGrace:       opts.DrainGrace,
 		stopping:         make(chan struct{}),
 		done:             make(chan struct{}),
 	}
@@ -293,6 +319,7 @@ const (
 //nolint:contextcheck // intentional fresh context; see godoc above.
 func (s *AsyncSink) run() {
 	defer close(s.done)
+	s.abortFlush = s.stopping
 	batch := make([]Row, 0, s.batchSz)
 	ticker := time.NewTicker(s.flush)
 	defer ticker.Stop()
@@ -330,6 +357,14 @@ func (s *AsyncSink) run() {
 // producer; the stopping signal already unblocked them via
 // PushEvent's select.
 func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
+	// s.stopping is already closed here, so leaving abortFlush pointing
+	// at it would abandon every batch this drain flushes — the bug this
+	// grace window fixes. Bounded, so Stop() still returns promptly.
+	grace := make(chan struct{})
+	timer := time.AfterFunc(s.drainGrace, func() { close(grace) })
+	defer timer.Stop()
+	s.abortFlush = grace
+
 	for {
 		select {
 		case row := <-s.ch:
@@ -363,13 +398,14 @@ func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
 // point is abandoned loudly via [AsyncSink.abandonBatch] rather than
 // retried forever.
 func (s *AsyncSink) flushBatch(rows []Row) {
+	abort := s.abortFlush
 	backoff := asyncSinkRetryInitialBackoff
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
 		attemptDone := make(chan struct{})
 		go func() {
 			select {
-			case <-s.stopping:
+			case <-abort:
 				cancel() // unblock a write stuck past its own WriteTimeout
 			case <-attemptDone:
 			}
@@ -389,7 +425,7 @@ func (s *AsyncSink) flushBatch(rows []Row) {
 			return
 		}
 		select {
-		case <-s.stopping:
+		case <-abort:
 			s.abandonBatch(rows, err, "shutdown before the write landed")
 			return
 		case <-time.After(backoff):
