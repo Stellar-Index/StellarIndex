@@ -1,0 +1,30 @@
+# .gitleaksignore — exact-fingerprint exemptions for findings that live
+# ONLY in immutable git history.
+#
+# Why this file exists alongside .gitleaks.toml's [[rules.allowlists]]:
+# those entries are `paths`-based, so they exempt an entire file for all
+# time — correct for the decoder-fixture tests, whose whole point is
+# holding high-entropy public XDR blobs. This file is for the other
+# shape: a one-off string that tripped the heuristic in a PAST commit and
+# has already been removed from the working tree. A path allowlist would
+# be far too wide for that — it would permanently blind the scanner to a
+# live file over a string that is no longer even in it.
+#
+# A fingerprint is `commit:path:rule:line`, so each line here exempts
+# exactly one finding in exactly one historical commit. If the same
+# string reappears in a NEW commit, the fingerprint differs and gitleaks
+# fails — which is the behaviour we want.
+#
+# Bar for adding a line: the string must be provably not a credential
+# (and if it ever WAS one, the answer is rotation, not an ignore entry).
+# Say which, and why, next to it.
+
+# A fake Redis usage-counter subject key in a unit-test fixture, added by
+# 6721eacb and removed in cacf6731 (replaced with an inert literal so the
+# scanner stops seeing it going forward). `kid_515c8d94191f4e93` is a
+# hand-typed identifier for a table-driven test of the usage-rollup
+# backfill's key parsing — it never authenticated anything and matches no
+# key this system issues. gitleaks flags it purely on Shannon entropy
+# (3.55) of the hex-looking tail. Kept as a fingerprint rather than a
+# path allowlist so usage_rollup_backfill_test.go stays scanned.
+6721eacb1b40533c039ecd58b424c3071f29b7c5:cmd/stellarindex-ops/usage_rollup_backfill_test.go:generic-api-key:73

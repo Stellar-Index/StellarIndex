@@ -52,13 +52,52 @@ fi
 # gitleaks (secret scan). CI runs this as its own job; verify.sh didn't,
 # so a new base64/XDR test fixture that trips the generic-api-key entropy
 # heuristic passed local gate but reddened CI (2026-07-06). Graceful-skip
-# when absent (mirrors promtool/govulncheck). `detect --no-git` scans the
-# working tree against .gitleaks.toml — fast, catches a new fixture leak
-# before push so the fix is a .gitleaks.toml allowlist, not a CI email.
+# when absent (mirrors promtool/govulncheck).
+#
+# TWO scans, because neither subsumes the other and running only the first
+# is what let a leak through on 2026-07-25:
+#
+#   --no-git  scans the WORKING TREE, including uncommitted edits. This is
+#             the one that catches a fixture before you commit it, when the
+#             fix is still cheap. It cannot see history.
+#   (default) scans COMMITTED HISTORY, which is exactly what CI runs (with
+#             fetch-depth: 0). It cannot see uncommitted edits.
+#
+# The gap that bit: a test fixture was committed, then removed from the
+# working tree in a follow-up commit. --no-git went green — the string was
+# genuinely gone from the tree — while CI stayed red, because the commit
+# that INTRODUCED it is still in the log and always will be. A local gate
+# that calls itself "run before every push" has to run what CI runs, or it
+# is issuing a pass it has no basis for. History findings that are provably
+# not credentials are exempted by fingerprint in .gitleaksignore.
 if command -v gitleaks >/dev/null 2>&1; then
-    echo "=== Secrets (gitleaks) ===" && gitleaks detect --no-git --no-banner --redact --config .gitleaks.toml
+    echo "=== Secrets (gitleaks, working tree) ===" && \
+        gitleaks detect --no-git --no-banner --redact --config .gitleaks.toml
+    echo "=== Secrets (gitleaks, history — CI parity) ===" && \
+        gitleaks detect --no-banner --redact --config .gitleaks.toml
 else
     echo "=== Secrets (skipped — gitleaks not installed; install via 'brew install gitleaks') ==="
+fi
+# Generated-artifact drift. CI enforces three of these — docs/reference/api
+# and examples/postman in the `openapi` job, web/explorer/src/api/types.ts in
+# the `web/explorer` job — each by regenerating and diffing. verify.sh ran
+# none of them, so an OpenAPI change that regenerated two of the three
+# passed local gate and reddened CI on the third (2026-07-25).
+#
+# Regenerating here is deliberate: unlike CI, a local run should FIX the
+# drift rather than just report it, so the operator commits the result. The
+# diff is still checked so the run is loud about having changed files.
+if command -v node >/dev/null 2>&1 && command -v npx >/dev/null 2>&1; then
+    echo "=== Generated API reference + Postman drift ==="
+    ./scripts/dev/docs-api.sh >/dev/null
+    ./scripts/dev/docs-postman.sh >/dev/null
+    if ! git diff --exit-code --stat -- docs/reference/api examples/postman; then
+        echo "⚠️  Generated artifacts were STALE and have been regenerated above."
+        echo "    Commit these files — CI fails on exactly this diff."
+        exit 1
+    fi
+else
+    echo "=== Generated-artifact drift (skipped — node/npx not installed) ==="
 fi
 echo "=== Test ==="          && make test
 # Compile-only: catches interface-extension breakage in
