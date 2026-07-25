@@ -335,6 +335,15 @@ jobs:
         # ci-health.yml (watches `ci.yml`) and reconciliation-health.yml
         # (watches `ansible-drift.yml`) call. No network, no token.
         run: ./scripts/ci/check-main-ci-health-test.sh
+      - name: check-ansible-drift self-test
+        # OBS-drift (audit-2026-07-23): fixtures for the codified≠live
+        # verdict ansible-drift.yml calls. The load-bearing case runs the
+        # pre-fix rule (`changed -gt 13`) and the current gate against the
+        # same ansible output and asserts they disagree — thirteen unnamed
+        # changed tasks used to pass as "no drift". ansible-drift.yml only
+        # fires weekly against live r1, so these fixtures are the only
+        # place the verdict is exercised on a PR. No network, no ansible.
+        run: ./scripts/ci/check-ansible-drift-test.sh
       - name: lint-lexicon
         # Maintainability audit 2026-07-01 (D2+D6): domain-lexicon +
         # idiom ratchet. Zero rules (no Fetch/Make verbs, slog is the

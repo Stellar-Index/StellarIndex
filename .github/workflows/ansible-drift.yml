@@ -151,24 +151,34 @@ jobs:
             --check --diff | tee /tmp/drift.out
 
       - name: Fail on drift
-        run: |
-          RECAP=$(grep -E "changed=[0-9]+" /tmp/drift.out | tail -1)
-          # No recap => the dry-run never reached PLAY RECAP (the play errored).
-          # With pipefail above this step won't even run, but guard anyway so a
-          # future regression fails with the TRUE cause, not "drift detected: <empty>".
-          if [ -z "$RECAP" ]; then
-            echo "::error::ansible produced no PLAY RECAP — the dry-run failed (invalid vault password, unreachable host, or a task error). See the 'Dry-run the playbook against r1' step above; this is NOT a drift signal."
-            exit 1
-          fi
-          CHANGED=$(echo "$RECAP" | grep -oE "changed=[0-9]+" | cut -d= -f2)
-          echo "recap: $RECAP"
-          # A small allowance for known non-idempotent command tasks
-          # (chown recurse, bucket-ensure). Anything above it = drift.
-          if [ "${CHANGED:-999}" -gt 13 ]; then
-            echo "::error::ansible drift detected: $CHANGED changed tasks (allowance 13). A hand fix needs codifying or repo config needs applying — see docs/operations/r1-ansible-drift-2026-07-03.md"
-            exit 1
-          fi
-          echo "within allowance ($CHANGED <= 13)"
+        # OBS-drift (audit-2026-07-23): the verdict used to be
+        # `[ "${CHANGED:-999}" -gt 13 ]` — thirteen UNNAMED changed
+        # tasks passed as "codified = live", justified by a one-line
+        # comment ("known non-idempotent command tasks (chown recurse,
+        # bucket-ensure)") that enumerated nothing. A hand fix on r1
+        # that ansible would erase — precisely what this guard was
+        # built for after the 2026-06-11 rsyslog incident — passed
+        # silently anywhere inside that slack, and every enumerated
+        # task that legitimately CLEARED just handed its share of the
+        # slack to genuine drift.
+        #
+        # The number is gone. scripts/ci/check-ansible-drift.sh matches
+        # the changed tasks by NAME against
+        # scripts/ci/ansible-drift.baseline, where each entry carries
+        # the reason it reports changed on every run; anything else is
+        # drift at count 1. That baseline is `*.baseline`, so widening
+        # it needs a `Baseline-Growth:` commit trailer
+        # (scripts/ci/lint-baseline-growth.sh) — an auditable act with
+        # a task name attached, unlike a `13` → `14`.
+        #
+        # FIRST RUN AFTER THE VAULT SECRETS ARE RESTORED: expect this to
+        # be red. No verdict has been produced since the rotation
+        # (CID-24), so the baseline was seeded from the runbook's
+        # 2026-07-06 reconcile rather than from an observed run. The
+        # failure will NAME the tasks — confirm each is genuinely
+        # non-idempotent (and add it with a reason) or codify/apply it.
+        # Do not restore a numeric allowance to clear the red.
+        run: bash scripts/ci/check-ansible-drift.sh /tmp/drift.out
 
       - name: Shred materialized secrets
         # F-003: always remove the decoded vault + the plaintext vault

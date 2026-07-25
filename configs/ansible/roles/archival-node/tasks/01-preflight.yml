@@ -31,6 +31,39 @@
       A new region beyond r1-r3 should extend this list deliberately,
       not fall through to a default.
 
+# audit-2026-07-23 SEC-network / INF-20: allowed_ssh_cidrs has no role
+# default either (see defaults/main.yml). SSH is the port that grants
+# root on this box, and the previous "0.0.0.0/0" default handed it to
+# the internet by inheritance — an inventory that never mentioned the
+# var got the widest possible rule with nothing recording the decision.
+# Two separate failures below, deliberately: "you said nothing" and
+# "you said 0.0.0.0/0 without acknowledging it" are different mistakes.
+- name: Verify allowed_ssh_cidrs is declared in inventory
+  ansible.builtin.assert:
+    that:
+      - allowed_ssh_cidrs | default([]) | length > 0
+    fail_msg: >-
+      allowed_ssh_cidrs must be set in inventory (see
+      inventory/r1.example.yml) — the role no longer defaults it to
+      0.0.0.0/0. Narrow it to the operator VPN / jump-host CIDR(s); if
+      the port genuinely has to stay world-open, say so explicitly with
+      ssh_world_open_ack: true.
+
+- name: Verify a world-open SSH port is explicitly acknowledged
+  ansible.builtin.assert:
+    that:
+      - not (allowed_ssh_cidrs | select('in', ['0.0.0.0/0', '::/0']) | list | length > 0)
+        or (ssh_world_open_ack | default(false) | bool)
+    fail_msg: >-
+      allowed_ssh_cidrs opens SSH to the entire internet
+      ({{ allowed_ssh_cidrs | select('in', ['0.0.0.0/0', '::/0']) | list | join(', ') }})
+      on {{ inventory_hostname }}. Narrow it to the operator VPN /
+      jump-host CIDR(s), or — if that host has no jump host yet —
+      declare the exposure in the SAME inventory with
+      ssh_world_open_ack: true and a comment saying what retires it.
+      Key-only auth plus the 30/min nftables rate limit is the only
+      thing in front of a root shell otherwise.
+
 - name: Check that ZFS data devices are declared
   ansible.builtin.assert:
     that:
