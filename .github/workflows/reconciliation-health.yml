@@ -1,0 +1,122 @@
+name: reconciliation-health
+
+# Liveness/staleness watchdog for ansible-drift.yml — the ONLY
+# codified-vs-live infrastructure reconciliation in this repo
+# (reconciliation-and-monitoring-liveness, audit-2026-07-23).
+#
+# ansible-drift.yml failing every week (or never firing at all) is
+# invisible to anyone who doesn't go looking: there is no badge or
+# consumer of "did the weekly drift check produce a verdict", and the
+# 2026-07-20 run history shows exactly this — every scheduled run has
+# died at a credential-loading step before reaching PLAY RECAP, so no
+# valid drift verdict has existed for weeks with nothing surfacing it.
+# A broken reconciliation guard is indistinguishable from "no drift"
+# to anyone who isn't reading individual run logs.
+#
+# This reuses ci-health.yml's own decision core
+# (scripts/ci/check-main-ci-health.sh — generic over CI_WORKFLOW_FILE,
+# unit-testable offline via CI_HEALTH_FIXTURE; see
+# scripts/ci/check-main-ci-health-test.sh) pointed at ansible-drift.yml
+# instead of ci.yml, with thresholds sized for a WEEKLY schedule rather
+# than a per-push one: 2 consecutive red/absent runs (~2 weeks) or 9
+# days since the last green run, whichever trips first.
+#
+# Self-contained: uses ${{ github.token }} via the gh CLI to read run
+# history only — this workflow never touches the vault/SSH secrets
+# ansible-drift.yml itself needs, so it cannot be broken by (or mask)
+# the same credential problem it exists to detect.
+
+on:
+  schedule:
+    # Tuesdays 08:00 UTC — a day after ansible-drift's own Monday
+    # 06:17 UTC run, so the latest week's result is always in by the
+    # time this checks it.
+    - cron: '0 8 * * 2'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: reconciliation-health
+  cancel-in-progress: false
+
+env:
+  ISSUE_LABEL: reconciliation-health
+  ISSUE_TITLE: "Reconciliation health: ansible-drift has no valid drift verdict"
+  FAIL_RUNS: '2'
+  FAIL_HOURS: '216'   # 9 days — one missed weekly run's worth of slack
+
+jobs:
+  check-ansible-drift-health:
+    name: ansible-drift liveness tripwire
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - name: Assess ansible-drift run health
+        id: assess
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CI_WORKFLOW_FILE: ansible-drift.yml
+          CI_HEALTH_BRANCH: main
+        run: |
+          set -euo pipefail
+          set +e
+          report="$(FAIL_RUNS="${FAIL_RUNS}" FAIL_HOURS="${FAIL_HOURS}" ./scripts/ci/check-main-ci-health.sh)"
+          rc=$?
+          set -e
+          echo "$report"
+          {
+            echo "verdict_rc=${rc}"
+            echo "report<<REPORT_EOF"
+            echo "$report"
+            echo "REPORT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the tracking issue (ansible-drift is red/stale)
+        if: steps.assess.outputs.verdict_rc != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REPORT: ${{ steps.assess.outputs.report }}
+        run: |
+          set -euo pipefail
+          # Ensure the label exists (idempotent).
+          gh label create "$ISSUE_LABEL" --color B60205 \
+            --description "ansible-drift.yml has produced no valid drift verdict past threshold" 2>/dev/null || true
+
+          body="$(printf '%s\n\n---\n_Auto-managed by the reconciliation-health workflow (run %s). Closes automatically once ansible-drift.yml produces a green run again._\n' \
+            "$REPORT" "${GITHUB_RUN_ID:-?}")"
+
+          existing="$(gh issue list --label "$ISSUE_LABEL" --state open \
+            --json number --jq '.[0].number' || true)"
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "$body"
+            echo "Updated existing reconciliation-health issue #$existing."
+          else
+            gh issue create --title "$ISSUE_TITLE" --label "$ISSUE_LABEL" --body "$body"
+            echo "Opened new reconciliation-health issue."
+          fi
+
+      - name: Close the tracking issue (ansible-drift is green)
+        if: steps.assess.outputs.verdict_rc == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for n in $(gh issue list --label "$ISSUE_LABEL" --state open \
+              --json number --jq '.[].number' || true); do
+            gh issue close "$n" --comment "ansible-drift.yml is producing valid drift verdicts again — reconciliation-health closing automatically."
+            echo "Closed reconciliation-health issue #$n."
+          done
+
+      - name: Fail the run if ansible-drift has no valid verdict
+        if: steps.assess.outputs.verdict_rc != '0'
+        run: |
+          echo "::error::ansible-drift.yml has produced no valid drift verdict past threshold (2 consecutive red/absent runs or 9 days since the last green run) — see the reconciliation-health tracking issue."
+          exit 1
