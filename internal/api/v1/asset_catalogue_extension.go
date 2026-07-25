@@ -12,8 +12,9 @@ import (
 )
 
 // assetExtensionTimeout caps the total wall time for the
-// asset-catalogue overlay on /v1/assets/{id}. Five reader calls
-// run in parallel; each is bounded by this shared deadline.
+// asset-catalogue overlay on /v1/assets/{id}. Six reader calls
+// run in parallel (see [Server.fetchAssetExtensionResults]); each is
+// bounded by this shared deadline.
 const assetExtensionTimeout = 4 * time.Second
 
 // applyAssetExtensionFields lifts the trailing-window activity +
@@ -140,6 +141,20 @@ func (s *Server) applyAssetRowToDetail(detail *AssetDetail, row timescale.AssetR
 	if row.Slug != "" {
 		detail.Slug = row.Slug
 	}
+	// COR-03: the ledger fields keep their zero-as-unset guard — the
+	// registry columns are `NOT NULL` with a 0 fallback and ledger 0
+	// does not exist on Stellar (genesis is ledger 1), so 0 there
+	// unambiguously means "never observed" and serving
+	// `first_seen_ledger: 0` would assert a ledger that cannot exist.
+	//
+	// observation_count is the opposite: `NOT NULL DEFAULT 0` on a
+	// COUNT column (migrations/0023), so 0 is a LEGITIMATE reading —
+	// a registered asset that hasn't traded in the window. Gating it
+	// on `!= 0` conflated that with "no catalogue row at all" and
+	// dropped the field, so a client could not tell "we have no data"
+	// from "we have data and it is zero". Presence is already proven
+	// here (a non-nil err returned above), so report the count
+	// unconditionally.
 	if row.FirstSeenLedger != 0 {
 		v := row.FirstSeenLedger
 		detail.FirstSeenLedger = &v
@@ -148,10 +163,8 @@ func (s *Server) applyAssetRowToDetail(detail *AssetDetail, row timescale.AssetR
 		v := row.LastSeenLedger
 		detail.LastSeenLedger = &v
 	}
-	if row.ObservationCount != 0 {
-		v := row.ObservationCount
-		detail.ObservationCount = &v
-	}
+	obs := row.ObservationCount
+	detail.ObservationCount = &obs
 }
 
 // applyAssetExtensionResults populates the array-shaped fields from

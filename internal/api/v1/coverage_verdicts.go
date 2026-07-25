@@ -59,8 +59,11 @@ type CoverageVerdictView struct {
 	GenesisLedger   uint32 `json:"genesis_ledger"`
 	WatermarkLedger uint32 `json:"watermark_ledger"`
 	TipLedger       uint32 `json:"tip_ledger"`
-	// CoveragePct is watermark progress vs tip — 100 means the verdict
-	// reaches the tip at compute time.
+	// CoveragePct is watermark progress vs tip, as a FRACTION in
+	// [0,1] — 1.0 (not 100) means the verdict reaches the tip at
+	// compute time. The name is a legacy misnomer kept for wire
+	// compatibility; the value is what completeness.Watermark
+	// computes, (Ledger-Genesis+1)/(Tip-Genesis+1), clamped.
 	CoveragePct float64 `json:"coverage_pct"`
 	// FirstProblemLedger is the first ledger with a verified problem
 	// (0 when none) and Detail the human-readable problem description.

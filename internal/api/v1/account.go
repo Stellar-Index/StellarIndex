@@ -110,7 +110,10 @@ type SessionPeeker interface {
 // On the fallback path (rollup reader unwired or not yet swept)
 // rows degrade to the legacy shape: one row per day, Endpoint
 // empty, errors/throttled zero. Clients sum `requests` grouped by
-// `date` for daily totals in either shape.
+// `date` for daily totals in either shape. That legacy column is
+// the BILLABLE counter the monthly quota enforces against, so it
+// additionally excludes platform-caused 5xx responses (COR-05) —
+// see middleware.billableClass.
 type UsageRow struct {
 	Date      string `json:"date"`               // YYYY-MM-DD
 	Endpoint  string `json:"endpoint,omitempty"` // route pattern; empty on the legacy fallback

@@ -114,16 +114,21 @@ func TestUsageTracker_FamilyAndOutcome(t *testing.T) {
 	}
 }
 
-// TestUsageTracker_OutcomeClasses — 4xx / 5xx land in their classes
-// and still count in the legacy (allowed-traffic) total.
+// TestUsageTracker_OutcomeClasses — every status lands in its detail
+// class, and only CALLER-caused outcomes advance the legacy billable
+// total. wantBillable is 0 for 5xx: that used to be 1, which is
+// exactly the COR-05 defect (a platform failure charged to the
+// customer's monthly quota) — see
+// TestUsageTracker_ServerErrorExcludedFromLegacyTotal.
 func TestUsageTracker_OutcomeClasses(t *testing.T) {
 	cases := []struct {
-		status int
-		class  string
+		status       int
+		class        string
+		wantBillable int64
 	}{
-		{http.StatusNotFound, usage.ClassClientError},
-		{http.StatusInternalServerError, usage.ClassServerError},
-		{http.StatusNoContent, usage.ClassOK},
+		{http.StatusNotFound, usage.ClassClientError, 1},
+		{http.StatusInternalServerError, usage.ClassServerError, 0},
+		{http.StatusNoContent, usage.ClassOK, 1},
 	}
 	for _, tc := range cases {
 		ts, counter := usageTestStack(t, auth.Subject{
@@ -145,8 +150,66 @@ func TestUsageTracker_OutcomeClasses(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(days) != 1 || days[0].Requests != 1 {
-			t.Errorf("status %d: legacy total = %+v, want one day with 1 request", tc.status, days)
+		var billable int64
+		for _, d := range days {
+			billable += d.Requests
+		}
+		if billable != tc.wantBillable {
+			t.Errorf("status %d: legacy billable total = %d, want %d (days = %+v)",
+				tc.status, billable, tc.wantBillable, days)
+		}
+	}
+}
+
+// TestUsageTracker_ServerErrorExcludedFromLegacyTotal — a 5xx records
+// under the server-error class but must NOT advance the legacy per-day
+// total (COR-05).
+//
+// The legacy total is MonthlyQuota's input. Counting our own failures
+// against it means a sustained outage burns the customer's paid
+// monthly quota and then locks them out of their own plan for the rest
+// of the month once we recover — we would charge them for the outage
+// twice. Same reasoning the 429 exclusion already encodes
+// (TestUsageTracker_ThrottledExcludedFromLegacyTotal), applied to the
+// failure class the customer has even less control over.
+//
+// The request stays fully visible in the DETAIL family under the 5xx
+// class, so the traffic is still observable and billable-vs-observed
+// stay separable — only the quota input drops it.
+func TestUsageTracker_ServerErrorExcludedFromLegacyTotal(t *testing.T) {
+	for _, status := range []int{
+		http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout,
+	} {
+		ts, counter := usageTestStack(t, auth.Subject{
+			Tier:  auth.TierAPIKey,
+			KeyID: "kid_5",
+		}, "GET /v1/price", status)
+
+		resp, err := http.Get(ts.URL + "/v1/price")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+
+		got := detailCounts(t, counter, "key:kid_5")
+		if n := got[[2]string{"/v1/price", usage.ClassServerError}]; n != 1 {
+			t.Errorf("status %d: 5xx detail count = %d, want 1 — the request must stay observable (counts = %v)",
+				status, n, got)
+		}
+		days, err := counter.Read(context.Background(), "key:kid_5", 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var billable int64
+		for _, d := range days {
+			billable += d.Requests
+		}
+		if billable != 0 {
+			t.Errorf("status %d: legacy billable total = %d, want 0 — a platform-caused failure must not eat monthly quota (days = %+v)",
+				status, billable, days)
 		}
 	}
 }

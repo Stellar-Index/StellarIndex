@@ -20,9 +20,15 @@ import (
 //
 //   - The LEGACY per-day total (usage:<sub>:<day>) — feeds
 //     [MonthlyQuota] and the /v1/account/usage fallback path. Only
-//     ALLOWED traffic increments it: 429s are excluded so `requests`
-//     keeps meaning "requests that ran" (rate-limit rejections must
-//     not eat monthly quota).
+//     BILLABLE traffic increments it: 429s are excluded so
+//     rate-limit rejections don't eat monthly quota, and 5xx are
+//     excluded for the same reason with more force (COR-05) — a
+//     platform-caused failure is our fault, not the customer's, so
+//     an outage must not burn through the quota they paid for and
+//     lock them out of their own plan once we recover. Both classes
+//     stay fully visible in the detail family below, so the traffic
+//     is still observable; it is only the BILLABLE total that
+//     excludes them.
 //   - The per-endpoint DETAIL hash (usage:ep:<sub>:<day>) — one
 //     field per (route pattern, outcome class): ok / 4xx / 429 /
 //     5xx. The rollup worker folds these into the `usage_daily`
@@ -60,14 +66,14 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 			if id == "" {
 				return
 			}
-			if rec.status != http.StatusTooManyRequests {
-				// Legacy total: allowed traffic only (quota input).
+			family := endpointFamily(r)
+			class := outcomeClass(rec.status)
+			if billableClass(class) {
+				// Legacy total: billable traffic only (quota input).
 				if err := counter.Increment(r.Context(), id); err != nil {
 					logger.Debug("usage: increment failed", "err", err, "subject", id)
 				}
 			}
-			family := endpointFamily(r)
-			class := outcomeClass(rec.status)
 			if err := counter.IncrementDetail(r.Context(), id, family, class); err != nil {
 				logger.Debug("usage: detail increment failed",
 					"err", err, "subject", id, "endpoint", family, "class", class)
@@ -117,6 +123,20 @@ func endpointFamily(r *http.Request) string {
 		return p
 	}
 	return "unmatched"
+}
+
+// billableClass reports whether an outcome class increments the
+// LEGACY per-day total — the counter [MonthlyQuota] enforces against.
+//
+// Only outcomes the CALLER caused are billable. A 429 is our
+// throttle firing and a 5xx is our failure; charging either against
+// the customer's monthly quota means a rate-limit storm or an outage
+// on our side eats the plan they paid for and locks them out for the
+// rest of the month (COR-05). Both remain counted in the per-endpoint
+// DETAIL family under their own class, so nothing becomes invisible —
+// only unbillable.
+func billableClass(class string) bool {
+	return class != usage.ClassThrottled && class != usage.ClassServerError
 }
 
 // outcomeClass maps a response status onto the four bounded usage

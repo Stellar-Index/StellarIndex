@@ -374,6 +374,156 @@ func TestCachedAssetsReader_SWRKeepsStaleOnError(t *testing.T) {
 	}
 }
 
+// ── HLT-01: the history-batch cache must have the SAME SWR posture
+// as its ListAssetsExt sibling ────────────────────────────────────
+//
+// fetchHistoryMap used to omit the (A') stale-while-revalidate branch
+// entirely, so an EXPIRED history batch fell through to the blocking
+// cold-leader path and every caller waited on the slow upstream —
+// exactly the stampede-on-expiry that #22 fixed for the rows path. The
+// two are called from the SAME request (/v1/assets?include=sparkline),
+// so the missing branch reintroduced the latency cliff the rows fix
+// removed.
+
+// GetAssetsPriceHistory24hBatch overrides the embedded fake so the SWR
+// harness's delay / value / failure knobs drive the history path too.
+// One point per asset carrying the configured value in P, which is how
+// the test tells v1 from v2.
+func (s *swrAssetsUpstream) GetAssetsPriceHistory24hBatch(ctx context.Context, _ []string) (map[string][]timescale.AssetPricePoint, error) {
+	s.calls.Add(1)
+	s.mu.Lock()
+	d, v, f := s.delay, s.val, s.fail
+	s.mu.Unlock()
+	if d > 0 {
+		select {
+		case <-time.After(d):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if f {
+		return nil, errors.New("swr history upstream boom")
+	}
+	val := v
+	return map[string][]timescale.AssetPricePoint{
+		"native": {{T: "2026-05-11T00:00:00Z", P: &val}},
+	}, nil
+}
+
+func swrHistoryGet(t *testing.T, c *CachedAssetsReader) (string, error) {
+	t.Helper()
+	m, err := c.GetAssetsPriceHistory24hBatch(context.Background(), []string{"native"})
+	if err != nil {
+		return "", err
+	}
+	pts := m["native"]
+	if len(pts) == 0 || pts[0].P == nil {
+		return "", nil
+	}
+	return *pts[0].P, nil
+}
+
+// TestCachedAssetsReader_HistorySWRServesStaleAndRefreshes mirrors
+// TestCachedAssetsReader_SWRServesStaleAndRefreshes for the history
+// batch: an expired entry serves the stale map IMMEDIATELY, one
+// background refresh runs, and the fresh value is served afterwards.
+func TestCachedAssetsReader_HistorySWRServesStaleAndRefreshes(t *testing.T) {
+	up := &swrAssetsUpstream{fakeAssetsUpstream: &fakeAssetsUpstream{}, val: "v1"}
+	c := NewCachedAssetsReader(up, 25*time.Millisecond)
+
+	if v, err := swrHistoryGet(t, c); err != nil || v != "v1" {
+		t.Fatalf("cold fetch: got %q err=%v, want v1", v, err)
+	}
+	if up.calls.Load() != 1 {
+		t.Fatalf("cold calls=%d, want 1", up.calls.Load())
+	}
+
+	time.Sleep(50 * time.Millisecond)         // let it expire
+	up.set(300*time.Millisecond, "v2", false) // slow refresh, new value
+
+	start := time.Now()
+	v, err := swrHistoryGet(t, c)
+	elapsed := time.Since(start)
+	if err != nil || v != "v1" {
+		t.Fatalf("SWR must serve the stale history map; got %q err=%v", v, err)
+	}
+	if elapsed > 120*time.Millisecond {
+		t.Fatalf("expired history batch BLOCKED %v on the 300ms upstream refetch; "+
+			"it must serve stale ~instantly like the rows path", elapsed)
+	}
+	if !waitFor(2*time.Second, func() bool { return up.calls.Load() == 2 }) {
+		t.Fatalf("background refresh not started; calls=%d want 2", up.calls.Load())
+	}
+	if !waitFor(2*time.Second, func() bool { vv, _ := swrHistoryGet(t, c); return vv == "v2" }) {
+		t.Fatalf("post-refresh did not serve fresh v2")
+	}
+}
+
+// TestCachedAssetsReader_HistorySWRSingleFlight mirrors the rows
+// single-flight guarantee: many concurrent reads of an expired history
+// batch all get stale immediately and trigger EXACTLY ONE refresh.
+func TestCachedAssetsReader_HistorySWRSingleFlight(t *testing.T) {
+	up := &swrAssetsUpstream{fakeAssetsUpstream: &fakeAssetsUpstream{}, val: "v1"}
+	c := NewCachedAssetsReader(up, 20*time.Millisecond)
+
+	if _, err := swrHistoryGet(t, c); err != nil { // cold → calls=1
+		t.Fatal(err)
+	}
+	time.Sleep(40 * time.Millisecond)         // expire
+	up.set(250*time.Millisecond, "v2", false) // slow refresh window
+
+	var wg sync.WaitGroup
+	for i := 0; i < 25; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if v, err := swrHistoryGet(t, c); err != nil || v != "v1" {
+				t.Errorf("concurrent history SWR got %q err=%v, want stale v1", v, err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if !waitFor(2*time.Second, func() bool { return up.calls.Load() == 2 }) {
+		t.Fatalf("want exactly 2 upstream calls (1 cold + 1 single-flighted refresh); got %d", up.calls.Load())
+	}
+	time.Sleep(350 * time.Millisecond) // let the 250ms refresh finish
+	if got := up.calls.Load(); got != 2 {
+		t.Fatalf("single-flight violated: %d upstream calls for 25 concurrent stale reads", got)
+	}
+}
+
+// TestCachedAssetsReader_HistorySWRKeepsStaleOnError mirrors the rows
+// failure posture: a failing background refresh keeps serving stale
+// (never an error, never a block) and is retried next time.
+func TestCachedAssetsReader_HistorySWRKeepsStaleOnError(t *testing.T) {
+	up := &swrAssetsUpstream{fakeAssetsUpstream: &fakeAssetsUpstream{}, val: "v1"}
+	c := NewCachedAssetsReader(up, 20*time.Millisecond)
+
+	if _, err := swrHistoryGet(t, c); err != nil { // cold v1, calls=1
+		t.Fatal(err)
+	}
+	time.Sleep(40 * time.Millisecond) // expire
+	up.set(0, "v2", true)             // refresh will error (fast)
+
+	v, err := swrHistoryGet(t, c)
+	if err != nil || v != "v1" {
+		t.Fatalf("stale-with-failing-refresh must serve stale v1, no error; got %q err=%v", v, err)
+	}
+	if !waitFor(2*time.Second, func() bool { return up.calls.Load() == 2 }) {
+		t.Fatalf("refresh not attempted; calls=%d want 2", up.calls.Load())
+	}
+
+	time.Sleep(40 * time.Millisecond) // re-expire
+	v2, err2 := swrHistoryGet(t, c)
+	if err2 != nil || v2 != "v1" {
+		t.Fatalf("after a failed refresh, still serve stale v1 no error; got %q err=%v", v2, err2)
+	}
+	if !waitFor(2*time.Second, func() bool { return up.calls.Load() >= 3 }) {
+		t.Fatalf("failed refresh was not retried on the next request; calls=%d", up.calls.Load())
+	}
+}
+
 // swrAssetByIDUpstream is a race-safe configurable GetAssetByAssetID
 // stub for the generic swr[T] tests (#24): atomic call counter,
 // fixed construction-time delay, atomic "fail on call >= 2" toggle

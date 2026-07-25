@@ -23,12 +23,22 @@ import (
 // removed before the VWAP computation — zero when outlier_sigma=0
 // was passed or there weren't enough samples for the filter.
 //
-// Truncated is true when the window had MORE than the server's
-// max-trades cap (10000 today) — the returned Price is then only
-// over the chronologically-first 10000 trades and is NOT the true
+// Truncated is true when the window hit the server's max-trades cap
+// (10000 today) — the returned Price is then only over the
+// chronologically-LAST 10000 trades of the window and is NOT the true
 // window VWAP. Clients should narrow the window and retry. For
 // fixed cross-region-consistent VWAPs, `/v1/price` serves the
 // closed-bucket aggregator output instead (per ADR-0015).
+//
+// LAST, not first: the reader orders `ts DESC` under the LIMIT and
+// reverses to ascending, so truncation drops the OLDEST rows and the
+// surviving slice runs up to the window end (F-1319 — the previous
+// `ORDER BY ts ASC LIMIT` computed a busy 24h VWAP from a slice that
+// stopped near the window START and never reached the present). This
+// doc said "first N" for both revisions and was wrong after F-1319;
+// which end survives is exactly what a client needs to know to
+// interpret a truncated price, so it is stated here and in the
+// OpenAPI description.
 type VWAPResult struct {
 	From             time.Time `json:"from"`
 	To               time.Time `json:"to"`
@@ -97,8 +107,10 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// maxTrades caps each single-shot aggregation. Hitting the cap
-	// means the computed VWAP is only over the first N trades and
-	// we flag the response truncated=true. /v1/vwap takes arbitrary
+	// means the computed VWAP is only over the NEWEST N trades in
+	// the window (the reader drops the oldest rows — see
+	// VWAPResult.Truncated) and we flag the response
+	// truncated=true. /v1/vwap takes arbitrary
 	// time windows, so it always scans trades on-query — the
 	// aggregator binary's pre-computed rollups feed `/v1/price`'s
 	// closed-bucket surface (ADR-0015), not this endpoint.

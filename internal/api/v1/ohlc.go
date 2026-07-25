@@ -31,10 +31,12 @@ const ohlcDefaultOutlierSigma = 4.0
 // decimal strings (ADR-0003). volume fields are in the asset's
 // smallest unit (stroop-equivalent).
 //
-// Truncated signals the window had more trades than the server's
-// per-request cap — High/Low may not reflect the actual extreme
-// in the window (only in the chronologically-first N trades). See
-// VWAPResult.Truncated for the same semantics.
+// Truncated signals the window hit the server's per-request trade
+// cap — Open/High/Low may not reflect the actual window values
+// (only those of the chronologically-LAST N trades, since the reader
+// drops the OLDEST rows under the LIMIT). Close is unaffected: it is
+// the newest print either way. See VWAPResult.Truncated for the same
+// semantics and the F-1319 note on which end survives.
 type OHLCBar struct {
 	From        time.Time `json:"from"`
 	To          time.Time `json:"to"`

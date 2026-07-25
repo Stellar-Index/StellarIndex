@@ -297,7 +297,7 @@ func (s *Server) issueSignupVerification(r *http.Request, keyID, toEmail string)
 	verifyURL := buildSignupVerifyURL(r, token)
 	if err := s.signupVerifyEmailer.SendSignupVerification(r.Context(), toEmail, verifyURL); err != nil {
 		s.logger.Warn("signup verification: send failed",
-			"err", err, "key_id", keyID, "to", toEmail)
+			"err", err, "key_id", keyID, "to", maskEmail(toEmail))
 		return false
 	}
 	return true
