@@ -10662,7 +10662,12 @@ export interface paths {
                                 since_ledger?: number;
                                 interactions?: {
                                     contract_id?: string;
-                                    /** Format: int64 */
+                                    /**
+                                     * Format: int64
+                                     * @description Number of DISTINCT transactions in which this contract and the subject both emitted events, within the query window.
+                                     *
+                                     *     Corrected 2026-07-25 (audit DAT-10 / DAT-11): this previously counted co-occurring EVENTS rather than transactions, so a contract emitting many events inside one shared transaction scored its event count. It also double-counted rows from a retried partial flush that the ReplacingMergeTree had not yet merged. Values are therefore LOWER than before for busy pairs — the old figure was an event count wearing a transaction count's name.
+                                     */
                                     shared_txs?: number;
                                     /** @description Owning protocol when attributed; absent otherwise. */
                                     protocol?: string;
