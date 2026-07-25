@@ -67,6 +67,12 @@ func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 		if h.ClientAborted(r, err) {
 			return
 		}
+		if readTimedOut(ctx, err) {
+			h.Logger.Warn("explorer RecentContracts deadline exceeded", "since", since)
+			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/contracts-timeout",
+				"Contracts directory timed out")
+			return
+		}
 		h.Logger.Error("explorer RecentContracts failed", "err", err, "since", since)
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
@@ -153,6 +159,12 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 		if h.ClientAborted(r, err) {
 			return
 		}
+		if readTimedOut(ctx, err) {
+			h.Logger.Warn("explorer ContractInteractions deadline exceeded", "contract", cid)
+			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/contract-interactions-timeout",
+				"Contract interactions timed out")
+			return
+		}
 		h.Logger.Error("explorer ContractInteractions failed", "err", err, "contract", cid)
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
@@ -215,6 +227,12 @@ func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 	versions, err := h.Reader.ContractCodeHistory(ctx, cid)
 	if err != nil {
 		if h.ClientAborted(r, err) {
+			return
+		}
+		if readTimedOut(ctx, err) {
+			h.Logger.Warn("explorer ContractCodeHistory deadline exceeded", "contract", cid)
+			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/contract-code-history-timeout",
+				"Contract code history timed out")
 			return
 		}
 		h.Logger.Error("explorer ContractCodeHistory failed", "err", err, "contract", cid)

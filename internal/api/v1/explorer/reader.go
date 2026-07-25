@@ -18,6 +18,7 @@ package explorer
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -42,6 +43,44 @@ import (
 // (liquidity_pools.go, markets.go) and fires before the blanket
 // request-timeout middleware (defaultRequestTimeout, 15s).
 const explorerReadTimeout = 8 * time.Second
+
+// readTimedOut reports whether a handler-scoped read context — the
+// context.WithTimeout(r.Context(), explorerReadTimeout) every handler in this
+// package wraps its lake reads in — hit its deadline. Pass the PER-CALL ctx,
+// not r.Context(): the driver often beats the caller to noticing and returns
+// its own cancellation error rather than something that unwraps to
+// context.DeadlineExceeded, so the context itself is the reliable signal.
+//
+// A 1:1 mirror of v1's handlerTimedOut (internal/api/v1/envelope.go), which
+// this package cannot import — v1.Server embeds a *Handler from here, so the
+// import would cycle (see the package doc). Keep the two in sync.
+func readTimedOut(callCtx context.Context, err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	return callCtx.Err() == context.DeadlineExceeded
+}
+
+// writeReadTimeout writes the standard response for a lake read that blew
+// explorerReadTimeout: 503 + problem+json with an endpoint-specific
+// `…-timeout` type URL (audit-2026-07-23 C-F1). Pre-fix every explorer handler
+// mapped a deadline to `errors/internal` 500, which tells the caller "we broke"
+// when the truthful answer is "this exceeded our time budget, retry" — and made
+// a capacity problem indistinguishable from a bug in the logs and the 5xx SLA
+// probe. /v1/contracts/{id}/code-history served that 500 for EVERY contract.
+//
+// 503, not 504: this is the convention the rest of the API already uses for a
+// server-side read deadline (14 call sites in package v1 pair handlerTimedOut
+// with a `…-timeout` 503 — markets, lending, history, chart, ohlc, oracle,
+// issuers, observations, sep41-transfers, cursors), it is the decision rule
+// documented on v1's clientAborted ("the client is still waiting and deserves a
+// 503"), and every explorer route ALREADY declares 503 in
+// openapi/stellar-index.v1.yaml — so this needs no new wire shape.
+func (h *Handler) writeReadTimeout(w http.ResponseWriter, r *http.Request, typeURL, title string) {
+	h.WriteProblem(w, r, typeURL, title, http.StatusServiceUnavailable,
+		"the ClickHouse lake read didn't return within the "+explorerReadTimeout.String()+
+			" explorer read budget; retry shortly")
+}
 
 // ExplorerReader is the seam the network-explorer endpoints (ADR-0038) read
 // through: the certified Tier-1 ClickHouse lake (the full chain to genesis —

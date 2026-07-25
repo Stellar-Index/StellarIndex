@@ -201,6 +201,12 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 		if h.ClientAborted(r, err) {
 			return
 		}
+		if readTimedOut(ctx, err) {
+			h.Logger.Warn("explorer AccountMovements deadline exceeded", "account", g)
+			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/account-movements-timeout",
+				"Account movements timed out")
+			return
+		}
 		h.Logger.Error("explorer AccountMovements (ClickHouse archive) failed", "err", err, "account", g)
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")

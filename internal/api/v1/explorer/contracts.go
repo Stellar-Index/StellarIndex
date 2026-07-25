@@ -74,6 +74,12 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 		if h.ClientAborted(r, err) {
 			return
 		}
+		if readTimedOut(ctx, err) {
+			h.Logger.Warn("explorer ContractEventsRecent deadline exceeded", "contract", cid)
+			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/contract-detail-timeout",
+				"Contract detail timed out")
+			return
+		}
 		h.Logger.Error("explorer ContractEventsRecent failed", "err", err, "contract", cid)
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
