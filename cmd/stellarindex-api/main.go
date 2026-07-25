@@ -2628,6 +2628,10 @@ func (r redisConfidenceLooker) LookupConfidence(ctx context.Context, asset, quot
 			BaselineQuality:      score.Factors.BaselineQuality,
 			CrossOracleChecked:   score.Factors.CrossOracleChecked,
 			CrossOracleAgreement: score.Factors.CrossOracleAgreement,
+			LiquidityMeasured:    score.Factors.LiquidityMeasured,
+
+			TriangulationAgreement: score.Factors.TriangulationAgreement,
+			TriangulationChecked:   score.Factors.TriangulationChecked,
 		},
 	}, true, nil
 }

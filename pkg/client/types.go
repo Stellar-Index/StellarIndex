@@ -90,6 +90,17 @@ type ConfidenceFactors struct {
 	// references that corroborated the price within the divergence
 	// threshold (ADR-0019 Phase 3). Always 0 when unchecked.
 	CrossOracleAgreement int `json:"cross_oracle_agreement"`
+	// LiquidityMeasured is true only when a real USD volume fed the
+	// Liquidity factor. False means the neutral no-information value
+	// was used — NOT "liquidity is mid-range".
+	LiquidityMeasured bool `json:"liquidity_measured"`
+	// TriangulationAgreement scores agreement between the direct
+	// price and the configured triangulation composite (1.0 agrees;
+	// 0.7 neutral). TriangulationChecked false means no composite
+	// was available — NOT "the composite agrees"; the factor carries
+	// zero weight in the score when unchecked.
+	TriangulationAgreement float64 `json:"triangulation_agreement"`
+	TriangulationChecked   bool    `json:"triangulation_checked"`
 }
 
 // PriceChangeHorizon is one trailing-window delta on
