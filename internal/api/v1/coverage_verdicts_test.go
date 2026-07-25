@@ -173,7 +173,8 @@ func coverageStaleFlag(t *testing.T, url string) bool {
 // Here the verdict was computed against tip 63_000_000 only minutes ago
 // (so the age signal is clean and cannot be what fires) while the live
 // ledgerstream cursor — the SAME cursor compute-completeness resolves
-// its tip from — sits 10_000 ledgers ahead, ~14 h of chain. The
+// its tip from — sits 40_000 ledgers ahead (~2.3 days of chain, past
+// the 34_560 two-audit-period bound at the daily cadence). The
 // response must carry flags.stale = true.
 //
 // Proven red against the pre-fix handler: writeJSON(..., Flags{}) →
@@ -187,14 +188,14 @@ func TestHandleCoverageVerdicts_StaleWhenVerdictTrailsLiveTip(t *testing.T) {
 			ComputedAt: time.Now().UTC().Add(-5 * time.Minute),
 		}}},
 		Cursors: &stubCursorsReader{rows: []timescale.Cursor{
-			mkCursor("ledgerstream", "", 63_010_000, 4*time.Second),
+			mkCursor("ledgerstream", "", 63_040_000, 4*time.Second),
 		}},
 	})
 	ts := httpTestServer(t, srv)
 
 	if !coverageStaleFlag(t, ts.URL) {
 		t.Error("flags.stale = false, want true: the verdict's tip (63000000) trails the " +
-			"live ledgerstream cursor (63010000) by 10000 ledgers — `complete: true` is no " +
+			"live ledgerstream cursor (63040000) by 40000 ledgers (past the 34560 two-audit-period bound) — `complete: true` is no " +
 			"longer a claim about the current chain (MNY-04)")
 	}
 }
@@ -225,7 +226,7 @@ func TestHandleCoverageVerdicts_FreshVerdictNotStale(t *testing.T) {
 }
 
 // With no CursorsReader wired the ledger-gap signal is unavailable, so
-// the verdict's own age has to carry the gate: a verdict computed 6h
+// the verdict's own age has to carry the gate: a verdict computed 30h
 // ago is not a current claim. Proven red against the pre-fix handler
 // (stale = false) and non-vacuous — the sibling test above shows a
 // 5-minute-old verdict on the same wiring reads false.
@@ -234,12 +235,12 @@ func TestHandleCoverageVerdicts_StaleWhenVerdictIsOld(t *testing.T) {
 		Source: "blend", Genesis: 51_499_546, Tip: 63_000_000, Watermark: 63_000_000,
 		CoveragePct: 1, Complete: true, LakeComplete: true,
 		SubstrateOK: true, RecognitionOK: true, ProjectionOK: true,
-		ComputedAt: time.Now().UTC().Add(-6 * time.Hour),
+		ComputedAt: time.Now().UTC().Add(-30 * time.Hour),
 	}}
 	srv := v1.New(v1.Options{CompletenessReader: &stubCompletenessReader{snaps: snaps}})
 	ts := httpTestServer(t, srv)
 	if !coverageStaleFlag(t, ts.URL) {
-		t.Error("flags.stale = false, want true: the verdict is 6h old and no live tip is " +
+		t.Error("flags.stale = false, want true: the verdict is 30h old and no live tip is " +
 			"wired to compare against — its age is the only freshness evidence there is")
 	}
 
