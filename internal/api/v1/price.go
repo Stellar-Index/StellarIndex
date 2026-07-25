@@ -197,6 +197,27 @@ type ConfidenceFactors struct {
 	// unchecked.
 	CrossOracleChecked   bool `json:"cross_oracle_checked"`
 	CrossOracleAgreement int  `json:"cross_oracle_agreement"`
+
+	// LiquidityMeasured disambiguates the Liquidity factor on the
+	// same CS-087 discipline: true means a real USD volume fed it,
+	// false means the neutral no-information value was substituted
+	// because the pair could not be valued in USD. The neutral (0.5)
+	// sits inside the measured curve's range, so a consumer cannot
+	// otherwise tell "unmeasured" from a mid-liquidity bucket.
+	LiquidityMeasured bool `json:"liquidity_measured"`
+
+	// TriangulationAgreement is the seventh confidence factor
+	// (ADR-0019 amendment 2026-07-25): agreement between the pair's
+	// DIRECT price and the COMPOSITE its configured triangulation
+	// chain implies. Same shape as cross_oracle (1.0 = agrees,
+	// halving per 4pp beyond a 2% tolerance, 0.7 no-data neutral).
+	// TriangulationChecked follows the CS-087 discipline: false
+	// means no chain is configured / no fresh composite existed —
+	// NOT "the composite agrees". The factor carries weight 0 in
+	// the score when unchecked, so unchecked pairs score exactly as
+	// they did before the factor existed.
+	TriangulationAgreement float64 `json:"triangulation_agreement"`
+	TriangulationChecked   bool    `json:"triangulation_checked"`
 }
 
 // ConfidenceLooker is the read-side interface the v1 server uses

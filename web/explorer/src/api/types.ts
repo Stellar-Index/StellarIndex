@@ -12877,6 +12877,12 @@ export interface components {
                 cross_oracle_checked?: boolean;
                 /** @description Number of independent external references (Reflector DEX/CEX/FX, Redstone, Band, CoinGecko, Chainlink) that corroborated this price within the divergence threshold at the last refresh (ADR-0019 Phase 3 cross-oracle agreement). Always 0 when cross_oracle_checked is false. */
                 cross_oracle_agreement?: number;
+                /** @description True only when a real USD volume fed the liquidity factor. False means the neutral no-information value was substituted because the pair could not be valued in USD — do NOT read false as "liquidity is mid-range"; the neutral sits inside the measured curve's range. */
+                liquidity_measured?: boolean;
+                /** @description Agreement between this pair's direct price and the composite implied by its configured triangulation chain (ADR-0019 amendment 2026-07-25). Same shape as cross_oracle - 1.0 within tolerance, decaying with divergence, 0.7 as the no-data neutral. Disagreement is a manipulation signal; agreement corroborates at half the weight of an independent reference. */
+                triangulation_agreement?: number;
+                /** @description True only when a fresh composite existed to compare against. False means no chain is configured or the composite was stale - NOT "the composite agrees". The factor carries zero weight in the confidence score when unchecked, so unchecked pairs score exactly as they did before this factor existed. */
+                triangulation_checked?: boolean;
             } | null;
         };
         PriceEnvelope: components["schemas"]["EnvelopeMeta"] & {
