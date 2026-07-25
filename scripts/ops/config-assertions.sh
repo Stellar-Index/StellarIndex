@@ -97,6 +97,40 @@ assert_cmd galexie_writer_creds_valid sh -c '
   /usr/local/bin/mc ls cfgassert/galexie-live >/dev/null 2>&1
 '
 
+# ── Compression-policy backfill status (DAT-03, audit-2026-07-23) ────
+# scripts/ops/add-missing-compression-policies.sql is a deliberate
+# NON-migration operator script (must run AFTER the Phase D backfill —
+# see its own header for why) that shipped with no execution tracking:
+# nothing noticed if an operator forgot to run it, or if a table was
+# added to its eligible-tables list without a matching policy actually
+# landing. Reuses the SAME stellarindex_config_assertion_ok gauge +
+# the existing stellarindex_config_assertion_failed alert every other
+# assertion here uses — no new alert rule needed. Expected to page
+# (severity: ticket, not page) until the operator runs that script
+# post-Phase-D; that visibility IS the fix — today the gap is silent.
+# shellcheck disable=SC2329  # invoked indirectly via assert_cmd's "${@:2}"
+compression_policies_applied() {
+  [[ -r /etc/stellarindex/postgres-password.txt ]] || return 1
+  PGPASSWORD="$(cat /etc/stellarindex/postgres-password.txt)" \
+    psql -h 127.0.0.1 -U stellarindex -d stellarindex -tAc "
+      SELECT count(*) FROM unnest(ARRAY[
+        'account_observations','aggregator_exposures','blend_backstop_events',
+        'cctp_events','claimable_observations','classic_asset_stats_5m',
+        'decoder_stats_5m','defindex_flows','divergence_observations',
+        'freeze_events','lp_reserve_observations','price_source_contributions',
+        'rozo_events','sac_balance_observations','sdex_offer_events',
+        'sep41_supply_events','soroswap_router_swaps','trustline_observations',
+        'tvl_observations'
+      ]) AS want(tbl)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM timescaledb_information.jobs j
+        WHERE j.hypertable_name = want.tbl
+          AND j.proc_name = 'policy_compression'
+      );
+    " 2>/dev/null | grep -qx 0
+}
+assert_cmd compression_policies_applied compression_policies_applied
+
 mv "$TMP" "$OUT"
 chmod 644 "$OUT"
 echo "config-assertions: $fails failure(s)" >&2
