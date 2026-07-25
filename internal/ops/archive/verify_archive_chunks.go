@@ -258,6 +258,9 @@ func verifyChunk(
 			res.LastHash = hash
 			obs.VerifyArchiveLedgersVerified.WithLabelValues(chunkLabel).Inc()
 			obs.VerifyArchiveCurrentLedger.WithLabelValues(chunkLabel).Set(float64(seq))
+			// Liveness signal for the systemd watchdog: a walk that
+			// stops advancing this stops feeding WATCHDOG=1 (OBS-07).
+			verifyArchiveProgress.Ledgers.Add(1)
 
 			if time.Since(lastProgress) >= progressEvery {
 				progressMu.Lock()

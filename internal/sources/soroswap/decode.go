@@ -28,16 +28,31 @@ type RawPair struct {
 // to emit as a trade.
 func (r RawPair) Complete() bool { return r.Swap != nil && r.Sync != nil }
 
-// groupKey is the (ledger, tx_hash, op_index) tuple we use to
-// correlate swap + sync. It's ordered so Go-map-ready.
+// groupKey is the (ledger, tx_hash, op_index, pair_contract) tuple we
+// use to correlate swap + sync. It's ordered so Go-map-ready.
+//
+// COR-08: the pair contract is part of the key. A router multi-hop
+// swaps through SEVERAL pools inside ONE operation, so (ledger, tx,
+// op) alone puts every pool's swap+sync in the same buffer slot. As
+// long as each pool emitted swap-then-sync contiguously that happened
+// to work — the slot completed and cleared before the next pool's
+// swap. But nothing in the protocol guarantees that interleaving:
+// pool A's swap followed by pool B's swap OVERWROTE the slot's Swap
+// while leaving Pair pinned to A, so A's sync then completed a trade
+// carrying B's amounts under A's pair identity — and therefore under
+// A's token0/token1 mapping. Wrong assets, wrong price, silently.
+// Keying on the emitter makes the correlation correct regardless of
+// emission order; both correlated kinds are gated to the same pair
+// contract by Matches, so this can never split a real pair.
 type groupKey struct {
 	Ledger  uint32
 	TxHash  string
 	OpIndex uint32
+	Pair    string
 }
 
 func keyOf(e *events.Event) groupKey {
-	return groupKey{Ledger: e.Ledger, TxHash: e.TxHash, OpIndex: uint32(e.OperationIndex)}
+	return groupKey{Ledger: e.Ledger, TxHash: e.TxHash, OpIndex: uint32(e.OperationIndex), Pair: e.ContractID}
 }
 
 // classify decides what kind of Soroswap event this is. Soroswap

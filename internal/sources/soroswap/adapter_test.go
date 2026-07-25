@@ -234,6 +234,80 @@ func TestDecoder_Decode_swapSyncWithRegistryEmitsTradeEvent(t *testing.T) {
 	}
 }
 
+// TestDecoder_Decode_twoPoolsOneOp_interleaved is the COR-08
+// regression: a router multi-hop swaps through two pools inside ONE
+// operation. With the correlation buffer keyed on (ledger, tx, op)
+// alone, both pools shared a slot — pool B's swap overwrote pool A's
+// while Pair stayed pinned to A, so A's sync completed a trade
+// carrying B's amounts under A's token mapping. Each pool must
+// correlate independently, whatever order the events arrive in.
+func TestDecoder_Decode_twoPoolsOneOp_interleaved(t *testing.T) {
+	poolA := makeContractStrkey(t, 0x20)
+	poolB := makeContractStrkey(t, 0x21)
+	// Distinct token sets so a cross-correlated trade is identifiable
+	// by its assets, not just its amounts.
+	a0, _ := canonical.NewSorobanAsset(makeContractStrkey(t, 0x10))
+	a1, _ := canonical.NewSorobanAsset(makeContractStrkey(t, 0x11))
+	b0, _ := canonical.NewSorobanAsset(makeContractStrkey(t, 0x12))
+	b1, _ := canonical.NewSorobanAsset(makeContractStrkey(t, 0x13))
+
+	d := NewDecoder(WithSeededPairTokensDecoder(map[string]PairTokens{
+		poolA: {Token0: a0, Token1: a1},
+		poolB: {Token0: b0, Token1: b1},
+	}))
+
+	// Interleaved: both swaps land before either sync.
+	feed := []events.Event{
+		makeSwapEvent(t, poolA, big.NewInt(100), big.NewInt(200)),
+		makeSwapEvent(t, poolB, big.NewInt(300), big.NewInt(400)),
+		makeSyncEvent(t, poolA),
+		makeSyncEvent(t, poolB),
+	}
+	var trades []TradeEvent
+	for i, ev := range feed {
+		out, err := d.Decode(ev)
+		if err != nil {
+			t.Fatalf("Decode event %d: %v", i, err)
+		}
+		for _, o := range out {
+			te, ok := o.(TradeEvent)
+			if !ok {
+				t.Fatalf("event %d: expected TradeEvent, got %T", i, o)
+			}
+			trades = append(trades, te)
+		}
+	}
+
+	if len(trades) != 2 {
+		t.Fatalf("got %d trades, want 2 (one per pool) — a shared buffer slot loses one and mis-attributes the other", len(trades))
+	}
+	// canonical.Trade carries no pair-contract field, so each pool's
+	// trade is identified by ITS OWN token mapping. A cross-correlated
+	// trade shows up as one pool's assets carrying the other's amounts.
+	byBase := map[canonical.Asset]TradeEvent{}
+	for _, te := range trades {
+		byBase[te.Trade.Pair.Base] = te
+	}
+	for _, tc := range []struct {
+		name     string
+		wantBase canonical.Asset
+		wantAmt  string
+	}{
+		{"poolA", a0, "100"},
+		{"poolB", b0, "300"},
+	} {
+		te, ok := byBase[tc.wantBase]
+		if !ok {
+			t.Errorf("%s: no trade emitted with base %v — its swap was overwritten in a shared buffer slot", tc.name, tc.wantBase)
+			continue
+		}
+		if te.Trade.BaseAmount.String() != tc.wantAmt {
+			t.Errorf("%s: BaseAmount = %s, want %s (amounts from the WRONG pool's swap)",
+				tc.name, te.Trade.BaseAmount.String(), tc.wantAmt)
+		}
+	}
+}
+
 func TestDecoder_Decode_unrelatedTopicReturnsNilNil(t *testing.T) {
 	d := NewDecoder()
 	out, err := d.Decode(events.Event{

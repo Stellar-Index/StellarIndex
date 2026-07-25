@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coreos/go-systemd/v22/daemon"
@@ -172,13 +173,26 @@ func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // li
 	// $NOTIFY_SOCKET isn't set (manual `stellarindex-ops verify-
 	// archive` invocations from a shell), so this is safe outside
 	// systemd too.
+	//
+	// OBS-07: the ping is GATED on observed walk progress. An
+	// unconditional 30s ticker feeds the watchdog for as long as the
+	// process is alive, which detects a crash (no process, no pings)
+	// but is blind to exactly the failure the unit says WatchdogSec is
+	// there for — "binary hung / dead-locked". A wedged chunk walker
+	// (say a stuck object read) kept the pings flowing forever. See
+	// verifyArchiveProgress.
 	if _, err := daemon.SdNotify(false, daemon.SdNotifyReady); err != nil {
 		fmt.Fprintf(os.Stderr, "verify-archive: warn: sd_notify READY failed: %v\n", err)
 	}
 	go func() {
 		t := time.NewTicker(30 * time.Second)
 		defer t.Stop()
+		gate := newWatchdogGate(&verifyArchiveProgress)
 		for range t.C {
+			if !gate.shouldPing() {
+				fmt.Fprintf(os.Stderr, "verify-archive: warn: no ledger verified since the last watchdog interval — withholding WATCHDOG=1 (systemd's WatchdogSec will act if this persists)\n")
+				continue
+			}
 			_, _ = daemon.SdNotify(false, daemon.SdNotifyWatchdog)
 		}
 	}()
@@ -230,8 +244,15 @@ func verifyArchive(args []string) error { //nolint:funlen,gocognit,gocyclo // li
 		if effectiveResumeHash == "" && *safetyOverlap == 0 {
 			effectiveResumeHash = resolveIncrementalResumeHash(priorState, *tier)
 		}
+		// High-water reported from the BOUNDING tier, not the raw -tier
+		// key: `-tier all` records under "chain"+"checkpoint" and has no
+		// "all" entry to read (DAT-09).
+		priorHighWater := uint32(0)
+		if bound, ok := incrementalBoundTier(priorState, incrementalStateTiers(*tier)); ok {
+			priorHighWater = bound.LastVerifiedLedger
+		}
 		fmt.Fprintf(os.Stderr, "verify-archive: incremental run, prior state high-water=%d → effective -from=%d (safety overlap %d)\n",
-			priorState.Tiers[*tier].LastVerifiedLedger, effectiveFrom, *safetyOverlap)
+			priorHighWater, effectiveFrom, *safetyOverlap)
 	}
 
 	// Tier A + B (LCM walk via ledgerstream). Skipped when tier=peers.
@@ -458,6 +479,11 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	}
 	var stateMu sync.Mutex
 
+	// Arm the systemd watchdog's progress gate for the duration of the
+	// walk — see verifyArchiveProgress (OBS-07).
+	verifyArchiveProgress.WalkActive.Store(true)
+	defer verifyArchiveProgress.WalkActive.Store(false)
+
 	results, walkErr := runVerifyChunks(
 		ctx, lsCfg, filteredChunks,
 		doChain, doCheckpoint, archiveRoot,
@@ -622,6 +648,98 @@ type historyBucket struct {
 	Next json.RawMessage `json:"next"` // opaque; compare raw bytes
 }
 
+// verifyArchiveProgress is the process-wide liveness signal the
+// systemd watchdog ticker reads. Ledgers is bumped by every chunk
+// worker for each ledger it verifies; WalkActive is true only for the
+// duration of the LCM walk.
+//
+// Package-level because there is exactly one walk per process (this is
+// a CLI subcommand, not a library) and the ticker goroutine starts
+// before the walk does — the same shape the obs.VerifyArchive*
+// collectors already use.
+var verifyArchiveProgress verifyArchiveProgressTracker
+
+type verifyArchiveProgressTracker struct {
+	WalkActive atomic.Bool
+	Ledgers    atomic.Uint64
+}
+
+// watchdogGate decides, once per watchdog interval, whether to feed
+// systemd's watchdog. While the LCM walk is running the ping requires
+// real forward progress; outside the walk it is unconditional, because
+// the other tiers (peer diff, archivist scan) are each bounded by
+// their own timeouts and verify no ledgers — gating on the ledger
+// counter there would SIGTERM healthy work.
+type watchdogGate struct {
+	progress *verifyArchiveProgressTracker
+	last     uint64
+}
+
+func newWatchdogGate(p *verifyArchiveProgressTracker) *watchdogGate {
+	return &watchdogGate{progress: p, last: p.Ledgers.Load()}
+}
+
+func (g *watchdogGate) shouldPing() bool {
+	n := g.progress.Ledgers.Load()
+	if g.progress.WalkActive.Load() && n == g.last {
+		return false
+	}
+	g.last = n
+	return true
+}
+
+// peerArchiveTip resolves how far the peer archives have actually
+// published, by reading each one's .well-known/stellar-history.json —
+// the same schema as a checkpoint file, whose currentLedger IS the
+// archive's tip. Returns the LOWEST tip across the responding peers:
+// a checkpoint above that hasn't been uploaded by everyone yet, so
+// sampling it would diff a missing file against a present one and read
+// as a phantom divergence. ok=false when no peer answered at all —
+// the caller refuses to guess a range rather than inventing one.
+func peerArchiveTip(client *http.Client, peers []string) (uint32, bool) {
+	var tip uint32
+	found := false
+	for _, p := range peers {
+		cp, err := fetchHistoryCheckpoint(client, strings.TrimRight(p, "/")+"/.well-known/stellar-history.json")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "verify-archive: peer tip probe failed for %s: %v\n", p, err)
+			continue
+		}
+		if cp.CurrentLedger == 0 {
+			continue
+		}
+		if !found || cp.CurrentLedger < tip {
+			tip = cp.CurrentLedger
+			found = true
+		}
+	}
+	return tip, found
+}
+
+// peerCheckpointBounds returns the first and last checkpoint ledger
+// (seq mod 64 == 63) contained in [from, to], erroring when the range
+// holds none.
+//
+// The arithmetic runs through uint64 on purpose: the naive unsigned
+// form underflowed for sub-checkpoint inputs — `(to/64*64)-1` wrapped
+// to ~4.29e9 for any to < 64, which then passed the `lastCP < firstCP`
+// guard and sent the sampler chasing checkpoints past the end of the
+// chain. It also picked the checkpoint BELOW `to` when `to` was itself
+// a checkpoint; the ceiling form here includes it.
+func peerCheckpointBounds(from, to uint32) (uint32, uint32, error) {
+	noneErr := fmt.Errorf("range [%d,%d] contains no checkpoint ledgers (checkpoints are at seq mod 64 == 63)", from, to)
+	if to < 63 || from > to {
+		return 0, 0, noneErr
+	}
+	// Smallest checkpoint >= from, largest checkpoint <= to.
+	firstCP := (uint64(from)+64)/64*64 - 1
+	lastCP := (uint64(to)+1)/64*64 - 1
+	if firstCP > lastCP {
+		return 0, 0, noneErr
+	}
+	return uint32(firstCP), uint32(lastCP), nil //nolint:gosec // G115: both are <= to, which is a uint32.
+}
+
 // verifyArchivePeers samples checkpoints in [from, to] and cross-
 // compares each peer's history-XXXXXXXX.json. Any disagreement is a
 // consensus-level finding — either one peer has replayed wrong, or
@@ -642,24 +760,28 @@ func verifyArchivePeers(from, to uint32, peerList string, sampleN int) error { /
 		return fmt.Errorf("tier peers needs ≥2 archive URLs; got %d", len(peers))
 	}
 
-	// Find checkpoint ledgers in range. Checkpoints are at seq
-	// 63, 127, 191, ... (seq mod 64 == 63).
-	firstCP := ((from + 63) / 64 * 64) - 1
-	if firstCP < from {
-		firstCP += 64
-	}
-	var lastCP uint32
-	if to == 0 {
-		// Unbounded range — pick "last few hours of pubnet" as a
-		// stand-in. 10k ledgers before the current guessed tip.
-		// This is coarse; better would be a HEAD query against one
-		// peer, but we keep Tier D self-contained.
-		lastCP = firstCP + 640 // 10 sample slots
-	} else {
-		lastCP = (to / 64 * 64) - 1
-		if lastCP < firstCP {
-			return fmt.Errorf("range [%d,%d] contains no checkpoint ledgers", from, to)
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	// Resolve an unbounded -to against the peers themselves (OBS-07).
+	// This used to fabricate `lastCP = firstCP + 640` — with the
+	// default -from 2 that sampled checkpoints 63..703, i.e. ten
+	// GENESIS-era slots, then printed "peer cross-check OK". The whole
+	// point of Tier D is consensus agreement on what we hold NOW, so a
+	// run that never looks above ledger 703 certifies nothing while
+	// reading as a pass.
+	effectiveTo := to
+	if effectiveTo == 0 {
+		tip, ok := peerArchiveTip(client, peers)
+		if !ok {
+			return fmt.Errorf("tier peers: -to 0 means \"up to the archives' current ledger\", but no peer answered .well-known/stellar-history.json — pass an explicit -to")
 		}
+		effectiveTo = tip
+		fmt.Fprintf(os.Stderr, "verify-archive: peer diff — -to 0 resolved to the lowest peer archive tip %d\n", effectiveTo)
+	}
+
+	firstCP, lastCP, err := peerCheckpointBounds(from, effectiveTo)
+	if err != nil {
+		return err
 	}
 
 	// Sample evenly-spaced checkpoints. Always include first and last.
@@ -678,13 +800,12 @@ func verifyArchivePeers(from, to uint32, peerList string, sampleN int) error { /
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "verify-archive: peer diff — %d peers × %d checkpoints\n",
-		len(peers), len(samples))
+	fmt.Fprintf(os.Stderr, "verify-archive: peer diff — %d peers × %d checkpoints in [%d,%d]\n",
+		len(peers), len(samples), firstCP, lastCP)
 	for _, p := range peers {
 		fmt.Fprintf(os.Stderr, "  peer: %s\n", p)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
 	matches, mismatches := 0, 0
 	for _, seq := range samples {
 		hexSeq := fmt.Sprintf("%08x", seq)

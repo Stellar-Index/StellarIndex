@@ -76,10 +76,12 @@
 // that as "no liquidation" rather than "can't tell yet").
 //
 // LiquidityPoolDeposit/Withdraw emit TWO rows per op (leg_index 0/1,
-// one per pool asset); a CAP-0038 liquidation emits one row per
-// created ClaimableBalanceEntry (always two for a real event, since
-// every classic AMM pool has exactly two assets) — both are the only
-// Phase 1-4 kinds with more than one row per op.
+// one per pool asset) — except a withdraw whose payout rounds to zero
+// on one leg, which emits only the paying leg under its own
+// leg_index; see decodeLiquidityPoolWithdraw. A CAP-0038 liquidation
+// emits one row per created ClaimableBalanceEntry (always two for a
+// real event, since every classic AMM pool has exactly two assets) —
+// both are the only Phase 1-4 kinds with more than one row per op.
 //
 // The migration 0105 schema already admits all ten movement_kind
 // values and both provenance values, so no schema change was needed

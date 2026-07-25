@@ -155,6 +155,57 @@ func TestResolveIncrementalFrom(t *testing.T) {
 			safetyOverlap: 5000,
 			want:          100,
 		},
+		{
+			// DAT-09: `-tier all` writes its outcome under "chain" +
+			// "checkpoint" and never under "all", so reading the raw
+			// flag value found nothing and restarted from genesis.
+			name: "tier all → resumes from the chain/checkpoint high-water",
+			state: VerifyArchiveState{Tiers: map[string]VerifyArchiveTierState{
+				"chain":      {LastVerifiedLedger: 60_000_000},
+				"checkpoint": {LastVerifiedLedger: 60_000_000},
+			}},
+			tier:          "all",
+			explicitFrom:  2,
+			safetyOverlap: 5000,
+			want:          59_995_000,
+		},
+		{
+			// A `-tier chain` run can advance "chain" past "checkpoint";
+			// `-tier all` must resume from the LOWER of the two or the
+			// checkpoint pass silently skips the range in between.
+			name: "tier all → bounded by the LAGGING tier",
+			state: VerifyArchiveState{Tiers: map[string]VerifyArchiveTierState{
+				"chain":      {LastVerifiedLedger: 60_000_000},
+				"checkpoint": {LastVerifiedLedger: 50_000_000},
+			}},
+			tier:          "all",
+			explicitFrom:  2,
+			safetyOverlap: 5000,
+			want:          49_995_000,
+		},
+		{
+			name: "tier all → one side unverified falls through to explicit",
+			state: VerifyArchiveState{Tiers: map[string]VerifyArchiveTierState{
+				"chain": {LastVerifiedLedger: 60_000_000},
+			}},
+			tier:          "all",
+			explicitFrom:  2,
+			safetyOverlap: 5000,
+			want:          2,
+		},
+		{
+			// REL-05: strict cross-run boundary mode. -safety-overlap 0
+			// must resume at last-verified + 1 so the first chunk's
+			// FirstPrevHash is exactly the saved LastVerifiedHash.
+			name: "safety overlap 0 → resumes strictly AFTER last verified",
+			state: VerifyArchiveState{Tiers: map[string]VerifyArchiveTierState{
+				"chain": {LastVerifiedLedger: 60_000_000},
+			}},
+			tier:          "chain",
+			explicitFrom:  2,
+			safetyOverlap: 0,
+			want:          60_000_001,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -163,6 +214,58 @@ func TestResolveIncrementalFrom(t *testing.T) {
 				t.Errorf("got %d, want %d", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestResolveIncremental_strictBoundaryHashLinesUp is the REL-05
+// regression in the terms the operator actually hits: with
+// -safety-overlap 0 the saved LastVerifiedHash must be exactly the
+// hash checkResumeFromHash sees as the first chunk's FirstPrevHash
+// (= the hash of effectiveFrom - 1). Resuming AT last-verified made
+// that comparison hash(L) vs hash(L-1), so strict mode failed every
+// single run.
+func TestResolveIncremental_strictBoundaryHashLinesUp(t *testing.T) {
+	t.Parallel()
+	const lastVerified = 60_000_000
+	var hashAtLastVerified sdkxdr.Hash
+	hashAtLastVerified[0], hashAtLastVerified[31] = 0xab, 0xcd
+
+	st := VerifyArchiveState{Tiers: map[string]VerifyArchiveTierState{
+		"chain": {LastVerifiedLedger: lastVerified, LastVerifiedHash: hashToHex(hashAtLastVerified)},
+	}}
+
+	effectiveFrom := resolveIncrementalFrom(st, "chain", 2, 0)
+	if effectiveFrom != lastVerified+1 {
+		t.Fatalf("effectiveFrom = %d, want %d (strictly after last-verified)", effectiveFrom, lastVerified+1)
+	}
+	// The walk starts at effectiveFrom, so the first ledger's
+	// PreviousLedgerHash is the hash of effectiveFrom-1 == lastVerified.
+	if err := checkResumeFromHash(resolveIncrementalResumeHash(st, "chain"), hashAtLastVerified, effectiveFrom); err != nil {
+		t.Errorf("strict resume boundary rejected a correct archive: %v", err)
+	}
+}
+
+// TestResolveIncrementalResumeHash_tierAll pins the hash source for a
+// multi-tier run: the bounding (lowest high-water) tier, so the hash is
+// provably the one at effectiveFrom-1. The checkpoint tier records no
+// hash, so when it lags, strict mode must skip rather than compare the
+// chain hash at the wrong ledger.
+func TestResolveIncrementalResumeHash_tierAll(t *testing.T) {
+	t.Parallel()
+	chainBound := VerifyArchiveState{Tiers: map[string]VerifyArchiveTierState{
+		"chain":      {LastVerifiedLedger: 50_000_000, LastVerifiedHash: "aa"},
+		"checkpoint": {LastVerifiedLedger: 60_000_000},
+	}}
+	if got := resolveIncrementalResumeHash(chainBound, "all"); got != "aa" {
+		t.Errorf("chain-bounded: hash = %q, want %q", got, "aa")
+	}
+
+	checkpointBound := VerifyArchiveState{Tiers: map[string]VerifyArchiveTierState{
+		"chain":      {LastVerifiedLedger: 60_000_000, LastVerifiedHash: "aa"},
+		"checkpoint": {LastVerifiedLedger: 50_000_000},
+	}}
+	if got := resolveIncrementalResumeHash(checkpointBound, "all"); got != "" {
+		t.Errorf("checkpoint-bounded: hash = %q, want \"\" (no hash at that ledger)", got)
 	}
 }
 
