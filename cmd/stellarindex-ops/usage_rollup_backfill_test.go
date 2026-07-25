@@ -70,7 +70,7 @@ func TestUsageRollupBackfill_RecoversADaySweepCannotReach(t *testing.T) {
 	today := time.Date(2026, 7, 24, 0, 0, 0, 0, time.UTC)
 	lost := today.AddDate(0, 0, -10)
 	const (
-		subject  = "key:kid_515c8d94191f4e93"
+		subject  = "key:kid_test_fixture_not_a_secret"
 		endpoint = "/v1/assets/{asset_id}"
 	)
 	seedUsageDetail(t, rdb, lost, subject, endpoint, usage.ClassOK, 7)
