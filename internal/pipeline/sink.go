@@ -594,12 +594,32 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, store *t
 // ctx.Done()-vs-`<-in` non-determinism.
 //
 //nolint:contextcheck // intentional fresh context; see godoc above.
+
+// ledgerSpan tracks the min/max ledger observed across the trades a shutdown
+// drain could not persist, so the undrained-range ERROR can name the exact
+// range an operator must re-derive (`ch-rebuild -sdex-gaps`).
+//
+// Extracted from drainFinalPass's inner loop purely to keep that function under
+// the cognitive-complexity gate — the campaign's precedent is to lower real
+// complexity rather than suppress the linter. Behaviour is identical: min stays
+// 0 until the first observation, so a drain that loses nothing reports 0/0.
+type ledgerSpan struct{ min, max uint32 }
+
+func (s *ledgerSpan) observe(l uint32) {
+	if s.min == 0 || l < s.min {
+		s.min = l
+	}
+	if l > s.max {
+		s.max = l
+	}
+}
+
 func drainFinalPass(in <-chan consumer.Event, logger *slog.Logger, store *timescale.Store, mode SinkMode) {
 	finalCtx, finalCancel := context.WithTimeout(context.Background(), drainFinalPassBudget)
 	defer finalCancel()
 	finalTrades := make([]canonical.Trade, 0, tradeBatchSize)
 	var total, trades int
-	var minL, maxL uint32
+	var span ledgerSpan
 drainRemainder:
 	for {
 		select {
@@ -621,12 +641,7 @@ drainRemainder:
 			t, isTrade := tradeFromEvent(ev)
 			if isTrade {
 				trades++
-				if minL == 0 || t.Ledger < minL {
-					minL = t.Ledger
-				}
-				if t.Ledger > maxL {
-					maxL = t.Ledger
-				}
+				span.observe(t.Ledger)
 				finalTrades = append(finalTrades, t)
 				continue
 			}
@@ -642,7 +657,7 @@ drainRemainder:
 	if total > 0 {
 		logger.Error("PersistEvents drain deadline exceeded — made a final best-effort persist pass; any residual is recoverable from the CH lake, re-derive this ledger range if the served tier is short",
 			"undrained_events", total, "undrained_trades", trades,
-			"ledger_from", minL, "ledger_to", maxL)
+			"ledger_from", span.min, "ledger_to", span.max)
 	} else {
 		logger.Warn("PersistEvents drain deadline exceeded — no events undrained",
 			"buffered", len(in))

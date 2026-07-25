@@ -11,7 +11,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// closeTrackingStore wraps a real datastore.DataStore, counting Close
+// closeTrackingStore wraps a fsStore datastore.DataStore, counting Close
 // calls so a test can assert walkDataStore's cleanup contract without
 // needing an SDK-internal hook.
 type closeTrackingStore struct {
@@ -44,7 +44,7 @@ func TestWalkDataStore_ClosesStoreOnEveryReturnPath(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	real, err := datastore.NewFilesystemDataStoreWithPath(tmp)
+	fsStore, err := datastore.NewFilesystemDataStoreWithPath(tmp)
 	if err != nil {
 		t.Fatalf("open filesystem datastore: %v", err)
 	}
@@ -59,11 +59,11 @@ func TestWalkDataStore_ClosesStoreOnEveryReturnPath(t *testing.T) {
 		NetworkPassphrase: "Test SDF Network ; September 2015",
 		Compression:       "zstd",
 	}
-	if _, _, err := datastore.PublishConfig(ctx, real, dsCfg); err != nil {
+	if _, _, err := datastore.PublishConfig(ctx, fsStore, dsCfg); err != nil {
 		t.Fatalf("publish config: %v", err)
 	}
 
-	tracked := &closeTrackingStore{DataStore: real}
+	tracked := &closeTrackingStore{DataStore: fsStore}
 	cfg := Config{DataStore: dsCfg}
 
 	// An invalid bounded range (To < From) fails validateRange — a

@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
-	"runtime/debug"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
@@ -163,15 +161,7 @@ func (s *Server) runTipStreamProducer(
 	// (defers are LIFO): the SSE writer sees the channel close and ends the response
 	// cleanly, then this logs. Never swallow it silently — a crash turning into an
 	// invisible dropped connection is its own bug.
-	defer func() {
-		if r := recover(); r != nil {
-			s.logger.Error("sse producer panicked",
-				"stream", "price_tip",
-				"panic", fmt.Sprintf("%v", r),
-				"stack", string(debug.Stack()),
-			)
-		}
-	}()
+	defer s.recoverStreamProducer("price_tip")
 	defer close(ch)
 
 	if firstEv, ok := tipStreamEvent(gen, first, firstSources); ok {
