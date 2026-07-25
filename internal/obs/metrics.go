@@ -190,7 +190,12 @@ func registerAppMetricsTail() {
 	// pre-seeded here. AggregatorFXSnapFallbackTotal's `leg` label
 	// is per-pair (unbounded by operator config) so it stays
 	// emit-on-error.
-	for _, outcome := range []string{"ok", "missing_leg", "parse_error", "redis_error"} {
+	// `frozen_leg` (MNY-22) landed after the original four and was not
+	// seeded with them — so the one outcome that means "we refused to
+	// publish a derived price because a leg was frozen" was the one
+	// outcome an operator could not distinguish from "this metric is
+	// dead" until it first fired.
+	for _, outcome := range []string{"ok", "missing_leg", "parse_error", "redis_error", "frozen_leg"} {
 		AggregatorTriangulationsTotal.WithLabelValues(outcome)
 	}
 	for _, op := range []string{"get_account", "upsert_subscription", "account_update", "list_keys", "key_update", "key_cache_invalidate"} {
@@ -1998,7 +2003,7 @@ var AnomalyFreezeRecoverySweepDurationSeconds = prometheus.NewHistogramVec(
 var AggregatorTriangulationsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_triangulations_total",
-		Help: "Aggregator triangulation outcomes per tick × chain × window. Outcome ∈ {ok, missing_leg, parse_error, redis_error}.",
+		Help: "Aggregator triangulation outcomes per tick × chain × window. Outcome ∈ {ok, missing_leg, parse_error, redis_error, frozen_leg}.",
 	},
 	[]string{"outcome"},
 )

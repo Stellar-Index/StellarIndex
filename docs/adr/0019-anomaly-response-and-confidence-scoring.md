@@ -64,6 +64,73 @@ superseded_by: null
 > records which combiner ships. Filed alongside R-003 in the
 > audit-2026-07-23 remediation.
 
+> **Amendment (2026-07-25) — the liquidity ceiling is $1M, not $100K,
+> and a SEVENTH factor exists.** Two changes to §"Multi-factor
+> confidence score" below, shipped together because both move the same
+> combiner.
+>
+> **1. `liquidity_factor`'s ceiling: $100K → $1,000,000.** The bullet
+> below says "near-0 below $1K bucket volume, near-1.0 above $100K".
+> $100K is not a deep bucket, it is roughly a typical one: BTC/USD's 5m
+> bucket volume has a measured p50 of **$123,678**, so the MEDIAN bucket
+> of the index's deepest pair already saturated the factor at 1.0. A
+> ceiling the median clears carries no information across the top half
+> of its own population — and, worse on the security side, it priced
+> $100K of wash volume at the same full credit as $10M of real depth.
+> The shape is unchanged (log-saturating between floor and ceiling);
+> only the ceiling moves, so `LiquidityFactor(123_678)` now reads 0.697
+> and the curve's 0.5 point moves from $10,000 to
+> `sqrt(1e3 × 1e6) ≈ $31,623`.
+>
+> Freeze impact, re-derived on the shipped combiner for the population
+> that can actually freeze (single source, one class, no cross-oracle
+> data, mature baseline, `confidence_max_freeze = 0.45`): the z at which
+> the CONFIDENCE leg crosses moves from z ≈ 5.54 (at $12K measured
+> volume) / 6.39 ($100K) to z ≈ 4.79 / 5.85. This does **not** move the
+> freeze's trigger: `z_score > 5.0` is a separate, independently
+> evaluated leg of the same AND, so nothing freezes below z = 5 whatever
+> confidence says. What moves is which leg binds — below ≈ $15.6K of
+> measured volume the confidence leg now goes true before z reaches 5,
+> and the AND leans on z + source_count for that thin slice. The 8
+> non-USD-quoted default pairs are unaffected: they pass the
+> `LiquidityUnmeasured` sentinel and read `LiquidityUnmeasuredFactor`,
+> deliberately left at **0.5** rather than tracked down to the new
+> floor-value of 0.333 — following the curve would have lowered
+> confidence for the population at highest false-freeze risk, for a
+> reason that says nothing about those pairs.
+>
+> **2. `triangulation_agreement_factor` — a seventh factor this ADR
+> predates.** When a pair has a configured triangulation chain, the
+> aggregator now compares its DIRECT price against the COMPOSITE the
+> chain implies (XLM/EUR direct vs XLM/USD × USD/EUR) and feeds the
+> divergence to a new factor with the same piecewise shape as
+> `cross_oracle_factor`: 1.0 within 2% (the wider tolerance absorbs a
+> chained-fiat leg snapped to a DAILY `fx_quotes` bucket), halving every
+> 4 percentage points beyond, 0.7 as the no-data neutral. It is a
+> manipulation signal in the disagreeing direction and corroboration in
+> the agreeing one.
+>
+> Two properties are load-bearing and deliberately unlike the six
+> original factors:
+>
+> - **Default weight 0.5, not 1.0.** A composite re-uses our own leg
+>   VWAPs, filters and upstream venues, so it corroborates at roughly
+>   half the evidentiary weight of an independent external reference.
+>   The discount lives in the weight so the served factor value stays
+>   directly comparable to `cross_oracle`.
+> - **Weight 0 when unchecked.** The combiner is normalised, so adding
+>   any constant "neutral" seventh value would re-score every pair in
+>   the index — including every pair with no chain — and silently move
+>   the Phase 2 confidence leg for them. Only zeroing the weight is a
+>   true no-op, and an un-triangulated pair therefore scores bit-for-bit
+>   what it scored before this factor existed.
+>
+> It does **not** feed `source_count`. A composite is corroboration, not
+> a second venue; counting it as a source would let configuring a chain
+> disarm the `source_count <= 1` leg of the freeze AND on exactly the
+> thin single-venue pairs chains are deployed for. See
+> `internal/aggregate/orchestrator/triangulate_corroborate.go`.
+
 > **Amendment (2026-07-24, audit-2026-07-23 wave5 AGT-08).** The
 > "Factor shapes" bullet list below (`source_count_factor:
 > 1/(1+exp(-(n-3))) — caps confidence at ~0.3 for single-source

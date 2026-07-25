@@ -378,6 +378,14 @@ func TestZeroSeed_F0033(t *testing.T) {
 		`stellarindex_aggregator_triangulations_total{outcome="missing_leg"} 0`,
 		`stellarindex_aggregator_triangulations_total{outcome="parse_error"} 0`,
 		`stellarindex_aggregator_triangulations_total{outcome="redis_error"} 0`,
+		// frozen_leg (MNY-22) shipped after the original four and was
+		// not seeded with them. It is the outcome that matters most to
+		// an operator — "a chain refused to publish because one of its
+		// legs was frozen" — and until it first fired, the series was
+		// absent, so a `rate(...{outcome="frozen_leg"}[15m])` panel read
+		// as "no data" (indistinguishable from a dead metric) rather
+		// than as a healthy zero.
+		`stellarindex_aggregator_triangulations_total{outcome="frozen_leg"} 0`,
 		`stellarindex_stripe_platform_sync_errors_total{operation="get_account"} 0`,
 		`stellarindex_stripe_platform_sync_errors_total{operation="upsert_subscription"} 0`,
 		`stellarindex_stripe_platform_sync_errors_total{operation="account_update"} 0`,

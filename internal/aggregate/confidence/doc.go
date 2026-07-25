@@ -2,7 +2,7 @@
 // per ADR-0019 §"Multi-factor confidence score".
 //
 // Each price published by the aggregator carries a `confidence ∈ [0, 1]`
-// value computed by combining six independent factors via weighted
+// value computed by combining the factors below via weighted
 // geometric mean:
 //
 //   - [ZScoreFactor]: how anomalous the bucket's return is vs the
@@ -14,6 +14,11 @@
 //   - [LiquidityFactor]: USD volume in the bucket.
 //   - [CrossOracleFactor]: agreement with external reference oracles
 //     (Reflector, Chainlink, etc.).
+//   - [TriangulationAgreementFactor]: agreement between the pair's
+//     direct price and the composite implied by a configured
+//     triangulation chain. Half-weight by default and weightless when
+//     no composite exists, so it is inert for pairs without a chain —
+//     ADR-0019 predates it; see that ADR's 2026-07-25 amendment.
 //   - [BaselineQualityFactor]: how mature the per-asset baseline is.
 //
 // The combiner is the NORMALISED weighted geometric mean —

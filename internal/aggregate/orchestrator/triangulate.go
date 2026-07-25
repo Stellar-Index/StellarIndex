@@ -149,6 +149,13 @@ func (o *Orchestrator) triangulateOne(ctx context.Context, chain TriangulationCh
 		return "redis_error"
 	}
 
+	// Corroboration input for the NEXT tick's confidence score on this
+	// target ([Orchestrator.triangulationDivergencePct]). Recorded only
+	// on a published composite: a chain that missed a leg, hit a frozen
+	// leg or failed its write must not leave a value behind that the
+	// confidence step would treat as this tick's evidence.
+	o.recordComposite(chain.Target, window, implied)
+
 	// Provenance marker. Lets the API set flags.triangulated=true
 	// when serving this pair via the Redis-fallback path. Per-pair
 	// direct refresh does NOT write this key — absence == direct.

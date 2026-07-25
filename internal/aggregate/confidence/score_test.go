@@ -288,7 +288,11 @@ func TestCompute_IsNormalisedGeometricMeanNotBareProduct(t *testing.T) {
 
 	// 2. Concrete corrected value, so this test pins a number rather
 	//    than a tautology against whatever the code happens to do.
-	const wantConfidence = 0.86773527630883263 // prod = 0.42689740997311271
+	//    Recomputed 2026-07-25 when liquidityCeilingUSD moved $100K →
+	//    $1M: the $50K bucket's liquidity factor drops from
+	//    ln(50)/ln(100) = 0.84949 to ln(50)/ln(1000) = 0.56632, which is
+	//    the whole of the change here.
+	const wantConfidence = 0.81103334478800171 // prod = 0.28459827331540849
 	if math.Abs(got.Confidence-wantConfidence) > 1e-9 {
 		t.Errorf("Compute = %.17f, want %.17f", got.Confidence, wantConfidence)
 	}
@@ -371,7 +375,8 @@ func TestCompute_NoCrossOracleDataStaysNeutral(t *testing.T) {
 	}
 }
 
-// TestDefaultWeights — sanity that the default is unweighted.
+// TestDefaultWeights — sanity that the ADR-0019 factors are unweighted
+// and that the one post-ADR factor carries its documented discount.
 func TestDefaultWeights(t *testing.T) {
 	w := confidence.DefaultWeights()
 	for name, v := range map[string]float64{
@@ -385,6 +390,13 @@ func TestDefaultWeights(t *testing.T) {
 		if v != 1.0 {
 			t.Errorf("DefaultWeights.%s = %v, want 1.0", name, v)
 		}
+	}
+	// Half weight IS the "a derived path is not an independent venue"
+	// discount (2026-07-25). Raising it to 1.0 would let a composite
+	// corroborate as strongly as an independent external reference.
+	if w.TriangulationAgreement != 0.5 {
+		t.Errorf("DefaultWeights.TriangulationAgreement = %v, want 0.5 — the "+
+			"derived-evidence discount lives in the weight", w.TriangulationAgreement)
 	}
 }
 
@@ -523,12 +535,28 @@ func TestCompute_UnmeasuredLiquidityDoesNotZeroTheScore(t *testing.T) {
 	// The score must equal what the same bucket scores with a
 	// mid-band MEASURED liquidity — i.e. the neutral factor is the only
 	// difference, nothing else silently changed.
+	//
+	// The collision volume is the curve's GEOMETRIC midpoint, which the
+	// 2026-07-25 ceiling change moved from $10,000 (the production
+	// min_usd_volume floor — the worst possible place for it) to
+	// ≈ $31,622.78. LiquidityUnmeasuredFactor deliberately stayed at
+	// 0.5 rather than tracking the curve; see its doc comment for why
+	// following it down to 0.333 would have made the 8 non-USD-quoted
+	// pairs freeze more readily for a reason that says nothing about
+	// them.
 	mid := healthyInputs()
-	mid.LiquidityUSD = 10_000 // log-midpoint → factor 0.5
+	mid.LiquidityUSD = math.Sqrt(1_000.0 * 1_000_000.0) // log-midpoint → factor 0.5
 	wantSame := confidence.Compute(mid, confidence.DefaultWeights())
 	if math.Abs(got.Confidence-wantSame.Confidence) > 1e-9 {
-		t.Errorf("unmeasured confidence = %v, want %v (the neutral factor is 0.5, the same as a $10K measured bucket)",
-			got.Confidence, wantSame.Confidence)
+		t.Errorf("unmeasured confidence = %v, want %v (the neutral factor is 0.5, the same as a $%.0f measured bucket)",
+			got.Confidence, wantSame.Confidence, mid.LiquidityUSD)
+	}
+	// And the collision is no longer at the publish floor: a bucket at
+	// min_usd_volume must now be DISTINGUISHABLE from "unmeasured" by
+	// value alone (the flag remains the contract, but the coincidence
+	// that motivated it is gone).
+	if confidence.LiquidityFactor(10_000) == confidence.LiquidityUnmeasuredFactor {
+		t.Error("LiquidityFactor(min_usd_volume) still collides with the unmeasured neutral")
 	}
 
 	// And the discrimination the factor exists for is intact: a
@@ -538,5 +566,136 @@ func TestCompute_UnmeasuredLiquidityDoesNotZeroTheScore(t *testing.T) {
 	if craterd := confidence.Compute(thin, confidence.DefaultWeights()); craterd.Confidence != 0 {
 		t.Errorf("measured sub-$1K bucket scored %v, want 0 — the thin-liquidity signal must stay live",
 			craterd.Confidence)
+	}
+}
+
+// ─── Triangulation (composite) corroboration ──────────────────────
+
+// TestCompute_TriangulationUncheckedIsInert is the load-bearing safety
+// property of the whole composite-corroboration feature: a pair with no
+// triangulation chain — which is EVERY pair in the index until an
+// operator configures one — must score exactly what it scored before
+// the factor existed, to the last bit.
+//
+// A "neutral" constant would not have achieved that. Compute is a
+// NORMALISED geometric mean, so adding any seventh factor value changes
+// the 1/sum(weights) exponent and therefore re-scores every pair in the
+// index — silently moving the Phase 2 freeze's confidence leg for
+// pairs that gained nothing. Only zeroing the unchecked factor's WEIGHT
+// is a true no-op, and this test pins that: the served value equals the
+// six-factor mean computed independently here.
+func TestCompute_TriangulationUncheckedIsInert(t *testing.T) {
+	in := healthyInputs() // TriangulationChecked is false (zero value)
+	got := confidence.Compute(in, confidence.DefaultWeights())
+
+	if got.Factors.TriangulationChecked {
+		t.Error("TriangulationChecked = true with no composite supplied")
+	}
+	f := got.Factors
+	sixFactorMean := math.Pow(
+		f.ZScore*f.SourceCount*f.Diversity*f.Liquidity*f.CrossOracle*f.BaselineQuality,
+		1.0/6.0)
+	if math.Abs(got.Confidence-sixFactorMean) > 1e-12 {
+		t.Errorf("unchecked triangulation moved the score: Compute = %.17f, "+
+			"six-factor mean = %.17f (delta %g) — an unchecked corroboration "+
+			"factor must not re-score pairs that have no composite",
+			got.Confidence, sixFactorMean, got.Confidence-sixFactorMean)
+	}
+}
+
+// TestCompute_TriangulationZeroValueIsNotAgreement — the fail-closed
+// default. `TriangulationDivergencePct` is a float, so its zero value
+// is 0.0 = "the composite agrees perfectly"; if that alone flipped the
+// factor to checked, every caller that never heard of the field would
+// silently collect full corroboration credit. The explicit
+// TriangulationChecked flag is what prevents it.
+func TestCompute_TriangulationZeroValueIsNotAgreement(t *testing.T) {
+	in := healthyInputs()
+	in.TriangulationDivergencePct = 0 // as if never set
+	got := confidence.Compute(in, confidence.DefaultWeights())
+	if got.Factors.TriangulationChecked {
+		t.Fatal("a zero divergence with TriangulationChecked=false read as CHECKED — " +
+			"omitting the field must never award corroboration credit")
+	}
+
+	checked := healthyInputs()
+	checked.TriangulationChecked = true
+	checked.TriangulationDivergencePct = 0
+	if same := confidence.Compute(checked, confidence.DefaultWeights()); same.Confidence == got.Confidence {
+		t.Error("checked and unchecked scored identically — the flag has no effect")
+	}
+}
+
+// TestCompute_TriangulationAgreementRaisesAndDisagreementLowers pins
+// the direction of the signal in both directions, which is the point of
+// the factor: a composite that reproduces the direct price is
+// corroboration (score up), and one that contradicts it is a
+// manipulation signal on one side or the other (score down, hard).
+func TestCompute_TriangulationAgreementRaisesAndDisagreementLowers(t *testing.T) {
+	unchecked := confidence.Compute(healthyInputs(), confidence.DefaultWeights()).Confidence
+
+	agreeIn := healthyInputs()
+	agreeIn.TriangulationChecked = true
+	agreeIn.TriangulationDivergencePct = 0.3 // inside tolerance
+	agree := confidence.Compute(agreeIn, confidence.DefaultWeights())
+
+	disagreeIn := healthyInputs()
+	disagreeIn.TriangulationChecked = true
+	disagreeIn.TriangulationDivergencePct = 25 // manipulation-shaped
+	disagree := confidence.Compute(disagreeIn, confidence.DefaultWeights())
+
+	if !agree.Factors.TriangulationChecked || !disagree.Factors.TriangulationChecked {
+		t.Fatal("TriangulationChecked = false on a supplied comparison")
+	}
+	if agree.Confidence <= unchecked {
+		t.Errorf("agreement did not raise confidence: %v vs unchecked %v",
+			agree.Confidence, unchecked)
+	}
+	if disagree.Confidence >= unchecked {
+		t.Errorf("25%% direct-vs-composite divergence did not lower confidence: %v vs unchecked %v",
+			disagree.Confidence, unchecked)
+	}
+	// Size check: the penalty must be big enough to matter (a
+	// manipulation signal that moves the score by 0.001 is decoration),
+	// and the credit small enough that corroboration alone can't lift a
+	// bad bucket over a threshold.
+	if unchecked-disagree.Confidence < 0.15 {
+		t.Errorf("disagreement penalty too small: %v → %v", unchecked, disagree.Confidence)
+	}
+	if agree.Confidence-unchecked > 0.05 {
+		t.Errorf("agreement credit too large: %v → %v; a derived path is not an "+
+			"independent venue", unchecked, agree.Confidence)
+	}
+}
+
+// TestCompute_TriangulationNeverTouchesSourceCount — ADR-0019's freeze
+// is a 3-signal AND whose third leg is `source_count <= 1`. A composite
+// re-uses our own legs and pipeline, so it must not count as a second
+// source: if it did, configuring a chain would silently disarm the
+// freeze on exactly the thin single-venue pairs chains are deployed for.
+func TestCompute_TriangulationNeverTouchesSourceCount(t *testing.T) {
+	single := confidence.Inputs{
+		ZScore:                   6,
+		SourceCount:              1,
+		SourceClassCount:         1,
+		LiquidityUSD:             12_000,
+		CrossOracleDivergencePct: -1,
+		BaselineAgeDays:          200,
+	}
+	withComposite := single
+	withComposite.TriangulationChecked = true
+	withComposite.TriangulationDivergencePct = 0
+
+	a := confidence.Compute(single, confidence.DefaultWeights())
+	b := confidence.Compute(withComposite, confidence.DefaultWeights())
+
+	if a.Factors.SourceCount != b.Factors.SourceCount {
+		t.Errorf("a composite changed the source-count factor: %v → %v",
+			a.Factors.SourceCount, b.Factors.SourceCount)
+	}
+	if b.Factors.SourceCount != confidence.SourceCountFactor(1) {
+		t.Errorf("source-count factor = %v, want SourceCountFactor(1) = %v — the "+
+			"composite must not be counted as a source",
+			b.Factors.SourceCount, confidence.SourceCountFactor(1))
 	}
 }

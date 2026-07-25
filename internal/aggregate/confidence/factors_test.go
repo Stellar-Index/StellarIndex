@@ -99,30 +99,52 @@ func TestDiversityFactor(t *testing.T) {
 
 // ─── LiquidityFactor ──────────────────────────────────────────────
 
+// TestLiquidityFactor_AnchorPoints pins the curve's endpoints and the
+// two interior volumes that matter operationally: the production
+// `min_usd_volume` publish floor ($10K) and the measured p50 bucket
+// volume of the index's deepest pair (BTC/USD, $123,678 as of
+// 2026-07-25).
+//
+// Proven red against the pre-2026-07-25 $100K ceiling: that curve
+// returned 1.0 at $100K and at $123,678 — the deepest pair's MEDIAN
+// bucket saturated the factor, so it carried no information across the
+// whole top half of its own population and $100K of wash volume bought
+// the same full credit as $10M of real depth.
 func TestLiquidityFactor_AnchorPoints(t *testing.T) {
 	cases := []struct {
 		usd       float64
 		want, tol float64
+		why       string
 	}{
-		{usd: 100, want: 0, tol: 0.01},         // below floor → 0
-		{usd: 1_000, want: 0, tol: 0.01},       // exactly floor → 0
-		{usd: 100_000, want: 1.0, tol: 0.01},   // exactly ceiling → 1
-		{usd: 1_000_000, want: 1.0, tol: 0.01}, // above ceiling → 1
+		{usd: 100, want: 0, tol: 0.01, why: "below floor"},
+		{usd: 1_000, want: 0, tol: 0.01, why: "exactly floor"},
+		{usd: 10_000, want: 1.0 / 3.0, tol: 1e-9, why: "min_usd_volume publish floor: ln(10)/ln(1000)"},
+		{usd: 100_000, want: 2.0 / 3.0, tol: 1e-9, why: "the OLD ceiling is now two-thirds up the curve"},
+		{usd: 123_678, want: 0.69743081788140493, tol: 1e-9, why: "BTC/USD p50 bucket — no longer saturating"},
+		{usd: 1_000_000, want: 1.0, tol: 1e-12, why: "exactly ceiling"},
+		{usd: 10_000_000, want: 1.0, tol: 1e-12, why: "above ceiling"},
 	}
 	for _, c := range cases {
 		got := confidence.LiquidityFactor(c.usd)
 		if !near(got, c.want, c.tol) {
-			t.Errorf("LiquidityFactor(%v) = %v, want ~%v", c.usd, got, c.want)
+			t.Errorf("LiquidityFactor(%v) = %v, want ~%v (%s)", c.usd, got, c.want, c.why)
 		}
 	}
 }
 
 func TestLiquidityFactor_LogShape(t *testing.T) {
-	// Geometric midpoint between $1K and $100K is $10K (log midpoint);
-	// the factor at $10K should be ~0.5.
-	got := confidence.LiquidityFactor(10_000)
-	if !near(got, 0.5, 0.05) {
-		t.Errorf("LiquidityFactor(10000) = %v, want ~0.5 (log-midpoint)", got)
+	// The factor is a log-interpolation, so its 0.5 point is the
+	// GEOMETRIC midpoint of [floor, ceiling] — sqrt(1e3 × 1e6) ≈
+	// $31,622.78 since the 2026-07-25 ceiling change (it was $10K when
+	// the ceiling was $100K).
+	midpoint := math.Sqrt(1_000.0 * 1_000_000.0)
+	if got := confidence.LiquidityFactor(midpoint); !near(got, 0.5, 1e-12) {
+		t.Errorf("LiquidityFactor(%.2f) = %v, want 0.5 (geometric midpoint of the band)", midpoint, got)
+	}
+	// Monotone and strictly interior between the endpoints — the shape
+	// claim, independent of where the ends sit.
+	if a, b := confidence.LiquidityFactor(5_000), confidence.LiquidityFactor(500_000); !(a > 0 && a < b && b < 1) {
+		t.Errorf("factor not strictly increasing inside the band: f(5K)=%v f(500K)=%v", a, b)
 	}
 }
 
@@ -193,6 +215,68 @@ func TestCrossOracleFactor_NoDataReturnsNeutral(t *testing.T) {
 
 func TestCrossOracleFactor_GuardsNaN(t *testing.T) {
 	if got := confidence.CrossOracleFactor(math.NaN()); got != 0 {
+		t.Errorf("NaN = %v, want 0", got)
+	}
+}
+
+// ─── TriangulationAgreementFactor ─────────────────────────────────
+
+// TestTriangulationAgreementFactor_AnchorPoints pins the corroboration
+// curve: full credit inside the 2% tolerance (which exists to absorb a
+// chained-fiat leg snapped to a DAILY fx_quotes bucket, not to be
+// lenient), halving every 4 percentage points past it, and near-zero
+// for the divergence a single-venue manipulation on a thin pair
+// produces.
+func TestTriangulationAgreementFactor_AnchorPoints(t *testing.T) {
+	cases := []struct {
+		divergencePct float64
+		want, tol     float64
+		why           string
+	}{
+		{divergencePct: 0, want: 1.0, tol: 1e-12, why: "identical prices"},
+		{divergencePct: 2.0, want: 1.0, tol: 1e-12, why: "exactly the tolerance — still full credit"},
+		{divergencePct: 6.0, want: 0.5, tol: 1e-9, why: "tolerance + one half-life"},
+		{divergencePct: 10.0, want: 0.25, tol: 1e-9, why: "tolerance + two half-lives"},
+		{divergencePct: 25.0, want: 0.018581361171917517, tol: 1e-9, why: "manipulation-shaped gap"},
+	}
+	for _, c := range cases {
+		got := confidence.TriangulationAgreementFactor(c.divergencePct)
+		if !near(got, c.want, c.tol) {
+			t.Errorf("TriangulationAgreementFactor(%v%%) = %v, want ~%v (%s)",
+				c.divergencePct, got, c.want, c.why)
+		}
+	}
+}
+
+// TestTriangulationAgreementFactor_IsMonotoneDecreasing — the property
+// that makes disagreement a signal rather than noise: more divergence
+// can never score better.
+func TestTriangulationAgreementFactor_IsMonotoneDecreasing(t *testing.T) {
+	prev := confidence.TriangulationAgreementFactor(0)
+	for d := 0.5; d <= 60; d += 0.5 {
+		got := confidence.TriangulationAgreementFactor(d)
+		if got > prev {
+			t.Fatalf("factor rose at %v%%: %v > %v", d, got, prev)
+		}
+		prev = got
+	}
+	if prev > 0.01 {
+		t.Errorf("factor at 60%% divergence = %v, want near-0", prev)
+	}
+}
+
+func TestTriangulationAgreementFactor_NoCompositeReturnsNeutral(t *testing.T) {
+	// Negative is the "no composite for this pair" sentinel — the same
+	// 0.7 neutral CrossOracleFactor uses. Compute additionally zeroes
+	// the factor's weight in this case; see
+	// TestCompute_TriangulationUncheckedIsInert.
+	if got := confidence.TriangulationAgreementFactor(-1); got != 0.7 {
+		t.Errorf("no-composite sentinel = %v, want 0.7", got)
+	}
+}
+
+func TestTriangulationAgreementFactor_GuardsNaN(t *testing.T) {
+	if got := confidence.TriangulationAgreementFactor(math.NaN()); got != 0 {
 		t.Errorf("NaN = %v, want 0", got)
 	}
 }

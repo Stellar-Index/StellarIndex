@@ -512,9 +512,12 @@ func TestConfidence_BaselineMissingDoesNotBlockVWAP(t *testing.T) {
 // must scale each quote amount by its SOURCE's smallest-unit decimals,
 // not a fixed 1e7. A CEX quote is 8dp (externalAmountDecimals = 8), so
 // the pre-fix fixed-1e7 divisor overstated it 10×. Because
-// LiquidityFactor is log-linear across [1e3, 1e5], that 10× swings the
-// factor by ~0.5 (here from 0.7386 up to a saturated 1.0) — a material
-// distortion, not the "insensitive" error the old comment claimed.
+// LiquidityFactor is log-linear inside its band, that 10× swings the
+// factor by exactly ln(10)/ln(ceiling/floor) — one third of the full
+// [0,1] range on today's [1e3, 1e6] band (it was one HALF on the
+// [1e3, 1e5] band that shipped until 2026-07-25, where the inflated
+// figure also saturated at 1.0). A material distortion either way, not
+// the "insensitive" error the old comment claimed.
 func TestApproxUSDVolume_CEXQuoteIsEightDecimals(t *testing.T) {
 	pair := xlmUSDPair(t)
 	ts := time.Now().UTC()
@@ -531,11 +534,17 @@ func TestApproxUSDVolume_CEXQuoteIsEightDecimals(t *testing.T) {
 
 	corrected := confidence.LiquidityFactor(got)                // F(30000)
 	buggy := confidence.LiquidityFactor(float64(usdWhole) * 10) // what /1e7 produced: F(300000)
-	if math.Abs(corrected-0.7386) > 0.01 {
-		t.Errorf("LiquidityFactor(30000) = %.4f, want ~0.7386", corrected)
+	if math.Abs(corrected-0.492376) > 1e-5 {
+		t.Errorf("LiquidityFactor(30000) = %.6f, want ~0.492376 (= ln(30)/ln(1000))", corrected)
 	}
-	if buggy != 1.0 {
-		t.Errorf("pre-fix LiquidityFactor(300000) = %.4f, want 1.0 (saturated)", buggy)
+	if math.Abs(buggy-0.825709) > 1e-5 {
+		t.Errorf("pre-fix LiquidityFactor(300000) = %.6f, want ~0.825709 (= ln(300)/ln(1000))", buggy)
+	}
+	// Both volumes sit inside the log-linear band, so the swing is
+	// exactly one decade's worth of it: ln(10)/ln(1e6/1e3) = 1/3.
+	if math.Abs((buggy-corrected)-1.0/3.0) > 1e-9 {
+		t.Errorf("factor swing = %.6f, want exactly 1/3 (one decade of a [1e3, 1e6] log band)",
+			buggy-corrected)
 	}
 	if buggy-corrected < 0.25 {
 		t.Errorf("factor swing = %.4f, want a material (>0.25) gap the fix removes", buggy-corrected)

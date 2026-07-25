@@ -82,6 +82,47 @@ func TestADR0019PinsTheNormalisedCombiner(t *testing.T) {
 	}
 }
 
+// TestADR0019PinsTheShippedFactorSet — the ADR's "Factor shapes"
+// bullet list is the only prose description of what actually goes into
+// a published `confidence`, and two of the shipped shapes no longer
+// match the original text: the liquidity ceiling moved $100K → $1M, and
+// a seventh factor (triangulation agreement) exists that the ADR
+// predates. Both are carried by the 2026-07-25 amendment; this guard
+// fails if the amendment is dropped or the constants drift away from
+// it, which is the same class of silent doc/code divergence R-003 was.
+func TestADR0019PinsTheShippedFactorSet(t *testing.T) {
+	adr := readSquashed(t, adr0019Path)
+
+	// The ceiling constant, stated in the form an operator can match
+	// against internal/aggregate/confidence/factors.go.
+	if !strings.Contains(adr, "$100K → $1,000,000") {
+		t.Error("ADR-0019 does not record the liquidity_factor ceiling change " +
+			"($100K → $1,000,000); its factor-shape bullet still describes a " +
+			"ceiling the code has not used since 2026-07-25")
+	}
+	// The measurement that justifies it — a number, not an adjective,
+	// so a future re-tune has to argue with the evidence.
+	if !strings.Contains(adr, "$123,678") {
+		t.Error("ADR-0019 no longer carries the measured BTC/USD p50 bucket volume " +
+			"that justifies the liquidity ceiling")
+	}
+	// The seventh factor and the two properties that make it safe.
+	if !strings.Contains(adr, "triangulation_agreement_factor") {
+		t.Error("ADR-0019 does not mention triangulation_agreement_factor — the " +
+			"shipped combiner has a factor the ADR's list omits")
+	}
+	if !strings.Contains(adr, "Weight 0 when unchecked") {
+		t.Error("ADR-0019 does not record that the triangulation factor is EXCLUDED " +
+			"(weight 0), not merely neutral, when no composite exists — the property " +
+			"that keeps every un-triangulated pair's score unchanged")
+	}
+	if !strings.Contains(adr, "does not feed `source_count`") &&
+		!strings.Contains(adr, "does **not** feed `source_count`") {
+		t.Error("ADR-0019 does not state that a composite is excluded from " +
+			"source_count — the freeze AND's independence leg depends on it")
+	}
+}
+
 // TestPackageDocPinsTheNormalisedCombiner — the package doc comment
 // is the first thing a reader hits on pkg.go.dev; it carried the same
 // truncated `prod(factor_i ^ weight_i)` formula as the ADR.

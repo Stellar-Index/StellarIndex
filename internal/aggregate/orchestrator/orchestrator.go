@@ -608,6 +608,16 @@ type Orchestrator struct {
 	// sequentially inside one Tick), so no lock is needed.
 	frozenThisTick map[string]struct{}
 
+	// lastComposites holds the most recent composite (triangulated)
+	// price the chain pass published per (target pair, window), so the
+	// NEXT tick's confidence step can compare a freshly-computed direct
+	// VWAP against an independently-routed opinion of the same pair.
+	// See triangulate_corroborate.go for why the comparison is one tick
+	// behind and why it feeds confidence but never the freeze's
+	// source-count leg. Same single-Tick-at-a-time invariant as
+	// prevVWAPs, so no lock is needed.
+	lastComposites map[string]compositeSample
+
 	// Stats exposed for metrics / test assertions. Zero-copy.
 	mu             sync.Mutex
 	lastTickAt     time.Time
@@ -634,12 +644,13 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 		logger = slog.Default()
 	}
 	return &Orchestrator{
-		store:       store,
-		cache:       cache,
-		cfg:         cfg,
-		logger:      logger,
-		prevVWAPs:   make(map[string]*big.Rat, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
-		lastWriteAt: make(map[string]time.Time, len(cfg.Pairs)),
+		store:          store,
+		cache:          cache,
+		cfg:            cfg,
+		logger:         logger,
+		prevVWAPs:      make(map[string]*big.Rat, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
+		lastWriteAt:    make(map[string]time.Time, len(cfg.Pairs)),
+		lastComposites: make(map[string]compositeSample, len(cfg.Triangulations)*max(len(cfg.Windows), 1)),
 	}
 }
 
@@ -878,7 +889,7 @@ func (o *Orchestrator) refreshPairWindow(
 	// Phase 2 freeze leaves the prior bucket's value intact in cache
 	// — same semantic as Phase 1.
 	prevForConfidence := o.prevVWAPs[stateKey]
-	conf, confOK := o.computeConfidence(ctx, pair, vwap, prevForConfidence, trades)
+	conf, confOK := o.computeConfidence(ctx, pair, window, vwap, prevForConfidence, trades)
 	if confOK {
 		input := confidenceWithSourceCount{
 			Confidence:  conf.Score.Confidence,
