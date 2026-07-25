@@ -362,11 +362,23 @@ jobs:
           if [ "${{ needs.resolve-tag.outputs.is_prerelease }}" = "true" ]; then
             PRE="--prerelease"
           fi
-          # If a release already exists for this tag (manual re-run),
-          # delete it first so we can re-upload assets cleanly.
+          # CID-21 (audit-2026-07-23): a published release must be
+          # immutable — the same tag can only ever ship one set of
+          # bytes. Pre-fix, a manual re-run of this job for a tag that
+          # already had a release DELETED it and re-created it from
+          # whatever `dist/` this run happened to produce, so the same
+          # version string could silently ship different binaries +
+          # migrations.tar.gz than the first cut (or than what a
+          # consumer already downloaded, verified, and pinned via
+          # SHA256SUMS). Refuse instead: an existing release for this
+          # tag is a hard stop, not a thing to clear and retry. If the
+          # release genuinely needs different bytes, cut a NEW version
+          # — that is the whole point of SemVer immutability, and is
+          # also why release-process.md's re-cut guidance is "bump the
+          # version", not "re-run this workflow".
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG exists — deleting before re-creating"
-            gh release delete "$TAG" --yes
+            echo "::error::Release $TAG already exists — refusing to delete and re-create it. Published releases are immutable: cut a new version (e.g. a patch bump) instead of re-running this workflow for an existing tag. If this release is genuinely broken (e.g. a bad cut that was never installed anywhere), delete it by hand via 'gh release delete' after confirming no consumer depends on it, then re-run — this workflow will not do that step for you."
+            exit 1
           fi
           gh release create "$TAG" \
             --title "Stellar Index $TAG" \
