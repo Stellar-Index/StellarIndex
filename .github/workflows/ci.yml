@@ -16,14 +16,23 @@ on:
   # direct pushes (live-in-development sessions, hot-fix commits,
   # the /loop workflow) must still run the canonical suite.
   #
-  # 2026-07-02 (CS-097): main is now protected by two repo rulesets —
-  # "main-integrity" (force-push + deletion blocked, NO bypass, not
-  # even admins) and "main-required-checks" (the core jobs here are
-  # required status checks; repository admins bypass so the
-  # operator's direct-push workflow keeps working). Because the
-  # admin-bypass path exists BY DESIGN, this push trigger is NOT
-  # redundant: it is what keeps direct pushes honest — a red run on
-  # main is the tripwire. Do not remove it while the bypass exists.
+  # 2026-07-02 (CS-097): main was reported protected by two repo
+  # rulesets — "main-integrity" (force-push + deletion blocked, NO
+  # bypass, not even admins) and "main-required-checks" (the core jobs
+  # here are required status checks; repository admins bypass so the
+  # operator's direct-push workflow keeps working).
+  #
+  # CID-01 (audit-2026-07-23, corrected 2026-07-25): that claim was
+  # never verified from inside the repo, and a live check found it
+  # false — `GET /repos/<repo>/rules/branches/main` currently returns
+  # `[]` (no active rules), confirmed both authenticated and via a
+  # plain unauthenticated `curl` (the repo is public). The
+  # `branch-protection-status` job below turns this from a one-time
+  # manual check into an ongoing, visible signal on every push, since
+  # nothing in this repo can configure the ruleset itself. Regardless
+  # of ruleset state, this push trigger is NOT redundant: it is what
+  # keeps direct pushes honest even under an admin-bypass rule — a red
+  # run on main is the tripwire. Do not remove it.
   push:
     branches: [main]
     paths-ignore:
@@ -90,7 +99,16 @@ jobs:
   lint:
     name: lint
     runs-on: ubuntu-latest
-    if: "!contains(github.event.pull_request.labels.*.name, 'skip-ci')"
+    # CID-02 (audit-2026-07-23): `lint` is a required status check
+    # (main-required-checks per CS-097); a job-level `if:` that a PR
+    # author's own label can flip to `false` makes a "skipped" run
+    # report as a passing required check — the PR author controls
+    # whether their own gate runs. This job-level escape was already
+    # dropped from `build` (N2-07, audit-2026-06-11) but missed here.
+    # If a docs/WIP PR genuinely needs to skip Go lint, filter it at
+    # the trigger (`paths-ignore` above already exempts docs-only
+    # diffs) — not with a per-job label a required check can't defend
+    # against.
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
@@ -193,6 +211,56 @@ jobs:
           # lint-baseline-growth diffs against the PR base / push
           # `before` sha, so it needs more than a depth-1 checkout.
           fetch-depth: 0
+      - name: Restore trusted gate scripts from the base ref
+        # CID-03 (audit-2026-07-23): every step below runs from the
+        # PR-head checkout, including the SCRIPT FILES themselves — so
+        # a single PR could edit e.g. lint-migrations.sh to stop
+        # flagging a BIGINT money column, add exactly that column in
+        # the same diff, and be judged by its own weakened copy.
+        # lint-migrations.sh (money-column DDL scan) and
+        # lint-baseline-growth.sh (the anti-self-bypass tripwire for
+        # every OTHER baseline/allowlist — the one gate whose own
+        # sabotage would be hardest to notice) get the un-modified
+        # base-ref version restored over the PR-head one before they
+        # run; every step still evaluates PR-head CONTENT (the
+        # migrations/ tree, the git history lint-baseline-growth diffs)
+        # — only the checker's own source is pinned to the base.
+        #
+        # Deliberately scoped to these two (medium-severity CID-03
+        # scope) rather than every scripts/ci/*.sh: a blanket policy
+        # would also block a PR from ever exercising ITS OWN fix to
+        # any other gate script in the same PR that adds the case it
+        # fixes — a real workflow cost this repo does not currently
+        # pay for the other ~20 gate scripts. Widen the loop below if
+        # that trade-off is revisited.
+        #
+        # First push / shallow history (no BASE_SHA, or it isn't in
+        # this checkout's history) falls back to the PR-head script
+        # rather than failing the job — same fallback lint-baseline-
+        # growth.sh's own BASE_SHA handling already uses.
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          ZERO_SHA="0000000000000000000000000000000000000000"
+          if [ -z "${BASE_SHA:-}" ] || [ "$BASE_SHA" = "$ZERO_SHA" ]; then
+            echo "::notice::no BASE_SHA — running PR-head gate scripts (first push / no comparison base)."
+            exit 0
+          fi
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            echo "::warning::BASE_SHA ${BASE_SHA} not in local history — running PR-head gate scripts (fetch-depth too shallow?)."
+            exit 0
+          fi
+          for f in scripts/ci/lint-migrations.sh scripts/ci/lint-baseline-growth.sh; do
+            if git show "${BASE_SHA}:${f}" > "${f}.trusted" 2>/dev/null; then
+              mv "${f}.trusted" "$f"
+              chmod +x "$f"
+              echo "Restored $f from base ${BASE_SHA} — judged by the un-modified guard."
+            else
+              rm -f "${f}.trusted"
+              echo "::notice::$f did not exist at base ${BASE_SHA} (new gate) — running the PR-head version."
+            fi
+          done
       - name: lint-imports
         # Enforces architectural import rules:
         # - No stellar-rpc in production ingest (removed from r1
@@ -245,6 +313,12 @@ jobs:
         # fail-closed environment-approval assertion deploy.yml runs
         # before it touches production. No network, no token.
         run: ./scripts/ci/check-deploy-protection-test.sh
+      - name: check-main-ci-health self-test
+        # reconciliation-and-monitoring-liveness (audit-2026-07-23):
+        # fixtures for the shared red-streak decision core both
+        # ci-health.yml (watches `ci.yml`) and reconciliation-health.yml
+        # (watches `ansible-drift.yml`) call. No network, no token.
+        run: ./scripts/ci/check-main-ci-health-test.sh
       - name: lint-lexicon
         # Maintainability audit 2026-07-01 (D2+D6): domain-lexicon +
         # idiom ratchet. Zero rules (no Fetch/Make verbs, slog is the
@@ -269,6 +343,37 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           fetch-depth: 0
+      - name: Restore trusted lint-actions-pinning.sh from the base ref
+        # CID-03 (audit-2026-07-23): same class as import-checks'
+        # equivalent step — a PR could weaken this script's PR_DIFF
+        # hard-fail (e.g. widen SHA_RE, or exempt a namespace) and
+        # introduce a new tag-pinned third-party action in the same
+        # diff, and be judged by its own weakened copy. Restore the
+        # base-ref (un-modified) script before it runs; its own
+        # internal `git diff origin/main` logic is unaffected and still
+        # evaluates the PR-head `.github/workflows/*.yml` content.
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          ZERO_SHA="0000000000000000000000000000000000000000"
+          f=scripts/ci/lint-actions-pinning.sh
+          if [ -z "${BASE_SHA:-}" ] || [ "$BASE_SHA" = "$ZERO_SHA" ]; then
+            echo "::notice::no BASE_SHA — running the PR-head $f (first push / no comparison base)."
+            exit 0
+          fi
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            echo "::warning::BASE_SHA ${BASE_SHA} not in local history — running the PR-head $f (fetch-depth too shallow?)."
+            exit 0
+          fi
+          if git show "${BASE_SHA}:${f}" > "${f}.trusted" 2>/dev/null; then
+            mv "${f}.trusted" "$f"
+            chmod +x "$f"
+            echo "Restored $f from base ${BASE_SHA} — judged by the un-modified guard."
+          else
+            rm -f "${f}.trusted"
+            echo "::notice::$f did not exist at base ${BASE_SHA} (new gate) — running the PR-head version."
+          fi
       - name: lint-actions-pinning
         # F-1216 (codex audit-2026-05-12): warns on existing
         # tag-pinned third-party actions and HARD-FAILS when a
@@ -595,3 +700,32 @@ jobs:
       - name: ansible-lint (production profile, warnings tolerated)
         working-directory: configs/ansible
         run: ansible-lint --profile moderate roles/ playbooks/ || true
+
+  branch-protection-status:
+    name: branch protection status (informational)
+    runs-on: ubuntu-latest
+    # CID-01 (audit-2026-07-23): only meaningful on the branch itself —
+    # a PR's merge-ref isn't "main", so this only runs on push-to-main.
+    if: github.event_name == 'push'
+    permissions: {}
+    steps:
+      - name: Warn if main has no active branch-protection rules
+        # `GET /repos/<repo>/rules/branches/<branch>` is a PUBLIC,
+        # unauthenticated GitHub API endpoint for a public repo — no
+        # token or checkout needed, so this cannot be broken by a
+        # credential problem. Deliberately advisory (::warning::,
+        # never fails the build): ruleset configuration is a repo
+        # Setting nothing in this repo can change, and hard-failing
+        # every push to main over an org setting would just make main
+        # permanently red for everyone with merge rights rather than
+        # fix anything. See the CID-01 note on the `push:` trigger
+        # above for why the claim this replaces was wrong.
+        run: |
+          set -euo pipefail
+          rules="$(curl -fsSL "https://api.github.com/repos/${{ github.repository }}/rules/branches/main")"
+          count="$(printf '%s' "$rules" | jq 'length')"
+          if [ "$count" -eq 0 ]; then
+            echo "::warning::main has ZERO active branch-protection rules right now (GET /repos/${{ github.repository }}/rules/branches/main returned []). Anyone with push access can force-push or delete main. Configure branch rulesets in repo Settings → Rules if this is unintentional."
+          else
+            echo "main has ${count} active branch-protection rule(s)."
+          fi
