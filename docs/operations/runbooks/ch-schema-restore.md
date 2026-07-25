@@ -154,6 +154,88 @@ action, tracked in the operator register — the timer cannot do it
 (no repo credentials on r1, and committing from production is its own
 bad idea).
 
+## The drift check — the other half of the snapshot
+
+The snapshot answers *what IS the live schema*. It cannot answer *is
+the live schema what the repository says it should be* — and until
+2026-07-25 nothing did. Tier-1 lake DDL is **hand-applied**: there is
+no ClickHouse migration runner the way `migrations/` + golang-migrate
+cover Postgres, so an `ORDER BY` changed by hand during an incident, a
+column added and never codified, or a table the repo declares that was
+never created, produced no signal anywhere. That matters more than it
+sounds: a 60M-ledger re-derive against a sort order that differs from
+the one the repo assumes does not error — it silently writes a
+differently-ordered table.
+
+`configs/ansible/roles/archival-node/files/ch-schema-drift.sh` closes
+that (it lives in the role's `files/` dir because that is where this
+repo keeps textfile-collector emitters, and where
+`scripts/ci/lint-metric-refs.sh` looks for a metric's producer). It runs daily
+(`ch-schema-drift.timer`, 04:10 UTC — 30 minutes after the snapshot, so
+it always reads that day's complete capture) and compares, per table
+declared in `deploy/clickhouse/tier1_schema.sql`:
+
+| Compared | Why |
+| --- | --- |
+| existence | Declared in the repo, missing live. |
+| `ENGINE` incl. arguments | A `ReplacingMergeTree` whose version column changed dedupes differently. `system.tables.engine` does **not** carry the arguments — this is why the check parses `SHOW CREATE`, not the inventory TSV. |
+| `PARTITION BY` | Re-shapes every part. |
+| `ORDER BY` | The one that silently corrupts a rebuild rather than failing it. |
+| column names, in order | An added / dropped / reordered column. |
+
+Column **types** are reported as `INFO`, never as drift: ClickHouse
+re-renders types, DEFAULTs, CODECs and TTLs in its own canonical form,
+and enforcing textual equality on those is a false-positive machine —
+which ends with the check being ignored, i.e. worse than no check. The
+snapshot's `schema.sql` remains the authoritative record of exact live
+types.
+
+Tables that exist **live but are absent from `tier1_schema.sql`** are
+counted and listed but do not fail: `tier1_schema.sql` is the *founding*
+DDL, and materialized views, serving tables and later migrations have
+legitimately landed on top of it. Enforcing that direction needs a named
+baseline with a per-entry reason under `scripts/ci/` (so
+`scripts/ci/lint-baseline-growth.sh`'s `Baseline-Growth:` tripwire covers
+it) — an ungated allowlist elsewhere would be the same hole with a new
+address. Until then `stellarindex_ch_schema_drift_uncodified` makes the
+growth visible.
+
+Exit codes: `0` clean, `1` drift, **`2` could-not-compare**. Two is a
+failure on purpose — "we could not check" must never be recorded as
+"checked, and fine", which is the equivalence this whole ADR exists to
+break. The systemd unit sets no `SuccessExitStatus`.
+
+Run it by hand:
+
+```sh
+# against the newest snapshot on the box
+ch-schema-drift.sh
+
+# against a live SHOW CREATE sweep, no snapshot needed
+LIVE=1 ch-schema-drift.sh
+
+# from a checkout, against a snapshot you copied down
+INTENT=deploy/clickhouse/tier1_schema.sql \
+  LIVE_SCHEMA=/path/to/schema.sql TEXTFILE_DIR=/dev/null \
+  configs/ansible/roles/archival-node/files/ch-schema-drift.sh
+```
+
+**When it fires, decide which side is wrong before touching anything.**
+Drift has two directions and they need opposite fixes: a hand change on
+r1 that was never codified (update `tier1_schema.sql` in the same change
+that re-applies or accepts it), or repo DDL that was never applied (apply
+it). Editing the repo to match live without understanding which is which
+codifies the incident.
+
+Metrics: `stellarindex_ch_schema_drift_divergent` (alert on `> 0`),
+`_tables`, `_uncodified`, `_last_run_unix` (staleness). The alert rules
+themselves are not yet in `deploy/monitoring/rules/storage.yml` — the
+producer ships first; wiring the rule is a follow-up in that file.
+
+Self-test: `configs/ansible/roles/archival-node/files/ch-schema-drift-test.sh` (hermetic, no
+ClickHouse required — mutates a ClickHouse-rendered fixture one attribute
+at a time and asserts each is caught).
+
 ## Related
 
 - ADR-0043 §2 — why a full CH backup is rejected and what replaces it.
@@ -167,3 +249,9 @@ bad idea).
 - 2026-07-25 — initial version, shipped with the §2.1 implementation
   (script + daily timer + staleness alerts). Before this the ClickHouse
   lake had no backup of any kind and no alert that said so.
+- 2026-07-25 — added "The drift check" (C6-008 / C6-003):
+  `ch-schema-drift.sh` + `ch-schema-drift.timer` compare
+  `deploy/clickhouse/tier1_schema.sql` against the snapshot's live
+  `SHOW CREATE`. The snapshot recorded the live schema daily but nothing
+  ever asserted it matched the repo, and hand-applied Tier-1 DDL has no
+  migration runner to notice.

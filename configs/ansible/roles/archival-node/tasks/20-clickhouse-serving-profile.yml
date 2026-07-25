@@ -102,10 +102,54 @@
                  default, nice 0) under contention, without going to
                  an extreme (-20) that could starve merges outright
                  and let compaction fall permanently behind.
-                 readonly=1 — this user only ever SELECTs (the
-                 explorer read path is 100% read-only); defense in
-                 depth so a leaked credential can't INSERT/ALTER/DROP
-                 even if the network ACL below is ever loosened.
+                 readonly=2 — NOT 1 (C6-015). This user only ever
+                 SELECTs, so read-only is right; the question is which
+                 read-only. ClickHouse's `readonly` has three values:
+                 0 = everything, 1 = read-data queries ONLY and
+                 CHANGING SETTINGS IS PROHIBITED, 2 = read data AND
+                 change settings (the `readonly` setting itself still
+                 cannot be raised, and INSERT/ALTER/DROP/CREATE stay
+                 blocked exactly as under 1).
+                 Under readonly=1 this profile would have broken every
+                 serving endpoint it was built for, on the FIRST
+                 REQUEST after ADR-0048's serving flip
+                 (stellarindex_clickhouse_serving_enabled). Both
+                 constructors the API binary passes these credentials
+                 to — clickhouse.NewExplorerReaderAuth and
+                 NewSupplyReaderAuth (cmd/stellarindex-api/main.go) —
+                 open the connection with
+                 `Settings: clickhouse.Settings{"max_execution_time": 30}`,
+                 and clickhouse-go merges the connection's Settings
+                 into the settings packet of EVERY query it sends
+                 (conn.go settings()), flagged Important. Under
+                 readonly=1 the server answers that with
+                 `Cannot modify 'max_execution_time' setting in
+                 readonly mode. (READONLY)`. The native-protocol Ping
+                 carries no settings, so the API would have started
+                 clean and healthy and then 500'd every explorer /
+                 supply read — the worst shape of this failure.
+                 Several serving reads also carry their own SQL-text
+                 `SETTINGS ...` clause (ADR-0048 D2's
+                 stellar.account_movements path), which readonly=1
+                 rejects identically.
+                 Consequence to be honest about: under readonly=2 the
+                 four numbers above are DEFAULTS a per-query SETTINGS
+                 may raise, not hard ceilings — and the serving reads
+                 do raise them (max_threads 4, max_memory_usage 8 GB,
+                 max_execution_time 30). Hard ceilings would need a
+                 <constraints><max> block, which IS enforced regardless
+                 of readonly; it is deliberately NOT added blind here,
+                 because a ceiling set below any real serving query's
+                 request turns "bounded" back into "broken", which is
+                 the exact failure this value fixes. Derive the maxima
+                 from the live per-query settings first.
+                 What survives unchanged as defense in depth: no
+                 INSERT/ALTER/DROP/CREATE from a leaked credential,
+                 allow_databases below pinning it to `stellar`,
+                 access_management=0, and the loopback-only network
+                 ACL. max_concurrent_queries_for_user still bounds the
+                 profile's aggregate footprint for every query that
+                 does not override it (no reader in this repo does).
 
                Password: SHA-256 hex digest of
                clickhouse_serving_password (ansible-vault —
@@ -122,7 +166,7 @@
                   <max_concurrent_queries_for_user>{{ clickhouse_serving_max_concurrent_queries }}</max_concurrent_queries_for_user>
                   <priority>1</priority>
                   <os_thread_priority>-5</os_thread_priority>
-                  <readonly>1</readonly>
+                  <readonly>2</readonly>
               </api_serving>
           </profiles>
           <users>

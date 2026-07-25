@@ -124,6 +124,24 @@
   changed_when: false
   failed_when: false
 
+# The comparison reads stdout OR stderr. Observed on r1 (recorded in the
+# defaults/main.yml warning): the assert below failed with the live
+# galexie reporting '' — an EMPTY stdout. A guard that only ever looks at
+# stdout can never pass against a binary that prints its version banner
+# on stderr, no matter which constant is pinned, so "reconcile the
+# constants" would not have fixed it. Broadening WHERE the string is read
+# from does not weaken the check: it still has to equal
+# galexie_expected_version_string exactly, and an error message on stderr
+# fails that comparison just as an empty stdout does — only now the
+# fail_msg shows what was actually printed.
+- name: Resolve the galexie version banner (stdout or stderr)
+  ansible.builtin.set_fact:
+    galexie_reported_version: >-
+      {{ ((galexie_running_version.stdout | default('')) | trim)
+         if ((galexie_running_version.stdout | default('')) | trim) != ''
+         else ((galexie_running_version.stderr | default('')) | trim) }}
+  tags: [observability, stellar-stack-version, drift-guard]
+
 - name: Assert galexie matches the ansible-pinned installed-version stamp
   # A hard assert, not a warning: ansible-drift.yml's entire purpose is
   # to fail loudly on exactly this class of drift (CLAUDE.md "r1
@@ -136,33 +154,57 @@
   #
   # NOTE for a from-scratch bootstrap (new region, or a full r1
   # rebuild): the `go install ...@{{ galexie_version }}` task above
-  # builds whatever `galexie_version` currently points at. If that
-  # tag has fallen behind `galexie_expected_version_string` (as it
-  # does today — `galexie_version` is still pinned at galexie-v26.0.0,
-  # predating the P27 upgrade), this assert will correctly fail on
-  # that fresh build too: it's flagging the SAME staleness this whole
-  # probe exists to catch, just discovered a different way. Fix by
-  # bumping `galexie_version` to a tag whose build matches (or by
-  # re-deriving `galexie_expected_version_string` from a fresh build
-  # at the tag you actually want), not by disabling the assert.
+  # builds whatever `galexie_version` currently points at. If that tag
+  # and `galexie_expected_version_string` disagree, this assert will
+  # correctly fail on that fresh build too: it's flagging the SAME
+  # staleness this whole probe exists to catch, just discovered a
+  # different way. Fix by bumping `galexie_version` to a tag whose
+  # build matches (or by re-deriving `galexie_expected_version_string`
+  # from a fresh build at the tag you actually want), not by disabling
+  # the assert.
+  #
+  # KNOWN OPEN as of 2026-07-25 (was TODO(post-Phase-0); Phase 0 is
+  # over, so it is now a live operator action, not a deferral):
+  # galexie_version and galexie_expected_binary_sha256 both describe the
+  # 2026-07-09 galexie-v27.0.0 build, but
+  # galexie_expected_version_string is still a 2026-06-10 stamp. Two of
+  # the three constants agree; the version string does not, and this
+  # assert therefore fails on r1 today. It cannot be reconciled from
+  # inside the repository — the value has to be READ OFF a built
+  # artifact, and inventing one would replace a known-red guard with a
+  # green one that proves nothing. The exact procedure is in
+  # defaults/main.yml on galexie_expected_binary_sha256.
   ansible.builtin.assert:
     that:
-      - galexie_running_version.stdout is defined
-      - (galexie_running_version.stdout | trim) == galexie_expected_version_string
+      - galexie_reported_version | length > 0
+      - galexie_reported_version == galexie_expected_version_string
     fail_msg: >-
       installed galexie reports
-      '{{ galexie_running_version.stdout | default("<command failed: " ~ (galexie_running_version.stderr | default("no such file")) ~ ">") }}'
+      '{{ galexie_reported_version | default("") }}'
+      {{ "(the binary printed NOTHING on stdout or stderr — check it exists and is executable: " ~ galexie_running_version.rc | default("no rc") ~ ")" if (galexie_reported_version | default("")) == "" else "" }}
       but the ansible-pinned expected stamp (galexie_expected_version_string,
       defaults/main.yml) is '{{ galexie_expected_version_string }}'. See
       docs/operations/runbooks/stellar-stack-version-lag.md.
     success_msg: "installed galexie matches the pinned version stamp."
   tags: [observability, stellar-stack-version, drift-guard]
 
-# Optional belt-and-suspenders: file-hash check, skipped entirely
-# while galexie_expected_binary_sha256 is unset (see the comment on
-# that var in defaults/main.yml for why it isn't pre-filled).
+# Belt-and-suspenders file-hash check. It IS live: defaults/main.yml
+# sets galexie_expected_binary_sha256 from the 2026-07-09 v27.0.0 build.
+#
+# The gate is `| default('') | length > 0`, NOT `is defined`. Both
+# comments here and in defaults/main.yml document an escape hatch —
+# "unset it and the task is skipped" — and `is defined` never delivered
+# it: defaults/main.yml always defines the variable, so `is defined` is
+# unconditionally true, and an operator blanking it in their inventory
+# got the assert comparing the live checksum against "" and failing,
+# rather than the documented skip. That matters precisely while the two
+# galexie constants are known-unreconciled (see the version assert
+# above): the documented way to stand a guard down has to actually work,
+# or the next operator reaches for deleting the task instead. Same
+# `| default('') | length > 0` idiom the ClickHouse serving-profile
+# assert uses (20-clickhouse-serving-profile.yml).
 - name: Stat the installed galexie binary (drift guard checksum)
-  when: galexie_expected_binary_sha256 is defined
+  when: galexie_expected_binary_sha256 | default('') | length > 0
   ansible.builtin.stat:
     path: /usr/local/bin/galexie
     checksum_algorithm: sha256
@@ -170,7 +212,7 @@
   tags: [observability, stellar-stack-version, drift-guard]
 
 - name: Assert galexie binary sha256 matches the pinned drift-guard checksum
-  when: galexie_expected_binary_sha256 is defined
+  when: galexie_expected_binary_sha256 | default('') | length > 0
   ansible.builtin.assert:
     that:
       - galexie_binary_stat.stat.exists

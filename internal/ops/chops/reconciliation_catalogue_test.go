@@ -17,6 +17,14 @@ var testWatchedSEP41 = []string{
 	"CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
 }
 
+// wantSEP41Filter is the served-side predicate both sep41 targets must
+// carry for testWatchedSEP41 — sorted, single-quoted, `contract_id IN`.
+// Spelled out literally rather than re-derived via contractIDFilter so
+// the test cannot agree with a broken builder.
+const wantSEP41Filter = "contract_id IN (" +
+	"'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75', " +
+	"'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC')"
+
 // TestBuildReconciliationCatalogue_PromotesSEP41WhenWatched pins the
 // 2026-07-11 promotion: now that the full-history truncate+re-derive
 // (`ch-rebuild -sep41 -write`, windows 50.0M→63.42M, rc=0) has purged
@@ -124,8 +132,18 @@ func TestBuildSEP41ReconSources_OptIn(t *testing.T) {
 		if len(tgt.kinds) != 1 || tgt.kinds[0] != w.kind {
 			t.Errorf("%s: kinds = %v, want [%q]", src.name, tgt.kinds, w.kind)
 		}
-		if tgt.whereFilter != "" {
-			t.Errorf("%s: whereFilter = %q, want whole-table ownership", src.name, tgt.whereFilter)
+		// The sep41 targets are watched-set SLICES of their tables, not
+		// whole tables. This assertion used to demand whereFilter == ""
+		// (whole-table ownership) — it encoded the defect: the served
+		// side then counted every contract's rows while the expected
+		// side was gated on the watched set by dec/contractIDs, so any
+		// row from a since-unwatched contract was a permanent, never-
+		// closing surplus. Pinned to the exact predicate, not merely
+		// non-empty, because this string is part of the durable
+		// completeness_target_floors key.
+		if tgt.whereFilter != wantSEP41Filter {
+			t.Errorf("%s: whereFilter = %q, want %q (watched-set scoping matching the expected side)",
+				src.name, tgt.whereFilter, wantSEP41Filter)
 		}
 		if src.aggregateReconcile != "" {
 			t.Errorf("%s: must stay on the strict per-ledger reconcile (CS-084), got opt-out %q", src.name, src.aggregateReconcile)
@@ -141,6 +159,99 @@ func TestBuildSEP41ReconSources_OptIn(t *testing.T) {
 func TestBuildSEP41ReconSources_EmptyWatchedSetErrors(t *testing.T) {
 	if _, err := buildSEP41ReconSources(config.Config{}); err == nil {
 		t.Fatal("expected error for empty [supply] watched_sep41_contracts, got nil")
+	}
+}
+
+// ─── sep41 served-vs-expected scoping (reconcile defect 4a) ────────
+//
+// The expected side of the sep41 reconcile is gated on the watched set
+// twice over (the decoders' own watched map, and the contractIDs lake
+// prefilter). The served side is a plain row count over the target
+// table. If the served count is not scoped to the SAME contracts, rows
+// for a contract that is no longer watched — dropped from `[supply]
+// watched_sep41_contracts`, or captured under a wider set during an
+// earlier backfill — inflate served forever while expected can never
+// grow to match. The reconcile then reports a surplus that no re-derive
+// can close.
+
+// TestSEP41Filter_ScopesToWatchedSetOnly builds two catalogues from
+// watched sets that differ by one contract and asserts the served-side
+// predicate differs with them. A whole-table filter ("") is identical
+// for both — which is exactly the bug — so this fails on any fix that
+// leaves the served side unscoped.
+func TestSEP41Filter_ScopesToWatchedSetOnly(t *testing.T) {
+	const (
+		a = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+		b = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+	)
+	filterFor := func(t *testing.T, watched []string) string {
+		t.Helper()
+		cfg := config.Config{}
+		cfg.Supply.WatchedSEP41Contracts = watched
+		cat, err := buildSEP41ReconSources(cfg)
+		if err != nil {
+			t.Fatalf("buildSEP41ReconSources(%v): %v", watched, err)
+		}
+		return cat[0].targets[0].whereFilter
+	}
+
+	both := filterFor(t, []string{a, b})
+	justA := filterFor(t, []string{a})
+
+	if both == justA {
+		t.Fatalf("served-side filter is identical for watched sets {a,b} and {a}: %q — "+
+			"the served count is not scoped to the watched set, so %s's rows count on the "+
+			"served side while the expected side cannot produce them", both, b)
+	}
+	if !strings.Contains(justA, a) {
+		t.Errorf("filter for {a} = %q, want it to select %s", justA, a)
+	}
+	if strings.Contains(justA, b) {
+		t.Errorf("filter for {a} = %q, want it NOT to select the unwatched %s", justA, b)
+	}
+}
+
+// TestSEP41Filter_StableAcrossOrdering — whereFilter is part of the
+// durable completeness_target_floors key (timescale.TargetFloorKey), so
+// the same watched set listed in a different order must render the same
+// predicate. An order-sensitive filter would orphan the recorded floor
+// on every config reshuffle and silently disable detectFloorLoss.
+func TestSEP41Filter_StableAcrossOrdering(t *testing.T) {
+	fwd := config.Config{}
+	fwd.Supply.WatchedSEP41Contracts = []string{testWatchedSEP41[0], testWatchedSEP41[1]}
+	rev := config.Config{}
+	rev.Supply.WatchedSEP41Contracts = []string{testWatchedSEP41[1], testWatchedSEP41[0]}
+
+	catF, err := buildSEP41ReconSources(fwd)
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	catR, err := buildSEP41ReconSources(rev)
+	if err != nil {
+		t.Fatalf("reversed: %v", err)
+	}
+	if catF[0].targets[0].whereFilter != catR[0].targets[0].whereFilter {
+		t.Errorf("filter is order-sensitive:\n forward  = %q\n reversed = %q",
+			catF[0].targets[0].whereFilter, catR[0].targets[0].whereFilter)
+	}
+}
+
+// TestSEP41Filter_RejectsNonStrkey — whereFilter is interpolated into
+// SQL by timescale.Store's row-count helpers, and the watched set comes
+// from operator config, which only checks non-emptiness. Anything that
+// is not a contract C-strkey must fail the build loudly rather than
+// reach the query text.
+func TestSEP41Filter_RejectsNonStrkey(t *testing.T) {
+	for _, bad := range []string{
+		"C'); DROP TABLE sep41_transfers; --",
+		"GCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75", // account, not contract
+		"CCW67TSZ", // truncated
+	} {
+		cfg := config.Config{}
+		cfg.Supply.WatchedSEP41Contracts = []string{bad}
+		if _, err := buildSEP41ReconSources(cfg); err == nil {
+			t.Errorf("buildSEP41ReconSources accepted %q as a watched contract", bad)
+		}
 	}
 }
 

@@ -254,6 +254,24 @@ ch_schema_snapshot_retain_days: 90
 ch_schema_snapshot_mc_target: ""
 ch_schema_snapshot_offsite_ack: false
 
+# ───── ClickHouse schema DRIFT check (C6-008 / C6-003) ────────────────
+# The other half of the snapshot: compares deploy/clickhouse/tier1_schema.sql
+# (repo intent) against the live SHOW CREATE the snapshot captured, on
+# engine (incl. args) / PARTITION BY / ORDER BY / column names. Enabled
+# by default — it is sub-second text comparison, and a drift guard that
+# ships disabled detects nothing. Deliberately NOT gated on
+# ch_schema_snapshot_enabled: with ch_schema_drift_use_live it can read
+# ClickHouse directly and needs no snapshot at all.
+ch_schema_drift_enabled: true
+# Where the shipped copy of the repo's founding DDL lands on the host.
+# The comparison needs the repo's intent ON the box; r1 has no checkout.
+ch_schema_drift_intent: "/usr/local/share/stellarindex/tier1_schema.sql"
+# false = compare against the newest ch-schema-snapshot capture (default:
+# one SHOW CREATE sweep per day serves both the backup and the check).
+# true = the check runs its OWN SHOW CREATE sweep. Use only if the
+# snapshot is disabled or you want the check independent of it.
+ch_schema_drift_use_live: false
+
 # ───── ClickHouse serving-query isolation (ADR-0048 D4) ───────────────
 # A dedicated ClickHouse settings profile + user for the API's
 # per-request explorer reads (GET /v1/ledgers, /v1/tx, /v1/accounts/*
@@ -538,27 +556,42 @@ galexie_version:         "galexie-v27.0.0"   # pinned — update via VERSIONS.md
 # ansible-drift.yml exists to catch. Update BOTH this value AND
 # galexie_version in the SAME PR whenever galexie is upgraded.
 galexie_expected_version_string: "stellar-galexie v0.0.0-20260610161848-c97d6484816f"
-# Optional second guard: sha256 of the /usr/local/bin/galexie file
-# itself (belt-and-suspenders alongside the version-string assert
-# above — catches a same-version-string-but-different-bytes swap,
-# e.g. a different build toolchain). When UNSET the assert task in
-# 07-galexie.yml is skipped; once SET it becomes a hard gate like
-# minio_release_sha256. It IS SET below, so the sha256 assert is
-# LIVE (NOT skipped) — the earlier "left unset by default → skipped"
-# note was stale.
-# WARNING — the two galexie drift constants currently target
-# DIFFERENT builds: this sha256 is stamped from the 2026-07-09
-# v27.0.0 build (CGO_ENABLED=0 GOOS=linux GOARCH=amd64,
-# go build -trimpath), but galexie_expected_version_string above is
-# a 2026-06-10 stamp (…-20260610161848-…). They cannot both match a
-# single installed binary, and the version assert has been observed
-# to hard-fail on r1 (live galexie reports '' vs the pinned string).
-# TODO(post-Phase-0): reconcile galexie_expected_version_string +
-# galexie_expected_binary_sha256 from ONE built galexie-v27.0.0
-# binary — currently they target different build dates; see audit
-# deps F-002. (Rebuild galexie-v27.0.0 with the flags above, then
-# read `galexie version` + `sha256sum` off that exact artifact and
-# set BOTH constants from it in the same PR.)
+# Second guard: sha256 of the /usr/local/bin/galexie file itself
+# (belt-and-suspenders alongside the version-string assert above —
+# catches a same-version-string-but-different-bytes swap, e.g. a
+# different build toolchain). Blank it and the two tasks in
+# 07-galexie.yml skip (`| default('') | length > 0`); it is SET below,
+# so the sha256 assert is LIVE.
+#
+# ── OPEN OPERATOR ACTION (was TODO(post-Phase-0); Phase 0 is over, so
+#    this is now due, not deferred). audit deps F-002 / C6-003.
+#
+# State as of 2026-07-25 — three constants, two builds:
+#   galexie_version                 galexie-v27.0.0   (2026-07-09) ✔
+#   galexie_expected_binary_sha256  045caa5f…         (2026-07-09) ✔
+#   galexie_expected_version_string v0.0.0-20260610…  (2026-06-10) ✘
+# Two of the three already describe the v27.0.0 build; only the
+# version string is stale, so the version assert fails on r1 today.
+#
+# This CANNOT be reconciled from inside the repository. The correct
+# value has to be read off a real artifact, and pinning a guessed
+# string would turn a guard that is honestly red into a green one that
+# proves nothing — strictly worse than the current state. Do this:
+#
+#   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+#     go install -trimpath github.com/stellar/go/exp/services/galexie@galexie-v27.0.0
+#   ./galexie version        # -> galexie_expected_version_string
+#   sha256sum ./galexie      # -> galexie_expected_binary_sha256
+#
+# Set BOTH from THAT ONE artifact, in the same PR, together with
+# VERSIONS.md. If `galexie version` prints on stderr rather than
+# stdout, the 07-galexie.yml guard now reads either stream, so the
+# fail_msg will show you what it actually printed.
+#
+# Until then the version assert is EXPECTED RED on r1 and that red is
+# the correct signal — do not stand it down by editing the constant to
+# match whatever the box happens to report; that would codify an
+# uncodified binary, which is the drift this guard exists to catch.
 galexie_expected_binary_sha256: "045caa5f1cfc43b2cc367f1e48155763ef67ef94cecd61f3c3aaa1a77382a270"
 
 galexie_s3_endpoint:     "http://127.0.0.1:9000"

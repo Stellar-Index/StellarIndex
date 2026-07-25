@@ -354,8 +354,14 @@ Subcommands:
                             stellarindex_cross_region_divergences_total
                             stellarindex_cross_region_fetch_errors_total{region}
                             stellarindex_cross_region_last_run_timestamp_seconds
-                          /healthz returns 503 until the first sweep
-                          completes; 200 thereafter. Example:
+                            stellarindex_cross_region_last_reached_timestamp_seconds
+                          /healthz reflects the LAST sweep, not the first
+                          (C4-007): 503 before the first sweep, when the
+                          last sweep is older than 3×interval+timeout (the
+                          tick loop is stuck or dead), or when no sweep has
+                          reached ANY region within that window (every
+                          fetch failing). A partial region failure stays
+                          200 — see the fetch_errors counter. Example:
                             stellarindex-ops cross-region-monitor \
                               -regions r1=...,r2=...,r3=... \
                               -interval 60s -listen :9479
