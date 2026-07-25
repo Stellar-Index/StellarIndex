@@ -665,6 +665,48 @@ func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Ass
 	return vwap, nil
 }
 
+// ─── tier 3a: the direct <asset>/<peg> market ────────────────────────
+
+// directLegMinQuoteVolume is the dust floor a direct `<asset>/<peg>`
+// bucket must clear before its VWAP is allowed to value another trade,
+// expressed in QUOTE units — i.e. units of the USD peg, which this
+// resolver treats as exactly $1 by construction.
+//
+// Same defence and same $0.01 as [bridgeLegMinUSDVolume] and the OHLC
+// extremes (migration 0115), so the three dust defences agree rather
+// than each picking their own threshold. The direct market is if
+// anything MORE exposed than the bridge: it needs no second leg to go
+// wrong.
+//
+// WHY NOT `volume_usd` (the discriminator the bridge leg uses):
+// reverted at 7b69cd33 because on this leg it is CIRCULAR. A bucket's
+// `volume_usd` is the sum of its trades' `usd_volume`, and `usd_volume`
+// is written by this very resolver — so a pair it has never priced can
+// never clear a USD-volume floor, and tier 3a could not bootstrap.
+// (prices_1m coalesces a NULL `usd_volume` to 0, so "not yet valued"
+// and "genuinely worth nothing" are indistinguishable in that column.)
+//
+// The quote-side notional has no such dependency: it is derived from
+// the bucket's own stored amounts, which exist the instant the trade
+// inserts. `vwap * volume` reconstructs Σ(quote_amount) for the bucket
+// — prices_1m defines vwap as Σ(quote)/Σ(base) and volume as Σ(base),
+// so the product cancels back to the quote sum, up to NUMERIC's ~16
+// significant digits of division rounding (immaterial against a
+// one-cent threshold). And this query only ever matches rows whose
+// `quote_asset` IS one of the operator's pegs, so that sum is already
+// denominated in dollars modulo the peg assumption the whole resolver
+// rests on.
+const directLegMinQuoteVolume = "0.01"
+
+// pegQuoteScaleDenominator converts a prices_1m `volume`/`vwap` product
+// from raw stroops to whole units of the quote asset. Trade amounts are
+// stored unscaled (see [canonical.Amount]), and the pegs this leg
+// queries are classic Stellar assets, which the protocol fixes at
+// [stellarClassicDecimals] places — the same `/ 1e7::numeric` identity
+// [sorobanVolume24hUSDQuery] applies query-time. Pinned to
+// scaleDenominator(stellarClassicDecimals) by a unit test.
+const pegQuoteScaleDenominator = 10_000_000
+
 // queryDB does one prices_1m read for `<asset>/<peg>` for any peg
 // in the configured list, at-or-before `at`. Returns the VWAP
 // string + the row's bucket timestamp on hit, or ("", zero, nil)
@@ -673,6 +715,18 @@ func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Ass
 // Implementation: single round-trip with `quote_asset = ANY(...)`
 // so the DB picks the highest-bucket row across all pegs in one
 // pass.
+//
+// Dust floor: buckets whose whole minute moved less than
+// [directLegMinQuoteVolume] of the peg are excluded, so a single
+// sub-cent fill cannot set the valuation rate. This query takes the
+// FRESHEST qualifying bucket, so without the floor a 2-stroop
+// remainder landing in the newest minute outranks every real bucket
+// behind it and prices every trade quoted in this asset until it ages
+// out of the freshness window — the dust shape measured in
+// docs/operations/finding-dust-trades-set-chart-extremes.md, where a
+// price computed from two tiny integers carries a near-100%
+// quantisation error. See [directLegMinQuoteVolume] for why the
+// discriminator is the QUOTE-side notional and not `volume_usd`.
 //
 // Lower bucket bound (audit-2026-06-11 G11-06): when freshness is
 // enforced (>0), USDPriceAt rejects any row whose bucket is older
@@ -684,20 +738,23 @@ func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Ass
 // lets TimescaleDB prune to the freshness window's chunks. When
 // freshness is disabled (0) we keep the unbounded scan.
 func (r *VWAPUSDFXResolver) queryDB(ctx context.Context, asset canonical.Asset, at time.Time) (string, time.Time, error) {
-	q := `
+	q := fmt.Sprintf(`
 		SELECT bucket, vwap::text
 		  FROM prices_1m
 		 WHERE base_asset  = $1
 		   AND quote_asset = ANY($2)
-		   AND bucket     <= $3`
+		   AND bucket     <= $3
+		   AND vwap        > 0
+		   AND vwap * volume / %d::numeric >= $4::numeric`, pegQuoteScaleDenominator)
 	args := []any{
 		asset.String(),
 		pq.Array(r.usdPegs),
 		at.UTC(),
+		directLegMinQuoteVolume,
 	}
 	if r.freshness > 0 {
 		q += `
-		   AND bucket     >= $4`
+		   AND bucket     >= $5`
 		args = append(args, at.UTC().Add(-r.freshness))
 	}
 	q += `

@@ -492,6 +492,35 @@ func TestXLMLegRate_RejectsBadInput(t *testing.T) {
 	}
 }
 
+// TestPegQuoteScaleDenominator pins the tier-3a dust floor's stroop→unit
+// divisor to the Stellar classic scale it claims to mirror. Drift here
+// would silently move the floor by a power of ten in one direction or
+// the other — 10x too permissive lets dust back in, 10x too strict
+// starts dropping real thin markets — and neither shows up as a
+// compile error.
+func TestPegQuoteScaleDenominator(t *testing.T) {
+	t.Parallel()
+	want := scaleDenominator(stellarClassicDecimals)
+	if got := big.NewInt(pegQuoteScaleDenominator); got.Cmp(want) != 0 {
+		t.Errorf("pegQuoteScaleDenominator = %s, want 10^%d = %s",
+			got, stellarClassicDecimals, want)
+	}
+}
+
+// TestDirectLegMinQuoteVolume_MatchesBridgeFloor pins the tier-3a and
+// tier-3b dust floors to the same $0.01 the OHLC extremes use
+// (migration 0115). The two legs discriminate on different columns —
+// quote-side notional vs volume_usd, see [directLegMinQuoteVolume] —
+// but they must agree on WHERE dust starts, or the same bucket is dust
+// on one route and a valuation anchor on the other.
+func TestDirectLegMinQuoteVolume_MatchesBridgeFloor(t *testing.T) {
+	t.Parallel()
+	if directLegMinQuoteVolume != bridgeLegMinUSDVolume {
+		t.Errorf("directLegMinQuoteVolume = %q, bridgeLegMinUSDVolume = %q — the two dust floors must agree",
+			directLegMinQuoteVolume, bridgeLegMinUSDVolume)
+	}
+}
+
 // TestBridgeRate — the tier-3b multiplication, pinned against the real
 // production legs measured on R1 for 2026-07-17 12:00:
 // 6T/XLM 0.03218194209615242009 x XLM/USD 0.18437992688007971271.
