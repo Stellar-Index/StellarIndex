@@ -24,16 +24,35 @@ severity, follow [`sev-playbook.md`](../sev-playbook.md) §4 for the
 incident-management overlay. The steps below are the technical
 flip; the IC drives + validates in parallel.
 
-**Drill status (honest, CS-113):** this runbook has NOT been executed
-end-to-end — there is no standby region to cut over to (R2/R3 are
-unprovisioned; single-host r1 is the entire deployment), and no
-restore has ever been performed from the pgBackRest repo (CS-110;
-`scripts/ops/restore-drill.sh` is the scratch-restore drill to run
-until a real standby exists). The annual DR exercise described in
+**Drill status (honest, CS-113; refreshed 2026-07-25):** this runbook
+has NOT been executed end-to-end — there is no standby region to cut
+over to (R2/R3 are unprovisioned; single-host r1 is the entire
+deployment). One scratch restore from the pgBackRest repo has since
+been performed — 2026-07-03, `repo1`, manual, five attempts, logged in
+[`drills/restore-drills.md`](../drills/restore-drills.md) (CS-110;
+`scripts/ops/restore-drill.sh` is that drill). It is **not** on a
+timer: `restore-drill.timer` is installed but left disabled while the
+ZFS pool is tight. The annual DR exercise described in
 [sev-playbook §8.3](../sev-playbook.md#83-annual-dr) is the INTENDED
 cadence once multi-region lands; treat every multi-region step below
 as untested design, not verified procedure. If you're reading this for the first time *during* an
 incident, follow it from §3.
+
+> **⛔ The backups are on the box you are trying to recover from.**
+> pgBackRest runs **`repo1` only**, at `/var/lib/pgbackrest` — a ZFS
+> dataset on r1's own `data` pool. There is no off-site repo:
+> `configs/ansible/inventory/r1.yml` sets `pgbackrest_offsite_ack:
+> true`, the explicit acknowledgement of that gap, and ClickHouse has
+> no backup at all. So the §1 triggers split in two:
+> **logical corruption / partition** (pool still readable) → a
+> pgBackRest restore is available; **pool or host-fleet loss** → the
+> backups die with the data, and so does the galexie archive (MinIO is
+> a dataset on that same pool). The remaining path is then a rebuild
+> from a public Stellar history archive — days to weeks, per
+> `ha-plan.md` §8's total-loss row — not a restore. Do not plan a
+> recovery around an off-site copy — see
+> `docs/architecture/ha-plan.md` §8 and
+> `docs/operations/off-site-backup-plan.md` (status: proposed).
 
 ---
 

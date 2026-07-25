@@ -1,7 +1,7 @@
 ---
 title: High-Availability Infrastructure Plan
-last_verified: 2026-07-24
-status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for ClickHouse (§4.3's hardware-expansion claim corrected 2026-07-24, audit-2026-07-23 DOC-05); §3 still lacks a CH tier (see top amendment)
+last_verified: 2026-07-25
+status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for ClickHouse (§4.3's hardware-expansion claim corrected 2026-07-24, §8/§3.3's backup deployment status corrected 2026-07-25, audit-2026-07-23 DOC-05/DOC-06); §3 still lacks a CH tier (see top amendment)
 ---
 
 > **DEPLOYMENT STATE (audit 2026-07-16):** the HAProxy/Patroni/Redis-Sentinel HA
@@ -236,11 +236,30 @@ provisioned; cloud is pay-as-you-use for DR.
   - `prices_1m`, `prices_15m`: retention also removed — indefinite.
   - `prices_1h`, `prices_4h`, `prices_1d`, `prices_1w`,
     `prices_1mo`: **indefinite** (daily OHLC spans back to 2015).
-- **Backup:**
-  - `pgBackRest` to MinIO with WAL-stream, `--type=full` weekly,
+- **Backup** (target design; see §8's ⛔ block for what is actually
+  provisioned):
+  - `pgBackRest` with WAL-stream, `--type=full` weekly,
     `--type=diff` daily, `--type=incr` hourly.
   - **RPO 5 min** (WAL archiving lag SLA).
-  - **Restore test:** monthly automated; reported in ops dashboard.
+  - **Restore test:** automated on a timer, evidence appended to
+    `docs/operations/drills/` per
+    [ADR-0043](../adr/0043-backup-and-restore-strategy.md) §3 (that
+    ADR says *monthly*; the shipped
+    `restore-drill.timer` template is *weekly* — unreconciled drift,
+    do not treat either as a live guarantee). There is no ops
+    dashboard for drill results, here or anywhere in the repo.
+  > **Reality check (2026-07-25, audit-2026-07-23 DOC-06).** On R1
+  > today: the repo is `repo1` at `/var/lib/pgbackrest` — a local ZFS
+  > dataset on the same `data` pool as the DB, **not** MinIO and not
+  > off-site (§8). `pgbackrest-backup.timer` is enabled and runs
+  > **full Sunday / diff Mon–Sat at 02:00 UTC** — there is no hourly
+  > `incr`. WAL archiving is continuous (`archive-async=y`), so the
+  > 5-min RPO holds *for repo1 only*. The restore drill is **not
+  > automated**: `restore-drill.timer` (Sat 04:00 UTC) is installed
+  > but deliberately left disabled while the pool is tight
+  > (`tasks/18-pgbackrest-backup.yml`), and exactly **one** drill has
+  > ever run — 2026-07-03, repo1, manual
+  > (`docs/operations/drills/restore-drills.md`).
 - **Failover:** Patroni leader election. Target RTO 60 s.
 - **Connection secret:** read via secret manager at startup, never
   on disk.
@@ -431,7 +450,7 @@ pods is comfortable.
 5. **pgBackRest diff-retention prune** (~1 TiB, deferred until off-site backup exists — see §8).
 6. **Horizontal growth — a second server, not a bigger R1.** R1 is one region of the multi-region design in §2; the durable answer to R1 filling up is R2 coming online (per [ADR-0016](../adr/0016-per-region-storage-strategy.md); `production-readiness-remaining.md` §5c: "R2 provisioning … unblocks HA/DR *and* capacity") and eventual R1 retirement — not more drives in this chassis.
 
-Detail + live capacity table: `docs/operations/runbooks/phase-a-capacity-relief-2026-07-18.md` (note: that runbook's own "5th NVMe" line is the same stale claim corrected here — don't follow it) + `docs/operations/production-readiness-remaining.md` §4 (the current, hardware-ruled-out version). Campaign source of truth: `docs/operations/production-readiness-master-plan-2026-07-18.md`.
+Detail + live capacity table: `docs/operations/runbooks/phase-a-capacity-relief-2026-07-18.md` (its own "5th NVMe" line carried the same stale claim and has since been corrected the same way — the runbook is safe to follow) + `docs/operations/production-readiness-remaining.md` §4 (the current, hardware-ruled-out version). Campaign source of truth: `docs/operations/production-readiness-master-plan-2026-07-18.md`.
 
 ---
 
@@ -503,11 +522,35 @@ Alerts already sketched in `docs/operations/alerts-catalog.md` (Week 9).
 
 ---
 
-## 8. Backup & restore — REWRITTEN 2026-07-18 (added ClickHouse; made it off-site)
+## 8. Backup & restore — TARGET DESIGN (rewritten 2026-07-18; deployment status verified 2026-07-25)
 
-> ⚠️ The original table (in git history) had two gaps that make it unsafe as-is: **(1) no ClickHouse** — the largest store and primary serving path, omitted because this predates ADR-0034; **(2) backups landed on the *same box's* MinIO**, so a single ZFS-pool/box loss takes the data *and* its backups. Corrected below. Full design + provider/cost: **`docs/operations/off-site-backup-plan.md`**.
+> **⛔ NOT DEPLOYED — none of the off-site streams in the table below exist yet (verified against config AND against the live host, 2026-07-25).**
+>
+> Live evidence from R1, not inference from the repo:
+> ```
+> $ grep repo /etc/pgbackrest/pgbackrest.conf
+> repo1-path=/var/lib/pgbackrest          # no repo2, no S3, no azure/gcs
+>
+> $ df -h /var/lib/pgbackrest /var/lib/postgresql
+> data/pgbackrest  2.0T  1019G  948G  52%  /var/lib/pgbackrest
+> data/postgres    1.7T   695G  948G  43%  /var/lib/postgresql
+> ```
+> Identical `Avail` on both rows is the point: **the only backup shares one
+> ZFS pool with the database it protects.** `systemctl list-timers` shows
+> `pgbackrest-backup.timer` and nothing else — no `clickhouse-backup`, no
+> `restore-drill`.
+> During an incident, plan recovery from what is actually on the box, not from this table. **What exists today on R1:** pgBackRest **`repo1` only**, at `/var/lib/pgbackrest` — a ZFS dataset on the *same* `data` pool as the database it protects (`templates/pgbackrest.conf.j2`), full Sunday + differential Mon–Sat at 02:00 UTC with continuous WAL archiving. **A pool/box loss loses the data *and* every backup of it.** Specifically not provisioned:
+>
+> - **ClickHouse — no backup of any kind.** `clickhouse-backup` appears nowhere in the repo outside design docs. The 8.6 TiB lake's only recovery path today is re-derivation from the galexie archive (~1–2 weeks).
+> - **Postgres off-site (`repo2`) — not configured.** `configs/ansible/inventory/r1.yml` sets `pgbackrest_offsite_ack: true`, the explicit acknowledgement of this gap that `tasks/18-pgbackrest-backup.yml` demands in lieu of an S3 repo.
+> - **Galexie archive off-site — not configured.** Galexie exports to the box's own MinIO (`galexie_s3_endpoint: http://127.0.0.1:9000`) and the only `mc mirror` job, `galexie-archive-fill.sh`, runs *inbound* (AWS public blockchain dataset → `local/galexie-archive`). Nothing copies the archive **out**, and ADR-0027's cold-S3 tier is not enabled on r1 (`s3_cold_bucket_archive` unset).
+> - **Config / vault / secrets tarball — no such job exists.**
+>
+> Design, provider choice, cost and sequencing: **`docs/operations/off-site-backup-plan.md` (status: proposed — execute after Phase A/D).** Anything below is the target that plan builds toward.
 
-| Asset | Tool | Off-site target | RPO | Restore (RTO) |
+> ⚠️ The original table (in git history) had two gaps that make it unsafe as-is: **(1) no ClickHouse** — the largest store and primary serving path, omitted because this predates ADR-0034; **(2) backups landed on the *same box's* MinIO**, so a single ZFS-pool/box loss takes the data *and* its backups. The design below corrects both; note that gap (2) is still the LIVE situation until the streams above are provisioned.
+
+| Asset | Tool (PLANNED) | Off-site target (PLANNED — none provisioned) | RPO (target) | Restore (RTO, target) |
 | --- | --- | --- | --- | --- |
 | **ClickHouse lake (~7 TiB post-ZSTD)** | `clickhouse-backup` (part-level incremental) | S3 (Cloudflare R2 / B2) | daily | **~2–16 h restore.** Re-derive from the archive is the *last resort* (~1–2 wk), NOT the plan |
 | Postgres (served money state) | pgBackRest **`repo2-type=s3`** (off-site) + `repo1` local | S3 | 5 min (WAL) | ~1–3 h |
