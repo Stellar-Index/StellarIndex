@@ -308,6 +308,15 @@ jobs:
         # additive-safe. A rule-9 gate that silently stops matching is
         # worse than none.
         run: ./scripts/ci/lint-migration-compat-test.sh
+      - name: lint-baseline-growth self-test
+        # The tripwire's own fixtures. It is restored from the base ref
+        # above, so a PR cannot be judged by its own edited copy — which
+        # also means a bug in it is invisible until it reaches main.
+        # Pins that the verdict depends only on the inputs: notably that
+        # a declared growth still passes on a LARGE commit range (the
+        # piped `grep -q` it used to run took SIGPIPE past the 64KB pipe
+        # buffer and failed PRs that had declared correctly).
+        run: ./scripts/ci/lint-baseline-growth-test.sh
       - name: check-deploy-protection self-test
         # deploy-approval-gate (audit-2026-07-23): fixtures for the
         # fail-closed environment-approval assertion deploy.yml runs
