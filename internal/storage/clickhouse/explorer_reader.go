@@ -926,14 +926,30 @@ type ContractDirectoryRow struct {
 // RecentContracts returns the most active contracts by contract-event count
 // within [sinceLedger, tip] — the contracts directory (GET /v1/contracts).
 // Window-scoped so the GROUP BY stays bounded (contract_events is billions of
-// rows all-time); the caller derives sinceLedger from the tip. NOT FINAL —
-// FINAL would defeat the contract_id bloom index, and a slightly stale
-// dedup count is fine for a ranking.
+// rows all-time); the caller derives sinceLedger from the tip.
+//
+// The event count is uniqExact over the PRIMARY KEY, not count() (audit
+// DAT-10). stellar.contract_events is ReplacingMergeTree(ingested_at) and a
+// partially-succeeded flush is retried over the same range — by design, the
+// writes are idempotent under RMT — so the table legitimately holds duplicate
+// un-merged parts until a background merge collapses them. A bare count()
+// therefore inflated a contract's event tally and MIS-RANKED this directory,
+// and it did so worst exactly where it matters: this query is window-scoped to
+// recent ledgers, which is where un-merged retries concentrate.
+//
+// Still NOT FINAL, deliberately: FINAL would defeat the contract_id bloom
+// index and force a merge of every overlapping part. uniqExact over the PK
+// tuple costs one aggregate state per contract and leaves the scan shape
+// untouched — the same "dedup without FINAL" trade the operations-family
+// readers took with LIMIT 1 BY (1bac345f). max() needs no such treatment: it
+// is idempotent over duplicates and was already correct.
 func (r *ExplorerReader) RecentContracts(ctx context.Context, limit int, sinceLedger uint32) ([]ContractDirectoryRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	const q = `SELECT contract_id, toInt64(count()) AS events, max(ledger_seq) AS last_ledger, max(close_time) AS last_seen
+	const q = `SELECT contract_id,
+		       toInt64(uniqExact((ledger_seq, tx_hash, op_index, event_index))) AS events,
+		       max(ledger_seq) AS last_ledger, max(close_time) AS last_seen
 		FROM stellar.contract_events
 		WHERE ledger_seq >= ?
 		GROUP BY contract_id
@@ -984,7 +1000,22 @@ func (r *ExplorerReader) ContractInteractions(ctx context.Context, contractID st
 	// the interaction map reflects current behaviour regardless of how
 	// busy the contract is.
 	const subjectTxCap = 50_000
-	const q = `SELECT contract_id, toInt64(count()) AS shared
+	// uniqExact(tx_hash), not count(), and this fixes TWO defects at once.
+	//
+	// DAT-10: contract_events is ReplacingMergeTree, so a retried partial
+	// flush leaves duplicate un-merged rows that count() double-counted —
+	// concentrated in exactly this query's recent window.
+	//
+	// DAT-11 #50: the column is named shared_txs and the API serves it as
+	// shared_txs, but count() counted co-occurring EVENTS, not transactions.
+	// A callee emitting 20 events in one shared tx scored 20. Counting
+	// distinct tx_hash makes the number mean what its name has always
+	// claimed, and is inherently duplicate-proof — a duplicated row carries
+	// the same tx_hash and collapses on its own.
+	//
+	// Served values will DROP for busy pairs. That is the correction: the old
+	// figure was an event count wearing a transaction count's name.
+	const q = `SELECT contract_id, toInt64(uniqExact(tx_hash)) AS shared
 		FROM stellar.contract_events
 		WHERE ledger_seq >= ?
 		  AND contract_id != ?
