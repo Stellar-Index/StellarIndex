@@ -468,9 +468,8 @@ type projectionScope struct {
 // (soroswap_skim_events, phoenix_liquidity/phoenix_stake_events,
 // comet_liquidity) were silently un-verified below it too. Per TARGET is the
 // correct granularity: each table is checked over exactly what the served tier
-// holds for it, whether that is full history (trades, no retention), a real
-// drop_chunks boundary (oracle_updates, 90d per migration 0003), or a
-// never-backfilled prefix (soroswap/sdex trades begin ~61.5M — see
+// holds for it, whether that is full history or a never-backfilled prefix
+// (soroswap/sdex trades begin ~61.5M — see
 // notes/DECISION-genesis-complete-verdict-2026-07-16.md, which lists this fix
 // as decision item 3).
 //
@@ -481,6 +480,18 @@ type projectionScope struct {
 // runFrom is the incremental -from floor (0 for a full run): it can only RAISE
 // the scope, and whatever it excludes is handled by projectionClaim, never
 // silently claimed.
+//
+// NO RECONCILE TARGET HAS A RETENTION POLICY, verified against both the
+// migrations and r1 (2026-07-25). This comment used to cite oracle_updates as
+// "a real drop_chunks boundary, 90d per migration 0003"; migration 0040
+// removed that policy, and 0031 removed retention from trades / prices_1m /
+// prices_15m. The only surviving add_retention_policy in the tree is
+// api_usage_events (12 months, migration 0027), which is not a reconcile
+// target. That matters for anyone extending this: it means a RISING servedMin
+// is unambiguously LOSS, with no legitimate drop_chunks case to exempt — so
+// the durable-floor fix below does not need per-target retention windows. The
+// stale version of this sentence very nearly produced exactly that
+// unnecessary branch.
 //
 // KNOWN RESIDUAL — a BOTTOM-EDGE truncation is self-erasing: if the oldest
 // served rows are deleted (a rogue retention policy re-appearing on `trades` is
