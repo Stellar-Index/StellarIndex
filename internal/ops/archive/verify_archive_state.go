@@ -152,14 +152,85 @@ func writeVerifyArchiveState(path string, st VerifyArchiveState) error {
 // exists for this tier — a fresh deployment defaults to full-archive
 // from -from=2 unless the operator passes a higher value.
 func resolveIncrementalFrom(st VerifyArchiveState, tier string, explicitFrom uint32, safetyOverlap uint32) uint32 {
-	tierState, ok := st.Tiers[tier]
-	if !ok || tierState.LastVerifiedLedger == 0 {
+	return resolveIncrementalFromTiers(st, incrementalStateTiers(tier), explicitFrom, safetyOverlap)
+}
+
+// incrementalStateTiers maps the operator's -tier flag onto the state
+// -file tier key(s) whose high-water marks bound an incremental run.
+//
+// DAT-09: `-tier all` runs the chain AND checkpoint passes and records
+// its outcome under BOTH the "chain" and "checkpoint" keys — it never
+// writes a key literally named "all". Reading incremental state under
+// the raw flag value therefore always missed, so every nightly
+// `-tier all -from-last-verified` run silently restarted from genesis
+// (and, bounded by -max-runtime, never reached the trailing edge it
+// was scheduled to verify).
+func incrementalStateTiers(tier string) []string {
+	if tier == "all" {
+		return []string{"chain", "checkpoint"}
+	}
+	return []string{tier}
+}
+
+// resolveIncrementalFromTiers is resolveIncrementalFrom generalised
+// over the several state tiers one -tier value can cover. The bound is
+// the MINIMUM high-water across them — a `-tier chain` run can advance
+// "chain" past "checkpoint", and resuming from the higher mark would
+// skip checkpoint-anchoring the range in between. Any covered tier
+// with no prior state at all forces explicitFrom: nothing is verified
+// on that side yet, so there is no watermark to resume from.
+func resolveIncrementalFromTiers(st VerifyArchiveState, tiers []string, explicitFrom uint32, safetyOverlap uint32) uint32 {
+	bound, ok := incrementalBoundTier(st, tiers)
+	if !ok {
 		return explicitFrom
 	}
-	if tierState.LastVerifiedLedger <= safetyOverlap {
-		return 2 // ledger 1 has no predecessor; floor is 2
+	return incrementalFromWatermark(bound.LastVerifiedLedger, explicitFrom, safetyOverlap)
+}
+
+// incrementalBoundTier returns the state entry that BOUNDS an
+// incremental run over tiers — the one with the lowest
+// LastVerifiedLedger. ok=false when any covered tier has no prior
+// verified ledger.
+func incrementalBoundTier(st VerifyArchiveState, tiers []string) (VerifyArchiveTierState, bool) {
+	var bound VerifyArchiveTierState
+	found := false
+	for _, t := range tiers {
+		ts, ok := st.Tiers[t]
+		if !ok || ts.LastVerifiedLedger == 0 {
+			return VerifyArchiveTierState{}, false
+		}
+		if !found || ts.LastVerifiedLedger < bound.LastVerifiedLedger {
+			bound = ts
+			found = true
+		}
 	}
-	candidate := tierState.LastVerifiedLedger - safetyOverlap
+	return bound, found
+}
+
+// incrementalFromWatermark applies the safety-overlap arithmetic to a
+// resolved high-water mark.
+func incrementalFromWatermark(lastVerified, explicitFrom, safetyOverlap uint32) uint32 {
+	if lastVerified == 0 {
+		return explicitFrom
+	}
+	var candidate uint32
+	switch {
+	case safetyOverlap == 0:
+		// Strict cross-run boundary mode (REL-05). Resume at the ledger
+		// AFTER the last verified one, so the first chunk's
+		// FirstPrevHash — the hash of effectiveFrom-1 — IS the saved
+		// LastVerifiedHash the resume-from-hash check compares against.
+		// Starting AT last-verified re-walks one ledger (an overlap of
+		// 1, not 0) and made that check compare the hash AT
+		// last-verified against the hash of last-verified-1, so
+		// `-safety-overlap 0` failed every run with a bogus
+		// "resume-from-hash boundary mismatch".
+		candidate = lastVerified + 1
+	case lastVerified <= safetyOverlap:
+		return 2 // ledger 1 has no predecessor; floor is 2
+	default:
+		candidate = lastVerified - safetyOverlap
+	}
 	if candidate < explicitFrom {
 		// Operator explicitly asked to go further back — honor it.
 		return explicitFrom
@@ -171,11 +242,20 @@ func resolveIncrementalFrom(st VerifyArchiveState, tier string, explicitFrom uin
 // tier when the operator wants a strict resume-boundary check on
 // the next incremental run. Empty string when no prior hash is
 // recorded (first run, hash-less tier).
+//
+// For a multi-tier -tier value the hash comes from the tier that
+// BOUNDS the run (see incrementalBoundTier) — the same tier
+// resolveIncrementalFrom derived effectiveFrom from, so the hash is
+// provably the one at effectiveFrom-1. When the bounding tier records
+// no hash (the checkpoint tier never does) this is empty and the
+// strict check is simply skipped rather than run against the wrong
+// ledger's hash.
 func resolveIncrementalResumeHash(st VerifyArchiveState, tier string) string {
-	if tierState, ok := st.Tiers[tier]; ok {
-		return tierState.LastVerifiedHash
+	bound, ok := incrementalBoundTier(st, incrementalStateTiers(tier))
+	if !ok {
+		return ""
 	}
-	return ""
+	return bound.LastVerifiedHash
 }
 
 // updateTierState merges a successful run's outcome into the prior

@@ -209,6 +209,101 @@ func TestDecodeLiquidityPoolOp_withdraw_missingBefore_unavailable(t *testing.T) 
 	}
 }
 
+// TestDecodeLiquidityPoolOp_withdraw_fullDrain_removedEntry covers the
+// full-drain withdrawal: the last shares are withdrawn, so core erases
+// the LiquidityPoolEntry and emits 'state' + 'removed' (key only, no
+// entry payload) with NO 'updated' row. The after-reserves are zero by
+// construction, so both legs must be emitted at the full prior reserve
+// — this used to be misread as ErrEntryChangesUnavailable, dropping a
+// real on-chain withdrawal AND firing a false fidelity alarm.
+func TestDecodeLiquidityPoolOp_withdraw_fullDrain_removedEntry(t *testing.T) {
+	withdrawerAddr, _ := mkAccount(t, 0x97)
+	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	usdc := mkAlphanum4Asset(t, "USDC", 0x98)
+	poolID := mkPoolID(0x02)
+	op := mkLiquidityPoolWithdrawOp(poolID, 1000, 0, 0)
+	result := mkLiquidityPoolWithdrawSuccessResult()
+	changes := []EntryChangeXDR{
+		{ChangeType: "state", Entry: mkLiquidityPoolEntry(native, usdc, 10_000, 50_000, 1000)},
+		{ChangeType: "removed", Entry: nil},
+	}
+
+	movements, err := DecodeLiquidityPoolOp(40_000_000, time.Time{}, "tx7", 0, withdrawerAddr, op, result, changes)
+	if err != nil {
+		t.Fatalf("DecodeLiquidityPoolOp: %v", err)
+	}
+	if len(movements) != 2 {
+		t.Fatalf("got %d movements, want 2 (full drain pays out the whole pool)", len(movements))
+	}
+	if movements[0].Amount.String() != "10000" || movements[1].Amount.String() != "50000" {
+		t.Errorf("amounts = %s/%s, want 10000/50000 (the entire prior reserve)",
+			movements[0].Amount.String(), movements[1].Amount.String())
+	}
+	if movements[0].LegIndex != 0 || movements[1].LegIndex != 1 {
+		t.Errorf("LegIndex = %d/%d, want 0/1", movements[0].LegIndex, movements[1].LegIndex)
+	}
+	if movements[0].Asset != "native" {
+		t.Errorf("leg0 asset = %q, want native", movements[0].Asset)
+	}
+	if movements[0].ToAddress != withdrawerAddr {
+		t.Errorf("ToAddress = %q, want %q", movements[0].ToAddress, withdrawerAddr)
+	}
+}
+
+// TestDecodeLiquidityPoolOp_withdraw_zeroLeg_emitsPayingLeg covers the
+// one-sided withdrawal: core computes each leg as
+// floor(shares*reserve/totalShares), so a small withdrawal from a
+// lopsided pool legitimately pays out on B and rounds A to zero. Only
+// the zero leg is dropped — the whole op used to be rejected as
+// ErrMalformedMovement, losing the real B-side payout.
+func TestDecodeLiquidityPoolOp_withdraw_zeroLeg_emitsPayingLeg(t *testing.T) {
+	withdrawerAddr, _ := mkAccount(t, 0x99)
+	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	usdc := mkAlphanum4Asset(t, "USDC", 0x9a)
+	op := mkLiquidityPoolWithdrawOp(mkPoolID(0x02), 1, 0, 0)
+	result := mkLiquidityPoolWithdrawSuccessResult()
+	changes := []EntryChangeXDR{
+		{ChangeType: "state", Entry: mkLiquidityPoolEntry(native, usdc, 100, 1_000_000_000, 10_000_000)},
+		{ChangeType: "updated", Entry: mkLiquidityPoolEntry(native, usdc, 100, 999_999_900, 9_999_999)},
+	}
+
+	movements, err := DecodeLiquidityPoolOp(40_000_000, time.Time{}, "tx8", 0, withdrawerAddr, op, result, changes)
+	if err != nil {
+		t.Fatalf("DecodeLiquidityPoolOp: %v", err)
+	}
+	if len(movements) != 1 {
+		t.Fatalf("got %d movements, want 1 (only the paying leg)", len(movements))
+	}
+	if movements[0].LegIndex != 1 {
+		t.Errorf("LegIndex = %d, want 1 (the B leg keeps its pool-asset index)", movements[0].LegIndex)
+	}
+	if movements[0].Amount.String() != "100" {
+		t.Errorf("amount = %s, want 100", movements[0].Amount.String())
+	}
+	if movements[0].Asset == "native" {
+		t.Errorf("asset = %q, want the AssetB (USDC) leg", movements[0].Asset)
+	}
+}
+
+// TestDecodeLiquidityPoolOp_withdraw_bothLegsZero_malformed keeps the
+// loud signal for the genuinely degenerate case: shares burned, no
+// reserve moved on EITHER leg.
+func TestDecodeLiquidityPoolOp_withdraw_bothLegsZero_malformed(t *testing.T) {
+	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	usdc := mkAlphanum4Asset(t, "USDC", 0x9b)
+	op := mkLiquidityPoolWithdrawOp(mkPoolID(0x02), 1, 0, 0)
+	result := mkLiquidityPoolWithdrawSuccessResult()
+	changes := []EntryChangeXDR{
+		{ChangeType: "state", Entry: mkLiquidityPoolEntry(native, usdc, 100, 200, 1000)},
+		{ChangeType: "updated", Entry: mkLiquidityPoolEntry(native, usdc, 100, 200, 999)},
+	}
+
+	_, err := DecodeLiquidityPoolOp(40_000_000, time.Time{}, "tx9", 0, "GTEST", op, result, changes)
+	if !errors.Is(err, ErrMalformedMovement) {
+		t.Errorf("err = %v, want errors.Is(err, ErrMalformedMovement)", err)
+	}
+}
+
 func TestDecodeLiquidityPoolOp_failedOp_emitsNothing(t *testing.T) {
 	op := mkLiquidityPoolDepositOp(mkPoolID(0x01), 1000, 5000)
 	result := xdr.OperationResult{Code: xdr.OperationResultCodeOpNoAccount}

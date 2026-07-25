@@ -119,13 +119,15 @@ type EntryChangeXDR struct {
 	Entry      *xdr.LedgerEntry
 }
 
-// DecodeLiquidityPoolOp reconstructs the TWO
+// DecodeLiquidityPoolOp reconstructs the
 // 'liquidity_pool_deposit'/'liquidity_pool_withdraw' movement rows
 // (leg 0 = pool AssetA, leg 1 = pool AssetB) for a successful
 // LiquidityPoolDeposit/Withdraw op, given its correlated
-// ledger_entry_changes group. Returns ErrEntryChangesUnavailable
-// (never a guessed amount) when changes has no usable liquidity_pool
-// before/after pair for this op.
+// ledger_entry_changes group. Two rows for the ordinary case; a
+// withdraw whose payout rounds to zero on one leg emits only the
+// paying leg (see decodeLiquidityPoolWithdraw). Returns
+// ErrEntryChangesUnavailable (never a guessed amount) when changes has
+// no usable liquidity_pool before/after pair for this op.
 //
 // from/to framing: a deposit moves value FROM the depositor
 // (fromAddr) INTO the pool (no G-address — ToAddress left empty, the
@@ -165,11 +167,12 @@ func decodeLiquidityPoolDeposit(ledger uint32, closedAt time.Time, txHash string
 			ErrMalformedMovement, ledger, txHash, opIndex)
 	}
 
-	before, haveBefore, after, haveAfter := liquidityPoolBeforeAfter(changes)
-	if !haveAfter {
+	v := liquidityPoolBeforeAfter(changes)
+	if !v.haveAfter {
 		return nil, fmt.Errorf("%w: ledger %d tx %s op %d", ErrEntryChangesUnavailable, ledger, txHash, opIndex)
 	}
-	if !haveBefore {
+	before, after := v.before, v.after
+	if !v.haveBefore {
 		// A brand-new pool (this deposit created it) — implicit
 		// zero-reserve "before" is valid, not a fidelity gap.
 		before = xdr.LiquidityPoolEntryConstantProduct{}
@@ -208,27 +211,54 @@ func decodeLiquidityPoolWithdraw(ledger uint32, closedAt time.Time, txHash strin
 			ErrMalformedMovement, ledger, txHash, opIndex)
 	}
 
-	before, haveBefore, after, haveAfter := liquidityPoolBeforeAfter(changes)
+	v := liquidityPoolBeforeAfter(changes)
 	// A withdraw ALWAYS acts on a pre-existing pool — unlike deposit,
 	// a missing "before" here is itself a fidelity gap, not a valid
 	// "new pool" case.
-	if !haveBefore || !haveAfter {
+	if !v.haveBefore {
 		return nil, fmt.Errorf("%w: ledger %d tx %s op %d", ErrEntryChangesUnavailable, ledger, txHash, opIndex)
+	}
+	before, after := v.before, v.after
+	if !v.haveAfter {
+		if !v.removed {
+			return nil, fmt.Errorf("%w: ledger %d tx %s op %d", ErrEntryChangesUnavailable, ledger, txHash, opIndex)
+		}
+		// Full drain: the last pool shares were withdrawn, so core
+		// ERASED the LiquidityPoolEntry — the group is 'state' +
+		// 'removed' with no 'updated' row, and 'removed' carries a key
+		// only (Entry nil). The after-reserves are zero BY
+		// CONSTRUCTION, so this is a complete observation, not a
+		// fidelity gap: treating it as ErrEntryChangesUnavailable both
+		// dropped a real two-leg withdrawal and fired a false
+		// "entry-changes unavailable" fidelity alarm at the caller.
+		after = xdr.LiquidityPoolEntryConstantProduct{}
 	}
 	deltaA := before.ReserveA - after.ReserveA
 	deltaB := before.ReserveB - after.ReserveB
-	if deltaA <= 0 || deltaB <= 0 {
+	if deltaA < 0 || deltaB < 0 || (deltaA == 0 && deltaB == 0) {
 		return nil, fmt.Errorf("%w: non-positive reserve delta A=%d B=%d (ledger %d tx %s op %d)",
 			ErrMalformedMovement, deltaA, deltaB, ledger, txHash, opIndex)
 	}
 
+	// A single zero leg is a VALID one-sided withdrawal, not a
+	// malformed op: core computes each leg as
+	// floor(shares * reserve / totalShares) with ROUND_DOWN and only
+	// rejects it against the caller's minAmountA/minAmountB, so a small
+	// withdrawal from a lopsided pool legitimately pays out on one
+	// asset and rounds the other to zero. Emit the paying leg(s) and
+	// drop only the zero one — LegIndex still identifies the pool asset
+	// (0=AssetA, 1=AssetB), so the surviving leg keeps its true index.
 	poolIDHex := fmt.Sprintf("%x", body.LiquidityPoolId)
-	return []Movement{
-		liquidityPoolLeg(KindLiquidityPoolWithdraw, ledger, closedAt, txHash, opIndex, 0,
-			before.Params.AssetA, deltaA, "", fromAddr, poolIDHex),
-		liquidityPoolLeg(KindLiquidityPoolWithdraw, ledger, closedAt, txHash, opIndex, 1,
-			before.Params.AssetB, deltaB, "", fromAddr, poolIDHex),
-	}, nil
+	movements := make([]Movement, 0, 2)
+	if deltaA > 0 {
+		movements = append(movements, liquidityPoolLeg(KindLiquidityPoolWithdraw, ledger, closedAt, txHash, opIndex, 0,
+			before.Params.AssetA, deltaA, "", fromAddr, poolIDHex))
+	}
+	if deltaB > 0 {
+		movements = append(movements, liquidityPoolLeg(KindLiquidityPoolWithdraw, ledger, closedAt, txHash, opIndex, 1,
+			before.Params.AssetB, deltaB, "", fromAddr, poolIDHex))
+	}
+	return movements, nil
 }
 
 // liquidityPoolLeg builds one leg of a two-leg LiquidityPoolDeposit/
@@ -255,6 +285,18 @@ func liquidityPoolLeg(kind Kind, ledger uint32, closedAt time.Time, txHash strin
 	}
 }
 
+// lpEntryChangeView is one op's correlated liquidity_pool
+// entry-changes group reduced to the three facts the deposit/withdraw
+// decoders need: the pool state before the op, the pool state after
+// it, and whether the op ERASED the pool entry outright.
+type lpEntryChangeView struct {
+	before     xdr.LiquidityPoolEntryConstantProduct
+	haveBefore bool
+	after      xdr.LiquidityPoolEntryConstantProduct
+	haveAfter  bool
+	removed    bool
+}
+
 // liquidityPoolBeforeAfter walks an op's correlated liquidity_pool
 // entry-changes group (already in change_index order — the same
 // order stellar-core's own Changes list uses, see
@@ -263,22 +305,36 @@ func liquidityPoolLeg(kind Kind, ledger uint32, closedAt time.Time, txHash strin
 // row if present (haveBefore=false, not an error, for a brand-new
 // pool with no prior state — 'created' rows have no preceding
 // state); "after" comes from the LAST 'created'/'updated' row.
-func liquidityPoolBeforeAfter(changes []EntryChangeXDR) (before xdr.LiquidityPoolEntryConstantProduct, haveBefore bool, after xdr.LiquidityPoolEntryConstantProduct, haveAfter bool) {
+//
+// removed reports a 'removed' row in the group: core erases the
+// LiquidityPoolEntry when the last shares are withdrawn, emitting
+// 'state' + 'removed' and NO 'updated' row. That row carries a
+// LedgerKey only (Entry nil), so it can't be read as an "after" — but
+// it is not a missing observation either: the caller reads it as a
+// zero-reserve after (see decodeLiquidityPoolWithdraw). The group is
+// already scoped to one op and filtered to entry_type='liquidity_pool'
+// by the caller, so any 'removed' row here is this pool's.
+func liquidityPoolBeforeAfter(changes []EntryChangeXDR) lpEntryChangeView {
+	var v lpEntryChangeView
 	for _, c := range changes {
+		if c.ChangeType == "removed" {
+			v.removed = true
+			continue
+		}
 		cp, ok := liquidityPoolConstantProduct(c.Entry)
 		if !ok {
 			continue
 		}
 		switch c.ChangeType {
 		case "state":
-			before = cp
-			haveBefore = true
+			v.before = cp
+			v.haveBefore = true
 		case "created", "updated":
-			after = cp
-			haveAfter = true
+			v.after = cp
+			v.haveAfter = true
 		}
 	}
-	return before, haveBefore, after, haveAfter
+	return v
 }
 
 // liquidityPoolConstantProduct extracts the ConstantProduct body
