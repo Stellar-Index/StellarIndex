@@ -927,7 +927,7 @@ type Phase2FreezeConfig struct {
 // Mirrors `anomaly.Thresholds` but uses TOML-friendly types so the
 // loader doesn't need a custom unmarshaller.
 type AnomalyThreshold struct {
-	WarnPct   float64 `toml:"warn_pct" doc:"Deviation above this percentage triggers ActionWarn (publish with divergence_warning flag)." default:"30.0"`
+	WarnPct   float64 `toml:"warn_pct" doc:"Deviation above this percentage triggers ActionWarn: the bucket is still published, and the warning is recorded operator-side via stellarindex_anomaly_warn_total plus a Warn log. It does NOT set the divergence_warning wire flag, which belongs to the cross-reference divergence service." default:"30.0"`
 	FreezePct float64 `toml:"freeze_pct" doc:"Deviation above this percentage triggers ActionFreeze when source_count<=1 (don't publish; serve last-known-good)." default:"75.0"`
 }
 
