@@ -120,6 +120,12 @@ func (h *Handler) ContractWasm(w http.ResponseWriter, r *http.Request) {
 					"ledger-entry window")
 			return
 		}
+		if readTimedOut(ctx, err) {
+			h.Logger.Warn("explorer ContractWasm deadline exceeded", "contract", cid)
+			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/contract-wasm-timeout",
+				"Contract WASM timed out")
+			return
+		}
 		h.Logger.Error("explorer ContractWasm failed", "err", err, "contract", cid)
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")

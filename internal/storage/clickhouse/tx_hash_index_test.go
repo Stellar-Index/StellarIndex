@@ -41,17 +41,19 @@ func (r *stubRows) Scan(dest ...any) error {
 func (r *stubRows) Close() error { return nil }
 func (r *stubRows) Err() error   { return nil }
 
-// stubConn records every query and routes it to a per-shape responder. The
-// embedded driver.Conn panics on anything but Query — TransactionByHash must
-// only ever Query.
+// stubConn records every query (and its bound args, positionally aligned with
+// queries) and routes it to a per-shape responder. The embedded driver.Conn
+// panics on anything but Query — TransactionByHash must only ever Query.
 type stubConn struct {
 	driver.Conn
 	queries []string
+	args    [][]any
 	respond func(query string) (driver.Rows, error)
 }
 
-func (c *stubConn) Query(_ context.Context, query string, _ ...any) (driver.Rows, error) {
+func (c *stubConn) Query(_ context.Context, query string, args ...any) (driver.Rows, error) {
 	c.queries = append(c.queries, query)
+	c.args = append(c.args, args)
 	return c.respond(query)
 }
 

@@ -54,6 +54,12 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 		if h.ClientAborted(r, err) {
 			return
 		}
+		if readTimedOut(ctx, err) {
+			h.Logger.Warn("explorer TransactionByHash deadline exceeded", "hash", hash)
+			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/tx-detail-timeout",
+				"Transaction detail timed out")
+			return
+		}
 		h.Logger.Error("explorer TransactionByHash failed", "err", err)
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
@@ -69,6 +75,12 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 	ops, err := h.Reader.OperationsByTx(ctx, tx.Seq, hash)
 	if err != nil {
 		if h.ClientAborted(r, err) {
+			return
+		}
+		if readTimedOut(ctx, err) {
+			h.Logger.Warn("explorer OperationsByTx deadline exceeded", "hash", hash)
+			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/tx-detail-timeout",
+				"Transaction detail timed out")
 			return
 		}
 		h.Logger.Error("explorer OperationsByTx failed", "err", err)

@@ -202,9 +202,38 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     -- Point lookups of a specific contract_data / ledger-entry key
     -- (ADR-0039 Blend reserve reads, wasm-hash + code-history readers).
     -- key_xdr is NOT in the sort key, so `WHERE key_xdr = ? / IN (…)`
-    -- would full-scan ~1.7B rows; the bloom prunes granules. MATERIALIZE
+    -- would full-scan the whole table; the bloom prunes granules. MATERIALIZE
     -- INDEX backfills existing parts (heavy mutation; run off-peak).
-    INDEX idx_lec_key_xdr key_xdr TYPE bloom_filter(0.01) GRANULARITY 1
+    --
+    -- FP rate 0.0001, NOT the 0.01 default this index shipped with
+    -- (audit-2026-07-23 C-F1). A bloom's FP rate is a pruning FLOOR: it
+    -- cannot survive fewer than FP x total granules however selective the
+    -- key is. Measured on r1 2026-07-24, `EXPLAIN indexes=1` for the
+    -- ContractCodeHistory query shape over this table at 150.78B rows /
+    -- 6.17 TiB — 18,405,620 granules total, 172,942 surviving the index
+    -- (0.94% == the index's own FP rate), 1.38B read_rows / 101.58 GiB /
+    -- 21,538 ms to return FOUR rows. Every
+    -- /v1/contracts/{id}/code-history request therefore blew the 8s
+    -- explorer read deadline and 500'd, deterministically, for every
+    -- contract. No query rewrite beats the floor; only the FP rate does.
+    -- At 1e-4 the floor drops ~100x to ~1,840 granules ≈ 15M rows
+    -- (~2x that for the reader's 2-key IN-list, since the FP applies per
+    -- probed value) — comfortably inside the deadline.
+    --
+    -- COST, stated honestly: ClickHouse sizes a bloom granule as
+    -- bits_per_row x DISTINCT values in the granule, and
+    -- BloomFilterHash::calculationBestPractices maps 0.01 -> ~10 bits/row
+    -- and 1e-4 -> the 20 bits/row ceiling, so this index roughly DOUBLES
+    -- in bytes. Measure before materializing on a constrained pool —
+    -- deploy/clickhouse/ledger_entry_changes_key_xdr_index_fp.sql has the
+    -- system.data_skipping_indices query, the per-partition procedure and
+    -- the 0.001 fallback. (1e-4 is near the implementation floor: 20
+    -- bits/row + 15 hashes bottoms out around 6.7e-5, so asking for less
+    -- silently buys nothing.) idx_lec_account_id / idx_lec_asset are
+    -- deliberately LEFT at 0.01 — same floor, but their readers degrade to
+    -- latency rather than errors and each retune costs the same doubling
+    -- on a pool that was at 92% when this was written.
+    INDEX idx_lec_key_xdr key_xdr TYPE bloom_filter(0.0001) GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger_seq, 1000000)

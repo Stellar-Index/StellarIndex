@@ -1,0 +1,196 @@
+-- ledger_entry_changes.idx_lec_key_xdr false-positive-rate retune:
+-- bloom_filter(0.01) → bloom_filter(0.0001) (audit-2026-07-23 C-F1). Full
+-- rationale + the measured evidence: deploy/clickhouse/tier1_schema.sql (the
+-- idx_lec_key_xdr comment block) and internal/storage/clickhouse/wasm_lake_reader.go
+-- (ContractCodeHistory).
+--
+-- This file is NOT auto-applied by any bootstrap — it is the operator-run
+-- migration artifact for an EXISTING deployment (r1) whose
+-- stellar.ledger_entry_changes already carries the index at the 0.01 default
+-- (`CREATE TABLE IF NOT EXISTS` in tier1_schema.sql is a no-op against it). A
+-- FRESH deployment does NOT need this file — tier1_schema.sql's canonical DDL
+-- already declares 0.0001. Direct sibling of
+-- deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql.
+--
+-- ── THE DEFECT ───────────────────────────────────────────────────────────────
+-- A bloom skip index's false-positive rate is a pruning FLOOR, not a hint: it
+-- cannot survive fewer than FP × total_granules however selective the probed
+-- key is. stellar.ledger_entry_changes is 150.78B rows / 6.17 TiB across
+-- 18,405,620 granules, so at FP=0.01 the floor is ~184k granules ≈ 1.5B rows.
+-- Measured on r1 2026-07-24 with `EXPLAIN indexes=1` + system.query_log for the
+-- exact ContractCodeHistory query shape:
+--
+--     granules total .................. 18,405,620
+--     granules surviving the index ....    172,942   (0.94% = the FP rate)
+--     read_rows ....................... 1.38 billion
+--     read_bytes ...................... 101.58 GiB
+--     query_duration_ms ...............     21,538
+--     result_rows .....................          4
+--
+-- 21.5s against the explorer's 8s read deadline (internal/api/v1/explorer/reader.go)
+-- ⇒ GET /v1/contracts/{id}/code-history returned 500 for EVERY contract,
+-- deterministically. No query rewrite beats the floor; only the FP rate does.
+-- At 1e-4 the floor drops ~100x to ~1,840 granules ≈ 15M rows (~2x that for the
+-- reader's 2-key IN list — the FP applies per probed value), i.e. sub-second.
+--
+-- ── COST, MEASURED ───────────────────────────────────────────────────────────
+-- ClickHouse sizes a bloom granule as bits_per_row × DISTINCT values in that
+-- granule, and BloomFilterHash::calculationBestPractices picks bits_per_row from
+-- the requested FP. Measured on ClickHouse 24.8.14.39 (the version pinned by
+-- test/integration/clickhouse_harness_test.go), 200k distinct String keys:
+--
+--     bloom_filter(0.01)     10 bits/value   250,050 B   (1.00x — today)
+--     bloom_filter(0.001)    15 bits/value   375,050 B   (1.50x — fallback)
+--     bloom_filter(0.0001)   19 bits/value   475,050 B   (1.90x — this change)
+--     bloom_filter(0.000001) 19 bits/value   475,050 B   (identical — clamped)
+--
+-- So this roughly DOUBLES idx_lec_key_xdr's bytes, and 1e-4 is the practical
+-- floor: the implementation caps at 20 bits/row + 15 hash functions, so
+-- requesting anything smaller silently buys nothing (last row above).
+-- Bloom bytes do not compress — on the probe the "compressed" size came back
+-- marginally LARGER than raw — so budget on-disk ≈ uncompressed.
+--
+-- Upper bound for r1, derived (NOT measured — Step 0 measures it for real):
+-- at most 8,192 distinct keys per granule ⇒ ≤ 8192×19/8 = 19,456 B/granule ×
+-- 18,405,620 granules ≈ 333 GiB for the new index vs ≈ 175 GiB today, i.e. a
+-- delta of up to ~158 GiB. The pool was at 92% / 948 GiB free when this was
+-- written, so that is ~17% of remaining headroom. ***DO NOT RUN THIS BLIND —
+-- run Step 0 first.*** If the measured delta doesn't fit, use bloom_filter(0.001)
+-- instead: ~1.5x size, floor ~18.4k granules ≈ 150M rows ≈ 2.4s at the measured
+-- 15.6 ms/million-rows rate — inside the 8s deadline, but with far less margin
+-- under concurrency. 1e-4 is the recommended target.
+--
+-- ── WHY DROP+ADD AND NOT `MODIFY INDEX` ──────────────────────────────────────
+-- ClickHouse has no `ALTER TABLE … MODIFY INDEX <name> TYPE …`. Verified on
+-- 24.8.14.39:
+--     ALTER TABLE stellar.lec_probe MODIFY INDEX idx_lec_key_xdr TYPE bloom_filter(0.0001) GRANULARITY 1
+--     → Code: 62. DB::Exception: Syntax error: failed at position 38 ('INDEX')…
+--       Expected one of: STATISTICS, COLUMN, ORDER BY, SAMPLE BY, TTL, SETTING,
+--       QUERY, SQL SECURITY, DEFINER, REFRESH, COMMENT. (SYNTAX_ERROR)
+-- The supported path is DROP INDEX → ADD INDEX (same name, new type) →
+-- MATERIALIZE INDEX. Rehearsed end-to-end on scratch 24.8: DROP is a mutation
+-- (it appears in system.mutations and removes the index files; the data columns
+-- are hardlinked, so it is I/O-light, not a 6.17 TiB rewrite); ADD is
+-- metadata-only and instant; MATERIALIZE is the expensive part and is the only
+-- step that accepts IN PARTITION.
+--
+-- ── BLAST RADIUS OF THE UNPRUNED WINDOW ──────────────────────────────────────
+-- Between Step 1 and the end of Step 3 the index prunes NOTHING for
+-- not-yet-materialized partitions. Verified on scratch: with the index declared
+-- but unmaterialized, `EXPLAIN indexes=1` reports Granules 25/25 (no pruning) —
+-- it degrades silently, it does not error. Only TWO production readers put a
+-- key_xdr predicate on THIS table (everything else reads
+-- stellar.ledger_entries_current, whose PRIMARY KEY is (entry_type, key_xdr)
+-- and which is unaffected):
+--   * ContractCodeHistory (internal/storage/clickhouse/wasm_lake_reader.go) —
+--     already 500s 100% of the time today, so the window is not a regression.
+--   * BlendPoolReserves (internal/storage/clickhouse/blend_pool_state_reader.go) —
+--     also bounded by `ledger_seq > max(ledger_seq) - ?`, so it prunes by
+--     partition/primary key and never depended on this bloom for its scale.
+-- New parts written during the window (live ingest) already carry the 1e-4
+-- index — ADD INDEX applies to every subsequent insert — so only HISTORICAL
+-- partitions need Step 3.
+--
+-- ***Heavy op.*** Step 3 reads the ZSTD(3)-compressed key_xdr column for every
+-- one of 150.78B rows and rehashes it. Run it per-partition, off-peak, with a
+-- disk floor guard, in the style of scripts/ops/recompress-lec.sh (per-partition,
+-- biggest-first, `df`-guarded, resumable) — never as one table-wide statement.
+
+-- ── Step 0: MEASURE FIRST (read-only; run all four) ──────────────────────────
+-- (a) current on-disk size of the index being replaced — multiply by 1.90 for
+--     the post-change size, subtract for the delta:
+--
+--   SELECT name,
+--          formatReadableSize(sum(data_compressed_bytes))   AS on_disk,
+--          formatReadableSize(sum(data_uncompressed_bytes)) AS raw
+--   FROM system.data_skipping_indices
+--   WHERE database = 'stellar' AND table = 'ledger_entry_changes'
+--   GROUP BY name ORDER BY name;
+--
+-- (b) free space on the ClickHouse volume — the delta from (a) must fit with the
+--     500 GiB abort floor scripts/ops/recompress-lec.sh already uses:
+--
+--   SELECT name, formatReadableSize(free_space) FROM system.disks;
+--
+-- (c) per-partition work units, biggest-first (this is the Step-3 order,
+--     reversed — see the note there):
+--
+--   SELECT partition, sum(rows) AS rows, formatReadableSize(sum(bytes_on_disk)) AS sz
+--   FROM system.parts
+--   WHERE database = 'stellar' AND table = 'ledger_entry_changes' AND active
+--   GROUP BY partition ORDER BY toUInt32(partition) DESC;
+--
+-- (d) baseline the defect so Step 4 has something to compare against:
+--
+--   EXPLAIN indexes = 1
+--   SELECT ledger_seq, close_time, entry_xdr FROM stellar.ledger_entry_changes
+--   WHERE entry_type = 'contract_data'
+--     AND key_xdr IN ('<the instance LedgerKey base64 for a known contract>')
+--     AND entry_xdr != ''
+--   ORDER BY ledger_seq DESC, change_index DESC, ingested_at DESC LIMIT 20000;
+
+-- ── Step 1: drop the 0.01 index (mutation; hardlinks data, removes index files)
+-- Wait for it to finish before Step 2 — poll system.mutations:
+--   SELECT command, parts_to_do, is_done, latest_fail_reason FROM system.mutations
+--   WHERE database='stellar' AND table='ledger_entry_changes' AND NOT is_done;
+ALTER TABLE stellar.ledger_entry_changes
+    DROP INDEX idx_lec_key_xdr;
+
+-- ── Step 2: re-declare it at 1e-4 (metadata-only, instant). From this statement
+-- on, every NEW part is written with the tightened index; only pre-existing
+-- partitions need Step 3.
+ALTER TABLE stellar.ledger_entry_changes
+    ADD INDEX idx_lec_key_xdr key_xdr TYPE bloom_filter(0.0001) GRANULARITY 1;
+
+-- ── Step 3: materialize per partition, NEWEST partition first ────────────────
+-- Newest-first, not biggest-first: /v1/contracts/{id}/code-history reads the
+-- contract's instance changes and the reader takes the most RECENT window
+-- (ORDER BY … DESC LIMIT), so materializing the tip partitions first is what
+-- actually returns the endpoint to service; older partitions only widen the
+-- history. Run ONE partition at a time, checking `df` between each against the
+-- 500 GiB floor, and let each mutation drain before starting the next:
+--
+--   ALTER TABLE stellar.ledger_entry_changes
+--       MATERIALIZE INDEX idx_lec_key_xdr IN PARTITION '{partition}';
+--
+--   -- drain (mutations_sync=2 blocks until done; or poll system.mutations):
+--   SELECT partition_id, parts_to_do, is_done, latest_fail_reason
+--   FROM system.mutations
+--   WHERE database='stellar' AND table='ledger_entry_changes' AND NOT is_done;
+--
+-- Idempotent + resumable: re-materializing an already-done partition is a cheap
+-- no-op, so a restart after an abort simply re-walks the list.
+
+-- ── Step 4: verify ───────────────────────────────────────────────────────────
+-- Re-run Step 0(d)'s EXPLAIN. `Skip / Name: idx_lec_key_xdr` must now report a
+-- surviving-granule count ~100x smaller (order 1e3, not 1.7e5). Then time the
+-- real read end-to-end — it must land well inside the 8s explorer deadline:
+--
+--   SELECT read_rows, formatReadableSize(read_bytes), query_duration_ms, result_rows
+--   FROM system.query_log
+--   WHERE type = 'QueryFinish' AND query LIKE '%ledger_entry_changes%key_xdr%'
+--   ORDER BY event_time DESC LIMIT 5;
+--
+-- And confirm the size landed near the 1.90x prediction (Step 0(a) again).
+-- Finally: `curl -s -o /dev/null -w '%{http_code} %{time_total}\n' \
+--   http://127.0.0.1:3000/v1/contracts/{cid}/code-history` → 200, not 500.
+-- (The API listens on 127.0.0.1:3000; `clickhouse-client` on r1 needs
+-- `--port 9300` — MinIO owns 9000.)
+
+-- ── ROLLBACK ─────────────────────────────────────────────────────────────────
+-- Symmetric, and costs the same materialization walk — so roll back only for a
+-- genuine capacity emergency, and prefer simply STOPPING mid-Step-3 (a partly
+-- materialized index is valid: materialized partitions prune at 1e-4, the rest
+-- prune not at all, which is the pre-fix behaviour for those partitions).
+--   ALTER TABLE stellar.ledger_entry_changes DROP INDEX idx_lec_key_xdr;
+--   ALTER TABLE stellar.ledger_entry_changes
+--       ADD INDEX idx_lec_key_xdr key_xdr TYPE bloom_filter(0.01) GRANULARITY 1;
+--   -- then re-materialize per partition as in Step 3, and revert the
+--   -- tier1_schema.sql declaration so fresh deploys match r1 again.
+--
+-- ── DELIBERATELY NOT DONE ────────────────────────────────────────────────────
+-- idx_lec_account_id and idx_lec_asset carry the same 0.01 floor on the same
+-- table and were LEFT ALONE: their readers (account-state / asset-holder) go
+-- through stellar.ledger_entries_current, they degrade to latency rather than
+-- 500s, and each retune costs the same ~1.9x on a pool that had 948 GiB free.
+-- Retune them only behind their own measurement.

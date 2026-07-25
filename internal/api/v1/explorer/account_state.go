@@ -277,6 +277,12 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 		if h.ClientAborted(r, err) {
 			return
 		}
+		if readTimedOut(ctx, err) {
+			h.Logger.Warn("explorer AccountState deadline exceeded", "account", g)
+			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/account-state-timeout",
+				"Account state timed out")
+			return
+		}
 		h.Logger.Error("explorer AccountState failed", "err", err, "account", g)
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
@@ -365,6 +371,12 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 	holders, total, err := h.Reader.AssetHolders(ctx, asset, limit)
 	if err != nil {
 		if h.ClientAborted(r, err) {
+			return
+		}
+		if readTimedOut(ctx, err) {
+			h.Logger.Warn("explorer AssetHolders deadline exceeded", "asset", asset)
+			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/asset-holders-timeout",
+				"Asset holders timed out")
 			return
 		}
 		h.Logger.Error("explorer AssetHolders failed", "err", err, "asset", asset)

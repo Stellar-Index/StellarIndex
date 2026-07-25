@@ -183,11 +183,21 @@ type ContractCodeVersion struct {
 	WasmHash  string
 }
 
+// contractCodeHistoryMaxRows caps the instance-change rows ContractCodeHistory
+// pulls back (audit-2026-07-23 C-F1). Pre-fix the query had no LIMIT at all: a
+// contract that rewrites its instance entry often — instance-STORAGE writes
+// rewrite the same ledger key, not just `update_contract` upgrades — can match
+// millions of rows, every one of which is transferred and XDR-decoded below.
+// 10k is ~3 orders of magnitude above anything real (the r1 probe of this exact
+// query shape returned FOUR rows for a live contract) while bounding the
+// pathological case, and the response collapses to distinct executables anyway.
+const contractCodeHistoryMaxRows = 10_000
+
 // ContractCodeHistory returns a contract's WASM-hash timeline — the contract's
 // "change over time" (ADR-0038 Phase C): every distinct executable the
 // contract instance has pointed at, in chronological order, so an in-place
 // `update_contract` upgrade surfaces as a new version. Reads the instance
-// contract_data entry's executable across all captured changes and collapses
+// contract_data entry's executable across the captured changes and collapses
 // consecutive identical hashes. Coverage = the captured entry-change window
 // (same substrate as the "see the code" view); fills back with the Phase-C
 // backfill. Empty (not an error) when the contract's instance isn't captured.
@@ -203,10 +213,22 @@ func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID str
 		return nil, err
 	}
 
-	const q = `SELECT ledger_seq, close_time, entry_xdr FROM stellar.ledger_entry_changes
-		WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
-		ORDER BY ledger_seq ASC, change_index ASC, ingested_at ASC`
-	rows, err := r.conn.Query(ctx, q, keys)
+	// The cap is applied NEWEST-first in the inner select and the surviving
+	// window is re-sorted ascending for the collapse loop below, so truncation
+	// drops the OLDEST changes and never the newest: the most valuable entry in
+	// an upgrade timeline is the CURRENT executable, and this reader's coverage
+	// is already "the captured window" rather than "since deploy" (see the doc
+	// comment), so an older-tail gap is the same class of gap callers already
+	// render. `ORDER BY … DESC LIMIT n` also bounds the sort to n rows instead
+	// of materialising every match.
+	const q = `SELECT ledger_seq, close_time, entry_xdr FROM (
+			SELECT ledger_seq, close_time, entry_xdr, change_index, ingested_at
+			FROM stellar.ledger_entry_changes
+			WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
+			ORDER BY ledger_seq DESC, change_index DESC, ingested_at DESC
+			LIMIT ?
+		) ORDER BY ledger_seq ASC, change_index ASC, ingested_at ASC`
+	rows, err := r.conn.Query(ctx, q, keys, contractCodeHistoryMaxRows)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: contract code history: %w", err)
 	}

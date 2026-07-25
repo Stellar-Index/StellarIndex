@@ -111,6 +111,12 @@ func (h *Handler) LedgersList(w http.ResponseWriter, r *http.Request) {
 		if h.ClientAborted(r, err) {
 			return
 		}
+		if readTimedOut(ctx, err) {
+			h.Logger.Warn("explorer RecentLedgers deadline exceeded")
+			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/ledgers-timeout",
+				"Ledgers listing timed out")
+			return
+		}
 		h.Logger.Error("explorer RecentLedgers failed", "err", err)
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
@@ -159,6 +165,12 @@ func (h *Handler) LedgerDetail(w http.ResponseWriter, r *http.Request) {
 		if h.ClientAborted(r, err) {
 			return
 		}
+		if readTimedOut(ctx, err) {
+			h.Logger.Warn("explorer LedgerBySeq deadline exceeded", "seq", seq)
+			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/ledger-detail-timeout",
+				"Ledger detail timed out")
+			return
+		}
 		h.Logger.Error("explorer LedgerBySeq failed", "err", err, "seq", seq)
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
@@ -200,6 +212,12 @@ func (h *Handler) LedgerTransactions(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.Reader.LedgerTransactions(ctx, seq, limit)
 	if err != nil {
 		if h.ClientAborted(r, err) {
+			return
+		}
+		if readTimedOut(ctx, err) {
+			h.Logger.Warn("explorer LedgerTransactions deadline exceeded", "seq", seq)
+			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/ledger-transactions-timeout",
+				"Ledger transactions timed out")
 			return
 		}
 		h.Logger.Error("explorer LedgerTransactions failed", "err", err, "seq", seq)
