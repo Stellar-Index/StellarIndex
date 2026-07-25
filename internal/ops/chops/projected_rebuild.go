@@ -346,6 +346,81 @@ type ProjectedRebuildOptions struct {
 	ProgressInterval time.Duration
 }
 
+// applyProjectedEvent decodes one lake event and writes its outputs,
+// returning how many rows it emitted and how many of those FAILED to insert.
+//
+// The failure count is the load-bearing return value: only NON-TRADE inserts
+// can produce one, because trade events deliberately return nil from
+// HandleEvent (ADR-0041 block-and-retry owns their outcome). A non-zero count
+// therefore means rows were genuinely lost, and the caller must not
+// checkpoint that window (COR-09 — see [checkpointWindow]).
+func applyProjectedEvent(
+	ctx context.Context,
+	opts ProjectedRebuildOptions,
+	logger *slog.Logger,
+	counters *projectedRebuildCounters,
+	ev events.Event,
+) (emitted, insertErrs int64) {
+	outs, softFail := decodeProjectedEvent(opts.Source.Name, opts.Source.Decoder, ev, logger)
+	if softFail {
+		counters.decodeErrors.Add(1)
+		return 0, 0
+	}
+	for _, out := range outs {
+		emitted++
+		counters.addKind(out.EventKind())
+		if !opts.Write {
+			continue
+		}
+		if err := pipeline.HandleEvent(ctx, logger, opts.Store, out); err != nil {
+			insertErrs++
+		}
+	}
+	return emitted, insertErrs
+}
+
+// checkpointWindow records a completed projected-rebuild window — or
+// deliberately does NOT, when rows were lost inside it (COR-09).
+//
+// The old code discarded HandleEvent's error and checkpointed
+// unconditionally, justified by "the idempotent ON CONFLICT write is
+// retried by re-running the range". But -resume defaults to true and a
+// resumed run SKIPS checkpointed windows, so the range was never actually
+// re-run and the row was gone permanently. Leaving the cursor unset is what
+// makes that justification true again: the next resumed run redoes exactly
+// this window, and the writes are idempotent.
+//
+// Only NON-TRADE inserts can land here. Trade events deliberately return nil
+// from HandleEvent (ADR-0041 block-and-retry owns their outcome), so a
+// non-nil error is by construction a non-trade row that genuinely failed.
+//
+// This is the only recovery path that works unattended. The completeness
+// verdict cannot be relied on: the reconciliation catalogue registers only
+// `trades` for some sources (aquarius), so a dropped aquarius_reserves /
+// _liquidity / _rewards / _admin row is invisible to it.
+func checkpointWindow(
+	ctx context.Context,
+	opts ProjectedRebuildOptions,
+	logger *slog.Logger,
+	counters *projectedRebuildCounters,
+	w opsutil.RangeChunk,
+	insertErrs int64,
+) {
+	sub := windowCursorSub(opts.Source.Name, w)
+	if insertErrs > 0 {
+		counters.insertErrors.Add(insertErrs)
+		counters.windowsHeld.Add(1)
+		logger.Error("projected-rebuild: window NOT checkpointed — inserts failed, "+
+			"re-run to retry it (writes are idempotent)",
+			"window_sub", sub, "from", w.From, "to", w.To,
+			"insert_errors", insertErrs)
+		return
+	}
+	if cerr := opts.Store.UpsertCursor(ctx, projectedRebuildCursorSource, sub, w.To); cerr != nil {
+		logger.Warn("projected-rebuild: checkpoint failed", "window_sub", sub, "err", cerr)
+	}
+}
+
 // ProjectedRebuildResult summarises one RunProjectedRebuild call.
 type ProjectedRebuildResult struct {
 	WindowsPlanned   int
@@ -355,6 +430,12 @@ type ProjectedRebuildResult struct {
 	EventsRead       int64
 	EventsEmitted    int64
 	DecodeErrors     int64
+	// InsertErrors counts non-trade HandleEvent failures, and WindowsHeld
+	// the windows deliberately left un-checkpointed because of them. Both
+	// non-zero means this run did NOT cover its whole range: re-run to
+	// retry the held windows (writes are idempotent). COR-09.
+	InsertErrors int64
+	WindowsHeld  int64
 	// KindCounts is emitted-event count by consumer.Event.EventKind() —
 	// the "per-topic emitted counts" report so an operator can eyeball
 	// against the census tables. ADR-0033 compute-completeness remains
@@ -454,6 +535,8 @@ func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (Pro
 	result.EventsRead = counters.eventsRead.Load()
 	result.EventsEmitted = counters.eventsEmitted.Load()
 	result.DecodeErrors = counters.decodeErrors.Load()
+	result.InsertErrors = counters.insertErrors.Load()
+	result.WindowsHeld = counters.windowsHeld.Load()
 	result.KindCounts = counters.kindCounts
 	result.Elapsed = time.Since(start)
 	return result, runErr
@@ -469,8 +552,13 @@ type projectedRebuildCounters struct {
 	eventsRead       atomic.Int64
 	eventsEmitted    atomic.Int64
 	decodeErrors     atomic.Int64
-	kindMu           sync.Mutex
-	kindCounts       map[string]int64
+	// insertErrors counts non-trade HandleEvent failures. Non-zero means
+	// at least one window was deliberately NOT checkpointed, so a resumed
+	// run will redo it — see runProjectedRebuildWorker.
+	insertErrors atomic.Int64
+	windowsHeld  atomic.Int64
+	kindMu       sync.Mutex
+	kindCounts   map[string]int64
 }
 
 func newProjectedRebuildCounters() *projectedRebuildCounters {
@@ -498,28 +586,16 @@ func runProjectedRebuildWorker(ctx context.Context, sched *windowScheduler, opts
 		if !ok {
 			return nil
 		}
-		var windowRead, windowEmitted int64
+		var windowRead, windowEmitted, windowInsertErrs int64
 		werr := clickhouse.StreamContractEventsFiltered(ctx, opts.ChAddr, w.From, w.To,
 			opts.Source.ContractIDs, opts.Source.Topic0Syms, opts.Source.ExcludeTopic0Syms,
 			false, // no FINAL: idempotent downstream writes absorb any duplicate (matches the live projector's CH feed-switch mode)
 			true,  // withOpArgs: mirrors the live projector, which routes every source uniformly (redstone needs it; the window is bounded so the wide column is cheap)
 			func(ev events.Event) error {
 				windowRead++
-				outs, softFail := decodeProjectedEvent(opts.Source.Name, opts.Source.Decoder, ev, logger)
-				if softFail {
-					counters.decodeErrors.Add(1)
-					return nil
-				}
-				for _, out := range outs {
-					windowEmitted++
-					counters.addKind(out.EventKind())
-					if opts.Write {
-						// Log-and-continue (unchanged re-derive behavior): HandleEvent
-						// logs + counts a failed insert internally. The idempotent
-						// ON CONFLICT write is retried by re-running the range.
-						_ = pipeline.HandleEvent(ctx, logger, opts.Store, out)
-					}
-				}
+				emitted, insertErrs := applyProjectedEvent(ctx, opts, logger, counters, ev)
+				windowEmitted += emitted
+				windowInsertErrs += insertErrs
 				return nil
 			})
 		counters.eventsRead.Add(windowRead)
@@ -528,10 +604,7 @@ func runProjectedRebuildWorker(ctx context.Context, sched *windowScheduler, opts
 			return fmt.Errorf("window [%d,%d]: %w", w.From, w.To, werr)
 		}
 		if opts.Write {
-			sub := windowCursorSub(opts.Source.Name, w)
-			if cerr := opts.Store.UpsertCursor(ctx, projectedRebuildCursorSource, sub, w.To); cerr != nil {
-				logger.Warn("projected-rebuild: checkpoint failed", "window_sub", sub, "err", cerr)
-			}
+			checkpointWindow(ctx, opts, logger, counters, w, windowInsertErrs)
 		}
 		counters.completedLedgers.Add(int64(w.To-w.From) + 1)
 		counters.windowsDone.Add(1)
@@ -727,6 +800,17 @@ func printProjectedRebuildSummary(name string, from, to uint32, write bool, r Pr
 	fmt.Printf("windows: planned=%d skipped(resume)=%d processed=%d\n", r.WindowsPlanned, r.WindowsSkipped, r.WindowsProcessed)
 	fmt.Printf("ledgers covered this run: %d\n", r.LedgersCovered)
 	fmt.Printf("events read: %d   emitted: %d   decode errors: %d\n", r.EventsRead, r.EventsEmitted, r.DecodeErrors)
+	if r.WindowsHeld > 0 {
+		// Loud, and phrased as an instruction: this run did NOT cover its
+		// whole range, and the only unattended recovery is re-running it.
+		// Do not point the operator at compute-completeness here — the
+		// reconciliation catalogue does not register every non-trade table
+		// (aquarius registers only `trades`), so it cannot see these rows.
+		fmt.Printf("\n!! %d window(s) NOT checkpointed — %d non-trade insert(s) failed and those rows were LOST.\n",
+			r.WindowsHeld, r.InsertErrors)
+		fmt.Printf("!! This run did NOT cover its full range. RE-RUN the same command to retry the held\n")
+		fmt.Printf("!! windows (writes are idempotent; -resume will skip the windows that did succeed).\n")
+	}
 	if r.Elapsed > 0 {
 		fmt.Printf("elapsed: %s   (%.1f ledgers/s, %.1f events/s)\n",
 			r.Elapsed.Round(time.Second),
