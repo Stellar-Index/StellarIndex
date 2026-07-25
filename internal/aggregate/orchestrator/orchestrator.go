@@ -1027,6 +1027,27 @@ func (o *Orchestrator) evaluateAndMaybeFreeze(
 		SourceCount: distinctSourceCount(trades),
 	})
 	if !decision.IsFrozen() {
+		if decision.IsWarn() {
+			// COR-09 / AGT-06: this decision used to end here and vanish.
+			// The caller discards the returned Action on the non-freeze
+			// path, so a bucket deviating past warn_pct — loud enough to
+			// call out, not loud enough to freeze — left no trace at all
+			// and `warn_pct` was an inert knob. It is NOT folded into
+			// flags.divergence_warning despite what several doc comments
+			// used to say: that flag is the cross-reference divergence
+			// service's, and is meaningful only alongside
+			// divergence_checked (CS-087). An anomaly warn runs no
+			// cross-reference check, so setting it would publish
+			// divergence_warning=true / divergence_checked=false — the
+			// exact state CS-087 calls un-interpretable.
+			obs.AnomalyWarnTotal.WithLabelValues(string(decision.Class)).Inc()
+			o.logger.Warn("anomaly warn threshold crossed (published, not frozen)",
+				"pair", pair.String(),
+				"window", window.String(),
+				"class", string(decision.Class),
+				"deviation_pct", decision.DeviationPct,
+				"reason", decision.Reason)
+		}
 		return decision.Action, true
 	}
 

@@ -1423,6 +1423,32 @@ Redis marker JSON (deviation_pct, reason, frozen_at) — labelled by
 class only here so cardinality stays bound to the small AssetClass
 enum.
 
+### `stellarindex_anomaly_warn_total`
+
+Counter, label `class` (`stablecoin` / `treasury` / `crypto` /
+`governance` / `default`).
+
+ActionWarn decisions emitted by the aggregator anomaly checker
+(ADR-0019) — a bucket deviated past `anomaly.warn_pct` but not far
+enough (or had multi-source corroboration) to freeze, so it WAS
+published. Mirrors `stellarindex_anomaly_freeze_engaged_total`.
+
+**This is the only place an anomaly warn surfaces.** It deliberately
+does NOT set `flags.divergence_warning` on the wire, despite several
+doc comments having claimed so until audit COR-09/AGT-06. That flag
+is produced by the cross-reference divergence service and is
+meaningful only alongside `flags.divergence_checked` (CS-087: a
+`false` warning must not be read as "prices agree"). An anomaly warn
+runs no cross-reference check, so folding it in would publish
+`divergence_warning=true` with `divergence_checked=false` — exactly
+the state CS-087 declares un-interpretable. Surfacing it on the wire
+needs its own flag, which is an API-shape decision.
+
+Before that audit the decision was computed and discarded, so
+`warn_pct` was a tunable knob with no observable effect anywhere.
+If you are alerting on price-feed instability, this is the signal
+that fires BEFORE a freeze.
+
 ### `stellarindex_anomaly_freeze_recovered_total`
 
 Counter, no labels.

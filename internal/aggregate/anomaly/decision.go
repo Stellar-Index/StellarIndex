@@ -9,10 +9,19 @@ const (
 	// ActionAllow — publish the bucket normally. No flags fire.
 	ActionAllow Action = "allow"
 
-	// ActionWarn — publish the bucket but set
-	// `flags.divergence_warning: true`. The deviation is large
-	// enough to surface to consumers but not extreme enough (or
-	// has multi-source corroboration) to refuse to publish.
+	// ActionWarn — publish the bucket, and record the warning on
+	// the OPERATOR side (obs.AnomalyWarnTotal + a Warn log). The
+	// deviation is large enough to call out but not extreme enough
+	// (or has multi-source corroboration) to refuse to publish.
+	//
+	// This does NOT set `flags.divergence_warning`, despite what
+	// this comment claimed until audit COR-09/AGT-06. That flag
+	// belongs to the cross-reference divergence service and is
+	// meaningful only alongside `flags.divergence_checked`
+	// (CS-087); an anomaly warn runs no cross-reference check, so
+	// setting it would publish warning=true / checked=false — the
+	// state CS-087 declares un-interpretable. Surfacing this on
+	// the wire needs its own flag, which is an API-shape decision.
 	ActionWarn Action = "warn"
 
 	// ActionFreeze — DO NOT publish this bucket. Serve the

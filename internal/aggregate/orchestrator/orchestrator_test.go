@@ -1928,3 +1928,63 @@ func TestTick_StreamPublisher_ErrorDoesNotPropagate(t *testing.T) {
 		t.Error("VWAP key should be present even when stream publish fails")
 	}
 }
+
+// TestTick_AnomalyWarn_EmitsMetric pins the COR-09 / AGT-06 fix: an
+// ActionWarn decision must leave an observable trace.
+//
+// Before this, evaluateAndMaybeFreeze returned the Action and the caller
+// discarded it on the non-freeze path (`_ = action`), so a bucket that
+// deviated past warn_pct — loud enough to call out, not loud enough to
+// freeze — produced NOTHING: no metric, no log, no wire flag. The operator's
+// `warn_pct` knob was fully tunable and completely inert, while four doc
+// comments claimed it set flags.divergence_warning.
+//
+// The warn is deliberately operator-side only. It does NOT set
+// flags.divergence_warning: that flag belongs to the cross-reference
+// divergence service and is meaningful only alongside
+// flags.divergence_checked (CS-087), and an anomaly warn runs no
+// cross-reference check.
+//
+// Thresholds here are Warn 1% / Freeze 2% (newAnomalyChecker), so a 1.5%
+// move is unambiguously a warn — above the warn line, below the freeze line
+// — rather than sitting on either boundary.
+//
+// Proven red: without the IsWarn branch in evaluateAndMaybeFreeze the delta
+// is 0.
+func TestTick_AnomalyWarn_EmitsMetric(t *testing.T) {
+	pair := xlmUsdtPair(t)
+	cache, _ := newTestRedis(t)
+	checker := newAnomalyChecker(t, pair)
+	o := New(nil, cache, Config{
+		Pairs:   []canonical.Pair{pair},
+		Windows: []time.Duration{5 * time.Minute},
+		Anomaly: checker,
+	})
+	stateKey := pair.String() + ":" + (5 * time.Minute).String()
+	o.prevVWAPs[stateKey] = big.NewRat(1, 1)
+
+	// 101_500_000 / 100_000_000 = 1.015 → +1.5% vs the prior bucket.
+	o.store = &mockStore{
+		trades: []canonical.Trade{
+			buildTrade(t, big.NewInt(100_000_000), big.NewInt(101_500_000), time.Now()),
+		},
+	}
+
+	beforeWarn := testutil.ToFloat64(obs.AnomalyWarnTotal.WithLabelValues("stablecoin"))
+	beforeFreeze := testutil.ToFloat64(obs.AnomalyFreezeEngagedTotal.WithLabelValues("stablecoin"))
+	if err := o.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	afterWarn := testutil.ToFloat64(obs.AnomalyWarnTotal.WithLabelValues("stablecoin"))
+	afterFreeze := testutil.ToFloat64(obs.AnomalyFreezeEngagedTotal.WithLabelValues("stablecoin"))
+
+	if afterWarn-beforeWarn != 1 {
+		t.Errorf("AnomalyWarnTotal{stablecoin} delta = %v, want 1 — "+
+			"an ActionWarn decision left no observable trace", afterWarn-beforeWarn)
+	}
+	// A warn must NOT be counted as a freeze: the bucket is still published.
+	if afterFreeze-beforeFreeze != 0 {
+		t.Errorf("AnomalyFreezeEngagedTotal{stablecoin} delta = %v, want 0 — "+
+			"a warn must not be recorded as a freeze", afterFreeze-beforeFreeze)
+	}
+}
