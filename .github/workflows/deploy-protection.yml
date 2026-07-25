@@ -23,9 +23,15 @@ name: deploy-protection
 # to a read-only PAT — that supplies the credential, it never relaxes
 # the assertion.
 #
-# SCHEDULING CAVEAT: scheduled runs have historically never fired for
-# this repository (see the note in ansible-drift.yml). Treat the cron
-# as a bonus and the manual dispatch as the real mechanism.
+# SCHEDULING CAVEAT (corrected 2026-07-25, CID-24, audit-2026-07-23):
+# this comment used to claim scheduled workflows "have never fired" for
+# this repository, citing a note in ansible-drift.yml. That note was
+# itself wrong — `gh run list` shows ansible-drift.yml, security.yml and
+# ci-health.yml all firing on schedule; ansible-drift.yml's scheduled
+# runs were failing at a credential-loading step, not silently absent.
+# Treat the cron here as the primary mechanism; manual dispatch remains
+# available as a fallback (e.g. to confirm the token can read the
+# environments API before a real deploy depends on it).
 
 on:
   schedule:
