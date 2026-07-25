@@ -16,18 +16,28 @@ name: ansible-drift
 #                              live ssh-keyscan fallback anymore)
 #   - ANSIBLE_VAULT_PASSWORD  (the r1.secrets.yml vault password)
 #   - ANSIBLE_VAULT_FILE_B64  (base64 of the encrypted r1.secrets.yml)
-# NOTE (2026-07-17): ANSIBLE_VAULT_PASSWORD must match the vault that
-# ANSIBLE_VAULT_FILE_B64 was encrypted with. After the 2026-07-03 vault
-# rotation these drifted — a manual dispatch failed with
-# "Invalid vault password" (the SSH + checkout + ansible-install steps all
-# passed, so only the secret is stale). Re-set both from the current vault.
+# NOTE (2026-07-25, CID-24, audit-2026-07-23): ANSIBLE_VAULT_PASSWORD /
+# ANSIBLE_VAULT_FILE_B64 are not merely stale — the 2026-07-20 scheduled
+# run's own log shows both env vars EMPTY (`VAULT_PASS: `,
+# `VAULT_FILE_B64: `), i.e. the secrets are currently UNSET on this repo,
+# not mismatched. Every run since has failed at "Dry-run the playbook
+# against r1" with `[ERROR]: Invalid vault password was provided from
+# file`, before ever reaching PLAY RECAP — this is NOT a drift signal, it
+# is a missing-credential signal, and no drift verdict has been produced
+# since the rotation. This cannot be fixed from inside the repository: an
+# operator must set both secrets from the current r1 vault (repo Settings
+# → Secrets → Actions), then re-run this workflow. The "Vault password"
+# step below now fails fast with an explicit message instead of silently
+# writing empty files and letting ansible's generic error surface several
+# steps later.
 #
-# SCHEDULING (2026-07-17): this cron has never fired — no scheduled run has
-# ever executed for this workflow OR security.yml (both added early-July),
-# despite multiple Mondays passing. The repo is public + active + not a fork,
-# so this is a GitHub scheduled-workflow registration/enablement gap, not a
-# workflow defect. Verify Settings → Actions is not restricting schedules;
-# a manual `workflow_dispatch` always works as a fallback.
+# SCHEDULING: the "this cron has never fired" claim that used to live here
+# was wrong and has been removed — `gh run list --workflow=ansible-drift.yml`
+# shows real schedule-triggered runs (e.g. 2026-07-20T09:35 UTC), all
+# failing at the step above, not silently absent. Treating "broken guard"
+# as "cron never fires" would have sent the next investigation down the
+# wrong path (GitHub Actions scheduling config) instead of the real one
+# (the two vault secrets above).
 
 on:
   schedule:
@@ -105,6 +115,20 @@ jobs:
           VAULT_FILE_B64: ${{ secrets.ANSIBLE_VAULT_FILE_B64 }}
         run: |
           set -euo pipefail
+          # CID-24 (audit-2026-07-23): fail HERE, loudly and specifically,
+          # when either secret is unset — mirrors the SSH-key step's own
+          # `-z` guard above. Pre-fix this step wrote empty files
+          # unconditionally and let `ansible-playbook` fail two steps
+          # later with a generic "Invalid vault password" — indistinguish-
+          # able, without reading the raw log, from an actually-wrong
+          # password. That confusion is exactly what let this guard run
+          # broken for a week: "no valid drift verdict" got misdiagnosed
+          # as "the cron never fires" instead of "these two secrets are
+          # unset". This is the distinct, unambiguous paging state.
+          if [ -z "${VAULT_PASS:-}" ] || [ -z "${VAULT_FILE_B64:-}" ]; then
+            echo "::error::ANSIBLE_VAULT_PASSWORD and/or ANSIBLE_VAULT_FILE_B64 is unset — this is a missing-credential failure, NOT a drift signal. Set both secrets from the current r1 vault (repo Settings → Secrets → Actions) and re-run. This cannot be fixed from inside the repository." >&2
+            exit 1
+          fi
           mkdir -p ~/.ansible
           printf '%s' "$VAULT_PASS" > ~/.ansible/r1_vault_pass
           chmod 600 ~/.ansible/r1_vault_pass
