@@ -38,8 +38,10 @@ const priceBatchMaxAssetsPOST = 1000
 type DivergenceLooker interface {
 	// DivergenceFiringFor reports whether the cross-reference divergence
 	// warning is firing for the asset, AND whether the check was actually
-	// live: `checked` is true only when a cached result exists with at least
-	// one responding reference. When `checked` is false the warning is not
+	// live: `checked` is true only when a cached result exists whose responding
+	// reference count met the worker's own `min_sources_for_warning` quorum —
+	// the same threshold the worker requires before it will fire a warning, so
+	// the two cannot disagree. When `checked` is false the warning is not
 	// meaningful — either no divergence record exists yet, or every reference
 	// was dark (CS-087) — so consumers must not read a `false` firing as
 	// "prices agree".
