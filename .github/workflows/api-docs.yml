@@ -50,8 +50,18 @@ jobs:
           cp -r docs/reference/api/README.md _site/README.md
           cp -r docs/reference/api/stellar-index.v1.yaml _site/stellar-index.v1.yaml
 
-      - uses: actions/configure-pages@v6
-      - uses: actions/upload-pages-artifact@v5
+      # CID-02 / CID-06 (audit-2026-07-23): both were tag-pinned in a
+      # job holding id-token:write + pages:write — a mutable major tag
+      # a compromised/hijacked upstream release could move. Every other
+      # actions/* use in this repo is already SHA-pinned (see
+      # actions/checkout and actions/deploy-pages just above/below);
+      # these two were the outliers, not an intentional exception —
+      # lint-actions-pinning.sh exempts the whole actions/* namespace
+      # from its gate, so nothing caught the drift. SHAs resolved via
+      # `gh api repos/actions/configure-pages/commits/v6 --jq .sha` and
+      # the equivalent for upload-pages-artifact@v5.
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d  # v6
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5
         with:
           path: _site
 
