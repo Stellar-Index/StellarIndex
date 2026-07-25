@@ -70,7 +70,11 @@ type AquariusLiquidityEvent struct {
 // fanned to one row per token position. Idempotent on the
 // (ledger_close_time, contract_id, ledger, tx_hash, op_index,
 // event_index, token_index) PK — a projector-replay or ch-rebuild over
-// the same range writes the same rows (ON CONFLICT DO NOTHING).
+// the same range writes the same rows. The upsert is generation-guarded
+// DO UPDATE (INV-3), NOT the DO NOTHING this comment used to claim: a
+// re-derive at a HIGHER derive_generation lands its correction in place,
+// while a lower generation can never revert one. DO NOTHING is what made
+// corrected re-derives silently no-op (the re-backfill treadmill).
 //
 // Defensive: rejects an empty ContractID / TxHash, an empty reserve
 // vector, and a negative reserve before touching the DB.

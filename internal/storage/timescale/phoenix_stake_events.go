@@ -75,9 +75,12 @@ type PhoenixStakeEvent struct {
 // idempotent on the (ledger_close_time, stake_contract, ledger,
 // tx_hash, op_index, action, event_index) PK (event_index added by
 // migration 0060 / F-1324 so two bonds/unbonds in one op don't
-// collide). Re-running the indexer over the same range or replaying
-// a backfill writes the same rows; ON CONFLICT DO NOTHING makes the
-// replay a no-op.
+// collide). Re-running the indexer over the same range or replaying a
+// backfill writes the same rows. The upsert is generation-guarded DO
+// UPDATE (INV-3), NOT the DO NOTHING this comment used to claim: a
+// replay at the SAME generation is still a no-op, but a re-derive at a
+// higher generation now lands its correction instead of being
+// discarded.
 //
 // Defensive: rejects empty StakeContract / TxHash / LPToken and an
 // invalid Action before touching the DB. User is required for every
