@@ -295,15 +295,15 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
 
-  # C3-016 (audit-2026-07-23): a dead-lettered Stripe event means a
-  # customer PAID and provisioning did not complete. The gauge is
-  # re-seeded from the durable table at boot + every 60s, so this
-  # cannot be blinded by a process restart.
-  - alert: stellarindex_stripe_dead_letter_open
-    expr: stellarindex_stripe_dead_letters_open > 0
-    for: 15m
-    labels:
-      severity: page
-    annotations:
-      summary: "{{ $value }} unresolved Stripe dead-letter(s) — a customer paid and got nothing"
-      runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stripe-dead-letter.md
+      # C3-016 (audit-2026-07-23): a dead-lettered Stripe event means
+      # a customer PAID and provisioning did not complete. The gauge
+      # is re-seeded from the durable table at boot + every 60s, so
+      # this cannot be blinded by a process restart.
+      - alert: stellarindex_stripe_dead_letter_open
+        expr: stellarindex_stripe_dead_letters_open > 0
+        for: 15m
+        labels:
+          severity: page
+        annotations:
+          summary: "{{ $value }} unresolved Stripe dead-letter(s) — a customer paid and got nothing"
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stripe-dead-letter.md
