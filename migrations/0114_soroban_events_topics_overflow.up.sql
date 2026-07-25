@@ -45,16 +45,40 @@
 -- captured whole. Rows already in soroban_events keep topics_xdr = '{}'
 -- and, for the 5+-topic ones, permanently lost topics 5+ IN POSTGRES —
 -- but the ClickHouse raw lake (stellar.contract_events) is topic-complete
--- to genesis (ADR-0034), so history is recoverable. Recover by
--- re-projecting the affected ledger range from the lake AFTER this
--- migration + the new binary are deployed, e.g.:
+-- to genesis (ADR-0034), so the BYTES still exist and history is
+-- recoverable in principle.
 --
---     stellarindex-ops projector-replay -ch \
---       -from <soroban-genesis> -to <lake-tip>
+-- ⚠ THERE IS NO TOOL THAT DOES IT (audit DAT-03, verified 2026-07-25).
+-- This comment previously named:
 --
--- (the -ch replay re-derives soroban_events from the lake). Scope can be
--- narrowed to the contracts known to emit 5+ topics if a full re-project
--- is too heavy. Left to the operator; NOT executed here.
+--     stellarindex-ops projector-replay -ch -from <x> -to <y>
+--
+-- That command does not exist in that form and would not do this job:
+--
+--   * `projector-replay` has no `-ch` and no `-to` flag, and REQUIRES
+--     `-config` and `-source` (internal/ops/ingest/projector.go).
+--   * More fundamentally it rewinds a Postgres cursor so the live
+--     projector re-derives the PER-SOURCE protocol tables by READING
+--     soroban_events. It never writes soroban_events, so it cannot
+--     repair this table.
+--   * The only writer of soroban_events is the live capture path's
+--     InsertSorobanEventsBatch, and it is `ON CONFLICT DO NOTHING`
+--     (internal/storage/timescale/soroban_events.go) — so even a
+--     hypothetical re-ingest would silently no-op against the existing
+--     truncated rows rather than filling topics_xdr.
+--   * No stellarindex-ops subcommand (ch-backfill / ch-rebuild /
+--     ch-reproject / projected-rebuild) inserts into soroban_events;
+--     ch-reproject is read-only by construction.
+--
+-- Recovering pre-0114 rows therefore needs NEW code: something that
+-- reads stellar.contract_events.topics_xdr from the lake and UPDATEs
+-- (not inserts) soroban_events.topics_xdr for the affected range.
+-- Do not plan an incident response around a command that isn't there.
+--
+-- Note the blast radius is narrow: only events with 5+ topics lost
+-- anything, and only topics 5+. Everything else is unaffected, and the
+-- forward fix above means the set is closed — it stops growing at the
+-- deploy of this migration's binary.
 
 BEGIN;
 
