@@ -25,7 +25,10 @@ EnvironmentFile=-/etc/default/stellarindex
 EnvironmentFile=-/run/archive-completeness.env
 
 # Sensible defaults. Operators override via /etc/default/archive-completeness.
-Environment=ARCHIVE_FROM=2
+# ARCHIVE_FROM tracks the hot floor (ADR-0027 trim): below it the local
+# archive is deliberately empty and completeness of that range is the
+# cold tier's concern, verified by the cold-read canary instead.
+Environment=ARCHIVE_FROM={{ stellarindex_archive_hot_floor | default(2) }}
 Environment=ARCHIVE_TO=0
 Environment=TEXTFILE_OUTPUT=/var/lib/node_exporter/textfile_collector/archive_completeness.prom
 Environment=REPORT_OUTPUT=/var/lib/galexie/last-completeness-report.json

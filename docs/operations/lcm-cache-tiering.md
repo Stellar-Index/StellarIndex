@@ -181,6 +181,16 @@ in real-time.
    done
    ```
 
+> **Set the hot floor in the SAME change that trims.** The
+> `stellarindex_archive_hot_floor` inventory var (rendered to
+> `/etc/default/galexie-archive-fill`, `ARCHIVE_FROM` on
+> archive-completeness, and verify-archive-tier-a's cold-start default)
+> tells the hourly mirror and the daily completeness check which
+> partitions are trimmed ON PURPOSE. Trim without raising it and the
+> next fill run re-downloads everything you deleted (~3.7 TB at the
+> 49,984,000 boundary); raise it without trimming and nothing breaks
+> (it only skips work).
+
 4. **Verify the post-trim pool size.** `zpool list` should
    show ~3-4 TB recovered. `mc du local/galexie-archive` should
    show the bucket dropped by the same amount.
@@ -258,3 +268,32 @@ stellarindex-ops rehydrate-galexie-archive -from <N> -to <M>
 - [internal/ledgerstream/tiered.go](../../internal/ledgerstream/tiered.go)
 - [cmd/stellarindex-ops/trim_galexie_archive.go](../../cmd/stellarindex-ops/trim_galexie_archive.go)
 - [cmd/stellarindex-ops/rehydrate_galexie_archive.go](../../cmd/stellarindex-ops/rehydrate_galexie_archive.go)
+
+## Rehydrate (the undo button) — credentials
+
+`rehydrate-galexie-archive` copies cold → hot. Proven end-to-end
+2026-07-25 (delete a ledger from hot → rehydrate → byte-identical md5,
+288ms), but ONLY under the right identity:
+
+- The service identity in `/etc/default/stellarindex` can READ and
+  DELETE on `galexie-archive` but **not PUT** (deliberate: the indexer
+  should never write the archive). Under it, rehydrate fails
+  `hot.PutFileIfNotExists ... 403 AccessDenied`.
+- The `archivewriter` mc alias (`galexie-archive-writer`) is **stale** —
+  its stored secret fails `SignatureDoesNotMatch` on every call. Nothing
+  uses it, which is why nobody noticed. Fix or remove it; do not build
+  procedures on it until then.
+- The working write identity is the one the fill job itself uses — the
+  `local` mc alias. Run rehydrate with that identity overriding the
+  ambient env:
+
+```sh
+set -a; . /etc/default/stellarindex; set +a
+export AWS_ACCESS_KEY_ID=$(python3 -c "import json;print(json.load(open('/root/.mc/config.json'))['aliases']['local']['accessKey'])")
+export AWS_SECRET_ACCESS_KEY=$(python3 -c "import json;print(json.load(open('/root/.mc/config.json'))['aliases']['local']['secretKey'])")
+stellarindex-ops rehydrate-galexie-archive -config /etc/stellarindex.toml -from <ledger> -to <ledger>
+```
+
+The cold read stays anonymous regardless of these exports — the cold
+client is built with explicit anonymous credentials (2026-07-25 fix)
+precisely so ambient writer creds cannot leak into requests to AWS.
