@@ -114,6 +114,47 @@ missing the classic trustline component entirely). Code fix landed
 - [ ] **CH lake tail + DDL offsite push** (ADR-0043 §2.1/2.3) — script rides with the
   repo2 provisioning (same bucket); the full-CH-backup decision waits on the drill's
   measured re-derive throughput, deliberately.
+- [ ] **Encrypt pgBackRest repo1** (F4-F2) — repo1 is `cipher-type=none` today: a
+  plaintext copy of the whole DB (API keys, Stripe ids) on local disk, and inside any
+  ZFS send of that dataset. The role now renders `repo1-cipher-type=aes-256-cbc` when
+  `pgbackrest_repo1_cipher_pass` is set and refuses a silently-unencrypted repo1
+  otherwise — but **pgbackrest cannot re-encrypt an existing repo**, so this needs a
+  `stanza-delete` + `stanza-create` + full backup, which discards repo1's backup
+  history. Do repo2 first so the box is never without a restorable copy. Full
+  procedure, key custody, and the RPO window:
+  [pgbackrest-encryption.md](pgbackrest-encryption.md).
+
+## MinIO credential hygiene (2026-07-25)
+- [ ] **Rotate MinIO root** (`minio_root_user` / `minio_root_password`, still named
+  `ratesengine-admin`) — the credentials appeared in plaintext in an agent session
+  transcript on 2026-07-25. Rotating restarts MinIO and **invalidates the Prometheus
+  bearer token** (the 2026-07-03 incident); regenerate it in the same window. Steps:
+  [credential-rotation.md §MinIO identity inventory](credential-rotation.md).
+- [ ] **Apply `--tags minio` to repair the `galexie-archive-writer` identity** — its
+  vault var and `/etc/default/galexie-backfill` always existed but the MinIO user,
+  policy, and attach never did, so the `archivewriter` alias fails
+  `SignatureDoesNotMatch`. `09-minio.yml` now creates it (write-only on
+  `galexie-archive`, no delete); `mc admin user add` re-syncs the secret from vault.
+  Then re-point the alias and prove `mc ls archivewriter/galexie-archive/` lists.
+- [ ] **Verify the `stellarindex-reader` live policy** — the codified policy grants no
+  `s3:DeleteObject` but the 2026-07-25 live test observed it deleting from
+  `galexie-archive`. `mc admin policy info local stellarindex-reader`; re-apply if the
+  live policy is wider than the codified one.
+- [ ] **Move `galexie-archive-fill` off the root (`local`) alias** — the hourly mirror,
+  including its `mc rm --recursive --force` sweep, authenticates as MinIO root. Needs
+  the archive-writer identity live first, and the delete sweep separated from the
+  mirror (the writer policy grants no delete). Confirm one full timer cycle after.
+
+## Supply cross-check P3 on BLND / EURC / KALE / PHO (E4/N-F3)
+- [ ] **Run `supply seed-sac-balances -full-history`** under `run-heavy-job.sh`
+  (`-dry-run` first). The alert is CORRECT and the served `total_supply` /
+  `market_cap_usd` for those four assets are understated until this runs: Algorithm 2's
+  `SACWrapped` addend misses dormant pool-held balances last written below the ~62M
+  `ledger_entries_current` MV floor. The reader that closes it
+  (`StreamSACBalanceSeedsFullHistory`) shipped 2026-07-10; only the run is missing.
+  Verify per-asset via `sac_balance_seed_provenance` (`source='full_history'` **and**
+  `min_ledger_seen` well below 62,000,000), then confirm the gauge drops.
+  Triage + queries: [runbooks/supply-cross-check-divergence.md](runbooks/supply-cross-check-divergence.md).
 
 ## Multi-region / HA (gated on hosts existing — P3)
 - [ ] Provision R2 (AWS) + R3 (Vultr); then the `redis-sentinel`/patroni/bringup roles run.

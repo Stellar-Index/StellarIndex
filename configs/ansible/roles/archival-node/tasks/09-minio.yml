@@ -206,6 +206,101 @@
   changed_when: false
   failed_when: false   # mc returns non-zero if policy already attached
 
+# ──── galexie-archive-writer (write on galexie-archive only) ───────
+# NOT ansible-managed until 2026-07-25, which is why it broke silently.
+# `/etc/default/galexie-backfill` (07-galexie.yml) has always exported
+# this identity's key pair from vault, and docs/operations/
+# credential-rotation.md has always listed it — but nothing ever created
+# the MinIO user, rendered a policy, or attached one. The identity was
+# hand-made once and then drifted: as of 2026-07-25 the `archivewriter`
+# mc alias fails `SignatureDoesNotMatch` on every call, i.e. the live
+# secret no longer matches the vaulted one. Nothing noticed because the
+# hourly galexie-archive-fill job writes as the `local` alias — MinIO
+# ROOT — so the archive's only working write path is a full-admin
+# credential (see the credential-hygiene section of
+# docs/operations/credential-rotation.md).
+#
+# Codifying it here does three things at once: `mc admin user add`
+# re-syncs the secret from vault on every apply (the drift can't
+# persist), the identity gains a bucket-scoped policy instead of none,
+# and the rehydrate/backfill procedures get an identity to use that
+# isn't root.
+#
+# Deliberately WRITE, not write+delete: the delete paths on this bucket
+# (trim-galexie-archive, the fill script's empty-partition sweep) are
+# separately gated destructive operations and must not inherit their
+# authority from the identity that merely fills the archive.
+
+- name: Render galexie-archive-writer MinIO policy
+  ansible.builtin.copy:
+    dest: /etc/minio/policies/galexie-archive-writer.json
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": [
+              "s3:PutObject",
+              "s3:GetObject",
+              "s3:ListBucket",
+              "s3:GetBucketLocation",
+              "s3:ListBucketMultipartUploads",
+              "s3:ListMultipartUploadParts",
+              "s3:AbortMultipartUpload"
+            ],
+            "Resource": [
+              "arn:aws:s3:::galexie-archive",
+              "arn:aws:s3:::galexie-archive/*"
+            ]
+          }
+        ]
+      }
+
+- name: Install / update galexie-archive-writer MinIO policy
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/mc
+      - admin
+      - policy
+      - create
+      - local
+      - galexie-archive-writer
+      - /etc/minio/policies/galexie-archive-writer.json
+  changed_when: false
+
+- name: Create galexie-archive-writer MinIO user (vault-supplied creds)
+  # `mc admin user add` updates the secret if the user already exists —
+  # which is exactly what repairs the drifted `archivewriter` alias.
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/mc
+      - admin
+      - user
+      - add
+      - local
+      - "{{ galexie_archive_s3_access_key }}"
+      - "{{ galexie_archive_s3_secret_key }}"
+  changed_when: false
+  no_log: true
+
+- name: Attach galexie-archive-writer policy to galexie-archive-writer user
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/mc
+      - admin
+      - policy
+      - attach
+      - local
+      - galexie-archive-writer
+      - --user
+      - "{{ galexie_archive_s3_access_key }}"
+  changed_when: false
+  failed_when: false   # mc returns non-zero if policy already attached
+
 # ──── stellarindex-reader (read-only on both buckets) ──────────────
 # Used by stellarindex-ops verify-archive today, and by the indexer +
 # api once they have systemd units. Scoped to BOTH galexie-live and

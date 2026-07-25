@@ -279,20 +279,34 @@ stellarindex-ops rehydrate-galexie-archive -from <N> -to <M>
   DELETE on `galexie-archive` but **not PUT** (deliberate: the indexer
   should never write the archive). Under it, rehydrate fails
   `hot.PutFileIfNotExists ... 403 AccessDenied`.
-- The `archivewriter` mc alias (`galexie-archive-writer`) is **stale** —
-  its stored secret fails `SignatureDoesNotMatch` on every call. Nothing
-  uses it, which is why nobody noticed. Fix or remove it; do not build
-  procedures on it until then.
-- The working write identity is the one the fill job itself uses — the
-  `local` mc alias. Run rehydrate with that identity overriding the
-  ambient env:
+- The `archivewriter` mc alias (`galexie-archive-writer`) was **stale**
+  when this was written — its stored secret failed
+  `SignatureDoesNotMatch` on every call, because the identity had a
+  vault var and an env file but was never created in MinIO by ansible.
+  **Fixed 2026-07-25** (`09-minio.yml` now renders its policy, creates
+  the user from vault, and attaches): applying `--tags minio` re-syncs
+  the secret and the alias works again. Until that apply has run on the
+  host, the identity is still broken — check before relying on it.
+- **Use `galexie-archive-writer` for rehydrate**, not root. Its policy
+  grants Put/Get/List on `galexie-archive`, which is exactly what
+  rehydrate needs:
 
 ```sh
 set -a; . /etc/default/stellarindex; set +a
-export AWS_ACCESS_KEY_ID=$(python3 -c "import json;print(json.load(open('/root/.mc/config.json'))['aliases']['local']['accessKey'])")
-export AWS_SECRET_ACCESS_KEY=$(python3 -c "import json;print(json.load(open('/root/.mc/config.json'))['aliases']['local']['secretKey'])")
+# The archive-writer identity — same pair /etc/default/galexie-backfill
+# carries, so no secret is retyped here.
+export AWS_ACCESS_KEY_ID=$(sed -n 's/^AWS_ACCESS_KEY_ID=//p'     /etc/default/galexie-backfill)
+export AWS_SECRET_ACCESS_KEY=$(sed -n 's/^AWS_SECRET_ACCESS_KEY=//p' /etc/default/galexie-backfill)
 stellarindex-ops rehydrate-galexie-archive -config /etc/stellarindex.toml -from <ledger> -to <ledger>
 ```
+
+- **Break-glass only:** the `local` mc alias is MinIO **root**, and the
+  hourly fill job still writes as it (a known least-privilege gap — see
+  the credential-hygiene section of
+  [credential-rotation.md](credential-rotation.md)). It will make
+  rehydrate work if the archive-writer apply has not run yet, but do not
+  bake it into a procedure — root credentials in a copy-pasteable
+  runbook is how they end up in transcripts.
 
 The cold read stays anonymous regardless of these exports — the cold
 client is built with explicit anonymous credentials (2026-07-25 fix)

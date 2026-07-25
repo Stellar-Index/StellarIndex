@@ -76,6 +76,38 @@
 # ever fire once the (possibly half-configured) config had already
 # been rendered — too late for the friendly precondition to do its
 # job.
+# repo1 encryption (audit-2026-07-23 F4-F2). repo1 shipped with
+# pgbackrest's default cipher-type=none: a full copy of the database —
+# API keys, customer records, Stripe identifiers — in plaintext on disk,
+# protected by filesystem permissions alone, and copied verbatim into
+# any ZFS send / rsync / disk-level backup of that dataset. repo2 has
+# been encrypted since CS-111; repo1 never was.
+#
+# The fix cannot be a template flip alone: a pgBackRest repo's cipher is
+# established at stanza-create and cannot be changed on an existing repo
+# (stanza-upgrade does NOT re-encrypt, and a cipher mismatch makes the
+# repo unreadable). So this gate does what a config change honestly can
+# — it makes "unencrypted" an explicit, greppable declaration instead of
+# a silent default, exactly as pgbackrest_offsite_ack does for the
+# missing offsite copy. The re-create procedure (and the RPO window it
+# opens) is docs/operations/pgbackrest-encryption.md.
+- name: Refuse an unencrypted repo1 without an explicit ack of the gap
+  ansible.builtin.assert:
+    that:
+      - >-
+        (pgbackrest_repo1_cipher_pass | default('') != '')
+        or (pgbackrest_repo1_unencrypted_ack | default(false) | bool)
+    fail_msg: >-
+      pgBackRest repo1 would be written UNENCRYPTED (cipher-type=none) —
+      a plaintext copy of the whole database on local disk. Either set
+      pgbackrest_repo1_cipher_pass from vault and follow
+      docs/operations/pgbackrest-encryption.md (the repo must be
+      RE-CREATED; pgbackrest cannot re-encrypt an existing one), or set
+      pgbackrest_repo1_unencrypted_ack: true in the inventory to accept
+      the gap explicitly.
+    quiet: true
+  when: pgbackrest_manage_conf | default(false)
+
 - name: Refuse repo2 without its cipher pass (offsite copies are encrypted by us)
   ansible.builtin.assert:
     that:
