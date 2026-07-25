@@ -232,6 +232,21 @@
     group: root
     mode: "0755"
 
+- name: Template /etc/default/galexie-archive-fill (hot floor)
+  # Sourced by the fill script at run time. The floor tells the mirror
+  # which partitions are trimmed ON PURPOSE (cold tier serves them) so
+  # it stops treating them as missing — without it, trim and fill are
+  # adversaries and the fill re-downloads everything trimmed (~3.7 TB
+  # at the planned 49,984,000 boundary).
+  ansible.builtin.copy:
+    dest: /etc/default/galexie-archive-fill
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      ARCHIVE_HOT_FLOOR={{ stellarindex_archive_hot_floor | default(0) }}
+  tags: [galexie, archive-fill]
+
 - name: Install galexie-archive-fill recovery script
   # Per-partition mirror that handles mtime-poisoned buckets where
   # bucket-level `mc mirror` deadlocks. Audits local partitions,

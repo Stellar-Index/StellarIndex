@@ -175,6 +175,16 @@ all:
     stellarindex_s3_cold_region:         "us-east-2"
     stellarindex_s3_cold_bucket_archive: "aws-public-blockchain/v1.1/stellar/ledgers/pubnet"
 
+    # Hot floor: local archive partitions ending BELOW this ledger are
+    # deliberately trimmed (cold tier serves them). Consumed by the
+    # galexie-archive-fill mirror (skip, don't re-download), the daily
+    # archive-completeness check (verify hot range only) and
+    # verify-archive-tier-a's cold-start default. 2 = keep everything —
+    # RAISE THIS TO THE TRIM BOUNDARY (49,984,000, partition-aligned)
+    # IN THE SAME CHANGE THAT RUNS THE TRIM, never after: fill would
+    # re-download ~3.7 TB in the gap.
+    stellarindex_archive_hot_floor: 2
+
     # ───── Backups ───────────────────────────────────────────────
     # No pgBackRest offsite (repo2) copy exists yet on r1 — the S3
     # off-site offload is a deferred capacity lever, not yet

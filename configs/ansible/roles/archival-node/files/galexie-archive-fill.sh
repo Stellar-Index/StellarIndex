@@ -33,6 +33,16 @@ set -euo pipefail
 
 LOG=/var/log/galexie-mirror.log
 PARALLEL="${PARALLEL:-8}"
+
+# Hot floor (2026-07-25, ADR-0027 trim): partitions whose ledger range
+# ends BELOW this are deliberately trimmed from local storage — the cold
+# tier (aws-public-blockchain) serves them. Without this filter, Phase 2
+# sees every trimmed partition as "missing" and re-downloads the lot,
+# which would make trim and fill adversaries (~3.7 TB re-pulled).
+# Sourced from /etc/default/galexie-archive-fill (ansible-templated from
+# stellarindex_archive_hot_floor); 0 = no floor, mirror everything.
+[ -f /etc/default/galexie-archive-fill ] && . /etc/default/galexie-archive-fill
+ARCHIVE_HOT_FLOOR="${ARCHIVE_HOT_FLOOR:-0}"
 PARTIAL_CHECK_WINDOW="${PARTIAL_CHECK_WINDOW:-4}"
 
 # Known partials: pass via env var (newline- or space-separated), e.g.
@@ -109,7 +119,20 @@ comm -23 /tmp/galexie-fill.aws.txt /tmp/galexie-fill.local.txt \
 # now unioned in directly and mirrored incrementally.
 touch /tmp/galexie-fill.incomplete.txt
 sort -u /tmp/galexie-fill.missing.txt /tmp/galexie-fill.incomplete.txt \
-  > /tmp/galexie-fill.needs-work.txt
+  > /tmp/galexie-fill.needs-work.unfloored.txt
+# Drop partitions entirely below the hot floor — those are trimmed on
+# purpose, not missing. A partition STRADDLING the floor stays eligible.
+below=0
+: > /tmp/galexie-fill.needs-work.txt
+while read -r p; do
+  [ -z "$p" ] && continue
+  end=${p##*-}
+  if [[ "$end" =~ ^[0-9]+$ ]] && [ "$end" -lt "$ARCHIVE_HOT_FLOOR" ]; then
+    below=$((below+1)); continue
+  fi
+  echo "$p" >> /tmp/galexie-fill.needs-work.txt
+done < /tmp/galexie-fill.needs-work.unfloored.txt
+echo "  below hot floor ($ARCHIVE_HOT_FLOOR), intentionally not mirrored: $below" | tee -a "$LOG"
 echo "  AWS partitions: $(wc -l < /tmp/galexie-fill.aws.txt)" | tee -a "$LOG"
 echo "  local partitions present: $(wc -l < /tmp/galexie-fill.local.txt)" | tee -a "$LOG"
 echo "  missing entirely: $(wc -l < /tmp/galexie-fill.missing.txt)" | tee -a "$LOG"

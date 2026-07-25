@@ -42,7 +42,11 @@ EnvironmentFile=-/etc/default/stellarindex-ops
 # -from-last-verified state file; a binary-side cap that fired
 # mid-pass meant state never seeded and every run stayed a full
 # pass (the Task #13 / 2026-05-19 incident).
-Environment=VERIFY_ARCHIVE_FROM=2
+# Cold-start floor only — normal runs resume from the state file's
+# high-water (63.6M+, far above any floor). If the state file is ever
+# lost, restarting from the hot floor instead of ledger 2 avoids a
+# from-genesis walk over a range the local archive no longer holds.
+Environment=VERIFY_ARCHIVE_FROM={{ stellarindex_archive_hot_floor | default(2) }}
 Environment=VERIFY_ARCHIVE_WORKERS=12
 Environment=VERIFY_ARCHIVE_MAX_RUNTIME=0
 Environment=VERIFY_ARCHIVE_STATE_FILE=/var/lib/stellarindex/verify-archive-state.json
