@@ -424,11 +424,8 @@ func trimNumericText(s string) string {
 
 // ─── tier 3b: the XLM bridge ─────────────────────────────────────────
 
-// legMinUSDVolume is the dust floor a prices_1m bucket must clear
-// before its VWAP is allowed to value another trade. It applies to
-// EVERY prices_1m leg this resolver reads — the direct `<asset>/<peg>`
-// market ([VWAPUSDFXResolver.queryDB], tier 3a) and the XLM bridge leg
-// ([VWAPUSDFXResolver.queryXLMLeg], tier 3b) alike.
+// bridgeLegMinUSDVolume is the dust floor a bridge bucket must clear
+// before its VWAP is allowed to value another trade.
 //
 // Rationale is the dust finding (docs/operations/
 // finding-dust-trades-set-chart-extremes.md): amounts are integers
@@ -438,12 +435,12 @@ func trimNumericText(s string) string {
 // near-immune to a crumb sitting inside a real bucket; what it cannot
 // survive is a bucket containing ONLY dust, where the crumb sets the
 // rate outright. This floor removes exactly that case. Without it a
-// 2-stroop remainder could set the valuation rate for every trade
-// quoted in the asset.
+// 2-stroop remainder could set the valuation rate for every trade that
+// bridges through the pair.
 //
 // $0.01 matches the floor chosen for the OHLC extremes, so the two
 // dust defences agree rather than each picking their own threshold.
-const legMinUSDVolume = "0.01"
+const bridgeLegMinUSDVolume = "0.01"
 
 // bridgeRateSigDigits is how many SIGNIFICANT digits a bridged rate is
 // rendered with. Significance, not a fixed decimal scale, is what this
@@ -594,7 +591,7 @@ func xlmLegRate(vwapText string, inverted bool) (*big.Rat, bool) {
 // A stored `<asset>/XLM` VWAP is already XLM-per-asset; an `XLM/<asset>`
 // VWAP is asset-per-XLM and must be inverted.
 //
-// Buckets below [legMinUSDVolume] are excluded so a dust-only
+// Buckets below [bridgeLegMinUSDVolume] are excluded so a dust-only
 // bucket cannot set the rate. The lower bucket bound mirrors the
 // G11-06 rationale on queryDB: without it a miss walks prices_1m back
 // to genesis before returning a row the caller would discard anyway.
@@ -606,7 +603,7 @@ func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Ass
 		asset.String(),
 		pq.Array(xlmForms),
 		at.UTC(),
-		legMinUSDVolume,
+		bridgeLegMinUSDVolume,
 	}
 	// The lower bucket bound must live INSIDE each UNION branch, not on
 	// the outer query: chunk exclusion is decided per-scan, so a bound
@@ -677,24 +674,6 @@ func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Ass
 // so the DB picks the highest-bucket row across all pegs in one
 // pass.
 //
-// Dust floor: buckets below [legMinUSDVolume] are excluded, the
-// same defence [VWAPUSDFXResolver.queryXLMLeg] already applies to the
-// bridge leg. This query takes the FRESHEST qualifying bucket, so a
-// single sub-cent fill in the newest minute outranks every real bucket
-// behind it and would set the valuation rate for every trade quoted in
-// this asset until it ages out — the dust shape documented in
-// docs/operations/finding-dust-trades-set-chart-extremes.md, where a
-// price computed from two tiny integers carries a near-100%
-// quantisation error. The direct peg market is if anything MORE
-// exposed than the bridge: it needs no second leg to go wrong.
-//
-// This costs no coverage that the tier-2 quote spec covers: the pegs
-// queried here are the same operator list [USDVolumeQuoteSpec] values
-// trades against, so every bucket this query can return has
-// `volume_usd` populated from its own quote amounts. Only a bucket
-// whose entire minute is worth less than a cent is excluded, and its
-// rate was never usable.
-//
 // Lower bucket bound (audit-2026-06-11 G11-06): when freshness is
 // enforced (>0), USDPriceAt rejects any row whose bucket is older
 // than `at - freshness`, so a miss within the window is the only
@@ -705,7 +684,26 @@ func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Ass
 // lets TimescaleDB prune to the freshness window's chunks. When
 // freshness is disabled (0) we keep the unbounded scan.
 func (r *VWAPUSDFXResolver) queryDB(ctx context.Context, asset canonical.Asset, at time.Time) (string, time.Time, error) {
-	q, args := usdPegVWAPQuery(asset.String(), r.usdPegs, at.UTC(), r.freshness)
+	q := `
+		SELECT bucket, vwap::text
+		  FROM prices_1m
+		 WHERE base_asset  = $1
+		   AND quote_asset = ANY($2)
+		   AND bucket     <= $3`
+	args := []any{
+		asset.String(),
+		pq.Array(r.usdPegs),
+		at.UTC(),
+	}
+	if r.freshness > 0 {
+		q += `
+		   AND bucket     >= $4`
+		args = append(args, at.UTC().Add(-r.freshness))
+	}
+	q += `
+		 ORDER BY bucket DESC
+		 LIMIT 1
+	`
 	row := r.store.db.QueryRowContext(ctx, q, args...)
 	var (
 		bucket time.Time
@@ -718,38 +716,6 @@ func (r *VWAPUSDFXResolver) queryDB(ctx context.Context, asset canonical.Asset, 
 		return "", time.Time{}, fmt.Errorf("timescale: VWAPUSDFXResolver query: %w", err)
 	}
 	return vwap, bucket, nil
-}
-
-// usdPegVWAPQuery composes tier 3a's single prices_1m read and its
-// positional args. Split out of [VWAPUSDFXResolver.queryDB] so the
-// predicate set — in particular the [legMinUSDVolume] dust floor and
-// the placeholder numbering it shares with the optional freshness
-// bound — is assertable without a live database. The DB half of
-// queryDB is a row fetch; this is the part that can be wrong.
-func usdPegVWAPQuery(asset string, pegs []string, at time.Time, freshness time.Duration) (string, []any) {
-	q := `
-		SELECT bucket, vwap::text
-		  FROM prices_1m
-		 WHERE base_asset  = $1
-		   AND quote_asset = ANY($2)
-		   AND bucket     <= $3
-		   AND volume_usd >= $4::numeric`
-	args := []any{
-		asset,
-		pq.Array(pegs),
-		at.UTC(),
-		legMinUSDVolume,
-	}
-	if freshness > 0 {
-		q += `
-		   AND bucket     >= $5`
-		args = append(args, at.UTC().Add(-freshness))
-	}
-	q += `
-		 ORDER BY bucket DESC
-		 LIMIT 1
-	`
-	return q, args
 }
 
 // InstallUSDVolumeResolution wires BOTH `usd_volume` resolution tiers

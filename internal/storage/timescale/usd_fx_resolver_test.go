@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"math/big"
-	"strings"
 	"testing"
 	"time"
 
@@ -555,70 +554,5 @@ func TestBridgeViaXLM_XLMIsBaseCase(t *testing.T) {
 		if rate != "" {
 			t.Errorf("%s: bridge returned %q, want a decline (would be circular)", name, rate)
 		}
-	}
-}
-
-// TestUSDPegVWAPQuery_CarriesDustFloor (MNY-22) — tier 3a (the direct
-// `<asset>/<peg>` market) must exclude dust-only buckets exactly as
-// tier 3b's XLM leg already does.
-//
-// Why it matters: this query takes the FRESHEST qualifying bucket, so a
-// single sub-cent fill in the newest minute outranks every real bucket
-// behind it and sets the USD valuation rate for every trade quoted in
-// that asset until it ages out of the freshness window. Stroop amounts
-// are integers, so a two-stroop crumb's "price" is a quantisation
-// artifact — the same shape that produced the served 0.1333 XLM/USD low
-// in docs/operations/finding-dust-trades-set-chart-extremes.md.
-//
-// Scope of this test (be honest about it): it asserts the SQL predicate
-// and the positional-arg wiring — the off-by-one placeholder risk this
-// edit actually carries — not Postgres's evaluation of it. The semantic
-// proof against a real TimescaleDB belongs beside
-// test/integration/ohlc_dust_floor_test.go, which is outside this
-// change's scope.
-//
-// Proven red pre-fix: the emitted SQL carried no volume_usd predicate
-// and the freshness bound sat at $4.
-func TestUSDPegVWAPQuery_CarriesDustFloor(t *testing.T) {
-	at := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
-	pegs := []string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"}
-
-	t.Run("freshness enforced", func(t *testing.T) {
-		q, args := usdPegVWAPQuery("native", pegs, at, time.Hour)
-		if !strings.Contains(q, "AND volume_usd >= $4::numeric") {
-			t.Fatalf("query = %q, want the `volume_usd >= $4::numeric` dust floor", q)
-		}
-		// The freshness bound must follow the floor, not collide with it.
-		if !strings.Contains(q, "AND bucket     >= $5") {
-			t.Fatalf("query = %q, want the freshness lower bound at $5", q)
-		}
-		if len(args) != 5 {
-			t.Fatalf("args = %d, want 5", len(args))
-		}
-		if got, ok := args[3].(string); !ok || got != legMinUSDVolume {
-			t.Errorf("args[3] = %v, want the %q floor", args[3], legMinUSDVolume)
-		}
-		if got, ok := args[4].(time.Time); !ok || !got.Equal(at.Add(-time.Hour)) {
-			t.Errorf("args[4] = %v, want the freshness bound %v", args[4], at.Add(-time.Hour))
-		}
-	})
-
-	t.Run("freshness disabled keeps the floor", func(t *testing.T) {
-		q, args := usdPegVWAPQuery("native", pegs, at, 0)
-		if !strings.Contains(q, "AND volume_usd >= $4::numeric") {
-			t.Fatalf("query = %q, want the dust floor even with freshness disabled", q)
-		}
-		if strings.Contains(q, "$5") {
-			t.Errorf("query = %q, must not reference $5 when freshness is disabled", q)
-		}
-		if len(args) != 4 {
-			t.Fatalf("args = %d, want 4", len(args))
-		}
-	})
-
-	// The floor is one shared constant, so the two prices_1m legs can
-	// never drift to different dust thresholds.
-	if legMinUSDVolume != "0.01" {
-		t.Errorf("legMinUSDVolume = %q, want \"0.01\" (matches the OHLC extremes floor)", legMinUSDVolume)
 	}
 }
