@@ -152,6 +152,83 @@ func SplitRange(from, to uint32, n int) []RangeChunk {
 	return out
 }
 
+// ResolveStreamBucket resolves which galexie bucket a BOUNDED backfill
+// walk reads, given the operator's -bucket override and the requested
+// ledger range. Every ops subcommand that walks a historic range
+// (ch-backfill, census-backfill) must go through this rather than
+// defaulting to a bucket of its own choosing.
+//
+// The defect this exists to close (found live 2026-07-25 in ch-backfill,
+// 2026-07-25 in census-backfill): the walkers defaulted to
+// cfg.Storage.S3BucketLive unconditionally, which is silently wrong for
+// exactly the ranges these commands exist to serve. The live bucket holds
+// only what galexie has exported since this node started (on r1 it is also
+// the TRIMMED one — see
+// docs/operations/runbooks/consolidated-deploy-plan-2026-07-18.md §4), so a
+// historic range resolves to zero objects there. Because every ops walker
+// opts into TolerateTrailingMissing (NewBoundedLedgerStreamConfig), that
+// walk ends WITHOUT an error, and the caller records the window as DONE on
+// exit 0 — a permanent hole, recorded as success. The per-command coverage
+// checks close the second half of that trap; this closes the first.
+//
+// It lives here rather than in one subcommand package because the two
+// callers had INDEPENDENT copies of the broken default: fixing one and
+// leaving the other is how this class survives a remediation. One seam
+// policy, one place.
+//
+// Resolution order:
+//  1. An explicit -bucket always wins: the operator knows their layout, and
+//     every runbook that matters already passes it.
+//  2. With a live seam configured (ingestion.live_seam_ledger), the RANGE
+//     decides — entirely below the seam reads the archive, entirely at or
+//     above it reads live. A range that STRADDLES the seam is an error, not
+//     a guess: one walk reads one bucket, so either choice silently drops
+//     the ledgers on the other side, which is the same vacuous-success
+//     failure in a subtler shape.
+//  3. With NO seam configured (r1 today), the live bucket — unchanged.
+//     Without a seam the live bucket's floor is not knowable from config,
+//     and guessing it is what produced this whole class of bug in the
+//     first place. Silently switching the default to the archive would
+//     also break scripts/ops/ch-live-catchup.sh, which heals live-era
+//     holes and extends the tip with no -bucket at all: the archive is an
+//     hourly MIRROR of live, so it lags the tip by up to an hour and that
+//     timer would fail on every run until the mirror caught up. So the
+//     default stays, and the caller's coverage check is what makes a wrong
+//     bucket unmissable instead of silent — a historic range now fails
+//     naming galexie-live and telling the operator to pass the archive
+//     bucket. Setting ingestion.live_seam_ledger promotes this host to
+//     case 2 and makes the choice automatic, but it also changes the
+//     INDEXER's read path (StreamArchiveThenLive), so it is an operator
+//     decision, not a default this function should assume.
+func ResolveStreamBucket(cfg config.Config, override string, from, to uint32) (string, error) {
+	if override != "" {
+		return override, nil
+	}
+	archive, live := cfg.Storage.S3BucketArchive, cfg.Storage.S3BucketLive
+	seam := cfg.Ingestion.LiveSeamLedger
+	switch {
+	case seam > 0 && to < seam:
+		if archive == "" {
+			return "", fmt.Errorf("ledgers %d..%d are below the live seam %d but storage.s3_bucket_archive is unset — pass -bucket", from, to, seam)
+		}
+		return archive, nil
+	case seam > 0 && from >= seam:
+		if live == "" {
+			return "", fmt.Errorf("ledgers %d..%d are at/above the live seam %d but storage.s3_bucket_live is unset — pass -bucket", from, to, seam)
+		}
+		return live, nil
+	case seam > 0:
+		return "", fmt.Errorf("ledgers %d..%d straddle the live seam %d — %q holds [%d,tip] and %q holds the history below it, and one walk reads exactly one bucket; split the range at %d or pass -bucket explicitly",
+			from, to, seam, live, seam, archive, seam)
+	case live != "":
+		return live, nil
+	case archive != "":
+		return archive, nil
+	default:
+		return "", fmt.Errorf("no galexie bucket configured — set storage.s3_bucket_archive / s3_bucket_live or pass -bucket")
+	}
+}
+
 // NewBoundedLedgerStreamConfig returns the ledgerstream.Config that ops
 // subcommands should ALWAYS use when their `-to` may equal the live
 // galexie-archive tip. Always opts into TolerateTrailingMissing per

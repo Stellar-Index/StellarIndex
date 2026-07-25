@@ -76,6 +76,22 @@ ingest**. Resumable per-chunk cursor (`source='census-backfill'`).
 This is the prerequisite for truthful watermarks and for sdex
 reconciliation.
 
+**Exit code is load-bearing (2026-07-25).** `census-backfill` now fails
+closed: it exits non-zero unless it persisted a substrate row for EVERY
+ledger in the range it walked (`censusCoverage`, mirroring ch-backfill's
+`backfillCoverage`). Two consequences for the invocation above:
+
+- Keep `-bucket galexie-archive` explicit. Without it the command
+  defaults to the LIVE bucket, which cannot hold a historic range —
+  previously that streamed zero ledgers and still exited 0.
+- Set `-to` to the **archive** tip, not the live tip.
+  `galexie-archive` mirrors only complete 64,000-ledger partitions, so a
+  `-to` at the live tip leaves the newest partition short and the run
+  now (correctly) reports the shortfall instead of silently skipping it.
+  Re-run later to pick up the rest — the C2-14 cursor resumes at the
+  first gap and `UpsertLedgerIngestLog` is `ON CONFLICT DO UPDATE`, so
+  overlapping re-runs converge.
+
 ### 2. `soroban_events` re-backfill (recover the ~55% loss)
 
 ```

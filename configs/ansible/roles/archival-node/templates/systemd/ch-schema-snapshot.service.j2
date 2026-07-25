@@ -1,0 +1,59 @@
+# systemd unit: ClickHouse schema + state snapshot (ADR-0043 §2.1).
+#
+# Rendered by Ansible. Runs scripts/ops/ch-schema-snapshot.sh — SHOW
+# CREATE for every stellar.* table/view, the partition + settings
+# inventory, and the ch-backfill / ingestion cursor state, written to
+# {{ ch_schema_snapshot_dir | default('/var/lib/stellarindex/ch-schema-snapshot') }}
+# and pushed offsite when a target is configured.
+#
+# This is the lake's ONLY backup by design: ADR-0043 rejects a
+# multi-TiB copy of derived data and protects the metadata instead,
+# because the raw ledgers already exist in two independent archives but
+# the DDL exists nowhere else. Megabytes a day.
+
+[Unit]
+Description=Stellar Index — ClickHouse schema + state snapshot (ADR-0043 §2.1)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/adr/0043-backup-and-restore-strategy.md
+After=clickhouse-server.service network-online.target
+Wants=clickhouse-server.service
+
+# Restart-storm limit — matches the sibling oneshots (systemd >=230
+# ignores StartLimit* under [Service]).
+StartLimitIntervalSec=1h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/stellarindex-ops
+Environment=OUT_DIR={{ ch_schema_snapshot_dir | default('/var/lib/stellarindex/ch-schema-snapshot') }}
+Environment=RETAIN_DAYS={{ ch_schema_snapshot_retain_days | default(90) }}
+{% if ch_schema_snapshot_mc_target | default('') != '' %}
+Environment=SNAPSHOT_MC_TARGET={{ ch_schema_snapshot_mc_target }}
+{% endif %}
+ExecStart=/usr/local/bin/ch-schema-snapshot.sh
+# Root: reads /var/lib/ch-backfill state, writes the node_exporter
+# textfile collector, and uses HOME=/root for the `mc` alias config —
+# same shape as the config-assertions / archive-completeness oneshots.
+User=root
+
+# A metadata dump must never compete with ingest.
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+# ~40 SHOW CREATEs plus four small system-table queries: seconds. Bound
+# it well above that so a wedged ClickHouse fails the run (and trips the
+# staleness alert) instead of pinning the timer forever.
+TimeoutStartSec=15min
+RuntimeMaxSec=15min
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths={{ ch_schema_snapshot_dir | default('/var/lib/stellarindex/ch-schema-snapshot') }} /var/lib/node_exporter/textfile_collector
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,177 @@
+---
+# ADR-0019 freeze-LIFECYCLE alerts — the extension ladder, the
+# operator escalation, and the "is anything frozen right now" gauge.
+#
+# Distinct from anomaly.yml, which alerts on the freeze DECISION
+# (`stellarindex_anomaly_freeze_engaged_total`, incremented on every
+# frozen tick). That counter answers "are freezes happening"; these
+# rules answer "how are they ENDING" — which is the question the
+# pre-lifecycle aggregator could not answer at all, because a freeze
+# was simply the set of buckets whose 3-signal AND fired and there
+# was no duration, no ladder and no escalation to observe.
+#
+# The lifecycle, per ADR-0019 §"Freeze duration":
+#
+#   fire → hold (30 min corroborated / 10 min uncorroborated)
+#        → re-evaluate at expiry → extend 30 min, up to 4 times
+#        → escalate to operator review; NO auto-unfreeze from there
+#   auto-unfreeze: confidence > 0.30 AND z < 3.0 for two consecutive
+#   buckets, once the initial hold has been served
+#
+# Producers: internal/aggregate/orchestrator (freeze lifecycle step),
+# metrics declared in internal/obs/metrics.go. Every series here is
+# zero-seeded at process start (F-0033), so `increase()` reads a real
+# zero rather than "no data" before the first event.
+#
+# Cardinality: all three metrics are unlabelled by pair. Per-pair
+# identity lives in the `freeze:<asset>:<quote>` Redis marker's
+# `state` object (fired_at / hold_until / extensions_used /
+# escalated) and in the aggregator's WARN+ERROR log lines. The
+# marker is the triage entry point for every rule below.
+
+groups:
+  - name: stellarindex.freeze_lifecycle
+    interval: 30s
+    rules:
+
+      # ─── P1: the ladder ran out ────────────────────────────────
+      #
+      # This is the ONLY alert in the repo that fires on a freeze
+      # which will not resolve itself. Everything else about the
+      # freeze path is self-clearing; an escalated freeze is held
+      # "until manual unfreeze" by ADR-0019, so the pair's /v1/price
+      # is pinned to a last-known-good value until a human acts.
+      - alert: stellarindex_anomaly_freeze_escalated
+        expr: |
+          increase(stellarindex_anomaly_freeze_escalated_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: page
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
+          summary: "Freeze escalated to operator review — will NOT auto-unfreeze (P1)"
+          description: |
+            A freeze exhausted ADR-0019's extension ladder: it held
+            through its initial hold plus 4 × 30-minute extensions
+            (≥ 2h) without the pair ever meeting the auto-unfreeze
+            condition (confidence > 0.30 AND z < 3.0 for two
+            consecutive buckets). The freeze is now held until an
+            operator acts — it will NOT clear on its own, and the
+            affected pair's /v1/price serves a last-known-good price
+            with flags.frozen=true until then.
+
+            Two hours of a pair failing to look healthy is either a
+            real sustained manipulation or a genuine repricing the
+            per-asset baseline has not absorbed. Both need a human.
+
+            Triage:
+              - `journalctl -u stellarindex-aggregator | grep "freeze escalated"`
+                — one ERROR line per escalation with the pair, its
+                fired_at, and the reason string carrying the
+                confidence / z / source_count that fired it.
+              - `redis-cli --scan --pattern 'freeze:*'` then
+                `redis-cli GET <key> | jq .state` — fired_at,
+                hold_until, extensions_used, escalated, and
+                unfreeze_streak for each frozen pair.
+              - `SELECT * FROM freeze_events WHERE recovered_at IS NULL`
+                — the durable mirror of the same set.
+
+            Resolution paths:
+              1. Confirmed manipulation → leave frozen; the freeze is
+                 doing its job. Ack the page.
+              2. Genuine repricing / false positive → force unfreeze
+                 by DELETing the pair's `freeze:<asset>:<quote>` key.
+                 The aggregator notices the missing marker on its next
+                 tick, drops the ladder, publishes the fresh bucket,
+                 and counts the release as
+                 stellarindex_anomaly_freeze_released_total{mode="operator"}.
+                 If the underlying condition still fires, the pair
+                 will re-freeze — that is intended; the durable fix is
+                 a threshold or baseline change, not repeated DELETEs.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
+
+      # ─── P3: freezes are climbing the ladder ───────────────────
+      #
+      # The early-warning signal that sits between "a freeze fired"
+      # (anomaly.yml, P3) and "a freeze escalated" (P1 above).
+      # Extensions are only granted at a hold expiry the pair did not
+      # earn its release at, so a burst of them means freezes are
+      # running long — either a real market event or a calibration
+      # firing on noise that then cannot clear itself.
+      - alert: stellarindex_anomaly_freeze_extension_rate
+        expr: |
+          increase(stellarindex_anomaly_freeze_extensions_total[1h]) >= 3
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
+          summary: "ADR-0019 freeze holds are being extended repeatedly (P3)"
+          description: |
+            Three or more freeze-hold extensions were granted in the
+            last hour. Each extension is a pair that reached a hold
+            expiry without meeting the auto-unfreeze condition, so
+            this is the leading indicator for the P1 escalation above
+            — four extensions on one pair and it pages.
+
+            Reading it:
+              - Extensions climbing with `stellarindex_anomaly_freeze_active`
+                flat at 1 → ONE pair is stuck; expect the P1 in ≤ 2h.
+              - Extensions climbing with the gauge also climbing →
+                broad false-firing. The usual cause is cold or sparse
+                per-asset baselines (see the "Cold baseline (Phase 2)"
+                section of the anomaly-freeze-sustained runbook), not
+                a market event.
+
+            The freeze itself is working correctly in both cases —
+            this alert exists so an operator sees the escalation
+            coming rather than being paged by it.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-sustained.md
+
+      # ─── Informational: something is frozen right now ──────────
+      #
+      # A gauge, deliberately. anomaly.yml's header explains why its
+      # own rules had to use rate() on a counter: "the orchestrator
+      # doesn't currently track per-(asset, quote) 'is this pair
+      # frozen RIGHT NOW' state". It does now, so the counter no
+      # longer has to stand in for a gauge — one pair frozen for an
+      # hour and sixty pairs frozen for one tick each read identically
+      # on the counter and completely differently here.
+      #
+      # Informational, not ticket: a freeze holding for its ADR
+      # duration is the system working. The escalation and extension
+      # rules above are what carry urgency; this one exists so the
+      # dashboard can show a truthful "N pairs frozen" and so an
+      # on-call can confirm a freeze cleared.
+      - alert: stellarindex_anomaly_freeze_active
+        expr: |
+          stellarindex_anomaly_freeze_active > 0
+        for: 5m
+        labels:
+          severity: informational
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+          summary: "{{ $value }} (pair, window) freeze(s) held for 5m+ (info)"
+          description: |
+            The aggregator is holding at least one ADR-0019 freeze and
+            has been for 5 minutes. The affected pairs serve their
+            last-known-good price with flags.frozen=true on /v1/price;
+            /v1/price/tip and /v1/observations are unaffected by
+            design (ADR-0018 per-surface policy).
+
+            Expected durations: 10 minutes minimum for a pair with no
+            corroborating lens (no triangulation chain, no trusted
+            cross-oracle reading), 30 minutes for one with either, plus
+            30 minutes per extension. A freeze that clears inside those
+            floors means someone force-unfroze it or the aggregator
+            restarted and lost Redis.
+
+            No action required. `redis-cli GET freeze:<asset>:<quote> | jq .state`
+            shows which pairs and where each one is on the ladder.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md

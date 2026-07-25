@@ -33,10 +33,11 @@ func chBackfill(args []string) error {
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	from := fs.Uint("from", 0, "first ledger sequence (inclusive, required)")
 	to := fs.Uint("to", 0, "last ledger sequence (inclusive, required)")
-	bucket := fs.String("bucket", "", "galexie bucket override. Default: the range vs ingestion.live_seam_ledger picks archive-or-live; with no seam configured it stays cfg.Storage.S3BucketLive, which does NOT hold historic ranges — pass the archive bucket for those (see backfillBucket)")
+	bucket := fs.String("bucket", "", "galexie bucket override. Default: the range vs ingestion.live_seam_ledger picks archive-or-live; with no seam configured it stays cfg.Storage.S3BucketLive, which does NOT hold historic ranges — pass the archive bucket for those (see opsutil.ResolveStreamBucket)")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	flushEvery := fs.Int("flush-every", 500, "flush to ClickHouse every N ledgers (per worker)")
 	parallel := fs.Int("parallel", 1, "number of concurrent range-walkers")
+	dryRun := fs.Bool("dry-run", false, "re-derive WITHOUT writing: fetch + decode every ledger in the range and report coverage/throughput, but open no ClickHouse Sink. The ADR-0043 §2.2 restore-drill mode — proves the recovery machinery and measures RTO without adding rows to the live lake")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -63,8 +64,12 @@ func chBackfill(args []string) error {
 	passphrase := cfg.Stellar.Passphrase()
 
 	chunks := opsutil.SplitRange(uint32(*from), uint32(*to), *parallel)
-	fmt.Fprintf(os.Stderr, "ch-backfill: streaming ledgers %d..%d from %q -> ClickHouse %s (%d worker(s))\n",
-		*from, *to, streamBucket, *chAddr, len(chunks))
+	sinkDesc := fmt.Sprintf("ClickHouse %s", *chAddr)
+	if *dryRun {
+		sinkDesc = "DRY RUN (decode only, nothing written)"
+	}
+	fmt.Fprintf(os.Stderr, "ch-backfill: streaming ledgers %d..%d from %q -> %s (%d worker(s))\n",
+		*from, *to, streamBucket, sinkDesc, len(chunks))
 
 	var (
 		mu      sync.Mutex
@@ -89,7 +94,7 @@ func chBackfill(args []string) error {
 	for i, chunk := range chunks {
 		i, chunk := i, chunk // capture
 		g.Go(func() error {
-			return chBackfillChunk(gctx, i, chunk, lsCfg, passphrase, *chAddr, *flushEvery, logProgress)
+			return chBackfillChunk(gctx, i, chunk, lsCfg, passphrase, *chAddr, *flushEvery, *dryRun, logProgress)
 		})
 	}
 	walkErr := g.Wait()
@@ -109,76 +114,23 @@ func chBackfill(args []string) error {
 	if cerr := backfillCoverage(uint32(*from), uint32(*to), total, streamBucket, ctx.Err() != nil); cerr != nil {
 		return fmt.Errorf("ch-backfill: %w", cerr)
 	}
+	if *dryRun {
+		fmt.Fprintf(os.Stderr, "ch-backfill: done — [%d,%d] re-derived from %q (DRY RUN, nothing written)\n", *from, *to, streamBucket)
+		return nil
+	}
 	fmt.Fprintf(os.Stderr, "ch-backfill: done — [%d,%d] complete from %q\n", *from, *to, streamBucket)
 	return nil
 }
 
 // backfillBucket resolves which galexie bucket a bounded ch-backfill walk
-// reads, given the operator's -bucket override and the requested range.
-//
-// ch-backfill used to default to cfg.Storage.S3BucketLive unconditionally,
-// which is silently wrong for exactly the ranges this command exists to
-// serve. The live bucket holds only what galexie has exported since this
-// node started (on r1 it is also the TRIMMED one — see
-// docs/operations/runbooks/consolidated-deploy-plan-2026-07-18.md §4), so a
-// historic range resolves to zero objects there. Because every ops walker
-// opts into TolerateTrailingMissing (opsutil.NewBoundedLedgerStreamConfig),
-// that walk ends WITHOUT an error, and scripts/ops/ch-full-backfill.sh
-// records the window as DONE on exit 0 — a permanent hole in the lake,
-// recorded as success. backfillCoverage closes the second half of that
-// trap; this closes the first.
-//
-// Resolution order:
-//  1. An explicit -bucket always wins: the operator knows their layout, and
-//     every runbook that matters already passes it.
-//  2. With a live seam configured (ingestion.live_seam_ledger), the RANGE
-//     decides — entirely below the seam reads the archive, entirely at or
-//     above it reads live. A range that STRADDLES the seam is an error, not
-//     a guess: one walk reads one bucket, so either choice silently drops
-//     the ledgers on the other side, which is the same vacuous-success
-//     failure in a subtler shape.
-//  3. With NO seam configured (r1 today), the live bucket — unchanged.
-//     Without a seam the live bucket's floor is not knowable from config,
-//     and guessing it is what produced this whole class of bug in the
-//     first place. Silently switching the default to the archive would
-//     also break scripts/ops/ch-live-catchup.sh, which heals live-era
-//     holes and extends the tip with no -bucket at all: the archive is an
-//     hourly MIRROR of live, so it lags the tip by up to an hour and that
-//     timer would fail on every run until the mirror caught up. So the
-//     default stays, and backfillCoverage is what makes a wrong bucket
-//     unmissable instead of silent — a historic range now fails naming
-//     galexie-live and telling the operator to pass the archive bucket.
-//     Setting ingestion.live_seam_ledger promotes this host to case 2 and
-//     makes the choice automatic, but it also changes the INDEXER's read
-//     path (StreamArchiveThenLive), so it is an operator decision, not a
-//     default this function should assume.
+// reads. The seam policy itself now lives in opsutil.ResolveStreamBucket:
+// census-backfill carried an INDEPENDENT copy of the same broken
+// live-bucket default (fixed 2026-07-25), and two copies of a subtle seam
+// rule is how this defect class survives a remediation. This thin wrapper
+// stays so the call site and the tests keep reading in ch-backfill's own
+// vocabulary.
 func backfillBucket(cfg config.Config, override string, from, to uint32) (string, error) {
-	if override != "" {
-		return override, nil
-	}
-	archive, live := cfg.Storage.S3BucketArchive, cfg.Storage.S3BucketLive
-	seam := cfg.Ingestion.LiveSeamLedger
-	switch {
-	case seam > 0 && to < seam:
-		if archive == "" {
-			return "", fmt.Errorf("ledgers %d..%d are below the live seam %d but storage.s3_bucket_archive is unset — pass -bucket", from, to, seam)
-		}
-		return archive, nil
-	case seam > 0 && from >= seam:
-		if live == "" {
-			return "", fmt.Errorf("ledgers %d..%d are at/above the live seam %d but storage.s3_bucket_live is unset — pass -bucket", from, to, seam)
-		}
-		return live, nil
-	case seam > 0:
-		return "", fmt.Errorf("ledgers %d..%d straddle the live seam %d — %q holds [%d,tip] and %q holds the history below it, and one walk reads exactly one bucket; split the range at %d or pass -bucket explicitly",
-			from, to, seam, live, seam, archive, seam)
-	case live != "":
-		return live, nil
-	case archive != "":
-		return archive, nil
-	default:
-		return "", fmt.Errorf("no galexie bucket configured — set storage.s3_bucket_archive / s3_bucket_live or pass -bucket")
-	}
+	return opsutil.ResolveStreamBucket(cfg, override, from, to)
 }
 
 // backfillCoverage turns a walk that did not cover its requested range into
@@ -223,6 +175,14 @@ func backfillCoverage(from, to uint32, streamed int64, bucket string, interrupte
 // chBackfillChunk walks one chunk's range with its own Sink. A ClickHouse
 // write failure is fatal (returns the error so errgroup cancels siblings);
 // re-running the range is safe under ReplacingMergeTree.
+//
+// dryRun opens NO Sink and writes nothing: the walk still fetches every
+// galexie object and runs the full clickhouse.ExtractLedger decode, so
+// coverage and throughput are measured against the real recovery path, but
+// the live lake is untouched. This is what the ADR-0043 §2.2 restore drill
+// runs — see the drill's own note on why it cannot use a scratch database
+// (clickhouse.Open pins the `stellar` database) and why re-deriving into
+// the LIVE lake is the wrong default on a capacity-constrained host.
 func chBackfillChunk(
 	ctx context.Context,
 	idx int,
@@ -230,13 +190,18 @@ func chBackfillChunk(
 	lsCfg ledgerstream.Config,
 	passphrase, chAddr string,
 	flushEvery int,
+	dryRun bool,
 	logProgress func(workerIdx int, seq uint32),
 ) error {
-	sink, err := clickhouse.Open(ctx, chAddr, flushEvery)
-	if err != nil {
-		return err
+	var sink *clickhouse.Sink
+	if !dryRun {
+		opened, err := clickhouse.Open(ctx, chAddr, flushEvery)
+		if err != nil {
+			return err
+		}
+		sink = opened
+		defer func() { _ = sink.Close(ctx) }()
 	}
-	defer func() { _ = sink.Close(ctx) }()
 
 	walkErr := ledgerstream.Stream(ctx, lsCfg, chunk.From, chunk.To,
 		func(lcm sdkxdr.LedgerCloseMeta) error {
@@ -245,8 +210,10 @@ func chBackfillChunk(
 				fmt.Fprintf(os.Stderr, "ch-backfill: worker %d extract ledger %d: %v\n", idx, lcm.LedgerSequence(), eerr)
 				return nil
 			}
-			if aerr := sink.Add(ctx, ext); aerr != nil {
-				return aerr // a ClickHouse write failure is fatal; retry the range
+			if sink != nil {
+				if aerr := sink.Add(ctx, ext); aerr != nil {
+					return aerr // a ClickHouse write failure is fatal; retry the range
+				}
 			}
 			logProgress(idx, lcm.LedgerSequence())
 			return nil
@@ -254,6 +221,9 @@ func chBackfillChunk(
 	)
 	if walkErr != nil {
 		return walkErr
+	}
+	if sink == nil {
+		return nil
 	}
 	// Clean completion: flush the chunk's tail before Close so the final
 	// partial batch lands.

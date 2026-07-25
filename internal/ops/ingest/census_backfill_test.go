@@ -1,6 +1,162 @@
 package ingest
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/config"
+)
+
+// testCensusConfig is the r1-shaped storage block: both buckets named, seam
+// unset (r1's live value — see configs/ansible/inventory/r1.yml).
+func testCensusConfig(seam uint32) config.Config {
+	var cfg config.Config
+	cfg.Storage.S3BucketArchive = "galexie-archive"
+	cfg.Storage.S3BucketLive = "galexie-live"
+	cfg.Ingestion.LiveSeamLedger = seam
+	return cfg
+}
+
+// TestCensusBucket_SeamAware — census-backfill carried the SAME unconditional
+// `streamBucket := cfg.Storage.S3BucketLive` default that ch-backfill was
+// fixed for at 5179250a. With a seam configured, the requested range must
+// decide the bucket, and a straddling range must be a hard error rather than
+// a coin flip (one walk reads exactly one bucket).
+func TestCensusBucket_SeamAware(t *testing.T) {
+	const seam = uint32(60_000_000)
+	cfg := testCensusConfig(seam)
+
+	// The historic range census-backfill exists to serve: pre-live ledgers
+	// that only the archive bucket holds.
+	got, err := censusBucket(cfg, "", 2, 1_000_000)
+	if err != nil {
+		t.Fatalf("below the seam errored: %v", err)
+	}
+	if got != "galexie-archive" {
+		t.Fatalf("census-backfill resolved a historic range to %q, want %q — the live "+
+			"bucket cannot hold pre-live ledgers, so the walk streams nothing", got, "galexie-archive")
+	}
+	if got, err := censusBucket(cfg, "", seam, seam+1000); err != nil || got != "galexie-live" {
+		t.Errorf("at/above the seam = (%q, %v), want (galexie-live, nil)", got, err)
+	}
+	straddle, err := censusBucket(cfg, "", seam-1, seam+1)
+	if err == nil {
+		t.Fatalf("a range straddling the seam resolved to %q instead of erroring — "+
+			"one of the two sides would be silently skipped", straddle)
+	}
+	if !strings.Contains(err.Error(), "straddle") || !strings.Contains(err.Error(), "60000000") {
+		t.Errorf("straddle error must name the seam, got: %v", err)
+	}
+}
+
+// TestCensusBucket_NoSeamKeepsTheLiveDefault pins the DELIBERATE limit of the
+// shared resolver on r1 (no seam configured): the default stays live, and it
+// is censusCoverage — not a guessed default — that makes a wrong bucket
+// unmissable. Mirrors chops.TestBackfillBucket_NoSeamKeepsTheLiveDefault.
+func TestCensusBucket_NoSeamKeepsTheLiveDefault(t *testing.T) {
+	cfg := testCensusConfig(0)
+
+	got, err := censusBucket(cfg, "", 2, 1_000_000)
+	if err != nil {
+		t.Fatalf("no-seam resolution errored: %v", err)
+	}
+	if got != cfg.Storage.S3BucketLive {
+		t.Fatalf("resolved = %q, want %q — changing the no-seam default is what "+
+			"breaks ch-live-catchup.sh", got, cfg.Storage.S3BucketLive)
+	}
+	// ...and the historic range that lands there must not be able to pass.
+	if censusCoverage(2, 1_000_000, 0, 0, got, false) == nil {
+		t.Fatal("a historic range resolved to the live bucket persisted zero ledgers and still " +
+			"reported success — the wrong-bucket defect is not closed")
+	}
+}
+
+// TestCensusBucket_ExplicitOverrideAlwaysWins — docs/operations/
+// adr-0033-data-recovery.md drives census-backfill with an explicit -bucket;
+// resolution must never second-guess it.
+func TestCensusBucket_ExplicitOverrideAlwaysWins(t *testing.T) {
+	cfg := testCensusConfig(60_000_000)
+	for _, tc := range []struct{ from, to uint32 }{
+		{2, 1_000_000},           // below the seam
+		{61_000_000, 62_000_000}, // above it
+		{59_000_000, 61_000_000}, // straddling it
+	} {
+		got, err := censusBucket(cfg, "some-other-bucket", tc.from, tc.to)
+		if err != nil {
+			t.Fatalf("[%d,%d]: override errored: %v", tc.from, tc.to, err)
+		}
+		if got != "some-other-bucket" {
+			t.Errorf("[%d,%d]: override = %q, want %q", tc.from, tc.to, got, "some-other-bucket")
+		}
+	}
+}
+
+// TestCensusCoverage_ZeroPersistedIsAHardError — the live-observed shape:
+// census-backfill against a historic range read galexie-live, streamed
+// nothing, printed "done — 0 ledgers processed" and exited 0. ledger_ingest_log
+// is the substrate the ADR-0033 projection reconcile measures completeness
+// against, so a range recorded as backfilled but never written becomes a
+// completeness lie later.
+func TestCensusCoverage_ZeroPersistedIsAHardError(t *testing.T) {
+	err := censusCoverage(2, 1_000_000, 0, 0, "galexie-live", false)
+	if err == nil {
+		t.Fatal("censusCoverage(persisted=0) returned nil — census-backfill would exit 0 having " +
+			"written no substrate rows for [2,1000000]")
+	}
+	for _, want := range []string{"ZERO", "1000000", "galexie-live"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error must name %q so the operator sees which bucket was read; got: %v", want, err)
+		}
+	}
+}
+
+// TestCensusCoverage_PartialRunIsAHardError — a run whose ledgers were
+// partly absent / skipped / failed to upsert left a substrate hole and still
+// exited 0. The C2-14 watermark froze the resume cursor correctly, but
+// nothing told the caller.
+func TestCensusCoverage_PartialRunIsAHardError(t *testing.T) {
+	err := censusCoverage(1_000_000, 1_000_999, 900, 40, "galexie-archive", false)
+	if err == nil {
+		t.Fatal("censusCoverage(persisted=900, want=1000) returned nil — a 100-ledger " +
+			"substrate hole would be reported as a completed range")
+	}
+	if !strings.Contains(err.Error(), "900 of 1000") || !strings.Contains(err.Error(), "100 ledgers are missing") {
+		t.Errorf("error must state the shortfall exactly, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "40 skipped") {
+		t.Errorf("error must carry the skip count so the operator can tell absent objects "+
+			"from G15-06 tx-read-error skips, got: %v", err)
+	}
+}
+
+// TestCensusCoverage_InterruptedRunIsNotADoneRange — a SIGINT'd walk unwinds
+// through `errors.Is(walkErr, context.Canceled)` and used to return nil.
+func TestCensusCoverage_InterruptedRunIsNotADoneRange(t *testing.T) {
+	err := censusCoverage(1_000_000, 1_000_999, 1000, 0, "galexie-archive", true)
+	if err == nil {
+		t.Fatal("an interrupted run reported success — Ctrl-C would look like a completed range")
+	}
+	if !strings.Contains(err.Error(), "INTERRUPTED") {
+		t.Errorf("error must say it was interrupted, got: %v", err)
+	}
+}
+
+// TestCensusCoverage_CompleteRunPasses — the fix must not turn a genuinely
+// complete run (including a RESUMED one, which starts above -from) into a
+// failure.
+func TestCensusCoverage_CompleteRunPasses(t *testing.T) {
+	if err := censusCoverage(1_000_000, 1_000_999, 1000, 0, "galexie-archive", false); err != nil {
+		t.Fatalf("a complete run must pass, got: %v", err)
+	}
+	if err := censusCoverage(5, 5, 1, 0, "galexie-archive", false); err != nil {
+		t.Fatalf("a single-ledger run must pass, got: %v", err)
+	}
+	// Resumed run: coverage is charged from the ledger the run actually
+	// started at, not the original -from.
+	if err := censusCoverage(1_000_500, 1_000_999, 500, 0, "galexie-archive", false); err != nil {
+		t.Fatalf("a complete RESUMED run must pass, got: %v", err)
+	}
+}
 
 // TestContiguousWatermark_FreezesOnGap is the C2-14 proof for the
 // census-backfill resume checkpoint: a mid-range skipped/failed ledger must

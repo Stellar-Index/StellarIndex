@@ -13,7 +13,7 @@
 # (ZFS pool ~94% full) when this landed; the drill needs
 # MIN_FREE_GB=200 free on the drill volume and the script itself
 # refuses to run below that (safe-by-construction), but starting a
-# NEW weekly heavy job while capacity is this tight is an operator
+# NEW heavy recurring job while capacity is this tight is an operator
 # call, not a default. Enable once Phase A clears:
 #   systemctl enable --now restore-drill.timer
 

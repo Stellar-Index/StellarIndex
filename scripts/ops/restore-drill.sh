@@ -16,7 +16,12 @@
 #   DRILL_REPO=2 bash scripts/ops/restore-drill.sh    # prove the OFFSITE copy
 #   DRILL_CH_WINDOW=100000 bash scripts/ops/restore-drill.sh  # + CH re-derive sample
 #
-# Exit code: number of failed verification checks.
+# Exit code: number of failed verification checks; 2 for a precondition
+# refusal (wrong user, missing tool, too little free space, or a
+# drill-script/binary flag drift — see the CH preflight below). A
+# precondition refusal is deliberately NOT counted as a verification
+# failure: "the drill could not honestly run" and "the drill ran and
+# found a problem" are different facts and must not share a signal.
 set -euo pipefail
 
 STANZA="${DRILL_STANZA:-stellarindex}"
@@ -28,6 +33,14 @@ PG_VERSION="${PG_VERSION:-15}"
 PG_BIN="/usr/lib/postgresql/${PG_VERSION}/bin"
 LIVE_DSN="${STELLARINDEX_POSTGRES_DSN:-}"
 DRILL_LOG_NOTE="${DRILL_LOG_NOTE:-}"
+OPS_BIN="${OPS_BIN:-/usr/local/bin/stellarindex-ops}"
+OPS_CONFIG="${OPS_CONFIG:-/etc/stellarindex.toml}"
+CH_HTTP="${CH_HTTP:-http://127.0.0.1:8123/}"
+# Bucket the CH re-derive reads. The window is ~1M ledgers below the
+# tip, i.e. history — which on r1 lives in galexie-archive, NOT the
+# trimmed galexie-live default (the 5179250a wrong-bucket class). Passed
+# explicitly so the drill never depends on a seam this host has not set.
+DRILL_CH_BUCKET="${DRILL_CH_BUCKET:-galexie-archive}"
 # WAL replay from the last backup to now legitimately takes tens of
 # minutes (third drill failure mode: a daily-diff schedule means up
 # to ~24h of a busy ingest DB's WAL replays through archive-get).
@@ -49,6 +62,41 @@ check() { # check <name> <ok:0|1> <detail>
 [[ "$(id -u)" == "0" ]] || { note "run as root (drops to postgres for pg ops)"; exit 2; }
 command -v pgbackrest >/dev/null || { note "pgbackrest not installed"; exit 2; }
 [[ -x "$PG_BIN/postgres" ]] || { note "postgres $PG_VERSION binaries not at $PG_BIN"; exit 2; }
+
+# CH-stage preconditions, checked HERE rather than four hours into the
+# run (2026-07-25): this stage passed `-database drill_scratch` — a flag
+# ch-backfill has never had — so flag.ContinueOnError rejected the
+# invocation at PARSE time. The failure was recorded as
+# `check "ch_rederive" 0 "ch-backfill sample failed"` and its output was
+# swallowed by `| tail -5`, so a drill-script BUG was indistinguishable
+# from a genuine re-derive failure. The optional stage has therefore
+# never once run since it shipped.
+#
+# A drill whose own invocation is broken must fail LOUDLY, immediately,
+# and DIFFERENTLY from a drill that ran and found a problem: this is a
+# precondition (exit 2, same class as "pgbackrest not installed"), not a
+# verification failure that gets counted, logged as evidence and averaged
+# into an RTO number.
+if [[ -n "${DRILL_CH_WINDOW:-}" ]]; then
+  [[ -x "$OPS_BIN" ]] || { note "DRILL_CH_WINDOW set but $OPS_BIN is not executable"; exit 2; }
+  [[ -r "$OPS_CONFIG" ]] || { note "DRILL_CH_WINDOW set but $OPS_CONFIG is not readable"; exit 2; }
+  ch_usage="$("$OPS_BIN" ch-backfill -help 2>&1 || true)"
+  missing_flags=()
+  for f in config from to bucket dry-run; do
+    grep -qE "^[[:space:]]*-${f}([[:space:]]|$)" <<<"$ch_usage" || missing_flags+=("-$f")
+  done
+  if (( ${#missing_flags[@]} > 0 )); then
+    note "─────────────────────────────────────────────────────────────"
+    note "DRILL SCRIPT BUG — NOT a backup or re-derive failure."
+    note "ch-backfill does not accept: ${missing_flags[*]}"
+    note "This drill script and $OPS_BIN have drifted apart; the CH"
+    note "re-derive stage would fail at flag-parse time and be recorded"
+    note "as a re-derive failure. Refusing to run it. ch-backfill -help:"
+    note "─────────────────────────────────────────────────────────────"
+    printf '%s\n' "$ch_usage" >&2
+    exit 2
+  fi
+fi
 
 mkdir -p "$DRILL_ROOT"
 free_gb=$(df -BG --output=avail "$DRILL_ROOT" | tail -1 | tr -dc '0-9')
@@ -185,20 +233,49 @@ live_rows=$(qlive "SELECT count(*) FROM trades WHERE ledger BETWEEN $window_lo A
 check "trades_window_match" "$([[ "$restored_rows" == "$live_rows" ]] && echo 1 || echo 0)" "trades[$window_lo,$window_hi]: restored=$restored_rows live=$live_rows"
 
 # ─── phase 4 (optional): ClickHouse re-derive sample ────────────────
-# Proves the ADR-0043 "lake is re-derivable" claim + measures RTO.
+# Proves the ADR-0043 §2.2 "lake is re-derivable" claim + measures RTO.
+#
+# WHY DRY-RUN rather than the ADR's "scratch database": clickhouse.Open
+# pins the `stellar` database (internal/storage/clickhouse/sink.go), so
+# ch-backfill has no scratch-database mode to offer — the `-database`
+# flag this stage used to pass never existed. The only writing
+# alternative is re-deriving into the LIVE lake, and that is the wrong
+# default here: r1's pool is capacity-constrained and the lake already
+# carries ~3 TiB of duplicate rows (61c16ccd), so a recurring drill that
+# re-inserts 100k ledgers of ReplacingMergeTree duplicates would be
+# paying for its own evidence in the scarcest resource on the box.
+#
+# `-dry-run` fetches every galexie object and runs the full
+# clickhouse.ExtractLedger decode — the entire recovery path and
+# essentially all of its wall-clock — and writes nothing. Honest limit,
+# recorded in the drill log: this measures FETCH+DECODE throughput, not
+# the ClickHouse INSERT (which the live sink exercises continuously and
+# which is not the multi-week bottleneck). The count reconcile below is
+# what checks the lake actually holds the window we just proved
+# derivable.
 if [[ -n "${DRILL_CH_WINDOW:-}" ]]; then
-  note "CH re-derive drill: window=$DRILL_CH_WINDOW ledgers (see ADR-0043 §2.2)"
+  note "CH re-derive drill: window=$DRILL_CH_WINDOW ledgers, dry-run (see ADR-0043 §2.2)"
   ch_started=$(date +%s)
   lo=$(( restored_tip - 1000000 )); hi=$(( lo + DRILL_CH_WINDOW - 1 ))
-  if /usr/local/bin/stellarindex-ops ch-backfill -config /etc/stellarindex.toml \
-       -from "$lo" -to "$hi" -database "drill_scratch" 2>&1 | tail -5; then
+  ch_rc=0
+  ch_out="$("$OPS_BIN" ch-backfill -config "$OPS_CONFIG" \
+    -from "$lo" -to "$hi" -bucket "$DRILL_CH_BUCKET" -dry-run 2>&1)" || ch_rc=$?
+  if [[ "$ch_rc" -eq 0 ]]; then
     ch_secs=$(( $(date +%s) - ch_started ))
     per_ledger=$(echo "scale=4; $ch_secs / $DRILL_CH_WINDOW" | bc)
     full_days=$(echo "scale=1; $per_ledger * $live_tip / 86400" | bc)
-    check "ch_rederive" 1 "window in ${ch_secs}s (${per_ledger}s/ledger → full rebuild ≈ ${full_days} days single-threaded — parallelism divides this)"
-    curl -s 'http://127.0.0.1:8123/' --data-binary "DROP DATABASE IF EXISTS drill_scratch" >/dev/null || true
+    check "ch_rederive" 1 "window in ${ch_secs}s (${per_ledger}s/ledger → full rebuild ≈ ${full_days} days single-threaded, fetch+decode only — parallelism divides this)"
+    # Reconcile against the live lake (ADR-0043 §2.2): the window we
+    # just proved re-derivable must already be complete in ClickHouse.
+    ch_rows=$(curl -sf "$CH_HTTP" --data-binary \
+      "SELECT count() FROM stellar.ledgers WHERE ledger_seq BETWEEN $lo AND $hi" | tr -dc '0-9')
+    check "ch_lake_window_complete" "$([[ "$ch_rows" == "$DRILL_CH_WINDOW" ]] && echo 1 || echo 0)" \
+      "stellar.ledgers[$lo,$hi]: lake=${ch_rows:-?} expected=$DRILL_CH_WINDOW"
   else
-    check "ch_rederive" 0 "ch-backfill sample failed"
+    # Full output, never `| tail -5`: the reason this stage sat broken
+    # for weeks is that its diagnosis was truncated away.
+    check "ch_rederive" 0 "ch-backfill -dry-run exited $ch_rc — full output below"
+    printf '%s\n' "$ch_out" >&2
   fi
 fi
 
@@ -208,7 +285,7 @@ if [[ -d "$LOG_DIR" ]]; then
   {
     echo "## $(date -u +%F) restore drill (repo${DRILL_REPO})"
     echo "- restore: ${restore_secs}s; tip lag ${lag} ledgers; hash-chain breaks: ${breaks}; trades window match: ${restored_rows}=${live_rows}"
-    [[ -n "${ch_secs:-}" ]] && echo "- CH re-derive: ${DRILL_CH_WINDOW} ledgers in ${ch_secs}s"
+    [[ -n "${ch_secs:-}" ]] && echo "- CH re-derive (dry-run, fetch+decode only): ${DRILL_CH_WINDOW} ledgers in ${ch_secs}s from ${DRILL_CH_BUCKET}; lake rows in window: ${ch_rows:-n/a}"
     [[ -n "$DRILL_LOG_NOTE" ]] && echo "- note: $DRILL_LOG_NOTE"
     echo "- failures: $fail_count"
     echo

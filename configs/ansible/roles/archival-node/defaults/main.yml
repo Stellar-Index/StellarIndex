@@ -228,6 +228,32 @@ postgres_db_stellarindex:    "stellarindex"
 postgres_user_stellarindex:  "stellarindex"
 # postgres_pass_stellarindex ← set in ansible-vault secrets file
 
+# ───── ClickHouse schema + state snapshot (ADR-0043 §2.1) ─────────────
+# The lake's only backup, by design: ADR-0043 rejects a multi-TiB copy
+# of derived data (the raw ledgers already live in two independent
+# archives) and protects the METADATA instead — SHOW CREATE for every
+# stellar.* table/view, the partition + changed-settings inventory, and
+# the ch-backfill / ingestion cursor state. Megabytes a day. Losing the
+# DDL is what turns a re-derive from "run the script" into archaeology.
+#
+# Enabled by default: it is seconds of metadata queries, so none of the
+# Phase-A capacity caveats that ship restore-drill.timer disabled apply
+# here, and a backup that ships disabled is what the ADR was written
+# after.
+ch_schema_snapshot_enabled: true
+ch_schema_snapshot_dir: "/var/lib/stellarindex/ch-schema-snapshot"
+# Long tail on purpose — the snapshot's value is partly its DIFF
+# history ("when did that ORDER BY change?"), which a 7-day window
+# throws away for no saving.
+ch_schema_snapshot_retain_days: 90
+# `mc` alias/prefix for the offsite copy, e.g.
+# "offsite/stellarindex-backups/ch-schema". Empty = local-only, which
+# 18-pgbackrest-backup.yml refuses without ch_schema_snapshot_offsite_ack
+# (same shape as pgbackrest_offsite_ack): a copy on the pool it protects
+# is not a backup.
+ch_schema_snapshot_mc_target: ""
+ch_schema_snapshot_offsite_ack: false
+
 # ───── ClickHouse serving-query isolation (ADR-0048 D4) ───────────────
 # A dedicated ClickHouse settings profile + user for the API's
 # per-request explorer reads (GET /v1/ledgers, /v1/tx, /v1/accounts/*

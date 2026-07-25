@@ -12,6 +12,7 @@ adapted for the single-host scrape config in [`prometheus.r1.yml`](../prometheus
 | `meta.yml` | `meta.yml` | scrape regex narrowed to R1 jobs |
 | `slo.yml` | `slo.yml` | `job="api"` → `job="stellarindex-api"` |
 | `anomaly.yml` | `anomaly.yml` | as-is (no job-label refs) |
+| `freeze-lifecycle.yml` | `freeze-lifecycle.yml` | as-is (no job-label refs) |
 | `divergence.yml` | `divergence.yml` | as-is |
 | `external-pollers.yml` | `external-pollers.yml` | as-is |
 | `supply.yml` | `supply.yml` | as-is |
