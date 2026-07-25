@@ -301,6 +301,21 @@ func parsePriceAssetParam(w http.ResponseWriter, r *http.Request) (string, bool)
 
 // handlePrice serves GET /v1/price?asset=<id>&quote=<id>.
 // `quote` defaults to "fiat:USD" if omitted (ADR-0010).
+//
+// Window semantics: the last CLOSED 1-minute VWAP bucket, never an
+// in-progress one (ADR-0015) — that is what makes the answer
+// byte-identical across regions that have ingested the same ledgers,
+// and it costs a worst-case ~30–120 s of staleness by construction.
+// `?window=N` serves the aggregator's rolling VWAP for that window
+// instead (still closed-bucket-flavoured, see [Server.handlePriceWindowed]);
+// sub-minute freshness is /v1/price/tip's job, per the URL discipline in
+// ADR-0018. `flags.stale` here means specifically "the closed bucket
+// wasn't available and this degraded to a last-trade fallback".
+//
+// This surface will read slightly differently from /v1/price/tip and
+// from the price_usd inlined on /v1/assets rows — different windows,
+// deliberately. See the "Current-price surfaces and their windows"
+// section in the package doc before filing a discrepancy.
 func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	reader := s.prices
 	if reader == nil {

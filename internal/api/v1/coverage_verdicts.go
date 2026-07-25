@@ -1,8 +1,11 @@
 package v1
 
 import (
+	"context"
 	"net/http"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // CoverageVerdictView is the wire shape of one source's row on
@@ -88,10 +91,38 @@ type CoverageVerdictsView struct {
 	LakeCompleteSources int `json:"lake_complete_sources"`
 }
 
+// coverageVerdictStaleLedgers bounds how far the LIVE ingest frontier
+// may run past a verdict's tip_ledger before the verdict stops being a
+// claim about the CURRENT chain.
+//
+// The completeness audit runs hourly
+// (deploy/systemd/stellarindex-completeness.timer: OnUnitActiveSec=1h
+// plus up to 5 min of jitter plus a multi-minute run), and pubnet
+// closes a ledger every ~5 s → ~720 ledgers/hour. 2160 ≈ 3 h of
+// ledgers: three audit periods, so one skipped or slow run can't flap
+// the flag, while an audit that has STOPPED surfaces within a few
+// hours instead of never.
+const coverageVerdictStaleLedgers uint32 = 2160
+
+// coverageVerdictStaleAge is the wall-clock twin of
+// [coverageVerdictStaleLedgers] — the same three-audit-period horizon
+// expressed in time, so the gate still has an opinion on a deployment
+// with no CursorsReader wired (or before the ledgerstream cursor
+// exists) and on the pathological case where the live tip itself is
+// frozen alongside a stalled audit.
+const coverageVerdictStaleAge = 3 * time.Hour
+
 // handleCoverageVerdicts serves GET /v1/coverage — every source's
 // latest ADR-0033 completeness verdict. Verdicts change only when the
 // audit runs (manually or on its timer), so a 60s public cache is
 // generous to edges without hiding anything meaningful.
+//
+// `flags.stale` carries the live-tip gate (MNY-04): true when the
+// published verdicts no longer describe the current chain. See
+// [Server.coverageVerdictsStale] — without it this surface served
+// "15/15 complete" forever after the audit died, since every field on
+// the row (including tip_ledger and coverage_pct) is frozen at the
+// verdict's own compute time and reads perfectly healthy in isolation.
 func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) {
 	if s.completenessReader == nil {
 		writeProblem(w, r,
@@ -139,5 +170,78 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 	view.TotalSources = len(view.Sources)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
-	writeJSON(w, view, Flags{})
+	writeJSON(w, view, Flags{Stale: s.coverageVerdictsStale(r.Context(), snaps)})
+}
+
+// coverageVerdictsStale is the live-tip gate on the completeness
+// verdicts (MNY-04 / audit A-H-4). It answers the only question a
+// consumer of a trust surface actually has — "is this `complete: true`
+// a statement about the chain as it is NOW?" — which the rows
+// themselves cannot answer: `tip_ledger`, `coverage_pct` and every
+// claim boolean are stamped at the audit's compute time, so a verdict
+// from a dead audit still reads `coverage_pct: 1` ("verified to tip")
+// against a tip that is hours behind the network.
+//
+// Two independent signals, OR'd (fail-closed — either alone is enough
+// to say the response is below the surface's baseline contract, which
+// is what `flags.stale` means per ADR-0018):
+//
+//   - LEDGER GAP: the live ingest frontier has advanced more than
+//     [coverageVerdictStaleLedgers] past the verdict's own tip. This is
+//     an apples-to-apples comparison: compute-completeness resolves its
+//     `tip` from the SAME ledgerstream cursor
+//     (internal/ops/chops/compute_completeness.go), so the difference
+//     is exactly "how many ledgers have closed since this verdict was
+//     computed".
+//   - VERDICT AGE: computed_at older than [coverageVerdictStaleAge], or
+//     absent entirely (an unknown-age verdict cannot be claimed fresh).
+//
+// A verdict list that is EMPTY is not flagged: there is no claim to
+// qualify, and the summary counts (0/0) already say so.
+//
+// The gate degrades rather than fails: no CursorsReader, no
+// ledgerstream cursor yet, or a slow/failing cursor read leaves the
+// ledger-gap signal unavailable and the age signal alone decides.
+func (s *Server) coverageVerdictsStale(ctx context.Context, snaps []timescale.CompletenessSnapshot) bool {
+	if len(snaps) == 0 {
+		return false
+	}
+	liveTip, haveTip := s.liveTipLedger(ctx)
+	now := time.Now()
+	for _, sn := range snaps {
+		if haveTip && liveTip > sn.Tip && liveTip-sn.Tip > coverageVerdictStaleLedgers {
+			return true
+		}
+		if sn.ComputedAt.IsZero() || now.Sub(sn.ComputedAt) > coverageVerdictStaleAge {
+			return true
+		}
+	}
+	return false
+}
+
+// liveTipLedger returns the live ingest frontier — the ledgerstream
+// cursor's last ledger, the same value /v1/ledger/tip serves and the
+// same one compute-completeness resolves its tip from. ok=false when no
+// CursorsReader is wired, the cursor row doesn't exist yet, or the read
+// failed; callers must degrade rather than fail, since this is a
+// freshness annotation on someone else's response.
+//
+// The read is bounded at 5s — matching /v1/diagnostics/cursors' own
+// ListCursors ceiling — so a slow Postgres can't hold a public GET open
+// past the point where the annotation is worth waiting for.
+func (s *Server) liveTipLedger(ctx context.Context) (uint32, bool) {
+	if s.cursors == nil {
+		return 0, false
+	}
+	tipCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	view, ok, err := s.ledgerTip(tipCtx)
+	if err != nil {
+		s.logger.Debug("live tip read failed — freshness gate falls back to verdict age", "err", err)
+		return 0, false
+	}
+	if !ok {
+		return 0, false
+	}
+	return view.LatestLedger, true
 }

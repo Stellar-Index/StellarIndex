@@ -1213,9 +1213,10 @@ func (s *Server) Handler() http.Handler {
 	// Usage tracker runs OUTSIDE rate-limit so it observes 429
 	// rejections and records them under the per-endpoint `throttled`
 	// class. The LEGACY per-day total (the MonthlyQuota input) still
-	// excludes 429s — the middleware skips it by response status —
-	// so denied requests never eat billing quota. Best-effort;
-	// failures log at debug and never block.
+	// excludes BOTH 429s and 5xx — the middleware skips it by response
+	// status, see middleware.billableClass (COR-05) — so neither a
+	// throttled request nor an outage on our side eats billing quota.
+	// Best-effort; failures log at debug and never block.
 	if s.usageTracker != nil {
 		stack = append(stack, s.usageTracker)
 	}

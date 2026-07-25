@@ -43,6 +43,16 @@ type GlobalAssetView struct {
 	// CEX nor reference-aggregator coverage exists — consumers
 	// should drill into the canonical /v1/assets/{asset_id} surface
 	// to reach the Stellar-issued price).
+	//
+	// Window semantics: this is a GLOBAL (CEX/aggregator) price, not
+	// the on-chain closed-bucket VWAP /v1/price serves, so the two are
+	// expected to differ — venue mix, not window, is the dominant term
+	// here. PriceAsOf carries the tier's own observation time and is
+	// the field to read for freshness; for the fiat class it is an
+	// fx_quotes point from the DAILY ECB reference series, so a fiat
+	// price_usd can legitimately be up to ~24 h old. The package doc's
+	// "Current-price surfaces and their windows" section maps every
+	// price surface.
 	PriceUSD       *string                  `json:"price_usd,omitempty"`
 	PriceAuthority aggregate.PriceAuthority `json:"price_authority,omitempty"`
 	PriceSources   []string                 `json:"price_sources,omitempty"`

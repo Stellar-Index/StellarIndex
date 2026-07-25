@@ -205,6 +205,25 @@ type AssetDetail struct {
 	//      / SEP-41 not in the assetsReader catalogue / any asset whose
 	//      market_cap path already paid for the price lookup).
 	//
+	// Window semantics differ per producer, which is why this field can
+	// disagree with /v1/price by ~0.1–0.2 % on a moving pair:
+	//
+	//   - Path 1 is the most recent prices_1m bucket in a trailing 24 h
+	//     window, quoted through the on-chain USDC / fiat:USD proxy pair
+	//     and chained via XLM when the asset has no direct USD market —
+	//     then served through CachedAssetsReader (2 min TTL in the API
+	//     binary). So it can trail /v1/price by the cache TTL plus the
+	//     quote-policy difference, and on a quiet pair it can be up to
+	//     24 h old rather than absent.
+	//   - Path 2 is the SAME closed-bucket PriceReader read /v1/price
+	//     performs (alias-aware, stablecoin-proxy aware) — see
+	//     [Server.lookupUSDPrice].
+	//
+	// The package doc's "Current-price surfaces and their windows"
+	// section is the authoritative map across all four price surfaces;
+	// consumers that need cross-region determinism must read /v1/price,
+	// not this field.
+	//
 	// Null only when no USD price can be derived at all (no
 	// on-chain trades, prices_1m has no row, and stablecoin-fiat
 	// proxy is disabled).
