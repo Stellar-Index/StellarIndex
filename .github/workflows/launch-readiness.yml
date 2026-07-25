@@ -1,0 +1,50 @@
+name: launch-readiness
+
+# Scheduled staleness/regression gate for the launch-readiness backlog
+# doc (AGT-06, audit-2026-07-23).
+#
+# docs/architecture/launch-readiness-backlog.md's own staleness banner
+# says `make verify-launch-ready-single-region` (scripts/ci/
+# verify-launch-ready) "should" turn a stale or regressed doc into a
+# visible CI failure — but by the banner's own admission it was never
+# wired into any GitHub Actions workflow, so that claim was decorative:
+# nothing could actually fail a build on it. This wires it in.
+#
+# Weekly rather than per-PR: the backlog doc changes far less often
+# than code, and ci.yml's doc-checks job already gates high-churn docs
+# on every PR — this is a slower-cadence staleness/regression check for
+# a document that is explicitly a "living document" reviewed on a
+# roughly-weekly basis, not something that needs to block every PR.
+# The push trigger below additionally catches drift the moment either
+# the doc or the checker itself changes, without waiting for Wednesday.
+
+on:
+  schedule:
+    - cron: '30 8 * * 3'   # Wednesdays 08:30 UTC
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - 'docs/architecture/launch-readiness-backlog.md'
+      - 'scripts/ci/verify-launch-ready/**'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify-launch-ready (single-region)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Single-region subset: matches the project's current
+      # "live-in-development on R1" posture (skips R2/R3 + chaos +
+      # external-security rows not yet in scope). Run
+      # `make verify-launch-ready` locally for the full multi-region
+      # gate ahead of an actual cutover decision.
+      - name: make verify-launch-ready-single-region
+        run: make verify-launch-ready-single-region
