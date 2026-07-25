@@ -404,3 +404,54 @@ groups:
           description: |
             RPO breach. At 24h+ without a backup we exceed the documented
             5-min RPO target by 288×. Escalate immediately.
+
+      # NVMe wear + media health. r1's NVMe is not swappable on demand,
+      # so these exist to give a long lead time rather than to catch a
+      # failure in progress. Produced by the packaged nvme collector,
+      # redirected into the read textfile dir by the archival-node role
+      # (10-observability.yml) — before that redirect these series did
+      # not exist despite being generated every 5 minutes.
+      - alert: stellarindex_nvme_wear_high
+        expr: nvme_percentage_used_ratio > 0.80
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
+          summary: "NVMe {{ $labels.device }} at {{ $value | humanizePercentage }} rated write endurance"
+          description: |
+            Rated endurance consumed on {{ $labels.device }}. Not urgent at
+            80%, deliberately: replacing a drive here is a planned
+            operation, so this is a procurement trigger, not an incident.
+
+      - alert: stellarindex_nvme_spare_low
+        expr: nvme_available_spare_ratio < 0.20
+        for: 30m
+        labels:
+          severity: page
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
+          summary: "NVMe {{ $labels.device }} spare blocks down to {{ $value | humanizePercentage }}"
+          description: |
+            The drive is consuming its reserve block pool, which is a
+            late-stage wear signal — unlike percentage_used this one moves
+            shortly before failure.
+
+      - alert: stellarindex_nvme_media_errors
+        expr: increase(nvme_media_errors_total[24h]) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/nvme-smart.md
+          summary: "NVMe {{ $labels.device }} reported {{ $value }} new media errors in 24h"
+          description: |
+            Uncorrected media errors on a ZFS member. ZFS will surface
+            corruption on scrub, but the drive reporting them first is the
+            earlier signal.

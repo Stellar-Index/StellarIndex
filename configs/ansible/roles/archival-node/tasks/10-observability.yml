@@ -740,3 +740,70 @@
     enabled: true
     state: started
     daemon_reload: true
+
+# ── Redirect the Debian collectors into the dir we actually read ───
+#
+# `prometheus-node-exporter-collectors` ships apt + nvme probes on
+# 5-minute timers, and both hardcode their output into
+# /var/lib/prometheus/node-exporter — Debian's default textfile dir.
+# This host runs node_exporter with
+# --collector.textfile.directory=/var/lib/node_exporter/textfile_collector
+# (see the ARGS above), so every one of those samples has been written
+# and thrown away: nvme_percentage_used_ratio,
+# nvme_available_spare_ratio, nvme_media_errors_total,
+# apt_upgrades_pending and node_reboot_required all scrape 0 series.
+#
+# That is the same class of failure as the galexie probe writing to the
+# wrong dir in the 2026-07-08 incident, just inherited from the package
+# instead of written here — and it matters more than it looks: r1's
+# NVMe is not replaceable on demand, so drive wear and media errors are
+# exactly what we want a long lead time on.
+#
+# Fixed with systemd drop-ins rather than by editing the packaged units
+# (drop-ins survive package upgrades) and rather than by moving OUR
+# probes to Debian's dir (that would churn 8 working producers). The
+# empty `ExecStart=` is required to clear the packaged value before
+# setting a new one.
+- name: Ensure the drop-in directories exist
+  ansible.builtin.file:
+    path: "/etc/systemd/system/prometheus-node-exporter-{{ item }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - apt
+    - nvme
+
+- name: Redirect packaged apt/nvme textfile collectors to the read dir
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/prometheus-node-exporter-{{ item.name }}.service.d/textfile-dir.conf"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by ansible (archival-node / 10-observability.yml).
+      # Repoints the packaged collector at the textfile dir node_exporter
+      # actually reads. Empty ExecStart= clears the packaged one first.
+      [Service]
+      ExecStart=
+      ExecStart={{ item.cmd }}
+  loop:
+    - name: apt
+      cmd: '/bin/bash -c "/usr/share/prometheus-node-exporter-collectors/apt_info.py | sponge /var/lib/node_exporter/textfile_collector/apt.prom"'
+    - name: nvme
+      cmd: '/bin/sh -c "/usr/share/prometheus-node-exporter-collectors/nvme_metrics.py | sponge /var/lib/node_exporter/textfile_collector/nvme.prom"'
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Reload systemd
+
+- name: Drop the now-stale copies from Debian's unread textfile dir
+  # Left in place they are simply dead files, but a future operator
+  # finding two textfile dirs with overlapping names has no way to tell
+  # which one is live. Removing them makes the answer unambiguous.
+  ansible.builtin.file:
+    path: "/var/lib/prometheus/node-exporter/{{ item }}"
+    state: absent
+  loop:
+    - apt.prom
+    - nvme.prom
