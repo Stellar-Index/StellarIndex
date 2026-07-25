@@ -1,0 +1,25 @@
+# systemd timer: daily ClickHouse schema drift check (C6-008/C6-003).
+#
+# Rendered by Ansible. Enabled by default for the same reason the
+# snapshot timer is: it costs a fraction of a second of text comparison,
+# and a drift guard that ships disabled detects nothing.
+#
+# Time slot: 04:10 UTC + up to 5 min jitter — 30 minutes after
+# ch-schema-snapshot.timer's 03:40 + 10 min jitter, so the day's capture
+# is always complete before this reads it. (The unit also orders itself
+# After= the snapshot service, but a timer-started oneshot that is not
+# running yet imposes no ordering by itself, so the clock gap is the
+# real guarantee.)
+
+[Unit]
+Description=Daily ClickHouse schema drift check (repo intent vs live)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/adr/0043-backup-and-restore-strategy.md
+
+[Timer]
+OnCalendar=*-*-* 04:10:00 UTC
+RandomizedDelaySec=300
+Persistent=true
+Unit=ch-schema-drift.service
+
+[Install]
+WantedBy=timers.target

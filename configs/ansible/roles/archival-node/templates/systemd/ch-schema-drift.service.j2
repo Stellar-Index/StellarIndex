@@ -1,0 +1,66 @@
+# systemd unit: ClickHouse schema DRIFT check (C6-008/C6-003).
+#
+# Rendered by Ansible. Runs deploy/clickhouse/ch-schema-drift.sh, which
+# compares the repo's founding lake DDL (deploy/clickhouse/tier1_schema.sql)
+# against the live schema captured by ch-schema-snapshot.service — engine
+# (incl. args), PARTITION BY, ORDER BY, and the column-name list, per
+# declared table.
+#
+# The snapshot answers "what IS the live schema". This answers "is it
+# what the repo says it should be". Tier-1 DDL has always been
+# hand-applied — there is no ClickHouse migration runner the way
+# migrations/ covers Postgres — so an ORDER BY changed by hand during an
+# incident produced no signal anywhere until a re-derive silently wrote a
+# differently-sorted table.
+#
+# Runs AFTER the snapshot (which lands at 03:40 + up to 10 min jitter) so
+# it always reads the same day's capture; ch_schema_drift_use_live flips
+# it to querying ClickHouse directly instead.
+
+[Unit]
+Description=Stellar Index — ClickHouse schema drift check (repo intent vs live)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/adr/0043-backup-and-restore-strategy.md
+After=clickhouse-server.service ch-schema-snapshot.service network-online.target
+Wants=clickhouse-server.service
+
+# Restart-storm limit — matches the sibling oneshots (systemd >=230
+# ignores StartLimit* under [Service]).
+StartLimitIntervalSec=1h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/stellarindex-ops
+Environment=INTENT={{ ch_schema_drift_intent | default('/usr/local/share/stellarindex/tier1_schema.sql') }}
+Environment=SNAPSHOT_DIR={{ ch_schema_snapshot_dir | default('/var/lib/stellarindex/ch-schema-snapshot') }}
+{% if ch_schema_drift_use_live | default(false) | bool %}
+Environment=LIVE=1
+{% endif %}
+ExecStart=/usr/local/bin/ch-schema-drift.sh
+# Exit 1 = drift, exit 2 = could-not-compare. BOTH are failures on
+# purpose: "we could not check" must never be recorded as "checked, and
+# fine" — that equivalence is the failure ADR-0043 was written after.
+# No SuccessExitStatus here, deliberately.
+User=root
+
+# Reads a snapshot and writes one .prom file: must never compete with ingest.
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+# Pure text comparison over ~40 CREATE statements: sub-second. Bounded
+# well above that so a wedged ClickHouse (LIVE=1 mode) fails the run
+# rather than pinning the timer.
+TimeoutStartSec=10min
+RuntimeMaxSec=10min
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
+
+[Install]
+WantedBy=multi-user.target

@@ -134,14 +134,12 @@ func crossRegionMonitor(args []string) error { //nolint:funlen,gocognit,gocyclo 
 	}()
 
 	// HTTP server with /metrics + /healthz.
+	staleAfter := healthStaleAfter(*interval, *timeout)
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		// Healthy = the loop has run at least once. Sets aside the
-		// ambiguity of "we just started, no data yet" vs "we've been
-		// up for hours but haven't run a check".
-		if exp.lastRunUnix.Load() == 0 {
-			http.Error(w, "no checks completed yet", http.StatusServiceUnavailable)
+		if code, msg := crossRegionHealth(exp, time.Now(), staleAfter); code != http.StatusOK {
+			http.Error(w, msg, code)
 			return
 		}
 		_, _ = fmt.Fprintln(w, "ok")
@@ -156,6 +154,66 @@ func crossRegionMonitor(args []string) error { //nolint:funlen,gocognit,gocyclo 
 		"cross-region-monitor: listening on %s; checking %d region(s) × %d pair(s) every %s\n",
 		*listen, len(regions), len(pairs), *interval)
 	return srv.ListenAndServe()
+}
+
+// healthStaleAfter is how much silence /healthz tolerates from the tick
+// loop before it reports unhealthy. Three missed intervals plus one full
+// per-region timeout: two consecutive skipped ticks (a slow sweep that
+// overran its interval, a transient region stall) stay green, a third
+// does not. Deriving it from the operator's own -interval/-timeout keeps
+// the threshold correct at any tick rate without a fourth flag to get
+// wrong.
+func healthStaleAfter(interval, timeout time.Duration) time.Duration {
+	return 3*interval + timeout
+}
+
+// crossRegionHealth is the /healthz verdict, split out from the handler so
+// the staleness + reachability rules are unit-testable without a listener.
+//
+// C4-007: the previous verdict was `lastRunUnix != 0` — "the loop has run
+// at least once". That is a LATCH, not a health check: the first sweep set
+// it and nothing ever cleared it, so a monitor whose tick goroutine had
+// died, or whose every region had been unreachable for a week, still
+// answered 200 forever. This is a sidecar whose entire job is to notice
+// cross-region divergence; a frozen-healthy /healthz means the thing
+// watching for silent breakage is itself silently broken.
+//
+// Two independent liveness facts, both recency-bounded:
+//
+//   - lastRunUnix — a sweep COMPLETED. Stale ⇒ the tick loop is stuck or
+//     dead (or resolveAnchor keeps failing, which returns before the
+//     store and so shows up here as staleness).
+//   - lastReachedUnix — a sweep reached at least one region. Stale ⇒
+//     every fetch is failing and the comparison is producing nothing,
+//     even though the loop is still turning.
+//
+// "Reached" deliberately reuses allFailed()'s existing every-region-failed
+// notion rather than the OBS-07 not-compared signal: a PARTIAL region
+// failure keeps /healthz green and is reported through
+// stellarindex_cross_region_fetch_errors_total, exactly as runOneTick's
+// outcome labelling already draws that line.
+func crossRegionHealth(exp *crossRegionExporter, now time.Time, staleAfter time.Duration) (int, string) {
+	last := exp.lastRunUnix.Load()
+	if last == 0 {
+		return http.StatusServiceUnavailable, "no check sweep has completed yet"
+	}
+	if age := now.Sub(time.Unix(last, 0)); age > staleAfter {
+		return http.StatusServiceUnavailable, fmt.Sprintf(
+			"last check sweep completed %s ago (> %s) — the tick loop is stuck or dead",
+			age.Truncate(time.Second), staleAfter)
+	}
+
+	reached := exp.lastReachedUnix.Load()
+	if reached == 0 {
+		return http.StatusServiceUnavailable,
+			"no check sweep has reached any region — every region fetch is failing"
+	}
+	if age := now.Sub(time.Unix(reached, 0)); age > staleAfter {
+		return http.StatusServiceUnavailable, fmt.Sprintf(
+			"no check sweep has reached any region for %s (> %s) — every region fetch is failing",
+			age.Truncate(time.Second), staleAfter)
+	}
+	return http.StatusOK, "ok"
 }
 
 // runOneTick does a single sweep over (pairs × samples), updates the
@@ -178,6 +236,12 @@ func runOneTick(
 		exp.checkErrors.WithLabelValues(metric.String(), err.Error()).Inc()
 		return
 	}
+
+	// reached records whether ANY comparison in this sweep got data back
+	// from at least one region — the second liveness fact /healthz needs
+	// (see crossRegionHealth). Tracked per sweep, not per comparison, so
+	// one bad pair among many doesn't declare the monitor blind.
+	reached := false
 
 	for _, pair := range pairs {
 		for i := 0; i < samples; i++ {
@@ -215,13 +279,20 @@ func runOneTick(
 			// failures are tracked separately via fetchErrors.
 			if allFailed(results) {
 				outcome = "error"
+			} else {
+				reached = true
 			}
 			exp.checksTotal.WithLabelValues(pair, metric.String(), outcome).Inc()
 		}
 	}
 
-	exp.lastRunUnix.Store(time.Now().Unix())
+	now := time.Now()
+	exp.lastRunUnix.Store(now.Unix())
 	exp.lastRunGauge.SetToCurrentTime()
+	if reached {
+		exp.lastReachedUnix.Store(now.Unix())
+		exp.lastReachedGauge.SetToCurrentTime()
+	}
 }
 
 // allFailed reports whether every region's fetch returned an error.
@@ -242,16 +313,21 @@ func allFailed(results []regionResult) bool {
 // crossRegionExporter holds the metric vectors. One instance per
 // process; passed by pointer to runOneTick.
 type crossRegionExporter struct {
-	checksTotal  *prometheus.CounterVec
-	divergences  *prometheus.CounterVec
-	fetchErrors  *prometheus.CounterVec
-	checkErrors  *prometheus.CounterVec
-	lastRunGauge prometheus.Gauge
-	inFlight     prometheus.Gauge
+	checksTotal      *prometheus.CounterVec
+	divergences      *prometheus.CounterVec
+	fetchErrors      *prometheus.CounterVec
+	checkErrors      *prometheus.CounterVec
+	lastRunGauge     prometheus.Gauge
+	lastReachedGauge prometheus.Gauge
+	inFlight         prometheus.Gauge
 
-	// lastRunUnix is the wall clock of the last completed sweep.
-	// Used by /healthz; the gauge above is for Prometheus.
-	lastRunUnix atomic.Int64
+	// lastRunUnix is the wall clock of the last completed sweep, and
+	// lastReachedUnix of the last sweep that reached at least one region.
+	// Both feed /healthz (crossRegionHealth); the gauges above are the
+	// Prometheus-scrapable twins, so the same two facts can be alerted on
+	// without polling /healthz.
+	lastRunUnix     atomic.Int64
+	lastReachedUnix atomic.Int64
 }
 
 func newCrossRegionExporter(reg prometheus.Registerer) *crossRegionExporter {
@@ -290,6 +366,12 @@ func newCrossRegionExporter(reg prometheus.Registerer) *crossRegionExporter {
 				Help: "Unix time of the last completed check sweep.",
 			},
 		),
+		lastReachedGauge: prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "stellarindex_cross_region_last_reached_timestamp_seconds",
+				Help: "Unix time of the last check sweep that reached at least one region. Lagging behind _last_run_ means the loop is turning but every region fetch is failing — the monitor is blind. /healthz reports 503 on the same condition.",
+			},
+		),
 		inFlight: prometheus.NewGauge(
 			prometheus.GaugeOpts{
 				Name: "stellarindex_cross_region_check_in_flight",
@@ -303,6 +385,7 @@ func newCrossRegionExporter(reg prometheus.Registerer) *crossRegionExporter {
 		exp.fetchErrors,
 		exp.checkErrors,
 		exp.lastRunGauge,
+		exp.lastReachedGauge,
 		exp.inFlight,
 	)
 	return exp

@@ -2,7 +2,10 @@ package chops
 
 import (
 	"fmt"
+	"sort"
 	"strings"
+
+	"github.com/stellar/go-stellar-sdk/strkey"
 
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
@@ -363,16 +366,62 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sep41_supply decoder: %w", err)
 	}
+	// Both sep41 targets are WATCHED-SET SLICES of their table, not whole
+	// tables — so they need a whereFilter, exactly like `trades` needs
+	// `source = '...'`.
+	//
+	// Pre-fix both carried "" (whole-table ownership) while the EXPECTED
+	// side was gated on the watched set through `dec`/`contractIDs`. The
+	// two axes therefore measured different populations: any row written
+	// for a contract that is not in TODAY'S watched set — history from a
+	// contract since removed from `[supply] watched_sep41_contracts`, or
+	// from a wider set used during an earlier backfill — counted on the
+	// served side and could not counted on the expected side. That is a
+	// PERMANENT surplus: it never closes, because the re-derive can never
+	// produce a row for a contract it is configured not to decode, and
+	// the served rows are real history nobody is going to delete.
+	filter, err := contractIDFilter(watched)
+	if err != nil {
+		return nil, err
+	}
 	return []reconSource{
 		{
 			name: sep41transfers.SourceName, genesis: sorobanEraGenesis,
 			dec: tdec, contractIDs: watched,
-			targets: []reconTarget{{"sep41_transfers", "", []string{sep41transfers.EventKind}}},
+			targets: []reconTarget{{"sep41_transfers", filter, []string{sep41transfers.EventKind}}},
 		},
 		{
 			name: sep41supply.SourceName, genesis: sorobanEraGenesis,
 			dec: sdec, contractIDs: watched,
-			targets: []reconTarget{{"sep41_supply_events", "", []string{sep41supply.EventKind}}},
+			targets: []reconTarget{{"sep41_supply_events", filter, []string{sep41supply.EventKind}}},
 		},
 	}, nil
+}
+
+// contractIDFilter renders a watched set as the served-side SQL predicate
+// that scopes a target to the same contracts the expected-side decoder is
+// gated on. Both sep41 tables carry `contract_id` and index it
+// (sep41_supply_events_contract_ledger_idx, sep41_transfers_contract_*_idx).
+//
+// whereFilter is INTERPOLATED into SQL by timescale.Store's row-count
+// helpers, and unlike every other filter in this catalogue — all in-code
+// literals — this one is built from operator config, which validates only
+// that entries are non-empty (config.SupplyConfig.Validate). So each id is
+// strkey-decoded as a contract address before it is quoted: a valid
+// C-strkey is base32 [A-Z2-7]{56} and cannot carry a quote, so the
+// rendered predicate is safe by construction rather than by escaping.
+// Sorted for a stable string — the filter is part of the durable
+// completeness_target_floors key (timescale.TargetFloorKey), so map/slice
+// order must not churn it between runs.
+func contractIDFilter(watched []string) (string, error) {
+	ids := make([]string, 0, len(watched))
+	for i, c := range watched {
+		if _, err := strkey.Decode(strkey.VersionByteContract, c); err != nil {
+			return "", fmt.Errorf(
+				"sep41 reconcile filter: watched_sep41_contracts[%d] = %q is not a contract C-strkey: %w", i, c, err)
+		}
+		ids = append(ids, "'"+c+"'")
+	}
+	sort.Strings(ids)
+	return "contract_id IN (" + strings.Join(ids, ", ") + ")", nil
 }

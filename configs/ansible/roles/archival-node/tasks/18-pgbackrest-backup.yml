@@ -207,6 +207,67 @@
     daemon_reload: "{{ ch_schema_snapshot_units is changed }}"
   when: ch_schema_snapshot_enabled | default(true)
 
+# ─── ClickHouse schema DRIFT check (C6-008 / C6-003) ─────────────────
+# The snapshot above records what the live schema IS. Nothing recorded
+# whether it is what the repo SAYS it should be. Tier-1 lake DDL is
+# hand-applied — there is no ClickHouse migration runner the way
+# migrations/ + golang-migrate cover Postgres — so a hand ALTER on r1,
+# or a table the repo declares that was never created, produced no
+# signal at all. A re-derive against an ORDER BY that differs from the
+# one the repo assumes does not error; it writes a mis-sorted table.
+#
+# The repo's founding DDL has to be ON the host for the comparison, so
+# tier1_schema.sql is shipped alongside the script rather than read out
+# of a checkout that may not exist there.
+
+- name: Install ClickHouse schema-drift check script
+  ansible.builtin.copy:
+    src: ch-schema-drift.sh
+    dest: /usr/local/bin/ch-schema-drift.sh
+    owner: root
+    group: root
+    mode: "0755"
+  when: ch_schema_drift_enabled | default(true)
+
+- name: Ensure the shared stellarindex data directory exists
+  ansible.builtin.file:
+    path: /usr/local/share/stellarindex
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: ch_schema_drift_enabled | default(true)
+
+- name: Ship the repo's Tier-1 lake DDL as the drift check's intent side
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../deploy/clickhouse/tier1_schema.sql"
+    dest: "{{ ch_schema_drift_intent | default('/usr/local/share/stellarindex/tier1_schema.sql') }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: ch_schema_drift_enabled | default(true)
+
+- name: Install ClickHouse schema-drift systemd units
+  ansible.builtin.template:
+    src: "systemd/{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - ch-schema-drift.service
+    - ch-schema-drift.timer
+  register: ch_schema_drift_units
+  when: ch_schema_drift_enabled | default(true)
+
+- name: Enable + start the ClickHouse schema-drift timer
+  ansible.builtin.systemd:
+    name: ch-schema-drift.timer
+    enabled: true
+    state: started
+    daemon_reload: "{{ ch_schema_drift_units is changed }}"
+  when: ch_schema_drift_enabled | default(true)
+
 # ─── Restore-drill (audit-2026-07-23 REL-backup-restore) ──────────────
 # CS-110: a backup that has never been restored is a hope, not a
 # backup. scripts/ops/restore-drill.sh already exists (non-destructive,
