@@ -117,6 +117,130 @@ func TestWriter_MarkRefreshesTTL(t *testing.T) {
 	}
 }
 
+// TestWriter_MarkHoldRoundTrip — the lifecycle write path. The
+// marker must carry the freeze [freeze.State] verbatim and expire on
+// the caller's TTL (remaining hold + grace), NOT on the writer's flat
+// default. A marker that outlived its hold would keep flags.frozen
+// set after a release; one that expired inside its hold would let the
+// serving path forget a live freeze.
+func TestWriter_MarkHoldRoundTrip(t *testing.T) {
+	mr, rdb := newRedis(t)
+	w, err := freeze.NewWriter(rdb, 0) // default TTL = 5m
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	asset, quote := nativeUSD(t)
+
+	firedAt := time.Now().UTC().Truncate(time.Second)
+	state := freeze.State{
+		FiredAt:        firedAt,
+		HoldUntil:      firedAt.Add(30 * time.Minute),
+		ExtensionsUsed: 3,
+		Escalated:      false,
+		UnfreezeStreak: 1,
+		Corroborated:   true,
+	}
+	const holdTTL = 35 * time.Minute
+	if err := w.MarkHold(context.Background(), asset, quote, "1.000000000000",
+		anomaly.Decision{Action: anomaly.ActionFreeze}, state, holdTTL); err != nil {
+		t.Fatalf("MarkHold: %v", err)
+	}
+
+	key := cachekeys.Freeze(asset, quote)
+	if ttl := mr.TTL(key.String()); ttl != holdTTL {
+		t.Errorf("marker TTL = %v, want the caller's %v (not the writer default %v)",
+			ttl, holdTTL, cachekeys.FreezeTTL)
+	}
+
+	raw, err := rdb.Get(context.Background(), key.String()).Bytes()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	var m freeze.Marker
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !m.State.FiredAt.Equal(state.FiredAt) || !m.State.HoldUntil.Equal(state.HoldUntil) {
+		t.Errorf("marker state times = %+v, want %+v", m.State, state)
+	}
+	if m.State.ExtensionsUsed != 3 || m.State.UnfreezeStreak != 1 || !m.State.Corroborated {
+		t.Errorf("marker state = %+v, want %+v", m.State, state)
+	}
+
+	// LoadState must read back exactly what MarkHold wrote — this is
+	// how the aggregator recovers the extension ladder after a
+	// restart instead of silently restarting the escalation clock.
+	got, ok, err := w.LoadState(context.Background(), asset, quote)
+	if err != nil || !ok {
+		t.Fatalf("LoadState: ok=%v err=%v", ok, err)
+	}
+	if got.ExtensionsUsed != state.ExtensionsUsed || !got.HoldUntil.Equal(state.HoldUntil) {
+		t.Errorf("LoadState = %+v, want %+v", got, state)
+	}
+}
+
+// TestWriter_ClearRemovesTheMarker — the auto-unfreeze / operator-
+// override path. Letting the TTL lapse instead would keep
+// flags.frozen true for the whole remaining hold after the price was
+// republished as healthy.
+func TestWriter_ClearRemovesTheMarker(t *testing.T) {
+	_, rdb := newRedis(t)
+	w, _ := freeze.NewWriter(rdb, 0)
+	l, _ := freeze.NewLooker(rdb)
+	asset, quote := nativeUSD(t)
+
+	if err := w.MarkHold(context.Background(), asset, quote, "",
+		anomaly.Decision{Action: anomaly.ActionFreeze},
+		freeze.State{FiredAt: time.Now().UTC()}, time.Hour); err != nil {
+		t.Fatalf("MarkHold: %v", err)
+	}
+	if frozen, _ := l.FrozenForPair(context.Background(), asset, quote); !frozen {
+		t.Fatal("setup: marker not present")
+	}
+
+	if err := w.Clear(context.Background(), asset, quote); err != nil {
+		t.Fatalf("Clear: %v", err)
+	}
+	if frozen, _ := l.FrozenForPair(context.Background(), asset, quote); frozen {
+		t.Error("marker still present after Clear — flags.frozen would stay set " +
+			"for the marker's full remaining-hold TTL")
+	}
+	// Idempotent.
+	if err := w.Clear(context.Background(), asset, quote); err != nil {
+		t.Errorf("Clear on an absent marker returned %v, want nil", err)
+	}
+	// And LoadState reports absence, which the orchestrator reads as
+	// the ADR-0019 operator force-unfreeze.
+	if _, ok, err := w.LoadState(context.Background(), asset, quote); ok || err != nil {
+		t.Errorf("LoadState after Clear: ok=%v err=%v, want (false, nil)", ok, err)
+	}
+}
+
+// TestWriter_LoadState_PreLifecycleMarker — a marker written by the
+// flat-TTL Mark path (or by an older build) decodes to a zero State
+// rather than erroring, so a rolling deploy doesn't fail ticks.
+func TestWriter_LoadState_PreLifecycleMarker(t *testing.T) {
+	_, rdb := newRedis(t)
+	w, _ := freeze.NewWriter(rdb, 0)
+	asset, quote := nativeUSD(t)
+
+	if err := w.Mark(context.Background(), asset, quote, "",
+		anomaly.Decision{Action: anomaly.ActionFreeze}); err != nil {
+		t.Fatalf("Mark: %v", err)
+	}
+	st, ok, err := w.LoadState(context.Background(), asset, quote)
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	if !ok {
+		t.Fatal("LoadState reported no marker for a Mark-written key")
+	}
+	if st.Active() {
+		t.Errorf("pre-lifecycle marker decoded to an ACTIVE state %+v — the "+
+			"aggregator would inherit a hold nobody set", st)
+	}
+}
+
 // TestNewLooker_RejectsNilCache — same loud-misconfig stance.
 func TestNewLooker_RejectsNilCache(t *testing.T) {
 	if _, err := freeze.NewLooker(nil); err == nil {

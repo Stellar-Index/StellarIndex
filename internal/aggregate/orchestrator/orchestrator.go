@@ -57,6 +57,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -107,10 +108,7 @@ type Cache interface {
 // interface so tests can substitute a recorder without spinning up
 // a Redis client.
 //
-// Mark MUST be idempotent on (asset, quote) — calling it twice for
-// the same pair refreshes the marker's TTL, matching the policy
-// "freeze stays in effect as long as the underlying anomaly
-// persists".
+// All four methods MUST be idempotent on (asset, quote).
 //
 // frozenValue is the last-known-good VWAP being frozen on, encoded
 // as a fixed-precision decimal string (the orchestrator formats with
@@ -118,7 +116,28 @@ type Cache interface {
 // exists. Forwarded to the durable EventSink so freeze_events
 // records the frozen-on price; the Redis marker doesn't carry it.
 type FreezeMarker interface {
+	// Mark writes a marker with the writer's flat default TTL and no
+	// lifecycle state. Used by the triangulated-composite refusal,
+	// which is a per-tick decision about a DERIVED price and owns no
+	// freeze lifecycle of its own.
 	Mark(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) error
+
+	// MarkHold writes a marker carrying the ADR-0019 lifecycle state,
+	// with `ttl` = remaining hold + silence grace. The freeze-duration
+	// path uses this; the marker's expiry is a liveness backstop, not
+	// the freeze policy.
+	MarkHold(ctx context.Context, asset, quote canonical.Asset, frozenValue string,
+		decision anomaly.Decision, state freeze.State, ttl time.Duration) error
+
+	// LoadState reads back the lifecycle state a previous MarkHold
+	// stamped. (State{}, false, nil) means no marker — which the
+	// orchestrator reads as "never frozen" on a cold key and as the
+	// ADR-0019 operator force-unfreeze on a key it believes is frozen.
+	LoadState(ctx context.Context, asset, quote canonical.Asset) (freeze.State, bool, error)
+
+	// Clear deletes the marker, ending the freeze on the serving path
+	// immediately rather than after the remaining hold's TTL.
+	Clear(ctx context.Context, asset, quote canonical.Asset) error
 }
 
 // Config controls the orchestrator's behaviour. Built from config.go
@@ -618,6 +637,30 @@ type Orchestrator struct {
 	// prevVWAPs, so no lock is needed.
 	lastComposites map[string]compositeSample
 
+	// freezeStates holds the ADR-0019 freeze lifecycle state per
+	// `<pair>:<window>` stateKey — how long the current freeze must
+	// hold, how far up the 4-extension ladder it has climbed, whether
+	// it has escalated, and how many consecutive buckets have met the
+	// auto-unfreeze condition (see internal/aggregate/freeze.Policy).
+	//
+	// An entry is present-but-inactive (`freeze.State{}`) once a key
+	// has been evaluated at least once; that is what stops the
+	// hydrate-from-Redis path below from re-running every tick for
+	// pairs that are simply healthy. Same single-Tick-at-a-time
+	// invariant as prevVWAPs, so no lock is needed.
+	//
+	// In-memory is the WORKING copy, not the authority: on the first
+	// evaluation after a restart the ladder is re-hydrated from the
+	// Redis marker, so a deploy mid-freeze does not silently restart
+	// the 2-hour escalation clock.
+	freezeStates map[string]freeze.State
+
+	// clock is the orchestrator's time source, injectable so the
+	// freeze lifecycle's hold/extension/escalation ladder — which is
+	// measured in tens of minutes — is testable without sleeping.
+	// Defaults to time.Now in [New].
+	clock func() time.Time
+
 	// Stats exposed for metrics / test assertions. Zero-copy.
 	mu             sync.Mutex
 	lastTickAt     time.Time
@@ -651,6 +694,8 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 		prevVWAPs:      make(map[string]*big.Rat, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
 		lastWriteAt:    make(map[string]time.Time, len(cfg.Pairs)),
 		lastComposites: make(map[string]compositeSample, len(cfg.Triangulations)*max(len(cfg.Windows), 1)),
+		freezeStates:   make(map[string]freeze.State, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
+		clock:          time.Now,
 	}
 }
 
@@ -688,7 +733,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 // Exported so tests can drive deterministic cycles without waiting
 // on the ticker.
 func (o *Orchestrator) Tick(ctx context.Context) error {
-	now := time.Now().UTC()
+	now := o.clock().UTC()
 	o.mu.Lock()
 	o.lastTickAt = now
 	o.ticksTotal++
@@ -742,7 +787,27 @@ func (o *Orchestrator) Tick(ctx context.Context) error {
 	// publish anything new for them.
 	o.emitStalenessGauges(now)
 
+	// ADR-0019 freeze lifecycle: publish how many (pair, window)
+	// freezes are being HELD right now. A gauge, unlike the engaged
+	// counter, tells "one pair frozen for an hour" apart from "sixty
+	// pairs frozen for one tick" — see obs.AnomalyFreezeActive.
+	obs.AnomalyFreezeActive.Set(float64(o.activeFreezeCount()))
+
 	return nil
+}
+
+// activeFreezeCount counts the (pair, window) keys currently holding
+// a freeze. Released keys keep a present-but-inactive entry (so the
+// hydrate-once path stays once), so this walks the map rather than
+// taking its len.
+func (o *Orchestrator) activeFreezeCount() int {
+	n := 0
+	for _, st := range o.freezeStates {
+		if st.Active() {
+			n++
+		}
+	}
+	return n
 }
 
 // emitStalenessGauges sets `stellarindex_price_staleness_seconds` for
@@ -876,7 +941,7 @@ func (o *Orchestrator) refreshPairWindow(
 	// keep the previous bucket's value in cache (don't overwrite)
 	// and emit a freeze marker so flags.frozen=true on the next read.
 	stateKey := pair.String() + ":" + window.String()
-	if action, ok := o.evaluateAndMaybeFreeze(ctx, pair, window, vwap, trades, stateKey); !ok {
+	if action, ok := o.evaluateAndMaybeFreeze(ctx, pair, window, vwap, trades, stateKey, now); !ok {
 		_ = action
 		// Freeze: evaluateAndMaybeFreeze has already refreshed the LKG
 		// VWAP key's TTL (F-1345). Skip the cache write so the prior
@@ -884,24 +949,23 @@ func (o *Orchestrator) refreshPairWindow(
 		return nil
 	}
 
-	// Phase 2 (ADR-0019): compute confidence + run the 3-signal AND
-	// freeze check. Both happen BEFORE the VWAP cache write so a
-	// Phase 2 freeze leaves the prior bucket's value intact in cache
-	// — same semantic as Phase 1.
+	// Phase 2 (ADR-0019): compute confidence, then advance the freeze
+	// LIFECYCLE with it. Both happen BEFORE the VWAP cache write so a
+	// freeze leaves the prior bucket's value intact in cache — same
+	// semantic as Phase 1.
+	//
+	// The lifecycle step runs unconditionally, NOT only when the
+	// 3-signal AND fires. That is the whole point: a pair inside its
+	// ADR-0019 hold stays frozen through buckets the AND does not fire
+	// for, and is released only by the ADR's auto-unfreeze condition
+	// (two consecutive healthy buckets, once the initial hold has been
+	// served). It also runs when the bucket could not be scored at all
+	// — an unscored bucket must not release a live freeze by default.
 	prevForConfidence := o.prevVWAPs[stateKey]
 	conf, confOK := o.computeConfidence(ctx, pair, window, vwap, prevForConfidence, trades)
-	if confOK {
-		input := confidenceWithSourceCount{
-			Confidence:  conf.Score.Confidence,
-			ZScore:      conf.ZScore,
-			SourceCount: distinctSourceCount(trades),
-		}
-		if phase2FreezeFires(input, o.cfg.Phase2Thresholds) {
-			// markPhase2Freeze refreshes the LKG VWAP key's TTL
-			// (F-1345) before returning; skip the cache write.
-			o.markPhase2Freeze(ctx, pair, window, input, prevForConfidence)
-			return nil
-		}
+	if o.stepPhase2Freeze(ctx, pair, window, stateKey, now,
+		conf, confOK, distinctSourceCount(trades), prevForConfidence) {
+		return nil
 	}
 
 	// Cache write VWAP. Aggregator writers stay in big.Rat / big.Int
@@ -1015,13 +1079,19 @@ func frozenTickKey(pair canonical.Pair, window time.Duration) string {
 // freeze marker (F-1345, G13-03).
 //
 // Why: a freeze skips the VWAP cache write, so the LKG value keeps
-// the TTL it was written with — equal to the window. The shortest
-// window (5m) equals the freeze-marker TTL ([cachekeys.FreezeTTL]),
-// so a freeze that persists past one window-worth of seconds lets
-// the LKG expire out of Redis while flags.frozen is still set. The
-// API then reads frozen=true with no value to serve. Re-arming the
-// key's expiry to FreezeTTL on every frozen tick keeps the LKG alive
-// for as long as the marker is being refreshed.
+// the TTL it was written with — equal to the window. A freeze that
+// persists past one window-worth of seconds would let the LKG expire
+// out of Redis while flags.frozen is still set, and the API would
+// then read frozen=true with no value to serve.
+//
+// ttl MUST be the marker's own TTL, which since the ADR-0019
+// lifecycle landed is "remaining hold + silence grace" and can reach
+// ~35 minutes — not the flat [cachekeys.FreezeTTL] it used to be.
+// Passing the smaller constant here would recreate exactly the bug
+// F-1345 fixed, one order of magnitude later in the hold: the LKG
+// would evaporate 5 minutes into a 30-minute freeze. ttl <= 0 falls
+// back to FreezeTTL so a caller with no lifecycle of its own (the
+// composite-refusal path) keeps the original behaviour.
 //
 // Best-effort + nil-safe on a missing key: Expire returns
 // BoolCmd=false (not an error) when the key doesn't exist — the
@@ -1029,9 +1099,12 @@ func frozenTickKey(pair canonical.Pair, window time.Duration) string {
 // to keep alive. A transient Redis error is logged at debug and
 // swallowed; the freeze marker write is the load-bearing operation
 // and already happened upstream.
-func (o *Orchestrator) keepFrozenVWAPAlive(ctx context.Context, pair canonical.Pair, window time.Duration) {
+func (o *Orchestrator) keepFrozenVWAPAlive(ctx context.Context, pair canonical.Pair, window, ttl time.Duration) {
+	if ttl <= 0 {
+		ttl = cachekeys.FreezeTTL
+	}
 	key := cachekeys.VWAP(pair.Base, pair.Quote, window)
-	if err := o.cache.Expire(ctx, key.String(), cachekeys.FreezeTTL).Err(); err != nil {
+	if err := o.cache.Expire(ctx, key.String(), ttl).Err(); err != nil {
 		o.logger.Debug("freeze: LKG VWAP TTL refresh failed",
 			"pair", pair.String(), "window", window, "key", key, "err", err)
 	}
@@ -1079,6 +1152,7 @@ func (o *Orchestrator) evaluateAndMaybeFreeze(
 	currVWAP *big.Rat,
 	trades []canonical.Trade,
 	stateKey string,
+	now time.Time,
 ) (anomaly.Action, bool) {
 	if o.cfg.Anomaly == nil {
 		return anomaly.ActionAllow, true
@@ -1115,16 +1189,6 @@ func (o *Orchestrator) evaluateAndMaybeFreeze(
 		return decision.Action, true
 	}
 
-	o.mu.Lock()
-	o.freezesEngaged++
-	o.mu.Unlock()
-	obs.AnomalyFreezeEngagedTotal.WithLabelValues(string(decision.Class)).Inc()
-
-	// MNY-22: this pair's LKG stays in cache for the rest of the tick;
-	// record the refusal so triangulation can't republish it as a
-	// derived price.
-	o.markFrozenThisTick(pair, window)
-
 	o.logger.Warn("anomaly freeze engaged",
 		"pair", pair.String(),
 		"window", window,
@@ -1132,31 +1196,30 @@ func (o *Orchestrator) evaluateAndMaybeFreeze(
 		"deviation_pct", decision.DeviationPct,
 		"reason", decision.Reason)
 
-	if o.cfg.FreezeWriter != nil {
-		// LKG VWAP we're freezing on: the prior bucket's value (which
-		// stays in cache because we skip the cache write below).
-		// Empty string when no prior bucket exists (first-tick freeze
-		// on this pair); the sink stamps NULL in that case.
-		var frozenValue string
-		if prev != nil {
-			frozenValue = formatRatFixed(prev, 12)
-		}
-		if err := o.cfg.FreezeWriter.Mark(ctx, pair.Base, pair.Quote, frozenValue, decision); err != nil {
-			o.logger.Warn("freeze writer mark failed",
-				"pair", pair.String(),
-				"err", err)
-			// Soft-fail: anomaly was detected, marker write failed,
-			// API won't see flags.frozen. Operators alert on
-			// AnomalyFreezeEngagedTotal vs the API-side flag rate;
-			// a sustained gap = the writer is broken. Don't 5xx the
-			// tick over it.
-		}
+	// Phase 1 shares the ADR-0019 freeze lifecycle with Phase 2 — one
+	// owner per `freeze:<asset>:<quote>` key. Two owners writing the
+	// same marker with different TTL semantics would let a Phase 1
+	// fire truncate a Phase 2 hold's marker to the flat grace TTL, and
+	// would leave the ladder un-advanced (never extending, never
+	// escalating) for as long as Phase 1 kept firing.
+	//
+	// Scored=false: the Phase 1 path returns before the confidence
+	// step runs, so this bucket contributes no evidence of health and
+	// cannot earn an auto-unfreeze streak. Corroborated=false for the
+	// same reason — Phase 1 has no corroboration signal, so its first
+	// hold is the shorter uncorroborated one.
+	//
+	// A `Fires: true` signal always ends frozen EXCEPT when the
+	// operator has cleared the marker out of band, which the lifecycle
+	// honours as a force-unfreeze. Returning ok=true there publishes
+	// the bucket, so the override behaves identically whichever phase
+	// flagged the pair; if the anomaly persists the next tick
+	// re-freezes it, which is intended — the durable remedy for a
+	// mis-calibration is a threshold change, not repeated overrides.
+	if !o.stepFreezeLifecycle(ctx, pair, window, stateKey,
+		freeze.Signal{Now: now, Fires: true}, decision, prev) {
+		return decision.Action, true
 	}
-	// F-1345 (G13-03): the freeze skips the VWAP cache write, so the
-	// LKG value keeps its original TTL (== window). Extend it to the
-	// freeze-marker lifetime so a freeze outlasting the window doesn't
-	// let the LKG expire while flags.frozen is still set.
-	o.keepFrozenVWAPAlive(ctx, pair, window)
 	return decision.Action, false
 }
 

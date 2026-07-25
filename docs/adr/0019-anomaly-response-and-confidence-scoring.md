@@ -9,6 +9,113 @@ superseded_by: null
 
 # ADR-0019: Anomaly response policy and confidence scoring
 
+> **Amendment (2026-07-26, N-F6) — the freeze DURATION now exists,
+> and its initial hold is scaled by corroboration rather than flat.**
+> §"Freeze duration" below specifies a state machine: a 30-minute
+> initial hold, re-evaluation at expiry, extension by 30 min up to 4
+> times, escalation to operator review after that, and an
+> auto-unfreeze trigger. **None of it was implemented.** What shipped
+> was `cachekeys.FreezeTTL = 5min` plus a marker re-written on every
+> bucket the 3-signal AND fired for. That made the RELEASE condition
+> the negation of the FIRE condition, evaluated on a SINGLE bucket:
+>
+> - The release band was strictly *wider* than the fire band. A freeze
+>   fires at `z > 5.0`, so it released at `z <= 5.0` — not at this
+>   ADR's `z < 3.0` — and it released on `confidence >= 0.45` rather
+>   than `> 0.30`. The hysteresis gap the two pairs of numbers exist to
+>   create was inverted into an overlap, so a signal hovering at the
+>   trigger flapped the pair frozen/unfrozen bucket after bucket,
+>   publishing on each unfreeze the value it had just refused.
+> - `source_count <= 1` is a leg of the AND, so **one trade on a second
+>   venue cleared the freeze outright**, at any price. That is a
+>   one-trade unfreeze primitive available to the attacker whose
+>   manipulation is in force.
+> - There was no bound and no escalation. A freeze could run for days
+>   with no operator ever being told, and the only signal was a
+>   rate() on a counter that also fires for one-tick blips.
+>
+> `internal/aggregate/freeze.Policy` now implements the section as
+> written, as a pure function of (previous state, this bucket's
+> signal), with the state carried in the durable freeze marker.
+> **Three points where this amendment resolves an ambiguity in the
+> text rather than merely implementing it:**
+>
+> **1. The initial hold is corroboration-scaled: 30 minutes, or 10
+> minutes for a pair with no corroborating lens at all.** A deliberate
+> deviation from the flat 30. A freeze serves the last-known-good
+> price for its entire duration, so a FALSE freeze is its own money bug
+> — the MNY-22 class, where a stale leg was laundered into a derived
+> pair. The false-freeze rate is not uniform across the index: it
+> concentrates on thin books, where a single venue's own history is the
+> only reference the 3-signal AND has and where a $19/hour book can
+> produce a `z > 5` bucket from one ordinary trade. Charging that
+> population the full 30-minute stale-price bill for a decision taken
+> on one lens is the wrong trade; charging it 10 minutes is not. 10
+> rather than 5 because it must comfortably outlast the longest default
+> window that can carry the spike (5m) and several 30s ticks, so a
+> one-bucket spike can never be waited out. **Extensions are NOT
+> scaled** — an uncorroborated pair whose anomaly persists climbs the
+> same 30-minute ladder to the same 2-hour escalation — so the
+> shortened hold only shortens the FIRST decision, which is exactly
+> where the false-positive risk sits.
+>
+> "Corroborated" means a second lens produced a READING this bucket
+> (`triangulation_checked` OR `cross_oracle_checked`), **not** that the
+> lens agreed. The agreement-only reading was considered and rejected
+> as perverse: a composite or an external reference that *disagrees* is
+> the strongest available evidence that a freeze is true, and would
+> have been handed the shortest hold. Agreement is already priced in
+> elsewhere — it raises the confidence score, which is a leg of the
+> fire condition, so a well-corroborated healthy pair mostly never
+> reaches the freeze path at all.
+>
+> **2. Auto-unfreeze is a continuous trigger, gated on the INITIAL
+> hold only.** The text lists auto-unfreeze as a "trigger" but places
+> re-evaluation "at expiry", which can be read as "release is checked
+> only at a ladder expiry". That reading makes a pair that recovers one
+> bucket after an extension was granted serve up to 30 further minutes
+> of stale price for no security benefit — the streak is what proves
+> recovery, and it is no harder to satisfy at an expiry instant than
+> between two. So: the initial hold is a hard minimum, and from the end
+> of it the two-consecutive-bucket condition is evaluated every bucket.
+> The extension ladder still advances at each expiry; its job is to
+> decide when to ESCALATE, not to gate the release. The minimum hold
+> remains load-bearing on volatile pairs: the freeze fires at `z > 5`
+> and the streak needs only `z < 3`, so on a wide-MAD asset a price
+> still well away from the last-known-good can read "healthy" two
+> buckets running, possibly 60 seconds after the freeze.
+>
+> **3. An escalated freeze does not auto-unfreeze.** "Freeze stays
+> active until manual unfreeze" is read literally: once the ladder is
+> spent, the auto-unfreeze path is suppressed and only an operator ends
+> it. The ladder already spent two hours asking whether the pair had
+> recovered, and a human has been paged.
+>
+> Two mechanics worth recording because they are not obvious from the
+> section: the **`prevVWAP` comparator is pinned for the duration of a
+> freeze** (the orchestrator does not advance it on a refused bucket),
+> so a manipulated price that is simply HELD keeps scoring a large `z`
+> against the pre-freeze value and can never satisfy the auto-unfreeze
+> condition — that pinning, not the hold, is what defeats the
+> park-the-price evasion, and the hold is what defeats the flap. And
+> the **sustained-drift statistic stays out of the fire, extend and
+> release decisions** (it latches for ~30 days and cannot self-clear);
+> it reaches the release decision only through `confidence`, which is
+> graded and self-correcting.
+>
+> **Operator surface.** Every duration is tunable under
+> `[anomaly.phase2]` with the ADR values as defaults. Force-unfreeze is
+> `DEL freeze:<asset>:<quote>`: the aggregator detects the missing
+> marker on its next tick, drops the ladder, and counts the release as
+> `stellarindex_anomaly_freeze_released_total{mode="operator"}`. The
+> Redis marker's TTL is now "remaining hold + a 5-minute silence
+> grace", so it is a liveness backstop rather than the duration policy,
+> and the ladder is re-hydrated from the marker after a restart instead
+> of silently restarting the escalation clock. New alerts:
+> `stellarindex_anomaly_freeze_escalated` (P1),
+> `stellarindex_anomaly_freeze_extension_rate` (P3),
+> `stellarindex_anomaly_freeze_active` (informational).
+
 > **Amendment (2026-07-24, audit-2026-07-23 R-003 / COR-14).** The
 > confidence formula block under §"Multi-factor confidence score"
 > writes the weighted product **without** its normalisation exponent,

@@ -381,10 +381,10 @@ const DivergenceTTL = 5 * time.Minute
 // Reader: internal/api/v1.FrozenLooker — production wiring is the
 // freeze package's RedisLooker.
 //
-// TTL: 5 minutes — long enough that the next bucket close (1
-// minute) sees the marker still in place if the anomaly persists,
-// short enough that a transient anomaly clears within a few buckets
-// of the underlying signal returning to normal.
+// TTL: see [FreezeTTL]. It is the SILENCE GRACE, not the freeze
+// duration — the aggregator writes each marker with a TTL of
+// "remaining hold + FreezeTTL" and deletes the key outright on
+// unfreeze (see internal/aggregate/freeze's Policy).
 
 // FreezeKey is the typed Redis key for the
 // `freeze:<asset_id>:<quote_id>` family.
@@ -401,7 +401,26 @@ func Freeze(asset, quote canonical.Asset) FreezeKey {
 	return FreezeKey("freeze:" + asset.String() + ":" + quote.String())
 }
 
-// FreezeTTL is the expiry for freeze: keys.
+// FreezeTTL is the SILENCE GRACE added to a freeze marker's
+// remaining hold when the aggregator writes the key — i.e. how long
+// `flags.frozen` keeps serving after the aggregator stops writing
+// (crash, restart, deploy, a stalled tick).
+//
+// It is NOT the freeze duration. It used to be: markers were written
+// with a flat 5-minute TTL and re-written on every bucket the
+// ADR-0019 3-signal AND fired for, which made "the freeze ends" mean
+// "the fire condition stopped holding for one bucket" — a release
+// band strictly wider than the fire band, on a single sample. The
+// duration now lives in `freeze.State` (initial hold, extension
+// ladder, escalation, two-consecutive-bucket auto-unfreeze) per
+// ADR-0019 §"Freeze duration"; this constant only decides how much
+// aggregator downtime a live freeze tolerates before the serving
+// path forgets it.
+//
+// 5 minutes = 10 missed ticks at the default 30s cadence. Long
+// enough to ride out a deploy; short enough that a genuinely dead
+// aggregator does not pin a pair to a last-known-good price with
+// nobody advancing the ladder.
 const FreezeTTL = 5 * time.Minute
 
 // ─── API-key records ──────────────────────────────────────────────

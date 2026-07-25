@@ -939,7 +939,42 @@ type Phase2FreezeConfig struct {
 	ConfidenceMaxFreeze  float64 `toml:"confidence_max_freeze" doc:"Freeze fires when confidence is strictly less than this. 0.45 (operator decision 2026-07-25, coupled with the COR-14 fix); ADR-0019 originally said 0.10, which in practice required z ~= 15 and never fired." default:"0.45"`
 	ZScoreMinFreeze      float64 `toml:"z_score_min_freeze" doc:"Freeze fires when z-score is strictly greater than this. ADR-0019 default 5.0 (the documented 5σ trigger)." default:"5.0"`
 	SourceCountMaxFreeze int     `toml:"source_count_max_freeze" doc:"Freeze fires when source count is at or below this. ADR-0019 default 1 (single-source pattern)." default:"1"`
+
+	// ─── Freeze DURATION (ADR-0019 §"Freeze duration") ────────────
+	//
+	// The three fields above decide WHETHER a bucket fires a freeze.
+	// The ones below decide how long the resulting freeze holds, when
+	// it re-evaluates, and what ends it. They are separate knobs
+	// because they trade against different costs: firing too readily
+	// serves a stale last-known-good price (MNY-22), while holding too
+	// briefly serves a manipulated one.
+	//
+	// Durations are minutes, not Go duration strings, to match the
+	// `*_seconds` / numeric convention every other cadence knob in
+	// this file uses. 0 = "use the ADR default" for every field.
+	InitialHoldMinutes int `toml:"initial_hold_minutes" doc:"Minimum freeze duration for a pair that had a corroborating lens (a checked triangulation composite or a trusted cross-oracle reading) in the bucket that froze it. ADR-0019 §'Freeze duration': 30 minutes. 0 = use the default." default:"30"`
+
+	UncorroboratedInitialHoldMinutes int `toml:"uncorroborated_initial_hold_minutes" doc:"Minimum freeze duration for a pair with NO corroborating lens at all — one venue and its own history. Deliberately shorter than ADR-0019's flat 30 min: that population is where false freezes concentrate, and a false freeze bills the customer 100% of its duration in stale last-known-good price. Must stay comfortably above the longest window that can carry a spike so a one-bucket spike cannot be waited out. 0 = use the default." default:"10"`
+
+	ExtensionMinutes int `toml:"extension_minutes" doc:"Added to the hold at each expiry the freeze has not earned its auto-unfreeze at. ADR-0019: 30 minutes. 0 = use the default." default:"30"`
+
+	MaxExtensions int `toml:"max_extensions" doc:"Extensions granted before the freeze escalates to operator review (a P1 alert) and stops auto-unfreezing. ADR-0019: 4, i.e. 2 hours of extensions on top of the initial hold. 0 = use the default." default:"4"`
+
+	UnfreezeConfidenceMin float64 `toml:"unfreeze_confidence_min" doc:"Auto-unfreeze requires confidence strictly ABOVE this. ADR-0019 §'Auto-unfreeze trigger': 0.30. Note the deliberate hysteresis against confidence_max_freeze (0.45) — a freeze must not be released by the same score band that would still fire it. 0 = use the default." default:"0.30"`
+
+	UnfreezeZScoreMax float64 `toml:"unfreeze_z_score_max" doc:"Auto-unfreeze requires z strictly BELOW this. ADR-0019: 3.0, against the 5.0 fire threshold — the gap is the hysteresis band that stops a freeze flapping on a signal hovering at the trigger. 0 = use the default." default:"3.0"`
+
+	UnfreezeBuckets int `toml:"unfreeze_buckets" doc:"How many CONSECUTIVE buckets must meet both auto-unfreeze conditions before the freeze ends. ADR-0019: 2. A bucket that cannot be scored at all resets the count. 0 = use the default." default:"2"`
 }
+
+// NOTE — the *Minutes fields above are ints rather than a
+// `freeze.Policy`, and there is no conversion helper here, because
+// this package must not import `internal/aggregate/freeze`:
+// freeze → obs → config is a live import chain, so the reverse edge
+// is a cycle. The binary boundary
+// (cmd/stellarindex-aggregator/main.go) maps these onto
+// `orchestrator.Phase2Thresholds.Lifecycle`, the same way it already
+// maps the three threshold fields.
 
 // AnomalyThreshold is one row of the anomaly threshold table.
 // Mirrors `anomaly.Thresholds` but uses TOML-friendly types so the
@@ -1445,6 +1480,37 @@ func defaultHashDBConfig() HashDBConfig {
 	}
 }
 
+// defaultAnomalyConfig is split out of Default() to keep that function
+// under the funlen ceiling (same reason as defaultAPIConfig below).
+//
+// It holds the ADR-0019 anomaly-response defaults: the Phase 2
+// 3-signal freeze thresholds AND the freeze-duration lifecycle
+// (initial hold, extension ladder, escalation cap, auto-unfreeze
+// condition). The duration values mirror the `freeze.Default*`
+// constants in internal/aggregate/freeze — the two are kept in step
+// by TestDefault_MatchesStructTags here (Default() vs the `default:`
+// tags) and by TestPolicy_WithDefaults_MatchesADR0019 there
+// (constants vs the ADR).
+func defaultAnomalyConfig() AnomalyConfig {
+	return AnomalyConfig{
+		// Enabled defaults to false — operator opts in once
+		// classifications are set per ADR-0019 stop-gap.
+		Phase2: Phase2FreezeConfig{
+			ConfidenceMaxFreeze:  0.45,
+			ZScoreMinFreeze:      5.0,
+			SourceCountMaxFreeze: 1,
+
+			InitialHoldMinutes:               30,
+			UncorroboratedInitialHoldMinutes: 10,
+			ExtensionMinutes:                 30,
+			MaxExtensions:                    4,
+			UnfreezeConfidenceMin:            0.30,
+			UnfreezeZScoreMax:                3.0,
+			UnfreezeBuckets:                  2,
+		},
+	}
+}
+
 // defaultAPIConfig is split out of Default() to keep that function under
 // the funlen ceiling; it holds the public-API / auth / dashboard defaults
 // (kept in lockstep with the `default:` struct tags — see
@@ -1595,15 +1661,7 @@ func Default() Config {
 			DivergenceMinIntervalSeconds: 300,
 			MaxTradesPerWindow:           10_000,
 		},
-		Anomaly: AnomalyConfig{
-			// Enabled defaults to false — operator opts in once
-			// classifications are set per ADR-0019 stop-gap.
-			Phase2: Phase2FreezeConfig{
-				ConfidenceMaxFreeze:  0.45,
-				ZScoreMinFreeze:      5.0,
-				SourceCountMaxFreeze: 1,
-			},
-		},
+		Anomaly:    defaultAnomalyConfig(),
 		API:        defaultAPIConfig(),
 		Divergence: defaultDivergenceConfig(),
 		DecimalsGuard: DecimalsGuardConfig{

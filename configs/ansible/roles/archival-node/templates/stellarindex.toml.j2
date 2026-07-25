@@ -375,4 +375,12 @@ rpc_url = "{{ vault_chainlink_rpc_url | default('https://eth.llamarpc.com') }}"
 # physically impossible without a market move that would also
 # trigger Phase 1. Revisit once baselines mature post-backfill.
 [anomaly.phase2]
-z_score_min_freeze = 100
+# RESTORED to ADR-0019's 5.0 on 2026-07-26: the 2026-05-14 stop-gap
+# (z=100, i.e. never fire) existed because firing without a duration/
+# extension/unfreeze lifecycle was unsafe — a freeze could flap or run
+# unbounded. The lifecycle landed (freeze/lifecycle.go, corroboration-
+# scaled holds, 2-bucket hysteresis release, x4 extension ladder, P1
+# escalation), which is precisely what makes z>5 affordable. Applies on
+# the next ansible render + aggregator deploy, both in the operator
+# batch.
+z_score_min_freeze = {{ stellarindex_phase2_z_min_freeze | default(5.0) }}

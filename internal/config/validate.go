@@ -514,6 +514,70 @@ func (p Phase2FreezeConfig) validate() error {
 		return fmt.Errorf("%w: anomaly.phase2.source_count_max_freeze must be >= 0 (got %d)",
 			ErrInvalidConfig, p.SourceCountMaxFreeze)
 	}
+	return p.validateLifecycle()
+}
+
+// validateLifecycle enforces the ADR-0019 freeze-duration bounds.
+//
+// Split out to keep [Phase2FreezeConfig.validate] under the funlen
+// ceiling, and because these checks guard a different failure mode:
+// a bad THRESHOLD makes the freeze fire wrongly, a bad DURATION makes
+// a correctly-fired freeze end at the wrong time — which is the
+// silent failure ADR-0019's ladder exists to prevent.
+func (p Phase2FreezeConfig) validateLifecycle() error {
+	for _, f := range []struct {
+		name string
+		mins int
+	}{
+		{"initial_hold_minutes", p.InitialHoldMinutes},
+		{"uncorroborated_initial_hold_minutes", p.UncorroboratedInitialHoldMinutes},
+		{"extension_minutes", p.ExtensionMinutes},
+	} {
+		if f.mins < 0 {
+			return fmt.Errorf("%w: anomaly.phase2.%s must be >= 0 (got %d; 0 = use the ADR-0019 default)",
+				ErrInvalidConfig, f.name, f.mins)
+		}
+	}
+	if p.MaxExtensions < 0 {
+		return fmt.Errorf("%w: anomaly.phase2.max_extensions must be >= 0 (got %d; 0 = use the ADR-0019 default of 4)",
+			ErrInvalidConfig, p.MaxExtensions)
+	}
+	if p.UnfreezeConfidenceMin < 0 || p.UnfreezeConfidenceMin > 1 {
+		return fmt.Errorf("%w: anomaly.phase2.unfreeze_confidence_min must be in [0, 1] (got %v)",
+			ErrInvalidConfig, p.UnfreezeConfidenceMin)
+	}
+	if p.UnfreezeZScoreMax < 0 {
+		return fmt.Errorf("%w: anomaly.phase2.unfreeze_z_score_max must be >= 0 (got %v)",
+			ErrInvalidConfig, p.UnfreezeZScoreMax)
+	}
+	if p.UnfreezeBuckets < 0 {
+		return fmt.Errorf("%w: anomaly.phase2.unfreeze_buckets must be >= 0 (got %d; 0 = use the ADR-0019 default of 2)",
+			ErrInvalidConfig, p.UnfreezeBuckets)
+	}
+	// Hysteresis, the invariant this whole lifecycle exists to
+	// restore: no bucket may satisfy BOTH the freeze condition and the
+	// auto-unfreeze condition. If one can, a signal sitting near the
+	// trigger flaps the pair frozen and unfrozen bucket after bucket —
+	// publishing, each time it unfreezes, exactly the value the freeze
+	// just refused. That was the pre-lifecycle behaviour and it must
+	// not be reachable by config.
+	//
+	// The z axis is what carries the disjointness, and it is the ONLY
+	// axis that has to. The confidence bands deliberately DO overlap
+	// at the shipped defaults — auto-unfreeze wants confidence > 0.30
+	// while the freeze fires below 0.45, so (0.30, 0.45) satisfies
+	// both confidence legs — and that is harmless because the two
+	// conditions are ANDs whose z legs (z > 5.0 vs z < 3.0) cannot
+	// hold together. Rejecting the confidence overlap would reject the
+	// ADR's own numbers.
+	//
+	// Checked only when the operator set both, since 0 means "use the
+	// default" and the defaults satisfy this by construction.
+	if p.UnfreezeZScoreMax != 0 && p.ZScoreMinFreeze != 0 && p.UnfreezeZScoreMax > p.ZScoreMinFreeze {
+		return fmt.Errorf("%w: anomaly.phase2.unfreeze_z_score_max (%v) must be <= z_score_min_freeze (%v) — "+
+			"otherwise the release band overlaps the fire band and the pair flaps frozen/unfrozen at the trigger",
+			ErrInvalidConfig, p.UnfreezeZScoreMax, p.ZScoreMinFreeze)
+	}
 	return nil
 }
 

@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
@@ -53,13 +55,26 @@ const (
 )
 
 // Phase2Thresholds is the operator-tunable shape of the Phase 2
-// freeze condition. The orchestrator's [Config.Phase2Thresholds]
-// holds an instance of this struct; zero values fall back to the
-// `Default*` package constants so unset fields do the right thing.
+// freeze condition AND of the ADR-0019 freeze lifecycle it feeds.
+// The orchestrator's [Config.Phase2Thresholds] holds an instance of
+// this struct; zero values fall back to documented defaults so unset
+// fields do the right thing.
+//
+// The two halves answer different questions and are tuned
+// independently: the first three fields decide WHETHER a bucket fires
+// a freeze, the [freeze.Policy] fields decide HOW LONG the resulting
+// freeze holds, when it re-evaluates, and what it takes to end.
 type Phase2Thresholds struct {
 	ConfidenceMaxFreeze  float64
 	ZScoreMinFreeze      float64
 	SourceCountMaxFreeze int
+
+	// Lifecycle is the ADR-0019 §"Freeze duration" policy — initial
+	// hold (corroborated / uncorroborated), extension size, extension
+	// cap before operator escalation, and the auto-unfreeze condition.
+	// Zero-valued fields fall back to the `freeze.Default*` constants,
+	// which are the ADR's own numbers.
+	Lifecycle freeze.Policy
 }
 
 // withDefaults returns a Phase2Thresholds with any zero-valued
@@ -125,88 +140,331 @@ type confidenceWithSourceCount struct {
 	SourceCount int
 }
 
-// markPhase2Freeze records a Phase 2 freeze decision via the
-// configured FreezeWriter (when wired) and emits the orchestrator's
-// freeze-engaged Prometheus counter. Reuses the [anomaly.Decision]
-// shape so downstream readers (the API's freeze-flag lookup) don't
-// need to distinguish Phase 1 vs Phase 2 — both look identical on
-// the wire.
+// classOf resolves the asset class label for a pair, using the
+// Phase 1 checker's classifier when it's wired so the per-class
+// metric stays consistent across both phases.
+func (o *Orchestrator) classOf(pair canonical.Pair) anomaly.AssetClass {
+	if o.cfg.Anomaly != nil {
+		return o.cfg.Anomaly.ClassOf(pair.Base)
+	}
+	return anomaly.ClassDefault
+}
+
+// stepPhase2Freeze translates one scored bucket into a [freeze.Signal]
+// and advances the ADR-0019 lifecycle. Returns true when the bucket
+// must be refused publication.
 //
-// The [anomaly.Decision] carries Reason="phase2:3_signal_AND" so
-// log lines + Redis marker JSON make the source legible without
-// adding a new wire field.
-func (o *Orchestrator) markPhase2Freeze(
+// Called on EVERY bucket, not only on buckets the 3-signal AND fires
+// for — a pair inside its hold stays frozen through quiet buckets,
+// and only the ADR's auto-unfreeze condition ends it.
+//
+// confOK=false (no baseline, no previous VWAP, bootstrap) yields an
+// UNSCORED signal: it cannot fire a freeze and it cannot earn an
+// auto-unfreeze streak. That asymmetry is deliberate — "we could not
+// measure this bucket" is not evidence the pair recovered, and the
+// state right after an aggregator restart is exactly that.
+func (o *Orchestrator) stepPhase2Freeze(
 	ctx context.Context,
 	pair canonical.Pair,
 	window time.Duration,
-	c confidenceWithSourceCount,
+	stateKey string,
+	now time.Time,
+	conf confidenceComputation,
+	confOK bool,
+	sourceCount int,
 	prevVWAP *big.Rat,
+) bool {
+	sig := freeze.Signal{Now: now}
+	decision := anomaly.Decision{
+		Action: anomaly.ActionFreeze,
+		Class:  o.classOf(pair),
+		// Phase 2 doesn't compute a raw class deviation — the per-
+		// asset baseline replaces the per-class threshold. Keep
+		// DeviationPct zero; the Reason field carries the source.
+		Reason: "phase2:unscored",
+	}
+	if confOK {
+		input := confidenceWithSourceCount{
+			Confidence:  conf.Score.Confidence,
+			ZScore:      conf.ZScore,
+			SourceCount: sourceCount,
+		}
+		sig.Scored = true
+		sig.Confidence = input.Confidence
+		sig.ZScore = input.ZScore
+		sig.Fires = phase2FreezeFires(input, o.cfg.Phase2Thresholds)
+		sig.Corroborated = corroborated(conf.Score.Factors)
+		decision.Reason = fmt.Sprintf("phase2:3_signal_AND confidence=%.3f z=%.2f sources=%d",
+			input.Confidence, input.ZScore, input.SourceCount)
+	}
+	return o.stepFreezeLifecycle(ctx, pair, window, stateKey, sig, decision, prevVWAP)
+}
+
+// corroborated reports whether a corroborating lens produced a
+// reading for this bucket — i.e. whether the freeze decision was
+// taken with a second opinion available at all. It selects between
+// ADR-0019's 30-minute initial hold and the shorter uncorroborated
+// one (see freeze.DefaultUncorroboratedInitialHold).
+//
+// "Was a lens consulted", NOT "did the lens agree". A composite or an
+// external reference that DISAGREES is the strongest evidence a
+// freeze is true, so reading only the agreeing case as corroboration
+// would hand the shortest hold to the best-evidenced freezes — the
+// exact inversion of what the duration is for. The agreeing case is
+// already priced in elsewhere: agreement raises the confidence score,
+// which is a leg of the fire condition, so a well-corroborated
+// healthy pair mostly does not reach this code at all.
+func corroborated(f confidence.Factors) bool {
+	return f.TriangulationChecked || f.CrossOracleChecked
+}
+
+// stepFreezeLifecycle is the single owner of a pair's freeze
+// lifecycle and of its `freeze:<asset>:<quote>` marker: it evaluates
+// the ADR-0019 policy, persists the resulting state, drives the
+// marker (write / refresh / delete), emits metrics + logs, and keeps
+// the last-known-good VWAP alive for the hold's duration.
+//
+// Returns true when the bucket must be refused publication.
+//
+// Both freeze phases funnel through here. One owner per marker key is
+// a correctness requirement, not tidiness: two writers with different
+// TTL semantics would let a Phase 1 fire truncate a Phase 2 hold, and
+// a phase that wrote the marker without advancing the ladder would
+// hold a freeze forever without ever escalating it to an operator.
+func (o *Orchestrator) stepFreezeLifecycle(
+	ctx context.Context,
+	pair canonical.Pair,
+	window time.Duration,
+	stateKey string,
+	sig freeze.Signal,
+	decision anomaly.Decision,
+	prevVWAP *big.Rat,
+) bool {
+	prev, overridden := o.loadFreezeState(ctx, pair, stateKey)
+	if overridden {
+		o.releaseFreeze(ctx, pair, stateKey, prev, freeze.TransitionOverridden)
+		return false
+	}
+
+	out := o.cfg.Phase2Thresholds.Lifecycle.Evaluate(prev, sig)
+	if !out.Frozen {
+		o.releaseFreeze(ctx, pair, stateKey, prev, out.Transition)
+		return false
+	}
+	o.engageFreeze(ctx, pair, window, stateKey, decision, prevVWAP, out)
+	return true
+}
+
+// loadFreezeState returns the working lifecycle state for a
+// (pair, window) key, plus whether the operator has force-unfrozen it
+// out of band.
+//
+// Two Redis reads, both deliberate and both cheap:
+//
+//   - Cold key (first evaluation in this process): re-hydrate the
+//     ladder from the marker. Without it, every deploy would restart
+//     the 2-hour escalation clock, so a rolling restart cadence
+//     shorter than 2 hours could hold a pair frozen indefinitely
+//     while never paging anyone.
+//   - Live freeze: confirm the marker still exists. ADR-0019 requires
+//     "operator override always available: force unfreeze", and
+//     deleting the marker is that override — but without this check
+//     the orchestrator's in-memory ladder would simply re-write the
+//     marker on the next tick and the override would not stick.
+//
+// Healthy pairs cost nothing steady-state: an inactive-but-present
+// entry short-circuits both reads.
+func (o *Orchestrator) loadFreezeState(
+	ctx context.Context,
+	pair canonical.Pair,
+	stateKey string,
+) (freeze.State, bool) {
+	st, cached := o.freezeStates[stateKey]
+	if o.cfg.FreezeWriter == nil {
+		return st, false
+	}
+
+	if !cached {
+		marked, ok, err := o.cfg.FreezeWriter.LoadState(ctx, pair.Base, pair.Quote)
+		switch {
+		case err != nil:
+			// Transient Redis failure on a cold key. Start clean rather
+			// than fail the tick; the pair re-freezes on its own signal
+			// if the anomaly is still live.
+			o.logger.Debug("freeze lifecycle: marker read failed on cold key",
+				"pair", pair.String(), "err", err)
+		case ok && marked.Active():
+			st = marked
+			o.logger.Info("freeze lifecycle rehydrated from marker",
+				"pair", pair.String(),
+				"fired_at", marked.FiredAt,
+				"hold_until", marked.HoldUntil,
+				"extensions_used", marked.ExtensionsUsed,
+				"escalated", marked.Escalated)
+		}
+		o.freezeStates[stateKey] = st
+		return st, false
+	}
+
+	if st.Active() {
+		if _, ok, err := o.cfg.FreezeWriter.LoadState(ctx, pair.Base, pair.Quote); err == nil && !ok {
+			return st, true
+		}
+	}
+	return st, false
+}
+
+// engageFreeze applies a still-frozen [freeze.Outcome]: persist the
+// state, count it, log the transition, protect the last-known-good
+// value, and refresh the marker with the remaining hold.
+func (o *Orchestrator) engageFreeze(
+	ctx context.Context,
+	pair canonical.Pair,
+	window time.Duration,
+	stateKey string,
+	decision anomaly.Decision,
+	prevVWAP *big.Rat,
+	out freeze.Outcome,
 ) {
+	o.freezeStates[stateKey] = out.State
+
 	o.mu.Lock()
 	o.freezesEngaged++
 	o.mu.Unlock()
 
-	// Class label uses the same Phase 1 checker's classifier when
-	// it's wired (so the per-class metric stays consistent across
-	// both phases). When Phase 1 isn't configured, default class.
-	class := anomaly.ClassDefault
-	if o.cfg.Anomaly != nil {
-		class = o.cfg.Anomaly.ClassOf(pair.Base)
-	}
-	obs.AnomalyFreezeEngagedTotal.WithLabelValues(string(class)).Inc()
+	// Per FROZEN TICK, not per fire transition. The pre-existing
+	// anomaly.yml rules read a sustained freeze as a sustained rate()
+	// on this counter ("a sustained freeze keeps the counter
+	// incrementing"), and a lifecycle hold is precisely a sustained
+	// freeze — incrementing only on the fire would silently disarm
+	// stellarindex_anomaly_freeze_sustained, a severity:page rule.
+	obs.AnomalyFreezeEngagedTotal.WithLabelValues(string(decision.Class)).Inc()
+
+	o.logFreezeTransition(pair, window, decision, out)
 
 	// MNY-22: this pair's LKG stays in cache for the rest of the tick;
 	// record the refusal so triangulation can't republish it as a
 	// derived price.
 	o.markFrozenThisTick(pair, window)
 
-	// Visibility for the operator: until 2026-05-13 Phase 2 freeze
-	// decisions only manifested as a Prometheus counter +
-	// (optional) Redis marker. Phase 1 logs the same event at
-	// WARN level (orchestrator.go:851). The Phase 2 path stayed
-	// silent for ergonomic reasons (3-signal AND can fire many
-	// times in a tick) but that hid an actionable signal — when
-	// baselines aren't mature (insufficient historical samples)
-	// Phase 2 false-fires across many pairs and the operator's
-	// only signal is the alert summary "freeze sustained" with no
-	// way to triage which pairs / how confidently. This INFO line
-	// gives the alert runbook something to grep.
-	o.logger.Info("phase2 freeze engaged",
-		"pair", pair.String(),
-		"class", class,
-		"confidence", c.Confidence,
-		"zscore", c.ZScore,
-		"source_count", c.SourceCount,
-		"writer_wired", o.cfg.FreezeWriter != nil,
-	)
-
-	// F-1345 (G13-03): a Phase 2 freeze also skips the VWAP cache
-	// write, so the prior bucket's value must be kept alive for as
-	// long as the freeze marker. Refresh its TTL regardless of whether
-	// a FreezeWriter is wired — the LKG keeps serving either way.
-	o.keepFrozenVWAPAlive(ctx, pair, window)
+	// F-1345 (G13-03): a freeze skips the VWAP cache write, so the
+	// prior bucket's value must outlive the marker. Refresh regardless
+	// of whether a FreezeWriter is wired — the LKG keeps serving
+	// either way.
+	o.keepFrozenVWAPAlive(ctx, pair, window, out.MarkerTTL)
 
 	if o.cfg.FreezeWriter == nil {
 		return
 	}
-	decision := anomaly.Decision{
-		Action: anomaly.ActionFreeze,
-		Class:  class,
-		// Phase 2 doesn't compute a raw class deviation — the per-
-		// asset baseline replaces the per-class threshold. Keep
-		// DeviationPct zero; the Reason field carries the source.
-		Reason: fmt.Sprintf("phase2:3_signal_AND confidence=%.3f z=%.2f sources=%d",
-			c.Confidence, c.ZScore, c.SourceCount),
-	}
 	// LKG VWAP we're freezing on: the prior bucket's value (which
-	// stays in cache because the Phase 2 caller skips the cache
-	// write below). Empty string when no prior bucket exists.
+	// stays in cache because the caller skips the cache write).
+	// Empty string when no prior bucket exists (first-tick freeze).
 	var frozenValue string
 	if prevVWAP != nil {
 		frozenValue = formatRatFixed(prevVWAP, 12)
 	}
-	if err := o.cfg.FreezeWriter.Mark(ctx, pair.Base, pair.Quote, frozenValue, decision); err != nil {
-		o.logger.Warn("phase2 freeze marker write failed",
+	if err := o.cfg.FreezeWriter.MarkHold(ctx, pair.Base, pair.Quote,
+		frozenValue, decision, out.State, out.MarkerTTL); err != nil {
+		o.logger.Warn("freeze marker write failed",
+			"pair", pair.String(), "window", window, "err", err)
+		// Soft-fail: the anomaly was detected, the marker write
+		// failed, the API won't see flags.frozen. Operators alert on
+		// AnomalyFreezeEngagedTotal vs the API-side flag rate; a
+		// sustained gap = the writer is broken. Don't fail the tick.
+	}
+}
+
+// logFreezeTransition emits the per-transition operator signal and
+// the extension / escalation counters.
+//
+// Escalation logs at ERROR: it is the one transition that will not
+// resolve itself. ADR-0019 holds an escalated freeze "until manual
+// unfreeze", so the pair's /v1/price is pinned to a last-known-good
+// price until a human acts.
+func (o *Orchestrator) logFreezeTransition(
+	pair canonical.Pair,
+	window time.Duration,
+	decision anomaly.Decision,
+	out freeze.Outcome,
+) {
+	switch out.Transition {
+	case freeze.TransitionFired:
+		o.logger.Info("freeze engaged",
+			"pair", pair.String(),
+			"window", window.String(),
+			"class", string(decision.Class),
+			"reason", decision.Reason,
+			"hold_until", out.State.HoldUntil,
+			"corroborated", out.State.Corroborated,
+			"writer_wired", o.cfg.FreezeWriter != nil)
+	case freeze.TransitionExtended:
+		obs.AnomalyFreezeExtensionsTotal.Inc()
+		o.logger.Warn("freeze hold extended",
+			"pair", pair.String(),
+			"window", window.String(),
+			"class", string(decision.Class),
+			"extensions_used", out.State.ExtensionsUsed,
+			"max_extensions", o.cfg.Phase2Thresholds.Lifecycle.WithDefaults().MaxExtensions,
+			"hold_until", out.State.HoldUntil,
+			"reason", decision.Reason)
+	case freeze.TransitionEscalated:
+		obs.AnomalyFreezeEscalatedTotal.Inc()
+		o.logger.Error("freeze escalated to operator review — will NOT auto-unfreeze",
+			"pair", pair.String(),
+			"window", window.String(),
+			"class", string(decision.Class),
+			"fired_at", out.State.FiredAt,
+			"extensions_used", out.State.ExtensionsUsed,
+			"reason", decision.Reason)
+	case freeze.TransitionHeld, freeze.TransitionNone,
+		freeze.TransitionReleased, freeze.TransitionOverridden:
+		// Held is the steady state of a live freeze — logging it every
+		// tick would bury the transitions above. The other three never
+		// reach this function (they are not frozen outcomes).
+	default:
+		o.logger.Debug("freeze: unhandled lifecycle transition",
+			"pair", pair.String(), "transition", string(out.Transition))
+	}
+}
+
+// releaseFreeze ends a freeze: drop the ladder, delete the marker so
+// `flags.frozen` clears immediately rather than after the remaining
+// hold's TTL, and count the release by mode.
+//
+// The state entry is kept present-but-inactive rather than deleted,
+// so [Orchestrator.loadFreezeState]'s hydrate-on-cold-key path stays
+// a once-per-process cost.
+func (o *Orchestrator) releaseFreeze(
+	ctx context.Context,
+	pair canonical.Pair,
+	stateKey string,
+	prev freeze.State,
+	transition freeze.Transition,
+) {
+	o.freezeStates[stateKey] = freeze.State{}
+	if !prev.Active() {
+		return // nothing was frozen; nothing to release
+	}
+
+	mode := "auto"
+	if transition == freeze.TransitionOverridden {
+		mode = "operator"
+	}
+	obs.AnomalyFreezeReleasedTotal.WithLabelValues(mode).Inc()
+	o.logger.Info("freeze released",
+		"pair", pair.String(),
+		"mode", mode,
+		"fired_at", prev.FiredAt,
+		"extensions_used", prev.ExtensionsUsed,
+		"escalated", prev.Escalated)
+
+	if o.cfg.FreezeWriter == nil {
+		return
+	}
+	// An operator override already deleted the marker; clearing again
+	// is a harmless idempotent DEL and keeps the two paths identical.
+	if err := o.cfg.FreezeWriter.Clear(ctx, pair.Base, pair.Quote); err != nil {
+		o.logger.Warn("freeze marker clear failed — flags.frozen stays set until its TTL",
 			"pair", pair.String(), "err", err)
 	}
 }

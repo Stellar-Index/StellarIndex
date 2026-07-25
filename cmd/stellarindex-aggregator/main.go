@@ -425,6 +425,23 @@ func run(cfgPath string, dryRun bool) error {
 			ConfidenceMaxFreeze:  cfg.Anomaly.Phase2.ConfidenceMaxFreeze,
 			ZScoreMinFreeze:      cfg.Anomaly.Phase2.ZScoreMinFreeze,
 			SourceCountMaxFreeze: cfg.Anomaly.Phase2.SourceCountMaxFreeze,
+			// Lifecycle knobs (ADR-0019 §"Freeze duration" + the
+			// 2026-07-26 amendment). Zero values fall through to the
+			// package defaults inside Policy.withDefaults, so an
+			// unset TOML block behaves identically to the shipped
+			// constants — but a SET knob must take effect, which is
+			// exactly why this mapping cannot be deferred (a config
+			// key that parses and does nothing is the dormant-config
+			// class this campaign exists to kill).
+			Lifecycle: freeze.Policy{
+				InitialHold:               time.Duration(cfg.Anomaly.Phase2.InitialHoldMinutes) * time.Minute,
+				UncorroboratedInitialHold: time.Duration(cfg.Anomaly.Phase2.UncorroboratedInitialHoldMinutes) * time.Minute,
+				Extension:                 time.Duration(cfg.Anomaly.Phase2.ExtensionMinutes) * time.Minute,
+				MaxExtensions:             cfg.Anomaly.Phase2.MaxExtensions,
+				UnfreezeConfidenceMin:     cfg.Anomaly.Phase2.UnfreezeConfidenceMin,
+				UnfreezeZScoreMax:         cfg.Anomaly.Phase2.UnfreezeZScoreMax,
+				UnfreezeBuckets:           cfg.Anomaly.Phase2.UnfreezeBuckets,
+			},
 		},
 		DisableClassFilter:        cfg.Aggregate.DisableClassFilter,
 		EnableStablecoinFiatProxy: cfg.Aggregate.EnableStablecoinFiatProxy,
