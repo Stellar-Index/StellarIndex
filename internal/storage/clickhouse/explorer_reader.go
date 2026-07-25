@@ -765,15 +765,25 @@ func (r *ExplorerReader) txByLedgerAndHash(ctx context.Context, seq uint32, hash
 //     Only ledger_seq is read here, and that is safe even from an un-merged
 //     duplicate part: a transaction executes in exactly one historical
 //     ledger, and that fact never changes on re-ingest — every candidate row
-//     for this tx_hash agrees on ledger_seq, so LIMIT 1 without an ORDER BY
-//     is fine.
+//     for this tx_hash agrees on ledger_seq.
+//
+//     The `ORDER BY ingested_at DESC` is therefore a NO-OP on real data (one
+//     ledger, so nothing to order), and is kept deliberately for the case the
+//     lake can hold but the network cannot: the same hash recorded against two
+//     different ledger_seq values (a mis-seeded or cross-network backfill).
+//     There, "most recently ingested wins" is the long-documented behaviour
+//     this reader has always had, and integration coverage pins it. Dropping
+//     it made the choice arbitrary — whichever granule the skip-index happened
+//     to return first. Note this ordering is NOT what resolves the duplicate-
+//     row case: `ingested_at` is DateTime (1s), so it cannot break a
+//     same-second tie. That is step 2's job, via FINAL.
 //  2. Read the authoritative row via txByLedgerAndHash, now that step 1
 //     narrowed the read to one ledger — cheap FINAL, deterministic, correct
 //     even on an ingested_at tie (audit DAT-10; see txByLedgerAndHash).
 //
 // found=false when the hash is unknown (step 1 comes up empty).
 func (r *ExplorerReader) txByHashScan(ctx context.Context, hash string) (TxSummary, bool, error) {
-	const seqQ = `SELECT ledger_seq FROM stellar.transactions WHERE tx_hash = ? LIMIT 1`
+	const seqQ = `SELECT ledger_seq FROM stellar.transactions WHERE tx_hash = ? ORDER BY ingested_at DESC LIMIT 1`
 	rows, err := r.conn.Query(ctx, seqQ, hash)
 	if err != nil {
 		return TxSummary{}, false, fmt.Errorf("clickhouse: tx %s: %w", hash, err)
