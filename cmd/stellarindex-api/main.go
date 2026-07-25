@@ -40,7 +40,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -142,6 +144,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// docs/operations/pre-launch-hardening.md.
 	warnUnsafeBind(logger, cfg.API.ListenAddr, cfg.API.TrustedProxyCIDRs)
 	warnOpenCORS(logger, cfg.API.AllowedOrigins, cfg.API.AuthMode)
+	warnCollapsedStreamCap(logger, cfg.API.ListenAddr, cfg.API.Streaming.MaxStreamsPerIP, cfg.API.TrustedProxyCIDRs)
 
 	// SEP-10 validator — wired regardless of auth_mode so the
 	// /v1/auth/sep10/{challenge,token} endpoints serve. When the
@@ -306,6 +309,16 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		cors = middleware.CORS(middleware.CORSOptions{
 			AllowedOrigins:   cfg.API.AllowedOrigins,
 			AllowCredentials: cfg.API.AllowCredentials,
+			// API-08 (audit-2026-07-23): CORSOptions' own default
+			// (GET/HEAD/OPTIONS/POST) omits DELETE and PATCH, but the
+			// v1 mux registers DELETE /v1/account/keys/{keyID} and
+			// PATCH /v1/admin/accounts/{id} — a cross-origin browser
+			// preflight for either gets an Access-Control-Allow-Methods
+			// response missing the method it asked about, so the
+			// browser blocks the actual request client-side even
+			// though the origin itself is allowed and the server would
+			// have served it.
+			AllowedMethods: []string{"GET", "HEAD", "OPTIONS", "POST", "PATCH", "DELETE"},
 		})
 	}
 
@@ -323,6 +336,22 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// then had no limiter at all. Single-instance accounting is correct
 	// for the R1 single-instance deployment; a future multi-instance
 	// deployment provides Redis and gets fleet-wide accounting back.
+	// CFG-08 (audit-2026-07-23): 0 is a valid, Validate()-accepted
+	// value for either limit, but it means "this tier is completely
+	// UNBOUNDED" (fail-open) — a config typo or a copy-pasted
+	// dev-profile value silently disables abuse protection with no
+	// signal anywhere. Warn loudly at boot so the choice is visible
+	// even though it isn't rejected (an operator may have a
+	// legitimate reason — e.g. auth_mode=apikey with a downstream
+	// WAF doing the limiting).
+	if cfg.API.AnonRateLimitPerMin == 0 {
+		logger.Warn("anonymous rate limit is DISABLED (api.anon_rate_limit_per_min=0) — anonymous requests are UNBOUNDED",
+			"auth_mode", cfg.API.AuthMode)
+	}
+	if cfg.API.KeyRateLimitPerMin == 0 {
+		logger.Warn("per-key rate limit is DISABLED (api.key_rate_limit_per_min=0) — authenticated requests are UNBOUNDED",
+			"auth_mode", cfg.API.AuthMode)
+	}
 	var rateLimit middleware.Middleware
 	if cfg.API.AnonRateLimitPerMin > 0 || cfg.API.KeyRateLimitPerMin > 0 {
 		var anonBucket, authBucket *ratelimit.Bucket
@@ -339,10 +368,20 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			logger.With("component", "ratelimit"),
 		)
 		backend := "redis"
+		// CON-06 (audit-2026-07-23): all rate-limit buckets on the
+		// in-process fallback use PER-PROCESS state — a multi-instance
+		// deployment multiplies every limit by instance count (each
+		// process enforces its own independent budget) instead of
+		// sharing one fleet-wide budget the way the Redis path does.
+		// That's silently wrong the moment R1 becomes multi-instance,
+		// so this is a WARN (not Info) to keep it loud rather than
+		// buried in normal boot chatter.
+		logFn := logger.Info
 		if rdb == nil {
 			backend = "in-process (single-instance fallback — no Redis)"
+			logFn = logger.Warn
 		}
-		logger.Info(
+		logFn(
 			"rate-limit tiers wired",
 			"anon_per_min", cfg.API.AnonRateLimitPerMin,
 			"key_per_min", cfg.API.KeyRateLimitPerMin,
@@ -366,6 +405,15 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	var failedAuthLimiter *ratelimit.Bucket
 	if cfg.API.FailedAuthRateLimitPerMin > 0 {
 		failedAuthLimiter = ratelimit.New(rdb, cfg.API.FailedAuthRateLimitPerMin, time.Minute)
+		// CON-06 (audit-2026-07-23): same per-process-state caveat as
+		// the rate-limit tiers above — a multi-instance deployment
+		// without Redis multiplies the failed-auth (credential-
+		// stuffing) budget by instance count instead of sharing it.
+		if rdb == nil {
+			logger.Warn("failed-auth throttle is in-process (single-instance fallback — no Redis); "+
+				"a multi-instance deployment multiplies the credential-stuffing budget by instance count",
+				"failed_auth_per_min", cfg.API.FailedAuthRateLimitPerMin)
+		}
 	}
 
 	// Per-account usage counter — daily INCRs alongside rate-limit
@@ -435,6 +483,19 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	var signupIPThrottle v1.SignupIPThrottle
 	if rdb != nil {
 		signupIPThrottle = auth.NewRedisSignupIPThrottle(rdb, auth.SignupIPThrottleOptions{})
+	} else {
+		// NTF-08 (audit-2026-07-23): Redis-less deployments used to
+		// leave signupIPThrottle nil entirely — /v1/signup can trigger
+		// an outbound verification email per accepted request (when
+		// api.dashboard is wired, which only needs Postgres, not
+		// Redis), bounded ONLY by the global anonymous rate limit
+		// (60/min). That's up to 3,600 signup/verification emails per
+		// hour from one IP with no per-IP signup cap at all. Same
+		// in-process single-instance fallback posture as the
+		// magic-link throttle just below.
+		signupIPThrottle = newInProcessSignupIPThrottle()
+		logger.Warn("signup IP throttle is in-process (single-instance fallback — no Redis); " +
+			"the per-IP signup cap is NOT shared across instances")
 	}
 
 	// F-1218 wave 42 + 43 (codex audit-2026-05-12): the email-
@@ -588,6 +649,14 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// ran above, so RemoteIP honours the configured proxy allow-list.
 	streaming.SetMaxStreamsPerIP(cfg.API.Streaming.MaxStreamsPerIP)
 	streaming.SetStreamClientIPResolver(middleware.RemoteIP)
+	// Global concurrent-SSE-connection cap (AGT-dead-code,
+	// audit-2026-07-23): SetMaxConcurrentStreams existed since CS-013
+	// but nothing called it, so every deployment silently ran the
+	// package-level hardcoded default (8192) with no operator
+	// control. api.streaming.max_concurrent_streams now drives it,
+	// defaulting to that same 8192 so behaviour is unchanged unless
+	// an operator opts into a different value.
+	streaming.SetMaxConcurrentStreams(cfg.API.Streaming.MaxConcurrentStreams)
 
 	priceReader := storePriceReader{s: store, logger: logger}
 
@@ -942,6 +1011,17 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			lakeWatermarkReader = er
 			tokenDecimalsReader = er
 			logger.Info("explorer reader wired (ClickHouse lake, ADR-0038)", "addr", addr)
+			// OBS-07 (audit-2026-07-23): ClickHouse was entirely absent
+			// from /v1/readyz, so a CH outage was invisible to the
+			// dependency poll — operators only found out when
+			// /v1/ledgers etc. started 503ing in the wild. Non-critical
+			// (Critical()==false), matching the redisChecker precedent
+			// a few lines up: CH is documented + wired throughout this
+			// file as an OPTIONAL, nil-degrading dependency (Postgres-
+			// backed endpoints keep serving without it), so a CH blip
+			// should surface as status="degraded", not take the whole
+			// API out of load-balancer rotation.
+			checks = append(checks, clickhouseChecker{r: er})
 		}
 	}
 
@@ -1218,12 +1298,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		if err != nil {
 			return fmt.Errorf("redispub subscriber: %w", err)
 		}
-		go func() {
-			if err := sub.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
-				logger.Error("stream subscriber exited",
-					"channel", sub.Channel(), "err", err)
-			}
-		}()
+		go runSubscriberSupervised(rootCtx, sub, logger.With("component", "stream-sub"))
 	}
 
 	// Customer-webhook delivery worker (F-1270). Drains the
@@ -1520,6 +1595,134 @@ func buildPriceAlertHandlers(pg *postgresstore.Store, logger *slog.Logger) (*das
 	return h, nil
 }
 
+// inProcessLoginThrottleWindow / *MaxPerIP / *MaxPerEmail mirror
+// auth.RedisLoginThrottle's documented defaults (10 sends/hour/IP,
+// 5 sends/hour/email) so the Redis-less fallback enforces the SAME
+// policy, just with single-instance (not fleet-wide) accounting.
+const (
+	inProcessLoginThrottleWindow      = time.Hour
+	inProcessLoginThrottleMaxPerIP    = 10
+	inProcessLoginThrottleMaxPerEmail = 5
+)
+
+// inProcessLoginThrottle implements dashboardauth.LoginThrottle
+// (NTF-08, audit-2026-07-23) as the Redis-less fallback for the
+// magic-link send throttle — see newInProcessLoginThrottle's call
+// site for the threat this closes. Wraps two ratelimit.Bucket
+// instances constructed with a nil Redis client, which is the same
+// in-process single-instance fixed-window fallback already relied
+// on for the anon/key rate-limit tiers a few hundred lines up
+// (ratelimit.New(nil, …)) — REL-05/CON-04 hardened that fallback's
+// memory bound, so reusing it here inherits that hardening for free
+// instead of hand-rolling a second unbounded map.
+type inProcessLoginThrottle struct {
+	perIP    *ratelimit.Bucket
+	perEmail *ratelimit.Bucket
+}
+
+func newInProcessLoginThrottle() *inProcessLoginThrottle {
+	return &inProcessLoginThrottle{
+		perIP:    ratelimit.New(nil, inProcessLoginThrottleMaxPerIP, inProcessLoginThrottleWindow),
+		perEmail: ratelimit.New(nil, inProcessLoginThrottleMaxPerEmail, inProcessLoginThrottleWindow),
+	}
+}
+
+// Allow implements dashboardauth.LoginThrottle. The in-process
+// Bucket path never returns an error (no backend to fail — see
+// Bucket.TakeN's doc), so the discarded errors here are always nil;
+// the signature is kept for interface conformance.
+func (t *inProcessLoginThrottle) Allow(ctx context.Context, ip, email string) (bool, error) {
+	allowed := true
+	if email != "" {
+		// dashboardauth.LoginThrottle's doc requires implementations to
+		// hash the (already-lowercased) email before keying on it —
+		// mirrors auth.RedisLoginThrottle's hashEmail, kept local so
+		// this adapter doesn't need an internal/auth import for one
+		// unexported helper.
+		sum := sha256.Sum256([]byte(email))
+		res, _ := t.perEmail.Take(ctx, "mail:"+hex.EncodeToString(sum[:8]))
+		allowed = allowed && res.Allowed
+	}
+	if ip != "" {
+		res, _ := t.perIP.Take(ctx, "ip:"+ip)
+		allowed = allowed && res.Allowed
+	}
+	return allowed, nil
+}
+
+// inProcessSignupIPThrottleMaxPerHour mirrors
+// auth.RedisSignupIPThrottle's documented default (5 signups/hour/IP,
+// F-1232) so the Redis-less fallback enforces the same policy with
+// single-instance accounting.
+const inProcessSignupIPThrottleMaxPerHour = 5
+
+// inProcessSignupIPThrottle implements v1.SignupIPThrottle
+// (NTF-08, audit-2026-07-23) as the Redis-less fallback for the
+// per-IP signup throttle — see its construction site for the threat
+// this closes. Same ratelimit.New(nil, …) in-process bucket pattern
+// as inProcessLoginThrottle.
+type inProcessSignupIPThrottle struct {
+	bucket *ratelimit.Bucket
+}
+
+func newInProcessSignupIPThrottle() *inProcessSignupIPThrottle {
+	return &inProcessSignupIPThrottle{
+		bucket: ratelimit.New(nil, inProcessSignupIPThrottleMaxPerHour, time.Hour),
+	}
+}
+
+// CheckIP implements v1.SignupIPThrottle. The in-process Bucket path
+// never errors (no backend to fail), so the only non-nil return is
+// auth.ErrSignupRateLimited on quota exhaustion — the handler
+// (signupIPThrottleOK) already knows how to translate that into 429.
+func (t *inProcessSignupIPThrottle) CheckIP(ctx context.Context, ip string) error {
+	if ip == "" {
+		return nil
+	}
+	res, _ := t.bucket.Take(ctx, ip)
+	if !res.Allowed {
+		return auth.ErrSignupRateLimited
+	}
+	return nil
+}
+
+// wireDashboardAuthThrottles sets authCfg's EmailLocker + LoginThrottle
+// based on Redis availability. Split out of buildDashboardBundle to
+// keep that function under the funlen ceiling.
+//
+// F-1255 (codex audit-2026-05-12): per-email signup lock. Redis-
+// backed SETNX serialises first-login provisioning so two callback
+// callers for the same just-verified email can't both create
+// speculative Account rows. Redis-less deployments leave the locker
+// nil and fall back to the Suspend-on-conflict recovery path (still
+// safe; the orphan row gets reaped).
+//
+// Magic-link send throttle (audit-2026-06-14 A12): per-IP +
+// per-target-email caps so /v1/auth/login can't be used to
+// email-bomb an inbox or burn the email-send quota. Defaults: 10/h
+// per IP, 5/h per email.
+//
+// NTF-08 (audit-2026-07-23): Redis-less deployments used to leave
+// LoginThrottle nil entirely — only the global anonymous per-IP
+// rate limit (60/min) bounded /v1/auth/login, which caps REQUEST
+// volume but not the per-target-EMAIL dimension at all, so a single
+// IP under that ceiling could still bomb one victim's inbox and
+// burn the Resend send quota. Fall back to an in-process two-bucket
+// throttle (same shape + defaults as auth.RedisLoginThrottle) so the
+// abuse cap is never fully disabled, just downgraded to
+// single-instance accounting — the same posture already accepted
+// for the rate-limit tiers' C3-13 in-process fallback in run().
+func wireDashboardAuthThrottles(authCfg *dashboardauth.Config, rdb redis.UniversalClient, logger *slog.Logger) {
+	if rdb != nil {
+		authCfg.EmailLocker = auth.NewRedisSignupEmailLocker(rdb)
+		authCfg.LoginThrottle = auth.NewRedisLoginThrottle(rdb, auth.LoginThrottleOptions{})
+		return
+	}
+	authCfg.LoginThrottle = newInProcessLoginThrottle()
+	logger.Warn("dashboard magic-link throttle is in-process (single-instance fallback — no Redis); " +
+		"per-email/per-IP caps are NOT shared across instances")
+}
+
 func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.UniversalClient, logger *slog.Logger) (dashboardBundle, error) {
 	if cfg.BaseURL == "" {
 		logger.Warn("dashboard not wired (api.dashboard.base_url is empty); /v1/auth/* + /v1/dashboard/* will 404")
@@ -1571,21 +1774,7 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 		CookieSecure:     cfg.CookieSecure,
 		CookieDomain:     cfg.CookieDomain,
 	}
-	// F-1255 (codex audit-2026-05-12): per-email signup lock. Redis-
-	// backed SETNX serialises first-login provisioning so two
-	// callback callers for the same just-verified email can't both
-	// create speculative Account rows. Redis-less deployments leave
-	// the locker nil and fall back to the Suspend-on-conflict
-	// recovery path (still safe; the orphan row gets reaped).
-	if rdb != nil {
-		authCfg.EmailLocker = auth.NewRedisSignupEmailLocker(rdb)
-		// Magic-link send throttle (audit-2026-06-14 A12): per-IP +
-		// per-target-email caps so /v1/auth/login can't be used to
-		// email-bomb an inbox or burn the email-send quota. Redis-less
-		// deployments leave it nil (only the global anon rate-limit
-		// applies). Defaults: 10/h per IP, 5/h per email.
-		authCfg.LoginThrottle = auth.NewRedisLoginThrottle(rdb, auth.LoginThrottleOptions{})
-	}
+	wireDashboardAuthThrottles(&authCfg, rdb, logger)
 	authH, err := dashboardauth.NewHandlers(authCfg)
 	if err != nil {
 		return dashboardBundle{}, fmt.Errorf("dashboard auth handlers: %w", err)
@@ -1857,6 +2046,26 @@ func (c redisChecker) Name() string   { return "redis" }
 func (c redisChecker) Critical() bool { return false }
 func (c redisChecker) Ping(ctx context.Context) error {
 	return c.rdb.Ping(ctx).Err()
+}
+
+// clickhouseChecker adapts *clickhouse.ExplorerReader to the
+// v1.ReadyChecker interface (OBS-07, audit-2026-07-23). Non-critical
+// for the same reason as redisChecker: the explorer/supply readers
+// this wraps degrade to 503 on their own OWNING endpoints
+// (/v1/ledgers, /v1/tx, /v1/assets/{id}/supply, …) when ClickHouse
+// is unreachable — the rest of the API (Postgres-backed reads) keeps
+// serving correctly — so a CH outage should read status="degraded",
+// not take the whole backend out of load-balancer rotation. Reuses
+// LakeTipLedger (already exported for the protocol-analytics window
+// cutoff) as the Ping probe: a cheap query against the small
+// `stellar.ledgers` table, no new ClickHouse-side surface needed.
+type clickhouseChecker struct{ r *clickhouse.ExplorerReader }
+
+func (c clickhouseChecker) Name() string   { return "clickhouse" }
+func (c clickhouseChecker) Critical() bool { return false }
+func (c clickhouseChecker) Ping(ctx context.Context) error {
+	_, err := c.r.LakeTipLedger(ctx)
+	return err
 }
 
 // storeAssetReader adapts *timescale.Store to v1.AssetReader. Keeps
@@ -2962,6 +3171,72 @@ func (r storeSupplyLooker) DailyCirculatingSupply(ctx context.Context, assetKey 
 // canonical.ParseAsset. Any error returns immediately so the
 // binary fails loud at startup rather than silently dropping
 // pairs the operator expected to be streamed.
+// subscriberRestartMinBackoff / subscriberRestartMaxBackoff bound the
+// restart delay [runSubscriberSupervised] applies between
+// consecutive Run attempts — 1s floor so a transient blip recovers
+// fast, 30s ceiling so a sustained outage doesn't hot-loop
+// reconnect attempts against Redis.
+const (
+	subscriberRestartMinBackoff = time.Second
+	subscriberRestartMaxBackoff = 30 * time.Second
+)
+
+// subscriberRunner is the subset of [*redispub.Subscriber] that
+// [runSubscriberSupervised] needs, narrowed to an interface so tests
+// can inject a fake that fails on demand without a real/miniredis
+// Redis connection. *redispub.Subscriber satisfies this with no
+// changes.
+type subscriberRunner interface {
+	Run(ctx context.Context) error
+	Channel() string
+}
+
+// runSubscriberSupervised drives sub.Run in a restart loop with
+// exponential backoff (REL-supervision, audit-2026-07-23).
+// [redispub.Subscriber.Run]'s own doc says "any unexpected
+// stream-end is surfaced as an error so the caller can decide
+// whether to retry" — but the caller (this file) previously just
+// logged the error and let the goroutine exit for good, leaving
+// /v1/price/stream's closed-bucket feed permanently silent
+// (heartbeats only, no price_update events) for the rest of the
+// process lifetime after a single Redis pubsub hiccup. This
+// fulfils the documented retry contract.
+func runSubscriberSupervised(ctx context.Context, sub subscriberRunner, logger *slog.Logger) {
+	runSubscriberSupervisedWithBackoff(ctx, sub, logger, subscriberRestartMinBackoff, subscriberRestartMaxBackoff)
+}
+
+// runSubscriberSupervisedWithBackoff is [runSubscriberSupervised]
+// with the backoff floor/ceiling as parameters so tests can run the
+// real restart loop without waiting through production-sized delays.
+// Backs off minBackoff..maxBackoff (doubling) between restarts; a
+// run that stayed up for at least maxBackoff resets to the floor so
+// a later blip doesn't inherit an already-maxed delay. Returns
+// (instead of looping) on ctx cancellation or a nil error (clean
+// shutdown).
+func runSubscriberSupervisedWithBackoff(ctx context.Context, sub subscriberRunner, logger *slog.Logger, minBackoff, maxBackoff time.Duration) {
+	backoff := minBackoff
+	for {
+		started := time.Now()
+		err := sub.Run(ctx)
+		if err == nil || errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			return
+		}
+		if time.Since(started) >= maxBackoff {
+			backoff = minBackoff
+		}
+		logger.Error("stream subscriber exited; restarting",
+			"channel", sub.Channel(), "err", err, "backoff", backoff)
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return
+		}
+		if backoff *= 2; backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+	}
+}
+
 func parseStreamingPairs(rows [][]string) ([]canonical.Pair, error) {
 	out := make([]canonical.Pair, 0, len(rows))
 	for i, row := range rows {
@@ -3033,6 +3308,36 @@ func warnUnsafeBind(logger *slog.Logger, listenAddr string, trustedProxyCIDRs []
 	}
 }
 
+// warnCollapsedStreamCap logs a warning at startup when the per-IP
+// SSE concurrent-stream cap (C3-8, audit-2026-07-16) can't actually
+// discriminate clients. REL-availability (audit-2026-07-23): the cap
+// keys on middleware.RemoteIP, which only trusts X-Forwarded-For from
+// TrustedProxyCIDRs; behind a reverse proxy WITHOUT that configured,
+// every request resolves to the proxy's own single socket address, so
+// MaxStreamsPerIP silently collapses into one shared global budget
+// for every client instead of a per-client cap — the first
+// MaxStreamsPerIP clients through the proxy exhaust it for everyone
+// else. Loopback binds are exempt (no proxy in front by definition).
+func warnCollapsedStreamCap(logger *slog.Logger, listenAddr string, maxStreamsPerIP int, trustedProxyCIDRs []string) {
+	if maxStreamsPerIP <= 0 || len(trustedProxyCIDRs) > 0 {
+		return
+	}
+	host, _, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		return
+	}
+	if host == "127.0.0.1" || host == "::1" || host == "localhost" {
+		return
+	}
+	logger.Warn("SECURITY: api.streaming.max_streams_per_ip is set but trusted_proxy_cidrs is empty — "+
+		"if the API runs behind a reverse proxy, every client resolves to the proxy's single address and the "+
+		"per-IP SSE stream cap collapses into ONE shared global budget instead of a per-client cap. Populate "+
+		"trusted_proxy_cidrs with your reverse proxy's source range.",
+		"listen", listenAddr,
+		"max_streams_per_ip", maxStreamsPerIP,
+		"docs", "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/pre-launch-hardening.md")
+}
+
 // warnOpenCORS logs a warning at startup when CORS is set to
 // allow every origin AND auth_mode permits authenticated calls.
 // The combination lets any third-party site issue authenticated
@@ -3041,8 +3346,9 @@ func warnUnsafeBind(logger *slog.Logger, listenAddr string, trustedProxyCIDRs []
 // auth (we use bearer tokens, which mitigates the worst of it,
 // but the wide-open posture is still a smell).
 //
-// Default config ships AllowedOrigins=["*"] for the dev path; the
-// operator must explicitly narrow before exposing the API.
+// Default config ships AllowedOrigins=[] (same-origin only, SEC-14
+// audit-2026-07-23); this warning only fires once an operator has
+// explicitly opted into the wildcard.
 // parseUSDPeggedClassics resolves the operator's
 // trades.usd_pegged_classic_assets strings into canonical Assets so
 // /v1/chart can use them as fallback quotes when the literal
