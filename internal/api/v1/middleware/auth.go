@@ -106,6 +106,10 @@ func Auth(opts AuthOptions) Middleware {
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if isUnauthenticatedInfraPath(r.URL.Path) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			subject, err := authenticate(r, mode, opts)
 			if err != nil {
 				// C3-5: throttle per-IP on a CREDENTIAL FAILURE so a bad
@@ -124,6 +128,46 @@ func Auth(opts AuthOptions) Middleware {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// isUnauthenticatedInfraPath reports whether a path is operational
+// plumbing that must answer WITHOUT credentials, whatever `auth_mode` is.
+//
+// Auth() wraps the entire mux, and every one of these routes is registered
+// on that same mux — so before this, flipping auth_mode from `none` to
+// `apikey` made liveness probes, readiness probes, the Prometheus scrape,
+// robots.txt and the public error-documentation pages all return 401.
+//
+// That is not a hypothetical configuration. docs/operations/
+// launch-day-checklist.md documents the production cutover as exactly that
+// flip (`--extra-vars 'auth_mode=apikey'`), so the failure fires at the
+// moment of going live: load-balancer health checks start failing, the
+// orchestrator concludes the API is unhealthy, and monitoring goes blind at
+// precisely the point an operator most needs it. Audit SEC-01.
+//
+// /metrics is included deliberately. It is already protected by
+// loopbackOnly(), which is the correct control for a scrape endpoint — but
+// that guard was MOOT under auth, because Auth 401'd the request before it
+// ever reached the handler. Even a local Prometheus on 127.0.0.1 was blocked.
+// Exempting it here restores loopbackOnly as the actual gate rather than
+// stacking a second one that breaks the legitimate caller.
+//
+// Nothing here reads user data or accepts input: healthz/readyz report
+// process liveness, /metrics is loopback-only, and robots.txt and /errors/*
+// are static public documentation the RFC 9457 `type` URIs point at — a 401
+// on those makes every error response's own documentation link unreachable.
+//
+// Deliberately an exact-match list, not a prefix match: a prefix rule ("/v1/health…")
+// is how an exemption silently widens to cover a route added next to it later.
+// The one prefix here, /errors/, is scoped to a static docs handler.
+func isUnauthenticatedInfraPath(path string) bool {
+	switch path {
+	case "/v1/healthz", "/v1/readyz", "/v1/version", "/metrics", "/robots.txt", "/":
+		return true
+	}
+	// /errors/{slug} and /errors/ — the RFC 9457 problem-type documentation
+	// every error body links to.
+	return strings.HasPrefix(path, "/errors/")
 }
 
 // isCredentialRejection reports whether err is a caller-supplied

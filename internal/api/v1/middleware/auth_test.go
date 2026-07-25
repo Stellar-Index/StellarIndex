@@ -405,3 +405,71 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+// TestAuth_InfraPathsBypassCredentials pins the SEC-01 fix: operational
+// plumbing must answer WITHOUT credentials whatever auth_mode is set to.
+//
+// Auth() wraps the whole mux and every infra route is registered on that same
+// mux, so before this, flipping auth_mode from `none` to `apikey` made
+// liveness probes, readiness probes, the Prometheus scrape, robots.txt and the
+// error-documentation pages all return 401.
+//
+// That flip is the DOCUMENTED production cutover
+// (docs/operations/launch-day-checklist.md: --extra-vars 'auth_mode=apikey'),
+// so the failure fires at the moment of going live: load-balancer health checks
+// start failing, the orchestrator concludes the API is unhealthy, and
+// monitoring goes blind exactly when an operator most needs it.
+//
+// The validator here rejects EVERY key, so any request that reaches
+// authenticate() 401s. An infra path returning 200 therefore proves the bypass
+// ran, not that some credential happened to work.
+//
+// Proven red: without isUnauthenticatedInfraPath every infra subtest returns
+// 401.
+func TestAuth_InfraPathsBypassCredentials(t *testing.T) {
+	mw := middleware.Auth(middleware.AuthOptions{
+		Mode:   middleware.AuthModeAPIKey,
+		APIKey: stubAPIKeyValidator{knownKey: "no-key-matches-this"},
+	})
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	infra := []string{
+		"/v1/healthz", "/v1/readyz", "/v1/version",
+		"/metrics",    // loopbackOnly() is the real gate; Auth 401'd before it ran
+		"/robots.txt", //nolint:misspell // filename
+		"/",
+		"/errors/not-found", // RFC 9457 type URIs point here from every error body
+		"/errors/",
+	}
+	for _, path := range infra {
+		t.Run("open "+path, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, path, nil) // no credentials at all
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != http.StatusOK {
+				t.Errorf("GET %s with no credentials = %d, want 200 — infra plumbing must "+
+					"answer regardless of auth_mode, or the documented production cutover "+
+					"breaks health checks and monitoring (SEC-01)", path, w.Code)
+			}
+		})
+	}
+
+	// The exemption must NOT leak to real API surface.
+	for _, path := range []string{
+		"/v1/price", "/v1/assets", "/v1/accounts/GABC/movements",
+		"/v1/healthz/../price", // no prefix-walking into the API
+		"/errors",              // no trailing slash: NOT the docs handler, must stay protected
+	} {
+		t.Run("still protected "+path, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, path, nil)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code == http.StatusOK {
+				t.Errorf("GET %s with no credentials = 200 — the infra exemption leaked "+
+					"onto authenticated API surface", path)
+			}
+		})
+	}
+}

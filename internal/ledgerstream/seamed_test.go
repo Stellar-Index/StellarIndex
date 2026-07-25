@@ -3,6 +3,7 @@ package ledgerstream_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,4 +176,71 @@ func newSeededFilesystemDataStore(t *testing.T, ctx context.Context, from, to ui
 		writeLedgerFixture(t, ctx, store, cfg.Schema, seq)
 	}
 	return cfg, dir
+}
+
+// TestStreamArchiveThenLive_trailingGapRefusesHandoff pins the fix for the
+// silent seam gap.
+//
+// Config.TolerateTrailingMissing is set for BOTH buckets by
+// pipeline.LedgerstreamConfig — deliberately, because ops backfills reuse that
+// helper against the archive bucket and must survive racing the live tip. The
+// consequence for the indexer is that a genuine hole at the trailing edge of
+// the archive range makes the bounded Stream return SUCCESS. Before this fix
+// the handoff then jumped to the fixed `seam` regardless, so every
+// undelivered ledger was skipped — and skipped PERMANENTLY, because the
+// cursor advances past the gap and nothing re-reads it. The completeness
+// verdict would be the only thing to ever notice, long after the fact.
+//
+// It was also genuinely silent: ledgerstream only logs when cfg.Logger is
+// non-nil, and neither LedgerstreamConfig nor cmd/stellarindex-indexer ever
+// sets it, so the trailing-missing WARN never fired in production.
+//
+// Here the archive holds only [5,7] while the seam says it should cover
+// [5,9]. The stream must refuse to hand off rather than silently skip 8 and 9.
+//
+// Proven red: without the lastArchive check this returns the live phase's
+// stop sentinel and ledgers 8-9 are missing from `got`.
+func TestStreamArchiveThenLive_trailingGapRefusesHandoff(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	const seam = 10
+	const from = 5
+	const archiveLast = 7 // two ledgers short of seam-1 (=9)
+
+	archiveDS, _ := newSeededFilesystemDataStore(t, ctx, from, archiveLast)
+	liveDS, _ := newSeededFilesystemDataStore(t, ctx, seam, 15)
+
+	var got []uint32
+	err := ledgerstream.StreamArchiveThenLive(
+		ctx,
+		// TolerateTrailingMissing mirrors production (pipeline.LedgerstreamConfig
+		// sets it for both buckets) — it is what turns the hole into a success.
+		ledgerstream.Config{DataStore: archiveDS, TolerateTrailingMissing: true},
+		ledgerstream.Config{DataStore: liveDS, TolerateTrailingMissing: true},
+		from, seam, nil,
+		func(lcm xdr.LedgerCloseMeta) error {
+			got = append(got, lcm.LedgerSequence())
+			return nil
+		},
+	)
+	if err == nil {
+		t.Fatalf("expected an error: the archive delivered only up to %d but the seam is %d, "+
+			"so handing off would skip ledgers %d-%d permanently. got=%v",
+			archiveLast, seam, archiveLast+1, seam-1, got)
+	}
+	// The message must name the gap, not just fail — an operator needs to know
+	// WHICH ledgers are missing to re-drive them.
+	for _, want := range []string{"archive phase", "never delivered", "refusing to hand off"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err.Error(), want)
+		}
+	}
+	// It must fail BEFORE the live phase runs — no live ledger may be consumed.
+	for _, seq := range got {
+		if seq >= seam {
+			t.Errorf("consumed live ledger %d despite the archive gap — the handoff happened "+
+				"anyway, which is the bug (got=%v)", seq, got)
+		}
+	}
 }

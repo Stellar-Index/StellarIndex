@@ -140,9 +140,26 @@ Order matters. Don't skip.
    region. Ansible role does this in one command:
    ```sh
    ansible-playbook -i inventory/r1.yml deploy/ansible/roles/api/restart.yml \
-     --extra-vars 'auth_mode=apikey'
+     --extra-vars 'auth_mode=apikey_optional'
    # Repeat for r2, r3.
    ```
+
+   > **The production value is `apikey_optional`, NOT `apikey`.** This
+   > command said `apikey` until 2026-07-25, which contradicted the very
+   > sentence above it and the deployed reality (r1 has run
+   > `apikey_optional` throughout). The difference is not cosmetic:
+   >
+   > - `apikey_optional` — no key means ANONYMOUS, served at the anon
+   >   rate-limit tier; a supplied key must be valid and grants its tier.
+   >   This is "enable the public rate-limit tier", i.e. what this step
+   >   is actually for, and what a public read API used by wallets,
+   >   widgets and SDKs requires.
+   > - `apikey` — every request needs a credential. Following this step
+   >   literally would have taken the public API PRIVATE at launch, and
+   >   because the auth middleware wraps the whole mux it would also have
+   >   401'd `/v1/healthz`, `/v1/readyz` and `/metrics`, so load-balancer
+   >   probes and Prometheus would have failed at the same moment
+   >   (audit SEC-01).
 
 4. **Smoke test the public surface.**
    ```sh
