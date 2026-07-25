@@ -293,3 +293,118 @@ func prB64(t *testing.T, sv xdr.ScVal) string {
 	}
 	return base64.StdEncoding.EncodeToString(b)
 }
+
+// TestProjectedRebuild_FailedInsertDoesNotCheckpoint is the COR-09 proof, and
+// it is deliberately end-to-end (real ClickHouse + real Postgres) because the
+// bug lived in the seam between them.
+//
+// The old worker discarded pipeline.HandleEvent's error and checkpointed the
+// window unconditionally, justified in-comment by "the idempotent ON CONFLICT
+// write is retried by re-running the range". That justification was false in
+// the tool's DEFAULT mode: -resume=true SKIPS checkpointed windows, so the
+// range was never re-run and the row was gone permanently. A single transient
+// Postgres error during a multi-hour historical backfill silently dropped a
+// row with no unattended path to recovery.
+//
+// It has to be a NON-TRADE event to reproduce: trade events deliberately
+// return nil from HandleEvent (ADR-0041 block-and-retry owns their outcome),
+// so only non-trade inserts can surface an error at this seam. rozo.Event ->
+// persistRozoEvent returns its insert error, which is why this fixture uses
+// it.
+//
+// Nor can the completeness verdict be relied on as the backstop the code
+// pointed operators at: the reconciliation catalogue registers only `trades`
+// for some sources, so a dropped non-trade row is invisible to it.
+//
+// Failure is injected by renaming rozo_events out from under the insert —
+// a real, deterministic Postgres error, not a mock.
+//
+// Proven red: with the pre-fix `_ = pipeline.HandleEvent(...)`, run 1
+// checkpoints both windows, run 2 skips them, and the rows are never written.
+func TestProjectedRebuild_FailedInsertDoesNotCheckpoint(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	chAddr := clickhouseAddr(t)
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const contractID = rozo.MainnetPaymentContract
+	seedRozoPayment(t, ctx, chAddr, contractID, 3050, "tx-d-4444444444444444444444444444444444444444444444444444444444", 1_000_0000000, "dave-memo")
+	seedRozoPayment(t, ctx, chAddr, contractID, 3150, "tx-e-5555555555555555555555555555555555555555555555555555555555", 2_000_0000000, "erin-memo")
+
+	registry, err := projector.BuildRegistry([]string{rozo.SourceName}, config.OracleConfig{}, nil, nil)
+	if err != nil {
+		t.Fatalf("build projector registry: %v", err)
+	}
+	src := registry.Sources[0]
+
+	opts := func() chops.ProjectedRebuildOptions {
+		return chops.ProjectedRebuildOptions{
+			Store: store, ChAddr: chAddr, Source: src,
+			From: 3000, To: 3199, Window: 100, Workers: 2,
+			Write: true, Resume: true, ProgressInterval: time.Hour,
+		}
+	}
+
+	// ─── Break the insert target, then run ───────────────────────────────
+	if _, err := store.DB().ExecContext(ctx, `ALTER TABLE rozo_events RENAME TO rozo_events_hidden`); err != nil {
+		t.Fatalf("hide rozo_events: %v", err)
+	}
+
+	broken, err := chops.RunProjectedRebuild(ctx, opts())
+	if err != nil {
+		// The run itself still succeeds — the stream completed; only the
+		// inserts failed. That is the shape the bug hid inside.
+		t.Fatalf("RunProjectedRebuild (broken): %v", err)
+	}
+	if broken.InsertErrors == 0 {
+		t.Fatalf("InsertErrors = 0, want >0 — the failure injection did not take effect")
+	}
+	if broken.WindowsHeld == 0 {
+		t.Fatalf("WindowsHeld = 0 with InsertErrors = %d — the window was checkpointed despite "+
+			"losing rows, so a resumed run will skip it and the rows are gone permanently (COR-09)",
+			broken.InsertErrors)
+	}
+
+	// No checkpoint may exist for a window that lost rows.
+	var cursors int
+	if err := store.DB().QueryRowContext(ctx,
+		`SELECT count(*) FROM ingestion_cursors WHERE source = 'projected-rebuild'`).Scan(&cursors); err != nil {
+		t.Fatalf("count cursors: %v", err)
+	}
+	if cursors != 0 {
+		t.Fatalf("ingestion_cursors has %d projected-rebuild row(s) after a run that lost every "+
+			"insert, want 0 — a resumed run would skip those windows", cursors)
+	}
+
+	// ─── Repair, then resume: the held windows must be REDONE ────────────
+	if _, err := store.DB().ExecContext(ctx, `ALTER TABLE rozo_events_hidden RENAME TO rozo_events`); err != nil {
+		t.Fatalf("restore rozo_events: %v", err)
+	}
+
+	repaired, err := chops.RunProjectedRebuild(ctx, opts())
+	if err != nil {
+		t.Fatalf("RunProjectedRebuild (repaired): %v", err)
+	}
+	if repaired.WindowsSkipped != 0 {
+		t.Errorf("WindowsSkipped = %d, want 0 — the previously-held windows must be re-processed, "+
+			"not skipped", repaired.WindowsSkipped)
+	}
+	if repaired.WindowsProcessed != 2 {
+		t.Errorf("WindowsProcessed = %d, want 2", repaired.WindowsProcessed)
+	}
+	if repaired.InsertErrors != 0 || repaired.WindowsHeld != 0 {
+		t.Errorf("after repair: InsertErrors=%d WindowsHeld=%d, want 0/0",
+			repaired.InsertErrors, repaired.WindowsHeld)
+	}
+
+	// The whole point: the rows the first run lost are now actually present.
+	assertRozoEventLedgers(t, ctx, store.DB(), []uint32{3050, 3150})
+}
