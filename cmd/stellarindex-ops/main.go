@@ -8,7 +8,7 @@
 // more than one of those packages). main.go is only the dispatch
 // table + the handful of subcommands too small or too miscellaneous
 // to warrant their own package (docs-config, mint-key, upgrade-key,
-// emit-incident).
+// emit-incident, usage-rollup-backfill).
 //
 //   - Ingest / backfill (internal/ops/ingest): `backfill`,
 //     `backfill-external`, `backfill-chainlink`, `backfill-router`,
@@ -37,6 +37,10 @@
 //     `verify-hashchain`, `verify-lake`.
 //   - Doc generation: `docs-config` (regenerates the config
 //     reference from struct tags; called by `make docs-config`).
+//   - Billing/usage recovery: `usage-rollup-backfill` (re-folds the
+//     Redis per-endpoint usage counters into `usage_daily` for a
+//     chosen date range — the recovery path for a day the API's
+//     two-day rollup window skipped).
 //
 // This split (maintainability audit 2026-07-01, D1 finding M1-5) is
 // mechanical, not a behavior change: every subcommand keeps its exact
@@ -89,10 +93,11 @@ func main() {
 // verify-invariants) land via their feature PRs and add their own
 // entry here.
 var subcommands = map[string]func(args []string) error{
-	"docs-config":   func([]string) error { return config.EmitMarkdown(os.Stdout) },
-	"mint-key":      mintKey,
-	"upgrade-key":   upgradeKey,
-	"emit-incident": emitIncident,
+	"docs-config":           func([]string) error { return config.EmitMarkdown(os.Stdout) },
+	"mint-key":              mintKey,
+	"upgrade-key":           upgradeKey,
+	"emit-incident":         emitIncident,
+	"usage-rollup-backfill": usageRollupBackfill,
 
 	"rpc-probe":             diagnostics.Run,
 	"verify-decoders":       diagnostics.Run,
@@ -1033,6 +1038,26 @@ Subcommands:
                               -config /etc/stellarindex.toml \
                               -slug 2026-05-12-redis-blip \
                               -event sev1
+  usage-rollup-backfill -config PATH -from YYYY-MM-DD [-to YYYY-MM-DD] [-dry-run] [-timeout DUR]
+                          Re-fold the Redis per-endpoint usage
+                          counters into the usage_daily hypertable
+                          for a past UTC date range. The API's
+                          in-process rollup worker only sweeps
+                          today + yesterday, so a sink outage (or an
+                          API process down) spanning a day boundary
+                          skips that day permanently — the live
+                          window has already moved past it. Redis
+                          keeps the source counters for 35 days;
+                          this is the recovery path within that
+                          window. Idempotent (GREATEST() merge), so
+                          re-running is safe and can never lower an
+                          existing row. Reuses the worker's own
+                          Sweep with its clock pinned per day, so
+                          it also re-folds the day before -from.
+                          Example:
+                            stellarindex-ops usage-rollup-backfill \
+                              -config /etc/stellarindex.toml \
+                              -from 2026-07-19 -to 2026-07-21
   version                 Print version + build date.
   help                    This help.
 `
