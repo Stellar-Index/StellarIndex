@@ -52,6 +52,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -95,6 +96,36 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/usage"
 	"github.com/Stellar-Index/StellarIndex/internal/version"
 )
+
+// recoverBackgroundWorker turns a panic in a DETACHED background worker into a
+// logged error instead of a process exit.
+//
+// An unrecovered panic in any goroutine terminates the whole Go process — it is
+// not confined to that goroutine. So before this, a panic in any of the nine
+// background workers below (forex poller, TLS-cert probe, two cache refreshers,
+// the supply/wealth prewarm, stream publisher, customer-webhook sender, usage
+// rollup, signup reaper) took the entire API down, including every healthy
+// request in flight. None of those workers is on the serving path; none of them
+// is worth an outage.
+//
+// The trade-off is stated rather than hidden: the panicking worker STOPS (its
+// goroutine unwinds and is not restarted), so a crash-looping refresher becomes
+// a silently stale cache instead of a crash-looping process. That is the better
+// failure for a read API, but it is a real degradation — hence Error level and
+// the full stack, so it cannot pass unnoticed.
+//
+// Deliberately NOT applied to the http.Server goroutine. If the listener dies
+// the process has no reason to live, and recovering there would leave a running
+// process serving nothing — strictly worse than crashing. Same reasoning as
+// AGT-12's SSE producers, which recover per-connection for exactly this reason.
+func recoverBackgroundWorker(logger *slog.Logger, worker string) {
+	if r := recover(); r != nil {
+		logger.Error("background worker panicked — worker STOPPED, API still serving",
+			"worker", worker,
+			"panic", fmt.Sprintf("%v", r),
+			"stack", string(debug.Stack()))
+	}
+}
 
 func main() {
 	var (
@@ -770,6 +801,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	}
 
 	go func() {
+		defer recoverBackgroundWorker(logger, "forex-worker")
 		if err := forexWorker.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("forex worker exited", "err", err)
 		}
@@ -873,6 +905,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// deploy/monitoring/rules/api.yml fires at < 14 days remaining.
 	if len(cfg.API.TLSCertProbeHosts) > 0 {
 		go func() {
+			defer recoverBackgroundWorker(logger, "tls-cert-probe")
 			if err := v1.RunTLSCertProbe(rootCtx, cfg.API.TLSCertProbeHosts, logger.With("component", "tls-cert-probe")); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Warn("tls cert probe exited", "err", err)
 			}
@@ -890,6 +923,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// refreshes happen on the v1.CoverageRefreshInterval cadence.
 	backfillCoverageCache := v1.NewCoverageCache(store, logger.With("component", "backfill-coverage"))
 	go func() {
+		defer recoverBackgroundWorker(logger, "backfill-coverage-cache")
 		// Refresh timeout is 2 min: the per-source coverage query
 		// (BackfillCoverageStats) does ~13 sources × (ts-ordered
 		// LIMIT 1 earliest/latest + 24h count) plus two shared
@@ -940,6 +974,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// (row removed) or a new confirmation propagates.
 	nonstandardDecimalsCache := v1.NewNonstandardDecimalsCache(store, logger.With("component", "nonstandard-decimals-cache"))
 	go func() {
+		defer recoverBackgroundWorker(logger, "nonstandard-decimals-cache")
 		const refreshTimeout = 30 * time.Second
 
 		initCtx, initCancel := context.WithTimeout(rootCtx, refreshTimeout)
@@ -1222,6 +1257,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// warm — the wealth one returns as soon as it sees a live entry, and
 	// only kicks off its detached refresh on a miss.
 	go func() {
+		defer recoverBackgroundWorker(logger, "prewarm-supply-wealth")
 		const cadence = 5 * time.Minute
 		apiSrv.PrewarmClassicSupply(rootCtx)
 		apiSrv.PrewarmAccountsWealth(rootCtx)
@@ -1250,6 +1286,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	if len(streamPairs) > 0 {
 		pub := streampublish.New(hub, priceReader, cfg.API.Streaming.PollInterval, logger.With("component", "stream-publisher"))
 		go func() {
+			defer recoverBackgroundWorker(logger, "stream-publisher")
 			if err := pub.Run(rootCtx, streamPairs); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("stream publisher exited", "err", err)
 			}
@@ -1312,6 +1349,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			Logger: logger.With("component", "customer-webhook"),
 		})
 		go func() {
+			defer recoverBackgroundWorker(logger, "customer-webhook")
 			if err := worker.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("customer-webhook worker exited",
 					"err", err)
@@ -1330,6 +1368,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	if rollup := usage.NewRollup(usageCounter, store, usage.DefaultRollupInterval,
 		logger.With("component", "usage-rollup")); rollup != nil {
 		go func() {
+			defer recoverBackgroundWorker(logger, "usage-rollup")
 			if err := rollup.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("usage-rollup worker exited", "err", err)
 			}
@@ -1351,6 +1390,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 				Logger:   logger.With("component", "signup-reaper"),
 			})
 			go func() {
+				defer recoverBackgroundWorker(logger, "signup-reaper")
 				if err := reaper.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 					logger.Error("signup-reaper worker exited", "err", err)
 				}
