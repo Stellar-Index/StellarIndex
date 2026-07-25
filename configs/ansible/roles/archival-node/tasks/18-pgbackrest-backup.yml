@@ -130,6 +130,83 @@
     mode: "0640"
   when: pgbackrest_manage_conf | default(false)
 
+# ─── ClickHouse lake protection: schema + state snapshot ──────────────
+# ADR-0043 §2 rejects a full multi-TiB CH backup and commits instead to
+# three cheaper guarantees. §2.1 is this one: "Schema + state backup
+# (tiny, daily): SHOW CREATE DDL for every table + the
+# ch-live-catchup/backfill cursor state, pushed to repo2 alongside
+# pgBackRest. Losing DDL/config is what turns a re-derive from 'run the
+# script' into archaeology."
+#
+# It lives in the pgBackRest task file deliberately: the ADR pairs the
+# CH metadata copy with the Postgres backup (same destination, same
+# cadence, same operator), and the repo2 vars it should ride along with
+# are already in scope here.
+#
+# Nothing existed for §2.1 before this — the lake had DDL in
+# deploy/clickhouse/tier1_schema.sql (the FOUNDING schema, since
+# outgrown by indexes, MVs and compression policies) and nothing else.
+- name: Refuse a local-only ClickHouse schema snapshot without an explicit ack of the gap
+  ansible.builtin.assert:
+    that:
+      - >-
+        (ch_schema_snapshot_mc_target | default('') != '')
+        or (ch_schema_snapshot_offsite_ack | default(false) | bool)
+    fail_msg: >-
+      The ClickHouse schema+state snapshot (ADR-0043 §2.1) would be written
+      ONLY to this host's own pool — the same pool it protects, so one pool
+      loss takes the lake's DDL with the lake (the CS-111 failure shape,
+      one layer down). Either set ch_schema_snapshot_mc_target to an mc
+      alias/prefix on offsite storage, or set
+      ch_schema_snapshot_offsite_ack: true to accept the gap explicitly.
+      With the gap accepted, regenerate the in-repo copy periodically
+      instead — see docs/operations/runbooks/ch-schema-restore.md.
+    quiet: true
+  when: ch_schema_snapshot_enabled | default(true)
+
+- name: Install ClickHouse schema-snapshot script
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../scripts/ops/ch-schema-snapshot.sh"
+    dest: /usr/local/bin/ch-schema-snapshot.sh
+    owner: root
+    group: root
+    mode: "0755"
+  when: ch_schema_snapshot_enabled | default(true)
+
+- name: Ensure the ClickHouse schema-snapshot directory exists
+  ansible.builtin.file:
+    path: "{{ ch_schema_snapshot_dir | default('/var/lib/stellarindex/ch-schema-snapshot') }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  when: ch_schema_snapshot_enabled | default(true)
+
+- name: Install ClickHouse schema-snapshot systemd units
+  ansible.builtin.template:
+    src: "systemd/{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - ch-schema-snapshot.service
+    - ch-schema-snapshot.timer
+  register: ch_schema_snapshot_units
+  when: ch_schema_snapshot_enabled | default(true)
+
+# Enabled by default, unlike restore-drill.timer: this is seconds of
+# metadata queries and megabytes of output, so the Phase-A capacity
+# argument does not apply — and a backup that ships disabled is exactly
+# what ADR-0043 was written after.
+- name: Enable + start the ClickHouse schema-snapshot timer
+  ansible.builtin.systemd:
+    name: ch-schema-snapshot.timer
+    enabled: true
+    state: started
+    daemon_reload: "{{ ch_schema_snapshot_units is changed }}"
+  when: ch_schema_snapshot_enabled | default(true)
+
 # ─── Restore-drill (audit-2026-07-23 REL-backup-restore) ──────────────
 # CS-110: a backup that has never been restored is a hope, not a
 # backup. scripts/ops/restore-drill.sh already exists (non-destructive,
@@ -168,7 +245,9 @@
 # services.yml). R1 was mid Phase-A capacity relief (ZFS pool ~94%
 # full, docs/operations/runbooks/phase-a-capacity-relief-2026-07-18.md)
 # when this landed; the drill needs MIN_FREE_GB=200 free and the
-# script refuses to run below that (safe), but starting a NEW weekly
-# heavy job while capacity is this tight is an operator call. Enable
+# script refuses to run below that (safe), but starting a NEW heavy
+# recurring job while capacity is this tight is an operator call.
+# Cadence is MONTHLY (first Saturday, 04:00 UTC) per ADR-0043 §1/§3 —
+# the template shipped weekly, which over-committed the ADR. Enable
 # once Phase A clears:
 #   systemctl enable --now restore-drill.timer

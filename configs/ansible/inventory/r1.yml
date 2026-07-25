@@ -196,6 +196,18 @@ all:
     # Remove this once pgbackrest_repo2_s3_bucket (+ friends) is set.
     pgbackrest_offsite_ack: true
 
+    # The ClickHouse schema+state snapshot (ADR-0043 §2.1) has the same
+    # gap for the same reason: no offsite object store is provisioned
+    # for r1 yet, so ch_schema_snapshot_mc_target is empty and the daily
+    # snapshot lands only on the pool it protects. Acknowledged
+    # explicitly rather than shipped silently. INTERIM OFF-BOX COPY
+    # until an offsite target exists — run it into a checkout and commit
+    # the result (the repo is public, versioned and off this host):
+    #   OUT_DIR=deploy/clickhouse/schema-snapshot TEXTFILE_DIR=/dev/null \
+    #     scripts/ops/ch-schema-snapshot.sh
+    # See docs/operations/runbooks/ch-schema-restore.md.
+    ch_schema_snapshot_offsite_ack: true
+
     # ───── Observability targets ───────────────────────────────────
     prometheus_scrape_allow_cidrs:
       - "10.0.0.0/8"

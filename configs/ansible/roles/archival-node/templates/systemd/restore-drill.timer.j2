@@ -1,20 +1,30 @@
-# systemd timer: weekly pgBackRest restore-drill (ADR-0043 / CS-110).
+# systemd timer: monthly pgBackRest restore-drill (ADR-0043 / CS-110).
 #
 # Rendered by Ansible. Installed but NOT enabled by default — see
 # restore-drill.service.j2's header + 18-pgbackrest-backup.yml.
 #
-# Time slot: Saturday 04:00 UTC + up to 30 min jitter — after the
-# Saturday differential backup (pgbackrest-backup.timer, 02:00 UTC)
-# so the drill exercises that day's freshest backup, and well
-# outside the Sunday 02:17/03:23 archive-completeness / verify-
-# archive window.
+# Cadence: MONTHLY, not weekly. ADR-0043 commits to a monthly drill in
+# two places — §1 ("Wired to a monthly timer once the operator has run
+# it by hand twice") and §3 ("the monthly scratch drill is what we CAN
+# honestly do on one host, so it is what we commit to") — and the
+# evidence log in docs/operations/drills/ is written against that
+# cadence. This template shipped weekly, which is a heavier commitment
+# than the ADR made (each run is a full scratch restore + WAL replay,
+# up to 4h, on the same pool as live ingest).
+#
+# Time slot: the FIRST SATURDAY of the month, 04:00 UTC + up to 30 min
+# jitter — keeps the original slot's reasoning intact while dropping to
+# monthly: after the Saturday differential backup
+# (pgbackrest-backup.timer, 02:00 UTC) so the drill exercises that
+# day's freshest backup, and well outside the Sunday 02:17/03:23
+# archive-completeness / verify-archive window.
 
 [Unit]
-Description=Weekly pgBackRest restore-drill (ADR-0043 / CS-110)
+Description=Monthly pgBackRest restore-drill (ADR-0043 / CS-110)
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/adr/0043-backup-and-restore-strategy.md
 
 [Timer]
-OnCalendar=Sat *-*-* 04:00:00 UTC
+OnCalendar=Sat *-*-01..07 04:00:00 UTC
 RandomizedDelaySec=1800
 Persistent=true
 Unit=restore-drill.service

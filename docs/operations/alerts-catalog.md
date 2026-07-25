@@ -94,6 +94,8 @@ signal lands.
 | `stellarindex_timescale_compression_lag` | `stellarindex_uncompressed_chunks_older_than_7d` | > 0 for > 24 h | P3 | [compression-lag](runbooks/compression-lag.md) |
 | `stellarindex_timescale_backup_failed` | `stellarindex_pgbackrest_last_success_unix` | > 2× expected interval | P2 | [backup-failed](runbooks/backup-failed.md) |
 | `stellarindex_timescale_backup_none_24h` | same | > 24 h | **P1** | [backup-failed](runbooks/backup-failed.md) |
+| `stellarindex_ch_schema_snapshot_stale` | `time() - stellarindex_ch_schema_snapshot_last_success_unix` | > 36 h for ≥ 30 min | P3 | [ch-schema-restore](runbooks/ch-schema-restore.md) |
+| `stellarindex_ch_schema_snapshot_offsite_stale` | `time() - stellarindex_ch_schema_snapshot_offsite_last_success_unix` | > 72 h for ≥ 30 min | P3 | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 
 ## Cache / serving alerts
 
@@ -289,16 +291,32 @@ state so failures and stale runs trigger the alerts below. See
 ## Anomaly + freeze alerts
 
 Per [ADR-0019](../adr/0019-anomaly-response-and-confidence-scoring.md).
-The freeze policy fires only when `confidence < 0.10 AND z_score >
+The freeze policy fires only when `confidence < 0.45 AND z_score >
 5σ AND source_count <= 1` — the extreme corner where multi-source
-consensus can't help. Operator runbook walks through review +
-override.
+consensus can't help. (The bound is 0.45, not the ADR's original
+0.10; see the 2026-07-25 amendment in the ADR for the recalibration.)
+Operator runbook walks through review + override.
 
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_anomaly_freeze_engaged` | `stellarindex_anomaly_freeze_engaged_total` per class | rate > 0 over 5m | P3 | [anomaly-freeze-engaged](runbooks/anomaly-freeze-engaged.md) |
 | `stellarindex_anomaly_freeze_sustained` | `stellarindex_anomaly_freeze_engaged_total` per class | rate > 0 sustained 1h+ | **P1** | [anomaly-freeze-sustained](runbooks/anomaly-freeze-sustained.md) |
 | `stellarindex_anomaly_freeze_recovery_stalled` | `stellarindex_anomaly_freeze_engaged_total` vs `_recovered_total` + `_recovery_sweeps_total{outcome!="ok"}` | engaged > recovered for 2h+ AND sweep errors in last 15m | P3 | [freeze-recovery-stalled](runbooks/freeze-recovery-stalled.md) |
+
+### Freeze lifecycle (ADR-0019 §"Freeze duration")
+
+The rules above alert on the freeze DECISION. These alert on how
+freezes END: a freeze holds for a minimum duration, extends by 30 min
+at each expiry it has not earned its auto-unfreeze at, and escalates
+to operator review after 4 extensions — from which point it does not
+auto-unfreeze at all. Rules in
+[`deploy/monitoring/rules/freeze-lifecycle.yml`](../../deploy/monitoring/rules/freeze-lifecycle.yml).
+
+| Name | Metric | Condition | Severity | Runbook |
+| ---- | ------ | --------- | -------- | ------- |
+| `stellarindex_anomaly_freeze_escalated` | `stellarindex_anomaly_freeze_escalated_total` | increase > 0 over 15m — a freeze exhausted the 4-extension ladder and will NOT auto-unfreeze | **P1** | [anomaly-freeze-sustained](runbooks/anomaly-freeze-sustained.md) |
+| `stellarindex_anomaly_freeze_extension_rate` | `stellarindex_anomaly_freeze_extensions_total` | increase >= 3 over 1h, sustained 10m — freezes are climbing toward escalation | P3 | [anomaly-freeze-sustained](runbooks/anomaly-freeze-sustained.md) |
+| `stellarindex_anomaly_freeze_active` | `stellarindex_anomaly_freeze_active` | > 0 for 5m — informational "N (pair, window) freezes held right now" | informational | [anomaly-freeze-engaged](runbooks/anomaly-freeze-engaged.md) |
 
 ## Divergence / quality alerts
 
@@ -318,6 +336,7 @@ override.
 | `stellarindex_aggregator_outlier_storm` | `rate(stellarindex_aggregator_dropped_trades_total{reason="outlier"}[10m])` | > 5× baseline (offset 1h) for > 15 min | P3 | [aggregator-outlier-storm](runbooks/aggregator-outlier-storm.md) |
 | `stellarindex_aggregator_class_drop_spike` | `rate(stellarindex_aggregator_dropped_trades_total{reason="class"}[10m])` | > 10× baseline (offset 1h) for > 15 min | P3 | [aggregator-class-drop-spike](runbooks/aggregator-class-drop-spike.md) |
 | `stellarindex_aggregator_fx_snap_fallback_dominant` | `rate(stellarindex_aggregator_fx_snap_fallback_total[15m]) / rate(stellarindex_aggregator_triangulations_total{outcome="ok"}[15m])` | > 0.5 for > 30 min | P3 | [aggregator-fx-snap-fallback-dominant](runbooks/aggregator-fx-snap-fallback-dominant.md) |
+| `stellarindex_aggregator_triangulation_chains_dry` | `rate(stellarindex_aggregator_triangulations_total{outcome="missing_leg"}[15m])` > 0 **and** `rate(...{outcome="ok"}[15m])` == 0 | for > 30 min | P3 | [aggregator-triangulation-chains-dry](runbooks/aggregator-triangulation-chains-dry.md) |
 | `stellarindex_aggregator_cache_write_errors` | `rate(stellarindex_aggregator_vwap_cache_write_errors_total[5m])` | > 0 for ≥ 2 min | **P1** | [redis-write-blocked-disk-full](runbooks/redis-write-blocked-disk-full.md) |
 | `stellarindex_customer_webhook_delivery_failing` | `rate(stellarindex_customer_webhook_delivery_attempts_total{outcome=~"server_error\|network_error"}[5m])` | > 0.1/s for ≥ 15 min | P3 | [customer-webhook-delivery-failing](runbooks/customer-webhook-delivery-failing.md) |
 | `stellarindex_customer_webhook_delivery_exhausted` | `rate(stellarindex_customer_webhook_delivery_attempts_total{outcome="exhausted"}[1h])` | > 0 for ≥ 1h | informational | [customer-webhook-delivery-failing](runbooks/customer-webhook-delivery-failing.md) |

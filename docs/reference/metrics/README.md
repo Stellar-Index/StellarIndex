@@ -1281,7 +1281,7 @@ the reference set.
 ### `stellarindex_aggregator_triangulations_total`
 
 Counter, label `outcome` (`ok` / `missing_leg` / `parse_error` /
-`redis_error`).
+`redis_error` / `frozen_leg`).
 
 Triangulation outcomes per tick × chain × window. The aggregator
 runs one row per (chain, window) per tick after the per-pair
@@ -1290,6 +1290,24 @@ entries when a leg's window was empty this tick. Sustained
 `parse_error` or `redis_error` rates above baseline indicate
 upstream regression worth investigating (Redis blip, malformed
 cached value).
+
+`frozen_leg` (MNY-22) means a leg of the chain was frozen earlier in
+the same tick, so the chain deliberately did NOT publish: the freeze
+path keeps the leg's last-known-good in cache, and reading it here
+would launder a value we just declined to publish into a derived pair
+that carries no frozen flag of its own. The freeze is inherited onto
+the target pair instead. Treat a sustained `frozen_leg` rate as
+"the chain's legs are under anomaly protection", not as an error.
+
+All five outcomes are pre-seeded at zero in `internal/obs`, so
+`rate()` / `absent()` on any of them is a real zero rather than a gap
+before the first event.
+
+A sustained `missing_leg` rate with `ok` pinned at zero means the
+chains are configured but their legs never resolve — usually a dry
+fiat-FX feed. That is
+`stellarindex_aggregator_triangulation_chains_dry` in
+`deploy/monitoring/rules/aggregator.yml`.
 
 ### `stellarindex_aggregator_fx_snap_fallback_total`
 
@@ -1419,9 +1437,85 @@ last-known-good value); the API's `/v1/price` for the affected
 pair will surface `flags.frozen=true` on the next read.
 
 Pair-specific freeze details live in the `freeze:<asset>:<quote>`
-Redis marker JSON (deviation_pct, reason, frozen_at) — labelled by
-class only here so cardinality stays bound to the small AssetClass
-enum.
+Redis marker JSON (deviation_pct, reason, frozen_at, and the
+`state` object described below) — labelled by class only here so
+cardinality stays bound to the small AssetClass enum.
+
+Incremented on every FROZEN TICK, not once per freeze: a freeze
+held through its ADR-0019 duration keeps this counter climbing for
+as long as it is held, which is what makes the `rate()`-based
+`stellarindex_anomaly_freeze_sustained` rule work. Use
+`stellarindex_anomaly_freeze_active` to count freezes rather than
+frozen ticks.
+
+### `stellarindex_anomaly_freeze_active`
+
+Gauge, no labels.
+
+How many `(pair, window)` freezes the aggregator is holding right
+now, set at the end of every tick (ADR-0019 §"Freeze duration").
+
+The counter above cannot answer this: one pair frozen for an hour
+and sixty pairs frozen for one tick each produce the same
+`rate()`. This gauge is the freeze-lifecycle equivalent, and it
+falls back to zero on release rather than latching.
+
+Unlabelled by pair on purpose — `len(Pairs) × len(Windows)` is
+operator-configured. Per-pair identity lives in the marker JSON:
+`redis-cli GET freeze:<asset>:<quote> | jq .state` shows
+`fired_at`, `hold_until`, `extensions_used`, `escalated`,
+`unfreeze_streak` and `corroborated`.
+
+### `stellarindex_anomaly_freeze_extensions_total`
+
+Counter, no labels.
+
+Freeze-hold extensions granted. A freeze that reaches its hold
+expiry without the pair meeting the auto-unfreeze condition
+(confidence > 0.30 AND z < 3.0 for two consecutive buckets) gets
++30 minutes, up to 4 times.
+
+This is the leading indicator for the escalation below: four
+extensions on one pair and it pages. A sustained rate with
+`stellarindex_anomaly_freeze_active` flat at 1 means one pair is
+stuck; rising alongside the gauge usually means broad false-firing
+on cold or sparse per-asset baselines rather than a market event.
+
+### `stellarindex_anomaly_freeze_escalated_total`
+
+Counter, no labels. **Drives a severity:page rule.**
+
+Freezes that exhausted the extension ladder and escalated to
+operator review. ADR-0019 holds an escalated freeze "until manual
+unfreeze": it does NOT auto-unfreeze however healthy the pair
+subsequently looks, so every increment is a pair whose `/v1/price`
+is pinned to a last-known-good value until a human acts.
+
+One increment per escalation transition (not per frozen tick), so
+`increase(...[15m]) > 0` reads as "a new pair escalated" and an
+un-actioned escalation is a flat line rather than a climbing one.
+
+Force-unfreeze by deleting the pair's `freeze:<asset>:<quote>` key;
+the aggregator notices the missing marker on its next tick, drops
+the ladder, and counts the release under
+`stellarindex_anomaly_freeze_released_total{mode="operator"}`.
+
+### `stellarindex_anomaly_freeze_released_total`
+
+Counter, label `mode` (`auto` / `operator`).
+
+Freezes that ENDED, by how. `auto` = the ADR-0019 auto-unfreeze
+condition held (confidence > 0.30 AND z < 3.0 for two consecutive
+buckets, once the initial hold was served). `operator` = the marker
+was cleared out of band, which is ADR-0019's "operator override
+always available".
+
+Not expected to balance against
+`stellarindex_anomaly_freeze_engaged_total`, which counts frozen
+ticks rather than freezes. The label to watch is `operator`: a
+rising manual-unfreeze rate means the calibration is producing
+freezes humans keep having to undo, which is a threshold or
+baseline problem rather than an incident.
 
 ### `stellarindex_anomaly_warn_total`
 

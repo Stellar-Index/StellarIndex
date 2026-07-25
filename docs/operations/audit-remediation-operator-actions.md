@@ -109,11 +109,36 @@ missing the classic trustline component entirely). Code fix landed
   the rendered `pgbackrest.conf` diff, run `stanza-upgrade` + a first full to repo2.
 - [ ] **Run `scripts/ops/restore-drill.sh` by hand twice** (once `DRILL_REPO=1`, once
   `=2` when repo2 exists; add `DRILL_CH_WINDOW=100000` on one run to measure the CH
-  re-derive RTO). Commit the appended `docs/operations/drills/restore-drills.md`
-  entries; then we wire the monthly timer.
-- [ ] **CH lake tail + DDL offsite push** (ADR-0043 §2.1/2.3) — script rides with the
-  repo2 provisioning (same bucket); the full-CH-backup decision waits on the drill's
-  measured re-derive throughput, deliberately.
+  re-derive RTO — that stage had **never run** before 2026-07-25: it passed a
+  `-database` flag `ch-backfill` has never had, so it died at flag-parse every time).
+  Commit the appended `docs/operations/drills/restore-drills.md` entries; then enable
+  the timer — it is now **monthly** (first Saturday 04:00 UTC), matching ADR-0043
+  §1/§3; the template had shipped weekly.
+- [x] **CH lake DDL/state snapshot** (ADR-0043 §2.1) — SHIPPED 2026-07-25:
+  `scripts/ops/ch-schema-snapshot.sh` + `ch-schema-snapshot.timer` (daily,
+  enabled by default) + `stellarindex_ch_schema_snapshot_stale` /
+  `_offsite_stale` alerts + the snapshot→`CREATE` restore path in
+  [runbooks/ch-schema-restore.md](runbooks/ch-schema-restore.md). Before this
+  the ClickHouse lake had **no backup of any kind and no alert that said so**.
+- [ ] **Point the schema snapshot offsite** — `ch_schema_snapshot_mc_target` is empty
+  and `ch_schema_snapshot_offsite_ack: true` is set in `inventory/r1.yml`, so the
+  daily snapshot currently lands only on the pool it protects. Set the `mc`
+  alias/prefix when the repo2 bucket lands (same provisioning as the item above) and
+  drop the ack. **Interim, do this now and repeat after any DDL change / at least
+  monthly** — the public repo is a valid off-box copy:
+  `OUT_DIR=deploy/clickhouse/schema-snapshot TEXTFILE_DIR=/dev/null scripts/ops/ch-schema-snapshot.sh`
+  then commit the result.
+- [x] **CH lake "tail insurance"** (ADR-0043 §2.3) — ASSESSED 2026-07-25, **do not
+  implement as written**; the ADR's premise no longer holds (galexie-archive is filled
+  from aws-public-blockchain, not from galexie-live, so recent raw LCM is off-box the
+  moment it is published, and the newest ledgers are the ones the public history
+  archives are most certain to serve). Derivation, cost/benefit and the proposed ADR
+  amendment text: [off-site-backup-plan.md](off-site-backup-plan.md)
+  §"ADR-0043 §2.3 tail insurance". **Your half: land the ADR-0043 §2.3 amendment**
+  (ADR-owner edit, not made by the remediation).
+- [ ] **Full-CH-backup decision** — still waits on the drill's measured re-derive
+  throughput, deliberately. The drill's CH stage is now runnable (it never was — see
+  the drill log entry for 2026-07-25).
 - [ ] **Encrypt pgBackRest repo1** (F4-F2) — repo1 is `cipher-type=none` today: a
   plaintext copy of the whole DB (API keys, Stripe ids) on local disk, and inside any
   ZFS send of that dataset. The role now renders `repo1-cipher-type=aes-256-cbc` when

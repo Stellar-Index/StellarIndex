@@ -85,6 +85,66 @@ groups:
             FX rows.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-fx-snap-fallback-dominant.md
 
+      # ─── Triangulation chains configured but their legs are dry ──────
+      # Residual risk of e9803e69 (the four default triangulation chains:
+      # XLM/EUR, XLM/GBP, ETH/GBP, BTC/GBP, each = the deep USD pair ×
+      # the fiat cross). The fiat/fiat leg resolves through the X2.5
+      # forex-snap path (fx_quotes, daily buckets, 7-day lookback,
+      # written by the massive worker in the API binary). If that feed
+      # goes dry — no EUR/GBP row inside the lookback — EVERY chain
+      # degrades to `missing_leg` and the composite corroboration factor
+      # silently stops contributing. Direct prices keep serving, so
+      # nothing customer-visible breaks; the seventh confidence factor
+      # just quietly weighs nothing and the thin-pair manipulation
+      # signal the chains exist to provide is gone.
+      #
+      # Why the existing fx_snap_fallback_dominant alert does NOT cover
+      # this: its numerator is the FALLBACK counter, which only
+      # increments when the snap path misses AND the cached-VWAP path is
+      # tried. With four chains at one tick each per 15m the fallback
+      # rate sits around 0.4/s — under its own >0.5 ratio floor — and its
+      # denominator is clamp_min(ok_rate, 1), so with ok pinned at ZERO
+      # the ratio can never reach 0.5. A total leg drought is exactly the
+      # state that alert cannot see.
+      #
+      # Shape: missing_leg is being counted (so the chains ARE configured
+      # and running) while ok is a hard zero for 30m. All five outcomes
+      # are pre-seeded at zero in internal/obs, so `== 0` here is a real
+      # zero rather than a "no data" gap. If the aggregator is down
+      # entirely both series go absent, the `and` yields nothing, and
+      # this stays quiet — stellarindex_aggregator_silent owns that case.
+      # If no chains are configured at all, missing_leg never increments
+      # and this also stays quiet, which is correct: an unconfigured
+      # chain set is a deployment choice, not a fault.
+      - alert: stellarindex_aggregator_triangulation_chains_dry
+        expr: |
+          sum(rate(stellarindex_aggregator_triangulations_total{outcome="missing_leg"}[15m])) > 0
+          and
+          sum(rate(stellarindex_aggregator_triangulations_total{outcome="ok"}[15m])) == 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-triangulation-chains-dry.md
+          summary: "Triangulation chains configured but legs dry — zero successful triangulations for 30m+ (P3)"
+          description: |
+            Every configured triangulation chain has been failing on a
+            missing leg for 30+ minutes, with ZERO successful
+            triangulations in that window. The composite-rate
+            corroboration factor (triangulation_agreement, ADR-0019
+            seventh factor) is therefore contributing nothing, and the
+            thin-pair pairs it was built for (XLM/GBP, XLM/EUR, ETH/GBP)
+            are back to single-source with no independent cross-check.
+            Direct prices are UNAFFECTED — this degrades manipulation
+            detection, not the served price.
+            Most likely cause: the fiat-FX feed is dry, so the fiat cross
+            leg has no fx_quotes row inside the 7-day lookback. Check
+            stellarindex_external_fx_last_quote_unix per source, the
+            massive worker in the API binary, then the chain config.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-triangulation-chains-dry.md
+
       - alert: stellarindex_aggregator_class_drop_spike
         expr: |
           sum(rate(stellarindex_aggregator_dropped_trades_total{reason="class"}[10m]))

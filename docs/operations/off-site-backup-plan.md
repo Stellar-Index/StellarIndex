@@ -68,5 +68,83 @@ Back up the full lake so recovery is a **restore (~hours)**, not a re-walk (~wee
 - **Sequencing:** archive (1) + PG (2) first — the irreplaceable/authoritative data. Then the CH full backup (4) — after the Phase A recompress, so it captures ~7 TiB not ~8.6. Then config (3). Then enable the local pgBackRest prune (deferred from Phase A) once `repo2` (PG off-site) is proven.
 - **Restore drill must include CH now** (not just PG): a periodic `clickhouse-backup restore_remote` of a sampled table into a scratch instance + `verify-contiguity`, so the ~half-day RTO is *proven*, not assumed.
 
+## ADR-0043 §2.3 "tail insurance" — assessment + recommended amendment
+
+**Status (2026-07-25): ASSESSED — do not implement §2.3 as written. §2.1
+(the ClickHouse schema+state snapshot) now ships and covers the part of
+the tail that is genuinely irreplaceable.**
+
+ADR-0043 §2.3 commits to:
+
+> **Tail insurance:** the newest N days of `contract_events` + `ledgers`
+> (the window between Galexie-archive certification and live) are
+> included in the daily offsite push — the only window where the lake
+> could hold data the archives don't yet.
+
+Re-derived against the system as it actually stands, that premise no
+longer holds, and the mitigation it prescribes fails this document's own
+RTO-driven test.
+
+**1. The window is smaller than the ADR assumed, and it is not
+unarchived.** `galexie-archive-fill.sh` does not mirror
+`galexie-live` → `galexie-archive`; it mirrors **AWS →
+`galexie-archive`**, computing (AWS partitions − local partitions) and
+pulling the difference hourly. So the raw LCM for a recent ledger sits in
+*two independent places* the moment it exists: `galexie-live` on r1's
+pool, and `s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/`
+published by the AWS Open Data Sponsorship. The
+`galexie_archive_tip_lag_ledgers` gap the ADR points at is the *local
+durable mirror* lagging by up to one 64,000-ledger partition (~4 days at
+mainnet pace, alerted at >64k / paged at >128k) — it is **not** a window
+where the data exists nowhere but the lake.
+
+**2. Beneath both, the tail is the most recoverable part of the chain,
+not the least.** Raw LCM is a deterministic re-export from a captive core
+replaying the public Stellar history archives. Meta pruning — the reason
+`galexie-archive` is called irreplaceable in the table above — bites
+*old* ledgers, never the newest four days. The tail is precisely the
+window the network is guaranteed to still be able to hand back.
+
+**3. The cost/benefit inverts this document's own principle.** The
+principle above is *RTO-driven*: re-derive the full lake ≈ 1–2 weeks, so
+back it up. The §2.3 tail is ~64,000 ledgers; at the observed ~80
+ledgers/s re-walk rate that is **~13 minutes**, inside a host rebuild
+that is already hours long. Backing it up would cost roughly 7 GiB/day of
+push (~116 KiB/ledger × 64k) — on a pool that is capacity-blocked and to
+an offsite target r1 does not yet have. Paying GiB/day for minutes of RTO
+is the "poor spend" §2 rejects a full lake backup for, at 1/1000th the
+scale.
+
+**4. What in the tail actually *is* irreplaceable — and is now
+captured.** Not the rows: the *bookkeeping*. After a pool loss you must
+know how far the lake had got, which windows had been banked, and under
+what schema — otherwise the re-derive is guesswork. That is exactly
+`partitions.tsv`, `ch-backfill-done-windows.txt`, `ingestion-cursors.tsv`
+and `schema.sql` in the §2.1 daily snapshot
+(`scripts/ops/ch-schema-snapshot.sh`, shipped 2026-07-25). §2.1 is the
+tail insurance that was worth buying.
+
+**Recommended ADR-0043 amendment** (an ADR edit, not made here — it needs
+the ADR owner):
+
+> **§2.3 amended 2026-07-25.** Tail insurance is satisfied without a
+> ClickHouse data push. galexie-archive is filled from
+> aws-public-blockchain, not from galexie-live, so recent raw LCM is
+> independently held off-box from the moment it is published; and the
+> newest ledgers are the ones the public history archives are most
+> certain to still serve. The irreplaceable part of the tail — the tip,
+> the banked-window set and the live DDL — is captured daily by §2.1.
+> REVISIT if either (a) the lake gains a table whose contents are NOT a
+> deterministic decode of LCM, or (b)
+> `stellarindex_galexie_archive_tip_lag_ledgers` develops a sustained
+> floor above one partition, meaning the local mirror has stopped
+> converging.
+
+Condition (a) is the one that would genuinely reopen this: today every
+lake table is a structural decode of LCM (ADR-0034), so nothing in the
+tail is unrecoverable. A future table sourced from a live-only feed (an
+external price tick, an operator annotation) would not be, and would need
+its own tail copy.
+
 ## Related
 Master plan `production-readiness-master-plan-2026-07-18.md` (this is a Phase F / post-D hardening item). Restore tooling: `scripts/ops/restore-drill.sh`.

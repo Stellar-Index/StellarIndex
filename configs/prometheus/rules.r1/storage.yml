@@ -405,6 +405,72 @@ groups:
             RPO breach. At 24h+ without a backup we exceed the documented
             5-min RPO target by 288×. Escalate immediately.
 
+      # ─── ClickHouse lake protection (ADR-0043 §2.1) ──────────────
+      # The lake has no data backup BY DESIGN — ADR-0043 rejects a
+      # multi-TiB third copy of derived data because the raw ledgers
+      # already exist in two independent archives. What it protects
+      # instead is the metadata: SHOW CREATE for every stellar.* table,
+      # the partition/settings inventory, and the ch-backfill cursor
+      # state, dumped daily by ch-schema-snapshot.timer (megabytes).
+      #
+      # That makes the SNAPSHOT'S OWN FRESHNESS load-bearing: if it
+      # stops, the lake is protected by a schema that drifts further
+      # from reality every day an index, MV or compression policy
+      # lands — and nobody finds out until a rebuild reproduces the
+      # wrong ORDER BY. Backups that silently stopped is the exact
+      # failure class ADR-0043 exists for, so the ADR's own backup
+      # gets the same paging discipline as pgBackRest's.
+      #
+      # Emitted by scripts/ops/ch-schema-snapshot.sh into the
+      # node_exporter textfile collector. Deliberately NOT stamped on
+      # a partial capture, so a half-written schema reads as stale
+      # rather than fresh.
+      - alert: stellarindex_ch_schema_snapshot_stale
+        expr: time() - stellarindex_ch_schema_snapshot_last_success_unix > 36 * 3600
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
+          summary: "ClickHouse schema snapshot is {{ $value | humanizeDuration }} old (daily timer)"
+          description: |
+            ch-schema-snapshot.timer (daily, 03:40 UTC) has not
+            completed a full capture in over 36 h — one missed cycle
+            plus slack. The ClickHouse lake's ONLY backup is this
+            metadata copy (ADR-0043 §2.1); while it is stale, every
+            DDL change since the last good snapshot is unprotected and
+            a re-derive would rebuild against a schema that no longer
+            matches production.
+            Check `systemctl status ch-schema-snapshot.service` and
+            run `/usr/local/bin/ch-schema-snapshot.sh` by hand — it
+            refuses to write an empty or partial snapshot, so a
+            failure here usually means ClickHouse was unreachable or a
+            SHOW CREATE errored.
+
+      # Only emitted once an offsite target is configured AND a push
+      # has succeeded, so this stays silent on a host that has
+      # explicitly acknowledged local-only (ch_schema_snapshot_offsite_ack)
+      # — the ack is the record of that decision, not this alert.
+      - alert: stellarindex_ch_schema_snapshot_offsite_stale
+        expr: time() - stellarindex_ch_schema_snapshot_offsite_last_success_unix > 72 * 3600
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
+          summary: "ClickHouse schema snapshot has not reached offsite storage in {{ $value | humanizeDuration }}"
+          description: |
+            The daily schema snapshot is being written locally but its
+            offsite push has been failing for 3+ days, so the only
+            copy of the lake's DDL now lives on the same pool as the
+            lake (CS-111's failure shape, one layer down). Check the
+            `mc` alias/credentials for ch_schema_snapshot_mc_target
+            and the remote's quota.
+
       # NVMe wear + media health. r1's NVMe is not swappable on demand,
       # so these exist to give a long lead time rather than to catch a
       # failure in progress. Produced by the packaged nvme collector,

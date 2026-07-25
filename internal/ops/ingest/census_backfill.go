@@ -37,7 +37,7 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	from := fs.Uint("from", 0, "First ledger sequence (inclusive, required)")
 	to := fs.Uint("to", 0, "Last ledger sequence (inclusive, required)")
 	resume := fs.Bool("resume", true, "Resume from saved cursor if a checkpoint exists for this from/to pair")
-	bucket := fs.String("bucket", "", "Override storage bucket (default cfg.Storage.S3BucketLive)")
+	bucket := fs.String("bucket", "", "galexie bucket override. Default: the range vs ingestion.live_seam_ledger picks archive-or-live; with no seam configured it stays cfg.Storage.S3BucketLive, which does NOT hold historic ranges — pass the archive bucket for those (see opsutil.ResolveStreamBucket)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -78,9 +78,12 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 		return nil
 	}
 
-	streamBucket := cfg.Storage.S3BucketLive
-	if *bucket != "" {
-		streamBucket = *bucket
+	// Resolve on the range actually about to be WALKED (startLedger, not
+	// -from): a resumed run may begin above a seam its original -from sat
+	// below, and the bucket must match the ledgers this process will read.
+	streamBucket, berr := censusBucket(cfg, *bucket, startLedger, uint32(*to))
+	if berr != nil {
+		return fmt.Errorf("census-backfill: %w", berr)
 	}
 	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, streamBucket, 1)
 	passphrase := cfg.Stellar.Passphrase()
@@ -91,6 +94,7 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	var (
 		total         int
 		skipped       int
+		persisted     int    // ledgers whose substrate row is durably committed
 		lastProcessed uint32 // last ledger we actually WROTE a row for (logging only)
 		// C2-14: `wm` is the durable resume checkpoint — the highest
 		// ledger such that EVERY ledger from startLedger through it was
@@ -160,6 +164,7 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 				return nil
 			}
 			lastProcessed = census.LedgerSeq
+			persisted++
 			wm.persisted(census.LedgerSeq)
 			if wm.seq > 0 && time.Since(lastCheckpoint) >= checkpointInterval {
 				checkpoint(wm.seq)
@@ -189,8 +194,76 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	if walkErr != nil && !errors.Is(walkErr, context.Canceled) {
 		return fmt.Errorf("census-backfill stream (last processed %d): %w", lastProcessed, walkErr)
 	}
-	fmt.Fprintf(os.Stderr, "census-backfill: done — %d ledgers processed, %d skipped, last %d\n",
-		total, skipped, lastProcessed)
+	fmt.Fprintf(os.Stderr, "census-backfill: %d ledgers streamed, %d persisted, %d skipped, last %d\n",
+		total, persisted, skipped, lastProcessed)
+	// A run that did not persist its whole range must NOT exit 0 — see
+	// censusCoverage.
+	if cerr := censusCoverage(startLedger, uint32(*to), persisted, skipped, streamBucket, ctx.Err() != nil); cerr != nil {
+		return fmt.Errorf("census-backfill: %w", cerr)
+	}
+	fmt.Fprintf(os.Stderr, "census-backfill: done — [%d,%d] complete from %q\n", startLedger, *to, streamBucket)
+	return nil
+}
+
+// censusBucket resolves which galexie bucket a census-backfill walk reads.
+//
+// census-backfill used to default to cfg.Storage.S3BucketLive
+// unconditionally — the identical defect ch-backfill was fixed for at
+// 5179250a, in an independent copy. The live bucket cannot hold the
+// pre-live ranges this command exists to serve (ADR-0033 Phase 2), and
+// TolerateTrailingMissing makes an entirely-absent range look like a clean
+// walk, so the run printed "done" and exited 0 having written nothing.
+//
+// The seam policy itself lives in opsutil.ResolveStreamBucket so the two
+// commands cannot drift apart again; this wrapper is census-backfill's own
+// named seam (mirrors chops.backfillBucket).
+func censusBucket(cfg config.Config, override string, from, to uint32) (string, error) {
+	return opsutil.ResolveStreamBucket(cfg, override, from, to)
+}
+
+// censusCoverage turns a census-backfill run that did not persist its whole
+// range into a hard error, naming the bucket it read.
+//
+// Same defect class as ch-backfill's backfillCoverage (found live
+// 2026-07-25), reached here by the same two roads:
+//
+//   - the run read the WRONG BUCKET. census-backfill defaulted to
+//     cfg.Storage.S3BucketLive, which cannot hold a historic range — and
+//     because opsutil.NewBoundedLedgerStreamConfig opts into
+//     TolerateTrailingMissing, an ENTIRELY absent range is indistinguishable
+//     from a clean walk at the ledgerstream layer. The command printed
+//     "done — 0 ledgers processed" and exited 0.
+//   - the run persisted only PART of the range. Every non-persisting path in
+//     the callback (census error, G15-06 tx-read-error skip, upsert failure)
+//     deliberately logs and continues so one bad ledger doesn't abort a
+//     multi-day walk, and the C2-14 watermark correctly freezes the resume
+//     cursor at the first gap — but the process still exited 0, so a wrapper
+//     or an operator reading only the exit code sees a hole as a success.
+//
+// The bar is the command's contract — "[from,to] now has a substrate row in
+// ledger_ingest_log". ledger_ingest_log is exactly what the projection
+// reconcile measures completeness against (ADR-0033), so a silent hole there
+// is a silent completeness lie later. Re-running is cheap and safe
+// (UpsertLedgerIngestLog is ON CONFLICT DO UPDATE, and the frozen cursor
+// resumes at the first gap), so failing closed costs a re-run while failing
+// open costs a hole nobody looks for.
+//
+// `from` is the ledger the run actually STARTED at (post-resume), not -from:
+// ledgers already banked by an earlier run are that run's business, and
+// re-charging them here would make every resumed run fail.
+func censusCoverage(from, to uint32, persisted, skipped int, bucket string, interrupted bool) error {
+	want := int64(to) - int64(from) + 1
+	switch {
+	case interrupted:
+		return fmt.Errorf("INTERRUPTED after persisting %d of %d ledgers in [%d,%d] from %q — the range is NOT complete; re-run it (the cursor resumes at the first gap)",
+			persisted, want, from, to, bucket)
+	case persisted == 0:
+		return fmt.Errorf("persisted ZERO of %d ledgers for [%d,%d] from %q — that bucket does not hold this range (wrong bucket for a historic range is the usual cause: pass -bucket <archive bucket>); NOT recording this range as backfilled",
+			want, from, to, bucket)
+	case int64(persisted) < want:
+		return fmt.Errorf("persisted only %d of %d ledgers for [%d,%d] from %q — %d ledgers are missing from the bucket, failed their census, or were skipped for tx read errors (%d skipped; see the per-ledger errors above); the substrate range is NOT complete",
+			persisted, want, from, to, bucket, want-int64(persisted), skipped)
+	}
 	return nil
 }
 

@@ -1,0 +1,25 @@
+# systemd timer: daily ClickHouse schema + state snapshot
+# (ADR-0043 §2.1 — "Schema + state backup (tiny, daily)").
+#
+# Rendered by Ansible. UNLIKE restore-drill.timer this one IS enabled by
+# default: it is seconds of metadata queries and megabytes of output, so
+# there is no capacity argument for shipping it disabled, and a backup
+# that ships disabled is the thing ADR-0043 exists to stop.
+#
+# Time slot: 03:40 UTC + up to 10 min jitter — after the 02:00
+# pgbackrest backup and clear of the Sunday 02:17/03:23
+# archive-completeness / verify-archive window, so the daily
+# metadata dump never overlaps a heavy job.
+
+[Unit]
+Description=Daily ClickHouse schema + state snapshot (ADR-0043 §2.1)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/adr/0043-backup-and-restore-strategy.md
+
+[Timer]
+OnCalendar=*-*-* 03:40:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+Unit=ch-schema-snapshot.service
+
+[Install]
+WantedBy=timers.target

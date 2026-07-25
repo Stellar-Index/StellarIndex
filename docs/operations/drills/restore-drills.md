@@ -6,6 +6,43 @@ been restored is a hope, not a backup"). Appended by
 `/usr/local/bin` on r1 are reconstructed here from
 `/var/log/restore-drill-*.log`.
 
+## Procedures this log is evidence for
+
+| Layer | What restores it | Runbook |
+| ----- | ---------------- | ------- |
+| Postgres (served tier) | `pgbackrest restore` into a scratch datadir, driven by `scripts/ops/restore-drill.sh` phases 1–3 | `runbooks/backup-failed.md` |
+| ClickHouse **schema + state** | replay `schema.sql` from the daily §2.1 snapshot, then re-derive the data | **`runbooks/ch-schema-restore.md`** — the snapshot → `CREATE` path, step by step |
+| ClickHouse **data** | `ch-full-backfill.sh` against `galexie-archive`, bounded by `ch-backfill-done-windows.txt` from the same snapshot | `runbooks/ch-schema-restore.md` §"Restore path" |
+
+The ClickHouse half of a restore is **schema first, data second**, and
+the schema does not come from `deploy/clickhouse/tier1_schema.sql` — that
+is the founding DDL, since outgrown by indexes, MVs and compression
+policies. It comes from the daily snapshot
+(`scripts/ops/ch-schema-snapshot.sh`, ADR-0043 §2.1). A drill that
+restores Postgres and assumes the lake schema is in the repo is drilling
+half the system.
+
+### CH re-derive stage (phase 4), and its honest limit
+
+`DRILL_CH_WINDOW=100000` adds the ADR-0043 §2.2 re-derive sample. It runs
+`ch-backfill -dry-run`: every galexie object is fetched and fully decoded
+(`clickhouse.ExtractLedger`), and nothing is written. There is no
+scratch-database mode to use — `clickhouse.Open` pins the `stellar`
+database — and re-deriving into the live lake would add ReplacingMergeTree
+duplicates to a capacity-blocked pool every drill. So the RTO figure this
+log records is **fetch+decode throughput**, which is the multi-week part
+of a rebuild; the ClickHouse INSERT path is exercised continuously by live
+ingest and is not the bottleneck. The stage additionally reconciles the
+window against the live lake (`ch_lake_window_complete`).
+
+Before 2026-07-25 this stage had **never run**: it passed `-database
+drill_scratch`, a flag `ch-backfill` has never declared, so
+`flag.ContinueOnError` rejected the invocation at parse time and the
+failure was recorded as a generic re-derive failure under `| tail -5`.
+The drill now preflights its own invocation against the binary and
+refuses to start (exit 2, precondition) on drift;
+`scripts/ops/restore-drill-test.sh` pins the same contract in CI.
+
 ## 2026-07-03 restore drill (repo1) — first drill series
 
 The first-ever drill took **five runs**, each failing one layer
