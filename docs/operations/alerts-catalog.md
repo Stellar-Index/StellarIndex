@@ -58,6 +58,8 @@ Severity maps to [sev-playbook.md §1](sev-playbook.md#1-severity-definitions).
 | `stellarindex_dex_trade_unit_ratio_detected` | `sum by (source) (increase(stellarindex_dex_trade_unit_ratio_total[30m]))` | > 25 per source, sustained 5 min | P2 | [dex-trade-unit-ratio](runbooks/dex-trade-unit-ratio.md) |
 | `stellarindex_ingest_gap_detected` | `max by (source) (stellarindex_ingest_gap_max_size_ledgers) > 1000` per (source, table) | sustained 15 min | **P1** | [ingest-gap-detected](runbooks/ingest-gap-detected.md) + per-source [sdex-gap-detected](runbooks/sdex-gap-detected.md) / [projector-replay](runbooks/projector-replay.md) |
 | `stellarindex_ingest_gap_detector_silent` | `(time() - stellarindex_ingest_gap_detector_last_success_unix) > 8h` OR detector metric absent for 15 min | for ≥ 10 min | P2 | [ingest-gap-detector-silent](runbooks/ingest-gap-detector-silent.md) |
+| `stellarindex_ops_job_heartbeat_stale` | `stellarindex_ops_job_heartbeat_unix` + `_running`, joined `on (ops_job, instance, pid)` | running==1 and no liveness write for > 15 min, for 10 min (the ops job PROCESS died) | P3 | [ops-job-stalled](runbooks/ops-job-stalled.md) |
+| `stellarindex_ops_job_no_progress` | `changes(stellarindex_ops_job_progress_total[30m])` + `_running`, joined `on (ops_job, instance, pid)` | running==1 and zero units completed in 30 min, for 15 min (the ops job is HUNG) | P3 | [ops-job-stalled](runbooks/ops-job-stalled.md) |
 | `stellarindex_projector_lag_high` | `max by (source) (stellarindex_projector_lag_ledgers)` | > 256 ledgers sustained 10 min | P3 | [projector-lag](runbooks/projector-lag.md) |
 | `stellarindex_projector_error_rate_high` | `rate(stellarindex_projector_runs_total{outcome="error"}[15m])` per source | > 0.05/s sustained 15 min | P3 | [projector-lag](runbooks/projector-lag.md) |
 | `stellarindex_projector_row_quarantined` | `increase(stellarindex_projector_events_decoded_total{outcome="sink_quarantined"}[15m])` | > 0 for 15 min (a poison row was skipped so the sole-writer projector could advance) | ticket | [projector-row-quarantined](runbooks/projector-row-quarantined.md) |
@@ -349,6 +351,7 @@ auto-unfreeze at all. Rules in
 | `stellarindex_price_alert_eval_failing` | `rate(stellarindex_price_alert_eval_total{outcome="list_error"}[5m]) > rate(...{outcome="ok"}[5m])` | sustained 30 min | P3 | [price-alert-eval-failing](runbooks/price-alert-eval-failing.md) |
 | `stellarindex_signup_reaper_failing` | `rate(stellarindex_signup_reaper_runs_total{outcome="error"}[6h]) > rate(...{outcome="ok"}[6h])` | sustained 30 min | P3 | [signup-reaper-failing](runbooks/signup-reaper-failing.md) |
 | `stellarindex_stripe_platform_sync_errors` | `rate(stellarindex_stripe_platform_sync_errors_total[15m])` | > 0 for ≥ 15 min | P3 | [stripe-platform-sync-errors](runbooks/stripe-platform-sync-errors.md) |
+| `stellarindex_ratelimit_fail_open` | `sum(rate(stellarindex_ratelimit_fail_open_total[5m]))` | > 0 for ≥ 10 min (rate limiter bypassing on a Redis error) | P3 | [ratelimit-fail-open](runbooks/ratelimit-fail-open.md) |
 | `stellarindex_tls_cert_expiring_soon` | `stellarindex_tls_cert_not_after_unix - time()` per host | < 14 days for ≥ 1 h | P2 | [tls-cert-expiring-soon](runbooks/tls-cert-expiring-soon.md) |
 
 ## Supply alerts

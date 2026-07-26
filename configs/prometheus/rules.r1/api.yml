@@ -277,3 +277,42 @@ groups:
         annotations:
           summary: "{{ $value }} unresolved Stripe dead-letter(s) — a customer paid and got nothing"
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/stripe-dead-letter.md
+
+      # C6-032 (audit-2026-07-23): stellarindex_ratelimit_fail_open_total
+      # has been registered + incremented since the rate limiter shipped
+      # (internal/api/v1/middleware/ratelimit.go:96,190) and NOTHING in
+      # either rule tree selected it. The limiter deliberately fails OPEN
+      # on a Redis error so a cache outage can't take the API down — a
+      # sound choice that also means the DoS/abuse control silently turns
+      # ITSELF OFF, with the only trace a counter no one looked at. This
+      # is precisely the registered-but-unalerted class metrics-registry.yml
+      # was built for, and it did not catch this one (that alert covers a
+      # missing Registry, not an unreferenced metric).
+      #
+      # rate() over 5m with for: 10m fires only on SUSTAINED bypass, so a
+      # single-request Redis blip during a failover doesn't ticket, while
+      # "the limiter has been off for ten minutes" always does. Expect it
+      # to correlate with the Redis readyz probe going red — if it fires
+      # ALONE, the limiter is failing open for a reason the health probe
+      # can't see (auth to Redis, key eviction, script error).
+      - alert: stellarindex_ratelimit_fail_open
+        expr: sum(rate(stellarindex_ratelimit_fail_open_total[5m])) > 0
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ratelimit-fail-open.md
+          summary: "Rate limiting is FAILING OPEN ({{ $value | humanize }} req/s bypassing the limiter)"
+          description: |
+            The API rate limiter could not reach its Redis backing store and
+            let the requests through unlimited, continuously for the last
+            10 minutes. Per-key quotas, burst protection and the abuse
+            ceiling are all inert for the duration: a single caller can
+            saturate the serving plane, and metered usage still records
+            (billing is unaffected) while the throughput cap is not enforced.
+
+            Check the Redis readyz probe first — this normally moves
+            together with it. If Redis is healthy, the failure is in the
+            limiter's own path (auth, evicted script, key namespace).

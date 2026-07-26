@@ -89,11 +89,50 @@ groups:
       # free space, so node_filesystem_avail_bytes{fstype="zfs"} (identical
       # across every dataset) is the pool-free proxy. Added 2026-07-17 after
       # the live R1 review found a ~90%-full pool with NO fullness alert.
-      # Thresholds are absolute (box-specific): ~16.8 TiB usable, and ZFS
-      # (copy-on-write) degrades sharply past ~90% and can stall writes
-      # near-full, so page well before 0%.
+      #
+      # C6-118 (2026-07-26): the thresholds used to be ABSOLUTE bytes
+      # (1.3e12 / 0.65e12), hand-calibrated to r1's ~16.8 TiB pool and
+      # shipped VERBATIM to configs/prometheus/rules.r1 and to every other
+      # host this file is deployed to. On a host with a differently-sized
+      # pool the same numbers mean something else entirely: r2/r3 (ADR-0016)
+      # have their own topologies, and a 2 TB box that is 90 % EMPTY still
+      # trips a 1.3 TB floor (permanent false ticket), while a 100 TB box at
+      # 98 % full never trips it at all (silent, which is the dangerous
+      # direction). The floors are now RATIOS of pool capacity, so they
+      # travel to any host unchanged.
+      #
+      # Pool capacity has to be reconstructed from the dataset series
+      # because there is no zpool size metric: every ZFS dataset reports
+      # `size = <that dataset's used> + <shared pool avail>`, so
+      #   pool_used  = sum(size - avail) over the datasets, and
+      #   pool_avail = min(avail)         (identical across datasets),
+      #   pool_total = pool_used + pool_avail.
+      # A per-dataset `avail/size` ratio is NOT equivalent and must not be
+      # substituted: it reads the free fraction as avail/(one dataset's used
+      # + avail), so a pool whose data is spread across several datasets
+      # reports a comfortable ratio while the pool itself is nearly full —
+      # fail-open, the exact direction this alert exists to catch.
+      #
+      # Thresholds preserve r1's calibrated behaviour (1.3e12 and 0.65e12
+      # against ~16.8 TiB usable ≈ 18.5e12 B → 7 % and 3.5 %). ZFS is
+      # copy-on-write: it degrades sharply past ~90 % full and can stall
+      # writes near-full, so both floors sit well above 0.
+      #
+      # SINGLE-POOL ASSUMPTION: instance-level aggregation treats all
+      # fstype="zfs" mounts on a host as one pool (true on r1). A host with
+      # two zpools needs a `device=~` / `mountpoint=~` selector added here,
+      # or the two pools' used bytes are summed against one pool's free.
       - alert: stellarindex_zfs_pool_low_space
-        expr: min by (instance) (node_filesystem_avail_bytes{fstype="zfs"}) < 1.3e12
+        expr: |
+          min by (instance) (node_filesystem_avail_bytes{fstype="zfs"})
+            /
+          (
+            sum by (instance) (
+              node_filesystem_size_bytes{fstype="zfs"}
+                - node_filesystem_avail_bytes{fstype="zfs"}
+            )
+            + min by (instance) (node_filesystem_avail_bytes{fstype="zfs"})
+          ) < 0.07
         for: 15m
         labels:
           severity: ticket
@@ -101,16 +140,26 @@ groups:
           component: infra
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
-          summary: "ZFS data pool free space low ({{ $value | humanize1024 }}B free)"
+          summary: "ZFS data pool free space low ({{ $value | humanizePercentage }} of capacity free)"
           description: |
-            The data pool (raidz1, ~16.8 TiB usable) has under 1.3 TB free.
-            All ZFS datasets share this pool, so every writer (ClickHouse lake,
-            MinIO archive, Postgres, pgBackRest) is affected. ZFS is
-            copy-on-write: performance degrades past ~90% and writes stall
-            near-full. Plan reclamation (stale snapshots, pgBackRest off-box,
-            TSDB compression) — see the storage section of the go-live master plan.
+            Under 7 % of the ZFS data pool's capacity is free (on r1's raidz1
+            ~16.8 TiB pool that is ~1.3 TB). All ZFS datasets share this pool,
+            so every writer (ClickHouse lake, MinIO archive, Postgres,
+            pgBackRest) is affected. ZFS is copy-on-write: performance
+            degrades past ~90 % full and writes stall near-full. Plan
+            reclamation (stale snapshots, pgBackRest off-box, TSDB
+            compression) — see the storage section of the go-live master plan.
       - alert: stellarindex_zfs_pool_critical_space
-        expr: min by (instance) (node_filesystem_avail_bytes{fstype="zfs"}) < 0.65e12
+        expr: |
+          min by (instance) (node_filesystem_avail_bytes{fstype="zfs"})
+            /
+          (
+            sum by (instance) (
+              node_filesystem_size_bytes{fstype="zfs"}
+                - node_filesystem_avail_bytes{fstype="zfs"}
+            )
+            + min by (instance) (node_filesystem_avail_bytes{fstype="zfs"})
+          ) < 0.035
         for: 5m
         labels:
           severity: page
@@ -118,9 +167,10 @@ groups:
           component: infra
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
-          summary: "ZFS data pool CRITICALLY low ({{ $value | humanize1024 }}B free) (SEV-1)"
+          summary: "ZFS data pool CRITICALLY low ({{ $value | humanizePercentage }} of capacity free) (SEV-1)"
           description: |
-            Under 650 GB free on the data pool. On a copy-on-write filesystem
+            Under 3.5 % of the ZFS data pool's capacity is free (on r1's
+            ~16.8 TiB pool that is ~650 GB). On a copy-on-write filesystem
             this risks write stalls / ingest failure across ClickHouse, MinIO,
             and Postgres. Reclaim space NOW (drop stale snapshots, move
             pgBackRest off-box) or ingestion will halt.
