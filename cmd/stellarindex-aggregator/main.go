@@ -275,6 +275,15 @@ func run(cfgPath string, dryRun bool) error {
 		sink := timescale.NewFreezeEventSink(store, sinkOpts...)
 		opts := []freeze.WriterOption{
 			freeze.WithEventSink(sink),
+			// Durable ADR-0019 ladder (migration 0119). Without it the
+			// extension count and the ESCALATED flag live only in this
+			// process's memory and in the Redis marker's JSON, and the
+			// orchestrator reads a missing marker as the operator
+			// force-unfreeze — so a Redis flush released every held pair,
+			// including ones that had spent the full 2-hour ladder and
+			// already paged a human. Same sink object: the ladder columns
+			// hang off the freeze_events row RecordFreeze opens.
+			freeze.WithLadderStore(sink, 0), // 0 → freeze.DefaultLadderGrace
 		}
 		w, err := freeze.NewWriter(rdb, 0, opts...) // 0 → cachekeys.FreezeTTL default
 		if err != nil {
@@ -289,10 +298,20 @@ func run(cfgPath string, dryRun bool) error {
 		// permanently firing. F-1229.
 		freezeRecovery = freeze.NewRecovery(rdb, sink, sink, freeze.RecoveryOptions{
 			Logger: logger,
+			// Migration 0119: without this the sweep is the THIRD
+			// marker-miss consumer and the one that does damage — it stamps
+			// recovered_at, which is the exact predicate LoadLadder tests,
+			// so it deletes the rehydrate's evidence AND records on
+			// /v1/anomalies that the freeze recovered normally. On a restart
+			// after a Redis flush its immediate first tick beats the
+			// orchestrator's (which computes VWAPs before evaluating any
+			// freeze), so it wins that race essentially always.
+			Ladder: sink,
 		})
 		logger.Info("anomaly + freeze: wired",
 			"thresholds", len(cfg.Anomaly.Thresholds),
 			"event_sink", "timescale",
+			"ladder_store", "timescale",
 			"recovery_worker", "wired")
 	} else if checker != nil {
 		logger.Warn("anomaly enabled but no Redis — freeze markers won't be written; anomaly metric still emits")

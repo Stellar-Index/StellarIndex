@@ -133,9 +133,15 @@ Decision tree:
   # [anomaly.phase2]. Codify in configs/ansible/ (vault for
   # secrets), then:
   sudo systemctl restart stellarindex-aggregator
-  # Optional immediate flag-clear (marker would otherwise expire
-  # within 5 min anyway; it re-engages if the condition still fires):
-  redis-cli DEL 'freeze:<asset>:<quote>'
+  ```
+  Then, if you want the flag cleared immediately rather than waiting
+  for the hold to lapse, use the operator command — **not** a raw
+  `redis-cli DEL` (see "Force-unfreeze" below for why that no longer
+  works):
+  ```sh
+  stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml \
+    -asset '<asset>' -quote '<quote>' \
+    -reason "phase-2 threshold retuned; false fire"
   ```
   Any r1 config change lands in `configs/ansible/` in the same PR
   (CLAUDE.md rule) — a hand-edited TOML will page Monday morning.
@@ -195,6 +201,60 @@ For the postmortem, capture:
   classified `crypto` gets a 20/50% threshold instead of 1/3% (or
   vice versa — a governance token classed `stablecoin` freezes
   constantly). Audit `[anomaly.classifications]`.
+
+## Force-unfreeze (the operator override)
+
+ADR-0019 requires an operator override to always be available, and for
+an **escalated** freeze it is the only thing that ends it — the ladder
+has already spent its four extensions and the ADR holds such a freeze
+"until manual unfreeze".
+
+```sh
+# See what is actually open, with its ladder state:
+stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml -list
+
+# Rehearse:
+stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml \
+  -asset native -quote fiat:USD -reason "..." -dry-run
+
+# Do it (-reason is REQUIRED for a mutation):
+stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml \
+  -asset native -quote fiat:USD \
+  -reason "oracle recovered, verified by hand against Reflector + Kraken"
+```
+
+It does both halves in the right order: clears the Redis marker (the
+serving path's authority, so the price republishes immediately) and
+stamps `recovered_at` on the open `freeze_events` row (the durable
+timeline `/v1/anomalies` reads). It is idempotent, and it reports
+which half failed if one does.
+
+`-list`'s MARKER column reads `live` (Redis marker present),
+`rehydrated` (marker gone but the durable ladder is still holding —
+Redis lost it, and the aggregator will re-write the marker), or `GONE`.
+
+### Do NOT `redis-cli DEL` the marker
+
+That was the documented override before the durable ladder landed
+(migration 0119) and it **no longer works**. Deleting the key alone
+leaves `freeze_events.recovered_at` NULL, so the aggregator reads the
+missing marker as "Redis lost the marker", rehydrates the ladder from
+the still-open row and re-writes the marker on its next tick.
+
+Two consequences worth being precise about:
+
+* On an **escalated** freeze — the only kind that requires a manual
+  unfreeze — a bare DEL is **permanently inert**. It will look like it
+  worked for up to one aggregator tick and then undo itself.
+* On a **healthy** pair mid-hold it does not "clear the flag early"
+  either; the freeze re-engages on the next tick regardless of whether
+  the underlying condition still fires, because the hold, not the
+  condition, is what keeps it alive.
+
+That ambiguity is exactly why the marker stopped being the sole
+authority: a Redis flush used to be indistinguishable from an operator
+override, and it silently released every live freeze — including
+escalated ones that had already paged a human.
 
 ## Related
 

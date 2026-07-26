@@ -116,6 +116,54 @@ superseded_by: null
 > `stellarindex_anomaly_freeze_extension_rate` (P3),
 > `stellarindex_anomaly_freeze_active` (informational).
 
+> **Amendment (2026-07-26, migration 0119 — the freeze ladder is durable,
+> and `DEL` is no longer the override).** The "Operator surface" paragraph
+> above says force-unfreeze is `DEL freeze:<asset>:<quote>`, and that the
+> ladder "is re-hydrated from the marker after a restart". Both were true
+> and both are now superseded, because the premise underneath them was
+> wrong: **Redis is a cache.** It is deployed without persistence and it is
+> flushed during incidents, so "the marker is missing" was never the
+> deliberate signal this ADR treated it as.
+>
+> The consequence was the exact inverse of what this ADR exists to
+> guarantee. The orchestrator read a missing marker under a live freeze as
+> the operator override, so a Redis flush did not merely forget how far a
+> pair had climbed the ladder — it **released every live freeze**, including
+> ones that had spent the whole 2-hour ladder to `escalated`, which this ADR
+> holds "until manual unfreeze" and which has already paged a human. An
+> aggregator restart after the flush instead re-froze from
+> `extensions_used = 0`, restarting the escalation clock, so a restart
+> cadence shorter than two hours could hold a pair frozen indefinitely while
+> never escalating it to anyone.
+>
+> Migration 0119 gives the lifecycle a durable home — `hold_until`,
+> `extensions_used`, `escalated`, `corroborated` on `freeze_events` — written
+> on every transition and read back whenever the marker is missing, bounded
+> by `hold_until + the marker grace` so a long-dead aggregator cannot
+> resurrect a stale freeze. "Marker missing" is now disambiguated against
+> `recovered_at`: an OPEN row means Redis lost the marker (rehydrate), a
+> CLOSED row means the freeze genuinely ended (stay unfrozen).
+>
+> **The override is therefore `stellarindex-ops freeze-unfreeze`**, which
+> does both halves — clears the marker AND stamps `recovered_at` — and
+> requires a `-reason`. A bare `redis-cli DEL` is no longer an override at
+> all: it leaves `recovered_at` NULL, so the next tick rehydrates and
+> re-writes the marker. Against an escalated freeze it is **permanently
+> inert**. The override this ADR requires is still always available; it is
+> now typed, logged and mirrored, which the raw `DEL` never was.
+>
+> Two further consequences worth recording, because both were discovered as
+> defects in the first cut of this change:
+>
+> * The recovery worker is a THIRD marker-miss consumer. Its sweep stamps
+>   `recovered_at`, i.e. the very predicate the rehydrate tests, so it had to
+>   learn the same `hold_until + grace` bound — otherwise it destroys the
+>   ladder before the orchestrator can read it, and `/v1/anomalies` records
+>   that the freeze "recovered normally".
+> * `Writer.Clear` retires the durable ladder in the same call that deletes
+>   the marker, so an auto-release cannot be re-hydrated by a restart landing
+>   inside the recovery worker's 60-second poll window.
+
 > **Amendment (2026-07-24, audit-2026-07-23 R-003 / COR-14).** The
 > confidence formula block under §"Multi-factor confidence score"
 > writes the weighted product **without** its normalisation exponent,
