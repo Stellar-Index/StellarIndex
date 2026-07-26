@@ -136,6 +136,45 @@ groups:
             the first tick. Same customer-impact profile + same runbook
             as stellarindex_external_fx_feed_stale.
 
+      # C2-030 (audit-2026-07-23): the forex worker's sanity band refused
+      # to persist an upstream rate. fx_quotes is the denominator of every
+      # fiat-quoted usd_volume the X2.5 triangulation derives, so one bad
+      # bar (decimal shift, unit-scale change, zeroed field) would
+      # re-scale a whole currency's history — the band drops it instead.
+      #
+      # A one-off rejection is EXPECTED and self-healing: the guard is
+      # two-strike, so a genuine devaluation confirmed by the next fetch
+      # is accepted one refresh later (worker cadence is hourly). The
+      # alertable state is a SUSTAINED stream of rejections, which means
+      # a ticker is stuck on its last accepted rate while the upstream
+      # keeps disagreeing — i.e. the feed's scale changed for real and
+      # the confirmation arm is not clearing it. 3h covers three hourly
+      # refreshes, so a single bad bar plus its confirmation cannot trip
+      # it. The rejected TICKER is on the worker's WARN log line (the
+      # metric is deliberately not labelled by ticker).
+      - alert: stellarindex_external_fx_rate_rejections
+        expr: |
+          sum by (reason) (increase(stellarindex_external_fx_rate_rejected_total[3h])) > 2
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: external-poller
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-rate-rejected.md
+          summary: "forex sanity band is rejecting upstream rates ({{ $labels.reason }})"
+          description: |
+            The forex worker refused more than 2 upstream rates in 3 h
+            with reason `{{ $labels.reason }}`. Those tickers are HELD on
+            their last accepted fx_quotes row, so fiat-quoted usd_volume
+            for them is being converted at a stale rate. `deviation`
+            means the upstream keeps reporting a move > 50% that the
+            two-strike confirmation is not clearing — usually a real
+            redenomination the guard needs to be told about, or an
+            upstream scale change. `non_positive` / `non_finite` mean the
+            feed is emitting garbage fields. Grep the API logs for
+            "forex: rejected upstream rate" to get the ticker(s).
+
       # Sustained error rate over 15 min — catches the case where
       # the poller is hitting the venue successfully sometimes but
       # >50% of attempts return non-nil err. Lower severity than

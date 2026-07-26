@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -29,6 +30,41 @@ type FXQuote struct {
 	Source     string
 }
 
+// maxRateDeviation is the per-refresh sanity band on an upstream FX rate:
+// a ticker whose new rate differs from its last ACCEPTED rate by more than
+// this fraction is not written to fx_quotes on the first sighting
+// (C2-030, audit-2026-07-23).
+//
+// Why 0.50 and not something tighter: fx_quotes is the denominator of
+// every fiat-quoted usd_volume, so the band exists to catch a BROKEN BAR
+// — a decimal shift (10x = 900% deviation), a unit-scale change, a
+// redenomination applied upstream without a ticker change — not to
+// second-guess the FX market. Real single-step fiat devaluations do get
+// large: EGP fell ~38% in a day (Mar 2024), NGN ~40% (Jun 2023), TRY ~25%
+// (Dec 2021). A band tighter than those would reject genuine history and
+// wedge the ticker; 50% sits above every such episode while still being
+// far below any decimal-shift error.
+const maxRateDeviation = 0.50
+
+// fxSource is the source tag stamped on persisted rows and on the
+// rejection metric's `source` label.
+const fxSource = "massive"
+
+// rateGuard is the per-ticker state behind the sanity band. lastAccepted
+// is the baseline a new rate is measured against; pending holds an
+// outlier that was rejected ONCE so a second, agreeing fetch can confirm
+// it.
+//
+// The two-strike shape is the whole point: a one-off bad bar never
+// reaches fx_quotes, but a REAL devaluation — which the upstream will
+// keep reporting — is accepted on the next refresh (≈1 h of lag) instead
+// of wedging the ticker on a stale rate forever. A permanent reject would
+// trade one wrong number for an indefinitely wrong one.
+type rateGuard struct {
+	lastAccepted float64
+	pending      float64
+}
+
 // Worker periodically fetches the upstream rates + names and
 // installs the result into a [Cache]. Designed to run as a
 // goroutine for the lifetime of the API process.
@@ -39,6 +75,12 @@ type Worker struct {
 	logger      *slog.Logger
 	interval    time.Duration
 	circulation map[string]CirculationEntry // loaded once at startup
+
+	// guards holds the sanity-band state per ticker. Only touched from
+	// refreshOnce → persistSnapshot, which is single-goroutine (Run owns
+	// the ticker loop). Empty on process start: the first refresh has no
+	// baseline, so it accepts and establishes one.
+	guards map[string]*rateGuard
 }
 
 // NewWorker constructs the worker. interval is the refresh
@@ -66,6 +108,7 @@ func NewWorker(client *Client, cache *Cache, logger *slog.Logger, interval time.
 		logger:      logger,
 		interval:    interval,
 		circulation: circulation,
+		guards:      map[string]*rateGuard{},
 	}
 }
 
@@ -155,18 +198,30 @@ func (w *Worker) refreshOnce(ctx context.Context) {
 //     the first install of each day (the worker's gap-detector
 //     short-circuits unchanged history).
 //
+// Every "current" rate passes the [maxRateDeviation] sanity band before it
+// is written (C2-030): fx_quotes is the denominator of every fiat-quoted
+// usd_volume, so one bad upstream bar would mis-scale a whole currency's
+// history. Rejections are logged at WARN and counted on
+// [obs.ExternalFXRateRejectedTotal]; the ticker keeps its last accepted
+// row rather than gaining a wrong one.
+//
+// The trailing-7d history rows are NOT banded — they are dated snapshots
+// of the upstream's own published history, not a moving current rate, so
+// there is no meaningful "last accepted" baseline to compare a
+// 5-days-ago bar against. They keep the pre-existing positive-value
+// filter, tightened to reject non-finite values too.
+//
 // Errors get logged at warn level; persistence is best-effort
 // alongside the in-memory cache, never a crash condition.
 func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 	if w.writer == nil || snap == nil {
 		return
 	}
-	const sourceTag = "massive"
 	today := snap.PublishedAt.UTC().Truncate(24 * time.Hour)
 
 	batch := make([]FXQuote, 0, len(snap.Currencies)+len(snap.History7d)*7)
 	for _, c := range snap.Currencies {
-		if c.RateUSD <= 0 {
+		if !w.acceptRate(c.Ticker, c.RateUSD) {
 			continue
 		}
 		batch = append(batch, FXQuote{
@@ -174,12 +229,12 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 			Ticker:     c.Ticker,
 			RateUSD:    c.RateUSD,
 			InverseUSD: 1.0 / c.RateUSD,
-			Source:     sourceTag,
+			Source:     fxSource,
 		})
 	}
 	for ticker, points := range snap.History7d {
 		for _, p := range points {
-			if p.RateUSD <= 0 {
+			if p.RateUSD <= 0 || math.IsNaN(p.RateUSD) || math.IsInf(p.RateUSD, 0) {
 				continue
 			}
 			batch = append(batch, FXQuote{
@@ -187,7 +242,7 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 				Ticker:     ticker,
 				RateUSD:    p.RateUSD,
 				InverseUSD: 1.0 / p.RateUSD,
-				Source:     sourceTag,
+				Source:     fxSource,
 			})
 		}
 	}
@@ -211,8 +266,79 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 	// dry fiat-FX feed BEFORE the 7-day fx_snap lookback expires and
 	// fiat-quoted pairs silently break.
 	if len(batch) > 0 {
-		obs.ExternalFXLastQuoteUnix.WithLabelValues(sourceTag).Set(float64(time.Now().Unix()))
+		obs.ExternalFXLastQuoteUnix.WithLabelValues(fxSource).Set(float64(time.Now().Unix()))
 	}
+}
+
+// acceptRate is the C2-030 sanity band. It reports whether `rate` for
+// `ticker` may be written to fx_quotes, and updates the per-ticker guard
+// state as a side effect.
+//
+// Accept / reject rules, in order:
+//   - non-finite or non-positive → reject (a broken upstream field can
+//     never be a rate; 1/rate would poison InverseUSD too).
+//   - no baseline yet (first sighting since process start) → accept and
+//     establish the baseline. There is nothing to compare against, and
+//     refusing to bootstrap would leave the feed permanently empty.
+//   - within [maxRateDeviation] of the last accepted rate → accept.
+//   - outside the band but WITHIN the band of the outlier we already
+//     rejected once → accept: two independent fetches agree, so this is
+//     a real move (devaluation / redenomination), not a bad bar.
+//   - otherwise → reject, remember it as pending, count + log.
+//
+// Rejecting holds the ticker on its last accepted row rather than writing
+// a wrong one; the confirmation arm bounds that hold to one refresh
+// interval.
+func (w *Worker) acceptRate(ticker string, rate float64) bool {
+	if math.IsNaN(rate) || math.IsInf(rate, 0) {
+		w.rejectRate(ticker, rate, 0, "non_finite")
+		return false
+	}
+	if rate <= 0 {
+		w.rejectRate(ticker, rate, 0, "non_positive")
+		return false
+	}
+	if w.guards == nil {
+		w.guards = map[string]*rateGuard{}
+	}
+	g, ok := w.guards[ticker]
+	if !ok || g.lastAccepted <= 0 {
+		w.guards[ticker] = &rateGuard{lastAccepted: rate}
+		return true
+	}
+	if withinBand(rate, g.lastAccepted) {
+		g.lastAccepted = rate
+		g.pending = 0
+		return true
+	}
+	if g.pending > 0 && withinBand(rate, g.pending) {
+		w.logger.Warn("forex: large FX move confirmed by a second fetch; accepting",
+			"ticker", ticker, "previous", g.lastAccepted, "rate", rate,
+			"band", maxRateDeviation)
+		g.lastAccepted = rate
+		g.pending = 0
+		return true
+	}
+	g.pending = rate
+	w.rejectRate(ticker, rate, g.lastAccepted, "deviation")
+	return false
+}
+
+// rejectRate records one refused rate: a WARN carrying the ticker (which
+// the metric deliberately does not label) and a bump on the bounded
+// per-reason counter.
+func (w *Worker) rejectRate(ticker string, rate, previous float64, reason string) {
+	obs.ExternalFXRateRejectedTotal.WithLabelValues(fxSource, reason).Inc()
+	w.logger.Warn("forex: rejected upstream rate; keeping last accepted",
+		"ticker", ticker, "rate", rate, "previous", previous,
+		"reason", reason, "band", maxRateDeviation)
+}
+
+// withinBand reports whether `rate` is within [maxRateDeviation] of
+// `baseline` in relative terms. baseline is guaranteed positive by the
+// caller.
+func withinBand(rate, baseline float64) bool {
+	return math.Abs(rate-baseline)/baseline <= maxRateDeviation
 }
 
 // shouldRefreshHistory returns true when the worker should re-pull

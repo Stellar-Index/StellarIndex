@@ -1,0 +1,80 @@
+---
+# promtool unit tests for the C2-030 FX sanity-band alert.
+#
+#   promtool test rules deploy/monitoring/rule-tests/external-pollers_test.yml
+#
+# `stellarindex_external_fx_rate_rejections` guards a control that is
+# SUPPOSED to fire occasionally: the forex worker's two-strike band holds
+# an out-of-band rate for one refresh and accepts it if the next fetch
+# agrees. A `> 0` rule would therefore page on every genuine devaluation
+# and get muted inside a week — the exact failure mode that makes an
+# alert worthless.
+#
+# So the two cases below are the whole contract:
+#   1. one bad bar + its confirmation must stay SILENT;
+#   2. a ticker the upstream keeps disagreeing about (wedged on its last
+#      accepted rate) must TICKET.
+#
+# The worker refreshes hourly, so `increase(...[3h]) > 2` means "more than
+# two of the last three refreshes were refused".
+#
+# Deliberately lives OUTSIDE `deploy/monitoring/rules/` — see the header
+# of archive-completeness_test.yml.
+
+rule_files:
+  - ../rules/external-pollers.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── One bad bar, then confirmation ───────────────────────────────
+  # A single decimal-shifted EUR bar is refused at t=60m. The next
+  # hourly fetch agrees with the new value, the two-strike arm accepts
+  # it, and the counter never moves again. Two rejections total (the
+  # counter steps once) — under the > 2 threshold, so no ticket.
+  - interval: 1m
+    name: a single refused bar does not ticket
+    input_series:
+      - series: 'stellarindex_external_fx_rate_rejected_total{job="stellarindex_api",instance="r1:3000",source="massive",reason="deviation"}'
+        values: '0+0x60 1+0x180'
+    alert_rule_test:
+      - eval_time: 120m
+        alertname: stellarindex_external_fx_rate_rejections
+        exp_alerts: []
+      - eval_time: 200m
+        alertname: stellarindex_external_fx_rate_rejections
+        exp_alerts: []
+
+  # ── A wedged ticker ──────────────────────────────────────────────
+  # The upstream keeps reporting a scale the confirmation arm never
+  # settles: one rejection per hourly refresh, indefinitely. By t=240m
+  # the trailing 3h window holds 3 rejections (> 2) and has for well
+  # over the 30-minute `for`.
+  - interval: 1m
+    name: sustained rejections ticket
+    input_series:
+      - series: 'stellarindex_external_fx_rate_rejected_total{job="stellarindex_api",instance="r1:3000",source="massive",reason="deviation"}'
+        values: '0+0x60 1+0x59 2+0x59 3+0x59 4+0x59 5+0x59'
+    alert_rule_test:
+      - eval_time: 340m
+        alertname: stellarindex_external_fx_rate_rejections
+        exp_alerts:
+          - exp_labels:
+              reason: deviation
+              severity: ticket
+              team: stellarindex
+              component: external-poller
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-rate-rejected.md
+              summary: "forex sanity band is rejecting upstream rates (deviation)"
+              description: |
+                The forex worker refused more than 2 upstream rates in 3 h
+                with reason `deviation`. Those tickers are HELD on
+                their last accepted fx_quotes row, so fiat-quoted usd_volume
+                for them is being converted at a stale rate. `deviation`
+                means the upstream keeps reporting a move > 50% that the
+                two-strike confirmation is not clearing — usually a real
+                redenomination the guard needs to be told about, or an
+                upstream scale change. `non_positive` / `non_finite` mean the
+                feed is emitting garbage fields. Grep the API logs for
+                "forex: rejected upstream rate" to get the ticker(s).

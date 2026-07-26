@@ -59,6 +59,7 @@ func registerAppMetrics() {
 		ExternalPollerPollsTotal,
 		ExternalPollerLastSuccessUnix,
 		ExternalFXLastQuoteUnix,
+		ExternalFXRateRejectedTotal,
 		ExternalDustDroppedTotal,
 		CEXStreamDisconnectTotal,
 		DiscoveryDroppedHitsTotal,
@@ -303,6 +304,13 @@ func seedBoundedLabelSeries() {
 	// distinguishable from "nothing has been clamped yet".
 	for _, outcome := range []string{"lowered", "failed"} {
 		AdminKeyBudgetClampsTotal.WithLabelValues(outcome)
+	}
+	// C2-030: FX sanity-band rejections. Bounded (one source × three
+	// reasons) and seeded because the alertable state is a SUSTAINED
+	// non-zero rate — an absent series would make "the band has never
+	// rejected anything" and "the worker never started" identical.
+	for _, reason := range []string{"deviation", "non_positive", "non_finite"} {
+		ExternalFXRateRejectedTotal.WithLabelValues("massive", reason)
 	}
 }
 
@@ -849,6 +857,40 @@ var ExternalFXLastQuoteUnix = prometheus.NewGaugeVec(
 		Help: "UNIX seconds of the most recent successful fx_quotes write per FX source (currently `massive`). Reset-proof liveness for the active fiat-FX feed the triangulation forex-snap depends on; only advances on a committed non-empty batch.",
 	},
 	[]string{"source"},
+)
+
+// ExternalFXRateRejectedTotal — per-source counter of upstream FX rates
+// the forex worker refused to persist, by reason (C2-030,
+// audit-2026-07-23).
+//
+// The forex worker's fx_quotes rows are the denominator of every
+// fiat-quoted `usd_volume` the X2.5 triangulation derives, so ONE bad
+// upstream bar (a decimal shift, a unit-scale change, a zeroed field)
+// mis-scales an entire currency's history. persistSnapshot now gates each
+// per-ticker rate on a deviation band against the last accepted value for
+// that ticker and drops the outlier instead of writing it.
+//
+// Reasons (bounded — extend the const block, not the call sites):
+//   - "deviation"    — moved more than the band vs the last accepted rate
+//     for that ticker, and no second fetch has confirmed it yet.
+//   - "non_positive" — rate <= 0 (an upstream field that came back empty).
+//   - "non_finite"   — NaN or ±Inf (a parse that produced garbage).
+//
+// Deliberately NOT labelled by ticker: ~150 currencies × sources would be
+// pure cardinality for a signal whose actionable question is "is the feed
+// producing junk", and the rejected ticker is on the WARN log line.
+//
+// A single rejection is expected and self-healing — the guard is
+// two-strike, so a genuine devaluation confirmed by the next fetch is
+// accepted one refresh later. A SUSTAINED non-zero rate is the alertable
+// state: it means a ticker is wedged on a stale rate
+// (see stellarindex_external_fx_rate_rejections).
+var ExternalFXRateRejectedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_external_fx_rate_rejected_total",
+		Help: "Upstream FX rates refused by the forex worker's sanity band before reaching fx_quotes, per source and reason (deviation/non_positive/non_finite). Sustained non-zero means a currency is wedged on its last accepted rate.",
+	},
+	[]string{"source", "reason"},
 )
 
 // SourceOrphanEventsTotal — per-source counter of events that
