@@ -6,6 +6,20 @@ import (
 	"fmt"
 )
 
+// opsVerifyStatementTimeoutMS bounds the per-query statement_timeout for the
+// full-history ops/verify counts (CountRowsByLedger, MinLedger, and the
+// source-coverage scan). These are TRUSTED ops jobs — never the request path,
+// whose DoS backstop is OpenServing's separate SESSION statement_timeout — and
+// they scan full-history hypertables that legitimately take tens of minutes as
+// the chain grows (e.g. sep41_supply_events: ~9.3M rows / 130 chunks over the
+// Soroban range ≈ 40 min, index-only scan). The prior 5-minute cap SILENTLY
+// FAILED the completeness projection verify on large sources ("canceling
+// statement due to statement timeout"). 2h is generous headroom yet still
+// catches a genuinely stuck query; the caller's context is the real outer
+// bound. (per_source_gaps and sep41_supply_events already carry their own
+// longer / caller-supplied timeouts.)
+const opsVerifyStatementTimeoutMS = 7200000 // 2 hours, in ms
+
 // MinLedger returns the smallest ledger present in a per-source table over
 // [from, to] — where that target's served data ACTUALLY begins. It is the
 // lower bound of the ADR-0033 Claim 2b projection reconcile (chops.targetScope),
@@ -36,7 +50,7 @@ func (s *Store) MinLedger(ctx context.Context, table, ledgerColumn, whereFilter 
 		return 0, false, fmt.Errorf("timescale: MinLedger begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, "SET LOCAL statement_timeout = '300000'"); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL statement_timeout = '%d'", opsVerifyStatementTimeoutMS)); err != nil {
 		return 0, false, fmt.Errorf("timescale: MinLedger SET: %w", err)
 	}
 	var minL sql.NullInt64
@@ -58,8 +72,10 @@ func (s *Store) MinLedger(ctx context.Context, table, ledgerColumn, whereFilter 
 // callers MUST pass compile-time-trusted identifiers (the same
 // discipline as GapDetectorTarget per ADR-0030) — never user input.
 //
-// A 5-minute SQL statement_timeout backstops the GROUP BY on large
-// tables (trades) the same way CountDistinctLedgers does.
+// A generous ops statement_timeout (opsVerifyStatementTimeoutMS)
+// backstops the GROUP BY on large full-history hypertables; the caller's
+// context is the real bound. Raised from the old 5-min cap that failed the
+// completeness verify on grown sources (sep41_supply_events).
 func (s *Store) CountRowsByLedger(ctx context.Context, table, ledgerColumn, whereFilter string, from, to uint32) (map[uint32]int, error) {
 	if to < from {
 		return nil, fmt.Errorf("timescale: CountRowsByLedger: to (%d) < from (%d)", to, from)
@@ -79,7 +95,7 @@ func (s *Store) CountRowsByLedger(ctx context.Context, table, ledgerColumn, wher
 		return nil, fmt.Errorf("timescale: CountRowsByLedger begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, "SET LOCAL statement_timeout = '300000'"); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL statement_timeout = '%d'", opsVerifyStatementTimeoutMS)); err != nil {
 		return nil, fmt.Errorf("timescale: CountRowsByLedger SET: %w", err)
 	}
 
