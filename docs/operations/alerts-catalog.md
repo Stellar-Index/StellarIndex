@@ -68,6 +68,7 @@ Severity maps to [sev-playbook.md §1](sev-playbook.md#1-severity-definitions).
 | `stellarindex_external_poller_error_rate_high` | `rate(stellarindex_external_poller_polls_total{outcome="error"}[15m]) / sum(...) ` | > 0.5 sustained 15 min | P3 | [external-poller-error-rate-high](runbooks/external-poller-error-rate-high.md) |
 | `stellarindex_external_fx_feed_stale` | `time() - max(stellarindex_external_fx_last_quote_unix)` | > 21600 s (6h) for > 15 min | P2 | [fx-feed-stale](runbooks/fx-feed-stale.md) |
 | `stellarindex_external_fx_feed_absent` | `absent(stellarindex_external_fx_last_quote_unix)` | series missing for 30 min | P2 | [fx-feed-stale](runbooks/fx-feed-stale.md) |
+| `stellarindex_external_fx_rate_rejections` | `sum by (reason) (increase(stellarindex_external_fx_rate_rejected_total[3h]))` | > 2 rejections in 3h, for 30 min (a ticker is wedged on its last accepted rate) | ticket | [fx-rate-rejected](runbooks/fx-rate-rejected.md) |
 
 Historical note: the former `stellarindex_ingestion_lag_high` alert was retired
 when the repo moved off the legacy orchestrator topology and the live indexer
@@ -464,6 +465,13 @@ enforcement.
 - [sev-playbook.md](sev-playbook.md) — response timelines each
   severity binds to.
 - [runbooks/](runbooks/) — per-alert response steps.
+- [runbooks/entry-walk-renumbering.md](runbooks/entry-walk-renumbering.md) —
+  NOT an alert: a deploy-time procedure that must run whenever
+  `dispatcher.EntryWalkVersion` is bumped. Listed here because it is the
+  one non-alert runbook an on-call may be handed mid-incident — a skipped
+  renumbering repair surfaces later as a widening
+  `stellarindex_supply_divergence`, and the obvious fix (re-derive) is
+  silently discarded by the `intra_ledger_seq` guard.
 - [repo-hygiene-plan.md §16](../architecture/repo-hygiene-plan.md#16-observability-discipline) —
   "no alert without a runbook" rule.
 - External:

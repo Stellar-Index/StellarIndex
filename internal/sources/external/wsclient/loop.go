@@ -5,6 +5,7 @@ package wsclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -23,6 +24,27 @@ import (
 // forever — losing ~MaxBackoff of data per cycle instead of the expected
 // InitialBackoff (F-0029, ported G10-03).
 const DefaultHealthyConnectionThreshold = 5 * time.Minute
+
+// DefaultPingInterval / DefaultPingTimeout bound how long a HALF-OPEN venue
+// socket can go unnoticed (C2-017/C2-031, audit-2026-07-23). A bare
+// conn.Read on the long-lived connection context blocks forever on a
+// half-open socket: no data arrives, no error is raised, and detection is
+// left to OS TCP keepalive (minutes to hours on Linux defaults) — during
+// which the streamer silently ingests nothing while every liveness signal
+// says "connected".
+//
+// The watchdog is an ACTIVE ping rather than a read deadline on purpose. A
+// read deadline cannot distinguish a wedged socket from a genuinely quiet
+// pair (XLM/BTC can go minutes between prints), and WebSocket control
+// frames — including the server pings Binance sends every 3 min — never
+// unblock conn.Read, so an idle-but-healthy stream would be torn down on
+// every cycle. A ping we send ourselves is answered by any live peer
+// regardless of trade flow, so worst-case detection is
+// PingInterval + PingTimeout ≈ 40 s.
+const (
+	DefaultPingInterval = 30 * time.Second
+	DefaultPingTimeout  = 10 * time.Second
+)
 
 // Loop is the shared connect → subscribe → read → reconnect lifecycle
 // used by every external WS streamer (binance / kraken / coinbase /
@@ -63,6 +85,15 @@ type Loop struct {
 	// disconnect resets backoff to InitialBackoff. <=0 defaults to
 	// [DefaultHealthyConnectionThreshold].
 	HealthyThreshold time.Duration
+
+	// PingInterval is how often the live connection is actively probed
+	// with a WebSocket ping. <=0 defaults to [DefaultPingInterval].
+	PingInterval time.Duration
+
+	// PingTimeout bounds each ping's pong wait; exceeding it drops the
+	// connection with [ErrStreamStalled] (metric reason "stall"). <=0
+	// defaults to [DefaultPingTimeout].
+	PingTimeout time.Duration
 
 	// Subscribe, if non-nil, is called once per connection immediately
 	// after a successful dial to register channels (venues whose
@@ -201,8 +232,16 @@ func (l *Loop) runOnce(ctx context.Context, out chan<- canonical.Trade) error {
 		_ = conn.Close(websocket.StatusNormalClosure, "client shutdown")
 	}()
 
+	// Connection-scoped context: the stall watchdog cancels it (with the
+	// stall as the cause) so the blocked conn.Read below unblocks and the
+	// reconnect path runs. Cancelled unconditionally on return so the
+	// watchdog goroutine cannot outlive the connection.
+	connCtx, cancelConn := context.WithCancelCause(ctx)
+	defer cancelConn(nil)
+	go l.pingWatchdog(connCtx, conn, cancelConn)
+
 	if l.Subscribe != nil {
-		if err := l.Subscribe(ctx, conn); err != nil {
+		if err := l.Subscribe(connCtx, conn); err != nil {
 			return err
 		}
 	}
@@ -211,8 +250,13 @@ func (l *Loop) runOnce(ctx context.Context, out chan<- canonical.Trade) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		_, data, err := conn.Read(ctx)
+		_, data, err := conn.Read(connCtx)
 		if err != nil {
+			// A watchdog-declared stall is the real disconnect reason;
+			// the Read error is just "context canceled" noise.
+			if cause := context.Cause(connCtx); cause != nil && errors.Is(cause, ErrStreamStalled) {
+				return cause
+			}
 			return fmt.Errorf("read: %w", err)
 		}
 		trades, err := l.HandleFrame(data)
@@ -235,6 +279,49 @@ func (l *Loop) runOnce(ctx context.Context, out chan<- canonical.Trade) error {
 				return nil
 			case out <- t:
 			}
+		}
+	}
+}
+
+// pingWatchdog actively probes the connection every PingInterval and
+// cancels connCtx with [ErrStreamStalled] the first time a ping goes
+// unanswered within PingTimeout — turning an invisible half-open socket
+// into an ordinary reconnect with a "stall" disconnect reason
+// (C2-017/C2-031, audit-2026-07-23).
+//
+// conn.Ping blocks until the pong arrives, so it MUST run concurrently
+// with the read loop (the reader is what dispatches the pong). Returns as
+// soon as connCtx is done, which the caller guarantees on every runOnce
+// exit path.
+func (l *Loop) pingWatchdog(connCtx context.Context, conn *websocket.Conn, fail context.CancelCauseFunc) {
+	interval := l.PingInterval
+	if interval <= 0 {
+		interval = DefaultPingInterval
+	}
+	timeout := l.PingTimeout
+	if timeout <= 0 {
+		timeout = DefaultPingTimeout
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-connCtx.Done():
+			return
+		case <-ticker.C:
+			pingCtx, cancel := context.WithTimeout(connCtx, timeout)
+			err := conn.Ping(pingCtx)
+			cancel()
+			if err == nil {
+				continue
+			}
+			if connCtx.Err() != nil {
+				// Shutdown or an unrelated disconnect won the race —
+				// not a stall.
+				return
+			}
+			fail(fmt.Errorf("%w (after %s): %w", ErrStreamStalled, timeout, err))
+			return
 		}
 	}
 }

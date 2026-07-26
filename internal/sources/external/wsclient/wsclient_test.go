@@ -4,10 +4,20 @@
 package wsclient
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // Jitter scatters reconnect timers ±25% so a fleet of streamers doesn't
@@ -40,6 +50,9 @@ func TestClassifyDisconnect_BoundedReasonLabels(t *testing.T) {
 		want string
 	}{
 		{"nil", nil, "other"},
+		// Checked before the string match: the wrapped cause is a context
+		// deadline, which would otherwise land in "timeout".
+		{"stall", fmt.Errorf("%w: %w", ErrStreamStalled, context.DeadlineExceeded), "stall"},
 		{"reset", errors.New("read: failed to read frame payload: read tcp 1.2.3.4:443: read: connection reset by peer"), "reset"},
 		{"broken_pipe", errors.New("write: broken pipe"), "broken_pipe"},
 		{"timeout", errors.New("read: i/o timeout"), "timeout"},
@@ -74,5 +87,68 @@ func TestKeepAliveHTTPClient_HasKeepaliveDialer(t *testing.T) {
 	}
 	if tr.ForceAttemptHTTP2 {
 		t.Error("ForceAttemptHTTP2 = true, want false (WS upgrade dials must stay HTTP/1.1)")
+	}
+}
+
+// TestLoop_PingStallDropsConnection pins C2-017/C2-031 (audit-2026-07-23):
+// a HALF-OPEN venue socket must be detected by the loop itself, not left
+// to OS TCP keepalive (minutes-to-hours on Linux defaults).
+//
+// The fake venue accepts the upgrade and then wedges — it never reads
+// again, so the client's ping frame is never processed and no pong comes
+// back, while the TCP connection stays established. That is exactly what a
+// half-open venue socket looks like from the streamer's side. Before the
+// ping watchdog, runOnce sat in a bare conn.Read on the long-lived
+// connection context and returned nothing at all: no trades, no error, no
+// reconnect, and no disconnect metric — the streamer looked healthy while
+// ingesting zero.
+func TestLoop_PingStallDropsConnection(t *testing.T) {
+	wedged := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		<-wedged // never read a frame → never answer a ping
+	}))
+	defer func() {
+		close(wedged)
+		srv.Close()
+	}()
+
+	l := &Loop{
+		Source:       "wedgedvenue",
+		URL:          "ws" + strings.TrimPrefix(srv.URL, "http"),
+		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		PingInterval: 50 * time.Millisecond,
+		PingTimeout:  150 * time.Millisecond,
+		HandleFrame: func([]byte) ([]canonical.Trade, error) {
+			return nil, nil
+		},
+	}
+
+	// The ctx deadline is the failure mode, not the success path: with no
+	// watchdog runOnce blocks until it fires and then reports nothing.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out := make(chan canonical.Trade, 1)
+
+	start := time.Now()
+	err := l.runOnce(ctx, out)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, ErrStreamStalled) {
+		t.Fatalf("runOnce on a wedged venue returned %v after %v, want ErrStreamStalled — "+
+			"a half-open socket must reconnect, not block", err, elapsed)
+	}
+	if got := ClassifyDisconnect(err); got != "stall" {
+		t.Errorf("ClassifyDisconnect(stall err) = %q, want %q — operators need the reason label "+
+			"to tell a wedged socket from an ordinary read timeout", got, "stall")
+	}
+	// PingInterval + PingTimeout = 200ms; anything near the 3s ctx deadline
+	// means the watchdog did not fire and the ctx did.
+	if elapsed > time.Second {
+		t.Errorf("stall detected after %v, want < 1s (PingInterval 50ms + PingTimeout 150ms)", elapsed)
 	}
 }

@@ -385,6 +385,38 @@ When to look: `time() - <gauge>` is the feed's age. Healthy is < 1 h
 7-day cliff); the companion `stellarindex_external_fx_feed_absent` fires
 when the series is missing entirely (worker never wrote since startup).
 
+### `stellarindex_external_fx_rate_rejected_total`
+
+Counter, labels `source`, `reason`.
+
+Upstream FX rates the forex worker **refused to persist** because they
+failed its sanity band, before they could reach `fx_quotes` (C2-030,
+audit-2026-07-23). `fx_quotes` is the denominator of every fiat-quoted
+`usd_volume` the X2.5 triangulation derives, so one mis-scaled bar — a
+decimal shift, a unit-scale change, a redenomination applied upstream
+without a ticker change — would silently re-scale that currency's whole
+conversion history. `persistSnapshot` previously wrote whatever the
+upstream said.
+
+`reason` is bounded at three values: `deviation` (moved > 50% from the
+last accepted rate for that ticker with no confirming second fetch),
+`non_positive` (rate ≤ 0 — `1/rate` feeds `InverseUSD`, so it would
+poison the row both ways), `non_finite` (NaN / ±Inf). Deliberately NOT
+labelled by ticker: ~150 currencies would be pure cardinality for a
+signal whose actionable question is "is the feed producing junk". The
+rejected ticker is on the worker's WARN log line
+(`forex: rejected upstream rate`).
+
+Zero-seeded for all three reasons so an untripped band is a real zero,
+not "no data".
+
+When to look: a single rejection is expected and self-healing — the
+guard is two-strike, so a genuine devaluation confirmed by the next
+hourly fetch is accepted one refresh later. **Sustained** non-zero means
+a ticker is wedged on its last accepted rate while the upstream keeps
+disagreeing; that is what `stellarindex_external_fx_rate_rejections`
+alerts on.
+
 ### `stellarindex_external_dust_dropped_total`
 
 Counter, label `source`.
