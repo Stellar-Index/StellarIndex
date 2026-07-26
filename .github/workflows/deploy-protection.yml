@@ -51,12 +51,23 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
       - name: Assert required reviewers on the r1 environment
+        # ⚠ PRE-PRODUCTION RELAXATION (2026-07-26): mirrors deploy.yml,
+        # fail-closed. Only when the repo variable DEPLOY_APPROVAL_RELAXED
+        # is exactly "true" is the gate intentionally absent (R1 has no
+        # production traffic) and this drift check does NOT alarm. Re-arm
+        # by deleting the variable; the assertion then enforces the r1
+        # Required-reviewers rule again.
         env:
           GH_TOKEN: ${{ secrets.DEPLOY_PROTECTION_TOKEN || secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           REGION: r1
+          APPROVAL_RELAXED: ${{ vars.DEPLOY_APPROVAL_RELAXED }}
         run: |
           set -euo pipefail
+          if [ "${APPROVAL_RELAXED:-}" = "true" ]; then
+            echo "::notice::deploy-approval-gate intentionally relaxed (pre-production, DEPLOY_APPROVAL_RELAXED=true). Skipping the required-reviewers assertion. Re-arm before production launch by deleting the variable."
+            exit 0
+          fi
           if ! gh api "repos/${REPO}/environments/${REGION}" > env-protection.json; then
             echo "::error::Could not read the '${REGION}' environment protection config. If the default GITHUB_TOKEN lacks access, set the DEPLOY_PROTECTION_TOKEN secret to a read-only PAT and re-run."
             exit 1
