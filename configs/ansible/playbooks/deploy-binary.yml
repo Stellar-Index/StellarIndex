@@ -112,6 +112,12 @@
     # hot-fix). Skipping is loud — the debug task below prints why.
     - name: Assert a recent restorable pgBackRest backup exists before migrating
       ansible.builtin.shell:
+        # `set -o pipefail` is a bashism; ansible.builtin.shell defaults to
+        # /bin/sh (dash on r1), which errors "Illegal option -o pipefail"
+        # BEFORE the check runs — so the gate must run under bash. The cmd
+        # genuinely pipes `pgbackrest … | python3`, so pipefail is load-
+        # bearing here, not decoration.
+        executable: /bin/bash
         cmd: |
           set -euo pipefail
           max_age_hours={{ backup_freshness_max_age_hours | default(36) | int }}
