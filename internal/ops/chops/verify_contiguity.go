@@ -290,7 +290,7 @@ func runEntryChangesCheck(ctx context.Context, addr string, from, to, ecFloor ui
 		}
 		for _, w := range windows {
 			pending += w.Missing()
-			fmt.Println(formatCoverageLine(w.From, w.To, w.TxLedgers, w.ECCovered, "BACKFILL-PENDING (below -ec-floor, informational only)"))
+			fmt.Println(formatCoverageLine(w.From, w.To, w.TxLedgers, w.ECCoveredTxLedgers, "BACKFILL-PENDING (below -ec-floor, informational only)"))
 		}
 	}
 	if hasGated {
@@ -305,7 +305,7 @@ func runEntryChangesCheck(ctx context.Context, addr string, from, to, ecFloor ui
 			if wm > 0 {
 				tag = "DEFICIENCY (at/above -ec-floor)"
 			}
-			fmt.Println(formatCoverageLine(w.From, w.To, w.TxLedgers, w.ECCovered, tag))
+			fmt.Println(formatCoverageLine(w.From, w.To, w.TxLedgers, w.ECCoveredTxLedgers, tag))
 		}
 	}
 
@@ -342,16 +342,18 @@ func ecFloorSegments(from, to, ecFloor uint32) (pendingFrom, pendingTo uint32, h
 
 // formatCoverageLine renders one window's report line — shared by both
 // checks, since both are (from, to, expected-count, present-count) shaped:
-// Check 1 passes (Expected, Present); Check 2 passes (TxLedgers, ECCovered).
-// tag carries the check-specific verdict ("GAP", "OK",
+// Check 1 passes (Expected, Present); Check 2 passes (TxLedgers,
+// ECCoveredTxLedgers). tag carries the check-specific verdict ("GAP", "OK",
 // "DEFICIENCY (at/above -ec-floor)", "BACKFILL-PENDING (...)"). Pure — no
 // ClickHouse dependency — so it's unit-testable without a live lake.
 //
-// missing is a SATURATING expected-present: for Check 2, present (distinct
-// entry_change ledgers) can exceed expected (tx-bearing ledgers) on
-// protocol-upgrade / config-change ledgers — matching
-// clickhouse.ECWindowCoverage.Missing(), and keeping the displayed count from
-// wrapping uint64 when it does.
+// missing is a SATURATING expected-present. Since C4-085 Check 2's present
+// side is a SUBSET of its expected side (tx-bearing ledgers WITH
+// entry-change coverage, not a standalone entry_changes cardinality), so
+// present > expected is unreachable there and the saturation is pure
+// defence-in-depth — matching clickhouse.ECWindowCoverage.Missing(), and
+// keeping the displayed count from wrapping uint64 if a caller ever hands
+// over unrelated cardinalities again.
 func formatCoverageLine(from, to uint32, expected, present uint64, tag string) string {
 	var missing uint64
 	if present < expected {
