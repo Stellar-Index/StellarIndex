@@ -3,6 +3,7 @@ package explorer
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -131,7 +132,57 @@ type AccountPositionsView struct {
 	Positions     []PositionEntry `json:"positions"`
 	IncludeClosed bool            `json:"include_closed"`
 	Note          string          `json:"note"`
+	// CoverageNote is an honest-degrade signal, mirroring
+	// movements.go's field of the same name: non-empty when one or
+	// more of the six per-protocol folds could NOT be read for this
+	// request. Absent = all six ran.
+	//
+	// C3-045 (audit-2026-07-23): each builder logs and returns an
+	// empty slice on a read error, so a response where three of six
+	// protocol reads failed was byte-identical on the wire to "this
+	// account holds no positions". That is exactly the
+	// silently-incomplete-reads-as-complete shape this codebase
+	// refuses everywhere else — [positionsHonestNote] is a STATIC
+	// string about valuation semantics and says nothing about
+	// coverage, so it could never carry this.
+	CoverageNote string `json:"coverage_note,omitempty"`
 }
+
+// positionsCoverage collects the per-protocol read failures behind one
+// request so the response can say which folds are missing rather than
+// pass their absence off as an empty position set.
+type positionsCoverage struct{ degraded []string }
+
+// fail records that `protocol`'s fold could not be read. Safe on a nil
+// receiver so a builder called outside AccountPositions (tests, future
+// callers) doesn't have to thread a collector it doesn't want.
+func (c *positionsCoverage) fail(protocol string) {
+	if c == nil {
+		return
+	}
+	c.degraded = append(c.degraded, protocol)
+}
+
+// note renders the wire coverage_note, or "" when every fold ran.
+func (c *positionsCoverage) note() string {
+	if c == nil || len(c.degraded) == 0 {
+		return ""
+	}
+	return "INCOMPLETE: " + strconv.Itoa(len(c.degraded)) + " of " +
+		strconv.Itoa(positionsProtocolFolds) + " protocol reads failed (" +
+		strings.Join(c.degraded, ", ") + "); positions from those protocols are MISSING " +
+		"from this response, not proven absent on-chain — retry before treating this list as complete."
+}
+
+// positionsProtocolFolds is the number of independent per-protocol
+// folds AccountPositions runs, and the denominator in the
+// coverage_note. Adding a seventh fold means bumping this — the
+// all-six-reads-fail case in
+// internal/api/v1/explorer_positions_coverage_test.go
+// (TestExplorer_AccountPositions_TotalReadFailureIsNotAnEmptyAccount)
+// fails on the mismatch if it isn't, since it asserts every fold that
+// CAN fail is counted in the "N of N" the note reports.
+const positionsProtocolFolds = 6
 
 // positionsUnavailable writes the 503 for this endpoint specifically —
 // distinct wording from unavailable() (that one names the ClickHouse
@@ -172,13 +223,14 @@ func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 
 	resolve := h.newPositionAssetResolver(ctx)
 
+	var cov positionsCoverage
 	var positions []PositionEntry
-	positions = append(positions, h.buildBlendPositions(ctx, g, resolve)...)
-	positions = append(positions, h.buildBlendBackstopPositions(ctx, g, resolve)...)
-	positions = append(positions, h.buildPhoenixStakePositions(ctx, g, resolve)...)
-	positions = append(positions, h.buildDefindexPositions(ctx, g)...)
-	positions = append(positions, h.buildCreditPositions(ctx, g)...)
-	positions = append(positions, h.buildAquariusGaugePositions(ctx, g, resolve)...)
+	positions = append(positions, h.buildBlendPositions(ctx, g, resolve, &cov)...)
+	positions = append(positions, h.buildBlendBackstopPositions(ctx, g, resolve, &cov)...)
+	positions = append(positions, h.buildPhoenixStakePositions(ctx, g, resolve, &cov)...)
+	positions = append(positions, h.buildDefindexPositions(ctx, g, &cov)...)
+	positions = append(positions, h.buildCreditPositions(ctx, g, &cov)...)
+	positions = append(positions, h.buildAquariusGaugePositions(ctx, g, resolve, &cov)...)
 
 	out := make([]PositionEntry, 0, len(positions))
 	for _, p := range positions {
@@ -193,6 +245,7 @@ func (h *Handler) AccountPositions(w http.ResponseWriter, r *http.Request) {
 		Positions:     out,
 		IncludeClosed: includeClosed,
 		Note:          positionsHonestNote,
+		CoverageNote:  cov.note(),
 	}, false)
 }
 
@@ -322,10 +375,11 @@ func fmtActivity(ledger uint32, t time.Time) PositionLastActivity {
 // buildBlendPositions maps BlendPositionFold rows to up to two
 // PositionEntry rows each (an independent lending_supply and/or
 // lending_borrow leg — see timescale.BlendPositionFold's doc comment).
-func (h *Handler) buildBlendPositions(ctx context.Context, address string, resolve func(string) string) []PositionEntry {
+func (h *Handler) buildBlendPositions(ctx context.Context, address string, resolve func(string) string, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.BlendPositionsByUser(ctx, address)
 	if err != nil {
 		h.Logger.Error("positions: blend read failed", "err", err, "account", address)
+		cov.fail("blend")
 		return nil
 	}
 	poolTokens := h.poolTokensFor(ctx, "blend")
@@ -377,10 +431,11 @@ func (h *Handler) buildBlendPositions(ctx context.Context, address string, resol
 // comment); the label text is the protocol's own documented backstop
 // asset (internal/sources/blend_backstop/decode.go package doc:
 // "the backstop token (BLND:USDC LP)"), not a guess.
-func (h *Handler) buildBlendBackstopPositions(ctx context.Context, address string, resolve func(string) string) []PositionEntry {
+func (h *Handler) buildBlendBackstopPositions(ctx context.Context, address string, resolve func(string) string, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.BlendBackstopSharesByUser(ctx, address)
 	if err != nil {
 		h.Logger.Error("positions: blend_backstop read failed", "err", err, "account", address)
+		cov.fail("blend_backstop")
 		return nil
 	}
 	poolTokens := h.poolTokensFor(ctx, "blend")
@@ -413,10 +468,11 @@ func (h *Handler) buildBlendBackstopPositions(ctx context.Context, address strin
 // map is pool-contract-keyed for Phoenix, not stake-contract-keyed —
 // see pool_tokens.go's phoenixPoolTokens), so VenueLabel is left
 // absent — a documented best-effort gap, not a bug.
-func (h *Handler) buildPhoenixStakePositions(ctx context.Context, address string, resolve func(string) string) []PositionEntry {
+func (h *Handler) buildPhoenixStakePositions(ctx context.Context, address string, resolve func(string) string, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.PhoenixStakeByUser(ctx, address)
 	if err != nil {
 		h.Logger.Error("positions: phoenix_stake read failed", "err", err, "account", address)
+		cov.fail("phoenix_stake")
 		return nil
 	}
 	out := make([]PositionEntry, 0, len(rows))
@@ -446,10 +502,11 @@ func (h *Handler) buildPhoenixStakePositions(ctx context.Context, address string
 // array with no identity — migration 0050), so Assets is left absent
 // rather than guessed; no PoolTokens entry exists for defindex either
 // (pool_tokens.go's documented gap), so VenueLabel stays absent too.
-func (h *Handler) buildDefindexPositions(ctx context.Context, address string) []PositionEntry {
+func (h *Handler) buildDefindexPositions(ctx context.Context, address string, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.DefindexVaultSharesByUser(ctx, address)
 	if err != nil {
 		h.Logger.Error("positions: defindex read failed", "err", err, "account", address)
+		cov.fail("defindex")
 		return nil
 	}
 	out := make([]PositionEntry, 0, len(rows))
@@ -481,10 +538,11 @@ func (h *Handler) buildDefindexPositions(ctx context.Context, address string) []
 // no statement published yet legitimately has no reportable amount
 // (LatestAmount == "") without being closed; reporting "0" for it would
 // misrepresent "unknown yet" as "verified zero".
-func (h *Handler) buildCreditPositions(ctx context.Context, address string) []PositionEntry {
+func (h *Handler) buildCreditPositions(ctx context.Context, address string, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.CreditPositionsByOwner(ctx, address)
 	if err != nil {
 		h.Logger.Error("positions: sorocredit read failed", "err", err, "account", address)
+		cov.fail("sorocredit")
 		return nil
 	}
 	out := make([]PositionEntry, 0, len(rows))
@@ -520,10 +578,11 @@ func (h *Handler) buildCreditPositions(ctx context.Context, address string) []Po
 // pool_tokens.go's aquariusPoolTokens uses, so PoolTokens("aquarius")
 // resolves directly (unlike Phoenix stake / DeFindex vault, no
 // cross-mapping needed here).
-func (h *Handler) buildAquariusGaugePositions(ctx context.Context, address string, resolve func(string) string) []PositionEntry {
+func (h *Handler) buildAquariusGaugePositions(ctx context.Context, address string, resolve func(string) string, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.AquariusGaugeByUser(ctx, address)
 	if err != nil {
 		h.Logger.Error("positions: aquarius_rewards read failed", "err", err, "account", address)
+		cov.fail("aquarius_rewards")
 		return nil
 	}
 	poolTokens := h.poolTokensFor(ctx, "aquarius")

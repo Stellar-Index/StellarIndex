@@ -27739,7 +27739,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Role can't mint keys.",
+                  "name": "Role can't mint keys, OR the write was blocked as cross-site:\nstate-changing dashboard requests must carry an `Origin`\n(or `Referer`) matching this API or an operator-allow-listed\nsite (`cross-site-request-blocked`).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -28019,7 +28019,7 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
-                      "name": "Role can't revoke keys.",
+                      "name": "Role can't revoke keys, OR the write was blocked as cross-site:\nstate-changing dashboard requests must carry an `Origin`\n(or `Referer`) matching this API or an operator-allow-listed\nsite (`cross-site-request-blocked`).",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -28508,7 +28508,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Role can't manage webhooks.",
+                  "name": "Role can't manage webhooks, OR the write was blocked as cross-site:\nstate-changing dashboard requests must carry an `Origin`\n(or `Referer`) matching this API or an operator-allow-listed\nsite (`cross-site-request-blocked`).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -28905,6 +28905,74 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
+                      "name": "Cross-site write blocked: state-changing dashboard + auth\nrequests must carry an `Origin` (or `Referer`) matching\nthis API or an operator-allow-listed site\n(`cross-site-request-blocked`).",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "webhooks",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          },
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          },
+                          {
+                            "description": {
+                              "content": "Added as a part of security scheme: apikey",
+                              "type": "text/plain"
+                            },
+                            "key": "stellarindex_session",
+                            "value": "<API Key>"
+                          }
+                        ],
+                        "method": "PATCH",
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"anomaly.freeze\",\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                          "options": {
+                            "raw": {
+                              "headerFamily": "json",
+                              "language": "json"
+                            }
+                          }
+                        }
+                      },
+                      "status": "Forbidden",
+                      "code": 403,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
                       "name": "Webhook not found.",
                       "originalRequest": {
                         "url": {
@@ -29126,6 +29194,61 @@
                       },
                       "status": "Unauthorized",
                       "code": 401,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Cross-site write blocked: state-changing dashboard + auth\nrequests must carry an `Origin` (or `Referer`) matching\nthis API or an operator-allow-listed site\n(`cross-site-request-blocked`).",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "webhooks",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          },
+                          {
+                            "description": {
+                              "content": "Added as a part of security scheme: apikey",
+                              "type": "text/plain"
+                            },
+                            "key": "stellarindex_session",
+                            "value": "<API Key>"
+                          }
+                        ],
+                        "method": "DELETE",
+                        "body": {}
+                      },
+                      "status": "Forbidden",
+                      "code": 403,
                       "header": [
                         {
                           "key": "Content-Type",
@@ -29755,7 +29878,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Role can't manage price alerts.",
+                  "name": "Role can't manage price alerts, OR the write was blocked as cross-site:\nstate-changing dashboard requests must carry an `Origin`\n(or `Referer`) matching this API or an operator-allow-listed\nsite (`cross-site-request-blocked`).",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -30152,6 +30275,74 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
+                      "name": "Cross-site write blocked: state-changing dashboard + auth\nrequests must carry an `Origin` (or `Referer`) matching\nthis API or an operator-allow-listed site\n(`cross-site-request-blocked`).",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "price-alerts",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Content-Type",
+                            "value": "application/json"
+                          },
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          },
+                          {
+                            "description": {
+                              "content": "Added as a part of security scheme: apikey",
+                              "type": "text/plain"
+                            },
+                            "key": "stellarindex_session",
+                            "value": "<API Key>"
+                          }
+                        ],
+                        "method": "PATCH",
+                        "body": {
+                          "mode": "raw",
+                          "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"above\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                          "options": {
+                            "raw": {
+                              "headerFamily": "json",
+                              "language": "json"
+                            }
+                          }
+                        }
+                      },
+                      "status": "Forbidden",
+                      "code": 403,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
                       "name": "Price alert not found.",
                       "originalRequest": {
                         "url": {
@@ -30384,6 +30575,61 @@
                       "_postman_previewlanguage": "json"
                     },
                     {
+                      "name": "Cross-site write blocked: state-changing dashboard + auth\nrequests must carry an `Origin` (or `Referer`) matching\nthis API or an operator-allow-listed site\n(`cross-site-request-blocked`).",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "dashboard",
+                            "price-alerts",
+                            ":id"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) ",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<uuid>",
+                              "key": "id"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          },
+                          {
+                            "description": {
+                              "content": "Added as a part of security scheme: apikey",
+                              "type": "text/plain"
+                            },
+                            "key": "stellarindex_session",
+                            "value": "<API Key>"
+                          }
+                        ],
+                        "method": "DELETE",
+                        "body": {}
+                      },
+                      "status": "Forbidden",
+                      "code": 403,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
                       "name": "Price alert not found.",
                       "originalRequest": {
                         "url": {
@@ -30463,7 +30709,7 @@
               "request": {
                 "name": "Customer dashboard — request a magic-link sign-in email.",
                 "description": {
-                  "content": "Mints a single-use magic-link token (valid 15 minutes) and\nemails it to the address. Always returns `{status: \"sent\"}`\nregardless of whether the email matches an existing account\n— leaking that information would let attackers enumerate\nvalid users. First-time users have their account + owner-\nuser provisioned on the callback (not here), so the same\nflow handles login + signup.\n\nThe email carries both a one-click magic link (consumed by\n`/auth/callback`) and a 6-digit code (consumed by\n`/auth/verify-code`) — either signs the user in.\n\nDistinct from `/auth/sep10/*` (programmatic API auth via a\nsigned Stellar challenge). This endpoint is the entry point\nfor the cookie-based in-site dashboard at stellarindex.io/account.\n\nReturns 503 when the deployment hasn't configured the\ndashboard auth flow (api.dashboard.base_url empty).\n",
+                  "content": "Mints a single-use magic-link token (valid 15 minutes) and\nemails it to the address. Always returns `{status: \"sent\"}`\nregardless of whether the email matches an existing account\n— leaking that information would let attackers enumerate\nvalid users. First-time users have their account + owner-\nuser provisioned on the callback (not here), so the same\nflow handles login + signup.\n\nThe email carries both a one-click magic link (consumed by\n`/auth/callback`) and a 6-digit code (consumed by\n`/auth/verify-code`) — either signs the user in.\n\nDistinct from `/auth/sep10/*` (programmatic API auth via a\nsigned Stellar challenge). This endpoint is the entry point\nfor the cookie-based in-site dashboard at stellarindex.io/account.\n\nSets a short-lived, HttpOnly `stellarindex_login_intent`\ncookie that binds the emailed link to THIS browser;\n`/auth/callback` refuses to mint a session without it, so a\nlink mailed on to a third party cannot sign that third party\ninto this account. Up to three concurrently-live links per\nbrowser are remembered, so re-requesting doesn't invalidate\nthe first mail. The cookie is cleared on a successful sign-in.\n\nReturns 503 when the deployment hasn't configured the\ndashboard auth flow (api.dashboard.base_url empty).\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -30587,6 +30833,54 @@
                   },
                   "status": "Bad Request",
                   "code": 400,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Cross-site write blocked: state-changing dashboard + auth\nrequests must carry an `Origin` (or `Referer`) matching\nthis API or an operator-allow-listed site\n(`cross-site-request-blocked`).",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "auth",
+                        "login"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "POST",
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"email\": \"<email>\"\n}",
+                      "options": {
+                        "raw": {
+                          "headerFamily": "json",
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Forbidden",
+                  "code": 403,
                   "header": [
                     {
                       "key": "Content-Type",
@@ -30802,6 +31096,60 @@
                   },
                   "status": "Bad Request",
                   "code": 400,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "The link was opened in a browser that did not request it.\n`POST /auth/login` sets a short-lived, HttpOnly\n`stellarindex_login_intent` cookie binding the link to the\nrequesting browser; without a matching witness no session\nis minted (login-CSRF defence). The token is NOT consumed,\nso the originating browser can still complete the sign-in.\nClients should fall back to the 6-digit code, or request a\nfresh link from the device in hand.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "auth",
+                        "callback"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) Hex-encoded magic-link plaintext from the email.",
+                            "type": "text/plain"
+                          },
+                          "key": "token",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Path-only redirect target after sign-in (e.g. `/keys`).\nAbsolute URLs and protocol-relative paths (`//evil.com`)\nare rejected; the user lands at `/` instead.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "next",
+                          "value": "<string>"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "Forbidden",
+                  "code": 403,
                   "header": [
                     {
                       "key": "Content-Type",
@@ -31081,6 +31429,54 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
+                  "name": "Cross-site write blocked: state-changing dashboard + auth\nrequests must carry an `Origin` (or `Referer`) matching\nthis API or an operator-allow-listed site\n(`cross-site-request-blocked`).",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "auth",
+                        "verify-code"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "POST",
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"401145\"\n}",
+                      "options": {
+                        "raw": {
+                          "headerFamily": "json",
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Forbidden",
+                  "code": 403,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
                   "name": "Server is degraded (dependency outage, startup, shutdown).",
                   "originalRequest": {
                     "url": {
@@ -31192,6 +31588,41 @@
                   "header": [],
                   "cookie": [],
                   "_postman_previewlanguage": "text"
+                },
+                {
+                  "name": "Cross-site write blocked: state-changing dashboard + auth\nrequests must carry an `Origin` (or `Referer`) matching\nthis API or an operator-allow-listed site\n(`cross-site-request-blocked`).",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "auth",
+                        "logout"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "POST",
+                    "body": {}
+                  },
+                  "status": "Forbidden",
+                  "code": 403,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
                 },
                 {
                   "name": "Server is degraded (dependency outage, startup, shutdown).",
@@ -34047,7 +34478,7 @@
                   "request": {
                     "name": "\"Enter an address, see all your DeFi positions\" — folded per-protocol net positions.",
                     "description": {
-                      "content": "Folds six ADR-0035-gated on-chain protocols' event tables into\none per-(venue, position_kind) net-position list for the\naddress: Blend money-market (lending_supply / lending_borrow),\nBlend Backstop (backstop_shares), Phoenix stake\n(stake), DeFindex vault shares (vault_shares), sorocredit\n(credit), and Aquarius rewards-gauge (gauge). Not paginated —\neach protocol's venue fan-out for one address is bounded server-\nside (500 venues), far past any realistic user.\n\nHONESTY CONTRACT: this is raw on-chain quantities only — no\nUSD/asset valuation is applied (see the top-level `note`, always\npresent). Every position also carries `amount_semantics`\n(exactly what the number IS — see the schema) and `basis`\n(`event_derived`: a sum of this fold's own historical event\namounts, computed here, that does NOT model interest/fees/\nexchange-rate accrual since each event; or `stateful`: read\nstraight from the protocol's own most-recently-published figure,\nnot derived by summing events — currently only sorocredit).\n\nNET-ZERO / CLOSED positions are excluded by default (what\n\"net-zero\" means is protocol-specific — see each `position_kind`\nbelow); `?include_closed=true` includes them.\n",
+                      "content": "Folds six ADR-0035-gated on-chain protocols' event tables into\none per-(venue, position_kind) net-position list for the\naddress: Blend money-market (lending_supply / lending_borrow),\nBlend Backstop (backstop_shares), Phoenix stake\n(stake), DeFindex vault shares (vault_shares), sorocredit\n(credit), and Aquarius rewards-gauge (gauge). Not paginated —\neach protocol's venue fan-out for one address is bounded server-\nside (500 venues), far past any realistic user.\n\nHONESTY CONTRACT: this is raw on-chain quantities only — no\nUSD/asset valuation is applied (see the top-level `note`, always\npresent). Coverage is disclosed separately: if any of the six\nper-protocol reads fails, the response carries a\n`coverage_note` naming which folds are missing, so a partial\nanswer can never be mistaken for \"this address holds nothing\". Every position also carries `amount_semantics`\n(exactly what the number IS — see the schema) and `basis`\n(`event_derived`: a sum of this fold's own historical event\namounts, computed here, that does NOT model interest/fees/\nexchange-rate accrual since each event; or `stateful`: read\nstraight from the protocol's own most-recently-published figure,\nnot derived by summing events — currently only sorocredit).\n\nNET-ZERO / CLOSED positions are excluded by default (what\n\"net-zero\" means is protocol-specific — see each `position_kind`\nbelow); `?include_closed=true` includes them.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -34147,7 +34578,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"positions\": [\n      {\n        \"protocol\": \"sorocredit\",\n        \"position_kind\": \"lending_supply\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"stateful_current\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"event_derived\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ]\n      },\n      {\n        \"protocol\": \"defindex\",\n        \"position_kind\": \"gauge\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"net_underlying_at_event_time\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"stateful\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ]\n      }\n    ],\n    \"include_closed\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
+                      "body": "{\n  \"data\": {\n    \"account\": \"<string>\",\n    \"positions\": [\n      {\n        \"protocol\": \"defindex\",\n        \"position_kind\": \"backstop_shares\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"stateful_current\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"stateful\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ]\n      },\n      {\n        \"protocol\": \"aquarius\",\n        \"position_kind\": \"stake\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"stateful_current\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"event_derived\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ]\n      }\n    ],\n    \"include_closed\": \"<boolean>\",\n    \"note\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -34360,7 +34791,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"account\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"contract\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },

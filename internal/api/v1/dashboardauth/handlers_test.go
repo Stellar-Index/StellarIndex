@@ -73,6 +73,29 @@ func (r *testRig) postLogin(t *testing.T, email string) *httptest.ResponseRecord
 	return w
 }
 
+// attachCookies replays onto req the cookies a real browser would
+// have stored from w. Load-bearing since C3-030: `POST /v1/auth/login`
+// sets the login-intent witness and `GET /v1/auth/callback` refuses to
+// mint a session without it, so a callback request built without this
+// step is a DIFFERENT browser — which is exactly the login-CSRF the
+// binding rejects.
+func attachCookies(req *http.Request, w *httptest.ResponseRecorder) {
+	for _, c := range w.Result().Cookies() {
+		req.AddCookie(c)
+	}
+}
+
+// attachLoginIntent stamps the witness a browser would hold for
+// `plaintext` without going through /login — for the cases that need a
+// token the store has never seen (or has since dropped), where the
+// binding must not be what decides the outcome.
+func attachLoginIntent(req *http.Request, plaintext string) {
+	req.AddCookie(&http.Cookie{
+		Name:  LoginIntentCookieName,
+		Value: loginIntentDigest(HashMagicLinkPlaintext(plaintext)),
+	})
+}
+
 // extractTokenFromSentEmail pulls the magic-link plaintext out of
 // the most-recently-sent NoopSender Message. The plaintext shows
 // up in the rendered link URL — we parse it back out so tests can
@@ -158,13 +181,15 @@ func TestHandleLogin_RejectsMalformedJSON(t *testing.T) {
 func TestHandleCallback_HappyPath_FirstTimeSignupCreatesAccount(t *testing.T) {
 	r := newTestRig(t)
 	// Mint a token via /login so we exercise the same plumbing.
-	if w := r.postLogin(t, "newuser@example.com"); w.Code != http.StatusOK {
-		t.Fatalf("login: %d", w.Code)
+	lw := r.postLogin(t, "newuser@example.com")
+	if lw.Code != http.StatusOK {
+		t.Fatalf("login: %d", lw.Code)
 	}
 	plaintext := r.extractTokenFromSentEmail(t)
 
 	cb := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token="+url.QueryEscape(plaintext), nil)
 	cb.RemoteAddr = "203.0.113.5:55123"
+	attachCookies(cb, lw)
 	w := httptest.NewRecorder()
 	r.h.HandleCallback(w, cb)
 
@@ -223,13 +248,15 @@ func TestHandleCallback_HappyPath_ExistingUserNoDuplicateAccount(t *testing.T) {
 		AccountID: acct.ID, Email: "ash@acme.com", Role: platform.RoleOwner,
 	})
 
-	if w := r.postLogin(t, "ash@acme.com"); w.Code != http.StatusOK {
-		t.Fatalf("login: %d", w.Code)
+	lw := r.postLogin(t, "ash@acme.com")
+	if lw.Code != http.StatusOK {
+		t.Fatalf("login: %d", lw.Code)
 	}
 	plaintext := r.extractTokenFromSentEmail(t)
 
 	cb := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token="+url.QueryEscape(plaintext), nil)
 	cb.RemoteAddr = "203.0.113.5:55123"
+	attachCookies(cb, lw)
 	w := httptest.NewRecorder()
 	r.h.HandleCallback(w, cb)
 
@@ -250,8 +277,9 @@ func TestHandleCallback_HappyPath_ExistingUserNoDuplicateAccount(t *testing.T) {
 
 func TestHandleCallback_ExpiredTokenReturns410(t *testing.T) {
 	r := newTestRig(t)
-	if w := r.postLogin(t, "alice@example.com"); w.Code != http.StatusOK {
-		t.Fatalf("login: %d", w.Code)
+	lw := r.postLogin(t, "alice@example.com")
+	if lw.Code != http.StatusOK {
+		t.Fatalf("login: %d", lw.Code)
 	}
 	plaintext := r.extractTokenFromSentEmail(t)
 
@@ -260,6 +288,7 @@ func TestHandleCallback_ExpiredTokenReturns410(t *testing.T) {
 
 	cb := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token="+url.QueryEscape(plaintext), nil)
 	cb.RemoteAddr = "203.0.113.5:55123"
+	attachCookies(cb, lw)
 	w := httptest.NewRecorder()
 	r.h.HandleCallback(w, cb)
 
@@ -272,6 +301,9 @@ func TestHandleCallback_InvalidTokenReturns400(t *testing.T) {
 	r := newTestRig(t)
 	cb := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token=deadbeef", nil)
 	cb.RemoteAddr = "203.0.113.5:55123"
+	// Intent witness present, token unknown to the store: the 400 must
+	// come from the token lookup, not from the C3-030 binding.
+	attachLoginIntent(cb, "deadbeef")
 	w := httptest.NewRecorder()
 	r.h.HandleCallback(w, cb)
 	if w.Code != http.StatusBadRequest {
@@ -281,23 +313,28 @@ func TestHandleCallback_InvalidTokenReturns400(t *testing.T) {
 
 func TestHandleCallback_TokenSingleUse(t *testing.T) {
 	r := newTestRig(t)
-	if w := r.postLogin(t, "alice@example.com"); w.Code != http.StatusOK {
-		t.Fatalf("login: %d", w.Code)
+	lw := r.postLogin(t, "alice@example.com")
+	if lw.Code != http.StatusOK {
+		t.Fatalf("login: %d", lw.Code)
 	}
 	plaintext := r.extractTokenFromSentEmail(t)
 
 	// Consume once.
 	cb1 := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token="+url.QueryEscape(plaintext), nil)
 	cb1.RemoteAddr = "203.0.113.5:55123"
+	attachCookies(cb1, lw)
 	w1 := httptest.NewRecorder()
 	r.h.HandleCallback(w1, cb1)
 	if w1.Code != http.StatusSeeOther {
 		t.Fatalf("first callback: %d", w1.Code)
 	}
 
-	// Replay must fail.
+	// Replay must fail. The browser still holds the login-intent
+	// witness it was issued at /login, so the rejection has to come
+	// from the token's single-use consumption, not the binding.
 	cb2 := httptest.NewRequest(http.MethodGet, "/v1/auth/callback?token="+url.QueryEscape(plaintext), nil)
 	cb2.RemoteAddr = "203.0.113.5:55123"
+	attachLoginIntent(cb2, plaintext)
 	w2 := httptest.NewRecorder()
 	r.h.HandleCallback(w2, cb2)
 	if w2.Code != http.StatusBadRequest {
@@ -307,8 +344,9 @@ func TestHandleCallback_TokenSingleUse(t *testing.T) {
 
 func TestHandleCallback_NextParamPathOnly_RejectsOpenRedirect(t *testing.T) {
 	r := newTestRig(t)
-	if w := r.postLogin(t, "alice@example.com"); w.Code != http.StatusOK {
-		t.Fatalf("login: %d", w.Code)
+	lw := r.postLogin(t, "alice@example.com")
+	if lw.Code != http.StatusOK {
+		t.Fatalf("login: %d", lw.Code)
 	}
 	plaintext := r.extractTokenFromSentEmail(t)
 
@@ -316,6 +354,7 @@ func TestHandleCallback_NextParamPathOnly_RejectsOpenRedirect(t *testing.T) {
 	target := "/v1/auth/callback?token=" + url.QueryEscape(plaintext) + "&next=" + url.QueryEscape("//evil.com/x")
 	cb := httptest.NewRequest(http.MethodGet, target, nil)
 	cb.RemoteAddr = "203.0.113.5:55123"
+	attachCookies(cb, lw)
 	w := httptest.NewRecorder()
 	r.h.HandleCallback(w, cb)
 	loc := w.Header().Get("Location")

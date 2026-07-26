@@ -87,6 +87,7 @@ func CORS(opts CORSOptions) Middleware { //nolint:gocognit // origin allow-list 
 	}
 	maxAgeStr := strconv.Itoa(maxAge)
 	allowCredentials := opts.AllowCredentials
+	policy := &OriginPolicy{allowed: allowed, credentials: allowCredentials}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -134,6 +135,15 @@ func CORS(opts CORSOptions) Middleware { //nolint:gocognit // origin allow-list 
 			default:
 				obs.APICORSDecisionsTotal.WithLabelValues("denied").Inc()
 			}
+
+			// Publish the operator's allow-list so the same-site write
+			// guard (see [RequireSameSiteWrite]) can reuse the ONE
+			// configured list instead of growing a second, drift-prone
+			// copy of it. The policy value is built once at
+			// construction and shared by pointer, so this costs one
+			// context node per request and no per-request allocation
+			// of the list itself.
+			r = r.WithContext(withOriginPolicy(r.Context(), policy))
 
 			if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
 				// Preflight. Emit the allow-methods/headers/max-age

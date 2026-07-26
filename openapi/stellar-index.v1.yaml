@@ -6262,7 +6262,11 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
         "403":
-          description: Role can't mint keys.
+          description: |
+            Role can't mint keys, OR the write was blocked as cross-site:
+            state-changing dashboard requests must carry an `Origin`
+            (or `Referer`) matching this API or an operator-allow-listed
+            site (`cross-site-request-blocked`).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -6297,7 +6301,11 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
         "403":
-          description: Role can't revoke keys.
+          description: |
+            Role can't revoke keys, OR the write was blocked as cross-site:
+            state-changing dashboard requests must carry an `Origin`
+            (or `Referer`) matching this API or an operator-allow-listed
+            site (`cross-site-request-blocked`).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -6389,7 +6397,11 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
         "403":
-          description: Role can't manage webhooks.
+          description: |
+            Role can't manage webhooks, OR the write was blocked as cross-site:
+            state-changing dashboard requests must carry an `Origin`
+            (or `Referer`) matching this API or an operator-allow-listed
+            site (`cross-site-request-blocked`).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -6440,6 +6452,15 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+        "403":
+          description: |
+            Cross-site write blocked: state-changing dashboard + auth
+            requests must carry an `Origin` (or `Referer`) matching
+            this API or an operator-allow-listed site
+            (`cross-site-request-blocked`).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "404":
           description: Webhook not found.
           content:
@@ -6463,6 +6484,15 @@ paths:
           description: Deleted.
         "401":
           description: No valid session cookie.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "403":
+          description: |
+            Cross-site write blocked: state-changing dashboard + auth
+            requests must carry an `Origin` (or `Referer`) matching
+            this API or an operator-allow-listed site
+            (`cross-site-request-blocked`).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -6594,7 +6624,11 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
         "403":
-          description: Role can't manage price alerts.
+          description: |
+            Role can't manage price alerts, OR the write was blocked as cross-site:
+            state-changing dashboard requests must carry an `Origin`
+            (or `Referer`) matching this API or an operator-allow-listed
+            site (`cross-site-request-blocked`).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -6649,6 +6683,15 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+        "403":
+          description: |
+            Cross-site write blocked: state-changing dashboard + auth
+            requests must carry an `Origin` (or `Referer`) matching
+            this API or an operator-allow-listed site
+            (`cross-site-request-blocked`).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "404":
           description: Price alert not found.
           content:
@@ -6672,6 +6715,15 @@ paths:
           description: Deleted.
         "401":
           description: No valid session cookie.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "403":
+          description: |
+            Cross-site write blocked: state-changing dashboard + auth
+            requests must carry an `Origin` (or `Referer`) matching
+            this API or an operator-allow-listed site
+            (`cross-site-request-blocked`).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -6702,6 +6754,14 @@ paths:
         signed Stellar challenge). This endpoint is the entry point
         for the cookie-based in-site dashboard at stellarindex.io/account.
 
+        Sets a short-lived, HttpOnly `stellarindex_login_intent`
+        cookie that binds the emailed link to THIS browser;
+        `/auth/callback` refuses to mint a session without it, so a
+        link mailed on to a third party cannot sign that third party
+        into this account. Up to three concurrently-live links per
+        browser are remembered, so re-requesting doesn't invalidate
+        the first mail. The cookie is cleared on a successful sign-in.
+
         Returns 503 when the deployment hasn't configured the
         dashboard auth flow (api.dashboard.base_url empty).
       requestBody:
@@ -6731,6 +6791,15 @@ paths:
                     enum: [sent]
                 required: [status]
         "400": { $ref: "#/components/responses/BadRequest" }
+        "403":
+          description: |
+            Cross-site write blocked: state-changing dashboard + auth
+            requests must carry an `Origin` (or `Referer`) matching
+            this API or an operator-allow-listed site
+            (`cross-site-request-blocked`).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /auth/callback:
@@ -6772,6 +6841,19 @@ paths:
               schema: { type: string }
               description: HttpOnly + Secure session cookie.
         "400": { $ref: "#/components/responses/BadRequest" }
+        "403":
+          description: |
+            The link was opened in a browser that did not request it.
+            `POST /auth/login` sets a short-lived, HttpOnly
+            `stellarindex_login_intent` cookie binding the link to the
+            requesting browser; without a matching witness no session
+            is minted (login-CSRF defence). The token is NOT consumed,
+            so the originating browser can still complete the sign-in.
+            Clients should fall back to the 6-digit code, or request a
+            fresh link from the device in hand.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "410":
           description: Magic-link token expired; request a fresh one.
           content:
@@ -6840,6 +6922,15 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+        "403":
+          description: |
+            Cross-site write blocked: state-changing dashboard + auth
+            requests must carry an `Origin` (or `Referer`) matching
+            this API or an operator-allow-listed site
+            (`cross-site-request-blocked`).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /auth/logout:
@@ -6854,6 +6945,15 @@ paths:
       responses:
         "200":
           description: Session revoked (if any) and cookie cleared.
+        "403":
+          description: |
+            Cross-site write blocked: state-changing dashboard + auth
+            requests must carry an `Origin` (or `Referer`) matching
+            this API or an operator-allow-listed site
+            (`cross-site-request-blocked`).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /auth/sep10/challenge:
@@ -8010,7 +8110,10 @@ paths:
 
         HONESTY CONTRACT: this is raw on-chain quantities only — no
         USD/asset valuation is applied (see the top-level `note`, always
-        present). Every position also carries `amount_semantics`
+        present). Coverage is disclosed separately: if any of the six
+        per-protocol reads fails, the response carries a
+        `coverage_note` naming which folds are missing, so a partial
+        answer can never be mistaken for "this address holds nothing". Every position also carries `amount_semantics`
         (exactly what the number IS — see the schema) and `basis`
         (`event_derived`: a sum of this fold's own historical event
         amounts, computed here, that does NOT model interest/fees/
@@ -8711,6 +8814,17 @@ components:
             quantities with no valuation applied, and that event_derived
             positions do not model interest/fee/exchange-rate accrual —
             see each position's amount_semantics / basis for specifics.
+        coverage_note:
+          type: string
+          description: |
+            ABSENT on a fully-successful read. Present when one or more
+            of the six per-protocol folds could not be read for this
+            request — it names how many failed, out of how many, and
+            which ones. Positions from a named protocol are MISSING
+            from the response, not proven absent on-chain: an empty
+            `positions` array with a `coverage_note` means "we could
+            not look", never "this address holds nothing". Mirrors the
+            same field on GET /accounts/{g_strkey}/movements.
       required: [account, positions, include_closed, note]
     DashboardKey:
       type: object

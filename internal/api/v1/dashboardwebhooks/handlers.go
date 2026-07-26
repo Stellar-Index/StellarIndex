@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardauth"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 	"github.com/Stellar-Index/StellarIndex/internal/nettools"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
@@ -71,11 +72,19 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 }
 
 // Mount installs the dashboard webhook-management routes.
+//
+// Every mutation is wrapped in [middleware.RequireSameSiteWrite]
+// (C3-031 / C3-057): these routes authenticate with the session
+// COOKIE, so a cross-site page could otherwise drive them on a
+// logged-in customer's behalf — registering an endpoint that
+// exfiltrates the victim's webhook payloads is the concrete attack.
+// Reads stay unwrapped — safe methods change nothing.
 func (h *Handlers) Mount(mux *http.ServeMux) {
+	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
 	mux.HandleFunc("GET /v1/dashboard/webhooks", h.HandleList)
-	mux.HandleFunc("POST /v1/dashboard/webhooks", h.HandleCreate)
-	mux.HandleFunc("PATCH /v1/dashboard/webhooks/{id}", h.HandleUpdate)
-	mux.HandleFunc("DELETE /v1/dashboard/webhooks/{id}", h.HandleDelete)
+	mux.Handle("POST /v1/dashboard/webhooks", sameSite(http.HandlerFunc(h.HandleCreate)))
+	mux.Handle("PATCH /v1/dashboard/webhooks/{id}", sameSite(http.HandlerFunc(h.HandleUpdate)))
+	mux.Handle("DELETE /v1/dashboard/webhooks/{id}", sameSite(http.HandlerFunc(h.HandleDelete)))
 	mux.HandleFunc("GET /v1/dashboard/webhooks/{id}/deliveries", h.HandleListDeliveries)
 }
 

@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardauth"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
@@ -108,10 +109,17 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 // short-circuit to 401 here rather than depending on a separate
 // RequireSession wrapper — the dashboard surface always requires
 // auth, so embedding the check keeps the route table tight.
+//
+// Every mutation is wrapped in [middleware.RequireSameSiteWrite]
+// (C3-031 / C3-057): these routes authenticate with the session
+// COOKIE, so a cross-site page could otherwise mint or revoke a
+// logged-in customer's API keys. Reads stay unwrapped — safe
+// methods change nothing.
 func (h *Handlers) Mount(mux *http.ServeMux) {
+	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
 	mux.HandleFunc("GET /v1/dashboard/keys", h.HandleList)
-	mux.HandleFunc("POST /v1/dashboard/keys", h.HandleCreate)
-	mux.HandleFunc("DELETE /v1/dashboard/keys/{id}", h.HandleRevoke)
+	mux.Handle("POST /v1/dashboard/keys", sameSite(http.HandlerFunc(h.HandleCreate)))
+	mux.Handle("DELETE /v1/dashboard/keys/{id}", sameSite(http.HandlerFunc(h.HandleRevoke)))
 }
 
 // keyDTO is the wire shape the dashboard reads. The plaintext is

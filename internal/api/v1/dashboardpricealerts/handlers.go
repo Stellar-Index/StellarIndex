@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardauth"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
@@ -60,11 +61,18 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 }
 
 // Mount installs the dashboard price-alert-management routes.
+//
+// Every mutation is wrapped in [middleware.RequireSameSiteWrite]
+// (C3-031 / C3-057): these routes authenticate with the session
+// COOKIE, so a cross-site page could otherwise drive them on a
+// logged-in customer's behalf. Reads stay unwrapped — safe methods
+// change nothing.
 func (h *Handlers) Mount(mux *http.ServeMux) {
+	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
 	mux.HandleFunc("GET /v1/dashboard/price-alerts", h.HandleList)
-	mux.HandleFunc("POST /v1/dashboard/price-alerts", h.HandleCreate)
-	mux.HandleFunc("PATCH /v1/dashboard/price-alerts/{id}", h.HandleUpdate)
-	mux.HandleFunc("DELETE /v1/dashboard/price-alerts/{id}", h.HandleDelete)
+	mux.Handle("POST /v1/dashboard/price-alerts", sameSite(http.HandlerFunc(h.HandleCreate)))
+	mux.Handle("PATCH /v1/dashboard/price-alerts/{id}", sameSite(http.HandlerFunc(h.HandleUpdate)))
+	mux.Handle("DELETE /v1/dashboard/price-alerts/{id}", sameSite(http.HandlerFunc(h.HandleDelete)))
 }
 
 // priceAlertDTO is the wire shape the dashboard reads.
