@@ -1,11 +1,20 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -199,4 +208,306 @@ func TestSubcommandDispatch_LeafHandlersSeeTheirFlags(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ─── the operator-override vs aggregator-rehydrate race ─────────
+
+// fakeLadderStore is an in-memory freeze.LadderStore mirroring the SQL in
+// timescale.FreezeEventSink: SaveLadder UPDATEs the open row (a zero State
+// nulls hold_until), LoadLadder reports absent once the row is closed
+// (recovered_at stamped) or the ladder retired (hold_until NULL).
+type fakeLadderStore struct {
+	states map[string]freeze.State
+	closed map[string]bool
+}
+
+func newFakeLadderStore() *fakeLadderStore {
+	return &fakeLadderStore{states: map[string]freeze.State{}, closed: map[string]bool{}}
+}
+
+func (f *fakeLadderStore) key(asset, quote canonical.Asset) string {
+	return asset.String() + "|" + quote.String()
+}
+
+func (f *fakeLadderStore) SaveLadder(_ context.Context, asset, quote canonical.Asset, st freeze.State) error {
+	k := f.key(asset, quote)
+	if f.closed[k] {
+		return nil // UPDATE ... WHERE recovered_at IS NULL matches nothing
+	}
+	f.states[k] = st
+	return nil
+}
+
+func (f *fakeLadderStore) LoadLadder(_ context.Context, asset, quote canonical.Asset) (freeze.State, bool, error) {
+	k := f.key(asset, quote)
+	if f.closed[k] {
+		return freeze.State{}, false, nil
+	}
+	st, ok := f.states[k]
+	if ok && st.HoldUntil.IsZero() { // mirrors `hold_until IS NOT NULL`
+		return freeze.State{}, false, nil
+	}
+	return st, ok, nil
+}
+
+// markRecovered is the durable half of the override (recovered_at).
+func (f *fakeLadderStore) markRecovered(asset, quote canonical.Asset) {
+	f.closed[f.key(asset, quote)] = true
+}
+
+// tickProbingRecoverer stands in for the real MarkRecovered and, before
+// stamping recovered_at, performs the exact read an aggregator tick would
+// perform at that instant: freeze.Writer.LoadState against the SAME Redis +
+// ladder store. That is the race window — Clear has run, MarkRecovered has
+// not — so whatever this probe sees is what a concurrent tick would act on.
+type tickProbingRecoverer struct {
+	aggregator *freeze.Writer
+	ladder     *fakeLadderStore
+	sawFrozen  bool
+	probed     bool
+}
+
+func (r *tickProbingRecoverer) MarkRecovered(ctx context.Context, asset, quote canonical.Asset) error {
+	_, present, err := r.aggregator.LoadState(ctx, asset, quote)
+	if err != nil {
+		return err
+	}
+	r.probed, r.sawFrozen = true, present
+	r.ladder.markRecovered(asset, quote)
+	return nil
+}
+
+// TestUnfreezePair_OperatorWinsTheRehydrateRace pins the direction of the
+// one race this command has.
+//
+// `unfreezePair` deliberately clears the Redis marker FIRST and stamps
+// recovered_at second (the marker is the serving path's authority, so
+// clearing it is what republishes the price). Since migration 0119 the
+// durable ladder is ALSO an authority: an aggregator tick that finds no
+// marker but a live open ladder rehydrates the freeze and re-writes the
+// marker. A tick landing in the window between those two steps would
+// therefore resurrect the freeze, and the operator's MarkRecovered would
+// then close a row the aggregator had already replaced — the unfreeze
+// silently undone, on a pair that by construction never unfreezes itself.
+//
+// The fix is the wiring in [newFreezeWriterForOps]: with the ladder store
+// passed, Clear retires the ladder in the same call that deletes the marker,
+// so the window is empty by construction rather than merely narrow.
+//
+// This asserts the corrected observation, not just an end state: at the
+// instant MarkRecovered runs, a concurrent aggregator tick must already see
+// the pair as NOT frozen.
+func TestUnfreezePair_OperatorWinsTheRehydrateRace(t *testing.T) {
+	asset, quote := testPair(t)
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	ladder := newFakeLadderStore()
+
+	// The aggregator's writer — always ladder-aware. Its LoadState is the
+	// read the racing tick performs.
+	aggregator, err := freeze.NewWriter(rdb, 0, freeze.WithLadderStore(ladder, 0))
+	if err != nil {
+		t.Fatalf("aggregator writer: %v", err)
+	}
+
+	// A pair that spent the whole ADR-0019 ladder and escalated: the exact
+	// case that "stays active until manual unfreeze", i.e. the only reason
+	// this subcommand exists.
+	now := time.Now().UTC()
+	escalated := freeze.State{
+		FiredAt:        now.Add(-2*time.Hour - 5*time.Minute),
+		HoldUntil:      now.Add(25 * time.Minute),
+		ExtensionsUsed: freeze.DefaultMaxExtensions,
+		Escalated:      true,
+		Corroborated:   true,
+	}
+	if err := aggregator.MarkHold(context.Background(), asset, quote, "0.87",
+		anomaly.Decision{Action: anomaly.ActionFreeze, Reason: "phase2:3_signal_AND"},
+		escalated, 30*time.Minute); err != nil {
+		t.Fatalf("MarkHold: %v", err)
+	}
+	if _, present, err := aggregator.LoadState(context.Background(), asset, quote); err != nil || !present {
+		t.Fatalf("precondition: the pair must start frozen (present=%v, err=%v)", present, err)
+	}
+
+	// The operator's writer, built exactly as freezeUnfreeze() builds it.
+	opsWriter, err := newFreezeWriterForOps(rdb, ladder)
+	if err != nil {
+		t.Fatalf("newFreezeWriterForOps: %v", err)
+	}
+	recoverer := &tickProbingRecoverer{aggregator: aggregator, ladder: ladder}
+
+	if err := unfreezePair(context.Background(), recoverer, opsWriter,
+		asset, quote, "oracle recovered, verified by hand", false); err != nil {
+		t.Fatalf("unfreezePair: %v", err)
+	}
+
+	if !recoverer.probed {
+		t.Fatal("MarkRecovered never ran — the race window was never reached")
+	}
+	if recoverer.sawFrozen {
+		t.Error("a concurrent aggregator tick would still see this pair as FROZEN between Clear and " +
+			"MarkRecovered: it rehydrates the escalated ladder from the durable row, re-writes the marker, " +
+			"and the operator's unfreeze is silently undone")
+	}
+
+	// End state: both authorities agree the freeze is over.
+	if _, present, err := aggregator.LoadState(context.Background(), asset, quote); err != nil || present {
+		t.Errorf("after the unfreeze the pair still reads frozen (present=%v, err=%v)", present, err)
+	}
+}
+
+// TestNewFreezeWriterForOps_ReadsTheDurableLadder — `-list`'s ladder column
+// must survive a Redis flush too. Before the ladder store was wired here,
+// the exact situation an operator is most likely to be investigating (an
+// escalated freeze whose marker evaporated) printed as EXTS 0 / ESCALATED
+// false: it lied in the reassuring direction.
+func TestNewFreezeWriterForOps_ReadsTheDurableLadder(t *testing.T) {
+	asset, quote := testPair(t)
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	ladder := newFakeLadderStore()
+	now := time.Now().UTC()
+	want := freeze.State{
+		FiredAt:        now.Add(-3 * time.Hour),
+		HoldUntil:      now.Add(20 * time.Minute),
+		ExtensionsUsed: freeze.DefaultMaxExtensions,
+		Escalated:      true,
+	}
+	if err := ladder.SaveLadder(context.Background(), asset, quote, want); err != nil {
+		t.Fatalf("SaveLadder: %v", err)
+	}
+	mr.FlushAll() // Redis lost the marker; the durable row is untouched.
+
+	writer, err := newFreezeWriterForOps(rdb, ladder)
+	if err != nil {
+		t.Fatalf("newFreezeWriterForOps: %v", err)
+	}
+	got, present, err := writer.LoadState(context.Background(), asset, quote)
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	if !present {
+		t.Fatal("-list would report MARKER GONE with a zero ladder after a Redis flush")
+	}
+	if !got.Escalated || got.ExtensionsUsed != freeze.DefaultMaxExtensions {
+		t.Errorf("ladder = {escalated:%v exts:%d}, want {escalated:true exts:%d}",
+			got.Escalated, got.ExtensionsUsed, freeze.DefaultMaxExtensions)
+	}
+}
+
+// TestListOpenFreezes_DistinguishesRehydratedFromGone — the STATE column
+// must not collapse "Redis lost the marker, the ladder is still holding"
+// into "GONE".
+//
+// Before migration 0119 the column was a marker-only probe, so a flushed
+// Redis printed GONE — which an operator reads as "nothing to do here" on
+// exactly the pair whose marker just evaporated. After 0119 LoadState falls
+// back to the ladder, so a marker-only reading of `present` would swing the
+// other way and print `live` for a marker that does not exist. Both are
+// wrong; the three states have to be distinguished.
+func TestListOpenFreezes_DistinguishesRehydratedFromGone(t *testing.T) {
+	asset, quote := testPair(t)
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	ladder := newFakeLadderStore()
+	writer, err := newFreezeWriterForOps(rdb, ladder)
+	if err != nil {
+		t.Fatalf("newFreezeWriterForOps: %v", err)
+	}
+	looker, err := freeze.NewLooker(rdb)
+	if err != nil {
+		t.Fatalf("NewLooker: %v", err)
+	}
+	lister := &fakeOpenLister{pairs: []freeze.OpenFreezePair{{Asset: asset, Quote: quote}}}
+
+	now := time.Now().UTC()
+	escalated := freeze.State{
+		FiredAt:        now.Add(-2*time.Hour - 5*time.Minute),
+		HoldUntil:      now.Add(25 * time.Minute),
+		ExtensionsUsed: freeze.DefaultMaxExtensions,
+		Escalated:      true,
+	}
+	if err := writer.MarkHold(context.Background(), asset, quote, "0.87",
+		anomaly.Decision{Action: anomaly.ActionFreeze}, escalated, 30*time.Minute); err != nil {
+		t.Fatalf("MarkHold: %v", err)
+	}
+
+	// Marker present → live.
+	if out := captureStdout(t, func() {
+		if err := listOpenFreezes(context.Background(), lister, writer, looker); err != nil {
+			t.Fatalf("listOpenFreezes: %v", err)
+		}
+	}); !strings.Contains(out, "live") || strings.Contains(out, "rehydrated") {
+		t.Errorf("with the marker present the STATE column should be `live`, got:\n%s", out)
+	}
+
+	// Redis flushed, ladder still holding → rehydrated (NOT GONE, NOT live).
+	mr.FlushAll()
+	out := captureStdout(t, func() {
+		if err := listOpenFreezes(context.Background(), lister, writer, looker); err != nil {
+			t.Fatalf("listOpenFreezes: %v", err)
+		}
+	})
+	if !strings.Contains(out, "rehydrated") {
+		t.Errorf("a flushed marker with a live durable ladder must print `rehydrated`, got:\n%s", out)
+	}
+	if strings.Contains(out, "GONE") {
+		t.Errorf("printed GONE for a pair that is still frozen to every API caller:\n%s", out)
+	}
+	// The ladder itself must still be reported truthfully.
+	if !strings.Contains(out, "true") {
+		t.Errorf("ESCALATED column lost after the flush:\n%s", out)
+	}
+
+	// Ladder retired as well → GONE.
+	if err := writer.Clear(context.Background(), asset, quote); err != nil {
+		t.Fatalf("Clear: %v", err)
+	}
+	if out := captureStdout(t, func() {
+		if err := listOpenFreezes(context.Background(), lister, writer, looker); err != nil {
+			t.Fatalf("listOpenFreezes: %v", err)
+		}
+	}); !strings.Contains(out, "GONE") {
+		t.Errorf("with neither authority holding it the STATE column should be `GONE`, got:\n%s", out)
+	}
+}
+
+// fakeOpenLister is the -list source.
+type fakeOpenLister struct{ pairs []freeze.OpenFreezePair }
+
+func (l *fakeOpenLister) ListOpen(context.Context) ([]freeze.OpenFreezePair, error) {
+	return l.pairs, nil
+}
+
+// captureStdout runs fn with os.Stdout redirected to a pipe and returns what
+// it wrote. listOpenFreezes prints the table to stdout by design (it is an
+// operator report), so asserting on it means asserting on the pipe.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+	fn()
+	_ = w.Close()
+	os.Stdout = orig
+	return <-done
 }

@@ -96,16 +96,21 @@ func freezeUnfreeze(args []string) error {
 	rdb := redisclient.Build(cfg.Storage)
 	defer func() { _ = rdb.Close() }()
 
-	// The TTL is irrelevant here — this command only ever Clears and
-	// LoadStates, never Marks — but NewWriter requires a positive one.
-	writer, err := freeze.NewWriter(rdb, time.Minute)
+	sink := timescale.NewFreezeEventSink(store)
+	writer, err := newFreezeWriterForOps(rdb, sink)
 	if err != nil {
 		return fmt.Errorf("freeze writer: %w", err)
 	}
-	sink := timescale.NewFreezeEventSink(store)
 
 	if *list {
-		return listOpenFreezes(ctx, sink, writer)
+		// A marker-only reader alongside the ladder-aware writer, so the
+		// STATE column can tell "Redis marker live" from "marker gone but
+		// the durable ladder is still holding".
+		looker, lerr := freeze.NewLooker(rdb)
+		if lerr != nil {
+			return fmt.Errorf("freeze looker: %w", lerr)
+		}
+		return listOpenFreezes(ctx, sink, writer, looker)
 	}
 
 	asset, err := canonical.ParseAsset(*assetFlag)
@@ -117,6 +122,39 @@ func freezeUnfreeze(args []string) error {
 		return fmt.Errorf("-quote %q: %w", *quoteFlag, err)
 	}
 	return unfreezePair(ctx, sink, writer, asset, quote, *reason, *dryRun)
+}
+
+// newFreezeWriterForOps builds the freeze.Writer this command reads and
+// clears through. Extracted from [freezeUnfreeze] so the WIRING itself is
+// unit-testable — it is the load-bearing part, not an incidental detail.
+//
+// The ladder store (migration 0119) is what makes both halves of this
+// command correct, and neither is obvious:
+//
+//  1. `-list` reads the ladder through [freeze.Writer.LoadState]. Without
+//     the store that read is Redis-only, so after a Redis flush the exact
+//     situation an operator is most likely to be investigating — an
+//     escalated freeze whose marker evaporated — prints as `MARKER GONE`
+//     with `EXTS 0 / ESCALATED false`, i.e. it lies about the ladder in the
+//     direction of "nothing to see here".
+//
+//  2. The unfreeze itself. [freeze.Writer.Clear] RETIRES the durable ladder
+//     (writes back a zero State, nulling hold_until) as well as deleting the
+//     marker. Without the store wired here, Clear only touches Redis, and
+//     the durable row stays authoritative until MarkRecovered lands one DB
+//     round trip later — a window in which an aggregator tick reads "marker
+//     gone, durable ladder live", rehydrates, and re-writes the marker. The
+//     operator's unfreeze is then silently defeated: MarkRecovered closes a
+//     row the aggregator has already replaced. With the store wired the
+//     ladder is retired at the same instant the marker is, so the tick sees
+//     the freeze as over and the override wins by construction.
+//
+// The TTL is irrelevant here — this command only ever Clears and
+// LoadStates, never Marks — but NewWriter requires a positive one.
+func newFreezeWriterForOps(rdb freeze.RedisCache, ladder freeze.LadderStore) (*freeze.Writer, error) {
+	return freeze.NewWriter(rdb, time.Minute,
+		freeze.WithLadderStore(ladder, 0), // 0 → freeze.DefaultLadderGrace
+	)
 }
 
 // openFreezeLister / freezeRecoverer are the two store behaviours this
@@ -136,15 +174,38 @@ type freezeStateReader interface {
 	LoadState(ctx context.Context, asset, quote canonical.Asset) (freeze.State, bool, error)
 }
 
+// markerPresenceReader reports whether the pair's REDIS marker specifically
+// is alive — as opposed to [freezeStateReader.LoadState], which since
+// migration 0119 answers the broader "is this pair frozen by EITHER
+// authority". freeze.Looker satisfies it.
+type markerPresenceReader interface {
+	FrozenForPair(ctx context.Context, asset, quote canonical.Asset) (bool, error)
+}
+
 // listOpenFreezes prints every pair the durable mirror still records as
-// firing, together with whether its Redis marker is still alive and how far
-// up the extension ladder it got.
+// firing, how far up the extension ladder it got, and — the operationally
+// important column — WHICH authority is holding it.
 //
-// The marker-present column is the operationally important one: a pair with
-// an OPEN row and NO marker is already effectively unfrozen on the serving
-// path and is just waiting for the recovery worker; a pair with both is
-// live. An ESCALATED pair is one that will never clear on its own.
-func listOpenFreezes(ctx context.Context, lister openFreezeLister, states freezeStateReader) error {
+// The STATE column has three values, and since migration 0119 collapsing
+// them would be actively misleading:
+//
+//	live        the Redis marker is present. Normal running freeze.
+//	rehydrated  the marker is GONE but the durable ladder is still inside
+//	            its hold, so Redis lost the marker and the aggregator will
+//	            re-write it on its next tick. The pair IS still frozen to
+//	            every API caller. A row of these right after a Redis
+//	            restart is the expected shape; a slow trickle with Redis
+//	            healthy means markers are being evicted or expiring early.
+//	GONE        neither authority holds it — already unfrozen on the
+//	            serving path, just waiting for the recovery worker to close
+//	            the row.
+//
+// Reporting a rehydrated pair as `live` would be defensible (it is frozen);
+// reporting it as `GONE` — which is what a marker-only probe used to say —
+// is not, because an operator reads GONE as "nothing to do here" on exactly
+// the pair whose marker just evaporated. An ESCALATED pair is one that will
+// never clear on its own.
+func listOpenFreezes(ctx context.Context, lister openFreezeLister, states freezeStateReader, markers markerPresenceReader) error {
 	open, err := lister.ListOpen(ctx)
 	if err != nil {
 		return fmt.Errorf("list open freezes: %w", err)
@@ -153,24 +214,30 @@ func listOpenFreezes(ctx context.Context, lister openFreezeLister, states freeze
 		fmt.Println("freeze-unfreeze: no open freeze_events rows")
 		return nil
 	}
-	fmt.Printf("%-34s %-34s %-7s %-6s %-10s %s\n", "ASSET", "QUOTE", "MARKER", "EXTS", "ESCALATED", "HOLD UNTIL")
+	fmt.Printf("%-34s %-34s %-11s %-6s %-10s %s\n", "ASSET", "QUOTE", "STATE", "EXTS", "ESCALATED", "HOLD UNTIL")
 	for _, p := range open {
-		state, present, serr := states.LoadState(ctx, p.Asset, p.Quote)
-		marker := "live"
+		state, frozen, serr := states.LoadState(ctx, p.Asset, p.Quote)
+		markerLive, merr := markers.FrozenForPair(ctx, p.Asset, p.Quote)
+		status := "GONE"
 		switch {
-		case serr != nil:
-			marker = "err"
-		case !present:
-			marker = "GONE"
+		case serr != nil || merr != nil:
+			status = "err"
+		case markerLive:
+			status = "live"
+		case frozen:
+			status = "rehydrated"
 		}
 		hold := "-"
 		if !state.HoldUntil.IsZero() {
 			hold = state.HoldUntil.UTC().Format(time.RFC3339)
 		}
-		fmt.Printf("%-34s %-34s %-7s %-6d %-10v %s\n",
-			p.Asset.String(), p.Quote.String(), marker, state.ExtensionsUsed, state.Escalated, hold)
+		fmt.Printf("%-34s %-34s %-11s %-6d %-10v %s\n",
+			p.Asset.String(), p.Quote.String(), status, state.ExtensionsUsed, state.Escalated, hold)
 		if serr != nil {
-			fmt.Fprintf(os.Stderr, "freeze-unfreeze: marker read failed for %s/%s: %v\n", p.Asset, p.Quote, serr)
+			fmt.Fprintf(os.Stderr, "freeze-unfreeze: ladder read failed for %s/%s: %v\n", p.Asset, p.Quote, serr)
+		}
+		if merr != nil {
+			fmt.Fprintf(os.Stderr, "freeze-unfreeze: marker read failed for %s/%s: %v\n", p.Asset, p.Quote, merr)
 		}
 	}
 	return nil
@@ -212,7 +279,13 @@ func unfreezePair(ctx context.Context, recoverer freezeRecoverer, clearer freeze
 		// there first). Not a failure — the end state is the intended one.
 		fmt.Printf("freeze-unfreeze: no OPEN freeze_events row for %s/%s — already closed\n", asset.String(), quote.String())
 	default:
-		return fmt.Errorf("redis marker for %s/%s WAS cleared (the pair is unfrozen) but the freeze_events row could not be stamped — the recovery worker will close it on its next poll: %w",
+		// Since migration 0119 the recovery worker is NOT a fallback here.
+		// The durable row is still open, so the aggregator's next tick reads
+		// the missing marker as "Redis lost it", rehydrates the ladder and
+		// re-writes the marker — and the sweep then correctly declines to
+		// close a row whose hold is live. The unfreeze has NOT stuck, and
+		// nothing will make it stick on its own.
+		return fmt.Errorf("redis marker for %s/%s was cleared but the freeze_events row could not be stamped, so the unfreeze did NOT take: the aggregator will rehydrate the ladder from the still-open row and re-freeze the pair on its next tick. Fix Postgres and RE-RUN this command: %w",
 			asset, quote, err)
 	}
 	return nil

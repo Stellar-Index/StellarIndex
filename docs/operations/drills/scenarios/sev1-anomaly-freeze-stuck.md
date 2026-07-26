@@ -108,11 +108,23 @@ Per [`anomaly-freeze-engaged.md`](../../runbooks/anomaly-freeze-engaged.md):
 **Operator-driven clear** (the right call here):
 
 ```
-stellarindex-ops freeze clear --asset native --quote fiat:USD
+stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml \
+  -asset native -quote fiat:USD \
+  -reason "drill: escalated freeze, oracle verified healthy by hand"
 ```
 
-(or the equivalent `redis-cli DEL freeze:native:fiat:USD` if
-the ops command isn't yet shipped — runbook has both forms).
+`-reason` is REQUIRED for a mutation — an unfreeze overrides an
+automated safety control on a money surface, so who and why has to be
+in the record. `-list` first to see what is open, `-dry-run` to
+rehearse.
+
+**Do NOT use `redis-cli DEL freeze:native:fiat:USD`.** It was the
+documented form before the durable ladder landed (migration 0119) and
+it no longer works: deleting the key alone leaves
+`freeze_events.recovered_at` NULL, so the aggregator reads the missing
+marker as "Redis lost it", rehydrates the ladder and re-writes the
+marker on the next tick. Against the escalated freeze this drill
+simulates, a bare DEL is permanently inert.
 
 Verify on the next aggregator tick:
 
@@ -151,7 +163,7 @@ Postmortem covers:
 | 2 | Did the team consult `freeze:native:fiat:USD` directly via `redis-cli` (not just the metric)? |
 | 3 | Did the team correctly distinguish "freeze is stuck" vs "freeze is legitimate" by checking the source-class-diversity timeline? |
 | 4 | Did anyone correctly identify that ADR-0019 Phase 1 freeze is **operator-cleared by design**, not a bug? |
-| 5 | Did the team use `stellarindex-ops freeze clear` (or `redis-cli DEL`) rather than waiting for TTL? |
+| 5 | Did the team use `stellarindex-ops freeze-unfreeze` (never `redis-cli DEL` — inert for escalated freezes, and the ladder rehydrates) rather than waiting for TTL? |
 | 6 | After clearing, did anyone verify on the next tick that `flags.frozen` was indeed false? |
 | 7 | Did the postmortem capture the Phase 1 clear-policy rationale rather than recommending "just auto-clear"? |
 | 8 | Status-page wording stayed factual (no speculation about cause until §"Identified")? |

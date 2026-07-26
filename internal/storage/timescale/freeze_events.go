@@ -208,6 +208,127 @@ func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonic
 	return nil
 }
 
+// SaveLadder persists the ADR-0019 lifecycle state onto the currently-firing
+// `freeze_events` row for (asset, quote). Implements freeze.LadderStore.
+//
+// Migration 0119. The ladder — hold_until / extensions_used / escalated /
+// corroborated — used to live only in the aggregator's memory and in the
+// Redis marker's JSON, so a Redis flush took an ESCALATED freeze (one
+// ADR-0019 holds "until manual unfreeze") down with it. This is the durable
+// copy, written on every lifecycle transition by freeze.Writer.MarkHold.
+//
+// Deliberately an UPDATE of the OPEN row and nothing else:
+//
+//   - No INSERT. RecordFreeze owns row creation and is the only path that
+//     may open a row; a SaveLadder that could insert would race it and open
+//     a second firing row for one pair — the F-1250 class this file already
+//     serialises against.
+//   - No row → [ErrNotFound], NOT a silent nil. The freeze fired before
+//     0119, RecordFreeze's insert failed (best-effort by contract), the
+//     operator just closed the row out from under a tick — or, the case
+//     that actually bites, migration 0119 has not been applied while the
+//     new binary is already running, in which case EVERY ladder write
+//     matches nothing and the durable ladder simply is not there when a
+//     flush needs it. The caller cannot act on any of these (the write is
+//     best-effort), but it must be able to COUNT them; returning nil made
+//     the whole failure mode invisible.
+//
+// Idempotent and monotonic in practice: every write is the whole current
+// state, so a lost write is corrected by the next tick's write.
+func (s *FreezeEventSink) SaveLadder(ctx context.Context, asset, quote canonical.Asset, state freeze.State) error {
+	var holdUntil any
+	if !state.HoldUntil.IsZero() {
+		holdUntil = state.HoldUntil.UTC()
+	}
+	const q = `
+		UPDATE freeze_events
+		   SET hold_until      = $3,
+		       extensions_used = $4,
+		       escalated       = $5,
+		       corroborated    = $6
+		 WHERE asset_id = $1 AND quote_id = $2 AND recovered_at IS NULL
+	`
+	res, err := s.db.ExecContext(ctx, q,
+		asset.String(), quote.String(),
+		holdUntil, state.ExtensionsUsed, state.Escalated, state.Corroborated,
+	)
+	if err != nil {
+		return fmt.Errorf("timescale: SaveLadder %s/%s: %w",
+			asset.String(), quote.String(), err)
+	}
+	// A ladder write that matched NOTHING is the silent-failure shape that
+	// matters most here: it is what "migration 0119 has not been applied yet
+	// while the new binary is already running" looks like from the caller's
+	// side — every MarkHold succeeds, the Redis marker is written, and the
+	// durable ladder is simply never there when a flush needs it. Same for a
+	// row closed out from under a tick. Neither is an error the Writer can
+	// act on (it is best-effort by contract), so report it as ErrNotFound
+	// and let the caller COUNT it.
+	n, err := res.RowsAffected()
+	if err != nil {
+		// Driver cannot report it — do not manufacture a false negative.
+		return nil //nolint:nilerr // RowsAffected support is driver-dependent; the UPDATE itself succeeded
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// LoadLadder reads the durable ADR-0019 ladder for (asset, quote).
+// Implements freeze.LadderStore.
+//
+// Returns ok=false unless there is an OPEN row (recovered_at IS NULL) that
+// carries a lifecycle (hold_until NOT NULL). Both conditions are
+// load-bearing and neither is redundant:
+//
+//   - recovered_at IS NULL is what distinguishes "Redis lost the marker"
+//     from "an operator ended this freeze". `stellarindex-ops
+//     freeze-unfreeze` clears the marker AND stamps recovered_at, so after
+//     a supported override this returns ok=false and the override stands.
+//   - hold_until NOT NULL excludes rows written by a pre-0119 binary, which
+//     have no ladder to restore. Those fall back to today's Redis-only
+//     behaviour rather than rehydrating a zero ladder, which would read as
+//     "freeze fired just now, 0 extensions" and reset the escalation clock.
+//
+// FiredAt comes from the row's own `frozen_at` — the freeze's true age,
+// already stored, never duplicated into a second column.
+//
+// The caller ([freeze.Writer.LoadState]) applies the freshness bound on
+// hold_until; this method reports the stored state verbatim so an operator
+// tool can display a lapsed ladder without the reader's policy applied.
+func (s *FreezeEventSink) LoadLadder(ctx context.Context, asset, quote canonical.Asset) (freeze.State, bool, error) {
+	const q = `
+		SELECT frozen_at, hold_until,
+		       COALESCE(extensions_used, 0),
+		       COALESCE(escalated, false),
+		       COALESCE(corroborated, false)
+		  FROM freeze_events
+		 WHERE asset_id = $1 AND quote_id = $2
+		   AND recovered_at IS NULL
+		   AND hold_until IS NOT NULL
+		 ORDER BY frozen_at DESC
+		 LIMIT 1
+	`
+	var (
+		firedAt   time.Time
+		holdUntil time.Time
+		st        freeze.State
+	)
+	err := s.db.QueryRowContext(ctx, q, asset.String(), quote.String()).
+		Scan(&firedAt, &holdUntil, &st.ExtensionsUsed, &st.Escalated, &st.Corroborated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return freeze.State{}, false, nil
+	}
+	if err != nil {
+		return freeze.State{}, false, fmt.Errorf("timescale: LoadLadder %s/%s: %w",
+			asset.String(), quote.String(), err)
+	}
+	st.FiredAt = firedAt.UTC()
+	st.HoldUntil = holdUntil.UTC()
+	return st, true, nil
+}
+
 // pairAdvisoryLockKey derives a stable int64 advisory-lock key
 // from the (asset, quote) pair. FNV-1a 64-bit; collisions are
 // possible across distinct pairs but cosmetic (false serialisation,
