@@ -60,14 +60,47 @@ type stubHistoryReader struct {
 	err       error
 }
 
-func (r *stubHistoryReader) TradesInRange(_ context.Context, _ canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
+// TradesInRange returns the fixture rows that BELONG to the requested pair,
+// i.e. those whose own Trade.Pair matches it — what a real store does.
+//
+// The filter is load-bearing since C1-024 unified the fiat point path onto
+// the series constituent set: `?quote=fiat:USD` now fans out over all ~18
+// entries of usdPeggedConstituents, and a pair-blind stub would hand the
+// same fixture back once per constituent and multiply every volume /
+// trade-count assertion by the fan-out width. Fixtures that leave Pair
+// unset are "unspecified" and match any request, so the pair-agnostic
+// callers (observations, cursor plumbing) are unaffected.
+func (r *stubHistoryReader) TradesInRange(_ context.Context, pair canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
 	r.lastCall.from = from
 	r.lastCall.to = to
 	r.lastCall.limit = limit
 	if r.err != nil {
 		return nil, r.err
 	}
-	return r.trades, nil
+	return tradesForPair(r.trades, pair), nil
+}
+
+// tradesForPair is the stub's pair predicate — see
+// [stubHistoryReader.TradesInRange]. Returns the input slice untouched when
+// no row declares a pair, so an all-unset fixture keeps its identity (and
+// nil stays nil).
+func tradesForPair(trades []canonical.Trade, pair canonical.Pair) []canonical.Trade {
+	var zero canonical.Pair
+	matched := make([]canonical.Trade, 0, len(trades))
+	declared := false
+	for _, t := range trades {
+		if t.Pair == zero {
+			continue
+		}
+		declared = true
+		if t.Pair.Equal(pair) {
+			matched = append(matched, t)
+		}
+	}
+	if !declared {
+		return trades
+	}
+	return matched
 }
 
 // TradesInRangeAfter: the stub ignores the cursor (tests construct

@@ -215,48 +215,38 @@ func (s *Server) fetchVWAPTrades(
 	return nil, false, false
 }
 
-// tradesInRangeWithStablecoinFallback wraps HistoryReader.TradesInRange
-// with the same X/fiat:USD → X/<peg> retry shape used in the chart
-// handler (chartStablecoinFallback) and price handlers
-// (tryStablecoinFiatProxy). When the literal pair has zero trades AND
-// quote is fiat:USD AND the operator has declared classic USD pegs,
-// re-runs against each peg in priority order; first non-empty result
-// wins. triangulated=true when the fallback fired so callers can stamp
-// flags.triangulated.
+// tradesInRangeWithStablecoinFallback is the single raw-trade fetch behind
+// every single-shot ("point") rate endpoint: /v1/vwap, /v1/twap and the
+// single-bar /v1/ohlc. Returns (trades, triangulated, err), trades sorted by
+// close time ascending as [aggregate.ComputeOHLC] / [aggregate.TWAP]
+// require.
 //
-// Without this, /v1/vwap and /v1/twap 404 with "no trades in window"
-// for any X/fiat:USD query out-of-the-box — same root cause as #1217.
-// Used by handleVWAP + handleTWAP. The CAGG-reading siblings live
-// elsewhere: ohlc_fiat_combine.go combines the peg constituents for
-// the OHLC series path, and price_at.go's
-// lookupPriceAtStablecoinFallback covers the closed-1m-VWAP-CAGG
+// A fiat-denominated quote (fiat:USD, fiat:EUR, …) has almost no trade
+// stream of its own — the depth sits under the fiat's pegged stablecoin
+// pairs — so it is served by COMBINING every constituent of
+// [Server.usdPeggedConstituents], which is exactly the set the /v1/ohlc
+// series path combines and the set the live aggregator computes its VWAP
+// over. See [Server.fiatCombinedTrades] for the C1-024 divergence that
+// replaced (the point path used to take the FIRST non-empty peg, so the same
+// `?quote=fiat:USD` question answered differently depending on whether you
+// asked for a point or a series).
+//
+// A non-fiat quote reads the literal pair only — same as before, and the
+// same gate [Server.ohlcSeriesWithAliases] applies on the series side.
+//
+// The other fiat-proxy read paths are the CAGG-reading siblings:
+// ohlc_fiat_combine.go's ohlcSeriesFiatCombined for the OHLC series and
+// price_at.go's lookupPriceAtStablecoinFallback for the closed-1m-VWAP-CAGG
 // point lookup.
 func (s *Server) tradesInRangeWithStablecoinFallback(
 	ctx context.Context, pair canonical.Pair, from, to time.Time, maxTrades int,
 ) ([]canonical.Trade, bool, error) {
+	if pair.Quote.Type == canonical.AssetFiat {
+		return s.fiatCombinedTrades(ctx, pair, from, to, maxTrades)
+	}
 	trades, err := s.history.TradesInRange(ctx, pair, from, to, maxTrades)
 	if err != nil {
 		return nil, false, err
-	}
-	if len(trades) > 0 {
-		return trades, false, nil
-	}
-	if pair.Quote.Type != canonical.AssetFiat || pair.Quote.Code != "USD" {
-		return trades, false, nil
-	}
-	for _, peg := range s.usdPeggedClassics {
-		if peg.Equal(pair.Base) {
-			continue
-		}
-		proxied, err := canonical.NewPair(pair.Base, peg)
-		if err != nil {
-			continue
-		}
-		pp, err := s.history.TradesInRange(ctx, proxied, from, to, maxTrades)
-		if err != nil || len(pp) == 0 {
-			continue
-		}
-		return pp, true, nil
 	}
 	return trades, false, nil
 }

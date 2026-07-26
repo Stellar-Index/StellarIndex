@@ -141,8 +141,13 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
+	// Single-bar mode shares the point-path trade fetch with /v1/vwap and
+	// /v1/twap — one implementation, so a fiat quote can't be resolved
+	// against a different constituent set here than there (C1-024). The
+	// second copy of this fetch that used to live in this file
+	// (`ohlcTradesWithStablecoinFallback`) is gone.
 	const maxTradesForOHLC = 10000
-	trades, triangulated, err := s.ohlcTradesWithStablecoinFallback(ctx, pair, from, to, maxTradesForOHLC)
+	trades, triangulated, err := s.tradesInRangeWithStablecoinFallback(ctx, pair, from, to, maxTradesForOHLC)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -234,50 +239,6 @@ func parseOHLCOutlierSigma(w http.ResponseWriter, r *http.Request) (float64, boo
 		return 0, false
 	}
 	return v, true
-}
-
-// ohlcTradesWithStablecoinFallback wraps HistoryReader.TradesInRange
-// with the same X/fiat:USD → X/<peg> retry shape used by the chart
-// handler (chartStablecoinFallback) and the price handlers
-// (tryStablecoinFiatProxy). When the literal pair has zero trades
-// AND quote is fiat:USD AND the operator declared classic USD pegs
-// in `[trades].usd_pegged_classic_assets`, retries against each
-// peg in priority order; first non-empty result wins. triangulated=true
-// when the fallback fired so the handler can stamp flags.triangulated.
-//
-// Without this, /v1/ohlc?base=native&quote=fiat:USD 404s with "no
-// trades in window" out-of-the-box on every fresh deployment — same
-// root cause as #1217 (/v1/price), #1218 (/v1/price/tip), #1015
-// (/v1/chart). /v1/ohlc is a launch-blocker
-// for the asset-detail surface.
-func (s *Server) ohlcTradesWithStablecoinFallback(
-	ctx context.Context, pair canonical.Pair, from, to time.Time, maxTrades int,
-) ([]canonical.Trade, bool, error) {
-	trades, err := s.history.TradesInRange(ctx, pair, from, to, maxTrades)
-	if err != nil {
-		return nil, false, err
-	}
-	if len(trades) > 0 {
-		return trades, false, nil
-	}
-	if pair.Quote.Type != canonical.AssetFiat || pair.Quote.Code != "USD" {
-		return trades, false, nil
-	}
-	for _, peg := range s.usdPeggedClassics {
-		if peg.Equal(pair.Base) {
-			continue
-		}
-		proxied, err := canonical.NewPair(pair.Base, peg)
-		if err != nil {
-			continue
-		}
-		pp, err := s.history.TradesInRange(ctx, proxied, from, to, maxTrades)
-		if err != nil || len(pp) == 0 {
-			continue
-		}
-		return pp, true, nil
-	}
-	return trades, false, nil
 }
 
 // parseFromTo parses the from/to query params, applying the same

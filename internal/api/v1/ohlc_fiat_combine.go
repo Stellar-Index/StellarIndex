@@ -112,6 +112,100 @@ func (s *Server) usdPeggedConstituents(pair canonical.Pair) []canonical.Pair {
 	return out
 }
 
+// fiatCombinedTrades is the POINT-path twin of
+// [Server.ohlcSeriesFiatCombined]: it reads the raw trades of EVERY
+// constituent of a fiat-quoted target — the SAME set
+// [Server.usdPeggedConstituents] feeds the series combine — and merges them
+// into one chronologically-ordered population. Returns
+// (trades, proxied, err); `proxied` drives flags.triangulated.
+//
+// C1-024 (audit-2026-07-23): the point path used to read the LITERAL pair
+// and, only when that came back empty, retry each operator-declared classic
+// peg and take the FIRST non-empty one. So exactly one constituent ever
+// backed a point quote, while the series combined all of them — and the
+// point path's fallback set was structurally narrower besides: no base
+// aliases (the CEX `crypto:XLM/fiat:USD` stream was unreachable from
+// `?base=native`), no `crypto:USDC`/`crypto:USDT`/… backers, and hard-gated
+// on quote.Code == "USD" so a fiat:EUR point 404'd against a populated EUR
+// series. `/v1/vwap?base=native&quote=fiat:USD` and
+// `/v1/ohlc?interval=1h&base=native&quote=fiat:USD` — the same question
+// asked two ways — therefore answered from different trade populations, and
+// a point quote could not be reconciled against the series it belongs to.
+// The series methodology is the authority (it is the live aggregator's own
+// source set, aggregate.ExpandTargetPairWithClassicPegs — see
+// [Server.ohlcSeriesFiatCombined]); the point path now derives from the
+// identical constituent selection, so point == series at shared timestamps.
+//
+// Constituent read errors PROPAGATE rather than being skipped: dropping a
+// constituent would silently narrow the methodology back to the divergence
+// this fix removes, and a quietly-narrower money answer is worse than a 500.
+// This matches [Server.ohlcSeriesFiatCombined], which also propagates.
+//
+// Each constituent is fetched with the caller's `maxTrades` cap (newest-N
+// per pair, per the reader's `ts DESC` LIMIT — F-1319) and the merged set is
+// then trimmed to the newest `maxTrades` overall, preserving the callers'
+// `len(trades) == maxTrades` truncation signal.
+func (s *Server) fiatCombinedTrades(
+	ctx context.Context, pair canonical.Pair, from, to time.Time, maxTrades int,
+) ([]canonical.Trade, bool, error) {
+	var merged []canonical.Trade
+	proxied := false
+	for _, sp := range s.usdPeggedConstituents(pair) {
+		batch, err := s.history.TradesInRange(ctx, sp, from, to, maxTrades)
+		if err != nil {
+			return nil, false, err
+		}
+		if len(batch) == 0 {
+			continue
+		}
+		// Triangulated means the QUOTE leg was proxied (X/fiat:USD served
+		// from X/USDC), which is what the flag has always meant on this
+		// path. A base-alias constituent (`crypto:XLM/fiat:USD` for a
+		// `?base=native` query) is the same asset in another canonical
+		// form, not a proxy, so it does not raise the flag.
+		if !sp.Quote.Equal(pair.Quote) {
+			proxied = true
+		}
+		merged = append(merged, batch...)
+	}
+	sortTradesChronological(merged)
+	if maxTrades > 0 && len(merged) > maxTrades {
+		merged = merged[len(merged)-maxTrades:]
+	}
+	return merged, proxied, nil
+}
+
+// sortTradesChronological orders a merged multi-constituent trade set by
+// close time ascending. Required: [aggregate.ComputeOHLC] and
+// [aggregate.TWAP] derive open/close and the time weights from slice order
+// and deliberately do not sort internally.
+//
+// The tiebreak is the trades hypertable's primary key (ledger, source,
+// tx_hash, op_index), NOT slice position. [Server.usdPeggedConstituents]'
+// order is map-iteration-dependent (aggregate.FiatBackers ranges a map), so
+// a merge-order-preserving sort would let two regions — or two consecutive
+// requests in one process — order same-timestamp prints differently and
+// serve different open/close for the identical window, breaking ADR-0015's
+// "all regions return the same rate".
+func sortTradesChronological(trades []canonical.Trade) {
+	sort.Slice(trades, func(i, j int) bool {
+		a, b := &trades[i], &trades[j]
+		if !a.Timestamp.Equal(b.Timestamp) {
+			return a.Timestamp.Before(b.Timestamp)
+		}
+		if a.Ledger != b.Ledger {
+			return a.Ledger < b.Ledger
+		}
+		if a.Source != b.Source {
+			return a.Source < b.Source
+		}
+		if a.TxHash != b.TxHash {
+			return a.TxHash < b.TxHash
+		}
+		return a.OpIndex < b.OpIndex
+	})
+}
+
 // ohlcBucketAcc accumulates the combine across constituent bars sharing a
 // bucket timestamp. All arithmetic is big.Rat/big.Int to preserve the
 // NUMERIC precision the wire contract promises (no float round-trip).
