@@ -34,7 +34,13 @@ git archive HEAD | tar -x -C "$OUT"
 
 echo "== dropping internal-only content =="
 # Audit working dirs: internal security evidence + r1 infra findings.
-rm -rf "$OUT"/docs/audit-* 2>/dev/null || true
+# These live at docs/audit/<dated-dir>/ (NOT docs/audit-*); the old
+# glob matched the wrong layout and silently stripped nothing, so
+# every tracked finding dir shipped. Keep the generic tooling
+# (recipe.md, repo-prep.md); drop the dated finding directories.
+rm -rf "$OUT"/docs/audit-* \
+       "$OUT"/docs/audit/audit-* \
+       "$OUT"/docs/audit/site-audit-* 2>/dev/null || true
 # Local operator overlay if it ever lands in the tree.
 rm -f "$OUT"/configs/ansible/inventory/r1.yml \
       "$OUT"/configs/ansible/inventory/r2.yml \
