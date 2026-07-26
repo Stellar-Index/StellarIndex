@@ -187,6 +187,62 @@ func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 		}
 	})
 
+	// ── Walk-version renumbering: the C2-032 boundary ────────────────────
+	//
+	// intra_ledger_seq is PERSISTED and compared ACROSS BINARY VERSIONS by
+	// this guard, but it is only meaningful within one walk version
+	// (dispatcher.EntryWalkVersion). The C2-032 fix renumbered every ledger:
+	// the v1 per-tx walk gave an account's ledger-final balance a HIGH
+	// position (a fee-phase change that sorted last — the corruption); the v2
+	// ledger-wide walk correctly places that same final balance LOWER.
+	//
+	// So the obvious repair — replay the changes under the new binary — is
+	// SILENTLY DISCARDED by `legacy_seq <= corrected_seq` = false, and
+	// re-running never helps because the walk is deterministic. This subtest
+	// pins BOTH halves: the trap, and the repair path migration 0120 names
+	// (reconstruct-final-then-seed at SeedIntraLedgerSeq).
+	t.Run("walk_version_renumbering_strands_replay_but_seed_repairs", func(t *testing.T) {
+		const (
+			contractID = "CBRENUMBERSACWRAPPERCONTRACTID00000000000000000000000000"
+			holder     = "GHOLDERRENUMBERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+			legacyBad  = int64(700) // v1 walk: a FEE-phase balance, stamped last
+			correct    = int64(250) // v2 walk: the true ledger-final balance
+		)
+		// A row written by the OLD binary: wrong value, HIGH position.
+		writeSAC(t, contractID, holder, legacyBad, 6)
+
+		// The corrective re-derive under the NEW binary recomputes the same
+		// entry at its correct — and LOWER — position.
+		writeSAC(t, contractID, holder, correct, 3)
+		if bal, seq := readSAC(t, contractID, holder); bal != "700" || seq != 6 {
+			t.Fatalf("renumbering trap: balance = %s (seq %d), want the LEGACY 700 (seq 6) to "+
+				"still be there — this documents that a change-replay re-derive at a lower "+
+				"walk-version position is dropped by the guard", bal, seq)
+		}
+		// Replaying does not help: same deterministic position, same rejection.
+		writeSAC(t, contractID, holder, correct, 3)
+		if bal, _ := readSAC(t, contractID, holder); bal != "700" {
+			t.Fatalf("replay: balance = %s, want 700 — a second identical replay must not "+
+				"change the outcome (the walk is deterministic)", bal)
+		}
+
+		// THE REPAIR PATH (migration 0120): reconstruct the FINAL per-(key,
+		// ledger) state from the repaired lake and write ONE row at the
+		// sentinel. `<=` always admits MaxUint32, so the correction lands
+		// regardless of what the legacy row carries.
+		writeSAC(t, contractID, holder, correct, timescale.SeedIntraLedgerSeq)
+		if bal, seq := readSAC(t, contractID, holder); bal != "250" || seq != int64(timescale.SeedIntraLedgerSeq) {
+			t.Fatalf("reconstruct-final-then-seed: balance = %s (seq %d), want the CORRECTED "+
+				"250 at the sentinel — this is the only repair that beats a legacy-numbered row",
+				bal, seq)
+		}
+		// And it stays idempotent-corrective: a re-run of the repair re-lands.
+		writeSAC(t, contractID, holder, 251, timescale.SeedIntraLedgerSeq)
+		if bal, _ := readSAC(t, contractID, holder); bal != "251" {
+			t.Fatalf("repair re-run: balance = %s, want 251 (equal sentinel is admitted)", bal)
+		}
+	})
+
 	// The finding lists account_observations.go:43 as a sibling site; the
 	// same guard protects the native-XLM reserve component (fee + op + op in
 	// one ledger). Prove the FINAL post-state wins under out-of-order commit.

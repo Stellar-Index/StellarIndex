@@ -31,14 +31,28 @@
 -- intra_ledger_seq is a MONOTONIC POSITION, not a money value (NUMERIC-lint:
 -- bigint is correct — it is not a stroop/price/supply amount, so it is
 -- deliberately NOT numeric). It is the dispatcher's per-ledger entry-change
--- counter (internal/dispatcher: LedgerEntryChangeContext.IntraLedgerSeq),
--- assigned in the canonical meta-walk order — transactions in apply order,
--- and within each transaction fee-changes, tx-changes-before, operations (in
--- op_index order, each op's changes in change_index order), tx-changes-after.
--- That is a faithful single-integer encoding of (tx position, op_index,
--- change_index) — the same canonical within-ledger order
--- internal/storage/clickhouse/entry_change_reader.go uses — so the
--- highest-position change is the final intra-ledger state.
+-- counter (internal/dispatcher: LedgerEntryChangeContext.IntraLedgerSeq).
+--
+-- SUPERSEDED BY MIGRATION 0120 (C2-032/R-A01-1, audit-2026-07-23). The two
+-- paragraphs below described the ORDER as per-transaction ("within each
+-- transaction fee-changes, tx-changes-before, operations …, tx-changes-after")
+-- and claimed it was "the same canonical within-ledger order
+-- internal/storage/clickhouse/entry_change_reader.go uses". BOTH WERE FALSE:
+-- stellar-core commits a ledger in LEDGER-WIDE PHASES (all fees, then all
+-- apply-phase meta, then — from P23 — all post-apply Soroban fee refunds),
+-- which is what the SDK's ingest.LedgerChangeReader does. The per-tx walk
+-- ranked tx1's apply-phase change BELOW tx2's fee change, so this guard
+-- preserved a FEE-PHASE balance as the ledger-final observation. 0120 carries
+-- the corrected order, the walk-version-scoping invariant, and the repair
+-- path. Kept here unedited in substance because this file is already applied
+-- on r1; read 0120 alongside it.
+--
+-- [superseded] assigned in the canonical meta-walk order — transactions in
+-- apply order, and within each transaction fee-changes, tx-changes-before,
+-- operations (in op_index order, each op's changes in change_index order),
+-- tx-changes-after. That is a faithful single-integer encoding of
+-- (tx position, op_index, change_index) — so the highest-position change is
+-- the final intra-ledger state.
 --   * 0 (the DEFAULT) is the FIRST change in a ledger's walk AND the value
 --     every pre-existing row backfills to. A re-observed ledger overwrites a
 --     seq-0 legacy row (0 <= EXCLUDED), so no legacy row is stranded.

@@ -234,6 +234,49 @@ type LedgerEntryChangeDecoder interface {
 // FeeMeta-block changes carry an empty TxHash and OpIndex == -1
 // to distinguish from per-op changes (the fee debit on the source
 // account is technically tx-level, not op-level).
+
+// EntryWalkVersion identifies the ledger entry-change walk ORDER that
+// produced a [LedgerEntryChangeContext.IntraLedgerSeq]. Bump it whenever the
+// walk emits changes in a different sequence.
+//
+//	1  original: per-transaction walk (fee, apply) tx by tx; failed txs
+//	   skipped entirely; no post-apply fee phase.
+//	2  ledger-wide three-phase walk (all fees, all apply-phase, all
+//	   post-apply fees), failed txs included — C2-023/C2-040/C2-032/R-A01-1,
+//	   audit-2026-07-23.
+//
+// WHY THIS MATTERS, and it is not academic. intra_ledger_seq is PERSISTED
+// and COMPARED ACROSS BINARY VERSIONS by two guards:
+//
+//   - account_observations (and its four sibling *_observations tables):
+//     `WHERE intra_ledger_seq <= EXCLUDED.intra_ledger_seq` (migration 0111);
+//   - ledger_entries_current_v2: the ReplacingMergeTree version
+//     `(ledger_seq << 32) | intra_ledger_seq`.
+//
+// Both assume the two positions being compared are drawn from the same
+// numbering. A version bump RENUMBERS every ledger, so a legacy row can
+// OUTRANK a correction: if the v1 walk gave an account's final balance
+// position 6, and the v2 walk correctly places that same final balance at
+// position 3, the guard evaluates `6 <= 3` = false and the corrected write
+// is SILENTLY DROPPED — permanently. Replaying the re-derive does not help,
+// because it re-computes the same lower position every time.
+//
+// THE REPAIR PATH for a version bump is therefore NOT "replay the changes".
+// It is RECONSTRUCT-FINAL-THEN-SEED: derive the FINAL per-(key, ledger)
+// state and write ONE row per key per ledger stamped
+// timescale.SeedIntraLedgerSeq (= math.MaxUint32), which the `<=` guard
+// always admits and a re-run re-admits idempotently. It is only sound for a
+// reconstructed FINAL state — stamping the sentinel on a change-by-change
+// replay would tie every change in the ledger at MaxUint32 and re-open C2-6.
+// See migration 0120 and
+// docs/operations/runbooks/entry-walk-renumbering.md.
+//
+// On the ClickHouse side the equivalent repair is the existing
+// delete-then-replay per range (the master plan's re-derive procedure): a
+// lower RMT version cannot displace a higher one either, so the partition
+// must be dropped before re-ingest.
+const EntryWalkVersion = 2
+
 type LedgerEntryChangeContext struct {
 	Ledger   uint32
 	ClosedAt time.Time
@@ -242,12 +285,28 @@ type LedgerEntryChangeContext struct {
 
 	// IntraLedgerSeq is the position of this change within the ledger's
 	// canonical entry-change walk — a per-ledger monotonic counter assigned
-	// in meta-walk order (transactions in apply order; within each tx:
-	// fee-changes, tx-changes-before, operations in op_index order with each
-	// op's changes in change_index order, tx-changes-after). It is a faithful
-	// single-integer encoding of (tx position, op_index, change_index) — the
-	// same canonical within-ledger order entry_change_reader.go uses — so the
+	// in LEDGER-WIDE PHASE order, not per-transaction order:
+	//
+	//	phase 1  every tx's fee changes            (tx-set apply order)
+	//	phase 2  every tx's apply-phase meta       (tx-changes-before,
+	//	                                            per-op changes in
+	//	                                            op_index/change_index
+	//	                                            order, tx-changes-after)
+	//	phase 3  every tx's post-apply fee changes (P23 Soroban refunds)
+	//
+	// This mirrors the SDK's canonical ingest.LedgerChangeReader state
+	// machine (feeChangesState → metaChangesState → postTxApplyState), which
+	// is how stellar-core actually commits a ledger: all fees are charged
+	// before any transaction is applied, and P23 moved the Soroban fee refund
+	// into a third phase applied after all transactions execute. So the
 	// HIGHEST value for a given ledger entry is its FINAL intra-ledger state.
+	//
+	// This doc previously described a PER-TRANSACTION order ("within each tx:
+	// fee-changes, …") and claimed it was "the same canonical within-ledger
+	// order entry_change_reader.go uses". Both were false: the per-tx walk
+	// ranked tx1's apply-phase change BELOW tx2's fee change, so the balance
+	// upsert published a fee-phase balance as the ledger-final balance
+	// (C2-032, audit-2026-07-23).
 	//
 	// The balance-observation writers persist this alongside the value and
 	// guard their last-writer-wins upsert on it
@@ -257,6 +316,10 @@ type LedgerEntryChangeContext struct {
 	// correctness only needs monotonicity WITHIN a ledger (rows from different
 	// ledgers never share the observation PK). Unmatched changes still consume
 	// a value (gaps are harmless — only relative order matters).
+	//
+	// POSITIONS ARE SCOPED TO [EntryWalkVersion] — a position is only
+	// comparable against another produced by the SAME walk version. Read that
+	// constant before writing any corrective re-derive.
 	IntraLedgerSeq uint32
 
 	Change xdr.LedgerEntryChange
@@ -572,13 +635,15 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 	closedAt := lcm.ClosedAt().UTC().Format(time.RFC3339)
 
 	var outputs []consumer.Event
-	// Per-ledger monotonic entry-change position, threaded into every
-	// LedgerEntryChangeContext.IntraLedgerSeq so the balance-observation
-	// writers can make the FINAL intra-ledger change win their upsert
-	// regardless of parallel-worker commit order (audit-2026-07-16 C2-6).
-	// Declared OUTSIDE the tx loop so it accumulates across all txs in the
-	// ledger in apply order.
-	var entryChangeSeq uint32
+	parsedClosedAt := mustParseRFC3339(closedAt)
+
+	// Read the whole ledger's transactions up front. The entry-change walk
+	// needs every tx before it can emit anything, because on-chain the fee
+	// phase for ALL txs precedes the apply phase for ALL txs — see
+	// [Dispatcher.walkLedgerEntryChanges] (C2-032, audit-2026-07-23).
+	// LedgerTransaction only holds slices into lcm, so retaining a ledger's
+	// worth costs no extra decode.
+	txs := make([]ingest.LedgerTransaction, 0, 64)
 	for {
 		tx, err := reader.Read()
 		if errors.Is(err, io.EOF) {
@@ -595,9 +660,25 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 			d.statsMu.Unlock()
 			continue
 		}
+		txs = append(txs, tx)
+	}
+
+	// ─── LedgerEntryChange walk (ADR-0021) ───────────────────────
+	// Runs over the WHOLE ledger — including failed txs, whose fee
+	// debits are committed on chain (C2-023/C2-040) — and in the
+	// chain's two-phase order. Skipped cheaply when no entry decoders
+	// are registered.
+	if len(d.entryDecoders) > 0 {
+		outputs = append(outputs,
+			d.walkLedgerEntryChanges(txs, ledgerSeq, parsedClosedAt)...)
+	}
+
+	for i := range txs {
+		tx := txs[i]
 		if !tx.Result.Successful() {
 			// Failed transactions don't produce real price signal.
-			// stellar-extract/trades.go does the same.
+			// stellar-extract/trades.go does the same. Their entry
+			// changes ARE walked — above, before this loop.
 			continue
 		}
 
@@ -614,7 +695,6 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 		//      upload, etc.) — the slot is nil.
 		invokeCalls := extractInvokeContractCalls(tx.Envelope.Operations())
 		txSource, _ := accountIDToStrkey(tx.Envelope.SourceAccount().ToAccountId())
-		parsedClosedAt := mustParseRFC3339(closedAt)
 		ops := tx.Envelope.Operations()
 
 		// ─── Soroban contract events ─────────────────────────
@@ -702,15 +782,6 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 			}
 		}
 
-		// ─── LedgerEntryChange walk (ADR-0021) ───────────────
-		// Walks per-op + tx-level changes from this tx's meta and
-		// routes each to the LedgerEntryChangeDecoder chain.
-		// Skipped cheaply when no entry decoders are registered.
-		if len(d.entryDecoders) > 0 {
-			outputs = append(outputs,
-				d.walkEntryChanges(&tx, ledgerSeq, parsedClosedAt, txHash, &entryChangeSeq)...)
-		}
-
 		// ─── Classic operations (SDEX and friends) ───────────
 		if len(d.opDecoders) == 0 {
 			continue // skip op walking if no classic decoders registered
@@ -748,59 +819,135 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 	return outputs, nil
 }
 
-// walkEntryChanges iterates per-op + tx-level LedgerEntryChange
-// rows from one transaction's meta and dispatches each to the
-// entry-decoder chain. Returns the collected outputs across every
-// matched change.
+// walkLedgerEntryChanges walks EVERY LedgerEntryChange in the ledger and
+// dispatches each to the entry-decoder chain, in the order stellar-core
+// committed them. Returns the collected outputs across every matched change.
+//
+// Two properties this function exists to guarantee — both are correctness
+// requirements of the balance-observation surface, not cosmetics:
+//
+//  1. FAILED TXS ARE INCLUDED (C2-023/C2-040, audit-2026-07-23). A failed
+//     transaction still debits its fee on chain, and stellar-core commits
+//     that fee change; only the operation changes are rolled back (a failed
+//     tx's meta carries no op changes, so nothing rolled-back is replayed).
+//     Skipping failed txs therefore over-reported the observed balance by
+//     the fee and put the live observer permanently out of step with the
+//     lake, whose clickhouse.extractEntryChanges has always walked every tx.
+//     ADR-0034's "re-derive the LedgerEntry supply observers from the lake"
+//     promise is only meetable if the two agree.
+//
+//  2. THE WALK IS THREE-PHASE, LEDGER-WIDE (C2-032, and R-A01-1 for the
+//     third phase). stellar-core commits a ledger in ledger-wide phases,
+//     not tx by tx, and this walk mirrors the SDK's canonical
+//     ingest.LedgerChangeReader state machine exactly (feeChangesState →
+//     metaChangesState → postTxApplyState) — see the phase table below.
+//     Walking per tx (fee, apply, then the next tx's fee) mis-ranked an
+//     account touched by tx1's ops and tx2's fee: IntraLedgerSeq put the fee
+//     last, and IntraLedgerSeq is exactly the tiebreak that makes the FINAL
+//     intra-ledger change win the balance upsert. That published a
+//     fee-phase balance as the ledger-final balance. Omitting phase 3 has
+//     the same shape on P23+ ledgers: the refund is the LAST thing that
+//     touches the fee-source account, so dropping it publishes the
+//     pre-refund balance as final.
+//
+// The three phases, in emission order:
+//
+//	phase 1  every tx's FeeChanges             processFeeSeqNum charges ALL
+//	                                           fees before applying ANY tx
+//	phase 2  every tx's apply-phase meta       TxChangesBefore, per-op
+//	                                           changes, TxChangesAfter
+//	phase 3  every tx's PostTxApplyFeeChanges  P23 moved the Soroban fee
+//	                                           REFUND out of TxChangesAfter
+//	                                           into a ledger-wide phase run
+//	                                           after all txs execute; LCM V2
+//	                                           only, so empty pre-P23
+//
+// LEDGER UPGRADES (the SDK's 4th state, upgradeChangesState) are deliberately
+// NOT walked: they are not transaction-scoped, carry no TxHash, and no
+// LedgerEntryChangeDecoder consumes them today. The lake walker makes the
+// identical choice, so the two stay in step.
+//
+// IntraLedgerSeq is the per-ledger monotonic position, advanced for every
+// walked change (matched or not) so relative order is preserved; gaps from
+// unmatched changes are harmless (C2-6).
+//
+// POSITIONS ARE WALK-VERSION-SCOPED. IntraLedgerSeq is only comparable
+// against another position produced by the SAME walk version. This change
+// renumbered every ledger, so a legacy row can outrank a correction — see
+// [EntryWalkVersion] and migration 0120 for the invariant and the repair
+// path.
 //
 // Meta-version handling: V1/V2 don't carry post-Soroban operation
-// metadata so they're skipped (no-op for purposes of entry-change
-// observation; the indexer ran against pre-Soroban ledgers
-// produces no AccountEntry observations for those ranges, which
-// is correct — the AccountEntry observer is a forward-going
-// surface). V3 + V4 share the same Operations / TxChanges shape
-// for AccountEntry purposes; the only difference is the wrapping
-// type.
-func (d *Dispatcher) walkEntryChanges(tx *ingest.LedgerTransaction, ledgerSeq uint32, closedAt time.Time, txHash string, seq *uint32) []consumer.Event {
-	dispatch := func(opIdx int, change xdr.LedgerEntryChange) []consumer.Event {
-		ctx := LedgerEntryChangeContext{
-			Ledger:         ledgerSeq,
-			ClosedAt:       closedAt,
-			TxHash:         txHash,
-			OpIndex:        opIdx,
-			IntraLedgerSeq: *seq,
-			Change:         change,
+// metadata so their apply phase is skipped (no-op for purposes of
+// entry-change observation; the indexer run against pre-Soroban ledgers
+// produces no AccountEntry observations for those ranges, which is correct
+// — the AccountEntry observer is a forward-going surface). Their fee
+// changes still walk. V3 + V4 share the same Operations / TxChanges shape
+// for AccountEntry purposes; the only difference is the wrapping type.
+func (d *Dispatcher) walkLedgerEntryChanges(txs []ingest.LedgerTransaction, ledgerSeq uint32, closedAt time.Time) []consumer.Event {
+	var seq uint32
+	dispatchFor := func(txHash string) func(int, xdr.LedgerEntryChange) []consumer.Event {
+		return func(opIdx int, change xdr.LedgerEntryChange) []consumer.Event {
+			ctx := LedgerEntryChangeContext{
+				Ledger:         ledgerSeq,
+				ClosedAt:       closedAt,
+				TxHash:         txHash,
+				OpIndex:        opIdx,
+				IntraLedgerSeq: seq,
+				Change:         change,
+			}
+			seq++
+			outs, err := d.dispatchEntryChange(ctx)
+			if err != nil {
+				return nil
+			}
+			return outs
 		}
-		// Advance the per-ledger position for the NEXT change. Bumped for
-		// every walked change (matched or not) so relative order is
-		// preserved; gaps from unmatched changes are harmless (C2-6).
-		*seq++
-		outs, err := d.dispatchEntryChange(ctx)
-		if err != nil {
-			return nil
-		}
-		return outs
 	}
 
 	var outputs []consumer.Event
-	// Tx-level fee changes — every successful tx debits a fee.
+	// ── Phase 1: the fee phase for every tx, in tx-set apply order.
 	// OpIndex is -1 to distinguish from per-op changes.
-	for i := range tx.FeeChanges {
-		outputs = append(outputs, dispatch(-1, tx.FeeChanges[i])...)
+	for i := range txs {
+		dispatch := dispatchFor(entryChangeTxHash(&txs[i]))
+		for j := range txs[i].FeeChanges {
+			outputs = append(outputs, dispatch(-1, txs[i].FeeChanges[j])...)
+		}
 	}
-	switch tx.UnsafeMeta.V {
-	case 3:
-		v3 := tx.UnsafeMeta.MustV3()
-		outputs = append(outputs, walkChangeSet(v3.TxChangesBefore, -1, dispatch)...)
-		outputs = append(outputs, walkOperations(v3.Operations, dispatch)...)
-		outputs = append(outputs, walkChangeSet(v3.TxChangesAfter, -1, dispatch)...)
-	case 4:
-		v4 := tx.UnsafeMeta.MustV4()
-		outputs = append(outputs, walkChangeSet(v4.TxChangesBefore, -1, dispatch)...)
-		outputs = append(outputs, walkV4Operations(v4.Operations, dispatch)...)
-		outputs = append(outputs, walkChangeSet(v4.TxChangesAfter, -1, dispatch)...)
+	// ── Phase 2: the apply phase for every tx, in the same order.
+	for i := range txs {
+		dispatch := dispatchFor(entryChangeTxHash(&txs[i]))
+		switch txs[i].UnsafeMeta.V {
+		case 3:
+			v3 := txs[i].UnsafeMeta.MustV3()
+			outputs = append(outputs, walkChangeSet(v3.TxChangesBefore, -1, dispatch)...)
+			outputs = append(outputs, walkOperations(v3.Operations, dispatch)...)
+			outputs = append(outputs, walkChangeSet(v3.TxChangesAfter, -1, dispatch)...)
+		case 4:
+			v4 := txs[i].UnsafeMeta.MustV4()
+			outputs = append(outputs, walkChangeSet(v4.TxChangesBefore, -1, dispatch)...)
+			outputs = append(outputs, walkV4Operations(v4.Operations, dispatch)...)
+			outputs = append(outputs, walkChangeSet(v4.TxChangesAfter, -1, dispatch)...)
+		}
+	}
+	// ── Phase 3: the post-apply fee phase (P23 Soroban fee refunds) for
+	// every tx, in the same order. Empty on pre-P23 ledgers — the SDK only
+	// populates PostTxApplyFeeChanges from LCM V2. op_index -1: it is a
+	// tx-level change, like the fee phase it mirrors.
+	for i := range txs {
+		dispatch := dispatchFor(entryChangeTxHash(&txs[i]))
+		for j := range txs[i].PostTxApplyFeeChanges {
+			outputs = append(outputs, dispatch(-1, txs[i].PostTxApplyFeeChanges[j])...)
+		}
 	}
 	return outputs
+}
+
+// entryChangeTxHash is the hex tx hash used to stamp entry-change contexts.
+// Kept separate from the ProcessLedger-local encoding so the two-phase walk
+// computes it identically in both phases.
+func entryChangeTxHash(tx *ingest.LedgerTransaction) string {
+	return hex.EncodeToString(tx.Result.TransactionHash[:])
 }
 
 // walkChangeSet dispatches each LedgerEntryChange in the slice
@@ -1229,6 +1376,33 @@ func walkAuthTree(node *xdr.SorobanAuthorizedInvocation, path []int, ancestorCha
 	}
 }
 
+// containsCall reports whether calls already holds the same invocation as
+// c — same contract, same function, same argument encoding. Identity is
+// deliberately NOT CallPath: the question it answers is "did the auth walk
+// already emit the top-level call under some path", and emitting it twice
+// would double every downstream decode (C2-060).
+func containsCall(calls []*invokeCall, c *invokeCall) bool {
+	for _, existing := range calls {
+		if existing.ContractID != c.ContractID || existing.FunctionName != c.FunctionName {
+			continue
+		}
+		if len(existing.Args) != len(c.Args) {
+			continue
+		}
+		same := true
+		for i := range existing.Args {
+			if existing.Args[i] != c.Args[i] {
+				same = false
+				break
+			}
+		}
+		if same {
+			return true
+		}
+	}
+	return false
+}
+
 // extractInvokeContractCallTrees returns, per operation, the full
 // list of contract-call snapshots reachable from that op — the
 // top-level invocation PLUS every transitively-nested sub-call from
@@ -1243,14 +1417,28 @@ func walkAuthTree(node *xdr.SorobanAuthorizedInvocation, path []int, ancestorCha
 // The auth tree is the right call-tree source because:
 //   - Every contract call that requires user authorization (which
 //     includes every token transfer in a DEX flow) is in the tree.
-//   - The root of each auth entry IS the top-level call — no separate
-//     dedup needed when the auth array is non-empty.
 //   - The recursive structure mirrors the actual Soroban call tree.
 //
-// When `ihf.Auth` is empty (calls that don't require user auth —
-// rare for token-moving paths) we fall back to the top-level call
-// from [xdr.HostFunction.MustInvokeContract] so the dispatcher
-// behaviour matches the pre-#48 baseline for that case.
+// The TOP-LEVEL call is always emitted, with CallPath == [] (C2-060,
+// audit-2026-07-23). The comment this replaces asserted "the root of
+// each auth entry IS the top-level call — no separate dedup needed when
+// the auth array is non-empty", and the code only fell back to
+// [xdr.HostFunction.MustInvokeContract] when `ihf.Auth` was EMPTY. That
+// assertion is false for the ordinary aggregator shape: a
+// SorobanAuthorizationEntry's RootInvocation is the root of the subtree
+// that needs authorization, so when the top-level call needs no auth but
+// something it calls does, the auth root is a NESTED call — and it was
+// exported carrying CallPath == [], i.e. labelled as the call-tree root,
+// while the real root was never emitted at all.
+//
+// So when no walked call matches the top-level invocation, the top-level
+// call is prepended as the root and each auth entry j is re-rooted
+// beneath it at CallPath [j]. That index is the AUTH-ENTRY ordinal, not
+// the host's sub-call ordinal — the auth tree does not carry the latter —
+// but it is stable across re-derives and, unlike [], it does not claim
+// to be the root. The dedup is by (contract, function, args) so a
+// top-level call that IS its own auth root is never emitted twice; that
+// matters because a duplicate would become a duplicate trade row.
 //
 // Multiple auth entries (rare; co-signed multi-user txs) are walked
 // independently. Duplicate calls across entries are accepted at this
@@ -1274,25 +1462,33 @@ func extractInvokeContractCallTrees(ops []xdr.Operation) [][]*invokeCall { //nol
 		}
 
 		var calls []*invokeCall
+		topIC := ihf.HostFunction.MustInvokeContract()
+		top := buildInvokeCallFromArgs(&topIC, nil, nil)
 
 		if len(ihf.Auth) > 0 {
-			// Auth tree is the canonical source. Walk every entry's
-			// root; each root represents the start of one user's
-			// authorized call subtree. ancestorChain starts nil — the
-			// root IS the top-level call, so its own CallPathContracts
-			// comes out as exactly [rootContractID].
+			// Auth tree is the canonical source for everything BELOW the
+			// top-level call: each entry's RootInvocation starts one
+			// authorized subtree. Walk them first so we can tell whether
+			// any of them is the top-level call itself.
 			for j := range ihf.Auth {
 				walkAuthTree(&ihf.Auth[j].RootInvocation, nil, nil, &calls)
 			}
-		} else {
+			if top != nil && !containsCall(calls, top) {
+				// The auth roots are NESTED calls: the top-level call
+				// needed no auth of its own. Re-root them under it so
+				// nothing but the real root carries CallPath [] (C2-060).
+				calls = nil
+				for j := range ihf.Auth {
+					walkAuthTree(&ihf.Auth[j].RootInvocation, []int{j}, top.CallPathContracts, &calls)
+				}
+				calls = append([]*invokeCall{top}, calls...)
+			}
+		} else if top != nil {
 			// No auth array — the op didn't need user auth for any
 			// downstream call (rare for token-moving paths but allowed
-			// by the protocol). Fall back to the top-level call alone,
-			// matching the pre-#48 baseline.
-			topIC := ihf.HostFunction.MustInvokeContract()
-			if call := buildInvokeCallFromArgs(&topIC, nil, nil); call != nil {
-				calls = append(calls, call)
-			}
+			// by the protocol). The top-level call alone, matching the
+			// pre-#48 baseline.
+			calls = append(calls, top)
 		}
 
 		if len(calls) > 0 {

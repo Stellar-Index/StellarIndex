@@ -128,9 +128,16 @@ type LedgerEntryChangeRow struct {
 	// entry's XDR. Int64 (XLM / classic balances are i64 in XDR).
 	Balance int64
 	// IntraLedgerSeq is the position of this change within its ledger's
-	// canonical entry-change walk (transactions in apply order; within each tx
-	// fee-changes, tx-changes-before, per-op changes in op_index/change_index
-	// order, tx-changes-after) — a per-ledger monotonic counter. It is the
+	// canonical entry-change walk — a per-ledger monotonic counter assigned in
+	// LEDGER-WIDE PHASE order, not per-transaction order: phase 1 every tx's
+	// fee changes (tx-set apply order), phase 2 every tx's apply-phase meta
+	// (tx-changes-before, per-op changes in op_index/change_index order,
+	// tx-changes-after), phase 3 every tx's post-apply fee changes (P23
+	// Soroban refunds). This mirrors the SDK's canonical
+	// ingest.LedgerChangeReader state machine and dispatcher's
+	// walkLedgerEntryChanges exactly. This doc previously described a
+	// PER-TRANSACTION order, which mis-ranked tx1's apply-phase change below
+	// tx2's fee change (C2-032, audit-2026-07-23). It is the
 	// intra-ledger tie-breaker folded into stellar.ledger_entries_current's
 	// ReplacingMergeTree version (version = ledger_seq<<32 | intra_ledger_seq),
 	// so when the SAME key is changed more than once in one ledger (e.g.
@@ -140,6 +147,12 @@ type LedgerEntryChangeRow struct {
 	// a ledger's txs (see extract_entry_changes.go). Snapshot/seed backfill rows
 	// stamp the seedIntraLedgerSeq sentinel (the authoritative final state for
 	// their ledger). DEFAULT 0 in the lake — old-binary-safe.
+	//
+	// POSITIONS ARE SCOPED TO dispatcher.EntryWalkVersion: comparable only
+	// against another position from the SAME walk version. A version bump
+	// renumbers every ledger, so a lower-numbered correction cannot displace a
+	// higher-numbered legacy row through the RMT version — the partition must
+	// be dropped before re-ingest. See that constant and migration 0120.
 	IntraLedgerSeq uint32
 }
 

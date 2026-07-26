@@ -203,3 +203,54 @@ func TestCensusLedger_emptyLedger(t *testing.T) {
 		t.Errorf("TxReadErrors = %d, want 0", c.TxReadErrors)
 	}
 }
+
+// TestCaptureEligible_UnmarshallableEventCountsAsSinkDoes pins C2-054
+// (audit-2026-07-23). captureEligible's contract — stated in its own
+// docstring — is that "the census count equals the soroban_events row
+// count for the ledger". It used to re-state only the CHEAP half of the
+// sink's gate and explicitly skip the ScVal MarshalBinary round-trip that
+// contractEventToEventsEvent performs, so an event whose topic or body
+// fails to marshal was DROPPED by the sink and COUNTED by the census. The
+// reconcile then reported a projector shortfall that did not exist.
+func TestCaptureEligible_UnmarshallableEventCountsAsSinkDoes(t *testing.T) {
+	t.Parallel()
+	base, _ := makeBasicContractEvent(t)
+
+	// An ScVal carrying a discriminant outside the enum: MarshalBinary
+	// returns "'31337' is not a valid ScValType enum value".
+	bogus := xdr.ScVal{Type: xdr.ScValType(31337)}
+	if _, err := bogus.MarshalBinary(); err == nil {
+		t.Fatal("fixture invalid: the bogus ScVal must fail MarshalBinary")
+	}
+
+	t.Run("unmarshallable topic", func(t *testing.T) {
+		ev := base
+		v0 := *base.Body.V0
+		v0.Topics = []xdr.ScVal{bogus}
+		ev.Body = xdr.ContractEventBody{V: 0, V0: &v0}
+
+		// Ground truth: the live path produces NO event, so the sink
+		// lands NO row.
+		if contractEventToEventsEvent(ev, 1, "tx", 0, 0, "", nil) != nil {
+			t.Fatal("fixture invalid: the live conversion should have dropped this event")
+		}
+		if captureEligible(ev) {
+			t.Error("census counted an event the sink drops (unmarshallable topic) — " +
+				"the census would report a phantom projector shortfall")
+		}
+	})
+
+	t.Run("unmarshallable body", func(t *testing.T) {
+		ev := base
+		v0 := *base.Body.V0
+		v0.Data = bogus
+		ev.Body = xdr.ContractEventBody{V: 0, V0: &v0}
+
+		if contractEventToEventsEvent(ev, 1, "tx", 0, 0, "", nil) != nil {
+			t.Fatal("fixture invalid: the live conversion should have dropped this event")
+		}
+		if captureEligible(ev) {
+			t.Error("census counted an event the sink drops (unmarshallable body)")
+		}
+	})
+}
