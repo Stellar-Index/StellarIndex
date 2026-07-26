@@ -3,6 +3,7 @@ package ledgerstream
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -344,9 +345,15 @@ func TestIsNotFound(t *testing.T) {
 		{"os.ErrNotExist", os.ErrNotExist, true},
 		{"sdk ErrNoLedgerFiles", datastore.ErrNoLedgerFiles, true},
 		{"sdk ErrNoValidLedgerFiles", datastore.ErrNoValidLedgerFiles, true},
-		{"s3 NoSuchKey wrapping", errors.New("operation GetObject: NoSuchKey: key not found"), true},
-		{"plain key not found", errors.New("key not found"), true},
-		{"fs no such file", errors.New("open /missing: no such file or directory"), true},
+		// The SDK's S3DataStore converts AWS typed not-found errors
+		// (types.NoSuchKey / types.NotFound) to os.ErrNotExist via
+		// errors.As before returning (C2-064). It never surfaces a
+		// bare "NoSuchKey" string — the previous fixtures here
+		// encoded errors no backend actually produces, which is why
+		// the dead string-matching arm looked load-bearing.
+		{"s3 not-found (as the SDK returns it)", fmt.Errorf("hot read %q: %w", "k", os.ErrNotExist), true},
+		{"fs not-found (real PathError)", &os.PathError{Op: "open", Path: "/missing", Err: os.ErrNotExist}, true},
+		{"bare NoSuchKey string (no backend produces this)", errors.New("operation GetObject: NoSuchKey: key not found"), false},
 		{"transient timeout", errors.New("dial tcp 1.2.3.4:443: i/o timeout"), false},
 		{"auth failure", errors.New("AccessDenied: user is not authorized"), false},
 		{"throttling", errors.New("SlowDown: please reduce your request rate"), false},
