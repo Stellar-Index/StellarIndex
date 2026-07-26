@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -98,12 +97,17 @@ func NewTieredDataStore(hot, cold datastore.DataStore, registry prometheus.Regis
 	return t
 }
 
-// IsNotFound returns true when err looks like a missing-key error
-// from either the filesystem datastore (os.IsNotExist), the S3
-// datastore (AWS `NoSuchKey`, surfaced via the SDK as a wrapped
-// error containing the string), or the SDK's manifest-empty
-// errors ([datastore.ErrNoLedgerFiles] etc.). Best-effort;
-// transient errors (network timeouts, auth failures, throttling)
+// IsNotFound returns true when err is a missing-key error from any
+// datastore backend. All three backends normalize to os.ErrNotExist:
+// the filesystem store natively, and the SDK's S3DataStore converts
+// AWS typed errors (types.NoSuchKey from GetObject, types.NotFound
+// from HeadObject) via errors.As before returning os.ErrNotExist
+// (go-stellar-sdk support/datastore/s3.go, isNotFoundError) — so no
+// string matching is needed or performed (C2-064: the previous
+// "NoSuchKey" string arm was dead code and its comment inverted the
+// SDK's actual behavior). Manifest-empty errors
+// ([datastore.ErrNoLedgerFiles] etc.) also count as not-found.
+// Transient errors (network timeouts, auth failures, throttling)
 // DO NOT match and so propagate up rather than falsely triggering
 // a cold fallback.
 func IsNotFound(err error) bool {
@@ -113,21 +117,7 @@ func IsNotFound(err error) bool {
 	if errors.Is(err, os.ErrNotExist) {
 		return true
 	}
-	if errors.Is(err, datastore.ErrNoLedgerFiles) || errors.Is(err, datastore.ErrNoValidLedgerFiles) {
-		return true
-	}
-	// Best-effort string match. The AWS SDK wraps NoSuchKey errors
-	// as `smithy.GenericAPIError` with code="NoSuchKey"; checking
-	// that requires importing `github.com/aws/smithy-go` directly
-	// which we'd rather avoid as a transitive-version-pin risk.
-	// The SDK's S3DataStore.GetFile is documented to surface
-	// "NoSuchKey" in the wrapped error string, and the MinIO
-	// client's err format includes the same code. Refine if/when
-	// the SDK exports a typed IsNotFound helper.
-	s := err.Error()
-	return strings.Contains(s, "NoSuchKey") ||
-		strings.Contains(s, "key not found") ||
-		strings.Contains(s, "no such file or directory")
+	return errors.Is(err, datastore.ErrNoLedgerFiles) || errors.Is(err, datastore.ErrNoValidLedgerFiles)
 }
 
 // GetFile reads from hot; on IsNotFound, reads from cold.
