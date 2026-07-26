@@ -31,7 +31,7 @@
 //     `ch-reproject`, `ch-rebuild`, `ch-supply`,
 //     `ch-txindex-backfill`, `ch-participant-backfill`,
 //     `ch-recognition`, `verify-recognition`, `verify-reconciliation`,
-//     `compute-completeness`, `verify-served-values`,
+//     `compute-completeness`, `verify-served-values`, `verify-usd-volume`,
 //     `sdex-claim-audit`, `classic-movements-backfill`,
 //     `projected-rebuild`, `reconcile-balances`, `verify-contiguity`,
 //     `verify-hashchain`, `verify-lake`.
@@ -169,6 +169,7 @@ var subcommands = map[string]func(args []string) error{
 	"verify-reconciliation":   chops.Run,
 	"compute-completeness":    chops.Run,
 	"verify-served-values":    chops.Run,
+	"verify-usd-volume":       chops.Run,
 	"sdex-claim-audit":        chops.Run,
 
 	"classic-movements-backfill": chops.Run,
@@ -946,6 +947,45 @@ Subcommands:
                           completeness_snapshots for the API + status page.
                           -to defaults to the live ledgerstream tip. Run on
                           a cron; the headline replaces density/gap_free.
+  verify-usd-volume [-config PATH] [-day YYYY-MM-DD] [-days N] [-min-rows N] [-max-list N]
+                          The VALUE half of the usd_volume checks (C4-055/
+                          C4-066). The standing
+                          stellarindex_{cex,onchain}_usd_volume_coverage_low
+                          alerts only measure COVERAGE — the share of trades
+                          with a non-NULL usd_volume. A trade priced with the
+                          WRONG number is 100% covered and completely wrong,
+                          and every volume surface we publish (DEX volume,
+                          asset volume, venue rankings, market share) is a sum
+                          of that column.
+                          Splits the five-tier valuation waterfall in two:
+                            * CHECKED — the exact tiers. Where the QUOTE leg
+                              (tiers 1/2) or the BASE leg (tier 2b) is
+                              USD-pegged, usd_volume is a pure decimal
+                              rescaling of an amount already on the row:
+                              usd_volume == pegged_leg / 10^decimals. No price
+                              lookup, no time alignment, so NO TOLERANCE is
+                              involved. A mismatch means the wrong scale,
+                              wrong leg, a stale peg list, or a superseded
+                              backfill vintage, and it FAILS the run.
+                            * MEASURED — the estimated tiers (FX rate /
+                              XLM anchor). Sums and row counts are PRINTED
+                              per tier so an operator can read the real
+                              divergence distribution off production, but
+                              they are NOT judged: no threshold for them has
+                              been measured yet, and guessing one on a money
+                              surface is the C6-118 mistake.
+                          Read-only against Postgres; no alert rule. Uses the
+                          SAME peg inputs (trades.usd_pegged_classic_assets +
+                          supply.sac_wrappers) as the insert path, so it
+                          re-derives what the writer should have done rather
+                          than reimplementing it. -day defaults to YESTERDAY
+                          (today's chunk is still being written).
+                          Exit: non-zero iff an exact-tier identity is
+                          violated. Follow-up after the first production run:
+                          read the tier-3/4 spread, THEN calibrate an alert.
+                          Example:
+                            stellarindex-ops verify-usd-volume \
+                              -config /etc/stellarindex.toml -days 30
   seed-soroswap-pairs -config PATH [-rpc URL] [-timeout DUR]
                           Bootstrap the soroswap_pairs registry table
                           via stellar-rpc simulateTransaction. Walks the

@@ -517,11 +517,20 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 				continue
 			}
 			before := len(buf)
-			if cerr := forEachContractCallEvent(ctx, *chAddr, src.callContract, src.callDec, lo, hi, func(_ uint32, ev consumer.Event) error {
+			// The blind spots are the WRITER's side of the C4-059
+			// symmetry: a call this stream cannot decode is a row the
+			// rebuild does not write, exactly as the census cannot expect
+			// it. Reported so a rebuild states what it dropped rather than
+			// leaving the census to discover it later.
+			ccBlind, cerr := forEachContractCallEvent(ctx, *chAddr, src.callContract, src.callDec, lo, hi, func(_ uint32, ev consumer.Event) error {
 				buf = append(buf, ev)
 				return nil
-			}); cerr != nil {
+			})
+			if cerr != nil {
 				return fmt.Errorf("ch-rebuild: contract-call stream %s: %w", src.name, cerr)
+			}
+			if ccBlind.Any() {
+				fmt.Fprintf(os.Stderr, "ch-rebuild: contract-call %s — %s\n", src.name, ccBlind.Detail())
 			}
 			fmt.Fprintf(os.Stderr, "ch-rebuild: contract-call %s read done (%d events)\n", src.name, len(buf)-before)
 		}

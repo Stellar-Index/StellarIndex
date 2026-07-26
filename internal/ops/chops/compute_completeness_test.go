@@ -10,6 +10,9 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -792,5 +795,96 @@ func TestSubstrateClaim_SkipSubstrateCarriesRatherThanAsserts(t *testing.T) {
 	// and it must read false rather than silently extend the old claim.
 	if ok, d := substrateClaim(genesis, hi, noScan, true, 0, priorProjection{known: true, ok: true, tip: hi - 10_000}); ok {
 		t.Errorf("-skip-substrate must not extend a prior verdict past the tip it reached: %s", d)
+	}
+}
+
+// ─── C4-059: the ContractCall census is per-row blind too ────────
+
+// stubContractCallDecoder owns every call and fails Decode on one named
+// function — the shape of a real decoder bug (a call variant it claims by
+// contract+function and then cannot parse).
+type stubContractCallDecoder struct{ badFunc string }
+
+func (stubContractCallDecoder) Name() string             { return "stub" }
+func (stubContractCallDecoder) Matches(_, _ string) bool { return true }
+func (d stubContractCallDecoder) Decode(cc dispatcher.ContractCallContext) ([]consumer.Event, error) {
+	if cc.FunctionName == d.badFunc {
+		return nil, errors.New("decode: unsupported call variant")
+	}
+	return []consumer.Event{stubCallEvent{}}, nil
+}
+
+type stubCallEvent struct{}
+
+func (stubCallEvent) Source() string    { return "stub" }
+func (stubCallEvent) EventKind() string { return "stub.call" }
+
+// TestDecodeContractCallTree_MalformedCallNetsToZero is the C4-059
+// regression for the ContractCall census (band, soroswap-router).
+//
+// These sources have NO soroban_events landing zone, so
+// reDeriveContractCallCensus IS the projection oracle — and it soft-fails
+// per call, exactly as the ch-rebuild WRITER that shares the same function
+// does. A call whose Decode errors is therefore missing from the expected
+// side AND from the served side, the per-ledger diff nets to zero, and
+// recordFloors runs while projection_ok is certified on a ledger with a
+// provably-dropped row.
+//
+// expectedProjection's comment used to assert this could not happen ("the
+// census oracles soft-fail per claim, never per row"). It was false.
+func TestDecodeContractCallTree_MalformedCallNetsToZero(t *testing.T) {
+	const badLedger uint32 = 51_000_123
+	op := clickhouse.ContractCallOp{
+		Ledger:  badLedger,
+		TxHash:  "aa",
+		Source:  "GSOURCE",
+		OpIndex: 0,
+	}
+	calls := []dispatcher.ContractCall{
+		{ContractID: "CAAA", FunctionName: "swap"},
+		{ContractID: "CAAA", FunctionName: "relay"}, // decoder fails on this
+		{ContractID: "CAAA", FunctionName: "swap"},
+	}
+
+	blind := completeness.NewBlindTracker()
+	var emitted int
+	if err := decodeContractCallTree(op, calls, stubContractCallDecoder{badFunc: "relay"}, blind,
+		func(uint32, consumer.Event) error { emitted++; return nil }); err != nil {
+		t.Fatalf("decodeContractCallTree: %v", err)
+	}
+
+	// Pre-condition: the defect is invisible to the counts. Two calls
+	// decoded, so the census expects 2 — and the writer (same function)
+	// wrote 2 — so a per-ledger diff is clean.
+	if emitted != 2 {
+		t.Fatalf("emitted = %d, want 2 (the malformed call is skipped by BOTH sides)", emitted)
+	}
+
+	got := blind.Result()
+	if !got.Any() {
+		t.Fatal("the malformed call was skipped silently: the census and the writer drop it identically, " +
+			"so the diff nets to zero and projection_ok is certified on a ledger with a dropped row")
+	}
+	if got.UndecodableMatched != 1 {
+		t.Errorf("UndecodableMatched = %d, want 1", got.UndecodableMatched)
+	}
+	if len(got.Ledgers) != 1 || got.Ledgers[0] != badLedger {
+		t.Errorf("Ledgers = %v, want [%d]", got.Ledgers, badLedger)
+	}
+}
+
+// TestDecodeContractCallTree_CleanTreeIsNotBlind — the counter must be
+// silent on the healthy path, or every ContractCall source would pin its
+// watermark forever.
+func TestDecodeContractCallTree_CleanTreeIsNotBlind(t *testing.T) {
+	blind := completeness.NewBlindTracker()
+	op := clickhouse.ContractCallOp{Ledger: 42}
+	calls := []dispatcher.ContractCall{{ContractID: "CAAA", FunctionName: "swap"}}
+	if err := decodeContractCallTree(op, calls, stubContractCallDecoder{badFunc: "none"}, blind,
+		func(uint32, consumer.Event) error { return nil }); err != nil {
+		t.Fatalf("decodeContractCallTree: %v", err)
+	}
+	if blind.Result().Any() {
+		t.Errorf("a clean call tree reported blind spots: %+v", blind.Result())
 	}
 }
