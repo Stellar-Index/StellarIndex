@@ -1,6 +1,6 @@
 ---
 title: Runbook — archive-completeness-stale
-last_verified: 2026-06-12
+last_verified: 2026-07-26
 status: draft
 severity: P2
 ---
@@ -21,6 +21,21 @@ severity: P2
 
 - `time() - archive_completeness_last_success_timestamp` > 26 h on any region (P2) or > 48 h on R1 (P1).
 - `archive_completeness_runs_total` may or may not have incremented during the staleness window. If it has, runs are happening but failing; if it hasn't, the timer/service itself isn't firing.
+- A value of exactly `0` means **no clean verify has ever been recorded
+  on this host** (fresh deploy, or the collector directory was wiped).
+  That is a real staleness condition, not a metric bug — the archive has
+  never been proven complete here.
+
+> **Before 2026-07-26 this alert was blind during persistent failure
+> (C4-038/039/054).** The emitter omitted
+> `archive_completeness_last_success_timestamp` from every rewrite that
+> ended with residuals, on the false premise that node_exporter retains
+> the previous scrape's value; the textfile collector re-reads the file
+> each scrape, so the **series disappeared** and `time() - <absent>`
+> produced no samples. The alert therefore went silent in exactly the
+> state it exists for. The writer now carries the last clean run's
+> timestamp forward across failed rewrites. **Do not read "this never
+> fired" as history**; there is none before 2026-07-26.
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -87,7 +102,7 @@ Common patterns:
   From the missing-checkpoint list, see [archive-completeness.md](../archive-completeness.md)
   for the bootstrap-procedure step that addresses the gap.
 
-- [ ] **Verification:** after a successful manual run, `archive_completeness_last_success_timestamp` updates to "now" and the alert clears within the next eval cycle (default 1 min).
+- [ ] **Verification:** after a successful manual run, `archive_completeness_last_success_timestamp` updates to "now" and the alert clears within the next eval cycle (default 1 min). A run that still ends with residuals leaves the timestamp at its previous value (carried forward) — the series stays present and the alert stays firing, which is the intended behaviour, not a stuck metric.
 
 ## Root cause analysis
 
@@ -109,6 +124,10 @@ Common patterns:
 
 ## Changelog
 
+- 2026-07-26 — C4-038/039/054: the last-success series now persists
+  across failed rewrites, so this alert can actually fire during
+  persistent failure. Symptoms + verification steps updated; added the
+  `0 = never succeeded` reading.
 - 2026-06-12 — F-1330: replace fictional `archive-completeness check
   -range … -checks …` invocations with the real
   `archive-completeness verify -from … -to … -workers …` subcommand

@@ -20,11 +20,21 @@
 #     running or every recent run had residuals. Severity: ticket
 #     at 26 h, page at 48 h.
 #
+#     C4-038/039/054 (audit-2026-07-23): the writer used to OMIT
+#     `archive_completeness_last_success_timestamp` on any run that
+#     ended with residuals, on the false premise that node_exporter
+#     retains the previous scrape's value. It re-reads the textfile
+#     every scrape, so the series disappeared and these two alerts
+#     had no samples to evaluate during exactly the persistent-
+#     failure state they exist for. The writer now always emits it —
+#     carrying the last clean run's value forward, or 0 when no clean
+#     run has ever been recorded (which correctly fires both tiers).
+#
 #   - `stellarindex_archive_repair_source_degraded` — per-source
-#     failure ratio > 10% over 1 h. Informational; the fallback
-#     chain compensates so customers see no impact, but multiple
-#     sources degrading at once is a precursor to
-#     `stellarindex_archive_files_missing`.
+#     failure ratio > 10% over the daily verify cadence.
+#     Informational; the fallback chain compensates so customers see
+#     no impact, but multiple sources degrading at once is a
+#     precursor to `stellarindex_archive_files_missing`.
 
 groups:
   - name: stellarindex.archive_completeness
@@ -89,30 +99,43 @@ groups:
             playbook; manual archive-completeness verify run is the
             first diagnostic.
 
-      # Per-source degradation: failure rate is per-source over the
-      # window. The numerator is cumulative across the run; the
-      # denominator should be too. Both are textfile-emitted by the
-      # `verify` mode in archivecompleteness/metrics.go.
+      # Per-source degradation: failed tries / total tries, per real
+      # source name. Both legs are textfile-emitted by the `verify`
+      # mode in archivecompleteness/metrics.go, which accumulates
+      # them across runs so they are genuine counters.
+      #
+      # C4-037 (audit-2026-07-23): two defects made this structurally
+      # unfireable. (1) The emitter filed failures under a synthetic
+      # `multi-source-exhausted` label while attempts used real source
+      # names, so `by (source)` never intersected and the numerator was
+      # permanently empty for every real source. (2) The window was
+      # `rate(...[1h])` against a metric the DAILY verify timer
+      # rewrites, so the ratio series existed for at most one hour
+      # after a run and could never satisfy `for: 1h`. Failures now
+      # carry real source names, and the window is a 25 h `increase()`
+      # — one verify cadence (24 h) plus the same 1 h cushion the
+      # staleness budget above uses.
       - alert: stellarindex_archive_repair_source_degraded
         expr: |
           (
-            sum by (source) (rate(archive_completeness_repair_failures_total[1h]))
+            sum by (source) (increase(archive_completeness_repair_failures_total[25h]))
             /
-            (sum by (source) (rate(archive_completeness_repair_attempts_total[1h])) > 0)
+            (sum by (source) (increase(archive_completeness_repair_attempts_total[25h])) > 0)
           ) > 0.10
-        for: 1h
+        for: 30m
         labels:
           severity: informational
           team: stellarindex
           component: archive
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-repair-source-degraded.md
-          summary: "Source {{ $labels.source }} repair failure ratio > 10% sustained 1h"
+          summary: "Source {{ $labels.source }} repair failure ratio > 10% over the last verify cycle"
           description: |
             A specific archive source is failing > 10% of repair attempts
-            over the last hour. The fallback chain handles this — customers
-            see no impact unless multiple sources fail simultaneously, in
-            which case the `stellarindex_archive_files_missing` alert will
-            follow. Runbook: cross-check source's public status page,
-            confirm fallback chain is succeeding overall, ticket if the
+            over the last verify cycle (25 h). The fallback chain handles
+            this — customers see no impact unless multiple sources fail
+            simultaneously, in which case the
+            `stellarindex_archive_files_missing` alert will follow.
+            Runbook: cross-check source's public status page, confirm
+            fallback chain is succeeding overall, ticket if the
             degradation persists > 24 h.

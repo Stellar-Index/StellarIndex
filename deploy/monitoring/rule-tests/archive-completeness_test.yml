@@ -1,0 +1,125 @@
+---
+# promtool unit tests for the archive-completeness alert family.
+#
+#   promtool test rules deploy/monitoring/rule-tests/archive-completeness_test.yml
+#
+# These pin the two structural blind spots the 2026-07-23 audit found
+# (C4-037 / C4-038 / C4-039 / C4-054), both of which made an alert
+# *evaluate to nothing* rather than evaluate to false — the failure
+# mode where absence reads as health:
+#
+#   * the staleness pair had no series at all during persistent
+#     failure, because the emitter dropped
+#     `archive_completeness_last_success_timestamp` from every
+#     non-clean rewrite;
+#   * the per-source repair-degradation ratio had a numerator and a
+#     denominator whose label sets could never intersect (synthetic
+#     `multi-source-exhausted` failures vs real-source attempts), and
+#     a `rate(...[1h])` window over a metric a DAILY timer rewrites.
+#
+# Deliberately lives OUTSIDE `deploy/monitoring/rules/` — everything
+# in that directory is globbed by `promtool check rules`,
+# lint-rule-structure.py and lint-metric-refs.sh, all of which require
+# a top-level `groups:` key that a unit-test file does not have.
+
+rule_files:
+  - ../rules/archive-completeness.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── C4-038/039/054 ───────────────────────────────────────────────
+  # A host whose verify runs keep ending with residuals. Post-fix the
+  # emitter still writes last_success on every rewrite (carried
+  # forward, or 0 when no clean run was ever recorded), so the series
+  # is continuously present and both staleness tiers evaluate.
+  #
+  # Pre-fix the series was simply absent here and BOTH alerts below
+  # produced zero samples.
+  - interval: 1m
+    name: staleness tiers fire while the series persists through failures
+    input_series:
+      - series: 'archive_completeness_last_success_timestamp'
+        values: '0+0x3000'
+
+    alert_rule_test:
+      # 27 h since the last clean run: ticket tier only.
+      - eval_time: 27h
+        alertname: stellarindex_archive_completeness_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: archive
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-completeness-stale.md
+              summary: "archive-completeness verify hasn't completed cleanly in 1d 3h 0m 0s"
+              description: |
+                Either the systemd timer isn't running, or every run since the
+                last clean one exited with residuals. R2/R3 may set
+                `flags.reduced_redundancy: true` on API responses while this
+                fires on R1. Runbook: bisect by check / chain-link / cross-
+                anchor sub-checks to find which contract is broken.
+      - eval_time: 27h
+        alertname: stellarindex_archive_completeness_critical_stale
+        exp_alerts: []
+
+      # 49 h: the page tier joins it.
+      - eval_time: 49h
+        alertname: stellarindex_archive_completeness_critical_stale
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: archive
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-completeness-stale.md
+              summary: "(R1 integrity-leader) archive-completeness verify stale > 48h — SEV-2"
+              description: |
+                R1 is the integrity leader for the fleet (ADR-0016). 48h
+                without a clean verify is enough that R2/R3 should already
+                be flagging reduced_redundancy. Escalate to the SEV-2
+                playbook; manual archive-completeness verify run is the
+                first diagnostic.
+
+  # ── C4-037 ───────────────────────────────────────────────────────
+  # One daily verify run at t=20h places 10 checkpoints' worth of
+  # tries against each of two sources. `lobstr-v1` failed half of
+  # them; `sdf-core-live-001` failed none (so it has no failure
+  # series at all). The ratio must fire for lobstr-v1 and stay silent
+  # for the healthy source.
+  #
+  # Pre-fix this could not fire for any real source: the failure
+  # samples carried source="multi-source-exhausted", which matched no
+  # attempt sample, so `by (source)` produced an empty numerator.
+  - interval: 1m
+    name: per-source repair degradation fires for the failing source only
+    input_series:
+      - series: 'archive_completeness_repair_attempts_total{source="lobstr-v1"}'
+        values: '0+0x1200 10+0x600'
+      - series: 'archive_completeness_repair_failures_total{source="lobstr-v1"}'
+        values: '0+0x1200 5+0x600'
+      - series: 'archive_completeness_repair_attempts_total{source="sdf-core-live-001"}'
+        values: '0+0x1200 10+0x600'
+
+    alert_rule_test:
+      - eval_time: 26h
+        alertname: stellarindex_archive_repair_source_degraded
+        exp_alerts:
+          - exp_labels:
+              source: lobstr-v1
+              severity: informational
+              team: stellarindex
+              component: archive
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-repair-source-degraded.md
+              summary: "Source lobstr-v1 repair failure ratio > 10% over the last verify cycle"
+              description: |
+                A specific archive source is failing > 10% of repair attempts
+                over the last verify cycle (25 h). The fallback chain handles
+                this — customers see no impact unless multiple sources fail
+                simultaneously, in which case the
+                `stellarindex_archive_files_missing` alert will follow.
+                Runbook: cross-check source's public status page, confirm
+                fallback chain is succeeding overall, ticket if the
+                degradation persists > 24 h.

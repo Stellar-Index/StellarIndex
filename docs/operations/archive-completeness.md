@@ -1,6 +1,6 @@
 ---
 title: Archive completeness — invariants, bootstrap, daily cron
-last_verified: 2026-06-12
+last_verified: 2026-07-26
 status: living procedure
 ---
 
@@ -335,7 +335,15 @@ used only when every public archive is missing the same file.
 Per-source success and failure are tracked in
 `archive_completeness_repair_attempts_total` /
 `archive_completeness_repair_failures_total` so a degrading source
-shows up in dashboards before it becomes the primary problem.
+shows up in dashboards before it becomes the primary problem. Both
+are keyed by the **real** source name from
+[`DefaultCrossAnchorSources`](https://github.com/Stellar-Index/StellarIndex/blob/main/internal/archivecompleteness/cross_anchor_fill.go),
+and *every* try counts as an attempt — including the tries that
+failed before a later source in the chain succeeded. That matters:
+a source that fails 100 % of the time would never appear in a
+success-only denominator, which is precisely how
+`stellarindex_archive_repair_source_degraded` came to be
+structurally unfireable (C4-037, fixed 2026-07-26).
 
 ## Prometheus surface
 
@@ -344,10 +352,31 @@ archive_files_missing{archive="galexie-archive"}     gauge
 archive_files_missing{archive="cross-anchor"}        gauge
 archive_completeness_runs_total                      counter
 archive_completeness_run_duration_seconds            histogram
-archive_completeness_repair_attempts_total{source="aws|sdf|tier1|galexie-replay"} counter
+archive_completeness_repair_attempts_total{source="sdf-core-live-001|publicnode-bootes|lobstr-v1|..."} counter
 archive_completeness_repair_failures_total{source="..."} counter
 archive_completeness_last_success_timestamp           gauge
 ```
+
+The `verify` run rewrites this textfile wholesale (write `.tmp` →
+rename), so **anything a run does not re-emit disappears from the
+next scrape** — node_exporter's textfile collector re-reads the file
+every time; it does not retain prior values. The writer therefore
+reads the existing file back before each rewrite and carries the
+persistent state forward:
+
+* `archive_completeness_last_success_timestamp` is re-emitted on
+  every run, holding the last **clean** run's time. `0` means no
+  clean run has ever been recorded on this host — which correctly
+  fires the staleness alerts, because an archive that has never been
+  verified is not a healthy one.
+* the two `repair_*_total` counters accumulate across runs, so they
+  are genuine monotonic counters and `increase()` over them is
+  meaningful.
+
+Omitting the last-success line on a failed run was C4-038/039/054:
+the series vanished and `time() - <absent series>` yields no samples,
+so the staleness alerts went silent during exactly the persistent-
+failure state they exist for.
 
 R2 and R3 each emit their own copies (per region). They also scrape
 R1's `archive_completeness_last_success_timestamp` over the
@@ -362,7 +391,7 @@ Defined in `deploy/monitoring/rules/archive-completeness.yml` per
 |---|---|---|---|
 | `stellarindex_archive_files_missing` | gauge > 0 for 4h on either archive | P2 | [archive-files-missing](runbooks/archive-files-missing.md) |
 | `stellarindex_archive_completeness_stale` | last_success_timestamp older than 26h | P2 | [archive-completeness-stale](runbooks/archive-completeness-stale.md) |
-| `stellarindex_archive_repair_source_degraded` | repair_failures / repair_attempts > 0.10 over 1h per source | P3 | [archive-repair-source-degraded](runbooks/archive-repair-source-degraded.md) |
+| `stellarindex_archive_repair_source_degraded` | `increase(repair_failures[25h]) / increase(repair_attempts[25h])` > 0.10 per source, sustained 30 m | P3 | [archive-repair-source-degraded](runbooks/archive-repair-source-degraded.md) |
 
 ## Status-page integration
 

@@ -221,8 +221,20 @@ func TestAssetBoundSEP41Computer_HappyPath(t *testing.T) {
 	if snap.TotalSupply.Int64() != 1_000 {
 		t.Errorf("TotalSupply=%s want 1000", snap.TotalSupply)
 	}
-	if snap.Basis != BasisAdminExclusion {
-		t.Errorf("Basis=%s want %s", snap.Basis, BasisAdminExclusion)
+	// C1-041 (audit-2026-07-23): this assertion used to expect
+	// BasisAdminExclusion, i.e. it pinned the defect. The reader
+	// hardcodes AdminBalance=0 and Policy{} carries no locked-set, so
+	// circulating == total and NOTHING was excluded — stamping
+	// "admin_exclusion" told every consumer the issuer's own holdings
+	// had been netted out of circulating supply when they had not.
+	// BasisSEP41TotalOnly is the honest reading, mirroring
+	// BasisXLMTotalOnly (CS-010).
+	if snap.Basis != BasisSEP41TotalOnly {
+		t.Errorf("Basis=%s want %s", snap.Basis, BasisSEP41TotalOnly)
+	}
+	if snap.CirculatingSupply.Cmp(snap.TotalSupply) != 0 {
+		t.Errorf("circulating=%s total=%s — nothing should have been excluded",
+			snap.CirculatingSupply, snap.TotalSupply)
 	}
 }
 

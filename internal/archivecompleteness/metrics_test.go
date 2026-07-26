@@ -129,21 +129,58 @@ func TestPopulateFromReport(t *testing.T) {
 }
 
 // TestPopulateFromFillResult — repair-attempts and -failures get
-// populated from a FillResult.
+// populated from a FillResult under REAL source names.
+//
+// C4-037 (audit-2026-07-23): this test previously asserted that
+// failures land under the synthetic `multi-source-exhausted` label
+// while attempts use real source names — i.e. it pinned the defect.
+// The two label sets can never intersect, so
+// `archive-completeness.yml`'s
+// `sum by (source)(failures) / sum by (source)(attempts)` alert had
+// a permanently-zero numerator for every real source. The assertions
+// below are the corrected contract: one attempt per try, one failure
+// per failed try, both keyed by the source that was actually tried.
 func TestPopulateFromFillResult(t *testing.T) {
 	res := archivecompleteness.FillResult{
 		Filled:           5,
 		PerSourceSuccess: map[string]int{"sdf-core-live-001": 4, "lobstr-v1": 1},
+		PerSourceAttempt: map[string]int{"sdf-core-live-001": 4, "lobstr-v1": 3, "publicnode-bootes": 2},
+		PerSourceFailure: map[string]int{"lobstr-v1": 2, "publicnode-bootes": 2},
 		Failed:           []archivecompleteness.FillFailure{{Seq: 63, Reason: "exhausted"}},
 	}
 	snap := archivecompleteness.NewMetricsSnapshot()
 	snap.PopulateFromFillResult(res)
 
-	if snap.RepairAttempts["sdf-core-live-001"] != 4 {
-		t.Errorf("sdf-001 attempts = %d, want 4", snap.RepairAttempts["sdf-core-live-001"])
+	wantAttempts := map[string]int{
+		"sdf-core-live-001": 4,
+		"lobstr-v1":         3,
+		"publicnode-bootes": 2,
 	}
-	if snap.RepairFailures["multi-source-exhausted"] != 1 {
-		t.Errorf("multi-source-exhausted failures = %d, want 1", snap.RepairFailures["multi-source-exhausted"])
+	for source, want := range wantAttempts {
+		if got := snap.RepairAttempts[source]; got != want {
+			t.Errorf("RepairAttempts[%q] = %d, want %d", source, got, want)
+		}
+	}
+	wantFailures := map[string]int{
+		"lobstr-v1":         2,
+		"publicnode-bootes": 2,
+	}
+	for source, want := range wantFailures {
+		if got := snap.RepairFailures[source]; got != want {
+			t.Errorf("RepairFailures[%q] = %d, want %d", source, got, want)
+		}
+	}
+	// The synthetic label must be gone entirely — an alert grouping
+	// `by (source)` would otherwise carry a phantom series that
+	// matches no attempt denominator.
+	if _, present := snap.RepairFailures["multi-source-exhausted"]; present {
+		t.Errorf("synthetic 'multi-source-exhausted' failure label still emitted: %v", snap.RepairFailures)
+	}
+	// Every failure label must have an attempt label to divide by.
+	for source := range snap.RepairFailures {
+		if snap.RepairAttempts[source] == 0 {
+			t.Errorf("failure label %q has no attempts denominator — by(source) ratio is unfireable", source)
+		}
 	}
 }
 

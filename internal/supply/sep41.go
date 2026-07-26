@@ -142,8 +142,10 @@ var ErrNegativeTotalMissingBaseline = errors.New("supply: SEP-41 total negative 
 //     locked-set extends that.
 //
 // Basis is BasisOverride when MaxSupplyOverrides supplied a value
-// OR the per-asset locked-set is non-empty; BasisAdminExclusion
-// otherwise.
+// OR the per-asset locked-set is non-empty; otherwise
+// BasisAdminExclusion when a non-zero AdminBalance was subtracted,
+// and BasisSEP41TotalOnly when nothing was excluded at all (C1-041 —
+// the wire must not claim an exclusion that didn't happen).
 func (c *SEP41Computer) Compute(ctx context.Context, asset canonical.Asset, ledger uint32, observedAt time.Time) (Supply, error) {
 	if asset.Type != canonical.AssetSoroban {
 		return Supply{}, fmt.Errorf("%w: got type %q", ErrNotSoroban, asset.Type)
@@ -213,6 +215,23 @@ func (c *SEP41Computer) Compute(ctx context.Context, asset canonical.Asset, ledg
 
 	if !locked.IsEmpty() && basis == BasisAdminExclusion {
 		basis = BasisOverride
+	}
+
+	// C1-041 (audit-2026-07-23), following the CS-010 precedent in
+	// xlm.go: only claim an admin exclusion when one actually
+	// happened. Reaching here with BasisAdminExclusion means no
+	// max_supply override and an empty locked-set, so the ONLY thing
+	// that could have been subtracted is AdminBalance — and
+	// [StorageSEP41SupplyReader] hardcodes it to zero because v1
+	// doesn't track `set_admin`. Labelling that circulating==total
+	// figure "admin_exclusion" told every consumer the issuer's own
+	// holdings had been netted out when nothing was, overstating
+	// circulating supply (and market cap) by whatever the admin
+	// holds. Emit an honest basis so the gap is self-evident on the
+	// API, exactly as xlm_total_only does for an unconfigured
+	// SDF-reserve list.
+	if basis == BasisAdminExclusion && comps.AdminBalance.Sign() == 0 {
+		basis = BasisSEP41TotalOnly
 	}
 
 	return Supply{

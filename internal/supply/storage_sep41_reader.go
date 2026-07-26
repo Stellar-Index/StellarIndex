@@ -68,6 +68,16 @@ type SEP41KindTotals struct {
 // reader; the practical effect on circulating is identical
 // (locked-set sums + admin balance both subtract).
 //
+// C1-041 (audit-2026-07-23): "identical effect on circulating" is
+// only true once the operator HAS configured the locked-set. With
+// no locked-set, nothing is subtracted at all — and the computer
+// used to stamp the result `basis:"admin_exclusion"` regardless,
+// claiming an exclusion that never happened. [SEP41Computer.Compute]
+// now emits [BasisSEP41TotalOnly] for that case, so the unconfigured
+// state is visible on the wire instead of masquerading as a
+// configured one. Do NOT "fix" this by returning a non-zero
+// placeholder here.
+//
 // LockedAccount/LockedContract handling: per-entity SAC-balance
 // lookups summed in Go. Per-asset LockedSet sizes are typically
 // single-digit, so the round-trip cost is bounded.
@@ -83,7 +93,9 @@ func NewStorageSEP41SupplyReader(store SEP41SupplyStore) *StorageSEP41SupplyRead
 // SEP41SupplyAt implements [SEP41SupplyReader]. Performs the
 // kind-totals query plus per-(account, contract) SAC-balance
 // lookups for the locked set. AdminBalance is returned as 0 —
-// see type-level docstring for the rationale.
+// see the type-level docstring for the rationale, and for why the
+// computer must (and does) report that as [BasisSEP41TotalOnly]
+// rather than [BasisAdminExclusion].
 func (r *StorageSEP41SupplyReader) SEP41SupplyAt(ctx context.Context, asset canonical.Asset, locked LockedSet, ledger uint32) (SEP41SupplyComponents, error) {
 	if asset.Type != canonical.AssetSoroban {
 		return SEP41SupplyComponents{}, fmt.Errorf("supply: StorageSEP41SupplyReader: %w: got type %q", ErrNotSoroban, asset.Type)
