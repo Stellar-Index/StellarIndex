@@ -26,7 +26,25 @@ The single, honest, dependency-ordered plan to take StellarIndex (Stellar explor
   - **Deploy batch is NOT blocked by the soak:** current ~2.4T free already covers migration 0115's ~1.1T re-mat; the deploy can proceed in parallel with / after the soak.
   - **Soak mechanism (objective, session-independent):** `galexie-soak-check.timer` (systemd, every 6h) → `/usr/local/sbin/galexie-soak-check.sh` probes cold availability of a rotating 18-ledger sample across the trimmed span via `rehydrate -dry-run`, logging PASS/FAIL to `/var/log/galexie-soak.log`. Baseline 2× PASS at 17:20. **Snapshot-destroy gate:** after ~2026-07-28 17:00, if `grep -c FAIL /var/log/galexie-soak.log` is 0 and there are ≥8 PASS entries → `zfs destroy data/minio@pre-trim-2026-07-26` (reclaims 1.07T) and `systemctl disable --now galexie-soak-check.timer`. Any FAIL → do NOT destroy; investigate cold tier (AWS-public drift) and consider `rehydrate` (needs the archivewriter cred fix first).
 
-### ▶ NEXT MAJOR PHASE — the consolidated deploy batch (ready; not yet started)
+### ⛔ DEPLOY BLOCKED on the human-approval gate (2026-07-26 ~17:45) — `[OP]` action needed
+- **v0.21.0 release is cut, signed, and ready. r1 is UNTOUCHED** (deploy refused at the very first step — schema_migrations still 114, ops binary unchanged, all services active, lag 7s). Nothing partially applied.
+- **Why it stopped:** `deploy.yml`'s first step asserts the `r1` GitHub environment has a `required_reviewers` protection rule (the deploy-approval-gate this campaign landed, audit-2026-07-23). It's MISSING, so the deploy fails closed. **This is the safety control working — not a bug.** It CANNOT be set from any file in the repo, and I deliberately did NOT bypass it (self-configuring + self-approving, or manual SSH deploy, would defeat the control and skip release-signing + the C6-107 backup gate + atomic install).
+- **`[OP]` to unblock (one-time):** GitHub → repo Settings → Environments → `r1` → Deployment protection rules → add **Required reviewers** (yourself/a team). Then re-run: `gh workflow run deploy.yml -f region=r1 -f version=v0.21.0 -f binaries="stellarindex-indexer,stellarindex-aggregator,stellarindex-api,stellarindex-ops,stellarindex-migrate,stellarindex-sla-probe"` and **approve the run** when GitHub prompts. (If the default token can't read the protection config, also set a read-only `DEPLOY_PROTECTION_TOKEN` PAT secret.)
+- Backup gate will PASS (15h-old full backup). Migration 0115 is fast (empties the CAGGs — see re-mat note below). Everything else is staged and verified.
+
+### ▶ (superseded) DEPLOY plan — v0.21.0 → r1
+- **Release v0.21.0 cut** from HEAD (258 commits past v0.20.9 = the whole audit campaign), built + signed (sigstore), migrations bundle packed. **`deploy.yml` running** (region=r1, all 6 binaries, id 30208398516, monitored). deploy.yml needs NO vault secrets (uses deploy-binary playbook, not archival-node config render). Backup gate (my C6-107 fix) PASSED — 15h-old full backup is the recovery point.
+- **⚠️ Migration 0115 is FAST but EMPTIES the OHLC/TWAP CAGGs.** It DROPs + recreates prices_1m/15m/1h/4h/1d/1w/1mo + twap_1h/1d **WITH NO DATA** (adds the usd_volume≥0.01 dust floor on extremes). The migration itself is quick — but until re-materialized, those 9 CAGGs are EMPTY, so /v1/ohlc, /v1/chart, /v1/twap serve nothing. Acceptable (no production traffic). **REQUIRED post-deploy re-mat** (the "1.1T re-mat", hours, run + monitor AFTER deploy verifies), on r1 as postgres:
+  ```
+  CALL refresh_continuous_aggregate('prices_1m',  now()-INTERVAL '7 days', now());
+  CALL refresh_continuous_aggregate('prices_15m', now()-INTERVAL '30 days', now());
+  CALL refresh_continuous_aggregate('prices_1h',  NULL, now());  -- and 4h,1d,1w,1mo
+  CALL refresh_continuous_aggregate('twap_1h', NULL, now());     -- and twap_1d
+  ```
+  Then verify /v1/ohlc + /v1/chart serve again. (0116 already applied direct → migrate up no-ops it; 0117–0122 additive, panel-verified.)
+- **Post-deploy verify:** schema_migrations advanced (114→122), 6 binaries fresh (was dev-unknown), services active, CH tip advancing, /v1/* serving. THEN the re-mat above.
+
+### ▶ REMAINING after this deploy
 Trim is done; this is the path to production. Approach it like the trim — staged, with gates, not rushed. r1 currently runs a **dev (unknown) ops binary** (replaced during the galexie/trim work; the 2026-07-19 v0.17.0 was superseded locally). Ordered steps:
 1. **Cut a signed release from current main HEAD** (has ALL audit remediation + migrations 0117–0122) and deploy all 6 binaries via `deploy.yml` (region=r1). Migrations apply before binary swap: **0115** (OHLC extremes notional floor — the heavy ~1.1T re-mat, do in a low-write window), **0116** already applied directly (schema_migrations stays 114 by design — 0116 is IF NOT EXISTS), **0117–0122** ride along (additive, old-binary-safe, panel-verified). Verify: migrations applied, all 6 binaries fresh, services active, CH tip advancing, `/v1/*` serving.
 2. **ansible apply** (chains/triangulation, **archivewriter cred fix** ← unblocks rehydrate rollback, cipher ack, cold-tier render, z=5.0 activation). Needs the 2 vault secrets `[OP]`.
