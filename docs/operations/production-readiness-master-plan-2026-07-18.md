@@ -26,7 +26,22 @@ The single, honest, dependency-ordered plan to take StellarIndex (Stellar explor
   - **Deploy batch is NOT blocked by the soak:** current ~2.4T free already covers migration 0115's ~1.1T re-mat; the deploy can proceed in parallel with / after the soak.
   - **Soak mechanism (objective, session-independent):** `galexie-soak-check.timer` (systemd, every 6h) → `/usr/local/sbin/galexie-soak-check.sh` probes cold availability of a rotating 18-ledger sample across the trimmed span via `rehydrate -dry-run`, logging PASS/FAIL to `/var/log/galexie-soak.log`. Baseline 2× PASS at 17:20. **Snapshot-destroy gate:** after ~2026-07-28 17:00, if `grep -c FAIL /var/log/galexie-soak.log` is 0 and there are ≥8 PASS entries → `zfs destroy data/minio@pre-trim-2026-07-26` (reclaims 1.07T) and `systemctl disable --now galexie-soak-check.timer`. Any FAIL → do NOT destroy; investigate cold tier (AWS-public drift) and consider `rehydrate` (needs the archivewriter cred fix first).
 
-### ▶ DEPLOY RE-TRIGGERED (2026-07-26 ~17:55) — approval gate relaxed pre-production
+### ▶ DEPLOY — migrations DONE (schema 122), binaries rolling (2026-07-26 ~18:00)
+- **Two gate bugs fixed en route, both caught r1-untouched:** (1) approval gate → relaxed via `DEPLOY_APPROVAL_RELAXED=true`; (2) C6-107 backup gate used `set -o pipefail` under ansible's `/bin/sh` (dash) → fixed with `executable: /bin/bash` (commit `7609dce4`).
+- **Migration incident + recovery (RESOLVED):** the 3rd deploy passed both gates, applied **0115** (OHLC/TWAP CAGGs recreated WITH NO DATA — history needs the re-mat below), then **0116 failed** `must be owner of table completeness_target_floors (42501)` → left schema **dirty at 116**. Cause: 0116 was applied out-of-band earlier as `postgres` (the "schema_migrations=114 by design" choice), so its `CREATE TABLE IF NOT EXISTS` no-op'd but the app user `stellarindex` couldn't re-run the `COMMENT ON` (not owner). The table + comments already existed, so 0116's effect was fully present. **Recovery (manual, on r1):** `ALTER TABLE completeness_target_floors OWNER TO stellarindex` (fixed the ownership landmine) → `stellarindex-migrate force 116` (clean, its effects exist) → `stellarindex-migrate up` → **schema 122, dirty=false**, 0117–0122 applied (they create fresh tables owned by stellarindex, no ownership issue). Lesson logged to audit-suite IMPROVEMENTS (verify a fix through its real wrapper; out-of-band applies as a different owner are a landmine for later COMMENT/ALTER).
+- **Binaries rolling now** (deploy id 30211559111, `migrations_skip=true` since migrations are already applied). Was running the dev build; v0.21.0 replaces it. Verify after: 6 binaries fresh, services active, CH tip advancing, /v1/* serving.
+- **⚠️ STILL REQUIRED post-binary: 0115 CAGG re-mat** (the OHLC/chart/TWAP history is empty until refreshed — policies only filled recent buckets). Run on r1 as postgres, monitored (hours):
+  ```
+  CALL refresh_continuous_aggregate('prices_1m',  now()-INTERVAL '7 days', now());
+  CALL refresh_continuous_aggregate('prices_15m', now()-INTERVAL '30 days', now());
+  CALL refresh_continuous_aggregate('prices_1h',  NULL, now());  CALL refresh_continuous_aggregate('prices_4h', NULL, now());
+  CALL refresh_continuous_aggregate('prices_1d',  NULL, now());  CALL refresh_continuous_aggregate('prices_1w', NULL, now());
+  CALL refresh_continuous_aggregate('prices_1mo', NULL, now());
+  CALL refresh_continuous_aggregate('twap_1h', NULL, now());     CALL refresh_continuous_aggregate('twap_1d', NULL, now());
+  ```
+  Then verify /v1/ohlc + /v1/chart serve history again.
+
+### (history) ▶ DEPLOY RE-TRIGGERED (2026-07-26 ~17:55) — approval gate relaxed pre-production
 - **Gate relaxed (operator-directed):** the deploy-approval-gate is now a no-op while the repo variable `DEPLOY_APPROVAL_RELAXED=true` (set 2026-07-26; commit `4a4e335b` made deploy.yml + deploy-protection.yml fail-closed on it — unset/fresh-clone still ENFORCES). Rationale: pre-production, no traffic, operator wants autonomous deploys; a self-approved gate is theatre. **► RE-ARM BEFORE PRODUCTION LAUNCH:** `gh variable delete DEPLOY_APPROVAL_RELAXED` (restores enforcement) AND configure the r1 environment's Required-reviewers rule. The deploy logs a loud `::warning::` every run while relaxed.
 - **deploy.yml re-running** (id 30211234823, monitored) — now clears the gate and proceeds: backup gate → migrations 0115–0122 → 6 binaries → health checks. See the 0115 CAGG-empty + required re-mat note below.
 
