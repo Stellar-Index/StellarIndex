@@ -8336,6 +8336,12 @@ export interface paths {
          *     plaintext key; effective on the next request (validator reads
          *     the per-key budget on every Lookup).
          *
+         *     Deduped by a durable CLAIM on `stripe_event_log`, not merely by
+         *     row existence: a completed delivery is duplicate-acked `200`,
+         *     and a delivery that arrives while another copy of the same
+         *     event is still being processed gets `409` so it stays in
+         *     Stripe's retry queue.
+         *
          *     Stripe-Signature header verified via HMAC-SHA256 with
          *     timestamp drift bounded to 5 minutes. Endpoint returns 503
          *     when the signing secret is unset (deployments without
@@ -8447,6 +8453,15 @@ export interface paths {
                 };
                 /** @description Stripe-Signature verification failed. */
                 401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Another delivery of this same event is currently being processed (Stripe delivers at-least-once and can deliver concurrently). Deliberately NOT a 200 duplicate-ack: the in-flight processor has not finished, and acking would remove the event from Stripe's retry queue, so a crash mid-processing would leave a paid customer unprovisioned with no further delivery. Stripe retries; by then the claim is either released, completed (→ 200 duplicate-ack) or lease-expired (→ re-processed). */
+                409: {
                     headers: {
                         [name: string]: unknown;
                     };

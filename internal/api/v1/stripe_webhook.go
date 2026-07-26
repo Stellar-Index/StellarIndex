@@ -305,6 +305,13 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 		s.logger.Error("stripe webhook: client_reference_id missing",
 			"event_id", ev.ID, "session_id", session.ID,
 			"email", maskEmail(session.CustomerEmail))
+		// C3-039: this attempt is over and provisioned nothing, so
+		// release the claim taken by stripeDedupeOK. Otherwise a Stripe
+		// retry inside the claim lease would be answered 409 instead of
+		// being re-evaluated, and the `error` column — which operators
+		// query for stuck events — would stay empty on a path that
+		// definitely failed.
+		s.markStripeEventFailed(r.Context(), ev.ID, "client_reference_id missing")
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/stripe-missing-identifier",
 			"client_reference_id missing", http.StatusBadRequest,
@@ -322,6 +329,7 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 			if err != nil || n < 0 {
 				s.logger.Error("stripe webhook: bad rate_limit_per_min override",
 					"event_id", ev.ID, "value", override, "err", err)
+				s.markStripeEventFailed(r.Context(), ev.ID, "bad rate_limit_per_min metadata") // C3-039: release the claim
 				writeProblem(w, r,
 					"https://api.stellarindex.io/errors/stripe-bad-metadata",
 					"Bad rate_limit_per_min metadata", http.StatusBadRequest,
@@ -333,6 +341,7 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 			s.logger.Error("stripe webhook: unknown tier + no override",
 				"event_id", ev.ID, "tier", tierName,
 				"valid_tiers", "pro|business")
+			s.markStripeEventFailed(r.Context(), ev.ID, "unknown tier and no rate_limit_per_min override") // C3-039: release the claim
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/stripe-bad-metadata",
 				"Unknown tier", http.StatusBadRequest,
@@ -348,6 +357,11 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 	if err != nil {
 		s.logger.Error("stripe webhook: list keys failed",
 			"err", err, "identifier", identifier, "event_id", ev.ID)
+		// C3-039: release the claim before asking Stripe to retry. This
+		// is the F-1322 path — a transient key-store failure on the first
+		// delivery — and it is precisely the case that must NOT be
+		// answered 409 on the retry that heals it.
+		s.markStripeEventFailed(r.Context(), ev.ID, "list keys failed: "+err.Error())
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError,
@@ -1238,7 +1252,16 @@ func (s *Server) upgradeAllKeys(
 //	Events == nil           → ok=true (legacy no-dedupe path)
 //	AppendStripeEvent: nil  → ok=true (first delivery; row claimed)
 //	  ↳ ErrAlreadyProcessed → ok=false (write 200 dup-ack)
+//	  ↳ ErrEventInFlight    → ok=false (write 409; Stripe retries)
 //	  ↳ other error         → ok=false (write 500; Stripe retries)
+//
+// The ErrEventInFlight arm (C3-039) is deliberately NOT folded into
+// the dup-ack: a concurrent delivery holds the claim but has not
+// finished, and a 200 would drop the event out of Stripe's retry queue
+// for good. If the in-flight processor then dies, a customer has paid
+// and nothing was provisioned. 409 keeps the retry alive; by the time
+// it lands the claim is either released (failure path), superseded
+// (success path → dup-ack) or lease-expired (crash path → re-claim).
 func (s *Server) stripeDedupeOK(w http.ResponseWriter, r *http.Request, ev stripeEvent) bool {
 	if s.stripe == nil || s.stripe.Events == nil {
 		return true
@@ -1262,6 +1285,18 @@ func (s *Server) stripeDedupeOK(w http.ResponseWriter, r *http.Request, ev strip
 			"duplicate": true,
 			"event_id":  ev.ID,
 		}, Flags{})
+		return false
+	}
+	if errors.Is(err, platform.ErrEventInFlight) {
+		// Not an error condition on our side — Stripe delivered the
+		// same event twice and the first copy is still being worked.
+		// Info, not Error: a page for this would be noise.
+		s.logger.Info("stripe webhook: concurrent delivery in flight; asking Stripe to retry",
+			"event_id", ev.ID, "type", ev.Type)
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/event-in-flight",
+			"Event delivery already in flight", http.StatusConflict,
+			"another delivery of this event is being processed; Stripe will retry")
 		return false
 	}
 	s.logger.Error("stripe webhook: AppendStripeEvent failed",

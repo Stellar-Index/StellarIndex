@@ -70,9 +70,16 @@ type BillingStore interface {
 	// fully cancelled).
 	GetActiveSubscriptionForAccount(ctx context.Context, accountID uuid.UUID) (Subscription, error)
 
-	// AppendStripeEvent inserts the dedupe row. Returns
-	// ErrAlreadyProcessed when the stripe_event_id is already
-	// present — handlers should skip re-processing in that case.
+	// AppendStripeEvent CLAIMS the dedupe row for processing. nil
+	// means the caller now holds the claim and must process the
+	// event. Returns ErrAlreadyProcessed when a prior delivery
+	// COMPLETED (skip and dup-ack), and ErrEventInFlight when
+	// another delivery holds a live claim (do NOT process; return a
+	// retryable response so the event stays in Stripe's retry
+	// queue). C3-039: the claim is what stops two concurrent
+	// deliveries of one paid event from both being processed —
+	// processed_at cannot, because it is only stamped once the work
+	// is done.
 	AppendStripeEvent(ctx context.Context, e StripeEvent) error
 
 	// MarkStripeEventProcessed sets processed_at to now() on a

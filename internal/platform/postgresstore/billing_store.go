@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -30,19 +31,95 @@ func NewBillingStore(s *Store) *BillingStore { return &BillingStore{s: s} }
 // Compile-time interface conformance.
 var _ platform.BillingStore = (*BillingStore)(nil)
 
-// AppendStripeEvent claims the dedupe row for processing. It returns
-// [platform.ErrAlreadyProcessed] ONLY when a prior delivery actually
-// COMPLETED (processed_at IS NOT NULL) so the webhook handler skips it.
+// stripeEventClaimLease bounds how long one delivery may hold the claim
+// on a stripe_event_log row before another delivery may take it
+// (C3-039). It has to exceed the slowest realistic run of
+// `handleStripeWebhook` — which is bounded by the request context and
+// does at most a handful of Postgres/Redis writes per key — while
+// staying far under Stripe's own retry horizon (retries continue for 3
+// days), so a processor killed mid-flight costs at most one lease
+// before the next retry re-attempts.
 //
-// F-1322: it previously returned ErrAlreadyProcessed on mere row
+// 5 minutes is ~2 orders of magnitude above the p99 handler runtime and
+// ~1 order below the first Stripe retry, which is the widest safe gap
+// available.
+const stripeEventClaimLease = 5 * time.Minute
+
+// stripeEventClaimQuery claims the dedupe row for processing in one
+// round-trip, under the advisory lock taken by [AppendStripeEvent].
+//
+// Three arms, mutually exclusive by construction:
+//
+//	ins  — no row existed: insert it, claimed.
+//	upd  — a row existed with no LIVE claim (never claimed, released by
+//	       a failed/dead-lettered attempt, or a lease that expired
+//	       because its processor died): re-claim it. F-1322's
+//	       reprocessable case.
+//	obs  — a row existed that neither arm touched: it is either
+//	       finished (processed_at IS NOT NULL) or claimed by a live
+//	       delivery. `processed_at` tells the caller which.
+//
+// The `NOT EXISTS (SELECT 1 FROM ins)` guard on `upd` keeps the two
+// write arms disjoint; `obs` fires only when neither wrote.
+const stripeEventClaimQuery = `
+	WITH ins AS (
+		INSERT INTO stripe_event_log
+		    (stripe_event_id, type, received_at, payload, claimed_at)
+		VALUES ($1, $2, COALESCE(NULLIF($3, '0001-01-01 00:00:00+00'::timestamptz), now()), $4, now())
+		ON CONFLICT (stripe_event_id) DO NOTHING
+		RETURNING processed_at, TRUE AS claimed
+	), upd AS (
+		UPDATE stripe_event_log
+		   SET claimed_at = now()
+		 WHERE stripe_event_id = $1
+		   AND processed_at IS NULL
+		   AND (claimed_at IS NULL OR claimed_at < now() - make_interval(secs => $5))
+		   AND NOT EXISTS (SELECT 1 FROM ins)
+		RETURNING processed_at, TRUE AS claimed
+	)
+	SELECT processed_at, claimed FROM ins
+	UNION ALL
+	SELECT processed_at, claimed FROM upd
+	UNION ALL
+	SELECT processed_at, FALSE AS claimed
+	  FROM stripe_event_log
+	 WHERE stripe_event_id = $1
+	   AND NOT EXISTS (SELECT 1 FROM ins)
+	   AND NOT EXISTS (SELECT 1 FROM upd)
+`
+
+// AppendStripeEvent claims the dedupe row for processing. It returns:
+//
+//	nil                            — the caller now HOLDS the claim and
+//	                                 must process the event.
+//	[platform.ErrAlreadyProcessed] — a prior delivery COMPLETED
+//	                                 (processed_at IS NOT NULL); skip.
+//	[platform.ErrEventInFlight]    — another delivery holds a live
+//	                                 claim; the caller must NOT process
+//	                                 and must ask Stripe to retry.
+//
+// F-1322: it originally returned ErrAlreadyProcessed on mere row
 // EXISTENCE (any unique violation). A transient failure on the first
 // delivery (e.g. a Redis blip in the key-upgrade step) left the row
 // inserted with processed_at NULL; every Stripe retry then hit the
 // unique violation, was dup-acked 200, and the upgrade work was never
-// re-run — a paid customer was silently never upgraded. A row with
-// processed_at NULL is now treated as reprocessable: a new row inserts
-// cleanly, an existing-but-unfinished row returns nil so the handler
-// re-attempts, and only a finished row short-circuits.
+// re-run — a paid customer was silently never upgraded.
+//
+// C3-039 (audit-2026-07-23): the F-1322 fix made an unfinished row
+// reprocessable, which removed the only thing that arbitrated between
+// two live deliveries. processed_at is stamped at the END of the
+// handler's work, so during the work itself both a fresh insert and an
+// existing-unfinished read returned nil and BOTH callers processed the
+// same paid event. The claim (migration 0121) is the missing middle
+// state; the advisory lock serialises the claim itself, on the same
+// `hashtext('<domain>:' || key)` pattern the API-key, webhook and
+// price-alert stores already use for their atomic gates.
+//
+// The lock is xact-scoped, so it covers the CLAIM only, not the
+// handler's subsequent work — which is exactly right: holding a
+// database lock across an HTTP handler's full body would convert a slow
+// upstream into connection-pool exhaustion. The durable claim is what
+// spans the work.
 func (b *BillingStore) AppendStripeEvent(ctx context.Context, e platform.StripeEvent) error {
 	if e.StripeEventID == "" {
 		return errors.New("postgresstore: AppendStripeEvent: StripeEventID is empty")
@@ -53,39 +130,48 @@ func (b *BillingStore) AppendStripeEvent(ctx context.Context, e platform.StripeE
 		// schema for events we don't archive the body of.
 		payload = []byte(`{}`)
 	}
-	// Insert-or-observe in one round-trip: the CTE inserts when absent
-	// (returning processed_at = NULL, inserted = true) and otherwise the
-	// UNION arm reads the existing row's processed_at. We then decide
-	// reprocessable vs done in Go.
-	const q = `
-		WITH ins AS (
-			INSERT INTO stripe_event_log
-			    (stripe_event_id, type, received_at, payload)
-			VALUES ($1, $2, COALESCE(NULLIF($3, '0001-01-01 00:00:00+00'::timestamptz), now()), $4)
-			ON CONFLICT (stripe_event_id) DO NOTHING
-			RETURNING processed_at, TRUE AS inserted
-		)
-		SELECT processed_at, inserted FROM ins
-		UNION ALL
-		SELECT processed_at, FALSE AS inserted
-		  FROM stripe_event_log
-		 WHERE stripe_event_id = $1
-		   AND NOT EXISTS (SELECT 1 FROM ins)
-	`
+
+	tx, err := b.s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("postgresstore: AppendStripeEvent %s: begin tx: %w", e.StripeEventID, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Serialise concurrent claims of the SAME event id. Without it the
+	// loser of an `ON CONFLICT DO NOTHING` race reads its snapshot from
+	// before the winner committed and sees no row at all. The keyspace
+	// is prefixed so it cannot collide with 'apikey:' / 'webhook:' /
+	// 'pricealert:'.
+	if _, err := tx.ExecContext(ctx,
+		`SELECT pg_advisory_xact_lock(hashtext('stripe_event:' || $1::text))`,
+		e.StripeEventID); err != nil {
+		return fmt.Errorf("postgresstore: AppendStripeEvent %s: advisory lock: %w", e.StripeEventID, err)
+	}
+
 	var processedAt sql.NullTime
-	var inserted bool
-	if err := b.s.db.QueryRowContext(ctx, q,
+	var claimed bool
+	if err := tx.QueryRowContext(ctx, stripeEventClaimQuery,
 		e.StripeEventID, e.Type, e.ReceivedAt, payload,
-	).Scan(&processedAt, &inserted); err != nil {
+		stripeEventClaimLease.Seconds(),
+	).Scan(&processedAt, &claimed); err != nil {
 		return fmt.Errorf("postgresstore: AppendStripeEvent %s: %w", e.StripeEventID, err)
 	}
-	if inserted {
-		return nil // fresh row — proceed to process
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("postgresstore: AppendStripeEvent %s: commit: %w", e.StripeEventID, err)
+	}
+
+	if claimed {
+		return nil // this caller owns the row — proceed to process
 	}
 	if processedAt.Valid {
 		return platform.ErrAlreadyProcessed // a prior delivery completed
 	}
-	return nil // existing but unfinished — reprocessable (F-1322)
+	// Unfinished, but someone else's claim is still live. Deliberately
+	// NOT dup-acked: a 200 here would take the event out of Stripe's
+	// retry queue permanently, so if the in-flight processor then died
+	// the customer would have paid for nothing. The caller turns this
+	// into a retryable response instead.
+	return platform.ErrEventInFlight
 }
 
 // MarkStripeEventProcessed sets processed_at = now() on the
@@ -138,11 +224,16 @@ func (b *BillingStore) MarkStripeEventDeadLettered(ctx context.Context, stripeEv
 	if reason == "" {
 		return errors.New("postgresstore: MarkStripeEventDeadLettered: reason is empty")
 	}
+	// claimed_at is released (C3-039): this attempt has concluded and
+	// provisioned nothing, so an operator re-sending the event from the
+	// Stripe dashboard must be able to re-claim it immediately rather
+	// than wait out this attempt's lease.
 	const q = `
 		UPDATE stripe_event_log
 		   SET dead_lettered_at   = COALESCE(dead_lettered_at, now()),
 		       dead_letter_reason = $2,
-		       error              = $2
+		       error              = $2,
+		       claimed_at         = NULL
 		 WHERE stripe_event_id = $1
 	`
 	if _, err := b.s.db.ExecContext(ctx, q, stripeEventID, string(reason)); err != nil {
@@ -160,9 +251,15 @@ func (b *BillingStore) MarkStripeEventFailed(ctx context.Context, stripeEventID,
 	if stripeEventID == "" {
 		return errors.New("postgresstore: MarkStripeEventFailed: stripeEventID is empty")
 	}
+	// claimed_at is released (C3-039) for the same reason as the
+	// dead-letter path: this attempt is over and did not finish, so the
+	// next Stripe retry must be able to claim the row without waiting
+	// out the dead attempt's lease. Without this a transient failure
+	// would re-introduce a (bounded) version of the F-1322 stall.
 	const q = `
 		UPDATE stripe_event_log
-		   SET error = $2
+		   SET error      = $2,
+		       claimed_at = NULL
 		 WHERE stripe_event_id = $1
 	`
 	if _, err := b.s.db.ExecContext(ctx, q, stripeEventID, errMsg); err != nil {
