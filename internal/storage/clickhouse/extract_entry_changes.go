@@ -1,6 +1,7 @@
 package clickhouse
 
 import (
+	"encoding/hex"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/ingest"
@@ -9,58 +10,104 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// extractEntryChanges populates ext.Changes with one row per LedgerEntryChange
-// in a transaction's meta — the substrate the account-state explorer (ADR-0038
-// Phase C) re-derives current balances/trustlines/offers/contract-data from,
-// and the ADR-0034 "re-derive the LedgerEntry supply observers from the lake"
-// promise. Closes the G12-03 known gap in ExtractLedger.
+// extractLedgerEntryChanges populates ext.Changes with one row per
+// LedgerEntryChange in the WHOLE ledger — the substrate the account-state
+// explorer (ADR-0038 Phase C) re-derives current balances/trustlines/offers/
+// contract-data from, and the ADR-0034 "re-derive the LedgerEntry supply
+// observers from the lake" promise. Closes the G12-03 known gap in
+// ExtractLedger.
 //
-// Mirrors dispatcher.walkEntryChanges EXACTLY so the lake's rows match what the
-// live LedgerEntryChangeDecoder hook sees: fee-meta + TxChangesBefore/After at
-// op_index -1, per-operation changes at their op_index. change_index is a
-// monotonic per-transaction counter (stable across re-ingest → idempotent under
-// the ReplacingMergeTree). Resilient: a change that won't marshal is skipped,
-// never fatal.
+// Mirrors dispatcher.walkLedgerEntryChanges EXACTLY so the lake's rows match
+// what the live LedgerEntryChangeDecoder hook sees — including its two
+// correctness properties (see that function's doc for the full derivation):
 //
-// entryChangeSeq is the per-LEDGER intra-ledger position, threaded across every
-// tx in the ledger (declared in ExtractLedger). Unlike change_index — a
-// per-TRANSACTION counter that repeats across a ledger's txs — this counter is
-// monotonic over the WHOLE ledger's canonical walk, so it uniquely orders every
-// change to a given key within one ledger. It is folded into
-// ledger_entries_current's ReplacingMergeTree version so the LAST intra-ledger
-// change to a key wins FINAL dedup deterministically (audit-2026-07-16 C2-4c).
-func extractEntryChanges(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, closeTime time.Time, txHash string, entryChangeSeq *uint32) {
-	var changeIdx uint32
-	emit := func(opIndex int, c xdr.LedgerEntryChange) {
-		row, ok := entryChangeRow(seq, closeTime, txHash, int32(opIndex), changeIdx, c)
-		if !ok {
-			return
+//   - Every tx is walked, FAILED TXS INCLUDED: a failed tx's fee debit is
+//     committed on chain, and only its operation changes are rolled back
+//     (C2-023/C2-040, audit-2026-07-23).
+//   - The walk is LEDGER-WIDE AND THREE-PHASE — every tx's fee changes,
+//     then every tx's apply-phase changes, then every tx's
+//     PostTxApplyFeeChanges — mirroring the SDK's canonical
+//     ingest.LedgerChangeReader state machine (feeChangesState →
+//     metaChangesState → postTxApplyState). stellar-core charges all fees
+//     before applying any transaction (C2-032), and protocol 23 moved the
+//     Soroban fee REFUND into a third ledger-wide phase applied after all
+//     transactions execute (R-A01-1; LCM V2 only, so empty pre-P23).
+//     intra_ledger_seq therefore ranks an apply-phase change above a later
+//     tx's fee change and a refund above both, which is what makes "the
+//     FINAL intra-ledger change wins FINAL dedup" mean the ledger-final
+//     balance. Ledger UPGRADE changes (the SDK's 4th state) are deliberately
+//     not walked — they are not transaction-scoped and carry no tx_hash;
+//     dispatcher.walkLedgerEntryChanges makes the identical choice.
+//
+// Change positions within a tx keep their existing shape: fee-meta +
+// TxChangesBefore/After at op_index -1, per-operation changes at their
+// op_index. change_index is a monotonic per-TRANSACTION counter (stable
+// across re-ingest → idempotent under the ReplacingMergeTree) and continues
+// across the two phases for a given tx, so a tx's fee change keeps
+// change_index 0. Resilient: a change that won't marshal is skipped, never
+// fatal.
+//
+// intra_ledger_seq is the per-LEDGER position. Unlike change_index it is
+// monotonic over the whole ledger's canonical walk, so it uniquely orders
+// every change to a given key within one ledger. It is folded into
+// ledger_entries_current's ReplacingMergeTree version so the LAST
+// intra-ledger change to a key wins FINAL dedup deterministically
+// (audit-2026-07-16 C2-4c).
+func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransaction, seq uint32, closeTime time.Time) {
+	var entryChangeSeq uint32
+	// change_index is per-transaction, so it must survive the gap between
+	// the two ledger-wide phases — one slot per tx.
+	changeIdx := make([]uint32, len(txs))
+	emitterFor := func(i int) func(int, xdr.LedgerEntryChange) {
+		txHash := hex.EncodeToString(txs[i].Result.TransactionHash[:])
+		return func(opIndex int, c xdr.LedgerEntryChange) {
+			row, ok := entryChangeRow(seq, closeTime, txHash, int32(opIndex), changeIdx[i], c)
+			if !ok {
+				return
+			}
+			row.IntraLedgerSeq = entryChangeSeq
+			ext.Changes = append(ext.Changes, row)
+			changeIdx[i]++
+			entryChangeSeq++
 		}
-		row.IntraLedgerSeq = *entryChangeSeq
-		ext.Changes = append(ext.Changes, row)
-		changeIdx++
-		*entryChangeSeq++
 	}
 
-	// Tx-level fee changes (every successful tx debits a fee) — op_index -1.
-	for i := range tx.FeeChanges {
-		emit(-1, tx.FeeChanges[i])
+	// ── Phase 1: the fee phase for every tx, in tx-set apply order.
+	// op_index -1 marks tx-level changes.
+	for i := range txs {
+		emit := emitterFor(i)
+		for j := range txs[i].FeeChanges {
+			emit(-1, txs[i].FeeChanges[j])
+		}
 	}
-	switch tx.UnsafeMeta.V {
-	case 3:
-		v3 := tx.UnsafeMeta.MustV3()
-		emitChangeSet(v3.TxChangesBefore, -1, emit)
-		for opIdx := range v3.Operations {
-			emitChangeSet(v3.Operations[opIdx].Changes, opIdx, emit)
+	// ── Phase 2: the apply phase for every tx, in the same order.
+	for i := range txs {
+		emit := emitterFor(i)
+		switch txs[i].UnsafeMeta.V {
+		case 3:
+			v3 := txs[i].UnsafeMeta.MustV3()
+			emitChangeSet(v3.TxChangesBefore, -1, emit)
+			for opIdx := range v3.Operations {
+				emitChangeSet(v3.Operations[opIdx].Changes, opIdx, emit)
+			}
+			emitChangeSet(v3.TxChangesAfter, -1, emit)
+		case 4:
+			v4 := txs[i].UnsafeMeta.MustV4()
+			emitChangeSet(v4.TxChangesBefore, -1, emit)
+			for opIdx := range v4.Operations {
+				emitChangeSet(v4.Operations[opIdx].Changes, opIdx, emit)
+			}
+			emitChangeSet(v4.TxChangesAfter, -1, emit)
 		}
-		emitChangeSet(v3.TxChangesAfter, -1, emit)
-	case 4:
-		v4 := tx.UnsafeMeta.MustV4()
-		emitChangeSet(v4.TxChangesBefore, -1, emit)
-		for opIdx := range v4.Operations {
-			emitChangeSet(v4.Operations[opIdx].Changes, opIdx, emit)
+	}
+	// ── Phase 3: the post-apply fee phase (P23 Soroban fee refunds) for
+	// every tx, in the same order. op_index -1 — a tx-level change, like the
+	// fee phase it mirrors.
+	for i := range txs {
+		emit := emitterFor(i)
+		for j := range txs[i].PostTxApplyFeeChanges {
+			emit(-1, txs[i].PostTxApplyFeeChanges[j])
 		}
-		emitChangeSet(v4.TxChangesAfter, -1, emit)
 	}
 }
 

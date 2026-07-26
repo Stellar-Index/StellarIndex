@@ -186,15 +186,33 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     -- decoding every entry's XDR.
     balance      Int64 DEFAULT 0,
     -- Position of this change within its ledger's canonical entry-change walk
-    -- (transactions in apply order; within each tx: fee-changes,
-    -- tx-changes-before, per-op changes in op_index/change_index order,
-    -- tx-changes-after) — a per-LEDGER monotonic counter, unlike change_index
-    -- which restarts per transaction. Folded into ledger_entries_current's
-    -- ReplacingMergeTree version so the LAST change to a key within one ledger
-    -- wins FINAL dedup deterministically (audit-2026-07-16 C2-4c). DEFAULT 0
-    -- (old-binary-safe + the value legacy/pre-fix rows carry until a re-derive
-    -- repopulates them); snapshot/seed backfill rows stamp 4294967295
-    -- (math.MaxUint32 — authoritative final state for their ledger).
+    -- — a per-LEDGER monotonic counter (unlike change_index, which restarts
+    -- per transaction), assigned in LEDGER-WIDE PHASE order:
+    --   phase 1  every tx's fee changes            (tx-set apply order)
+    --   phase 2  every tx's apply-phase meta       (tx-changes-before, per-op
+    --                                               changes in op_index /
+    --                                               change_index order,
+    --                                               tx-changes-after)
+    --   phase 3  every tx's post-apply fee changes (P23 Soroban refunds)
+    -- This mirrors the SDK's canonical ingest.LedgerChangeReader state machine
+    -- (feeChangesState → metaChangesState → postTxApplyState) and
+    -- dispatcher.walkLedgerEntryChanges. This comment previously described a
+    -- PER-TRANSACTION order ("within each tx: fee-changes, …"), which ranked
+    -- tx1's apply-phase change BELOW tx2's fee change and so let FINAL keep a
+    -- fee-phase row as a key's ledger-final state (C2-032, audit-2026-07-23).
+    -- Folded into ledger_entries_current's ReplacingMergeTree version so the
+    -- LAST change to a key within one ledger wins FINAL dedup
+    -- deterministically (audit-2026-07-16 C2-4c). DEFAULT 0 (old-binary-safe
+    -- + the value legacy/pre-fix rows carry until a re-derive repopulates
+    -- them); snapshot/seed backfill rows stamp 4294967295 (math.MaxUint32 —
+    -- authoritative final state for their ledger).
+    --
+    -- POSITIONS ARE SCOPED TO dispatcher.EntryWalkVersion (currently 2).
+    -- The C2-032 fix RENUMBERED every ledger, so a legacy row can carry a
+    -- HIGHER version than the corrected row for the same key — and a lower
+    -- RMT version never displaces a higher one. Re-deriving a range therefore
+    -- requires DROPPING the partition first, not just re-inserting. See
+    -- migrations/0120 and docs/operations/runbooks/entry-walk-renumbering.md.
     intra_ledger_seq UInt32 DEFAULT 0,
     ingested_at  DateTime DEFAULT now(),
     INDEX idx_lec_account_id account_id TYPE bloom_filter(0.01) GRANULARITY 1,

@@ -132,30 +132,34 @@ func CensusLedger(lcm xdr.LedgerCloseMeta, passphrase string) (Census, error) { 
 }
 
 // captureEligible reports whether a contract event is one that the
-// raw-event sink would land in soroban_events. Mirrors the
-// eligibility gate in contractEventToEventsEvent + sorobanevents.Capture
-// (Type=Contract, ContractId set, body version 0, at least one topic)
-// WITHOUT decoding the body — so the census count equals the
-// soroban_events row count for the ledger.
+// raw-event sink would land in soroban_events.
+//
+// It runs the ACTUAL conversion the live path runs
+// ([contractEventToEventsEvent]) and asks whether it produced an event,
+// rather than re-stating its gate. That is the difference between
+// agreeing by construction and two functions agreeing to stay in step —
+// the same reason claimAtomCount delegates to sdexclaim.IsRealTrade.
+//
+// C2-054 (audit-2026-07-23): the previous version re-stated only the
+// cheap half of the gate (Type=Contract, ContractId set, body version 0,
+// ≥1 topic) and explicitly skipped the ScVal MarshalBinary round-trip and
+// the contract-id strkey encode, while its docstring claimed "the census
+// count equals the soroban_events row count for the ledger". An event
+// that fails either of those is dropped by the sink and WAS counted by
+// the census, so the reconcile showed a phantom projector shortfall.
+//
+// Still NOT modelled (and deliberately so — they are per-TRANSACTION, not
+// per-event, so they cannot make one event of a tx diverge from another):
+// sorobanevents.Capture's tx-hash-hex and ledger-close-time parses.
 func captureEligible(ce xdr.ContractEvent) bool {
-	if ce.Type != xdr.ContractEventTypeContract {
+	ev := contractEventToEventsEvent(ce, 0, "", 0, 0, "", nil)
+	if ev == nil {
 		return false
 	}
-	if ce.ContractId == nil {
-		return false
-	}
-	if ce.Body.V != 0 {
-		// V != 0 is an unaudited protocol bump; contractEventToEventsEvent
-		// drops it, so it never lands in soroban_events either.
-		return false
-	}
-	v0, ok := ce.Body.GetV0()
-	if !ok {
-		return false
-	}
-	// sorobanevents.Capture skips zero-topic events (NOT NULL
-	// topic_0_xdr); every real contract event has ≥1 topic anyway.
-	return len(v0.Topics) > 0
+	// The one per-event gate that lives in sorobanevents.Capture rather
+	// than in the conversion: a zero-topic event is skipped because
+	// topic_0_xdr is NOT NULL. Every real contract event has ≥1 topic.
+	return len(ev.Topic) > 0
 }
 
 // claimAtomCount returns the number of ClaimAtoms an operation

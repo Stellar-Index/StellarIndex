@@ -162,10 +162,31 @@ replay an LCM range. The dispatcher's existing range-walker
 delivers `LedgerEntryChange` rows in chronological order; the
 observer's `Decode` writes one row per matched change.
 
-The `Insert` path is `ON CONFLICT (account_id, ledger) DO NOTHING`
-— a backfill that re-walks an already-observed range is idempotent
-(the observation for a given (account, ledger) is deterministic
-from XDR; re-deriving it would write the same value).
+The `Insert` path is `ON CONFLICT (account_id, ledger, observed_at)
+DO UPDATE SET … WHERE account_observations.intra_ledger_seq <=
+EXCLUDED.intra_ledger_seq` (see
+`internal/storage/timescale/account_observations.go`). A backfill that
+re-walks an already-observed range is idempotent — the observation for a
+given (account, ledger) is deterministic from XDR, so re-deriving it
+writes the same value.
+
+Two corrections to what this ADR originally ratified (C4-098,
+audit-2026-07-23 — the text said `ON CONFLICT (account_id, ledger) DO
+NOTHING`, differing in BOTH the conflict target and the action):
+
+- **The conflict target carries `observed_at`.** Timescale requires the
+  partition column in the primary key, so identity is
+  `(account_id, ledger, observed_at)` — `observed_at` is the ledger
+  close time, not the write time, so it is a function of `ledger` and
+  adds no new identity.
+- **The action is `DO UPDATE`, guarded by `intra_ledger_seq`, not
+  `DO NOTHING`.** An account is typically touched several times inside
+  one ledger (fee phase, then one or more operations), and it is the
+  LAST intra-ledger change that is the ledger-final state.
+  `DO NOTHING` would have frozen the FIRST write — usually the fee-phase
+  balance — as the published one. The `<=` (rather than `<`) keeps a
+  deterministic re-backfill, which re-assigns the same position per
+  change, idempotent-corrective rather than a no-op.
 
 ### Reader contracts
 

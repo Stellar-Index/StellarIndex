@@ -176,6 +176,12 @@ Capture for the postmortem:
 - [`supply-cross-check-divergence.md`](supply-cross-check-divergence.md)
   — the INTERNAL consistency sibling (classic vs SAC), not this
   external cross-check.
+- [`entry-walk-renumbering.md`](entry-walk-renumbering.md) — the
+  deploy-time procedure after a `dispatcher.EntryWalkVersion` bump. A
+  skipped repair leaves stale balance observations that this alert will
+  eventually surface as a widening divergence, and a plain re-derive will
+  NOT fix them (the `intra_ledger_seq` guard silently drops the
+  correction).
 - `internal/divergence/supply.go` — the worker; the reference clients
   + threshold live here.
 

@@ -61,13 +61,12 @@ func ExtractLedger(lcm xdr.LedgerCloseMeta, passphrase string) (LedgerExtract, e
 	}
 	defer func() { _ = reader.Close() }()
 
-	// Per-ledger monotonic entry-change position, threaded into every
-	// LedgerEntryChangeRow.IntraLedgerSeq so ledger_entries_current's
-	// ReplacingMergeTree can break same-ledger ties on the LAST change
-	// (audit-2026-07-16 C2-4c). Declared OUTSIDE the tx loop so it accumulates
-	// across all txs in the ledger in apply order — mirrors
-	// dispatcher.ProcessLedger's entryChangeSeq (0111).
-	var entryChangeSeq uint32
+	// Read the ledger's transactions up front: the entry-change walk is
+	// ledger-wide and two-phase (all fee changes, then all apply-phase
+	// changes), mirroring stellar-core's commit order and
+	// dispatcher.walkLedgerEntryChanges exactly (C2-032, audit-2026-07-23).
+	// LedgerTransaction holds slices into lcm, so retaining them is cheap.
+	txs := make([]ingest.LedgerTransaction, 0, 64)
 	for {
 		tx, rerr := reader.Read()
 		if errors.Is(rerr, io.EOF) {
@@ -80,18 +79,22 @@ func ExtractLedger(lcm xdr.LedgerCloseMeta, passphrase string) (LedgerExtract, e
 			ext.TxReadErrors++
 			continue
 		}
-		extractTx(&ext, tx, seq, closeTime, &entryChangeSeq)
+		txs = append(txs, tx)
 	}
+	for i := range txs {
+		extractTx(&ext, txs[i], seq, closeTime)
+	}
+	// ADR-0038 Phase C substrate (closes G12-03).
+	extractLedgerEntryChanges(&ext, txs, seq, closeTime)
 
 	return ext, nil
 }
 
 // extractTx appends one transaction's rows (the tx, its ops + results, its
-// contract events) to ext and updates the per-ledger counts. entryChangeSeq is
-// the per-LEDGER intra-ledger position counter, threaded through so
-// consecutive txs' entry-changes keep a single monotonic order across the whole
-// ledger (audit-2026-07-16 C2-4c) rather than restarting per tx.
-func extractTx(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, closeTime time.Time, entryChangeSeq *uint32) {
+// contract events) to ext and updates the per-ledger counts. The tx's
+// LedgerEntryChanges are NOT appended here — they are walked ledger-wide by
+// extractLedgerEntryChanges, which needs every tx before it can emit anything.
+func extractTx(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, closeTime time.Time) {
 	txIndex := tx.Index - 1 // Index is 1-based; store 0-based
 	txHash := hex.EncodeToString(tx.Result.TransactionHash[:])
 	txSource, _ := tx.Account()
@@ -115,7 +118,6 @@ func extractTx(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, clos
 
 	extractOps(ext, tx, seq, closeTime, txHash, txSource, txIndex, tx.Result.Successful())
 	extractEvents(ext, tx, seq, closeTime, txHash, opArgsByIndex(tx.Envelope.Operations()), tx.Result.Successful())
-	extractEntryChanges(ext, tx, seq, closeTime, txHash, entryChangeSeq) // ADR-0038 Phase C substrate (closes G12-03)
 }
 
 // opArgsByIndex returns the base64-SCVal InvokeContract args per operation

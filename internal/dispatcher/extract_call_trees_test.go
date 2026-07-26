@@ -231,3 +231,88 @@ func TestExtractCallTrees_nonInvokeContractOpNilSlot(t *testing.T) {
 		t.Errorf("invoke op slot len = %d, want 1", len(got[1]))
 	}
 }
+
+// TestExtractCallTrees_TopLevelNeedsNoAuthIsStillTheRoot pins C2-060
+// (audit-2026-07-23).
+//
+// A SorobanAuthorizationEntry's RootInvocation is the root of the subtree
+// that requires authorization — NOT necessarily the op's top-level call.
+// The ordinary aggregator shape has a top-level entry point that needs no
+// auth of its own while the token transfer it triggers does. The extractor
+// only fell back to xdr.HostFunction.MustInvokeContract when the auth array
+// was EMPTY, so in that shape:
+//
+//   - the real top-level call was never emitted at all, and
+//   - the NESTED auth root was emitted carrying CallPath == [], i.e.
+//     labelled as the call-tree root.
+//
+// Every downstream consumer of CallPath (routed_via, RouterSwap.CallPath,
+// the completeness re-derive through ExtractContractCallTree) therefore
+// recorded a false call-tree root.
+func TestExtractCallTrees_TopLevelNeedsNoAuthIsStillTheRoot(t *testing.T) {
+	// Top level: entrypoint(0xC1).route — needs no auth.
+	// Auth entry root: token(0xC2).transfer — a NESTED call.
+	authRoot := authNodeContract(t, 0xC2, "transfer")
+	op := opInvokeNoAuth(t, 0xC1, "route")
+	op.Body.InvokeHostFunctionOp.Auth = []xdr.SorobanAuthorizationEntry{
+		{RootInvocation: authRoot},
+	}
+
+	calls := extractInvokeContractCallTrees([]xdr.Operation{op})[0]
+	if len(calls) != 2 {
+		t.Fatalf("got %d calls, want 2 (the top-level `route` PLUS the authorized `transfer`); calls=%+v",
+			len(calls), calls)
+	}
+
+	root, nested := calls[0], calls[1]
+	if root.FunctionName != "route" {
+		t.Errorf("calls[0].FunctionName = %q, want %q — the op's top-level call must be emitted, "+
+			"and must be first", root.FunctionName, "route")
+	}
+	if len(root.CallPath) != 0 {
+		t.Errorf("top-level call CallPath = %v, want [] (it IS the root)", root.CallPath)
+	}
+	if nested.FunctionName != "transfer" {
+		t.Fatalf("calls[1].FunctionName = %q, want %q", nested.FunctionName, "transfer")
+	}
+	if len(nested.CallPath) == 0 {
+		t.Errorf("the nested authorized call carries CallPath [] — it is being labelled as the "+
+			"call-tree root; want a non-empty path (got %v)", nested.CallPath)
+	}
+	// The nested call's contract chain must start at the top-level contract.
+	if len(nested.CallPathContracts) != 2 ||
+		nested.CallPathContracts[0] != root.ContractID ||
+		nested.CallPathContracts[1] != nested.ContractID {
+		t.Errorf("nested CallPathContracts = %v, want [%s %s] — the chain must be rooted at the "+
+			"top-level contract", nested.CallPathContracts, root.ContractID, nested.ContractID)
+	}
+}
+
+// TestExtractCallTrees_TopLevelIsAuthRootNotDuplicated is the other half
+// of the C2-060 decision: when the auth root IS the top-level call (the
+// common single-entry shape), it must be emitted exactly ONCE. A
+// duplicate here becomes a duplicate decode and therefore a duplicate
+// trade row.
+func TestExtractCallTrees_TopLevelIsAuthRootNotDuplicated(t *testing.T) {
+	pair := authNodeContract(t, 0xEE, "swap")
+	root := authNodeContract(t, 0xCC, "yeet", pair)
+	op := opInvokeNoAuth(t, 0xCC, "yeet")
+	op.Body.InvokeHostFunctionOp.Auth = []xdr.SorobanAuthorizationEntry{{RootInvocation: root}}
+
+	calls := extractInvokeContractCallTrees([]xdr.Operation{op})[0]
+	if len(calls) != 2 {
+		t.Fatalf("got %d calls, want 2 (yeet + swap, with yeet emitted once); calls=%+v", len(calls), calls)
+	}
+	seen := 0
+	for _, c := range calls {
+		if c.FunctionName == "yeet" {
+			seen++
+		}
+	}
+	if seen != 1 {
+		t.Errorf("top-level `yeet` emitted %d times, want 1 — a duplicate becomes a duplicate trade row", seen)
+	}
+	if len(calls[0].CallPath) != 0 {
+		t.Errorf("calls[0].CallPath = %v, want [] — the auth root IS the top-level call here", calls[0].CallPath)
+	}
+}

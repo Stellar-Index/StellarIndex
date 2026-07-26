@@ -169,8 +169,9 @@ func TestExtractEntryChanges_IntraLedgerSeqOrdersLastChangeWins(t *testing.T) {
 	}
 	otherChange := xdr.LedgerEntryChange{Type: xdr.LedgerEntryChangeTypeLedgerEntryCreated, Created: &other}
 
-	mkTx := func(changes ...xdr.LedgerEntryChange) ingest.LedgerTransaction {
+	mkTx := func(marker byte, changes ...xdr.LedgerEntryChange) ingest.LedgerTransaction {
 		return ingest.LedgerTransaction{
+			Result: xdr.TransactionResultPair{TransactionHash: xdr.Hash{marker}},
 			UnsafeMeta: xdr.TransactionMeta{
 				V:  3,
 				V3: &xdr.TransactionMetaV3{Operations: []xdr.OperationMeta{{Changes: changes}}},
@@ -179,12 +180,14 @@ func TestExtractEntryChanges_IntraLedgerSeqOrdersLastChangeWins(t *testing.T) {
 	}
 
 	var ext LedgerExtract
-	var entryChangeSeq uint32 // one per-ledger counter, threaded across both txs
 	now := time.Unix(0, 0).UTC()
 	// tx1: the same account key is updated, then removed, in one ledger.
-	extractEntryChanges(&ext, mkTx(updated, removed), 100, now, "tx1", &entryChangeSeq)
 	// tx2: an unrelated change, later in the same ledger's apply order.
-	extractEntryChanges(&ext, mkTx(otherChange), 100, now, "tx2", &entryChangeSeq)
+	// One ledger-wide walk, one per-ledger counter across both txs.
+	extractLedgerEntryChanges(&ext, []ingest.LedgerTransaction{
+		mkTx(0x01, updated, removed),
+		mkTx(0x02, otherChange),
+	}, 100, now)
 
 	if len(ext.Changes) != 3 {
 		t.Fatalf("expected 3 extracted changes, got %d", len(ext.Changes))
@@ -231,5 +234,79 @@ func TestEntryTypeName(t *testing.T) {
 		if got := entryTypeName(in); got != want {
 			t.Errorf("entryTypeName(%v) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestExtractLedgerEntryChanges_FeePhasePrecedesApplyPhase pins C2-032
+// (audit-2026-07-23) on the LAKE side, in lockstep with
+// dispatcher.TestProcessLedger_FeePhasePrecedesApplyPhase.
+//
+// stellar-core charges the fee for EVERY transaction in the tx set before
+// applying ANY of them, so on chain every fee change precedes every
+// apply-phase change. Walking per tx (tx1 fee, tx1 apply, tx2 fee, …) gave
+// tx2's FEE-phase row a HIGHER intra_ledger_seq than tx1's APPLY-phase row
+// for the same key — and intra_ledger_seq is folded into
+// ledger_entries_current's ReplacingMergeTree version, so FINAL would keep
+// the fee-phase entry as the ledger-final state of that key.
+func TestExtractLedgerEntryChanges_FeePhasePrecedesApplyPhase(t *testing.T) {
+	acctAt := func(balance int64) xdr.LedgerEntryChange {
+		return xdr.LedgerEntryChange{
+			Type: xdr.LedgerEntryChangeTypeLedgerEntryUpdated,
+			Updated: &xdr.LedgerEntry{
+				LastModifiedLedgerSeq: 100,
+				Data: xdr.LedgerEntryData{
+					Type:    xdr.LedgerEntryTypeAccount,
+					Account: &xdr.AccountEntry{AccountId: xdr.MustAddress(ecTestG), Balance: xdr.Int64(balance)},
+				},
+			},
+		}
+	}
+	mkTx := func(marker byte, fee, apply []xdr.LedgerEntryChange) ingest.LedgerTransaction {
+		return ingest.LedgerTransaction{
+			Result:     xdr.TransactionResultPair{TransactionHash: xdr.Hash{marker}},
+			FeeChanges: xdr.LedgerEntryChanges(fee),
+			UnsafeMeta: xdr.TransactionMeta{
+				V:  3,
+				V3: &xdr.TransactionMetaV3{Operations: []xdr.OperationMeta{{Changes: apply}}},
+			},
+		}
+	}
+
+	// tx1 fee → 990, tx1 apply → 500 (the ledger-FINAL balance), tx2 fee → 980.
+	var ext LedgerExtract
+	extractLedgerEntryChanges(&ext, []ingest.LedgerTransaction{
+		mkTx(0x01, []xdr.LedgerEntryChange{acctAt(990)}, []xdr.LedgerEntryChange{acctAt(500)}),
+		mkTx(0x02, []xdr.LedgerEntryChange{acctAt(980)}, nil),
+	}, 100, time.Unix(0, 0).UTC())
+
+	if len(ext.Changes) != 3 {
+		t.Fatalf("expected 3 extracted changes, got %d", len(ext.Changes))
+	}
+	seqOf := map[uint32]uint32{} // change_index+op_index composite is awkward; key by row order
+	for i, row := range ext.Changes {
+		seqOf[uint32(i)] = row.IntraLedgerSeq
+	}
+	// Row order must be: tx1 fee, tx2 fee, tx1 apply.
+	if ext.Changes[0].OpIndex != -1 || ext.Changes[1].OpIndex != -1 || ext.Changes[2].OpIndex != 0 {
+		t.Fatalf("walk order op_index = %d,%d,%d, want -1,-1,0 (both fee phases, then the apply phase)",
+			ext.Changes[0].OpIndex, ext.Changes[1].OpIndex, ext.Changes[2].OpIndex)
+	}
+	if ext.Changes[0].TxHash == ext.Changes[1].TxHash {
+		t.Fatalf("rows 0 and 1 must be the fee changes of DIFFERENT txs, both got %q", ext.Changes[0].TxHash)
+	}
+	if ext.Changes[2].IntraLedgerSeq != 2 {
+		t.Errorf("tx1's apply-phase row has intra_ledger_seq %d, want 2 — it must outrank BOTH fee-phase rows "+
+			"or FINAL publishes a fee-phase balance as the ledger-final balance",
+			ext.Changes[2].IntraLedgerSeq)
+	}
+	// change_index is per-TRANSACTION and must survive the phase split:
+	// tx1's fee row is its change 0, tx1's apply row is its change 1.
+	if ext.Changes[0].ChangeIndex != 0 || ext.Changes[2].ChangeIndex != 1 {
+		t.Errorf("tx1 change_index = %d (fee) / %d (apply), want 0 / 1 — the per-tx counter must not restart "+
+			"between the two ledger-wide phases (re-ingest idempotency under the ReplacingMergeTree)",
+			ext.Changes[0].ChangeIndex, ext.Changes[2].ChangeIndex)
+	}
+	if ext.Changes[1].ChangeIndex != 0 {
+		t.Errorf("tx2 fee change_index = %d, want 0", ext.Changes[1].ChangeIndex)
 	}
 }

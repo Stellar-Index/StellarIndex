@@ -26,12 +26,20 @@ type ContractCall struct {
 }
 
 // ExtractContractCallTree returns every InvokeContract call reachable from a
-// single operation — the Soroban auth-tree roots (the canonical source per
-// task #48), or the top-level call as the fallback when the op carries no
-// auth array. This is byte-identical to what the live dispatcher feeds its
+// single operation: the op's TOP-LEVEL call (always, at CallPath []) plus
+// every call in the Soroban auth tree (the canonical source per task #48).
+// This is byte-identical to what the live dispatcher feeds its
 // ContractCallDecoders (see extractInvokeContractCallTrees), so a census
 // re-derived through it reconciles against the served tier by the same
 // routing logic. Returns nil for non-InvokeContract ops.
+//
+// The top-level call used to be emitted only "as the fallback when the op
+// carries no auth array" (C2-060, audit-2026-07-23). An auth entry's
+// RootInvocation is the root of the subtree that needs authorization, not
+// necessarily the op's entry point — so when the top-level call needed no
+// auth and something below it did, the nested auth root was exported with
+// CallPath [] and the real root was never exported at all. See
+// extractInvokeContractCallTrees for the re-rooting rule and its dedup.
 func ExtractContractCallTree(op xdr.Operation) []ContractCall {
 	trees := extractInvokeContractCallTrees([]xdr.Operation{op})
 	if len(trees) == 0 || trees[0] == nil {
