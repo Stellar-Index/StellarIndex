@@ -85,7 +85,7 @@ func (s *Store) CountDistinctLedgers(ctx context.Context, target GapDetectorTarg
 		return 0, fmt.Errorf("timescale: CountDistinctLedgers begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, "SET LOCAL statement_timeout = '300000'"); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL statement_timeout = '%d'", opsVerifyStatementTimeoutMS)); err != nil {
 		return 0, fmt.Errorf("timescale: CountDistinctLedgers SET: %w", err)
 	}
 	var n int64
