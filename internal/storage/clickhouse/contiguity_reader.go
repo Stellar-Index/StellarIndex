@@ -124,45 +124,104 @@ func QueryMissingLedgerSeqs(ctx context.Context, addr string, from, to uint32) (
 }
 
 // ECWindowCoverage is one window's Check-2 result: how many ledgers in
-// stellar.ledgers are tx-bearing (tx_count > 0) within [From,To], versus how
-// many of those ledger_seqs stellar.ledger_entry_changes holds at least one
+// stellar.ledgers are tx-bearing (tx_count > 0) within [From,To], and how
+// many of THOSE ledger_seqs stellar.ledger_entry_changes holds at least one
 // row for. Used for BOTH the below-ec-floor (backfill-pending) and
 // at/above-ec-floor (live-covered, hard-gated) scans — verify-contiguity
 // scopes [From,To] to one side of -ec-floor before calling
 // QueryECWindowCoverage, so a single window is never ambiguous about which
 // side of the floor it's on (see chops.ecFloorSegments).
 type ECWindowCoverage struct {
-	From, To             uint32
-	TxLedgers, ECCovered uint64
+	From, To uint32
+
+	// TxLedgers is the distinct tx-bearing (tx_count > 0) ledger_seq count
+	// in [From,To].
+	TxLedgers uint64
+
+	// ECCoveredTxLedgers is the subset of those TxLedgers that
+	// stellar.ledger_entry_changes holds at least one row for — a per-ledger
+	// semi-join, NOT a standalone cardinality of entry_changes. It is
+	// therefore ≤ TxLedgers by construction. See [ECWindowCoverage.Missing].
+	ECCoveredTxLedgers uint64
 }
 
-// Missing is the count of tx-bearing ledgers in [From,To] with zero
-// stellar.ledger_entry_changes rows — a SATURATING TxLedgers-ECCovered.
+// Missing is the EXACT count of tx-bearing ledgers in [From,To] with zero
+// stellar.ledger_entry_changes rows: TxLedgers - ECCoveredTxLedgers.
 //
-// ECCovered counts DISTINCT ledger_seq in ledger_entry_changes regardless of
-// tx_count, so it can legitimately EXCEED TxLedgers: a protocol-upgrade
-// ledger (or, in early history, a config/base-reserve change) mutates
-// LedgerEntry state with tx_count==0, landing in entry_changes but not in the
-// tx-bearing count. Treating that as "meets-or-exceeds coverage → no
-// deficiency" is correct for this check's purpose; a raw uint64 subtraction
-// would instead wrap to ~1.8e19 and catastrophically false-fail the whole
-// run off a single such ledger. This makes Missing() a lower bound on the
-// true per-ledger gap (the exact gap needs an anti-join), which is the right
-// trade for a coarse coverage signal whose backfills fill whole ranges.
+// C4-085 (audit-2026-07-23). This used to subtract two INDEPENDENT
+// cardinalities — tx-bearing ledgers from stellar.ledgers against
+// uniqExact(ledger_seq) over ALL of ledger_entry_changes in the window — and
+// saturate at zero. Entry-change rows exist for ledgers that carry no
+// transactions at all: a protocol-upgrade ledger (or, in early history, a
+// config/base-reserve change) mutates LedgerEntry state with tx_count == 0,
+// so it landed in the "present" side while never appearing in the "expected"
+// side. Inside a 1,000,000-ledger window those ledgers padded `present` and
+// NETTED OUT genuinely-uncovered tx-bearing ledgers one-for-one: a window
+// holding 5 protocol-upgrade ledgers reported zero deficiency while 5
+// tx-bearing ledgers had no entry-change coverage at all, and Check 2 —
+// the hard gate above -ec-floor — passed on a real gap.
+//
+// The fix is the anti-join this comment used to name as the thing it was
+// NOT doing: ECCoveredTxLedgers is now computed per-ledger against the
+// tx-bearing set, so a tx_count == 0 ledger can never contribute coverage
+// it does not have, and Missing() is the true gap rather than a lower bound.
+//
+// The saturating guard is retained as defence-in-depth only: the subset
+// relation makes ECCoveredTxLedgers > TxLedgers unreachable through
+// [QueryECWindowCoverage], but a hand-constructed value must still not wrap
+// uint64 to ~1.8e19 and catastrophically false-fail a whole run.
 func (w ECWindowCoverage) Missing() uint64 {
-	if w.ECCovered >= w.TxLedgers {
+	if w.ECCoveredTxLedgers >= w.TxLedgers {
 		return 0
 	}
-	return w.TxLedgers - w.ECCovered
+	return w.TxLedgers - w.ECCoveredTxLedgers
+}
+
+// ecWindowCoverageQuery is the Check-2 per-window scan: one query returning
+// (tx-bearing ledgers, tx-bearing ledgers WITH entry-change coverage).
+//
+// Split out as a builder so the anti-join shape is pinned by a unit test
+// without a live lake — the same discipline distinctShapesWindowQuery uses.
+//
+// Shape notes:
+//
+//   - uniqExact(ledger_seq), not count(): stellar.ledgers is
+//     ReplacingMergeTree, so count() over an un-merged re-ingested ledger
+//     double-counts a tx-bearing ledger and manufactures a false coverage
+//     surplus (audit C2-12). uniqExact counts distinct ledgers — matching
+//     the two uniqExact reads above.
+//   - uniqExactIf(..., ledger_seq IN (SELECT … FROM ledger_entry_changes …))
+//     is the anti-join's complement, evaluated over the SAME tx-bearing row
+//     set as the total. Restricting coverage to that set is the whole fix
+//     for C4-085; a standalone uniqExact over ledger_entry_changes counts
+//     tx_count == 0 ledgers as coverage of ledgers that are not in the
+//     expected set at all.
+//   - Both sides are primary-key range scans bounded by the caller's stride
+//     window, so the IN-set is one window wide — the cost class is unchanged
+//     from the two-query form it replaces (in fact one fewer round trip).
+//
+// The four `?` placeholders bind positionally in text order:
+// (subquery lo, subquery hi, outer lo, outer hi) — the same pair twice.
+func ecWindowCoverageQuery() string {
+	return `
+		SELECT
+		    uniqExact(ledger_seq),
+		    uniqExactIf(ledger_seq, ledger_seq IN (
+		        SELECT ledger_seq
+		        FROM stellar.ledger_entry_changes
+		        WHERE ledger_seq BETWEEN ? AND ?
+		    ))
+		FROM stellar.ledgers
+		WHERE ledger_seq BETWEEN ? AND ? AND tx_count > 0`
 }
 
 // QueryECWindowCoverage runs the Check-2 coverage scan over [from,to], one
-// pair of queries per stride-wide window (see forEachLedgerWindow): a
-// tx-bearing-ledger count from stellar.ledgers and a distinct-ledger-covered
-// count from stellar.ledger_entry_changes. Adapted from the ad hoc query run
-// by hand to first find the ledger 63,050,000 live-ingest floor (see
-// CLAUDE.md); windowing bounds per-query cost to one lake partition
-// regardless of the overall range's size.
+// query per stride-wide window (see forEachLedgerWindow): the tx-bearing
+// ledger count from stellar.ledgers alongside how many of those same ledgers
+// stellar.ledger_entry_changes covers. Adapted from the ad hoc query run by
+// hand to first find the ledger 63,050,000 live-ingest floor (see CLAUDE.md);
+// windowing bounds per-query cost to one lake partition regardless of the
+// overall range's size.
 func QueryECWindowCoverage(ctx context.Context, addr string, from, to, stride uint32) ([]ECWindowCoverage, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -170,25 +229,19 @@ func QueryECWindowCoverage(ctx context.Context, addr string, from, to, stride ui
 	}
 	defer func() { _ = conn.Close() }()
 
-	// uniqExact(ledger_seq), not count(): stellar.ledgers is
-	// ReplacingMergeTree, so count() over an un-merged re-ingested ledger
-	// double-counts a tx-bearing ledger and manufactures a false coverage
-	// surplus (audit C2-12). uniqExact counts distinct ledgers — matching the
-	// ecQ sibling below and the two uniqExact reads above.
-	const txQ = `SELECT uniqExact(ledger_seq) FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ? AND tx_count > 0`
-	const ecQ = `SELECT uniqExact(ledger_seq) FROM stellar.ledger_entry_changes WHERE ledger_seq BETWEEN ? AND ?`
+	q := ecWindowCoverageQuery()
 
 	var out []ECWindowCoverage
 	err = forEachLedgerWindow(from, to, stride, func(lo, hi uint32) error {
-		var txLedgers uint64
-		if qerr := conn.QueryRow(ctx, txQ, lo, hi).Scan(&txLedgers); qerr != nil {
-			return fmt.Errorf("clickhouse: query tx-bearing ledgers [%d,%d]: %w", lo, hi, qerr)
-		}
-		var ecCovered uint64
-		if qerr := conn.QueryRow(ctx, ecQ, lo, hi).Scan(&ecCovered); qerr != nil {
+		var txLedgers, ecCovered uint64
+		if qerr := conn.QueryRow(ctx, q, lo, hi, lo, hi).Scan(&txLedgers, &ecCovered); qerr != nil {
 			return fmt.Errorf("clickhouse: query entry-change coverage [%d,%d]: %w", lo, hi, qerr)
 		}
-		out = append(out, ECWindowCoverage{From: lo, To: hi, TxLedgers: txLedgers, ECCovered: ecCovered})
+		out = append(out, ECWindowCoverage{
+			From: lo, To: hi,
+			TxLedgers:          txLedgers,
+			ECCoveredTxLedgers: ecCovered,
+		})
 		return nil
 	})
 	if err != nil {
