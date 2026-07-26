@@ -79,11 +79,29 @@ func main() {
 
 // subcommands maps each subcommand name to its handler package's Run
 // function (or, for the handful of subcommands too small to warrant
-// their own package, a leaf closure right here). Handlers receive the
-// FULL argv starting at the subcommand name itself (args[0] == the
-// map key that reached it, args[1:] its own flags) — each internal/ops/*
-// package's Run does its own args[0] dispatch, which is what lets
-// several map keys below point at the same package.Run reference.
+// their own package, a leaf closure right here).
+//
+// A package Run receives the FULL argv starting at the subcommand name
+// itself (args[0] == the map key that reached it, args[1:] its own
+// flags): each internal/ops/* package's Run switches on args[0] and hands
+// args[1:] to the handler, which is what lets several map keys below point
+// at the same package.Run reference.
+//
+// A LEAF handler receives ONLY ITS OWN FLAGS — it is wrapped in [leaf],
+// which strips the verb. That asymmetry is deliberate and load-bearing.
+// Every leaf handler builds a flag.FlagSet and calls fs.Parse(args); Go's
+// flag package STOPS at the first non-flag argument, so handing a leaf the
+// verb-prefixed argv means fs.Parse sees "mint-key" as a positional,
+// parses NOTHING, and every flag keeps its zero value. All four leaf
+// subcommands were broken exactly that way — `stellarindex-ops
+// usage-rollup-backfill -config /etc/stellarindex.toml -from …` answered
+// "-config is required" and could not be invoked at all. It survived
+// because the unit tests call the handlers DIRECTLY with flags-only argv
+// (mint_key_test.go, usage_rollup_backfill_test.go), i.e. they tested the
+// convention the handlers wanted and never the one the dispatcher used.
+// [leaf] makes the two agree at the one place they meet;
+// TestSubcommandDispatch_LeafHandlersSeeTheirFlags pins it.
+//
 // Handlers return an error to exit 1; realMain prints the "name: err"
 // prefix uniformly. Handlers that have already printed a specific
 // message return opsutil.ErrExitSilently to suppress the prefix. The
@@ -93,11 +111,12 @@ func main() {
 // verify-invariants) land via their feature PRs and add their own
 // entry here.
 var subcommands = map[string]func(args []string) error{
-	"docs-config":           func([]string) error { return config.EmitMarkdown(os.Stdout) },
-	"mint-key":              mintKey,
-	"upgrade-key":           upgradeKey,
-	"emit-incident":         emitIncident,
-	"usage-rollup-backfill": usageRollupBackfill,
+	"docs-config":           leaf(func([]string) error { return config.EmitMarkdown(os.Stdout) }),
+	"mint-key":              leaf(mintKey),
+	"upgrade-key":           leaf(upgradeKey),
+	"emit-incident":         leaf(emitIncident),
+	"usage-rollup-backfill": leaf(usageRollupBackfill),
+	"freeze-unfreeze":       leaf(freezeUnfreeze),
 
 	"rpc-probe":             diagnostics.Run,
 	"verify-decoders":       diagnostics.Run,
@@ -158,6 +177,19 @@ var subcommands = map[string]func(args []string) error{
 	"verify-contiguity":          chops.Run,
 	"verify-hashchain":           chops.Run,
 	"verify-lake":                chops.Run,
+}
+
+// leaf adapts a flags-only handler to the dispatch table's full-argv
+// calling convention by stripping the verb. See the [subcommands] doc for
+// why this exists: without it a leaf's fs.Parse stops on the verb and no
+// flag is ever read.
+func leaf(fn func(args []string) error) func(args []string) error {
+	return func(args []string) error {
+		if len(args) == 0 {
+			return fn(nil)
+		}
+		return fn(args[1:])
+	}
 }
 
 func realMain() int {
@@ -1064,6 +1096,25 @@ Subcommands:
                             stellarindex-ops usage-rollup-backfill \
                               -config /etc/stellarindex.toml \
                               -from 2026-07-19 -to 2026-07-21
+  freeze-unfreeze -config PATH [-list] [-asset A -quote Q -reason "..."] [-dry-run]
+                          Manually lift an ADR-0019 price freeze. An
+                          ESCALATED freeze (the 4x30m extension
+                          ladder ran out) never auto-unfreezes by
+                          design — "stays active until manual
+                          unfreeze" — and until now that manual step
+                          had no code path at all, only a raw
+                          redis-cli DEL. This clears the Redis marker
+                          (unfreezing the serving path immediately)
+                          AND stamps recovered_at on the open
+                          freeze_events row, so the explorer
+                          /anomalies timeline agrees. -reason is
+                          required for the mutation, mirroring the
+                          admin API's X-Reason discipline. -list
+                          shows every open freeze with its ladder
+                          state and whether its marker is still live.
+                          Example:
+                            stellarindex-ops freeze-unfreeze \
+                              -config /etc/stellarindex.toml -list
   version                 Print version + build date.
   help                    This help.
 `
