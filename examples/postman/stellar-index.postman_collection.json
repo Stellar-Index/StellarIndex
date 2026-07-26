@@ -26621,7 +26621,7 @@
               "request": {
                 "name": "Stripe webhook — paid-tier upgrade.",
                 "description": {
-                  "content": "Receives Stripe webhook events. On `checkout.session.completed`\nwith `payment_status=paid`, looks up every API key whose\nidentifier matches `client_reference_id` and lifts their\n`rate_limit_per_min` to the value implied by `metadata.tier`\n(pro / business) or the explicit `metadata.rate_limit_per_min`\noverride.\n\nIdempotent — Stripe at-least-once delivery means the same\nevent may arrive multiple times; the handler always sets the\nsame target rate-limit. Customer keeps their existing\nplaintext key; effective on the next request (validator reads\nthe per-key budget on every Lookup).\n\nStripe-Signature header verified via HMAC-SHA256 with\ntimestamp drift bounded to 5 minutes. Endpoint returns 503\nwhen the signing secret is unset (deployments without\nStripe).\n\n**Operator observability.** Beyond the Redis-side\nrate-limit lift (which 5xx-bubbles back to Stripe so the\nplatform retries), the handler also fans out platform-store\nside effects: account tier update, subscription upsert, and\nper-key rate-limit lift on dashboard-created Postgres keys\n(F-1219). Those side effects are best-effort — they do NOT\n5xx — because Stripe retries against an unhealthy Postgres\nwould just retry-storm. Failures are surfaced via the\n`stellarindex_stripe_platform_sync_errors_total{operation}`\ncounter; the alert\n`stellarindex_stripe_platform_sync_errors` (P3 / ticket)\nfires on any non-zero rate over 15 min. See the runbook\nat `docs/operations/runbooks/stripe-platform-sync-errors.md`\nfor per-`operation` triage.\n\n**Provisioning outcomes.** The status code encodes whether a\nretry can help:\n\n- **All keys upgraded** → `200`.\n- **Some keys upgraded, some failed** → `200` with\n  `keys_failed > 0`. The customer already holds a credential\n  carrying the paid tier, and a retry loop over one\n  permanently-unwritable key record would risk Stripe\n  disabling the endpoint for every customer. Surfaced by\n  `keys_failed` and per-key ERROR logs, not by the status.\n- **Keys exist but NONE could be upgraded** → `500`. Nothing\n  was provisioned and the cause is a key-store outage, which\n  a retry heals, so Stripe's retry schedule must re-deliver.\n  The event is also dead-lettered (`processed_at` stays NULL)\n  so the incident survives Stripe eventually giving up, and\n  resolves itself when a retry succeeds.\n- **No keys exist for the identifier** (customer paid but\n  never signed up) → `200` + dead-letter. Retrying cannot\n  help; a human must act.\n",
+                  "content": "Receives Stripe webhook events. On `checkout.session.completed`\nwith `payment_status=paid`, looks up every API key whose\nidentifier matches `client_reference_id` and lifts their\n`rate_limit_per_min` to the value implied by `metadata.tier`\n(pro / business) or the explicit `metadata.rate_limit_per_min`\noverride.\n\nIdempotent — Stripe at-least-once delivery means the same\nevent may arrive multiple times; the handler always sets the\nsame target rate-limit. Customer keeps their existing\nplaintext key; effective on the next request (validator reads\nthe per-key budget on every Lookup).\n\nDeduped by a durable CLAIM on `stripe_event_log`, not merely by\nrow existence: a completed delivery is duplicate-acked `200`,\nand a delivery that arrives while another copy of the same\nevent is still being processed gets `409` so it stays in\nStripe's retry queue.\n\nStripe-Signature header verified via HMAC-SHA256 with\ntimestamp drift bounded to 5 minutes. Endpoint returns 503\nwhen the signing secret is unset (deployments without\nStripe).\n\n**Operator observability.** Beyond the Redis-side\nrate-limit lift (which 5xx-bubbles back to Stripe so the\nplatform retries), the handler also fans out platform-store\nside effects: account tier update, subscription upsert, and\nper-key rate-limit lift on dashboard-created Postgres keys\n(F-1219). Those side effects are best-effort — they do NOT\n5xx — because Stripe retries against an unhealthy Postgres\nwould just retry-storm. Failures are surfaced via the\n`stellarindex_stripe_platform_sync_errors_total{operation}`\ncounter; the alert\n`stellarindex_stripe_platform_sync_errors` (P3 / ticket)\nfires on any non-zero rate over 15 min. See the runbook\nat `docs/operations/runbooks/stripe-platform-sync-errors.md`\nfor per-`operation` triage.\n\n**Provisioning outcomes.** The status code encodes whether a\nretry can help:\n\n- **All keys upgraded** → `200`.\n- **Some keys upgraded, some failed** → `200` with\n  `keys_failed > 0`. The customer already holds a credential\n  carrying the paid tier, and a retry loop over one\n  permanently-unwritable key record would risk Stripe\n  disabling the endpoint for every customer. Surfaced by\n  `keys_failed` and per-key ERROR logs, not by the status.\n- **Keys exist but NONE could be upgraded** → `500`. Nothing\n  was provisioned and the cause is a key-store outage, which\n  a retry heals, so Stripe's retry schedule must re-deliver.\n  The event is also dead-lettered (`processed_at` stays NULL)\n  so the incident survives Stripe eventually giving up, and\n  resolves itself when a retry succeeds.\n- **No keys exist for the identifier** (customer paid but\n  never signed up) → `200` + dead-letter. Retrying cannot\n  help; a human must act.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -26829,6 +26829,63 @@
                   },
                   "status": "Unauthorized",
                   "code": 401,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Another delivery of this same event is currently being processed (Stripe delivers at-least-once and can deliver concurrently). Deliberately NOT a 200 duplicate-ack: the in-flight processor has not finished, and acking would remove the event from Stripe's retry queue, so a crash mid-processing would leave a paid customer unprovisioned with no further delivery. Stripe retries; by then the claim is either released, completed (→ 200 duplicate-ack) or lease-expired (→ re-processed).",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "webhooks",
+                        "stripe"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "disabled": false,
+                        "description": {
+                          "content": "(Required) ",
+                          "type": "text/plain"
+                        },
+                        "key": "Stripe-Signature",
+                        "value": "<string>"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "POST",
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{}",
+                      "options": {
+                        "raw": {
+                          "headerFamily": "json",
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Conflict",
+                  "code": 409,
                   "header": [
                     {
                       "key": "Content-Type",

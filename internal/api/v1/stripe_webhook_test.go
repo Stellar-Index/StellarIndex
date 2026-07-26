@@ -37,29 +37,46 @@ type fakeStripeEventStore struct {
 	// present while the dead-letter is OPEN (the processed-mark
 	// resolves it, exactly as the store's UPDATE does).
 	deadLettered map[string]platform.DeadLetterReason
+	// claimed mirrors the C3-039 claimed_at column: present while a
+	// delivery holds the row. Set by AppendStripeEvent, cleared when the
+	// attempt concludes without success (failed / dead-lettered), exactly
+	// as the Postgres store's UPDATEs do. Without it this fake would
+	// encode the PRE-C3-039 contract — two concurrent deliveries both
+	// told to process one paid event — and every handler test built on it
+	// would be validating the bug.
+	claimed map[string]bool
 }
 
 func newFakeStripeEventStore() *fakeStripeEventStore {
 	return &fakeStripeEventStore{
 		events:       map[string]platform.StripeEvent{},
 		deadLettered: map[string]platform.DeadLetterReason{},
+		claimed:      map[string]bool{},
 	}
 }
 
 func (f *fakeStripeEventStore) AppendStripeEvent(_ context.Context, e platform.StripeEvent) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	// Mirror the F-1322-corrected production contract: short-circuit
-	// ONLY when a prior delivery actually completed (ProcessedAt set). A
-	// row left behind by a failed first attempt (ProcessedAt zero) is
-	// reprocessable.
+	// Mirror the production contract: a COMPLETED prior delivery
+	// short-circuits (F-1322 kept an unfinished row reprocessable), and
+	// an unfinished row whose claim is still held belongs to another
+	// in-flight delivery (C3-039). The Postgres store additionally
+	// expires a claim after `stripeEventClaimLease`; this fake has no
+	// clock to advance, so the lease is modelled by the explicit release
+	// on the failure paths, which is what the handler drives.
 	if existing, exists := f.events[e.StripeEventID]; exists {
 		if !existing.ProcessedAt.IsZero() {
 			return platform.ErrAlreadyProcessed
 		}
+		if f.claimed[e.StripeEventID] {
+			return platform.ErrEventInFlight
+		}
+		f.claimed[e.StripeEventID] = true
 		return nil
 	}
 	f.events[e.StripeEventID] = e
+	f.claimed[e.StripeEventID] = true
 	return nil
 }
 
@@ -92,6 +109,9 @@ func (f *fakeStripeEventStore) MarkStripeEventDeadLettered(_ context.Context, id
 	}
 	row.Error = string(reason)
 	f.events[id] = row
+	// C3-039: this attempt concluded without provisioning, so the claim
+	// is released — an operator re-send must be able to re-claim at once.
+	delete(f.claimed, id)
 	return nil
 }
 
@@ -123,7 +143,18 @@ func (f *fakeStripeEventStore) MarkStripeEventFailed(_ context.Context, id, msg 
 	}
 	row.Error = msg
 	f.events[id] = row
+	// C3-039: a failed attempt releases its claim so the next Stripe
+	// retry re-attempts immediately instead of waiting out the lease.
+	delete(f.claimed, id)
 	return nil
+}
+
+// isClaimed reports whether a delivery currently holds the row (the
+// claimed_at column's in-flight state).
+func (f *fakeStripeEventStore) isClaimed(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.claimed[id]
 }
 
 // fakeStripeManager is the test double for [v1.StripeKeyManager].
