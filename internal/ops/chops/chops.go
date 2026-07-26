@@ -7,7 +7,7 @@
 // `ch-backfill`, `ch-gate`, `ch-reproject`, `ch-rebuild`, `ch-supply`,
 // `ch-txindex-backfill`, `ch-participant-backfill`, `ch-recognition`,
 // `verify-recognition`, `verify-reconciliation`, `compute-completeness`,
-// `verify-served-values`, `sdex-claim-audit`,
+// `verify-served-values`, `verify-usd-volume`, `sdex-claim-audit`,
 // `classic-movements-backfill`, `projected-rebuild`,
 // `reconcile-balances`, `verify-contiguity`, `verify-hashchain`,
 // `verify-lake` — ADR-0033/ADR-0034 completeness + reconciliation checks,
@@ -39,48 +39,82 @@ import (
 // Run is the internal/ops/chops package's entry point — see
 // discovery.Run's doc comment for the calling convention shared by
 // every internal/ops/* package post-split. args[0] is the subcommand
-// verb (one of the nineteen this package owns); args[1:] are its flags.
+// verb (one of the twenty this package owns); args[1:] are its flags.
+//
+// Split across two dispatch helpers by ROLE — the data-mutating tools and
+// the verifiers. The split is what keeps each switch under the gocyclo
+// ceiling as verbs accumulate, and the boundary is a real one: a `ch-*` /
+// `*-backfill` / `*-rebuild` verb rewrites lake or served DATA, while
+// nothing in the verifier half touches trade/event rows at all.
 func Run(args []string) error {
-	switch args[0] {
+	if fn, ok := lakeMutatorVerb(args[0]); ok {
+		return fn(args[1:])
+	}
+	if fn, ok := verifierVerb(args[0]); ok {
+		return fn(args[1:])
+	}
+	return fmt.Errorf("internal/ops/chops: unknown subcommand %q", args[0])
+}
+
+// lakeMutatorVerb resolves the WRITING half: the ADR-0034 lake
+// backfill/gate/reproject/rebuild tools plus the projected-source and
+// classic-movement backfills.
+func lakeMutatorVerb(verb string) (func([]string) error, bool) {
+	switch verb {
 	case "ch-backfill":
-		return chBackfill(args[1:])
+		return chBackfill, true
 	case "ch-gate":
-		return chGate(args[1:])
+		return chGate, true
 	case "ch-reproject":
-		return chReproject(args[1:])
+		return chReproject, true
 	case "ch-rebuild":
-		return chRebuild(args[1:])
+		return chRebuild, true
 	case "ch-supply":
-		return chSupply(args[1:])
+		return chSupply, true
 	case "ch-txindex-backfill":
-		return chTxIndexBackfill(args[1:])
+		return chTxIndexBackfill, true
 	case "ch-participant-backfill":
-		return chParticipantBackfill(args[1:])
+		return chParticipantBackfill, true
 	case "ch-recognition":
-		return chRecognition(args[1:])
-	case "verify-recognition":
-		return verifyRecognition(args[1:])
-	case "verify-reconciliation":
-		return verifyReconciliation(args[1:])
-	case "compute-completeness":
-		return computeCompleteness(args[1:])
-	case "verify-served-values":
-		return verifyServedValues(args[1:])
-	case "sdex-claim-audit":
-		return sdexClaimAudit(args[1:])
+		return chRecognition, true
 	case "classic-movements-backfill":
-		return classicMovementsBackfill(args[1:])
+		return classicMovementsBackfill, true
 	case "projected-rebuild":
-		return projectedRebuild(args[1:])
-	case "reconcile-balances":
-		return reconcileBalances(args[1:])
-	case "verify-contiguity":
-		return verifyContiguity(args[1:])
-	case "verify-hashchain":
-		return verifyHashChain(args[1:])
-	case "verify-lake":
-		return verifyLake(args[1:])
+		return projectedRebuild, true
 	default:
-		return fmt.Errorf("internal/ops/chops: unknown subcommand %q", args[0])
+		return nil, false
+	}
+}
+
+// verifierVerb resolves the verification half: the ADR-0033/0034
+// completeness, reconciliation, contiguity, hash-chain and value checks.
+// None of these touch trade/event data. Most are strictly read-only; the
+// exception is compute-completeness, which writes its VERDICT
+// (completeness_snapshots + the projection floors it earns) — bookkeeping
+// about the data, never the data itself.
+func verifierVerb(verb string) (func([]string) error, bool) {
+	switch verb {
+	case "verify-recognition":
+		return verifyRecognition, true
+	case "verify-reconciliation":
+		return verifyReconciliation, true
+	case "compute-completeness":
+		return computeCompleteness, true
+	case "verify-served-values":
+		return verifyServedValues, true
+	case "verify-usd-volume":
+		return verifyUSDVolume, true
+	case "sdex-claim-audit":
+		return sdexClaimAudit, true
+	case "reconcile-balances":
+		return reconcileBalances, true
+	case "verify-contiguity":
+		return verifyContiguity, true
+	case "verify-hashchain":
+		return verifyHashChain, true
+	case "verify-lake":
+		return verifyLake, true
+	default:
+		return nil, false
 	}
 }

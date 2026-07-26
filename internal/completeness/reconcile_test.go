@@ -2,6 +2,8 @@ package completeness
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,9 +82,12 @@ func TestReDeriveOutputCounts(t *testing.T) {
 		rowAt(102, "MATCH"),   // → 1 output
 		rowAt(999, "MATCH"),   // out of range → skipped
 	}}
-	got, err := ReDeriveOutputCounts(context.Background(), s, matchDecoder{}, nil, nil, 100, 102)
+	got, blind, err := ReDeriveOutputCounts(context.Background(), s, matchDecoder{}, nil, nil, 100, 102)
 	if err != nil {
 		t.Fatalf("ReDeriveOutputCounts: %v", err)
+	}
+	if blind.Any() {
+		t.Errorf("clean stream reported blind spots: %+v", blind)
 	}
 	want := map[uint32]int{100: 2, 102: 1}
 	if len(got) != len(want) {
@@ -102,9 +107,12 @@ func TestReDeriveOutputCountsByKind(t *testing.T) {
 		rowAt(101, "NOMATCH"), // skipped
 		rowAt(102, "MATCH"),   // → x.trade@102, x.liquidity@102
 	}}
-	byKind, err := ReDeriveOutputCountsByKind(context.Background(), s, twoKindDecoder{}, nil, nil, 100, 102)
+	byKind, blind, err := ReDeriveOutputCountsByKind(context.Background(), s, twoKindDecoder{}, nil, nil, 100, 102)
 	if err != nil {
 		t.Fatalf("ReDeriveOutputCountsByKind: %v", err)
+	}
+	if blind.Any() {
+		t.Errorf("clean stream reported blind spots: %+v", blind)
 	}
 	if byKind["x.trade"][100] != 2 || byKind["x.trade"][102] != 1 {
 		t.Errorf("x.trade counts = %v, want {100:2,102:1}", byKind["x.trade"])
@@ -171,5 +179,162 @@ func TestReconcileCounts(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// ─── C4-059: the symmetric-soft-fail blind spot ─────────────────
+
+// brokenDecoder MATCHES every "MATCH" row and then fails Decode on rows in
+// one specific ledger — the shape of a real decoder bug (a payload variant
+// the decoder claims by topic and then cannot parse). The projector running
+// the SAME decoder over the SAME bytes drops those rows too, which is what
+// makes the defect invisible to a row-count reconcile.
+type brokenDecoder struct{ badLedger uint32 }
+
+func (brokenDecoder) Matches(ev events.Event) bool { return ev.ContractID == "MATCH" }
+
+func (d brokenDecoder) Decode(ev events.Event) ([]consumer.Event, error) {
+	if ev.Ledger == d.badLedger {
+		return nil, errors.New("decode: unsupported payload variant")
+	}
+	return []consumer.Event{fakeOutput{}}, nil
+}
+
+// TestReDeriveOutputCounts_UndecodableMatchedNetsToZero is the C4-059
+// regression (audit-2026-07-23).
+//
+// Scenario: ledger 101 holds two events the decoder CLAIMS (Matches == true)
+// and then fails to Decode. The projector failed on the identical rows when
+// it ran, so the served table holds zero rows for ledger 101 too.
+//
+// The row-count reconcile therefore reports ledger 101 CLEAN — expected 0,
+// actual 0 — even though two rows were provably dropped from the served tier.
+// That netting is structural: the check is "expected == actual" and both
+// sides are blind in the same place, so no assertion over the counts can
+// ever catch it.
+//
+// The only signal is the blindness itself. This asserts the re-derive
+// reports it, with the exact affected ledger and the correct per-class
+// counts, so the caller can refuse to certify the range.
+func TestReDeriveOutputCounts_UndecodableMatchedNetsToZero(t *testing.T) {
+	const badLedger uint32 = 101
+	s := fakeStreamer{rows: []sorobanevents.Row{
+		rowAt(100, "MATCH"),       // decodes → 1 output
+		rowAt(badLedger, "MATCH"), // matched, Decode fails → dropped
+		rowAt(badLedger, "MATCH"), // matched, Decode fails → dropped
+		rowAt(102, "MATCH"),       // decodes → 1 output
+	}}
+
+	expected, blind, err := ReDeriveOutputCounts(context.Background(), s, brokenDecoder{badLedger: badLedger}, nil, nil, 100, 102)
+	if err != nil {
+		t.Fatalf("ReDeriveOutputCounts: %v", err)
+	}
+
+	// Pre-condition: the defect really is invisible to the counts. The
+	// projector dropped the same two rows, so actual matches expected
+	// exactly and ReconcileCounts sees a clean range.
+	actual := map[uint32]int{100: 1, 102: 1}
+	if gaps := ReconcileCounts(expected, actual); len(gaps) != 0 {
+		t.Fatalf("precondition failed: symmetric drop should net to zero gaps, got %+v", gaps)
+	}
+
+	// The fix: the blindness is reported.
+	if !blind.Any() {
+		t.Fatal("re-derive reported no blind spots: two matched-but-undecodable rows netted to zero and the range would certify as complete")
+	}
+	if got, want := blind.UndecodableMatched, 2; got != want {
+		t.Errorf("UndecodableMatched = %d, want %d", got, want)
+	}
+	if got, want := blind.Unreconstructable, 0; got != want {
+		t.Errorf("Unreconstructable = %d, want %d", got, want)
+	}
+	if got, want := blind.Rows(), 2; got != want {
+		t.Errorf("Rows() = %d, want %d", got, want)
+	}
+	if got, want := len(blind.Ledgers), 1; got != want {
+		t.Fatalf("Ledgers = %v, want exactly %d entry", blind.Ledgers, want)
+	}
+	if blind.Ledgers[0] != badLedger {
+		t.Errorf("Ledgers[0] = %d, want %d (the ledger whose rows both sides dropped)", blind.Ledgers[0], badLedger)
+	}
+	if d := blind.Detail(); !strings.Contains(d, "undecodable-but-matched") || !strings.Contains(d, "101") {
+		t.Errorf("Detail() = %q, want it to name the class and the first affected ledger", d)
+	}
+}
+
+// TestReDeriveOutputCountsByKind_UndecodableMatched — the by-kind sibling
+// carries the same accounting, since it is the entry point every
+// multi-table source (and compute-completeness' Postgres branch) uses.
+func TestReDeriveOutputCountsByKind_UndecodableMatched(t *testing.T) {
+	const badLedger uint32 = 200
+	s := fakeStreamer{rows: []sorobanevents.Row{
+		rowAt(199, "MATCH"),
+		rowAt(badLedger, "MATCH"),
+	}}
+	byKind, blind, err := ReDeriveOutputCountsByKind(context.Background(), s, brokenDecoder{badLedger: badLedger}, nil, nil, 199, 200)
+	if err != nil {
+		t.Fatalf("ReDeriveOutputCountsByKind: %v", err)
+	}
+	if byKind["trade"][badLedger] != 0 {
+		t.Errorf("bad ledger contributed %d outputs, want 0 (Decode failed)", byKind["trade"][badLedger])
+	}
+	if got, want := blind.UndecodableMatched, 1; got != want {
+		t.Errorf("UndecodableMatched = %d, want %d", got, want)
+	}
+	if len(blind.Ledgers) != 1 || blind.Ledgers[0] != badLedger {
+		t.Errorf("Ledgers = %v, want [%d]", blind.Ledgers, badLedger)
+	}
+}
+
+// TestReDeriveOutputCounts_UnreconstructableRow — a stored row too broken to
+// rebuild into an events.Event is the OTHER symmetric drop: the projector
+// could not reconstruct it either, so its outputs are missing from the served
+// tier while the diff stays zero. Counted in its own class because it cannot
+// be attributed to a decoder (Matches is never reached).
+func TestReDeriveOutputCounts_UnreconstructableRow(t *testing.T) {
+	broken := rowAt(300, "MATCH")
+	broken.TxHash = make([]byte, 8) // Reconstruct requires exactly 32 bytes
+
+	s := fakeStreamer{rows: []sorobanevents.Row{rowAt(299, "MATCH"), broken}}
+	counts, blind, err := ReDeriveOutputCounts(context.Background(), s, matchDecoder{}, nil, nil, 299, 300)
+	if err != nil {
+		t.Fatalf("ReDeriveOutputCounts: %v", err)
+	}
+	if counts[300] != 0 {
+		t.Errorf("unreconstructable row contributed %d outputs, want 0", counts[300])
+	}
+	if got, want := blind.Unreconstructable, 1; got != want {
+		t.Errorf("Unreconstructable = %d, want %d", got, want)
+	}
+	if got, want := blind.UndecodableMatched, 0; got != want {
+		t.Errorf("UndecodableMatched = %d, want %d", got, want)
+	}
+	if len(blind.Ledgers) != 1 || blind.Ledgers[0] != 300 {
+		t.Errorf("Ledgers = %v, want [300]", blind.Ledgers)
+	}
+}
+
+// TestBlindSpots_LedgersSortedAndDeduped — Ledgers[0] is read as "the first
+// affected ledger" by the verdict detail, so ordering is load-bearing even
+// when the stream arrives out of order.
+func TestBlindSpots_LedgersSortedAndDeduped(t *testing.T) {
+	tr := NewBlindTracker()
+	tr.Undecodable(500)
+	tr.Unreconstructable(400)
+	tr.Undecodable(500)
+	tr.Undecodable(450)
+
+	got := tr.Result()
+	want := []uint32{400, 450, 500}
+	if len(got.Ledgers) != len(want) {
+		t.Fatalf("Ledgers = %v, want %v", got.Ledgers, want)
+	}
+	for i := range want {
+		if got.Ledgers[i] != want[i] {
+			t.Fatalf("Ledgers = %v, want %v", got.Ledgers, want)
+		}
+	}
+	if got.Rows() != 4 {
+		t.Errorf("Rows() = %d, want 4", got.Rows())
 	}
 }

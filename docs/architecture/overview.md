@@ -42,6 +42,12 @@ and serves it all through a public **REST + SSE API** and a static
   per-ledger by the daily verdict.
 - **Value truth:** `verify-served-values` reconciles flagship served
   numbers against independent sources (SDF, Stellar Expert).
+  `verify-usd-volume` covers the denominator underneath most of them:
+  the standing usd-volume alerts only measure COVERAGE (is the column
+  non-NULL), so it checks the exact tiers' VALUE — where either leg is
+  USD-pegged, `usd_volume` must equal `pegged_leg / 10^decimals`
+  exactly — and merely *measures* the FX/anchor-estimated tiers until a
+  production run gives us a distribution to calibrate against.
 - **Contract truth:** `openapi/stellar-index.v1.yaml` — handlers,
   SDK, and explorer types are all machine-reconciled against it.
 

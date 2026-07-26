@@ -104,11 +104,20 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 			if perr := preseedFactoryChildren(ctx, store, src, lo); perr != nil {
 				return fmt.Errorf("%s: %w", src.name, perr)
 			}
-			bk, derr := completeness.ReDeriveOutputCountsByKind(ctx, store, src.dec, src.contractIDs, src.topic0Syms, lo, hi)
+			bk, blind, derr := completeness.ReDeriveOutputCountsByKind(ctx, store, src.dec, src.contractIDs, src.topic0Syms, lo, hi)
 			if derr != nil {
 				return fmt.Errorf("%s: re-derive: %w", src.name, derr)
 			}
 			byKind = bk
+			// C4-059: rows the re-derive could not decode are dropped from
+			// the EXPECTED side, and the projector dropped them from the
+			// ACTUAL side for the same reason — so the per-ledger diff below
+			// is structurally blind there and would report OK. Report it as a
+			// mismatch so the command exits non-zero.
+			if blind.Any() {
+				anyGaps = true
+				fmt.Fprintf(os.Stderr, "verify-reconciliation: %-28s %s\n", src.name, blind.Detail())
+			}
 		}
 
 		for _, tgt := range src.targets {

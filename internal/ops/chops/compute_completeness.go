@@ -371,7 +371,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 				// treat loss as a hard projection failure — the surviving rows
 				// will reconcile perfectly and would otherwise read complete.
 				floorLoss := detectFloorLoss(src, servedMins, targetFloors)
-				delta, pdetail, perr := reconcileProjectionAggregate(ctx, store, streamer, *chAddr, src, scopes)
+				delta, blind, pdetail, perr := reconcileProjectionAggregate(ctx, store, streamer, *chAddr, src, scopes)
 				if perr != nil {
 					return fmt.Errorf("%s: projection: %w", src.name, perr)
 				}
@@ -380,7 +380,11 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 				// range as verified. A run that DETECTED loss must not record
 				// either, or it would immediately adopt the post-loss floor as
 				// the new truth and erase the evidence on the very next run.
-				if delta == 0 && len(floorLoss) == 0 {
+				//
+				// C4-059: a blind re-derive earns no ground either. Its zero
+				// delta is an artifact of both sides dropping the same rows,
+				// so recording the floor would enshrine an unverified range.
+				if delta == 0 && len(floorLoss) == 0 && !blind.Any() {
 					if ferr := recordFloors(ctx, store, src, scopes, servedMins); ferr != nil {
 						return fmt.Errorf("%s: record projection floors: %w", src.name, ferr)
 					}
@@ -388,8 +392,15 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 				// The scope travels WITH the verdict: a run may only claim the
 				// range it actually reconciled (ADR-0033 — a source is complete
 				// through W iff every claim holds contiguously to W).
+				//
+				// C4-059: `delta == 0 && !blind.Any()` is the honest "clean"
+				// predicate. A ledger whose rows neither side could decode
+				// contributes 0 to delta while proving nothing, so a bare
+				// delta==0 would certify projection_ok on exactly the ledgers
+				// the check is blind to. pdetail already leads with the
+				// blind-spot summary (reconcileProjectionAggregate).
 				var claimDetail string
-				projOK, claimDetail = projectionClaim(servedFrom, runFrom, srW.Ledger, delta == 0, pdetail, priorProj[src.name])
+				projOK, claimDetail = projectionClaim(servedFrom, runFrom, srW.Ledger, delta == 0 && !blind.Any(), pdetail, priorProj[src.name])
 				detail = append(detail, claimDetail)
 				if len(floorLoss) > 0 {
 					projOK = false
@@ -408,14 +419,23 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		} else {
 			// Legacy Postgres path: strict per-ledger projection pins the watermark.
 			if srW.Ledger >= genesis {
-				pgaps, perr := reconcileSourceProjection(ctx, store, nil, src, genesis, srW.Ledger)
+				pgaps, pblind, perr := reconcileSourceProjection(ctx, store, nil, src, genesis, srW.Ledger)
 				if perr != nil {
 					return fmt.Errorf("%s: projection: %w", src.name, perr)
 				}
-				projOK = len(pgaps) == 0
+				projOK = len(pgaps) == 0 && !pblind.Any()
 				problems = append(problems, pgaps...)
-				if !projOK {
+				problems = append(problems, pblind.Ledgers...)
+				// C4-059: name the two classes separately. A count mismatch
+				// and a ledger the re-derive could not READ are different
+				// findings with different fixes, and folding blind ledgers
+				// into "N mismatched ledger(s)" sends an operator hunting
+				// for a row-count discrepancy that does not exist.
+				if len(pgaps) > 0 {
 					detail = append(detail, fmt.Sprintf("projection: %d mismatched ledger(s) in [%d,%d]", len(pgaps), genesis, srW.Ledger))
+				}
+				if d := pblind.Detail(); d != "" {
+					detail = append(detail, "projection: "+d)
 				}
 			} else {
 				detail = append(detail, "projection: not evaluated (earlier claim failed at genesis)")
@@ -886,48 +906,54 @@ func substrateClaim(genesis, hi, scanFrom uint32, scanClean bool, problem uint32
 // [genesis, hi] and returns the union of mismatched ledgers. SDEX uses
 // the LCM census; event sources re-derive (by kind) and project each
 // table's kinds.
-func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, src reconSource, genesis, hi uint32) ([]uint32, error) {
+func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, src reconSource, genesis, hi uint32) ([]uint32, completeness.BlindSpots, error) {
 	var mismatched []uint32
 	if src.census {
 		expected, eerr := store.ClassicTradeEffectCountsByLedger(ctx, genesis, hi)
 		if eerr != nil {
-			return nil, eerr
+			return nil, completeness.BlindSpots{}, eerr
 		}
 		for _, tgt := range src.targets {
 			actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, genesis, hi)
 			if aerr != nil {
-				return nil, aerr
+				return nil, completeness.BlindSpots{}, aerr
 			}
 			for _, g := range completeness.ReconcileCounts(expected, actual) {
 				mismatched = append(mismatched, g.Ledger)
 			}
 		}
-		return mismatched, nil
+		return mismatched, completeness.BlindSpots{}, nil
 	}
 
 	// Re-derive expected outputs: from the CH lake (certified, off the serving
 	// DB) when -ch, else from Postgres soroban_events.
 	var byKind map[string]map[uint32]int
+	var blind completeness.BlindSpots
 	var derr error
 	if chStreamer != nil {
-		byKind, derr = completeness.ReDeriveOutputCountsByKindFromEvents(ctx, chStreamer, src.dec, src.contractIDs, src.topic0Syms, genesis, hi)
+		byKind, blind, derr = completeness.ReDeriveOutputCountsByKindFromEvents(ctx, chStreamer, src.dec, src.contractIDs, src.topic0Syms, genesis, hi)
 	} else {
-		byKind, derr = completeness.ReDeriveOutputCountsByKind(ctx, store, src.dec, src.contractIDs, src.topic0Syms, genesis, hi)
+		byKind, blind, derr = completeness.ReDeriveOutputCountsByKind(ctx, store, src.dec, src.contractIDs, src.topic0Syms, genesis, hi)
 	}
 	if derr != nil {
-		return nil, derr
+		return nil, completeness.BlindSpots{}, derr
 	}
+	// C4-059: a ledger the re-derive could not decode is a ledger this
+	// function cannot certify — the projector dropped the same rows, so the
+	// per-ledger diff nets to zero and reads clean. Returned SEPARATELY from
+	// the count mismatches: both pin the watermark, but they are different
+	// findings and the caller's verdict names them apart.
 	for _, tgt := range src.targets {
 		expected := completeness.SumKinds(byKind, tgt.kinds...)
 		actual, aerr := store.CountRowsByLedger(ctx, tgt.table, "ledger", tgt.whereFilter, genesis, hi)
 		if aerr != nil {
-			return nil, aerr
+			return nil, completeness.BlindSpots{}, aerr
 		}
 		for _, g := range completeness.ReconcileCounts(expected, actual) {
 			mismatched = append(mismatched, g.Ledger)
 		}
 	}
-	return mismatched, nil
+	return mismatched, blind, nil
 }
 
 // reconcileProjectionAggregate is the CH-backed projection check
@@ -952,47 +978,65 @@ func reconcileSourceProjection(ctx context.Context, store *timescale.Store, chSt
 // late-starting table (trades) with a full-history one (soroswap_skim_events)
 // verifies each over its true range instead of flooring the whole source at the
 // latest — the DAT-09/N-F2 source-level-floor defect.
-func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, chAddr string, src reconSource, scopes []projectionScope) (int, string, error) {
+func reconcileProjectionAggregate(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, chAddr string, src reconSource, scopes []projectionScope) (int, completeness.BlindSpots, string, error) {
 	if len(scopes) == 0 {
-		return 0, "", nil
+		return 0, completeness.BlindSpots{}, "", nil
 	}
 	lo, hi := scopeUnion(scopes)
 	if lo > hi {
-		return 0, "", nil // every target's scope is empty
+		return 0, completeness.BlindSpots{}, "", nil // every target's scope is empty
 	}
-	expectedFor, eerr := expectedProjection(ctx, store, chStreamer, chAddr, src, lo, hi)
+	expectedFor, blind, eerr := expectedProjection(ctx, store, chStreamer, chAddr, src, lo, hi)
 	if eerr != nil {
-		return 0, "", eerr
+		return 0, completeness.BlindSpots{}, "", eerr
 	}
 	var totalDelta int
 	var details []string
+	// C4-059: state the blindness first — it explains why a zero delta below
+	// is not evidence, and the caller uses it to refuse the claim outright.
+	if d := blind.Detail(); d != "" {
+		details = append(details, d)
+	}
 	for i, tgt := range src.targets {
 		d, detail, terr := reconcileTarget(ctx, store, src, tgt, expectedFor(tgt), scopes[i])
 		if terr != nil {
-			return 0, "", terr
+			return 0, completeness.BlindSpots{}, "", terr
 		}
 		if d != 0 {
 			totalDelta += d
 			details = append(details, detail)
 		}
 	}
-	return totalDelta, strings.Join(details, "; "), nil
+	return totalDelta, blind, strings.Join(details, "; "), nil
 }
 
 // expectedProjection re-derives the EXPECTED side of Claim 2b once over
-// [lo, hi] and returns a per-target accessor. Three oracles, by source class.
-func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, chAddr string, src reconSource, lo, hi uint32) (func(reconTarget) map[uint32]int, error) {
+// [lo, hi] and returns a per-target accessor plus the C4-059 blind spots the
+// re-derive hit. Three oracles, by source class, and TWO of them can be
+// blind:
+//
+//   - the decoder-driven oracle (soroban_events / contract_events), and
+//   - the ContractCall census, which soft-fails PER CALL in
+//     forEachContractCallEvent — symmetric with the ch-rebuild writer that
+//     shares that same function, so a band or soroswap-router call whose
+//     Decode errors is missing from BOTH sides and the diff nets to zero.
+//
+// Only the SDEX census is genuinely per-claim rather than per-row: its
+// decoder soft-fails inside a single op's claim list and still emits the op,
+// so a malformed claim cannot remove a whole row from the expected side
+// without also removing it from served.
+func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer completeness.EventStreamer, chAddr string, src reconSource, lo, hi uint32) (func(reconTarget) map[uint32]int, completeness.BlindSpots, error) {
 	switch {
 	case src.callDec != nil:
 		// Event-less ContractCall source (band, soroswap-router): re-derive the
 		// census from the lake's InvokeContract ops (no soroban_events landing
 		// zone) and reconcile against the served tier (oracle_updates /
 		// soroswap_router_swaps) by the SAME decoder the live dispatcher routes.
-		expected, err := reDeriveContractCallCensus(ctx, chAddr, src.callContract, src.callDec, lo, hi)
+		expected, blind, err := reDeriveContractCallCensus(ctx, chAddr, src.callContract, src.callDec, lo, hi)
 		if err != nil {
-			return nil, err
+			return nil, completeness.BlindSpots{}, err
 		}
-		return func(reconTarget) map[uint32]int { return expected }, nil
+		return func(reconTarget) map[uint32]int { return expected }, blind, nil
 
 	case src.census:
 		// Re-derive the census by running the SDEX decoder over the certified CH
@@ -1005,9 +1049,9 @@ func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer 
 		// passes by construction.
 		expected, err := reDeriveSDEXCensusViaDecoder(ctx, chAddr, lo, hi)
 		if err != nil {
-			return nil, err
+			return nil, completeness.BlindSpots{}, err
 		}
-		return func(reconTarget) map[uint32]int { return expected }, nil
+		return func(reconTarget) map[uint32]int { return expected }, completeness.BlindSpots{}, nil
 
 	default:
 		// Factory-anchored sources (ADR-0035): seed the gate registry from the
@@ -1023,16 +1067,16 @@ func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer 
 		// CH-native preseed for full -ch purity is a follow-up.)
 		if len(src.factories) > 0 {
 			if err := preseedFactoryChildren(ctx, store, src, lo); err != nil {
-				return nil, fmt.Errorf("%s preseed: %w", src.name, err)
+				return nil, completeness.BlindSpots{}, fmt.Errorf("%s preseed: %w", src.name, err)
 			}
 		}
-		byKind, err := completeness.ReDeriveOutputCountsByKindFromEvents(ctx, chStreamer, src.dec, src.contractIDs, src.topic0Syms, lo, hi)
+		byKind, blind, err := completeness.ReDeriveOutputCountsByKindFromEvents(ctx, chStreamer, src.dec, src.contractIDs, src.topic0Syms, lo, hi)
 		if err != nil {
-			return nil, err
+			return nil, completeness.BlindSpots{}, err
 		}
 		// Each table receives only the kinds it is registered for; counting
 		// every output would overcount any table that receives a subset.
-		return func(tgt reconTarget) map[uint32]int { return completeness.SumKinds(byKind, tgt.kinds...) }, nil
+		return func(tgt reconTarget) map[uint32]int { return completeness.SumKinds(byKind, tgt.kinds...) }, blind, nil
 	}
 }
 
@@ -1179,9 +1223,9 @@ func contractCallRowIdentity(ev consumer.Event) (contractCallRowID, bool) {
 // forEachContractCallEvent so it decodes byte-identically to the ch-rebuild
 // WRITE path; the write persists the same raw events and ON CONFLICT collapses
 // them to this exact set, so a written-row re-verify reaches Δ=0.
-func reDeriveContractCallCensus(ctx context.Context, chAddr, contractStrkey string, dec dispatcher.ContractCallDecoder, from, to uint32) (map[uint32]int, error) {
+func reDeriveContractCallCensus(ctx context.Context, chAddr, contractStrkey string, dec dispatcher.ContractCallDecoder, from, to uint32) (map[uint32]int, completeness.BlindSpots, error) {
 	seen := make(map[uint32]map[contractCallRowID]struct{})
-	err := forEachContractCallEvent(ctx, chAddr, contractStrkey, dec, from, to, func(ledger uint32, ev consumer.Event) error {
+	blind, err := forEachContractCallEvent(ctx, chAddr, contractStrkey, dec, from, to, func(ledger uint32, ev consumer.Event) error {
 		id, ok := contractCallRowIdentity(ev)
 		if !ok {
 			return fmt.Errorf("reDeriveContractCallCensus: unexpected event type %T (no served-row identity)", ev)
@@ -1195,13 +1239,13 @@ func reDeriveContractCallCensus(ctx context.Context, chAddr, contractStrkey stri
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, completeness.BlindSpots{}, err
 	}
 	out := make(map[uint32]int, len(seen))
 	for ledger, ids := range seen {
 		out[ledger] = len(ids)
 	}
-	return out, nil
+	return out, blind, nil
 }
 
 // forEachContractCallEvent streams the lake's InvokeContract ops that touch
@@ -1218,10 +1262,11 @@ func reDeriveContractCallCensus(ctx context.Context, chAddr, contractStrkey stri
 // linear pipeline; splitting hurts the read (mirrors reDeriveSDEXCensusViaDecoder).
 //
 //nolint:gocognit // windowed stream → per-op call-tree → Matches/Decode is a
-func forEachContractCallEvent(ctx context.Context, chAddr, contractStrkey string, dec dispatcher.ContractCallDecoder, from, to uint32, fn func(ledger uint32, ev consumer.Event) error) error {
+func forEachContractCallEvent(ctx context.Context, chAddr, contractStrkey string, dec dispatcher.ContractCallDecoder, from, to uint32, fn func(ledger uint32, ev consumer.Event) error) (completeness.BlindSpots, error) {
+	blind := completeness.NewBlindTracker()
 	raw, err := strkey.Decode(strkey.VersionByteContract, contractStrkey)
 	if err != nil {
-		return fmt.Errorf("decode contract strkey %s: %w", contractStrkey, err)
+		return completeness.BlindSpots{}, fmt.Errorf("decode contract strkey %s: %w", contractStrkey, err)
 	}
 	contractHex := hex.EncodeToString(raw)
 	const window = 250_000
@@ -1231,38 +1276,62 @@ func forEachContractCallEvent(ctx context.Context, chAddr, contractStrkey string
 			hi = to
 		}
 		if err := clickhouse.StreamContractCallOps(ctx, chAddr, contractHex, lo, hi, func(op clickhouse.ContractCallOp) error {
-			for _, call := range dispatcher.ExtractContractCallTree(op.Op) {
-				if !dec.Matches(call.ContractID, call.FunctionName) {
-					continue
-				}
-				evs, derr := dec.Decode(dispatcher.ContractCallContext{
-					Ledger:            op.Ledger,
-					ClosedAt:          op.ClosedAt,
-					TxHash:            op.TxHash,
-					TxSource:          op.Source,
-					OpSource:          op.Source,
-					OpIndex:           int(op.OpIndex),
-					ContractID:        call.ContractID,
-					FunctionName:      call.FunctionName,
-					Args:              call.Args,
-					CallPath:          call.CallPath,
-					CallPathContracts: call.CallPathContracts,
-				})
-				if derr != nil {
-					continue // malformed call: skip per the decoder contract
-				}
-				for _, ev := range evs {
-					if ferr := fn(op.Ledger, ev); ferr != nil {
-						return ferr
-					}
-				}
-			}
-			return nil
+			return decodeContractCallTree(op, dispatcher.ExtractContractCallTree(op.Op), dec, blind, fn)
 		}); err != nil {
-			return err
+			return completeness.BlindSpots{}, err
 		}
 		if hi == to {
 			break
+		}
+	}
+	return blind.Result(), nil
+}
+
+// decodeContractCallTree decodes every call in ONE op's call tree that `dec`
+// owns, forwarding each emitted event to fn and recording per-call decode
+// failures on `blind`.
+//
+// Split out of [forEachContractCallEvent] so the C4-059 accounting is
+// testable without a live ClickHouse: the streaming half needs a lake, this
+// half is pure.
+//
+// The `continue` on a decode error is symmetric with the ch-rebuild WRITER,
+// which shares this same function — so a malformed call is missing from the
+// served tier AND from the census, the per-ledger diff nets to zero, and the
+// ledger reads clean while a row was provably dropped. That is precisely why
+// the skip is counted rather than swallowed.
+func decodeContractCallTree(
+	op clickhouse.ContractCallOp,
+	calls []dispatcher.ContractCall,
+	dec dispatcher.ContractCallDecoder,
+	blind *completeness.BlindTracker,
+	fn func(ledger uint32, ev consumer.Event) error,
+) error {
+	for _, call := range calls {
+		if !dec.Matches(call.ContractID, call.FunctionName) {
+			continue
+		}
+		evs, derr := dec.Decode(dispatcher.ContractCallContext{
+			Ledger:            op.Ledger,
+			ClosedAt:          op.ClosedAt,
+			TxHash:            op.TxHash,
+			TxSource:          op.Source,
+			OpSource:          op.Source,
+			OpIndex:           int(op.OpIndex),
+			ContractID:        call.ContractID,
+			FunctionName:      call.FunctionName,
+			Args:              call.Args,
+			CallPath:          call.CallPath,
+			CallPathContracts: call.CallPathContracts,
+		})
+		if derr != nil {
+			blind.Undecodable(op.Ledger)
+			continue
+		}
+		for _, ev := range evs {
+			if ferr := fn(op.Ledger, ev); ferr != nil {
+				return ferr
+			}
 		}
 	}
 	return nil

@@ -118,6 +118,15 @@ type USDVolumeFXResolver interface {
 // separate work, matching the boundary
 // [Store.SorobanVolume24hUSDForAsset] documents for its query-time
 // equivalent.
+// LOCKSTEP: [ClassifyUSDVolumeTier] (below) mirrors this waterfall — same
+// legs, same order, same decimal scale — so `verify-usd-volume` can judge
+// the exact tiers' stored values. Changing the order of the leg probes, the
+// scale a tier divides by, or which amount a tier reads REQUIRES changing it
+// too; TestClassifyUSDVolumeTier_TracksTheWaterfall round-trips a trade
+// through both and fails if they drift. A silent drift does not merely
+// mis-label a tier: it makes the checker verify `usd_volume == quote/10^d`
+// on rows built from the BASE leg, i.e. report a fleet-wide violation, or —
+// the quiet direction — verify nothing at all.
 func tradeUSDVolume(ctx context.Context, t canonical.Trade, quoteSpec *USDVolumeQuoteSpec, fxResolver USDVolumeFXResolver) *string {
 	q := t.QuoteAmount.BigInt()
 	if q == nil || q.Sign() <= 0 {
@@ -434,6 +443,42 @@ func usdVolumeDecimals(asset canonical.Asset, subclass external.Subclass, quoteS
 	default:
 		return 0, false
 	}
+}
+
+// ClassifyUSDVolumeTier reports which waterfall tier the insert path WOULD
+// use for a (source, base, quote) trade today, and the decimal scale that
+// tier divides by.
+//
+// It calls exactly the functions [tradeUSDVolume] calls, in the same order,
+// so a change to the peg list or the waterfall moves both together. Assets
+// that do not parse yield [TierEstimated] with a non-nil error — the caller
+// reports them rather than silently dropping them, since an unparseable
+// asset id on a landed trade is its own finding.
+//
+// spec may be nil (no operator peg list): on-chain pairs then never resolve
+// a peg, which matches [usdVolumeDecimals]'s own nil handling.
+func ClassifyUSDVolumeTier(source, baseID, quoteID string, spec *USDVolumeQuoteSpec) (USDVolumeTier, int, error) {
+	md := external.Lookup(source)
+	if md.Class != external.ClassExchange {
+		return TierUnvaluable, 0, nil
+	}
+	base, err := canonical.ParseAsset(baseID)
+	if err != nil {
+		return TierEstimated, 0, fmt.Errorf("base asset %q: %w", baseID, err)
+	}
+	quote, err := canonical.ParseAsset(quoteID)
+	if err != nil {
+		return TierEstimated, 0, fmt.Errorf("quote asset %q: %w", quoteID, err)
+	}
+	// Quote leg first — tradeUSDVolume checks it first, and tier 2b is only
+	// reached when the quote declined.
+	if decimals, ok := usdVolumeDecimals(quote, md.Subclass, spec); ok {
+		return TierQuotePegged, decimals, nil
+	}
+	if decimals, ok := usdVolumeDecimals(base, md.Subclass, spec); ok {
+		return TierBasePegged, decimals, nil
+	}
+	return TierEstimated, 0, nil
 }
 
 // scaleDenominator returns 10^decimals as a *big.Int. Decimals are

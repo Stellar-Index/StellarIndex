@@ -2,6 +2,7 @@ package completeness
 
 import (
 	"context"
+	"fmt"
 	"sort"
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
@@ -54,6 +55,117 @@ type ProjectionGap struct {
 	Actual   int
 }
 
+// BlindSpots records the raw rows a re-derive could not turn into a
+// comparable expectation at all — the rows it SKIPPED rather than counted.
+//
+// C4-059 (audit-2026-07-23). The skip is a soft-fail that deliberately
+// mirrors the projector's: a row the projector could not decode produced no
+// served row, and a row the re-derive cannot decode produces no expected
+// row, so ReconcileCounts sees expected == actual == 0 and reports the
+// ledger CLEAN. That symmetry is the defect. The two sides fail for the SAME
+// reason — the same Decode, on the same bytes — so a decoder bug or a
+// truncated payload silently nets to zero and certifies `projection_ok` on a
+// ledger where rows were provably dropped from the served tier.
+//
+// Row counts alone cannot detect this class by construction: the check is
+// "expected == actual" and both sides are blind in the same place. The only
+// honest signal is the blindness itself, which is why it is returned rather
+// than logged — a caller certifying completeness must treat "I could not
+// evaluate this ledger" as NOT-clean, never as clean.
+//
+// The old comment claimed "the recognition audit catches shape issues". That
+// is true for UNRECOGNISED contract/topic shapes — events no decoder claims.
+// It is NOT true for this class: an event the decoder DOES claim
+// (Matches == true) and then fails to Decode is, to the recognition audit, a
+// recognised event. Nothing else looks at it.
+type BlindSpots struct {
+	// Ledgers holds every ledger with at least one blind row, ascending and
+	// deduped. Callers whose branch pins the watermark on problem ledgers
+	// append these; callers whose branch flips a boolean use [BlindSpots.Any].
+	Ledgers []uint32
+
+	// UndecodableMatched counts rows the decoder CLAIMED (Matches == true)
+	// and then failed to Decode. The precisely-attributed half: this source
+	// owned the event and could not produce its expectation.
+	UndecodableMatched int
+
+	// Unreconstructable counts stored soroban_events rows too structurally
+	// broken to rebuild into an events.Event at all (empty contract_id,
+	// missing topic_0_xdr, wrong-length tx_hash, undecodable op_args). Matches
+	// is never evaluated for these, so they cannot be attributed to a decoder
+	// — but the projector dropped them for the identical reason, so the served
+	// tier is genuinely missing whatever they would have produced. Blind is
+	// blind; they pin too. Counted separately so a verdict says which class
+	// fired. Always 0 on the ClickHouse path, which streams events.Event
+	// directly with no Row round-trip.
+	Unreconstructable int
+}
+
+// Rows is the total blind-row count across both classes.
+func (b BlindSpots) Rows() int { return b.UndecodableMatched + b.Unreconstructable }
+
+// Any reports whether the re-derive was blind anywhere in the range — i.e.
+// whether its expected counts are known-incomplete and a clean
+// ReconcileCounts therefore proves nothing for the affected ledgers.
+func (b BlindSpots) Any() bool { return b.Rows() > 0 }
+
+// Detail renders the operator-facing summary for a verdict line. Empty
+// string when there is nothing to report, so callers can append
+// unconditionally.
+func (b BlindSpots) Detail() string {
+	if !b.Any() {
+		return ""
+	}
+	return fmt.Sprintf(
+		"re-derive blind on %d ledger(s): %d undecodable-but-matched, %d unreconstructable (first=%d) — expected counts are known-incomplete there, so a zero delta proves nothing",
+		len(b.Ledgers), b.UndecodableMatched, b.Unreconstructable, b.Ledgers[0])
+}
+
+// BlindTracker accumulates [BlindSpots] during a stream, keeping the ledger
+// set deduped without holding a second copy of it.
+//
+// Exported because the re-derives in this package are NOT the only per-row
+// soft-fail sites: the ContractCall census in internal/ops/chops skips a
+// malformed call exactly the way the ch-rebuild writer does, with the same
+// nets-to-zero consequence. One tracker implementation means one definition
+// of "blind", and a new soft-fail site cannot quietly invent a weaker one.
+type BlindTracker struct {
+	seen  map[uint32]bool
+	spots BlindSpots
+}
+
+// NewBlindTracker returns a ready tracker.
+func NewBlindTracker() *BlindTracker {
+	return &BlindTracker{seen: make(map[uint32]bool)}
+}
+
+// Undecodable records a row the decoder CLAIMED and then failed to decode.
+func (t *BlindTracker) Undecodable(ledger uint32) {
+	t.spots.UndecodableMatched++
+	t.mark(ledger)
+}
+
+// Unreconstructable records a stored row too broken to rebuild at all.
+func (t *BlindTracker) Unreconstructable(ledger uint32) {
+	t.spots.Unreconstructable++
+	t.mark(ledger)
+}
+
+func (t *BlindTracker) mark(ledger uint32) {
+	if t.seen[ledger] {
+		return
+	}
+	t.seen[ledger] = true
+	t.spots.Ledgers = append(t.spots.Ledgers, ledger)
+}
+
+// Result returns the accumulated blind spots with Ledgers sorted ascending,
+// so callers can read Ledgers[0] as the first affected ledger.
+func (t *BlindTracker) Result() BlindSpots {
+	sort.Slice(t.spots.Ledgers, func(i, j int) bool { return t.spots.Ledgers[i] < t.spots.Ledgers[j] })
+	return t.spots
+}
+
 // ReDeriveOutputCounts re-runs the decoder over the raw events in
 // [from, to] and returns how many outputs it emits per ledger. Outputs
 // are attributed to the triggering row's ledger; because every
@@ -63,28 +175,35 @@ type ProjectionGap struct {
 //
 // contractIDs / topic0Syms are the same SQL prefilters the projector
 // passes for this source (empty = match-by-topic across all contracts).
-// Malformed / undecodable rows are skipped (mirroring the projector's
-// soft-fail) — they surface separately via the recognition audit.
+//
+// Malformed / undecodable rows are still SKIPPED (mirroring the projector's
+// soft-fail) but are no longer silent: they are returned as [BlindSpots], so
+// a caller certifying completeness can refuse to call a ledger clean that the
+// re-derive could not actually evaluate. See [BlindSpots] for why a row-count
+// reconcile cannot detect this class on its own.
 func ReDeriveOutputCounts(
 	ctx context.Context,
 	s SorobanEventStreamer,
 	dec Decoder,
 	contractIDs, topic0Syms []string,
 	from, to uint32,
-) (map[uint32]int, error) {
+) (map[uint32]int, BlindSpots, error) {
 	counts := make(map[uint32]int)
+	blind := NewBlindTracker()
 	err := s.StreamSorobanEvents(ctx, from, to, contractIDs, topic0Syms, nil,
 		func(row sorobanevents.Row) error {
 			ev, rerr := sorobanevents.Reconstruct(row)
 			if rerr != nil {
-				return nil //nolint:nilerr // soft-fail like the projector; recognition audit catches shape issues.
+				blind.Unreconstructable(row.Ledger)
+				return nil //nolint:nilerr // soft-fail like the projector; recorded as a blind spot, not swallowed.
 			}
 			if !dec.Matches(ev) {
 				return nil
 			}
 			outs, derr := dec.Decode(ev)
 			if derr != nil {
-				return nil //nolint:nilerr // deterministically-broken row; skip, don't abort the audit.
+				blind.Undecodable(row.Ledger)
+				return nil //nolint:nilerr // deterministically-broken row; skip the count, pin the verdict.
 			}
 			if len(outs) > 0 {
 				counts[row.Ledger] += len(outs)
@@ -92,9 +211,9 @@ func ReDeriveOutputCounts(
 			return nil
 		})
 	if err != nil {
-		return nil, err
+		return nil, BlindSpots{}, err
 	}
-	return counts, nil
+	return counts, blind.Result(), nil
 }
 
 // EventStreamer yields decoded-ready [events.Event] directly — the ClickHouse
@@ -108,17 +227,24 @@ type EventStreamer interface {
 // ReDeriveOutputCountsByKindFromEvents is [ReDeriveOutputCountsByKind] sourced
 // from the CH lake instead of Postgres soroban_events: it streams events.Event
 // straight from contract_events (no Reconstruct), decodes, and counts outputs
-// by EventKind() per ledger. Same soft-fail semantics (a row that fails Decode
-// is skipped, not fatal). Used by the CH-backed completeness verification so
-// projection reconciliation reads the certified lake, off the serving DB.
+// by EventKind() per ledger. Same soft-fail semantics (an event that fails
+// Decode is skipped, not fatal) and the same C4-059 accounting: every skipped
+// match is returned as a [BlindSpots] entry so a clean reconcile over a range
+// the decoder could not read does not certify as complete. Used by the
+// CH-backed completeness verification so projection reconciliation reads the
+// certified lake, off the serving DB.
+//
+// BlindSpots.Unreconstructable is always 0 here — this path has no
+// soroban_events Row to rebuild.
 func ReDeriveOutputCountsByKindFromEvents(
 	ctx context.Context,
 	es EventStreamer,
 	dec Decoder,
 	contractIDs, topic0Syms []string,
 	from, to uint32,
-) (map[string]map[uint32]int, error) {
+) (map[string]map[uint32]int, BlindSpots, error) {
 	byKind := make(map[string]map[uint32]int)
+	blind := NewBlindTracker()
 	// Adjacent-duplicate skip: the CH stream is ORDER BY (ledger, tx_hash,
 	// op_index, event_index), so un-merged ReplacingMergeTree duplicate rows
 	// (re-run partitions 25/45/62) arrive consecutively. Dedup by identity vs
@@ -141,7 +267,8 @@ func ReDeriveOutputCountsByKindFromEvents(
 			}
 			outs, derr := dec.Decode(ev)
 			if derr != nil {
-				return nil //nolint:nilerr // deterministically-broken event; skip, don't abort.
+				blind.Undecodable(ev.Ledger)
+				return nil //nolint:nilerr // deterministically-broken event; skip the count, pin the verdict.
 			}
 			for _, out := range outs {
 				k := out.EventKind()
@@ -153,9 +280,9 @@ func ReDeriveOutputCountsByKindFromEvents(
 			return nil
 		})
 	if err != nil {
-		return nil, err
+		return nil, BlindSpots{}, err
 	}
-	return byKind, nil
+	return byKind, blind.Result(), nil
 }
 
 // ReDeriveOutputCountsByKind is the multi-table generalization of
@@ -168,27 +295,31 @@ func ReDeriveOutputCountsByKindFromEvents(
 // every output would overcount any table that receives a subset.
 //
 // Stream once per source; SumKinds then projects the kinds for each
-// target table. Same soft-fail semantics as ReDeriveOutputCounts.
+// target table. Same soft-fail semantics as ReDeriveOutputCounts — and the
+// same C4-059 [BlindSpots] accounting for the rows it soft-fails on.
 func ReDeriveOutputCountsByKind(
 	ctx context.Context,
 	s SorobanEventStreamer,
 	dec Decoder,
 	contractIDs, topic0Syms []string,
 	from, to uint32,
-) (map[string]map[uint32]int, error) {
+) (map[string]map[uint32]int, BlindSpots, error) {
 	byKind := make(map[string]map[uint32]int)
+	blind := NewBlindTracker()
 	err := s.StreamSorobanEvents(ctx, from, to, contractIDs, topic0Syms, nil,
 		func(row sorobanevents.Row) error {
 			ev, rerr := sorobanevents.Reconstruct(row)
 			if rerr != nil {
-				return nil //nolint:nilerr // soft-fail like the projector.
+				blind.Unreconstructable(row.Ledger)
+				return nil //nolint:nilerr // soft-fail like the projector; recorded as a blind spot.
 			}
 			if !dec.Matches(ev) {
 				return nil
 			}
 			outs, derr := dec.Decode(ev)
 			if derr != nil {
-				return nil //nolint:nilerr // deterministically-broken row; skip.
+				blind.Undecodable(row.Ledger)
+				return nil //nolint:nilerr // deterministically-broken row; skip the count, pin the verdict.
 			}
 			for _, out := range outs {
 				k := out.EventKind()
@@ -200,9 +331,9 @@ func ReDeriveOutputCountsByKind(
 			return nil
 		})
 	if err != nil {
-		return nil, err
+		return nil, BlindSpots{}, err
 	}
-	return byKind, nil
+	return byKind, blind.Result(), nil
 }
 
 // SumKinds projects a by-kind count map down to a single per-ledger
