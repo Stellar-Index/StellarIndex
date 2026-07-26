@@ -395,24 +395,68 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 	s.applyPlatformSideEffects(r.Context(), ev, session, tierName)
 
 	if upgraded == 0 {
-		// The customer HAS keys and not one budget was applied — the
-		// paid tier is on no credential the customer can use. Pre-fix
-		// this fell through to markStripeEventProcessed, whose statement
-		// is `SET processed_at = now(), error = NULL`: it erased the very
+		// TOTAL failure: the customer HAS keys and not one budget was
+		// applied — the paid tier is on no credential the customer can
+		// use. Two corrections, in two waves:
+		//
+		// C3-016 (audit-2026-07-23) stopped this falling through to
+		// markStripeEventProcessed, whose statement is
+		// `SET processed_at = now(), error = NULL`: it erased the very
 		// error upgradeAllKeys had just recorded, stamped the event
 		// complete, logged "customer upgraded … keys_upgraded=0", and
 		// wrote a `plan.upgrade` audit row for an upgrade that did not
-		// happen. Dead-letter instead — processed_at stays NULL so the
-		// event remains reprocessable, and the open dead-letter closes
-		// itself when a later delivery succeeds. C3-016
-		// (audit-2026-07-23).
+		// happen. The dead-letter fixed that: processed_at stays NULL so
+		// the event remains reprocessable, and the open dead-letter
+		// closes itself when a later delivery succeeds.
+		//
+		// 52105fdb residual: it still answered 200, which TELLS STRIPE
+		// TO STOP RETRYING. Every failure here is our key store being
+		// unavailable — precisely the class a retry fixes — so a 30-second
+		// Redis blip permanently required a human to re-send the event
+		// from the Stripe dashboard. Answer 5xx instead: Stripe's own
+		// retry schedule re-delivers, the dead-letter row keeps the
+		// incident visible in the meantime, and MarkStripeEventProcessed
+		// resolves it automatically when a retry lands the upgrade. If
+		// the failure is permanent, Stripe eventually gives up and the
+		// dead-letter is still open for the operator — strictly no worse
+		// than the 200. (Contrast the len(keys)==0 branch above, which
+		// KEEPS its 200: there the webhook is not the blocked resource —
+		// the customer never signed up, and no number of retries can
+		// change that.)
+		//
+		// Retry-driven re-entry calls deadLetterStripeEvent more than
+		// once. dead_lettered_at is COALESCE-guarded so the incident's
+		// AGE is stable, but StripeDeadLettersOpen.Inc() is not — the
+		// gauge can transiently over-count until the once-a-minute
+		// CountOpenDeadLetters reseed in cmd/stellarindex-api corrects it.
 		s.deadLetterStripeEvent(r.Context(), ev, identifier, platform.DeadLetterKeyUpgradeFailed)
-		writeJSON(w, map[string]any{
-			"ok": true, "upgraded": 0, "keys_total": len(keys),
-			"note":          "no key budget could be applied",
-			"dead_lettered": true,
-		}, Flags{})
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/stripe-provisioning-failed",
+			"Key provisioning failed", http.StatusInternalServerError,
+			"the customer's payment is recorded but no API key budget could be updated; "+
+				"the event is dead-lettered and Stripe will retry")
 		return
+	}
+
+	// PARTIAL success (0 < upgraded < len(keys)) deliberately stays 200 +
+	// marked-processed, unlike the total failure above. The customer has
+	// at least one credential carrying the tier they paid for, so the
+	// money-for-service contract is met; the remaining keys are a
+	// degradation, not an outage. Answering 5xx here would be actively
+	// worse in the case that matters: ONE permanently-unwritable key
+	// record would 5xx every retry for Stripe's whole multi-day schedule,
+	// and Stripe disables endpoints that keep failing — turning one stuck
+	// key into a billing-sync outage for EVERY customer. It is also not
+	// dead-lettered: markStripeEventProcessed (below) stamps
+	// dead_letter_resolved_at in the same statement, so a dead-letter here
+	// would write an incident that closes itself in the same request. The
+	// per-key ERROR logs from upgradeAllKeys plus `keys_failed` here are
+	// the signal.
+	if failed := len(keys) - upgraded; failed > 0 {
+		s.logger.Error("stripe webhook: PARTIAL upgrade — some keys keep the old budget",
+			"identifier", identifier, "event_id", ev.ID,
+			"tier", tierName, "rate_limit_per_min", rateLimit,
+			"keys_total", len(keys), "keys_upgraded", upgraded, "keys_failed", failed)
 	}
 
 	s.logger.Info("stripe webhook: customer upgraded",
@@ -441,6 +485,7 @@ func (s *Server) handleStripeWebhook(w http.ResponseWriter, r *http.Request) { /
 		"ok":                 true,
 		"upgraded":           upgraded,
 		"keys_total":         len(keys),
+		"keys_failed":        len(keys) - upgraded,
 		"rate_limit_per_min": rateLimit,
 	}, Flags{})
 }
@@ -642,8 +687,96 @@ func (s *Server) applyPlanDowngrade(
 				"event_id", ev.ID, "account_id", account.ID, "err", err)
 		}
 	}
-	s.downgradePlatformAPIKeys(ctx, ev, bridge, account, ceiling)
-	s.downgradeRedisAPIKeys(ctx, ev, account, ceiling)
+	s.clampKeyBudgetsToTier(ctx, "stripe event "+ev.ID, s.stripeKeyBudgetStores(bridge), account, ceiling)
+}
+
+// stripeKeyBudgetStores projects the Stripe wiring onto the shared
+// [APIKeyBudgetStores] seam so the webhook downgrade and the operator
+// PATCH /v1/admin/accounts/{id} downgrade run the SAME clamp code
+// (52105fdb residual, audit-2026-07-23). OnError keeps the
+// Stripe-specific counter on the Stripe path only — the admin path must
+// not inflate a metric whose name, help text and runbook all say
+// "Stripe webhook platform-store side-effect failures".
+// stripePlatformBridgeOrNil returns the wired bridge, or nil.
+func (s *Server) stripePlatformBridgeOrNil() *StripePlatformBridge {
+	if s.stripe == nil {
+		return nil
+	}
+	return s.stripe.Platform
+}
+
+func (s *Server) stripeKeyBudgetStores(bridge *StripePlatformBridge) APIKeyBudgetStores {
+	st := APIKeyBudgetStores{
+		OnError: func(step string) { obs.StripePlatformSyncErrorsTotal.WithLabelValues(step).Inc() },
+	}
+	if bridge != nil {
+		st.Platform = bridge.APIKeys
+		st.CacheInvalidator = bridge.KeyCacheInvalidator
+	}
+	if s.stripe != nil {
+		st.Redis = s.stripe.Manager
+	}
+	return st
+}
+
+// APIKeyBudgetStores groups the credential stores a TIER CHANGE has to
+// clamp, so every path that lowers an account's tier lowers the budget
+// on every credential that tier used to pay for.
+//
+// There are two independent key stores in production and a missed one
+// is a live paid-throughput leak: Postgres-backed dashboard keys
+// (platform.APIKeyStore) and Redis-backed self-service keys minted
+// through POST /v1/account/keys (StripeKeyManager). The enforced budget
+// is read straight off the key record by both validators
+// (auth/apikey_postgres.go, auth/apikey_redis.go), so lowering
+// accounts.tier alone changes nothing an attacker or an ex-customer can
+// feel.
+type APIKeyBudgetStores struct {
+	// Platform is the Postgres-backed dashboard key store. Nil skips
+	// that half (deployments without Postgres).
+	Platform platform.APIKeyStore
+	// Redis is the Redis-backed self-service key store, reached by
+	// [auth.AccountIdentifier](account.Slug). Nil skips that half.
+	Redis StripeKeyManager
+	// CacheInvalidator evicts each lowered Postgres key from the auth
+	// read-through cache so the new budget is enforced on the next
+	// request rather than after the validator's ~1h TTL. Nil is safe.
+	CacheInvalidator KeyCacheInvalidator
+	// OnError, when non-nil, is called with the failing step name
+	// (list_keys | key_update | key_cache_invalidate) so a caller can
+	// attach its OWN observability. Deliberately injected rather than
+	// hard-coded: the two callers report through different surfaces.
+	OnError func(step string)
+}
+
+// note reports a step failure through the caller's own observability, if any.
+func (st APIKeyBudgetStores) note(step string) {
+	if st.OnError != nil {
+		st.OnError(step)
+	}
+}
+
+// clampKeyBudgetsToTier lowers every credential `account` can still
+// authenticate with down to `ceiling`, across BOTH key stores. Returns
+// how many keys were lowered and how many failed to lower, so a caller
+// can record the outcome durably (the admin path writes both into its
+// audit row).
+//
+// Best-effort and idempotent: keys already at or below the ceiling are
+// skipped, revoked keys are left alone, and a failure on one key never
+// stops the others — leaving paid throughput live is the worse outcome.
+// `cause` names what triggered the clamp and is stamped on every log
+// line ("stripe event evt_123", "admin PATCH by key …").
+func (s *Server) clampKeyBudgetsToTier(
+	ctx context.Context,
+	cause string,
+	st APIKeyBudgetStores,
+	account platform.Account,
+	ceiling int,
+) (lowered, failed int) {
+	pl, pf := s.downgradePlatformAPIKeys(ctx, cause, st, account, ceiling)
+	rl, rf := s.downgradeRedisAPIKeys(ctx, cause, st, account, ceiling)
+	return pl + rl, pf + rf
 }
 
 // downgradePlatformAPIKeys lowers every active Postgres-backed dashboard
@@ -654,44 +787,45 @@ func (s *Server) applyPlanDowngrade(
 // revoked keys are left alone.
 func (s *Server) downgradePlatformAPIKeys(
 	ctx context.Context,
-	ev stripeEvent,
-	bridge *StripePlatformBridge,
+	cause string,
+	st APIKeyBudgetStores,
 	account platform.Account,
 	ceiling int,
-) {
-	if bridge.APIKeys == nil {
-		return
+) (lowered, failed int) {
+	if st.Platform == nil {
+		return 0, 0
 	}
-	keys, err := bridge.APIKeys.ListForAccount(ctx, account.ID)
+	keys, err := st.Platform.ListForAccount(ctx, account.ID)
 	if err != nil {
-		obs.StripePlatformSyncErrorsTotal.WithLabelValues("list_keys").Inc()
-		s.logger.Warn("stripe webhook: ListForAccount failed; skipping per-key downgrade",
-			"event_id", ev.ID, "account_id", account.ID, "err", err)
-		return
+		st.note("list_keys")
+		s.logger.Error("tier clamp: ListForAccount failed; platform-backed keys keep the OLD budget",
+			"cause", cause, "account_id", account.ID, "err", err)
+		return 0, 1
 	}
-	lowered := 0
 	for i := range keys {
 		k := keys[i]
 		if !k.RevokedAt.IsZero() || k.RateLimitPerMin <= ceiling {
 			continue
 		}
 		k.RateLimitPerMin = ceiling
-		if err := bridge.APIKeys.Update(ctx, k); err != nil {
-			obs.StripePlatformSyncErrorsTotal.WithLabelValues("key_update").Inc()
-			s.logger.Warn("stripe webhook: platform-key downgrade Update failed",
-				"event_id", ev.ID, "account_id", account.ID,
+		if err := st.Platform.Update(ctx, k); err != nil {
+			st.note("key_update")
+			s.logger.Error("tier clamp: platform-key downgrade Update failed",
+				"cause", cause, "account_id", account.ID,
 				"key_id", k.ID, "err", err)
+			failed++
 			continue
 		}
 		lowered++
-		s.invalidatePlatformKeyCache(ctx, ev, account, k)
+		s.invalidatePlatformKeyCache(ctx, cause, st, account, k)
 	}
 	if lowered > 0 {
-		s.logger.Info("stripe webhook: lowered platform-backed dashboard keys to the new tier budget",
-			"event_id", ev.ID, "account_id", account.ID,
+		s.logger.Info("tier clamp: lowered platform-backed dashboard keys to the new tier budget",
+			"cause", cause, "account_id", account.ID,
 			"tier", string(account.Tier), "rate_limit_per_min", ceiling,
 			"keys_lowered", lowered)
 	}
+	return lowered, failed
 }
 
 // downgradeRedisAPIKeys lowers every Redis-backed key the account minted
@@ -699,37 +833,44 @@ func (s *Server) downgradePlatformAPIKeys(
 // identifier, i.e. [auth.AccountIdentifier](slug), onto the record and
 // inherits the caller's then-current paid budget) down to `ceiling`.
 // No-op without a Manager or a slug.
-func (s *Server) downgradeRedisAPIKeys(ctx context.Context, ev stripeEvent, account platform.Account, ceiling int) {
-	if s.stripe == nil || s.stripe.Manager == nil || account.Slug == "" {
-		return
+func (s *Server) downgradeRedisAPIKeys(
+	ctx context.Context,
+	cause string,
+	st APIKeyBudgetStores,
+	account platform.Account,
+	ceiling int,
+) (lowered, failed int) {
+	if st.Redis == nil || account.Slug == "" {
+		return 0, 0
 	}
 	identifier := auth.AccountIdentifier(account.Slug)
-	keys, err := s.stripe.Manager.ListKeysForIdentifier(ctx, identifier)
+	keys, err := st.Redis.ListKeysForIdentifier(ctx, identifier)
 	if err != nil {
-		obs.StripePlatformSyncErrorsTotal.WithLabelValues("list_keys").Inc()
-		s.logger.Warn("stripe webhook: ListKeysForIdentifier failed; skipping redis-key downgrade",
-			"event_id", ev.ID, "identifier", identifier, "err", err)
-		return
+		st.note("list_keys")
+		s.logger.Error("tier clamp: ListKeysForIdentifier failed; redis-backed keys keep the OLD budget",
+			"cause", cause, "identifier", identifier, "err", err)
+		return 0, 1
 	}
-	lowered := 0
 	for _, k := range keys {
 		if !k.RevokedAt.IsZero() || k.RateLimitPerMin <= ceiling {
 			continue
 		}
-		if _, err := s.stripe.Manager.UpdateRateLimit(ctx, k.KeyID, ceiling); err != nil {
-			obs.StripePlatformSyncErrorsTotal.WithLabelValues("key_update").Inc()
-			s.logger.Warn("stripe webhook: redis-key downgrade failed",
-				"event_id", ev.ID, "identifier", identifier,
+		if _, err := st.Redis.UpdateRateLimit(ctx, k.KeyID, ceiling); err != nil {
+			st.note("key_update")
+			s.logger.Error("tier clamp: redis-key downgrade failed",
+				"cause", cause, "identifier", identifier,
 				"key_id", k.KeyID, "err", err)
+			failed++
 			continue
 		}
 		lowered++
 	}
 	if lowered > 0 {
-		s.logger.Info("stripe webhook: lowered redis-backed self-service keys to the new tier budget",
-			"event_id", ev.ID, "identifier", identifier,
+		s.logger.Info("tier clamp: lowered redis-backed self-service keys to the new tier budget",
+			"cause", cause, "identifier", identifier,
 			"rate_limit_per_min", ceiling, "keys_lowered", lowered)
 	}
+	return lowered, failed
 }
 
 // handleStripeInvoicePaid processes invoice.paid events. Stripe
@@ -916,6 +1057,9 @@ func (s *Server) applyAccountTierAndKeyUpgrade(ctx context.Context, ev stripeEve
 // `auth.Tier.MaxRateLimitPerMin` ceiling is the source of
 // truth for "the budget this tier promises".
 func (s *Server) upgradePlatformAPIKeys(ctx context.Context, ev stripeEvent, store platform.APIKeyStore, account platform.Account, tierName string) {
+	// Same seam the DOWN path uses, so cache eviction + error reporting
+	// are identical in both directions (52105fdb residual).
+	st := s.stripeKeyBudgetStores(s.stripePlatformBridgeOrNil())
 	target := stripeTierBudget(tierName)
 	if target <= 0 {
 		s.logger.Debug("stripe webhook: no platform-key budget for tier; skipping per-key upgrade",
@@ -956,7 +1100,7 @@ func (s *Server) upgradePlatformAPIKeys(ctx context.Context, ev stripeEvent, sto
 		// Best-effort — a miss here just means the customer waits out
 		// the TTL; it must not fail the webhook (Stripe would retry
 		// and re-apply the same already-durable Postgres update).
-		s.invalidatePlatformKeyCache(ctx, ev, account, k)
+		s.invalidatePlatformKeyCache(ctx, "stripe event "+ev.ID, st, account, k)
 	}
 	if upgraded > 0 {
 		s.logger.Info("stripe webhook: lifted platform-backed dashboard keys",
@@ -973,15 +1117,14 @@ func (s *Server) upgradePlatformAPIKeys(ctx context.Context, ev stripeEvent, sto
 // `key_cache_invalidate` operation but never surfaced — the Postgres
 // write already succeeded, so the worst case is the customer serving
 // the old budget until the cache TTL elapses.
-func (s *Server) invalidatePlatformKeyCache(ctx context.Context, ev stripeEvent, account platform.Account, k platform.APIKey) {
-	inv := s.stripe.Platform.KeyCacheInvalidator
-	if inv == nil || len(k.KeyHash) == 0 {
+func (s *Server) invalidatePlatformKeyCache(ctx context.Context, cause string, st APIKeyBudgetStores, account platform.Account, k platform.APIKey) {
+	if st.CacheInvalidator == nil || len(k.KeyHash) == 0 {
 		return
 	}
-	if err := inv.InvalidateCachedKey(ctx, hex.EncodeToString(k.KeyHash)); err != nil {
-		obs.StripePlatformSyncErrorsTotal.WithLabelValues("key_cache_invalidate").Inc()
-		s.logger.Warn("stripe webhook: auth cache invalidate after key upgrade failed",
-			"event_id", ev.ID, "account_id", account.ID,
+	if err := st.CacheInvalidator.InvalidateCachedKey(ctx, hex.EncodeToString(k.KeyHash)); err != nil {
+		st.note("key_cache_invalidate")
+		s.logger.Warn("tier clamp: auth cache invalidate after key budget change failed",
+			"cause", cause, "account_id", account.ID,
 			"key_id", k.ID, "err", err)
 	}
 }

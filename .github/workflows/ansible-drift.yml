@@ -16,6 +16,34 @@ name: ansible-drift
 #                              live ssh-keyscan fallback anymore)
 #   - ANSIBLE_VAULT_PASSWORD  (the r1.secrets.yml vault password)
 #   - ANSIBLE_VAULT_FILE_B64  (base64 of the encrypted r1.secrets.yml)
+#   - R1_INVENTORY_B64        (base64 of configs/ansible/inventory/r1.yml —
+#                              see the OPERATOR ACTION block immediately below)
+#
+# ════════════════════════════════════════════════════════════════════════
+# OPERATOR ACTION REQUIRED BEFORE MERGING — R1_INVENTORY_B64 (C6-041)
+# ════════════════════════════════════════════════════════════════════════
+# configs/ansible/inventory/r1.yml is no longer tracked (it carried the
+# production host IP, the world-open `allowed_ssh_cidrs`, disk serials and
+# the operator SSH pubkey in a PUBLIC repository). This workflow now
+# materializes it from an Actions secret, exactly as it already does for
+# the vault. THIS WORKFLOW IS RED UNTIL THAT SECRET EXISTS.
+#
+# Create it FIRST, from a machine holding the working-tree copy:
+#
+#     base64 -w0 configs/ansible/inventory/r1.yml   # macOS: base64 -i <file>
+#     # → repo Settings → Secrets and variables → Actions → New secret
+#     #   Name: R1_INVENTORY_B64
+#
+# HISTORY IS NOT REWRITTEN by the untracking. Every value that file ever
+# held is still readable from any clone via `git log -p --
+# configs/ansible/inventory/r1.yml`, and must be treated as public:
+#   - the r1 IP and open SSH surface are already-known facts — mitigate by
+#     narrowing `allowed_ssh_cidrs` (C6-018/C6-028/C6-060/C6-092), not by
+#     hiding the file;
+#   - anything credential-shaped that ever appeared there needs ROTATION,
+#     not untracking (see docs/operations/credential-rotation.md).
+# Untracking stops the LEAK GROWING (no future host/topology change is
+# published); it does not undo the past.
 # NOTE (2026-07-25, CID-24, audit-2026-07-23): ANSIBLE_VAULT_PASSWORD /
 # ANSIBLE_VAULT_FILE_B64 are not merely stale — the 2026-07-20 scheduled
 # run's own log shows both env vars EMPTY (`VAULT_PASS: `,
@@ -104,6 +132,36 @@ jobs:
           echo "$KNOWN_HOSTS_B64" | base64 -d > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
+      - name: Inventory
+        # C6-041 (audit-2026-07-23): configs/ansible/inventory/r1.yml is
+        # gitignored — it carried the production host IP, world-open
+        # allowed_ssh_cidrs, disk serials and the operator SSH pubkey in a
+        # PUBLIC repo. Materialize it from an Actions secret using the exact
+        # ANSIBLE_VAULT_FILE_B64 pattern below: routed through `env:`, never
+        # interpolated into the shell (F-1298), decoded with base64 -d.
+        #
+        # Fails fast and specifically when the secret is unset, mirroring the
+        # SSH-key and vault guards — a missing inventory is a
+        # missing-credential signal, NOT a drift signal, and the two must
+        # never be confusable (that confusion is what let this guard run
+        # broken for a week under CID-24).
+        env:
+          INVENTORY_B64: ${{ secrets.R1_INVENTORY_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${INVENTORY_B64:-}" ]; then
+            echo "::error::R1_INVENTORY_B64 is unset — this is a missing-credential failure, NOT a drift signal. configs/ansible/inventory/r1.yml is no longer tracked (C6-041: public repo). Create the secret from the working-tree copy: base64 -w0 configs/ansible/inventory/r1.yml → repo Settings → Secrets and variables → Actions → R1_INVENTORY_B64. This cannot be fixed from inside the repository." >&2
+            exit 1
+          fi
+          printf '%s' "$INVENTORY_B64" | base64 -d > configs/ansible/inventory/r1.yml
+          chmod 600 configs/ansible/inventory/r1.yml
+          # Fail loudly on a mis-encoded secret rather than letting ansible
+          # report a confusing "Could not match supplied host pattern".
+          if ! grep -q 'archival_nodes' configs/ansible/inventory/r1.yml; then
+            echo "::error::R1_INVENTORY_B64 decoded to something that is not the r1 inventory (no 'archival_nodes' group). Re-encode with: base64 -w0 configs/ansible/inventory/r1.yml" >&2
+            exit 1
+          fi
+
       - name: Vault password
         # F-1298: the vault password + the base64 vault both flow through
         # `env:`, never interpolated into the shell. The password was a
@@ -191,3 +249,6 @@ jobs:
         run: |
           shred -u ~/.ansible/r1_vault_pass 2>/dev/null || rm -f ~/.ansible/r1_vault_pass
           shred -u configs/ansible/inventory/r1.secrets.yml 2>/dev/null || rm -f configs/ansible/inventory/r1.secrets.yml
+          # C6-041: the materialized inventory is operationally sensitive too
+          # (host IP, SSH surface, disk serials) — same treatment.
+          shred -u configs/ansible/inventory/r1.yml 2>/dev/null || rm -f configs/ansible/inventory/r1.yml

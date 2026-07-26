@@ -598,35 +598,20 @@ func (s *Server) tryRedisVWAPFallback(ctx context.Context, asset, quote canonica
 	return snap, []string{}, isTriangulated, true
 }
 
-// assetAliases returns the list of canonical-asset forms equivalent
-// to `asset` that the price-read path should try, in priority order
-// (the literal input first, then known aliases). XLM is the only
-// asset with two canonical forms today: `native` (per-network
-// strkey-less form) and `crypto:XLM` (cross-network global ticker
-// form). Both appear in production trade rows depending on the
-// emitting source (SDEX writes `native`, every CEX writes
-// `crypto:XLM`); the aggregator VWAPs under whichever the configured
-// pair set names. Without the alias loop, /v1/price reading by one
-// form misses VWAPs published under the other.
+// assetAliases is the api/v1 spelling of [canonical.AssetAliases] —
+// the single primitive that knows XLM's three canonical identities
+// (`native`, `crypto:XLM`, and the XLM SAC C-address) and the priority
+// order the read paths must try them in. See that godoc for why the SAC
+// form is last (a thin Soroban pool must not outrank SDEX + CEX depth)
+// and for the classic↔SAC registry this deliberately does NOT attempt.
 //
-// Keeping the function tiny and explicit rather than wiring it
-// through a broader asset-equivalence registry: this is the only
-// known pair today and a registry would over-design the problem.
-// Add a second case here (and a test) if a future asset acquires
-// a second canonical form.
+// C4-012/C4-013 (audit-2026-07-23): this used to be a two-case switch
+// duplicated verbatim in internal/aggregate, with reciprocal "keep the
+// two in lock-step" comments and no mechanism to enforce it. Both are
+// gone; the lock-step test moved down to canonical as the primitive's
+// own contract test.
 func assetAliases(asset canonical.Asset) []canonical.Asset {
-	out := []canonical.Asset{asset}
-	switch asset.String() {
-	case "native":
-		if alt, err := canonical.ParseAsset("crypto:XLM"); err == nil {
-			out = append(out, alt)
-		}
-	case "crypto:XLM":
-		if alt, err := canonical.ParseAsset("native"); err == nil {
-			out = append(out, alt)
-		}
-	}
-	return out
+	return canonical.AssetAliases(asset)
 }
 
 // readPriceWithAliases is the alias-aware wrapper around

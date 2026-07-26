@@ -77,6 +77,7 @@ type Server struct {
 	accounts            AccountStore
 	accountKeyQuota     int
 	platformAccounts    PlatformAccountStore
+	apiKeyBudgets       APIKeyBudgetStores
 	statusNotices       StatusNoticeStore
 	audit               AuditSink
 	signups             SignupTracker
@@ -442,6 +443,22 @@ type Options struct {
 	// `RequireEmailVerified` gate can't reflect it back into
 	// subsequent requests.
 	APIKeyEmailVerifier APIKeyEmailVerifier
+
+	// APIKeyBudgets are the credential stores a TIER CHANGE has to
+	// clamp — the same two stores the Stripe downgrade path lowers.
+	// Wired so PATCH /v1/admin/accounts/{id} can enforce a
+	// tier-lowering on the keys the account can actually
+	// authenticate with, instead of only writing accounts.tier
+	// (52105fdb residual, audit-2026-07-23: the enforced per-minute
+	// budget is read straight off the key record, so an operator
+	// demoting Pro→Free left every existing key at 10_000/min).
+	//
+	// Zero value disables the admin-side clamp: the tier write still
+	// lands and the endpoint reports keys_clamped=0, so a deployment
+	// without a key store degrades visibly rather than silently.
+	// Deliberately NOT read from Options.Stripe — the operator
+	// downgrade must not depend on Stripe being configured.
+	APIKeyBudgets APIKeyBudgetStores
 
 	// Stripe, when non-nil, backs POST /v1/webhooks/stripe (paid-
 	// tier upgrade webhook). Nil makes the endpoint return 503 so
@@ -997,6 +1014,7 @@ func New(opts Options) *Server {
 		accounts:                opts.Accounts,
 		accountKeyQuota:         opts.AccountKeyQuota,
 		platformAccounts:        opts.PlatformAccounts,
+		apiKeyBudgets:           opts.APIKeyBudgets,
 		statusNotices:           opts.StatusNotices,
 		signups:                 opts.Signups,
 		signupIPThrottle:        opts.SignupIPThrottle,

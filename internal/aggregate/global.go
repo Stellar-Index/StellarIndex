@@ -216,34 +216,19 @@ func tryVWAPTier(
 	return GlobalPriceResult{}, false, nil
 }
 
-// assetAliases returns the canonical-asset forms equivalent to
-// `asset`, in priority order (the literal input first, then known
-// aliases). XLM is the only asset with two canonical forms today:
-// `native` (the per-network strkey-less form SDEX writes) and
-// `crypto:XLM` (the cross-network ticker form every CEX writes).
-// Both appear in production trade rows depending on the emitting
-// source, and the aggregator VWAPs under whichever form the
-// configured pair set names — so a read keyed by one form must also
-// try the other or it misses the VWAP published under the alias.
+// assetAliases is the aggregate spelling of [canonical.AssetAliases].
 //
-// This intentionally duplicates the small switch in
-// internal/api/v1.assetAliases rather than importing it (v1 imports
-// aggregate, not the reverse — pulling the helper down here would
-// invert the dependency). Keep the two in lock-step: a new asset
-// with a second canonical form needs a case in BOTH (and a test).
+// C4-012/C4-013 (audit-2026-07-23): this was a verbatim copy of the
+// api/v1 switch, kept "in lock-step" by a pair of reciprocal comments
+// and nothing else — the exact shape that lets one copy gain XLM's
+// third identity (the SAC C-address) and the other silently not. The
+// duplicate is gone; both call the leaf primitive, whose godoc carries
+// the priority-order reasoning that matters here: [tryVWAPTier] takes
+// the FIRST alias that clears VWAPMinTradeCount, so the SAC form is
+// ordered last and can only win when both SDEX (`native`) and CEX
+// (`crypto:XLM`) miss.
 func assetAliases(asset canonical.Asset) []canonical.Asset {
-	out := []canonical.Asset{asset}
-	switch asset.String() {
-	case "native":
-		if alt, err := canonical.ParseAsset("crypto:XLM"); err == nil {
-			out = append(out, alt)
-		}
-	case "crypto:XLM":
-		if alt, err := canonical.ParseAsset("native"); err == nil {
-			out = append(out, alt)
-		}
-	}
-	return out
+	return canonical.AssetAliases(asset)
 }
 
 func tryAggregatorTier(

@@ -58,20 +58,46 @@ func TestCaptureEligible(t *testing.T) {
 func TestClaimAtomCount(t *testing.T) {
 	t.Parallel()
 
-	// realClaims builds n value-moving claims (non-zero amounts) — realTradeCount
-	// keeps these. mixedClaims appends `zero` both-zero no-op crosses (dust /
-	// rounding artifacts the census must drop to equal COUNT(trades)).
+	// FIXTURE NOTE (C2-010, audit-2026-07-23): these atoms must name two
+	// DISTINCT assets. They originally left AssetSold/AssetBought at
+	// their zero value, which is xdr.AssetTypeAssetTypeNative on both
+	// legs — a native/native self-cross that stellar-core never emits and
+	// that internal/sources/sdex has always dropped (canonical.NewPair
+	// rejects base == quote). The under-specified fixture was invisible
+	// while sdexclaim.RealTradeCount looked only at amounts; now that it
+	// applies the decoder's full rule set, the atoms have to be shaped
+	// like real ones. The assertions below are unchanged.
+	usdc := xdr.Asset{
+		Type: xdr.AssetTypeAssetTypeCreditAlphanum4,
+		AlphaNum4: &xdr.AlphaNum4{
+			AssetCode: xdr.AssetCode4{'U', 'S', 'D', 'C'},
+			Issuer: xdr.AccountId{
+				Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
+				Ed25519: &xdr.Uint256{1},
+			},
+		},
+	}
+	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+
+	// realClaims builds n value-moving claims (non-zero amounts, distinct
+	// assets) — RealTradeCount keeps these. mixedClaims appends `zero`
+	// both-zero no-op crosses (dust / rounding artifacts the census must
+	// drop to equal COUNT(trades)).
 	realClaims := func(n int) []xdr.ClaimAtom {
 		c := make([]xdr.ClaimAtom, n)
 		for i := range c {
-			c[i] = xdr.ClaimAtom{Type: xdr.ClaimAtomTypeClaimAtomTypeOrderBook, OrderBook: &xdr.ClaimOfferAtom{AmountSold: 100, AmountBought: 200}}
+			c[i] = xdr.ClaimAtom{Type: xdr.ClaimAtomTypeClaimAtomTypeOrderBook, OrderBook: &xdr.ClaimOfferAtom{
+				AssetSold: native, AmountSold: 100, AssetBought: usdc, AmountBought: 200,
+			}}
 		}
 		return c
 	}
 	mixedClaims := func(nReal, zero int) []xdr.ClaimAtom {
 		c := realClaims(nReal)
 		for i := 0; i < zero; i++ {
-			c = append(c, xdr.ClaimAtom{Type: xdr.ClaimAtomTypeClaimAtomTypeOrderBook, OrderBook: &xdr.ClaimOfferAtom{AmountSold: 0, AmountBought: 0}})
+			c = append(c, xdr.ClaimAtom{Type: xdr.ClaimAtomTypeClaimAtomTypeOrderBook, OrderBook: &xdr.ClaimOfferAtom{
+				AssetSold: native, AmountSold: 0, AssetBought: usdc, AmountBought: 0,
+			}})
 		}
 		return c
 	}

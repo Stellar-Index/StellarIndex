@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -114,6 +115,52 @@ func TestMarketSources_ExpandsXLMAliasForms(t *testing.T) {
 	// A single-form asset (fiat:USD) stays a single form — no spurious aliases.
 	if len(reader.gotQuote) != 1 || reader.gotQuote[0] != "fiat:USD" {
 		t.Errorf("PairSourceStats quote got %v, want exactly [fiat:USD]", reader.gotQuote)
+	}
+}
+
+// TestMarketSources_MembershipMatchesSACValuation is the C4-012
+// regression guard (audit-2026-07-23). The per-source breakdown SQL has
+// always VALUED a `CAS3J7GY…` leg as XLM (its volume CASE applies the
+// XLM/USD rate to it), while the handler's form set passed only
+// `native` + `crypto:XLM` — so every Soroban XLM trade was excluded
+// from the population it was willing to price, and
+// /v1/markets/sources?asset=native undercounted Soroban XLM volume in
+// production. Membership and valuation must name the SAME set of forms.
+func TestMarketSources_MembershipMatchesSACValuation(t *testing.T) {
+	reader := &stubMarketSourceReader{asset: []timescale.SourceStats{
+		{Source: "aquarius", TradeCount24h: 1, VolumeUSD24h: sql.NullString{String: "1", Valid: true}},
+	}}
+	srv := v1.New(v1.Options{MarketSources: reader})
+	ts := httpTestServer(t, srv)
+
+	// The SQL's own XLM literal — the same constant the query embeds.
+	const xlmSAC = canonical.XLMSacContractID
+
+	for _, q := range []string{"native", "crypto:XLM", xlmSAC} {
+		resp := mustGet(t, ts.URL+"/v1/markets/sources?asset="+q)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("asset=%s: status=%d want 200", q, resp.StatusCode)
+		}
+		if !containsAll(reader.gotAsset, "native", "crypto:XLM", xlmSAC) {
+			t.Errorf("asset=%s: AssetSourceStats got forms %v, want all three XLM forms "+
+				"(the volume CASE prices the SAC leg as XLM, so the membership filter must match it)",
+				q, reader.gotAsset)
+		}
+	}
+
+	// Both LEGS of a pair query expand too — XLM is a quote as often as
+	// it is a base (AQUA/XLM), and the pair query's CASE checks
+	// quote_asset against the same SAC literal.
+	resp := mustGet(t, ts.URL+"/v1/markets/sources?base=AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA&quote=native")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("pair: status=%d want 200", resp.StatusCode)
+	}
+	if !containsAll(reader.gotQuote, "native", "crypto:XLM", xlmSAC) {
+		t.Errorf("PairSourceStats quote got forms %v, want all three XLM forms", reader.gotQuote)
+	}
+	// The non-XLM leg stays a single form — no spurious alias fan-out.
+	if len(reader.gotBase) != 1 {
+		t.Errorf("PairSourceStats base got %v, want exactly one form for a non-aliased asset", reader.gotBase)
 	}
 }
 

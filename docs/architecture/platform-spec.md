@@ -1,7 +1,7 @@
 ---
 title: Platform spec — customer + staff dashboards, billing, full lifecycle
-last_verified: 2026-05-05
-status: design proposal
+last_verified: 2026-07-26
+status: design proposal — §7.2 admin endpoints are now split into SHIPPED vs proposed
 ---
 
 # Platform spec — customer + staff dashboards, billing, full lifecycle
@@ -603,7 +603,8 @@ auth via:
 
 **Operations cockpit:**
 - View all firing alerts (mirror of `/v1/status`)
-- Suspend account (immediate; reason required → audit log)
+- Suspend account (immediate; reason required → audit log) — SHIPPED as
+  `PATCH /v1/admin/accounts/{id}` with `{"status":"suspended"}`; see §7.2
 - Reset rate limit (one-time grace)
 - Issue refund (proxies to Stripe; requires manager-approval workflow for >$X)
 - Manually rotate a key (compromise response — invalidates immediately, mints replacement, emails customer)
@@ -617,24 +618,66 @@ auth via:
 
 ### 7.2 Endpoints
 
-Mounted under `/admin/` in the API; require `users.is_staff = true`:
+Mounted under `/v1/admin/` in the API; operator-tier credential required
+(`requireOperator`, internal/api/v1/admin_accounts.go).
+
+**Shipped today** — this half of the section is DESCRIPTIVE, not a proposal:
 
 ```
-GET  /admin/accounts
-GET  /admin/accounts/{id}
-POST /admin/accounts/{id}/suspend
-POST /admin/accounts/{id}/unsuspend
-POST /admin/accounts/{id}/notes
-GET  /admin/keys/search?prefix=
-POST /admin/keys/{id}/rotate              # compromise response
-GET  /admin/usage/top-by-errors
-GET  /admin/usage/top-by-latency
-GET  /admin/revenue/mrr
-GET  /admin/audit-log
+GET    /v1/admin/accounts/{id}
+PATCH  /v1/admin/accounts/{id}            # tier, status, rate-limit + quota overrides
+POST   /v1/admin/keys                     # operator key mint
+DELETE /v1/admin/keys/{keyID}             # revoke (compromise response)
+GET    /v1/admin/status-notices
+POST   /v1/admin/status-notices
+POST   /v1/admin/status-notices/{id}/resolve
+```
+
+> **Suspension shipped as `PATCH …/{id}` with `{"status": "suspended"}`,
+> NOT as `POST …/{id}/suspend`** (C3-010, audit-2026-07-23; reconciled into
+> this spec 2026-07-26). The decision, recorded here because the spec is
+> where the next reader looks:
+>
+> - The lifecycle is a three-state enum — `active | suspended | closed` —
+>   pinned by the migration-0027 CHECK constraint and
+>   `platform.AccountStatus`. A pair of `/suspend` + `/unsuspend` verbs
+>   models only two of the three and has no natural spelling for `closed`;
+>   a third verb per state is how a REST surface grows one endpoint per
+>   value of an enum.
+> - Suspension is rarely the only thing an operator changes. `PATCH` lets
+>   "demote to free AND suspend" be ONE atomic, single-audit-row act;
+>   split verbs make it two requests with a window in between.
+> - The mandatory `X-Reason` header, the `account.override.set` audit row,
+>   and the operator-tier gate are identical either way, so nothing about
+>   accountability turns on the shape.
+>
+> Migration note: no client depended on `/suspend` — it was never
+> implemented, so this reconciles the doc to the code rather than changing
+> a contract.
+
+**Still proposed** (no handler yet — treat as design, not surface):
+
+```
+GET  /v1/admin/accounts                   # list/search
+POST /v1/admin/accounts/{id}/notes
+GET  /v1/admin/keys/search?prefix=
+POST /v1/admin/keys/{id}/rotate           # rotate-in-place; DELETE + POST is the shipped path
+GET  /v1/admin/usage/top-by-errors
+GET  /v1/admin/usage/top-by-latency
+GET  /v1/admin/revenue/mrr
+GET  /v1/admin/audit-log
 ```
 
 All write endpoints require an `X-Reason` header captured into
 the audit log.
+
+A tier LOWERING through `PATCH /v1/admin/accounts/{id}` also clamps every
+API key the account holds down to the new tier's
+`MaxRateLimitPerMin` — the enforced budget is read off the key record, so
+writing `accounts.tier` alone would leave the old throughput live. Same
+helper as the Stripe downgrade path (52105fdb residual,
+audit-2026-07-23); the audit row carries `keys_clamped` /
+`key_clamp_failures`.
 
 ---
 

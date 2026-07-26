@@ -8332,6 +8332,26 @@ export interface paths {
          *     fires on any non-zero rate over 15 min. See the runbook
          *     at `docs/operations/runbooks/stripe-platform-sync-errors.md`
          *     for per-`operation` triage.
+         *
+         *     **Provisioning outcomes.** The status code encodes whether a
+         *     retry can help:
+         *
+         *     - **All keys upgraded** → `200`.
+         *     - **Some keys upgraded, some failed** → `200` with
+         *       `keys_failed > 0`. The customer already holds a credential
+         *       carrying the paid tier, and a retry loop over one
+         *       permanently-unwritable key record would risk Stripe
+         *       disabling the endpoint for every customer. Surfaced by
+         *       `keys_failed` and per-key ERROR logs, not by the status.
+         *     - **Keys exist but NONE could be upgraded** → `500`. Nothing
+         *       was provisioned and the cause is a key-store outage, which
+         *       a retry heals, so Stripe's retry schedule must re-deliver.
+         *       The event is also dead-lettered (`processed_at` stays NULL)
+         *       so the incident survives Stripe eventually giving up, and
+         *       resolves itself when a retry succeeds.
+         *     - **No keys exist for the identifier** (customer paid but
+         *       never signed up) → `200` + dead-letter. Retrying cannot
+         *       help; a human must act.
          */
         post: {
             parameters: {
@@ -8348,7 +8368,7 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description Event acknowledged (regardless of whether keys were upgraded — non-2xx triggers Stripe retries). */
+                /** @description Event acknowledged. Covers full success, PARTIAL success (`keys_failed > 0` — at least one key carries the paid tier), deliberately-ignored event types, and the paid-but-never-signed-up case (`dead_lettered: true`), where no retry could help. A total provisioning failure returns 500 instead so Stripe retries. */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -8360,6 +8380,7 @@ export interface paths {
                          *         "ok": true,
                          *         "upgraded": 2,
                          *         "keys_total": 2,
+                         *         "keys_failed": 0,
                          *         "rate_limit_per_min": 10000
                          *       },
                          *       "as_of": "2026-07-03T22:45:19.771408Z",
@@ -8379,9 +8400,15 @@ export interface paths {
                                 upgraded?: number;
                                 /** @description Total keys belonging to the identifier. */
                                 keys_total?: number;
+                                /** @description Keys whose budget could NOT be updated. Non-zero means a PARTIAL upgrade: the customer holds at least one key on the paid tier, the rest kept the old budget. Investigate via the per-key ERROR logs. */
+                                keys_failed?: number;
                                 rate_limit_per_min?: number;
                                 /** @description Set when an event was acknowledged but not acted on (wrong type, unpaid). */
                                 ignored?: string;
+                                /** @description Human-readable outcome for an acknowledged-but-unprovisioned event (e.g. 'no keys for identifier'). */
+                                note?: string;
+                                /** @description The event was recorded as paid-but-unprovisioned; processed_at stays NULL so an operator re-send re-runs the provisioning. */
+                                dead_lettered?: boolean;
                             };
                         };
                     };
@@ -8397,6 +8424,15 @@ export interface paths {
                 };
                 /** @description Stripe-Signature verification failed. */
                 401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Provisioning failed and a retry can help — the customer's keys could not be listed, or they exist but NONE could be updated. Returned deliberately so Stripe's retry schedule re-delivers; the event is dead-lettered in parallel so the incident survives Stripe giving up, and resolves automatically when a retry succeeds. */
+                500: {
                     headers: {
                         [name: string]: unknown;
                     };

@@ -204,6 +204,7 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 	}
 
 	before := adminAccountView(acct)
+	priorTier := acct.Tier
 	applyAccountOverrides(&acct, req, time.Now().UTC())
 
 	if err := s.platformAccounts.Update(r.Context(), acct); err != nil {
@@ -219,15 +220,60 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	clamped, clampFailed := s.clampKeysAfterTierChange(r.Context(), subject, priorTier, acct)
+
 	after := adminAccountView(acct)
 	s.logger.Info("admin account override",
 		"actor_key_id", subject.KeyID,
 		"actor_identifier", subject.Identifier,
 		"account_id", id,
-		"reason", reason)
-	s.recordAdminAccountAudit(r, subject, id.String(), reason, before, after)
+		"reason", reason,
+		"keys_clamped", clamped,
+		"key_clamp_failures", clampFailed)
+	s.recordAdminAccountAudit(r, subject, id.String(), reason, before, after, clamped, clampFailed)
 
 	writeJSON(w, after, Flags{})
+}
+
+// clampKeysAfterTierChange lowers every credential the account can still
+// authenticate with to the new tier's budget, whenever the PATCH LOWERED
+// the tier ceiling. Returns (keys lowered, per-key failures) so the
+// caller can record both in the audit row.
+//
+// 52105fdb residual (audit-2026-07-23). The kill-switch/downgrade work
+// gave the Stripe path a full clamp — `applyPlanDowngrade` lowers the
+// account override AND both key stores — but PATCH
+// /v1/admin/accounts/{id} only wrote `accounts.tier`. The enforced
+// per-minute budget is read straight off the key record
+// (auth/apikey_postgres.go `rateLimit := pgKey.RateLimitPerMin`;
+// auth/apikey_redis.go returns the stored value), so an operator
+// demoting an abusive or non-paying account Pro→Free left every existing
+// key serving 10_000/min indefinitely — the same defect C3-014 fixed for
+// Stripe, still live on the operator surface. Same helper, same ladder
+// (`platform.Tier.MaxRateLimitPerMin`), so the two paths cannot drift.
+//
+// Only runs when the ceiling DROPS. A raise is intentionally not
+// mirrored: budgets are raised at mint time by the dashboard's
+// `clampRateLimitToTier`, and silently lifting existing keys on a comp
+// would grant throughput the operator did not ask for.
+//
+// The account-level `rate_limit_per_min_override` is deliberately NOT
+// clamped here, unlike the Stripe path: on the operator surface the
+// override is an explicit field of the SAME request. An operator who
+// PATCHes tier=free while leaving a 10_000 override in place is making a
+// deliberate, audited comp decision; overwriting it would silently
+// discard the very affordance this endpoint exists to provide. (Stripe
+// clamps it because no human is in that loop.)
+func (s *Server) clampKeysAfterTierChange(
+	ctx context.Context, subject auth.Subject, priorTier platform.Tier, acct platform.Account,
+) (lowered, failed int) {
+	ceiling := acct.Tier.MaxRateLimitPerMin()
+	if ceiling >= priorTier.MaxRateLimitPerMin() {
+		return 0, 0
+	}
+	cause := "admin PATCH /v1/admin/accounts/" + acct.ID.String() +
+		" by " + subject.KeyID + " (" + string(priorTier) + "→" + string(acct.Tier) + ")"
+	return s.clampKeyBudgetsToTier(ctx, cause, s.apiKeyBudgets, acct, ceiling)
 }
 
 // applyAccountOverrides mutates acct in place from the request's set
@@ -405,6 +451,7 @@ func writeAccountNotFound(w http.ResponseWriter, r *http.Request) {
 // same contract as recordAdminKeyMintAudit).
 func (s *Server) recordAdminAccountAudit(
 	r *http.Request, actor auth.Subject, accountID, reason string, before, after AdminAccountView,
+	keysClamped, keyClampFailures int,
 ) {
 	if s.audit == nil {
 		return
@@ -413,6 +460,16 @@ func (s *Server) recordAdminAccountAudit(
 		"actor_key_id":     actor.KeyID,
 		"actor_identifier": actor.Identifier,
 		"reason":           reason,
+		// The tier-lowering key clamp's OUTCOME, durably. There is no
+		// dedicated metric for this path (the Stripe counter's name,
+		// help text and runbook are all Stripe-specific, so reusing it
+		// would mislabel), and a clamp that silently failed would leave
+		// paid throughput live on a demoted account. The audit_log is
+		// the surface staff already read for privileged mutations, so a
+		// non-zero key_clamp_failures is queryable next to the tier
+		// change that caused it.
+		"keys_clamped":       keysClamped,
+		"key_clamp_failures": keyClampFailures,
 		"before": map[string]any{
 			"tier":                           before.Tier,
 			"status":                         before.Status,

@@ -149,6 +149,44 @@ missing the classic trustline component entirely). Code fix landed
   procedure, key custody, and the RPO window:
   [pgbackrest-encryption.md](pgbackrest-encryption.md).
 
+## `R1_INVENTORY_B64` — DO THIS BEFORE MERGING (C6-041, 2026-07-26)
+
+`configs/ansible/inventory/r1.yml` is no longer tracked. It was publishing r1's
+public IP, `allowed_ssh_cidrs: 0.0.0.0/0`, the disk serials and the operator SSH
+pubkey to a **public** repository, and re-publishing every topology change on
+every commit. `.github/workflows/ansible-drift.yml` now materializes it from an
+Actions secret, the same pattern it already used for the encrypted vault — so
+**the drift guard is RED until the secret exists**, and its failure message says
+exactly that rather than looking like drift.
+
+- [ ] **Create the `R1_INVENTORY_B64` Actions secret**, from a machine holding the
+  working-tree copy (the untracking deliberately leaves your local file in place):
+
+  ```bash
+  base64 -w0 configs/ansible/inventory/r1.yml    # macOS: base64 -i configs/ansible/inventory/r1.yml
+  # repo Settings → Secrets and variables → Actions → New repository secret
+  #   Name: R1_INVENTORY_B64
+  ```
+
+  Then re-run `ansible-drift` (`workflow_dispatch`) and confirm it gets past the
+  new "Inventory" step. Note it will still fail at "Vault password" until
+  `ANSIBLE_VAULT_PASSWORD` / `ANSIBLE_VAULT_FILE_B64` are also restored (CID-24,
+  still open) — three secrets, one green run.
+
+- [ ] **Treat the historical contents as public.** Untracking stops the leak
+  growing; it does not undo it. Every past revision is readable from any clone via
+  `git log -p -- configs/ansible/inventory/r1.yml`. Concretely: the IP and the
+  world-open SSH surface are already-known facts, so mitigate by narrowing
+  `allowed_ssh_cidrs` (the open C6-018/C6-028/C6-060/C6-092 items), not by hiding
+  the file; and anything credential-shaped that ever appeared in it needs
+  ROTATION per [credential-rotation.md](credential-rotation.md). A history rewrite
+  is NOT recommended for a public repo with forks/clones — it invalidates every
+  downstream ref while the old objects survive in those clones anyway.
+
+- [ ] **Keep a second copy of `r1.yml` outside the repo.** It is now the only
+  authoritative copy on your machine and is no longer protected by git. The
+  Actions secret is a copy, not a backup (write-only once set).
+
 ## MinIO credential hygiene (2026-07-25)
 - [ ] **Rotate MinIO root** (`minio_root_user` / `minio_root_password`, still named
   `ratesengine-admin`) — the credentials appeared in plaintext in an agent session

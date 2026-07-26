@@ -122,8 +122,16 @@ func TestStripeWebhook_AllUpgradesFailed_DeadLetters(t *testing.T) {
 		`"payment_status":"paid","metadata":{"tier":"pro"}}}}`
 	resp := postStripe(t, ts, body, stripeSign(t, body, testStripeSecret, now))
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	// 52105fdb residual (audit-2026-07-23): this assertion used to be
+	// `want 200`. C3-016 made the zero-provisioned outcome DURABLE
+	// (dead-letter, processed_at NULL) but still acknowledged it, which
+	// tells Stripe to stop retrying — and every failure on this path is a
+	// key-store outage, the transient class a retry heals. The dead-letter
+	// and the 5xx are complementary, not alternatives: the 5xx buys
+	// automatic recovery, the dead-letter survives Stripe giving up.
+	if resp.StatusCode < 500 {
+		t.Fatalf("status = %d, want a 5xx so Stripe's retry schedule re-delivers a payment "+
+			"that provisioned nothing", resp.StatusCode)
 	}
 
 	open := events.openDeadLetters()

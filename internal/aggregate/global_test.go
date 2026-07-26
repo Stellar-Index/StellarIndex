@@ -400,27 +400,40 @@ func TestComputeGlobalPrice_VWAPTierAliasUnderThreshold(t *testing.T) {
 	}
 }
 
-// TestAssetAliases mirrors the v1.assetAliases contract so the two
-// stay in lock-step (F-1340).
+// TestAssetAliases pins that this package's wrapper is a pure
+// delegation to [canonical.AssetAliases] (F-1340; C4-012/C4-013
+// audit-2026-07-23). The alias TABLE itself is tested once, in
+// canonical — the whole point of the hoist is that there is no second
+// copy here to drift. What this asserts is the property tryVWAPTier
+// depends on: the literal comes first and the SAC form comes LAST, so
+// the VWAP tier can only land on a thin Soroban pool after both SDEX
+// (`native`) and CEX (`crypto:XLM`) have missed.
 func TestAssetAliases(t *testing.T) {
-	cases := map[string][]string{
-		"native":     {"native", "crypto:XLM"},
-		"crypto:XLM": {"crypto:XLM", "native"},
-	}
-	for in, want := range cases {
+	for _, in := range []string{"native", "crypto:XLM", canonical.XLMSacContractID} {
 		a, err := canonical.ParseAsset(in)
 		if err != nil {
 			t.Fatalf("parse %s: %v", in, err)
 		}
-		got := assetAliases(a)
+		got, want := assetAliases(a), canonical.AssetAliases(a)
 		if len(got) != len(want) {
-			t.Fatalf("assetAliases(%s) len = %d, want %d", in, len(got), len(want))
+			t.Fatalf("assetAliases(%s) len = %d, want %d (must delegate)", in, len(got), len(want))
 		}
 		for i := range want {
-			if got[i].String() != want[i] {
-				t.Errorf("assetAliases(%s)[%d] = %q, want %q", in, i, got[i].String(), want[i])
+			if !got[i].Equal(want[i]) {
+				t.Errorf("assetAliases(%s)[%d] = %q, want %q (must delegate)",
+					in, i, got[i].String(), want[i].String())
 			}
 		}
+		if got[0].String() != in {
+			t.Errorf("assetAliases(%s)[0] = %q, want the literal input first", in, got[0].String())
+		}
+	}
+
+	// The manipulation-surface ordering, stated directly: a `native`
+	// read reaches the SAC form only as the LAST resort.
+	got := assetAliases(canonical.NativeAsset())
+	if len(got) != 3 || got[len(got)-1].String() != canonical.XLMSacContractID {
+		t.Errorf("assetAliases(native) = %v, want the XLM SAC form last", got)
 	}
 
 	// A non-XLM asset returns only itself.
@@ -430,5 +443,57 @@ func TestAssetAliases(t *testing.T) {
 	}
 	if got := assetAliases(usdc); len(got) != 1 || !got[0].Equal(usdc) {
 		t.Errorf("assetAliases(USDC) = %v, want just itself", got)
+	}
+}
+
+// TestComputeGlobalPrice_VWAPTierReachesSACOnlyLast is the
+// manipulation-surface guard for C4-012: adding the XLM SAC to the
+// alias family widened what tryVWAPTier can find, and the whole safety
+// of that widening is the ORDER. Two assertions, both load-bearing:
+//
+//  1. when a deep `native` VWAP exists, the SAC pool is never even
+//     queried — a Soroban pool cannot displace SDEX depth; and
+//  2. when both established forms miss, the SAC IS reached, so a
+//     Soroban-only market still gets a price instead of a 404.
+func TestComputeGlobalPrice_VWAPTierReachesSACOnlyLast(t *testing.T) {
+	quote, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatalf("fiat: %v", err)
+	}
+
+	// (1) native has depth — the loop must short-circuit before the SAC.
+	deep := &aliasAwareReader{byBase: map[string]int64{
+		"native":                   50,
+		canonical.XLMSacContractID: 9_999,
+	}}
+	res, err := ComputeGlobalPrice(context.Background(), canonical.NativeAsset(), quote, deep, DefaultGlobalPriceOptions())
+	if err != nil {
+		t.Fatalf("ComputeGlobalPrice (deep native): %v", err)
+	}
+	if res.TradeCount != 50 {
+		t.Errorf("trade_count = %d, want 50 (the native VWAP, not the SAC pool)", res.TradeCount)
+	}
+	if len(deep.vwapCalls) != 1 || deep.vwapCalls[0] != "native" {
+		t.Errorf("vwap queries = %v, want just [native] — the SAC form must not be reached when SDEX has depth", deep.vwapCalls)
+	}
+
+	// (2) both established forms miss — the SAC form is the last resort
+	// and must be tried, in third position.
+	sacOnly := &aliasAwareReader{byBase: map[string]int64{canonical.XLMSacContractID: 12}}
+	res, err = ComputeGlobalPrice(context.Background(), canonical.NativeAsset(), quote, sacOnly, DefaultGlobalPriceOptions())
+	if err != nil {
+		t.Fatalf("ComputeGlobalPrice (SAC only): %v", err)
+	}
+	if res.Authority != AuthorityVWAPNative || res.TradeCount != 12 {
+		t.Errorf("authority/trade_count = %q/%d, want vwap_native/12", res.Authority, res.TradeCount)
+	}
+	wantOrder := []string{"native", "crypto:XLM", canonical.XLMSacContractID}
+	if len(sacOnly.vwapCalls) != len(wantOrder) {
+		t.Fatalf("vwap query order = %v, want %v", sacOnly.vwapCalls, wantOrder)
+	}
+	for i := range wantOrder {
+		if sacOnly.vwapCalls[i] != wantOrder[i] {
+			t.Errorf("vwap query[%d] = %q, want %q", i, sacOnly.vwapCalls[i], wantOrder[i])
+		}
 	}
 }
