@@ -60,6 +60,30 @@ func findIncidentForEmit(all []incidents.Incident, slug string, eventType platfo
 	return found, nil
 }
 
+// incidentPayloadFields builds the webhook body a subscriber receives.
+// Extracted from [emitIncident] to keep that function under the funlen
+// cap; the shape is the same one the dashboard explorer + /v1/incidents
+// render, so a hook subscriber sees what the public status page shows.
+func incidentPayloadFields(found *incidents.Incident, eventType platform.WebhookEventType) map[string]any {
+	fields := map[string]any{
+		"event":               string(eventType),
+		"slug":                found.Slug,
+		"title":               found.Title,
+		"severity":            string(found.Severity),
+		"status":              string(found.Status),
+		"started_at":          found.StartedAt.UTC().Format(time.RFC3339Nano),
+		"affected_components": found.AffectedComponents,
+		"at":                  time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if found.ResolvedAt != nil {
+		fields["resolved_at"] = found.ResolvedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if found.PostmortemRef != "" {
+		fields["postmortem"] = found.PostmortemRef
+	}
+	return fields
+}
+
 // emitIncident fans out an `incident.sev1` or `incident.resolved`
 // webhook to every subscribed dashboard hook for the given slug.
 //
@@ -82,11 +106,12 @@ func findIncidentForEmit(all []incidents.Incident, slug string, eventType platfo
 //  5. Operator redeploys + runs `stellarindex-ops emit-incident
 //     -slug <slug> -event resolved`.
 //
-// Best-effort: the underlying `customerwebhook.Fanout.Publish`
-// logs and drops per-subscriber failures. The command returns
-// non-zero only on hard inputs errors (bad slug, no Postgres,
-// missing config). A zero-subscriber fan-out is a successful
-// no-op — informational stderr line only.
+// The command returns non-zero on hard input errors (bad slug, no
+// Postgres, missing config) AND — since C3-023 — when the fan-out
+// itself lost a delivery: a subscribed customer was not told about
+// the incident and no retry row exists, which the operator has to
+// know before they close the loop. A zero-subscriber fan-out is a
+// successful no-op — informational stderr line only.
 //
 // Usage:
 //
@@ -166,23 +191,7 @@ func emitIncident(args []string) error {
 		return errors.New("webhook fan-out not configured (store ctor returned nil)")
 	}
 
-	payloadFields := map[string]any{
-		"event":               string(eventType),
-		"slug":                found.Slug,
-		"title":               found.Title,
-		"severity":            string(found.Severity),
-		"status":              string(found.Status),
-		"started_at":          found.StartedAt.UTC().Format(time.RFC3339Nano),
-		"affected_components": found.AffectedComponents,
-		"at":                  time.Now().UTC().Format(time.RFC3339Nano),
-	}
-	if found.ResolvedAt != nil {
-		payloadFields["resolved_at"] = found.ResolvedAt.UTC().Format(time.RFC3339Nano)
-	}
-	if found.PostmortemRef != "" {
-		payloadFields["postmortem"] = found.PostmortemRef
-	}
-	payload := customerwebhook.MarshalPayload(logger, payloadFields)
+	payload := customerwebhook.MarshalPayload(logger, incidentPayloadFields(found, eventType))
 	if payload == nil {
 		return errors.New("payload marshal failed (see WARN log above)")
 	}
@@ -196,12 +205,21 @@ func emitIncident(args []string) error {
 		return fmt.Errorf("list subscribers: %w", err)
 	}
 
-	fanout.Publish(ctx, eventType, payload)
+	res, err := fanout.Publish(ctx, eventType, payload)
 
-	fmt.Fprintf(os.Stderr, "emit-incident: event=%s slug=%s subscribers=%d\n",
-		eventType, *slug, len(subs))
+	fmt.Fprintf(os.Stderr, "emit-incident: event=%s slug=%s subscribers=%d enqueued=%d failed=%d\n",
+		eventType, *slug, len(subs), res.Enqueued, res.Failed)
 	if len(subs) == 0 {
 		fmt.Fprintln(os.Stderr, "emit-incident: no dashboard hooks subscribed — fan-out was a no-op")
+	}
+	// C3-023: the operator ran this command to make customers aware of
+	// an incident. A partial or total fan-out failure means some of them
+	// were NOT told, and there is no retry row to drain — so the command
+	// must exit non-zero rather than printing a reassuring summary. Safe
+	// to re-run: the worker de-dupes nothing, but a re-emit is far
+	// cheaper than a silently un-notified customer.
+	if err != nil {
+		return fmt.Errorf("emit-incident: %w", err)
 	}
 	return nil
 }

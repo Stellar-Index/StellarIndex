@@ -267,7 +267,18 @@ func run(cfgPath string, dryRun bool) error {
 					if payload == nil {
 						return
 					}
-					fanout.Publish(ctx, platform.WebhookEventAnomalyFreeze, payload)
+					// C3-023: a lost fan-out is permanent (no delivery
+					// row exists to retry), so it is logged at ERROR
+					// with the pair that identifies the event — not
+					// discarded. The freeze itself is already durable
+					// in freeze_events, so we never fail the hook.
+					res, ferr := fanout.Publish(ctx, platform.WebhookEventAnomalyFreeze, payload)
+					if ferr != nil {
+						logger.Error("customer-webhook fan-out lost an anomaly.freeze event",
+							"err", ferr, "asset", asset.String(), "quote", quote.String(),
+							"subscribers", res.Subscribers, "enqueued", res.Enqueued,
+							"failed", res.Failed)
+					}
 				},
 			))
 			logger.Info("freeze events: customer-webhook fan-out wired")
@@ -371,7 +382,17 @@ func run(cfgPath string, dryRun bool) error {
 				if payload == nil {
 					return
 				}
-				divFanout.Publish(ctx, platform.WebhookEventDivergenceFiring, payload)
+				// C3-023: same contract as the freeze hook above — the
+				// divergence run is durable, the customer's copy of it
+				// is not, so a lost fan-out is an ERROR line plus a
+				// counter increment rather than silence.
+				res, ferr := divFanout.Publish(ctx, platform.WebhookEventDivergenceFiring, payload)
+				if ferr != nil {
+					logger.Error("customer-webhook fan-out lost a divergence.firing event",
+						"err", ferr, "pair", pair.String(),
+						"subscribers", res.Subscribers, "enqueued", res.Enqueued,
+						"failed", res.Failed)
+				}
 			}
 		}
 

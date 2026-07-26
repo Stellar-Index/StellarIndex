@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -88,6 +89,7 @@ func (h *Handlers) HandleAdminLookup(w http.ResponseWriter, r *http.Request) {
 	if h.cfg.Logger != nil {
 		h.cfg.Logger.Info("staff customer lookup", "actor", sc.User.Email, "account", acct.Slug)
 	}
+	h.recordAdminLookupAudit(r, sc, acct, lookupQueryKind(email), len(users))
 
 	resp := AdminLookupResponse{Account: adminAccountView(acct), Users: adminUserViews(users)}
 	w.Header().Set("Content-Type", "application/json")
@@ -97,6 +99,83 @@ func (h *Handlers) HandleAdminLookup(w http.ResponseWriter, r *http.Request) {
 
 // errLookupNoQuery signals neither email nor slug was supplied.
 var errLookupNoQuery = errors.New("dashboardauth: admin lookup needs email or slug")
+
+// lookupQueryKind names the dimension the staff member searched on, so
+// the audit row records HOW a customer was found (an email probe and a
+// slug probe are different investigative acts) without copying the
+// probed address into a second store.
+func lookupQueryKind(email string) string {
+	if email != "" {
+		return "email"
+	}
+	return "slug"
+}
+
+// recordAdminLookupAudit persists the "staff.customer.lookup" audit row
+// (C3-056, audit-2026-07-23). Pre-fix this surface recorded a staff read
+// of another customer's PII — account tier/status/billing email plus
+// every user's email and last-login — with a single `Logger.Info` line,
+// while every sibling admin surface (`admin_accounts.go`,
+// `admin_keys.go`, `status_notices.go`) wrote a durable
+// [platform.AuditEntry]. A log line is not a privacy audit trail: it is
+// rotated on a short retention, is not queryable per-account, and is
+// absent from the dashboard's audit view.
+//
+// Best-effort, matching the sibling contract: the read has already
+// happened by the time this runs, so a sink failure logs at WARN and
+// increments the shared write-failure counter under its own `surface`
+// label rather than failing the request.
+func (h *Handlers) recordAdminLookupAudit(
+	r *http.Request, sc SessionContext, acct platform.Account, queryKind string, usersReturned int,
+) {
+	if h.cfg.Audit == nil {
+		return
+	}
+	meta, err := json.Marshal(map[string]any{
+		"actor_user_id":   sc.User.ID.String(),
+		"actor_email":     sc.User.Email,
+		"query_kind":      queryKind,
+		"account_slug":    acct.Slug,
+		"users_returned":  usersReturned,
+		"account_tier":    string(acct.Tier),
+		"account_status":  string(acct.Status),
+		"session_id":      sc.Session.ID.String(),
+		"lookup_endpoint": adminLookupInstance,
+	})
+	if err != nil {
+		// Unreachable — a map of strings/ints always marshals. Surface
+		// it rather than writing a row with no metadata.
+		h.cfg.Logger.Warn("staff customer lookup: audit metadata marshal failed (skipping audit row)",
+			"err", err, "account_id", acct.ID)
+		obs.AdminAuditWriteFailuresTotal.WithLabelValues(auditSurfaceStaffLookup).Inc()
+		return
+	}
+	entry := platform.AuditEntry{
+		AccountID:   acct.ID,
+		ActorUserID: sc.User.ID,
+		ActorKind:   platform.ActorStaff,
+		Action:      "staff.customer.lookup",
+		TargetKind:  "account",
+		TargetID:    acct.ID.String(),
+		Metadata:    meta,
+		IP:          clientIP(r),
+		UserAgent:   truncateUA(r.UserAgent()),
+		Timestamp:   h.cfg.Now(),
+	}
+	if err := h.cfg.Audit.Append(r.Context(), entry); err != nil {
+		// C3-067's counter, C3-056's surface: the PII read already
+		// happened and cannot be un-done, so the only honest response is
+		// to make the missing row visible.
+		obs.AdminAuditWriteFailuresTotal.WithLabelValues(auditSurfaceStaffLookup).Inc()
+		h.cfg.Logger.Warn("staff customer lookup: audit append failed (best-effort)",
+			"err", err, "account_id", acct.ID, "actor", sc.User.Email)
+	}
+}
+
+// auditSurfaceStaffLookup is this surface's label value on
+// [obs.AdminAuditWriteFailuresTotal]. Kept as a named constant so the
+// increment site and the zero-seed in internal/obs cannot drift.
+const auditSurfaceStaffLookup = "staff_customer_lookup"
 
 // resolveLookupAccount resolves the target account by email (via its user) or
 // by slug. Returns errLookupNoQuery when neither is set, platform.ErrNotFound
