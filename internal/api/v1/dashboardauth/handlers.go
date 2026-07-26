@@ -173,11 +173,21 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 // routes intentionally do NOT pass through the API-key auth
 // middleware — they're the entry point for unauthenticated
 // users.
+//
+// The three POSTs are wrapped in [middleware.RequireSameSiteWrite]
+// (C3-031 / C3-057). They are state-changing and browser-driven:
+// login MINTS a token (and the intent cookie that binds it), and
+// verify-code MINTS a session — so a cross-site page that can
+// drive either is a login-CSRF primitive even though neither
+// consumes a session cookie. `GET /v1/auth/callback` is a
+// top-level navigation from an email client and carries no usable
+// Origin; it is bound instead by [LoginIntentCookieName] (C3-030).
 func (h *Handlers) Mount(mux *http.ServeMux) {
-	mux.HandleFunc("POST /v1/auth/login", h.HandleLogin)
+	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
+	mux.Handle("POST /v1/auth/login", sameSite(http.HandlerFunc(h.HandleLogin)))
 	mux.HandleFunc("GET /v1/auth/callback", h.HandleCallback)
-	mux.HandleFunc("POST /v1/auth/verify-code", h.HandleVerifyCode)
-	mux.HandleFunc("POST /v1/auth/logout", h.HandleLogout)
+	mux.Handle("POST /v1/auth/verify-code", sameSite(http.HandlerFunc(h.HandleVerifyCode)))
+	mux.Handle("POST /v1/auth/logout", sameSite(http.HandlerFunc(h.HandleLogout)))
 	// Staff customer look-up — session-gated (RequireSession) AND staff-gated
 	// (HandleAdminLookup checks IsStaff). Backs /dashboard/admin's first tool.
 	mux.Handle("GET /v1/account/admin/lookup",
@@ -234,6 +244,17 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 			h.cfg.Logger.Warn("login throttle unavailable; falling open", "err", terr)
 		case !ok:
 			h.cfg.Logger.Warn("magic-link login throttled", "ip", clientIP(r).String())
+			// Emit a login-intent cookie here too, of a token that was
+			// never persisted. Without it the throttled response would
+			// be the only 200 that carries no `Set-Cookie:
+			// stellarindex_login_intent` — a byte-visible oracle for
+			// "a throttle fired for this address", which is exactly
+			// what [LoginThrottle]'s contract forbids leaking. The
+			// decoy digest witnesses a token no store ever saw, so it
+			// can never redeem anything.
+			if _, decoy, _, gerr := h.cfg.Generator.NewToken(); gerr == nil {
+				h.setLoginIntentCookie(w, r, decoy)
+			}
 			_ = json.NewEncoder(w).Encode(loginResponse{Status: "sent"})
 			return
 		}
@@ -257,6 +278,11 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/login")
 		return
 	}
+
+	// Bind the link to THIS browser (C3-030 login CSRF). Set before
+	// the email goes out so a link can never be live without its
+	// witness. See [LoginIntentCookieName].
+	h.setLoginIntentCookie(w, r, hash)
 
 	// Build callback URL: {dashboard}/auth/callback?token=<plaintext>
 	cb, err := url.Parse(h.cfg.DashboardBaseURL)
@@ -306,6 +332,15 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 // closes that with no impact on the legitimate same-site flow. If the dashboard
 // is ever served from a truly different site, add a CSRF token — do NOT revert
 // to None.
+//
+// C3-031 / C3-057 (audit-2026-07-23) closed the residual Lax leaves open:
+// SameSite is a *site*-level control, so a sibling origin under the same
+// registrable domain still counts as same-site and Lax still permits a
+// top-level cross-site GET. Every state-changing dashboard + auth route is
+// now additionally gated by [middleware.RequireSameSiteWrite] (Origin /
+// Referer allow-list), and the magic-link callback — a GET, and therefore
+// beyond any Origin check — is gated by [LoginIntentCookieName] (C3-030).
+// This cookie's SameSite mode is defence in depth, no longer the only line.
 func sessionSameSite() http.SameSite {
 	return http.SameSiteLaxMode
 }
@@ -313,13 +348,30 @@ func sessionSameSite() http.SameSite {
 // HandleCallback consumes a magic-link token, finds-or-creates
 // the user (single-org v1: each email gets one account on first
 // signup), and issues a session cookie.
+//
+// The link must be opened in the browser that requested it: the
+// login-intent cookie is checked BEFORE the token is consumed
+// (C3-030 — see [LoginIntentCookieName] for the login-CSRF this
+// closes). Checking first, not after, means a user who merely
+// opened their own link on a second device doesn't burn the token
+// — they can still click it on the device that asked for it.
 func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	plaintext := r.URL.Query().Get("token")
 	if plaintext == "" {
 		writeProblem(w, http.StatusBadRequest, "missing token", "/v1/auth/callback")
 		return
 	}
-	tok, err := h.cfg.Tokens.ConsumeMagicLinkToken(r.Context(), HashMagicLinkPlaintext(plaintext))
+	tokenHash := HashMagicLinkPlaintext(plaintext)
+	if !hasLoginIntent(r, tokenHash) {
+		h.cfg.Logger.Warn("magic-link callback without a matching login-intent cookie",
+			"ip", clientIP(r).String())
+		writeProblem(w, http.StatusForbidden,
+			"this sign-in link must be opened in the browser that requested it — "+
+				"enter the 6-digit code from the email instead, or request a new link from this device",
+			"/v1/auth/callback")
+		return
+	}
+	tok, err := h.cfg.Tokens.ConsumeMagicLinkToken(r.Context(), tokenHash)
 	if err != nil {
 		switch {
 		case errors.Is(err, platform.ErrTokenExpired):
@@ -345,6 +397,7 @@ func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/callback")
 		return
 	}
+	h.clearLoginIntentCookie(w)
 
 	// Redirect into the dashboard. Caller-supplied `next` URL
 	// is path-only (we never honour absolute URLs to avoid

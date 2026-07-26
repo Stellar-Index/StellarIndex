@@ -8809,7 +8809,12 @@ export interface paths {
                         "application/problem+json": components["schemas"]["Problem"];
                     };
                 };
-                /** @description Role can't mint keys. */
+                /**
+                 * @description Role can't mint keys, OR the write was blocked as cross-site:
+                 *     state-changing dashboard requests must carry an `Origin`
+                 *     (or `Referer`) matching this API or an operator-allow-listed
+                 *     site (`cross-site-request-blocked`).
+                 */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -8879,7 +8884,12 @@ export interface paths {
                         "application/problem+json": components["schemas"]["Problem"];
                     };
                 };
-                /** @description Role can't revoke keys. */
+                /**
+                 * @description Role can't revoke keys, OR the write was blocked as cross-site:
+                 *     state-changing dashboard requests must carry an `Origin`
+                 *     (or `Referer`) matching this API or an operator-allow-listed
+                 *     site (`cross-site-request-blocked`).
+                 */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -9027,7 +9037,12 @@ export interface paths {
                         "application/problem+json": components["schemas"]["Problem"];
                     };
                 };
-                /** @description Role can't manage webhooks. */
+                /**
+                 * @description Role can't manage webhooks, OR the write was blocked as cross-site:
+                 *     state-changing dashboard requests must carry an `Origin`
+                 *     (or `Referer`) matching this API or an operator-allow-listed
+                 *     site (`cross-site-request-blocked`).
+                 */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -9095,6 +9110,20 @@ export interface paths {
                         "application/problem+json": components["schemas"]["Problem"];
                     };
                 };
+                /**
+                 * @description Cross-site write blocked: state-changing dashboard + auth
+                 *     requests must carry an `Origin` (or `Referer`) matching
+                 *     this API or an operator-allow-listed site
+                 *     (`cross-site-request-blocked`).
+                 */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
             };
         };
         options?: never;
@@ -9145,6 +9174,20 @@ export interface paths {
                 400: components["responses"]["BadRequest"];
                 /** @description No valid session cookie. */
                 401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /**
+                 * @description Cross-site write blocked: state-changing dashboard + auth
+                 *     requests must carry an `Origin` (or `Referer`) matching
+                 *     this API or an operator-allow-listed site
+                 *     (`cross-site-request-blocked`).
+                 */
+                403: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -9361,7 +9404,12 @@ export interface paths {
                         "application/problem+json": components["schemas"]["Problem"];
                     };
                 };
-                /** @description Role can't manage price alerts. */
+                /**
+                 * @description Role can't manage price alerts, OR the write was blocked as cross-site:
+                 *     state-changing dashboard requests must carry an `Origin`
+                 *     (or `Referer`) matching this API or an operator-allow-listed
+                 *     site (`cross-site-request-blocked`).
+                 */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -9422,6 +9470,20 @@ export interface paths {
                 };
                 /** @description No valid session cookie. */
                 401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /**
+                 * @description Cross-site write blocked: state-changing dashboard + auth
+                 *     requests must carry an `Origin` (or `Referer`) matching
+                 *     this API or an operator-allow-listed site
+                 *     (`cross-site-request-blocked`).
+                 */
+                403: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -9498,6 +9560,20 @@ export interface paths {
                         "application/problem+json": components["schemas"]["Problem"];
                     };
                 };
+                /**
+                 * @description Cross-site write blocked: state-changing dashboard + auth
+                 *     requests must carry an `Origin` (or `Referer`) matching
+                 *     this API or an operator-allow-listed site
+                 *     (`cross-site-request-blocked`).
+                 */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
                 /** @description Price alert not found. */
                 404: {
                     headers: {
@@ -9537,6 +9613,14 @@ export interface paths {
          *     Distinct from `/auth/sep10/*` (programmatic API auth via a
          *     signed Stellar challenge). This endpoint is the entry point
          *     for the cookie-based in-site dashboard at stellarindex.io/account.
+         *
+         *     Sets a short-lived, HttpOnly `stellarindex_login_intent`
+         *     cookie that binds the emailed link to THIS browser;
+         *     `/auth/callback` refuses to mint a session without it, so a
+         *     link mailed on to a third party cannot sign that third party
+         *     into this account. Up to three concurrently-live links per
+         *     browser are remembered, so re-requesting doesn't invalidate
+         *     the first mail. The cookie is cleared on a successful sign-in.
          *
          *     Returns 503 when the deployment hasn't configured the
          *     dashboard auth flow (api.dashboard.base_url empty).
@@ -9578,6 +9662,20 @@ export interface paths {
                     };
                 };
                 400: components["responses"]["BadRequest"];
+                /**
+                 * @description Cross-site write blocked: state-changing dashboard + auth
+                 *     requests must carry an `Origin` (or `Referer`) matching
+                 *     this API or an operator-allow-listed site
+                 *     (`cross-site-request-blocked`).
+                 */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
                 503: components["responses"]["ServiceUnavailable"];
             };
         };
@@ -9637,6 +9735,24 @@ export interface paths {
                     content?: never;
                 };
                 400: components["responses"]["BadRequest"];
+                /**
+                 * @description The link was opened in a browser that did not request it.
+                 *     `POST /auth/login` sets a short-lived, HttpOnly
+                 *     `stellarindex_login_intent` cookie binding the link to the
+                 *     requesting browser; without a matching witness no session
+                 *     is minted (login-CSRF defence). The token is NOT consumed,
+                 *     so the originating browser can still complete the sign-in.
+                 *     Clients should fall back to the 6-digit code, or request a
+                 *     fresh link from the device in hand.
+                 */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
                 /** @description Magic-link token expired; request a fresh one. */
                 410: {
                     headers: {
@@ -9735,6 +9851,20 @@ export interface paths {
                         "application/problem+json": components["schemas"]["Problem"];
                     };
                 };
+                /**
+                 * @description Cross-site write blocked: state-changing dashboard + auth
+                 *     requests must carry an `Origin` (or `Referer`) matching
+                 *     this API or an operator-allow-listed site
+                 *     (`cross-site-request-blocked`).
+                 */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
                 503: components["responses"]["ServiceUnavailable"];
             };
         };
@@ -9775,6 +9905,20 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content?: never;
+                };
+                /**
+                 * @description Cross-site write blocked: state-changing dashboard + auth
+                 *     requests must carry an `Origin` (or `Referer`) matching
+                 *     this API or an operator-allow-listed site
+                 *     (`cross-site-request-blocked`).
+                 */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
                 };
                 503: components["responses"]["ServiceUnavailable"];
             };
@@ -11523,7 +11667,10 @@ export interface paths {
          *
          *     HONESTY CONTRACT: this is raw on-chain quantities only — no
          *     USD/asset valuation is applied (see the top-level `note`, always
-         *     present). Every position also carries `amount_semantics`
+         *     present). Coverage is disclosed separately: if any of the six
+         *     per-protocol reads fails, the response carries a
+         *     `coverage_note` naming which folds are missing, so a partial
+         *     answer can never be mistaken for "this address holds nothing". Every position also carries `amount_semantics`
          *     (exactly what the number IS — see the schema) and `basis`
          *     (`event_derived`: a sum of this fold's own historical event
          *     amounts, computed here, that does NOT model interest/fees/
@@ -11988,6 +12135,17 @@ export interface components {
              *     see each position's amount_semantics / basis for specifics.
              */
             note: string;
+            /**
+             * @description ABSENT on a fully-successful read. Present when one or more
+             *     of the six per-protocol folds could not be read for this
+             *     request — it names how many failed, out of how many, and
+             *     which ones. Positions from a named protocol are MISSING
+             *     from the response, not proven absent on-chain: an empty
+             *     `positions` array with a `coverage_note` means "we could
+             *     not look", never "this address holds nothing". Mirrors the
+             *     same field on GET /accounts/{g_strkey}/movements.
+             */
+            coverage_note?: string;
         };
         /**
          * @description Dashboard view of an API key. Plaintext is NEVER on this
