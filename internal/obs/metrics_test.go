@@ -416,6 +416,13 @@ func TestZeroSeed_F0033(t *testing.T) {
 		`stellarindex_admin_audit_write_failures_total{surface="status_notice"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="stripe_plan_upgrade"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="stripe_dead_letter"} 0`,
+		// C3-056: the staff PII look-up joined the set. It is a read, not
+		// a mutation, which is exactly why its audit row is the ONLY
+		// evidence it happened — an absent series here would make "no
+		// staff look-up has ever lost its row" indistinguishable from
+		// "the look-up never got wired to the audit sink at all", which
+		// is the pre-fix state.
+		`stellarindex_admin_audit_write_failures_total{surface="staff_customer_lookup"} 0`,
 		// Tier clamp: not alerted, but `failed` means paid throughput
 		// stayed live past a downgrade and must not read as "no data".
 		`stellarindex_admin_key_budget_clamps_total{outcome="lowered"} 0`,
@@ -425,6 +432,22 @@ func TestZeroSeed_F0033(t *testing.T) {
 		`stellarindex_anomaly_freeze_ladder_write_failures_total{op="mark_hold"} 0`,
 		`stellarindex_anomaly_freeze_ladder_write_failures_total{op="clear"} 0`,
 		`stellarindex_anomaly_freeze_ladder_rehydrated_total 0`,
+		// C3-032: all three login-code-lockout failure paths are silent
+		// at the HTTP layer by design (the control is defence-in-depth
+		// over the per-token cap, so it fails soft). `status_check` in
+		// particular means the lockout is not being enforced AT ALL while
+		// the response looks healthy — an absent series there is the
+		// difference between an operator seeing a disabled control and
+		// assuming the metric is dead.
+		`stellarindex_login_code_lockout_errors_total{op="status_check"} 0`,
+		`stellarindex_login_code_lockout_errors_total{op="register"} 0`,
+		`stellarindex_login_code_lockout_errors_total{op="sweep"} 0`,
+		// The table's key is attacker-chosen and the endpoint that writes
+		// it is unauthenticated, so the row count is a security signal,
+		// not capacity trivia. Gauges register at zero; asserted here so
+		// a future refactor cannot drop it from the registry list.
+		`stellarindex_login_code_lockout_rows 0`,
+		`stellarindex_login_code_lockout_rows_deleted_total 0`,
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(s, want) {

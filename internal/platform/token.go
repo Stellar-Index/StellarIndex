@@ -55,6 +55,28 @@ type Invite struct {
 	CreatedAt       time.Time
 }
 
+// LoginCodeLockout is the durable per-EMAIL failed-verify state for the
+// 6-digit email-code sign-in (migration 0122, C3-032). It is what
+// [MagicLinkToken.Attempts] is not: independent of any single token, so
+// re-minting a link does not hand an attacker a fresh guess budget.
+//
+// The zero value means "no failures on record" — which is also what a
+// fully-elapsed window and an expired lock report.
+type LoginCodeLockout struct {
+	// FailedCount is the number of failures inside the current window.
+	FailedCount int
+	// WindowStartedAt is when the current counting window opened.
+	WindowStartedAt time.Time
+	// LockedUntil, when in the future, means the code path must refuse
+	// to match for this address. Zero = not locked.
+	LockedUntil time.Time
+}
+
+// Locked reports whether the lockout is in force at `now`.
+func (l LoginCodeLockout) Locked(now time.Time) bool {
+	return !l.LockedUntil.IsZero() && l.LockedUntil.After(now)
+}
+
 // TokenStore persists [MagicLinkToken] and [Invite]. The two
 // share the token-hash primary key shape (32-byte sha256) but
 // live in separate tables because their lifecycle and
@@ -82,6 +104,37 @@ type TokenStore interface {
 	// Called after a wrong code so a token self-retires from
 	// ConsumableLoginCandidates once it crosses the cap.
 	IncrementLoginCodeAttempts(ctx context.Context, email string) error
+
+	// RegisterFailedLoginCode records ONE failed code attempt against
+	// the email itself — the durable dimension a token re-mint cannot
+	// reset (C3-032). `attempts` on magic_link_tokens is per-mint, and
+	// the send throttle that bounds re-mints is Redis-only, so without
+	// this an attacker re-mints for a fresh 5-guess budget indefinitely.
+	//
+	// Returns the resulting [LoginCodeLockout]. Once failures inside
+	// `window` reach `maxFailures` the email is locked for `lockFor`;
+	// callers refuse to match a code while LockedUntil is in the future.
+	// A window that has fully elapsed starts fresh.
+	RegisterFailedLoginCode(
+		ctx context.Context, email string, maxFailures int, window, lockFor time.Duration,
+	) (LoginCodeLockout, error)
+
+	// LoginCodeLockoutStatus reports the STORED lockout for an email
+	// without recording an attempt. A missing row reports the zero
+	// value; an existing row is returned as stored — an elapsed window
+	// or an expired lock is not normalised away, because the raw
+	// counters are what an operator investigating a grinder reads.
+	// Callers decide with [LoginCodeLockout.Locked], which is
+	// time-aware.
+	LoginCodeLockoutStatus(ctx context.Context, email string) (LoginCodeLockout, error)
+
+	// ClearLoginCodeLockout drops the durable failure counter for an
+	// email. Called on a SUCCESSFUL sign-in through either door (code or
+	// magic link): possession of a live token proves the address's owner
+	// is present, which retires the suspicion the counter represents.
+	// Without it a legitimate user's typos would accumulate across
+	// months and eventually lock them out of the code path for nothing.
+	ClearLoginCodeLockout(ctx context.Context, email string) error
 
 	// CreateInvite inserts.
 	CreateInvite(ctx context.Context, i Invite) error

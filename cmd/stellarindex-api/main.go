@@ -79,6 +79,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/customerwebhook"
 	"github.com/Stellar-Index/StellarIndex/internal/divergence"
+	"github.com/Stellar-Index/StellarIndex/internal/logincodereaper"
 	"github.com/Stellar-Index/StellarIndex/internal/metadata"
 	"github.com/Stellar-Index/StellarIndex/internal/notify"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -1450,6 +1451,32 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		}
 	}
 
+	// Login-code lockout retention (C3-032). `login_code_lockouts` is
+	// keyed by an ATTACKER-CHOSEN email — POST /v1/auth/verify-code is
+	// unauthenticated, and a wrong guess against a synthetic address
+	// inserts a row that no successful sign-in will ever clear. This
+	// sweep is the only thing that bounds the table.
+	//
+	// Deliberately NOT gated on cfg.SignupReaper (or any other toggle):
+	// this is a DoS control, and switching it off with an unrelated
+	// knob is how a bound quietly stops existing. It runs whenever the
+	// dashboard's Postgres token store is wired, which is exactly when
+	// the endpoint that writes those rows is reachable.
+	if lockouts, ok := dashboardBundle.tokens.(logincodereaper.LockoutStore); ok && lockouts != nil {
+		lockoutReaper := logincodereaper.New(lockouts, logincodereaper.Options{
+			Logger: logger.With("component", "login-code-lockout-reaper"),
+		})
+		go func() {
+			defer recoverBackgroundWorker(logger, "login-code-lockout-reaper")
+			if err := lockoutReaper.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Error("login-code-lockout-reaper worker exited", "err", err)
+			}
+		}()
+		logger.Info("login-code-lockout reaper started",
+			"interval", logincodereaper.DefaultInterval,
+			"retention", logincodereaper.DefaultRetention)
+	}
+
 	serveErr := make(chan error, 1)
 	go func() {
 		logger.Info("http listening", "addr", httpSrv.Addr)
@@ -1640,7 +1667,11 @@ type dashboardBundle struct {
 	middleware   middleware.Middleware
 	keysStore    platform.APIKeyStore
 	accounts     platform.AccountStore
-	pgValidator  *auth.PostgresAPIKeyValidator
+	// tokens is the same store the auth handlers write magic-link rows
+	// and C3-032 lockout rows through; exposed so the login-code-lockout
+	// reaper can bind to its narrow sweep seam.
+	tokens      platform.TokenStore
+	pgValidator *auth.PostgresAPIKeyValidator
 	// sender + emailFrom are exported so the public-API signup
 	// flow (F-1218 wave 44) can re-use the same Resend / Noop
 	// transport the dashboard auth flow uses, without having to
@@ -1857,7 +1888,12 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 		Users:    users,
 		Tokens:   tokens,
 		Sender:   sender,
-		Logger:   logger.With("component", "dashboard-auth"),
+		// C3-056: the staff customer look-up reads another customer's
+		// PII. Same audit_log (migration 0027) the admin + Stripe
+		// surfaces already append to, so a staff read lands next to the
+		// staff mutations in one queryable trail.
+		Audit:  postgresstore.NewAuditStore(pg),
+		Logger: logger.With("component", "dashboard-auth"),
 		// Now is consumed by BOTH NewHandlers (which defaults it in
 		// validate()) AND the session-resolver Middleware (which gets
 		// this Config raw, without validate()). Set it here explicitly
@@ -1930,6 +1966,7 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 		middleware:   middleware.Middleware(dashboardauth.Middleware(&authCfg)),
 		keysStore:    keysStore,
 		accounts:     accounts,
+		tokens:       tokens,
 		pgValidator:  pgValidator,
 		sender:       sender,
 		emailFrom:    cfg.EmailFrom,

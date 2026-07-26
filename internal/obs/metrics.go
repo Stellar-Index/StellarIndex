@@ -95,6 +95,7 @@ func registerAppMetrics() {
 		APIStreamSubscribeTotal,
 		APICORSDecisionsTotal,
 		CustomerWebhookDeliveryAttemptsTotal,
+		CustomerWebhookFanoutFailuresTotal,
 		AggregatorDroppedTradesTotal,
 		AggregatorDroppedWindowsTotal,
 		AggregatorMinUSDVolumeUnvaluableTotal,
@@ -185,6 +186,10 @@ func registerAppMetricsTail() {
 		SignupReaperRunDurationSeconds,
 		SignupReaperRowsDeletedTotal,
 
+		LoginCodeLockoutRows,
+		LoginCodeLockoutRowsDeletedTotal,
+		LoginCodeLockoutErrorsTotal,
+
 		DEXTradeNonstandardDecimalsTotal,
 		PriceServeDeclinedNonstandardDecimalsTotal,
 		NonstandardDecimalsCacheRefreshFailuresTotal,
@@ -252,6 +257,16 @@ func seedBoundedLabelSeries() {
 	for _, outcome := range []string{"ok", "error"} {
 		SignupReaperRunsTotal.WithLabelValues(outcome)
 	}
+	// C3-032: the durable login-code lockout's three fail-soft paths.
+	// Seeded because all three are silent at the HTTP layer — a
+	// fail-open control with an ABSENT series is indistinguishable from
+	// one that has never failed, which is the exact ambiguity that let
+	// this class of defect through before.
+	for _, op := range []string{
+		LoginCodeLockoutOpStatusCheck, LoginCodeLockoutOpRegister, LoginCodeLockoutOpSweep,
+	} {
+		LoginCodeLockoutErrorsTotal.WithLabelValues(op)
+	}
 	// Bounded outcome set for the 2026-07-06 backpressure retry counter
 	// so the `trade_insert_backpressure` alert's rate() query reads a
 	// real zero (not "no data") before the first outage.
@@ -296,6 +311,10 @@ func seedBoundedLabelSeries() {
 	for _, surface := range []string{
 		"account_override", "key_mint", "key_revoke",
 		"status_notice", "stripe_plan_upgrade", "stripe_dead_letter",
+		// C3-056: the staff customer look-up is a PII READ rather than a
+		// mutation, but the accountability gap is identical — the row
+		// that records who read whose data is the only trace it happened.
+		"staff_customer_lookup",
 	} {
 		AdminAuditWriteFailuresTotal.WithLabelValues(surface)
 	}
@@ -304,6 +323,23 @@ func seedBoundedLabelSeries() {
 	// distinguishable from "nothing has been clamped yet".
 	for _, outcome := range []string{"lowered", "failed"} {
 		AdminKeyBudgetClampsTotal.WithLabelValues(outcome)
+	}
+	// C3-023: producer-side webhook fan-out losses. The event-type set
+	// is platform.WebhookEventType's closed enum (kept as literals here
+	// so internal/obs stays free of an internal/platform import); the
+	// reason set is the three FanoutFailure* constants above. Seeded
+	// because a lost fan-out leaves NO delivery row to count later —
+	// "this series has never fired" and "nothing publishes this metric"
+	// would otherwise be the same scrape.
+	for _, eventType := range []string{
+		"incident.sev1", "incident.resolved", "anomaly.freeze",
+		"divergence.firing", "price.alert",
+	} {
+		for _, reason := range []string{
+			FanoutFailureInvalidPayload, FanoutFailureListSubscribers, FanoutFailureEnqueue,
+		} {
+			CustomerWebhookFanoutFailuresTotal.WithLabelValues(eventType, reason)
+		}
 	}
 	// C2-030: FX sanity-band rejections. Bounded (one source × three
 	// reasons) and seeded because the alertable state is a SUSTAINED
@@ -1338,6 +1374,85 @@ var SignupReaperRowsDeletedTotal = prometheus.NewCounter(
 	},
 )
 
+// Operation labels on [LoginCodeLockoutErrorsTotal]. Bounded set of
+// three — one per place the durable login-code lockout (C3-032) can
+// fail without the sign-in itself failing.
+const (
+	// LoginCodeLockoutOpStatusCheck — the pre-match lockout read failed.
+	// The handler FAILS OPEN here (a locked address is let through to a
+	// code comparison), so this is the one that means the control is
+	// silently off.
+	LoginCodeLockoutOpStatusCheck = "status_check"
+	// LoginCodeLockoutOpRegister — a wrong-code attempt was not recorded
+	// against the durable per-email counter. The grinder got a free
+	// guess.
+	LoginCodeLockoutOpRegister = "register"
+	// LoginCodeLockoutOpSweep — the retention sweep failed. Rows an
+	// unauthenticated caller can create accumulate until it recovers.
+	LoginCodeLockoutOpSweep = "sweep"
+)
+
+// LoginCodeLockoutRows — current row count of `login_code_lockouts`
+// (migration 0122, C3-032), refreshed by each retention sweep.
+//
+// This table's primary key is ATTACKER-CHOSEN. POST /v1/auth/verify-code
+// is unauthenticated and accepts any well-formed address, so one wrong
+// guess against a synthetic address inserts a row that the
+// clear-on-successful-login path can never remove — nobody can sign in
+// as an address that does not exist. `internal/logincodereaper` bounds
+// it; this gauge is how an operator sees the bound holding.
+//
+// Without it, the first signal of a remote table-fill would be the
+// volume-level disk-full page — i.e. after the damage, on a metric that
+// names the wrong subsystem. A healthy deployment sits in the low tens:
+// rows exist only for addresses with recent failures, are deleted on
+// any successful sign-in, and are swept once settled.
+//
+// Gauges register at zero, so no explicit seeding is needed — but the
+// value is only meaningful once a sweep has run (the reaper sweeps
+// immediately at boot).
+var LoginCodeLockoutRows = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_login_code_lockout_rows",
+		Help: "Rows in login_code_lockouts. The key is attacker-chosen and the endpoint is unauthenticated, so sustained growth is a remote table-fill, not user behaviour.",
+	},
+)
+
+// LoginCodeLockoutRowsDeletedTotal — cumulative settled lockout rows
+// removed by the retention sweep. Charted as a rate it is the
+// production rate of failed-verify addresses; read next to
+// [LoginCodeLockoutRows] it distinguishes "the table is small because
+// nothing is happening" from "the table is small because the sweep is
+// keeping up with a flood".
+var LoginCodeLockoutRowsDeletedTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_login_code_lockout_rows_deleted_total",
+		Help: "Cumulative settled login_code_lockouts rows deleted by the retention sweep.",
+	},
+)
+
+// LoginCodeLockoutErrorsTotal — failures of the durable login-code
+// lockout's own machinery (C3-032), labelled by `op`.
+//
+// Every one of these paths is deliberately non-fatal to the request:
+// the lockout is defence-in-depth over the per-token `maxCodeAttempts`
+// cap, and failing a customer's sign-in because a counter table blipped
+// would be a worse trade. The consequence is that all three failures are
+// SILENT at the HTTP layer — which is precisely the shape of defect this
+// audit wave keeps finding (a fail-open control with no counter looks
+// identical to a control that is working). `op="status_check"` in
+// particular means the lockout is not being enforced at all.
+//
+// Pre-seeded across the bounded op set so "the control has never failed"
+// and "nothing emits this metric" are different scrapes.
+var LoginCodeLockoutErrorsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_login_code_lockout_errors_total",
+		Help: "Durable login-code lockout machinery failures by op (status_check|register|sweep). status_check non-zero = the lockout is failing open and is not being enforced.",
+	},
+	[]string{"op"},
+)
+
 // MEVDetectRunsTotal — per-run outcome counter for the aggregator's
 // MEV detection worker (internal/aggregate/mev). Labels:
 //
@@ -1750,6 +1865,62 @@ var CustomerWebhookDeliveryAttemptsTotal = prometheus.NewCounterVec(
 		Help: "Customer-webhook delivery attempts, labelled by outcome.",
 	},
 	[]string{"outcome"},
+)
+
+// Reason labels on [CustomerWebhookFanoutFailuresTotal]. Bounded set
+// of three — one per way a producer-side fan-out can lose a customer's
+// event before a delivery row exists.
+const (
+	// FanoutFailureInvalidPayload — the caller handed Publish bytes
+	// that are not JSON. Every subscriber loses the event.
+	FanoutFailureInvalidPayload = "invalid_payload"
+	// FanoutFailureListSubscribers — ListWebhooksSubscribedTo errored,
+	// so the subscriber set is unknown and nothing was enqueued.
+	FanoutFailureListSubscribers = "list_subscribers"
+	// FanoutFailureEnqueue — one subscriber's EnqueueDelivery insert
+	// failed. Counted once per LOST delivery.
+	FanoutFailureEnqueue = "enqueue"
+)
+
+// CustomerWebhookFanoutFailuresTotal — customer events that never
+// became a delivery row (C3-023, audit-2026-07-23).
+//
+// This is the PRODUCER-side counterpart to
+// [CustomerWebhookDeliveryAttemptsTotal], which only starts counting
+// once a `webhook_deliveries` row exists. A fan-out failure happens
+// strictly before that row: the freeze / divergence / incident event
+// fired, the customer was subscribed, and no delivery was ever
+// enqueued for them. There is nothing to retry and nothing to drain —
+// the customer's event is permanently gone.
+//
+// Pre-fix `Fanout.Publish` had no return value at all, so a fan-out
+// that lost every subscriber was indistinguishable from a successful
+// one at the call site, and the only trace was a WARN line.
+//
+// Labels:
+//   - event_type: the platform.WebhookEventType that was being
+//     published (incident.sev1 | incident.resolved | anomaly.freeze |
+//     divergence.firing | price.alert)
+//   - reason: invalid_payload | list_subscribers | enqueue
+//
+// `enqueue` increments once per lost DELIVERY (per subscriber);
+// the other two increment once per lost fan-out, where the loss
+// covers every subscriber of that event type.
+//
+// Emitted by the aggregator binary (freeze + divergence hot paths)
+// and by `stellarindex-ops emit-incident`; the ops CLI is short-lived
+// and unscraped, which is why that call site ALSO returns the error
+// to the operator's shell.
+//
+// Pre-seeded across event_type × reason so a quiet fan-out reads as a
+// real zero rather than "no data" — the distinction this whole
+// counter exists to make.
+var CustomerWebhookFanoutFailuresTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_customer_webhook_fanout_failures_total",
+		Help: "Customer events that never became a webhook delivery row, by event type and reason. Non-zero = a subscribed customer permanently lost an event (no retry row exists).",
+	},
+	[]string{"event_type", "reason"},
 )
 
 // CustomerWebhookDeliveryDurationSeconds — latency histogram for
@@ -2595,9 +2766,9 @@ var StripePlatformSyncErrorsTotal = prometheus.NewCounterVec(
 	[]string{"operation"},
 )
 
-// AdminAuditWriteFailuresTotal — counter of privileged mutations that
-// COMPLETED but whose durable audit row did not land (C3-067,
-// audit-2026-07-23).
+// AdminAuditWriteFailuresTotal — counter of privileged mutations (and,
+// since C3-056, privileged PII READS) that COMPLETED but whose durable
+// audit row did not land (C3-067, audit-2026-07-23).
 //
 // Every one of these call sites appends to the audit log best-effort and
 // logs a bare `logger.Warn("… audit append failed (best-effort)")`. The
@@ -2613,9 +2784,14 @@ var StripePlatformSyncErrorsTotal = prometheus.NewCounterVec(
 // closes on them. Any sustained non-zero value is alertable.
 //
 // Labels:
-//   - surface: which privileged mutation lost its audit row
+//   - surface: which privileged action lost its audit row
 //     (account_override|key_mint|key_revoke|status_notice|
-//     stripe_plan_upgrade|stripe_dead_letter)
+//     stripe_plan_upgrade|stripe_dead_letter|staff_customer_lookup)
+//
+// `staff_customer_lookup` is the one READ in the set: the staff
+// customer look-up returns another customer's billing email plus every
+// user's email and last-login, so the audit row is the only record that
+// a staff member saw it (C3-056).
 //
 // Bounded, well-known label set — pre-seeded so the alert's increase()
 // reads a real zero rather than "no data" before the first failure.

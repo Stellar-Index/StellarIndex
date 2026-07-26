@@ -255,7 +255,15 @@ type fakeTokenStore struct {
 	mu      sync.Mutex
 	tokens  map[string]platform.MagicLinkToken // hex(hash) → row
 	invites map[string]platform.Invite
-	now     func() time.Time
+	// lockouts mirrors the login_code_lockouts table (migration 0122,
+	// C3-032): email → durable failure state, deliberately keyed by
+	// EMAIL and not by token so the fake reproduces the property under
+	// test — a re-mint does not reset it.
+	lockouts map[string]platform.LoginCodeLockout
+	// lockoutErr, when set, makes the lockout reads/writes fail; used to
+	// pin the deliberate fail-open posture.
+	lockoutErr error
+	now        func() time.Time
 }
 
 func newFakeTokenStore(now func() time.Time) *fakeTokenStore {
@@ -263,9 +271,10 @@ func newFakeTokenStore(now func() time.Time) *fakeTokenStore {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &fakeTokenStore{
-		tokens:  map[string]platform.MagicLinkToken{},
-		invites: map[string]platform.Invite{},
-		now:     now,
+		tokens:   map[string]platform.MagicLinkToken{},
+		invites:  map[string]platform.Invite{},
+		lockouts: map[string]platform.LoginCodeLockout{},
+		now:      now,
 	}
 }
 
@@ -335,6 +344,51 @@ func (f *fakeTokenStore) IncrementLoginCodeAttempts(_ context.Context, email str
 		t.Attempts++
 		f.tokens[k] = t
 	}
+	return nil
+}
+
+func (f *fakeTokenStore) RegisterFailedLoginCode(
+	_ context.Context, email string, maxFailures int, window, lockFor time.Duration,
+) (platform.LoginCodeLockout, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.lockoutErr != nil {
+		return platform.LoginCodeLockout{}, f.lockoutErr
+	}
+	now := f.now()
+	state := f.lockouts[email]
+	// A fully-elapsed window on an unlocked row starts fresh — same rule
+	// as the Postgres UPSERT.
+	windowElapsed := !state.WindowStartedAt.IsZero() && state.WindowStartedAt.Before(now.Add(-window))
+	switch {
+	case state.WindowStartedAt.IsZero(), windowElapsed && !state.Locked(now):
+		state = platform.LoginCodeLockout{FailedCount: 1, WindowStartedAt: now}
+	default:
+		state.FailedCount++
+	}
+	if state.FailedCount >= maxFailures && !state.Locked(now) {
+		state.LockedUntil = now.Add(lockFor)
+	}
+	f.lockouts[email] = state
+	return state, nil
+}
+
+func (f *fakeTokenStore) LoginCodeLockoutStatus(_ context.Context, email string) (platform.LoginCodeLockout, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.lockoutErr != nil {
+		return platform.LoginCodeLockout{}, f.lockoutErr
+	}
+	return f.lockouts[email], nil
+}
+
+func (f *fakeTokenStore) ClearLoginCodeLockout(_ context.Context, email string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.lockoutErr != nil {
+		return f.lockoutErr
+	}
+	delete(f.lockouts, email)
 	return nil
 }
 

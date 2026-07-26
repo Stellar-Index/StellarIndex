@@ -341,3 +341,48 @@ groups:
             decimals-guard component (internal/decimalsguard) and the
             nonstandard_decimals_assets table directly.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+
+      # ─── Customer-webhook FAN-OUT losing events (C3-023) ───
+      # Distinct from the two delivery alerts in api.yml, which only
+      # start counting once a `webhook_deliveries` row exists. This one
+      # fires EARLIER in the chain: the freeze / divergence / incident
+      # event fired, the customer was subscribed, and no delivery row
+      # was ever written for them. There is nothing to retry and
+      # nothing to drain — the customer's event is permanently gone,
+      # which is why a single occurrence is worth a ticket rather than
+      # a sustained rate.
+      #
+      # Producer is the AGGREGATOR binary (freeze + divergence hot
+      # paths). `stellarindex-ops emit-incident` increments the same
+      # counter but is short-lived and unscraped; that call site exits
+      # non-zero instead, so an operator sees the loss in their shell.
+      - alert: stellarindex_customer_webhook_fanout_failing
+        expr: |
+          sum by (event_type, reason) (increase(stellarindex_customer_webhook_fanout_failures_total[1h])) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-fanout-failing.md
+          summary: "Customer webhook fan-out lost {{ $value | humanize }} {{ $labels.event_type }} event(s) ({{ $labels.reason }})"
+          description: |
+            A customer subscribed to `{{ $labels.event_type }}` did not
+            get a delivery row written for an event that fired
+            ({{ $labels.reason }}). Unlike a failed delivery ATTEMPT
+            there is no retry: `webhook_deliveries` has no row, so the
+            worker will never send it and nothing re-derives it.
+
+            reason=enqueue          — one subscriber's INSERT failed;
+                                      the count is lost deliveries.
+            reason=list_subscribers — the subscriber query failed, so
+                                      EVERY subscriber lost the event.
+            reason=invalid_payload  — the producer built non-JSON;
+                                      a code bug, not an outage.
+
+            The triggering event is still durable in its own table
+            (freeze_events / divergence_runs / the incident markdown),
+            so the customer-visible gap can be closed by re-emitting
+            once the store is healthy.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-fanout-failing.md
