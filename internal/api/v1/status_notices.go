@@ -16,6 +16,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -350,6 +351,8 @@ func (s *Server) recordStatusNoticeAudit(
 		entry.IP = net.ParseIP(ip)
 	}
 	if err := s.audit.Append(r.Context(), entry); err != nil {
+		// C3-067: a public status notice changed with no record of who did it.
+		obs.AdminAuditWriteFailuresTotal.WithLabelValues("status_notice").Inc()
 		s.logger.Warn("admin status notice: audit append failed (best-effort)",
 			"err", err, "notice_id", noticeID, "action", action)
 	}

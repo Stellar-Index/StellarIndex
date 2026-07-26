@@ -11,8 +11,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // fakeMTDReader implements middleware.MonthToDateReader with a
@@ -143,5 +146,43 @@ func TestMonthlyQuota_AnonymousPassThrough(t *testing.T) {
 	status, _, _ := runWithSubject(t, mw, sub)
 	if status != http.StatusOK {
 		t.Errorf("status = %d, want 200 (anon has no quota)", status)
+	}
+}
+
+// TestMonthlyQuota_FailOpenIncrementsCounter is the C3-082 regression
+// (audit-2026-07-23).
+//
+// The fail-open above is correct and stays — but before this counter the
+// only trace that the metered-spend ceiling had switched itself OFF was a
+// `logger.Debug` line, i.e. nothing at all at the API's production log
+// level. A metered key can bill past its agreed cap for the whole window,
+// and the overage is unrecoverable once the responses are served.
+//
+// Asserts the exact delta (1 per bypassed request) and, crucially, that a
+// HEALTHY read does not touch the counter — a counter that ticks on the
+// success path would make the alert permanently firing and worthless.
+func TestMonthlyQuota_FailOpenIncrementsCounter(t *testing.T) {
+	sub := auth.Subject{Tier: auth.TierAPIKey, KeyID: "K1", MonthlyQuota: 100}
+
+	// Healthy read: under cap, no bypass.
+	healthy := &fakeMTDReader{counts: map[string]int64{"key:K1": 1}}
+	before := testutil.ToFloat64(obs.MonthlyQuotaFailOpenTotal)
+	if status, _, _ := runWithSubject(t, middleware.MonthlyQuota(healthy, nil), sub); status != http.StatusOK {
+		t.Fatalf("healthy read status = %d, want 200", status)
+	}
+	if got := testutil.ToFloat64(obs.MonthlyQuotaFailOpenTotal); got != before {
+		t.Errorf("healthy read moved the fail-open counter: %v → %v", before, got)
+	}
+
+	// Backing-store error: the ceiling is bypassed and must be counted.
+	broken := &fakeMTDReader{err: errors.New("redis blip")}
+	mw := middleware.MonthlyQuota(broken, nil)
+	for i := 0; i < 2; i++ {
+		if status, _, _ := runWithSubject(t, mw, sub); status != http.StatusOK {
+			t.Fatalf("request %d status = %d, want 200 (fail-open)", i, status)
+		}
+	}
+	if got, want := testutil.ToFloat64(obs.MonthlyQuotaFailOpenTotal), before+2; got != want {
+		t.Errorf("stellarindex_monthly_quota_fail_open_total = %v, want %v (one per bypassed request)", got, want)
 	}
 }
