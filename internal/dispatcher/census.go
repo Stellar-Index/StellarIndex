@@ -159,9 +159,13 @@ func captureEligible(ce xdr.ContractEvent) bool {
 }
 
 // claimAtomCount returns the number of ClaimAtoms an operation
-// produced — one classic-DEX trade each. It mirrors
+// produced that will become trade rows. It mirrors
 // internal/sources/sdex.extractClaimAtoms exactly (same op types,
-// same success gating) so the census equals the SDEX trade-row count.
+// same success gating) for atom SELECTION, and delegates the per-atom
+// "is this a real trade" test to [sdexclaim.IsRealTrade], which is the
+// same predicate sdex.decodeClaimAtom enforces (C2-010,
+// audit-2026-07-23) — so the census equals the SDEX trade-row count by
+// construction, not by three files agreeing to stay in step.
 // Returns the count rather than the slice to avoid allocation in the
 // hot per-ledger census walk.
 func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int { //nolint:gocognit // switch over 5 trade op types, with a dual result-arm fallback for passive offers; linear and clearer unsplit.

@@ -4,9 +4,10 @@ import "strings"
 
 // nativeSAC is the Stellar Asset Contract address that wraps native
 // XLM (the Soroban-side alias for `native`). Both forms rank as XLM
-// for orientation. Kept in sync with the SAC literal used across the
-// storage layer's XLM/USD CTEs.
-const nativeSAC = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
+// for orientation. Aliased to [XLMSacContractID] (alias.go) so the one
+// literal in this package is the one the alias family, the orientation
+// ranking and the storage layer's XLM/USD CTEs all share.
+const nativeSAC = XLMSacContractID
 
 // StablecoinCodes are the asset CODES treated as fiat-pegged
 // stablecoins for canonical pair ORIENTATION — i.e. deciding which

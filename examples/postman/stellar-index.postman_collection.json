@@ -26549,7 +26549,7 @@
               "request": {
                 "name": "Stripe webhook — paid-tier upgrade.",
                 "description": {
-                  "content": "Receives Stripe webhook events. On `checkout.session.completed`\nwith `payment_status=paid`, looks up every API key whose\nidentifier matches `client_reference_id` and lifts their\n`rate_limit_per_min` to the value implied by `metadata.tier`\n(pro / business) or the explicit `metadata.rate_limit_per_min`\noverride.\n\nIdempotent — Stripe at-least-once delivery means the same\nevent may arrive multiple times; the handler always sets the\nsame target rate-limit. Customer keeps their existing\nplaintext key; effective on the next request (validator reads\nthe per-key budget on every Lookup).\n\nStripe-Signature header verified via HMAC-SHA256 with\ntimestamp drift bounded to 5 minutes. Endpoint returns 503\nwhen the signing secret is unset (deployments without\nStripe).\n\n**Operator observability.** Beyond the Redis-side\nrate-limit lift (which 5xx-bubbles back to Stripe so the\nplatform retries), the handler also fans out platform-store\nside effects: account tier update, subscription upsert, and\nper-key rate-limit lift on dashboard-created Postgres keys\n(F-1219). Those side effects are best-effort — they do NOT\n5xx — because Stripe retries against an unhealthy Postgres\nwould just retry-storm. Failures are surfaced via the\n`stellarindex_stripe_platform_sync_errors_total{operation}`\ncounter; the alert\n`stellarindex_stripe_platform_sync_errors` (P3 / ticket)\nfires on any non-zero rate over 15 min. See the runbook\nat `docs/operations/runbooks/stripe-platform-sync-errors.md`\nfor per-`operation` triage.\n",
+                  "content": "Receives Stripe webhook events. On `checkout.session.completed`\nwith `payment_status=paid`, looks up every API key whose\nidentifier matches `client_reference_id` and lifts their\n`rate_limit_per_min` to the value implied by `metadata.tier`\n(pro / business) or the explicit `metadata.rate_limit_per_min`\noverride.\n\nIdempotent — Stripe at-least-once delivery means the same\nevent may arrive multiple times; the handler always sets the\nsame target rate-limit. Customer keeps their existing\nplaintext key; effective on the next request (validator reads\nthe per-key budget on every Lookup).\n\nStripe-Signature header verified via HMAC-SHA256 with\ntimestamp drift bounded to 5 minutes. Endpoint returns 503\nwhen the signing secret is unset (deployments without\nStripe).\n\n**Operator observability.** Beyond the Redis-side\nrate-limit lift (which 5xx-bubbles back to Stripe so the\nplatform retries), the handler also fans out platform-store\nside effects: account tier update, subscription upsert, and\nper-key rate-limit lift on dashboard-created Postgres keys\n(F-1219). Those side effects are best-effort — they do NOT\n5xx — because Stripe retries against an unhealthy Postgres\nwould just retry-storm. Failures are surfaced via the\n`stellarindex_stripe_platform_sync_errors_total{operation}`\ncounter; the alert\n`stellarindex_stripe_platform_sync_errors` (P3 / ticket)\nfires on any non-zero rate over 15 min. See the runbook\nat `docs/operations/runbooks/stripe-platform-sync-errors.md`\nfor per-`operation` triage.\n\n**Provisioning outcomes.** The status code encodes whether a\nretry can help:\n\n- **All keys upgraded** → `200`.\n- **Some keys upgraded, some failed** → `200` with\n  `keys_failed > 0`. The customer already holds a credential\n  carrying the paid tier, and a retry loop over one\n  permanently-unwritable key record would risk Stripe\n  disabling the endpoint for every customer. Surfaced by\n  `keys_failed` and per-key ERROR logs, not by the status.\n- **Keys exist but NONE could be upgraded** → `500`. Nothing\n  was provisioned and the cause is a key-store outage, which\n  a retry heals, so Stripe's retry schedule must re-deliver.\n  The event is also dead-lettered (`processed_at` stays NULL)\n  so the incident survives Stripe eventually giving up, and\n  resolves itself when a retry succeeds.\n- **No keys exist for the identifier** (customer paid but\n  never signed up) → `200` + dead-letter. Retrying cannot\n  help; a human must act.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -26597,7 +26597,7 @@
               },
               "response": [
                 {
-                  "name": "Event acknowledged (regardless of whether keys were upgraded — non-2xx triggers Stripe retries).",
+                  "name": "Event acknowledged. Covers full success, PARTIAL success (`keys_failed > 0` — at least one key carries the paid tier), deliberately-ignored event types, and the paid-but-never-signed-up case (`dead_lettered: true`), where no retry could help. A total provisioning failure returns 500 instead so Stripe retries.",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -26649,7 +26649,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"ok\": \"<boolean>\",\n    \"upgraded\": \"<integer>\",\n    \"keys_total\": \"<integer>\",\n    \"rate_limit_per_min\": \"<integer>\",\n    \"ignored\": \"<string>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
+                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"ok\": \"<boolean>\",\n    \"upgraded\": \"<integer>\",\n    \"keys_total\": \"<integer>\",\n    \"keys_failed\": \"<integer>\",\n    \"rate_limit_per_min\": \"<integer>\",\n    \"ignored\": \"<string>\",\n    \"note\": \"<string>\",\n    \"dead_lettered\": \"<boolean>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"single_source\": false,\n    \"unverified_ticker_collision\": false\n  },\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -26757,6 +26757,63 @@
                   },
                   "status": "Unauthorized",
                   "code": 401,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Provisioning failed and a retry can help — the customer's keys could not be listed, or they exist but NONE could be updated. Returned deliberately so Stripe's retry schedule re-delivers; the event is dead-lettered in parallel so the incident survives Stripe giving up, and resolves automatically when a retry succeeds.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "webhooks",
+                        "stripe"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "disabled": false,
+                        "description": {
+                          "content": "(Required) ",
+                          "type": "text/plain"
+                        },
+                        "key": "Stripe-Signature",
+                        "value": "<string>"
+                      },
+                      {
+                        "key": "Content-Type",
+                        "value": "application/json"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "POST",
+                    "body": {
+                      "mode": "raw",
+                      "raw": "{}",
+                      "options": {
+                        "raw": {
+                          "headerFamily": "json",
+                          "language": "json"
+                        }
+                      }
+                    }
+                  },
+                  "status": "Internal Server Error",
+                  "code": 500,
                   "header": [
                     {
                       "key": "Content-Type",
@@ -27401,7 +27458,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"keys\": [\n    {\n      \"id\": \"<string>\",\n      \"name\": \"<string>\",\n      \"key_prefix\": \"<string>\",\n      \"tier\": \"partner\",\n      \"rate_limit_per_min\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"description\": \"<string>\",\n      \"monthly_quota\": \"<long>\",\n      \"usage_alert_threshold_pct\": \"<integer>\",\n      \"scopes\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"ip_allowlist\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"referer_allowlist\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"expires_at\": \"<dateTime>\",\n      \"revoked_at\": \"<dateTime>\",\n      \"revoked_reason\": \"<string>\",\n      \"last_used_at\": \"<dateTime>\"\n    },\n    {\n      \"id\": \"<string>\",\n      \"name\": \"<string>\",\n      \"key_prefix\": \"<string>\",\n      \"tier\": \"partner\",\n      \"rate_limit_per_min\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"description\": \"<string>\",\n      \"monthly_quota\": \"<long>\",\n      \"usage_alert_threshold_pct\": \"<integer>\",\n      \"scopes\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"ip_allowlist\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"referer_allowlist\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"expires_at\": \"<dateTime>\",\n      \"revoked_at\": \"<dateTime>\",\n      \"revoked_reason\": \"<string>\",\n      \"last_used_at\": \"<dateTime>\"\n    }\n  ]\n}",
+                  "body": "{\n  \"keys\": [\n    {\n      \"id\": \"<string>\",\n      \"name\": \"<string>\",\n      \"key_prefix\": \"<string>\",\n      \"tier\": \"partner\",\n      \"rate_limit_per_min\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"description\": \"<string>\",\n      \"monthly_quota\": \"<long>\",\n      \"usage_alert_threshold_pct\": \"<integer>\",\n      \"scopes\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"ip_allowlist\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"referer_allowlist\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"expires_at\": \"<dateTime>\",\n      \"revoked_at\": \"<dateTime>\",\n      \"revoked_reason\": \"<string>\",\n      \"last_used_at\": \"<dateTime>\"\n    },\n    {\n      \"id\": \"<string>\",\n      \"name\": \"<string>\",\n      \"key_prefix\": \"<string>\",\n      \"tier\": \"apikey\",\n      \"rate_limit_per_min\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"description\": \"<string>\",\n      \"monthly_quota\": \"<long>\",\n      \"usage_alert_threshold_pct\": \"<integer>\",\n      \"scopes\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"ip_allowlist\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"referer_allowlist\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"expires_at\": \"<dateTime>\",\n      \"revoked_at\": \"<dateTime>\",\n      \"revoked_reason\": \"<string>\",\n      \"last_used_at\": \"<dateTime>\"\n    }\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -27486,7 +27543,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"name\": \"<string>\",\n  \"description\": \"<string>\",\n  \"rate_limit_per_min\": \"<integer>\",\n  \"monthly_quota\": \"<long>\",\n  \"scopes\": [\n    \"dashboard\",\n    \"account\"\n  ],\n  \"ip_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"referer_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"expires_at\": \"<dateTime>\",\n  \"usage_alert_threshold_pct\": \"<integer>\"\n}",
+                  "raw": "{\n  \"name\": \"<string>\",\n  \"description\": \"<string>\",\n  \"rate_limit_per_min\": \"<integer>\",\n  \"monthly_quota\": \"<long>\",\n  \"scopes\": [\n    \"dashboard\",\n    \"dashboard\"\n  ],\n  \"ip_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"referer_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"expires_at\": \"<dateTime>\",\n  \"usage_alert_threshold_pct\": \"<integer>\"\n}",
                   "options": {
                     "raw": {
                       "headerFamily": "json",
@@ -27548,7 +27605,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"name\": \"<string>\",\n  \"description\": \"<string>\",\n  \"rate_limit_per_min\": \"<integer>\",\n  \"monthly_quota\": \"<long>\",\n  \"scopes\": [\n    \"dashboard\",\n    \"account\"\n  ],\n  \"ip_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"referer_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"expires_at\": \"<dateTime>\",\n  \"usage_alert_threshold_pct\": \"<integer>\"\n}",
+                      "raw": "{\n  \"name\": \"<string>\",\n  \"description\": \"<string>\",\n  \"rate_limit_per_min\": \"<integer>\",\n  \"monthly_quota\": \"<long>\",\n  \"scopes\": [\n    \"dashboard\",\n    \"dashboard\"\n  ],\n  \"ip_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"referer_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"expires_at\": \"<dateTime>\",\n  \"usage_alert_threshold_pct\": \"<integer>\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -27565,7 +27622,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"plaintext\": \"<string>\",\n  \"key\": {\n    \"id\": \"<string>\",\n    \"name\": \"<string>\",\n    \"key_prefix\": \"<string>\",\n    \"tier\": \"partner\",\n    \"rate_limit_per_min\": \"<integer>\",\n    \"created_at\": \"<dateTime>\",\n    \"description\": \"<string>\",\n    \"monthly_quota\": \"<long>\",\n    \"usage_alert_threshold_pct\": \"<integer>\",\n    \"scopes\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"ip_allowlist\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"referer_allowlist\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"expires_at\": \"<dateTime>\",\n    \"revoked_at\": \"<dateTime>\",\n    \"revoked_reason\": \"<string>\",\n    \"last_used_at\": \"<dateTime>\"\n  }\n}",
+                  "body": "{\n  \"plaintext\": \"<string>\",\n  \"key\": {\n    \"id\": \"<string>\",\n    \"name\": \"<string>\",\n    \"key_prefix\": \"<string>\",\n    \"tier\": \"operator\",\n    \"rate_limit_per_min\": \"<integer>\",\n    \"created_at\": \"<dateTime>\",\n    \"description\": \"<string>\",\n    \"monthly_quota\": \"<long>\",\n    \"usage_alert_threshold_pct\": \"<integer>\",\n    \"scopes\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"ip_allowlist\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"referer_allowlist\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"expires_at\": \"<dateTime>\",\n    \"revoked_at\": \"<dateTime>\",\n    \"revoked_reason\": \"<string>\",\n    \"last_used_at\": \"<dateTime>\"\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -27604,7 +27661,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"name\": \"<string>\",\n  \"description\": \"<string>\",\n  \"rate_limit_per_min\": \"<integer>\",\n  \"monthly_quota\": \"<long>\",\n  \"scopes\": [\n    \"dashboard\",\n    \"account\"\n  ],\n  \"ip_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"referer_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"expires_at\": \"<dateTime>\",\n  \"usage_alert_threshold_pct\": \"<integer>\"\n}",
+                      "raw": "{\n  \"name\": \"<string>\",\n  \"description\": \"<string>\",\n  \"rate_limit_per_min\": \"<integer>\",\n  \"monthly_quota\": \"<long>\",\n  \"scopes\": [\n    \"dashboard\",\n    \"dashboard\"\n  ],\n  \"ip_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"referer_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"expires_at\": \"<dateTime>\",\n  \"usage_alert_threshold_pct\": \"<integer>\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -27660,7 +27717,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"name\": \"<string>\",\n  \"description\": \"<string>\",\n  \"rate_limit_per_min\": \"<integer>\",\n  \"monthly_quota\": \"<long>\",\n  \"scopes\": [\n    \"dashboard\",\n    \"account\"\n  ],\n  \"ip_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"referer_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"expires_at\": \"<dateTime>\",\n  \"usage_alert_threshold_pct\": \"<integer>\"\n}",
+                      "raw": "{\n  \"name\": \"<string>\",\n  \"description\": \"<string>\",\n  \"rate_limit_per_min\": \"<integer>\",\n  \"monthly_quota\": \"<long>\",\n  \"scopes\": [\n    \"dashboard\",\n    \"dashboard\"\n  ],\n  \"ip_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"referer_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"expires_at\": \"<dateTime>\",\n  \"usage_alert_threshold_pct\": \"<integer>\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -27716,7 +27773,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"name\": \"<string>\",\n  \"description\": \"<string>\",\n  \"rate_limit_per_min\": \"<integer>\",\n  \"monthly_quota\": \"<long>\",\n  \"scopes\": [\n    \"dashboard\",\n    \"account\"\n  ],\n  \"ip_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"referer_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"expires_at\": \"<dateTime>\",\n  \"usage_alert_threshold_pct\": \"<integer>\"\n}",
+                      "raw": "{\n  \"name\": \"<string>\",\n  \"description\": \"<string>\",\n  \"rate_limit_per_min\": \"<integer>\",\n  \"monthly_quota\": \"<long>\",\n  \"scopes\": [\n    \"dashboard\",\n    \"dashboard\"\n  ],\n  \"ip_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"referer_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"expires_at\": \"<dateTime>\",\n  \"usage_alert_threshold_pct\": \"<integer>\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -27772,7 +27829,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"name\": \"<string>\",\n  \"description\": \"<string>\",\n  \"rate_limit_per_min\": \"<integer>\",\n  \"monthly_quota\": \"<long>\",\n  \"scopes\": [\n    \"dashboard\",\n    \"account\"\n  ],\n  \"ip_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"referer_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"expires_at\": \"<dateTime>\",\n  \"usage_alert_threshold_pct\": \"<integer>\"\n}",
+                      "raw": "{\n  \"name\": \"<string>\",\n  \"description\": \"<string>\",\n  \"rate_limit_per_min\": \"<integer>\",\n  \"monthly_quota\": \"<long>\",\n  \"scopes\": [\n    \"dashboard\",\n    \"dashboard\"\n  ],\n  \"ip_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"referer_allowlist\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"expires_at\": \"<dateTime>\",\n  \"usage_alert_threshold_pct\": \"<integer>\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -28170,7 +28227,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"webhooks\": [\n    {\n      \"id\": \"<uuid>\",\n      \"name\": \"<string>\",\n      \"url\": \"<string>\",\n      \"events\": [\n        \"incident.resolved\",\n        \"incident.resolved\"\n      ],\n      \"enabled\": \"<boolean>\",\n      \"created_at\": \"<dateTime>\",\n      \"updated_at\": \"<dateTime>\"\n    },\n    {\n      \"id\": \"<uuid>\",\n      \"name\": \"<string>\",\n      \"url\": \"<string>\",\n      \"events\": [\n        \"price.alert\",\n        \"incident.resolved\"\n      ],\n      \"enabled\": \"<boolean>\",\n      \"created_at\": \"<dateTime>\",\n      \"updated_at\": \"<dateTime>\"\n    }\n  ]\n}",
+                  "body": "{\n  \"webhooks\": [\n    {\n      \"id\": \"<uuid>\",\n      \"name\": \"<string>\",\n      \"url\": \"<string>\",\n      \"events\": [\n        \"anomaly.freeze\",\n        \"price.alert\"\n      ],\n      \"enabled\": \"<boolean>\",\n      \"created_at\": \"<dateTime>\",\n      \"updated_at\": \"<dateTime>\"\n    },\n    {\n      \"id\": \"<uuid>\",\n      \"name\": \"<string>\",\n      \"url\": \"<string>\",\n      \"events\": [\n        \"incident.resolved\",\n        \"price.alert\"\n      ],\n      \"enabled\": \"<boolean>\",\n      \"created_at\": \"<dateTime>\",\n      \"updated_at\": \"<dateTime>\"\n    }\n  ]\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -28334,7 +28391,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"webhook\": {\n    \"id\": \"<uuid>\",\n    \"name\": \"<string>\",\n    \"url\": \"<string>\",\n    \"events\": [\n      \"incident.sev1\",\n      \"incident.resolved\"\n    ],\n    \"enabled\": \"<boolean>\",\n    \"created_at\": \"<dateTime>\",\n    \"updated_at\": \"<dateTime>\"\n  },\n  \"secret\": \"<string>\"\n}",
+                  "body": "{\n  \"webhook\": {\n    \"id\": \"<uuid>\",\n    \"name\": \"<string>\",\n    \"url\": \"<string>\",\n    \"events\": [\n      \"incident.resolved\",\n      \"incident.resolved\"\n    ],\n    \"enabled\": \"<boolean>\",\n    \"created_at\": \"<dateTime>\",\n    \"updated_at\": \"<dateTime>\"\n  },\n  \"secret\": \"<string>\"\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -28616,7 +28673,7 @@
                     "method": "PATCH",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"incident.sev1\",\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                      "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"anomaly.freeze\",\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -28690,7 +28747,7 @@
                         "method": "PATCH",
                         "body": {
                           "mode": "raw",
-                          "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"incident.sev1\",\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                          "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"anomaly.freeze\",\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
                           "options": {
                             "raw": {
                               "headerFamily": "json",
@@ -28707,7 +28764,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"id\": \"<uuid>\",\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"price.alert\",\n    \"price.alert\"\n  ],\n  \"enabled\": \"<boolean>\",\n  \"created_at\": \"<dateTime>\",\n  \"updated_at\": \"<dateTime>\"\n}",
+                      "body": "{\n  \"id\": \"<uuid>\",\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"divergence.firing\",\n    \"divergence.firing\"\n  ],\n  \"enabled\": \"<boolean>\",\n  \"created_at\": \"<dateTime>\",\n  \"updated_at\": \"<dateTime>\"\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -28758,7 +28815,7 @@
                         "method": "PATCH",
                         "body": {
                           "mode": "raw",
-                          "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"incident.sev1\",\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                          "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"anomaly.freeze\",\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
                           "options": {
                             "raw": {
                               "headerFamily": "json",
@@ -28826,7 +28883,7 @@
                         "method": "PATCH",
                         "body": {
                           "mode": "raw",
-                          "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"incident.sev1\",\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                          "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"anomaly.freeze\",\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
                           "options": {
                             "raw": {
                               "headerFamily": "json",
@@ -28894,7 +28951,7 @@
                         "method": "PATCH",
                         "body": {
                           "mode": "raw",
-                          "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"incident.sev1\",\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
+                          "raw": "{\n  \"name\": \"<string>\",\n  \"url\": \"<string>\",\n  \"events\": [\n    \"anomaly.freeze\",\n    \"incident.resolved\"\n  ],\n  \"enabled\": \"<boolean>\"\n}",
                           "options": {
                             "raw": {
                               "headerFamily": "json",
@@ -29200,7 +29257,7 @@
                               "value": "application/json"
                             }
                           ],
-                          "body": "{\n  \"deliveries\": [\n    {\n      \"id\": \"<uuid>\",\n      \"event_type\": \"anomaly.freeze\",\n      \"attempt_count\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"next_attempt_at\": \"<dateTime>\",\n      \"delivered_at\": \"<dateTime>\",\n      \"last_error\": \"<string>\",\n      \"last_response_status\": \"<integer>\"\n    },\n    {\n      \"id\": \"<uuid>\",\n      \"event_type\": \"price.alert\",\n      \"attempt_count\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"next_attempt_at\": \"<dateTime>\",\n      \"delivered_at\": \"<dateTime>\",\n      \"last_error\": \"<string>\",\n      \"last_response_status\": \"<integer>\"\n    }\n  ]\n}",
+                          "body": "{\n  \"deliveries\": [\n    {\n      \"id\": \"<uuid>\",\n      \"event_type\": \"incident.resolved\",\n      \"attempt_count\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"next_attempt_at\": \"<dateTime>\",\n      \"delivered_at\": \"<dateTime>\",\n      \"last_error\": \"<string>\",\n      \"last_response_status\": \"<integer>\"\n    },\n    {\n      \"id\": \"<uuid>\",\n      \"event_type\": \"incident.resolved\",\n      \"attempt_count\": \"<integer>\",\n      \"created_at\": \"<dateTime>\",\n      \"next_attempt_at\": \"<dateTime>\",\n      \"delivered_at\": \"<dateTime>\",\n      \"last_error\": \"<string>\",\n      \"last_response_status\": \"<integer>\"\n    }\n  ]\n}",
                           "cookie": [],
                           "_postman_previewlanguage": "json"
                         },
@@ -29863,7 +29920,7 @@
                     "method": "PATCH",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                      "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"above\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -29937,7 +29994,7 @@
                         "method": "PATCH",
                         "body": {
                           "mode": "raw",
-                          "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                          "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"above\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
                           "options": {
                             "raw": {
                               "headerFamily": "json",
@@ -30005,7 +30062,7 @@
                         "method": "PATCH",
                         "body": {
                           "mode": "raw",
-                          "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                          "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"above\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
                           "options": {
                             "raw": {
                               "headerFamily": "json",
@@ -30073,7 +30130,7 @@
                         "method": "PATCH",
                         "body": {
                           "mode": "raw",
-                          "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                          "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"above\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
                           "options": {
                             "raw": {
                               "headerFamily": "json",
@@ -30141,7 +30198,7 @@
                         "method": "PATCH",
                         "body": {
                           "mode": "raw",
-                          "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"below\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
+                          "raw": "{\n  \"base_asset\": \"<string>\",\n  \"quote_asset\": \"<string>\",\n  \"condition\": \"above\",\n  \"threshold\": \"<string>\",\n  \"cooldown_seconds\": \"<integer>\",\n  \"enabled\": \"<boolean>\"\n}",
                           "options": {
                             "raw": {
                               "headerFamily": "json",
@@ -30907,7 +30964,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"677412\"\n}",
+                  "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"401145\"\n}",
                   "options": {
                     "raw": {
                       "headerFamily": "json",
@@ -30945,7 +31002,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"677412\"\n}",
+                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"401145\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -31002,7 +31059,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"677412\"\n}",
+                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"401145\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -31050,7 +31107,7 @@
                     "method": "POST",
                     "body": {
                       "mode": "raw",
-                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"677412\"\n}",
+                      "raw": "{\n  \"email\": \"<email>\",\n  \"code\": \"401145\"\n}",
                       "options": {
                         "raw": {
                           "headerFamily": "json",
@@ -32339,7 +32396,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"data\": {\n    \"hash\": \"<string>\",\n    \"ledger\": \"<integer>\",\n    \"close_time\": \"<dateTime>\",\n    \"index\": \"<integer>\",\n    \"source_account\": \"<string>\",\n    \"fee_charged\": \"<integer>\",\n    \"max_fee\": \"<integer>\",\n    \"operation_count\": \"<integer>\",\n    \"successful\": \"<boolean>\",\n    \"result_code\": \"<integer>\",\n    \"memo_type\": \"<string>\",\n    \"memo\": \"<string>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 8397.969577927142,\n          \"key_1\": \"string\",\n          \"key_2\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": \"string\"\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      }\n    ],\n    \"events\": [\n      {\n        \"contract_id\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"event_type\": \"<string>\",\n        \"topic_0\": \"<string>\",\n        \"topics\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"data\": \"<string>\"\n      },\n      {\n        \"contract_id\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"event_type\": \"<string>\",\n        \"topic_0\": \"<string>\",\n        \"topics\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"data\": \"<string>\"\n      }\n    ]\n  }\n}",
+                  "body": "{\n  \"data\": {\n    \"hash\": \"<string>\",\n    \"ledger\": \"<integer>\",\n    \"close_time\": \"<dateTime>\",\n    \"index\": \"<integer>\",\n    \"source_account\": \"<string>\",\n    \"fee_charged\": \"<integer>\",\n    \"max_fee\": \"<integer>\",\n    \"operation_count\": \"<integer>\",\n    \"successful\": \"<boolean>\",\n    \"result_code\": \"<integer>\",\n    \"memo_type\": \"<string>\",\n    \"memo\": \"<string>\",\n    \"operations\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": 1128\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"tx_index\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"type\": \"<string>\",\n        \"source_account\": \"<string>\",\n        \"fields\": {\n          \"key_0\": true,\n          \"key_1\": 1914.8264615796506\n        },\n        \"raw_xdr\": \"<string>\",\n        \"result_code\": \"<integer>\"\n      }\n    ],\n    \"events\": [\n      {\n        \"contract_id\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"event_type\": \"<string>\",\n        \"topic_0\": \"<string>\",\n        \"topics\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"data\": \"<string>\"\n      },\n      {\n        \"contract_id\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"event_index\": \"<integer>\",\n        \"event_type\": \"<string>\",\n        \"topic_0\": \"<string>\",\n        \"topics\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"data\": \"<string>\"\n      }\n    ]\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },

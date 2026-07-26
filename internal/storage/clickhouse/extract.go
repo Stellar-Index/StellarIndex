@@ -114,7 +114,7 @@ func extractTx(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, clos
 	ext.Ledger.TxCount++
 
 	extractOps(ext, tx, seq, closeTime, txHash, txSource, txIndex, tx.Result.Successful())
-	extractEvents(ext, tx, seq, closeTime, txHash, opArgsByIndex(tx.Envelope.Operations()))
+	extractEvents(ext, tx, seq, closeTime, txHash, opArgsByIndex(tx.Envelope.Operations()), tx.Result.Successful())
 	extractEntryChanges(ext, tx, seq, closeTime, txHash, entryChangeSeq) // ADR-0038 Phase C substrate (closes G12-03)
 }
 
@@ -222,7 +222,36 @@ func appendOpResult(ext *LedgerExtract, seq uint32, txHash string, opIndex uint3
 // extractEvents appends one tx's eligible contract-event rows. opArgs holds
 // the InvokeContract args per operation index (from opArgsByIndex); events of
 // op i carry opArgs[i] so Redstone/Band-class decoders can read them from CH.
-func extractEvents(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, closeTime time.Time, txHash string, opArgs [][]string) {
+//
+// TX-SUCCESS GATE (C2-010 sibling, audit-2026-07-23). `successful` is
+// tx.Result.Successful(); a failed transaction contributes nothing. Pre-fix
+// this was the ONLY one of the three ledger walks with no such gate —
+// dispatcher.ProcessLedger skips failed txs outright (dispatcher.go, "Failed
+// transactions don't produce real price signal") and dispatcher.CensusLedger
+// does the same before counting — so the lake's soroban_event_count and the
+// census oracle it is reconciled against were computed over different
+// populations, and eventRow stamped `in_successful_call = 1` on every row
+// regardless. Three invariants now hold by construction instead of by
+// coincidence:
+//
+//   - ledgers.soroban_event_count == COUNT(contract_events) for the range
+//     (what ReadGateCounts compares);
+//   - ext.Ledger.SorobanEventCount == census.SorobanEventCount for the same
+//     LCM (what ch-gate's EXTRACT≠CENSUS check compares);
+//   - in_successful_call = 1 is TRUE of every row written, rather than a
+//     hard-coded constant.
+//
+// The rejected alternative was to keep the rows and stamp
+// in_successful_call = 0: that preserves lake fidelity but breaks the first
+// invariant above (the gate counts contract_events rows, not
+// in_successful_call=1 rows), and it would leave supply_flows crediting
+// mint/burn amounts from transactions that never applied — a money-visible
+// error for a fidelity gain in events the protocol does not actually emit
+// (see the note in ExtractLedger's own doc on failed-tx meta shape).
+func extractEvents(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, closeTime time.Time, txHash string, opArgs [][]string, successful bool) {
+	if !successful {
+		return
+	}
 	txEvents, terr := tx.GetTransactionEvents()
 	if terr != nil {
 		// G15-06: an unsupported future TransactionMeta version makes this
@@ -302,24 +331,34 @@ func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash stri
 		topic0Sym = string(sym)
 	}
 	return ContractEventRow{
-		LedgerSeq:        seq,
-		CloseTime:        closeTime,
-		TxHash:           txHash,
-		OpIndex:          uint32(opIdx),
-		EventIndex:       uint32(evIdx),
-		ContractID:       cid,
-		EventType:        "contract",
-		TopicCount:       uint8(len(topics)),
-		Topic0Sym:        topic0Sym,
-		TopicsXDR:        topics,
-		DataXDR:          base64.StdEncoding.EncodeToString(dataRaw),
-		OpArgsXDR:        opArgs, // InvokeContract args of the producing op (Redstone feed_ids, etc.)
+		LedgerSeq:  seq,
+		CloseTime:  closeTime,
+		TxHash:     txHash,
+		OpIndex:    uint32(opIdx),
+		EventIndex: uint32(evIdx),
+		ContractID: cid,
+		EventType:  "contract",
+		TopicCount: uint8(len(topics)),
+		Topic0Sym:  topic0Sym,
+		TopicsXDR:  topics,
+		DataXDR:    base64.StdEncoding.EncodeToString(dataRaw),
+		OpArgsXDR:  opArgs, // InvokeContract args of the producing op (Redstone feed_ids, etc.)
+		// Constant 1 is now a STATEMENT OF FACT, not an assumption: the only
+		// caller, extractEvents, returns early for a failed transaction
+		// (C2-010 sibling, audit-2026-07-23). Pre-fix this literal was
+		// stamped on every row while extractEvents had no tx-success gate at
+		// all, so the column asserted something the extractor had not checked.
 		InSuccessfulCall: 1,
 	}, true
 }
 
 // claimAtomCount mirrors dispatcher.claimAtomCount exactly (same op types +
 // success gating) so classic_trade_effect_count equals the SDEX trade count.
+// The per-atom predicate is [sdexclaim.IsRealTrade] on both sides — the same
+// rule sdex.decodeClaimAtom applies — so the mirror this comment claims is
+// enforced by a shared function, not by inspection (C2-010, audit-2026-07-23;
+// TestClaimAtomCount_LockStepWithDecoder in the dispatcher's external test
+// package pins all three against the same divergent-atom table).
 func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int { //nolint:gocognit // switch over 5 trade op types, with a dual result-arm fallback for passive offers; linear and clearer unsplit.
 	if result.Code != xdr.OperationResultCodeOpInner {
 		return 0

@@ -214,13 +214,23 @@ func (s *Store) sourceVolumeHistory(ctx context.Context, window string) ([]Sourc
 // GetSourceStats (XLM/USD fallback for native / XLM-SAC legs).
 //
 // The asset filters use `= ANY($n)` against a bound string[] so the
-// handler can pass every canonical FORM of an asset (XLM's
-// `native` ↔ `crypto:XLM` dual form; see assetAliases in
-// internal/api/v1). Without the array a multi-form asset undercounts —
-// SDEX writes `native` while every CEX writes `crypto:XLM`, so a
-// single-form filter saw only one side. `= ANY(array)` stays sargable
-// (equality on the indexed base_asset/quote_asset columns, planned as
-// an index scan / BitmapOr) — NOT a function on the column.
+// handler can pass every canonical FORM of an asset (XLM's three:
+// `native`, `crypto:XLM` and the SAC C-address — see
+// [canonical.AssetAliases]). Without the array a multi-form asset
+// undercounts — SDEX writes `native`, every CEX writes `crypto:XLM` and
+// Soroban AMMs write the SAC, so a single-form filter saw only one
+// side. `= ANY(array)` stays sargable (equality on the indexed
+// base_asset/quote_asset columns, planned as an index scan / BitmapOr)
+// — NOT a function on the column.
+//
+// MEMBERSHIP MUST MATCH VALUATION (C4-012, audit-2026-07-23). The
+// volume CASE below treats the XLM SAC literal as XLM — it applies the
+// XLM/USD rate to a SAC leg — so the caller's form set MUST include the
+// SAC too, or Soroban XLM trades are excluded from the population while
+// being priced as XLM wherever they do match. That is precisely the
+// live undercount on /v1/markets/sources?asset=native this note exists
+// to stop recurring: if you edit either the CASE's IN-list or
+// [canonical.AssetAliases], edit both.
 const (
 	pairSourceStatsQuery = `
 		WITH xlm_usd AS (

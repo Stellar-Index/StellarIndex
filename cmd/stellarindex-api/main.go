@@ -1116,6 +1116,23 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		statusNoticeStore = postgresstore.NewStatusNoticeStore(postgresstore.New(pgDB))
 	}
 
+	// 52105fdb residual (audit-2026-07-23): the credential stores PATCH
+	// /v1/admin/accounts/{id} must clamp when an operator LOWERS an
+	// account's tier. Same two stores the Stripe downgrade path lowers —
+	// Postgres-backed dashboard keys and Redis-backed self-service keys —
+	// wired independently of `stripeCfg` so the operator kill-switch keeps
+	// working on a deployment with no Stripe signing secret. Each half is
+	// nil-safe: a missing store means that half is skipped and the
+	// endpoint's audit row records keys_clamped=0.
+	var apiKeyBudgets v1.APIKeyBudgetStores
+	if pgDB := store.DB(); pgDB != nil {
+		apiKeyBudgets.Platform = postgresstore.NewAPIKeyStore(postgresstore.New(pgDB))
+	}
+	if rdb != nil {
+		apiKeyBudgets.Redis = auth.NewRedisAPIKeyStore(rdb)
+		apiKeyBudgets.CacheInvalidator = auth.NewRedisKeyCacheInvalidator(rdb)
+	}
+
 	apiSrv := v1.New(v1.Options{
 		Logger:      logger.With("component", "api"),
 		ReadyChecks: checks,
@@ -1137,6 +1154,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Sep1Cache:           store,
 		Accounts:            accountStore,
 		PlatformAccounts:    platformAccountStore,
+		APIKeyBudgets:       apiKeyBudgets,
 		StatusNotices:       statusNoticeStore,
 		Audit:               adminAudit,
 		Signups:             signupTracker,

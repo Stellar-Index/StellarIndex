@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -129,11 +130,16 @@ func (f *fakeStripeEventStore) MarkStripeEventFailed(_ context.Context, id, msg 
 // Records every UpdateRateLimit call so assertions can confirm the
 // handler called the right key with the right budget.
 type fakeStripeManager struct {
-	mu       sync.Mutex
-	keys     map[string][]auth.APIKeyRecord // identifier → keys
-	updates  []stripeUpdateCall
-	listErr  error
+	mu      sync.Mutex
+	keys    map[string][]auth.APIKeyRecord // identifier → keys
+	updates []stripeUpdateCall
+	listErr error
+	// updateEr fails EVERY key (total failure).
 	updateEr error
+	// updateErrForKeyID fails only the named keys, so a test can build a
+	// genuinely PARTIAL upgrade — the case the 200-vs-5xx decision turns
+	// on (52105fdb residual, audit-2026-07-23).
+	updateErrForKeyID map[string]error
 }
 
 type stripeUpdateCall struct {
@@ -155,6 +161,9 @@ func (f *fakeStripeManager) UpdateRateLimit(_ context.Context, keyID string, rat
 	defer f.mu.Unlock()
 	if f.updateEr != nil {
 		return auth.APIKeyRecord{}, f.updateEr
+	}
+	if err := f.updateErrForKeyID[keyID]; err != nil {
+		return auth.APIKeyRecord{}, err
 	}
 	f.updates = append(f.updates, stripeUpdateCall{keyID: keyID, rateLimit: rateLimit})
 	return auth.APIKeyRecord{KeyID: keyID, RateLimitPerMin: rateLimit}, nil
@@ -431,23 +440,116 @@ func TestStripeWebhook_NoKeysForIdentifier(t *testing.T) {
 	}
 }
 
-func TestStripeWebhook_PartialUpgradeFailure(t *testing.T) {
-	// One upgrade fails — the others still go through; webhook
-	// returns 200 to prevent Stripe retrying everything.
+// TestStripeWebhook_TotalUpgradeFailure_5xxSoStripeRetries pins the
+// CORRECTED contract for a TOTAL provisioning failure (52105fdb
+// residual, audit-2026-07-23).
+//
+// This test previously lived under the name
+// `TestStripeWebhook_PartialUpgradeFailure` and asserted 200 — but its
+// fixture sets `updateEr`, which fails EVERY key, so it never exercised
+// a partial upgrade at all: it pinned "answer 200 when nothing was
+// provisioned". That is the one answer that forfeits Stripe's retry
+// machinery, and every failure on this path (Redis unreachable, key
+// store erroring) is exactly the transient class a retry heals. A
+// 30-second blip therefore turned a paid upgrade into a permanent
+// manual-recovery task.
+//
+// Corrected contract: total failure ⇒ non-2xx so Stripe re-delivers,
+// AND the dead-letter opens so the incident is durable while the retries
+// run. The genuinely-partial case is a separate test below and KEEPS its
+// 200 — see the reasoning at the call site.
+func TestStripeWebhook_TotalUpgradeFailure_5xxSoStripeRetries(t *testing.T) {
 	now := time.Now().UTC()
-	failing := errors.New("redis blip")
 	mgr := &fakeStripeManager{
 		keys: map[string][]auth.APIKeyRecord{
 			"signup-y": {{KeyID: "kid_a"}, {KeyID: "kid_b"}},
 		},
-		updateEr: failing,
+		updateEr: errors.New("redis blip"),
 	}
-	ts := newStripeTestServer(t, mgr, now)
-	body := `{"id":"evt","type":"checkout.session.completed","data":{"object":{"id":"cs","client_reference_id":"signup-y","payment_status":"paid","metadata":{"tier":"pro"}}}}`
+	events := newFakeStripeEventStore()
+	ts := newStripeTestServerWithEvents(t, mgr, events, now)
+	body := `{"id":"evt_total_fail","type":"checkout.session.completed","data":{"object":{"id":"cs","client_reference_id":"signup-y","payment_status":"paid","metadata":{"tier":"pro"}}}}`
 	resp := postStripe(t, ts, body, stripeSign(t, body, testStripeSecret, now))
 	defer resp.Body.Close()
+
+	if resp.StatusCode < 500 {
+		t.Errorf("status = %d, want a 5xx: NOTHING was provisioned and the failure is "+
+			"retryable, so Stripe's retry schedule must re-deliver instead of the "+
+			"webhook acknowledging an upgrade that did not happen", resp.StatusCode)
+	}
+
+	// The dead-letter must ALSO open — the 5xx buys automatic retries,
+	// the dead-letter is what survives Stripe eventually giving up.
+	if got := events.openDeadLetters()["evt_total_fail"]; got != platform.DeadLetterKeyUpgradeFailed {
+		t.Errorf("dead-letter reason = %q, want %q — the paid-but-unprovisioned state must be "+
+			"durable, not merely retried", got, platform.DeadLetterKeyUpgradeFailed)
+	}
+	// processed_at must stay NULL so a retry (or an operator re-send)
+	// actually re-runs the provisioning rather than being dup-acked.
+	if !events.processedAt("evt_total_fail").IsZero() {
+		t.Error("event marked processed after a total failure — a retry would be dup-acked into a no-op")
+	}
+}
+
+// TestStripeWebhook_PartialUpgradeFailure exercises what its name says:
+// SOME keys upgrade, some don't. This keeps the 200.
+//
+// The decision (52105fdb residual, audit-2026-07-23): the customer holds
+// at least one credential carrying the tier they paid for, so the
+// money-for-service contract is met and the rest is a degradation.
+// Answering 5xx here would be worse in the case that matters — a single
+// permanently-unwritable key record would fail every retry for Stripe's
+// whole multi-day schedule, and Stripe disables endpoints that keep
+// failing, escalating one stuck key into a billing-sync outage for every
+// customer. The failure is surfaced by the per-key ERROR logs and the
+// `keys_failed` field, not by the status code.
+func TestStripeWebhook_PartialUpgradeFailure(t *testing.T) {
+	now := time.Now().UTC()
+	mgr := &fakeStripeManager{
+		keys: map[string][]auth.APIKeyRecord{
+			"signup-partial": {{KeyID: "kid_ok"}, {KeyID: "kid_broken"}},
+		},
+		// Only the second key fails — a genuine PARTIAL upgrade.
+		updateErrForKeyID: map[string]error{"kid_broken": errors.New("redis blip on one key")},
+	}
+	events := newFakeStripeEventStore()
+	ts := newStripeTestServerWithEvents(t, mgr, events, now)
+	body := `{"id":"evt_partial","type":"checkout.session.completed","data":{"object":{"id":"cs","client_reference_id":"signup-partial","payment_status":"paid","metadata":{"tier":"pro"}}}}`
+	resp := postStripe(t, ts, body, stripeSign(t, body, testStripeSecret, now))
+	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status = %d, want 200 (partial-upgrade is reported, not failed)", resp.StatusCode)
+		t.Fatalf("status = %d, want 200 (one key carries the paid tier; a retry storm "+
+			"over the other risks Stripe disabling the endpoint)", resp.StatusCode)
+	}
+	var env struct {
+		Data struct {
+			Upgraded   int `json:"upgraded"`
+			KeysTotal  int `json:"keys_total"`
+			KeysFailed int `json:"keys_failed"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Data.Upgraded != 1 || env.Data.KeysTotal != 2 || env.Data.KeysFailed != 1 {
+		t.Errorf("body = %+v, want upgraded=1 keys_total=2 keys_failed=1 — the partial "+
+			"outcome must be REPORTED, not hidden behind a bare ok:true", env.Data)
+	}
+	// Exactly one key actually moved.
+	if got := len(mgr.updates); got != 1 || mgr.updates[0].keyID != "kid_ok" {
+		t.Errorf("updates = %+v, want exactly [kid_ok]", mgr.updates)
+	}
+	// A partial upgrade is NOT dead-lettered: markStripeEventProcessed
+	// stamps dead_letter_resolved_at in the same statement, so a
+	// dead-letter here would write an incident that closes itself in the
+	// same request — noise, not signal.
+	if _, open := events.openDeadLetters()["evt_partial"]; open {
+		t.Error("partial upgrade must not open a dead-letter it immediately resolves")
+	}
+	if events.processedAt("evt_partial").IsZero() {
+		t.Error("partial upgrade must mark the event processed — F-1227: a late re-delivery " +
+			"must not re-upgrade an account an operator has since manually downgraded")
 	}
 }
 

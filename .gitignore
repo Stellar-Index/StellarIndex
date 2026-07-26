@@ -70,10 +70,24 @@ service-account*.json
 # pubkeys, etc. — operationally sensitive even if not strictly
 # secret. Operators copy r*.example.yml → r*.yml locally; the .yml
 # stays local-only. The .example template is the public reference.
-# Real inventories + the ENCRYPTED vault are tracked (2026-07-03: the
-# ansible-drift workflow needs them; r1.yml holds no secrets — those
-# live vault-encrypted in r1.secrets.yml, password out-of-band).
+#
+# C6-041 (audit-2026-07-23) — REVERSED the 2026-07-03 decision to track
+# them. That decision's premise was "the ansible-drift workflow needs
+# them", which is true but does not require TRACKING: the workflow now
+# materializes r1.yml from the R1_INVENTORY_B64 Actions secret, the exact
+# pattern it already used for the encrypted vault. Meanwhile the file was
+# publishing r1's IP, `allowed_ssh_cidrs: 0.0.0.0/0`, the disk serials and
+# the operator SSH pubkey to a PUBLIC repo — and re-publishing every
+# topology change on every commit.
+#
+# Untracking stops the leak GROWING. It does not undo it: git history
+# still carries every past revision. The already-exposed facts are
+# mitigated by narrowing the SSH CIDR (C6-018/C6-028/C6-060/C6-092), and
+# anything credential-shaped that ever appeared there needs ROTATION —
+# see docs/operations/credential-rotation.md.
+#
 # Never commit an UNENCRYPTED secrets file — gitleaks (CI) backstops.
+/configs/ansible/inventory/r*.yml
 /configs/ansible/inventory/*.plaintext*
 !/configs/ansible/inventory/r*.example.yml
 

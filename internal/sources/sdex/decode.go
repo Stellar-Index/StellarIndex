@@ -206,32 +206,18 @@ func decodeClaimAtom(
 }
 
 // xdrAssetToCanonical converts an xdr.Asset to canonical.Asset.
-// Handles the three classic asset variants: native, credit
-// alphanum4, credit alphanum12. Soroban SAC-wrapped classic assets
-// arrive here as classic — the SAC address is metadata, not
-// canonical identity.
+//
+// C2-010 (audit-2026-07-23): the body moved to
+// [canonical.AssetFromXDR]. It stays a thin local wrapper so this
+// package's call sites and error-wrapping read unchanged, but the RULE
+// — which on-chain assets are representable, and therefore which SDEX
+// fills become trade rows — now lives in the leaf package where
+// internal/sdexclaim can apply the identical test. Before the hoist,
+// the dispatcher census and the ClickHouse extractor counted fills this
+// function would have rejected, so their "should equal COUNT(trades)"
+// oracles could never balance.
 func xdrAssetToCanonical(a xdr.Asset) (canonical.Asset, error) {
-	switch a.Type {
-	case xdr.AssetTypeAssetTypeNative:
-		return canonical.NativeAsset(), nil
-	case xdr.AssetTypeAssetTypeCreditAlphanum4:
-		a4 := a.MustAlphaNum4()
-		code := trimTrailingNulls(a4.AssetCode[:])
-		issuer, err := strkey.Encode(strkey.VersionByteAccountID, a4.Issuer.Ed25519[:])
-		if err != nil {
-			return canonical.Asset{}, fmt.Errorf("alphanum4 issuer: %w", err)
-		}
-		return canonical.NewClassicAsset(code, issuer)
-	case xdr.AssetTypeAssetTypeCreditAlphanum12:
-		a12 := a.MustAlphaNum12()
-		code := trimTrailingNulls(a12.AssetCode[:])
-		issuer, err := strkey.Encode(strkey.VersionByteAccountID, a12.Issuer.Ed25519[:])
-		if err != nil {
-			return canonical.Asset{}, fmt.Errorf("alphanum12 issuer: %w", err)
-		}
-		return canonical.NewClassicAsset(code, issuer)
-	}
-	return canonical.Asset{}, fmt.Errorf("unsupported asset type %d", a.Type)
+	return canonical.AssetFromXDR(a)
 }
 
 // amountFromInt64 converts a classic-Stellar 7-decimal-scaled
@@ -239,18 +225,6 @@ func xdrAssetToCanonical(a xdr.Asset) (canonical.Asset, error) {
 // loss — classic amounts fit in int64.
 func amountFromInt64(n xdr.Int64) canonical.Amount {
 	return canonical.FromInt128Parts(int64(n>>63), uint64(int64(n)))
-}
-
-// trimTrailingNulls removes zero bytes from the end of a classic
-// asset-code byte slice. AssetCode arrays are fixed-size (4 or 12
-// bytes) with nulls padding short codes like "USDC" (4 bytes in a
-// 4-array, no padding; "AQUA" in a 12-array has 8 nulls).
-func trimTrailingNulls(b []byte) string {
-	n := len(b)
-	for n > 0 && b[n-1] == 0 {
-		n--
-	}
-	return string(b[:n])
 }
 
 // opIndexFanoutStride spaces the synthetic op_index values for

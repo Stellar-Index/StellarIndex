@@ -5931,6 +5931,26 @@ paths:
         fires on any non-zero rate over 15 min. See the runbook
         at `docs/operations/runbooks/stripe-platform-sync-errors.md`
         for per-`operation` triage.
+
+        **Provisioning outcomes.** The status code encodes whether a
+        retry can help:
+
+        - **All keys upgraded** → `200`.
+        - **Some keys upgraded, some failed** → `200` with
+          `keys_failed > 0`. The customer already holds a credential
+          carrying the paid tier, and a retry loop over one
+          permanently-unwritable key record would risk Stripe
+          disabling the endpoint for every customer. Surfaced by
+          `keys_failed` and per-key ERROR logs, not by the status.
+        - **Keys exist but NONE could be upgraded** → `500`. Nothing
+          was provisioned and the cause is a key-store outage, which
+          a retry heals, so Stripe's retry schedule must re-deliver.
+          The event is also dead-lettered (`processed_at` stays NULL)
+          so the incident survives Stripe eventually giving up, and
+          resolves itself when a retry succeeds.
+        - **No keys exist for the identifier** (customer paid but
+          never signed up) → `200` + dead-letter. Retrying cannot
+          help; a human must act.
       requestBody:
         required: true
         content:
@@ -5944,7 +5964,12 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: Event acknowledged (regardless of whether keys were upgraded — non-2xx triggers Stripe retries).
+          description: >-
+            Event acknowledged. Covers full success, PARTIAL success
+            (`keys_failed > 0` — at least one key carries the paid tier),
+            deliberately-ignored event types, and the paid-but-never-signed-up
+            case (`dead_lettered: true`), where no retry could help. A total
+            provisioning failure returns 500 instead so Stripe retries.
           content:
             application/json:
               example:
@@ -5952,6 +5977,7 @@ paths:
                   ok: true
                   upgraded: 2
                   keys_total: 2
+                  keys_failed: 0
                   rate_limit_per_min: 10000
                 as_of: '2026-07-03T22:45:19.771408Z'
                 flags:
@@ -5971,8 +5997,11 @@ paths:
                           ok:                { type: boolean }
                           upgraded:          { type: integer, description: "Keys upgraded to the new rate limit." }
                           keys_total:        { type: integer, description: "Total keys belonging to the identifier." }
+                          keys_failed:       { type: integer, description: "Keys whose budget could NOT be updated. Non-zero means a PARTIAL upgrade: the customer holds at least one key on the paid tier, the rest kept the old budget. Investigate via the per-key ERROR logs." }
                           rate_limit_per_min: { type: integer }
                           ignored:           { type: string, description: "Set when an event was acknowledged but not acted on (wrong type, unpaid)." }
+                          note:              { type: string, description: "Human-readable outcome for an acknowledged-but-unprovisioned event (e.g. 'no keys for identifier')." }
+                          dead_lettered:     { type: boolean, description: "The event was recorded as paid-but-unprovisioned; processed_at stays NULL so an operator re-send re-runs the provisioning." }
                     required: [data]
         "400":
           description: Missing signature header / bad body / bad metadata.
@@ -5981,6 +6010,16 @@ paths:
               schema: { $ref: "#/components/schemas/Problem" }
         "401":
           description: Stripe-Signature verification failed.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "500":
+          description: >-
+            Provisioning failed and a retry can help — the customer's keys
+            could not be listed, or they exist but NONE could be updated.
+            Returned deliberately so Stripe's retry schedule re-delivers; the
+            event is dead-lettered in parallel so the incident survives Stripe
+            giving up, and resolves automatically when a retry succeeds.
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }

@@ -145,9 +145,21 @@ func (s *Server) handleMarketSources(w http.ResponseWriter, r *http.Request) {
 
 // sourceStatsAliases expands a raw asset_id query param into every
 // canonical FORM the per-source aggregate should match, reusing the
-// price path's assetAliases (rc.89). XLM is the live multi-form case:
-// SDEX writes `native`, every CEX writes `crypto:XLM`, so filtering on
-// one form alone undercounts the market's volume-by-source split.
+// price path's alias primitive (rc.89). XLM is the live multi-form
+// case: SDEX writes `native`, every CEX writes `crypto:XLM`, and
+// Soroban AMMs write the SAC C-address, so filtering on one form alone
+// undercounts the market's volume-by-source split.
+//
+// C4-012 (audit-2026-07-23) — the membership/valuation contradiction:
+// the per-source queries' volume CASE has ALWAYS treated
+// `CAS3J7GY…` as XLM (it applies the XLM/USD rate to a SAC leg), while
+// this filter passed only `native` + `crypto:XLM`. Every Soroban XLM
+// trade was therefore excluded from the population but would have been
+// valued as XLM had it matched — so /v1/markets/sources?asset=native
+// undercounted Soroban volume by construction. Both sides now agree
+// because both derive from [canonical.AssetAliases]; the SQL literal is
+// [canonical.XLMSacContractID], the same constant this expansion emits.
+//
 // Falls back to the literal id when it doesn't parse as a canonical
 // asset, so a malformed param still produces a (single-form) query
 // rather than an error.
@@ -156,10 +168,5 @@ func sourceStatsAliases(id string) []string {
 	if err != nil {
 		return []string{id}
 	}
-	forms := assetAliases(a)
-	out := make([]string, 0, len(forms))
-	for _, f := range forms {
-		out = append(out, f.String())
-	}
-	return out
+	return canonical.AssetAliasStrings(a)
 }

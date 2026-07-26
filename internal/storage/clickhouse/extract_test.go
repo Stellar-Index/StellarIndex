@@ -14,13 +14,40 @@ import (
 // GetCreatePassiveSellOfferResult) silently undercounted and slipped
 // past the gate. This table covers every claim-bearing op variant.
 
+// claimNative / claimUSDC are the two DISTINCT legs every fixture claim
+// carries. C2-010 (audit-2026-07-23): these atoms used to leave
+// AssetSold/AssetBought at their zero value, which is
+// xdr.AssetTypeAssetTypeNative on BOTH legs — a native/native self-cross
+// stellar-core never emits and internal/sources/sdex has always dropped
+// (canonical.NewPair rejects base == quote). That was invisible while
+// sdexclaim.RealTradeCount looked only at amounts; now that it applies
+// the decoder's full rule set, a fixture claim has to be shaped like a
+// real one. Every `want` in the table below is unchanged.
+var (
+	claimNative = xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	claimUSDC   = xdr.Asset{
+		Type: xdr.AssetTypeAssetTypeCreditAlphanum4,
+		AlphaNum4: &xdr.AlphaNum4{
+			AssetCode: xdr.AssetCode4{'U', 'S', 'D', 'C'},
+			Issuer: xdr.AccountId{
+				Type:    xdr.PublicKeyTypePublicKeyTypeEd25519,
+				Ed25519: &xdr.Uint256{1},
+			},
+		},
+	}
+)
+
 func mkClaims(n int) []xdr.ClaimAtom {
 	claims := make([]xdr.ClaimAtom, n)
 	for i := range claims {
-		// Real trades carry non-zero amounts; realTradeCount keeps these.
+		// Real trades carry non-zero amounts on two distinct assets;
+		// RealTradeCount keeps these.
 		claims[i] = xdr.ClaimAtom{
-			Type:      xdr.ClaimAtomTypeClaimAtomTypeOrderBook,
-			OrderBook: &xdr.ClaimOfferAtom{AmountSold: 100, AmountBought: 200},
+			Type: xdr.ClaimAtomTypeClaimAtomTypeOrderBook,
+			OrderBook: &xdr.ClaimOfferAtom{
+				AssetSold: claimNative, AmountSold: 100,
+				AssetBought: claimUSDC, AmountBought: 200,
+			},
 		}
 	}
 	return claims
@@ -32,8 +59,11 @@ func mkClaimsMixed(nReal, zero int) []xdr.ClaimAtom {
 	claims := mkClaims(nReal)
 	for i := 0; i < zero; i++ {
 		claims = append(claims, xdr.ClaimAtom{
-			Type:      xdr.ClaimAtomTypeClaimAtomTypeOrderBook,
-			OrderBook: &xdr.ClaimOfferAtom{AmountSold: 0, AmountBought: 0},
+			Type: xdr.ClaimAtomTypeClaimAtomTypeOrderBook,
+			OrderBook: &xdr.ClaimOfferAtom{
+				AssetSold: claimNative, AmountSold: 0,
+				AssetBought: claimUSDC, AmountBought: 0,
+			},
 		})
 	}
 	return claims
