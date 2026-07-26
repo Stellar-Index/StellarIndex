@@ -421,3 +421,51 @@ groups:
             (best-effort)` with the target id) BEFORE the log retention
             window closes on them, then fix whatever made the audit store
             unwritable.
+
+      # C3-032 follow-up: the durable login-code lockout's table is
+      # written by an UNAUTHENTICATED endpoint under an ATTACKER-CHOSEN
+      # key. POST /v1/auth/verify-code with a synthetic address inserts a
+      # `login_code_lockouts` row that no successful sign-in can ever
+      # clear, bounded only by the anonymous rate limit — a slow, cheap,
+      # remote table-fill on a disk-fixed host.
+      #
+      # Two arms, one alert, because the operator response starts the
+      # same way (look at the table):
+      #
+      #   rows      — the retention sweep is not keeping up, or someone is
+      #               filling the table faster than 48h retention drains
+      #               it. A healthy deployment sits in the low tens.
+      #   status_check — the lockout's pre-match read is FAILING OPEN. The
+      #               control is not being enforced and the HTTP response
+      #               is identical to the healthy path, so this counter is
+      #               the only evidence. Typically migration 0122 lagging
+      #               a node.
+      #
+      # `register` and `sweep` failures are deliberately NOT alerted: the
+      # first is a lost guess-count (bounded harm, visible in the same
+      # metric), the second surfaces here anyway as the row count climbing.
+      - alert: stellarindex_login_code_lockout_table_growing
+        expr: |
+          stellarindex_login_code_lockout_rows > 10000
+          or
+          increase(stellarindex_login_code_lockout_errors_total{op="status_check"}[1h]) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/login-code-lockout-table-growing.md
+          summary: "login_code_lockouts is growing or its check is failing open ({{ $value | humanize }})"
+          description: |
+            Either `login_code_lockouts` has exceeded 10k rows — a table
+            whose key an unauthenticated caller chooses, so sustained
+            growth is a remote fill rather than user behaviour — or the
+            lockout's pre-match read has been failing open, which means
+            the brute-force bound on the 6-digit email code is not being
+            enforced at all while sign-in looks perfectly healthy.
+
+            Neither is an outage. Both are silent: the fill ends at a
+            disk-full page that names the wrong subsystem, and the
+            fail-open ends at an account takeover with no trace.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/login-code-lockout-table-growing.md

@@ -21,6 +21,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 	"github.com/Stellar-Index/StellarIndex/internal/notify"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -91,6 +92,13 @@ type Config struct {
 	// target email. nil = no throttle (only the global anon
 	// rate-limit applies). audit-2026-06-14 A12.
 	LoginThrottle LoginThrottle
+	// Audit (optional) is the durable audit sink privileged staff
+	// actions on this surface append to — currently the staff
+	// customer look-up (C3-056, audit-2026-07-23), which reads another
+	// customer's PII and must leave the same durable trail the sibling
+	// admin surfaces do. nil degrades that handler to structured-log
+	// -only audit (Redis-less / Postgres-less deployments).
+	Audit platform.AuditStore
 	// DashboardBaseURL is the absolute URL of the explorer hosting
 	// the in-site dashboard (typically https://stellarindex.io).
 	// The magic-link callback URL embedded in emails is
@@ -200,6 +208,39 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 // brute-force success probability against the ~1e6 code space
 // negligible while tolerating a fat-fingered user.
 const maxCodeAttempts = 5
+
+// Durable per-EMAIL code-failure policy (C3-032, audit-2026-07-23).
+//
+// maxCodeAttempts alone is a per-MINT cap: a new /v1/auth/login hands
+// the guesser a fresh 5. The only thing bounding re-mints was
+// [auth.RedisLoginThrottle] (5 sends/hour/target-email), which lives in
+// Redis with an in-process fallback — a FLUSHALL, a fail-over or a
+// restart clears it, and it is a fixed window that resets hourly
+// regardless. Standing budget: ~25 guesses/hour/email, indefinitely
+// ≈ 0.22 probability of hitting a code over a year of patient grinding
+// on one targeted address.
+//
+// These numbers cut that to ~10 guesses/day ≈ 3.7e-3/year — two orders
+// of magnitude down — at a usability cost that is close to zero,
+// because the lockout gates the CODE path only: the magic link in the
+// same email keeps working, exactly as maxCodeAttempts already does.
+// A legitimate user would have to mistype ten times in a day to meet
+// it, and their recovery is "click the link you were sent".
+//
+// Deliberately NOT tunable per deployment: an operator lowering the
+// bound is the failure mode this finding is about.
+const (
+	// maxDurableCodeFailures is the per-email failure budget inside
+	// durableCodeFailureWindow before the code path locks.
+	maxDurableCodeFailures = 10
+	// durableCodeFailureWindow is how long failures accumulate. A window
+	// that fully elapses without reaching the cap starts fresh.
+	durableCodeFailureWindow = 24 * time.Hour
+	// durableCodeLockout is how long the code path stays shut once the
+	// cap is met. Matched to the window so the sustained budget is
+	// ~maxDurableCodeFailures per day rather than per window boundary.
+	durableCodeLockout = 24 * time.Hour
+)
 
 // loginRequest is the JSON body POST /v1/auth/login accepts.
 type loginRequest struct {
@@ -431,6 +472,17 @@ type verifyCodeResponse struct {
 // and each wrong guess burns an attempt (see [maxCodeAttempts]); all
 // failure modes return one generic error so a caller can't tell "no
 // token" from "wrong code" from "too many attempts".
+//
+// Non-matching includes CORRECT-BUT-STALE. A code whose token has
+// expired, been consumed, or already burned [maxCodeAttempts] is not a
+// candidate, so submitting it registers a durable per-email failure
+// (C3-032) exactly as a wrong guess does. That is deliberate — the
+// server cannot distinguish "the owner pasted yesterday's code" from
+// "an attacker guessed a value that happens to match a dead token"
+// without leaking which — and it is affordable because the lockout
+// gates this door only: the magic LINK in the same email keeps working,
+// and any successful sign-in clears the counter. A user who exhausts
+// the budget on stale codes clicks the link instead.
 func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<10))
 	if err != nil {
@@ -446,6 +498,16 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	code := strings.TrimSpace(req.Code)
 	if !looksLikeEmail(email) || !looksLikeCode(code) {
 		writeProblem(w, http.StatusBadRequest, "invalid email or code", "/v1/auth/verify-code")
+		return
+	}
+
+	// C3-032: durable per-email lockout, checked BEFORE any candidate is
+	// compared so a locked address burns no code space. Same generic 400
+	// as every other failure — a distinguishable "you are locked out"
+	// would be an enumeration oracle, and the anti-enumeration contract
+	// on this endpoint is absolute.
+	if h.loginCodeLocked(r, email) {
+		writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
 		return
 	}
 
@@ -471,6 +533,10 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 		if incErr := h.cfg.Tokens.IncrementLoginCodeAttempts(r.Context(), email); incErr != nil {
 			h.cfg.Logger.Warn("increment login code attempts", "err", incErr, "email", maskEmail(email))
 		}
+		// C3-032: and burn one against the EMAIL, which a re-mint does
+		// not reset. This is the counter that actually bounds a patient
+		// grinder; the per-token one above only bounds a burst.
+		h.registerFailedLoginCode(r, email)
 		writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
 		return
 	}
@@ -499,6 +565,61 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(verifyCodeResponse{Status: "ok"})
 }
 
+// loginCodeLocked reports whether the durable per-email failure counter
+// currently bars the code path (C3-032).
+//
+// Fails OPEN on a store error, loudly. Fail-closed was considered and
+// rejected: the realistic way this query fails while the rest of the
+// handler works is migration 0122 not being applied yet on a node, and
+// refusing there would take dashboard code sign-in offline fleet-wide
+// for a defence-in-depth control. It is not a bypass an attacker can
+// reach either — the candidate lookup two lines down uses the same
+// Postgres pool, so a DB an attacker could break takes the whole
+// verify path with it, and the per-token maxCodeAttempts cap still
+// stands regardless.
+func (h *Handlers) loginCodeLocked(r *http.Request, email string) bool {
+	state, err := h.cfg.Tokens.LoginCodeLockoutStatus(r.Context(), email)
+	if err != nil {
+		// The control is now OFF for this request and the HTTP response
+		// is indistinguishable from the healthy path, so the counter is
+		// the only evidence it happened. A fail-open control without one
+		// is the defect class this audit wave keeps finding.
+		obs.LoginCodeLockoutErrorsTotal.WithLabelValues(obs.LoginCodeLockoutOpStatusCheck).Inc()
+		h.cfg.Logger.Error("login code lockout status unavailable; allowing the attempt",
+			"err", err, "email", maskEmail(email))
+		return false
+	}
+	if !state.Locked(h.cfg.Now()) {
+		return false
+	}
+	h.cfg.Logger.Warn("login code verification refused: email is locked out",
+		"email", maskEmail(email), "failed_count", state.FailedCount,
+		"locked_until", state.LockedUntil, "ip", clientIP(r).String())
+	return true
+}
+
+// registerFailedLoginCode records one wrong-code attempt against the
+// email. Best-effort like [platform.TokenStore.IncrementLoginCodeAttempts]
+// — the response is the same generic error either way — but the
+// transition INTO a lockout is logged at WARN, because a grinder
+// crossing the cap is the signal an operator wants.
+func (h *Handlers) registerFailedLoginCode(r *http.Request, email string) {
+	state, err := h.cfg.Tokens.RegisterFailedLoginCode(
+		r.Context(), email, maxDurableCodeFailures, durableCodeFailureWindow, durableCodeLockout)
+	if err != nil {
+		// The guess was free: nothing durable recorded it. Same silence
+		// as the status-check path, same counter.
+		obs.LoginCodeLockoutErrorsTotal.WithLabelValues(obs.LoginCodeLockoutOpRegister).Inc()
+		h.cfg.Logger.Warn("register failed login code", "err", err, "email", maskEmail(email))
+		return
+	}
+	if state.Locked(h.cfg.Now()) {
+		h.cfg.Logger.Warn("email locked out of code sign-in after repeated failures",
+			"email", maskEmail(email), "failed_count", state.FailedCount,
+			"locked_until", state.LockedUntil, "ip", clientIP(r).String())
+	}
+}
+
 // startSessionForEmail finds-or-creates the user for a just-verified
 // email, marks it verified + bumps last_login, mints a session, and
 // writes the session cookie. Shared by HandleCallback (magic link) and
@@ -516,6 +637,16 @@ func (h *Handlers) startSessionForEmail(w http.ResponseWriter, r *http.Request, 
 		if err != nil {
 			return fmt.Errorf("signup new user: %w", err)
 		}
+	}
+
+	// C3-032: a successful sign-in through EITHER door (code or magic
+	// link) retires the durable failure counter. Possession of a live
+	// token proves the address's owner is present, and without this a
+	// legitimate user's typos would accumulate across months until they
+	// locked themselves out of the code path for nothing. Best-effort:
+	// a failure here must never turn a valid login into an error.
+	if err := h.cfg.Tokens.ClearLoginCodeLockout(r.Context(), email); err != nil {
+		h.cfg.Logger.Warn("clear login code lockout", "err", err, "email", maskEmail(email))
 	}
 
 	// Mark email verified + last_login_at. Non-fatal on error — the

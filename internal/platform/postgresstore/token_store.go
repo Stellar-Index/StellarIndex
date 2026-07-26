@@ -170,6 +170,189 @@ func (r *TokenStore) IncrementLoginCodeAttempts(ctx context.Context, email strin
 	return nil
 }
 
+// RegisterFailedLoginCode records one failed 6-digit-code attempt
+// against the EMAIL (migration 0122, C3-032) and returns the resulting
+// lockout state.
+//
+// The whole point is that this counter is independent of any token:
+// `magic_link_tokens.attempts` resets to 0 on every new mint, and the
+// only thing bounding re-mints is a Redis-backed send throttle that a
+// flush, a fail-over or a restart clears. An attacker who re-mints
+// therefore had an indefinite ~25-guesses/hour budget against a ~1e6
+// code space. Here the budget is per address and survives all of that.
+//
+// One statement, so concurrent verify attempts for the same address
+// cannot both read `failed_count = n` and both write `n+1`:
+//
+//	insert   — no row yet: first failure of a fresh window.
+//	conflict — a row exists. If its window has fully elapsed AND it is
+//	           not currently locked, the window restarts at 1;
+//	           otherwise the count increments. Crossing maxFailures
+//	           stamps locked_until; an already-locked row keeps its
+//	           existing lock rather than sliding it forward, so a
+//	           grinder cannot extend a victim's lockout indefinitely.
+func (r *TokenStore) RegisterFailedLoginCode(
+	ctx context.Context, email string, maxFailures int, window, lockFor time.Duration,
+) (platform.LoginCodeLockout, error) {
+	if email == "" {
+		return platform.LoginCodeLockout{}, errors.New("postgresstore: RegisterFailedLoginCode: email is empty")
+	}
+	if maxFailures <= 0 || window <= 0 || lockFor <= 0 {
+		return platform.LoginCodeLockout{}, fmt.Errorf(
+			"postgresstore: RegisterFailedLoginCode: bad policy (maxFailures=%d window=%s lockFor=%s)",
+			maxFailures, window, lockFor)
+	}
+	now := r.now()
+	const q = `
+		INSERT INTO login_code_lockouts
+		    (email, failed_count, window_started_at, last_failed_at, created_at, updated_at)
+		VALUES ($1, 1, $2, $2, $2, $2)
+		ON CONFLICT (email) DO UPDATE SET
+		    failed_count = CASE
+		        WHEN login_code_lockouts.window_started_at < $2 - make_interval(secs => $3)
+		         AND (login_code_lockouts.locked_until IS NULL OR login_code_lockouts.locked_until <= $2)
+		        THEN 1
+		        ELSE login_code_lockouts.failed_count + 1 END,
+		    window_started_at = CASE
+		        WHEN login_code_lockouts.window_started_at < $2 - make_interval(secs => $3)
+		         AND (login_code_lockouts.locked_until IS NULL OR login_code_lockouts.locked_until <= $2)
+		        THEN $2
+		        ELSE login_code_lockouts.window_started_at END,
+		    last_failed_at = $2,
+		    updated_at     = $2
+		RETURNING failed_count, window_started_at, locked_until
+	`
+	var out platform.LoginCodeLockout
+	var lockedUntil sql.NullTime
+	if err := r.s.db.QueryRowContext(ctx, q,
+		email, now, window.Seconds(),
+	).Scan(&out.FailedCount, &out.WindowStartedAt, &lockedUntil); err != nil {
+		return platform.LoginCodeLockout{}, fmt.Errorf("register failed login code: %w", err)
+	}
+	if lockedUntil.Valid {
+		out.LockedUntil = lockedUntil.Time
+	}
+	// Arm the lock on the crossing failure. Separate statement rather
+	// than a third CASE arm: the threshold comparison needs the
+	// POST-increment count, and re-deriving it inside the same UPSERT
+	// would duplicate the increment expression a third time.
+	if out.FailedCount >= maxFailures && !out.Locked(now) {
+		const lockQ = `
+			UPDATE login_code_lockouts
+			   SET locked_until = $2 + make_interval(secs => $3),
+			       updated_at   = $2
+			 WHERE email = $1
+			   AND (locked_until IS NULL OR locked_until <= $2)
+			RETURNING locked_until
+		`
+		var locked sql.NullTime
+		err := r.s.db.QueryRowContext(ctx, lockQ, email, now, lockFor.Seconds()).Scan(&locked)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// A concurrent attempt armed it first; re-read below.
+		case err != nil:
+			return out, fmt.Errorf("register failed login code: arm lock: %w", err)
+		case locked.Valid:
+			out.LockedUntil = locked.Time
+		}
+	}
+	return out, nil
+}
+
+// LoginCodeLockoutStatus reports the stored lockout for an email
+// without recording an attempt.
+//
+// A missing row reports the zero value. An EXISTING row is returned as
+// stored — an elapsed window or an expired lock is NOT normalised away
+// here, because the raw counters are what an operator investigating a
+// grinder wants to see. Callers decide with
+// [platform.LoginCodeLockout.Locked], which is time-aware; the window's
+// elapse is applied by [TokenStore.RegisterFailedLoginCode] at the next
+// failure.
+func (r *TokenStore) LoginCodeLockoutStatus(ctx context.Context, email string) (platform.LoginCodeLockout, error) {
+	if email == "" {
+		return platform.LoginCodeLockout{}, errors.New("postgresstore: LoginCodeLockoutStatus: email is empty")
+	}
+	const q = `
+		SELECT failed_count, window_started_at, locked_until
+		  FROM login_code_lockouts
+		 WHERE email = $1
+	`
+	var out platform.LoginCodeLockout
+	var lockedUntil sql.NullTime
+	err := r.s.db.QueryRowContext(ctx, q, email).
+		Scan(&out.FailedCount, &out.WindowStartedAt, &lockedUntil)
+	if errors.Is(err, sql.ErrNoRows) {
+		return platform.LoginCodeLockout{}, nil
+	}
+	if err != nil {
+		return platform.LoginCodeLockout{}, fmt.Errorf("login code lockout status: %w", err)
+	}
+	if lockedUntil.Valid {
+		out.LockedUntil = lockedUntil.Time
+	}
+	return out, nil
+}
+
+// ClearLoginCodeLockout drops the durable counter after a successful
+// sign-in through either door. Idempotent — no row is not an error.
+func (r *TokenStore) ClearLoginCodeLockout(ctx context.Context, email string) error {
+	if email == "" {
+		return errors.New("postgresstore: ClearLoginCodeLockout: email is empty")
+	}
+	if _, err := r.s.db.ExecContext(ctx,
+		`DELETE FROM login_code_lockouts WHERE email = $1`, email); err != nil {
+		return fmt.Errorf("clear login code lockout: %w", err)
+	}
+	return nil
+}
+
+// SweepLoginCodeLockouts deletes SETTLED lockout rows older than
+// `olderThan`, returning how many were removed. Drives
+// [logincodereaper.Reaper]; see that package for why this exists.
+//
+// The short version: `login_code_lockouts.email` is attacker-chosen.
+// POST /v1/auth/verify-code is unauthenticated and accepts any
+// well-formed address, so one wrong guess against a synthetic address
+// inserts a row that ClearLoginCodeLockout will never remove — nobody
+// can sign in as an address that does not exist. Bounded only by the
+// anonymous rate limit, that is remote, cheap, unbounded table growth.
+//
+// "Settled" is the load-bearing word: a row with a LIVE lock is never
+// deleted, at any age. Reaping the rest costs nothing — retention is
+// longer than the counting window, so a sweepable row's window has
+// already elapsed and its next failure would have restarted the count
+// anyway.
+func (r *TokenStore) SweepLoginCodeLockouts(ctx context.Context, olderThan time.Time) (int64, error) {
+	const q = `
+		DELETE FROM login_code_lockouts
+		 WHERE updated_at < $1
+		   AND (locked_until IS NULL OR locked_until <= $2)
+	`
+	res, err := r.s.db.ExecContext(ctx, q, olderThan, r.now())
+	if err != nil {
+		return 0, fmt.Errorf("sweep login code lockouts: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("sweep login code lockouts: rows affected: %w", err)
+	}
+	return n, nil
+}
+
+// CountLoginCodeLockouts returns the current row count. Feeds the
+// [obs.LoginCodeLockoutRows] gauge so table growth is visible on a
+// metric an operator already watches, rather than first appearing as a
+// volume-level disk-full page.
+func (r *TokenStore) CountLoginCodeLockouts(ctx context.Context) (int64, error) {
+	var n int64
+	if err := r.s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM login_code_lockouts`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count login code lockouts: %w", err)
+	}
+	return n, nil
+}
+
 // classifyMagicLinkMiss runs after the consume UPDATE found no
 // rows. Distinguishes:
 //   - row exists, past expiry → ErrTokenExpired

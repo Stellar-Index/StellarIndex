@@ -37,6 +37,14 @@ Before C3-067 (audit-2026-07-23) the only trace was one
 | `status_notice` | `POST /v1/admin/status-notices` (+ resolve) | A change to the **public** status page |
 | `stripe_plan_upgrade` | Stripe webhook plan change | The link between a paid Stripe event and the plan it granted |
 | `stripe_dead_letter` | Stripe dead-letter conclusion | The record that money landed and nothing was provisioned |
+| `staff_customer_lookup` | `GET /v1/account/admin/lookup` (**read**) | That a staff member read a customer's billing email, tier/status and every user's email + last-login |
+
+`staff_customer_lookup` is the only **read** in the table (C3-056). It
+mutates nothing, so there is no "the change is live but unrecorded"
+problem — the problem is the mirror image: an access to another
+customer's PII happened and the durable record of *who* looked at
+*whose* data is missing. It cannot be reconstructed from the target
+object (nothing changed), only from the API request log.
 
 The rule uses `increase(...[1h]) > 0` with `for: 5m`, not `rate() > 0`:
 these are rare, bursty events and the required response is triggered by a
@@ -70,7 +78,10 @@ these are rare, bursty events and the required response is triggered by a
    `account_id`, `notice_id`, `event_id`). Together with the request log
    line (actor key id, identifier, `X-Reason`) that is enough to
    reconstitute the audit entry. Do this before the journal's retention
-   window closes.
+   window closes. For `staff_customer_lookup` the paired line is
+   `staff customer lookup: audit append failed (best-effort)` and carries
+   `actor` (the staff email) + `account_id` — the two fields the missing
+   row exists to record.
 2. **Fix the store.** Postgres availability / disk / permissions per the
    cause found above. `SELECT count(*) FROM audit_log WHERE created_at >
    now() - interval '1 day';` confirms writes are landing again.

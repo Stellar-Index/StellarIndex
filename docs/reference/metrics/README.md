@@ -855,7 +855,7 @@ Alert: `stellarindex_monthly_quota_fail_open` →
 
 Counter, label `surface` (`account_override` / `key_mint` /
 `key_revoke` / `status_notice` / `stripe_plan_upgrade` /
-`stripe_dead_letter`).
+`stripe_dead_letter` / `staff_customer_lookup`).
 
 Privileged mutations that **completed** but whose durable audit row
 failed to append. Every one of these call sites appends best-effort:
@@ -867,10 +867,17 @@ credential, a public status notice or a Stripe-driven plan change
 can be live with no record of the actor, the reason, or the previous
 values.
 
+`staff_customer_lookup` is the one **read** in the set (C3-056):
+`GET /v1/account/admin/lookup` returns another customer's billing
+email, tier, status and every user's email + last-login. Nothing is
+mutated, which is precisely why the audit row is the only evidence
+the access happened — a lost row here is an unrecorded PII access,
+not an unrecorded change.
+
 Non-zero means the admin audit trail has holes that must be
 reconstructed from application logs before their retention window
-closes. All six label values are pre-seeded at zero (C3-067,
-audit-2026-07-23).
+closes. All seven label values are pre-seeded at zero (C3-067,
+C3-056, audit-2026-07-23).
 
 Alert: `stellarindex_admin_audit_write_failing` →
 [admin-audit-write-failing](../../operations/runbooks/admin-audit-write-failing.md).
@@ -1039,6 +1046,37 @@ rate(...{outcome="exhausted"}[1h]) > 0
 ```
 
 F-1270 (audit-2026-05-12).
+
+### `stellarindex_customer_webhook_fanout_failures_total`
+
+Counter, labels `event_type` (`incident.sev1` / `incident.resolved` /
+`anomaly.freeze` / `divergence.firing` / `price.alert`) × `reason`
+(`invalid_payload` / `list_subscribers` / `enqueue`).
+
+The **producer-side** counterpart to the delivery-attempts counter
+above. `customerwebhook.Fanout.Publish` writes one
+`webhook_deliveries` row per subscriber when a product event fires;
+this counts the events that never became a row at all — so unlike a
+failed delivery attempt there is **no retry**, no dead-letter, and
+nothing downstream that re-derives it. The subscribed customer has
+permanently lost the event.
+
+`enqueue` increments once per lost **delivery** (per subscriber);
+`list_subscribers` and `invalid_payload` increment once per lost
+**fan-out**, where the loss covers every subscriber of that event
+type.
+
+Emitted by the aggregator binary (freeze + divergence hot paths) and
+by `stellarindex-ops emit-incident`; the ops CLI is short-lived and
+unscraped, which is why that call site also exits non-zero. Every
+`event_type` × `reason` pair is pre-seeded at zero — a fan-out that is
+quiet because it is healthy must not look like a metric nobody emits,
+which is the exact silence this counter closes.
+
+Alert: `stellarindex_customer_webhook_fanout_failing` →
+[customer-webhook-fanout-failing](../../operations/runbooks/customer-webhook-fanout-failing.md).
+
+C3-023 (audit-2026-07-23).
 
 ### `stellarindex_usage_rollup_sweeps_total`
 
@@ -1221,6 +1259,69 @@ production rate: a steady non-zero rate means a race is firing
 regularly — investigate the `/v1/auth/callback` provisioning path
 (F-1255), separate from the reaper's own health (which the `runs_total`
 `error` outcome + `signup_reaper_failing` alert cover).
+
+### `stellarindex_login_code_lockout_rows`
+
+Gauge, unlabelled. Refreshed by every retention sweep
+(`internal/logincodereaper`, hourly).
+
+Rows in `login_code_lockouts` — the durable per-email failed-verify
+counter behind the dashboard email-code sign-in (migration 0122,
+C3-032).
+
+This is a **security** signal, not capacity trivia. The table's primary
+key is **attacker-chosen**: `POST /v1/auth/verify-code` is
+unauthenticated and accepts any well-formed address, so a wrong guess
+against a synthetic address inserts a row that the
+clear-on-successful-login path can never remove (nobody can sign in as
+an address that does not exist). The retention sweep is the only bound;
+this gauge is how an operator sees that bound holding, instead of
+learning about a remote table-fill from the volume-level disk-full page
+— an alarm that names the wrong subsystem, after the damage.
+
+A healthy deployment sits in the low tens: rows exist only for addresses
+with recent failures, are deleted on any successful sign-in, and are
+swept once settled (48 h, live locks exempt).
+
+Alert: `stellarindex_login_code_lockout_table_growing` →
+[login-code-lockout-table-growing](../../operations/runbooks/login-code-lockout-table-growing.md).
+
+### `stellarindex_login_code_lockout_rows_deleted_total`
+
+Counter, unlabelled.
+
+Cumulative settled lockout rows removed by the retention sweep. Charted
+as a `rate()` it is the production rate of failed-verify addresses; read
+next to `stellarindex_login_code_lockout_rows` it separates "the table is
+small because nothing is happening" from "the table is small because the
+sweep is keeping up with a flood".
+
+### `stellarindex_login_code_lockout_errors_total`
+
+Counter, label `op` (`status_check` / `register` / `sweep`).
+
+Failures of the durable login-code lockout's own machinery (C3-032).
+Every one is deliberately non-fatal to the request — the lockout is
+defence-in-depth over the per-token `maxCodeAttempts` cap, and failing a
+customer's sign-in because a counter table blipped would be the worse
+trade — which is exactly why the counter has to exist: all three are
+**invisible at the HTTP layer**.
+
+- `status_check` — the pre-match lockout read failed and the handler
+  **failed open**. The lockout is not being enforced for that request,
+  and the response is byte-identical to the healthy path. The scenario
+  the fail-open posture is chosen for (migration 0122 lagging a node)
+  would otherwise disable the control silently.
+- `register` — a wrong-code attempt was not recorded against the durable
+  counter. The grinder got a free guess.
+- `sweep` — the retention pass (or its row count) failed; rows an
+  unauthenticated caller can create accumulate until it recovers.
+
+Pre-seeded across all three ops.
+
+Alert: folded into
+`stellarindex_login_code_lockout_table_growing` (the `status_check` arm)
+→ [login-code-lockout-table-growing](../../operations/runbooks/login-code-lockout-table-growing.md).
 
 ### `stellarindex_aggregator_dropped_trades_total`
 
