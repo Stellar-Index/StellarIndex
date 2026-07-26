@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
@@ -164,7 +165,15 @@ func TestTransactionByHashIndexTableAbsent(t *testing.T) {
 	conn.respond = func(q string) (driver.Rows, error) {
 		switch {
 		case isIndexProbe(q):
-			return nil, fmt.Errorf("code: 60, UNKNOWN_TABLE") // table absent on this deployment
+			// A ClickHouse SERVER exception — the shape clickhouse-go
+			// actually returns (*clickhouse.Exception). It is what makes
+			// the absence DEFINITIVE, so the probe caches it and stops
+			// asking; a bare error would mean "no answer" and re-probe
+			// (C1-048).
+			return nil, &clickhouse.Exception{
+				Code: 60, Name: "UNKNOWN_TABLE",
+				Message: "Table stellar.tx_hash_index does not exist",
+			}
 		case isBloomScan(q):
 			return &stubRows{}, nil // unknown hash
 		default:

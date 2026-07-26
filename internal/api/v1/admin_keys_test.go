@@ -32,14 +32,12 @@ func newAdminTestServer(t *testing.T, subject auth.Subject, store v1.AccountStor
 	return ts
 }
 
+// postJSON POSTs with a stock X-Reason. Every admin write requires the
+// header (platform-spec §7.2); use status_notices_test.go's
+// postJSONWithReason directly to exercise the missing-header path.
 func postJSON(t *testing.T, url, body string) *http.Response {
 	t.Helper()
-	resp, err := http.Post(url, "application/json", strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("POST %s: %v", url, err)
-	}
-	t.Cleanup(func() { resp.Body.Close() })
-	return resp
+	return postJSONWithReason(t, url, "test mint", body)
 }
 
 func operatorSubject() auth.Subject {
@@ -108,6 +106,55 @@ func TestAdminKeysCreate_Happy(t *testing.T) {
 	}
 	if !strings.Contains(string(e.Metadata), "acct:partner-co") {
 		t.Errorf("audit metadata missing target identifier: %s", e.Metadata)
+	}
+}
+
+// TestAdminKeysCreate_RequiresReason pins C3-107 (audit-2026-07-23).
+// Minting a privileged credential is at least as consequential as
+// setting a per-account override or killing a key, both of which hard-400
+// without an X-Reason header. The mint was the one admin write that
+// captured no reason: the audit row recorded WHO minted WHAT, never WHY.
+func TestAdminKeysCreate_RequiresReason(t *testing.T) {
+	store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid_x"}, plain: "p"}
+	sink := &recordingAuditSink{}
+	ts := newAdminTestServer(t, operatorSubject(), store, sink)
+
+	resp := postJSONWithReason(t, ts.URL+"/v1/admin/keys", "",
+		`{"identifier":"acct:partner-co","label":"l"}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 without X-Reason (same contract as "+
+			"PATCH /v1/admin/accounts and DELETE /v1/admin/keys/{keyID})", resp.StatusCode)
+	}
+	// Fail BEFORE the mint — a key that exists with no recorded reason is
+	// exactly the state the header is there to prevent.
+	if store.calls != 0 {
+		t.Errorf("store.Create called %d times despite the missing X-Reason — the key was minted anyway", store.calls)
+	}
+	if len(sink.entries) != 0 {
+		t.Errorf("audit entries = %d, want 0", len(sink.entries))
+	}
+}
+
+// TestAdminKeysCreate_ReasonReachesAuditRow — the header is not just a
+// gate: the reason must land in the persisted audit row, or requiring it
+// buys nothing an operator can read back later.
+func TestAdminKeysCreate_ReasonReachesAuditRow(t *testing.T) {
+	store := &fakeAccountStore{rec: auth.APIKeyRecord{KeyID: "kid_minted01"}, plain: "p"}
+	sink := &recordingAuditSink{}
+	ts := newAdminTestServer(t, operatorSubject(), store, sink)
+
+	const reason = "partner onboarding SI-4412"
+	resp := postJSONWithReason(t, ts.URL+"/v1/admin/keys", reason,
+		`{"identifier":"acct:partner-co","label":"l"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", resp.StatusCode)
+	}
+	if len(sink.entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1", len(sink.entries))
+	}
+	if !strings.Contains(string(sink.entries[0].Metadata), reason) {
+		t.Errorf("audit metadata = %s, want it to carry the X-Reason %q",
+			sink.entries[0].Metadata, reason)
 	}
 }
 

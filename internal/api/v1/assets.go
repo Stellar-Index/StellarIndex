@@ -2334,18 +2334,48 @@ func findMatchingCachedCurrency(sep *timescale.IssuerSep1Cached, asset canonical
 	return nil
 }
 
-// isSafeImageURL reports whether s is a plausible http(s) image
-// URL. Refuses the tricky schemes (javascript:, data:, file:,
-// blob:) that an issuer could embed in a hostile stellar.toml's
-// [[CURRENCIES]] image field. An API consumer rendering
-// `<img src={data.image}>` without further validation must be
-// safe on today's browsers; this makes it so.
+// isSafeImageURL reports whether s is a plausible http(s) image URL,
+// safe to hand back as `data.image` from a hostile stellar.toml's
+// [[CURRENCIES]] image field.
 //
-// We don't try to validate the host or fetch the image — that
-// would leak outbound requests. Scheme-only check is enough to
-// rule out script-execution vectors.
+// Two independent checks:
+//
+//  1. Scheme allow-list — refuses javascript:, data:, file:, blob:,
+//     the script-execution vectors.
+//  2. Attribute-breakout characters — refuses `"`, `'`, `<`, `>`,
+//     backtick and any whitespace/control byte. These cannot break a
+//     correctly-escaping renderer, but a naive non-escaping template
+//     (`<img src="` + url + `">`) would let `"` close the attribute and
+//     `<`/`>` open a tag.
+//
+// What this deliberately does NOT claim (C1-031, audit-2026-07-23 — the
+// old docstring's "an API consumer rendering `<img src={data.image}>`
+// without further validation must be safe on today's browsers; this
+// makes it so" was an over-claim):
+//
+//   - It does not validate the HOST. A hostile issuer can still point a
+//     viewer's browser at a private/internal address — client-side SSRF.
+//     The explorer closes that on its own side with
+//     `isSafePublicImageUrl` (web/explorer/src/lib/safe-domain.ts,
+//     SEC-10); a third-party API consumer must do the equivalent.
+//   - It is not an escaping substitute. `name` and `description` come
+//     from the same untrusted stellar.toml and carry no such filter, so a
+//     consumer that interpolates our JSON into HTML unescaped is unsafe
+//     regardless of this field.
+//
+// We don't fetch the image — that would turn every catalogue read into an
+// outbound request to an issuer-chosen host.
 func isSafeImageURL(s string) bool {
-	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+	if !strings.HasPrefix(s, "http://") && !strings.HasPrefix(s, "https://") {
+		return false
+	}
+	return !strings.ContainsFunc(s, func(r rune) bool {
+		switch r {
+		case '"', '\'', '<', '>', '`', '\\':
+			return true
+		}
+		return r <= ' ' || r == 0x7f
+	})
 }
 
 // resolveSACToClassic maps a SAC contract address to the classic (or

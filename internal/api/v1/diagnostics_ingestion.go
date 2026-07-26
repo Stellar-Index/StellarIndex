@@ -243,7 +243,24 @@ type BackfillCoverageRow struct {
 	// CompletenessWatermark is the highest fully-verified ledger.
 	CompletenessWatermark int64 `json:"completeness_watermark,omitempty"`
 	// CompletenessComplete is true when the watermark reached tip.
+	// This is the SERVED/combined axis: substrate ∧ recognition ∧ the
+	// retention-scoped projection reconcile.
 	CompletenessComplete bool `json:"completeness_complete,omitempty"`
+	// CompletenessLakeComplete is the ADR-0033/ADR-0034 two-axis
+	// verdict's LAKE (archive) axis: substrate ∧ recognition only,
+	// genesis-to-tip, decoupled from the retention-scoped projection
+	// reconcile that additionally gates CompletenessComplete.
+	//
+	// A source is routinely `lake_complete: true, complete: false` — the
+	// archive is proven genesis-complete while the served tier is still
+	// reconciling. Serving only the `complete` axis (C6-046,
+	// audit-2026-07-23) made the status page render that state as a
+	// generic shortfall and gave a reader no way to tell "the data does
+	// not exist" from "the data exists and the projection is catching
+	// up". The two-axis verdict already reached /v1/coverage and
+	// /diagnostics; this puts it on the ingestion snapshot the status
+	// page actually reads.
+	CompletenessLakeComplete bool `json:"completeness_lake_complete,omitempty"`
 	// CompletenessComputedAt is when compute-completeness last ran.
 	CompletenessComputedAt *time.Time `json:"completeness_computed_at,omitempty"`
 }
@@ -818,6 +835,7 @@ func (s *Server) overlayCompleteness(ctx context.Context, rows *[]BackfillCovera
 		(*rows)[i].CompletenessPct = sn.CoveragePct
 		(*rows)[i].CompletenessWatermark = int64(sn.Watermark)
 		(*rows)[i].CompletenessComplete = sn.Complete
+		(*rows)[i].CompletenessLakeComplete = sn.LakeComplete
 		(*rows)[i].CompletenessComputedAt = &computedAt
 	}
 }

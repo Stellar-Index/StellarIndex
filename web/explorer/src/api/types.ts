@@ -5120,7 +5120,8 @@ export interface paths {
                          *             "applies": true,
                          *             "coverage_pct": 1,
                          *             "completeness_pct": 1,
-                         *             "completeness_complete": true
+                         *             "completeness_complete": true,
+                         *             "completeness_lake_complete": true
                          *           }
                          *         ],
                          *         "backfill_coverage_as_of": "2026-07-03T22:38:12Z",
@@ -5245,6 +5246,22 @@ export interface paths {
                                     entries: number;
                                     /** @description Fraction of (genesis → tip) range with any data. 1.0 = covered. Doesn't detect internal gaps. */
                                     coverage_pct?: number;
+                                    /** @description ADR-0033 watermark coverage: (watermark - genesis + 1) / (tip - genesis + 1). No sparsity threshold — a single PROVEN gap pins it. Absent until compute-completeness has run for the source. */
+                                    completeness_pct?: number;
+                                    /**
+                                     * Format: int64
+                                     * @description Highest fully-verified ledger.
+                                     */
+                                    completeness_watermark?: number;
+                                    /** @description SERVED/combined axis of the ADR-0033/ADR-0034 two-axis verdict: substrate ∧ recognition ∧ the retention-scoped projection reconcile. */
+                                    completeness_complete?: boolean;
+                                    /** @description LAKE (archive) axis: substrate ∧ recognition only, genesis-to-tip. A source is routinely lake_complete=true with complete=false — the archive is proven genesis-complete while the served tier is still reconciling. */
+                                    completeness_lake_complete?: boolean;
+                                    /**
+                                     * Format: date-time
+                                     * @description When compute-completeness last ran for this source.
+                                     */
+                                    completeness_computed_at?: string;
                                 }[];
                                 /**
                                  * Format: date-time
@@ -7737,15 +7754,21 @@ export interface paths {
          *
          *     Restricted to operator-tier credentials (staff-issued via
          *     stellarindex-ops; never granted to public callers) — other
-         *     tiers 403. Every successful mint is audit-logged: a
-         *     structured log line unconditionally plus a persisted
-         *     `audit_log` row (`key.mint`, staff actor) when the
-         *     deployment wires the audit store.
+         *     tiers 403. Requires an `X-Reason` header captured into the
+         *     audit log, the same contract as `PATCH /v1/admin/accounts/{id}`
+         *     and `DELETE /v1/admin/keys/{keyID}`; a request without it 400s.
+         *     Every successful mint is audit-logged: a structured log line
+         *     unconditionally plus a persisted `audit_log` row (`key.mint`,
+         *     staff actor, carrying the reason) when the deployment wires the
+         *     audit store.
          */
         post: {
             parameters: {
                 query?: never;
-                header?: never;
+                header: {
+                    /** @description Free-form reason captured into the audit log. */
+                    "X-Reason": string;
+                };
                 path?: never;
                 cookie?: never;
             };

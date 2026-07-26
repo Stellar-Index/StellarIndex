@@ -57,6 +57,12 @@ type adminCreateKeyRequest struct {
 // exists only on staff-issued credentials seeded via
 // stellarindex-ops; it is never granted to public callers).
 //
+// Requires an `X-Reason` header (platform-spec §7.2), the same contract
+// as PATCH /v1/admin/accounts and DELETE /v1/admin/keys/{keyID}. Minting
+// a privileged credential is at least as consequential as setting a
+// per-account override or killing a key, and it was the one admin write
+// that captured no reason (C3-107, audit-2026-07-23).
+//
 // Every successful mint is audit-logged: a structured log line
 // unconditionally, plus a persisted audit_log row ("key.mint",
 // ActorStaff) when the deployment wired an [AuditSink] — the same
@@ -82,6 +88,14 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 			"https://api.stellarindex.io/errors/account-store-unavailable",
 			"Account store not configured", http.StatusServiceUnavailable,
 			"this deployment has no AccountStore wired — typically because Redis is unavailable")
+		return
+	}
+	reason := r.Header.Get("X-Reason")
+	if reason == "" {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/missing-reason",
+			"X-Reason header required", http.StatusBadRequest,
+			"every admin write captures an X-Reason header into the audit log")
 		return
 	}
 
@@ -118,8 +132,9 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 		"target_identifier", req.Identifier,
 		"minted_key_id", rec.KeyID,
 		"tier", req.Tier,
-		"scopes", req.Scopes)
-	s.recordAdminKeyMintAudit(r, subject, req, rec.KeyID)
+		"scopes", req.Scopes,
+		"reason", reason)
+	s.recordAdminKeyMintAudit(r, subject, req, rec.KeyID, reason)
 
 	writeEnvelopeStatus(w, http.StatusCreated, Envelope{
 		Data: KeyCreated{
@@ -328,7 +343,7 @@ func parseAdminCreateKeyRequest(w http.ResponseWriter, r *http.Request) (adminCr
 // mint (audit-log unavailability must not break staff workflows,
 // same contract as platform.AuditStore.Append documents).
 func (s *Server) recordAdminKeyMintAudit(
-	r *http.Request, actor auth.Subject, req adminCreateKeyRequest, mintedKeyID string,
+	r *http.Request, actor auth.Subject, req adminCreateKeyRequest, mintedKeyID, reason string,
 ) {
 	if s.audit == nil {
 		return
@@ -341,6 +356,7 @@ func (s *Server) recordAdminKeyMintAudit(
 		"label":              req.Label,
 		"scopes":             req.Scopes,
 		"rate_limit_per_min": req.RateLimitPerMin,
+		"reason":             reason,
 	})
 	if err != nil {
 		s.logger.Warn("admin key mint: audit metadata marshal failed (skipping audit row)",

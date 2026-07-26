@@ -1218,6 +1218,32 @@ func (s *Server) Handler() http.Handler {
 	// fetch of a trailing-slash URL died at the redirect — exactly
 	// as dead as the 404 this middleware exists to prevent.
 	stack = append(stack, middleware.TrailingSlashRedirect)
+	// RequestTimeout bounds every non-streaming request's context so
+	// EVERY handler inherits a deadline even when it forgets to wrap its
+	// own DB/ClickHouse read (C3-1/C3-2/P1, audit-2026-07-16).
+	//
+	// It sits OUTSIDE the whole credential/quota/limit block rather than
+	// just above CaptureRoute (C3-102, audit-2026-07-23). In the inner
+	// position, Auth / KeyPolicy / RequireEmailVerified / MonthlyQuota /
+	// RateLimit / UsageTracker / SessionAuth all ran OUTSIDE the deadline
+	// — their Redis and Postgres round-trips were bounded only by
+	// go-redis's 3 s default and the http.Server WriteTimeout, which does
+	// not cancel anything in flight. A slow store therefore held a request
+	// goroutine well past the timeout this middleware exists to enforce,
+	// and the comment claimed "EVERY handler inherits a deadline" while
+	// the pre-handler stack did not.
+	//
+	// It stays INSIDE CORS/TrailingSlashRedirect (both allocation-free and
+	// I/O-free) so a preflight still short-circuits without a timer. The
+	// tighter per-handler 8s WithTimeout wrappers layer under it and fire
+	// first. Post-RESPONSE bookkeeping in UsageTracker/TouchUsage
+	// deliberately detaches from this deadline (context.WithoutCancel with
+	// its own bound) so moving the timeout out cannot drop a usage row.
+	// SSE endpoints are exempt inside the middleware. Skipped entirely
+	// when requestTimeout <= 0 (the middleware also self-guards on that).
+	if s.requestTimeout > 0 {
+		stack = append(stack, middleware.RequestTimeout(s.requestTimeout))
+	}
 	// Auth runs INSIDE CORS (so preflight OPTIONS short-circuits
 	// before any credential check) but OUTSIDE RateLimit (so
 	// per-tier limits see the authenticated Subject in context).
@@ -1277,18 +1303,6 @@ func (s *Server) Handler() http.Handler {
 	if s.sessionAuth != nil {
 		stack = append(stack, s.sessionAuth)
 	}
-	// RequestTimeout bounds every non-streaming request's context so
-	// EVERY handler inherits a deadline even when it forgets to wrap
-	// its own DB/ClickHouse read (C3-1/C3-2/P1, audit-2026-07-16). It
-	// sits just above CaptureRoute (i.e. innermost of the cross-cutting
-	// wrappers, directly around the mux) so the deadline covers the
-	// handler and everything it calls, and so the tighter per-handler
-	// 8s WithTimeout wrappers layer under it and fire first. SSE
-	// endpoints are exempt inside the middleware. Skipped entirely when
-	// requestTimeout <= 0 (the middleware also self-guards on that).
-	if s.requestTimeout > 0 {
-		stack = append(stack, middleware.RequestTimeout(s.requestTimeout))
-	}
 	// CaptureRoute MUST be innermost — directly above the mux — so
 	// r.Pattern is populated before it reads. It writes the matched
 	// route into the *routeCapture HTTPMetrics planted in the
@@ -1304,12 +1318,40 @@ func (s *Server) Handler() http.Handler {
 // for debugging / testing.
 func (s *Server) Uptime() time.Duration { return time.Since(s.started) }
 
-// loopbackOnly wraps `next` so it returns 404 for any request
-// whose RemoteAddr is not a loopback IP (127.0.0.0/8 or ::1).
-// Used for `/metrics` so the binary refuses to answer scrapes
-// from anything but localhost — defense-in-depth against a
-// misconfigured reverse proxy that forwards public traffic to
-// the binary's :3000 port.
+// proxyForwardHeaders are the headers a reverse proxy adds when it
+// forwards a request on behalf of a remote client. Their PRESENCE is the
+// signal, not their value — a direct local scrape sets none of them.
+var proxyForwardHeaders = []string{
+	"X-Forwarded-For",
+	"X-Forwarded-Host",
+	"X-Real-Ip",
+	"Forwarded",
+}
+
+// loopbackOnly wraps `next` so it returns 404 unless the request looks
+// like a genuinely local, un-proxied scrape. Used for `/metrics` so the
+// binary refuses to answer anything but the local Prometheus.
+//
+// Two conditions, both required:
+//
+//  1. RemoteAddr is a loopback IP (127.0.0.0/8 or ::1).
+//  2. The request carries NO proxy-forwarding header.
+//
+// (2) is what makes this guard actually defend the case its own name
+// implies (C3-029/C3-106, audit-2026-07-23). The documented topology is
+// Caddy running ON THE SAME HOST proxying to 127.0.0.1:3000, so a
+// misconfigured Caddy that forwards public traffic presents a LOOPBACK
+// RemoteAddr and sails through a RemoteAddr-only check — the guard was
+// inert against exactly the failure it was written for. Caddy's
+// reverse_proxy sets X-Forwarded-For (and Host/Proto) by default, and so
+// does every other mainstream proxy, so their presence distinguishes
+// "someone's request relayed to us" from "the local scraper called us".
+//
+// This is defence in depth, not the control: the real control is the
+// Caddyfile 404ing /metrics from public hosts
+// (configs/caddy/Caddyfile.api). A proxy configured to STRIP forwarding
+// headers would still pass — that is a deliberate limit, not an
+// oversight, and it is why the Caddyfile rule is not optional.
 //
 // Returns 404 (not 403) deliberately — 403 would confirm the
 // route exists; 404 mirrors what a properly-configured Caddy
@@ -1324,6 +1366,12 @@ func loopbackOnly(next http.Handler) http.Handler {
 		if ip == nil || !ip.IsLoopback() {
 			http.NotFound(w, r)
 			return
+		}
+		for _, h := range proxyForwardHeaders {
+			if r.Header.Get(h) != "" {
+				http.NotFound(w, r)
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -1403,12 +1451,15 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// Prometheus scrape endpoint. Deliberately unversioned — it's
 	// operator-facing, not part of the public API contract.
 	//
-	// Defense-in-depth: also gate at the Go layer on RemoteAddr
-	// being a loopback address. The intended posture is that Caddy
-	// 404s `/metrics` from public hosts (configs/caddy/Caddyfile.api)
-	// and only the local Prometheus scraper hits the binary
-	// directly via 127.0.0.1:3000. This guard catches the case where
-	// the Caddyfile config is stale OR the binary is exposed behind
+	// Defense-in-depth: also gate at the Go layer on the request
+	// being loopback AND un-proxied (see loopbackOnly — a
+	// same-host proxy presents a loopback RemoteAddr, so the
+	// forwarding-header check is the half that actually defends).
+	// The intended posture is that Caddy 404s `/metrics` from
+	// public hosts (configs/caddy/Caddyfile.api) and only the local
+	// Prometheus scraper hits the binary directly via
+	// 127.0.0.1:3000. This guard catches the case where the
+	// Caddyfile config is stale OR the binary is exposed behind
 	// a different proxy that hasn't been audited. /metrics on a
 	// public host fingerprints the deployment (Go runtime stats,
 	// per-source counters, build info) — the cost of a missed

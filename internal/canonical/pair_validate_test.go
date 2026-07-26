@@ -66,15 +66,27 @@ func TestAsset_Value_zeroValueRejected(t *testing.T) {
 	}
 }
 
-// Asset.Scan against a typed-nil source must zero the receiver
-// (a NULL column round-trips to a zero-value Asset). Documented
-// behaviour at the Scan callsite.
-func TestAsset_Scan_typedNilZeroesReceiver(t *testing.T) {
+// Asset.Scan against a NULL source must ERROR and leave the receiver
+// untouched (C4-068, audit-2026-07-23).
+//
+// The pre-C4-068 contract — and this test's original assertion — was the
+// opposite: Scan(nil) returned nil and zeroed the receiver, so a NULL
+// asset column produced an Asset with Type=="" that reads as valid
+// everywhere except Validate. Value() will not write such an Asset, so a
+// NULL can only come from a schema/query defect (a LEFT JOIN that
+// missed, a column that should be NOT NULL); failing closed surfaces it
+// at the read instead of laundering it into the domain. A genuinely
+// nullable column must be scanned through sql.NullString + ParseAsset.
+func TestAsset_Scan_nullIsAnError(t *testing.T) {
 	a := c.NativeAsset()
-	if err := a.Scan(nil); err != nil {
-		t.Fatalf("Scan(nil): %v", err)
+	err := a.Scan(nil)
+	if err == nil {
+		t.Fatal("Scan(nil) returned nil — a SQL NULL must not silently become a zero Asset")
 	}
-	if !a.IsZero() {
-		t.Errorf("after Scan(nil), Asset = %+v, want zero-value", a)
+	if !errors.Is(err, c.ErrInvalidAsset) {
+		t.Errorf("Scan(nil) error = %v, want it to wrap ErrInvalidAsset", err)
+	}
+	if !a.Equal(c.NativeAsset()) {
+		t.Errorf("after a failed Scan(nil), Asset = %+v, want the receiver untouched", a)
 	}
 }

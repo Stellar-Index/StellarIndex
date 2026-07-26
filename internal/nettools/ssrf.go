@@ -29,13 +29,23 @@ import (
 //     metadata IP 192.0.0.192.
 //   - 198.18.0.0/15  — RFC 2544 benchmarking; not internet-routable.
 //   - 0.0.0.0/8      — RFC 1122 "this host on this network".
+//   - 64:ff9b::/96   — RFC 6052 well-known NAT64 prefix, and
+//   - 64:ff9b:1::/48 — RFC 8215 local-use NAT64 prefix. These EMBED an
+//     IPv4 address in the low bits, so `64:ff9b::a9fe:a9fe` is the cloud
+//     metadata IP 169.254.169.254 wearing an IPv6 costume. Go's
+//     IsLinkLocalUnicast / IsPrivate do NOT unwrap the NAT64 prefix (only
+//     the ::ffff:0:0/96 IPv4-mapped form), so without these entries every
+//     v4 range above is bypassable by translating it — whenever a NAT64
+//     gateway is on the egress path (C3-110, audit-2026-07-23).
 var extraBlockedNets = func() []*net.IPNet {
-	out := make([]*net.IPNet, 0, 4)
+	out := make([]*net.IPNet, 0, 6)
 	for _, cidr := range []string{
 		"100.64.0.0/10",
 		"192.0.0.0/24",
 		"198.18.0.0/15",
 		"0.0.0.0/8",
+		"64:ff9b::/96",
+		"64:ff9b:1::/48",
 	} {
 		_, n, err := net.ParseCIDR(cidr)
 		if err != nil {

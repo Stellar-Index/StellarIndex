@@ -484,6 +484,24 @@ func (s *Store) ListFreezeEvents(ctx context.Context, firingOnly bool, limit int
 	return out, nil
 }
 
+// CountFiringFreezes returns the EXACT number of currently-firing
+// freezes (recovered_at IS NULL), using the same partial index
+// ListFreezeEvents' firingOnly arm selects on.
+//
+// It exists because /v1/anomalies used to derive its firing_count as
+// `len(ListFreezeEvents(ctx, true, 500))` — a LIMIT-capped page, so a
+// freeze storm of any size reported exactly 500 (C1-051,
+// audit-2026-07-23). A count is also strictly cheaper: no row
+// materialisation, no detail JSONB read.
+func (s *Store) CountFiringFreezes(ctx context.Context) (int64, error) {
+	const q = `SELECT count(*) FROM freeze_events WHERE recovered_at IS NULL`
+	var n int64
+	if err := s.db.QueryRowContext(ctx, q).Scan(&n); err != nil {
+		return 0, fmt.Errorf("timescale: CountFiringFreezes: %w", err)
+	}
+	return n, nil
+}
+
 // FreezeReasonCount pairs a freeze reason with its count in the window.
 type FreezeReasonCount struct {
 	Reason string

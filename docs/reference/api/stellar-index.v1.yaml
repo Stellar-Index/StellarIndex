@@ -3637,6 +3637,7 @@ paths:
                     coverage_pct: 1
                     completeness_pct: 1
                     completeness_complete: true
+                    completeness_lake_complete: true
                   backfill_coverage_as_of: '2026-07-03T22:38:12Z'
                   cagg_coverage:
                     earliest_bucket: '2015-11-18T03:00:00Z'
@@ -3736,6 +3737,11 @@ paths:
                                 latest_ledger:   { type: integer, format: int64 }
                                 entries:         { type: integer, format: int64, description: "Always-on per-source ingested-entry tally — trades for exchange/DEX/CEX sources, oracle_updates for oracle sources (source_entry_counts, migration 0035). Exact even mid-backfill; renamed from trade_count 2026-05-15." }
                                 coverage_pct:    { type: number,  description: "Fraction of (genesis → tip) range with any data. 1.0 = covered. Doesn't detect internal gaps." }
+                                completeness_pct:        { type: number,  description: "ADR-0033 watermark coverage: (watermark - genesis + 1) / (tip - genesis + 1). No sparsity threshold — a single PROVEN gap pins it. Absent until compute-completeness has run for the source." }
+                                completeness_watermark:  { type: integer, format: int64, description: "Highest fully-verified ledger." }
+                                completeness_complete:   { type: boolean, description: "SERVED/combined axis of the ADR-0033/ADR-0034 two-axis verdict: substrate ∧ recognition ∧ the retention-scoped projection reconcile." }
+                                completeness_lake_complete: { type: boolean, description: "LAKE (archive) axis: substrate ∧ recognition only, genesis-to-tip. A source is routinely lake_complete=true with complete=false — the archive is proven genesis-complete while the served tier is still reconciling." }
+                                completeness_computed_at: { type: string, format: date-time, description: "When compute-completeness last ran for this source." }
                           backfill_coverage_as_of:
                             type: string
                             format: date-time
@@ -5477,12 +5483,21 @@ paths:
 
         Restricted to operator-tier credentials (staff-issued via
         stellarindex-ops; never granted to public callers) — other
-        tiers 403. Every successful mint is audit-logged: a
-        structured log line unconditionally plus a persisted
-        `audit_log` row (`key.mint`, staff actor) when the
-        deployment wires the audit store.
+        tiers 403. Requires an `X-Reason` header captured into the
+        audit log, the same contract as `PATCH /v1/admin/accounts/{id}`
+        and `DELETE /v1/admin/keys/{keyID}`; a request without it 400s.
+        Every successful mint is audit-logged: a structured log line
+        unconditionally plus a persisted `audit_log` row (`key.mint`,
+        staff actor, carrying the reason) when the deployment wires the
+        audit store.
       security:
         - APIKeyAuth: []
+      parameters:
+        - name: X-Reason
+          in: header
+          required: true
+          schema: { type: string }
+          description: Free-form reason captured into the audit log.
       requestBody:
         required: true
         content:
