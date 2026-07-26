@@ -32,7 +32,28 @@ const (
 
 	// BasisAdminExclusion — Algorithm 3 default: SEP-41 tokens
 	// where circulating excludes the admin account/contract balance.
+	// Only emitted when a non-zero admin balance was ACTUALLY
+	// subtracted; see BasisSEP41TotalOnly for the other case.
 	BasisAdminExclusion Basis = "admin_exclusion"
+
+	// BasisSEP41TotalOnly — Algorithm 3 with NOTHING excluded:
+	// circulating == total because the admin balance came back zero
+	// and no per-asset locked-set was configured. Kept distinct from
+	// BasisAdminExclusion so the wire never claims an admin exclusion
+	// that didn't happen (CS-010, the same reasoning as
+	// BasisXLMTotalOnly) — a circulating==total SEP-41 figure
+	// labelled "admin_exclusion" tells a consumer the issuer's own
+	// holdings were netted out when they were not, overstating
+	// circulating supply and market cap by whatever the admin holds.
+	//
+	// This is the DEFAULT reading today, not an edge case:
+	// [StorageSEP41SupplyReader] hardcodes AdminBalance to zero
+	// because v1 doesn't track `set_admin`, and its docstring
+	// directs operators to put the admin's address in the per-asset
+	// LockedSet instead. Doing so yields BasisOverride — so an
+	// operator can tell a configured token from an unconfigured one
+	// straight off the basis field (C1-041).
+	BasisSEP41TotalOnly Basis = "sep41_total_only"
 
 	// BasisOverride — operator-configured override beat the
 	// algorithm-default policy. Used for both circulating

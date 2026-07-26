@@ -112,6 +112,12 @@ func archiveCompletenessVerify(args []string) error {
 	// this gauge going stale when something's wrong, and a range that
 	// contained no checkpoint position at all (DAT-11) verified
 	// nothing, so it must not stamp success either.
+	//
+	// Leaving it zero here does NOT drop the series: WriteTextfileAtomic
+	// re-reads the previous textfile and carries the last clean run's
+	// timestamp (and the repair counters) forward, so the staleness
+	// alert keeps evaluating while the failure persists. That direction
+	// of the blind spot was C4-038/039/054.
 	snapshot.PopulateFromReport(report)
 	snapshot.PopulateFromFillResult(fillRes)
 	snapshot.RunDurationSeconds = time.Since(startedAt).Seconds()

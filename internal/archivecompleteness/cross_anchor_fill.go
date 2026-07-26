@@ -176,6 +176,25 @@ type FillResult struct {
 	// PerSourceSuccess counts successful fetches by source name.
 	// Helps operators see which upstream is healthy vs degraded.
 	PerSourceSuccess map[string]int
+
+	// PerSourceAttempt counts EVERY try by source name — the winning
+	// fetch plus each source that was tried and failed before it.
+	// This is the denominator of the per-source repair failure ratio
+	// (`archive_completeness_repair_attempts_total`); PerSourceSuccess
+	// is not, because a source that fails every time would otherwise
+	// never appear in it at all.
+	PerSourceAttempt map[string]int
+
+	// PerSourceFailure counts failed tries by source name — the
+	// numerator of that same ratio.
+	//
+	// C4-037 (audit-2026-07-23): before this field existed, the
+	// metrics layer had no per-source failure data and filed the
+	// whole failed-checkpoint count under a synthetic
+	// `multi-source-exhausted` label, which never intersected the
+	// real-source attempt labels and made
+	// `stellarindex_archive_repair_source_degraded` unfireable.
+	PerSourceFailure map[string]int
 }
 
 // FillFailure describes one missing checkpoint that the filler
@@ -203,19 +222,13 @@ type FillFailure struct {
 // cancellation mid-walk leaves placed files intact (idempotent
 // next run will skip them) but stops fetching new ones.
 func (f *CrossAnchorFiller) Fill(ctx context.Context, missing []uint32) FillResult {
+	acc := newFillAccumulator()
 	if len(missing) == 0 {
-		return FillResult{PerSourceSuccess: map[string]int{}}
+		return acc.result()
 	}
 
 	type job struct{ seq uint32 }
 	jobs := make(chan job, f.workers)
-
-	var (
-		mu        sync.Mutex
-		filled    int
-		failures  []FillFailure
-		perSource = map[string]int{}
-	)
 
 	var wg sync.WaitGroup
 	for i := 0; i < f.workers; i++ {
@@ -227,16 +240,8 @@ func (f *CrossAnchorFiller) Fill(ctx context.Context, missing []uint32) FillResu
 				if ctx.Err() != nil {
 					return
 				}
-				if sourceName, err := f.fetchOne(ctx, j.seq, rng); err == nil {
-					mu.Lock()
-					filled++
-					perSource[sourceName]++
-					mu.Unlock()
-				} else {
-					mu.Lock()
-					failures = append(failures, FillFailure{Seq: j.seq, Reason: err.Error()})
-					mu.Unlock()
-				}
+				tries, err := f.fetchOne(ctx, j.seq, rng)
+				acc.record(j.seq, tries, err)
 			}
 		}(i)
 	}
@@ -246,20 +251,90 @@ func (f *CrossAnchorFiller) Fill(ctx context.Context, missing []uint32) FillResu
 		case <-ctx.Done():
 			close(jobs)
 			wg.Wait()
-			return FillResult{Filled: filled, Failed: failures, PerSourceSuccess: perSource}
+			return acc.result()
 		case jobs <- job{seq: seq}:
 		}
 	}
 	close(jobs)
 	wg.Wait()
 
-	return FillResult{Filled: filled, Failed: failures, PerSourceSuccess: perSource}
+	return acc.result()
+}
+
+// fillAccumulator collects per-checkpoint worker outcomes into the
+// shared [FillResult] under one mutex. Extracted from Fill so the
+// aggregation rules live in one readable place rather than inline in
+// the worker goroutine.
+type fillAccumulator struct {
+	mu         sync.Mutex
+	filled     int
+	failures   []FillFailure
+	perSource  map[string]int
+	perAttempt map[string]int
+	perFailure map[string]int
+}
+
+func newFillAccumulator() *fillAccumulator {
+	return &fillAccumulator{
+		perSource:  map[string]int{},
+		perAttempt: map[string]int{},
+		perFailure: map[string]int{},
+	}
+}
+
+// record folds one fetchOne walk into the totals.
+//
+// C4-037: EVERY source the walk touched counts as an attempt under
+// its real name — including sources that failed before a later one
+// in the chain succeeded. A source that fails 100% of the time would
+// otherwise never appear in the denominator at all, which is what
+// made the per-source failure ratio unfireable.
+func (a *fillAccumulator) record(seq uint32, tries fetchTries, err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, name := range tries.attempted {
+		a.perAttempt[name]++
+	}
+	for _, name := range tries.failed {
+		a.perFailure[name]++
+	}
+	if err != nil {
+		a.failures = append(a.failures, FillFailure{Seq: seq, Reason: err.Error()})
+		return
+	}
+	a.filled++
+	a.perSource[tries.winner]++
+}
+
+func (a *fillAccumulator) result() FillResult {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return FillResult{
+		Filled:           a.filled,
+		Failed:           a.failures,
+		PerSourceSuccess: a.perSource,
+		PerSourceAttempt: a.perAttempt,
+		PerSourceFailure: a.perFailure,
+	}
+}
+
+// fetchTries records which sources one [CrossAnchorFiller.fetchOne]
+// walk actually touched. attempted lists every source a GET was
+// issued against (in walk order), failed the subset that errored,
+// and winner the source that placed the file ("" when none did).
+type fetchTries struct {
+	winner    string
+	attempted []string
+	failed    []string
 }
 
 // fetchOne fetches one checkpoint via the shuffled fallback chain.
-// Returns the source name on success or an error describing the
-// last failure.
-func (f *CrossAnchorFiller) fetchOne(ctx context.Context, seq uint32, rng *rand.Rand) (string, error) {
+// Returns the per-source try record — populated even on the error
+// paths, because a source that fails every time must still show up
+// in the attempt counter — plus an error describing the last failure.
+func (f *CrossAnchorFiller) fetchOne(ctx context.Context, seq uint32, rng *rand.Rand) (fetchTries, error) {
+	var tries fetchTries
+
 	hex := hexSeq8(seq)
 	relPath := fmt.Sprintf("ledger/%s/%s/%s/ledger-%s.xdr.gz", hex[0:2], hex[2:4], hex[4:6], hex)
 	finalPath := filepath.Join(f.archiveRoot, relPath)
@@ -270,7 +345,7 @@ func (f *CrossAnchorFiller) fetchOne(ctx context.Context, seq uint32, rng *rand.
 	// into a non-existent dir, which fails fast even when the
 	// HTTP source is healthy.
 	if err := os.MkdirAll(filepath.Dir(finalPath), 0o750); err != nil {
-		return "", fmt.Errorf("mkdir parent: %w", err)
+		return tries, fmt.Errorf("mkdir parent: %w", err)
 	}
 
 	shuffled := make([]Source, len(f.sources))
@@ -280,24 +355,32 @@ func (f *CrossAnchorFiller) fetchOne(ctx context.Context, seq uint32, rng *rand.
 	var lastErr error
 	for _, src := range shuffled {
 		if ctx.Err() != nil {
-			return "", ctx.Err()
+			return tries, ctx.Err()
 		}
+		tries.attempted = append(tries.attempted, src.Name)
 		err := f.fetchAndValidate(ctx, src, relPath, tmpPath, seq)
 		if err == nil {
 			if err := os.Rename(tmpPath, finalPath); err != nil {
 				_ = os.Remove(tmpPath)
-				return "", fmt.Errorf("rename %q → %q: %w", tmpPath, finalPath, err)
+				// The bytes arrived fine; the local placement broke.
+				// Count it against the source anyway — the checkpoint
+				// is still missing and the operator needs the attempt
+				// and the failure to balance.
+				tries.failed = append(tries.failed, src.Name)
+				return tries, fmt.Errorf("rename %q → %q: %w", tmpPath, finalPath, err)
 			}
 			f.applyOwnership(finalPath)
-			return src.Name, nil
+			tries.winner = src.Name
+			return tries, nil
 		}
 		_ = os.Remove(tmpPath)
+		tries.failed = append(tries.failed, src.Name)
 		lastErr = fmt.Errorf("%s: %w", src.Name, err)
 	}
 	if lastErr == nil {
 		lastErr = errors.New("no sources configured")
 	}
-	return "", lastErr
+	return tries, lastErr
 }
 
 // fetchAndValidate performs one source GET and writes the response
