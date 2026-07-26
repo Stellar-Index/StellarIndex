@@ -116,7 +116,7 @@ export default async function ExchangeDetailPage({
         <p className="max-w-3xl text-sm text-ink-body">{info.blurb}</p>
         <p className="max-w-3xl rounded-md border border-warn-300 bg-warn-50 p-3 text-xs text-warn-700">
           <span className="font-semibold">Curated subscription, not a full mirror.</span>{' '}
-          Stellar Index is the protocol explorer for the Stellar network, with an independent pricing API; from each CEX we
+          Stellar Index is the protocol explorer for the Stellar network, with an independent price feed; from each CEX we
           subscribe to the pairs that triangulate to XLM (the largest XLM
           markets, the BTC/ETH crypto anchors, and ~17 top-cap globals
           for cross-venue VWAP coverage). The full venue order book is

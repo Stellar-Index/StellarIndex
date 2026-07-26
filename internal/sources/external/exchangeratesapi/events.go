@@ -26,8 +26,8 @@
 //
 // We target Professional tier at minimum. Free tier is rejected at
 // startup because EUR-only-base would force every FX consumer to
-// triangulate through EUR which is the wrong shape for a USD-quoted
-// pricing API.
+// triangulate through EUR which is the wrong shape for our USD-quoted
+// price surface.
 //
 // Wire format verified 2026-04-24 against
 // https://exchangeratesapi.io/documentation:

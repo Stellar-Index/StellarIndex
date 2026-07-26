@@ -6,7 +6,7 @@ import { GithubIcon } from '@/components/GithubIcon';
 export const metadata: Metadata = {
   title: 'Company — who we are',
   description:
-    'Stellar Index — vendor-neutral pricing infrastructure for the Stellar network. Real-time and historical prices for every Stellar asset. Apache-2.0, pre-v1.',
+    'Stellar Index — vendor-neutral data infrastructure for the Stellar network. The explorer, complete history, supply and prices for every Stellar asset. Apache-2.0, pre-v1.',
   alternates: { canonical: '/company' },
 };
 
@@ -18,12 +18,13 @@ export default function CompanyPage() {
           Company
         </p>
         <h1 className="text-4xl font-semibold tracking-tight">
-          Pricing infrastructure for Stellar.
+          Data infrastructure for Stellar.
         </h1>
         <p className="text-base text-ink-body">
-          Stellar Index is a public, vendor-neutral pricing surface for
+          Stellar Index is a public, vendor-neutral data surface for
           the Stellar network — complete, verified, per-protocol on-chain
-          data and an aggregated pricing API for every Stellar asset.
+          data, complete history and supply, and aggregated prices for
+          every Stellar asset, all served by the Stellar Index API.
         </p>
       </header>
 

@@ -75,8 +75,8 @@ ClickHouse (the Tier-1 raw lake,
 certified full history of every ledger; TimescaleDB is the **served**
 tier — the recent working set the API actually queries. You can run
 the indexer with the ClickHouse sink disabled
-(`clickhouse_live_sink = false`) if you only want the pricing API and
-don't need the raw-lake/completeness-verdict story — see
+(`clickhouse_live_sink = false`) if you only want the price endpoints
+and don't need the raw-lake/completeness-verdict story — see
 [§ 2 light mode](#light-mode-recent-window-only) for what you give
 up.
 

@@ -21,7 +21,7 @@
     API reference
   </text>
   <text x="80" y="370" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="26" font-weight="400" fill="#94a3b8">
-    Public REST + SSE pricing API for Stellar.
+    The public REST + SSE API for the Stellar network.
   </text>
   <text x="80" y="410" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="26" font-weight="400" fill="#94a3b8">
     Every endpoint, every shape, no auth required.

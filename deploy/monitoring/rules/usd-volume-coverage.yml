@@ -6,7 +6,7 @@ groups:
       # transaction and transfer volumes. A NULL does not merely omit one row —
       # it silently deflates every aggregate built on it, and it does so
       # UNEVENLY across venues, which biases exactly the comparisons the
-      # pricing API exists to answer.
+      # Stellar Index API exists to answer.
       #
       # These alerts are the enforcement half of the coverage work
       # (docs/operations/usd-volume-coverage-plan.md). The operator bar is

@@ -77,7 +77,7 @@ sequence.
 - Oncall opens `#incident-<YYYY-MM-DD>-redis-failover` channel.
 - Initial post: "We're seeing brief 503s on `/v1/price` from a
   Redis cache failover; recovering automatically."
-- Status page set to *Degraded performance* on **Pricing API**
+- Status page set to *Degraded performance* on **API**
   (NOT *Major outage* — the API is still serving, just briefly
   noisier).
 

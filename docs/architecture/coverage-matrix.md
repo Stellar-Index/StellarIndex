@@ -150,7 +150,7 @@ Any row with **status ❌** is a blocker for launch. Any row with
 
 ---
 
-## Pricing API — Core requirements
+## Stellar Index API — Core requirements
 
 ### S1. Asset coverage — classic + SEP-41 Soroban
 

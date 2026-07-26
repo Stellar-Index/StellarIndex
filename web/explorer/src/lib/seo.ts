@@ -33,7 +33,7 @@ export const SITE_OG_IMAGES = [
     url: SITE_OG_IMAGE_PATH,
     width: 1200,
     height: 630,
-    alt: 'Stellar Index — Stellar pricing explorer',
+    alt: 'Stellar Index — Stellar protocol explorer & API',
     type: 'image/png',
   },
 ];

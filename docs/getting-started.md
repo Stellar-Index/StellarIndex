@@ -6,10 +6,11 @@ status: living doc
 
 # Getting started
 
-Stellar Index is a public, aggregated, real-time and historical
-pricing API for every asset on the Stellar network — native XLM,
-classic credit assets, and SEP-41 Soroban tokens. This page walks
-you from zero to your first authenticated request in under five
+Stellar Index is a public API and protocol explorer for the Stellar
+network — the ledger, contracts, and every asset (native XLM, classic
+credit assets, and SEP-41 Soroban tokens) with complete history,
+supply, and aggregated real-time and historical prices. This page
+walks you from zero to your first authenticated request in under five
 minutes.
 
 > **Hosted endpoint:** `https://api.stellarindex.io`

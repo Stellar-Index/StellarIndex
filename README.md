@@ -1,6 +1,6 @@
 # Stellar Index
 
-**Stellar Index is a protocol explorer and pricing API for the Stellar network** —
+**Stellar Index is a protocol explorer and API for the Stellar network** —
 complete, verified, per-protocol on-chain data: every contract, every
 event, every trade, for every major protocol (SDEX, Soroswap, Aquarius,
 Phoenix, Comet, Blend, DeFindex, CCTP, Rozo, and the Reflector / Redstone
@@ -10,11 +10,14 @@ verification pages at [docs/protocols/](docs/protocols/). It is evolving
 toward a comprehensive blockchain explorer for Stellar — classic/native
 and Soroban.
 
-Its flagship product is the **pricing API**: publicly-accessible,
-aggregated, real-time and historical prices for every Stellar asset —
+Its flagship product is the **Stellar Index API**: one publicly-accessible
+read surface over the whole network — ledgers, transactions, operations
+and contracts; the asset catalogue with supply and holders; complete
+since-inception history and OHLC; MEV / anomaly / divergence analytics;
+and aggregated, real-time and historical prices for every Stellar asset,
 classic and SEP-41 Soroban token. On-chain trades + oracle feeds +
 CEX/FX/reference aggregators fused into one VWAP-first pricing layer
-served at p95 ≤ 200 ms. Full since-inception OHLC. Self-hostable.
+served at p95 ≤ 200 ms. Self-hostable.
 
 **Status:** Pre-v1. The core system runs end-to-end — ingestion, raw
 ledger lake, served tier, REST + SSE API, and the aggregator (VWAP/TWAP,

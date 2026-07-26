@@ -309,9 +309,10 @@ Contents:
 
 ## What this repo is
 
-Stellar Index — a Stellar protocol explorer and asset pricing API.
-Ingests on-chain and off-chain price data, aggregates into
-VWAP/TWAP/OHLC, serves via REST + SSE.
+Stellar Index — a Stellar protocol explorer and the Stellar Index API.
+Ingests on-chain and off-chain data, aggregates into VWAP/TWAP/OHLC,
+serves the explorer / history / supply / analytics / price surfaces
+via REST + SSE.
 
 ## Build + test commands
 

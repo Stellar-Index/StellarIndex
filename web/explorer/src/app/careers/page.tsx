@@ -4,7 +4,7 @@ import { ArrowRight, Mail } from 'lucide-react';
 import { GithubIcon } from '@/components/GithubIcon';
 
 export const metadata: Metadata = {
-  title: 'Careers — work on Stellar pricing infrastructure',
+  title: 'Careers — work on Stellar data infrastructure',
   description:
     'Roles at Stellar Index — Apache-2.0 codebase, real on-chain pricing, no AI-slop shortcuts. No open roles listed today; contributions via GitHub PRs welcome.',
   alternates: { canonical: '/careers' },
@@ -60,7 +60,7 @@ export default function CareersPage() {
           Careers
         </p>
         <h1 className="text-4xl font-semibold tracking-tight">
-          Work on real pricing infrastructure.
+          Work on real data infrastructure.
         </h1>
         <p className="text-base text-ink-body">
           We&apos;re a small team shipping the v1 platform. The

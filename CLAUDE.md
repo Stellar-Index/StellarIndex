@@ -17,9 +17,11 @@ Stellar explorer (classic/native + Soroban) — not a multi-chain explorer;
 the cross-chain asset model (R-018) was removed in the Stellar-focus
 refactor (docs/architecture/stellar-focus-refactor-plan.md).
 
-Its flagship product is the **pricing API**: it ingests on-chain and
-off-chain price data, aggregates into VWAP / TWAP / OHLC, and serves
-the result through a public REST + SSE API.
+Its flagship product is the **Stellar Index API**: a full Stellar
+explorer and data platform — complete on-chain history, asset
+catalogue + supply, anomaly analytics, and aggregated prices
+(VWAP / TWAP / OHLC from on- and off-chain sources) — served
+through a public REST + SSE API.
 
 The repo is Go (primary), Apache-2.0, pre-v1 at time of writing.
 

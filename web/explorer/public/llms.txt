@@ -1,8 +1,10 @@
 # Stellar Index
 
-> Public REST + SSE pricing API for the Stellar network. Aggregates
+> Public REST + SSE API for the Stellar network. Explorer (ledgers,
+> transactions, operations, contracts), asset catalogue with supply
+> and complete history, anomaly/divergence analytics, and aggregated
 > on-chain DEX/AMM trades, off-chain CEX trades, and oracle feeds
-> into VWAP/TWAP/OHLC. Apache-2.0, pre-v1.
+> fused into VWAP/TWAP/OHLC prices. Apache-2.0, pre-v1.
 
 The canonical asset_id format is `<class>:<id>` — e.g.
 `crypto:XLM`, `fiat:USD`, `credit:USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`.
@@ -11,7 +13,7 @@ The string `native` is a shorthand for `crypto:XLM`.
 ## Public surfaces
 
 - [Explorer](https://stellarindex.io): asset / market / pool / source / exchange browser, methodology docs, ADR + research browser.
-- [API](https://api.stellarindex.io): REST + SSE pricing endpoints. Anonymous-friendly; magic-link sign-in unlocks higher rate tiers.
+- [API](https://api.stellarindex.io): REST + SSE endpoints. Anonymous-friendly; magic-link sign-in unlocks higher rate tiers.
 - [Docs](https://docs.stellarindex.io): OpenAPI v1 spec rendered with Scalar.
 - [Status](https://status.stellarindex.io): per-region service health + incident postmortems.
 

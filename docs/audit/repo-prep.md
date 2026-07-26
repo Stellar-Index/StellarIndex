@@ -6,8 +6,9 @@ remediation PRs pass CI on the first push.
 
 ## What this repo is (stakes)
 
-Go monorepo: Stellar protocol explorer + **public pricing API**
-(stellarindex.io). ClickHouse raw lake + TimescaleDB served tier + Redis.
+Go monorepo: Stellar protocol explorer + the **public Stellar Index API**
+(stellarindex.io) — explorer, complete history, supply, anomaly detection,
+and prices. ClickHouse raw lake + TimescaleDB served tier + Redis.
 Money-adjacent: served prices/amounts are the product — i128/NUMERIC
 correctness, VWAP/aggregation math, and completeness verdicts are the
 "money" surface. Treat `internal/aggregate`, `internal/canonical`,
