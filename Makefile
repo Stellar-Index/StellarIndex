@@ -240,6 +240,13 @@ monitoring-check: ## Validate Prometheus rule files with promtool (multi-host + 
 	@# CI-validated before merge.
 	@promtool check rules deploy/monitoring/rules/*.yml
 	@promtool check rules configs/prometheus/rules.r1/*.yml
+	@# `check rules` only proves the PromQL PARSES. The unit tests in
+	@# deploy/monitoring/rule-tests/ prove each alert actually FIRES on the
+	@# state it claims to catch and stays silent otherwise — the class of
+	@# defect (C4-037/038, C6-118) where a rule is syntactically perfect and
+	@# structurally unfireable. They were written but never wired into any
+	@# gate, so a regression in the rules they cover shipped green.
+	@promtool test rules deploy/monitoring/rule-tests/*.yml
 	@# F-1329: promtool only checks PromQL SYNTAX, not whether a metric
 	@# has a producer. This guard catches dead stellarindex_* references
 	@# (an alert that can never fire because nothing emits its metric).
