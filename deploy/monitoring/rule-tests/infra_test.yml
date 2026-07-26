@@ -1,0 +1,153 @@
+---
+# promtool unit tests for the infra ZFS pool-capacity alerts.
+#
+#   promtool test rules deploy/monitoring/rule-tests/infra_test.yml
+#
+# These pin C6-118: the two pool-capacity floors used to be ABSOLUTE
+# byte counts (1.3e12 / 0.65e12) hand-calibrated to r1's ~16.8 TiB pool
+# and shipped verbatim to every host the file is deployed to. That is
+# wrong in BOTH directions on a differently-sized pool, and the
+# dangerous direction is silent:
+#
+#   * a SMALL host that is nearly empty trips the absolute floor
+#     permanently (false ticket + false page), and
+#   * a LARGE host at 98 % full never trips it at all — no alert, which
+#     is exactly the "pool full, ingest stalls" state the pair exists
+#     for.
+#
+# Post-fix both are ratios of reconstructed pool capacity
+# (pool_used = Σ(size − avail), pool_avail = min(avail)), so the same
+# rule travels to r2/r3 (ADR-0016 — entirely different topologies)
+# unchanged.
+#
+# Deliberately lives OUTSIDE `deploy/monitoring/rules/` — everything in
+# that directory is globbed by `promtool check rules`,
+# lint-rule-structure.py and lint-metric-refs.sh, all of which require a
+# top-level `groups:` key that a unit-test file does not have.
+
+rule_files:
+  - ../rules/infra.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── C6-118, false-positive direction ─────────────────────────────
+  # A small host: 650 GB pool, 600 GB of it FREE (92 % empty). Nothing
+  # is wrong. Post-fix neither alert fires.
+  #
+  # Pre-fix BOTH fired forever: 600e9 < 1.3e12 and 600e9 < 0.65e12.
+  - interval: 1m
+    name: a nearly-empty small pool raises nothing
+    input_series:
+      - series: 'node_filesystem_avail_bytes{fstype="zfs",instance="r2:9100",mountpoint="/tank/clickhouse"}'
+        values: '600e9+0x60'
+      - series: 'node_filesystem_size_bytes{fstype="zfs",instance="r2:9100",mountpoint="/tank/clickhouse"}'
+        values: '630e9+0x60'
+      - series: 'node_filesystem_avail_bytes{fstype="zfs",instance="r2:9100",mountpoint="/tank/pg"}'
+        values: '600e9+0x60'
+      - series: 'node_filesystem_size_bytes{fstype="zfs",instance="r2:9100",mountpoint="/tank/pg"}'
+        values: '620e9+0x60'
+
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_zfs_pool_low_space
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: stellarindex_zfs_pool_critical_space
+        exp_alerts: []
+
+  # ── C6-118, silent-miss direction ────────────────────────────────
+  # A large host: 100 TB pool with 2 TB free (2 %). ZFS is stalling
+  # writes territory. Post-fix both tiers fire.
+  #
+  # Pre-fix NEITHER fired: 2e12 is above both absolute floors.
+  - interval: 1m
+    name: a nearly-full large pool pages
+    input_series:
+      - series: 'node_filesystem_avail_bytes{fstype="zfs",instance="r3:9100",mountpoint="/tank/clickhouse"}'
+        values: '2e12+0x60'
+      - series: 'node_filesystem_size_bytes{fstype="zfs",instance="r3:9100",mountpoint="/tank/clickhouse"}'
+        values: '62e12+0x60'
+      - series: 'node_filesystem_avail_bytes{fstype="zfs",instance="r3:9100",mountpoint="/tank/minio"}'
+        values: '2e12+0x60'
+      - series: 'node_filesystem_size_bytes{fstype="zfs",instance="r3:9100",mountpoint="/tank/minio"}'
+        values: '40e12+0x60'
+
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_zfs_pool_low_space
+        exp_alerts:
+          - exp_labels:
+              instance: r3:9100
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
+              summary: "ZFS data pool free space low (2% of capacity free)"
+              description: |
+                Under 7 % of the ZFS data pool's capacity is free (on r1's raidz1
+                ~16.8 TiB pool that is ~1.3 TB). All ZFS datasets share this pool,
+                so every writer (ClickHouse lake, MinIO archive, Postgres,
+                pgBackRest) is affected. ZFS is copy-on-write: performance
+                degrades past ~90 % full and writes stall near-full. Plan
+                reclamation (stale snapshots, pgBackRest off-box, TSDB
+                compression) — see the storage section of the go-live master plan.
+      - eval_time: 30m
+        alertname: stellarindex_zfs_pool_critical_space
+        exp_alerts:
+          - exp_labels:
+              instance: r3:9100
+              severity: page
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
+              summary: "ZFS data pool CRITICALLY low (2% of capacity free) (SEV-1)"
+              description: |
+                Under 3.5 % of the ZFS data pool's capacity is free (on r1's
+                ~16.8 TiB pool that is ~650 GB). On a copy-on-write filesystem
+                this risks write stalls / ingest failure across ClickHouse, MinIO,
+                and Postgres. Reclaim space NOW (drop stale snapshots, move
+                pgBackRest off-box) or ingestion will halt.
+
+  # ── C6-118, r1 behaviour is PRESERVED ────────────────────────────
+  # r1's own shape: ~18.5 TB pool with 1.2 TB free. The old absolute
+  # floors said ticket-but-not-page (1.2e12 < 1.3e12, > 0.65e12); the
+  # ratios say the same (0.0649 < 0.07, > 0.035). The generalisation
+  # must not have moved the box the thresholds were calibrated on.
+  - interval: 1m
+    name: r1s own pool keeps its calibrated ticket-not-page verdict
+    input_series:
+      - series: 'node_filesystem_avail_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/clickhouse"}'
+        values: '1.2e12+0x60'
+      - series: 'node_filesystem_size_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/clickhouse"}'
+        values: '16.2e12+0x60'
+      - series: 'node_filesystem_avail_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/minio"}'
+        values: '1.2e12+0x60'
+      - series: 'node_filesystem_size_bytes{fstype="zfs",instance="r1:9100",mountpoint="/tank/minio"}'
+        values: '3.5e12+0x60'
+
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_zfs_pool_low_space
+        exp_alerts:
+          - exp_labels:
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-pool-full.md
+              summary: "ZFS data pool free space low (6.486% of capacity free)"
+              description: |
+                Under 7 % of the ZFS data pool's capacity is free (on r1's raidz1
+                ~16.8 TiB pool that is ~1.3 TB). All ZFS datasets share this pool,
+                so every writer (ClickHouse lake, MinIO archive, Postgres,
+                pgBackRest) is affected. ZFS is copy-on-write: performance
+                degrades past ~90 % full and writes stall near-full. Plan
+                reclamation (stale snapshots, pgBackRest off-box, TSDB
+                compression) — see the storage section of the go-live master plan.
+      - eval_time: 30m
+        alertname: stellarindex_zfs_pool_critical_space
+        exp_alerts: []
