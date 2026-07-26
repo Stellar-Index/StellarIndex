@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -92,6 +93,17 @@ type backfillOpts struct {
 	// is debugging a refresh failure where re-running the
 	// underlying chunk is the desired recovery path.
 	refreshCAGGs bool
+	// heartbeat publishes liveness + progress for the whole run
+	// (C6-020). Shared by every chunk goroutine — JobHeartbeat is
+	// mutex-guarded and walkedTotal is atomic, so the per-chunk
+	// callbacks can report into it concurrently. nil-safe: an inert
+	// heartbeat (no node_exporter textfile dir) makes every call a
+	// no-op, which is the laptop/CI case.
+	heartbeat   *opsutil.JobHeartbeat
+	walkedTotal *atomic.Uint64
+	// heartbeatPath is the -heartbeat flag: an explicit node_exporter
+	// textfile path, or "" for the auto-resolved default.
+	heartbeatPath string
 }
 
 // chunkRange is one sub-range of a parallel backfill: [from, to]
@@ -208,12 +220,27 @@ func backfill(args []string) error {
 		"chunks", len(chunks),
 	)
 
+	// C6-020: liveness + progress for the whole walk, so a wedged backfill
+	// (stalled S3 read, storage write that never returns, OOM-killed chunk
+	// goroutine) is distinguishable from a working one without tailing the
+	// journal. Inert off-r1 — see opsutil.NewJobHeartbeat.
+	opts.heartbeat = opsutil.NewJobHeartbeat("backfill", opts.heartbeatPath, nil)
+	opts.walkedTotal = &atomic.Uint64{}
+	if opts.heartbeat.Enabled() {
+		logger.Info("backfill heartbeat", "textfile", opts.heartbeat.Path())
+	}
+	opts.heartbeat.Start()
+	backfillOK := false
+	defer func() { opts.heartbeat.Stop(backfillOK) }()
+
 	// Sequential fast-path. Same shape as the pre-parallelism code,
 	// minus the redundant goroutine + channel hop. Lets `-parallel 1`
 	// (the default) keep its existing semantics: one cursor row, one
 	// ledgerstream, one events channel.
 	if len(chunks) == 1 {
-		return runBackfillChunk(rootCtx, logger, opts, cfg, store, chunks[0])
+		err := runBackfillChunk(rootCtx, logger, opts, cfg, store, chunks[0])
+		backfillOK = err == nil
+		return err
 	}
 
 	// Parallel path. Each chunk is independent: its own dispatcher,
@@ -251,6 +278,7 @@ func backfill(args []string) error {
 		"ledgers", opts.to-opts.from+1,
 		"parallel", opts.parallel,
 	)
+	backfillOK = true
 	return nil
 }
 
@@ -413,6 +441,13 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 			walked++
 			if err := pipeline.ProcessLedger(ctx, disp, events, logger, lcm, cfg.Stellar.Passphrase()); err != nil {
 				return err
+			}
+			// C6-020: report into the run-wide heartbeat AFTER the ledger
+			// was actually processed — a counter bumped before the work
+			// would keep advancing while ProcessLedger wedges, which is
+			// the exact hang the progress alert exists to catch.
+			if opts.walkedTotal != nil {
+				opts.heartbeat.Progress(opts.walkedTotal.Add(1), uint64(lcm.LedgerSequence()))
 			}
 			// C2-14 (durability): DO NOT advance the cursor here. Advancing
 			// at enqueue time moved the resume watermark PAST rows that were
@@ -639,6 +674,27 @@ func refreshCAGGsForChunk(ctx context.Context, logger *slog.Logger, store caggRe
 	return nil
 }
 
+// validateBackfillRangeFlags checks the flags that need no config load:
+// the config path is present, the range is non-empty and does not default
+// to genesis, and -parallel is sane. Split out of parseBackfillFlags purely
+// so that function stays under the funlen ceiling; the checks and their
+// messages are unchanged.
+func validateBackfillRangeFlags(cfgPath string, from, to uint, parallel int) error {
+	if cfgPath == "" {
+		return errors.New("-config required")
+	}
+	if from == 0 {
+		return errors.New("-from must be > 0 (refuse to default to genesis)")
+	}
+	if to <= from {
+		return fmt.Errorf("-to (%d) must be > -from (%d)", to, from)
+	}
+	if parallel < 1 {
+		return fmt.Errorf("-parallel (%d) must be >= 1", parallel)
+	}
+	return nil
+}
+
 // parseBackfillFlags parses CLI args, loads config, and validates the
 // result. Returns the resolved opts + the loaded config so the entry
 // point can wire them up. Returns a non-nil error on any validation
@@ -674,6 +730,10 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 			"inserted chunks before the policy refresher's natural "+
 			"cadence materialises them. Disable only when debugging a "+
 			"specific refresh failure.")
+	heartbeatPath := fs.String("heartbeat", "",
+		"node_exporter textfile path for the liveness/progress gauges (C6-020). "+
+			"Empty = "+opsutil.DefaultTextfileDir+"/ops_job_backfill.prom when that "+
+			"directory exists (r1), otherwise no heartbeat at all.")
 	parallel := fs.Int("parallel", 1,
 		"number of concurrent chunks (default 1 = sequential). The range is "+
 			"split into N contiguous, non-overlapping sub-ranges; each chunk "+
@@ -686,17 +746,8 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 		return opts, cfg, err
 	}
 
-	if *cfgPath == "" {
-		return opts, cfg, errors.New("-config required")
-	}
-	if *from == 0 {
-		return opts, cfg, errors.New("-from must be > 0 (refuse to default to genesis)")
-	}
-	if *to <= *from {
-		return opts, cfg, fmt.Errorf("-to (%d) must be > -from (%d)", *to, *from)
-	}
-	if *parallel < 1 {
-		return opts, cfg, fmt.Errorf("-parallel (%d) must be >= 1", *parallel)
+	if err := validateBackfillRangeFlags(*cfgPath, *from, *to, *parallel); err != nil {
+		return opts, cfg, err
 	}
 
 	loaded, err := config.LoadWithEnv(*cfgPath)
@@ -737,15 +788,16 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 	}
 
 	opts = backfillOpts{
-		cfgPath:      *cfgPath,
-		from:         uint32(*from),
-		to:           uint32(*to),
-		sources:      sources,
-		bucket:       bucket,
-		dryRun:       *dryRun,
-		resume:       *resume,
-		parallel:     *parallel,
-		refreshCAGGs: *refreshCAGGs,
+		cfgPath:       *cfgPath,
+		from:          uint32(*from),
+		to:            uint32(*to),
+		sources:       sources,
+		bucket:        bucket,
+		dryRun:        *dryRun,
+		resume:        *resume,
+		parallel:      *parallel,
+		refreshCAGGs:  *refreshCAGGs,
+		heartbeatPath: *heartbeatPath,
 	}
 	return opts, cfg, nil
 }

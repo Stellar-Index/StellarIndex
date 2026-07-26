@@ -1,0 +1,387 @@
+---
+# promtool unit tests for the C6-020 long-running-ops-job alert family
+# and the C6-032 rate-limiter fail-open alert.
+#
+#   promtool test rules deploy/monitoring/rule-tests/ops-job_test.yml
+#
+# Both alerts are NEW: before this wave neither rule tree selected
+# `stellarindex_ops_job_*` (the series did not exist) or
+# `stellarindex_ratelimit_fail_open_total` (the series existed and had
+# been incrementing since the limiter shipped — nothing looked at it).
+#
+# LABEL SHAPES HERE ARE POST-SCRAPE, ON PURPOSE.
+# The first version of this file fixtured a bare `job="ch-backfill"` — the
+# label as the .prom file writes it — and that made the suite pass against
+# a rule that false-fires in production. A textfile is scraped through
+# node_exporter with `honor_labels` unset, so Prometheus SUBSTITUTES its
+# own `job="node_exporter"` and demotes anything the target exposed to
+# `exported_job`. Every series below therefore carries what an alert
+# actually evaluates against:
+#
+#   job="node_exporter"   — the scrape's, not the emitter's
+#   instance="r1:9100"    — the target address
+#   ops_job="ch-backfill" — the non-reserved label the emitter now uses
+#
+# A fixture that skips the scrape is not a test of the alert; it is a test
+# of the emitter's intent.
+#
+# What these pin, in order of how easy each was to get wrong:
+#   1. the `running == 1` guard — without it a CLEANLY FINISHED backfill,
+#      whose progress counter is flat forever by definition, alerts
+#      eternally and the family gets muted within a week;
+#   2. `on (ops_job, …)` — a finished job must not be rescued by a healthy
+#      SIBLING job on the same host;
+#   3. `on (…, instance)` — a dead job on host A must not be rescued by a
+#      healthy namesake on host B.
+#
+# Deliberately lives OUTSIDE `deploy/monitoring/rules/` — see the header
+# of archive-completeness_test.yml.
+
+rule_files:
+  - ../rules/ingestion.yml
+  - ../rules/api.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── C6-020: the process died hard ────────────────────────────────
+  # running is stuck at 1 (nothing cleared it — OOM kill) and the 60s
+  # liveness ticker stopped at t=20m. By t=60m the heartbeat is 40 min
+  # stale, past the 15-min bound, and has been for over the 10-min `for`.
+  #
+  # 60m is also BEFORE no_progress could fire (its 30m flat window is not
+  # satisfied until t=50m and it then needs 15m of `for`), which is what
+  # lets this case assert the two alerts are genuinely distinguishing the
+  # failure mode rather than both firing on everything.
+  - interval: 1m
+    name: a killed job trips heartbeat_stale and not no_progress
+    input_series:
+      # Heartbeat tracks wall-clock (1 per minute) up to t=20m then freezes.
+      - series: 'stellarindex_ops_job_heartbeat_unix{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '0+60x20 1200+0x60'
+      - series: 'stellarindex_ops_job_running{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '1+0x80'
+      # Progress kept advancing right up to the kill, so within the last
+      # 30 min at t=60m there ARE changes — no_progress must stay silent
+      # and let the (correct) heartbeat alert own this failure.
+      - series: 'stellarindex_ops_job_progress_total{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '0+100x20 2000+0x60'
+
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_ops_job_heartbeat_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              ops_job: ch-backfill
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md
+              summary: "ops job ch-backfill says it is running but stopped heartbeating 40m 0s ago"
+              description: |
+                The job's textfile still claims running=1 but the 60-second
+                liveness ticker has not written for 15+ minutes. The ticker
+                runs independently of progress, so this is NOT "the job is
+                busy" — the PROCESS IS GONE: OOM-kill, SIGKILL, host reboot,
+                or the terminal that owned it closed.
+
+                The range it was walking is NOT complete. Confirm with
+                `systemctl status` / `ps`, then re-run the same window — the
+                backfills are idempotent (ReplacingMergeTree on the CH side,
+                ON CONFLICT on the served side), so re-running is free and
+                leaving the hole is not.
+
+                The stale textfile persists until the next run overwrites it;
+                that is deliberate (a job that died must not become invisible
+                just because nothing is running).
+      - eval_time: 60m
+        alertname: stellarindex_ops_job_no_progress
+        exp_alerts: []
+
+  # ── C6-020: the process is alive and hung ────────────────────────
+  # Heartbeat keeps ticking (the process is up) but progress froze at
+  # t=10m. By t=60m nothing has moved for 50 min.
+  - interval: 1m
+    name: a hung job trips no_progress and not heartbeat_stale
+    input_series:
+      - series: 'stellarindex_ops_job_heartbeat_unix{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '0+60x120'
+      - series: 'stellarindex_ops_job_running{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '1+0x120'
+      - series: 'stellarindex_ops_job_progress_total{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '0+100x10 1000+0x110'
+
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_ops_job_no_progress
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              ops_job: ch-backfill
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md
+              summary: "ops job ch-backfill is alive but has completed no work for 30+ minutes"
+              description: |
+                The process is heartbeating (so it has not died) but its
+                completed-units counter has not moved in 30 minutes. The job
+                is HUNG, not dead: a blocked S3 GET with no deadline, a
+                ClickHouse/Postgres write waiting on a lock, or a stuck
+                captive-core.
+
+                Distinguish from a genuinely slow window by checking the
+                cursor: `stellarindex_ops_job_progress_cursor{ops_job="…"}`
+                frozen at the same ledger across scrapes is a hang. Take a
+                goroutine dump / strace before killing it — a hang here has
+                recurred (galexie wedge, 2026-07-05) and the stack is the
+                only evidence of which read blocked.
+      - eval_time: 60m
+        alertname: stellarindex_ops_job_heartbeat_stale
+        exp_alerts: []
+
+  # ── C6-020: a job that FINISHED must be silent forever ───────────
+  # This is the regression that would otherwise get the whole family
+  # muted. The job exited cleanly at t=10m: running→0, and from then on
+  # both the heartbeat AND the progress counter are frozen by definition.
+  # Every stale/flat condition in both exprs is satisfied; only the
+  # `running == 1` guard keeps them quiet.
+  - interval: 1m
+    name: a cleanly finished job never alerts
+    input_series:
+      - series: 'stellarindex_ops_job_heartbeat_unix{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '0+60x10 600+0x170'
+      - series: 'stellarindex_ops_job_running{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '1+0x10 0+0x170'
+      - series: 'stellarindex_ops_job_progress_total{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '0+100x10 1000+0x170'
+      - series: 'stellarindex_ops_job_last_exit_ok{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '1+0x170'
+
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: stellarindex_ops_job_heartbeat_stale
+        exp_alerts: []
+      - eval_time: 3h
+        alertname: stellarindex_ops_job_no_progress
+        exp_alerts: []
+
+  # ── C6-020 PROBE (a): sibling jobs on ONE host ───────────────────
+  # The exact production steady state — the heartbeat is wired into BOTH
+  # ch-backfill and backfill, so two .prom files per host is normal.
+  # `backfill` finished cleanly at t=10m (running=0, heartbeat + progress
+  # frozen); `ch-backfill` is running happily alongside it.
+  #
+  # Nothing should fire. With the pre-fix `on (job)` join it does: after
+  # the scrape both files carry the SAME job="node_exporter", so the
+  # finished backfill's stale heartbeat and flat counter matched
+  # ch-backfill's `running == 1` and produced a PERMANENT false ticket.
+  # `on (ops_job, instance)` keeps the two apart.
+  - interval: 1m
+    name: a finished job is not rescued by a healthy sibling on the same host
+    input_series:
+      # backfill: finished cleanly at t=10m.
+      - series: 'stellarindex_ops_job_heartbeat_unix{job="node_exporter",instance="r1:9100",ops_job="backfill"}'
+        values: '0+60x10 600+0x170'
+      - series: 'stellarindex_ops_job_running{job="node_exporter",instance="r1:9100",ops_job="backfill"}'
+        values: '1+0x10 0+0x170'
+      - series: 'stellarindex_ops_job_progress_total{job="node_exporter",instance="r1:9100",ops_job="backfill"}'
+        values: '0+100x10 1000+0x170'
+      # ch-backfill: alive, heartbeating, making progress, all the way out.
+      - series: 'stellarindex_ops_job_heartbeat_unix{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '0+60x180'
+      - series: 'stellarindex_ops_job_running{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '1+0x180'
+      - series: 'stellarindex_ops_job_progress_total{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '0+250x180'
+
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: stellarindex_ops_job_heartbeat_stale
+        exp_alerts: []
+      - eval_time: 3h
+        alertname: stellarindex_ops_job_no_progress
+        exp_alerts: []
+
+  # ── C6-020 PROBE (b1): the `instance` half of the join, isolated ──
+  # r1's ch-backfill FINISHED cleanly at t=10m (running=0, heartbeat and
+  # progress frozen). r2 is running the SAME subcommand, healthily.
+  #
+  # Nothing should fire. This case is the one that isolates `instance`:
+  # it fails against the rejected `on (job)` AND against a half-fix of
+  # `on (ops_job)` alone, because in both of those r2's `running == 1`
+  # satisfies r1's guard and r1's finished job tickets forever.
+  - interval: 1m
+    name: a finished job on one host is not rescued by a running namesake on another
+    input_series:
+      # r1 — finished cleanly.
+      - series: 'stellarindex_ops_job_heartbeat_unix{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '0+60x10 600+0x170'
+      - series: 'stellarindex_ops_job_running{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '1+0x10 0+0x170'
+      - series: 'stellarindex_ops_job_progress_total{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '0+100x10 1000+0x170'
+      # r2 — same ops_job, still running, healthy.
+      - series: 'stellarindex_ops_job_heartbeat_unix{job="node_exporter",instance="r2:9100",ops_job="ch-backfill"}'
+        values: '0+60x180'
+      - series: 'stellarindex_ops_job_running{job="node_exporter",instance="r2:9100",ops_job="ch-backfill"}'
+        values: '1+0x180'
+      - series: 'stellarindex_ops_job_progress_total{job="node_exporter",instance="r2:9100",ops_job="ch-backfill"}'
+        values: '0+250x180'
+
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: stellarindex_ops_job_heartbeat_stale
+        exp_alerts: []
+      - eval_time: 3h
+        alertname: stellarindex_ops_job_no_progress
+        exp_alerts: []
+
+  # ── C6-020 PROBE (b2): same ops_job on TWO hosts ─────────────────
+  # r1's ch-backfill was OOM-killed at t=20m (running stuck at 1,
+  # heartbeat frozen). r2 is running the same subcommand, healthily.
+  #
+  # The alert must fire for r1 ONLY. Without `instance` in the join, r2's
+  # `running == 1` satisfies r1's guard and the dead job on r1 is masked —
+  # which is precisely the multi-host case this rule tree exists for.
+  - interval: 1m
+    name: a dead job on one host is not masked by a healthy namesake on another
+    input_series:
+      # r1 — killed at t=20m.
+      - series: 'stellarindex_ops_job_heartbeat_unix{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '0+60x20 1200+0x60'
+      - series: 'stellarindex_ops_job_running{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '1+0x80'
+      - series: 'stellarindex_ops_job_progress_total{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '0+100x20 2000+0x60'
+      # r2 — healthy throughout.
+      - series: 'stellarindex_ops_job_heartbeat_unix{job="node_exporter",instance="r2:9100",ops_job="ch-backfill"}'
+        values: '0+60x80'
+      - series: 'stellarindex_ops_job_running{job="node_exporter",instance="r2:9100",ops_job="ch-backfill"}'
+        values: '1+0x80'
+      - series: 'stellarindex_ops_job_progress_total{job="node_exporter",instance="r2:9100",ops_job="ch-backfill"}'
+        values: '0+100x80'
+
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_ops_job_heartbeat_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              ops_job: ch-backfill
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md
+              summary: "ops job ch-backfill says it is running but stopped heartbeating 40m 0s ago"
+              description: |
+                The job's textfile still claims running=1 but the 60-second
+                liveness ticker has not written for 15+ minutes. The ticker
+                runs independently of progress, so this is NOT "the job is
+                busy" — the PROCESS IS GONE: OOM-kill, SIGKILL, host reboot,
+                or the terminal that owned it closed.
+
+                The range it was walking is NOT complete. Confirm with
+                `systemctl status` / `ps`, then re-run the same window — the
+                backfills are idempotent (ReplacingMergeTree on the CH side,
+                ON CONFLICT on the served side), so re-running is free and
+                leaving the hole is not.
+
+                The stale textfile persists until the next run overwrites it;
+                that is deliberate (a job that died must not become invisible
+                just because nothing is running).
+
+  # ── C6-020 PROBE (d): flock winner vs .pid loser on ONE host ─────
+  # The concurrency guard's own output, joined against itself.
+  #
+  # Run A won the flock and writes the primary ops_job_ch_backfill.prom
+  # (no pid label). Run B lost, writes ops_job_ch_backfill.pid4242.prom
+  # (pid="4242"). A finishes cleanly at t=10m; B is still going.
+  #
+  # Nothing should fire. With a two-key `on (ops_job, instance)` join it
+  # does: A and B share that key exactly, so A's running=0 / frozen
+  # heartbeat / flat counter is "rescued" by B's `running == 1` and BOTH
+  # alerts ticket permanently against the run that finished correctly —
+  # the same cross-match class the ops_job rename fixed one scope out,
+  # re-opened by the fallback file. `pid` is the third join key; PromQL
+  # treats the primary's absent pid as "", so primary matches only
+  # primary and a .pid sibling only its own.
+  - interval: 1m
+    name: a finished primary is not rescued by its still-running pid sibling
+    input_series:
+      # Run A — flock winner, primary file, finished cleanly at t=10m.
+      - series: 'stellarindex_ops_job_heartbeat_unix{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '0+60x10 600+0x170'
+      - series: 'stellarindex_ops_job_running{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '1+0x10 0+0x170'
+      - series: 'stellarindex_ops_job_progress_total{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '0+100x10 1000+0x170'
+      # Run B — flock loser, .pid4242.prom, still running and healthy.
+      - series: 'stellarindex_ops_job_heartbeat_unix{job="node_exporter",instance="r1:9100",ops_job="ch-backfill",pid="4242"}'
+        values: '0+60x180'
+      - series: 'stellarindex_ops_job_running{job="node_exporter",instance="r1:9100",ops_job="ch-backfill",pid="4242"}'
+        values: '1+0x180'
+      - series: 'stellarindex_ops_job_progress_total{job="node_exporter",instance="r1:9100",ops_job="ch-backfill",pid="4242"}'
+        values: '0+250x180'
+
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: stellarindex_ops_job_heartbeat_stale
+        exp_alerts: []
+      - eval_time: 3h
+        alertname: stellarindex_ops_job_no_progress
+        exp_alerts: []
+
+  # ── C6-032: the rate limiter is failing open ─────────────────────
+  # Redis is erroring; every request bypasses the limiter. Sustained
+  # for well past the 10-minute `for`.
+  - interval: 1m
+    name: a sustained rate-limiter bypass tickets
+    input_series:
+      - series: 'stellarindex_ratelimit_fail_open_total'
+        values: '0+600x60'
+
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_ratelimit_fail_open
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ratelimit-fail-open.md
+              summary: "Rate limiting is FAILING OPEN (10 req/s bypassing the limiter)"
+              description: |
+                The API rate limiter could not reach its Redis backing store and
+                let the requests through unlimited, continuously for the last
+                10 minutes. Per-key quotas, burst protection and the abuse
+                ceiling are all inert for the duration: a single caller can
+                saturate the serving plane, and metered usage still records
+                (billing is unaffected) while the throughput cap is not enforced.
+
+                Check the Redis readyz probe first — this normally moves
+                together with it. If Redis is healthy, the failure is in the
+                limiter's own path (auth, evicted script, key namespace).
+
+  # ── C6-032: a momentary blip must NOT ticket ─────────────────────
+  # One failover second bumps the counter once and it goes flat again.
+  # The 10-minute `for` on rate() must absorb it — an alert that pages on
+  # every Redis failover is an alert that gets silenced.
+  - interval: 1m
+    name: a one-off bypass during a failover stays quiet
+    input_series:
+      - series: 'stellarindex_ratelimit_fail_open_total'
+        values: '0+0x10 3+0x60'
+
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_ratelimit_fail_open
+        exp_alerts: []
