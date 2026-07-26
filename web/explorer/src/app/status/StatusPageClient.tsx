@@ -110,7 +110,16 @@ type IngestionSnapshot = Omit<
       // coverage otherwise.
       completeness_pct?: number;
       completeness_watermark?: number;
+      // The ADR-0033/ADR-0034 TWO-AXIS verdict. `completeness_complete`
+      // is the SERVED axis (substrate ∧ recognition ∧ the
+      // retention-scoped projection reconcile);
+      // `completeness_lake_complete` is the ARCHIVE axis (substrate ∧
+      // recognition, genesis-to-tip). A source is routinely
+      // lake_complete=true with complete=false. Rendering only the
+      // served axis (C6-046) made that state look like a data
+      // shortfall — see the "reconciling" branch below.
       completeness_complete?: boolean;
+      completeness_lake_complete?: boolean;
     }
   >;
   sources: Array<
@@ -1653,6 +1662,12 @@ function BackfillCoverageTable({
               // `reconciled`, NOT on the percentage.
               const ran = r.completeness_pct != null;
               const reconciled = r.completeness_complete === true;
+              // The archive axis. When it is true and `reconciled` is
+              // false, the data PROVABLY EXISTS genesis-to-tip and only
+              // the served projection is behind — a materially different
+              // statement from "we may be missing history", and the one
+              // the status page previously could not make (C6-046).
+              const lakeComplete = r.completeness_lake_complete === true;
               const pct =
                 (ran
                   ? (r.completeness_pct as number)
@@ -1711,12 +1726,19 @@ function BackfillCoverageTable({
                     ) : ran ? (
                       <span
                         className="inline-flex items-center justify-end gap-1.5 text-warn-700"
-                        title="Captured, not yet verified. The certified lake holds 100% of this source's data (substrate hash-chained to the tip), but the served tier has not reconciled to the lake yet (ADR-0033 complete=false) — so this is NOT yet fully verified. The hourly completeness verify + lake re-derive close the gap."
+                        title={
+                          lakeComplete
+                            ? 'Archive PROVEN genesis-complete (ADR-0034 lake_complete=true: substrate continuity + hash chain + recognition, genesis to tip). The served tier has not reconciled to it yet (ADR-0033 complete=false), so the served numbers can still be short. No data is missing; the hourly completeness verify + lake re-derive close the gap.'
+                            : 'Captured, not yet verified. The completeness watermark has been computed but NEITHER axis is complete: the archive is not yet proven genesis-complete (lake_complete=false) and the served tier has not reconciled. Genuine history may still be missing.'
+                        }
                       >
                         <span className="rounded-sm bg-line px-1 py-0.5 text-[10px] uppercase tracking-wide text-warn-700">
-                          reconciling
+                          {lakeComplete ? 'archive complete' : 'reconciling'}
                         </span>
-                        <span className="tnum">{pct.toFixed(1)}% captured</span>
+                        <span className="tnum">
+                          {pct.toFixed(1)}%{' '}
+                          {lakeComplete ? 'served' : 'captured'}
+                        </span>
                       </span>
                     ) : (
                       <span

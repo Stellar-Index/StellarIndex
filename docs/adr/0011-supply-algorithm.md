@@ -221,9 +221,47 @@ than 1 stroop.
   formal disclosure. Same code path; just YAML.
 
 - **Negative — three algorithms means three test surfaces and
-  three bug classes.** Mitigated by the SAC-wrapped cross-check
-  (when the same asset is observable both ways, the sums must
-  match within 1 stroop). Disagreement triggers an alert.
+  three bug classes.** Partially mitigated by the SAC-wrapped
+  cross-check: when the same asset is observable both ways, the two
+  observations must satisfy a pair of INEQUALITIES. A breach triggers an
+  alert.
+
+  **Amendment (2026-07-26, C6-056 — the original text said "the sums
+  must match within 1 stroop", which the implementation has never done
+  and cannot do).** A partially-wrapped asset legitimately has
+  `classic_total > sac_total`: the classic ledger-entry sum counts every
+  holder, while the SAC event-derived total counts only what was wrapped.
+  Equality would false-alarm on every normal asset. What
+  `internal/supply.CrossCheckSubsetBound` actually asserts is two
+  one-directional bounds:
+
+  1. **over-mint** — `sac.TotalSupply ≤ classic.TotalSupply`;
+  2. **escrow-exceeds-minted** — `classic.SACWrappedStroops ≤
+     sac.TotalSupply` (every escrowed unit got there by a mint).
+
+  `DivergenceStroops = max(over_mint_excess, escrow_excess)`, so the
+  single existing gauge and alert fire on either breach.
+
+  Consequences of it being a bound rather than a reconciliation — each is
+  a real blind spot, not a hypothetical:
+
+  - **Only the OVER-report direction is detected.** An over-reported SAC
+    total (a mint the indexer double-counted, a burn it missed) breaches
+    leg 1; an UNDER-counted `SACWrappedStroops` sits *below* `sac_total`
+    and passes leg 2 silently — the documented BLND/EURC/KALE/PHO
+    dormant-pool-balance case in `WrapClassPartial`'s KNOWN LIMITATION,
+    cured by `supply seed-sac-balances -full-history`. Leg 2 is an upper
+    bound on escrow, not proof that escrow was fully observed.
+  - **The non-SAC half of Algorithm 2 is unchecked.** Trustline /
+    claimable-balance / LP-reserve balances have no independent second
+    observation, so an undercount there merely widens the benign
+    `classic > sac` gap and is invisible to this check.
+  - **Leg 2 is CS-087-gated.** When `classic.SACWrappedStroops` is nil
+    the leg is not evaluated and `SubsetBoundChecked` stays false; it is
+    never defaulted to zero, because `0 ≤ sac_total` holds vacuously and
+    a zero default would publish a green check that verified nothing.
+    **A caller reading `WithinTolerance` MUST read `SubsetBoundChecked`
+    alongside it.**
 
 - **Negative — the locked-set YAML is operationally fiddly.** Every
   asset-of-interest needs a curated entry to get a meaningful
