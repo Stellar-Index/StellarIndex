@@ -26,6 +26,23 @@ type ledgerCloseTimeReader interface {
 	CloseTimeForLedger(ctx context.Context, ledger uint32) (time.Time, bool, error)
 }
 
+// cursorReader is the ingestion-cursor half of resolveSnapshotLedger's
+// inputs, kept as an interface for the same reason ledgerCloseTimeReader
+// is: so the auto-resolve branch is unit-testable without Postgres.
+// Satisfied by *timescale.Store.
+type cursorReader interface {
+	ListCursors(ctx context.Context) ([]timescale.Cursor, error)
+}
+
+// chainCursorSource is the ingestion_cursors row that records how far the
+// LIVE indexer has walked the chain — cmd/stellarindex-indexer's
+// `cursorSource` constant. It is the one cursor whose value is, by
+// definition, "the chain position the supply components were derived
+// from"; every other row in that table belongs to an ops job
+// (backfill/<range>, projector/<source>, census-backfill, projected-rebuild,
+// gap-detector high-water) and describes that job's own progress.
+const chainCursorSource = "ledgerstream"
+
 // Run is the internal/ops/supply package's entry point — see
 // discovery.Run's doc comment for the calling convention shared by
 // every internal/ops/* package post-split (maintainability audit
@@ -306,21 +323,19 @@ func supplySnapshotMaybeEmitFailure(textfileOut, assetRaw string, startedAt time
 // acceptance (the per-row Ledger is already returned by
 // AccountObservationRow et al, so it's a refactor of the Refresher
 // + Supply shapes, not a new storage primitive).
-func resolveSnapshotLedger(ctx context.Context, store *timescale.Store, closeTimes ledgerCloseTimeReader, opLedger uint32) (uint32, time.Time, error) {
+func resolveSnapshotLedger(ctx context.Context, store cursorReader, closeTimes ledgerCloseTimeReader, opLedger uint32) (uint32, time.Time, error) {
 	ledger := opLedger
 	if ledger == 0 {
 		cursors, err := store.ListCursors(ctx)
 		if err != nil {
 			return 0, time.Time{}, fmt.Errorf("ListCursors: %w", err)
 		}
-		for _, c := range cursors {
-			if c.LastLedger > ledger {
-				ledger = c.LastLedger
-			}
-		}
+		var chosen string
+		ledger, chosen = autoSnapshotLedger(cursors)
 		if ledger == 0 {
 			return 0, time.Time{}, errors.New("no ingestion cursors yet — pass -ledger explicitly until the indexer has produced a cursor")
 		}
+		fmt.Fprintf(os.Stderr, "supply: auto-resolved snapshot ledger %d from the %q cursor\n", ledger, chosen)
 	}
 	closeTime, found, err := closeTimes.CloseTimeForLedger(ctx, ledger)
 	if err != nil {
@@ -330,6 +345,63 @@ func resolveSnapshotLedger(ctx context.Context, store *timescale.Store, closeTim
 		return 0, time.Time{}, fmt.Errorf("ledger %d has no stellar.ledgers row — cannot resolve its close time (lake gap?); refusing to stamp the snapshot with wall-clock time", ledger)
 	}
 	return ledger, closeTime, nil
+}
+
+// autoSnapshotLedger picks the chain position a `-ledger`-less supply
+// snapshot is stamped at, and names the cursor it came from. Pure —
+// unit-testable without Postgres.
+//
+// C4-033 (audit-2026-07-23): this used to be MAX(last_ledger) over EVERY
+// row of ingestion_cursors. That table is not a table of chain positions —
+// it is a table of JOB positions. `ledgerstream` is the live indexer's
+// walk of the chain and is the only row that means "this is how far the
+// data behind a supply component has been ingested"; the rest
+// (backfill/<from>-<to>, projector/<source>, census-backfill,
+// projected-rebuild, gap-detector high-water) are each some ops job's own
+// progress through a range an operator chose.
+//
+// Taking the MAX therefore let ANY ops job decide what ledger the money
+// snapshot claims to be as-of. The concrete reachable case on r1: the
+// indexer is stopped or behind (a restart, a re-derive, a Phase-A
+// maintenance window) while an operator backfills a range near the tip.
+// The backfill cursor then exceeds the ledgerstream cursor, `supply` with
+// no -ledger picks IT, and the snapshot is stamped
+// "circulating supply as of ledger Y" while every component balance it
+// summed was observed at the indexer's lower position. The published
+// number is real, its ledger attribution is not — and supply is the
+// single most-consumed number the product serves.
+//
+// The named cursor wins whenever it exists. The MAX fallback is kept —
+// with its source named in the returned string, which the caller prints —
+// for the pre-first-run case (an operator seeding supply on a host whose
+// indexer has not yet written a ledgerstream row) so this does not become
+// a hard dependency on one process having run. It is a fallback, not the
+// default: the caller's log line says which one was used, so an operator
+// reading the run output can see when a job cursor supplied the stamp.
+//
+// This does NOT close F-1236 (a stalled per-component observer can still
+// lag the chosen ledger); it removes the separate, cruder failure of
+// choosing the ledger from an unrelated job.
+func autoSnapshotLedger(cursors []timescale.Cursor) (ledger uint32, source string) {
+	for _, c := range cursors {
+		if c.Source == chainCursorSource {
+			return c.LastLedger, c.Source
+		}
+	}
+	var best timescale.Cursor
+	for _, c := range cursors {
+		if c.LastLedger > best.LastLedger {
+			best = c
+		}
+	}
+	if best.LastLedger == 0 {
+		return 0, ""
+	}
+	name := best.Source
+	if best.Sub != "" {
+		name += "/" + best.Sub
+	}
+	return best.LastLedger, name + " (no " + chainCursorSource + " cursor yet — FALLBACK)"
 }
 
 // supplyAudit prints the latest supply snapshot for an asset, plus
