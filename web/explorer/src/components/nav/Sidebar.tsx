@@ -51,7 +51,7 @@ type NavGroup = { title?: string; items: NavItem[] };
 // The console IA — an entity-centric explorer. Grouped so a data-heavy
 // site stays navigable. Secondary/marketing pages (Methodology,
 // Diagnostics, Sources, the CEX board) live in the footer + search, not
-// the primary rail. The pricing API is the flagship product, so Pricing
+// the primary rail. The API is the flagship product, so Pricing
 // sits in the Developers group (LC-060). Transactions / Contracts / SDEX
 // Markets land here as their pages ship (kept out until then so there
 // are no dead links).
@@ -103,7 +103,7 @@ const NAV: NavGroup[] = [
   {
     title: 'Developers',
     items: [
-      { href: '/pricing', label: 'Pricing API', icon: CreditCard },
+      { href: '/pricing', label: 'Pricing', icon: CreditCard },
       { href: 'https://docs.stellarindex.io', label: 'API docs', icon: BookOpen, external: true },
       { href: '/sdk', label: 'SDK', icon: Code2 },
       { href: '/status', label: 'Status', icon: Activity },

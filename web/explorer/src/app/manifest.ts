@@ -11,7 +11,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: 'Stellar Index',
     short_name: 'Stellar Index',
     description:
-      'Protocol explorer + pricing API for the Stellar network — complete, verified, per-protocol on-chain data.',
+      'Protocol explorer + API for the Stellar network — complete, verified, per-protocol on-chain data.',
     start_url: '/',
     display: 'standalone',
     background_color: '#ffffff',

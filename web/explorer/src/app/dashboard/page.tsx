@@ -222,7 +222,7 @@ function GettingStarted({
         'We have seen traffic on your keys.'
       ) : (
         <>
-          Try the pricing API — the latest XLM/USD VWAP:
+          Try the API — the latest XLM/USD VWAP:
           <pre className="mt-1.5 overflow-x-auto rounded-md border border-line bg-surface-subtle px-2.5 py-2 font-mono text-[12px] leading-relaxed text-ink">
             {`curl -H "Authorization: Bearer sip_your_key" \\
   "https://api.stellarindex.io/v1/price?asset=native&quote=fiat:USD"`}

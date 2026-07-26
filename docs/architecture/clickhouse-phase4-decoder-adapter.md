@@ -138,7 +138,7 @@ pattern:
 
 | data | home | why |
 |---|---|---|
-| CAGGs `prices_1m…1mo` | Postgres, **all history** | small, hot; the pricing API serves them; the Go aggregator + Timescale policy chain live here |
+| CAGGs `prices_1m…1mo` | Postgres, **all history** | small, hot; the API's price endpoints serve them; the Go aggregator + Timescale policy chain live here |
 | raw `trades` | Postgres, **kept forever** (migration 0031 removed the old 90-day retention — invariant 8) | live VWAP/OHLC recompute + per-trade API; the served working set is recent, but no `drop_after` policy prunes old rows |
 | all 2.9 B raw trades + events + ops | **ClickHouse** | protocol deep-dives, full explorer, historical-raw — the certified raw lake, the tier built for it |
 | protocol entity tables | Postgres, rebuilt clean from CH | hot served entities; full event-level history in CH |

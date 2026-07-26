@@ -38,7 +38,7 @@ export default function HomePage() {
             <ArrowRight className="h-4 w-4" />
           </ButtonLink>
           <ButtonLink href="/pricing" variant="secondary" size="lg">
-            Pricing API
+            Pricing
           </ButtonLink>
           <ButtonLink href="https://docs.stellarindex.io" variant="secondary" size="lg">
             API docs
@@ -97,23 +97,25 @@ export default function HomePage() {
 
       <HomeBlogStrip />
 
-      {/* LC-060: the flagship pricing-API product, presented as a product —
+      {/* LC-060: the flagship API product, presented as a product —
           plans, keys, and where to start. */}
       <section className="rounded-card border border-line bg-surface p-6 shadow-card sm:p-8">
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:items-center">
           <div className="space-y-4">
             <p className="text-xs font-medium uppercase tracking-wider text-brand-600">
-              Pricing API
+              Stellar Index API
             </p>
             <h2 className="text-h2 font-semibold text-ink">
               One verified price for every Stellar pair.
             </h2>
             <p className="text-[15px] leading-relaxed text-ink-muted">
-              The flagship product behind this explorer: VWAP, TWAP, and OHLC
-              computed from every CEX, DEX, and oracle we index, served over
-              REST + SSE with deterministic closed-bucket semantics. Anonymous
-              reads are free forever; an API key raises your rate limit from
-              60 to 1,000+ requests a minute, with tiers and SLAs beyond that.
+              The API behind this explorer — the same data, machine-readable.
+              VWAP, TWAP, and OHLC computed from every CEX, DEX, and oracle we
+              index, served over REST + SSE with deterministic closed-bucket
+              semantics, alongside the ledger, contract, asset, supply and
+              history endpoints. Anonymous reads are free forever; an API key
+              raises your rate limit from 60 to 1,000+ requests a minute, with
+              tiers and SLAs beyond that.
             </p>
             <div className="flex flex-wrap items-center gap-3 pt-1">
               <ButtonLink href="/signup">

@@ -87,7 +87,7 @@ expected sequence.
 - Oncall opens `#incident-<YYYY-MM-DD>-freeze-stuck` channel.
 - Initial post: "Investigating a stuck-frozen flag on XLM/USD.
   Customers may see a non-updating price feed."
-- Status page set to *Degraded performance* on **Pricing API**.
+- Status page set to *Degraded performance* on **API**.
 
 ### Within 10 minutes — diagnose
 

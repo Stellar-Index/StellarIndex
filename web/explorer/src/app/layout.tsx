@@ -30,8 +30,12 @@ const fraunces = Fraunces({
 
 const SITE_URL = 'https://stellarindex.io';
 const SITE_NAME = 'Stellar Index';
+// One tagline, used for <title>, og:title, twitter:title and the og:image
+// alt so the social card and the tab agree. Keep in sync with the same
+// string in src/lib/seo.ts (SITE_OG_IMAGES alt).
+const SITE_TAGLINE = `${SITE_NAME} — Stellar protocol explorer & API`;
 const SITE_DESCRIPTION =
-  'The protocol explorer for the Stellar network. Every contract, every event, every trade — complete, verified, per-protocol on-chain data, plus an independent VWAP pricing API across on-chain DEXes, classic SDEX, and major exchanges.';
+  'The protocol explorer and API for the Stellar network. Every contract, every event, every trade — complete, verified, per-protocol on-chain data, plus history, supply, anomaly detection, and independent VWAP prices across on-chain DEXes, classic SDEX, and major exchanges.';
 
 // Mobile address-bar / PWA theme tint — the primary brand blue (brand-600).
 export const viewport: Viewport = {
@@ -41,7 +45,7 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
-    default: `${SITE_NAME} — Stellar pricing explorer`,
+    default: SITE_TAGLINE,
     template: `%s · ${SITE_NAME}`,
   },
   description: SITE_DESCRIPTION,
@@ -65,7 +69,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: 'website',
     siteName: SITE_NAME,
-    title: `${SITE_NAME} — Stellar pricing explorer`,
+    title: SITE_TAGLINE,
     description: SITE_DESCRIPTION,
     url: SITE_URL,
     locale: 'en_US',
@@ -74,14 +78,14 @@ export const metadata: Metadata = {
         url: '/og.png',
         width: 1200,
         height: 630,
-        alt: `${SITE_NAME} — Stellar pricing explorer`,
+        alt: SITE_TAGLINE,
         type: 'image/png',
       },
     ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: `${SITE_NAME} — Stellar pricing explorer`,
+    title: SITE_TAGLINE,
     description: SITE_DESCRIPTION,
     images: ['/og.png'],
   },

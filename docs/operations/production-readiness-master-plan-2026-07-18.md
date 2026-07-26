@@ -8,7 +8,7 @@ supersedes_context: docs/operations/runbooks/consolidated-deploy-plan-2026-07-18
 
 # StellarIndex — production-readiness master plan
 
-The single, honest, dependency-ordered plan to take StellarIndex (Stellar explorer + public pricing API on the R1 Hetzner box) from its current state to a production-live state fit to present to Stellar. Every number here is live-verified on R1 (2026-07-18) or cited to a rehearsed artifact.
+The single, honest, dependency-ordered plan to take StellarIndex (Stellar explorer + the public Stellar Index API on the R1 Hetzner box) from its current state to a production-live state fit to present to Stellar. Every number here is live-verified on R1 (2026-07-18) or cited to a rehearsed artifact.
 
 > **⭐ THIS IS THE SOURCE OF TRUTH for the production-readiness campaign.** If you're resuming (context was lost / new session): read §0 for current state, then the phases (§3). Companion docs: `runbooks/phase-a-capacity-relief-2026-07-18.md` (capacity detail + live table), `off-site-backup-plan.md`, `runbooks/consolidated-deploy-plan-2026-07-18.md` (Phase C/D detail). Canonical-but-stale: `docs/architecture/ha-plan.md` (§4/§8 need the rewrite noted in §6b).
 

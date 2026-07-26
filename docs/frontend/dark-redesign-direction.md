@@ -10,8 +10,9 @@ references: Dune.com product UI (dark data aesthetic), docs/frontend/redesign-re
 
 ## Subject (grounding)
 
-**Stellar Index** — protocol explorer + independent VWAP pricing API for the
-Stellar network. Audience: protocol teams, quant/trading, integrators who care
+**Stellar Index** — protocol explorer + the Stellar Index API (complete history,
+supply, analytics, and independent VWAP prices) for the Stellar network.
+Audience: protocol teams, quant/trading, integrators who care
 about **precision and verifiability** of on-chain value. The interface's job:
 make dense, verified on-chain data (ledgers, contracts, trades, prices) legible
 and trustworthy at a glance. The material — **ledger sequences, tx hashes,
@@ -32,11 +33,11 @@ ledger table *is* the personality: institutional-grade identity, machine-grade
 data.
 
 **The risk (one, justified):** an editorial serif inside a data tool. Justified
-because the serif↔mono contrast is the identity, it matches the "institutional
-pricing API" positioning, and it's grounded in the reference — while being the
-opposite of the two AI-default darks (near-black + single acid accent; or
-all-Inter flatness). The serif is used *only* for display; everything else stays
-quiet.
+because the serif↔mono contrast is the identity, it matches the
+"institutional-grade data" positioning, and it's grounded in the reference —
+while being the opposite of the two AI-default darks (near-black + single acid
+accent; or all-Inter flatness). The serif is used *only* for display;
+everything else stays quiet.
 
 Second signature thread: the **freshness / verification chip** (a small green
 `✓ 21h` recency stamp, and the two-axis completeness verdict) — Stellar Index's

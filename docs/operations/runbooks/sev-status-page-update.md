@@ -57,7 +57,7 @@ the escalation timestamp; don't wait for the next hour boundary.
 
 ```sh
 cd internal/incidents/data
-SLUG=pricing-api-stale                     # short lowercase hyphen-separated
+SLUG=stale-prices                          # short lowercase hyphen-separated
 DATE=$(date -u +%Y-%m-%d)
 cp _template.md "${DATE}-${SLUG}.md"
 $EDITOR "${DATE}-${SLUG}.md"
@@ -73,7 +73,7 @@ reads on the index page.
 Match the `_template.md` shape precisely. Required fields:
 
 ```yaml
-title: "[SEV-1] Pricing API returning stale prices"
+title: "[SEV-1] API returning stale prices"
 date: 2026-05-13
 severity: SEV-1
 status: investigating

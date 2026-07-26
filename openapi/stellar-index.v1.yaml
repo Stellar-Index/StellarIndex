@@ -19,10 +19,14 @@ openapi: 3.1.0
 info:
   title: Stellar Index API
   version: "1.10.0"
-  summary: Aggregated Stellar asset pricing — real-time and historical.
+  summary: The Stellar network — explorer, history, supply, analytics, and prices.
   description: |
-    The Stellar Index API exposes normalised, VWAP-aggregated pricing
-    for every classic and SEP-41 Soroban asset on Stellar.
+    The Stellar Index API exposes the Stellar network as one
+    consistent read surface: ledgers, transactions, operations and
+    contracts; the asset catalogue with supply and holders; complete
+    since-inception history; MEV / anomaly / divergence analytics;
+    and normalised, VWAP-aggregated prices for every classic and
+    SEP-41 Soroban asset.
 
     Design intent: see
     https://github.com/Stellar-Index/StellarIndex/blob/main/docs/reference/api-design.md

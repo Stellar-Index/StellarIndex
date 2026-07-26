@@ -141,7 +141,7 @@ diff -r --brief --exclude=.git ../stellarindex . | head -50
 # 5. Create the GitHub repo + push
 gh repo create Stellar-Index/StellarIndex \
     --public \
-    --description "Stellar-network pricing API: ingest, aggregate, serve VWAP/TWAP/OHLC" \
+    --description "Stellar Index API: Stellar protocol explorer, complete history, supply, and aggregated VWAP/TWAP/OHLC prices" \
     --license Apache-2.0
 git remote remove origin
 git remote add origin git@github.com:Stellar-Index/StellarIndex.git

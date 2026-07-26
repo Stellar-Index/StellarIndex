@@ -21,7 +21,10 @@ The Stellar Index is now live at **{{api_url}}** as of
 
 ## What this is
 
-A Stellar-network pricing API. Aggregated VWAP / TWAP / OHLC
+The Stellar Index API — a public REST + SSE API for the Stellar
+network: the explorer surface (ledgers, transactions, operations,
+contracts), the asset catalogue with supply and complete history,
+anomaly / divergence analytics, and aggregated VWAP / TWAP / OHLC
 across on-chain DEXs (Soroswap, Aquarius, Phoenix, Comet,
 SDEX), CEX feeds (Binance, Coinbase, Kraken, Bitstamp),
 oracle networks (Reflector, Redstone, Band), and FX anchors
