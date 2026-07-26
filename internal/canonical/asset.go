@@ -326,10 +326,24 @@ func (a Asset) Value() (driver.Value, error) {
 }
 
 // Scan implements sql.Scanner.
+//
+// A SQL NULL is an ERROR, not a zero Asset (C4-068, audit-2026-07-23).
+// [Value] refuses to write anything that fails [Validate], so a NULL in
+// an asset column never came from this type — it is a schema/query
+// defect (a LEFT JOIN that missed, a column that should be NOT NULL).
+// Returning nil and leaving `*a = Asset{}` produced an Asset with
+// `Type == ""`: it survives every ==/Equal comparison, formats as the
+// empty string, and only fails if a caller happens to call Validate —
+// i.e. exactly the "invalid data that reads as valid" shape this
+// codebase fails closed on everywhere else.
+//
+// A column that is legitimately nullable must be scanned through a
+// *string / sql.NullString and converted with [ParseAsset] on the
+// non-NULL branch, so the caller states what the absent case means.
 func (a *Asset) Scan(src any) error {
 	if src == nil {
-		*a = Asset{}
-		return nil
+		return fmt.Errorf("%w: cannot scan SQL NULL into an Asset "+
+			"(scan a nullable asset column through sql.NullString and ParseAsset)", ErrInvalidAsset)
 	}
 	var s string
 	switch v := src.(type) {

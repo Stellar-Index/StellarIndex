@@ -14,6 +14,9 @@ import (
 type AnomalyReader interface {
 	ListFreezeEvents(ctx context.Context, firingOnly bool, limit int) ([]timescale.FreezeEventRow, error)
 	FreezeReasonCounts(ctx context.Context, sinceDays int) ([]timescale.FreezeReasonCount, error)
+	// CountFiringFreezes is an exact count, NOT a page length —
+	// firing_count must stay correct past any page cap (C1-051).
+	CountFiringFreezes(ctx context.Context) (int64, error)
 }
 
 // DivergenceReader backs /v1/divergence — the per-reference
@@ -25,8 +28,14 @@ type DivergenceReader interface {
 // ── /v1/anomalies ────────────────────────────────────────────────
 
 // AnomaliesView is the wire response for GET /v1/anomalies.
+//
+// FiringCount is an exact COUNT(*) over currently-firing freezes, not the
+// length of a page: it used to be `len(ListFreezeEvents(…, 500))`, so a
+// storm of more than 500 assets reported exactly 500 and the number
+// silently saturated at the moment it mattered most (C1-051,
+// audit-2026-07-23).
 type AnomaliesView struct {
-	FiringCount int               `json:"firing_count"`
+	FiringCount int64             `json:"firing_count"`
 	ReasonTally []ReasonCountV    `json:"reason_tally"`
 	Events      []FreezeEventView `json:"events"`
 }
@@ -83,12 +92,13 @@ func (s *Server) handleAnomalies(w http.ResponseWriter, r *http.Request) {
 	}
 	// Always compute the live firing count (independent of the firing
 	// filter) so the UI can show "N firing now" on the full timeline.
-	firing, err := s.anomalies.ListFreezeEvents(r.Context(), true, 500)
+	// An exact count, not a page length — see AnomaliesView.
+	firingCount, err := s.anomalies.CountFiringFreezes(r.Context())
 	if err != nil {
 		if clientAborted(r, err) {
 			return
 		}
-		s.logger.Error("ListFreezeEvents(firing) failed", "err", err)
+		s.logger.Error("CountFiringFreezes failed", "err", err)
 		writeProblem(w, r, "https://api.stellarindex.io/errors/internal", "Internal error", http.StatusInternalServerError, "")
 		return
 	}
@@ -103,7 +113,7 @@ func (s *Server) handleAnomalies(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := AnomaliesView{
-		FiringCount: len(firing),
+		FiringCount: firingCount,
 		ReasonTally: make([]ReasonCountV, len(tally)),
 		Events:      make([]FreezeEventView, len(events)),
 	}

@@ -235,13 +235,22 @@ func TestAsset_SQL_valueScan(t *testing.T) {
 		t.Fatalf("scan bytes: got %+v", d)
 	}
 
-	// Scan nil → zero
+	// Scan NULL → error, and the receiver is left untouched.
+	//
+	// This assertion was INVERTED before C4-068 (audit-2026-07-23): it
+	// required Scan(nil) to return nil and zero the receiver, which is
+	// how a NULL column became an Asset with Type=="" that survives every
+	// ==/Equal comparison and only fails if someone remembers to call
+	// Validate. Value() refuses to write anything that fails Validate, so
+	// a NULL in an asset column is a schema/query defect, not data.
 	e := a
-	if err := e.Scan(nil); err != nil {
-		t.Fatal(err)
+	if err := e.Scan(nil); err == nil {
+		t.Fatal("Scan(nil) returned nil — a SQL NULL must not silently become a zero Asset")
+	} else if !errors.Is(err, c.ErrInvalidAsset) {
+		t.Fatalf("Scan(nil) error = %v, want it to wrap ErrInvalidAsset", err)
 	}
-	if !e.IsZero() {
-		t.Fatalf("scan nil: got %+v, want zero", e)
+	if !e.Equal(a) {
+		t.Fatalf("Scan(nil) mutated the receiver to %+v; a failed scan must leave it alone", e)
 	}
 }
 

@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -11,6 +12,61 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
+
+// schemaProbeRetryAfter is how long a probe that got NO answer (a
+// transport error, a deadline, or a ClickHouse error that is not a schema
+// verdict) waits before querying again. Without it, every explorer read
+// during a ClickHouse outage would add its own probe query — doubling load
+// on the store exactly when it is least able to absorb it. Short enough
+// that a recovered store is picked up within one window.
+const schemaProbeRetryAfter = 5 * time.Second
+
+// schemaProbe caches the answer to a "does this schema object exist"
+// question — but ONLY once the server has actually answered one
+// (C1-048, audit-2026-07-23). See [ExplorerReader.probeSchema] for why a
+// sync.Once was the wrong primitive here.
+type schemaProbe struct {
+	mu      sync.Mutex
+	settled bool      // an authoritative answer was received
+	present bool      // meaningful only when settled
+	retryAt time.Time // while now < retryAt, degrade without re-querying
+
+	// retryAfter overrides [schemaProbeRetryAfter]. Zero uses the default;
+	// tests set a negative value to disable the negative cache.
+	retryAfter time.Duration
+}
+
+// schemaAbsentCodes are the ClickHouse error codes that constitute a
+// DEFINITIVE "that schema object does not exist" answer. Nothing else does.
+//
+// This list is deliberately narrow and the asymmetry is deliberate too
+// (C1-048, second review): a code we forgot to list costs one extra probe
+// per retry window — a rounding error. A code we list that is NOT a schema
+// verdict costs a PERMANENT silent degradation, because it latches the
+// probe false for the process lifetime. ClickHouse raises exceptions for
+// plain resource conditions — 159 TIMEOUT_EXCEEDED, 202
+// TOO_MANY_SIMULTANEOUS_QUERIES, 241 MEMORY_LIMIT_EXCEEDED, 209
+// SOCKET_TIMEOUT — and one such blip on lecVersionProbe would mean serving
+// non-final intra-ledger balances forever. 1002 UNKNOWN_EXCEPTION is
+// excluded for the same reason: it is a catch-all, not an answer.
+var schemaAbsentCodes = map[int32]struct{}{
+	8:  {}, // THERE_IS_NO_COLUMN
+	16: {}, // NO_SUCH_COLUMN_IN_TABLE
+	47: {}, // UNKNOWN_IDENTIFIER
+	60: {}, // UNKNOWN_TABLE
+	81: {}, // UNKNOWN_DATABASE
+}
+
+// isSchemaAbsent reports whether err is the server saying, definitively,
+// that the probed column/table/database does not exist.
+func isSchemaAbsent(err error) bool {
+	var chErr *clickhouse.Exception
+	if !errors.As(err, &chErr) {
+		return false
+	}
+	_, ok := schemaAbsentCodes[chErr.Code]
+	return ok
+}
 
 // ExplorerReader serves the network-explorer read path (ADR-0038) directly
 // from the certified Tier-1 lake (ADR-0034): the full chain to genesis —
@@ -25,14 +81,11 @@ type ExplorerReader struct {
 	conn driver.Conn
 
 	// tx-hash fast path (perf-todo §4): whether stellar.tx_hash_index
-	// exists on this deployment, probed once per process (probe-once like
-	// the api layer's DailyActivityAvailable use). false → every hash
-	// lookup takes the bloom-skip-index scan, exactly as before the index
-	// existed.
-	txIndexOnce sync.Once
-	txIndexOK   bool
+	// exists on this deployment. false → every hash lookup takes the
+	// bloom-skip-index scan, exactly as before the index existed.
+	txIndexProbe schemaProbe
 
-	// lecVersionOnce probes whether stellar.ledger_entries_current carries a
+	// lecVersionProbe probes whether stellar.ledger_entries_current carries a
 	// `version` column — the (ledger_seq<<32)|intra_ledger_seq RMT version
 	// that the D3 reproject introduces (deploy/clickhouse/
 	// ledger_entries_current_intra_ledger_seq.sql). D3 is freeze-gated and
@@ -41,8 +94,7 @@ type ExplorerReader struct {
 	// tie-break same-ledger changes must use `version` where it exists
 	// (C2-4c) and fall back to `ledger_seq` where it does not — otherwise
 	// they 500 with "Unknown identifier `version`" (site-audit S3).
-	lecVersionOnce sync.Once
-	lecVersionOK   bool
+	lecVersionProbe schemaProbe
 
 	// wealthCache backs AccountsByWealthCached. The wealth ranking is a
 	// FINAL scan over 43.6M rows that cannot fit a request deadline
@@ -712,35 +764,93 @@ func (r *ExplorerReader) TransactionByHash(ctx context.Context, hash string) (Tx
 }
 
 // txHashIndexAvailable reports whether stellar.tx_hash_index exists on this
-// ClickHouse, probed once per process. Availability is table EXISTENCE (the
-// probe query not erroring), not row count — an empty/partially-backfilled
-// index is fine because per-hash misses fall back to the scan anyway.
+// ClickHouse. Availability is table EXISTENCE, not row count — an
+// empty/partially-backfilled index is fine because per-hash misses fall back
+// to the scan anyway.
 func (r *ExplorerReader) txHashIndexAvailable(ctx context.Context) bool {
-	r.txIndexOnce.Do(func() {
-		rows, err := r.conn.Query(ctx, `SELECT ledger_seq FROM stellar.tx_hash_index LIMIT 1`)
-		if err != nil {
-			return
-		}
-		_ = rows.Close()
-		r.txIndexOK = true
-	})
-	return r.txIndexOK
+	return r.probeSchema(ctx, &r.txIndexProbe,
+		`SELECT ledger_seq FROM stellar.tx_hash_index LIMIT 1`)
 }
 
 // ledgerEntriesVersioned reports whether stellar.ledger_entries_current has
-// a `version` column (the post-D3 RMT version). Probed once per process,
-// like txHashIndexAvailable. false → pre-D3 schema; callers use ledger_seq
-// as the version key. See lecVersionOnce.
+// a `version` column (the post-D3 RMT version). false → pre-D3 schema;
+// callers use ledger_seq as the version key. See schemaProbe.
 func (r *ExplorerReader) ledgerEntriesVersioned(ctx context.Context) bool {
-	r.lecVersionOnce.Do(func() {
-		rows, err := r.conn.Query(ctx, `SELECT version FROM stellar.ledger_entries_current LIMIT 1`)
-		if err != nil {
-			return
-		}
+	return r.probeSchema(ctx, &r.lecVersionProbe,
+		`SELECT version FROM stellar.ledger_entries_current LIMIT 1`)
+}
+
+// probeSchema answers "does this schema object exist" and CACHES ONLY A
+// DEFINITIVE ANSWER (C1-048, audit-2026-07-23).
+//
+// These probes used to be a plain sync.Once, so the FIRST call's outcome
+// was final for the process lifetime. A transient ClickHouse error at that
+// instant — a restart mid-deploy, a connection reset, a request-context
+// deadline — latched the probe to false and silently degraded every
+// subsequent read for the life of the process, with no error, no metric,
+// and no self-heal short of a restart. That is the worst shape a fallback
+// can have: correct-but-slower forever, triggered by a blip.
+//
+// "Definitive" means the server gave a SCHEMA VERDICT:
+//
+//   - no error                          → the object exists (cache true);
+//   - an exception in [schemaAbsentCodes] → the object does not exist
+//     (cache false).
+//
+// Everything else — transport errors, context deadline/cancel, and any
+// OTHER ClickHouse exception (resource limits, timeouts, overload) — means
+// we never got an answer about the schema. Nothing is cached; the caller
+// degrades for this call only and a later call re-probes, rate-limited by
+// [schemaProbeRetryAfter] so an outage doesn't turn every read into an
+// extra query.
+//
+// The query runs OUTSIDE the mutex. sync.Mutex is not context-aware, so
+// holding it across a network round-trip would queue every concurrent
+// reader behind one slow probe and serialise the whole explorer read path
+// (C1-048, second review). The cost is that concurrent first-callers may
+// each issue a probe until one settles — bounded, and each is a LIMIT 1.
+func (r *ExplorerReader) probeSchema(ctx context.Context, p *schemaProbe, query string) bool {
+	p.mu.Lock()
+	if p.settled {
+		present := p.present
+		p.mu.Unlock()
+		return present
+	}
+	if !p.retryAt.IsZero() && time.Now().Before(p.retryAt) {
+		// A recent probe got no answer; don't pile on.
+		p.mu.Unlock()
+		return false
+	}
+	p.mu.Unlock()
+
+	rows, err := r.conn.Query(ctx, query)
+	if err == nil {
 		_ = rows.Close()
-		r.lecVersionOK = true
-	})
-	return r.lecVersionOK
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.settled {
+		// A concurrent probe already got the authoritative answer.
+		return p.present
+	}
+	switch {
+	case err == nil:
+		p.settled, p.present = true, true
+		return true
+	case isSchemaAbsent(err):
+		p.settled, p.present = true, false
+		return false
+	default:
+		retryAfter := p.retryAfter
+		if retryAfter == 0 {
+			retryAfter = schemaProbeRetryAfter
+		}
+		if retryAfter > 0 {
+			p.retryAt = time.Now().Add(retryAfter)
+		}
+		return false
+	}
 }
 
 // txByHashIndexed is the two-step fast path: hash → ledger_seq via the

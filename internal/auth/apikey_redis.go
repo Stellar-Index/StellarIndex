@@ -97,15 +97,21 @@ type APIKeyRecord struct {
 	Tier Tier `json:"tier"`
 
 	// Scopes — optional capability list. Empty slice and absent are
-	// equivalent ("no special scopes").
+	// equivalent ("no special scopes"), which means "no scope
+	// restriction" rather than "no access".
 	//
-	// **Day-1 launch posture (2026-05): the scope field is stored
-	// but NOT enforced at any runtime endpoint.** Every authenticated
-	// caller has full read-access to every endpoint regardless of
-	// what's listed here. Setting scopes today is forward-compat
-	// only; relying on them for access control is a footgun. The
-	// enforcement hook lands post-launch (tracked separately from
-	// the launch-readiness backlog).
+	// **These ARE enforced at runtime.** `middleware.KeyPolicy`
+	// (internal/api/v1/middleware/keypolicy.go, `checkScopes`) rejects a
+	// request whose route requires a scope the key doesn't carry, with a
+	// `scope-denied` problem response. Minting a key with a narrow scope
+	// set therefore narrows what it can call — verify the scope names
+	// against keypolicy.go's route table before issuing.
+	//
+	// This paragraph used to say the opposite ("stored but NOT enforced
+	// at any runtime endpoint … relying on them for access control is a
+	// footgun"), a day-1 note that outlived the enforcement hook landing.
+	// An operator reading it minted deliberately-scoped keys believing
+	// them inert and got 403s (C3-088, audit-2026-07-23).
 	Scopes []string `json:"scopes,omitempty"`
 
 	// RateLimitPerMin — overrides the per-tier default (zero means

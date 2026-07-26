@@ -1,14 +1,24 @@
 package middleware
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/usage"
 )
+
+// postResponseWriteTimeout bounds the bookkeeping writes that run AFTER
+// the response has been flushed (usage counters, last-used touch). They
+// deliberately do not inherit the request's cancellation — see the call
+// sites — so they need a bound of their own or a wedged Redis would pin
+// the request goroutine forever. Generous relative to go-redis's 3 s
+// default so it is a backstop, not the usual limiter.
+const postResponseWriteTimeout = 5 * time.Second
 
 // UsageTracker records per-request daily counters keyed on the
 // authenticated subject (KeyID for API-key callers; the auth.Subject
@@ -68,13 +78,37 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 			}
 			family := endpointFamily(r)
 			class := outcomeClass(rec.status)
+			// The response is already written, so these counters MUST NOT
+			// inherit the request's cancellation: a client that aborted, or
+			// a handler that consumed the whole RequestTimeout budget, would
+			// otherwise silently lose its usage row — and the legacy total is
+			// the monthly-quota input. Still bounded, so a wedged Redis can't
+			// pin the request goroutine (C3-102, audit-2026-07-23).
+			//
+			// DELIBERATE BEHAVIOUR CHANGE, recorded rather than discovered:
+			// an ABORTED request now consumes monthly quota where before it
+			// silently did not. statusRecorder defaults to 200, so a served-
+			// then-abandoned request classes as billable and the Increment
+			// (which used to die on the cancelled context) now lands. That
+			// is the intended semantics — the request consumed the read, the
+			// pool connection and the CPU, and NOT counting it is a
+			// quota-evasion vector: a caller could abort before the body
+			// completes and get unmetered traffic indefinitely.
+			//
+			// The 5 s bound is only as hard as the store's context honouring.
+			// go-redis and database/sql both respect ctx cancellation on the
+			// wire, so it holds for every store wired here today; a driver
+			// that ignored ctx would block the request goroutine for its own
+			// timeout instead.
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), postResponseWriteTimeout)
+			defer cancel()
 			if billableClass(class) {
 				// Legacy total: billable traffic only (quota input).
-				if err := counter.Increment(r.Context(), id); err != nil {
+				if err := counter.Increment(ctx, id); err != nil {
 					logger.Debug("usage: increment failed", "err", err, "subject", id)
 				}
 			}
-			if err := counter.IncrementDetail(r.Context(), id, family, class); err != nil {
+			if err := counter.IncrementDetail(ctx, id, family, class); err != nil {
 				logger.Debug("usage: detail increment failed",
 					"err", err, "subject", id, "endpoint", family, "class", class)
 			}

@@ -36,6 +36,19 @@ func TestIsBlockedIP(t *testing.T) {
 		{"192.0.0.192", true},     // Oracle Cloud metadata (192.0.0.0/24)
 		{"198.18.0.1", true},      // RFC 2544 benchmarking
 		{"0.1.2.3", true},         // 0.0.0.0/8
+
+		// NAT64-translated v4 (C3-110). The prefix EMBEDS the v4 address
+		// in the low 32 bits, and Go's IsLinkLocalUnicast/IsPrivate do not
+		// unwrap it — so before the fix every v4 range above was
+		// bypassable by translating it through a NAT64 gateway.
+		{"64:ff9b::a9fe:a9fe", true},   // 169.254.169.254 — cloud metadata
+		{"64:ff9b::a00:1", true},       // 10.0.0.1 — RFC 1918
+		{"64:ff9b::7f00:1", true},      // 127.0.0.1 — loopback
+		{"64:ff9b:1::a9fe:a9fe", true}, // RFC 8215 local-use NAT64 prefix
+		// Adjacent, NOT NAT64 — must stay allowed so the /96 isn't
+		// silently widened into a public-address blackhole.
+		{"64:ff9a::1", false},
+		{"64:ff9b:2::1", false},
 	}
 	for _, c := range cases {
 		ip := net.ParseIP(c.ip)

@@ -56,10 +56,15 @@ type assetsCacheEntry struct {
 }
 
 // NewCachedAssetsReader wraps `upstream` with a TTL cache. ttl=0
-// disables the cache (every call passes through). 30s is the
-// production default — listings are activity-ranked aggregates
-// that don't move materially in 30s, and the explorer's existing
-// react-query layer caches client-side anyway.
+// disables the cache (every call passes through).
+//
+// The production TTL is **2 minutes**, set at the single call site
+// (cmd/stellarindex-api/main.go, `NewCachedAssetsReader(store,
+// 2*time.Minute)`) — listings are activity-ranked aggregates that don't
+// move materially in that window, and the explorer's react-query layer
+// caches client-side on top. This doc used to claim "30s is the
+// production default", four times the real refresh rate (C3-090,
+// audit-2026-07-23); change the call site and this line together.
 func NewCachedAssetsReader(upstream AssetsReader, ttl time.Duration) *CachedAssetsReader {
 	return &CachedAssetsReader{
 		upstream:   upstream,
