@@ -85,6 +85,85 @@
         # safety feature was a no-op). `| bool` coerces "false"→False.
         - not (migrations_skip | default(false) | bool)
 
+    # C6-107 (audit-2026-07-23): the binary is backed up before a deploy
+    # (deploy-one-binary.yml `mv` to .prev-<version>) — the SCHEMA is not.
+    # `stellarindex-migrate up` below runs arbitrary DDL against the live
+    # database with no snapshot and no proof that a recent restorable
+    # backup exists, so a destructive or wrong migration is unrecoverable
+    # beyond whatever pgBackRest happens to hold. Sibling of the tracked
+    # CID-14.
+    #
+    # This gate asserts a RESTORABLE backup finished recently, straight
+    # from `pgbackrest info --output=json` (backup[-1].timestamp.stop is
+    # the completion epoch of the newest backup in the stanza). It fails
+    # CLOSED: a pgbackrest that is missing, erroring, or reporting an
+    # empty/`error: true` stanza aborts the deploy rather than reading as
+    # "fresh" — an un-inspectable backup is exactly the state where you
+    # least want to run DDL.
+    #
+    # Deliberately NOT a `pg_dump`/snapshot step: on a multi-TB TimescaleDB
+    # a pre-migration dump would add hours to every deploy. pgBackRest's
+    # daily full/diff (18-pgbackrest-backup.yml) plus WAL archiving already
+    # gives PITR to any moment; what was missing was proof it is CURRENT
+    # before we mutate the schema.
+    #
+    # Overrides: `-e backup_freshness_max_age_hours=N` widens the window;
+    # `-e backup_freshness_skip=true` bypasses entirely (emergency
+    # hot-fix). Skipping is loud — the debug task below prints why.
+    - name: Assert a recent restorable pgBackRest backup exists before migrating
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          max_age_hours={{ backup_freshness_max_age_hours | default(36) | int }}
+          if ! command -v pgbackrest >/dev/null 2>&1; then
+            echo "pgbackrest not installed — refusing to migrate without a restorable backup" >&2
+            exit 1
+          fi
+          info=$(runuser -u postgres -- pgbackrest --stanza=stellarindex --output=json info)
+          echo "$info" | python3 -c '
+          import json, sys, time
+          max_age = int(sys.argv[1]) * 3600
+          stanzas = json.load(sys.stdin)
+          if not stanzas:
+              sys.exit("pgbackrest info returned no stanza — cannot prove a backup exists")
+          st = stanzas[0]
+          if st.get("status", {}).get("code", 1) != 0:
+              sys.exit("stanza status is not ok: %s" % st.get("status"))
+          backups = st.get("backup") or []
+          if not backups:
+              sys.exit("stanza has ZERO backups — refusing to migrate")
+          newest = backups[-1]
+          stop = int(newest["timestamp"]["stop"])
+          age = int(time.time()) - stop
+          label = newest.get("label", "?")
+          if age > max_age:
+              sys.exit("newest backup %s finished %ds ago (> %ds) — refusing to migrate onto a stale backup" % (label, age, max_age))
+          print("pgbackrest: newest backup %s is %dh old (limit %dh) — OK to migrate" % (label, age // 3600, max_age // 3600))
+          ' "$max_age_hours"
+      register: backup_freshness
+      changed_when: false
+      when:
+        - not (migrations_skip | default(false) | bool)
+        - not (backup_freshness_skip | default(false) | bool)
+
+    - name: Report backup freshness verdict
+      ansible.builtin.debug:
+        msg: "{{ backup_freshness.stdout | default('') }}"
+      when:
+        - backup_freshness is defined
+        - backup_freshness.stdout is defined
+
+    - name: Backup-freshness gate skipped — operator override
+      ansible.builtin.debug:
+        msg: |
+          backup_freshness_skip=true — running migrations WITHOUT proving a
+          recent restorable backup exists. If this migration is destructive
+          there is no verified recovery point. Use only for hot-fix deploys
+          whose migrations you have read.
+      when:
+        - not (migrations_skip | default(false) | bool)
+        - backup_freshness_skip | default(false) | bool
+
     - name: Apply outstanding migrations
       # Source the host's env (STELLARINDEX_POSTGRES_DSN — the real,
       # password-bearing DSN that the services already use) and let
