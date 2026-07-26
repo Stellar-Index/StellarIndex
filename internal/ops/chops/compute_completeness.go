@@ -70,7 +70,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	only := fs.String("source", "", "Limit to one source (e.g. soroswap|blend|reflector-dex|sdex)")
 	useCH := fs.Bool("ch", false, "Read all three claims from the certified ClickHouse lake (substrate + recognition + projection re-derive) instead of Postgres soroban_events — fast, off the serving DB (ADR-0033 + ADR-0034)")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address (with -ch)")
-	skipSubstrate := fs.Bool("skip-substrate", false, "Trust the prior substrate certification (substrate_ok=true) instead of re-scanning the hash-chain — fast per-source iteration once substrate is proven")
+	skipSubstrate := fs.Bool("skip-substrate", false, "Skip the hash-chain re-scan and CARRY the prior substrate verdict — fast per-source iteration once substrate is proven. This run scans nothing, so it can only CONFIRM a prior clean verdict that already reached this run's tip; a FAILING or short prior verdict publishes substrate_ok=false with the unverified band named in the detail (C4-057). It no longer asserts substrate_ok=true unconditionally.")
 	skipRecognition := fs.Bool("skip-recognition", false, "Trust the prior recognition audit (recognition_ok=true) instead of re-scanning all topic shapes — the global DistinctTopicShapes scan is the load-heaviest step; skip it for gentle projection-only iteration once recognition is verified")
 	fromLedger := fs.Uint("from", 0, "INCREMENTAL verify: only check [from, tip], trusting [genesis, from] as already verified (substrate + recognition + projection all scoped to [from, tip]); the watermark still extends to tip when the window is clean. 0 = full verify from each source's genesis. The completeness timer passes min(watermark) from the prior snapshots so each run re-checks only new ledgers — minutes, not hours. An incremental run can only CONFIRM or DOWNGRADE the served `complete` axis, never upgrade it: a range it did not reconcile is carried from the prior verdict, and a FAILING prior verdict is cleared only by a full run (INV-5 — see projectionClaim).")
 	if err := fs.Parse(args); err != nil {
@@ -203,15 +203,21 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	// reuse per source. The CH lake is the certified authoritative substrate.
 	var chSubProblem uint32
 	var chSubHas bool
+	// subScanFrom is the FLOOR this run's substrate scan actually reached.
+	// subScanFrom > tip means "this run scanned no substrate at all"
+	// (-skip-substrate). Carried out of the switch because substrateClaim
+	// below needs it per source: it is what makes the difference between
+	// "proven from genesis" and "trusted below a floor" (C4-057).
+	subScanFrom := tip + 1
 	switch {
 	case *useCH && *skipSubstrate:
-		fmt.Fprintln(os.Stderr, "compute-completeness: -skip-substrate — trusting prior CH substrate certification (intact)")
+		fmt.Fprintln(os.Stderr, "compute-completeness: -skip-substrate — no substrate scan; the prior verdict is carried, not re-proven")
 	case *useCH:
-		subFrom := uint32(2)
+		subScanFrom = uint32(2)
 		if *fromLedger > 2 {
-			subFrom = uint32(*fromLedger) //nolint:gosec // ledger seq fits uint32
+			subScanFrom = uint32(*fromLedger) //nolint:gosec // ledger seq fits uint32
 		}
-		p, has, d, serr := clickhouse.SubstrateProblem(ctx, *chAddr, subFrom, tip)
+		p, has, d, serr := clickhouse.SubstrateProblem(ctx, *chAddr, subScanFrom, tip)
 		if serr != nil {
 			return fmt.Errorf("ch substrate: %w", serr)
 		}
@@ -219,7 +225,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		if has {
 			fmt.Fprintf(os.Stderr, "compute-completeness: CH substrate problem at %d (%s)\n", p, d)
 		} else {
-			fmt.Fprintf(os.Stderr, "compute-completeness: CH substrate intact [%d,tip] — contiguous + hash-chained\n", subFrom)
+			fmt.Fprintf(os.Stderr, "compute-completeness: CH substrate intact [%d,tip] — contiguous + hash-chained\n", subScanFrom)
 		}
 	}
 
@@ -236,8 +242,14 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		return fmt.Errorf("prior completeness verdicts (failing closed — an incremental run cannot gate its claim without them): %w", err)
 	}
 	priorProj := make(map[string]priorProjection, len(priorSnaps))
+	priorSub := make(map[string]priorProjection, len(priorSnaps))
 	for _, s := range priorSnaps {
 		priorProj[s.Source] = priorProjection{known: true, ok: s.ProjectionOK, tip: s.Tip}
+		// C4-057: the SUBSTRATE axis needs the same prior-verdict input the
+		// projection axis has had since INV-5, for exactly the same reason —
+		// an incremental run scans only a suffix and must not publish a
+		// genesis-to-tip claim off it. See substrateClaim.
+		priorSub[s.Source] = priorProjection{known: true, ok: s.SubstrateOK, tip: s.Tip}
 	}
 
 	// Durable per-target projection floors (migration 0116). Loaded once and
@@ -270,11 +282,16 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			// problem ledgers for empty/head/tail absences (see its
 			// substrateHeadProblem doc) so a high-genesis source can't read a
 			// COVERAGE failure as "below my genesis, I'm fine" (F1 fail-open).
-			substrateOK = sourceSubstrateOK(chSubProblem, chSubHas, genesis)
-			if !substrateOK {
+			scanClean := sourceSubstrateOK(chSubProblem, chSubHas, genesis)
+			if !scanClean {
 				problems = append(problems, chSubProblem)
-				detail = append(detail, fmt.Sprintf("substrate: lake gap/break at %d", chSubProblem))
 			}
+			// C4-057: gate what the run may PUBLISH on the range it actually
+			// scanned. The scan floor and the claim are different things and
+			// only the projection axis used to know that.
+			var subDetail string
+			substrateOK, subDetail = substrateClaim(genesis, tip, subScanFrom, scanClean, chSubProblem, priorSub[src.name])
+			detail = append(detail, subDetail)
 		} else {
 			subGaps, err := store.FindLedgerIngestGaps(ctx, genesis, tip)
 			if err != nil {
@@ -322,7 +339,17 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// notes/DECISION-genesis-complete-verdict-2026-07-16.md, Option
 		// B). lake_complete must NEVER be gated by the retention-scoped
 		// projection reconcile.
-		lakeComplete := srW.Complete
+		//
+		// C4-057: it IS gated by substrateOK, which is now a claim about the
+		// range this run scanned rather than a raw scan result. srW.Complete
+		// alone cannot see that gate — an incremental run that scanned only
+		// [from,tip] and found nothing wrong produces an EMPTY `problems`
+		// slice and therefore srW.Complete=true, i.e. a genesis-to-tip lake
+		// claim built on a suffix. Following the CH branch's own convention,
+		// an unproven claim flips the boolean rather than moving the
+		// watermark: the watermark still records where verification actually
+		// reached, and `detail` states the floor.
+		lakeComplete := srW.Complete && substrateOK
 		projOK := false
 		var w completeness.Watermark
 		// Incremental: only reconcile [from, srW.Ledger], trusting [genesis, from]
@@ -373,8 +400,11 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			}
 			// Coverage = substrate∧recognition (proven data capture). complete
 			// additionally requires the served-tier projection to reconcile;
-			// lakeComplete (set above, pre-projection) never does.
-			w = combineWatermark(srW, projOK)
+			// lakeComplete (set above, pre-projection) never does. The served
+			// axis can never be stronger than the lake axis it sits on, so an
+			// unproven substrate claim (C4-057) gates it too — that is what
+			// lakeComplete already carries.
+			w = combineWatermark(srW, lakeComplete && projOK)
 		} else {
 			// Legacy Postgres path: strict per-ledger projection pins the watermark.
 			if srW.Ledger >= genesis {
@@ -783,6 +813,72 @@ func projectionClaim(servedFrom, runFrom, hi uint32, runClean bool, runDetail st
 		return false, fmt.Sprintf("projection: verified only [%d,%d]; the prior clean verdict only reached tip=%d, leaving [%d,%d] verified by nobody — not claiming it (re-run without -from)", runFrom, hi, prior.tip, prior.tip+1, runFrom-1)
 	default:
 		return true, fmt.Sprintf("projection: verified [%d,%d]; %s carried from the prior clean verdict (tip=%d), not re-verified this run", runFrom, hi, skipped, prior.tip)
+	}
+}
+
+// substrateClaim gates what a run is ALLOWED to publish on the LAKE
+// (`substrate_ok` → `lake_complete`) axis, given the range its substrate
+// scan ACTUALLY covered. It is the exact twin of [projectionClaim], applied
+// to the claim that INV-5 left ungated (C4-057).
+//
+// The gap it closes: `computeCompleteness` scans substrate over
+// [scanFrom, hi], where scanFrom is the `-from` incremental floor — but
+// published `lake_complete` / `coverage_pct` over [genesis, hi]. On a clean
+// suffix the `problems` slice comes back empty, so the watermark reads
+// genesis-to-tip and the verdict asserts "the certified archive is
+// contiguous + hash-chained from genesis" on evidence covering only the
+// newest window. Worse, it is an UPGRADE path: the production driver
+// (run-compute-completeness.sh) re-runs each source from its prior
+// watermark on a daily timer, so a source pinned at substrate_ok=false by a
+// real gap below the floor silently flipped to true on the next pass —
+// the same regression shape ADR-0033 forbids and projectionClaim already
+// blocks on the other axis.
+//
+// The `-from` flag's own help text discloses that it trusts
+// [genesis, from]; the SERVED verdict did not. Now it does: the returned
+// detail always states the range this run verified and where the rest came
+// from, and `detail` is on the wire (`GET /v1/coverage` → `detail`), so a
+// consumer can tell proven-from-genesis from trusted-below-a-floor.
+//
+// Rules, fail-closed, in order:
+//  1. A problem found by THIS run always fails — nothing launders it.
+//  2. A scan that started at or below the source's genesis covered the
+//     WHOLE range the claim is about: self-evidencing, may publish true.
+//     This is the only way a failing lake verdict is ever cleared —
+//     deliberately, by a full re-verify.
+//  3. A partial run may CARRY FORWARD a prior clean verdict for the prefix
+//     it skipped, but only if that prior verdict is contiguous with this
+//     run's window (prior.tip+1 >= scanFrom). Confirm, never upgrade.
+//  4. Anything else — no prior verdict, a FAILING prior verdict, or a
+//     stale prior that leaves an unverified band — publishes false.
+//
+// scanFrom > hi encodes "this run scanned no substrate at all"
+// (-skip-substrate). It falls through to rules 3/4 naturally: the operator
+// gets the prior verdict carried when the prior already reached this tip,
+// and an honest false when it did not. That is a deliberate tightening —
+// the flag previously asserted substrate_ok=true unconditionally, which
+// upgraded a FAILING prior verdict to passing with zero evidence.
+func substrateClaim(genesis, hi, scanFrom uint32, scanClean bool, problem uint32, prior priorProjection) (bool, string) {
+	if !scanClean {
+		return false, fmt.Sprintf("substrate: lake gap/break at %d", problem)
+	}
+	if scanFrom <= genesis {
+		return true, fmt.Sprintf("substrate: verified [%d,%d] — contiguous + hash-chained from this source's genesis", genesis, hi)
+	}
+	scanned := fmt.Sprintf("[%d,%d]", scanFrom, hi)
+	if scanFrom > hi {
+		scanned = "nothing (-skip-substrate)"
+	}
+	skipped := fmt.Sprintf("[%d,%d]", genesis, scanFrom-1)
+	switch {
+	case !prior.known:
+		return false, fmt.Sprintf("substrate: verified only %s; %s was NOT scanned by this run and no prior verdict exists to carry — not claiming it (re-run without -from)", scanned, skipped)
+	case !prior.ok:
+		return false, fmt.Sprintf("substrate: verified only %s; %s was NOT scanned by this run and the prior verdict's substrate was FAILING — refusing to upgrade without evidence (re-run without -from)", scanned, skipped)
+	case scanFrom > prior.tip+1:
+		return false, fmt.Sprintf("substrate: verified only %s; the prior clean verdict only reached tip=%d, leaving [%d,%d] verified by nobody — not claiming it (re-run without -from)", scanned, prior.tip, prior.tip+1, scanFrom-1)
+	default:
+		return true, fmt.Sprintf("substrate: verified %s; %s carried from the prior clean verdict (tip=%d), not re-scanned this run", scanned, skipped, prior.tip)
 	}
 }
 

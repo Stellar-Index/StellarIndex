@@ -688,3 +688,109 @@ func TestFloorsToRecord_EmptyTargetEarnsNoFloor(t *testing.T) {
 		t.Fatalf("real bottom-edge loss below an established floor must still fail, got: %v", loss)
 	}
 }
+
+// TestSubstrateClaim_IncrementalRunCannotUpgradeAFailingLakeVerdict is the
+// C4-057 regression, and the exact twin of
+// TestProjectionClaim_IncrementalRunCannotUpgradeAFailingVerdict one axis over.
+//
+// The substrate scan is bounded by the incremental `-from`
+// (compute_completeness.go: `subScanFrom = *fromLedger`), but `substrate_ok`
+// and `lake_complete` were published over [genesis, tip]. On a clean suffix
+// the `problems` slice comes back EMPTY, so the verdict asserted "the
+// certified archive is contiguous + hash-chained from genesis" on evidence
+// covering only the newest window — and, because
+// run-compute-completeness.sh re-runs every source from its prior watermark
+// on the daily timer, a source pinned false by a real gap BELOW the floor
+// flipped silently to true on the next pass.
+func TestSubstrateClaim_IncrementalRunCannotUpgradeAFailingLakeVerdict(t *testing.T) {
+	const (
+		genesis  = uint32(50_457_424)
+		hi       = uint32(63_305_532)
+		scanFrom = uint32(63_300_000) // -from = the prior watermark
+	)
+	failingPrior := priorProjection{known: true, ok: false, tip: 63_300_000}
+
+	ok, detail := substrateClaim(genesis, hi, scanFrom, true /* the scanned suffix is clean */, 0, failingPrior)
+	if ok {
+		t.Fatalf("an incremental run that scanned only [%d,%d] UPGRADED a failing lake verdict to substrate_ok=true without re-scanning [%d,%d]; detail=%q",
+			scanFrom, hi, genesis, scanFrom-1, detail)
+	}
+	if !strings.Contains(detail, "50457424") || !strings.Contains(detail, "63299999") {
+		t.Errorf("detail must name the range that was NOT scanned, got: %s", detail)
+	}
+
+	// A full scan (floor at or below genesis) is self-evidencing — the
+	// deliberate re-verify that clears a failing verdict.
+	full, fullDetail := substrateClaim(genesis, hi, 2, true, 0, failingPrior)
+	if !full {
+		t.Errorf("a full-range clean scan must be able to clear a failing prior verdict, got false: %s", fullDetail)
+	}
+	if !strings.Contains(fullDetail, "from this source's genesis") {
+		t.Errorf("a full claim must say it reached genesis, got: %s", fullDetail)
+	}
+
+	// A clean prior contiguous with this run's window may be carried — this
+	// is the production daily driver's normal path and must keep working.
+	cleanPrior := priorProjection{known: true, ok: true, tip: 63_300_000}
+	carry, carryDetail := substrateClaim(genesis, hi, scanFrom, true, 0, cleanPrior)
+	if !carry {
+		t.Errorf("a contiguous clean prior must carry the skipped prefix, got false: %s", carryDetail)
+	}
+	if !strings.Contains(carryDetail, "carried from the prior clean verdict") {
+		t.Errorf("a carried claim must say so — that string IS the published verified-floor disclosure, got: %s", carryDetail)
+	}
+
+	// No prior verdict at all → fail closed.
+	if noPrior, d := substrateClaim(genesis, hi, scanFrom, true, 0, priorProjection{}); noPrior {
+		t.Errorf("a partial scan with NO prior verdict must not claim the skipped prefix: %s", d)
+	}
+
+	// A stale prior leaves [prior.tip+1, scanFrom-1] scanned by nobody.
+	if stale, d := substrateClaim(genesis, hi, scanFrom, true, 0, priorProjection{known: true, ok: true, tip: 62_000_000}); stale {
+		t.Errorf("a stale prior leaves an unverified band — must not claim it: %s", d)
+	}
+
+	// A gap/break found by THIS run always fails, whatever the prior said.
+	found, foundDetail := substrateClaim(genesis, hi, 2, false, 61_234_567, priorProjection{known: true, ok: true, tip: hi})
+	if found {
+		t.Errorf("a lake gap found by this run can never be laundered by a clean prior: %s", foundDetail)
+	}
+	if !strings.Contains(foundDetail, "61234567") {
+		t.Errorf("detail must name the problem ledger, got: %s", foundDetail)
+	}
+}
+
+// TestSubstrateClaim_SkipSubstrateCarriesRatherThanAsserts — `-skip-substrate`
+// scans NOTHING, and used to publish substrate_ok=true unconditionally: a
+// failing lake verdict was cleared by an operator convenience flag with zero
+// evidence. It must now carry the prior verdict instead.
+//
+// scanFrom > hi is how the caller encodes "no scan happened".
+func TestSubstrateClaim_SkipSubstrateCarriesRatherThanAsserts(t *testing.T) {
+	const (
+		genesis = uint32(50_457_424)
+		hi      = uint32(63_305_532)
+	)
+	noScan := hi + 1
+
+	if ok, d := substrateClaim(genesis, hi, noScan, true, 0, priorProjection{known: true, ok: false, tip: hi}); ok {
+		t.Errorf("-skip-substrate must not upgrade a FAILING prior verdict: %s", d)
+	}
+	if ok, d := substrateClaim(genesis, hi, noScan, true, 0, priorProjection{}); ok {
+		t.Errorf("-skip-substrate with no prior verdict must not claim anything: %s", d)
+	}
+	// A prior clean verdict that already reached this tip is confirmable.
+	ok, detail := substrateClaim(genesis, hi, noScan, true, 0, priorProjection{known: true, ok: true, tip: hi})
+	if !ok {
+		t.Errorf("-skip-substrate must still confirm a prior clean verdict that reached this tip: %s", detail)
+	}
+	if !strings.Contains(detail, "-skip-substrate") {
+		t.Errorf("the detail must disclose that nothing was scanned, got: %s", detail)
+	}
+	// A prior clean verdict that stopped SHORT of this tip leaves a band
+	// nobody verified — the tip advances every 5s, so this is the common case
+	// and it must read false rather than silently extend the old claim.
+	if ok, d := substrateClaim(genesis, hi, noScan, true, 0, priorProjection{known: true, ok: true, tip: hi - 10_000}); ok {
+		t.Errorf("-skip-substrate must not extend a prior verdict past the tip it reached: %s", d)
+	}
+}
