@@ -13,6 +13,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -250,6 +251,9 @@ func (s *Server) recordAdminKeyRevokeAudit(
 		entry.IP = net.ParseIP(ip)
 	}
 	if err := s.audit.Append(r.Context(), entry); err != nil {
+		// C3-067: the revoke already happened; the audit row did not. Count
+		// it so the hole in the trail is observable, not just logged.
+		obs.AdminAuditWriteFailuresTotal.WithLabelValues("key_revoke").Inc()
 		s.logger.Warn("admin key revoke: audit append failed (best-effort)",
 			"err", err, "key_id", keyID, "target_identifier", identifier)
 	}
@@ -356,6 +360,8 @@ func (s *Server) recordAdminKeyMintAudit(
 		entry.IP = net.ParseIP(ip)
 	}
 	if err := s.audit.Append(r.Context(), entry); err != nil {
+		// C3-067: a live credential exists with no record of who minted it.
+		obs.AdminAuditWriteFailuresTotal.WithLabelValues("key_mint").Inc()
 		s.logger.Warn("admin key mint: audit append failed (best-effort)",
 			"err", err, "minted_key_id", mintedKeyID, "target_identifier", req.Identifier)
 	}

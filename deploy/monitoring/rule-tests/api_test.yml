@@ -1,0 +1,146 @@
+---
+# promtool unit tests for the two audit-2026-07-23 API observability
+# alerts added with their counters:
+#
+#   stellarindex_monthly_quota_fail_open      (C3-082)
+#   stellarindex_admin_audit_write_failing    (C3-067)
+#
+#   promtool test rules deploy/monitoring/rule-tests/api_test.yml
+#
+# Both counters guard a path that is SILENT when healthy and silent when
+# broken — that is the whole finding. `promtool check rules` only proves
+# the PromQL parses; these prove each rule actually fires on the state it
+# claims to catch, stays quiet on the healthy state, and (for the
+# quota one) absorbs a single blip rather than ticketing on it.
+#
+# Deliberately lives OUTSIDE `deploy/monitoring/rules/` — everything in
+# that directory is globbed by `promtool check rules`,
+# lint-rule-structure.py and lint-metric-refs.sh, all of which require a
+# top-level `groups:` key that a unit-test file does not have.
+
+rule_files:
+  - ../rules/api.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── C3-082: sustained fail-open tickets ──────────────────────────
+  # The month-to-date read has been erroring continuously: one bypassed
+  # request per minute for an hour. Every metered key is uncapped.
+  - interval: 1m
+    name: a sustained monthly-quota fail-open tickets
+    input_series:
+      - series: 'stellarindex_monthly_quota_fail_open_total{job="stellarindex_api",instance="r1:8080"}'
+        values: '0+1x60'
+
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_monthly_quota_fail_open
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/monthly-quota-fail-open.md
+              summary: "Monthly quota ceiling is FAILING OPEN (16.67m req/s bypassing the cap)"
+              description: |
+                The per-key monthly request quota could not be read from its
+                backing store and the requests were served anyway, continuously
+                for the last 10 minutes. Every metered key is currently
+                uncapped: usage still meters (so the customer is still billed)
+                but the agreed ceiling is not enforced, and any overage served
+                in this window is unrecoverable.
+
+                Normally moves together with the Redis readyz probe and with
+                stellarindex_ratelimit_fail_open — the two share a backing
+                store. If this fires ALONE, suspect the usage-counter key
+                namespace or an eviction policy rather than Redis availability.
+
+  # ── C3-082: the healthy state is SILENT ──────────────────────────
+  # The counter exists and is pre-seeded at zero (obs.registerAppMetrics).
+  # A flat zero must not ticket — otherwise the alert is permanently
+  # firing and worthless, which is the failure mode a zero-seeded
+  # counter invites.
+  - interval: 1m
+    name: a healthy quota path raises nothing
+    input_series:
+      - series: 'stellarindex_monthly_quota_fail_open_total{job="stellarindex_api",instance="r1:8080"}'
+        values: '0+0x60'
+
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_monthly_quota_fail_open
+        exp_alerts: []
+
+  # ── C3-082: a single blip is absorbed ────────────────────────────
+  # One bypassed request during a Redis failover, then clean. The 10m
+  # `for:` is what makes this a non-event; without it every failover
+  # would ticket.
+  - interval: 1m
+    name: a single quota-read blip does not ticket
+    input_series:
+      # +1 at minute 5, flat thereafter. rate() decays to 0 well before
+      # the 10m `for:` can be satisfied continuously.
+      - series: 'stellarindex_monthly_quota_fail_open_total{job="stellarindex_api",instance="r1:8080"}'
+        values: '0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
+
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: stellarindex_monthly_quota_fail_open
+        exp_alerts: []
+
+  # ── C3-067: ONE lost audit row tickets, labelled by surface ──────
+  # A single failed append is the whole trigger: the operator has to
+  # reconstruct that row from application logs before the journal's
+  # retention closes on it. increase()[1h] keeps it firing long enough
+  # to be seen even though the event itself is instantaneous.
+  - interval: 1m
+    name: one lost admin audit row tickets and names its surface
+    input_series:
+      - series: 'stellarindex_admin_audit_write_failures_total{job="stellarindex_api",instance="r1:8080",surface="account_override"}'
+        values: '0 0 0 0 0 1+0x55'
+
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_admin_audit_write_failing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              surface: account_override
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/admin-audit-write-failing.md
+              summary: "Admin audit trail has holes: 1 lost row(s) on account_override"
+              description: |
+                A privileged mutation on the `account_override` surface
+                COMPLETED but its durable audit row did not land. The change is
+                live — a tier override, a minted or revoked credential, a public
+                status notice, or a Stripe-driven plan change — with no record
+                of the actor, the reason, or the previous values.
+
+                This is a compliance/forensics gap, not an availability one: do
+                NOT roll anything back. Recover the missing rows from the API's
+                application logs (each site logs `… audit append failed
+                (best-effort)` with the target id) BEFORE the log retention
+                window closes on them, then fix whatever made the audit store
+                unwritable.
+
+  # ── C3-067: the zero-seeded healthy state is SILENT ──────────────
+  # All six surfaces are pre-seeded at zero so the series exist before
+  # the first failure. They must not ticket.
+  - interval: 1m
+    name: zero-seeded audit surfaces raise nothing
+    input_series:
+      - series: 'stellarindex_admin_audit_write_failures_total{job="stellarindex_api",instance="r1:8080",surface="account_override"}'
+        values: '0+0x60'
+      - series: 'stellarindex_admin_audit_write_failures_total{job="stellarindex_api",instance="r1:8080",surface="key_mint"}'
+        values: '0+0x60'
+      - series: 'stellarindex_admin_audit_write_failures_total{job="stellarindex_api",instance="r1:8080",surface="stripe_dead_letter"}'
+        values: '0+0x60'
+
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_admin_audit_write_failing
+        exp_alerts: []

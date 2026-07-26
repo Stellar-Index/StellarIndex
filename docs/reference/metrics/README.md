@@ -793,6 +793,77 @@ errored. The middleware fails open deliberately (Redis outage
 shouldn't take down the API); this metric gives ops a quantitative
 signal that correlates with `redis` readyz turning red.
 
+Alert: `stellarindex_ratelimit_fail_open` →
+[ratelimit-fail-open](../../operations/runbooks/ratelimit-fail-open.md).
+
+### `stellarindex_monthly_quota_fail_open_total`
+
+Counter, no labels.
+
+Requests that bypassed the per-key **monthly quota ceiling** because
+the month-to-date counter read errored
+(`internal/api/v1/middleware/monthly_quota.go`). The exact twin of
+`stellarindex_ratelimit_fail_open_total` and deliberately the same
+shape: the middleware fails open on purpose, because the cap is a
+billing-fairness mechanism rather than a security boundary and a
+Redis blip must not 429 paying customers.
+
+The exposure runs the other way round from the rate limiter's,
+though: while this is open a metered key bills past its agreed cap
+and the overage cannot be reclaimed, because the requests were
+served. Pre-seeded at zero so "quiet" is distinguishable from
+"dead" (C3-082, audit-2026-07-23 — before this counter the only
+trace was a `logger.Debug` line, below the API's production log
+level).
+
+Alert: `stellarindex_monthly_quota_fail_open` →
+[monthly-quota-fail-open](../../operations/runbooks/monthly-quota-fail-open.md).
+
+### `stellarindex_admin_audit_write_failures_total`
+
+Counter, label `surface` (`account_override` / `key_mint` /
+`key_revoke` / `status_notice` / `stripe_plan_upgrade` /
+`stripe_dead_letter`).
+
+Privileged mutations that **completed** but whose durable audit row
+failed to append. Every one of these call sites appends best-effort:
+the mutation has already committed when the append runs, so the
+error is logged and swallowed rather than propagated (un-doing a
+committed tier change because the audit store blipped would be
+worse). The consequence is that a tier override, a minted or revoked
+credential, a public status notice or a Stripe-driven plan change
+can be live with no record of the actor, the reason, or the previous
+values.
+
+Non-zero means the admin audit trail has holes that must be
+reconstructed from application logs before their retention window
+closes. All six label values are pre-seeded at zero (C3-067,
+audit-2026-07-23).
+
+Alert: `stellarindex_admin_audit_write_failing` →
+[admin-audit-write-failing](../../operations/runbooks/admin-audit-write-failing.md).
+
+### `stellarindex_admin_key_budget_clamps_total`
+
+Counter, label `outcome` (`lowered` / `failed`).
+
+API **credentials** — not clamp calls — whose per-minute budget was
+lowered to their account's tier ceiling by
+`Server.clampKeyBudgetsToTier`. Both callers funnel through it: the
+Stripe downgrade path and the admin `PATCH /v1/admin/accounts/{id}`
+override path. One account downgrade that lowers four keys adds 4.
+
+`failed` is the one that matters operationally: the downgrade errored
+and the credential KEPT its old, higher budget, i.e. paid throughput
+is still live past the downgrade.
+
+Deliberately **not alerted** — downgrades are routine. The counter
+exists because a clamp is invisible from the customer's side (their
+key keeps authenticating and simply starts 429-ing sooner), so
+support needs to be able to tie "my key started rate-limiting" to a
+billing event, and an accidental mass-clamp from a bad tier map
+should not be invisible. Both label values pre-seeded at zero.
+
 ### `stellarindex_aggregator_ticks_total`
 
 Counter, label `outcome` (`ok` / `error`).
@@ -1506,10 +1577,19 @@ One increment per escalation transition (not per frozen tick), so
 `increase(...[15m]) > 0` reads as "a new pair escalated" and an
 un-actioned escalation is a flat line rather than a climbing one.
 
-Force-unfreeze by deleting the pair's `freeze:<asset>:<quote>` key;
-the aggregator notices the missing marker on its next tick, drops
-the ladder, and counts the release under
+Force-unfreeze with
+`stellarindex-ops freeze-unfreeze -asset A -quote Q -reason "..."`,
+which clears the Redis marker AND stamps `recovered_at` on the durable
+row, and counts the release under
 `stellarindex_anomaly_freeze_released_total{mode="operator"}`.
+
+**Do not `redis-cli DEL` the marker.** Since migration 0119 the
+durable ladder is a second authority: deleting the key alone leaves
+`freeze_events.recovered_at` NULL, so the aggregator reads the missing
+marker as "Redis lost it", rehydrates the ladder and re-writes the
+marker on its next tick. For an *escalated* freeze — the only kind
+that needs a manual unfreeze at all — a bare DEL is therefore
+permanently inert.
 
 ### `stellarindex_anomaly_freeze_released_total`
 
@@ -1565,6 +1645,57 @@ marker TTL elapsed). Steady-state rate trails
 the recovery-worker poll interval (default 60s). A persistent gap
 between the two indicates the recovery worker is broken — see the
 [freeze-recovery-stalled runbook](../../operations/runbooks/freeze-recovery-stalled.md).
+
+### `stellarindex_anomaly_freeze_ladder_rehydrated_total`
+
+Counter, no labels.
+
+Freeze lifecycles restored from the **durable** ADR-0019 ladder
+(migration 0119, `freeze_events.hold_until` / `extensions_used` /
+`escalated` / `corroborated`) because the Redis marker was missing but
+an open, unlapsed row was still there.
+
+Each increment is one freeze — extension count, escalation flag and
+all — that would have silently released before 0119: the orchestrator
+reads a missing marker under a live freeze as the ADR-0019 operator
+force-unfreeze, so a Redis flush used to unfreeze every held pair,
+including ones that had climbed the full 2-hour ladder to `escalated`
+("stays active until manual unfreeze") and had already paged a human.
+
+Deliberately **not alerted**: the healthy steady state is zero, and a
+non-zero reading means the safety net worked. Its value is
+correlation — a burst immediately after a Redis restart is the
+expected shape, whereas a slow trickle with Redis healthy means
+markers are being evicted (`maxmemory-policy`) or expiring early,
+which is a real configuration fault worth chasing.
+
+### `stellarindex_anomaly_freeze_ladder_write_failures_total`
+
+Counter, label `op` (`mark_hold` / `clear`).
+
+Durable ADR-0019 ladder writes (migration 0119) that did not land.
+
+The failure was always possible; the **silence** is what this closes.
+Neither `freeze.Writer` nor `timescale.FreezeEventSink` holds a
+logger, so a persistently failing ladder write produced no signal on
+any surface: every freeze looked healthy right up until a Redis flush
+needed the ladder that had never been written, at which point the
+escalated freeze released exactly as it did before 0119.
+
+The shape that makes this concrete is a partially-failed deploy. The
+pipeline applies migrations **before** swapping the binary, so a new
+binary running against a schema where 0119 did not apply sees every
+ladder write match zero rows — uniformly absent durable state, zero
+complaints. The sink reports that as `ErrNotFound` and it is counted
+here.
+
+Any sustained non-zero value means the durable ladder is not being
+maintained and the Redis-flush protection is **inert**. `mark_hold`
+failing is the dangerous direction (ladders never recorded); `clear`
+failing only widens the pre-existing recovery-worker window. Both
+label values are pre-seeded — a metric that only appears once it
+breaks is indistinguishable from a dead one, which is the exact class
+of gap this counter exists to close.
 
 ### `stellarindex_anomaly_freeze_recovery_sweeps_total`
 

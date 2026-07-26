@@ -67,6 +67,9 @@ func registerAppMetrics() {
 		MetricsRegistryPresent,
 		SourceInsertErrorsTotal,
 		RateLimitFailOpenTotal,
+		MonthlyQuotaFailOpenTotal,
+		AdminAuditWriteFailuresTotal,
+		AdminKeyBudgetClampsTotal,
 		Sep1CacheOpsTotal,
 		CursorLastLedger,
 		DivergenceRefreshTotal,
@@ -100,13 +103,6 @@ func registerAppMetrics() {
 		SupplyDivergenceRatio,
 		SupplyDivergenceTotal,
 
-		AnomalyFreezeEngagedTotal,
-		AnomalyFreezeEscalatedTotal,
-		AnomalyFreezeExtensionsTotal,
-		AnomalyFreezeReleasedTotal,
-		AnomalyFreezeActive,
-		AnomalyFreezeRecoveredTotal,
-		AnomalyFreezeRecoverySweepsTotal,
 		AggregatorTriangulationsTotal,
 		StripeDeadLettersOpen,
 		AggregatorFXSnapFallbackTotal,
@@ -126,7 +122,28 @@ func registerAppMetrics() {
 
 		MarketsSkippedRowsTotal,
 	)
+	registerFreezeLifecycleMetrics()
 	registerAppMetricsTail()
+}
+
+// registerFreezeLifecycleMetrics registers the ADR-0019 freeze-lifecycle
+// family — fire / extend / escalate / release, the live-freeze gauge, and
+// the recovery worker's own counters. A self-contained group, peeled off
+// [registerAppMetrics] for the same reason that function was peeled off
+// init(): the set only grows, and the funlen ceiling is what forces the
+// split rather than a silently ever-longer function.
+func registerFreezeLifecycleMetrics() {
+	Registry.MustRegister(
+		AnomalyFreezeEngagedTotal,
+		AnomalyFreezeEscalatedTotal,
+		AnomalyFreezeExtensionsTotal,
+		AnomalyFreezeReleasedTotal,
+		AnomalyFreezeActive,
+		AnomalyFreezeRecoveredTotal,
+		AnomalyFreezeLadderRehydratedTotal,
+		AnomalyFreezeLadderWriteFailuresTotal,
+		AnomalyFreezeRecoverySweepsTotal,
+	)
 }
 
 // registerAppMetricsTail registers the remainder of the app metric set
@@ -178,6 +195,15 @@ func registerAppMetricsTail() {
 		HashdbDriftTotal,
 	)
 
+	seedBoundedLabelSeries()
+}
+
+// seedBoundedLabelSeries pre-registers the zero-valued label combinations
+// alert rules select on. Split out of [registerAppMetrics] for the same
+// reason that function was split out of init(): the set only grows, and the
+// funlen ceiling is what forces the split rather than a silently
+// ever-longer function.
+func seedBoundedLabelSeries() {
 	// F-0033 closure: pre-seed zero-valued series for the
 	// bounded-cardinality counters whose alert rules use rate() /
 	// increase() but whose label combinations never appear in
@@ -253,6 +279,30 @@ func registerAppMetricsTail() {
 	// scrape output — indistinguishable from a dead metric.
 	for _, mode := range []string{"auto", "operator"} {
 		AnomalyFreezeReleasedTotal.WithLabelValues(mode)
+	}
+	// Durable-ladder write sites (migration 0119). Bounded set of two;
+	// seeded because this counter's whole purpose is to make a SILENT
+	// failure visible, and an absent series is itself a silence.
+	for _, op := range []string{"mark_hold", "clear"} {
+		AnomalyFreezeLadderWriteFailuresTotal.WithLabelValues(op)
+	}
+	// C3-067: privileged-mutation surfaces whose audit row can fail to
+	// land. Bounded and enumerated at the six call sites; seeded so the
+	// alert's increase() reads a real zero instead of "no data" on a
+	// freshly-deployed API — the state that is otherwise
+	// indistinguishable from "this metric is dead", which is exactly the
+	// gap that let the audit-write failure go unobserved in the first place.
+	for _, surface := range []string{
+		"account_override", "key_mint", "key_revoke",
+		"status_notice", "stripe_plan_upgrade", "stripe_dead_letter",
+	} {
+		AdminAuditWriteFailuresTotal.WithLabelValues(surface)
+	}
+	// Tier-clamp outcomes — bounded set of two. `failed` in particular
+	// means paid throughput stayed live past a downgrade, so it must be
+	// distinguishable from "nothing has been clamped yet".
+	for _, outcome := range []string{"lowered", "failed"} {
+		AdminKeyBudgetClampsTotal.WithLabelValues(outcome)
 	}
 }
 
@@ -922,6 +972,29 @@ var RateLimitFailOpenTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ratelimit_fail_open_total",
 		Help: "Requests that bypassed rate-limiting because Redis errored.",
+	},
+)
+
+// MonthlyQuotaFailOpenTotal — counter of requests that skipped the
+// per-key monthly-quota ceiling because the month-to-date read errored
+// (C3-082, audit-2026-07-23).
+//
+// The exact sibling of [RateLimitFailOpenTotal], and deliberately shaped
+// identically. `internal/api/v1/middleware/monthly_quota.go` fails OPEN on a
+// backing-store error — the cap is a billing-fairness mechanism, not a
+// security boundary, so a Redis blip must not 429 paying customers — but
+// that means the metered-plan spend ceiling silently switches itself off,
+// and until this counter existed the only trace was a `logger.Debug` line
+// (below the API's default log level, so in production: no trace at all).
+//
+// The exposure is the mirror image of the rate limiter's: this one is
+// revenue, not abuse. While it is failing open a metered key can bill past
+// its agreed cap, and the overage is unrecoverable after the fact — the
+// requests were served.
+var MonthlyQuotaFailOpenTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_monthly_quota_fail_open_total",
+		Help: "Requests that bypassed the per-key monthly quota ceiling because the month-to-date read errored.",
 	},
 )
 
@@ -2048,6 +2121,63 @@ var AnomalyFreezeRecoveredTotal = prometheus.NewCounter(
 	},
 )
 
+// AnomalyFreezeLadderRehydratedTotal — counter of freeze lifecycles
+// restored from the DURABLE ladder (migration 0119) because the Redis
+// marker was gone but `freeze_events` still held an open, unlapsed row.
+//
+// Each increment is one freeze — extension count, escalation flag and all —
+// that would have silently RELEASED before 0119: the orchestrator reads a
+// missing marker under a live freeze as the ADR-0019 operator override, so
+// a Redis flush used to unfreeze every held pair, including ones that had
+// climbed the whole 2-hour ladder to escalated ("stays active until manual
+// unfreeze") and had already paged a human.
+//
+// Deliberately not alerted on its own: the healthy steady state is zero,
+// and a non-zero reading means the safety net WORKED. What it gives an
+// operator is the ability to correlate — a burst here immediately after a
+// Redis restart is the expected shape, whereas a slow trickle with Redis
+// healthy means markers are being evicted (maxmemory policy) or expiring
+// early, which is a real configuration fault worth chasing.
+var AnomalyFreezeLadderRehydratedTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_anomaly_freeze_ladder_rehydrated_total",
+		Help: "Freeze lifecycles restored from the durable freeze_events ladder after the Redis marker went missing.",
+	},
+)
+
+// AnomalyFreezeLadderWriteFailuresTotal — counter of durable ADR-0019
+// ladder writes (migration 0119) that did not land, by call site
+// (`mark_hold` | `clear`).
+//
+// The failure was always possible; the SILENCE is what this closes. Neither
+// freeze.Writer nor timescale.FreezeEventSink holds a logger, so a
+// persistently failing ladder write produced no signal on any surface: every
+// freeze looked healthy right up until a Redis flush needed the ladder that
+// had never been written, at which point the escalated freeze released
+// exactly as it did before 0119.
+//
+// The shape that makes this concrete is a partially-failed deploy. The
+// pipeline applies migrations BEFORE swapping the binary, so a new binary
+// running against a schema where 0119 did not apply sees EVERY ladder write
+// match zero rows — uniformly absent durable state, zero complaints. The
+// sink now reports that as ErrNotFound and it is counted here.
+//
+// Any sustained non-zero value means the durable ladder is not being
+// maintained and the Redis-flush protection is inert. `mark_hold` failing is
+// the dangerous direction (ladders never recorded); `clear` failing only
+// widens the pre-existing recovery-worker window.
+//
+// Both label values are pre-seeded — a metric that only appears once it
+// breaks is indistinguishable from a dead one, which is the exact class of
+// gap this counter exists to close.
+var AnomalyFreezeLadderWriteFailuresTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_anomaly_freeze_ladder_write_failures_total",
+		Help: "Durable freeze-ladder writes that did not land, by call site (mark_hold|clear). Sustained non-zero = the Redis-flush protection is inert.",
+	},
+	[]string{"op"},
+)
+
 // AnomalyFreezeRecoverySweepsTotal — counter of recovery-worker
 // poll cycles, labelled by outcome (ok / partial / error). Sustained
 // `error` indicates the lister or Redis transport is broken; sustained
@@ -2421,6 +2551,66 @@ var StripePlatformSyncErrorsTotal = prometheus.NewCounterVec(
 		Help: "Stripe webhook platform-store side-effect failures, labelled by operation. Non-zero = bridge degraded; customer dashboard state drifting from Stripe billing state.",
 	},
 	[]string{"operation"},
+)
+
+// AdminAuditWriteFailuresTotal — counter of privileged mutations that
+// COMPLETED but whose durable audit row did not land (C3-067,
+// audit-2026-07-23).
+//
+// Every one of these call sites appends to the audit log best-effort and
+// logs a bare `logger.Warn("… audit append failed (best-effort)")`. The
+// mutation itself is already committed by then, so the choice is correct —
+// refusing the write after the fact would be worse — but it means a
+// money/security change to a customer's account can happen with NO durable
+// record, and until this counter existed the only trace was one WARN line
+// nobody greps for.
+//
+// This is the accountability counterpart to the mutation succeeding: a
+// non-zero reading means the admin audit trail is incomplete and the gap
+// has to be reconstructed from application logs before the retention window
+// closes on them. Any sustained non-zero value is alertable.
+//
+// Labels:
+//   - surface: which privileged mutation lost its audit row
+//     (account_override|key_mint|key_revoke|status_notice|
+//     stripe_plan_upgrade|stripe_dead_letter)
+//
+// Bounded, well-known label set — pre-seeded so the alert's increase()
+// reads a real zero rather than "no data" before the first failure.
+var AdminAuditWriteFailuresTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_admin_audit_write_failures_total",
+		Help: "Privileged mutations that succeeded but whose durable audit row failed to append, by surface. Non-zero = the admin audit trail has holes.",
+	},
+	[]string{"surface"},
+)
+
+// AdminKeyBudgetClampsTotal — counter of API credentials whose per-minute
+// budget was lowered to their account's tier ceiling by
+// `Server.clampKeyBudgetsToTier` (the Stripe downgrade path and the admin
+// account-override path both funnel through it).
+//
+// A clamp silently reduces throughput a customer may still believe they
+// have: their existing key keeps working but starts 429-ing sooner, and the
+// only prior trace was an INFO line per account. Downgrades are legitimate
+// and expected — this is deliberately NOT alerted — but the rate is what
+// tells an operator whether a support ticket ("my key started rate-limiting")
+// has a billing explanation, and it is what makes an accidental mass-clamp
+// (a bad tier map, a mis-sequenced webhook) visible at all.
+//
+// Labels:
+//   - outcome: `lowered` — the credential's budget was written down;
+//     `failed`  — the downgrade errored and the key KEPT its old, higher
+//     budget (paid throughput still live past the downgrade).
+//
+// Counts CREDENTIALS, not clamp calls: one account downgrade lowering four
+// keys adds 4. Pre-seeded on both outcomes.
+var AdminKeyBudgetClampsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_admin_key_budget_clamps_total",
+		Help: "API credentials whose per-minute budget was clamped to their account tier ceiling, by outcome (lowered|failed).",
+	},
+	[]string{"outcome"},
 )
 
 // ChLiveSinkLedgersTotal — count of ledgers processed by the

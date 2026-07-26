@@ -776,7 +776,19 @@ func (s *Server) clampKeyBudgetsToTier(
 ) (lowered, failed int) {
 	pl, pf := s.downgradePlatformAPIKeys(ctx, cause, st, account, ceiling)
 	rl, rf := s.downgradeRedisAPIKeys(ctx, cause, st, account, ceiling)
-	return pl + rl, pf + rf
+	lowered, failed = pl+rl, pf+rf
+	// A clamp quietly reduces throughput the customer may still believe they
+	// have — their key keeps authenticating and starts 429-ing sooner. Both
+	// callers (Stripe downgrade, admin override) funnel through here, so this
+	// is the one chokepoint that sees every clamp. `failed` is the operator's
+	// signal that paid throughput stayed live past a downgrade.
+	if lowered > 0 {
+		obs.AdminKeyBudgetClampsTotal.WithLabelValues("lowered").Add(float64(lowered))
+	}
+	if failed > 0 {
+		obs.AdminKeyBudgetClampsTotal.WithLabelValues("failed").Add(float64(failed))
+	}
+	return lowered, failed
 }
 
 // downgradePlatformAPIKeys lowers every active Postgres-backed dashboard
@@ -1319,6 +1331,9 @@ func (s *Server) recordStripeUpgradeAudit(
 		Timestamp:  s.stripeNow(),
 	}
 	if err := s.stripe.Audit.Append(ctx, entry); err != nil {
+		// C3-067: the plan changed on a paid account with no audit row
+		// tying it to the Stripe event that caused it.
+		obs.AdminAuditWriteFailuresTotal.WithLabelValues("stripe_plan_upgrade").Inc()
 		s.logger.Warn("stripe webhook: audit append failed (best-effort)",
 			"err", err, "event_id", ev.ID, "identifier", identifier)
 	}
@@ -1388,6 +1403,9 @@ func (s *Server) recordStripeDeadLetterAudit(ctx context.Context, ev stripeEvent
 		Timestamp:  s.stripeNow(),
 	}
 	if err := s.stripe.Audit.Append(ctx, entry); err != nil {
+		// C3-067: money landed, nothing was provisioned, and the audit row
+		// recording that conclusion is also missing.
+		obs.AdminAuditWriteFailuresTotal.WithLabelValues("stripe_dead_letter").Inc()
 		s.logger.Warn("stripe webhook: dead-letter audit append failed (best-effort)",
 			"err", err, "event_id", ev.ID, "identifier", identifier)
 	}

@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // MonthToDateReader is the storage-side primitive the
@@ -42,10 +43,13 @@ type MonthToDateReader interface {
 //     `UsageTracker` keeps 429s and 5xx out of it (see
 //     [billableClass]), so neither our throttle nor our outage can
 //     consume the customer's cap.
-//   - Reader nil or read error: log + pass through. The cap is
+//   - Reader nil or read error: count + log + pass through. The cap is
 //     not a security boundary — it's a billing fairness
 //     mechanism, so a transient Redis blip must not 500 paying
-//     customers.
+//     customers. The bypass is counted on
+//     [obs.MonthlyQuotaFailOpenTotal] (C3-082) because while it is
+//     happening a metered key bills past its agreed cap and the
+//     overage cannot be reclaimed after the response is served.
 //
 // Wire AFTER [Auth] (so SubjectFrom returns) and BEFORE
 // [RateLimit] so a request rejected by the monthly cap doesn't
@@ -68,7 +72,14 @@ func MonthlyQuota(reader MonthToDateReader, logger *slog.Logger) Middleware {
 			}
 			used, err := reader.MonthToDate(r.Context(), id)
 			if err != nil {
-				logger.Debug("monthly-quota: read failed; failing open",
+				// C3-082: the ceiling is now OFF for this request and the
+				// customer can bill past their agreed cap — an outcome that
+				// is unrecoverable once the response is served. Count it
+				// before logging so the signal exists even at the API's
+				// production log level, where Warn is the floor and the old
+				// Debug line was invisible.
+				obs.MonthlyQuotaFailOpenTotal.Inc()
+				logger.Warn("monthly-quota: read failed; failing open",
 					"err", err, "subject", id)
 				next.ServeHTTP(w, r)
 				return

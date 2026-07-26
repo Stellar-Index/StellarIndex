@@ -316,3 +316,78 @@ groups:
             Check the Redis readyz probe first — this normally moves
             together with it. If Redis is healthy, the failure is in the
             limiter's own path (auth, evicted script, key namespace).
+
+      # C3-082 (audit-2026-07-23): the monthly-quota middleware fails OPEN
+      # on a backing-store error — correct, because the cap is billing
+      # fairness and not a security boundary, so a Redis blip must not 429
+      # paying customers. But the pre-fix trace was a `logger.Debug` line,
+      # i.e. nothing at all at the API's production log level, and no
+      # counter: the metered-spend ceiling could be off indefinitely with
+      # zero signal.
+      #
+      # This is the revenue-side twin of stellarindex_ratelimit_fail_open
+      # and is deliberately shaped identically. The exposure is the
+      # opposite way round though: the rate limiter failing open costs
+      # throughput/abuse headroom, this one costs MONEY — while it is open
+      # a metered key bills past its agreed cap and the overage cannot be
+      # reclaimed, because the requests were served.
+      - alert: stellarindex_monthly_quota_fail_open
+        expr: sum(rate(stellarindex_monthly_quota_fail_open_total[5m])) > 0
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/monthly-quota-fail-open.md
+          summary: "Monthly quota ceiling is FAILING OPEN ({{ $value | humanize }} req/s bypassing the cap)"
+          description: |
+            The per-key monthly request quota could not be read from its
+            backing store and the requests were served anyway, continuously
+            for the last 10 minutes. Every metered key is currently
+            uncapped: usage still meters (so the customer is still billed)
+            but the agreed ceiling is not enforced, and any overage served
+            in this window is unrecoverable.
+
+            Normally moves together with the Redis readyz probe and with
+            stellarindex_ratelimit_fail_open — the two share a backing
+            store. If this fires ALONE, suspect the usage-counter key
+            namespace or an eviction policy rather than Redis availability.
+
+      # C3-067 (audit-2026-07-23): every privileged mutation on the admin
+      # + Stripe surfaces appends its audit row best-effort. The mutation
+      # has already committed by then, so swallowing the error is right —
+      # but it means an account tier, an API credential or a public status
+      # notice can change with NO durable record of who did it or why, and
+      # before this metric the only trace was one `logger.Warn` line.
+      #
+      # increase() over 1h with for: 5m, not rate()>0: these are rare,
+      # bursty events (a single audit-DB outage produces a handful), and
+      # the operator response is "reconstruct the missing rows from the
+      # application logs before their retention closes" — which is worth
+      # paging on for ONE occurrence, not only for a sustained rate. The
+      # `surface` label is preserved through the alert so the ticket names
+      # which mutation class to go looking for.
+      - alert: stellarindex_admin_audit_write_failing
+        expr: sum by (surface) (increase(stellarindex_admin_audit_write_failures_total[1h])) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/admin-audit-write-failing.md
+          summary: "Admin audit trail has holes: {{ $value | humanize }} lost row(s) on {{ $labels.surface }}"
+          description: |
+            A privileged mutation on the `{{ $labels.surface }}` surface
+            COMPLETED but its durable audit row did not land. The change is
+            live — a tier override, a minted or revoked credential, a public
+            status notice, or a Stripe-driven plan change — with no record
+            of the actor, the reason, or the previous values.
+
+            This is a compliance/forensics gap, not an availability one: do
+            NOT roll anything back. Recover the missing rows from the API's
+            application logs (each site logs `… audit append failed
+            (best-effort)` with the target id) BEFORE the log retention
+            window closes on them, then fix whatever made the audit store
+            unwritable.

@@ -404,6 +404,27 @@ func TestZeroSeed_F0033(t *testing.T) {
 		`stellarindex_anomaly_freeze_active 0`,
 		`stellarindex_anomaly_freeze_released_total{mode="auto"} 0`,
 		`stellarindex_anomaly_freeze_released_total{mode="operator"} 0`,
+		// C3-082 / C3-067 (audit-2026-07-23). Both are fail-open /
+		// best-effort paths whose whole point is that they are silent when
+		// healthy, so "absent" and "zero" have to be distinguishable or the
+		// alert is indistinguishable from a dead metric — which is exactly
+		// how both of these went unobserved until the audit found them.
+		`stellarindex_monthly_quota_fail_open_total 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="account_override"} 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="key_mint"} 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="key_revoke"} 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="status_notice"} 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="stripe_plan_upgrade"} 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="stripe_dead_letter"} 0`,
+		// Tier clamp: not alerted, but `failed` means paid throughput
+		// stayed live past a downgrade and must not read as "no data".
+		`stellarindex_admin_key_budget_clamps_total{outcome="lowered"} 0`,
+		`stellarindex_admin_key_budget_clamps_total{outcome="failed"} 0`,
+		// Migration 0119: a counter whose entire job is to make a SILENT
+		// failure visible must not itself be absent until it first fires.
+		`stellarindex_anomaly_freeze_ladder_write_failures_total{op="mark_hold"} 0`,
+		`stellarindex_anomaly_freeze_ladder_write_failures_total{op="clear"} 0`,
+		`stellarindex_anomaly_freeze_ladder_rehydrated_total 0`,
 	}
 	for _, want := range mustContain {
 		if !strings.Contains(s, want) {
