@@ -59,6 +59,13 @@ severity: P1
 
 ## Loop log (newest first)
 
+- 2026-07-27 ~14:50Z (iter 2, cont. 3): drift round 2 exposed three
+  role idempotency bugs (disable-thp oneshot without RemainAfterExit;
+  /var/lib/stellarindex 0750↔0755 mode ping-pong between two tasks;
+  migrations rsync stamping the CONTROLLER's uid) — all fixed
+  (`660e3b69`), applied to r1 (targeted tags, changed=3), drift round 3
+  triggered. Expected residual red: ONLY the stopped
+  compute-completeness.timer (self-heals when §2.1 finishes).
 - 2026-07-27 ~14:30Z (iter 2, cont. 2): **CI SSH lockout caught+fixed** —
   the exclusive `authorized_keys` apply deleted the post-org-migration
   deploy key (`gh-actions-deploy@stellarindex`), hand-added 2026-07-15
