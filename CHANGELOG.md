@@ -16,6 +16,44 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **`supply seed-sac-balances -full-history` no longer OOMs ClickHouse —
+  the scan is now walked in ledger windows and reduced in Go.** The
+  single all-contracts `argMax(entry_xdr, …) GROUP BY key_xdr` over
+  `stellar.ledger_entry_changes` holds one KB-scale aggregate state per
+  distinct storage key across ALL history, so its footprint grows with
+  chain history and no ceiling is ever enough: it hit code 241 for the
+  THIRD time on r1 (2026-07-27, after the 2026-07-11 global-sort and
+  wide-column-read failures), dying at its own 8 GB limit having read
+  110.3 B rows / 601 GiB in 380 s — about 70% of the table.
+  `StreamSACBalanceSeedsFullHistory` now scans in 250,000-ledger windows
+  — a primary-key range, so each window reads only its own slice — and
+  finishes the latest-write-wins reduction in Go, bounded by the seed's
+  own output cardinality: keys the raw-byte prefilter admits but that
+  are not a watched wrapper's `Balance(Address)` entry are rejected on
+  sight, and a removed winner drops its `entry_xdr`. The window size is
+  measured, not guessed: on r1 the two densest Soroban stretches peak at
+  1.48 / 1.75 GiB with zero spills (~60–70 s each), against a 1M-ledger
+  window that died above 3.73 GiB. GROUP-BY spill is now OFF — ClickHouse
+  compares the spill threshold against the WHOLE query's memory, which
+  here is dominated by the wide `entry_xdr` read rather than by the ~32k–54k
+  aggregate states, so the old 1–2 GB thresholds flushed a near-empty
+  hash table on every block (116,753 temporary parts on one window) and
+  merging them is what exhausted the budget. A 241 on any window bisects
+  it rather than raising the ceiling (monotonic, floored at 15,625
+  ledgers); every other ClickHouse exception still fails the run. The
+  within-ledger ordering tuple `(ledger_seq, intra_ledger_seq, tx_hash,
+  op_index, change_index)` is preserved exactly and is now applied on
+  BOTH sides of the seam — server-side within a window, and in Go across
+  windows — so audit-2026-07-16 C2-4 (a same-ledger removal must
+  suppress the live before-image, never resurrect it) holds across a
+  window boundary too. The per-column `argMax` fan-out collapses into
+  one `argMax` over a tuple of every projected column, making column
+  coherence structural rather than a property of tie-impossibility.
+  Per-contract iteration was measured and rejected: over ledgers
+  63.0–63.2M the USDC wrapper alone owns 98% of the matched distinct
+  keys, so splitting by contract would barely shrink the aggregation
+  while costing 38 full passes (~850 GiB each) on the host that runs
+  galexie's captive core.
 - **sep41 projector sources are now registered from the watched-contract
   set, closing a 14-day zero-writer hole** (`a0ac14e4`). The dispatcher
   unconditionally cedes the sep41 domain to the projector (F-1316

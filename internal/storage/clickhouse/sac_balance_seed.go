@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
@@ -118,9 +120,10 @@ func StreamSACBalanceSeeds(ctx context.Context, addr string, watched map[string]
 // [StreamSACBalanceSeeds]. It scans stellar.ledger_entry_changes — the
 // certified append-log (ADR-0034), not the ledger_entries_current
 // current-state projection — and reduces to the latest write per
-// (entry_type, key_xdr) with a server-side `ORDER BY … LIMIT 1 BY key_xdr`,
-// reproducing exactly what ledger_entries_current's ReplacingMergeTree
-// would hold if it had been backfilled for this key.
+// (entry_type, key_xdr), reproducing exactly what ledger_entries_current's
+// ReplacingMergeTree would hold if it had been backfilled for this key. The
+// reduction is server-side WITHIN each ledger window and finished in Go across
+// them (see the Memory note below).
 //
 // Why this exists (PHO/BLND VERDICT, incident 2026-07-06 — see
 // docs/architecture/supply-pipeline.md "Dormant contract-held SAC balances").
@@ -162,6 +165,34 @@ func StreamSACBalanceSeeds(ctx context.Context, addr string, watched map[string]
 // run-heavy-job.sh on r1 (CLAUDE.md heavy-job doctrine), same discipline as
 // the existing seed. It is intended for the small `[supply.sac_wrappers]`
 // watched-set (a handful of contracts), never a routine/scheduled job.
+//
+// Memory (incident 2026-07-27 — the THIRD 241 on this query, and the one that
+// changed its shape). Prefiltering to the watched set was not enough. A single
+// unbounded query over the append-log carries a per-query footprint that grows
+// with the SPAN it covers: the aggregate states (one latest-write state per
+// distinct storage key, and entry_xdr is KB-scale) plus the read pipeline for
+// that same wide entry_xdr column, which is the larger of the two. Neither is
+// bounded by anything except how much history the WHERE admits, so no ceiling
+// is ever the right answer — this is the third one it outgrew. Measured on r1
+// the day it died: 380 s, 110.3 BILLION rows / 601 GiB read (~70% of the
+// table) before hitting its own 8 GB limit in AggregatingTransform.
+//
+// The fix is to bound the span: scan in ledger WINDOWS ([sacSeedLedgerWindow],
+// sized from measurement) and finish the latest-write-wins reduction across
+// them in Go ([sacSeedReducer]). Windows are primary-key ranges, so a window
+// reads its own slice and nothing else; the granule-level over-read makes the
+// windowed total roughly 2x a single pass's rows through the Soroban-dense
+// stretch, which is the price of the fix — call it ~1 h wall on r1 for the
+// whole chain, still one heavy job under run-heavy-job.sh.
+//
+// Note what was deliberately NOT done: one query per watched contract. The r1
+// skew makes it useless here — over ledgers 63.0–63.2M the USDC wrapper alone
+// owns 914,993 of ~1.3M matched rows and 28,287 of ~28,800 matched distinct
+// keys (98% of the GROUP BY's cardinality), so a per-contract split leaves
+// essentially the whole aggregation intact for USDC while multiplying the
+// scan by 38 — hours of saturated I/O on the host that also runs galexie's
+// captive core (CLAUDE.md heavy-job doctrine). Windowing bounds the footprint
+// on the axis it actually grows along; splitting by contract does not.
 func StreamSACBalanceSeedsFullHistory(ctx context.Context, addr string, watched map[string]string, fn func(SACBalanceSeed) error) error {
 	if len(watched) == 0 {
 		return errors.New("clickhouse: StreamSACBalanceSeedsFullHistory: empty watched SAC-wrapper set")
@@ -172,95 +203,347 @@ func StreamSACBalanceSeedsFullHistory(ctx context.Context, addr string, watched 
 	}
 	defer func() { _ = conn.Close() }()
 
-	// LIMIT 1 BY key_xdr, ordered by ledger_seq DESC within each key group,
-	// keeps only the highest-ledger row per unique storage key — the same
-	// "latest write wins" reduction ledger_entries_current's
-	// ReplacingMergeTree(ledger_seq) performs, computed directly over the
-	// full append-log instead of the (floor-limited) projection.
-	// The watched-contract filter is pushed INTO the SQL as a raw-byte
-	// match on the strkey-decoded contract IDs embedded in key_xdr
-	// (multiSearchAny over the base64-decoded key — the same byte-match
-	// technique StreamContractCallOps uses on body_xdr). Without it, the
-	// LIMIT 1 BY reduction ran over EVERY contract_data key in the
-	// multi-billion-row append-log and exceeded the CH query budget
-	// twice on r1 (2026-07-11): first in the sort, then — with spill
-	// settings — in the wide-column read pipeline itself. Prefiltered
-	// to the watched handful of contracts, the surviving row set is
-	// tiny and the reduction is trivial. Spill settings retained as a
-	// belt-and-suspenders bound.
+	needles, err := sacWatchedContractNeedles(watched)
+	if err != nil {
+		return err
+	}
+	minLedger, maxLedger, err := entryChangeLedgerBounds(ctx, conn)
+	if err != nil {
+		return err
+	}
+
+	// Windows are walked in ascending ledger order and never overlap, so the
+	// per-window server-side reduction plus the Go reduction across windows is
+	// exactly the reduction the single unbounded GROUP BY performed.
+	red := newSACSeedReducer(watched)
+	window := uint32(sacSeedLedgerWindow)
+	for start := minLedger; ; {
+		end := start + window - 1
+		if end < start || end > maxLedger { // uint32 overflow guard + clamp
+			end = maxLedger
+		}
+		switch err := scanSACSeedWindow(ctx, conn, needles, start, end, red); {
+		case err == nil:
+		case isMemoryLimitExceeded(err) && window > sacSeedMinLedgerWindow:
+			// Bisect and retry the SAME start: a window whose key space
+			// still doesn't fit is a signal to narrow, never to raise the
+			// ceiling (chasing the ceiling is what failed three times).
+			// Monotonic — a narrowed window is never widened again, so one
+			// dense stretch can't be re-hit window after window.
+			window /= 2
+			continue
+		default:
+			return err
+		}
+		if end >= maxLedger {
+			break
+		}
+		start = end + 1
+	}
+	return red.emit(fn)
+}
+
+const (
+	// sacSeedLedgerWindow is the ledger span of one full-history seed scan
+	// step. It divides ledger_entry_changes' PARTITION BY
+	// intDiv(ledger_seq, 1000000) evenly, so a window never straddles a
+	// partition, and ledger_seq leads the table's ORDER BY, so a window is a
+	// primary-key range — the windows partition the ledger range and their
+	// reads sum to roughly the one pass the unbounded query made.
+	//
+	// 250,000 is measured, not guessed. On r1 (2026-07-27, 38 watched
+	// wrappers, ClickHouse 26.5.1) against the two densest stretches of
+	// Soroban history:
+	//
+	//	window     ledgers            peak mem   spills   wall
+	//	1,000,000  63.00M–64.00M      >3.73 GiB  died     —
+	//	  250,000  63.00M–63.25M      1.75 GiB   0        70 s
+	//	  250,000  63.40M–63.65M      1.48 GiB   0        59 s
+	//	  250,000  40.00M–40.25M      32 MiB     0        1 s   (pre-Soroban)
+	//
+	// — roughly 2.5x headroom under the per-query ceiling in the worst
+	// stretch measured, and pre-Soroban windows cost almost nothing because
+	// entry_type prunes them outright.
+	sacSeedLedgerWindow = 250_000
+	// sacSeedMinLedgerWindow is the bisection floor (250k >> 4). Below this a
+	// window holds a few thousand keys and tens of MiB — if THAT doesn't fit,
+	// the window size is not the problem and the error should surface.
+	sacSeedMinLedgerWindow = sacSeedLedgerWindow >> 4
+
+	// chMemoryLimitExceeded is ClickHouse's MEMORY_LIMIT_EXCEEDED.
+	chMemoryLimitExceeded = 241
+)
+
+// sacWatchedContractNeedles renders the watched SAC-wrapper set as raw-byte
+// ClickHouse literals for the multiSearchAny prefilter.
+//
+// The watched-contract filter is pushed INTO the SQL as a raw-byte match on
+// the strkey-decoded contract IDs embedded in key_xdr (multiSearchAny over the
+// base64-decoded key — the same byte-match technique StreamContractCallOps
+// uses on body_xdr): ledger_entry_changes carries no contract_id column.
+// Without it the reduction ran over EVERY contract_data key in the
+// multi-billion-row append-log and exceeded the CH query budget twice on r1
+// (2026-07-11): first in the sort, then — with spill settings — in the
+// wide-column read pipeline itself.
+func sacWatchedContractNeedles(watched map[string]string) ([]string, error) {
 	needles := make([]string, 0, len(watched))
 	for strk := range watched {
-		raw, derr := strkey.Decode(strkey.VersionByteContract, strk)
-		if derr != nil {
-			return fmt.Errorf("clickhouse: full-history seed: decode watched strkey %s: %w", strk, derr)
+		raw, err := strkey.Decode(strkey.VersionByteContract, strk)
+		if err != nil {
+			return nil, fmt.Errorf("clickhouse: full-history seed: decode watched strkey %s: %w", strk, err)
 		}
 		needles = append(needles, "unhex('"+hex.EncodeToString(raw)+"')")
 	}
 	sort.Strings(needles) // deterministic SQL for tests/logs
-	// argMax GROUP BY instead of ORDER BY … LIMIT 1 BY: the global sort
-	// variant pulled every surviving WIDE row (entry_xdr is KB-scale)
-	// through MergeSortingTransform and still breached the budget even
-	// with spill thresholds (third 241 on r1, 2026-07-11). argMax keeps
-	// one latest-write state per key — per-GROUP memory, spilled by
-	// external_group_by — and no global sort exists at all.
-	//
-	// The ordering key is the FULL within-ledger identity tuple
-	// (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index) — NOT
-	// ledger_seq alone. audit-2026-07-16 C2-4: ledger_seq is not unique per key
-	// within a ledger (change_index is only a per-TRANSACTION counter — see
-	// extract_entry_changes.go — so a single ledger can hold several changes to
-	// the same storage key), so `argMax(col, ledger_seq)` computed
-	// INDEPENDENTLY per column let ClickHouse resolve the tie differently for
-	// each column: `entry_xdr` from a still-present change and `change_type`
-	// from a later 'removed' change in the same ledger → a Frankenstein
-	// current-state row. When change_type was mis-read as present, the
-	// removed-entry skip below never fired and a deleted balance was
-	// RESURRECTED (before-image) into the SAC supply seed — a direct
-	// contributor to the supply cross-check divergence. A single argMax over
-	// the whole identity TUPLE forces every column to come from the one genuine
-	// latest row, making the removal skip coherent.
-	//
-	// intra_ledger_seq LEADS the within-ledger part of the tuple (C2-4c): it is
-	// the per-LEDGER canonical walk position (apply order across all txs), so it
-	// resolves same-ledger cross-tx writes by TRUE apply order — and it is the
-	// exact same tie-break folded into ledger_entries_current's version, so this
-	// full-history reduction and the FINAL projection agree on the winner. Rows
-	// written before the C2-4c fix (and legacy rows until a re-derive) carry
-	// intra_ledger_seq = 0, so among them the tuple falls through to
-	// (tx_hash, op_index, change_index) — the prior lexical-but-deterministic
-	// canonical order — a strict superset, never a regression.
-	//
-	// Output aliases must NOT shadow the source column names: ClickHouse
-	// resolves a shadowing alias back into sibling aggregate arguments
-	// (ILLEGAL_AGGREGATION — caught live 2026-07-11).
+	return needles, nil
+}
+
+// entryChangeLedgerBounds reads the append-log's [min, max] ledger. ledger_seq
+// leads ledger_entry_changes' ORDER BY, so both come from part metadata — no
+// scan. Deliberately NOT floored at a hard-coded Soroban-activation constant:
+// the seed's semantics are "whatever contract_data the lake holds", and the
+// integration fixtures write contract_data far below mainnet activation.
+func entryChangeLedgerBounds(ctx context.Context, conn driver.Conn) (uint32, uint32, error) {
+	var lo, hi uint32
+	const q = `SELECT min(ledger_seq), max(ledger_seq) FROM stellar.ledger_entry_changes`
+	if err := conn.QueryRow(ctx, q).Scan(&lo, &hi); err != nil {
+		return 0, 0, fmt.Errorf("clickhouse: read ledger_entry_changes ledger bounds: %w", err)
+	}
+	return lo, hi, nil
+}
+
+// scanSACSeedWindow reduces one ledger window server-side to at most one row
+// per storage key and offers each to red.
+//
+// A SINGLE argMax over a TUPLE of every projected column, keyed on the full
+// within-ledger identity tuple (ledger_seq, intra_ledger_seq, tx_hash,
+// op_index, change_index) — NOT ledger_seq alone, and not one argMax per
+// column. audit-2026-07-16 C2-4: ledger_seq is not unique per key within a
+// ledger (change_index is only a per-TRANSACTION counter — see
+// extract_entry_changes.go — so a single ledger can hold several changes to
+// the same storage key), so `argMax(col, ledger_seq)` computed INDEPENDENTLY
+// per column let ClickHouse resolve the tie differently for each column:
+// entry_xdr from a still-present change and change_type from a later 'removed'
+// change in the same ledger → a Frankenstein current-state row. When
+// change_type was mis-read as present, the removed-entry skip never fired and
+// a deleted balance was RESURRECTED (before-image) into the SAC supply seed — a
+// direct contributor to the supply cross-check divergence. Projecting all
+// columns through ONE aggregate makes column coherence structural rather than
+// a property of tie-impossibility, and costs one aggregate state per key
+// instead of four (the ordering tuple embeds a 64-char tx_hash, so the four
+// separate argMax states carried four copies of it).
+//
+// intra_ledger_seq LEADS the within-ledger part of the tuple (C2-4c): it is the
+// per-LEDGER canonical walk position (apply order across all txs), so it
+// resolves same-ledger cross-tx writes by TRUE apply order — and it is the
+// exact same tie-break folded into ledger_entries_current's version, so this
+// full-history reduction and the FINAL projection agree on the winner. Rows
+// written before the C2-4c fix (and legacy rows until a re-derive) carry
+// intra_ledger_seq = 0, so among them the tuple falls through to
+// (tx_hash, op_index, change_index) — the prior lexical-but-deterministic
+// canonical order — a strict superset, never a regression.
+//
+// Output aliases must NOT shadow the source column names: ClickHouse resolves
+// a shadowing alias back into sibling aggregate arguments (ILLEGAL_AGGREGATION
+// — caught live 2026-07-11), hence the win_ prefixes and the tupleElement
+// unpack in an outer SELECT.
+//
+// SETTINGS: the per-query ceiling is LOWER than the 8 GB the pre-windowing
+// query asked for, on purpose. With the key space bounded to one window a
+// healthy step needs a fraction of it (1.5–1.8 GiB measured), and a step that
+// doesn't fit should bisect — bounded extra time — rather than consume the
+// host's memory, whose blast radius is unbounded and includes galexie's
+// captive core.
+//
+// GROUP-BY SPILL IS OFF, which reverses the earlier belt-and-braces posture.
+// ClickHouse compares max_bytes_before_external_group_by against the WHOLE
+// QUERY's memory tracker, not the hash table alone — and this query's tracker
+// is dominated by the wide entry_xdr read, not by the aggregate states (only
+// ~32k–54k groups per window). With the threshold at 2 GB / 1 GB the read
+// alone sat above it, so the aggregator flushed a near-empty hash table on
+// every block: 116,753 temporary parts on one r1 window (2026-07-27), and
+// merging that many spilled parts is itself what exhausted the budget. Spilling
+// here made the query strictly worse; narrowing the window is what actually
+// bounds it. (max_bytes_ratio_before_external_group_by, which would clamp the
+// CH-25+ ratio-based path too, is deliberately NOT set: it does not exist on
+// the 24.8 server the integration harness runs, and an unknown setting is a
+// hard error. On a newer server the ratio can still spill near the ceiling —
+// at which point the bisection below takes over.)
+func scanSACSeedWindow(ctx context.Context, conn driver.Conn, needles []string, from, to uint32, red *sacSeedReducer) error {
 	q := `SELECT key_xdr,
-		       argMax(entry_xdr,   (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS win_entry_xdr,
-		       argMax(change_type, (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS win_change_type,
-		       argMax(ledger_seq,  (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS win_ledger_seq,
-		       argMax(close_time,  (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS win_close_time
-		FROM stellar.ledger_entry_changes
-		WHERE entry_type = 'contract_data'
-		  AND multiSearchAny(base64Decode(key_xdr), [` + strings.Join(needles, ", ") + `])
-		GROUP BY key_xdr
-		SETTINGS max_memory_usage = 8000000000,
-		         max_bytes_before_external_group_by = 2000000000,
+		       tupleElement(win, 1) AS win_ledger_seq,
+		       tupleElement(win, 2) AS win_intra_ledger_seq,
+		       tupleElement(win, 3) AS win_tx_hash,
+		       tupleElement(win, 4) AS win_op_index,
+		       tupleElement(win, 5) AS win_change_index,
+		       tupleElement(win, 6) AS win_entry_xdr,
+		       tupleElement(win, 7) AS win_change_type,
+		       tupleElement(win, 8) AS win_close_time
+		FROM (
+		    SELECT key_xdr,
+		           argMax((ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index,
+		                   entry_xdr, toString(change_type), close_time),
+		                  (ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)) AS win
+		    FROM stellar.ledger_entry_changes
+		    WHERE entry_type = 'contract_data'
+		      AND ledger_seq BETWEEN ? AND ?
+		      AND multiSearchAny(base64Decode(key_xdr), [` + strings.Join(needles, ", ") + `])
+		    GROUP BY key_xdr
+		)
+		SETTINGS max_memory_usage = 4000000000,
+		         max_bytes_before_external_group_by = 0,
 		         max_threads = 4`
-	rows, err := conn.Query(ctx, q)
+	rows, err := conn.Query(ctx, q, from, to)
 	if err != nil {
-		return fmt.Errorf("clickhouse: scan contract_data full history: %w", err)
+		return fmt.Errorf("clickhouse: scan contract_data full history [%d, %d]: %w", from, to, err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var (
-			keyXDR, entryXDR, changeType string
-			ledgerSeq                    uint32
-			closeTime                    time.Time
+			keyXDR, txHash, entryXDR, changeType string
+			ord                                  sacSeedOrder
+			closeTime                            time.Time
 		)
-		if err := rows.Scan(&keyXDR, &entryXDR, &changeType, &ledgerSeq, &closeTime); err != nil {
-			return fmt.Errorf("clickhouse: scan contract_data full-history row: %w", err)
+		if err := rows.Scan(&keyXDR, &ord.ledgerSeq, &ord.intraLedgerSeq, &txHash,
+			&ord.opIndex, &ord.changeIndex, &entryXDR, &changeType, &closeTime); err != nil {
+			return fmt.Errorf("clickhouse: scan contract_data full-history row [%d, %d]: %w", from, to, err)
 		}
-		seed, matched, err := sacBalanceSeedFromRow(keyXDR, entryXDR, changeType, ledgerSeq, closeTime, watched)
+		ord.txHash = txHash
+		if err := red.offer(keyXDR, entryXDR, changeType, closeTime, ord); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("clickhouse: stream contract_data full history [%d, %d]: %w", from, to, err)
+	}
+	return nil
+}
+
+// isMemoryLimitExceeded reports whether err is ClickHouse refusing a query for
+// memory (241). It is the ONE error class the window walk answers by bisecting
+// rather than failing — every other exception is surfaced unchanged, so a real
+// fault can never be masked as "just narrow the window".
+func isMemoryLimitExceeded(err error) bool {
+	var chErr *clickhouse.Exception
+	return errors.As(err, &chErr) && chErr.Code == chMemoryLimitExceeded
+}
+
+// sacSeedOrder is the full within-ledger identity tuple of one entry change —
+// the ordering key the server-side argMax uses, carried into Go so the
+// cross-window reduction compares winners on exactly the same terms
+// (audit-2026-07-16 C2-4 / C2-4c). Compared lexicographically:
+// ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index.
+type sacSeedOrder struct {
+	ledgerSeq      uint32
+	intraLedgerSeq uint32
+	txHash         string
+	opIndex        int32 // -1 for fee-meta / tx-level changes
+	changeIndex    uint32
+}
+
+// after reports whether a sorts STRICTLY after b, matching ClickHouse's
+// lexicographic tuple comparison element for element. tx_hash comparison is
+// byte-wise in both (CH String compare is memcmp; Go string compare is
+// byte-wise), and op_index is signed in both (Int32 / int32), so the -1
+// fee-meta sentinel orders below op 0 identically on either side.
+func (a sacSeedOrder) after(b sacSeedOrder) bool {
+	switch {
+	case a.ledgerSeq != b.ledgerSeq:
+		return a.ledgerSeq > b.ledgerSeq
+	case a.intraLedgerSeq != b.intraLedgerSeq:
+		return a.intraLedgerSeq > b.intraLedgerSeq
+	case a.txHash != b.txHash:
+		return a.txHash > b.txHash
+	case a.opIndex != b.opIndex:
+		return a.opIndex > b.opIndex
+	default:
+		return a.changeIndex > b.changeIndex
+	}
+}
+
+// sacSeedWinner is the latest change seen so far for one storage key.
+type sacSeedWinner struct {
+	order      sacSeedOrder
+	changeType string
+	entryXDR   string
+	closeTime  time.Time
+}
+
+// sacSeedReducer finishes, in Go, the latest-write-wins reduction that the
+// per-window queries can only complete WITHIN their window.
+//
+// Memory is bounded by the number of distinct WATCHED Balance keys — the seed's
+// own output cardinality — not by the append-log's key space: a key that is not
+// a watched wrapper's Balance(Address) entry is rejected on first sight and
+// never stored (the byte-match prefilter admits any contract_data key that
+// merely MENTIONS a watched contract — allowances, third-party pool storage —
+// and those are the bulk of the matched rows). A removed winner is stored
+// without its entry_xdr: the emit path never reads the value of a removal, and
+// dropping it keeps a churn-heavy key cheap.
+type sacSeedReducer struct {
+	watched map[string]string
+	best    map[string]sacSeedWinner // key_xdr → latest change seen
+}
+
+func newSACSeedReducer(watched map[string]string) *sacSeedReducer {
+	return &sacSeedReducer{watched: watched, best: make(map[string]sacSeedWinner)}
+}
+
+// offer folds one window-winning row into the running per-key reduction.
+//
+// Idempotent and order-independent: it keeps the maximum under
+// [sacSeedOrder.after], so re-offering rows (a bisected retry re-reads a window
+// whose stream already delivered part of its output) can never change the
+// outcome, and windows may be walked in any order.
+//
+// A REMOVAL must be able to win. The pre-windowing reader could short-circuit
+// on change_type before decoding anything because the server had already picked
+// the single global winner per key; here a removal seen in window N must still
+// suppress a live balance seen in window N-1, so removals are tracked like any
+// other change and dropped at emit time.
+func (r *sacSeedReducer) offer(keyXDR, entryXDR, changeType string, closeTime time.Time, ord sacSeedOrder) error {
+	if prev, seen := r.best[keyXDR]; seen {
+		if !ord.after(prev.order) {
+			return nil
+		}
+	} else {
+		watchedBalance, err := sacWatchedBalanceKey(keyXDR, r.watched)
+		if err != nil {
+			// An undecodable key on a REMOVED change identifies no holder and
+			// held nothing; the pre-windowing reader never decoded it either
+			// (it returned on change_type first). Preserve that exactly — only
+			// a live entry's corrupt key is a hard error.
+			if changeType == "removed" {
+				return nil
+			}
+			return err
+		}
+		if !watchedBalance {
+			return nil
+		}
+	}
+	if changeType == "removed" {
+		entryXDR = "" // never read for a removal — don't pay to keep it
+	}
+	r.best[keyXDR] = sacSeedWinner{order: ord, changeType: changeType, entryXDR: entryXDR, closeTime: closeTime}
+	return nil
+}
+
+// emit decodes each key's final winner and hands the survivors to fn, in
+// ascending key_xdr order so a run's output (and any log tail of it) is
+// reproducible. Decoding only the FINAL winner keeps the reader's error
+// contract identical to the pre-windowing version: corrupt XDR on a superseded
+// change is not the seed's problem, corrupt XDR on a live one is.
+func (r *sacSeedReducer) emit(fn func(SACBalanceSeed) error) error {
+	keys := make([]string, 0, len(r.best))
+	for k := range r.best {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		w := r.best[k]
+		seed, matched, err := sacBalanceSeedFromRow(k, w.entryXDR, w.changeType, w.order.ledgerSeq, w.closeTime, r.watched)
 		if err != nil {
 			return err
 		}
@@ -271,7 +554,30 @@ func StreamSACBalanceSeedsFullHistory(ctx context.Context, addr string, watched 
 			return err
 		}
 	}
-	return rows.Err()
+	return nil
+}
+
+// sacWatchedBalanceKey reports whether keyXDR is a `Balance(Address)` storage
+// key belonging to a WATCHED SAC wrapper — the cheap key-only prefilter that
+// keeps [sacSeedReducer] from retaining the allowance / third-party keys the
+// raw-byte multiSearchAny necessarily also matches. Mirrors the key half of
+// [sacBalanceSeedFromRow]; the value is not touched.
+func sacWatchedBalanceKey(keyXDR string, watched map[string]string) (bool, error) {
+	var lk xdr.LedgerKey
+	if err := xdr.SafeUnmarshalBase64(keyXDR, &lk); err != nil {
+		return false, fmt.Errorf("clickhouse: decode contract_data key_xdr: %w", err)
+	}
+	if lk.Type != xdr.LedgerEntryTypeContractData || lk.ContractData == nil {
+		return false, nil // defensive: SQL already scopes to contract_data
+	}
+	contractID, ok := scval.ContractIDFromScAddress(lk.ContractData.Contract)
+	if !ok {
+		return false, nil
+	}
+	if _, isWatched := watched[contractID]; !isWatched {
+		return false, nil
+	}
+	return scval.IsSEP41BalanceKey(lk.ContractData.Key), nil
 }
 
 // sacBalanceSeedFromRow decodes one ledger_entries_current contract_data
