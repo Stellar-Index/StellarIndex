@@ -312,14 +312,24 @@
     daemon_reload: true
   when: restore_drill_units is changed
 
-# restore-drill.timer is INTENTIONALLY NOT enabled here (mirrors
-# galexie-archive-trim.timer's pattern below in 14-stellarindex-
-# services.yml). R1 was mid Phase-A capacity relief (ZFS pool ~94%
-# full, docs/operations/runbooks/phase-a-capacity-relief-2026-07-18.md)
-# when this landed; the drill needs MIN_FREE_GB=200 free and the
-# script refuses to run below that (safe), but starting a NEW heavy
-# recurring job while capacity is this tight is an operator call.
-# Cadence is MONTHLY (first Saturday, 04:00 UTC) per ADR-0043 §1/§3 —
-# the template shipped weekly, which over-committed the ADR. Enable
-# once Phase A clears:
-#   systemctl enable --now restore-drill.timer
+# 2026-07-27: ENABLED. The condition the note below gated on has
+# cleared — the galexie trim took the pool from ~94% to 85% and the
+# drill volume (data/postgres) now has 2,657 GB free against the
+# script's MIN_FREE_GB=200 floor. Cadence is MONTHLY (first Saturday,
+# 04:00 UTC) per ADR-0043 §1/§3. This closes the "restore-drill timer
+# re-enabled" half of the v1 launch plan's DR gate; the drill's own
+# precondition check still refuses (exit 2, uncounted) if free space
+# ever regresses, so enabling is safe under capacity pressure.
+#
+# Original deferral, kept for the record: R1 was mid Phase-A capacity
+# relief (ZFS pool ~94% full,
+# docs/operations/runbooks/phase-a-capacity-relief-2026-07-18.md) when
+# this landed, and starting a NEW heavy recurring job while capacity
+# was that tight was an operator call.
+- name: Enable + start the restore-drill timer
+  ansible.builtin.systemd:
+    name: restore-drill.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: pgbackrest_backup_enabled | default(true)
