@@ -59,6 +59,17 @@ severity: P1
 
 ## Loop log (newest first)
 
+- 2026-07-27 ~15:35Z (iter 2, cont. 4): drift rounds 3–5 — fixed the
+  remaining idempotency classes: galexie/minio dataset dir_mode
+  ping-pong (04820ce0) and the migrations sync stamping the
+  controller's uid (6b2346e5 — owner/group sync off entirely; one-time
+  chown to root on r1). Targeted re-apply now `changed=0` from the
+  laptop. Drift-5 pending; expected residual = ONLY the stopped
+  compute-completeness.timer (deliberate, §2.1; baseline file's own
+  contract forbids parking it — drift goes green when the chain ends).
+  sep41_supply rebuild confirmed healthy: 5 parallel CH streams ~9M
+  rows each + active PG inserts; counters only tick per completed
+  window; overnight ETA stands.
 - 2026-07-27 ~14:50Z (iter 2, cont. 3): drift round 2 exposed three
   role idempotency bugs (disable-thp oneshot without RemainAfterExit;
   /var/lib/stellarindex 0750↔0755 mode ping-pong between two tasks;
