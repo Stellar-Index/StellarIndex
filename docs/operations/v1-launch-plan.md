@@ -271,6 +271,10 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
 - sep41 completeness 40-min count perf (non-blocking follow-up).
 
 ### 2.5 Soak close-out (timed gate: after 2026-07-28 ~17:00)
+_Status 2026-07-27 16:45Z: 5 PASS / 0 FAIL, timer active, snapshot
+3.23 T held. Needs ≥8 PASS — on the current cadence that lands before
+the deadline; the loop executes this gate automatically (time+evidence,
+not operator)._
 If `grep -c FAIL /var/log/galexie-soak.log` = 0 and ≥8 PASS:
 `zfs destroy data/minio@pre-trim-2026-07-26` (reclaims 1.07 T) +
 `systemctl disable --now galexie-soak-check.timer`. Any FAIL → investigate
