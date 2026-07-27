@@ -7,7 +7,11 @@ import (
 )
 
 func TestNewRWAAsset_accepted(t *testing.T) {
-	cases := []string{"BENJI", "iBENJI", "GILTS", "CETES", "KTB", "TESOURO", "USTRY", "SPXU"}
+	cases := []string{
+		"BENJI", "iBENJI", "GILTS", "CETES", "KTB", "TESOURO", "USTRY", "SPXU",
+		// 2026-07-24 RedStone relayer expansion (ADR-0028 Amendments).
+		"USDY", "USST", "XAUm", "deJAAA", "deJTRSY",
+	}
 	for _, code := range cases {
 		t.Run(code, func(t *testing.T) {
 			a, err := NewRWAAsset(code)
@@ -94,6 +98,14 @@ func TestRWAAsset_distinctFromCrypto(t *testing.T) {
 	}
 	if IsKnownCrypto("BENJI") {
 		t.Error("BENJI is an RWA code, must not be in the crypto allow-list")
+	}
+	// 2026-07-24 expansion split: savUSD (Avant, crypto-native vault)
+	// stays crypto like sUSDe; USDY (tokenized-treasury note) is rwa.
+	if IsKnownRWA("savUSD_FUNDAMENTAL") || IsKnownRWA("sUSDe") {
+		t.Error("savUSD_FUNDAMENTAL/sUSDe are crypto codes, must not be in the RWA allow-list")
+	}
+	if IsKnownCrypto("USDY") {
+		t.Error("USDY is an RWA code, must not be in the crypto allow-list")
 	}
 }
 

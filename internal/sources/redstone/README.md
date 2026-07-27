@@ -66,15 +66,17 @@ Confirmed against real mainnet event
 `349bd590c679a9d69ac0ff3eb49a673f95cf9d77016fc3d019eb654c772c7a8b`
 in the regression fixture.
 
-### Q3 — Feed-ID modelling: the 19-feed registry (ADR-0028, #53)
+### Q3 — Feed-ID modelling: the feed registry (ADR-0028, #53)
 
 Every feed publishes at `DECIMALS = 8`, so price-scale handling
 is uniform. The asset modelling is an explicit registry.
 
-`feeds.go` holds `feedRegistry` — all 19 mainnet feeds keyed on the
+`feeds.go` holds `feedRegistry` — all 30 mainnet feeds keyed on the
 **exact** on-chain `feed_id()` string, each mapped to a canonical
-`(base, quote)` pair. The feed_ids were captured on-chain
-2026-05-22; they are NOT always the display name —
+`(base, quote)` pair (19 captured on-chain 2026-05-22 + 11 from
+the 2026-07-24 relayer expansion at ledger 63624934 — see
+`docs/protocols/redstone.md` for the per-feed evidence). The
+feed_ids are NOT always the display name —
 `EUROC` is `EUROC/EUR`, `BENJI` is `BENJI_ETHEREUM_FUNDAMENTAL`,
 the SolvBTC variants carry `_FUNDAMENTAL` suffixes.
 
@@ -83,21 +85,27 @@ Because the EUROC feed_id is `EUROC/EUR` — not the allow-list
 entry `EUROC` — **EUROC silently never decoded**, and all 11
 RWA / tokenized-BTC feeds were dropped. The registry fixes both.
 
-RWA feeds (BENJI, GILTS, TESOURO, CETES, KTB, USTRY, SPXU, iBENJI)
+RWA feeds (BENJI, GILTS, TESOURO, CETES, KTB, USTRY, SPXU, iBENJI,
+USDY, USST, XAUm, deJAAA, deJTRSY)
 decode as the `canonical.AssetRWA` variant (ADR-0028) — deliberately
 NOT `crypto`, so a tokenized T-bill never lands in a crypto-scoped
 surface. They remain `ClassOracle` / `IncludeInVWAP=false`, so a
 NAV-quoted RWA reference never feeds market VWAP. A feed_id outside
-the registry (a future 20th feed) is skipped per-entry and counted
-on `redstone_unknown_symbols_total`.
+the registry is skipped per-entry and counted
+on `redstone_unknown_symbols_total` — the 2026-07-24 relayer
+expansion hit exactly this path (plus `ErrEmptyUpdates` for
+all-new batches) for ~5,600 events until the registry caught up.
 
 ### Q4 — Quote asset is per-feed (ADR-0028)
 
 RedStone publishes USD-denominated prices **unless** the feed_id
-carries an explicit `/<QUOTE>` suffix. Only `EUROC/EUR` does today —
-it is EUR-quoted. The `feedRegistry` carries the quote per feed;
+carries an explicit `/<QUOTE>` suffix. Only `EUROC/EUR` is
+non-USD-quoted today (the 2026-07-24 `/USD` suffixes restate the
+default). The `feedRegistry` carries the quote per feed;
 the decoder stamps `OracleUpdate.Quote` from it. Pre-#53 the
-decoder hardcoded USD for every feed, mislabelling EUROC.
+decoder hardcoded USD for every feed, mislabelling EUROC. Note the
+bare `EUROC` feed (2026-07-24) IS USD-quoted (~1.14 ≈ EUR/USD) —
+a separate series from `EUROC/EUR` (~1.00).
 
 ### Q5 — Update cadence: 0.2% deviation OR 24h heartbeat
 

@@ -1,16 +1,17 @@
 # RedStone — contract & event verification
 
-> **For the RedStone team:** this is the Adapter contract and the 19-feed
+> **For the RedStone team:** this is the Adapter contract and the 30-feed
 > registry Stellar Index ingests. Please confirm the Adapter address and
-> tell us if new feeds have been added since our 2026-05-22 capture (a
+> tell us if new feeds have been added since our 2026-07-24 capture (a
 > feed we don't have in the registry is skipped, not mis-attributed —
 > see Q3).
 >
 > - **Enumeration method:** single Adapter contract (pinned by ID) + an
->   in-code registry of the 19 mainnet `feed_id` strings, each mapped to a
->   canonical `(base, quote)` pair.
-> - **Last verified:** 2026-07-06 (source: `internal/sources/redstone`;
->   feed_ids captured on-chain 2026-05-22; WASM audit
+>   in-code registry of the 30 mainnet `feed_id` strings (19 captured
+>   2026-05-22 + 11 from the 2026-07-24 relayer expansion), each mapped
+>   to a canonical `(base, quote)` pair.
+> - **Last verified:** 2026-07-27 (source: `internal/sources/redstone`;
+>   feed_ids captured on-chain 2026-05-22 + 2026-07-24; WASM audit
 >   `docs/operations/wasm-audits/redstone.md`, 2026-04-29).
 > - **Gate status:** ✅ Gated (ADR-0035): the decoder matches ONLY the
 >   configured Adapter contract ID.
@@ -19,7 +20,7 @@
 
 [RedStone](https://app.redstone.finance) is a multi-feed oracle. On
 Stellar, **one Soroban Adapter contract owns price storage for every
-feed**; 19 thin per-feed proxy contracts delegate reads to the Adapter
+feed**; thin per-feed proxy contracts delegate reads to the Adapter
 but emit no events (they only serve `price()` reads, so we do not
 subscribe to them).
 
@@ -65,22 +66,57 @@ destructuring.
 
 ## Feed registry (ADR-0028)
 
-`feeds.go` holds all 19 mainnet feeds keyed on the **exact** on-chain
-`feed_id()` string (captured 2026-05-22). The feed_id is not always the
-display name — `EUROC` is `EUROC/EUR`, `BENJI` is
+`feeds.go` holds all 30 mainnet feeds keyed on the **exact** on-chain
+`feed_id()` string (19 captured 2026-05-22, 11 more from the
+2026-07-24 relayer expansion — see below). The feed_id is not always
+the display name — `EUROC` is `EUROC/EUR`, `BENJI` is
 `BENJI_ETHEREUM_FUNDAMENTAL`, SolvBTC variants carry `_FUNDAMENTAL`
 suffixes. Two correctness consequences:
 
 - **Quote asset is per-feed.** RedStone publishes USD-denominated prices
   unless the feed_id carries an explicit `/<QUOTE>` suffix; only
-  `EUROC/EUR` is EUR-quoted today. The registry carries the quote per
-  feed. (Pre-registry the decoder hardcoded USD, mislabelling EUROC.)
-- **RWA feeds** (BENJI, GILTS, TESOURO, CETES, KTB, USTRY, SPXU, iBENJI)
+  `EUROC/EUR` is non-USD-quoted today (the 2026-07-24 `/USD` suffixes
+  restate the default). The registry carries the quote per feed.
+  (Pre-registry the decoder hardcoded USD, mislabelling EUROC.)
+- **RWA feeds** (BENJI, GILTS, TESOURO, CETES, KTB, USTRY, SPXU, iBENJI,
+  USDY, USST, XAUm, deJAAA, deJTRSY)
   decode as `canonical.AssetRWA`, deliberately NOT `crypto`, so a
   tokenized T-bill never lands in a crypto-scoped surface.
-- **A feed_id outside the registry** (a future 20th feed) is skipped
+- **A feed_id outside the registry** is skipped
   per-entry and counted on `redstone_unknown_symbols_total` — skipped,
   never mis-attributed.
+
+### 2026-07-24 relayer expansion (ledger 63624934)
+
+RedStone's relayer began publishing 11 feed_ids beyond the original
+19-feed registry. Fail-closed behavior held — unknown feeds were
+skipped per-entry, and batches containing ONLY new feeds were refused
+whole (`ErrEmptyUpdates`) — but that meant ~5,600 events went
+undecoded until the registry caught up (2026-07-27). Per-feed
+decisions, each verified live 2026-07-27 against
+`api.redstone.finance` (`?provider=redstone`) with CoinGecko
+magnitude cross-checks:
+
+| feed_id | maps to | quote | evidence (live 2026-07-27) |
+| --- | --- | --- | --- |
+| `EUROC` (bare) | `crypto:EUROC` | **USD** | 1.1398 ≈ EUR/USD (CG euro-coin 1.14) — distinct series from the EUR-quoted `EUROC/EUR` feed (1.0003) |
+| `USDe` | `crypto:USDe` | USD | 0.9998 (CG ethena-usde 0.99957) — Ethena synthetic dollar, crypto per ADR-0014 |
+| `sUSDe` | `crypto:sUSDe` | USD | 1.2407 (CG ethena-staked-usde 1.24) — staked, value-accruing |
+| `savUSD_FUNDAMENTAL` | `crypto:savUSD_FUNDAMENTAL` | USD | 1.1877 — Avant staked USD, crypto-native yield vault (same class as sUSDe, NOT rwa) |
+| `SolvBTC_FUNDAMENTAL/USD` | `crypto:SolvBTC_FUNDAMENTAL_USD` | USD | 65,430 — NAV **in USD**; the unsuffixed feed publishes the NAV **ratio** vs BTC (1.0029, confirmed in our stored rows), so the two get distinct codes. Feed_id `/` normalized to `_` (URL-path safety) |
+| `SolvBTC.BBN_FUNDAMENTAL/USD` | `crypto:SolvBTC.BBN_FUNDAMENTAL_USD` | USD | 65,430 — same reasoning |
+| `USDY_FUNDAMENTAL/USD` | `rwa:USDY` | USD | 1.1408 (CG ondo-us-dollar-yield 1.14) — Ondo tokenized-treasury note |
+| `USST_FUNDAMENTAL` | `rwa:USST` | USD | 1.0096 — STBL treasury-backed stablecoin |
+| `XAUm_FUNDAMENTAL/USD` | `rwa:XAUm` | USD | 4,115.67/oz (CG pax-gold 4,088) — Matrixdock tokenized gold |
+| `deJAAA_FUNDAMENTAL/USD` | `rwa:deJAAA` | USD | 1.0404 — Securitize deRWA of Janus Henderson JAAA (CLO ETF) |
+| `deJTRSY_FUNDAMENTAL/USD` | `rwa:deJTRSY` | USD | 1.0315 — Securitize deRWA of Janus Henderson JTRSY (treasury fund) |
+
+None of the new feeds needs `Invert` (all are published
+token-in-quote, unlike MXNe's market-FX orientation). RWA codes strip
+the feed-id suffix per the BENJI precedent; crypto codes keep the
+full feed_id so market vs NAV series never collide. A registry
+invariant test pins that no two feed_ids share a `(base, quote)`
+pair — same-batch feeds can never double-write one series.
 
 ## Aggregator treatment — reported, not counted
 

@@ -169,6 +169,14 @@ for an addition._
 
 - 2026-05-22 — initial allow-list of 8 codes (the RWA feeds in
   RedStone's Stellar mainnet deployment). See `canonical.IsKnownRWA`
+- 2026-07-27 — added `USDY` (Ondo US Dollar Yield, tokenized-treasury
+  note), `USST` (STBL treasury-backed stablecoin), `XAUm` (Matrixdock
+  tokenized gold), `deJAAA`, `deJTRSY` (Securitize deRWA tokens of
+  Janus Henderson funds) — from RedStone's 2026-07-24 relayer
+  expansion (ledger 63624934). Codes strip the feed-id suffixes
+  (`_FUNDAMENTAL`, `/USD`) per the BENJI precedent. The registry is
+  now 30 feeds; the "19-feed" figure in §2 is historical to the
+  2026-05-22 capture — the live list is `redstone.feedRegistry`.
   for the live list.
 
 ## References

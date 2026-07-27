@@ -114,12 +114,17 @@ defends against decoding an unrelated call's args as feed IDs.
 
 ### Known-feeds allow-list
 
-Per CLAUDE.md, Redstone has **19 mainnet feeds**. Feed IDs from op
+Per CLAUDE.md, Redstone has **19 mainnet feeds** (at audit time —
+the relayer expanded to 30 feeds on 2026-07-24; the live list is
+`internal/sources/redstone/feeds.go`, per-feed evidence in
+`docs/protocols/redstone.md`). Feed IDs from op
 args that aren't on the known-feeds allow-list are skipped per-entry
 with `ErrUnknownFeedID` (other feeds in the same event still land).
 A new feed listed on Redstone's mainnet adapter without our
 allow-list update is silently dropped — the list lives in the
-package's known-feeds allow-list.
+package's known-feeds allow-list. That exact failure mode played
+out in the 2026-07-24 expansion (~5,600 events dropped fail-closed
+until the registry caught up on 2026-07-27).
 
 ## Failure modes specific to Redstone
 
