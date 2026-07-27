@@ -92,6 +92,11 @@
     src: "{{ playbook_dir }}/../../../migrations/"
     dest: /usr/local/share/stellarindex/migrations/
     delete: true
+    # Compare by content, not mtime: every CI drift run works from a
+    # fresh clone whose files carry clone-time mtimes, so the default
+    # size+mtime quick-check reported this task changed on EVERY run.
+    checksum: true
+    times: false
     rsync_opts:
       - "--exclude=.DS_Store"
       # Pin ownership server-side: synchronize's archive mode preserves

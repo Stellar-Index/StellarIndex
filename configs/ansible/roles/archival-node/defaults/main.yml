@@ -121,11 +121,13 @@ zfs_datasets:
     compression: "zstd"
     atime: "off"
     mountpoint: "/var/lib/galexie"
+    dir_mode: "0750"   # agree with 04-users.yml ownership task (see "os")
   - name: "minio"
     recordsize: "1048576"
     compression: "zstd"
     atime: "off"
     mountpoint: "/var/lib/minio"
+    dir_mode: "0750"   # agree with 04-users.yml ownership task (see "os")
   - name: "archive"
     recordsize: "1048576"
     compression: "zstd"
