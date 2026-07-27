@@ -194,8 +194,13 @@ sep41 zero-writer wiring hole since ~2026-07-13. Remaining chain:
    noise; matches the expected Σ|Δ|≈22M).
 2. ✅ sep41_transfers projected-rebuild DONE (22m4s, 14,183,347 events,
    0 decode errors, 252,510 ledgers).
-3. Full `compute-completeness -ch` re-verify ×2: sep41_supply RUNNING
-   (~16:10Z, ~40 min on v0.21.1 binary); sep41_transfers queued next.
+3. ✅ sep41_supply re-verify DONE — **fix PROVEN**: mismatched ledgers
+   **249,436 → 891**, Σ|Δ| 22,051,087 → 74,269, and the first residual
+   is ledger 63,671,021 = exactly the rebuild's `-to` bound. The
+   remainder is purely the tail accumulating since the rebuild, which
+   only stops growing when v0.21.2 (`ae7a082d`) deploys and live
+   projection resumes. sep41_transfers re-verify RUNNING.
+   `lake_complete=true` throughout — the archive was never at risk.
 4. Restart `compute-completeness.timer`.
 5. v0.21.2 (next session: carries `ae7a082d` + redstone `9bfcf5da`) →
    deploy → live sep41 projection resumes → final small rebuild for the
