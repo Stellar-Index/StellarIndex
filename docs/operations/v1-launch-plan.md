@@ -558,6 +558,13 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
     memory fix first, then build the claimable seed on the same shape.
   - Gate impact: blocks §1 "Supply trustworthy" independently of the
     SAC/dormancy items.
+  - ✅ **DRY-RUN COMPLETED CLEAN 2026-07-27 (no OOM, 3h50m)** and it
+    answers the blast-radius question: **3,605,321 live claimable
+    balances across 30,748 classic assets**. This was never an
+    AQUA-only defect — every one of those assets has been understated
+    by its pre-63.3M claimable balances. Peak memory ~12.4 GB, settling
+    ~11.6 GB, inside the 20 GB cap; the O(window) redesign is NOT
+    needed. **LIVE SEED RUNNING.**
   - ✅ **FIX BUILT `120bf7c3`** — `stellarindex-ops supply
     seed-claimable-balances`, built on the proven windowed reader.
     Defaults to EVERY classic credit asset (`-assets` narrows only by
