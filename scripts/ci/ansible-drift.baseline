@@ -40,6 +40,13 @@
 # is genuinely non-idempotent (or codify/apply it) before adding it —
 # do not raise a number to make the red go away.
 
-Ensure migrations dir exists on r1  # `Sync migrations` (below) runs rsync in archive mode with delete:true, which rewrites the destination directory's own owner/mode/times from the runner checkout; this preceding file: task re-asserts root:root 0755 on every run. Retire together with the Sync entry.
-Sync migrations from repo to r1  # ansible.posix.synchronize compares mtime+size in archive mode, and every CI run rsyncs from a FRESH checkout whose mtimes are the clone time — so all ~120 migration files itemize as differing regardless of content. Retire by adding `--checksum` (plus the matching --no-times/--omit-dir-times) to rsync_opts once it can be validated against a live apply.
-Enable + start disable-thp service  # the disable-thp unit (configs/ansible/roles/archival-node/tasks/02-kernel.yml) is `Type=oneshot` with no RemainAfterExit, so systemd reports it inactive the moment it finishes and `state: started` restarts it on every run. Retire by adding `RemainAfterExit=yes` to that unit's [Service] section.
+# 2026-07-27: the three entries that stood here — "Ensure migrations dir
+# exists on r1", "Sync migrations from repo to r1", "Enable + start
+# disable-thp service" — were RETIRED by implementing the fixes their own
+# "Retire by…" notes prescribed (checksum+times/owner off on the
+# synchronize; RemainAfterExit=yes on the disable-thp unit). Each was
+# verified against a live apply, then against a live drift run. That is
+# the intended lifecycle of an entry here: a named, fixable defect, not a
+# permanent allowance.
+
+Apt update (cache max 1 h)  # `ansible.builtin.apt: update_cache` with cache_valid_time=3600 reports changed whenever the host's apt cache is older than an hour — a TIME-based condition, not a config difference, so it is changed on essentially every scheduled run and cannot be made idempotent without dropping the cache refresh entirely (which the role legitimately needs before installing packages). Unfixable by construction; no retirement path.
