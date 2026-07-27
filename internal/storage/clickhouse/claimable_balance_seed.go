@@ -94,10 +94,24 @@ const (
 	// still covers the airdrop-era bursts, where one window can touch
 	// millions of distinct balances.
 	claimableSeedLedgerWindow = 250_000
-	// claimableSeedMinLedgerWindow is the bisection floor (250k >> 4). Below
-	// this the window holds a few thousand keys; if THAT doesn't fit, the
-	// window size is not the problem and the error should surface.
-	claimableSeedMinLedgerWindow = claimableSeedLedgerWindow >> 4
+	// claimableSeedMinLedgerWindow is the bisection floor. It was 250k>>4
+	// (15,625) on the premise that such a window "holds a few thousand keys,
+	// and if THAT doesn't fit the window size is not the problem" — which is
+	// FALSE in the airdrop era and is exactly how the first r1 dry-run died
+	// (2026-07-27): it bisected all the way to 15,625 and still exceeded the
+	// ceiling at [40,484,378, 40,500,002], because a mass claimable-balance
+	// airdrop can mint MILLIONS of distinct balances inside a few thousand
+	// ledgers. Key density per ledger is not bounded, so the floor must be
+	// low enough to survive the densest range on the chain.
+	claimableSeedMinLedgerWindow = 256
+	// claimableSeedWidenAfter re-widens after this many consecutive clean
+	// windows (doubling, capped at the initial width). Without it the walk is
+	// monotonically narrowing: one airdrop-era bisection would pin the window
+	// at its floor for the ~23M remaining ledgers, turning a bounded scan into
+	// ~90k round-trips. Narrow on failure, widen on sustained success — the
+	// ceiling itself is still NEVER raised (chasing the ceiling is what failed
+	// the SAC seed three times).
+	claimableSeedWidenAfter = 4
 )
 
 // StreamClaimableBalanceSeeds scans the certified append-log for every
@@ -124,6 +138,50 @@ const (
 // hours and NO output until the end: the reduction can only emit once the last
 // window has been folded, so every insert lands after the scan rather than
 // interleaved with it. Silence is not a hang.
+// claimableSeedWindow carries the adaptive ledger-window width for the seed
+// walk: narrow on a ClickHouse memory-limit error, widen again after sustained
+// success. Extracted from the walk loop so the policy is testable on its own
+// and the walk stays under the gocognit ceiling.
+//
+// The asymmetry is deliberate. Narrowing is immediate (one failure halves the
+// width) because a failed window is a wasted scan; widening needs
+// claimableSeedWidenAfter consecutive clean windows because re-widening into a
+// range that just failed would oscillate. The per-query memory ceiling is
+// never raised — only the amount of chain per query changes.
+type claimableSeedWindow struct {
+	width uint32
+	clean int // consecutive scans with no memory-limit error
+}
+
+func (w *claimableSeedWindow) reset() {
+	w.width = claimableSeedLedgerWindow
+	w.clean = 0
+}
+
+func (w *claimableSeedWindow) canNarrow() bool {
+	return w.width > claimableSeedMinLedgerWindow
+}
+
+func (w *claimableSeedWindow) narrow() {
+	w.width /= 2
+	if w.width < claimableSeedMinLedgerWindow {
+		w.width = claimableSeedMinLedgerWindow
+	}
+	w.clean = 0
+}
+
+func (w *claimableSeedWindow) succeeded() {
+	w.clean++
+	if w.clean < claimableSeedWidenAfter || w.width >= claimableSeedLedgerWindow {
+		return
+	}
+	w.width *= 2
+	if w.width > claimableSeedLedgerWindow {
+		w.width = claimableSeedLedgerWindow
+	}
+	w.clean = 0
+}
+
 func StreamClaimableBalanceSeeds(ctx context.Context, addr string, assets map[string]struct{}, fn func(ClaimableBalanceSeed) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -137,9 +195,10 @@ func StreamClaimableBalanceSeeds(ctx context.Context, addr string, assets map[st
 	}
 
 	red := newClaimableSeedReducer(assets)
-	window := uint32(claimableSeedLedgerWindow)
+	var win claimableSeedWindow
+	win.reset()
 	for start := minLedger; ; {
-		end := start + window - 1
+		end := start + win.width - 1
 		if end < start || end > maxLedger { // uint32 overflow guard + clamp
 			end = maxLedger
 		}
@@ -148,12 +207,10 @@ func StreamClaimableBalanceSeeds(ctx context.Context, addr string, assets map[st
 		}
 		switch err := scanClaimableSeedWindow(ctx, conn, start, end, red); {
 		case err == nil:
-		case isMemoryLimitExceeded(err) && window > claimableSeedMinLedgerWindow:
-			// Bisect and retry the SAME start — narrowing, never raising the
-			// ceiling (chasing the ceiling is what failed three times on the
-			// SAC seed). Monotonic: a narrowed window is never widened again.
-			window /= 2
-			continue
+			win.succeeded()
+		case isMemoryLimitExceeded(err) && win.canNarrow():
+			win.narrow()
+			continue // retry the SAME start, narrower
 		default:
 			return err
 		}

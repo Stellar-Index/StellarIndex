@@ -660,3 +660,81 @@ func TestClaimableIDFromKeyXDR(t *testing.T) {
 		t.Errorf("non-claimable key: ok=%v err=%v, want ok=false err=nil", ok, err)
 	}
 }
+
+// TestClaimableSeedWindowConstants pins the window-adaptation policy that the
+// first r1 dry-run (2026-07-27) proved wrong. That run bisected from 250,000
+// all the way to the then-floor of 15,625 ledgers and STILL exceeded the
+// ClickHouse memory ceiling at [40,484,378, 40,500,002] — an airdrop-era range
+// where a few thousand ledgers mint millions of distinct claimable balances.
+// The floor's original premise ("below this the window holds a few thousand
+// keys") does not hold anywhere on this chain, so the floor must be low enough
+// to survive the densest range, and the walk must be able to recover its width
+// afterwards instead of crawling the remaining ~23M ledgers at the floor.
+func TestClaimableSeedWindowConstants(t *testing.T) {
+	if claimableSeedMinLedgerWindow >= 15_625 {
+		t.Fatalf("bisection floor %d is at or above the width that demonstrably OOM'd on r1 (15,625) — a dense range would surface an error instead of narrowing",
+			claimableSeedMinLedgerWindow)
+	}
+	if claimableSeedMinLedgerWindow < 1 {
+		t.Fatalf("bisection floor must be positive, got %d", claimableSeedMinLedgerWindow)
+	}
+	if claimableSeedMinLedgerWindow > claimableSeedLedgerWindow {
+		t.Fatalf("floor %d exceeds the initial window %d", claimableSeedMinLedgerWindow, claimableSeedLedgerWindow)
+	}
+	if claimableSeedWidenAfter < 1 {
+		t.Fatalf("widen-after must be positive or the window can only ever narrow, got %d", claimableSeedWidenAfter)
+	}
+	// Halving from the initial width must actually reach the floor, otherwise
+	// the bisection stalls above it and the dense-range failure returns.
+	w := uint32(claimableSeedLedgerWindow)
+	for w > claimableSeedMinLedgerWindow {
+		w /= 2
+	}
+	if w < 1 {
+		t.Fatalf("repeated halving of %d underflows before reaching the floor %d",
+			claimableSeedLedgerWindow, claimableSeedMinLedgerWindow)
+	}
+}
+
+// TestClaimableSeedWindowPolicy exercises the narrow/widen state machine
+// directly: it must reach the floor from the initial width, must not narrow
+// below it, and must recover toward the initial width after sustained success
+// so one dense range cannot pin the rest of the walk at the floor.
+func TestClaimableSeedWindowPolicy(t *testing.T) {
+	var w claimableSeedWindow
+	w.reset()
+	if w.width != claimableSeedLedgerWindow {
+		t.Fatalf("reset width = %d, want %d", w.width, claimableSeedLedgerWindow)
+	}
+
+	// Narrow until it refuses: must land exactly on the floor.
+	for w.canNarrow() {
+		w.narrow()
+	}
+	if w.width != claimableSeedMinLedgerWindow {
+		t.Fatalf("narrowed to %d, want the floor %d", w.width, claimableSeedMinLedgerWindow)
+	}
+	w.narrow() // a narrow past the floor must clamp, never underflow
+	if w.width != claimableSeedMinLedgerWindow {
+		t.Fatalf("narrow past the floor gave %d, want it clamped at %d", w.width, claimableSeedMinLedgerWindow)
+	}
+
+	// A single clean window must NOT widen (that would oscillate straight
+	// back into the range that just failed).
+	w.succeeded()
+	if w.width != claimableSeedMinLedgerWindow {
+		t.Fatalf("widened after 1 clean window (%d) — widening must require %d", w.width, claimableSeedWidenAfter)
+	}
+
+	// Sustained success recovers the width, capped at the initial value.
+	for i := 0; i < claimableSeedWidenAfter*64; i++ {
+		w.succeeded()
+	}
+	if w.width != claimableSeedLedgerWindow {
+		t.Fatalf("after sustained success width = %d, want it recovered to %d", w.width, claimableSeedLedgerWindow)
+	}
+	w.succeeded() // must stay capped
+	if w.width != claimableSeedLedgerWindow {
+		t.Fatalf("width %d exceeded the initial cap %d", w.width, claimableSeedLedgerWindow)
+	}
+}
