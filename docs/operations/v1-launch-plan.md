@@ -390,15 +390,33 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
     populated on r1, and authenticating as that user against the lake
     returns real data (counted 8,314 ledgers above 63.67M). So only
     the flag stands between us and working explorer endpoints.
-  - **NOT flipped tonight — deliberate.** It needs an inventory +
-    vault edit and a full playbook apply, it enables previously-unused
-    serving read paths, and a 4h heavy seed is mid-flight. Enabling
-    new production read paths unattended at midnight is how you turn a
-    config gap into an incident. **Next ATTENDED action**: set
-    `stellarindex_clickhouse_serving_enabled: true` in
-    `inventory/r1.yml`, apply `--tags stellarindex-services`, then
-    verify `/v1/accounts/{addr}`, `/v1/ledgers`, `/v1/contracts` all
-    return 200 AND that the account balance matches Horizon.
+  - **NOT flipped tonight — deliberate.** It restarts all three
+    services and enables previously-unused serving read paths while a
+    4h heavy seed is mid-flight. Doing that unattended at midnight is
+    how a config gap becomes an incident.
+  - ✅ **DRY-RUN VERIFIED 2026-07-28** (`--check --diff`, extra-var, no
+    file edits). The change is exactly one line —
+    `clickhouse_serving_user = "" → "api_serving"` — plus an unrelated
+    pending "Tier D verify-archive weekly cron". It fires handlers
+    **Restart stellarindex-{indexer,aggregator,api}**, so expect a
+    brief ingest + serving blip; run it attended.
+    **Exact command (note the tag is `stellarindex`, NOT
+    `stellarindex-services` — the latter matches nothing and returns a
+    misleading `changed=0`):**
+    ```
+    cd configs/ansible
+    ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
+      --diff --tags stellarindex \
+      -e stellarindex_clickhouse_serving_enabled=true
+    ```
+    Then persist it by setting `stellarindex_clickhouse_serving_enabled:
+    true` in `inventory/r1.yml` (+ re-upload `R1_INVENTORY_B64`) so it
+    survives the next apply, and verify with:
+    ```
+    bash scripts/ops/route-sweep.sh          # expect server_5xx=0 (was 21)
+    ```
+    plus an account-balance spot-check against Horizon, which also
+    re-tests the §2.4 C2-4c finding through the public API.
   - ⚠️ **FAR WIDER THAN FIRST THOUGHT — 21 of 94 GET routes (22%) are
     503**, found by the new `scripts/ops/route-sweep.sh`. Not 3 routes,
     a whole product tier:
