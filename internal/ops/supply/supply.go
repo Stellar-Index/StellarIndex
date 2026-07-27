@@ -61,7 +61,11 @@ func Run(args []string) error {
 // `snapshot` (write), `seed-observations` (lake-derived ADR-0021
 // bootstrap for dormant reserve accounts), `seed-sac-balances`
 // (lake-derived bootstrap for dormant contract-held SAC balances,
-// migration 0014 / incident 2026-07-06), `seed-sep41-genesis`
+// migration 0014 / incident 2026-07-06), `seed-claimable-balances`
+// (lake-derived bootstrap for the never-seeded claimable component of
+// Algorithm 2, migration 0012 — claimable_observations held 997 rows
+// with a floor of ledger 63,301,831 until this shipped, which was the
+// whole of AQUA's 13.2% under-read vs Horizon), `seed-sep41-genesis`
 // (lake-derived pre-Soroban opening-balance seed for SAC-wrappers,
 // migration 0088 / incident 2026-07-06), `verify-rollup` (the
 // derived-checkpoint reconcile that catches sep41_supply_rollup fold
@@ -69,7 +73,7 @@ func Run(args []string) error {
 // modes (e.g. `recompute`, `policy-validate`) plug in here.
 func supplyCmd(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: supply <audit|snapshot|seed-observations|seed-sac-balances|seed-sep41-genesis|verify-rollup> [flags]")
+		return errors.New("usage: supply <audit|snapshot|seed-observations|seed-sac-balances|seed-claimable-balances|seed-sep41-genesis|verify-rollup> [flags]")
 	}
 	switch args[0] {
 	case "audit":
@@ -80,12 +84,14 @@ func supplyCmd(args []string) error {
 		return supplySeedObservations(args[1:])
 	case "seed-sac-balances":
 		return supplySeedSACBalances(args[1:])
+	case "seed-claimable-balances":
+		return supplySeedClaimableBalances(args[1:])
 	case "seed-sep41-genesis":
 		return supplySeedSEP41Genesis(args[1:])
 	case "verify-rollup":
 		return supplyVerifyRollup(args[1:])
 	default:
-		return fmt.Errorf("unknown supply subcommand %q (expected: audit | snapshot | seed-observations | seed-sac-balances | seed-sep41-genesis | verify-rollup)", args[0])
+		return fmt.Errorf("unknown supply subcommand %q (expected: audit | snapshot | seed-observations | seed-sac-balances | seed-claimable-balances | seed-sep41-genesis | verify-rollup)", args[0])
 	}
 }
 

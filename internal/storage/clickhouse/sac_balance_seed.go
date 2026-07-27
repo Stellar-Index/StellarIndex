@@ -402,7 +402,7 @@ func scanSACSeedWindow(ctx context.Context, conn driver.Conn, needles []string, 
 	for rows.Next() {
 		var (
 			keyXDR, txHash, entryXDR, changeType string
-			ord                                  sacSeedOrder
+			ord                                  lakeEntryChangeOrder
 			closeTime                            time.Time
 		)
 		if err := rows.Scan(&keyXDR, &ord.ledgerSeq, &ord.intraLedgerSeq, &txHash,
@@ -429,12 +429,20 @@ func isMemoryLimitExceeded(err error) bool {
 	return errors.As(err, &chErr) && chErr.Code == chMemoryLimitExceeded
 }
 
-// sacSeedOrder is the full within-ledger identity tuple of one entry change —
-// the ordering key the server-side argMax uses, carried into Go so the
+// lakeEntryChangeOrder is the full within-ledger identity tuple of one entry
+// change — the ordering key the server-side argMax uses, carried into Go so the
 // cross-window reduction compares winners on exactly the same terms
 // (audit-2026-07-16 C2-4 / C2-4c). Compared lexicographically:
 // ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index.
-type sacSeedOrder struct {
+//
+// It is deliberately NOT named for one seed: every windowed
+// latest-write-wins reduction over stellar.ledger_entry_changes must use
+// this exact tuple, so the SAC-balance seed
+// ([StreamSACBalanceSeedsFullHistory]) and the claimable-balance seed
+// ([StreamClaimableBalanceSeeds]) share ONE definition of it. Duplicating
+// [lakeEntryChangeOrder.after] per seed is how a same-ledger removal starts
+// resurrecting a deleted entry in one reader but not the other.
+type lakeEntryChangeOrder struct {
 	ledgerSeq      uint32
 	intraLedgerSeq uint32
 	txHash         string
@@ -447,7 +455,7 @@ type sacSeedOrder struct {
 // byte-wise in both (CH String compare is memcmp; Go string compare is
 // byte-wise), and op_index is signed in both (Int32 / int32), so the -1
 // fee-meta sentinel orders below op 0 identically on either side.
-func (a sacSeedOrder) after(b sacSeedOrder) bool {
+func (a lakeEntryChangeOrder) after(b lakeEntryChangeOrder) bool {
 	switch {
 	case a.ledgerSeq != b.ledgerSeq:
 		return a.ledgerSeq > b.ledgerSeq
@@ -464,7 +472,7 @@ func (a sacSeedOrder) after(b sacSeedOrder) bool {
 
 // sacSeedWinner is the latest change seen so far for one storage key.
 type sacSeedWinner struct {
-	order      sacSeedOrder
+	order      lakeEntryChangeOrder
 	changeType string
 	entryXDR   string
 	closeTime  time.Time
@@ -493,7 +501,7 @@ func newSACSeedReducer(watched map[string]string) *sacSeedReducer {
 // offer folds one window-winning row into the running per-key reduction.
 //
 // Idempotent and order-independent: it keeps the maximum under
-// [sacSeedOrder.after], so re-offering rows (a bisected retry re-reads a window
+// [lakeEntryChangeOrder.after], so re-offering rows (a bisected retry re-reads a window
 // whose stream already delivered part of its output) can never change the
 // outcome, and windows may be walked in any order.
 //
@@ -502,7 +510,7 @@ func newSACSeedReducer(watched map[string]string) *sacSeedReducer {
 // the single global winner per key; here a removal seen in window N must still
 // suppress a live balance seen in window N-1, so removals are tracked like any
 // other change and dropped at emit time.
-func (r *sacSeedReducer) offer(keyXDR, entryXDR, changeType string, closeTime time.Time, ord sacSeedOrder) error {
+func (r *sacSeedReducer) offer(keyXDR, entryXDR, changeType string, closeTime time.Time, ord lakeEntryChangeOrder) error {
 	if prev, seen := r.best[keyXDR]; seen {
 		if !ord.after(prev.order) {
 			return nil

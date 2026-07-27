@@ -15,6 +15,47 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **`stellarindex-ops supply seed-claimable-balances` — the claimable
+  component of Algorithm 2 classic supply was never seeded from history.**
+  Verified on r1 2026-07-27: `claimable_observations` held 997 rows with a
+  minimum ledger of 63,301,831 — i.e. nothing but what the live
+  `LedgerEntryChange` observer has seen since it started — so every claimable
+  balance created before that floor and still unclaimed was missing from
+  `Trustline + Claimable + LPReserve + SACWrapped`, leaving the claimable
+  component ~4% populated. Measured against Horizon for AQUA we served
+  86,711,792,598 vs Horizon's component sum 99,923,674,166 (−13.2%), while
+  against Horizon's total MINUS its claimable component (86,186,028,534) we
+  were only +0.61% — the claimable component was the entire gap. The new
+  subcommand reduces `stellar.ledger_entry_changes` latest-write-wins to every
+  currently-LIVE `ClaimableBalanceEntry` and upserts it at the balance's TRUE
+  last-modified ledger, so it reaches below the `ledger_entries_current`
+  materialized-view floor that the same-shaped SAC seed exists to get past.
+  Scope is EVERY classic credit asset — unlike the SAC seed there is no
+  operator-curated watched set, and a partial seed would leave the omitted
+  assets under-reported in exactly the way the command exists to fix; `-assets`
+  narrows a run and prints a PARTIAL banner. Native (XLM) claimables are
+  skipped, matching the live observer (they belong to Algorithm 1, whose reader
+  never consumes this table). Idempotent — rows carry
+  `intra_ledger_seq = SeedIntraLedgerSeq`, so a live observation (notably the
+  `is_removal` row a claim writes at a higher ledger) always wins the served
+  reader's at-or-before pick, and a re-seed stays corrective.
+  The scan reuses the windowed shape the SAC seed's third OOM forced
+  (250,000-ledger primary-key ranges, one `argMax` over a TUPLE of every
+  projected column keyed on the full `(ledger_seq, intra_ledger_seq, tx_hash,
+  op_index, change_index)` identity, GROUP-BY spill off, bisect-on-241) with
+  two additions for the un-watched-set case: entries are decoded at offer time
+  rather than retained as base64, and a removal DROPS its live record while
+  leaving a tombstone that `startWindow` compacts once the walk has passed it —
+  so resident memory tracks the balances live at the walk position (the seed's
+  own output cardinality) instead of every claimable balance ever created.
+  Writes go through a new batched
+  `timescale.Store.InsertClaimableObservationBatch` sharing the live writer's
+  exact `ON CONFLICT` tail. Whole-chain scan over a ~150B-row table: hours,
+  silent until the end, r1 = `run-heavy-job.sh` only.
+  `lp_reserve_observations` has the same never-seeded root cause (floor ledger
+  63,300,828) and is NOT addressed here — it is materially minor.
+
 ### Fixed
 - **`supply seed-sac-balances -full-history` no longer OOMs ClickHouse —
   the scan is now walked in ledger windows and reduced in Go.** The

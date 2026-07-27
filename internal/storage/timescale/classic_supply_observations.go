@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"strings"
 	"time"
 )
 
@@ -134,20 +135,16 @@ func (s *Store) InsertClaimableObservation(ctx context.Context, o ClaimableObser
 	if o.Balance == nil {
 		return fmt.Errorf("timescale: InsertClaimableObservation: Balance is nil (cb=%s)", o.ClaimableID)
 	}
-	// intra_ledger_seq-guarded upsert (audit-2026-07-16 C2-6).
+	// intra_ledger_seq-guarded upsert (audit-2026-07-16 C2-6). The conflict
+	// tail is shared with InsertClaimableObservationBatch so the ops seed and
+	// the live observer write through identical semantics.
 	const q = `
         INSERT INTO claimable_observations (
             claimable_id, asset_key, ledger, observed_at,
             balance_stroops, is_removal, intra_ledger_seq
         ) VALUES (
             $1, $2, $3, $4, $5, $6, $7
-        )
-        ON CONFLICT (claimable_id, ledger, observed_at) DO UPDATE SET
-            balance_stroops  = EXCLUDED.balance_stroops,
-            is_removal       = EXCLUDED.is_removal,
-            intra_ledger_seq = EXCLUDED.intra_ledger_seq
-        WHERE claimable_observations.intra_ledger_seq <= EXCLUDED.intra_ledger_seq
-    `
+        )` + claimableObservationUpsert
 	_, err := s.db.ExecContext(ctx, q,
 		o.ClaimableID, o.AssetKey, int(o.Ledger), o.ObservedAt.UTC(),
 		o.Balance.String(), o.IsRemoval, int64(o.IntraLedgerSeq),
@@ -156,6 +153,109 @@ func (s *Store) InsertClaimableObservation(ctx context.Context, o ClaimableObser
 		return fmt.Errorf("timescale: InsertClaimableObservation %s@%d: %w", o.ClaimableID, o.Ledger, err)
 	}
 	return nil
+}
+
+// claimableObservationUpsert is the INSERT … ON CONFLICT tail shared by the
+// single-row and batch writers, so a seeded row and a live-observed row land
+// through byte-identical SQL. Keep them in lockstep: the seed's whole premise
+// is that its rows are indistinguishable from the observer's.
+const claimableObservationUpsert = ` ON CONFLICT (claimable_id, ledger, observed_at) DO UPDATE SET
+            balance_stroops  = EXCLUDED.balance_stroops,
+            is_removal       = EXCLUDED.is_removal,
+            intra_ledger_seq = EXCLUDED.intra_ledger_seq
+        WHERE claimable_observations.intra_ledger_seq <= EXCLUDED.intra_ledger_seq`
+
+// InsertClaimableObservationBatch persists rows via a single multi-row INSERT
+// with the same intra_ledger_seq-guarded upsert [Store.InsertClaimableObservation]
+// uses — so it is idempotent, re-runnable, and can never let an earlier
+// intra-ledger change overwrite a later one.
+//
+// It exists for `stellarindex-ops supply seed-claimable-balances`, which
+// bootstraps claimable_observations from the ClickHouse lake and can emit one
+// row per claimable balance live on the whole network. At one round-trip per
+// row that seed is round-trip-bound for hours; batching is what makes it an
+// operation rather than an outage.
+//
+// Postgres rejects a single ON CONFLICT DO UPDATE statement that presents the
+// same conflict key twice ("cannot affect row a second time"), so intra-batch
+// duplicates are collapsed last-wins before the statement is built — the same
+// discipline InsertSEP41TransferBatch follows (INV-3 / migration 0110).
+func (s *Store) InsertClaimableObservationBatch(ctx context.Context, rows []ClaimableObservation) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	for i := range rows {
+		o := &rows[i]
+		if o.ClaimableID == "" {
+			return fmt.Errorf("timescale: InsertClaimableObservationBatch: row %d empty ClaimableID", i)
+		}
+		if o.AssetKey == "" {
+			return fmt.Errorf("timescale: InsertClaimableObservationBatch: row %d (cb=%s) empty AssetKey", i, o.ClaimableID)
+		}
+		if o.Balance == nil {
+			return fmt.Errorf("timescale: InsertClaimableObservationBatch: row %d (cb=%s) nil Balance", i, o.ClaimableID)
+		}
+	}
+	insertRows := dedupeClaimableObservations(rows)
+
+	const ncols = 7
+	var sb strings.Builder
+	sb.WriteString(`
+        INSERT INTO claimable_observations (
+            claimable_id, asset_key, ledger, observed_at,
+            balance_stroops, is_removal, intra_ledger_seq
+        ) VALUES `)
+	args := make([]any, 0, ncols*len(insertRows))
+	for i := range insertRows {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		base := i * ncols
+		fmt.Fprintf(&sb, "($%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+			base+1, base+2, base+3, base+4, base+5, base+6, base+7)
+		o := &insertRows[i]
+		args = append(args,
+			o.ClaimableID, o.AssetKey, int(o.Ledger), o.ObservedAt.UTC(),
+			o.Balance.String(), o.IsRemoval, int64(o.IntraLedgerSeq),
+		)
+	}
+	sb.WriteString(claimableObservationUpsert)
+
+	if _, err := s.db.ExecContext(ctx, sb.String(), args...); err != nil {
+		return fmt.Errorf("timescale: InsertClaimableObservationBatch (%d rows): %w", len(insertRows), err)
+	}
+	return nil
+}
+
+// claimableObservationKey is the claimable_observations ON CONFLICT identity
+// (claimable_id, ledger, observed_at). observed_at is normalised to a UTC
+// UnixNano so two instants differing only in location / monotonic reading —
+// which land in the same timestamptz — collapse to one key.
+type claimableObservationKey struct {
+	claimableID     string
+	ledger          uint32
+	observedAtNanos int64
+}
+
+// dedupeClaimableObservations collapses rows colliding on the conflict key,
+// keeping the LAST copy of each in first-seen order.
+func dedupeClaimableObservations(rows []ClaimableObservation) []ClaimableObservation {
+	seen := make(map[claimableObservationKey]int, len(rows))
+	out := make([]ClaimableObservation, 0, len(rows))
+	for i := range rows {
+		k := claimableObservationKey{
+			claimableID:     rows[i].ClaimableID,
+			ledger:          rows[i].Ledger,
+			observedAtNanos: rows[i].ObservedAt.UTC().UnixNano(),
+		}
+		if at, dup := seen[k]; dup {
+			out[at] = rows[i]
+			continue
+		}
+		seen[k] = len(out)
+		out = append(out, rows[i])
+	}
+	return out
 }
 
 // SumClaimableBalancesAtOrBefore — same shape as

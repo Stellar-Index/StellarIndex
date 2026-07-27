@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 )
 
 // These tests cover the Insert*Observation defensive guards —
@@ -147,5 +148,67 @@ func TestInsertSACBalanceObservation_RejectsNilBalance(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "Balance") {
 		t.Errorf("err=%v should mention Balance", err)
+	}
+}
+
+// ─── batch writer (the ops claimable seed's write path) ─────────────────
+
+// TestInsertClaimableObservationBatch_Validates — the same three defensive
+// guards the single-row writer applies, per row, BEFORE any SQL is built. A
+// nil Balance reaching the statement builder would panic on .String().
+func TestInsertClaimableObservationBatch_Validates(t *testing.T) {
+	s := &Store{}
+	good := ClaimableObservation{ClaimableID: "cb1", AssetKey: "AQUA:GA5", Balance: big.NewInt(1)}
+	cases := []struct {
+		name string
+		row  ClaimableObservation
+		want string
+	}{
+		{"empty claimable id", ClaimableObservation{AssetKey: "AQUA:GA5", Balance: big.NewInt(1)}, "ClaimableID"},
+		{"empty asset key", ClaimableObservation{ClaimableID: "cb1", Balance: big.NewInt(1)}, "AssetKey"},
+		{"nil balance", ClaimableObservation{ClaimableID: "cb1", AssetKey: "AQUA:GA5"}, "Balance"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := s.InsertClaimableObservationBatch(context.Background(), []ClaimableObservation{good, c.row})
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("err=%v should mention %s", err, c.want)
+			}
+		})
+	}
+}
+
+// TestInsertClaimableObservationBatch_EmptyIsNoop — an empty flush must not
+// build a statement with no VALUES (a syntax error) or touch the nil db.
+func TestInsertClaimableObservationBatch_EmptyIsNoop(t *testing.T) {
+	s := &Store{}
+	if err := s.InsertClaimableObservationBatch(context.Background(), nil); err != nil {
+		t.Errorf("empty batch should be a no-op, got %v", err)
+	}
+}
+
+// TestDedupeClaimableObservations — Postgres rejects a single ON CONFLICT DO
+// UPDATE statement presenting the same conflict key twice ("cannot affect row
+// a second time"), so intra-batch duplicates must collapse LAST-wins in
+// first-seen order before the statement is built.
+func TestDedupeClaimableObservations(t *testing.T) {
+	at := time.Date(2021, 3, 4, 5, 6, 7, 0, time.UTC)
+	rows := []ClaimableObservation{
+		{ClaimableID: "cb1", AssetKey: "AQUA:GA5", Ledger: 10, ObservedAt: at, Balance: big.NewInt(1)},
+		{ClaimableID: "cb2", AssetKey: "AQUA:GA5", Ledger: 10, ObservedAt: at, Balance: big.NewInt(2)},
+		// Same conflict key as cb1, different instant representation.
+		{ClaimableID: "cb1", AssetKey: "AQUA:GA5", Ledger: 10, ObservedAt: at.In(time.FixedZone("X", 3600)), Balance: big.NewInt(3)},
+		// Same id, DIFFERENT ledger — a distinct row, not a duplicate.
+		{ClaimableID: "cb1", AssetKey: "AQUA:GA5", Ledger: 11, ObservedAt: at, Balance: big.NewInt(4)},
+	}
+	got := dedupeClaimableObservations(rows)
+	if len(got) != 3 {
+		t.Fatalf("got %d rows, want 3: %+v", len(got), got)
+	}
+	if got[0].Balance.Cmp(big.NewInt(3)) != 0 {
+		t.Errorf("row 0 balance = %s, want 3 (last write for the duplicated conflict key)", got[0].Balance)
+	}
+	if got[1].ClaimableID != "cb2" || got[2].Ledger != 11 {
+		t.Errorf("first-seen order not preserved: %+v", got)
 	}
 }
