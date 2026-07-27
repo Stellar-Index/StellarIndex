@@ -441,6 +441,41 @@ Subcommands:
                           keep the reserve reader on the static fallback
                           forever. Idempotent; the live observer
                           supersedes seeded rows on the next real change.
+  supply seed-sac-balances -config PATH [-ch-addr ADDR] [-full-history] [-dry-run]
+                          Seed sac_balance_observations from the lake for
+                          every current Balance(Address) entry of each
+                          [supply].sac_wrappers contract (ADR-0022 /
+                          migration 0014, incident 2026-07-06). Closes the
+                          dormant contract-held SAC balance gap. Pass
+                          -full-history to read stellar.ledger_entry_changes
+                          (complete to genesis) instead of the
+                          ~ledger-62M-floored current-state projection —
+                          heavier, walked in ledger windows, run under
+                          run-heavy-job.sh only.
+  supply seed-claimable-balances -config PATH [-ch-addr ADDR] [-assets LIST] [-timeout DUR] [-dry-run]
+                          Seed claimable_observations from the ClickHouse
+                          lake for every currently-LIVE claimable balance
+                          paying a classic credit asset (ADR-0022 /
+                          migration 0012). claimable_observations was never
+                          seeded from history — 997 rows, floor ledger
+                          63,301,831, i.e. live-observer output only — so
+                          the claimable component of Algorithm 2 read ~4%
+                          populated and AQUA served 13.2% under Horizon
+                          (the claimable component was the entire gap).
+                          Reads stellar.ledger_entry_changes reduced
+                          latest-write-wins in ledger windows, so it sees
+                          balances created below the current-state
+                          projection's floor. Scope is EVERY classic credit
+                          asset; -assets CODE-ISSUER,... narrows a run and
+                          prints a PARTIAL banner because every omitted
+                          asset keeps its under-count. Native (XLM)
+                          claimables are skipped — Algorithm 1 does not
+                          read this table. Idempotent (rows land at each
+                          balance's true last-modified ledger); a later
+                          live is_removal observation always wins.
+                          Whole-chain scan over a ~150B-row table: hours,
+                          silent until the end (all inserts land after the
+                          reduction), r1 = run-heavy-job.sh only.
   supply seed-sep41-genesis -config PATH [-ch-addr ADDR] [-genesis-ledger N] [-dry-run]
                           Seed each [supply].watched_sep41_contracts
                           contract's pre-Soroban (ledger < 50457424)

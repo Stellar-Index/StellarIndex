@@ -258,8 +258,8 @@ func TestSACBalanceSeedFromRow_CorruptEntryErrors(t *testing.T) {
 // audit-2026-07-16 C2-4 within-ledger tie-break, which is what stops a deleted
 // balance being resurrected into the supply seed.
 
-func seedOrd(ledger, intra uint32, tx string, op int32, changeIdx uint32) sacSeedOrder {
-	return sacSeedOrder{ledgerSeq: ledger, intraLedgerSeq: intra, txHash: tx, opIndex: op, changeIndex: changeIdx}
+func seedOrd(ledger, intra uint32, tx string, op int32, changeIdx uint32) lakeEntryChangeOrder {
+	return lakeEntryChangeOrder{ledgerSeq: ledger, intraLedgerSeq: intra, txHash: tx, opIndex: op, changeIndex: changeIdx}
 }
 
 // seedEntryFor builds the entry_xdr for the standard test holder's Balance
@@ -294,7 +294,7 @@ func TestSACSeedOrderAfter(t *testing.T) {
 	base := seedOrd(50_000_000, 7, "bb", 2, 3)
 	cases := []struct {
 		name string
-		a, b sacSeedOrder
+		a, b lakeEntryChangeOrder
 		want bool
 	}{
 		{"identical is not after", base, base, false},
