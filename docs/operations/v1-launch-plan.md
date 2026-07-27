@@ -370,6 +370,15 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
     memory fix first, then build the claimable seed on the same shape.
   - Gate impact: blocks §1 "Supply trustworthy" independently of the
     SAC/dormancy items.
+  - ✅ **ISOLATED 2026-07-27 (post-SAC-seed measurement).** The live SAC
+    seed moved AQUA by only +9.9M (86,701,915,082.74 →
+    86,711,792,598.11; −13.232% → −13.222%), so SAC was NOT the cause.
+    Against Horizon's total-MINUS-claimable (86,186,028,534.15) we are
+    **+0.61%** — i.e. every other component reconciles and the
+    claimable component is the WHOLE remaining gap. The claimable seed
+    is therefore the single fix for this gate item, and it now has a
+    PROVEN template: the windowed reader + Go latest-wins reducer that
+    `7bede7e7` validated on 38/38 wrappers.
 - **redstone projection blind — ROOT-CAUSED 2026-07-27 (not a code
   regression)**: RedStone's relayer expanded past our 19-feed registry on
   2026-07-24 10:56Z (ledger 63,624,934), publishing 11 unknown feed_ids
