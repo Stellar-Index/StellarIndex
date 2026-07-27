@@ -232,7 +232,20 @@ the spec, so the wire-freeze prerequisite is met).
       2026-07-27** (its capacity gate cleared: pool 94%→85%, 2,657 GB
       free vs the 200 GB floor; enabled + codified `205b041a`, next
       fire 2026-08-01); ZFS trim snapshot resolved (auto — §2.5 gate).
-- [ ] **Launch mechanics**: `auth_mode=apikey_optional` (NEVER `apikey` — it 401s healthz/metrics, audit SEC-01); status page + API docs current; SLA definition published; announcement ready; first-24h watch staffed.
+- [ ] **Launch mechanics**: ✅ `auth_mode=apikey_optional` VERIFIED live
+      2026-07-27 (healthz + price both 200 unauthenticated); ✅ status
+      page (301→/status/), explorer, docs, /methodology, /operations,
+      /diagnostics all 200; ✅ **SLA definition PUBLISHED** — `/sla` was
+      **404**; the four targets existed only in internal ops docs and
+      are now a public page with the error budget and explicit
+      exclusions (`535c7bcc`). Remaining: announcement ready;
+      first-24h watch staffed [OP].
+      ⚠️ **New fragility found**: the explorer static export fetches the
+      live API per asset page and one run FAILED on **HTTP 429** from
+      our own rate limiter (passed on retry). A launch-day rebuild
+      could fail on this. Fix candidates: exempt the build's egress IP,
+      lower build concurrency, or make the fetch back off on 429 rather
+      than exhausting 5 attempts. Not launch-blocking; log it.
 
 ## 2. Critical path (dependency-ordered)
 
