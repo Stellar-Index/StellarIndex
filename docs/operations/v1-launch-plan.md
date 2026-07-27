@@ -395,11 +395,31 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
     balances are CLASSIC ledger entries with no TTL and no archival.
     Only `contract_data` (SAC balances) can be archived. So this does
     not undermine the AQUA fix.
-  - **Decisive test** (not yet run): correlate the PHO balance keys
-    with their `ttl` entries in the lake and check whether
-    `live_until_ledger` has passed. That settles it from our own
-    substrate, no external call needed. Secondary confirmation: an
-    `rpc-probe` `getLedgerEntry` read of one key.
+  - ✅ **(c) CONFIRMED BY CODE READ 2026-07-27 — we do not ingest
+    Soroban state eviction AT ALL.** `rg` for
+    `EvictedTemporaryLedgerKeys` / `EvictedPersistentLedgerEntries` /
+    `evicted` across `internal/` + `cmd/` returns **nothing**;
+    `extract_entry_changes.go` knows `ttl` only as an entry TYPE
+    (line 268) and has no archival logic. Explicit deletions ARE
+    captured (4,351,427 `removed` contract_data changes in ledgers
+    [63.0M, 63.1M]), so the gap is specific to EVICTION, not removals
+    generally. Consequence: an archived entry's last write stands as
+    "current" in our lake forever.
+  - **Scope is wider than supply.** `ledger_entries_current` — the
+    served current-state projection behind account-state, asset-holder
+    and SAC-seed reads — never sees the eviction either, so it serves
+    archived entries as live. Any surface reading current contract
+    state inherits this.
+  - **Fix direction**: capture the LedgerCloseMeta eviction fields in
+    `ledgerstream`/`extract_entry_changes` and emit them as `removed`
+    changes, then re-derive. Until then a cheaper mitigation is to
+    filter the SAC seed on TTL liveness (the lake HAS `ttl` entries —
+    150.6M above ledger 63M — so `live_until_ledger` is derivable
+    without new ingest).
+  - **Not launch-blocking by itself for the 5 passing assets**, but PHO
+    is served wrong TODAY and the class is systemic. [DECIDE] whether
+    v1 ships with a TTL-filtered seed (fast) or waits for real
+    eviction ingest (correct).
   - Until settled, PHO's served supply is NOT trustworthy in either
     direction. Blocks §1 "Supply trustworthy" alongside the claimable
     seed.
