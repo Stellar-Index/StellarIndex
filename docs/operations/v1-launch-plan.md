@@ -266,8 +266,15 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
    sep41 chain clears, re-count the surviving alerts; for those, decide
    the `WithMaxDormantComponentLedgers` calibration (see OPERATOR INBOX
    [DECIDE-new]).
-3. `supply seed-sac-balances -full-history` (may alone clear PHO/KALE/BLND
-   cross-check divergence).
+3. `supply seed-sac-balances -full-history` — **BLOCKED on a code fix
+   (2026-07-27)**: the run OOM'd against its own
+   `max_memory_usage=8e9` ("would use 7.45 GiB … AggregatingTransform").
+   The query argMax'es KB-scale `entry_xdr` GROUP BY key over ALL 38
+   watched contracts at once; this is the THIRD budget breach of this
+   query (the file's comments narrate 2026-07-11's two). Fix in flight:
+   per-contract iteration (+ ledger windowing for KALE, which dominates
+   row volume), preserving the C2-4 full ordering tuple. Ships with
+   v0.21.2. Then re-run dry-run → live.
 4. `projector-replay -source redstone -from 63624934` (after the v0.21.2
    registry fix deploys — §2.4; then re-run redstone compute-completeness
    including the false-clean [63,624,934, 63,661,714] range).
