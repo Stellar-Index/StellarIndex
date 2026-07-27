@@ -399,9 +399,29 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
     `inventory/r1.yml`, apply `--tags stellarindex-services`, then
     verify `/v1/accounts/{addr}`, `/v1/ledgers`, `/v1/contracts` all
     return 200 AND that the account balance matches Horizon.
+  - ⚠️ **FAR WIDER THAN FIRST THOUGHT — 21 of 94 GET routes (22%) are
+    503**, found by the new `scripts/ops/route-sweep.sh`. Not 3 routes,
+    a whole product tier:
+    `/accounts`, `/accounts/{id}`, `/accounts/{id}/transactions`,
+    `/accounts/{id}/operations`, `/accounts/{id}/movements`,
+    `/contracts`, `/contracts/{id}`, `/contracts/{id}/wasm`,
+    `/contracts/{id}/interactions`, `/contracts/{id}/code-history`,
+    `/ledgers`, `/ledgers/{id}`, `/ledgers/{id}/transactions`,
+    `/tx/{id}`, `/operations`, `/liquidity-pools`, `/pools/reserves`,
+    `/lending/pools/{id}/reserves`, `/network/throughput`, and —
+    notably — **`/assets/{id}/supply` and `/assets/{id}/holders`**.
+    These cannot be fixture artifacts: the 503 is returned BEFORE
+    parameter validation.
+  - **Why every prior check passed**: `r1-smoke.sh` is 13 hand-picked
+    GETs and the SLA probe exercises pricing. Neither touches the
+    explorer tier. The campaign's C1 track claimed a "98-route smoke ✅"
+    — that claim does not survive this sweep and should be treated as
+    refuted until re-run.
   - **This is a hard launch blocker** — "explorer" is the product
-    name; an explorer that 503s on accounts and ledgers is not
-    launched. Add to §1 Launch mechanics.
+    name; an explorer that 503s on accounts, ledgers, contracts and
+    transactions is not launched. Add to §1 Launch mechanics, and add
+    `route-sweep.sh` to the post-deploy battery so a dark subsystem
+    can never again pass a green smoke.
 - **🔴🔴 NEW 2026-07-27 — 38% OF SAMPLED ACCOUNTS SERVE A STALE
   PRE-TRANSACTION BALANCE. C2-4c reproduced on live data.**
   `reconcile-balances -sample 50` (tolerance 0): **18 matched, 19
