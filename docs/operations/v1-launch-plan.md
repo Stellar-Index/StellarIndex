@@ -272,6 +272,13 @@ sep41 zero-writer wiring hole since ~2026-07-13. Remaining chain:
    their rebuild boundary; the only residual is the tail accruing until
    v0.21.2 deploys. `compute-completeness.timer` RESTARTED (§2.1.4
    done) → drift's last residual item cleared.
+4b. **Post-deploy catch-up boundaries (measured 2026-07-27 18:36Z)** —
+   `sep41_supply_events` is frozen at exactly **63,671,020** and
+   `sep41_transfers` at **63,671,647**, i.e. each rebuild's own `-to`.
+   Confirms no sep41 writer is running (expected until v0.21.2) and
+   nothing else regressed. After the deploy, run `projected-rebuild`
+   for each source `-from` its boundary above `-to` the then-tip, then
+   re-verify. The gap grows ~1.5k ledgers/hour until then.
 5. v0.21.2 (next session: carries `ae7a082d` + redstone `9bfcf5da`) →
    deploy → live sep41 projection resumes → final small rebuild for the
    deploy-gap tail → redstone replay from 63624934 (§2.4).
