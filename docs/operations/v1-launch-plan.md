@@ -419,11 +419,23 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
     (side-loaded `stellarindex-ops-claimable`); expect it to account
     for AQUA's missing ~13.16B. Then live seed → re-run the AQUA
     reconciliation.
-    **Watch on the first live run** (author-flagged residuals, none
-    reachable without r1): (1) resident memory is bounded by *live*
-    claimable balances at the walk position (~250 B each) — the
-    dry-run prints that exact count, so it sizes the real run for
-    free; (2) the seed lands rows at TRUE historical ledgers, creating
+    ⚠️ **MEASURED 2026-07-27, and it is the pessimistic case**: 55 min
+    into the dry-run the Go process sits at **12.4 GB against the
+    heavy-job wrapper's 20 GB cap (58%) and is still walking**. The
+    author's own estimate put 50M live balances at ~12 GB "tight under
+    the cap" — we are in that regime. The reducer holds every live
+    balance until the final fold and **emits nothing until the end**,
+    so an OOM-kill at 95% loses the entire run. If this dry-run dies,
+    the design needs bounding, not tuning; the promising redesign is to
+    emit EVERY change as the walk proceeds instead of only the final
+    state — memory becomes O(window), and correctness still holds
+    because `claimable_observations` is an append-style observations
+    table whose reader already does
+    `DISTINCT ON (claimable_id) … ORDER BY ledger DESC`, and the
+    natural key is `(claimable_id, ledger, observed_at)` so historical
+    rows are additional, not conflicting. Costs more write volume.
+    **Watch on the first live run** (author-flagged residuals): (1)
+    resident memory — now measured, see above; (2) the seed lands rows at TRUE historical ledgers, creating
     ~290 new 7-day chunks on `claimable_observations` — harmless but
     it moves the `max_locks` math (see that memory); (3) ✅ CLEARED — checked r1:
     **zero** compression jobs on `claimable_observations`, so the
