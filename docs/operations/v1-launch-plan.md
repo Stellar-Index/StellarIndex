@@ -43,8 +43,8 @@ the spec, so the wire-freeze prerequisite is met).
 | Completeness | 3 sources incomplete: `sep41_supply` + `sep41_transfers` (blocked on deploying 06ff3b5e) and **`redstone` — NEW, undiagnosed**: projection blind on 866 ledgers from 63,661,715, "undecodable-but-matched", started ≈ the v0.21.0 deploy window (§2.4) |
 | Alerts | Above, plus `dex_nonstandard_decimals_detected` ×5 (informational — genuine non-7dp aquarius C-tokens, working as designed) + deadmansswitch (by design) |
 | GH secrets | Deploy + Cloudflare + `R1_INVENTORY_B64` ✅ present. `ANSIBLE_VAULT_PASSWORD` / `ANSIBLE_VAULT_FILE_B64` **absent** |
-| **Vault password** | 🔴 **Local `~/.ansible/r1_vault_pass` was CLOBBERED 2026-07-25** by a locally-run CI syntax step (now contains the literal `ci-syntax-only`). The real password was only ever entered via `read -s` (never logged), has **no copy on r1**, and no recoverable snapshot exists. **Operator must re-enter it** (§3.1). Until then: no ansible apply, no drift check, no vault edit. The encrypted vault itself (`configs/ansible/inventory/r1.secrets.yml`, untracked, 2026-07-10) is intact |
-| Config drift | `ansible-drift` CI red (vault secrets). Captive-core still runs the OLD validator set (24 `[[VALIDATORS]]` live; PR #7's 18-validator T1 set unapplied). 33-task config apply pending (archivewriter cred fix, quorum, triangulation chains, z=5.0, cold-tier render) |
+| **Vault password** | ✅ **REBUILT + ROTATED 2026-07-27.** The old password (clobbered 2026-07-25 by a locally-run CI syntax step) was unrecoverable, so the vault was rebuilt from live r1 rendered values (26 keys; secret-template re-render proven byte-identical), encrypted under a NEW operator-held passphrase, pass file locked (`chflags uchg`), CI clobber-path guarded (2a23698e). Fresh creds generated for not-yet-deployed components (patroni ×2, CH serving profile, pgbackrest repo2 cipher, core placeholder); repo1 cipher + webhook keys empty matching live. Old vault kept as `.lost-password-2026-07-27`. GH secrets `ANSIBLE_VAULT_PASSWORD`/`ANSIBLE_VAULT_FILE_B64` set |
+| Config drift | ✅ **`ansible-drift` FUNCTIONAL again** (first complete verdict since the rotation, 2026-07-27): `ok=243 changed=69 failed=0`. Three check-mode bugs fixed en route (timer-enables on unitless hosts e5edb17a/10802588; version-probe skip 2309f4d0 — which also proved the galexie drift-guard constants ALREADY agree, closing that "open operator action"). The red verdict is now REAL drift: **69 changed tasks = the pending config apply** (grown from the "33-task" estimate; incl. archivewriter cred fix, captive-core 18-validator quorum — 24 still live, triangulation chains, z=5.0, cold-tier render, postgres conf, ownership flips, timescale-jobs-probe + CH schema-snapshot units). Apply is §2.2 step 3, [ATTENDED] — service restarts incl. galexie (~1–3 min tip pause) + postgres |
 | Deploy gate | `DEPLOY_APPROVAL_RELAXED=true` still set — **re-arm at launch** (§2.7) |
 | Feeds | `COINGECKO_API_KEY` **not set** (feed dead since 2026-06-19, [OP]). `min_usd_volume=10000` since 2026-07-01 (older docs claiming 0 are stale) |
 | Paging | 🔴 **NOT wired** (corrected 2026-07-27 — the env files exist but every value is EMPTY: 5× `HEALTHCHECKS_URL_*`, `HEALTHCHECKS_DEADMANSSWITCH_URL`, `SLACK_WEBHOOK_URL` all blank; only the node-level `HEALTHCHECK_PING_URL` is populated). Alert pages currently route to nobody — the original [OP] item stands: create Healthchecks.io checks + chat webhooks, paste URLs into `/etc/default/stellarindex-healthchecks` + `/etc/default/alertmanager-secrets` (then codify in the vault), rerun `pre-launch-check.sh` |
@@ -71,18 +71,18 @@ Then re-run FULL `compute-completeness -ch` for `sep41_supply` and
 during; ~40 min each) → clears 2 of the 3 `completeness_incomplete`.
 
 ### 2.2 Restore the vault password → drift → config apply
-1. **[OP] Re-enter the vault password** (§3.1) and verify
-   `ansible-vault view` decrypts `inventory/r1.secrets.yml`.
-2. Set GH secrets `ANSIBLE_VAULT_PASSWORD` + `ANSIBLE_VAULT_FILE_B64`
-   (base64 of the vault file); re-run `ansible-drift.yml` → first drift
-   verdict since the rotation.
-3. Apply the 33-task config batch (`--check --diff` first): archivewriter
-   cred fix (**unblocks rehydrate rollback**), captive-core 18-validator T1
-   quorum (galexie restart, ~1–3 min tip pause), triangulation chains,
-   z=5.0, cold-tier render, freeze-lifecycle (N-F6) activation.
-4. Protect the password file from re-clobber: `chflags uchg
-   ~/.ansible/r1_vault_pass` (the clobber came from running ci.yml's syntax
-   step locally — it writes `ci-syntax-only` to the same path).
+1. ✅ ~~Vault password~~ — rebuilt + rotated 2026-07-27 (see §0).
+2. ✅ ~~GH secrets + drift run~~ — drift functional, verdict `changed=69`.
+3. **Apply the 69-task config batch** ([ATTENDED] — the one remaining step):
+   `ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml
+   --check --diff` review first, then live. Lands: archivewriter cred fix
+   (**unblocks rehydrate rollback**), captive-core 18-validator T1 quorum
+   (galexie restart, ~1–3 min tip pause), triangulation chains, z=5.0,
+   cold-tier render, freeze-lifecycle (N-F6) activation, postgres conf
+   (restart — coordinate with §2.3's max_worker_processes change),
+   ownership flips, timescale-jobs-probe + CH schema-snapshot units.
+   Then re-run `ansible-drift.yml` → should go green (allowances only).
+4. ✅ ~~Pass-file protection~~ — `chflags uchg` + ci.yml guard (2a23698e).
 
 ### 2.3 Served-tier population batch (heavy; ONE at a time under `run-heavy-job.sh`)
 Order matters; each gates the next check. The DO-NOTHING trap applies:
