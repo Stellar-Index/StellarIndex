@@ -64,6 +64,13 @@ notifications.
 
 ## 3. Detection channels
 
+> ⚠️ **Every channel below assumes paging is wired. As of 2026-07-27 it
+> is NOT** — Alertmanager's fanout receivers are no-op stubs, so alerts
+> accumulate in its UI and reach no human. See
+> [runbooks/wire-paging.md](runbooks/wire-paging.md) (~20 min,
+> operator-only). Until then, treat this playbook's detection column as
+> aspirational and rely on manual checks.
+
 | Channel | What it catches | Fires |
 | ------- | --------------- | ----- |
 | Prometheus / AlertManager | Every alert in [alerts-catalog.md](alerts-catalog.md) | Instantly |
