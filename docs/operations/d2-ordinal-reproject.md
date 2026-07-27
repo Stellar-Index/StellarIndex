@@ -1,7 +1,7 @@
 ---
 title: D2 — in-CH intra_ledger_seq reproject
 last_verified: 2026-07-23
-status: in progress — partitions 39–43, 45 done; 44, 46–53 running (FINAL-dedup fix)
+status: COMPLETE — all partitions 39–53 done + verified (2026-07-23; see v1-launch-plan.md §0)
 ---
 
 # D2 — in-CH `intra_ledger_seq` reproject
