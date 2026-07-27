@@ -435,6 +435,21 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
     explorer tier. The campaign's C1 track claimed a "98-route smoke ✅"
     — that claim does not survive this sweep and should be treated as
     refuted until re-run.
+  - **User-visible on stellarindex.io TODAY** — `/accounts/`,
+    `/ledgers/`, `/contracts/`, `/liquidity-pools/`, `/operations/`
+    all serve a 200 static shell whose data comes from the dead
+    routes. Each of those segments has an `error.tsx` boundary
+    rendering the shared `RouteError` surface — **"The <section> page
+    hit an error"** plus a Try-again button — so a visitor gets a
+    visible failure, not an empty page.
+    *Evidence honesty*: the 503s and the error-boundary copy are both
+    VERIFIED (route sweep; `web/explorer/src/components/RouteError.tsx`
+    lines 37-45). That the boundary actually trips on these fetches is
+    INFERRED, not observed — a `curl` only returns the pre-JS shell,
+    and my first attempt to prove it by grepping the HTML for "error"
+    was a FALSE POSITIVE (it matched framework strings in the bundle).
+    Browser verification was attempted and blocked (extension not
+    connected). Confirm visually when convenient.
   - **This is a hard launch blocker** — "explorer" is the product
     name; an explorer that 503s on accounts, ledgers, contracts and
     transactions is not launched. Add to §1 Launch mechanics, and add
