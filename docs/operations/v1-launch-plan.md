@@ -282,15 +282,16 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
    sep41 chain clears, re-count the surviving alerts; for those, decide
    the `WithMaxDormantComponentLedgers` calibration (see OPERATOR INBOX
    [DECIDE-new]).
-3. `supply seed-sac-balances -full-history` — **BLOCKED on a code fix
-   (2026-07-27)**: the run OOM'd against its own
-   `max_memory_usage=8e9` ("would use 7.45 GiB … AggregatingTransform").
-   The query argMax'es KB-scale `entry_xdr` GROUP BY key over ALL 38
-   watched contracts at once; this is the THIRD budget breach of this
-   query (the file's comments narrate 2026-07-11's two). Fix in flight:
-   per-contract iteration (+ ledger windowing for KALE, which dominates
-   row volume), preserving the C2-4 full ordering tuple. Ships with
-   v0.21.2. Then re-run dry-run → live.
+3. `supply seed-sac-balances -full-history` — **FIX LANDED `7bede7e7`**
+   (was: OOM at its own 8 GB ceiling, the THIRD budget breach of this
+   query). Now ledger-WINDOWED with a Go-side latest-wins reducer over
+   the same C2-4 ordering tuple; measured 1.48–1.75 GiB per 250k window.
+   The fix also caught a latent **correctness** bug: per-column argMax
+   could resolve a same-key tie differently for each column and stitch a
+   row from two different changes — now one argMax over a column tuple.
+   verify.sh green; re-run of the real dry-run IN FLIGHT with a
+   side-loaded `stellarindex-ops-sacfix` binary (r1's deployed ops
+   binary stays v0.21.1 until the v0.21.2 deploy). Then live seed.
 4. `projector-replay -source redstone -from 63624934` (after the v0.21.2
    registry fix deploys — §2.4; then re-run redstone compute-completeness
    including the false-clean [63,624,934, 63,661,714] range).
