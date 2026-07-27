@@ -383,6 +383,16 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
     memory fix first, then build the claimable seed on the same shape.
   - Gate impact: blocks §1 "Supply trustworthy" independently of the
     SAC/dormancy items.
+  - ✅ **FIX BUILT `120bf7c3`** — `stellarindex-ops supply
+    seed-claimable-balances`, built on the proven windowed reader.
+    Defaults to EVERY classic credit asset (`-assets` narrows only by
+    explicit opt-in). Writes through the SAME upsert SQL as the live
+    observer (extracted to a shared constant) so seeded rows are
+    indistinguishable from observed ones, stamped
+    `SeedIntraLedgerSeq` so a live change can never be overwritten.
+    verify.sh green. **Dry-run against r1 IN FLIGHT** (side-loaded
+    `stellarindex-ops-claimable`); expect it to account for AQUA's
+    missing ~13.16B. Then live seed → re-run the AQUA reconciliation.
   - ✅ **ISOLATED 2026-07-27 (post-SAC-seed measurement).** The live SAC
     seed moved AQUA by only +9.9M (86,701,915,082.74 →
     86,711,792,598.11; −13.232% → −13.222%), so SAC was NOT the cause.
