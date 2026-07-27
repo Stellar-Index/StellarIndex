@@ -351,6 +351,40 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
 7. TimescaleDB compression policies (`scripts/ops/add-missing-compression-policies.sql`, post-D4); CH system-log TTL at next CH restart.
 
 ### 2.4 Investigations (parallel, code-side)
+- **🔴🔴 NEW 2026-07-27 — 38% OF SAMPLED ACCOUNTS SERVE A STALE
+  PRE-TRANSACTION BALANCE. C2-4c reproduced on live data.**
+  `reconcile-balances -sample 50` (tolerance 0): **18 matched, 19
+  mismatched**, every mismatch **exactly 1 stroop, always ours LOW**.
+  Not noise — systematic.
+  - Ruled out first: the verifier's Horizon parse is exact
+    (string-based `DecimalStringToScaledInt`, truncating, no float),
+    and Horizon's `last_modified_ledger` for a mismatched account
+    equals OUR snapshot ledger — so this is **not** a missed change.
+    We disagree about the SAME ledger's state.
+  - **Direct evidence** — `ledger_entry_changes` for account
+    `GA3GJ…QZA3L` at ledger 63,378,766 holds TWO rows:
+    `state` balance **10,099,944** and `updated` balance
+    **10,099,945** — and **both carry `intra_ledger_seq = 0`**. The
+    `ReplacingMergeTree(ledger_seq)` therefore ties and keeps an
+    ARBITRARY row; here it kept the before-image. That is exactly
+    audit C2-4c / CS-021.
+  - **Why D3 ALONE WOULD NOT FIX THESE ACCOUNTS**: D3's composite
+    version is `(ledger_seq << 32) | intra_ledger_seq`, which still
+    ties when the ordinal is 0 on both rows. Ledger 63,378,766 sits in
+    the **un-ordinaled [63.0M, 63.55M) band** the ordinal probe found
+    earlier today. So the §2.3.1 pre-step (ch-backfill re-derive over
+    partition 38 + [63.0M, 63.55M)) is **mandatory before D3**, not
+    optional — this is the empirical proof of that, previously only a
+    theoretical concern.
+  - **Impact**: account balance is the single most-read money value in
+    an explorer, and ~38% of active accounts can serve a pre-transaction
+    figure. Broader than PHO. The uniform 1-stroop delta is consistent
+    with a 1-stroop dust campaign supplying the transactions; the SIZE
+    of the error is incidental — the same defect serves an arbitrarily
+    wrong balance whenever the last change is larger.
+  - **Blocks §1 "Prove-it battery" and arguably "Supply trustworthy".**
+    Sequence: ordinal re-derive → D3 → re-run `reconcile-balances
+    -sample 50` and require 0 mismatches as the acceptance test.
 - **🔴 NEW 2026-07-27 — PHO served supply is +156.9% vs Horizon.**
   Found by the new `scripts/ops/reconcile-supply-vs-horizon.sh`, which
   reconciles ALL 8 tracked classic assets against Horizon's full
