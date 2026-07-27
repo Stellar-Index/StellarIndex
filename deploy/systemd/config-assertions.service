@@ -16,7 +16,14 @@ NoNewPrivileges=true
 ProtectSystem=full
 PrivateTmp=true
 ProtectKernelTunables=true
-ProtectKernelModules=true
+# ProtectKernelModules is deliberately NOT set: it makes /lib/modules
+# INACCESSIBLE, which silently killed the zfs_module_on_disk assertion
+# (the 2026-07-03 guard against an apt downgrade deleting the dkms
+# module and leaving the pool one reboot from unimportable) — it read
+# FAIL on every run from the moment the unit went live, 2026-07-27, and
+# no reformulation helps: `ls`, `modinfo`, and `dkms status` all consult
+# that tree. This script never loads or unloads a module, so the flag
+# bought nothing here while disabling a load-bearing integrity check.
 ProtectControlGroups=true
 ReadWritePaths=/var/lib/node_exporter/textfile_collector
 

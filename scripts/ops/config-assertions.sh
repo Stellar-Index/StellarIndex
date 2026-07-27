@@ -56,6 +56,13 @@ assert_grep syslog_maxsize /etc/logrotate.d/rsyslog \
 # ── ZFS integrity (2026-07-03: an ansible apply downgrade-broke the
 # userspace and deleted the dkms module — pool one reboot from gone) ──
 assert_cmd zfs_userspace_works zpool status data
+# Requires the unit to NOT set ProtectKernelModules (see the comment in
+# deploy/systemd/config-assertions.service): that flag makes
+# /lib/modules inaccessible, and every formulation of this check — ls,
+# modinfo, dkms status — reads that tree, so the assertion reported FAIL
+# on every service run while passing by hand. Checking the module is
+# merely LOADED would not substitute: a deleted module stays resident
+# until reboot, which is exactly the 2026-07-03 trap.
 assert_cmd zfs_module_on_disk sh -c 'ls /lib/modules/$(uname -r)/updates/dkms/zfs.ko* >/dev/null'
 assert_cmd zfs_packages_held sh -c 'apt-mark showhold | grep -q zfs-dkms'
 
@@ -87,7 +94,11 @@ assert_cmd supply_reserve_accounts_nonempty sh -c \
 # reads it from the MC_HOST_* env var directly, nothing is written
 # to a config file on disk or echoed, and assert_cmd itself already
 # redirects all output to /dev/null.
-assert_cmd galexie_writer_creds_valid sh -c '
+# bash -c, not sh -c: the body uses [[ ]], which dash rejects with
+# "[[: not found" (exit 127) — so this assertion reported FAIL on every
+# run regardless of the creds' actual validity. Same bashism-under-dash
+# class as the deploy backup-freshness gate (7609dce4).
+assert_cmd galexie_writer_creds_valid bash -c '
   export HOME=/root
   [[ -r /etc/default/galexie ]] || exit 1
   set -a; . /etc/default/galexie; set +a
