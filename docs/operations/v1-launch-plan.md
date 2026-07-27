@@ -29,7 +29,17 @@ severity: P1
 
 - **[OP-standing]** The §3 register items all stand (paging wiring 2b is the
   most launch-critical). Nothing new requires a decision yet.
-- **[DECIDE-new] SolvBTC unsuffixed-feed quote mislabel (latent, pre-existing):**
+- **[DECIDE-new] Supply-guard dormancy calibration** (replaces most of old
+  D4): the `supply-refresh` stalled-observer guard's dormancy horizon
+  (17,280 ledgers ≈ 1 day) false-positives on structurally-dormant
+  components — SDF reserve accounts (change every days-weeks) and
+  slow classic assets (BLND at gap 17,922). My recommendation: raise
+  `WithMaxDormantComponentLedgers` for the account-observation component
+  (Algorithm 1 XLM) to ~2 weeks, and to ~3 days for classic trustline
+  components, keeping the tight default for SEP-41 (where a frozen
+  component DID mean a dead writer for 14 days — the guard was RIGHT
+  there). Loosening a data-trust guard needs your sign-off; parked. No
+  interim action — the alerts are honest until calibrated.
   `SolvBTC_FUNDAMENTAL` / `SolvBTC.BBN_FUNDAMENTAL` are registered quote
   `fiat:USD` but demonstrably publish a NAV **ratio vs BTC** (~1.003 live +
   on-chain; BBN stores exactly 1.0). Correct quote is arguably `crypto:BTC`,
@@ -174,11 +184,18 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
    the live bucket) so D3's tie-break actually bites there, THEN
    d3 setup → reproject [38M→tip] → verify → cutover. Doc:
    `deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql`.
-2. **D4 `projector-replay` served-tier re-derives** — unfreezes
-   `account_observations`, clears the 39 supply alerts. Afterwards confirm
-   whether the real-time path (`pipeline/sink.go` InsertAccountObservation)
-   keeps it at tip, or it's batch-only — if the former, root-cause why it
-   stalled ~2026-07-25.
+2. **D4 REFRAMED (2026-07-27 investigation)** — `account_observations` is
+   NOT stalled: it holds exactly the 16 SDF reserve accounts, whose last
+   changes are legitimately sparse (dormant by design; trustline/LP/SAC
+   observation siblings are all AT TIP). The 39 supply alerts decompose:
+   (a) SEP-41 assets → the sep41 zero-writer bug (fix in flight, §2.1);
+   (b) XLM + slow classic assets (e.g. BLND, gap 17,922 vs horizon
+   17,280) → the supply-refresh dormancy horizon (~1 day) is too tight
+   for structurally-dormant components. No replay needed for (b) — a
+   replay would re-derive identical rows. Remaining D4 action: after the
+   sep41 chain clears, re-count the surviving alerts; for those, decide
+   the `WithMaxDormantComponentLedgers` calibration (see OPERATOR INBOX
+   [DECIDE-new]).
 3. `supply seed-sac-balances -full-history` (may alone clear PHO/KALE/BLND
    cross-check divergence).
 4. `projector-replay -source redstone -from 63624934` (after the v0.21.2
