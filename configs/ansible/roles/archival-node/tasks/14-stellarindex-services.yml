@@ -94,6 +94,11 @@
     delete: true
     rsync_opts:
       - "--exclude=.DS_Store"
+      # Pin ownership server-side: synchronize's archive mode preserves
+      # the CONTROLLER's numeric uid/gid, so applies from the operator
+      # laptop vs the CI runner fought over owner (501 vs 0) and the
+      # drift check permanently reported this task changed (2026-07-27).
+      - "--chown=root:root"
 
 - name: Run pending migrations against the stellarindex database
   # OPT-IN since 2026-07-10: deploy.yml is the canonical migration

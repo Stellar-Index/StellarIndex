@@ -95,6 +95,10 @@ zfs_datasets:
     compression: "zstd"
     atime: "off"
     mountpoint: "/var/lib/stellarindex"
+    # Must agree with 04-users.yml "Ownership — stellarindex data dir"
+    # (0750); the 0755 default here ping-ponged the mode every apply
+    # and kept the drift check permanently red (2026-07-27).
+    dir_mode: "0750"
   - name: "postgres"
     recordsize: "8192"
     compression: "zstd"
