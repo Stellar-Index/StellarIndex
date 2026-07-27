@@ -177,15 +177,15 @@ sep41 zero-writer wiring hole since ~2026-07-13. Remaining chain:
 ### 2.2 Restore the vault password → drift → config apply
 1. ✅ ~~Vault password~~ — rebuilt + rotated 2026-07-27 (see §0).
 2. ✅ ~~GH secrets + drift run~~ — drift functional, verdict `changed=69`.
-3. **Apply the 69-task config batch** ([ATTENDED] — the one remaining step):
-   `ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml
-   --check --diff` review first, then live. Lands: archivewriter cred fix
-   (**unblocks rehydrate rollback**), captive-core 18-validator T1 quorum
-   (galexie restart, ~1–3 min tip pause), triangulation chains, z=5.0,
-   cold-tier render, freeze-lifecycle (N-F6) activation, postgres conf
-   (restart — coordinate with §2.3's max_worker_processes change),
-   ownership flips, timescale-jobs-probe + CH schema-snapshot units.
-   Then re-run `ansible-drift.yml` → should go green (allowances only).
+3. ✅ **Config batch APPLIED 2026-07-27** (~14:00Z, two passes: pass 1
+   died on the galexie stale-artifact guard — near-miss documented in
+   the loop log, binary restored, role hardened `9670ef29`; pass 2
+   clean `ok=259 changed=60 failed=0`). Post-apply battery green:
+   all services active, edge smoke 13/13, galexie sha == pin,
+   timescale-jobs-probe firing, ch-schema-snapshot/drift armed.
+   `ansible-drift.yml` re-run triggered → confirm GREEN (watcher armed).
+   NOTE: apply re-enabled `compute-completeness.timer`; re-stopped
+   manually (sep41 re-verifies still pending, §2.1.3–4 re-enables).
 4. ✅ ~~Pass-file protection~~ — `chflags uchg` + ci.yml guard (2a23698e).
 
 ### 2.3 Served-tier population batch (heavy; ONE at a time under `run-heavy-job.sh`)
