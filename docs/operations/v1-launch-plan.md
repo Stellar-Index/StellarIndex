@@ -22,6 +22,30 @@ severity: P1
 > gitignored `production-remediation-ledger-2026-07-23.md` (finding-status
 > authority). Runbooks under `runbooks/` remain the execution recipes.
 
+## OPERATOR INBOX (questions parked by the launch loop — answer inline, loop picks up next iteration)
+
+> Loop contract: no mid-loop questions to Ash. Everything needing an operator
+> lands here with context + recommendation + what was done meanwhile.
+
+- **[OP-standing]** The §3 register items all stand (paging wiring 2b is the
+  most launch-critical). Nothing new requires a decision yet.
+- **DECIDED (auto, revertible) 2026-07-27:** moved the untracked old-vault
+  backup `configs/ansible/inventory/r1.secrets.yml.lost-password-2026-07-27`
+  → `~/.config/stellarindex/` (guard-rail script requires a clean tree;
+  committing dead ciphertext to the public repo has no value; file preserved).
+- **DECIDED (auto) 2026-07-27:** cut **v0.21.1** (sep41 ops-verify
+  statement_timeout fix + CI/ansible guard entries; CHANGELOG entries for
+  06ff3b5e and the six ops/CI commits added at promote time). This consumes
+  the session's one-release budget — the redstone registry fix (below) lands
+  on main and ships as v0.21.2 in a LATER session.
+
+## Loop log (newest first)
+
+- 2026-07-27 ~09:50Z (iter 1): guard cron armed; r1 spot-verified (matches
+  §0; soak 5 PASS/0 FAIL). v0.21.1 tagged, release.yml building, deploy
+  next. **Redstone §2.4 ROOT-CAUSED** (see §2.4). Redstone registry fix
+  being implemented on main.
+
 ## What "v1 launch" means
 
 Public, announced availability of the Stellar Index API + explorer as a
@@ -63,7 +87,8 @@ the spec, so the wire-freeze prerequisite is met).
 ## 2. Critical path (dependency-ordered)
 
 ### 2.1 Deploy the sep41 fix (next deploy, small)
-Cut + deploy a patch release from main (`06ff3b5e` + docs). After deploy:
+**v0.21.1 CUT 2026-07-27** (tag pushed; release.yml building; deploy next).
+After deploy:
 `cp -f /usr/local/bin/stellarindex-ops /usr/local/bin/stellarindex-ops-ch`
 (the host `-ch` binary is NOT updated by deploy.yml — standing trap).
 Then re-run FULL `compute-completeness -ch` for `sep41_supply` and
@@ -96,16 +121,30 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
    stalled ~2026-07-25.
 3. `supply seed-sac-balances -full-history` (may alone clear PHO/KALE/BLND
    cross-check divergence).
-4. `ch-participant-backfill -from 2 -window 500000` (~2–4 d, resumable —
+4. `projector-replay -source redstone -from 63624934` (after the v0.21.2
+   registry fix deploys — §2.4; then re-run redstone compute-completeness
+   including the false-clean [63,624,934, 63,661,714] range).
+5. `ch-participant-backfill -from 2 -window 500000` (~2–4 d, resumable —
    queued since 2026-07-07; incoming-ops surface is ~1-day-only until run).
-5. `MATERIALIZE idx_lecur_account_id` (off-peak) + bloom index only if the
+6. `MATERIALIZE idx_lecur_account_id` (off-peak) + bloom index only if the
    bound-UNION fix proves insufficient (measure first).
-6. TimescaleDB compression policies (`scripts/ops/add-missing-compression-policies.sql`, post-D4); CH system-log TTL at next CH restart.
+7. TimescaleDB compression policies (`scripts/ops/add-missing-compression-policies.sql`, post-D4); CH system-log TTL at next CH restart.
 
 ### 2.4 Investigations (parallel, code-side)
-- **redstone projection blind** (NEW): 866 undecodable-but-matched ledgers
-  from 63,661,715 — v0.21.0-decoder regression or new upstream feed shape?
-  Data-trust: must resolve before the gate.
+- **redstone projection blind — ROOT-CAUSED 2026-07-27 (not a code
+  regression)**: RedStone's relayer expanded past our 19-feed registry on
+  2026-07-24 10:56Z (ledger 63,624,934), publishing 11 unknown feed_ids
+  (`EUROC` bare, `SolvBTC*_FUNDAMENTAL/USD` variants, `USDe`, `sUSDe`,
+  `USDY_FUNDAMENTAL/USD`, `USST_FUNDAMENTAL`, `savUSD_FUNDAMENTAL`,
+  `XAUm_FUNDAMENTAL/USD`, `deJAAA/deJTRSY_FUNDAMENTAL/USD`). All-unknown
+  batches → `ErrEmptyUpdates` → undecodable-but-matched. v0.21.0's C4-059
+  (6c51c760) only made pre-existing blindness VISIBLE; the pre-deploy range
+  [63,624,934, 63,661,714] (~4,276 ledgers) was **false-clean** and needs
+  re-verify after replay. FIX: registry + canonical-asset additions with
+  per-feed quote/orientation diligence (in progress on main → ships
+  v0.21.2); THEN `projector-replay -source redstone -from 63624934` (added
+  to §2.3 queue). Fail-closed behavior worked as designed; optional
+  hardening = distinct "registry stale" signal (post-v1).
 - sep41 completeness 40-min count perf (non-blocking follow-up).
 
 ### 2.5 Soak close-out (timed gate: after 2026-07-28 ~17:00)
