@@ -47,7 +47,7 @@ the spec, so the wire-freeze prerequisite is met).
 | Config drift | `ansible-drift` CI red (vault secrets). Captive-core still runs the OLD validator set (24 `[[VALIDATORS]]` live; PR #7's 18-validator T1 set unapplied). 33-task config apply pending (archivewriter cred fix, quorum, triangulation chains, z=5.0, cold-tier render) |
 | Deploy gate | `DEPLOY_APPROVAL_RELAXED=true` still set — **re-arm at launch** (§2.7) |
 | Feeds | `COINGECKO_API_KEY` **not set** (feed dead since 2026-06-19, [OP]). `min_usd_volume=10000` since 2026-07-01 (older docs claiming 0 are stale) |
-| Paging | Healthchecks (5 URLs) + alertmanager Discord secrets **ARE wired** (older docs claiming open are stale). Deadmansswitch heartbeat flowing |
+| Paging | 🔴 **NOT wired** (corrected 2026-07-27 — the env files exist but every value is EMPTY: 5× `HEALTHCHECKS_URL_*`, `HEALTHCHECKS_DEADMANSSWITCH_URL`, `SLACK_WEBHOOK_URL` all blank; only the node-level `HEALTHCHECK_PING_URL` is populated). Alert pages currently route to nobody — the original [OP] item stands: create Healthchecks.io checks + chat webhooks, paste URLs into `/etc/default/stellarindex-healthchecks` + `/etc/default/alertmanager-secrets` (then codify in the vault), rerun `pre-launch-check.sh` |
 | ADRs | 0040–0048 ALL Accepted (incl. **ADR-0042 v1 wire shape** — the old "biggest unsigned gate" is resolved). hashdb wired but `enabled=false` on r1 |
 
 ## 1. Go-live gate (all must be true)
@@ -168,6 +168,9 @@ are obsolete — repo has been public since 2026-07-03):
    `! mkdir -p ~/.ansible && read -s VP && echo -n "$VP" > ~/.ansible/r1_vault_pass && chmod 600 ~/.ansible/r1_vault_pass && unset VP`
    …then have the agent verify decrypt + set the two GH secrets.
 2. CoinGecko Pro purchase → `COINGECKO_API_KEY` on r1 + indexer restart.
+2b. **Wire paging** (go-live gate): Healthchecks.io checks (5 per-binary +
+   deadmansswitch) + chat webhook(s); paste into the two env files on r1 AND
+   the vault; rerun `pre-launch-check.sh` → 0 fails.
 3. External security review engagement.
 4. Accepted-risk sign-off (15 items) + IP-rotation/SSH-CIDR decision.
 5. pgbackrest retention number + off-site S3 provider (+account/creds).
@@ -191,9 +194,10 @@ are obsolete — repo has been public since 2026-07-03):
 
 ## 5. Corrections to prior plans (so nobody re-trusts stale rows)
 
-- Healthchecks/Discord wiring, `min_usd_volume=10000`, ADR-0042 signing,
-  comet gating, deploy/CF secrets, k6 cron, branch protection: **DONE** —
-  older docs listing them open are wrong.
+- `min_usd_volume=10000`, ADR-0042 signing, comet gating, deploy/CF secrets,
+  k6 cron, branch protection: **DONE** — older docs listing them open are
+  wrong. (Healthchecks/Discord wiring is NOT done — see §0 Paging; the env
+  files exist but all values are empty.)
 - `seed-sep41-genesis`: the 2026-07-07 "❌ do not run" verdict was
   overridden in practice (run 2026-07-26). The honesty check moves to §2.6.
 - "Deploy pipeline can't authenticate" / "capacity 94%" / "Phase 0 running":

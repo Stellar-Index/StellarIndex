@@ -716,9 +716,16 @@ jobs:
         run: |
           # syntax-check only needs the vars file to exist and parse.
           # Do not expose production vault material to Dependabot PRs.
+          # GUARD (2026-07-27): only write the stub if no password file
+          # exists — on 2026-07-25 these exact commands, reproduced on an
+          # operator workstation, silently OVERWROTE the real vault
+          # password (which had no other copy). Ephemeral CI runners never
+          # have the file, so the guard is a no-op in CI.
           mkdir -p ~/.ansible
-          printf '%s\n' 'ci-syntax-only' > ~/.ansible/r1_vault_pass
-          chmod 600 ~/.ansible/r1_vault_pass
+          if [ ! -e ~/.ansible/r1_vault_pass ]; then
+            printf '%s\n' 'ci-syntax-only' > ~/.ansible/r1_vault_pass
+            chmod 600 ~/.ansible/r1_vault_pass
+          fi
           printf '%s\n' '--- {}' > inventory/ci.syntax-secrets.yml
           ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/archival-node.yml -e secrets_file=../inventory/ci.syntax-secrets.yml
           ansible-playbook --syntax-check -i inventory/r1.example.yml playbooks/monitoring.yml
