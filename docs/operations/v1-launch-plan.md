@@ -351,6 +351,39 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
 7. TimescaleDB compression policies (`scripts/ops/add-missing-compression-policies.sql`, post-D4); CH system-log TTL at next CH restart.
 
 ### 2.4 Investigations (parallel, code-side)
+- **🔴 NEW 2026-07-27 — PHO served supply is +156.9% vs Horizon.**
+  Found by the new `scripts/ops/reconcile-supply-vs-horizon.sh`, which
+  reconciles ALL 8 tracked classic assets against Horizon's full
+  component sum (the check B3 never did). Full run: **5 PASS, 3 FAIL**
+  — AQUA −13.22% (known claimable gap), **PHO +156.90%** (NEW, severe),
+  KALE +1.31% (NEW, marginal — actively minted, may be timing).
+  - PHO isolated to the **SAC component**: ours 123.5M PHO across 46
+    contract holders vs Horizon's `contracts_amount` **1.37M** (~90×).
+    That difference (122.1M) almost exactly equals the total gap.
+  - **Control proves the pipeline is sound generally**: for USDC our
+    SAC component is 40.13M vs Horizon's 40.26M — 0.3%. So this is not
+    a systematic SAC bug; PHO is specifically anomalous.
+  - The PHO holders' latest lake change is ledger **54.4–56.4M**, i.e.
+    the dormant pre-floor pool balances CLAUDE.md describes, and the
+    rows carry `intra_ledger_seq=4294967295` (the seed sentinel), so
+    they came from today's full-history seed reading the lake's latest
+    state for those keys.
+  - **TWO LIVE HYPOTHESES, opposite conclusions — do not assume:**
+    (a) the balances are STALE and we overcount (the lake's last change
+    for those keys is old because later changes are missing), or
+    (b) the balances are REAL and **Horizon undercounts** — Horizon
+    began tracking contract balances relatively recently, so a balance
+    written before that and never touched since could be absent from
+    its aggregate. This is the exact mirror of the claimable case, and
+    the repo's own 2026-07-06 verdict says these ARE ordinary
+    `Vec(Symbol("Balance"), Address(pool))` entries.
+  - **Decisive test** (not yet run): read the CURRENT on-chain balance
+    for one of those keys directly via the `rpc-probe` operator
+    diagnostic (`getLedgerEntry`) and compare against both. That
+    settles which side is wrong; everything else is inference.
+  - Until settled, PHO's served supply is NOT trustworthy in either
+    direction. Blocks §1 "Supply trustworthy" alongside the claimable
+    seed.
 - **🔴 NEW 2026-07-27 — claimable-balance supply component is UNSEEDED
   (material classic-supply understatement).** Found running the §2.6
   AQUA honesty check. `claimable_observations` holds **997 rows total**,
