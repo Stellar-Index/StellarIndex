@@ -294,6 +294,31 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
 7. TimescaleDB compression policies (`scripts/ops/add-missing-compression-policies.sql`, post-D4); CH system-log TTL at next CH restart.
 
 ### 2.4 Investigations (parallel, code-side)
+- **🔴 NEW 2026-07-27 — claimable-balance supply component is UNSEEDED
+  (material classic-supply understatement).** Found running the §2.6
+  AQUA honesty check. `claimable_observations` holds **997 rows total**,
+  ledger range [63,301,831 → tip] — i.e. only live-observed changes; it
+  was never seeded from history like `trustline_observations` (2.48M
+  AQUA rows alone). For AQUA we hold 927 of Horizon's 41,685 claimable
+  balances = **574.6M of 13,737.6M AQUA (4.2%)**, so served AQUA total
+  supply is **86.70B vs Horizon's component sum 99.92B = −13.2%**.
+  Arithmetic confirms the component IS summed but under-populated:
+  trustlines 80.74B + claimable 0.57B + LP 0.52B + SAC 4.93B = 86.76B
+  ≈ served 86.70B (0.07%). **Every classic asset with pre-63.3M
+  claimable balances is understated by them.**
+  - Why prior checks missed it: campaign track B3 verified Algorithm 2
+    against the **trustline sum**, which is exact — the claimable
+    component was never in the comparison. §2.6's AQUA item was also
+    looking for the 2026-07-07 **+15.7% OVERSTATEMENT**; the seed
+    fixed that direction and the real defect is the opposite sign.
+  - Candidate fix: `stellarindex-ops state-snapshot -scope all` (its
+    docs name account/trustline/offer/data/**claimable**/LP as the
+    history-archive fill for exactly this "dormant since before the
+    capture window" case). MUST first confirm it lands in the Postgres
+    `claimable_observations` the supply reader aggregates, not only in
+    the CH current-state projection. Scoping delegated 2026-07-27.
+  - Gate impact: blocks §1 "Supply trustworthy" independently of the
+    SAC/dormancy items.
 - **redstone projection blind — ROOT-CAUSED 2026-07-27 (not a code
   regression)**: RedStone's relayer expanded past our 19-feed registry on
   2026-07-24 10:56Z (ledger 63,624,934), publishing 11 unknown feed_ids
