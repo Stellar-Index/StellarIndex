@@ -1,10 +1,14 @@
 ---
 title: Production-readiness — comprehensive remaining-work register
 last_verified: 2026-07-22
-status: living — the single list of everything between here and production
+status: superseded — see v1-launch-plan.md
 ---
 
 # Remaining work to production state
+
+> **⚠️ SUPERSEDED 2026-07-27 by [`v1-launch-plan.md`](v1-launch-plan.md).**
+> Open items were re-verified and absorbed there; several rows here are
+> stale-resolved (trim done, D2 done, deploys landed). Mine for detail only.
 
 Companion to `production-readiness-master-plan-2026-07-18.md` (which holds the
 phase narrative). This file is the **exhaustive checklist**, including the

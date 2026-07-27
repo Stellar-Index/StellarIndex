@@ -1,5 +1,10 @@
 # Stellar Index — go-live master plan
 
+> **⚠️ SUPERSEDED 2026-07-27 by
+> [`docs/operations/v1-launch-plan.md`](../../operations/v1-launch-plan.md).**
+> The go-live gate + "road to top-tier" framing carried forward there; the
+> operational rows here predate the trim/dedup/v0.21.0 campaign and are stale.
+
 Living reference for everything remaining before a public showcase + being the canonical Stellar source. Compiled 2026-07-17 from: the 2026-07-16 code audit, a live read-only R1 investigation over SSH, and the web-frontend audit. Supersedes ad-hoc status notes.
 
 ## North star (2026-07-17)

@@ -1,10 +1,16 @@
 ---
 title: Public-flip strategy — publishing Stellar Index to a public repo at v1.0
 last_verified: 2026-05-03
-status: living doc — checklist execution-ready, awaiting v1.0 launch signal
+status: historical — the flip happened 2026-07-03; see v1-launch-plan.md
 ---
 
 # Public-flip strategy
+
+> **⚠️ HISTORICAL (2026-07-27).** The repo went public 2026-07-03 via a
+> different mechanism than planned here (and with a vault exposure — see
+> `credential-rotation.md`). The org is `Stellar-Index/StellarIndex` since
+> 2026-07-15. Nothing here is executable; residuals live in
+> [`v1-launch-plan.md`](v1-launch-plan.md).
 
 The Stellar Index source is being prepared for public open-source
 release. This doc captures **how** we make that flip, and the prep
