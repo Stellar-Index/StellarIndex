@@ -97,13 +97,16 @@
     # size+mtime quick-check reported this task changed on EVERY run.
     checksum: true
     times: false
+    # Do NOT sync ownership: archive mode preserves the CONTROLLER's
+    # numeric uid/gid (operator laptop = 501, CI runner = 1001), so
+    # applies from different machines fought over ownership forever —
+    # --chown=root:root did not cover the implied root dir. With -og
+    # off, rsync (running as root on the receiver) creates root-owned
+    # files and never touches ownership again.
+    owner: false
+    group: false
     rsync_opts:
       - "--exclude=.DS_Store"
-      # Pin ownership server-side: synchronize's archive mode preserves
-      # the CONTROLLER's numeric uid/gid, so applies from the operator
-      # laptop vs the CI runner fought over owner (501 vs 0) and the
-      # drift check permanently reported this task changed (2026-07-27).
-      - "--chown=root:root"
 
 - name: Run pending migrations against the stellarindex database
   # OPT-IN since 2026-07-10: deploy.yml is the canonical migration
