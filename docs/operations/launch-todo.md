@@ -1,10 +1,16 @@
 ---
 title: Launch to-do — consolidated master list
 last_verified: 2026-06-30
-status: living document
+status: superseded — see v1-launch-plan.md
 ---
 
 # Launch to-do — consolidated master list
+
+> **⚠️ SUPERSEDED 2026-07-27 by [`v1-launch-plan.md`](v1-launch-plan.md).**
+> Surviving open items (CoinGecko key, external review, tx_hash_index
+> backfill, R2/R3, P4 tail) are carried there with 2026-07-27 verification;
+> many rows here are done-but-unmarked (Healthchecks wiring, min_usd_volume,
+> ADR-0035 gating, cold-tier trim). Do not execute from here.
 
 > **Compiled 2026-06-30** from a full audit: ADR sweep (41 deferred items),
 > docs sweep (~55 items across 26 files), live r1 probing, and a code-annotation

@@ -10,7 +10,12 @@ supersedes_context: docs/operations/runbooks/consolidated-deploy-plan-2026-07-18
 
 The single, honest, dependency-ordered plan to take StellarIndex (Stellar explorer + the public Stellar Index API on the R1 Hetzner box) from its current state to a production-live state fit to present to Stellar. Every number here is live-verified on R1 (2026-07-18) or cited to a rehearsed artifact.
 
-> **⭐ THIS IS THE SOURCE OF TRUTH for the production-readiness campaign.** If you're resuming (context was lost / new session): read §0 for current state, then the phases (§3). Companion docs: `runbooks/phase-a-capacity-relief-2026-07-18.md` (capacity detail + live table), `off-site-backup-plan.md`, `runbooks/consolidated-deploy-plan-2026-07-18.md` (Phase C/D detail). Canonical-but-stale: `docs/architecture/ha-plan.md` (§4/§8 need the rewrite noted in §6b).
+> **⚠️ SUPERSEDED 2026-07-27 by [`v1-launch-plan.md`](v1-launch-plan.md)** — the
+> single source of truth, with every carried item re-verified live. This file is
+> now the campaign HISTORY log (the §0 narrative through 2026-07-26 remains
+> accurate as a record). Do not execute from here.
+>
+> (previous header) THIS WAS the source of truth for the production-readiness campaign. If you're resuming (context was lost / new session): read §0 for current state, then the phases (§3). Companion docs: `runbooks/phase-a-capacity-relief-2026-07-18.md` (capacity detail + live table), `off-site-backup-plan.md`, `runbooks/consolidated-deploy-plan-2026-07-18.md` (Phase C/D detail). Canonical-but-stale: `docs/architecture/ha-plan.md` (§4/§8 need the rewrite noted in §6b).
 
 ## 0. CURRENT STATE — resume here (update this section as we progress)
 

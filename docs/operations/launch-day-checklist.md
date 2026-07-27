@@ -6,6 +6,12 @@ status: operator runbook
 
 # Launch-day operator checklist
 
+> **⚠️ SUPERSEDED 2026-07-27 by [`v1-launch-plan.md`](v1-launch-plan.md) §2.8**
+> — the public-flip steps here already happened (2026-07-03, differently) and
+> the CalVer tag format is wrong (we use SemVer). The still-live content
+> (`apikey_optional` warning, F-0100 counter-presence check, first-24h watch)
+> is carried in the new plan.
+
 End-to-end cutover runbook for **L6.4** in the launch-readiness
 backlog. Follow this **on the day**. Each step has a clear pass
 condition; do not advance until the prior step passes.

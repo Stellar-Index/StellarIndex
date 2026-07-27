@@ -1,0 +1,208 @@
+---
+title: v1 launch plan — THE single source of truth
+last_verified: 2026-07-27
+status: active
+severity: P1
+---
+
+# Stellar Index — v1 launch plan (single source of truth)
+
+> **⭐ THIS IS THE ONE PLAN.** Consolidated 2026-07-27 from every prior
+> launch/production document, with every carried item **re-verified against
+> live r1 + the repo on 2026-07-27** (not copied on trust). If you are
+> resuming: read §0 (verified state), then execute §2 in order.
+>
+> Superseded by this doc (banners added; keep for history/recipes only):
+> `production-readiness-master-plan-2026-07-18.md` (the campaign log),
+> `production-readiness-remaining.md`, `docs/audit/audit-2026-07-16/go-live-master-plan.md`,
+> `launch-todo.md`, `launch-day-checklist.md`, `public-flip.md`,
+> `public-flip-runbook.md`, `notes/ROADMAP.md`, `notes/BACKLOG.md`.
+> Still ACTIVE as companions: `production-confidence-campaign-2026-07-23.md`
+> (the adversarial proof harness — its E-gate is §2.6 here) and the
+> gitignored `production-remediation-ledger-2026-07-23.md` (finding-status
+> authority). Runbooks under `runbooks/` remain the execution recipes.
+
+## What "v1 launch" means
+
+Public, announced availability of the Stellar Index API + explorer as a
+production service fit to present to Stellar: substrate certified complete,
+served money-values proven correct, a signed repeatable deploy path, honest
+capacity/HA posture, paging wired to a human, and the v1.0 wire shape frozen
+(ADR-0042 — **Accepted and implemented**; the `kind` discriminator is live in
+the spec, so the wire-freeze prerequisite is met).
+
+## 0. Verified current state — 2026-07-27 (all checked live today)
+
+| Area | State |
+|---|---|
+| Deployed | **v0.21.0**, all 6 binaries, services active, schema **122 clean**. Main is 12 commits ahead — 11 docs + **`06ff3b5e` (sep41 ops-verify statement_timeout fix, NOT yet deployed)** |
+| Lake | Dedup complete; post-dedup completeness re-audit PASSED; CH ingest at tip (lag seconds) |
+| Galexie trim | Done + verified; cold reads OK. **Soak 4× PASS / 0 FAIL**; snapshot `data/minio@pre-trim-2026-07-26` held (3.2 T) |
+| D-series | D1 ✅, D2 ✅ (all partitions, 2026-07-23), CAGG re-mat ✅ ("ALL CAGG REMAT DONE" 2026-07-26). **D3: no run evidence on r1** — confirm need. **D4 NOT run** |
+| Supply | `account_observations` **frozen at 63,632,946** (lake tip 63,669,421); guard correctly refusing stale snapshots → **39 `supply_refresh_error_dominant` alerts**. Fix = D4 (§2.3). `seed-sep41-genesis` WAS run 2026-07-26 (overriding the 2026-07-07 "do not run" verdict — verify AQUA in §2.6) |
+| Completeness | 3 sources incomplete: `sep41_supply` + `sep41_transfers` (blocked on deploying 06ff3b5e) and **`redstone` — NEW, undiagnosed**: projection blind on 866 ledgers from 63,661,715, "undecodable-but-matched", started ≈ the v0.21.0 deploy window (§2.4) |
+| Alerts | Above, plus `dex_nonstandard_decimals_detected` ×5 (informational — genuine non-7dp aquarius C-tokens, working as designed) + deadmansswitch (by design) |
+| GH secrets | Deploy + Cloudflare + `R1_INVENTORY_B64` ✅ present. `ANSIBLE_VAULT_PASSWORD` / `ANSIBLE_VAULT_FILE_B64` **absent** |
+| **Vault password** | 🔴 **Local `~/.ansible/r1_vault_pass` was CLOBBERED 2026-07-25** by a locally-run CI syntax step (now contains the literal `ci-syntax-only`). The real password was only ever entered via `read -s` (never logged), has **no copy on r1**, and no recoverable snapshot exists. **Operator must re-enter it** (§3.1). Until then: no ansible apply, no drift check, no vault edit. The encrypted vault itself (`configs/ansible/inventory/r1.secrets.yml`, untracked, 2026-07-10) is intact |
+| Config drift | `ansible-drift` CI red (vault secrets). Captive-core still runs the OLD validator set (24 `[[VALIDATORS]]` live; PR #7's 18-validator T1 set unapplied). 33-task config apply pending (archivewriter cred fix, quorum, triangulation chains, z=5.0, cold-tier render) |
+| Deploy gate | `DEPLOY_APPROVAL_RELAXED=true` still set — **re-arm at launch** (§2.7) |
+| Feeds | `COINGECKO_API_KEY` **not set** (feed dead since 2026-06-19, [OP]). `min_usd_volume=10000` since 2026-07-01 (older docs claiming 0 are stale) |
+| Paging | Healthchecks (5 URLs) + alertmanager Discord secrets **ARE wired** (older docs claiming open are stale). Deadmansswitch heartbeat flowing |
+| ADRs | 0040–0048 ALL Accepted (incl. **ADR-0042 v1 wire shape** — the old "biggest unsigned gate" is resolved). hashdb wired but `enabled=false` on r1 |
+
+## 1. Go-live gate (all must be true)
+
+- [ ] **Supply trustworthy**: `supply_refresh_error_dominant` + `supply_cross_check_divergence` clear (or per-asset justified); AQUA/SEP-41 genesis-seed values spot-checked vs issuance truth.
+- [ ] **Completeness green**: all sources `complete=true` (incl. sep41 ×2 + the new redstone gap); `/v1/coverage` two-axis verdict honest.
+- [ ] **Prove-it battery passed** (§2.6): reconcile-balances, verify-lake/contiguity/hash-chain, re-derive determinism, price+supply vs external truth, `verify-usd-volume` calibrated.
+- [ ] **Config codified = live**: ansible drift check green in CI; the 33-task apply landed.
+- [ ] **Security posture**: creds rotated (ratesengine-admin, MinIO, anything session-exposed); approval gate re-armed; accepted-risk list explicitly signed; external security review booked/closed [OP].
+- [ ] **DR honest**: off-site backup decision executed or explicitly risk-accepted; restore-drill timer re-enabled; ZFS trim snapshot resolved.
+- [ ] **Launch mechanics**: `auth_mode=apikey_optional` (NEVER `apikey` — it 401s healthz/metrics, audit SEC-01); status page + API docs current; SLA definition published; announcement ready; first-24h watch staffed.
+
+## 2. Critical path (dependency-ordered)
+
+### 2.1 Deploy the sep41 fix (next deploy, small)
+Cut + deploy a patch release from main (`06ff3b5e` + docs). After deploy:
+`cp -f /usr/local/bin/stellarindex-ops /usr/local/bin/stellarindex-ops-ch`
+(the host `-ch` binary is NOT updated by deploy.yml — standing trap).
+Then re-run FULL `compute-completeness -ch` for `sep41_supply` and
+`sep41_transfers` (no `-from`; INV-5 latch; stop the completeness timer
+during; ~40 min each) → clears 2 of the 3 `completeness_incomplete`.
+
+### 2.2 Restore the vault password → drift → config apply
+1. **[OP] Re-enter the vault password** (§3.1) and verify
+   `ansible-vault view` decrypts `inventory/r1.secrets.yml`.
+2. Set GH secrets `ANSIBLE_VAULT_PASSWORD` + `ANSIBLE_VAULT_FILE_B64`
+   (base64 of the vault file); re-run `ansible-drift.yml` → first drift
+   verdict since the rotation.
+3. Apply the 33-task config batch (`--check --diff` first): archivewriter
+   cred fix (**unblocks rehydrate rollback**), captive-core 18-validator T1
+   quorum (galexie restart, ~1–3 min tip pause), triangulation chains,
+   z=5.0, cold-tier render, freeze-lifecycle (N-F6) activation.
+4. Protect the password file from re-clobber: `chflags uchg
+   ~/.ansible/r1_vault_pass` (the clobber came from running ci.yml's syntax
+   step locally — it writes `ci-syntax-only` to the same path).
+
+### 2.3 Served-tier population batch (heavy; ONE at a time under `run-heavy-job.sh`)
+Order matters; each gates the next check. The DO-NOTHING trap applies:
+`trades`/`oracle_updates` upserts never overwrite — corrections DELETE first.
+1. Confirm D3 (`ledger_entries_current` reproject) still required; run if so
+   (runbook: `d2-ordinal-reproject.md` + `deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql`).
+2. **D4 `projector-replay` served-tier re-derives** — unfreezes
+   `account_observations`, clears the 39 supply alerts. Afterwards confirm
+   whether the real-time path (`pipeline/sink.go` InsertAccountObservation)
+   keeps it at tip, or it's batch-only — if the former, root-cause why it
+   stalled ~2026-07-25.
+3. `supply seed-sac-balances -full-history` (may alone clear PHO/KALE/BLND
+   cross-check divergence).
+4. `ch-participant-backfill -from 2 -window 500000` (~2–4 d, resumable —
+   queued since 2026-07-07; incoming-ops surface is ~1-day-only until run).
+5. `MATERIALIZE idx_lecur_account_id` (off-peak) + bloom index only if the
+   bound-UNION fix proves insufficient (measure first).
+6. TimescaleDB compression policies (`scripts/ops/add-missing-compression-policies.sql`, post-D4); CH system-log TTL at next CH restart.
+
+### 2.4 Investigations (parallel, code-side)
+- **redstone projection blind** (NEW): 866 undecodable-but-matched ledgers
+  from 63,661,715 — v0.21.0-decoder regression or new upstream feed shape?
+  Data-trust: must resolve before the gate.
+- sep41 completeness 40-min count perf (non-blocking follow-up).
+
+### 2.5 Soak close-out (timed gate: after 2026-07-28 ~17:00)
+If `grep -c FAIL /var/log/galexie-soak.log` = 0 and ≥8 PASS:
+`zfs destroy data/minio@pre-trim-2026-07-26` (reclaims 1.07 T) +
+`systemctl disable --now galexie-soak-check.timer`. Any FAIL → investigate
+cold tier; rehydrate needs 2.2's archivewriter fix first.
+
+### 2.6 Prove correctness (Phase E — the go-live evidence pack)
+Run the confidence-campaign E-gate end to end and FILE the artifacts:
+reconcile-balances (+ N random accounts/trustlines), verify-lake /
+contiguity / hash-chain to genesis, compute-completeness all-green,
+re-derive determinism proof, prices top-50 vs CoinGecko/Chainlink, supply
+vs external truth **including the seeded SEP-41 genesis baselines (AQUA
+overstated +15.7% in the 2026-07-07 test — verify the 2026-07-26 seed
+doesn't serve that)**, first `verify-usd-volume -days 30` → calibrate the
+C4-055/066 alert. Also: SEV-1/2 paging drill + rollback rehearsal —
+evidence files have never been produced across three generations of plans.
+
+### 2.7 Security + launch hardening
+- Rotate `ratesengine-admin` + MinIO creds (session-exposed); confirm vault
+  passphrase rotation; re-enable restore-drill timer.
+- `gh variable delete DEPLOY_APPROVAL_RELAXED` + r1 environment
+  Required-reviewers (re-arm the deploy approval gate).
+- [OP] sign the 15 accepted-risk candidates (tail-triage-2026-07-26.md);
+  decide IP rotation + SSH CIDR narrowing (C6-041).
+- [OP] CoinGecko Pro key; hashdb `enabled=true` first-deploy opt-in.
+- [OP] External security review; off-site backup decision (§4).
+- [OP] Book/verify: `security@stellarindex.io` mailbox actually exists.
+
+### 2.8 Launch execution
+Refreshed launch-day sequence (the old checklist's CalVer/public-flip steps
+are obsolete — repo has been public since 2026-07-03):
+1. Tag the launch release (SemVer), deploy via the re-armed gate.
+2. Confirm `auth_mode=apikey_optional`; external SLA-probe smoke with a
+   `sip_` key; outside-internet `make smoke` 13/13.
+3. Status page + API docs + SLA/error-budget page current; F-0100
+   counter-presence PromQL sanity; Grafana launch-watch board from
+   `post-launch-queries.md` (refresh metric names first).
+4. Announcement; open the first-24h watch (every alert = SEV-2 minimum).
+
+### 2.9 Explicitly deferred to post-v1 (decide, don't drift)
+- **HA / R2+R3 / ClickHouse HA** — the single-box SPOF ships at v1 as a
+  documented accepted risk with tested restore ([DECIDE] — the standing
+  recommendation: R1 + one warm standby bootstrapping from the verified
+  snapshot, post-launch). R1 is NOT hardware-upgradeable — never propose drives.
+- CH Phase 8 `soroban_events` decommission (#39 — destructive, LAST;
+  enumerate live readers first), monthly galexie trim timer, `/v1/tx`
+  10.2B tx_hash_index backfill, contract_events_daily v2 swap
+  (`feat/ced-v2-rebuild` branch — land WITH the rebuild), CEX dust DELETE
+  (#68), P4 tail (i128 lint tooling, strkey/SCVal stubs, ADR-0025 CF-range),
+  email-verification flip-on, site-promised features (order-book depth /
+  DEX TVL / per-token oracles) [DECIDE build-or-drop], residual DeFi
+  decoders, team-asks (§5), the "road to top-tier" ambition set (explorer
+  depth, point-lookup path, generic Soroban decoding).
+
+## 3. [OP] register (operator-only, consolidated + deduplicated)
+
+1. **Vault password re-entry** (blocks §2.2). In a Claude Code session run:
+   `! mkdir -p ~/.ansible && read -s VP && echo -n "$VP" > ~/.ansible/r1_vault_pass && chmod 600 ~/.ansible/r1_vault_pass && unset VP`
+   …then have the agent verify decrypt + set the two GH secrets.
+2. CoinGecko Pro purchase → `COINGECKO_API_KEY` on r1 + indexer restart.
+3. External security review engagement.
+4. Accepted-risk sign-off (15 items) + IP-rotation/SSH-CIDR decision.
+5. pgbackrest retention number + off-site S3 provider (+account/creds).
+6. HA v1-or-fast-follow decision (§2.9).
+7. Stripe: C3-081 reconcile needs SDK + `[billing]` seam — deferred unless
+   paid tiers ship at launch.
+8. Team-asks (never sent — forward): Aquarius pool-set authority; DeFindex
+   vault registry + 9 unproven emitters; Phoenix pool→stake map; Blend V1
+   backstop address/emitter schema.
+
+## 4. Open decisions ([DECIDE])
+
+| Decision | Recommendation |
+|---|---|
+| CH backup posture | ADR-0043 §2.1 schema+state snapshot + re-derive (ledger direction); do NOT resurrect `clickhouse-backup` full-lake copies. Apply the drafted §2.3 amendment to the ADR. Warm standby is the real RTO answer |
+| HA at v1 | Accepted-risk + tested restore at v1; warm standby fast-follow |
+| Genesis edge [2→287,404] | Accept as documented-unfillable (recover via op-replay if ever needed) |
+| Served-tier retention/serve-window policy | Document current reality (projection-scoped windows per source) as the v1 contract |
+| Site-promised features (#34 residue) | Build or retract before announcement copy is finalized |
+| C4-012/13 third-alias thin-pool VWAP surface | Deliberate review before public traffic |
+
+## 5. Corrections to prior plans (so nobody re-trusts stale rows)
+
+- Healthchecks/Discord wiring, `min_usd_volume=10000`, ADR-0042 signing,
+  comet gating, deploy/CF secrets, k6 cron, branch protection: **DONE** —
+  older docs listing them open are wrong.
+- `seed-sep41-genesis`: the 2026-07-07 "❌ do not run" verdict was
+  overridden in practice (run 2026-07-26). The honesty check moves to §2.6.
+- "Deploy pipeline can't authenticate" / "capacity 94%" / "Phase 0 running":
+  resolved-by-events; ignore in superseded docs.
+- restore drill "never ran": refuted — PASSED 2026-07-03; the real residuals
+  are the disabled timer + cadence drift (§2.7).
+- `dex_nonstandard_decimals_detected` firing is informational detection
+  working (aquarius C-tokens), not the master plan's "cleared" claim nor a
+  regression of the AdjustPrice normalization work.
+
+_Update this file in the same commit as any change that lands or
+invalidates an item. One plan; no forks._

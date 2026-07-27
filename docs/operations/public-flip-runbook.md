@@ -1,5 +1,9 @@
 # Public open-source flip — operator runbook
 
+> **⚠️ HISTORICAL (2026-07-27).** Executed 2026-07-03. The two-repo /
+> re-export model described below is dead — the public repo IS the working
+> repo. See [`v1-launch-plan.md`](v1-launch-plan.md).
+
 Makes the project completely open source — publicly accessible and
 reproducible. Strategy: a **fresh single-commit public repo** — never
 push the private history (it once contained a GCP key that GitHub
