@@ -16,6 +16,23 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **sep41 projector sources are now registered from the watched-contract
+  set, closing a 14-day zero-writer hole** (`a0ac14e4`). The dispatcher
+  unconditionally cedes the sep41 domain to the projector (F-1316
+  sole-writer), but `projector.BuildRegistry` only built sources named in
+  `enabled_sources` — and the sep41 names are not in
+  `config.KnownSources`, so no production config could carry them. From
+  the deploy that landed the sole-writer skip (~ledger 63,419,139,
+  2026-07-13) nothing wrote `sep41_supply_events` / `sep41_transfers`;
+  the completeness verify exposed it (249k mismatched ledgers) once the
+  `statement_timeout` fix let it finish. BuildRegistry now always
+  attempts both sep41 sources, gated only on
+  `[supply] watched_sep41_contracts`; a new test pins the production
+  shape (watched set, no enabled_sources entry). The sep41
+  reconciliation-catalogue entries also gain the live projector's
+  `topic0Syms` prefilter — the full-verify re-derive was streaming the
+  watched contracts' entire firehose and discarding it row-by-row (~35
+  of its ~37 minutes, measured on r1).
 - **RedStone feed registry caught up with the 2026-07-24 relayer
   expansion** — 11 new mainnet feed_ids (bare `EUROC`, `USDe`, `sUSDe`,
   `savUSD_FUNDAMENTAL`, `SolvBTC_FUNDAMENTAL/USD`,

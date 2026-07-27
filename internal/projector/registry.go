@@ -41,11 +41,14 @@ import (
 // is "").
 func BuildRegistry(names []string, oracle config.OracleConfig, watchedSEP41 []string, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (Registry, error) {
 	var sources []Source
+	seen := map[string]bool{}
 	for _, name := range names {
-		s, ok, err := buildSource(strings.ToLower(name), oracle, watchedSEP41, gated, soroswapOpts...)
+		lower := strings.ToLower(name)
+		s, ok, err := buildSource(lower, oracle, watchedSEP41, gated, soroswapOpts...)
 		if err != nil {
 			return Registry{}, err
 		}
+		seen[lower] = true
 		if !ok {
 			// Source is enabled but doesn't have a projector entry
 			// (sdex, band, soroswap-router, external sources), or a
@@ -55,6 +58,27 @@ func BuildRegistry(names []string, oracle config.OracleConfig, watchedSEP41 []st
 			continue
 		}
 		sources = append(sources, s)
+	}
+	// The sep41 domain is NOT gated on the enabled-sources list: the
+	// dispatcher unconditionally cedes it to the projector (F-1316
+	// SKIP-SOLE-WRITER — "the projector is always its sole writer"),
+	// and the sep41 names are not in config.KnownSources, so they can
+	// never legally appear in `names`. Registering them here — gated
+	// only on watchedSEP41 via buildSource's own empty-set skip — is
+	// what closes the zero-writer hole found 2026-07-27: r1 ran ~14
+	// days (ledgers 63,419,139+) with the dispatcher skipping sep41
+	// writes while the projector had no sep41 source to write them.
+	for _, name := range []string{sep41_transfers.SourceName, sep41_supply.SourceName} {
+		if seen[name] {
+			continue // explicit request (e.g. projected-rebuild -source)
+		}
+		s, ok, err := buildSource(name, oracle, watchedSEP41, gated, soroswapOpts...)
+		if err != nil {
+			return Registry{}, err
+		}
+		if ok {
+			sources = append(sources, s)
+		}
 	}
 	return Registry{Sources: sources}, nil
 }
