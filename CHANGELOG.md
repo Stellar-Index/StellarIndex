@@ -15,6 +15,21 @@ against.
 
 ## [Unreleased]
 
+## [v0.21.1] — 2026-07-27
+
+### Fixed
+- **Completeness ops-verify no longer times out on grown hypertables**
+  (`06ff3b5e`). `CountRowsByLedger` / `MinLedger` / source-coverage
+  hardcoded a 5-min `SET LOCAL statement_timeout` that silently failed
+  the projection verify on large sources — `sep41_supply_events` is
+  ~9.3M rows across 130 chunks (~40 min index-only scan), so
+  `sep41_supply` / `sep41_transfers` stayed `projection_ok=false` on a
+  timeout, not a data problem. These are trusted ops/verify jobs, never
+  the request path (that DoS backstop is OpenServing's separate SESSION
+  timeout), so the per-query cap is now 2h
+  (`opsVerifyStatementTimeoutMS`) — headroom as the chain grows while
+  still catching a genuinely stuck query.
+
 ### Documentation
 - **BACKLOG #72 (account_movements extreme-address `/movements` timeout):
   the `(address, ledger)` PROJECTION was evaluated and REJECTED** (a
@@ -143,6 +158,21 @@ against.
   code without bypassing `realMain`'s flush-on-exit discipline.
 
 ### CI
+- **Deploy workflow's backup-freshness gate runs under bash** (`7609dce4`) —
+  the step used bashisms but ran under dash on the runner, failing the gate
+  spuriously (C6-107 follow-up).
+- **Fail-closed pre-production relaxation of the deploy approval gate**
+  (`4a4e335b`) — `DEPLOY_APPROVAL_RELAXED=true` skips the human-approval
+  environment gate ONLY while the repo variable is explicitly set; deleting
+  the variable restores the gate (re-armed at launch per the v1 plan §2.7).
+- **Ansible syntax-check password stub can no longer clobber a real vault
+  password file** (`2a23698e`) — the CI stub now refuses to overwrite an
+  existing `~/.ansible/r1_vault_pass` (root cause of the 2026-07-25 vault
+  password loss).
+- **`ansible-drift.yml` check-mode fixes** (`e5edb17a`, `2309f4d0`,
+  `10802588`) — timer-enable tasks no longer fail check mode on a host
+  missing the unit, and the galexie version drift-guard runs its probe in
+  check mode; first complete drift verdict since the vault rotation.
 - **`web/explorer` and `web/status` `pnpm audit` steps no longer red the build
   on `ERR_PNPM_AUDIT_BAD_RESPONSE`** — the npm advisory endpoint pnpm audit
   calls now returns HTTP 410 (retired in favour of the bulk advisory
