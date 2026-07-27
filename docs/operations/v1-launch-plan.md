@@ -430,6 +430,14 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
     notably — **`/assets/{id}/supply` and `/assets/{id}/holders`**.
     These cannot be fixture artifacts: the 503 is returned BEFORE
     parameter validation.
+  - **Sweep now fully trustworthy** (2026-07-28, after fixing a bash 3.2
+    associative-array bug in my own tool that made every route request
+    the same nonsense id). Final tally: **21×5xx** (the real defect),
+    **9×401** (auth-scoped — correct), **26×400** (missing required
+    QUERY params; the sweep fills path params only — legitimate),
+    **2×404** (`/external/assets/usdc`, `/issuers/{G…}` — plausibly
+    absent records, not drift). The 5xx count was identical across
+    every fixture bug, which is why it was safe to act on first.
   - **Why every prior check passed**: `r1-smoke.sh` is 13 hand-picked
     GETs and the SLA probe exercises pricing. Neither touches the
     explorer tier. The campaign's C1 track claimed a "98-route smoke ✅"
