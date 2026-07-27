@@ -373,6 +373,35 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
 7. TimescaleDB compression policies (`scripts/ops/add-missing-compression-policies.sql`, post-D4); CH system-log TTL at next CH restart.
 
 ### 2.4 Investigations (parallel, code-side)
+- **🔴 NEW 2026-07-27 — THE EXPLORER'S CORE ENDPOINTS 503 IN
+  PRODUCTION.** `/v1/accounts/{addr}`, `/v1/ledgers`, `/v1/contracts`
+  all return **503 "Explorer unavailable — this deployment hasn't
+  wired the ClickHouse explorer reader (ADR-0038)"**. `/v1/assets/*`
+  and pricing are unaffected (200).
+  - Cause: `storage.clickhouse_serving_user = ""` in
+    `/etc/stellarindex.toml`, because
+    `stellarindex_clickhouse_serving_enabled` defaults to **false**
+    (`archival-node/defaults/main.yml:326`). This is a deliberate
+    TWO-STEP: provision the CH-side profile first, flip the API flag
+    second. Today's apply did step 1; step 2 was never done.
+  - **Step 1's precondition is now satisfied and I verified the whole
+    path works**: CH user `api_serving` EXISTS
+    (`system.users`), `STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD` is
+    populated on r1, and authenticating as that user against the lake
+    returns real data (counted 8,314 ledgers above 63.67M). So only
+    the flag stands between us and working explorer endpoints.
+  - **NOT flipped tonight — deliberate.** It needs an inventory +
+    vault edit and a full playbook apply, it enables previously-unused
+    serving read paths, and a 4h heavy seed is mid-flight. Enabling
+    new production read paths unattended at midnight is how you turn a
+    config gap into an incident. **Next ATTENDED action**: set
+    `stellarindex_clickhouse_serving_enabled: true` in
+    `inventory/r1.yml`, apply `--tags stellarindex-services`, then
+    verify `/v1/accounts/{addr}`, `/v1/ledgers`, `/v1/contracts` all
+    return 200 AND that the account balance matches Horizon.
+  - **This is a hard launch blocker** — "explorer" is the product
+    name; an explorer that 503s on accounts and ledgers is not
+    launched. Add to §1 Launch mechanics.
 - **🔴🔴 NEW 2026-07-27 — 38% OF SAMPLED ACCOUNTS SERVE A STALE
   PRE-TRANSACTION BALANCE. C2-4c reproduced on live data.**
   `reconcile-balances -sample 50` (tolerance 0): **18 matched, 19
