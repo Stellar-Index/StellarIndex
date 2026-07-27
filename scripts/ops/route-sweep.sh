@@ -15,7 +15,7 @@
 # silently dropped — an unswept route is exactly how this class hides.
 #
 # Read-only. Exit code = number of 5xx responses (capped 255).
-set -o pipefail  # NOT -u: the FIX lookup uses ${FIX[k]:-} on a possibly-absent key
+set -o pipefail  # NOT -u: fixture_for returns empty for unmapped params
 
 # NOTE: spec paths are relative to servers[].url, which already carries
 # the /v1 prefix — so the base must include it. Omitting it makes every
@@ -25,26 +25,41 @@ SPEC="${SPEC:-openapi/stellar-index.v1.yaml}"
 
 # Real mainnet fixtures — keep these valid; a stale fixture turns a
 # healthy route into a false 404.
-declare -A FIX=(
-  [asset_id]="USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-  [slug]="usdc"
-  [address]="GA3GJGKCUKPOPL6NYPMSBK7LMFYNW7SJMAJ7ZGWR3KGSHJWJHQRQZA3L"
-  [account_id]="GA3GJGKCUKPOPL6NYPMSBK7LMFYNW7SJMAJ7ZGWR3KGSHJWJHQRQZA3L"
-  [contract_id]="CBZ7M5B3Y4WWBZ5XK5UZCAFOEZ23KSSZXYECYX3IXM6E2JOLQC52DK32"
-  [ledger]="63670000"
-  [sequence]="63670000"
-  [base]="native"
-  [quote]="fiat:USD"
-  [pair]="native_fiat:USD"
-  [source]="soroswap"
-  [name]="soroswap"
-  [protocol]="soroswap"
-  [code]="USDC"
-  [issuer]="GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-  [id]="1"
-  [hash]="28e04707f14aa2082a1dc66dcaf73be9107bc3b27bd3dd3281fb4de424793360"
-  [tx_hash]="28e04707f14aa2082a1dc66dcaf73be9107bc3b27bd3dd3281fb4de424793360"
-)
+# These are the ELEVEN parameter names the spec actually uses, derived
+# from the spec itself rather than guessed:
+#   asset_id contract_id entity_type g_strkey hash id keyID name pool seq slug
+# An unmapped name would make the route SKIP; a WRONGLY-typed value makes
+# it a false 4xx, which is why the first run's 4xx tally was untrustworthy.
+# A `case` lookup, NOT an associative array. macOS ships bash 3.2, where
+# `declare -A` silently degrades to an INDEXED array: every `[key]=`
+# subscript is evaluated arithmetically, undefined names become 0, so all
+# entries collapse onto index 0 and every lookup returns the LAST value.
+# The sweep then requests the same nonsense id for every route and the
+# 4xx column is pure noise — which is exactly what happened on the first
+# two runs (2026-07-28) before this was caught. `case` works everywhere.
+#
+# Per-key rationale:
+#   pool        - a Blend/Phoenix pool contract id
+#   entity_type - enum on /changes/{entity_type}/{id}; "account" pairs
+#                 with a real G-strkey to actually exercise the route
+#   keyID       - only on /account/keys + /admin/keys, which are
+#                 auth-scoped, so 401/403 there is CORRECT, not a defect
+fixture_for() {
+  case "$1" in
+    asset_id)    echo "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" ;;
+    slug)        echo "usdc" ;;
+    g_strkey)    echo "GA3GJGKCUKPOPL6NYPMSBK7LMFYNW7SJMAJ7ZGWR3KGSHJWJHQRQZA3L" ;;
+    contract_id) echo "CBZ7M5B3Y4WWBZ5XK5UZCAFOEZ23KSSZXYECYX3IXM6E2JOLQC52DK32" ;;
+    seq)         echo "63670000" ;;
+    hash)        echo "28e04707f14aa2082a1dc66dcaf73be9107bc3b27bd3dd3281fb4de424793360" ;;
+    name)        echo "soroswap" ;;
+    pool)        echo "CBZ7M5B3Y4WWBZ5XK5UZCAFOEZ23KSSZXYECYX3IXM6E2JOLQC52DK32" ;;
+    entity_type) echo "account" ;;
+    id)          echo "GA3GJGKCUKPOPL6NYPMSBK7LMFYNW7SJMAJ7ZGWR3KGSHJWJHQRQZA3L" ;;
+    keyID)       echo "sip_placeholder_expected_401" ;;
+    *)           echo "" ;;
+  esac
+}
 
 python3 - "$SPEC" > /tmp/route-sweep-paths.txt <<'PY'
 import sys, yaml
@@ -64,7 +79,7 @@ while read -r route; do
   unresolved=0
   while [[ "$filled" =~ \{([a-zA-Z_]+)\} ]]; do
     key="${BASH_REMATCH[1]}"
-    val="${FIX[$key]:-}"
+    val="$(fixture_for "$key")"
     if [ -z "$val" ]; then unresolved=1; break; fi
     filled="${filled//\{$key\}/$val}"
   done
