@@ -63,6 +63,12 @@ import (
 // that's known to have the floor problem, always under run-heavy-job.sh,
 // never as a routine re-run.
 //
+// Expect the full-history pass to run for roughly an hour on r1 and to print
+// nothing until it finishes: the reader walks the append-log in ledger windows
+// (a ClickHouse memory bound — incident 2026-07-27) and can only emit once the
+// last window has been reduced, so all inserts land at the end of the scan
+// rather than interleaved with it. Silence is not a hang.
+//
 // Flags:
 //
 //	-config PATH     Required. Operator TOML config (provides
