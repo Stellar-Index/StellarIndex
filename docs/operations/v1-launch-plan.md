@@ -289,9 +289,14 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
    The fix also caught a latent **correctness** bug: per-column argMax
    could resolve a same-key tie differently for each column and stitch a
    row from two different changes — now one argMax over a column tuple.
-   verify.sh green; re-run of the real dry-run IN FLIGHT with a
-   side-loaded `stellarindex-ops-sacfix` binary (r1's deployed ops
-   binary stays v0.21.1 until the v0.21.2 deploy). Then live seed.
+   **VALIDATED on real data 2026-07-27**: the dry-run that previously
+   OOM'd now completes — 54,849 Balance rows across **38/38** SAC
+   wrappers. LIVE seed RUNNING (side-loaded `stellarindex-ops-sacfix`;
+   r1's deployed ops binary stays v0.21.1 until the v0.21.2 deploy).
+   Additive fill of absent rows, not a correction, so the DELETE-first
+   rule does not apply. After it lands: re-check the 2
+   `supply_cross_check_divergence` alerts (PHO/KALE/BLND) and re-run
+   the AQUA reconciliation.
 4. `projector-replay -source redstone -from 63624934` (after the v0.21.2
    registry fix deploys — §2.4; then re-run redstone compute-completeness
    including the false-clean [63,624,934, 63,661,714] range).
