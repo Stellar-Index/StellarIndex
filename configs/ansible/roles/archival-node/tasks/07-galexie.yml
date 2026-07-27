@@ -123,6 +123,10 @@
   register: galexie_running_version
   changed_when: false
   failed_when: false
+  # Read-only probe: must ALSO run during --check (command tasks are
+  # skipped in check mode by default, which left stdout empty and failed
+  # the assert below with "printed NOTHING" — 2026-07-27 drift run).
+  check_mode: false
 
 # The comparison reads stdout OR stderr. Observed on r1 (recorded in the
 # defaults/main.yml warning): the assert below failed with the live
@@ -163,17 +167,15 @@
   # from a fresh build at the tag you actually want), not by disabling
   # the assert.
   #
-  # KNOWN OPEN as of 2026-07-25 (was TODO(post-Phase-0); Phase 0 is
-  # over, so it is now a live operator action, not a deferral):
-  # galexie_version and galexie_expected_binary_sha256 both describe the
-  # 2026-07-09 galexie-v27.0.0 build, but
-  # galexie_expected_version_string is still a 2026-06-10 stamp. Two of
-  # the three constants agree; the version string does not, and this
-  # assert therefore fails on r1 today. It cannot be reconciled from
-  # inside the repository — the value has to be READ OFF a built
-  # artifact, and inventing one would replace a known-red guard with a
-  # green one that proves nothing. The exact procedure is in
-  # defaults/main.yml on galexie_expected_binary_sha256.
+  # RESOLVED 2026-07-27 (was "KNOWN OPEN as of 2026-07-25"): the live r1
+  # binary was probed directly — `/usr/local/bin/galexie version` prints
+  # exactly the pinned "stellar-galexie v0.0.0-20260610161848-c97d6484816f"
+  # (the v27.0.0 emergency build embeds the module pseudo-version stamp,
+  # not the tag). All three constants therefore describe the same build
+  # and this assert PASSES against live. The earlier "assert fails on r1
+  # today / printed NOTHING" observation was a CHECK-MODE artifact: the
+  # probe command was skipped in --check, leaving stdout empty — fixed
+  # with check_mode: false on the probe above.
   ansible.builtin.assert:
     that:
       - galexie_reported_version | length > 0
