@@ -49,6 +49,31 @@ severity: P1
 
 ## Loop log (newest first)
 
+- 2026-07-27 ~13:15Z (iter 2): **MAJOR — sep41 completeness was NOT a
+  timeout artifact.** The v0.21.1 full verify finished and exposed a
+  REAL zero-writer hole: since the sole-writer deploy (~ledger
+  63,419,139 / 2026-07-13) the dispatcher skips the sep41 domain
+  (F-1316) while the projector NEVER registered the sep41 sources —
+  `BuildRegistry` only builds from `enabled_sources`, and the sep41
+  names aren't in `KnownSources`, so no config could carry them. Both
+  sep41 tables frozen at 63,419,138; 249k mismatched ledgers, Σ|Δ|=22M.
+  FIXED on main (`ae7a082d`: registry always attempts sep41 from the
+  watched set + regression test pinning the production shape + the
+  reconcile topic0Syms perf fix — full verify was ~35/37 min discarded
+  firehose, measured). Catch-up: `projected-rebuild -source sep41_supply
+  -from 63419138 -to 63671020 -write -allow-live-overlap` RUNNING
+  (justified: live projector provably has no sep41 source);
+  sep41_transfers rebuild queued next; then full re-verifies; residual
+  tail after v0.21.2 deploys. Ansible 69-task apply reviewed clean in
+  check mode (`changed=70` incl. my stopped timer; minio chown is
+  non-recursive) — applies AFTER the sep41 rebuilds (postgres restart
+  would kill them). Perf report: sep41_supply_events is 276M rows not
+  9.3M; needs VACUUM/ANALYZE (42/130 chunks never vacuumed) +
+  compression policy (§2.3.7) — full report in loop context, key
+  numbers preserved in the commit messages. NOTE: the 39 supply alerts
+  "clearing" at 12:30Z was cosmetic (aggregator restart reset counters);
+  observers still stalled, D4 still required.
+
 - 2026-07-27 ~12:10Z (iter 1 close): **v0.21.1 DEPLOYED to r1** (all 6
   binaries, edge smoke 13/13, `-ch` copy done). sep41_supply FULL
   compute-completeness RUNNING under heavy wrapper (timer stopped;
@@ -108,14 +133,20 @@ the spec, so the wire-freeze prerequisite is met).
 
 ## 2. Critical path (dependency-ordered)
 
-### 2.1 Deploy the sep41 fix (next deploy, small)
-**v0.21.1 CUT 2026-07-27** (tag pushed; release.yml building; deploy next).
-After deploy:
-`cp -f /usr/local/bin/stellarindex-ops /usr/local/bin/stellarindex-ops-ch`
-(the host `-ch` binary is NOT updated by deploy.yml — standing trap).
-Then re-run FULL `compute-completeness -ch` for `sep41_supply` and
-`sep41_transfers` (no `-from`; INV-5 latch; stop the completeness timer
-during; ~40 min each) → clears 2 of the 3 `completeness_incomplete`.
+### 2.1 The sep41 chain (REVISED 2026-07-27 — deeper than the timeout)
+✅ v0.21.1 cut + deployed (all 6 binaries; smoke 13/13; `-ch` copy done).
+The full verify then exposed the REAL cause (see loop log iter 2): a
+sep41 zero-writer wiring hole since ~2026-07-13. Remaining chain:
+1. ✅ ~~sep41_supply projected-rebuild [63419138 → 63671020]~~ →
+   RUNNING under heavy wrapper (watch `/var/log/sep41-supply-rebuild-2026-07-27.log`).
+2. sep41_transfers projected-rebuild (same range) — next heavy slot.
+3. Full `compute-completeness -ch` re-verify ×2 (timer stays stopped
+   until done; with the topic0Syms fix these drop to minutes once
+   v0.21.2's ops binary is on r1 — until then ~40 min each on v0.21.1).
+4. Restart `compute-completeness.timer`.
+5. v0.21.2 (next session: carries `ae7a082d` + redstone `9bfcf5da`) →
+   deploy → live sep41 projection resumes → final small rebuild for the
+   deploy-gap tail → redstone replay from 63624934 (§2.4).
 
 ### 2.2 Restore the vault password → drift → config apply
 1. ✅ ~~Vault password~~ — rebuilt + rotated 2026-07-27 (see §0).
