@@ -732,6 +732,7 @@
       Unit=timescale-jobs-probe.service
       [Install]
       WantedBy=timers.target
+  register: timescale_jobs_probe_units
   notify: Reload systemd
 
 - name: Enable + start the TimescaleDB job/CAGG probe timer
@@ -740,6 +741,10 @@
     enabled: true
     state: started
     daemon_reload: true
+  # check-mode: the unit install above is only simulated, so enabling a
+  # unit the host has never had fails the dry-run (2026-07-27 drift
+  # run). Real applies are unaffected.
+  when: not (ansible_check_mode and timescale_jobs_probe_units is changed)
 
 # ── Redirect the Debian collectors into the dir we actually read ───
 #
