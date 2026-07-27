@@ -215,7 +215,12 @@ sep41 zero-writer wiring hole since ~2026-07-13. Remaining chain:
    only stops growing when v0.21.2 (`ae7a082d`) deploys and live
    projection resumes. sep41_transfers re-verify RUNNING.
    `lake_complete=true` throughout — the archive was never at risk.
-4. Restart `compute-completeness.timer`.
+4. ✅ sep41_transfers re-verify DONE — same clean shape: **652
+   mismatched, first = ledger 63,671,648 = exactly the transfers
+   rebuild's `-to` bound.** Both sep41 sources are now correct up to
+   their rebuild boundary; the only residual is the tail accruing until
+   v0.21.2 deploys. `compute-completeness.timer` RESTARTED (§2.1.4
+   done) → drift's last residual item cleared.
 5. v0.21.2 (next session: carries `ae7a082d` + redstone `9bfcf5da`) →
    deploy → live sep41 projection resumes → final small rebuild for the
    deploy-gap tail → redstone replay from 63624934 (§2.4).
