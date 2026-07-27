@@ -199,7 +199,11 @@ the spec, so the wire-freeze prerequisite is met).
       the exclusive-keys apply, a stale-galexie-binary near-miss, and 4
       idempotency bugs; the drift baseline SHRANK 3 → 1 entry.
 - [ ] **Security posture**: creds rotated (ratesengine-admin, MinIO, anything session-exposed); approval gate re-armed; accepted-risk list explicitly signed; external security review booked/closed [OP].
-- [ ] **DR honest**: off-site backup decision executed or explicitly risk-accepted; restore-drill timer re-enabled; ZFS trim snapshot resolved.
+- [ ] **DR honest**: off-site backup decision executed or explicitly
+      risk-accepted [OP]; ~~restore-drill timer re-enabled~~ ✅ **DONE
+      2026-07-27** (its capacity gate cleared: pool 94%→85%, 2,657 GB
+      free vs the 200 GB floor; enabled + codified `205b041a`, next
+      fire 2026-08-01); ZFS trim snapshot resolved (auto — §2.5 gate).
 - [ ] **Launch mechanics**: `auth_mode=apikey_optional` (NEVER `apikey` — it 401s healthz/metrics, audit SEC-01); status page + API docs current; SLA definition published; announcement ready; first-24h watch staffed.
 
 ## 2. Critical path (dependency-ordered)
