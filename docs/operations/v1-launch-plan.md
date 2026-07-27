@@ -382,6 +382,38 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
     with a 1-stroop dust campaign supplying the transactions; the SIZE
     of the error is incidental — the same defect serves an arbitrarily
     wrong balance whenever the last change is larger.
+  - **BLAST RADIUS QUANTIFIED 2026-07-27 — it is not just accounts.**
+    Sampling ledgers [63,378,000, 63,379,000] for rows with
+    `intra_ledger_seq = 0`, the share of (key, ledger) pairs carrying
+    MORE THAN ONE row — i.e. a `state` before-image tied with its
+    `updated` after-image, tie-broken arbitrarily:
+
+    | entry_type | tied | total | % tied |
+    |---|---|---|---|
+    | liquidity_pool | 60,415 | 60,416 | **100.00** |
+    | data | 145 | 145 | **100.00** |
+    | account | 797,267 | 797,838 | **99.93** |
+    | trustline | 238,463 | 239,168 | **99.71** |
+    | offer | 128,156 | 134,866 | **95.02** |
+    | contract_data | 146,035 | 275,082 | 53.09 |
+    | ttl | 68,375 | 197,436 | 34.63 |
+    | claimable_balance | 6,740 | 56,979 | 11.83 |
+
+    So virtually EVERY entry that changed in the un-ordinaled band has
+    an ambiguous current-state row. The 38% observed wrong-balance rate
+    is simply how often the arbitrary pick lands on the before-image —
+    the AMBIGUITY is ~universal there.
+  - **Which entries are actually at risk**: only those whose LATEST
+    change falls in the un-ordinaled range — partition 38 and
+    [63.0M, 63.55M) (live ingest has written ordinals since
+    ~63,550,000). That is still ~550k ledgers ≈ a month of history, and
+    it covers accounts, trustlines (→ classic supply), LP reserves,
+    and offers.
+  - Why the supply reconciliation still passed 5/8: a supply total sums
+    thousands of trustlines, most of which last changed OUTSIDE the
+    band, and errors in both directions partly cancel. Aggregates mask
+    a defect that per-entity reads expose — which is exactly why the
+    account-level check found it and the asset-level one did not.
   - **Blocks §1 "Prove-it battery" and arguably "Supply trustworthy".**
     Sequence: ordinal re-derive → D3 → re-run `reconcile-balances
     -sample 50` and require 0 mismatches as the acceptance test.
