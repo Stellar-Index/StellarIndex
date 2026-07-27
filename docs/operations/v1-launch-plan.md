@@ -391,6 +391,14 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
     observer (extracted to a shared constant) so seeded rows are
     indistinguishable from observed ones, stamped
     `SeedIntraLedgerSeq` so a live change can never be overwritten.
+    **First r1 dry-run FAILED and produced a real fix (`9226f324`)**: it
+    bisected to the then-floor 15,625 ledgers and still exceeded the CH
+    ceiling at [40,484,378, 40,500,002] — the airdrop era, where a few
+    thousand ledgers mint millions of claimable balances, so the floor's
+    "a few thousand keys" premise was false. Floor now 256, and the
+    width RECOVERS after sustained success (it was monotonically
+    narrowing, which would have pinned the walk at the floor for the
+    remaining ~23M ledgers). Re-run IN FLIGHT.
     verify.sh green + 4 testcontainers integration tests (`0e73d789`,
     incl. a parity test proving the seed's output matches the LIVE
     observer's for the same fixture). **Dry-run against r1 IN FLIGHT**
