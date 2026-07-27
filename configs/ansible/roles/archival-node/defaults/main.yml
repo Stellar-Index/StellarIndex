@@ -563,20 +563,17 @@ galexie_expected_version_string: "stellar-galexie v0.0.0-20260610161848-c97d6484
 # 07-galexie.yml skip (`| default('') | length > 0`); it is SET below,
 # so the sha256 assert is LIVE.
 #
-# ── OPEN OPERATOR ACTION (was TODO(post-Phase-0); Phase 0 is over, so
-#    this is now due, not deferred). audit deps F-002 / C6-003.
+# ── RESOLVED 2026-07-27 (was "OPEN OPERATOR ACTION"; audit deps
+#    F-002 / C6-003). Probed live on r1: `/usr/local/bin/galexie
+#    version` prints exactly the pinned v0.0.0-20260610… stamp (rc=0).
+#    The 2026-07-09 v27.0.0 emergency build embeds the module
+#    pseudo-version, not the tag — so ALL THREE constants describe the
+#    same build and the version assert passes against live. The earlier
+#    "assert fails on r1" was the probe being skipped in check mode
+#    (fixed in 07-galexie.yml with check_mode: false).
 #
-# State as of 2026-07-25 — three constants, two builds:
-#   galexie_version                 galexie-v27.0.0   (2026-07-09) ✔
-#   galexie_expected_binary_sha256  045caa5f…         (2026-07-09) ✔
-#   galexie_expected_version_string v0.0.0-20260610…  (2026-06-10) ✘
-# Two of the three already describe the v27.0.0 build; only the
-# version string is stale, so the version assert fails on r1 today.
-#
-# This CANNOT be reconciled from inside the repository. The correct
-# value has to be read off a real artifact, and pinning a guessed
-# string would turn a guard that is honestly red into a green one that
-# proves nothing — strictly worse than the current state. Do this:
+# For a FUTURE deliberate upgrade, read both values off the ONE real
+# artifact you deploy:
 #
 #   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 #     go install -trimpath github.com/stellar/go/exp/services/galexie@galexie-v27.0.0
