@@ -318,12 +318,27 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
     component was never in the comparison. §2.6's AQUA item was also
     looking for the 2026-07-07 **+15.7% OVERSTATEMENT**; the seed
     fixed that direction and the real defect is the opposite sign.
-  - Candidate fix: `stellarindex-ops state-snapshot -scope all` (its
-    docs name account/trustline/offer/data/**claimable**/LP as the
-    history-archive fill for exactly this "dormant since before the
-    capture window" case). MUST first confirm it lands in the Postgres
-    `claimable_observations` the supply reader aggregates, not only in
-    the CH current-state projection. Scoping delegated 2026-07-27.
+  - **LP shares the root cause**: `lp_reserve_observations` also starts
+    at ledger 63,300,828 — never seeded either. It has 4.86M rows only
+    because LP reserves change on every swap, so ACTIVE pools self-heal
+    fast; a pool dormant since before 63.3M is still missing. Materially
+    minor for AQUA (Horizon LP = 517M = 0.5%) but the same defect.
+    Seeding state by component: trustlines seeded deep (34.96M rows from
+    ledger 31.8M) ✅; sac partial (2.30M from 61.3M); **claimable +
+    lp NOT seeded (both from ~63.30M = observer deploy)**.
+  - **`state-snapshot` is NOT the fix** (checked 2026-07-27): it writes
+    via `clickhouse.InsertEntryChanges` (`internal/ops/ingest/state_snapshot.go:137`)
+    — ClickHouse only. The observation tables are written by a separate
+    Postgres path (`internal/storage/timescale/classic_supply_observations.go:139,208`)
+    fed by the live observers. Correct fix = a NEW seed subcommand
+    mirroring `supply seed-sac-balances`: read current state from the
+    lake, write into the Postgres observation table.
+  - ⚠️ **Shares a blocker with §2.3.3**: a *current-state* seed inherits
+    the CH projection's ~62M coverage floor, so it needs the
+    `-full-history` read — which is exactly the query that just OOM'd.
+    The per-contract/windowing fix in flight for the SAC seed is the
+    precedent the claimable seed should reuse. Sequence: land the SAC
+    memory fix first, then build the claimable seed on the same shape.
   - Gate impact: blocks §1 "Supply trustworthy" independently of the
     SAC/dormancy items.
 - **redstone projection blind — ROOT-CAUSED 2026-07-27 (not a code
