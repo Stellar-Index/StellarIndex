@@ -530,9 +530,18 @@ are obsolete — repo has been public since 2026-07-03):
    `! mkdir -p ~/.ansible && read -s VP && echo -n "$VP" > ~/.ansible/r1_vault_pass && chmod 600 ~/.ansible/r1_vault_pass && unset VP`
    …then have the agent verify decrypt + set the two GH secrets.
 2. CoinGecko Pro purchase → `COINGECKO_API_KEY` on r1 + indexer restart.
-2b. **Wire paging** (go-live gate): Healthchecks.io checks (5 per-binary +
-   deadmansswitch) + chat webhook(s); paste into the two env files on r1 AND
-   the vault; rerun `pre-launch-check.sh` → 0 fails.
+2b. **Wire paging** (go-live gate) — ⭐ **NOW TURNKEY: follow
+   [runbooks/wire-paging.md](runbooks/wire-paging.md)** (~20 min,
+   copy-paste). Prepared 2026-07-27, which also fixed a **silent-failure
+   trap**: `/etc/default/alertmanager-secrets` offered
+   `SLACK_WEBHOOK_URL`, but `apply.sh` reads `DISCORD_WEBHOOK_URL_PAGES`
+   / `_ALERTS` — filling in the name the file itself suggested would
+   have produced no-op stubs while every command appeared to succeed.
+   Names corrected on r1 (values still empty, `.bak` kept).
+   Baseline captured: `pre-launch-check.sh` → **4 FAILs** today (the
+   four `HEALTHCHECKS_URL_*`), and **0** is the acceptance test.
+   Correction: that script is NOT installed on r1 and needs no install —
+   pipe it: `ssh root@… 'bash -s' < scripts/ops/pre-launch-check.sh`.
 3. External security review engagement.
 4. Accepted-risk sign-off (15 items) + IP-rotation/SSH-CIDR decision.
 5. pgbackrest retention number + off-site S3 provider (+account/creds).
