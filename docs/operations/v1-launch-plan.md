@@ -361,11 +361,18 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
     component was never in the comparison. §2.6's AQUA item was also
     looking for the 2026-07-07 **+15.7% OVERSTATEMENT**; the seed
     fixed that direction and the real defect is the opposite sign.
-  - **LP shares the root cause**: `lp_reserve_observations` also starts
-    at ledger 63,300,828 — never seeded either. It has 4.86M rows only
-    because LP reserves change on every swap, so ACTIVE pools self-heal
-    fast; a pool dormant since before 63.3M is still missing. Materially
-    minor for AQUA (Horizon LP = 517M = 0.5%) but the same defect.
+  - **LP shares the root cause but NOT the impact — MEASURED, no seed
+    needed (2026-07-27).** `lp_reserve_observations` also starts at
+    ledger 63,300,828 (never seeded), yet our latest-per-pool AQUA total
+    is **516,524,268 across 1,072 pools vs Horizon's 517,261,343 across
+    1,303 — only −0.14%**. The 231 missing pools are dust. **Why the two
+    components diverge so sharply is the point**: LP reserves change on
+    EVERY swap, so any pool with activity re-observes itself within days
+    and self-heals; a claimable balance is written ONCE and then sits
+    untouched until claimed, so it can never self-heal and the live-only
+    window captures almost none of them. That asymmetry is what makes
+    claimable 4% populated and LP 99.86%. **Decision: no LP seed for
+    v1** — the fix exists if a dormant-pool audit ever justifies it.
     Seeding state by component: trustlines seeded deep (34.96M rows from
     ledger 31.8M) ✅; sac partial (2.30M from 61.3M); **claimable +
     lp NOT seeded (both from ~63.30M = observer deploy)**.
