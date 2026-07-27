@@ -61,6 +61,7 @@ severity: P1
   component DID mean a dead writer for 14 days — the guard was RIGHT
   there). Loosening a data-trust guard needs your sign-off; parked. No
   interim action — the alerts are honest until calibrated.
+- **[DECIDE-new] SolvBTC unsuffixed-feed quote mislabel (latent, pre-existing):**
   `SolvBTC_FUNDAMENTAL` / `SolvBTC.BBN_FUNDAMENTAL` are registered quote
   `fiat:USD` but demonstrably publish a NAV **ratio vs BTC** (~1.003 live +
   on-chain; BBN stores exactly 1.0). Correct quote is arguably `crypto:BTC`,
@@ -390,9 +391,22 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
     observer (extracted to a shared constant) so seeded rows are
     indistinguishable from observed ones, stamped
     `SeedIntraLedgerSeq` so a live change can never be overwritten.
-    verify.sh green. **Dry-run against r1 IN FLIGHT** (side-loaded
-    `stellarindex-ops-claimable`); expect it to account for AQUA's
-    missing ~13.16B. Then live seed → re-run the AQUA reconciliation.
+    verify.sh green + 4 testcontainers integration tests (`0e73d789`,
+    incl. a parity test proving the seed's output matches the LIVE
+    observer's for the same fixture). **Dry-run against r1 IN FLIGHT**
+    (side-loaded `stellarindex-ops-claimable`); expect it to account
+    for AQUA's missing ~13.16B. Then live seed → re-run the AQUA
+    reconciliation.
+    **Watch on the first live run** (author-flagged residuals, none
+    reachable without r1): (1) resident memory is bounded by *live*
+    claimable balances at the walk position (~250 B each) — the
+    dry-run prints that exact count, so it sizes the real run for
+    free; (2) the seed lands rows at TRUE historical ledgers, creating
+    ~290 new 7-day chunks on `claimable_observations` — harmless but
+    it moves the `max_locks` math (see that memory); (3) ✅ CLEARED — checked r1:
+    **zero** compression jobs on `claimable_observations`, so the
+    seed's inserts cannot hit compressed chunks. Out of scope + still open: the identical
+    never-seeded gap on `lp_reserve_observations`.
   - ✅ **ISOLATED 2026-07-27 (post-SAC-seed measurement).** The live SAC
     seed moved AQUA by only +9.9M (86,701,915,082.74 →
     86,711,792,598.11; −13.232% → −13.222%), so SAC was NOT the cause.
