@@ -306,11 +306,33 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
 1. ✅ D3 CONFIRMED required (2026-07-27: engine still
    `ReplacingMergeTree(ledger_seq)`, no v2 table). Runner:
    `scripts/ops/d3-lecur-v2-rebuild.sh` (staged on r1 at
-   /usr/local/sbin). **Pre-step first**: ordinal probe found partition 38
-   + [63.0M,63.55M) un-ordinaled — run `ch-backfill` re-derive over those
-   two bands (38M band needs `-bucket galexie-archive`; 63.0–63.55M is in
-   the live bucket) so D3's tie-break actually bites there, THEN
-   d3 setup → reproject [38M→tip] → verify → cutover. Doc:
+   /usr/local/sbin).
+   **PRE-STEP (mandatory — §2.4's C2-4c reproduction proves D3 alone
+   cannot fix the affected accounts). Use the ALREADY-PROVEN D2
+   script, not a bespoke ch-backfill:**
+   ```
+   run-heavy-job.sh d2-p63 /usr/local/sbin/d2-ordinal-reproject.sh 63 63
+   run-heavy-job.sh d2-p38 /usr/local/sbin/d2-ordinal-reproject.sh 38 38
+   ```
+   Recomputing an already-ordinaled range is idempotent (the D2 doc
+   proves the formula reproduces live-written ordinals EXACTLY above
+   ledger 63,555,000), so covering all of partition 63 is safe even
+   though only [63.0M, 63.55M) needs it.
+   **Three preconditions VERIFIED 2026-07-27 — this is safe to run:**
+   - The append-log is COMPLETE. The `state` and `updated` rows for one
+     change carry DIFFERENT `change_index` (362 vs 363 on the sampled
+     account), so they have different ORDER BY keys and both coexist.
+     Nothing was lost — only the current-state dedup is ambiguous.
+   - Because `change_index` differs, the D2 formula
+     (`row_number() OVER (PARTITION BY ledger_seq ORDER BY tx_index,
+     change_index)`) gives the two rows DISTINCT ordinals — exactly
+     what D3's composite version needs to stop tying.
+   - `ledger_entry_changes` is `ReplacingMergeTree(ingested_at)`
+     ORDER BY `(ledger_seq, tx_hash, op_index, change_index)`; the
+     re-derive preserves that key, so new rows SUPERSEDE old ones by
+     `ingested_at`. No truncate, no duplication — DELETE-first does not
+     apply here.
+   Then: d3 setup → reproject [38M→tip] → verify → cutover, per
    `deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql`.
 2. **D4 REFRAMED (2026-07-27 investigation)** — `account_observations` is
    NOT stalled: it holds exactly the 16 SDF reserve accounts, whose last
