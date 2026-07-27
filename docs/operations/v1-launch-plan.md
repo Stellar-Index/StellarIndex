@@ -59,6 +59,22 @@ severity: P1
 
 ## Loop log (newest first)
 
+- 2026-07-27 ~13:50Z (iter 2, cont.): **NEAR-MISS during the ansible
+  apply** — the role's galexie install task copied a STALE pre-P27
+  go-install leftover (`/root/go/bin/stellar-galexie`, June-10
+  pseudo-version) over the live v27.0.0 binary; the post-install sha
+  assert failed the play (good guard, wrong ordering) with production
+  one galexie restart away from re-running the P27 crash-loop.
+  RESTORED from the running process inode (sha `045caa5f…` == pin,
+  verified); stale artifact renamed `.stale-pre-p27-20260610`; role
+  hardened to assert the SOURCE artifact against the pin BEFORE
+  install (`9670ef29`). Postgres restart from apply #1 landed clean
+  (all services active). Apply #2 running to complete the remaining
+  ~49 changes. ALSO: D4 reframed — account_observations is dormant
+  reserve accounts, not a stall (see §2.3.2 + OPERATOR INBOX).
+  sep41_supply rebuild paused for the apply (resumable, windows
+  checkpointed); resumes right after apply #2.
+
 - 2026-07-27 ~13:15Z (iter 2): **MAJOR — sep41 completeness was NOT a
   timeout artifact.** The v0.21.1 full verify finished and exposed a
   REAL zero-writer hole: since the sole-writer deploy (~ledger
