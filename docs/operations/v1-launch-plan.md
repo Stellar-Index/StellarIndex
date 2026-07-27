@@ -377,10 +377,29 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
     its aggregate. This is the exact mirror of the claimable case, and
     the repo's own 2026-07-06 verdict says these ARE ordinary
     `Vec(Symbol("Balance"), Address(pool))` entries.
-  - **Decisive test** (not yet run): read the CURRENT on-chain balance
-    for one of those keys directly via the `rpc-probe` operator
-    diagnostic (`getLedgerEntry`) and compare against both. That
-    settles which side is wrong; everything else is inference.
+  - ⭐ **HYPOTHESIS (c), added 2026-07-27 and now the most likely —
+    SOROBAN STATE ARCHIVAL.** Contract data entries have a TTL and are
+    ARCHIVED when it lapses; an archived entry is no longer live state,
+    so Horizon correctly excludes it while our seed — which takes each
+    key's LATEST WRITE as current — still counts it. This explains
+    every observation at once: the PHO holders' last write is ledger
+    54.4–56.4M (old enough for any TTL to have lapsed), USDC passes
+    because its contract balances are actively used and therefore TTL-
+    renewed, and it is exactly the "dormant" population the seed was
+    built to recover. **The lake DOES track this: `entry_type='ttl'`,
+    150,636,726 rows above ledger 63M.** If true, the "recover dormant
+    pre-floor balances" premise is partly recovering DEAD state, and
+    both `StreamSACBalanceSeedsFullHistory` and the cross-check's
+    documented BLND/EURC/KALE/PHO case need revisiting.
+  - **Note the claimable seed is NOT exposed to this**: claimable
+    balances are CLASSIC ledger entries with no TTL and no archival.
+    Only `contract_data` (SAC balances) can be archived. So this does
+    not undermine the AQUA fix.
+  - **Decisive test** (not yet run): correlate the PHO balance keys
+    with their `ttl` entries in the lake and check whether
+    `live_until_ledger` has passed. That settles it from our own
+    substrate, no external call needed. Secondary confirmation: an
+    `rpc-probe` `getLedgerEntry` read of one key.
   - Until settled, PHO's served supply is NOT trustworthy in either
     direction. Blocks §1 "Supply trustworthy" alongside the claimable
     seed.
