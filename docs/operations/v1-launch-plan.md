@@ -29,6 +29,14 @@ severity: P1
 
 - **[OP-standing]** The §3 register items all stand (paging wiring 2b is the
   most launch-critical). Nothing new requires a decision yet.
+- **[DECIDE-new] SolvBTC unsuffixed-feed quote mislabel (latent, pre-existing):**
+  `SolvBTC_FUNDAMENTAL` / `SolvBTC.BBN_FUNDAMENTAL` are registered quote
+  `fiat:USD` but demonstrably publish a NAV **ratio vs BTC** (~1.003 live +
+  on-chain; BBN stores exactly 1.0). Correct quote is arguably `crypto:BTC`,
+  but changing it rewrites an existing stored series. Recommendation: fix
+  quote + one-time series annotation post-v1; NOT launch-blocking (redstone
+  is IncludeInVWAP=false). Parked — no action taken beyond documenting the
+  distinction in the registry comments.
 - **DECIDED (auto, revertible) 2026-07-27:** moved the untracked old-vault
   backup `configs/ansible/inventory/r1.secrets.yml.lost-password-2026-07-27`
   → `~/.config/stellarindex/` (guard-rail script requires a clean tree;
@@ -41,6 +49,20 @@ severity: P1
 
 ## Loop log (newest first)
 
+- 2026-07-27 ~12:10Z (iter 1 close): **v0.21.1 DEPLOYED to r1** (all 6
+  binaries, edge smoke 13/13, `-ch` copy done). sep41_supply FULL
+  compute-completeness RUNNING under heavy wrapper (timer stopped;
+  sep41_transfers queued next). Redstone registry fix (19→30 feeds)
+  committed to main (`9bfcf5da`, verify.sh green) — ships v0.21.2 next
+  session, then replay. **D3 CONFIRMED still required** (r1 table still
+  `ReplacingMergeTree(ledger_seq)`, no v2); runner script committed
+  (`scripts/ops/d3-lecur-v2-rebuild.sh`, staged on r1). Ordinal probe:
+  only partition 38 + [63.0M,63.55M) lack ordinals among trafficked
+  bands → pre-D3 step added to §2.3. B1 price sweep broadened + closed
+  (campaign doc; gitignored so local-only). DECIDED (auto): savUSD/USDe/
+  sUSDe classed crypto per ADR-0028's tradfi-only rwa definition.
+  Launch trailhead: `set -a` before sourcing /etc/default/stellarindex
+  when hand-running ops binaries (EnvironmentFile vars aren't exported).
 - 2026-07-27 ~09:50Z (iter 1): guard cron armed; r1 spot-verified (matches
   §0; soak 5 PASS/0 FAIL). v0.21.1 tagged, release.yml building, deploy
   next. **Redstone §2.4 ROOT-CAUSED** (see §2.4). Redstone registry fix
@@ -112,8 +134,15 @@ during; ~40 min each) → clears 2 of the 3 `completeness_incomplete`.
 ### 2.3 Served-tier population batch (heavy; ONE at a time under `run-heavy-job.sh`)
 Order matters; each gates the next check. The DO-NOTHING trap applies:
 `trades`/`oracle_updates` upserts never overwrite — corrections DELETE first.
-1. Confirm D3 (`ledger_entries_current` reproject) still required; run if so
-   (runbook: `d2-ordinal-reproject.md` + `deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql`).
+1. ✅ D3 CONFIRMED required (2026-07-27: engine still
+   `ReplacingMergeTree(ledger_seq)`, no v2 table). Runner:
+   `scripts/ops/d3-lecur-v2-rebuild.sh` (staged on r1 at
+   /usr/local/sbin). **Pre-step first**: ordinal probe found partition 38
+   + [63.0M,63.55M) un-ordinaled — run `ch-backfill` re-derive over those
+   two bands (38M band needs `-bucket galexie-archive`; 63.0–63.55M is in
+   the live bucket) so D3's tie-break actually bites there, THEN
+   d3 setup → reproject [38M→tip] → verify → cutover. Doc:
+   `deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql`.
 2. **D4 `projector-replay` served-tier re-derives** — unfreezes
    `account_observations`, clears the 39 supply alerts. Afterwards confirm
    whether the real-time path (`pipeline/sink.go` InsertAccountObservation)
