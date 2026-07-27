@@ -209,9 +209,12 @@ sep41 zero-writer wiring hole since ~2026-07-13. Remaining chain:
    clean `ok=259 changed=60 failed=0`). Post-apply battery green:
    all services active, edge smoke 13/13, galexie sha == pin,
    timescale-jobs-probe firing, ch-schema-snapshot/drift armed.
-   `ansible-drift.yml` re-run triggered → confirm GREEN (watcher armed).
-   NOTE: apply re-enabled `compute-completeness.timer`; re-stopped
-   manually (sep41 re-verifies still pending, §2.1.3–4 re-enables).
+   Drift rounds 2–5 then burned down every idempotency bug (key
+   lockout, thp oneshot, mode ping-pong ×3 dirs, migrations
+   mtime+ownership) — **drift-5 residual = ONLY the deliberately
+   stopped `compute-completeness.timer`** (self-heals at §2.1.4; the
+   baseline file's contract rightly refuses to park it). Gate
+   effectively met; confirm the first fully-green run after §2.1.
 4. ✅ ~~Pass-file protection~~ — `chflags uchg` + ci.yml guard (2a23698e).
 
 ### 2.3 Served-tier population batch (heavy; ONE at a time under `run-heavy-job.sh`)
