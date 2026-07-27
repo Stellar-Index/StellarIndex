@@ -59,6 +59,14 @@ severity: P1
 
 ## Loop log (newest first)
 
+- 2026-07-27 ~14:30Z (iter 2, cont. 2): **CI SSH lockout caught+fixed** —
+  the exclusive `authorized_keys` apply deleted the post-org-migration
+  deploy key (`gh-actions-deploy@stellarindex`), hand-added 2026-07-15
+  but never codified → `ansible-drift` went `unreachable=1`. Key
+  recovered from the apply's `--diff`, restored on r1, codified in the
+  inventory, `R1_INVENTORY_B64` secret updated, drift re-triggered.
+  [OP] new sub-item: confirm the old `github-actions-deploy@r1-20260506`
+  key is unused and prune it from admin_ssh_keys + r1.
 - 2026-07-27 ~13:50Z (iter 2, cont.): **NEAR-MISS during the ansible
   apply** — the role's galexie install task copied a STALE pre-P27
   go-install leftover (`/root/go/bin/stellar-galexie`, June-10
