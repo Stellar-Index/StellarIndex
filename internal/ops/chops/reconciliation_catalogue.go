@@ -384,15 +384,33 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 	if err != nil {
 		return nil, err
 	}
+	// topic0Syms mirrors the live projector's SQL prefilter for the same
+	// sources (projector/registry.go sep41TransferSyms / sep41SupplySyms) —
+	// the re-derive must stream the same population the live writer sees.
+	// Without it the sep41_supply re-derive streamed the watched contracts'
+	// ENTIRE event firehose (KALE transfers dominate at ~99.95% of rows)
+	// and discarded non-supply events one-by-one in a single goroutine:
+	// ~35 of the full verify's ~37 minutes (measured 2026-07-27).
 	return []reconSource{
 		{
 			name: sep41transfers.SourceName, genesis: sorobanEraGenesis,
 			dec: tdec, contractIDs: watched,
+			topic0Syms: []string{
+				sep41transfers.SymbolTransfer,
+				sep41transfers.SymbolApprove,
+				sep41transfers.SymbolSetAdmin,
+				sep41transfers.SymbolSetAuthorized,
+			},
 			targets: []reconTarget{{"sep41_transfers", filter, []string{sep41transfers.EventKind}}},
 		},
 		{
 			name: sep41supply.SourceName, genesis: sorobanEraGenesis,
 			dec: sdec, contractIDs: watched,
+			topic0Syms: []string{
+				sep41supply.SymbolMint,
+				sep41supply.SymbolBurn,
+				sep41supply.SymbolClawback,
+			},
 			targets: []reconTarget{{"sep41_supply_events", filter, []string{sep41supply.EventKind}}},
 		},
 	}, nil

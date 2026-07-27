@@ -196,6 +196,48 @@ func TestBuildRegistry_SEP41NeedsWatchedSet(t *testing.T) {
 	}
 }
 
+// TestBuildRegistry_SEP41RegisteredWithoutEnabledSourcesEntry pins the
+// 2026-07-27 zero-writer regression: the sep41 names are NOT in
+// config.KnownSources, so production's enabled_sources can never carry
+// them — yet the dispatcher unconditionally cedes the sep41 domain to
+// the projector (F-1316 SKIP-SOLE-WRITER). BuildRegistry must therefore
+// register the sep41 sources from the watched-contract set alone, with
+// no enabled-sources entry. r1 ran ~14 days (ledgers 63,419,139+) with
+// zero sep41 writers because only the explicit-name path was tested.
+func TestBuildRegistry_SEP41RegisteredWithoutEnabledSourcesEntry(t *testing.T) {
+	watched := []string{"CWATCHEDCONTRACT0000000000000000000000000000000000000000"}
+
+	// Production shape: enabled_sources has no sep41 names.
+	reg, err := BuildRegistry([]string{"soroswap"}, oracleConfigEmpty(), watched, nil)
+	if err != nil {
+		t.Fatalf("BuildRegistry: %v", err)
+	}
+	got := map[string]int{}
+	for _, s := range reg.Sources {
+		got[s.Name]++
+	}
+	for _, want := range []string{"sep41_transfers", "sep41_supply"} {
+		if got[want] != 1 {
+			t.Fatalf("source %q: want exactly 1 registration with a watched set and no enabled_sources entry, got %d (registry: %v)", want, got[want], got)
+		}
+	}
+
+	// Explicit-name shape (projected-rebuild -source): no duplicates.
+	reg, err = BuildRegistry([]string{"sep41_supply"}, oracleConfigEmpty(), watched, nil)
+	if err != nil {
+		t.Fatalf("BuildRegistry (explicit): %v", err)
+	}
+	count := 0
+	for _, s := range reg.Sources {
+		if s.Name == "sep41_supply" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("explicit sep41_supply request: want exactly 1 registration, got %d", count)
+	}
+}
+
 // TestBuildRegistry_IncludesInScopeSources confirms an enabled-
 // sources list with on-chain Soroban protocols produces matching
 // projector.Source entries. Order-dependent so we map names.
