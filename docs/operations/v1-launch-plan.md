@@ -29,6 +29,27 @@ severity: P1
 
 - **[OP-standing]** The §3 register items all stand (paging wiring 2b is the
   most launch-critical). Nothing new requires a decision yet.
+- **[DECIDE-new] Anomaly-freeze pages on CORRECT prices (thin FX crosses).**
+  Found 2026-07-27 while the SAC seed ran (freeze predates the seed —
+  engaged 14:39Z vs seed 15:36Z, NOT caused by it). 3 active freezes,
+  all thin FX crosses (XLM/GBP ×2 windows, XLM/EUR), reason
+  `phase2:3_signal_AND … z=8.71 sources=1`. **I verified both served
+  prices against an independent FX cross: XLM/GBP +0.06%, XLM/EUR
+  +0.21% — both correct.** So a `severity=page` alert
+  (`anomaly_freeze_sustained`) is firing on good data, and
+  `stellarindex_anomaly_freeze_engaged_total{class="default"}=382`
+  says it is chronic, not a blip. At launch this burns the first-24h
+  on-call for nothing. Also noted: the log carries
+  `writer_wired=false` — the freeze is advisory, it does not gate
+  writes, so the page has no corresponding automatic protection.
+  My recommendation (NOT applied — it changes a money-path protective
+  mechanism and I am not ≥70% on WHICH variant is right): the minimal
+  fix is to stop paging on freezes where `sources=1`, since a z-score
+  from a single source has no cross-source corroboration and is
+  sparse-sampling noise. The larger question — should the freeze
+  require corroboration to engage at all, and should the writer be
+  wired? — wants your call. Ties into §4's C4-012/13 thin-pool row.
+  Meanwhile: no change made; prices verified correct; documented here.
 - **[DECIDE-new] Supply-guard dormancy calibration** (replaces most of old
   D4): the `supply-refresh` stalled-observer guard's dormancy horizon
   (17,280 ledgers ≈ 1 day) false-positives on structurally-dormant
@@ -294,9 +315,11 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
    wrappers. LIVE seed RUNNING (side-loaded `stellarindex-ops-sacfix`;
    r1's deployed ops binary stays v0.21.1 until the v0.21.2 deploy).
    Additive fill of absent rows, not a correction, so the DELETE-first
-   rule does not apply. After it lands: re-check the 2
-   `supply_cross_check_divergence` alerts (PHO/KALE/BLND) and re-run
-   the AQUA reconciliation.
+   rule does not apply. ✅ **LIVE SEED DONE 2026-07-27: 54,863 Balance
+   rows across 38/38 wrappers.** Next: confirm the 2
+   `supply_cross_check_divergence` alerts clear on the next
+   supply-refresh cycle, then re-run the AQUA reconciliation to split
+   the −13.2% into its SAC vs claimable parts.
 4. `projector-replay -source redstone -from 63624934` (after the v0.21.2
    registry fix deploys — §2.4; then re-run redstone compute-completeness
    including the false-clean [63,624,934, 63,661,714] range).
