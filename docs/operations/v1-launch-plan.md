@@ -192,12 +192,10 @@ sep41 zero-writer wiring hole since ~2026-07-13. Remaining chain:
 1. ✅ sep41_supply projected-rebuild DONE (37m3s, 21,939,833 events
    emitted, 0 decode errors, 250k ledgers — the 14h ETA was counter
    noise; matches the expected Σ|Δ|≈22M).
-2. sep41_transfers projected-rebuild [63419138 → 63671647] RUNNING
-   (launched ~15:55Z; transfer volume is larger — watch
-   `/var/log/sep41-transfers-rebuild-2026-07-27.log`).
-3. Full `compute-completeness -ch` re-verify ×2 (timer stays stopped
-   until done; with the topic0Syms fix these drop to minutes once
-   v0.21.2's ops binary is on r1 — until then ~40 min each on v0.21.1).
+2. ✅ sep41_transfers projected-rebuild DONE (22m4s, 14,183,347 events,
+   0 decode errors, 252,510 ledgers).
+3. Full `compute-completeness -ch` re-verify ×2: sep41_supply RUNNING
+   (~16:10Z, ~40 min on v0.21.1 binary); sep41_transfers queued next.
 4. Restart `compute-completeness.timer`.
 5. v0.21.2 (next session: carries `ae7a082d` + redstone `9bfcf5da`) →
    deploy → live sep41 projection resumes → final small rebuild for the
