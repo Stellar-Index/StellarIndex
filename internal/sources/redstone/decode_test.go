@@ -506,12 +506,13 @@ func TestDecode_RWAandQuoteCurrency(t *testing.T) {
 	}
 }
 
-func TestFeedRegistry_Has19Feeds(t *testing.T) {
-	// The ADR-0028 registry must cover exactly the 19 mainnet feeds.
-	// A drift here means a feed was added/removed without updating
-	// the ADR + this registry in lock-step.
-	if len(feedRegistry) != 19 {
-		t.Errorf("feedRegistry has %d feeds, want 19 (ADR-0028)", len(feedRegistry))
+func TestFeedRegistry_Has30Feeds(t *testing.T) {
+	// The registry must cover exactly the 30 known mainnet feeds:
+	// 19 captured 2026-05-22 (ADR-0028) + 11 from the 2026-07-24
+	// relayer expansion. A drift here means a feed was added/removed
+	// without updating the docs + this registry in lock-step.
+	if len(feedRegistry) != 30 {
+		t.Errorf("feedRegistry has %d feeds, want 30 (ADR-0028 + 2026-07-24 expansion)", len(feedRegistry))
 	}
 	for feedID, entry := range feedRegistry {
 		if err := entry.Base.Validate(); err != nil {
@@ -520,6 +521,124 @@ func TestFeedRegistry_Has19Feeds(t *testing.T) {
 		if err := entry.Quote.Validate(); err != nil {
 			t.Errorf("feed %q quote asset invalid: %v", feedID, err)
 		}
+	}
+}
+
+func TestFeedRegistry_UniquePairs(t *testing.T) {
+	// No two feed_ids may map to the same (Base, Quote) pair: feeds
+	// arrive together in one write_prices batch, so a shared pair
+	// would interleave two different quantities into one price
+	// series. The 2026-07-24 expansion makes this live — e.g.
+	// `SolvBTC_FUNDAMENTAL` (NAV ratio vs BTC, ~1.003) vs
+	// `SolvBTC_FUNDAMENTAL/USD` (NAV in USD, ~65,430) MUST land on
+	// distinct base codes, and bare `EUROC` (USD-quoted) vs
+	// `EUROC/EUR` (EUR-quoted) may share a base only because the
+	// quote differs.
+	seen := make(map[string]string, len(feedRegistry))
+	for feedID, entry := range feedRegistry {
+		pair := entry.Base.String() + "|" + entry.Quote.String()
+		if prev, dup := seen[pair]; dup {
+			t.Errorf("feeds %q and %q both map to pair %s — same-batch double-write into one series", prev, feedID, pair)
+		}
+		seen[pair] = feedID
+	}
+}
+
+// TestDecode_2026_07_24_ExpansionFeeds is the regression test for the
+// 2026-07-24 relayer expansion (ledger 63624934): RedStone began
+// publishing 11 feed_ids outside the original 19-feed registry.
+// Batches mixing old + new feeds dropped the new entries per-feed;
+// batches of ONLY new feeds failed whole with ErrEmptyUpdates —
+// "undecodable-but-matched" projection blindness (~5,600 events).
+// This all-new-feeds batch must now decode fully, with the asset /
+// quote mapping verified live 2026-07-27 (see feeds.go comments).
+func TestDecode_2026_07_24_ExpansionFeeds(t *testing.T) {
+	feedIDs := []string{
+		"EUROC", // bare — USD-quoted, unlike registered EUROC/EUR
+		"USDe",
+		"sUSDe",
+		"savUSD_FUNDAMENTAL",
+		"SolvBTC_FUNDAMENTAL/USD",
+		"SolvBTC.BBN_FUNDAMENTAL/USD",
+		"USDY_FUNDAMENTAL/USD",
+		"USST_FUNDAMENTAL",
+		"XAUm_FUNDAMENTAL/USD",
+		"deJAAA_FUNDAMENTAL/USD",
+		"deJTRSY_FUNDAMENTAL/USD",
+	}
+	// Live values captured 2026-07-27 from api.redstone.finance,
+	// scaled to RedStone's fixed 8 decimals.
+	prices := []*big.Int{
+		big.NewInt(1_13979753),     // EUROC in USD ≈ EUR/USD
+		big.NewInt(99984603),       // USDe ~0.9998
+		big.NewInt(1_24071513),     // sUSDe ~1.2407
+		big.NewInt(1_18773631),     // savUSD ~1.1877
+		big.NewInt(6543063_913439), // SolvBTC NAV in USD ~65,430
+		big.NewInt(6543063_913439), // SolvBTC.BBN NAV in USD
+		big.NewInt(1_14081251),     // USDY ~1.1408
+		big.NewInt(1_00957429),     // USST ~1.0096
+		big.NewInt(4115_66800000),  // XAUm ~4,115.67/oz
+		big.NewInt(1_04038535),     // deJAAA ~1.0404
+		big.NewInt(1_03152715),     // deJTRSY ~1.0315
+	}
+	body := encodeWritePricesBody(t, relayerG, prices,
+		1_753_500_000_000, 1_753_500_060_000)
+	args := []string{
+		encodeAddressArg(t, relayerG),
+		encodeStringVecArg(t, feedIDs),
+		encodePayloadArg(t),
+	}
+	ev := &events.Event{
+		Topic:      []string{TopicSymbolRedstone},
+		Value:      body,
+		OpArgs:     args,
+		ContractID: adapterC,
+		Ledger:     63_624_934,
+		TxHash:     "expansion",
+	}
+	updates, err := decodeWritePrices(ev, time.Now())
+	if err != nil {
+		t.Fatalf("decodeWritePrices: %v (pre-fix this was ErrEmptyUpdates — every feed unknown)", err)
+	}
+	if len(updates) != len(feedIDs) {
+		t.Fatalf("expected %d updates, got %d — an expansion feed is still outside the registry", len(feedIDs), len(updates))
+	}
+
+	wantAssets := []struct{ asset, quote string }{
+		{"crypto:EUROC", "fiat:USD"}, // NOT fiat:EUR — that's the EUROC/EUR feed
+		{"crypto:USDe", "fiat:USD"},
+		{"crypto:sUSDe", "fiat:USD"},
+		{"crypto:savUSD_FUNDAMENTAL", "fiat:USD"},
+		{"crypto:SolvBTC_FUNDAMENTAL_USD", "fiat:USD"}, // `/` normalized to `_`
+		{"crypto:SolvBTC.BBN_FUNDAMENTAL_USD", "fiat:USD"},
+		{"rwa:USDY", "fiat:USD"},
+		{"rwa:USST", "fiat:USD"},
+		{"rwa:XAUm", "fiat:USD"},
+		{"rwa:deJAAA", "fiat:USD"},
+		{"rwa:deJTRSY", "fiat:USD"},
+	}
+	for i, want := range wantAssets {
+		if got := updates[i].Asset.String(); got != want.asset {
+			t.Errorf("feed %q → asset %s, want %s", feedIDs[i], got, want.asset)
+		}
+		if got := updates[i].Quote.String(); got != want.quote {
+			t.Errorf("feed %q → quote %s, want %s", feedIDs[i], got, want.quote)
+		}
+		// None of the expansion feeds is Invert: prices pass through
+		// unchanged (the MXNe lesson — a silent inversion here would
+		// be a ~1.3× to ~65,000× error depending on the feed).
+		if updates[i].Price.BigInt().Cmp(prices[i]) != 0 {
+			t.Errorf("feed %q price = %s, want %s unchanged", feedIDs[i], updates[i].Price, prices[i])
+		}
+	}
+
+	// The /USD-suffixed SolvBTC NAV feeds must not collide with the
+	// unsuffixed ratio feeds' series: same batch, different quantity
+	// (~65,430 vs ~1.003).
+	ratio := feedRegistry["SolvBTC_FUNDAMENTAL"]
+	usd := feedRegistry["SolvBTC_FUNDAMENTAL/USD"]
+	if ratio.Base.Equal(usd.Base) && ratio.Quote.Equal(usd.Quote) {
+		t.Error("SolvBTC_FUNDAMENTAL and SolvBTC_FUNDAMENTAL/USD share a (base, quote) pair — NAV-ratio and NAV-in-USD would interleave in one series")
 	}
 }
 

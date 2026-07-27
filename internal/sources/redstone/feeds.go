@@ -32,7 +32,9 @@ type feedEntry struct {
 
 // quoteUSD / quoteEUR are the two quote currencies the registry
 // uses. RedStone publishes USD-denominated prices unless the feed_id
-// carries an explicit `/<QUOTE>` suffix — only EUROC/EUR does today.
+// carries an explicit `/<QUOTE>` suffix — EUROC/EUR is the only
+// non-USD suffix; the 2026-07-24 feeds carry explicit `/USD`
+// suffixes that simply restate the default.
 // See ADR-0028 §The RedStone 19-feed registry.
 var (
 	quoteUSD = mustFiat("USD")
@@ -40,8 +42,16 @@ var (
 )
 
 // feedRegistry maps each EXACT on-chain feed_id() string to the
-// canonical (base, quote) pair it prices — the 19 RedStone Stellar
-// mainnet feeds, captured on-chain 2026-05-22 (#53; see ADR-0028).
+// canonical (base, quote) pair it prices — the 30 RedStone Stellar
+// mainnet feeds: 19 captured on-chain 2026-05-22 (#53; see
+// ADR-0028) plus 11 from the 2026-07-24 relayer expansion (ledger
+// 63624934 — unknown ids were skipped fail-closed, ~5,600 events
+// dropped, until the expansion block below landed).
+//
+// Invariant (pinned by TestFeedRegistry_UniquePairs): no two
+// feed_ids map to the same (Base, Quote) pair — feeds arrive
+// together in one batch, so a shared pair would interleave two
+// different quantities into one price series.
 //
 // The key is the string the relayer passes in
 // write_prices(updater, feed_ids, payload) — which is NOT always the
@@ -80,12 +90,53 @@ var feedRegistry = map[string]feedEntry{
 	"TESOURO":                     {Base: mustRWA("TESOURO"), Quote: quoteUSD},
 	"USTRY":                       {Base: mustRWA("USTRY"), Quote: quoteUSD},
 	"SPXU":                        {Base: mustRWA("SPXU"), Quote: quoteUSD},
+
+	// ── 2026-07-24 relayer expansion (ledger 63624934) ─────────────
+	// Orientation + magnitude for every entry below verified live
+	// 2026-07-27 against api.redstone.finance (?provider=redstone)
+	// with CoinGecko cross-checks, plus r1 oracle_updates for the
+	// pre-existing SolvBTC baselines. None needs Invert — all are
+	// published token-in-quote like the rest of the registry.
+
+	// Bare EUROC is USD-quoted: live 1.1398 ≈ EUR/USD (CG euro-coin
+	// 1.14) — DISTINCT from the EUR-quoted `EUROC/EUR` feed above
+	// (live 1.0003). Same base asset, different quote → two separate
+	// price series; both can arrive in one batch without colliding.
+	"EUROC": {Base: mustCrypto("EUROC"), Quote: quoteUSD},
+
+	// Ethena synthetic dollars. USDe live 0.9998 (CG ethena-usde
+	// 0.99957); sUSDe is the staked accruing form, live 1.2407 (CG
+	// ethena-staked-usde 1.24). Crypto, not RWA — see ADR-0014.
+	"USDe":  {Base: mustCrypto("USDe"), Quote: quoteUSD},
+	"sUSDe": {Base: mustCrypto("sUSDe"), Quote: quoteUSD},
+
+	// Avant Protocol staked USD — crypto-native yield vault, same
+	// class as sUSDe (NOT ADR-0028 rwa). Live 1.1877, accruing.
+	"savUSD_FUNDAMENTAL": {Base: mustCrypto("savUSD_FUNDAMENTAL"), Quote: quoteUSD},
+
+	// USD-quoted SolvBTC NAV feeds. These publish NAV **in USD**
+	// (live 65,430 vs RedStone BTC 65,234) — a DIFFERENT quantity
+	// from the unsuffixed `_FUNDAMENTAL` feeds above, which publish
+	// the NAV RATIO vs BTC (live 1.0029; r1 oracle_updates agrees).
+	// Hence distinct base codes, with `/` normalized to `_` (see
+	// canonical.knownCryptoCodes for the URL-path rationale).
+	"SolvBTC_FUNDAMENTAL/USD":     {Base: mustCrypto("SolvBTC_FUNDAMENTAL_USD"), Quote: quoteUSD},
+	"SolvBTC.BBN_FUNDAMENTAL/USD": {Base: mustCrypto("SolvBTC.BBN_FUNDAMENTAL_USD"), Quote: quoteUSD},
+
+	// Tokenized RWAs (ADR-0028 Amendments, 2026-07-27). RWA codes
+	// strip the feed-id suffix per the BENJI precedent.
+	"USDY_FUNDAMENTAL/USD":    {Base: mustRWA("USDY"), Quote: quoteUSD},    // Ondo USDY: live 1.1408 (CG 1.14, accruing note)
+	"USST_FUNDAMENTAL":        {Base: mustRWA("USST"), Quote: quoteUSD},    // STBL USST: live 1.0096
+	"XAUm_FUNDAMENTAL/USD":    {Base: mustRWA("XAUm"), Quote: quoteUSD},    // Matrixdock gold: live 4115.67/oz (CG pax-gold 4088)
+	"deJAAA_FUNDAMENTAL/USD":  {Base: mustRWA("deJAAA"), Quote: quoteUSD},  // deRWA JAAA: live 1.0404
+	"deJTRSY_FUNDAMENTAL/USD": {Base: mustRWA("deJTRSY"), Quote: quoteUSD}, // deRWA JTRSY: live 1.0315
 }
 
 // lookupFeed resolves a feed_id to its registry entry. ok is false
-// for a feed_id outside the registry — RedStone deploying a 20th
-// feed surfaces here; the decoder skips + counts it, the same
-// graceful per-feed skip as the pre-#53 unknown path.
+// for a feed_id outside the registry — RedStone deploying a feed
+// beyond the registered set surfaces here (as the 2026-07-24
+// expansion did); the decoder skips + counts it, the same graceful
+// per-feed skip as the pre-#53 unknown path.
 func lookupFeed(feedID string) (entry feedEntry, ok bool) {
 	entry, ok = feedRegistry[feedID]
 	return entry, ok

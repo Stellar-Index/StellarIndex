@@ -12,8 +12,9 @@ import (
 
 // opIndexFanoutStride spaces synthetic op_index values derived from
 // a single batch update, same concept as the Reflector decoder.
-// Redstone emits at most 19 entries today; 1024 holds the full feed
-// set with headroom for growth and stays inside uint32.
+// Redstone emits at most 30 entries today (19 original + the
+// 2026-07-24 expansion); 1024 holds the full feed set with headroom
+// for growth and stays inside uint32.
 const opIndexFanoutStride = 1024
 
 // eventFanoutStride bounds how many contract events ONE operation can
@@ -97,9 +98,12 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 		if !ok {
 			// Partial-event skip: land every feed in the ADR-0028
 			// registry, drop the rest. A miss means RedStone deployed
-			// a feed beyond the 19-feed registry — count it so
+			// a feed beyond the registered set — count it so
 			// operators get a signal (F-1234, codex audit-2026-05-12)
-			// rather than blocking the whole batch.
+			// rather than blocking the whole batch. The 2026-07-24
+			// relayer expansion (11 new feed_ids, ledger 63624934) hit
+			// exactly this path — plus ErrEmptyUpdates for all-new
+			// batches — for ~5,600 events until the registry caught up.
 			obs.SourceUnknownSymbolsTotal.WithLabelValues("redstone").Inc()
 			continue
 		}

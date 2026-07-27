@@ -15,6 +15,28 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **RedStone feed registry caught up with the 2026-07-24 relayer
+  expansion** — 11 new mainnet feed_ids (bare `EUROC`, `USDe`, `sUSDe`,
+  `savUSD_FUNDAMENTAL`, `SolvBTC_FUNDAMENTAL/USD`,
+  `SolvBTC.BBN_FUNDAMENTAL/USD`, `USDY_FUNDAMENTAL/USD`,
+  `USST_FUNDAMENTAL`, `XAUm_FUNDAMENTAL/USD`, `deJAAA_FUNDAMENTAL/USD`,
+  `deJTRSY_FUNDAMENTAL/USD`) began publishing at ledger 63624934,
+  outside the 19-feed registry. The fail-closed design held — unknown
+  feeds skipped per-entry, all-unknown batches refused whole
+  (`ErrEmptyUpdates`) — but ~5,600 REDSTONE events went undecoded
+  ("undecodable-but-matched" projection blindness). The registry now
+  maps all 30 feeds, with orientation verified live against
+  `api.redstone.finance` + CoinGecko (notably: bare `EUROC` is
+  USD-quoted ~1.14, distinct from the EUR-quoted `EUROC/EUR`; the
+  `/USD`-suffixed SolvBTC feeds publish NAV-in-USD ~65k, a different
+  quantity from the unsuffixed NAV-ratio feeds ~1.003, so they get
+  distinct base codes). New canonical codes land in the ADR-0014 /
+  ADR-0028 allow-lists via their Amendments sections; a registry
+  invariant test pins that no two feed_ids share a `(base, quote)`
+  pair. Catch-up for the missed window is
+  `stellarindex-ops projector-replay -source redstone -from 63624934`.
+
 ## [v0.21.1] — 2026-07-27
 
 ### Fixed

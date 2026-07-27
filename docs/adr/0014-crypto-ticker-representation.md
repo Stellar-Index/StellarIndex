@@ -143,6 +143,14 @@ ADR for an addition._
   Stellar deployment. BTC-backed crypto tokens, so `crypto` not the
   ADR-0028 `rwa` variant. Each feed_id is its own code (market vs
   NAV observations stay distinct).
+- 2026-07-27 — added `USDe`, `sUSDe` (Ethena synthetic dollars),
+  `savUSD_FUNDAMENTAL` (Avant staked USD — crypto-native yield
+  vault like sUSDe, not `rwa`), `SolvBTC_FUNDAMENTAL_USD`,
+  `SolvBTC.BBN_FUNDAMENTAL_USD` (USD-quoted SolvBTC NAV feeds —
+  a different quantity from the unsuffixed NAV-ratio feeds, so
+  distinct codes; the on-chain feed_id's `/USD` suffix is
+  normalized `/`→`_` for URL-path safety). From RedStone's
+  2026-07-24 relayer expansion (ledger 63624934).
 
 ## References
 

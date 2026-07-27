@@ -81,7 +81,7 @@ date, so a team can tell us if a contract is missing or mis-attributed.
 | Protocol | Gate status | Page |
 |---|---|---|
 | Reflector (DEX/CEX/FX) | ✅ Gated — 3 pinned contract IDs | [reflector.md](reflector.md) |
-| RedStone | ✅ Gated — 1 Adapter contract + 19-feed registry | [redstone.md](redstone.md) |
+| RedStone | ✅ Gated — 1 Adapter contract + 30-feed registry | [redstone.md](redstone.md) |
 | Band | ✅ Gated — 1 StandardReference contract (ContractCall, zero events) | [band.md](band.md) |
 
 ### Bridges (flow coverage, excluded from VWAP)

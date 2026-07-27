@@ -7,7 +7,12 @@ import (
 )
 
 func TestNewCryptoAsset_accepted(t *testing.T) {
-	cases := []string{"BTC", "ETH", "USDT", "USDC", "SOL", "XRP", "ADA", "AVAX", "DOT", "LINK"}
+	cases := []string{
+		"BTC", "ETH", "USDT", "USDC", "SOL", "XRP", "ADA", "AVAX", "DOT", "LINK",
+		// 2026-07-24 RedStone relayer expansion (ADR-0014 Amendments).
+		"USDe", "sUSDe", "savUSD_FUNDAMENTAL",
+		"SolvBTC_FUNDAMENTAL_USD", "SolvBTC.BBN_FUNDAMENTAL_USD",
+	}
 	for _, code := range cases {
 		t.Run(code, func(t *testing.T) {
 			a, err := NewCryptoAsset(code)

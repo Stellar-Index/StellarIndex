@@ -45,6 +45,29 @@ var knownCryptoCodes = map[string]struct{}{
 	// `_FUNDAMENTAL` feeds publish NAV; each feed_id is its own code so
 	// market and NAV observations never collide on one asset.
 	"SolvBTC": {}, "SolvBTC_FUNDAMENTAL": {}, "SolvBTC.BBN_FUNDAMENTAL": {},
+	// 2026-07-24 RedStone relayer expansion (ledger 63624934; ADR-0014
+	// Amendments). Ethena's synthetic-dollar tokens — crypto-native
+	// (delta-neutral basis strategies), not ADR-0028 rwa; USDe stays
+	// crypto like USDT/USDC per the stablecoin-as-fiat-is-aggregator-
+	// policy rule above. sUSDe is the staked, value-accruing form.
+	"USDe": {}, "sUSDe": {},
+	// Avant Protocol staked USD (on-chain feed_id `savUSD_FUNDAMENTAL`).
+	// Crypto-native yield vault over delta-neutral strategies — the
+	// same class as sUSDe, NOT ADR-0028 rwa (reserved for tokenized
+	// tradfi assets). Code keeps the full feed_id per the
+	// each-feed_id-is-its-own-code convention above.
+	"savUSD_FUNDAMENTAL": {},
+	// USD-quoted SolvBTC NAV feeds (on-chain feed_ids
+	// `SolvBTC_FUNDAMENTAL/USD`, `SolvBTC.BBN_FUNDAMENTAL/USD`). These
+	// publish the NAV **in USD** (~65,430 on 2026-07-27) — a DIFFERENT
+	// quantity from the unsuffixed `_FUNDAMENTAL` feeds above, which
+	// publish the NAV RATIO vs underlying BTC (~1.003; verified live
+	// 2026-07-27 against api.redstone.finance AND r1 oracle_updates).
+	// Distinct codes so the two series never collide. The feed_id's
+	// `/` is normalized to `_` here because canonical codes travel as
+	// URL path segments (`/v1/assets/{id}`) where a literal `/` would
+	// split the segment.
+	"SolvBTC_FUNDAMENTAL_USD": {}, "SolvBTC.BBN_FUNDAMENTAL_USD": {},
 }
 
 // IsKnownCrypto reports whether code is in the ADR-0014 allow-list.

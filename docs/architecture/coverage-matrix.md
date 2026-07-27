@@ -426,7 +426,9 @@ For each claim below we state the **requirement**, what we
   `{ price: U256, package_timestamp, write_timestamp }`.
 - **Verified**: 19 mainnet feeds enumerated, all per-feed WASM hashes
   identical, `U256` field confirmed in
-  `common/src/lib.rs`.
+  `common/src/lib.rs`. (2026-07-27 note: the relayer expanded to 30
+  feeds on 2026-07-24 — see `docs/protocols/redstone.md` for the
+  current registry.)
   **Adapter emits events** (topic `"REDSTONE"`, one per batch push) —
   we can subscribe instead of polling.
 - **Verdict**: ✅ requirement met, event stream is a bonus.
