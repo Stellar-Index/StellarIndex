@@ -71,6 +71,7 @@
 - name: Stat the installed galexie and the go-install artifact
   ansible.builtin.stat:
     path: "{{ item }}"
+    checksum_algorithm: sha256   # the pre-install pin assert compares sha256
   loop:
     - /usr/local/bin/galexie
     - /root/go/bin/stellar-galexie
@@ -85,6 +86,26 @@
   ansible.builtin.file:
     path: /usr/local/bin/galexie
     state: absent
+
+- name: Assert the go-install artifact matches the pinned sha BEFORE install
+  # 2026-07-27 incident: a stale pre-P27 /root/go/bin/stellar-galexie
+  # (leftover from an old `go install`) was silently copied OVER the
+  # live v27.0.0 binary by this role; only the post-install sha assert
+  # caught it — AFTER the on-disk binary was already wrong, one galexie
+  # restart away from re-running the P27 crash-loop SEV. Verify the
+  # SOURCE artifact against the pin and refuse to touch the live binary
+  # with a mismatched one. A deliberate upgrade updates
+  # galexie_expected_binary_sha256 in the same PR as the new artifact.
+  when: galexie_paths.results[1].stat.exists
+  ansible.builtin.assert:
+    that:
+      - galexie_paths.results[1].stat.checksum == galexie_expected_binary_sha256
+    fail_msg: >-
+      /root/go/bin/stellar-galexie sha256
+      ({{ galexie_paths.results[1].stat.checksum }}) does not match the
+      pinned galexie_expected_binary_sha256 — refusing to install it over
+      the live binary. Either the artifact is a stale leftover (delete
+      it) or this is an upgrade whose pin was not updated in the same PR.
 
 - name: Install galexie binary into /usr/local/bin
   # Skipped when there is no fresh go-install artifact — on a built
