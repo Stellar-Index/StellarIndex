@@ -189,7 +189,14 @@ the spec, so the wire-freeze prerequisite is met).
 
 ## 1. Go-live gate (all must be true)
 
-- [ ] **Supply trustworthy**: `supply_refresh_error_dominant` + `supply_cross_check_divergence` clear (or per-asset justified); AQUA/SEP-41 genesis-seed values spot-checked vs issuance truth.
+- [ ] **Supply trustworthy**: `supply_refresh_error_dominant` +
+      `supply_cross_check_divergence` clear (or per-asset justified);
+      AQUA/SEP-41 genesis-seed values spot-checked vs issuance truth.
+      **2026-07-27: the AQUA spot-check RAN and FAILED** — not the
+      expected +15.7% overstatement but a **−13.2% understatement** from
+      the unseeded claimable component (§2.4). Three distinct blockers
+      now: (a) claimable seed, (b) SAC full-history seed OOM, (c)
+      dormancy calibration [OP].
 - [ ] **Completeness green**: all sources `complete=true` (incl. sep41 ×2 + the new redstone gap); `/v1/coverage` two-axis verdict honest.
 - [ ] **Prove-it battery passed** (§2.6): reconcile-balances, verify-lake/contiguity/hash-chain, re-derive determinism, price+supply vs external truth, `verify-usd-volume` calibrated.
 - [x] ✅ **Config codified = live** — DONE 2026-07-27. The 69-task apply
