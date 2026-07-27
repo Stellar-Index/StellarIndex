@@ -59,6 +59,20 @@ severity: P1
 
 ## Loop log (newest first)
 
+- 2026-07-27 ~17:25Z (iter 3): the config-assertions unit (activated by
+  the apply) fired 3 alerts — **2 were harness bugs, now fixed**
+  (`52be4f98`): `galexie_writer_creds_valid` ran `[[ ]]` under dash
+  (exit 127 → always FAIL; creds verified VALID by hand — the
+  archivewriter fix DID land, so **rehydrate rollback is unblocked**),
+  and `zfs_module_on_disk` was blocked by the unit's own
+  `ProtectKernelModules=true` (dropped — it disabled a real
+  pool-integrity guard and bought nothing here). r1 now 3 fails → 1.
+  The survivor `compression_policies_applied` is REAL = §2.3.7,
+  already queued. Also filed H1/H4 evidence (injection + error-leak
+  spot-audit: PASS, RFC-7807 clean, no banners) and L1/L4 (freshness
+  stamps live; `/v1/anomalies` honestly reports
+  `divergence_checked:false` — post-v1 integration item).
+
 - 2026-07-27 ~15:35Z (iter 2, cont. 4): drift rounds 3–5 — fixed the
   remaining idempotency classes: galexie/minio dataset dir_mode
   ping-pong (04820ce0) and the migrations sync stamping the
