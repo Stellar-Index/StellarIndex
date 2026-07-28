@@ -81,6 +81,37 @@ severity: P1
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~05:40Z — 🔴🔴 **THE SUPPLY REFRESH WORKER HAS A 0% SUCCESS
+  RATE. Served supply values are FROZEN and cannot reflect any data
+  fix.** Found by re-running the reconciliation after the claimable seed
+  and asking why AQUA had not moved.
+  - **The seed itself SUCCEEDED**: `claimable_observations` went
+    1,030 → **3,694,623 rows** across **30,753 assets**, clean exit, 276
+    chunks, no lock errors. For AQUA specifically the DB now holds
+    **41,783 claimable balances = 13.90B AQUA** (was 927 = 574.6M)
+    against Horizon's 13.74B — the data gap is CLOSED.
+  - **But the served number is unchanged at −13.21%**, because the
+    aggregator's supply-refresh worker persists nothing. Six hours of
+    journal: **966× "rejecting snapshot — component ledger frozen past
+    the dormancy horizon", 271× "no ledger … (lake lag?) — refresher
+    will retry next tick", 2× "rejecting stale-component snapshot",
+    and 0 successful persists.**
+  - **This reframes the 35 `supply_refresh_error_dominant` alerts**:
+    they are not "a few dormant assets are noisy", they are a TOTAL
+    write-path outage. Every served supply figure is stale by at least
+    6 hours and probably far longer.
+  - **Consequence for the gate**: fixing claimable was necessary but
+    NOT sufficient. §1 "Supply trustworthy" now needs the refresh
+    unblocked as well, and the dormancy-horizon [DECIDE] in the
+    OPERATOR INBOX is promoted from calibration-nicety to BLOCKER.
+  - The `no ledger` arm is a separate, probably-cheap race: the
+    refresher targets a ledger the ClickHouse `stellar.ledgers` write
+    has not landed yet (measured: target 63,681,736 while the lake tip
+    was already 63,681,759 moments later). It self-describes as
+    retrying, but with the dormancy arm also failing, nothing gets
+    through. Worth a small look at target-ledger selection (pick
+    `min(tip, lake_tip)` rather than a forward guess).
+
 - 2026-07-28 ~04:35Z — **claimable seed WRITE PHASE underway**: rows
   1,031 → 1,786,622 → 2,344,508 against the dry-run's expected
   3,605,321. **276 chunks** created so far, matching the ~290 estimate,
@@ -281,7 +312,8 @@ the spec, so the wire-freeze prerequisite is met).
 |---|---|
 | **Explorer** | 🔴 **21/94 GET routes 503** — whole tier dark. One-line fix dry-run verified, ATTENDED (§2.4) |
 | **Balances** | 🔴 **C2-4c live**: ~38% of sampled accounts serve a before-image. Ordinal re-derive → D3 → re-verify (§2.3.1) |
-| **Claimable** | 🟡 Seed LIVE-RUNNING (3.6M balances / 30,748 assets). Then re-run both reconciliations |
+| **Claimable** | ✅ SEED DONE — 3,694,623 rows / 30,753 assets; AQUA DB now 41,783 balances = 13.90B (Horizon 13.74B). Data gap CLOSED |
+| **Supply refresh** | 🔴🔴 **0% SUCCESS RATE** — 6h journal: 966 dormancy rejections + 271 no-ledger races + **0 persists**. Served supply is FROZEN, so the claimable fix cannot surface. Promotes the dormancy [DECIDE] to a BLOCKER |
 | **Eviction** | 🔴 Not ingested at all; archived contract_data reads as live (PHO +157%) [DECIDE] |
 | Deployed | **v0.21.1** (cut + deployed 2026-07-27, all 6 binaries, edge smoke 13/13, `-ch` copy done). Main is ahead with **v0.21.2 material NOT yet deployed**: sep41 projector wiring `ae7a082d`, redstone registry `9bfcf5da`, SAC seed windowing `7bede7e7`, claimable seed `120bf7c3` |
 | Lake | Dedup complete; post-dedup completeness re-audit PASSED; CH ingest at tip (lag seconds) |
