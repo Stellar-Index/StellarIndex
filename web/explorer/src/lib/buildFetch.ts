@@ -92,6 +92,51 @@ export class BuildFetchError extends Error {
 const DEFAULT_TIMEOUT_MS = 8_000;
 const MAX_ATTEMPTS = 5;
 
+// A 429 is NOT a transport failure — it is the server telling us to slow
+// down, and it will keep saying so until the window rolls. Charging it
+// against MAX_ATTEMPTS meant a throttled page burned its whole budget in
+// ~10s of linear backoff and then failed the export; one launch-rehearsal
+// build died exactly that way (passed on retry, which is the tell — nothing
+// was broken, we just asked too fast). Throttling therefore gets its OWN
+// budget and does not consume transport attempts.
+const MAX_THROTTLE_WAITS = 8;
+
+// Exponential, capped. 1s,2s,4s,8s,16s,30s,30s,30s ≈ 2min of patience —
+// comfortably longer than the anonymous tier's fixed window, so a build
+// rides out a full window rather than dying inside it.
+const THROTTLE_BASE_MS = 1_000;
+const THROTTLE_CAP_MS = 30_000;
+
+// Trust a server-sent Retry-After only up to this. A misconfigured or
+// hostile value must not stall a build for hours.
+const RETRY_AFTER_CAP_MS = 60_000;
+
+/**
+ * throttleDelayMs — how long to wait after a 429.
+ *
+ * Prefers the server's own Retry-After (seconds, or an HTTP-date) because
+ * that is the only value that actually knows when the window rolls; falls
+ * back to capped exponential backoff with jitter. Jitter matters: the export
+ * fans out many pages, and un-jittered backoff re-synchronises them into the
+ * next window together.
+ */
+export function throttleDelayMs(retryAfter: string | null, waitIndex: number): number {
+  if (retryAfter) {
+    const secs = Number(retryAfter);
+    if (Number.isFinite(secs) && secs >= 0) {
+      return Math.min(secs * 1_000, RETRY_AFTER_CAP_MS);
+    }
+    const at = Date.parse(retryAfter);
+    if (!Number.isNaN(at)) {
+      const delta = at - Date.now();
+      if (delta > 0) return Math.min(delta, RETRY_AFTER_CAP_MS);
+      return 0; // already elapsed
+    }
+  }
+  const backoff = Math.min(THROTTLE_BASE_MS * 2 ** waitIndex, THROTTLE_CAP_MS);
+  return backoff + Math.floor(Math.random() * 500);
+}
+
 // Per-build memo. Module state persists for the lifetime of the
 // `next build` worker, which is exactly the scope we want.
 const memo = new Map<string, Promise<unknown>>();
@@ -163,6 +208,7 @@ async function fetchWithRetry<T>(
 ): Promise<BuildFetchEnvelope<T>> {
   const { timeoutMs, maxAttempts, softFail } = opts;
   let lastErr: unknown = null;
+  let throttleWaits = 0;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const res = await fetch(url, {
@@ -170,11 +216,14 @@ async function fetchWithRetry<T>(
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (res.status === 429) {
-        // Rate-limited: longer, jittered backoff (the whole export runs
-        // against r1's anonymous tier).
+        // Rate-limited: wait on the server's terms and DON'T spend a
+        // transport attempt — see MAX_THROTTLE_WAITS. Waiting is the
+        // correct response to a 429; retrying faster is not.
         lastErr = new Error('HTTP 429');
-        if (attempt < maxAttempts) {
-          await sleep(1_000 * attempt + Math.floor(Math.random() * 500));
+        if (throttleWaits < MAX_THROTTLE_WAITS) {
+          await sleep(throttleDelayMs(res.headers.get('retry-after'), throttleWaits));
+          throttleWaits++;
+          attempt--; // this round was throttled, not attempted
         }
         continue;
       }
