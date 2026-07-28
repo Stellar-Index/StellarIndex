@@ -105,6 +105,46 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~13:00Z — 🧪 **Measured the TTL filters' blast radius BEFORE
+  the deploy — they do NOT over-drop, and the AQUA risk I flagged points
+  the opposite way to what I feared.**
+
+  Why I checked: those filters change behaviour the moment v0.21.2 ships,
+  and an over-broad filter would silently DELETE good balances — the same
+  error class in the opposite direction. A first, naive sample looked
+  alarming: 2,000 contract_data keys network-wide came back **2002
+  archived / 0 live**.
+
+  **That sample was misleading, not the filter.** Network-wide
+  `contract_data` is dominated by expired TEMPORARY storage — among 50k
+  recent TTL entries the median `live_until` is 63,164,824 and p90 is
+  63,571,556, both well below tip. Most Soroban entries in history really
+  are expired. SAC balances are PERSISTENT and behave nothing like that.
+
+  Measured against AQUA's actual SAC contract (`CAUIKL3I…`):
+
+  | | entries |
+  |---|---|
+  | total contract_data | 2,420 |
+  | **archived** (dropped) | **757** |
+  | **live** (kept) | **931** |
+  | no TTL match (kept — fail-open) | 732 |
+
+  So AQUA keeps **1,663 of 2,420**. Nothing like a wipe.
+
+  **And the direction is favourable.** I had worried that dropping seeded
+  rows would re-break AQUA. It should IMPROVE it: AQUA currently reconciles
+  at **+0.18% OVERSTATED**, and its seeded SAC contribution (172.6M of
+  100.1B ≈ 0.17%) is almost exactly that overstatement. Removing the
+  ARCHIVED subset moves it toward 0, not away. The earlier caution —
+  "seeded ≠ wrong, a blanket purge would break AQUA" — remains correct as
+  stated: a *blanket* purge is wrong, a *TTL-gated* one is right, and
+  those 931 live entries are precisely what a blanket purge would have
+  destroyed.
+
+  Still NOT a substitute for re-running the seed and re-reconciling after
+  deploy; this is a pre-flight estimate, not the acceptance test.
+
 - 2026-07-28 ~12:45Z — 📋 **v0.21.2 release prep: CHANGELOG curated and
   now complete.** The cut itself stays parked (one tag per session;
   v0.21.1 was this session's), but step 1 of /cut-release is done so the
