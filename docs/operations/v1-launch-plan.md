@@ -105,6 +105,57 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~13:35Z — 🚀 **v0.21.2 DEPLOY PLAN — written now, because
+  this is a much bigger deploy than a patch tag suggests: 26
+  behaviour-changing commits, several of which change what the API
+  SERVES.**
+
+  **✅ ZERO migrations** (`git diff v0.21.1..HEAD -- migrations/` is
+  empty). That removes the CS-099 hazard entirely — no
+  old-binary-on-new-schema risk if the probe fails and the workflow rolls
+  the binary back.
+
+  **TWO deploy vectors, and missing the second is the easy mistake:**
+  1. `gh workflow run deploy.yml` — the binaries.
+  2. **`ansible-playbook … --tags stellarindex`** — `data-freshness.sh`
+     and the Prometheus rules changed, so the new
+     `stellarindex_supply_assets_stale` alert DOES NOT EXIST until ansible
+     runs. Deploying binaries alone leaves the very blind spot that let
+     CS-102 hide. This is also the apply that flips
+     `stellarindex_clickhouse_serving_enabled` (INBOX #1) — one attended
+     window can carry both.
+
+  **What changes the moment binaries land:**
+  - Classic + XLM supply UNFREEZE and are correct — those producers are
+    alive.
+  - SEP-41 (40 assets) publishes as `dormant` only, and re-freezes once
+    the lag crosses 17,280 unless the projector catches up. **The sep41
+    tail rebuild from 63,671,020 is part of the deploy, not a follow-up.**
+  - redstone needs its replay from 63,624,934.
+  - **Soroswap pairs whose entries are ARCHIVED stop reporting reserves.**
+    This is user-visible and CORRECT (they were phantom depth), but it
+    will look like data disappearing — expect it rather than treat it as
+    a regression.
+
+  **What does NOT change on deploy:** the SAC seed TTL filters. Seeds are
+  manual, so nothing is re-seeded until someone runs one — and the phantom
+  rows already in Postgres stay until the INBOX #5 DELETE is approved.
+  Deploying does not silently rewrite supply.
+
+  **Verification order after deploy** (each answers a different question):
+  1. `bash scripts/dev/r1-smoke.sh` — 13 shape-asserted GETs.
+  2. `bash scripts/ops/route-sweep.sh` — every OpenAPI GET; this is what
+     catches a repeat of the 21/94 explorer outage.
+  3. `bash scripts/ops/reconcile-supply-vs-horizon.sh` — expect EURC and
+     KALE to come back inside tolerance (they are CS-102 casualties);
+     **PHO stays +157% until the seed is re-run**, so do not read it as a
+     failed deploy.
+  4. `stellarindex-ops reconcile-balances -sample 50` — now ~2.4 s to
+     sample instead of eating the budget. Run it WITHOUT piping through
+     `tail`; its exit code is load-bearing.
+  5. Watch `/v1/coverage` for redstone + sep41 ×2 going complete AFTER
+     their replays — not before.
+
 - 2026-07-28 ~13:00Z — 🧪 **Measured the TTL filters' blast radius BEFORE
   the deploy — they do NOT over-drop, and the AQUA risk I flagged points
   the opposite way to what I feared.**
