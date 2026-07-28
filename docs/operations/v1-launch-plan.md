@@ -81,6 +81,26 @@ severity: P1
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~04:10Z — **verified the seeded rows will actually be READ**
+  (checked before claiming the fix works, not after).
+  `SumClaimableBalancesAtOrBefore`
+  (`internal/storage/timescale/classic_supply_observations.go:263`) does
+  `DISTINCT ON (claimable_id) … WHERE asset_key=$1 AND ledger <= $2
+  ORDER BY claimable_id, ledger DESC … WHERE NOT is_removal`. All three
+  properties the seed needs hold: historical rows are included (they are
+  ≤ asOf), the highest-ledger row per balance wins (so a later live
+  `is_removal` from a claim correctly supersedes a seeded row), and
+  removals are excluded. The seed is therefore effective as written.
+  ⚠️ **Latent, same class as C2-4c**: that `ORDER BY` tie-breaks on
+  `ledger` ALONE — no `intra_ledger_seq` — so two rows at the SAME
+  ledger for one `claimable_id` resolve arbitrarily. Not reachable by
+  today's seed (it emits only live balances, and a same-ledger
+  same-`observed_at` row collides on the natural key and is resolved by
+  the `intra_ledger_seq`-guarded upsert), but the READ path lacks the
+  guard the WRITE path has. Cheap hardening: add `, intra_ledger_seq
+  DESC` to the ORDER BY. Not done tonight — it touches a money-path
+  read while a seed is mid-flight.
+
 - 2026-07-28 ~03:50Z — claimable LIVE seed progress + a false alarm worth
   recording. Go-side CPU fell from 73% to ~15%, which LOOKS like a stall;
   it is not. The work is server-side: ClickHouse shows **20 queries in 10
