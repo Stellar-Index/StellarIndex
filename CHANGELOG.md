@@ -94,6 +94,17 @@ against.
   63,300,828) and is NOT addressed here — it is materially minor.
 
 ### Fixed
+- **`reconcile-balances -sample N` is usable again** — its account
+  sampling ran a `GROUP BY account_id` across billions of raw change-log
+  rows and then sorted every distinct id, which consumed nearly the whole
+  budget of a 900s `-sample 50` run on r1 and left time for just 8
+  accounts. It now samples from the deduped current-state projection
+  (~53.8M account rows, one per account): ~2.4s instead. The populations
+  are provably identical — an account with ANY change above `minLedger`
+  necessarily has its LAST change at or above it — and each account's
+  BALANCE is still resolved from the change log, so the C2-4c tie
+  ambiguity in current-state values cannot leak into the verdict. This
+  unblocks the §2.6 evidence pack, which needs larger samples than 8.
 - **Archived Soroswap pairs no longer report phantom liquidity.**
   `SoroswapPairReserves` read `ledger_entries_current` unfiltered, which
   keeps a Soroban entry's last-known value after its TTL lapses — so a dead
