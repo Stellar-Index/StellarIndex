@@ -513,8 +513,33 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
      re-derive preserves that key, so new rows SUPERSEDE old ones by
      `ingested_at`. No truncate, no duplication — DELETE-first does not
      apply here.
-   Then: d3 setup → reproject [38M→tip] → verify → cutover, per
+   **Then D3, split by risk — the first three phases are SAFE to run
+   unattended, the fourth is NOT:**
+   ```
+   # SAFE: builds v2 ALONGSIDE v1, which keeps serving throughout.
+   run-heavy-job.sh d3-setup     /usr/local/sbin/d3-lecur-v2-rebuild.sh setup
+   run-heavy-job.sh d3-reproject /usr/local/sbin/d3-lecur-v2-rebuild.sh reproject 38000000 <tip>
+   /usr/local/sbin/d3-lecur-v2-rebuild.sh verify     # read-only
+   ```
+   `reproject` is resumable (progress file) and every phase is
+   idempotent; nothing reads v2 until cutover, so a failure at any
+   point costs only time.
+   ```
+   # ATTENDED ONLY — swaps the SERVED current-state table.
+   /usr/local/sbin/d3-lecur-v2-rebuild.sh cutover
+   ```
+   Cutover drops both MVs, double-RENAMEs, recreates the MV and runs a
+   catch-up from the recorded pre-cutover tip. It is a few ms of DDL,
+   but it is the moment account-state / asset-holder / SAC reads change
+   table underneath them, and `rollback-precutover` stops being the
+   easy escape. Reference:
    `deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql`.
+   **Acceptance after cutover**: `reconcile-balances -sample 50` must
+   report 0 mismatches (it was 19/50 before).
+   ⚠️ **Read `verify` output with care**: its divergence rows are only
+   meaningful where `v2_ils > 0`. A row with `v2_ils = 0` is an
+   UNRESOLVED legacy tie, not a correction — the 2026-07-18 rehearsal
+   note in that SQL file explains why it looks identical otherwise.
 2. **D4 REFRAMED (2026-07-27 investigation)** — `account_observations` is
    NOT stalled: it holds exactly the 16 SDF reserve accounts, whose last
    changes are legitimately sparse (dormant by design; trustline/LP/SAC
