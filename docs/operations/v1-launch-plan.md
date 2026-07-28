@@ -81,6 +81,20 @@ severity: P1
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~03:20Z — **ops finding: the "one heavy job at a time" rule
+  has no enforcement against SCHEDULED timers.** A long manual job that
+  overruns into a timer window simply gets a second heavy scope beside
+  it: the claimable seed (4h+) was joined by `archive-completeness`
+  when its daily 04:19 timer fired. `run-heavy-job.sh`'s flock is
+  PER-JOB-NAME, so different names never exclude each other, and each
+  scope gets its own MemoryMax=20G — two concurrent jobs can therefore
+  reserve 40G on a 188G box. Not an incident here (the seed stayed
+  healthy at 73% CPU / 11.7 GB, just slower from contention), but the
+  doctrine is aspirational rather than enforced. Options if it matters:
+  a shared lock file for all heavy jobs, or a systemd slice with a
+  global memory cap. Logged, not fixed — it needs a design decision and
+  the current behaviour is degraded-but-safe.
+
 - 2026-07-27 ~17:25Z (iter 3): the config-assertions unit (activated by
   the apply) fired 3 alerts — **2 were harness bugs, now fixed**
   (`52be4f98`): `galexie_writer_creds_valid` ran `[[ ]]` under dash
