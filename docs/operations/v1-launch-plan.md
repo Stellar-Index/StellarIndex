@@ -50,8 +50,16 @@ severity: P1
   require corroboration to engage at all, and should the writer be
   wired? — wants your call. Ties into §4's C4-012/13 thin-pool row.
   Meanwhile: no change made; prices verified correct; documented here.
-- **[DECIDE-new] Supply-guard dormancy calibration** (replaces most of old
-  D4): the `supply-refresh` stalled-observer guard's dormancy horizon
+- **[DECIDE-new] 🔴 PROMOTED TO BLOCKER 2026-07-28 — supply-guard
+  dormancy calibration is now the SOLE thing preventing ANY supply value
+  from updating.** When parked this looked like alert noise. Measured
+  since: the refresh worker persisted **0 snapshots in 6 hours** — 966
+  dormancy rejections, 271 transient lake races (verified self-healing,
+  not a bug), 2 stale-component rejections. Every served supply figure
+  is frozen, so the 3.69M-row claimable seed that fixed AQUA in the
+  DATABASE cannot reach the API until this is decided. That makes it
+  launch-blocking rather than cosmetic. Original detail:
+  the `supply-refresh` stalled-observer guard's dormancy horizon
   (17,280 ledgers ≈ 1 day) false-positives on structurally-dormant
   components — SDF reserve accounts (change every days-weeks) and
   slow classic assets (BLND at gap 17,922). My recommendation: raise
