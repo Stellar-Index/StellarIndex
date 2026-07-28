@@ -16,6 +16,19 @@ against.
 ## [Unreleased]
 
 ### Added
+- **`stellarindex_supply_assets_stale` — per-asset supply-freeze alert.**
+  The existing `data_source_stale{domain="supply"}` check measures
+  `max(time)` across the WHOLE `asset_supply_history` table, so it proves
+  only that SOME asset is publishing. It read green on 2026-07-28 while
+  37 of 48 watched assets were frozen, some for over two weeks — the
+  handful of still-live assets kept the global max current and hid every
+  other one. An aggregate cannot see a partial freeze. `data-freshness.sh`
+  now also emits the per-asset shape (`stellarindex_supply_assets_stale`
+  count + `stellarindex_supply_asset_max_age_seconds`), deliberately as
+  two low-cardinality series rather than one per asset. Alert in both rule
+  trees, with a runbook whose triage leads with the CS-102 shape: compare
+  PRODUCER watermarks against the asset's own last activity before
+  concluding a writer is dead.
 - **`scripts/ops/route-sweep.sh` — hits EVERY GET route in the OpenAPI
   spec and reports its status.** Written after 21 of 94 routes were
   found returning 503 in production while `r1-smoke.sh` (13 hand-picked

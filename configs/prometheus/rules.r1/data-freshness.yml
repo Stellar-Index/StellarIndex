@@ -25,6 +25,38 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-source-stale.md
 
+      # CS-102 (2026-07-28): the domain-level `supply` freshness check measures
+      # max(time) across the WHOLE table, so it proves only that SOME asset is
+      # publishing. It read green while 37 of 48 watched assets were frozen —
+      # the still-live assets kept the global max current. This alert is the
+      # per-asset shape that aggregate cannot express.
+      - alert: stellarindex_supply_assets_stale
+        expr: |
+          stellarindex_supply_assets_stale > 0
+        for: 2h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: supply
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-assets-stale.md
+          summary: "{{ $value }} watched asset(s) have frozen supply"
+          description: |
+            stellarindex_supply_assets_stale = {{ $value }} — that many watched
+            assets have published no supply snapshot for over 30h, while the
+            domain-level `supply` freshness check may still read fresh because
+            other assets are publishing normally.
+
+            Worst age is on stellarindex_supply_asset_max_age_seconds.
+
+            The founding case was CS-102: the supply freshness gate anchored on
+            per-entity last ACTIVITY instead of the producer's watermark, so any
+            quiet asset was mistaken for a stalled producer and refused every
+            snapshot. Check whether the affected assets share a component whose
+            observations have gone quiet before assuming a dead writer.
+
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-assets-stale.md
+
       # A source no longer reconciles to the certified lake. Now that the
       # ADR-0033 verdict is trustworthy + self-maintaining (rc.149), a
       # complete=false means a REAL served<>lake gap to re-derive.

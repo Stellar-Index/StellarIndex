@@ -74,6 +74,27 @@ SELECT 'stellarindex_data_freshness_stale{domain="'||domain||'",source="'||src||
   FROM f;
 SQL
 
+# CS-102: the `supply` domain above measures max(time) across the WHOLE table,
+# so it only proves SOME asset is publishing. On 2026-07-28 that read green
+# while 37 of 48 watched assets had frozen — a handful of live assets kept the
+# global max current and hid the rest. An aggregate cannot see a partial
+# freeze, so emit the per-asset shape too: how many watched assets are stale,
+# and the worst age among them. Low cardinality (two series) on purpose —
+# per-asset series would grow with the watched set.
+"$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+WITH per_asset AS (
+  SELECT asset_key, extract(epoch FROM now()-max(time)) AS age
+    FROM asset_supply_history
+   WHERE time > now()-interval '30 days'
+   GROUP BY asset_key
+)
+SELECT 'stellarindex_supply_assets_stale '||count(*) FILTER (WHERE age > 108000)::text
+  FROM per_asset
+UNION ALL
+SELECT 'stellarindex_supply_asset_max_age_seconds '||COALESCE(round(max(age)),0)::text
+  FROM per_asset;
+SQL
+
 # Per-source completeness verdict (latest snapshot per source): 1 = incomplete.
 "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 SELECT 'stellarindex_completeness_incomplete{source="'||source||'"} '||(NOT complete)::int::text
