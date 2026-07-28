@@ -95,9 +95,24 @@ func SampleAccountIDs(ctx context.Context, addr string, minLedger uint32, n int)
 	}
 	defer func() { _ = conn.Close() }()
 
+	// Sampled from the DEDUPED current-state projection, not the raw change
+	// log. Both select exactly the same population — an account with ANY
+	// change above minLedger necessarily has its LAST change at or above it,
+	// so "last-modified > minLedger" and "has a row > minLedger" are the same
+	// set — but the change log makes ClickHouse GROUP BY across billions of
+	// account rows and then sort every distinct id. Measured on r1
+	// 2026-07-28: that shape consumed nearly the whole budget of a
+	// 900s -sample 50 run, leaving time for only 8 accounts; against
+	// ledger_entries_current (~53.8M account rows, one per account) the same
+	// query answers in ~2.4s.
+	//
+	// The tie-ambiguity that affects ledger_entries_current's VALUES
+	// (audit C2-4c) does not affect this use: only account IDENTITIES are
+	// read here, and each account's balance is still resolved from the change
+	// log by [QueryAccountBalance].
 	const query = `
 		SELECT account_id
-		FROM stellar.ledger_entry_changes
+		FROM stellar.ledger_entries_current
 		WHERE entry_type = 'account' AND account_id != '' AND ledger_seq > ?
 		GROUP BY account_id
 		ORDER BY cityHash64(account_id)
