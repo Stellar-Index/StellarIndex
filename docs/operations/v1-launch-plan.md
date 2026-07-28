@@ -105,6 +105,68 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~07:45Z — 🔬 **PHO +157% ROOT-CAUSED — it is the SAC SEED
+  writing archived entries as live, not a general "eviction isn't
+  ingested" gap. Narrower, provable, and fixable.**
+
+  **Component isolation.** Three of our four PHO components match Horizon
+  EXACTLY; only `sac` is wrong:
+
+  | component | ours | Horizon | |
+  |---|---|---|---|
+  | trustline | 76,473,207.08 | 76,473,207.08 | ✓ exact |
+  | claimable | 3.92 | 3.92 | ✓ exact |
+  | lp | 6,603.53 | 6,603.53 | ✓ exact |
+  | **sac** | **123,520,184.77** | **1,372,101.36** | ✗ 90× |
+
+  **Split by row origin, and it resolves completely.** Seeded rows carry
+  `intra_ledger_seq = 4294967295` (`SeedIntraLedgerSeq`), so they are
+  trivially separable from live-observer rows:
+
+  | origin | holders | units |
+  |---|---|---|
+  | live observer | 7 | **1,371,980.36** |
+  | seeded (sentinel) | 39 | **122,148,204.41** |
+
+  **Our LIVE observer is correct to 0.009%** against Horizon's
+  1,372,101.36. The entire error is seeded rows — top 5 alone are 122.06M,
+  at ledgers 54.1M–56.4M (Oct 2024 – Mar 2025), never updated since.
+
+  **Cause.** `internal/storage/clickhouse/sac_balance_seed.go` selects
+  `WHERE entry_type = 'contract_data'` and takes the latest state per key
+  with **no liveness check whatsoever** — zero references to ttl /
+  evict / archiv in the file. A Soroban entry that was archived still has
+  its last-known state sitting in the lake, and the seed reads that as
+  current. Horizon, which reflects live state, does not.
+
+  **This is NOT PHO-only.** Seeded vs live SAC, worst first:
+
+  | asset | seeded | live |
+  |---|---|---|
+  | KALIEN | **4,032,232,808,125** | 0.00 |
+  | AQUA | 172,630,315 | 4,808,549,808 |
+  | PHO | 122,148,204 | 1,371,980 |
+  | XAU | 108,659,466 | 9,066,614,566 |
+  | XRF | 95,315,974 | 593,082 |
+  | KALE | 45,382,271 | 7,433,937 |
+
+  KALIEN is 4 TRILLION units seeded against ZERO live. **But do NOT
+  conclude every seeded row is phantom** — the seed's legitimate purpose
+  is recovering dormant balances the live observer never saw, and AQUA
+  reconciles at +0.18% WITH its seeded 172.6M included. Seeded ≠ wrong;
+  seeded-and-archived is wrong. Only a TTL check separates them.
+
+  **The fix is tractable because we already have the data:** the lake
+  carries **1,153,487,878 `ttl` entries**. A Soroban TTL entry is keyed
+  on `sha256(LedgerKey)`, and `ledger_entry_changes.key_xdr` is present
+  for both sides, so the seed can join contract_data → ttl and drop keys
+  whose `live_until_ledger_seq` has passed. That is a filter on an
+  existing seed, not the "build eviction ingest" project this was
+  originally scoped as.
+
+  **Not acted on: removing already-seeded phantom rows is a DELETE, so
+  it is parked per the guardrails.** See OPERATOR INBOX #5.
+
 - 2026-07-28 ~07:23Z — ✅ **AQUA CLAIMABLE FIX CONFIRMED LANDED**, and the
   full supply-vs-Horizon sweep now separates three distinct causes.
   `scripts/ops/reconcile-supply-vs-horizon.sh`, all 8 classic assets
