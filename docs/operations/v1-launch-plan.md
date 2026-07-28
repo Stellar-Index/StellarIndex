@@ -105,6 +105,16 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~08:15Z — iteration close. **Soak gate: 8 PASS / 0 FAIL**
+  (`/var/log/galexie-soak.log`, 18 sampled per run, 0 missing_in_cold, 0
+  probe_errors). Evidence half MET; waiting only on the clock. Timer runs
+  every 6 h at :20 — note the log stamps **CEST (+02:00)**, so the 17:00
+  **UTC** gate is 19:00 CEST and two more checks (09:20Z, 15:20Z) land
+  before it. Per the guardrail this gate is **auto-executable** (time +
+  evidence, not operator), so at ≥17:00Z with 0 FAIL the loop destroys
+  `data/minio@pre-trim-2026-07-26` without asking.
+  D3 reproject at 39.5M / 63.68M, healthy, on track for ~22:20Z.
+
 - 2026-07-28 ~08:10Z — 🛠️ **TTL-liveness mechanism IMPLEMENTED + validated
   against r1** (`internal/storage/clickhouse/ttl_liveness.go`).
   `ClassifyTTLLiveness` resolves each entry key to LIVE / ARCHIVED /
