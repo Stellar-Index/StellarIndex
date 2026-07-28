@@ -81,6 +81,22 @@ against.
   63,300,828) and is NOT addressed here — it is materially minor.
 
 ### Fixed
+- **SEP-41 supply freshness is anchored on the producer's watermark too
+  (CS-102 sibling).** `MinSEP41ComponentLedger` returned
+  `MAX(ledger) WHERE contract_id = $1` — the contract's last
+  mint/burn/clawback, which is activity rather than freshness. A token
+  whose supply simply had not moved read as a stalled producer and its
+  served supply froze. This bit harder than the classic case: 40 of 48
+  watched assets are C-address SEP-41 tokens that never touch the classic
+  component tables, so this path froze the majority of served supply
+  while the classic fix covered only 8 assets. Measured on r1: producer
+  watermark 63,671,020, frozen contracts 46k-169k ledgers behind it, and
+  the sole still-publishing asset's last event landing exactly on the
+  watermark. The old anchor was also perverse — a contract with NO events
+  returned 0, skipped the gate, and kept publishing, so it penalised
+  precisely the contracts we had data for. A genuinely stalled projector
+  is still caught, since a dead producer stops advancing the watermark
+  for every contract at once.
 - **Supply freshness is now anchored on the component OBSERVER's
   watermark, not on the asset's last activity (CS-102).**
   `MinClassicComponentLedger` took `MIN` over each component's
