@@ -105,6 +105,36 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~11:05Z — ✅ **Closed a launch-gate item: the explorer export
+  no longer fails on our own rate limiter** (`3422b150`). This was the
+  §1 "Launch mechanics" fragility — a launch-day rebuild could fail on a
+  429, which is a bad way to discover it.
+
+  Root of it: the code treated a 429 as a transport failure and charged it
+  against the 5-attempt budget, so a throttled page burned everything in
+  ~10 s of linear backoff and failed the export. **It passed on retry —
+  the tell that nothing was broken, we were just asking too fast.**
+
+  Now throttling has its own budget (8 waits) and does not consume
+  transport attempts; it prefers the server's `Retry-After` (seconds or
+  HTTP-date, capped at 60 s so a misconfigured value cannot stall a build
+  for hours) and otherwise backs off exponentially to a 30 s cap **with
+  jitter** — the export fans out many pages, and un-jittered backoff
+  resynchronises them into the next window together. ~2 min total, longer
+  than the anonymous window.
+
+  Picked backoff over the two alternatives deliberately: an egress-IP
+  exemption is infra that would ALSO mask a genuine limiter regression,
+  and lowering build concurrency makes every build slower to dodge a
+  problem that is really "we did not wait".
+
+  `throttleDelayMs` exported + 8 unit tests (both Retry-After forms,
+  elapsed date, hostile-value cap, unparseable fallback, exponential cap,
+  jitter, and that total patience outlasts a window). Explorer gate
+  108/108 + typecheck + lint clean; repo verify.sh green.
+  Verified my own test actually RAN rather than trusting a green suite —
+  the file was not visible in the truncated tail, so I re-ran it alone.
+
 - 2026-07-28 ~10:55Z — 🚫 **No workaround exists for the sep41 stall —
   checked, so nobody burns time on it.** `projector-replay` looked like an
   unblock path; it is not. Its own help states it only *"Rewind the
@@ -923,12 +953,16 @@ the spec, so the wire-freeze prerequisite is met).
       are now a public page with the error budget and explicit
       exclusions (`535c7bcc`). Remaining: announcement ready;
       first-24h watch staffed [OP].
-      ⚠️ **New fragility found**: the explorer static export fetches the
-      live API per asset page and one run FAILED on **HTTP 429** from
-      our own rate limiter (passed on retry). A launch-day rebuild
-      could fail on this. Fix candidates: exempt the build's egress IP,
-      lower build concurrency, or make the fetch back off on 429 rather
-      than exhausting 5 attempts. Not launch-blocking; log it.
+      ✅ **Export 429 fragility FIXED 2026-07-28** (`3422b150`). A 429 no
+      longer spends a transport attempt — throttling has its own budget
+      (8 waits), prefers the server's `Retry-After` (capped at 60 s so a
+      bad value cannot stall a build for hours), else exponential to a
+      30 s cap with jitter. ~2 min total patience, longer than the
+      anonymous tier's window, so a build rides the window out instead of
+      dying inside it. Chose backoff over the other two candidates: an IP
+      exemption is infra that would also mask a real limiter regression,
+      and lowering concurrency just makes every build slower to dodge a
+      problem that is really "we did not wait".
 
 ## 2. Critical path (dependency-ordered)
 
