@@ -67,6 +67,20 @@ change WORKS. For anything with a runtime surface, exercise it:
 - SQL / CAGG / migration claims → verify empirically on r1
   (read-only; SQL via file+scp, never inline `$$` over ssh — it
   expands to the shell PID and silently corrupts the query).
+- **Ask what your check does NOT cover, then check that too.** A
+  passing check over a narrow slice reads identically to a passing
+  check over the whole surface. Two 2026-07-27/28 cases: the 13-GET
+  smoke stayed green while **21 of 94 routes 503'd** (it touches none
+  of them), and supply was "verified" for months against the trustline
+  sum alone — exact, and therefore blind to the claimable component
+  that was 13.2% short. Coverage tools now exist for both
+  (`scripts/ops/route-sweep.sh`,
+  `scripts/ops/reconcile-supply-vs-horizon.sh`); run them rather than
+  re-deriving the same blind spot.
+- **Aggregates hide what per-entity reads expose.** The all-asset
+  supply reconciliation passed 5/8 on the SAME defect that made 19/50
+  individual account balances wrong — summing thousands of entities
+  lets errors cancel. When a total looks right, spot-check members.
 
 ## 4. Claim honesty
 

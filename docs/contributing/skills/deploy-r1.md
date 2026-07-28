@@ -42,9 +42,28 @@ binary on probe failure**. Two sharp edges:
 ```sh
 bash scripts/dev/r1-smoke.sh                       # 13 shape-asserted GETs (exit = failures)
 API_BASE_URL=https://api.stellarindex.io bash scripts/dev/r1-smoke.sh   # through the edge
+
+# COVERAGE checks — the smoke above is 13 hand-picked routes and will
+# stay green while an entire subsystem is dark. Both exit non-zero on
+# failure; treat a regression in either as deploy-blocking.
+bash scripts/ops/route-sweep.sh                    # every OpenAPI GET; exit = 5xx count
+bash scripts/ops/reconcile-supply-vs-horizon.sh    # served supply vs Horizon; exit = assets outside tolerance
+
 ssh root@136.243.90.96 'systemctl status stellarindex-indexer stellarindex-aggregator stellarindex-api | grep -E "Active|●"'
-ssh root@136.243.90.96 'bash /usr/local/bin/pre-launch-check.sh' 2>/dev/null || true
+ssh root@136.243.90.96 'bash -s' < scripts/ops/pre-launch-check.sh   # NOT installed on r1 — pipe it
 ```
+
+**Why the two coverage checks exist** (2026-07-27/28): the 13-GET smoke
+and the SLA probe both passed continuously while **21 of 94 GET routes
+returned 503** — the whole explorer tier (`/accounts`, `/contracts`,
+`/ledgers`, `/tx`, `/operations`) was dark and no check noticed, because
+none of them touch those routes. Separately, the supply figures were
+verified for months against the *trustline sum only*, which is exact and
+therefore blind to the claimable/LP/SAC components — hiding a 13.2%
+AQUA understatement. A check that only covers what already works
+manufactures confidence; these two are the antidote. Baselines to
+compare against: `route-sweep` server_5xx should be **0**;
+`reconcile-supply` outside-tolerance should be **0** (was 3).
 
 Then watch for 10–15 min: the freshness watchdog + verdict
 (`/v1/coverage`, `/v1/status`) and the cursor advancing — a restart
