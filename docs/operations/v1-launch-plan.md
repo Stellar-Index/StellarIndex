@@ -81,8 +81,9 @@ severity: P1
 
 ## Loop log (newest first)
 
-- 2026-07-28 ~05:40Z — **ordinal re-derive STARTED for [63.0M, 63.55M)**
-  (`ch-backfill`, 4 workers, ~133 ledgers/s → ~70 min), first step of
+- 2026-07-28 ~06:05Z — **ordinal re-derive: first attempt OOM-KILLED, retuned from measurement, now running.** `-parallel 4` with the DEFAULT `-flush-every 500` was killed at the 20 G cap **22 seconds in** (4 workers x 500 buffered Soroban-era ledgers). Measured 1 worker @ flush-every=100 = **2.8 GB**, so retried at `-parallel 3 -flush-every 100` → **6.7 GB steady**, matching the 8.4 G prediction. Also CHUNKED into ~110k-ledger pieces (`scripts/ops/ordinal-rederive-chunks.sh`) because ch-backfill has NO resume — a multi-hour single run that dies loses everything, whereas each chunk is durable and idempotent. Original note:
+- 2026-07-28 ~05:40Z — ordinal re-derive STARTED for [63.0M, 63.55M)
+  (`ch-backfill`), first step of
   the C2-4c fix chain. Heavy slot was free after the claimable seed.
   ⚠️ **Hazard caught before launching: do NOT use
   `d2-ordinal-reproject.sh` on partition 63.** That script ends in
