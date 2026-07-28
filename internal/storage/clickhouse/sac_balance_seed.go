@@ -49,26 +49,29 @@ type SACBalanceSeed struct {
 	Balance    *big.Int  // current balance, stroops (i128 — never truncated, ADR-0003)
 	LedgerSeq  uint32    // the current-state row's ledger (the entry's last-modified ledger)
 	CloseTime  time.Time // close time of that ledger (UTC)
+
+	// keyXDR is the row's base64 LedgerKey, carried so the seed's Soroban
+	// TTL liveness can be resolved before emission. Unexported: it is
+	// plumbing for [emitLiveSeeds], not part of the seed's value.
+	keyXDR string
 }
 
 // StreamSACBalanceSeeds scans the current-state projection for every
 // SAC / SEP-41 `Balance(Address)` contract_data entry belonging to a
 // WATCHED SAC-wrapper contract, invoking fn once per decoded entry.
 //
-// NOT LIVENESS-FILTERED — the entries it yields are "present in
-// ledger_entries_current", which is NOT the same as "part of live ledger
-// state". Soroban archives an entry once its TTL lapses, and
-// ledger_entries_current keeps the archived value, so this reader can hand
-// back balances that left the ledger years ago. (This doc comment used to
-// claim "live"; it never was.)
+// LIVENESS-FILTERED (CS-102 / archived-entry finding, 2026-07-28).
+// "Present in ledger_entries_current" is NOT "part of live ledger state":
+// Soroban archives an entry once its TTL lapses and the current-state table
+// keeps the archived value forever, so an unfiltered read hands back balances
+// that left the ledger years ago. That is the whole of PHO's +157% vs Horizon.
 //
-// [StreamSACBalanceSeedsFullHistory] drops those via
-// [sacSeedReducer.dropArchived]; this path cannot reuse that, because it
-// streams row-by-row rather than reducing to a key set, so filtering it wants
-// a server-side join to the ttl entries instead. That join is over ~586M
-// contract_data against ~586M ttl rows — heavy-job class — and is deliberately
-// NOT added blind. Until then, prefer -full-history for whole-network seeds:
-// the 2026-07-27 seed used it, which is why the fix landed there first.
+// The scan still streams every contract_data row; matched WATCHED Balance
+// keys — a tiny fraction of them — are buffered in bounded batches and
+// resolved through [ClassifyTTLLiveness] before emission. Batching the
+// survivors is what makes this cheap: an earlier reading of the problem
+// assumed filtering here required a server-side join of ~586M contract_data
+// against ~586M ttl rows, but only the matched keys ever need resolving.
 //
 // ledger_entries_current carries NO contract_id column — the contract
 // id lives inside key_xdr (the LedgerKey) — so the watched-set filter
@@ -100,6 +103,13 @@ func StreamSACBalanceSeeds(ctx context.Context, addr string, watched map[string]
 	}
 	defer func() { _ = conn.Close() }()
 
+	// Liveness is judged at the lake's own tip: this reader reconstructs
+	// CURRENT state, so an entry archived before that tip is not part of it.
+	_, asOfLedger, err := entryChangeLedgerBounds(ctx, conn)
+	if err != nil {
+		return err
+	}
+
 	const q = `SELECT key_xdr, entry_xdr, change_type, ledger_seq, close_time
 		FROM stellar.ledger_entries_current FINAL
 		WHERE entry_type = 'contract_data'`
@@ -108,6 +118,36 @@ func StreamSACBalanceSeeds(ctx context.Context, addr string, watched map[string]
 		return fmt.Errorf("clickhouse: scan contract_data current-state: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+
+	// Matched seeds are buffered in bounded batches so their Soroban
+	// liveness can be resolved before emission (CS-102 / archived-entry
+	// finding). The scan itself still streams every contract_data row; only
+	// the WATCHED Balance keys — a tiny fraction — are held, so this stays
+	// memory-bounded on a network-wide read.
+	return streamCurrentStateSeeds(ctx, conn, rows, watched, asOfLedger, fn)
+}
+
+// streamCurrentStateSeeds folds the current-state scan into bounded batches,
+// resolving each batch's Soroban liveness before emitting it.
+func streamCurrentStateSeeds(
+	ctx context.Context,
+	conn driver.Conn,
+	rows driver.Rows,
+	watched map[string]string,
+	asOfLedger uint32,
+	fn func(SACBalanceSeed) error,
+) error {
+	pending := make([]SACBalanceSeed, 0, ttlLivenessBatchSize)
+	flush := func() error {
+		if len(pending) == 0 {
+			return nil
+		}
+		if err := emitLiveSeeds(ctx, conn, pending, asOfLedger, fn); err != nil {
+			return err
+		}
+		pending = pending[:0]
+		return nil
+	}
 
 	for rows.Next() {
 		var (
@@ -125,11 +165,55 @@ func StreamSACBalanceSeeds(ctx context.Context, addr string, watched map[string]
 		if !matched {
 			continue
 		}
-		if err := fn(seed); err != nil {
+		seed.keyXDR = keyXDR
+		pending = append(pending, seed)
+		if len(pending) >= ttlLivenessBatchSize {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return flush()
+}
+
+// emitLiveSeeds resolves each buffered seed's Soroban liveness and passes only
+// the live ones to fn.
+//
+// Soroban archives a contract_data entry when its TTL lapses, but
+// ledger_entries_current keeps the archived value forever — so "present in
+// current-state" is NOT "part of live ledger state". Seeding the archived
+// value writes a balance that left the ledger years ago; that is the whole of
+// PHO's +157% vs Horizon (2026-07-28).
+//
+// Fails OPEN, exactly like the full-history path: only a positively-resolved,
+// lapsed TTL drops a seed. See [ClassifyTTLLiveness].
+func emitLiveSeeds(
+	ctx context.Context,
+	conn driver.Conn,
+	seeds []SACBalanceSeed,
+	asOfLedger uint32,
+	fn func(SACBalanceSeed) error,
+) error {
+	keys := make([]string, 0, len(seeds))
+	for _, s := range seeds {
+		keys = append(keys, s.keyXDR)
+	}
+	liveness, err := ClassifyTTLLiveness(ctx, conn, keys, asOfLedger)
+	if err != nil {
+		return err
+	}
+	for _, s := range seeds {
+		if liveness[s.keyXDR] == TTLArchived {
+			continue
+		}
+		if err := fn(s); err != nil {
 			return err
 		}
 	}
-	return rows.Err()
+	return nil
 }
 
 // StreamSACBalanceSeedsFullHistory is the full-raw-history counterpart to
