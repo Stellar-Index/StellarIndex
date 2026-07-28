@@ -33,7 +33,7 @@ severity: P1
 |---|---|---|---|
 | 1 | **Wire paging** — [runbooks/wire-paging.md](runbooks/wire-paging.md) | Needs Healthchecks.io checks + a Discord/Slack webhook CREATED on external accounts I don't hold (every URL on r1 is blank — nothing exists to wire). I do the rest once URLs exist | ~20 min |
 | 2 | **Book the external security review** | Third-party vendor engagement — money + your identity. Longest lead time of anything left | one email |
-| 3 | **Approve the SAC-seed archived-row DELETE** | Data deletion is reserved to you by the loop contract itself, regardless of my confidence. Recommendation ready: TTL-gated delete of ARCHIVED seeded rows only (blast radius measured — keeps AQUA's 931 live entries). Say "approved" and it folds into the post-deploy re-seed | one word |
+| ~~3~~ | ~~SAC-seed archived-row DELETE~~ — **✅ APPROVED by Ash 2026-07-28 ~22:55Z** ("happy with sac-seed delete per your recommendations"). Moved to the loop's post-deploy execution queue (below) | — | — |
 
 **Reclassified as LOOP-EXECUTABLE (no longer waiting on you), gated only
 on D3 completing (~00:00Z) + its acceptance checks:**
@@ -46,6 +46,18 @@ on D3 completing (~00:00Z) + its acceptance checks:**
   deploy.yml auto-rolls-back + retains `.prev` binaries (revertible per
   the 70% rule). Then the §0 deploy-plan verification order + sep41 tail
   rebuild + redstone replay.
+- **SAC seed DELETE + re-seed** (✅ operator-approved 2026-07-28 22:55Z,
+  MUST run AFTER the v0.21.2 deploy — the TTL filter only exists in the
+  new ops binary; v0.21.1's seed would rewrite the same phantom rows):
+  under `run-heavy-job.sh`, (1) verify the seeded-row count against
+  `sac_balance_seed_provenance` first, (2) DELETE seeded rows (the
+  `intra_ledger_seq` seed-sentinel discriminates them from live-observer
+  rows — confirm the exact predicate against the schema at execution),
+  (3) re-run `supply seed-sac-balances -full-history` (now TTL-gated,
+  fail-open on UNKNOWN), (4) acceptance: re-run
+  `reconcile-supply-vs-horizon.sh` — PHO must drop from +157% toward
+  tolerance, AQUA must STAY ~+0.18% (its 931 live entries must survive),
+  and KALIEN/XRF seeded phantoms must clear.
 
 Lower priority / no rush: CoinGecko Pro key, off-site backup decision,
 accepted-risk sign-off, IP-rotation + SSH CIDR, announcement copy,
