@@ -81,6 +81,15 @@ severity: P1
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~04:35Z — **claimable seed WRITE PHASE underway**: rows
+  1,031 → 1,786,622 → 2,344,508 against the dry-run's expected
+  3,605,321. **276 chunks** created so far, matching the ~290 estimate,
+  and no lock errors — the `max_locks_per_transaction=4096` precondition
+  check held. Scan took ~5h10m (vs the dry-run's 3h50m; the extra is
+  contention from the `archive-completeness` timer that overlapped).
+  Next on completion: re-run `reconcile-supply-vs-horizon.sh` (expect
+  AQUA −13.2% → ~0) and the AQUA spot-check.
+
 - 2026-07-28 ~04:10Z — **verified the seeded rows will actually be READ**
   (checked before claiming the fix works, not after).
   `SumClaimableBalancesAtOrBefore`
