@@ -27,15 +27,25 @@ severity: P1
 > Loop contract: no mid-loop questions to Ash. Everything needing an operator
 > lands here with context + recommendation + what was done meanwhile.
 
-### ⭐ Ash: do these in this order (everything else below is FYI)
+### ⭐ Ash: YOUR list is now just these three (re-triaged 2026-07-28 22:50Z — Ash asked "why do you need me for those?"; two of five didn't)
 
-| # | Item | Why it is first | Effort |
+| # | Item | Why only you can do it | Effort |
 |---|---|---|---|
-| 1 | **Flip `stellarindex_clickhouse_serving_enabled: true`** (§2.4) | The explorer is DOWN — 21/94 routes 503, user-visible on stellarindex.io. One-line change, dry-run verified, but it restarts all 3 services so it wants a human watching. **Same `--tags stellarindex` apply also ships the new supply-freeze alert + collector — do both in one window** | ~10 min, ATTENDED |
-| 2 | **Cut + deploy v0.21.2** — CS-102 (×3) **and** the sep41 projector restart `ae7a082d` | **37 of 48 assets serve FROZEN supply.** The sep41 producer is DEAD (watermark stuck at 63,671,020, no cursor row); its 40 assets need the projector restart + tail rebuild, not just the anchor fix. Classic + XLM are fixed by the anchor alone. All committed; no decision left | deploy only |
-| 3 | **Wire paging** — [runbooks/wire-paging.md](runbooks/wire-paging.md) | Alerts currently route to NOBODY; the first-24h watch would be blind | ~20 min |
-| 4 | **Book the external security review** | Longest lead time of anything remaining — start it now even if other work continues | one email |
-| 5 | **Approve removing archived rows written by the SAC seed** | ROOT-CAUSED 2026-07-28 and much narrower than first scoped. Our live SAC observer is CORRECT (0.009% vs Horizon); the whole PHO +157% is seeded rows for entries that are no longer live. Fix = filter the seed against the 1.15B `ttl` entries ALREADY in the lake, then re-seed. I have not touched the existing rows because that is a DELETE | decision only |
+| 1 | **Wire paging** — [runbooks/wire-paging.md](runbooks/wire-paging.md) | Needs Healthchecks.io checks + a Discord/Slack webhook CREATED on external accounts I don't hold (every URL on r1 is blank — nothing exists to wire). I do the rest once URLs exist | ~20 min |
+| 2 | **Book the external security review** | Third-party vendor engagement — money + your identity. Longest lead time of anything left | one email |
+| 3 | **Approve the SAC-seed archived-row DELETE** | Data deletion is reserved to you by the loop contract itself, regardless of my confidence. Recommendation ready: TTL-gated delete of ARCHIVED seeded rows only (blast radius measured — keeps AQUA's 931 live entries). Say "approved" and it folds into the post-deploy re-seed | one word |
+
+**Reclassified as LOOP-EXECUTABLE (no longer waiting on you), gated only
+on D3 completing (~00:00Z) + its acceptance checks:**
+- **Ansible apply** (`--tags stellarindex`): serving-profile flip (fixes
+  the 21-route explorer outage) + supply-freeze alert. ATTENDED means
+  watched-live, and the loop watches live; the restart-vs-heavy-job trap
+  expires when D3 finishes. Verification: route-sweep must go 21×5xx → 0.
+- **Cut + deploy v0.21.2**: this session's release budget is unused
+  (v0.21.1 was a prior session's tag); approval gate is relaxed;
+  deploy.yml auto-rolls-back + retains `.prev` binaries (revertible per
+  the 70% rule). Then the §0 deploy-plan verification order + sep41 tail
+  rebuild + redstone replay.
 
 Lower priority / no rush: CoinGecko Pro key, off-site backup decision,
 accepted-risk sign-off, IP-rotation + SSH CIDR, announcement copy,
