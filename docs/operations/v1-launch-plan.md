@@ -31,7 +31,7 @@ severity: P1
 
 | # | Item | Why it is first | Effort |
 |---|---|---|---|
-| 1 | **Flip `stellarindex_clickhouse_serving_enabled: true`** (§2.4) | The explorer is DOWN — 21/94 routes 503, user-visible on stellarindex.io. One-line change, dry-run verified, but it restarts all 3 services so it wants a human watching | ~10 min, ATTENDED |
+| 1 | **Flip `stellarindex_clickhouse_serving_enabled: true`** (§2.4) | The explorer is DOWN — 21/94 routes 503, user-visible on stellarindex.io. One-line change, dry-run verified, but it restarts all 3 services so it wants a human watching. **Same `--tags stellarindex` apply also ships the new supply-freeze alert + collector — do both in one window** | ~10 min, ATTENDED |
 | 2 | **Cut + deploy v0.21.2** — CS-102 (×3) **and** the sep41 projector restart `ae7a082d` | **37 of 48 assets serve FROZEN supply.** The sep41 producer is DEAD (watermark stuck at 63,671,020, no cursor row); its 40 assets need the projector restart + tail rebuild, not just the anchor fix. Classic + XLM are fixed by the anchor alone. All committed; no decision left | deploy only |
 | 3 | **Wire paging** — [runbooks/wire-paging.md](runbooks/wire-paging.md) | Alerts currently route to NOBODY; the first-24h watch would be blind | ~20 min |
 | 4 | **Book the external security review** | Longest lead time of anything remaining — start it now even if other work continues | one email |
