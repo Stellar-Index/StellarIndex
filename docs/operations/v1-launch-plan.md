@@ -103,6 +103,114 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~07:23Z — ✅ **AQUA CLAIMABLE FIX CONFIRMED LANDED**, and the
+  full supply-vs-Horizon sweep now separates three distinct causes.
+  `scripts/ops/reconcile-supply-vs-horizon.sh`, all 8 classic assets
+  against Horizon's FULL component sum:
+
+  | asset | Horizon | ours | delta | verdict |
+  |---|---|---|---|---|
+  | AQUA | 99,923,674,166 | 100,104,871,790 | **+0.18%** | PASS ✅ |
+  | VELO | 23,999,754,042 | 24,000,220,889 | +0.00% | PASS |
+  | USDC | 351,793,900 | 351,945,989 | +0.04% | PASS |
+  | yXLM | 154,910,541 | 155,056,806 | +0.09% | PASS |
+  | BLND | 112,304,366 | 111,766,751 | −0.48% | PASS |
+  | EURC | 2,632,900 | 2,601,251 | −1.20% | FAIL |
+  | KALE | 303,494,623 | 307,406,857 | +1.29% | FAIL |
+  | PHO | 77,851,915 | 199,999,995 | **+156.90%** | FAIL |
+
+  **AQUA went −13.2% → +0.18%** — its claimable component now reads
+  13.74B, matching the size of the former understatement. This is the
+  fix Ash asked to have landed, and it is landed and evidenced.
+
+  The three FAILs are NOT three problems:
+  - **EURC + KALE are CS-102 casualties, not independent defects.** Both
+    are frozen assets, so their delta is just drift accrued since they
+    stopped publishing (KALE froze 03:23Z). Both should return inside
+    tolerance once the CS-102 fix deploys — that is the acceptance test
+    for it, and it must be re-run post-deploy rather than assumed.
+  - **PHO (+157%) is the known Soroban-eviction blocker**, unrelated to
+    either. Sharper evidence now: ours is 199,999,995 — essentially
+    exactly PHO's 200M cap — while Horizon's components sum to 77.85M.
+    So we are not mis-summing components; we are serving a
+    max-supply-shaped figure, consistent with archived `contract_data`
+    reading as live. Still parked for the [DECIDE] in OPERATOR INBOX.
+
+  Caveat on this table: it covers the 8 CLASSIC assets the script knows.
+  It says nothing about the ~30,745 other assets the claimable seed
+  touched, and nothing about SEP-41/Soroban-native supply.
+
+- 2026-07-28 ~07:20Z — 🔴 **CS-102: SUPPLY FROZEN FOR 37 OF 48 WATCHED
+  ASSETS — I CAUSED IT, root-caused and fixed.**
+
+  **What broke.** `MinClassicComponentLedger` computed the supply
+  freshness anchor as `MIN over components of (per-ASSET MAX(ledger))`.
+  For an event-driven observer that writes only on CHANGE, a per-asset
+  MAX answers "when did this asset last see activity here" — which is
+  not a freshness signal at all. **A quiet asset is not a stale asset.**
+
+  **Why it was invisible for months.** `claimable_observations` was ~4%
+  populated, so the `NULLIF` in that query excluded the claimable
+  component for almost every asset and the wrong quantity was never
+  consulted. **My claimable seed (03:00Z, 3.69M rows / 30,753 assets)
+  populated it and un-latented the bug.** Every watched asset whose last
+  claimable event predated the 17,280-ledger dormancy horizon began
+  failing the gate → `stale_component` → snapshot refused.
+
+  **The evidence is unambiguous.** Tip 63,684,077. Only the claimable
+  component lags — trustline/lp/sac track tip within a few hundred
+  ledgers for EVERY asset:
+
+  | asset | trustline | lp | sac | claimable | supply |
+  |---|---|---|---|---|---|
+  | AQUA | 63,684,077 | 63,684,077 | 63,684,035 | 63,683,912 (−165) | fresh ✅ |
+  | BLND | 63,684,077 | 63,684,075 | 63,683,730 | 63,653,006 (−31k) | frozen |
+  | EURC | 63,684,077 | 63,684,035 | 63,683,843 | 63,518,086 (−166k) | frozen |
+  | VELO | 63,684,077 | 63,684,054 | 63,683,580 | 63,363,440 (−321k) | frozen |
+
+  The three assets still publishing (AQUA, yXLM, USDC) are EXACTLY the
+  three with live claimable writes in 24 h — perfect correlation, no
+  exceptions. KALE stopped 03:23 and PHO 03:28, minutes after the seed;
+  XLM followed at 04:46. The effective production rule had become *"an
+  asset publishes supply only if it recently had claimable activity."*
+
+  **The observer was never dead** — its global watermark is 63,683,912,
+  165 ledgers off tip. Nothing was actually stale; the gate was asking
+  the wrong question.
+
+  **Fix (`internal/storage/timescale/classic_supply_observations.go`).**
+  The anchor is now the per-component OBSERVER WATERMARK — `MAX(ledger)`
+  across ALL assets — so it answers "has this observer processed recent
+  ledgers?". A dead observer still stops advancing across every asset,
+  so stall detection survives; an asset with no observations anywhere
+  still returns 0 (uninstrumented → gate skipped), which stops the
+  change from handing a zero-valued supply a healthy-looking anchor.
+  Note the function's doc comment ALREADY said "the slowest observer" —
+  the query had always implemented something else.
+
+  **Perf.** Naively the watermark is identical for every asset, so
+  recomputing it per asset cost 5.6 s/asset (33.5 s for 6) — a 48-asset
+  tick would take 4.5 min. Memoized on the Store for 30 s (two orders of
+  magnitude tighter than the ~85-min threshold it feeds, so it cannot
+  mask a stall): ~102 ms/asset, a ~55× improvement.
+
+  Verified read-only against live r1: all five frozen assets now anchor
+  at 63,683,912 (lag 165, inside the 1000-ledger threshold); the
+  uninstrumented control still returns 0. Regression test added
+  reproducing the exact production shape (quiet asset + live asset +
+  stalled-observer case + uninstrumented case).
+
+  **Consequence:** F-1320's dormancy carve-out and R-002's 24 h bound
+  were both compensating for the wrong measurement. With the right one,
+  a quiet asset reads fresh and publishes as `ok`; the carve-out stays
+  only for genuine observer stalls. **Ships in v0.21.2 — until deployed,
+  37 assets keep serving frozen supply.**
+
+- 2026-07-28 ~07:05Z — D3 reproject running at ~100k ledgers / 3.6 min →
+  25.7M ledgers ≈ **15 h**, ETA ~22:30Z. It holds the single heavy-job
+  slot all day, so the sep41 tail rebuilds + redstone replay queued
+  behind v0.21.2 cannot start until it finishes or is stopped.
+
 - 2026-07-28 ~07:05Z — ✅ **ORDINAL RE-DERIVE COMPLETE** (5/5 chunks, **0
   failures**, ~35 min/chunk at ~52 ledgers/s) and **D3 STARTED**.
   `setup` created `stellar.ledger_entries_current_v2` as

@@ -8,6 +8,7 @@ import (
 	"math"
 	"math/big"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -530,52 +531,120 @@ func scanSum(ctx context.Context, db *sql.DB, q string, args ...any) (*big.Int, 
 	return v, nil
 }
 
-// MinClassicComponentLedger returns the lowest "most-recent
-// observation ledger" across the four classic-supply component
-// tables for `assetKey`, scoped to ledgers at-or-before
-// `asOfLedger`. Used by the supply Refresher to detect snapshots
-// whose component observations lag the snapshot ledger by more
-// than a threshold. F-1236 (codex audit-2026-05-12).
+// MinClassicComponentLedger returns how far the slowest of the four
+// classic-supply component OBSERVERS has progressed, scoped to
+// ledgers at-or-before `asOfLedger`. Used by the supply Refresher to
+// detect snapshots whose component observations lag the snapshot
+// ledger by more than a threshold. F-1236 (codex audit-2026-05-12).
 //
-// Each component contributes MAX(ledger) of any row matching
-// (asset_key, ledger <= asOfLedger). The function returns the
-// MIN of those four maxima — the slowest observer.
+// Each component contributes its observer WATERMARK — MAX(ledger)
+// across ALL assets in that table — and the function returns the MIN
+// of those four watermarks.
 //
-// A component that has NO observations for the asset returns
-// 0 from its MAX. Treated as "no signal" — excluded from the
-// MIN. A zero result means no component has any observation
-// (genuinely uninstrumented asset); caller treats that as
-// "skip the freshness gate" via the documented zero-means-no-
-// signal contract on Supply.MinComponentLedger.
+// CS-102 (2026-07-28): the watermark is deliberately global, NOT
+// per-asset. These four observers are event-driven: they write a row
+// only when a balance actually CHANGES. So a per-asset MAX(ledger)
+// answers "when did this asset last see activity in this component",
+// which is not a freshness signal at all — a quiet asset is not a
+// stale asset. The observer watermark answers the question the gate
+// actually asks: "has this observer processed recent ledgers?" A dead
+// observer stops advancing its watermark across every asset, which is
+// still caught.
+//
+// This bug was LATENT for months because claimable_observations was
+// ~4% populated: assets with no claimable rows were excluded by the
+// NULLIF below, so the wrong quantity was never consulted. Seeding
+// claimable from lake history (30,753 assets) populated it, and every
+// watched asset whose last claimable event was older than the
+// dormancy horizon froze — 37 of 48 assets stopped publishing supply
+// within hours, and the ONLY three still fresh were precisely the
+// three with live claimable activity. Note that the doc comment above
+// this function already described "the slowest observer"; the query
+// had always implemented "the slowest per-asset activity" instead.
+//
+// A component whose table is entirely empty contributes no signal
+// (NULLIF → excluded from the MIN) rather than pinning the result
+// to 0.
+//
+// An asset with NO observations in ANY component is genuinely
+// uninstrumented; it still returns 0 so the caller skips the
+// freshness gate via the documented zero-means-no-signal contract on
+// Supply.MinComponentLedger. Without that guard, switching to global
+// watermarks would hand an uninstrumented asset a healthy-looking
+// freshness anchor and let a zero-valued supply publish.
 func (s *Store) MinClassicComponentLedger(ctx context.Context, assetKey string, asOfLedger uint32) (uint32, error) {
-	// Per-component MAX(ledger). Empty tables → 0. NULLIF +
-	// MIN over a CTE filters out the "no observations yet"
-	// components so a brand-new asset that's only been observed
-	// in trustlines doesn't have its MinComponentLedger pinned
-	// to 0 by the empty claimable/LP/SAC tables.
-	const q = `
-		WITH per_component AS (
-		    SELECT NULLIF(COALESCE(MAX(ledger), 0), 0) AS l
-		      FROM trustline_observations
-		     WHERE asset_key = $1 AND ledger <= $2
-		    UNION ALL
-		    SELECT NULLIF(COALESCE(MAX(ledger), 0), 0) AS l
-		      FROM claimable_observations
-		     WHERE asset_key = $1 AND ledger <= $2
-		    UNION ALL
-		    SELECT NULLIF(COALESCE(MAX(ledger), 0), 0) AS l
-		      FROM lp_reserve_observations
-		     WHERE asset_key = $1 AND ledger <= $2
-		    UNION ALL
-		    SELECT NULLIF(COALESCE(MAX(ledger), 0), 0) AS l
-		      FROM sac_balance_observations
-		     WHERE asset_key = $1 AND ledger <= $2
-		)
-		SELECT COALESCE(MIN(l), 0) FROM per_component WHERE l IS NOT NULL
+	// Cheap per-asset half: is this asset instrumented at all? Postgres
+	// short-circuits the OR chain, so a normal asset stops at the first
+	// EXISTS.
+	const instrumentedQ = `
+		SELECT EXISTS (SELECT 1 FROM trustline_observations
+		                WHERE asset_key = $1 AND ledger <= $2)
+		    OR EXISTS (SELECT 1 FROM claimable_observations
+		                WHERE asset_key = $1 AND ledger <= $2)
+		    OR EXISTS (SELECT 1 FROM lp_reserve_observations
+		                WHERE asset_key = $1 AND ledger <= $2)
+		    OR EXISTS (SELECT 1 FROM sac_balance_observations
+		                WHERE asset_key = $1 AND ledger <= $2)
 	`
-	var minLedger uint32
-	if err := s.db.QueryRowContext(ctx, q, assetKey, int(asOfLedger)).Scan(&minLedger); err != nil {
-		return 0, fmt.Errorf("timescale: MinClassicComponentLedger: %w", err)
+	var instrumented bool
+	if err := s.db.QueryRowContext(ctx, instrumentedQ, assetKey, int(asOfLedger)).Scan(&instrumented); err != nil {
+		return 0, fmt.Errorf("timescale: MinClassicComponentLedger instrumented: %w", err)
 	}
-	return minLedger, nil
+	if !instrumented {
+		return 0, nil
+	}
+	return s.classicObserverWatermark(ctx, asOfLedger)
+}
+
+// classicWatermarkTTL bounds how long [Store.classicObserverWatermark]
+// reuses a cached watermark. Two orders of magnitude tighter than the
+// ~85-minute staleness threshold the value feeds, so caching cannot
+// mask a stalled observer; it only collapses the redundant per-asset
+// reads within a single refresh tick.
+const classicWatermarkTTL = 30 * time.Second
+
+type classicWatermarkCache struct {
+	mu        sync.Mutex
+	asOf      uint32
+	ledger    uint32
+	fetchedAt time.Time
+}
+
+// classicObserverWatermark returns the lowest per-observer watermark
+// across the four classic-supply component tables — how far the
+// slowest OBSERVER has progressed, across all assets.
+//
+// Memoized per [classicWatermarkTTL]; see [classicWatermarkCache].
+// The cache is keyed on asOfLedger so a backfill replaying historical
+// ledgers can't be served a live-tip watermark.
+func (s *Store) classicObserverWatermark(ctx context.Context, asOfLedger uint32) (uint32, error) {
+	c := &s.classicWatermark
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.asOf == asOfLedger && !c.fetchedAt.IsZero() && time.Since(c.fetchedAt) < classicWatermarkTTL {
+		return c.ledger, nil
+	}
+
+	const q = `
+		WITH observer_watermark AS (
+		    SELECT NULLIF(COALESCE(MAX(ledger), 0), 0) AS l
+		      FROM trustline_observations WHERE ledger <= $1
+		    UNION ALL
+		    SELECT NULLIF(COALESCE(MAX(ledger), 0), 0) AS l
+		      FROM claimable_observations WHERE ledger <= $1
+		    UNION ALL
+		    SELECT NULLIF(COALESCE(MAX(ledger), 0), 0) AS l
+		      FROM lp_reserve_observations WHERE ledger <= $1
+		    UNION ALL
+		    SELECT NULLIF(COALESCE(MAX(ledger), 0), 0) AS l
+		      FROM sac_balance_observations WHERE ledger <= $1
+		)
+		SELECT COALESCE(MIN(l), 0) FROM observer_watermark WHERE l IS NOT NULL
+	`
+	var watermark uint32
+	if err := s.db.QueryRowContext(ctx, q, int(asOfLedger)).Scan(&watermark); err != nil {
+		return 0, fmt.Errorf("timescale: classicObserverWatermark: %w", err)
+	}
+	c.asOf, c.ledger, c.fetchedAt = asOfLedger, watermark, time.Now()
+	return watermark, nil
 }
