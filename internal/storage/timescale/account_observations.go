@@ -176,3 +176,32 @@ func (s *Store) LatestAccountObservationAtOrBefore(ctx context.Context, accountI
 	}
 	return row, nil
 }
+
+// MaxAccountObservationLedger returns how far the ACCOUNT OBSERVER has
+// progressed at-or-before asOfLedger — MAX(ledger) across every observed
+// account, not any one account's last observation. Zero when the table holds
+// no observations in scope.
+//
+// CS-102 (2026-07-28), third leg. The XLM freshness gate previously anchored
+// on MIN(last observation) across the configured SDF reserve accounts. Those
+// accounts move every few days-to-weeks by design, so that anchor goes stale
+// while nothing is wrong, the gate reads a stalled observer, and XLM's served
+// supply freezes — which is exactly what it was doing.
+//
+// Per-account last-activity answers "how busy is this account", not "is our
+// data current". The observer watermark answers the latter, and a genuinely
+// dead observer still stops advancing it for every account at once.
+//
+// Same int4 cap as [Store.LatestAccountObservationAtOrBefore] — see its note.
+func (s *Store) MaxAccountObservationLedger(ctx context.Context, asOfLedger uint32) (uint32, error) {
+	const maxInt32 = uint32(math.MaxInt32)
+	if asOfLedger > maxInt32 {
+		asOfLedger = maxInt32
+	}
+	const q = `SELECT COALESCE(MAX(ledger), 0) FROM account_observations WHERE ledger <= $1`
+	var ledger uint32
+	if err := s.db.QueryRowContext(ctx, q, int(asOfLedger)).Scan(&ledger); err != nil {
+		return 0, fmt.Errorf("timescale: MaxAccountObservationLedger@%d: %w", asOfLedger, err)
+	}
+	return ledger, nil
+}

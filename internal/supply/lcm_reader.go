@@ -18,6 +18,16 @@ import (
 // fallback caller can drop to the config reader.
 type AccountObservationLookup interface {
 	LatestAccountObservationAtOrBefore(ctx context.Context, accountID string, asOfLedger uint32) (AccountObservationRow, error)
+
+	// MaxAccountObservationLedger reports how far the account OBSERVER has
+	// progressed at-or-before asOfLedger, across every observed account.
+	//
+	// Deliberately part of the REQUIRED interface rather than an optional
+	// one probed by type assertion (CS-102): a missing delegate behind an
+	// optional interface degrades silently to the old, wrong anchor and
+	// looks exactly like healthy operation. Adding a method here breaks
+	// implementers at compile time instead, which is the point.
+	MaxAccountObservationLedger(ctx context.Context, asOfLedger uint32) (uint32, error)
 }
 
 // AccountObservationRow is the storage-side shape mirrored into
@@ -95,15 +105,25 @@ func (r *LCMReserveBalanceReader) ReserveBalanceTotal(ctx context.Context, accou
 }
 
 // MinReserveAccountLedger implements [ReserveBalanceFreshnessReader].
-// Returns MIN(row.Ledger) across the supplied accounts at-or-before
-// `asOfLedger`. F-1236 (codex audit-2026-05-12): closes the third
-// leg of the supply-snapshot freshness gate.
+// Returns how far the account OBSERVER has progressed at-or-before
+// `asOfLedger`, provided every supplied account is actually observed.
+// F-1236 (codex audit-2026-05-12): closes the third leg of the
+// supply-snapshot freshness gate.
 //
-// Removed-account observations contribute their removal ledger
-// (the AccountEntry-delete is the most-recent observation we
-// have for that key, so it IS the freshness signal — pretending
-// the removal didn't happen would over-state freshness for an
-// account that no longer exists).
+// CS-102 (2026-07-28), third leg. This used to return MIN(row.Ledger)
+// across the accounts — each one's LAST observation. SDF reserve accounts
+// move every few days-to-weeks by design, so that anchor went stale while
+// nothing was wrong, the gate read a stalled observer, and XLM's served
+// supply froze. Per-account last-activity measures how busy an account is,
+// not whether our data is current; the observer watermark measures the
+// latter, and a dead observer still stops advancing it for every account at
+// once.
+//
+// The per-account probe is RETAINED — not for its ledger value, but because
+// "every configured reserve account is actually observed" is a real
+// precondition. If one is missing we cannot compute the reserve exclusion at
+// all, so the gate must stay permissive rather than bless a partial sum
+// behind a healthy-looking watermark.
 //
 // Returns 0 (gate-permissive bypass) when:
 //   - `accounts` is empty (no signal to compute);
@@ -121,7 +141,6 @@ func (r *LCMReserveBalanceReader) MinReserveAccountLedger(ctx context.Context, a
 	if len(accounts) == 0 {
 		return 0, nil
 	}
-	var minLedger uint32
 	for _, acc := range accounts {
 		row, err := r.store.LatestAccountObservationAtOrBefore(ctx, acc, asOfLedger)
 		if err != nil {
@@ -135,11 +154,8 @@ func (r *LCMReserveBalanceReader) MinReserveAccountLedger(ctx context.Context, a
 			// this as no-signal across the set.
 			return 0, nil
 		}
-		if minLedger == 0 || row.Ledger < minLedger {
-			minLedger = row.Ledger
-		}
 	}
-	return minLedger, nil
+	return r.store.MaxAccountObservationLedger(ctx, asOfLedger)
 }
 
 // Compile-time checks.

@@ -244,6 +244,12 @@ func (a supplyStoreLookup) LatestAccountObservationAtOrBefore(ctx context.Contex
 	}, nil
 }
 
+// MaxAccountObservationLedger forwards the account-observer watermark used by
+// the XLM freshness gate (CS-102).
+func (a supplyStoreLookup) MaxAccountObservationLedger(ctx context.Context, asOfLedger uint32) (uint32, error) {
+	return a.s.MaxAccountObservationLedger(ctx, asOfLedger)
+}
+
 // supplyChainReader composes the live LCM reader with the
 // operator-static config reader. Tries live first; on
 // ErrNoObservation (any account in the request set has no
