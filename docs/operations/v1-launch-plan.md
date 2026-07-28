@@ -105,6 +105,48 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~07:55Z — ✅ **EVICTION HYPOTHESIS PROVEN AGAINST THE LAKE —
+  the TTL join works and the fix mechanism is validated.** No longer an
+  inference from "Horizon disagrees"; it is now read directly from data
+  we already hold.
+
+  **Linkage established.** A Soroban TTL `LedgerKey` is 36 bytes —
+  `type=00000009` + `sha256(LedgerKey)` — and the `TTLEntry` is 48 bytes:
+  `lastModified(4) | type(4) | keyHash(32) | liveUntilLedgerSeq(4) |
+  ext(4)`. So:
+
+  ```sql
+  SHA256(base64Decode(cd.key_xdr)) = substring(base64Decode(ttl.key_xdr),5,32)
+  live_until = reinterpretAsUInt32(reverse(substring(base64Decode(ttl.entry_xdr),41,4)))
+  ```
+
+  Verified on a 50-ledger window: 500 contract_data keys → 294 joined
+  (the remainder simply had no TTL *change* in that window).
+
+  **Proof on the actual PHO offenders.** Resolving the contract_data keys
+  at ledger 54,414,471 — where the largest seeded PHO balance was
+  written — against tip 63,684,077:
+
+  | keyhash | live_until | verdict |
+  |---|---|---|
+  | EB2333… | 54,431,750 | **EXPIRED** (9.25M ledgers ago) |
+  | F5851B… | 54,431,750 | **EXPIRED** |
+  | 0A4970… | 56,252,151 | **EXPIRED** |
+  | 8742CB… | 56,488,043 | **EXPIRED** |
+  | 3B1C75… | 66,771,588 | LIVE — extended at 63,661,189 |
+
+  Four of five lapsed in 2024/2025 and were never extended. The fifth WAS
+  extended recently and is correctly live — so the filter discriminates
+  rather than blanket-dropping old rows, which is exactly the property
+  needed to avoid destroying the seed's legitimate dormant-balance
+  recovery (AQUA's).
+
+  **Consequences.** The fix is a `WHERE` on data already in the lake, not
+  new ingest. Note this also means `ledger_entries_current` serves
+  archived contract_data to EVERY current-state reader, not just supply —
+  the blast radius is wider than the supply number, and worth stating
+  plainly in §2.4 rather than leaving implied.
+
 - 2026-07-28 ~07:45Z — 🔬 **PHO +157% ROOT-CAUSED — it is the SAC SEED
   writing archived entries as live, not a general "eviction isn't
   ingested" gap. Narrower, provable, and fixable.**
