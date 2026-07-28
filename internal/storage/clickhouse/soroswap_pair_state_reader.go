@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
@@ -64,6 +65,14 @@ type TokenDisplayMeta struct {
 // Pairs whose instance entry isn't captured, or whose storage doesn't
 // match the verified u32-keyed layout, are absent from the result —
 // callers treat absence as "reserves unavailable", never as zero.
+//
+// ARCHIVED pairs are absent too (2026-07-28). ledger_entries_current keeps a
+// Soroban entry's last-known value after its TTL lapses, so an unfiltered read
+// reports a dead pool's final reserves as CURRENT liquidity — phantom depth on
+// every surface that consumes this. Absence is already the honest signal for
+// "unavailable", so an archived pair uses it rather than being reported as
+// live. Same fail-open contract as elsewhere: only a positively-resolved,
+// lapsed TTL drops a pair (see [ClassifyTTLLiveness]).
 func (r *ExplorerReader) SoroswapPairReserves(ctx context.Context, pairs []string) (map[string]SoroswapPairState, error) {
 	keys := make([]string, 0, len(pairs)*2)
 	pairByKey := make(map[string]string, len(pairs)*2)
@@ -94,12 +103,38 @@ func (r *ExplorerReader) SoroswapPairReserves(ctx context.Context, pairs []strin
 	}
 	defer func() { _ = rows.Close() }()
 
-	out := make(map[string]SoroswapPairState, len(pairs))
+	// Liveness is judged at the lake's own tip — this reader answers
+	// "current", so an entry archived before that tip is not current.
+	_, asOfLedger, err := entryChangeLedgerBounds(ctx, r.conn)
+	if err != nil {
+		return nil, err
+	}
+
+	out, keyByPair, err := scanSoroswapPairStates(rows, pairByKey, len(pairs))
+	if err != nil {
+		return nil, err
+	}
+	if err := dropArchivedPairs(ctx, r.conn, out, keyByPair, asOfLedger); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// scanSoroswapPairStates folds the batched lookup into per-pair winning state,
+// returning both the states and WHICH key produced each one (so the liveness
+// check resolves the entry actually being reported).
+func scanSoroswapPairStates(
+	rows driver.Rows,
+	pairByKey map[string]string,
+	size int,
+) (map[string]SoroswapPairState, map[string]string, error) {
+	out := make(map[string]SoroswapPairState, size)
+	keyByPair := make(map[string]string, size)
 	for rows.Next() {
 		var keyXDR, b64 string
 		var ledgerSeq uint32
 		if err := rows.Scan(&keyXDR, &ledgerSeq, &b64); err != nil {
-			return nil, fmt.Errorf("clickhouse: scan soroswap pair state: %w", err)
+			return nil, nil, fmt.Errorf("clickhouse: scan soroswap pair state: %w", err)
 		}
 		pair, ok := pairByKey[keyXDR]
 		if !ok {
@@ -117,11 +152,41 @@ func (r *ExplorerReader) SoroswapPairReserves(ctx context.Context, pairs []strin
 			continue
 		}
 		out[pair] = st
+		keyByPair[pair] = keyXDR
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("clickhouse: soroswap pair reserves rows: %w", err)
+		return nil, nil, fmt.Errorf("clickhouse: soroswap pair reserves rows: %w", err)
 	}
-	return out, nil
+	return out, keyByPair, nil
+}
+
+// dropArchivedPairs removes pairs whose instance entry has been archived.
+func dropArchivedPairs(
+	ctx context.Context,
+	conn driver.Conn,
+	out map[string]SoroswapPairState,
+	keyByPair map[string]string,
+	asOfLedger uint32,
+) error {
+	if len(out) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(out))
+	for pair := range out {
+		if k, ok := keyByPair[pair]; ok {
+			keys = append(keys, k)
+		}
+	}
+	liveness, err := ClassifyTTLLiveness(ctx, conn, keys, asOfLedger)
+	if err != nil {
+		return err
+	}
+	for pair, k := range keyByPair {
+		if liveness[k] == TTLArchived {
+			delete(out, pair)
+		}
+	}
+	return nil
 }
 
 // TokenDisplays batch-reads display metadata (symbol/name/decimals)
