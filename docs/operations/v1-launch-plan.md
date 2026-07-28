@@ -105,6 +105,20 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~10:55Z — 🚫 **No workaround exists for the sep41 stall —
+  checked, so nobody burns time on it.** `projector-replay` looked like an
+  unblock path; it is not. Its own help states it only *"Rewind the
+  projector cursor … the projector tails forward to the live tip from
+  here"* — it rewinds a cursor, it does not project. The deployed binary
+  is **v0.21.1**, which still carries the zero-writer hole, so there is no
+  registered sep41 source to tail forward and a rewind writes nothing.
+  (Consistent with `ingestion_cursors` having no sep41 row to rewind.)
+
+  **v0.21.2 is therefore the only path for the 40 SEP-41 assets.** No
+  release cut: one tag per session and v0.21.1 was this session's, and a
+  public tag is not cheaply revertible. Parked with the 13:30Z clock in
+  OPERATOR INBOX #2 rather than acted on.
+
 - 2026-07-28 ~10:45Z — ⏳ **CORRECTION + a 2.8-hour clock: the CS-102
   SEP-41 fix is NECESSARY BUT NOT SUFFICIENT, because the sep41 producer
   is genuinely DEAD.**
