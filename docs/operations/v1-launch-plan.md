@@ -81,6 +81,23 @@ severity: P1
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~05:40Z — **ordinal re-derive STARTED for [63.0M, 63.55M)**
+  (`ch-backfill`, 4 workers, ~133 ledgers/s → ~70 min), first step of
+  the C2-4c fix chain. Heavy slot was free after the claimable seed.
+  ⚠️ **Hazard caught before launching: do NOT use
+  `d2-ordinal-reproject.sh` on partition 63.** That script ends in
+  `ALTER TABLE … REPLACE PARTITION` (line 143), which is safe on the
+  STATIC partitions 39–53 it was written for, but partition 63 is the
+  LIVE one — ingest appends to it continuously, so any row written
+  between the staging snapshot and the replace would be silently
+  DROPPED. `ch-backfill` is the correct tool here: it re-derives
+  through `ExtractLedger` (which calls `extractLedgerEntryChanges`,
+  extract.go:88) and writes idempotent ReplacingMergeTree inserts that
+  supersede by `ingested_at` — no partition swap, safe against live
+  ingest. Partition 38 IS static, so the D2 script remains correct
+  there. Range is inside the retention-trimmed `galexie-live` bucket
+  (tip 63.68M), so no `-bucket galexie-archive` needed.
+
 - 2026-07-28 ~05:40Z — 🔴🔴 **THE SUPPLY REFRESH WORKER HAS A 0% SUCCESS
   RATE. Served supply values are FROZEN and cannot reflect any data
   fix.** Found by re-running the reconciliation after the claimable seed
