@@ -105,6 +105,43 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~08:55Z — ⚠️ **CS-102 HAS A SIBLING IN THE SEP-41 PATH, and my
+  fix covers only 8 of 48 watched assets.** Found by widening my own
+  verification from 5 assets to all 48 — the same narrow-slice trap I
+  flagged earlier, this time in my own work.
+
+  Running the FIXED anchor across every watched asset:
+
+  | verdict | assets |
+  |---|---|
+  | FRESH (inside the 1000-ledger gate) | **8** |
+  | UNINSTRUMENTED (gate skipped) | **40** |
+
+  The 40 are the C-address Soroban/SEP-41 tokens. They have no rows in
+  ANY classic component table, so `MinClassicComponentLedger` — the
+  function I fixed — is not even on their path. They resolve through
+  `StorageSEP41SupplyReader` → **`MinSEP41ComponentLedger`**, which is:
+
+  ```sql
+  SELECT COALESCE(MAX(ledger), 0) FROM sep41_supply_events
+   WHERE contract_id = $1 AND ledger <= $2
+  ```
+
+  **Per-CONTRACT last activity — identical bug shape to CS-102.** A
+  SEP-41 token with no recent mint/burn/clawback has a stale MAX(ledger),
+  reads as a stalled producer, and freezes. The correct anchor is again
+  the projector's watermark (how far `sep41_supply_events` has been
+  written across ALL contracts), not one contract's last event.
+
+  This matches the frozen population exactly: every asset frozen at
+  2026-07-05 / 07-10 / 07-11 and the 30-asset batch at 2026-07-25 is a
+  C-address. **The classic assets I fixed were the minority.**
+
+  Code-level finding is CERTAIN (read from source). Empirical
+  confirmation — projector watermark vs per-contract lag — is running;
+  the join over `sep41_supply_events` is slow, so it is backgrounded
+  rather than piled onto r1 while D3 writes.
+
 - 2026-07-28 ~08:45Z — 🔗 **TTL filter WIRED into the SAC seed's
   full-history path** (`sacSeedReducer.dropArchived`, called after the
   window walk, before emit, judged at the lake's own tip).
