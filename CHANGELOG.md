@@ -94,6 +94,20 @@ against.
   63,300,828) and is NOT addressed here — it is materially minor.
 
 ### Fixed
+- **The explorer's static export now waits out a 429 instead of failing
+  the build.** A launch-rehearsal export died on HTTP 429 from our own
+  rate limiter, having burned all 5 transport attempts in ~10s of linear
+  backoff; it passed on retry, which is the tell that nothing was broken —
+  we simply asked too fast. A 429 is the server asking us to slow down,
+  not a transport failure, so it no longer consumes the transport attempt
+  budget: throttling gets its own (8 waits), prefers the server's
+  `Retry-After` (seconds or HTTP-date, capped at 60s so a misconfigured
+  value cannot stall a build for hours), and otherwise backs off
+  exponentially to a 30s cap with jitter — jitter because the export fans
+  out many pages and un-jittered backoff resynchronises them into the next
+  window together. Total patience is now ~2min, comfortably longer than
+  the anonymous tier's window, so a build rides a window out rather than
+  dying inside it.
 - **XLM supply freshness is anchored on the account observer's watermark
   (CS-102, third leg).** `MinReserveAccountLedger` returned
   `MIN(last observation)` across the configured SDF reserve accounts.
