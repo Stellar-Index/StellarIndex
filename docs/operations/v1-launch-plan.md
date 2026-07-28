@@ -190,23 +190,53 @@ capacity/HA posture, paging wired to a human, and the v1.0 wire shape frozen
 (ADR-0042 — **Accepted and implemented**; the `kind` discriminator is live in
 the spec, so the wire-freeze prerequisite is met).
 
-## 0. Verified current state — 2026-07-27 (all checked live today)
+## 0. Verified current state — 2026-07-28 (all checked live)
+
+> **⚠️ READ THIS FIRST — four blockers were FOUND on 2026-07-27/28 that
+> no prior plan knew about. If you are resuming, these dominate:**
+>
+> 1. **The explorer is DOWN in production.** 21 of 94 GET routes return
+>    503 (all of `/accounts`, `/contracts`, `/ledgers`, `/tx`,
+>    `/operations`, `/liquidity-pools`, plus `/assets/{id}/supply` and
+>    `/holders`). Cause is one unflipped flag; the fix is dry-run
+>    verified and waits only for an ATTENDED apply (§2.4). User-visible
+>    on stellarindex.io today.
+> 2. **~38% of sampled accounts serve a STALE pre-transaction balance**
+>    (C2-4c reproduced live). Needs the ordinal re-derive BEFORE D3 —
+>    D3 alone cannot fix it (§2.3.1, §2.4).
+> 3. **Claimable balances were never seeded** → 30,748 assets
+>    understated (AQUA −13.2%). Seed built, dry-run clean, **live seed
+>    running now** (§2.3.3).
+> 4. **We never ingest Soroban state eviction**, so archived entries
+>    read as live — PHO supply +156.9% (§2.4). [DECIDE] interim TTL
+>    filter vs real eviction ingest.
+>
+> Two tools were added to stop this class recurring:
+> `scripts/ops/route-sweep.sh` (every OpenAPI GET) and
+> `scripts/ops/reconcile-supply-vs-horizon.sh` (all classic assets vs
+> Horizon's FULL component sum). Both exit non-zero on failure and
+> belong in the post-deploy battery — the existing 13-GET smoke passed
+> throughout every one of the failures above.
 
 | Area | State |
 |---|---|
-| Deployed | **v0.21.0**, all 6 binaries, services active, schema **122 clean**. Main is 12 commits ahead — 11 docs + **`06ff3b5e` (sep41 ops-verify statement_timeout fix, NOT yet deployed)** |
+| **Explorer** | 🔴 **21/94 GET routes 503** — whole tier dark. One-line fix dry-run verified, ATTENDED (§2.4) |
+| **Balances** | 🔴 **C2-4c live**: ~38% of sampled accounts serve a before-image. Ordinal re-derive → D3 → re-verify (§2.3.1) |
+| **Claimable** | 🟡 Seed LIVE-RUNNING (3.6M balances / 30,748 assets). Then re-run both reconciliations |
+| **Eviction** | 🔴 Not ingested at all; archived contract_data reads as live (PHO +157%) [DECIDE] |
+| Deployed | **v0.21.1** (cut + deployed 2026-07-27, all 6 binaries, edge smoke 13/13, `-ch` copy done). Main is ahead with **v0.21.2 material NOT yet deployed**: sep41 projector wiring `ae7a082d`, redstone registry `9bfcf5da`, SAC seed windowing `7bede7e7`, claimable seed `120bf7c3` |
 | Lake | Dedup complete; post-dedup completeness re-audit PASSED; CH ingest at tip (lag seconds) |
-| Galexie trim | Done + verified; cold reads OK. **Soak 4× PASS / 0 FAIL**; snapshot `data/minio@pre-trim-2026-07-26` held (3.2 T) |
+| Galexie trim | Done + verified; cold reads OK. **Soak 7× PASS / 0 FAIL** (needs ≥8 AND after 2026-07-28 17:00); snapshot `data/minio@pre-trim-2026-07-26` held (3.2 T) |
 | D-series | D1 ✅, D2 ✅ (all partitions, 2026-07-23), CAGG re-mat ✅ ("ALL CAGG REMAT DONE" 2026-07-26). **D3: no run evidence on r1** — confirm need. **D4 NOT run** |
-| Supply | `account_observations` **frozen at 63,632,946** (lake tip 63,669,421); guard correctly refusing stale snapshots → **39 `supply_refresh_error_dominant` alerts**. Fix = D4 (§2.3). `seed-sep41-genesis` WAS run 2026-07-26 (overriding the 2026-07-07 "do not run" verdict — verify AQUA in §2.6) |
-| Completeness | 3 sources incomplete: `sep41_supply` + `sep41_transfers` (blocked on deploying 06ff3b5e) and **`redstone` — NEW, undiagnosed**: projection blind on 866 ledgers from 63,661,715, "undecodable-but-matched", started ≈ the v0.21.0 deploy window (§2.4) |
+| Supply | REFRAMED — see the four blockers above; the 39 alerts decompose into the sep41 wiring bug (fixed, pending deploy) + a too-tight dormancy horizon [DECIDE], NOT a stall. Historical note: `account_observations` **frozen at 63,632,946** (lake tip 63,669,421); guard correctly refusing stale snapshots → **39 `supply_refresh_error_dominant` alerts**. Fix = D4 (§2.3). `seed-sep41-genesis` WAS run 2026-07-26 (overriding the 2026-07-07 "do not run" verdict — verify AQUA in §2.6) |
+| Completeness | All 3 ROOT-CAUSED + fixed in code 2026-07-27, pending the v0.21.2 deploy. sep41 ×2 = a 14-day ZERO-WRITER wiring hole (rebuilds cut mismatches 249,436→891 and 652, residual = post-rebuild tail only). redstone = upstream relayer added 11 feed_ids on 2026-07-24, NOT a regression; needs replay from 63,624,934 |
 | Alerts | Above, plus `dex_nonstandard_decimals_detected` ×5 (informational — genuine non-7dp aquarius C-tokens, working as designed) + deadmansswitch (by design) |
-| GH secrets | Deploy + Cloudflare + `R1_INVENTORY_B64` ✅ present. `ANSIBLE_VAULT_PASSWORD` / `ANSIBLE_VAULT_FILE_B64` **absent** |
+| GH secrets | Deploy + Cloudflare + `R1_INVENTORY_B64` ✅. `ANSIBLE_VAULT_PASSWORD` / `ANSIBLE_VAULT_FILE_B64` ✅ set 2026-07-27 (drift now runs) |
 | **Vault password** | ✅ **REBUILT + ROTATED 2026-07-27.** The old password (clobbered 2026-07-25 by a locally-run CI syntax step) was unrecoverable, so the vault was rebuilt from live r1 rendered values (26 keys; secret-template re-render proven byte-identical), encrypted under a NEW operator-held passphrase, pass file locked (`chflags uchg`), CI clobber-path guarded (2a23698e). Fresh creds generated for not-yet-deployed components (patroni ×2, CH serving profile, pgbackrest repo2 cipher, core placeholder); repo1 cipher + webhook keys empty matching live. Old vault kept as `.lost-password-2026-07-27`. GH secrets `ANSIBLE_VAULT_PASSWORD`/`ANSIBLE_VAULT_FILE_B64` set |
 | Config drift | ✅ **GREEN 2026-07-27** (run 7) — apply landed, baseline 3→1, §1 gate CHECKED. History below: ✅ **`ansible-drift` FUNCTIONAL again** (first complete verdict since the rotation, 2026-07-27): `ok=243 changed=69 failed=0`. Three check-mode bugs fixed en route (timer-enables on unitless hosts e5edb17a/10802588; version-probe skip 2309f4d0 — which also proved the galexie drift-guard constants ALREADY agree, closing that "open operator action"). The red verdict is now REAL drift: **69 changed tasks = the pending config apply** (grown from the "33-task" estimate; incl. archivewriter cred fix, captive-core 18-validator quorum — 24 still live, triangulation chains, z=5.0, cold-tier render, postgres conf, ownership flips, timescale-jobs-probe + CH schema-snapshot units). Apply is §2.2 step 3, [ATTENDED] — service restarts incl. galexie (~1–3 min tip pause) + postgres |
 | Deploy gate | `DEPLOY_APPROVAL_RELAXED=true` still set — **re-arm at launch** (§2.7) |
 | Feeds | `COINGECKO_API_KEY` **not set** (feed dead since 2026-06-19, [OP]). `min_usd_volume=10000` since 2026-07-01 (older docs claiming 0 are stale) |
-| Paging | 🔴 **NOT wired** (corrected 2026-07-27 — the env files exist but every value is EMPTY: 5× `HEALTHCHECKS_URL_*`, `HEALTHCHECKS_DEADMANSSWITCH_URL`, `SLACK_WEBHOOK_URL` all blank; only the node-level `HEALTHCHECK_PING_URL` is populated). Alert pages currently route to nobody — the original [OP] item stands: create Healthchecks.io checks + chat webhooks, paste URLs into `/etc/default/stellarindex-healthchecks` + `/etc/default/alertmanager-secrets` (then codify in the vault), rerun `pre-launch-check.sh` |
+| Paging | 🔴 **NOT wired** — now TURNKEY via [runbooks/wire-paging.md](runbooks/wire-paging.md) (~20 min, [OP]); a silent-failure trap in the secrets file was fixed 2026-07-27. Baseline `pre-launch-check.sh` = 4 FAILs, 0 is the acceptance test. Original detail: (corrected 2026-07-27 — the env files exist but every value is EMPTY: 5× `HEALTHCHECKS_URL_*`, `HEALTHCHECKS_DEADMANSSWITCH_URL`, `SLACK_WEBHOOK_URL` all blank; only the node-level `HEALTHCHECK_PING_URL` is populated). Alert pages currently route to nobody — the original [OP] item stands: create Healthchecks.io checks + chat webhooks, paste URLs into `/etc/default/stellarindex-healthchecks` + `/etc/default/alertmanager-secrets` (then codify in the vault), rerun `pre-launch-check.sh` |
 | ADRs | 0040–0048 ALL Accepted (incl. **ADR-0042 v1 wire shape** — the old "biggest unsigned gate" is resolved). hashdb wired but `enabled=false` on r1 |
 
 ## 1. Go-live gate (all must be true)
