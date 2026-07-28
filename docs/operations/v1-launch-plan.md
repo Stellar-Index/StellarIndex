@@ -105,6 +105,34 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~19:35Z — 🔁 **Session restart recovery (PC reboot killed the
+  ~13:40Z session) + three items closed.**
+
+  Recovery was lossless via this file, as designed: cron guard re-armed
+  (hourly), D3 completion monitor re-armed (the old one died with the
+  session), services all active, D3 healthy — but slower than estimated:
+  54.9M/63.68M at 19:15Z (~23 windows left, revised ETA **~01:30Z**).
+
+  1. ✅ **Soak gate EXECUTED** (§2.5): 10 PASS / 0 FAIL past the 17:00Z
+     deadline → snapshot destroyed, timer disabled. Time+evidence gate,
+     no operator needed per contract.
+  2. ✅ **The never-run CS-102 regression tests are now RUN — with a full
+     red/green proof.** The dead session left the two storage files with
+     the defect deliberately re-introduced (`PROBE(temporary)` markers) —
+     an in-flight red-proof. Completed it: against the re-introduced
+     defect both tests FAIL with precise diagnostics ("quiet asset anchor
+     = 1000, want 5000 (the observer watermark)"); restored the fix →
+     both PASS. The tests demonstrably guard the defect class, not just
+     the happy path. Tree clean.
+  3. ✅ **Pre-deploy route-sweep baseline re-captured**: ok=36
+     client_4xx=37 **server_5xx=21** — byte-consistent with the known
+     explorer outage (INBOX #1). This is the "before" for the
+     post-deploy acceptance run.
+
+  Next: parallel verification work while D3 runs; on D3 completion (the
+  monitor fires) → the deferred 50-account reconcile-balances baseline
+  uncontended, then D3 acceptance checks.
+
 - 2026-07-28 ~13:40Z — 🛑 **DECIDED (auto, revertible): stop adding
   behaviour-changing code to v0.21.2; shift to verification + evidence.**
 
@@ -1734,7 +1762,18 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
   hardening = distinct "registry stale" signal (post-v1).
 - sep41 completeness 40-min count perf (non-blocking follow-up).
 
-### 2.5 Soak close-out (timed gate — READ THE TIMEZONE NOTE)
+### 2.5 ✅ Soak close-out — EXECUTED 2026-07-28 19:17Z
+
+**Gate met and executed by the loop** (per the auto-executable contract):
+10 PASS / 0 FAIL at 19:16Z (> 17:00 UTC), re-confirmed at execution time.
+`data/minio@pre-trim-2026-07-26` destroyed (0 pre-trim snapshots remain);
+`galexie-soak-check.timer` disabled + removed. Pool free 3.60 T (reclaim
+lands asynchronously as ZFS frees the snapshot's unique blocks). Rollback
+for cold-tier issues is now rehydrate-only (needs §2.2's archivewriter
+cred fix — one more reason INBOX #1's ansible window matters).
+
+<details><summary>(original gate text, for the record)</summary>
+
 
 > ⚠️ **Interpret the deadline as 2026-07-28 17:00 UTC (= 19:00 CEST on
 > r1), i.e. the LATER reading.** The original wording said "17:00" with
@@ -1757,6 +1796,7 @@ If `grep -c FAIL /var/log/galexie-soak.log` = 0 and ≥8 PASS:
 `zfs destroy data/minio@pre-trim-2026-07-26` (reclaims 1.07 T) +
 `systemctl disable --now galexie-soak-check.timer`. Any FAIL → investigate
 cold tier; rehydrate needs 2.2's archivewriter fix first.
+</details>
 
 ### 2.6 Prove correctness (Phase E — the go-live evidence pack)
 Run the confidence-campaign E-gate end to end and FILE the artifacts:
