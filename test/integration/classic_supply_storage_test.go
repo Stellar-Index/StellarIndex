@@ -260,3 +260,62 @@ func insertSAC(t *testing.T, ctx context.Context, store *timescale.Store, contra
 		t.Fatalf("InsertSACBalance %s/%s@%d: %v", contractID, holder, ledger, err)
 	}
 }
+
+// TestClaimableSameLedgerTieBreak pins the read-path tie-break added
+// 2026-07-28. Two rows can share a (claimable_id, ledger): an ops seed
+// stamps SeedIntraLedgerSeq (MaxUint32, "authoritative reconstructed final
+// state") while the live observer writes the real per-ledger ordinal. They
+// do NOT collide on the natural key when observed_at differs, so both rows
+// persist and the DISTINCT ON must choose deterministically.
+//
+// Before the fix the readers ordered by `ledger DESC` alone and the pick was
+// left to the planner — the same shape as audit C2-4c, where a tie between a
+// `state` before-image and its `updated` after-image serves whichever the
+// engine happens to keep. The seed row must win: it reconstructs the
+// ledger's FINAL state, so it belongs at the end of the intra-ledger order.
+func TestClaimableSameLedgerTieBreak(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const (
+		asset = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		cbID  = "cb-tie-break"
+		ledg  = uint32(63_400_000)
+	)
+	base := time.Date(2026, 7, 28, 4, 0, 0, 0, time.UTC)
+
+	// Live-observer row: a real, small within-ledger ordinal.
+	if err := store.InsertClaimableObservation(ctx, timescale.ClaimableObservation{
+		ClaimableID: cbID, AssetKey: asset, Ledger: ledg,
+		ObservedAt: base, Balance: big.NewInt(111), IntraLedgerSeq: 5,
+	}); err != nil {
+		t.Fatalf("insert live-style row: %v", err)
+	}
+
+	// Seed row at the SAME ledger, different observed_at so it is a distinct
+	// natural key rather than an upsert of the row above.
+	if err := store.InsertClaimableObservation(ctx, timescale.ClaimableObservation{
+		ClaimableID: cbID, AssetKey: asset, Ledger: ledg,
+		ObservedAt: base.Add(time.Second), Balance: big.NewInt(999),
+		IntraLedgerSeq: timescale.SeedIntraLedgerSeq,
+	}); err != nil {
+		t.Fatalf("insert seed-style row: %v", err)
+	}
+
+	got, err := store.SumClaimableBalancesAtOrBefore(ctx, asset, ledg)
+	if err != nil {
+		t.Fatalf("SumClaimableBalancesAtOrBefore: %v", err)
+	}
+	if got.Cmp(big.NewInt(999)) != 0 {
+		t.Fatalf("same-ledger tie resolved to %s, want 999 (the SeedIntraLedgerSeq row) — the read path is ordering by ledger alone", got)
+	}
+}
