@@ -1261,6 +1261,12 @@ func (a supplyAggregatorStoreLookup) LatestAccountObservationAtOrBefore(ctx cont
 	}, nil
 }
 
+// MaxAccountObservationLedger forwards the account-observer watermark used by
+// the XLM freshness gate (CS-102).
+func (a supplyAggregatorStoreLookup) MaxAccountObservationLedger(ctx context.Context, asOfLedger uint32) (uint32, error) {
+	return a.s.MaxAccountObservationLedger(ctx, asOfLedger)
+}
+
 // supplyAggregatorChainReader is the same chained-fallback reader
 // pattern from internal/ops/supply/supply.go::supplyChainReader.
 // Inlined here because the aggregator is its own binary and we

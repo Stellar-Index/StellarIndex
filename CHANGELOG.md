@@ -81,6 +81,22 @@ against.
   63,300,828) and is NOT addressed here — it is materially minor.
 
 ### Fixed
+- **XLM supply freshness is anchored on the account observer's watermark
+  (CS-102, third leg).** `MinReserveAccountLedger` returned
+  `MIN(last observation)` across the configured SDF reserve accounts.
+  Those accounts move every few days-to-weeks by design, so the anchor
+  went stale while nothing was wrong, the gate read a stalled observer,
+  and XLM's served supply froze. The per-account probe is retained — every
+  configured reserve account must actually be observed, or the reserve
+  exclusion cannot be computed and the gate stays permissive — but the
+  freshness VALUE now comes from the observer watermark. With this, all
+  three supply algorithms (XLM, classic, SEP-41) anchor on producer
+  progress rather than per-entity activity.
+  `supply.AccountObservationLookup` gains `MaxAccountObservationLedger`;
+  it is a REQUIRED interface method rather than an optional
+  type-asserted one, because a missing delegate behind an optional
+  interface degrades silently to the old wrong anchor and looks exactly
+  like healthy operation.
 - **SEP-41 supply freshness is anchored on the producer's watermark too
   (CS-102 sibling).** `MinSEP41ComponentLedger` returned
   `MAX(ledger) WHERE contract_id = $1` — the contract's last

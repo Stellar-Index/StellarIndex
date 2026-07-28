@@ -13,6 +13,19 @@ import (
 type fakeLookup struct {
 	rows map[string]AccountObservationRow
 	err  error
+
+	// watermark is what the account OBSERVER has reached across all
+	// accounts — the CS-102 freshness anchor. Distinct from any row's
+	// Ledger on purpose: the tests assert the anchor tracks this and NOT
+	// the per-account minimum.
+	watermark uint32
+}
+
+func (f *fakeLookup) MaxAccountObservationLedger(_ context.Context, _ uint32) (uint32, error) {
+	if f.err != nil {
+		return 0, f.err
+	}
+	return f.watermark, nil
 }
 
 func (f *fakeLookup) LatestAccountObservationAtOrBefore(_ context.Context, accountID string, _ uint32) (AccountObservationRow, error) {
@@ -97,11 +110,14 @@ func TestLCMReserveBalanceReader_StoreError(t *testing.T) {
 	}
 }
 
-// TestLCMReserveBalanceReader_MinReserveAccountLedger_HappyPath —
-// returns MIN(row.Ledger) across the supplied accounts. F-1236
-// (codex audit-2026-05-12): closes the third leg of the supply-
-// snapshot freshness gate (the classic + SEP41 legs were shipped
-// in waves 17 + 18).
+// TestLCMReserveBalanceReader_MinReserveAccountLedger_HappyPath pins CS-102's
+// third leg: the anchor is the account OBSERVER's watermark, not the oldest
+// per-account observation.
+//
+// This test previously asserted the minimum (49,999,500 here). That was the
+// defect: SDF reserve accounts move every few days-to-weeks by design, so the
+// minimum goes stale while nothing is wrong, the gate reads a stalled
+// observer, and XLM's served supply freezes — which it was doing on r1.
 func TestLCMReserveBalanceReader_MinReserveAccountLedger_HappyPath(t *testing.T) {
 	r := NewLCMReserveBalanceReader(&fakeLookup{
 		rows: map[string]AccountObservationRow{
@@ -109,34 +125,41 @@ func TestLCMReserveBalanceReader_MinReserveAccountLedger_HappyPath(t *testing.T)
 			"GA2": {Balance: big.NewInt(200), Ledger: 49_999_500},
 			"GA3": {Balance: big.NewInt(300), Ledger: 50_000_100},
 		},
+		watermark: 50_000_900,
 	})
 	got, err := r.MinReserveAccountLedger(context.Background(), []string{"GA1", "GA2", "GA3"}, 50_001_000)
 	if err != nil {
 		t.Fatalf("MinReserveAccountLedger: %v", err)
 	}
-	if got != 49_999_500 {
-		t.Errorf("min=%d want 49_999_500 (GA2 oldest)", got)
+	if got == 49_999_500 {
+		t.Fatal("anchor regressed to the per-account MINIMUM — a quiet reserve " +
+			"account is not a stalled observer, and this freezes XLM supply")
+	}
+	if got != 50_000_900 {
+		t.Errorf("anchor=%d want 50_000_900 (observer watermark)", got)
 	}
 }
 
-// TestLCMReserveBalanceReader_MinReserveAccountLedger_RemovalContributes
-// — a removed-account observation IS the freshness signal for that
-// account (the AccountEntry-delete is the most-recent observation we
-// have). Pretending the removal didn't happen would over-state
-// freshness for an account that no longer exists.
-func TestLCMReserveBalanceReader_MinReserveAccountLedger_RemovalContributes(t *testing.T) {
+// TestLCMReserveBalanceReader_MinReserveAccountLedger_RemovalCounts — a
+// removed account still COUNTS as observed, so it does not force the
+// gate-permissive bypass; the AccountEntry-delete is a real observation. Its
+// ledger no longer sets the anchor though (CS-102): the observer watermark
+// does, so a long-ago removal cannot drag XLM's freshness backwards forever.
+func TestLCMReserveBalanceReader_MinReserveAccountLedger_RemovalCounts(t *testing.T) {
 	r := NewLCMReserveBalanceReader(&fakeLookup{
 		rows: map[string]AccountObservationRow{
 			"GA1": {Balance: big.NewInt(100), Ledger: 50_000_000},
-			"GA2": {IsRemoval: true, Ledger: 49_990_000}, // removal observation IS the signal
+			"GA2": {IsRemoval: true, Ledger: 49_990_000},
 		},
+		watermark: 50_000_900,
 	})
 	got, err := r.MinReserveAccountLedger(context.Background(), []string{"GA1", "GA2"}, 50_001_000)
 	if err != nil {
 		t.Fatalf("MinReserveAccountLedger: %v", err)
 	}
-	if got != 49_990_000 {
-		t.Errorf("min=%d want 49_990_000 (GA2 removal IS the freshness signal)", got)
+	if got != 50_000_900 {
+		t.Errorf("anchor=%d want 50_000_900 (watermark); a removed account must "+
+			"not pin freshness to its removal ledger forever", got)
 	}
 }
 
