@@ -105,6 +105,37 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~08:45Z — 🔗 **TTL filter WIRED into the SAC seed's
+  full-history path** (`sacSeedReducer.dropArchived`, called after the
+  window walk, before emit, judged at the lake's own tip).
+
+  **Confirmed it is the right path first.** `sac_balance_seed_provenance`
+  shows every existing seeded row came from **`full_history`**
+  (seeded_at 2026-07-27 16:04:50) — the exact path now filtered. The
+  ops command defaults to the OTHER path, so this was worth checking
+  rather than assuming.
+
+  `ClassifyTTLLiveness` now batches internally at 5,000 keys per IN list
+  — a whole-network seed resolves tens of thousands (USDC alone carries
+  48,505 seeded holders per the provenance table), which would not fit
+  one list.
+
+  **The current-state path (`StreamSACBalanceSeeds`) still has the gap,
+  and I did NOT fix it blind.** It streams row-by-row instead of reducing
+  to a key set, so filtering it wants a server-side join of ~586M
+  contract_data against ~586M ttl rows — heavy-job class, and the slot is
+  held by D3 for the rest of the day. Its doc comment claimed it returned
+  "live" entries; it never did, and that claim is now corrected in place.
+  **This is the SECOND doc-comment-vs-implementation gap found today**
+  (the first was `MinClassicComponentLedger` promising "the slowest
+  observer" while computing per-asset activity) — both were load-bearing
+  falsehoods that hid a real defect, which is worth treating as a search
+  pattern rather than a coincidence.
+
+  Honest status: unit-tested + query-validated, **not exercised
+  end-to-end** — re-running the seed is heavy-job class AND gated on the
+  OPERATOR INBOX #5 DELETE decision.
+
 - 2026-07-28 ~08:15Z — iteration close. **Soak gate: 8 PASS / 0 FAIL**
   (`/var/log/galexie-soak.log`, 18 sampled per run, 0 missing_in_cold, 0
   probe_errors). Evidence half MET; waiting only on the clock. Timer runs
