@@ -102,7 +102,7 @@ func (s *Store) SumTrustlineBalancesAtOrBefore(ctx context.Context, assetKey str
               FROM trustline_observations
              WHERE asset_key = $1
                AND ledger    <= $2
-             ORDER BY account_id, ledger DESC
+             ORDER BY account_id, ledger DESC, intra_ledger_seq DESC
           ) latest
          WHERE NOT is_removal
     `
@@ -258,6 +258,26 @@ func dedupeClaimableObservations(rows []ClaimableObservation) []ClaimableObserva
 	return out
 }
 
+// ─── Read-path tie-break (2026-07-28) ───────────────────────────────
+// Every DISTINCT ON reader below orders by `ledger DESC,
+// intra_ledger_seq DESC`, NOT ledger alone. Two rows can share a
+// (key, ledger): an ops seed stamps [SeedIntraLedgerSeq] (MaxUint32,
+// "authoritative reconstructed FINAL state for this ledger") while the
+// live observer writes the real per-ledger ordinal. Ordering on ledger
+// alone leaves that pick to the planner.
+//
+// The WRITE path already guards this — `claimableObservationUpsert` and
+// its siblings only overwrite when `intra_ledger_seq <= EXCLUDED` — so
+// the read path was the asymmetric half. That asymmetry is exactly the
+// shape of audit C2-4c, where `ReplacingMergeTree(ledger_seq)` ties
+// between a `state` before-image and its `updated` after-image and
+// serves whichever it happens to keep; that one is costing a full
+// ordinal re-derive. Fixing the cheap half here pre-emptively.
+//
+// Preferring the seed sentinel at equal ledger is correct by the seed's
+// own contract: it reconstructs the ledger's final state from the lake,
+// so it belongs at the END of the intra-ledger order.
+
 // SumClaimableBalancesAtOrBefore — same shape as
 // SumTrustlineBalancesAtOrBefore, keyed on claimable_id.
 func (s *Store) SumClaimableBalancesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error) {
@@ -269,7 +289,7 @@ func (s *Store) SumClaimableBalancesAtOrBefore(ctx context.Context, assetKey str
               FROM claimable_observations
              WHERE asset_key = $1
                AND ledger    <= $2
-             ORDER BY claimable_id, ledger DESC
+             ORDER BY claimable_id, ledger DESC, intra_ledger_seq DESC
           ) latest
          WHERE NOT is_removal
     `
@@ -338,7 +358,7 @@ func (s *Store) SumLPReservesAtOrBefore(ctx context.Context, assetKey string, as
               FROM lp_reserve_observations
              WHERE asset_key = $1
                AND ledger    <= $2
-             ORDER BY pool_id, ledger DESC
+             ORDER BY pool_id, ledger DESC, intra_ledger_seq DESC
           ) latest
          WHERE NOT is_removal
     `
@@ -419,7 +439,7 @@ func (s *Store) SumSACBalancesAtOrBefore(ctx context.Context, assetKey string, a
               FROM sac_balance_observations
              WHERE asset_key = $1
                AND ledger    <= $2
-             ORDER BY contract_id, holder, ledger DESC
+             ORDER BY contract_id, holder, ledger DESC, intra_ledger_seq DESC
           ) latest
          WHERE NOT is_removal
     `
@@ -443,7 +463,7 @@ func (s *Store) TrustlineBalanceForAccountAtOrBefore(ctx context.Context, accoun
          WHERE account_id = $1
            AND asset_key  = $2
            AND ledger    <= $3
-         ORDER BY ledger DESC
+         ORDER BY ledger DESC, intra_ledger_seq DESC
          LIMIT 1
     `
 	return scanLatestBalance(ctx, s.db, q, accountID, assetKey, int(asOfLedger))
@@ -464,7 +484,7 @@ func (s *Store) SACBalanceForContractAtOrBefore(ctx context.Context, contractHol
          WHERE holder    = $1
            AND asset_key = $2
            AND ledger   <= $3
-         ORDER BY ledger DESC
+         ORDER BY ledger DESC, intra_ledger_seq DESC
          LIMIT 1
     `
 	return scanLatestBalance(ctx, s.db, q, contractHolder, assetKey, int(asOfLedger))

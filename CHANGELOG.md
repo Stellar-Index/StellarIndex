@@ -81,6 +81,21 @@ against.
   63,300,828) and is NOT addressed here — it is materially minor.
 
 ### Fixed
+- **Supply readers now tie-break on `intra_ledger_seq`, not `ledger`
+  alone.** All five `DISTINCT ON` readers (trustline, claimable, LP
+  reserve, SAC balance, and the per-holder lookups) picked an arbitrary
+  row when two shared a `(key, ledger)` — which happens whenever an ops
+  seed's `SeedIntraLedgerSeq` sentinel row coexists with a live
+  observer's real ordinal at the same ledger. The WRITE path already
+  guarded this (the upserts only overwrite when
+  `intra_ledger_seq <= EXCLUDED`), so the read path was the asymmetric
+  half. Same shape as audit C2-4c, where `ReplacingMergeTree(ledger_seq)`
+  ties between a `state` before-image and its `updated` after-image and
+  serves whichever it kept — that one is costing a full ordinal
+  re-derive, so the cheap half is fixed pre-emptively here. Preferring
+  the seed sentinel at equal ledger is correct by the seed's own
+  contract: it reconstructs the ledger's FINAL state. Integration test
+  `TestClaimableSameLedgerTieBreak` constructs the tie explicitly.
 - **Claimable seed's bisection floor was too high for the airdrop era.**
   The first r1 dry-run bisected 250,000 → 15,625 ledgers and still
   exceeded the ClickHouse memory ceiling: a mass claimable-balance
