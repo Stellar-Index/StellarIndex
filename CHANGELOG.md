@@ -81,6 +81,28 @@ against.
   63,300,828) and is NOT addressed here — it is materially minor.
 
 ### Fixed
+- **Supply freshness is now anchored on the component OBSERVER's
+  watermark, not on the asset's last activity (CS-102).**
+  `MinClassicComponentLedger` took `MIN` over each component's
+  per-ASSET `MAX(ledger)`. These four observers are event-driven —
+  they write only when a balance CHANGES — so a per-asset maximum
+  answers "when did this asset last see activity here", which is not a
+  freshness signal: a quiet asset is not a stale asset. The gate read
+  that as a stalled producer and refused every subsequent snapshot,
+  freezing the asset's served supply. Latent for months because
+  `claimable_observations` was ~4% populated and the query's `NULLIF`
+  excluded the component; seeding claimable from lake history (30,753
+  assets) un-latented it and froze 37 of 48 watched assets within
+  hours — the only three still publishing were precisely the three
+  with live claimable activity. The anchor is now each component's
+  global `MAX(ledger)`, which is what the function's own doc comment
+  had always claimed it returned; a genuinely dead observer still
+  stops advancing across every asset, and an asset with no
+  observations anywhere still reports 0 so the gate is skipped rather
+  than blessing a zero-valued supply. The watermark is identical for
+  every asset, so it is memoized on the store for 30s — two orders of
+  magnitude tighter than the ~85-minute staleness threshold it feeds,
+  and ~55× cheaper than recomputing it per asset.
 - **Supply readers now tie-break on `intra_ledger_seq`, not `ledger`
   alone.** All five `DISTINCT ON` readers (trustline, claimable, LP
   reserve, SAC balance, and the per-holder lookups) picked an arbitrary

@@ -319,3 +319,90 @@ func TestClaimableSameLedgerTieBreak(t *testing.T) {
 		t.Fatalf("same-ledger tie resolved to %s, want 999 (the SeedIntraLedgerSeq row) — the read path is ordering by ledger alone", got)
 	}
 }
+
+// TestMinClassicComponentLedgerUsesObserverWatermark pins CS-102: the
+// freshness anchor must be the slowest component OBSERVER's watermark, not
+// the asset's last activity in that component.
+//
+// This reproduces the exact production shape from 2026-07-28. All four
+// observers are current (they have written at ledger ~5000 for SOME asset),
+// but the quiet asset's own last claimable event is ancient. That is the
+// normal, healthy state for a write-once entry type — nobody created or
+// claimed a claimable balance for that asset recently — and it must NOT read
+// as staleness.
+//
+// Before the fix, the query took MIN over per-ASSET MAX(ledger), so the quiet
+// asset's anchor was pinned to its ancient claimable row. The Refresher then
+// saw a lag past the dormancy horizon and refused every subsequent snapshot,
+// freezing the asset's served supply permanently. In production this froze 37
+// of 48 watched assets within hours of claimable_observations being seeded
+// from lake history; the only assets still publishing were the three that
+// happened to have live claimable activity.
+func TestMinClassicComponentLedgerUsesObserverWatermark(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const (
+		quiet  = "VELO:GDM4RQUQQUVSKQA7S6EM7XBZP3FCGH4Q7CL6TABQ7B2BEJ5ERARM2M5M"
+		lively = "AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+		absent = "NONE:GCNONEXISTENTASSETKEYFORUNINSTRUMENTEDCOVERAGECHECK000000"
+	)
+	t0 := time.Date(2026, 7, 28, 3, 0, 0, 0, time.UTC)
+
+	// Every observer is current: each has written at ledger 5000 for the
+	// lively asset. The quiet asset is fully observed too, EXCEPT its
+	// claimable activity stopped long ago at ledger 1000.
+	for _, a := range []string{quiet, lively} {
+		insertTrustline(t, ctx, store, "GA-"+a, a, 5000, 100, t0, false)
+		insertLPReserve(t, ctx, store, "pool-"+a, a, 5000, 100, t0, false)
+		insertSAC(t, ctx, store, "C-"+a, "holder", a, 5000, 100, t0, false)
+	}
+	insertClaimable(t, ctx, store, "cb-live", lively, 5000, 100, t0, false)
+	insertClaimable(t, ctx, store, "cb-old", quiet, 1000, 100, t0.Add(-time.Hour), false)
+
+	got, err := store.MinClassicComponentLedger(ctx, quiet, 10_000)
+	if err != nil {
+		t.Fatalf("MinClassicComponentLedger(quiet): %v", err)
+	}
+	if got != 5000 {
+		t.Errorf("quiet asset anchor = %d, want 5000 (the observer watermark). "+
+			"Got 1000 => the query regressed to per-asset last-activity, which "+
+			"freezes any asset without recent claimable activity.", got)
+	}
+
+	// A genuinely stalled observer must STILL be caught: roll the other three
+	// observers forward and leave claimable behind across every asset.
+	for _, a := range []string{quiet, lively} {
+		insertTrustline(t, ctx, store, "GA-"+a, a, 9000, 100, t0.Add(time.Hour), false)
+		insertLPReserve(t, ctx, store, "pool-"+a, a, 9000, 100, t0.Add(time.Hour), false)
+		insertSAC(t, ctx, store, "C-"+a, "holder", a, 9000, 100, t0.Add(time.Hour), false)
+	}
+	got, err = store.MinClassicComponentLedger(ctx, lively, 10_000)
+	if err != nil {
+		t.Fatalf("MinClassicComponentLedger(stalled): %v", err)
+	}
+	if got != 5000 {
+		t.Errorf("stalled-observer anchor = %d, want 5000 (claimable's watermark "+
+			"holds the MIN down) — stall detection must survive the fix", got)
+	}
+
+	// An asset with no observations anywhere stays uninstrumented (0), so the
+	// caller skips the gate rather than publishing a zero supply behind a
+	// healthy-looking anchor.
+	got, err = store.MinClassicComponentLedger(ctx, absent, 10_000)
+	if err != nil {
+		t.Fatalf("MinClassicComponentLedger(absent): %v", err)
+	}
+	if got != 0 {
+		t.Errorf("uninstrumented asset anchor = %d, want 0", got)
+	}
+}

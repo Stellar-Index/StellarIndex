@@ -72,6 +72,18 @@ type Store struct {
 	// entry point stamps a generation but forgets to enter USD-volume-resolution
 	// mode (A-CRIT-1). Set only by InstallUSDVolumeResolution.
 	usdVolumeResolutionInstalled bool
+
+	// classicWatermark memoizes the classic-supply observer watermark
+	// read by [Store.MinClassicComponentLedger] (CS-102). The watermark
+	// is a property of the four OBSERVERS, not of any one asset, so it
+	// is identical for every asset in a refresh tick — recomputing it
+	// per asset made a 48-asset tick take minutes (four MAX(ledger)
+	// scans across every hypertable chunk, 48 times over).
+	//
+	// Cached for [classicWatermarkTTL], which is far shorter than the
+	// 1000-ledger (~85 min) staleness threshold it feeds, so the cache
+	// can never be the reason a stall goes unnoticed.
+	classicWatermark classicWatermarkCache
 }
 
 // SetUSDVolumeQuoteSpec installs the operator-configured quote-asset
