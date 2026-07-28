@@ -105,6 +105,28 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~13:40Z — 🛑 **DECIDED (auto, revertible): stop adding
+  behaviour-changing code to v0.21.2; shift to verification + evidence.**
+
+  26 behaviour-changing commits are already queued behind ONE undeployed
+  release, several of which change what the API serves. Every further fix
+  I add enlarges a blast radius that nobody has yet exercised against r1.
+  Past some point "more fixes" stops reducing risk and starts adding it,
+  and I judge we are past it. Remaining supply/eviction work is either
+  parked on an operator DECISION (INBOX #5) or needs the heavy slot, so
+  nothing on the critical path is being starved by this.
+
+  Reversible: if a genuine blocker surfaces, it still gets fixed. This is
+  about not shipping opportunistic improvements in the same tag as a
+  supply-semantics change.
+
+  **Executing instead: run the regression tests I WROTE TODAY BUT NEVER
+  RAN.** `TestMinClassicComponentLedgerUsesObserverWatermark` and
+  `TestMinSEP41ComponentLedgerUsesObserverWatermark` are build-tagged
+  `integration`; I only ever `go vet`-ed them. A test that has never
+  executed is not evidence — it is a claim. Running them now against real
+  TimescaleDB via testcontainers.
+
 - 2026-07-28 ~13:35Z — 🚀 **v0.21.2 DEPLOY PLAN — written now, because
   this is a much bigger deploy than a patch tag suggests: 26
   behaviour-changing commits, several of which change what the API
