@@ -105,6 +105,40 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~08:10Z — 🛠️ **TTL-liveness mechanism IMPLEMENTED + validated
+  against r1** (`internal/storage/clickhouse/ttl_liveness.go`).
+  `ClassifyTTLLiveness` resolves each entry key to LIVE / ARCHIVED /
+  UNKNOWN.
+
+  It reads **`ledger_entries_current`**, not the raw change log — that
+  table already holds 586,012,567 deduped `ttl` entries (≈1:1 with its
+  586,390,435 contract_data), so liveness is a bounded lookup instead of
+  a scan over all 1.15B TTL changes. Deliberately did NOT run the full
+  586M×586M blast-radius join while the D3 reproject is writing to
+  ClickHouse; that quantification waits for the heavy slot.
+
+  **Validated end-to-end at the query level**: the exact generated SQL,
+  run against `ledger_entries_current`, returned live_until values
+  identical to the ones derived independently from the raw change log —
+  `0a4970…` 56,252,151 (archived), `eb2333…` 54,431,750 (archived),
+  `3b1c75…` 66,771,588 (live). Two sources, same answers.
+
+  **Fails OPEN by construction.** A key with no TTL row, an undecodable
+  key, or a TTLEntry whose decoded length is not exactly 48 bytes all
+  return `TTLUnknown`, and the contract is that callers KEEP those.
+  Dropping an entry merely because we failed to resolve it would
+  understate supply — the same class of error as the phantom balances
+  this removes, but far harder to notice than a residual over-count.
+  Only a positive, parsed, lapsed `liveUntilLedgerSeq` justifies
+  exclusion. Unit tests pin that guard, the sha256-over-DECODED-bytes
+  derivation (hashing the base64 TEXT instead fails silently — every
+  lookup just misses and the filter degrades to a no-op that reads as
+  "nothing archived"), and the byte offsets.
+
+  **Honest scope: this is the MECHANISM, not yet the fix.** It is not
+  wired into `sac_balance_seed.go`, and no phantom row has been removed.
+  Wiring + re-seed is gated on the OPERATOR INBOX #5 DELETE decision.
+
 - 2026-07-28 ~07:55Z — ✅ **EVICTION HYPOTHESIS PROVEN AGAINST THE LAKE —
   the TTL join works and the fix mechanism is validated.** No longer an
   inference from "Horizon disagrees"; it is now read directly from data
