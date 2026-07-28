@@ -105,6 +105,35 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~12:20Z — 🔎 **Swept every current-state reader of
+  `contract_data` for the archived-entry class; found and fixed one more**
+  (`3bbb5085`). The SAC seed was not the only exposure, and I checked
+  rather than assumed.
+
+  | reader | entry types | archived-entry risk |
+  |---|---|---|
+  | `asset_supply_reader` | trustline | none — classic entries have no TTL |
+  | `account_state_reader` | account / offer / trustline | none — same |
+  | `liquidity_pool_state_reader` | liquidity_pool | none — same |
+  | `token_decimals_reader` | **contract_data** | **none in practice** — decimals are immutable, so an archived read still returns the right value |
+  | `soroswap_pair_state_reader` | **contract_data** | **REAL — fixed** |
+
+  Only Soroban `contract_data` / `contract_code` carry TTLs, so the classic
+  readers cannot be affected at all. `TokenDecimals` reads a value that
+  never changes, so staleness does not change the answer. **The one that
+  mattered was Soroswap pair reserves**: a dead pool's final reserves were
+  served as CURRENT depth. Archived pairs are now absent — which is already
+  that reader's honest signal for "reserves unavailable", and its callers
+  never read absence as zero.
+
+  Also re-armed the D3 completion monitor: `TaskList` came back EMPTY, so
+  the earlier one had expired despite `persistent: true` and I would have
+  missed the reproject finishing. Worth checking TaskList rather than
+  assuming a monitor is still alive.
+
+  Soak now **9 PASS / 0 FAIL** — evidence well past the bar, waiting only
+  on the 17:00Z clock.
+
 - 2026-07-28 ~11:55Z — 📊 **D3 baseline: PARTIAL (8/50) but encouraging —
   and it points at the ordinal re-derive, not D3, as the fix.**
 
