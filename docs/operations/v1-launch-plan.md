@@ -724,7 +724,14 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
     **Watch on the first live run** (author-flagged residuals): (1)
     resident memory — now measured, see above; (2) the seed lands rows at TRUE historical ledgers, creating
     ~290 new 7-day chunks on `claimable_observations` — harmless but
-    it moves the `max_locks` math (see that memory); (3) ✅ CLEARED — checked r1:
+    it moves the `max_locks` math — ✅ CHECKED 2026-07-28:
+    `max_locks_per_transaction` is already **4096** and the table has
+    only 4 chunks on a 7-day interval, so the ~570 chunks the historical
+    span will create are affordable. Tightest case is a 2,000-row batch
+    whose rows are emitted in KEY order (so their `observed_at` are
+    unrelated and can touch many chunks at once) — still inside 4096,
+    and the upsert is idempotent so a failed batch is re-runnable;
+    (3) ✅ CLEARED — checked r1:
     **zero** compression jobs on `claimable_observations`, so the
     seed's inserts cannot hit compressed chunks. Out of scope + still open: the identical
     never-seeded gap on `lp_reserve_observations`.
