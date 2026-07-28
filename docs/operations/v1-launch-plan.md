@@ -27,6 +27,20 @@ severity: P1
 > Loop contract: no mid-loop questions to Ash. Everything needing an operator
 > lands here with context + recommendation + what was done meanwhile.
 
+### ⭐ Ash: do these in this order (everything else below is FYI)
+
+| # | Item | Why it is first | Effort |
+|---|---|---|---|
+| 1 | **Flip `stellarindex_clickhouse_serving_enabled: true`** (§2.4) | The explorer is DOWN — 21/94 routes 503, user-visible on stellarindex.io. One-line change, dry-run verified, but it restarts all 3 services so it wants a human watching | ~10 min, ATTENDED |
+| 2 | **Decide the supply-guard dormancy horizon** (below) | SOLE cause of a **0% supply-refresh success rate** — every served supply value is frozen, so the 3.69M-row claimable fix cannot reach the API | decision only |
+| 3 | **Wire paging** — [runbooks/wire-paging.md](runbooks/wire-paging.md) | Alerts currently route to NOBODY; the first-24h watch would be blind | ~20 min |
+| 4 | **Book the external security review** | Longest lead time of anything remaining — start it now even if other work continues | one email |
+| 5 | **Decide PHO / Soroban eviction** (§2.4): interim TTL filter vs real eviction ingest | PHO serves +157%; the class also affects every current-state reader | decision only |
+
+Lower priority / no rush: CoinGecko Pro key, off-site backup decision,
+accepted-risk sign-off, IP-rotation + SSH CIDR, announcement copy,
+the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
+
 - **[OP-standing]** The §3 register items all stand (paging wiring 2b is the
   most launch-critical). Nothing new requires a decision yet.
 - **[DECIDE-new] Anomaly-freeze pages on CORRECT prices (thin FX crosses).**
