@@ -94,6 +94,15 @@ against.
   63,300,828) and is NOT addressed here — it is materially minor.
 
 ### Fixed
+- **The SAC seed's CURRENT-STATE path now drops archived Soroban entries
+  too.** Only the full-history path was filtered initially, on the reading
+  that filtering a streaming reader would need a server-side join of ~586M
+  contract_data against ~586M ttl rows. That was wrong: the reader already
+  narrows to WATCHED `Balance(Address)` keys in Go, so only that tiny
+  fraction ever needs resolving. Matched seeds are now buffered in bounded
+  batches and passed through `ClassifyTTLLiveness` before emission — same
+  fail-open contract as the full-history path, no join, and memory stays
+  bounded on a network-wide scan. Both seed paths now agree.
 - **The explorer's static export now waits out a 429 instead of failing
   the build.** A launch-rehearsal export died on HTTP 429 from our own
   rate limiter, having burned all 5 transport attempts in ~10s of linear
