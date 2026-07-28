@@ -89,6 +89,22 @@ severity: P1
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~06:30Z — **ordinal re-derive VERIFIED WORKING on the first
+  completed chunk**, checked early rather than after the full 2.6 h.
+  Reading `ledger_entry_changes FINAL` over [63,050,000, 63,050,200]:
+  **969,427 of 969,992 rows (99.9%) now carry a non-zero
+  `intra_ledger_seq`**; an untouched control band [63.30M, 63.31M) is
+  still **0%**. The ~565 remaining zeros are legitimate — the FIRST
+  change in each ledger genuinely has ordinal 0.
+  *Read it with FINAL.* A non-FINAL count over the same chunk showed
+  only 53.5%, because the re-derived rows and the originals coexist as
+  unmerged ReplacingMergeTree parts until a background merge collapses
+  them by `ingested_at`. That is the tool working as designed, not a
+  half-finished job — but it would read as one.
+  This unblocks D3: its composite version
+  `(ledger_seq << 32) | intra_ledger_seq` can now actually discriminate
+  a `state` before-image from its `updated` after-image in this band.
+
 - 2026-07-28 ~06:05Z — **ordinal re-derive: first attempt OOM-KILLED, retuned from measurement, now running.** `-parallel 4` with the DEFAULT `-flush-every 500` was killed at the 20 G cap **22 seconds in** (4 workers x 500 buffered Soroban-era ledgers). Measured 1 worker @ flush-every=100 = **2.8 GB**, so retried at `-parallel 3 -flush-every 100` → **6.7 GB steady**, matching the 8.4 G prediction. Also CHUNKED into ~110k-ledger pieces (`scripts/ops/ordinal-rederive-chunks.sh`) because ch-backfill has NO resume — a multi-hour single run that dies loses everything, whereas each chunk is durable and idempotent. Original note:
 - 2026-07-28 ~05:40Z — ordinal re-derive STARTED for [63.0M, 63.55M)
   (`ch-backfill`), first step of
