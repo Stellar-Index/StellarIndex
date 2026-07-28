@@ -923,3 +923,93 @@ func TestSEP41SupplyRollup_LargeI128(t *testing.T) {
 		t.Errorf("rollup+delta mint = %s, want %s — i128 truncated across the checkpoint boundary", got.Mint, want)
 	}
 }
+
+// TestMinSEP41ComponentLedgerUsesObserverWatermark is the SEP-41 half of
+// CS-102: the freshness anchor must track the supply-event PRODUCER's
+// progress, not one contract's last mint/burn.
+//
+// This bit harder than the classic case. 40 of 48 watched assets are
+// C-address SEP-41 tokens that never touch the classic component tables, so
+// this path froze the MAJORITY of served supply. Measured on r1 2026-07-28:
+// producer watermark 63,671,020, frozen contracts 46k-169k ledgers behind it,
+// and the one asset still publishing had a last event landing exactly ON the
+// watermark.
+//
+// The old behaviour was also perverse in a way worth pinning: a contract with
+// NO events returned 0 and skipped the gate entirely, so it kept publishing —
+// while a contract that merely went quiet froze. The anchor penalised exactly
+// the contracts we had data for. Both cases are asserted below.
+func TestMinSEP41ComponentLedgerUsesObserverWatermark(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const (
+		quiet  = "CBEM2CAIYLM3HBOPU5HLQL7V5BUAKM3N77DYQKX4FNHTQLQUUD2ZFBOX"
+		lively = "CB23WRDQWGSP6YPMY4UV5C4OW5CBTXKYN3XEATG7KJEZCXMJBYEHOUOV"
+		silent = "CAFD2IS6FEBUXWHAOH3G5LM4LMXIHVH6LAYRHUPYUU62NXH3I4TUCI2C"
+	)
+	t0 := time.Date(2026, 7, 28, 8, 0, 0, 0, time.UTC)
+
+	mint := func(contract string, ledger uint32, tx string) {
+		t.Helper()
+		if err := store.InsertSEP41SupplyEvent(ctx, timescale.SEP41SupplyEvent{
+			ContractID:   contract,
+			Ledger:       ledger,
+			TxHash:       tx,
+			OpIndex:      0,
+			ObservedAt:   t0,
+			Kind:         timescale.SEP41EventMint,
+			Amount:       big.NewInt(1_000_000),
+			Counterparty: "GA1",
+		}); err != nil {
+			t.Fatalf("InsertSEP41SupplyEvent %s@%d: %v", contract, ledger, err)
+		}
+	}
+
+	// The producer has reached ledger 9000 (via the lively contract). The
+	// quiet contract's own last event is far behind — normal for a token
+	// whose supply simply hasn't moved.
+	mint(quiet, 1000, "2200000000000000000000000000000000000000000000000000000000000001")
+	mint(lively, 9000, "2200000000000000000000000000000000000000000000000000000000000002")
+
+	got, err := store.MinSEP41ComponentLedger(ctx, quiet, 10_000)
+	if err != nil {
+		t.Fatalf("MinSEP41ComponentLedger(quiet): %v", err)
+	}
+	if got != 9000 {
+		t.Errorf("quiet contract anchor = %d, want 9000 (producer watermark). "+
+			"Got 1000 => regressed to per-contract last activity, which freezes "+
+			"every SEP-41 token whose supply has not recently changed.", got)
+	}
+
+	// A contract with no events at all stays uninstrumented (0) so the caller
+	// skips the gate — unchanged from before, and asserted so the fix cannot
+	// silently start publishing a zero-valued supply behind a live anchor.
+	got, err = store.MinSEP41ComponentLedger(ctx, silent, 10_000)
+	if err != nil {
+		t.Fatalf("MinSEP41ComponentLedger(silent): %v", err)
+	}
+	if got != 0 {
+		t.Errorf("contract with no events anchor = %d, want 0 (gate skipped)", got)
+	}
+
+	// asOfLedger must still bound the watermark: replaying history must not
+	// be handed a future producer position.
+	got, err = store.MinSEP41ComponentLedger(ctx, quiet, 5_000)
+	if err != nil {
+		t.Fatalf("MinSEP41ComponentLedger(historical): %v", err)
+	}
+	if got != 1000 {
+		t.Errorf("anchor at asOf=5000 = %d, want 1000 — the watermark must be "+
+			"clamped to asOfLedger, not read at the live tip", got)
+	}
+}

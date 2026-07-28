@@ -84,6 +84,12 @@ type Store struct {
 	// 1000-ledger (~85 min) staleness threshold it feeds, so the cache
 	// can never be the reason a stall goes unnoticed.
 	classicWatermark classicWatermarkCache
+
+	// sep41Watermark is the [classicWatermark] counterpart for the SEP-41
+	// supply-event producer, read by [Store.MinSEP41ComponentLedger].
+	// Separate cache because the two producers advance independently — one
+	// stalling must not be hidden behind the other's progress.
+	sep41Watermark classicWatermarkCache
 }
 
 // SetUSDVolumeQuoteSpec installs the operator-configured quote-asset

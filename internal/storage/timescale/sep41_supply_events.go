@@ -433,23 +433,70 @@ func parseSEP41Totals(mintRaw, burnRaw, clawbackRaw string) (SEP41KindTotals, er
 	return SEP41KindTotals{Mint: mint, Burn: burn, Clawback: clawback}, nil
 }
 
-// MinSEP41ComponentLedger returns MAX(ledger) of sep41_supply_events
-// rows for `contractID` at-or-before `asOfLedger`. There's only one
-// component-feeding table for SEP-41 supply (event sums), so the
-// "min across components" semantics reduce to just the table's max.
-// Zero when the contract has no events yet — gate-skip signal.
+// MinSEP41ComponentLedger returns how far the SEP-41 supply-event PRODUCER
+// has progressed at-or-before `asOfLedger` — the watermark across all
+// contracts, not this contract's own last event. There is only one
+// component-feeding table for SEP-41 supply (event sums), so the "min across
+// components" semantics reduce to that single producer's watermark.
+// Zero when the contract has no events at all — gate-skip signal.
 // F-1236 (codex audit-2026-05-12).
+//
+// CS-102 sibling (2026-07-28): this previously returned
+// `MAX(ledger) WHERE contract_id = $1`, i.e. the contract's last mint /
+// burn / clawback. That is activity, not freshness — a token whose supply
+// simply hasn't changed is not stale, but the gate read it as a stalled
+// producer and refused every snapshot, freezing the served supply.
+//
+// It is the same defect fixed in [Store.MinClassicComponentLedger], and it
+// bit HARDER here: 40 of 48 watched assets are C-address SEP-41 tokens that
+// never touch the classic component tables, so this path — not that one —
+// froze the majority. Measured on r1: watermark 63,671,020, while frozen
+// contracts sat 46k–169k ledgers behind it and the one asset still
+// publishing had a last event landing exactly ON the watermark.
+//
+// The perverse shape worth remembering: a contract with NO events returned
+// 0 and skipped the gate entirely, so it kept publishing — while a contract
+// that merely went quiet froze. The old anchor penalised precisely the
+// contracts we had data for.
+//
+// A genuinely stalled projector is still caught, because a dead producer
+// stops advancing the watermark for every contract at once.
 func (s *Store) MinSEP41ComponentLedger(ctx context.Context, contractID string, asOfLedger uint32) (uint32, error) {
-	const q = `
-		SELECT COALESCE(MAX(ledger), 0)
-		  FROM sep41_supply_events
-		 WHERE contract_id = $1 AND ledger <= $2
+	const instrumentedQ = `
+		SELECT EXISTS (SELECT 1 FROM sep41_supply_events
+		                WHERE contract_id = $1 AND ledger <= $2)
 	`
-	var ledger uint32
-	if err := s.db.QueryRowContext(ctx, q, contractID, int(asOfLedger)).Scan(&ledger); err != nil {
+	var instrumented bool
+	if err := s.db.QueryRowContext(ctx, instrumentedQ, contractID, int(asOfLedger)).Scan(&instrumented); err != nil {
 		return 0, fmt.Errorf("timescale: MinSEP41ComponentLedger %s@%d: %w", contractID, asOfLedger, err)
 	}
-	return ledger, nil
+	if !instrumented {
+		return 0, nil
+	}
+	return s.sep41ObserverWatermark(ctx, asOfLedger)
+}
+
+// sep41ObserverWatermark returns MAX(ledger) across ALL sep41_supply_events
+// at-or-before asOfLedger — the producer's progress.
+//
+// Memoized on the same terms as [Store.classicObserverWatermark]: the value
+// is identical for every contract in a refresh tick, and the TTL is far
+// tighter than the staleness threshold it feeds, so caching collapses
+// redundant reads without being able to mask a stall.
+func (s *Store) sep41ObserverWatermark(ctx context.Context, asOfLedger uint32) (uint32, error) {
+	c := &s.sep41Watermark
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.asOf == asOfLedger && !c.fetchedAt.IsZero() && time.Since(c.fetchedAt) < classicWatermarkTTL {
+		return c.ledger, nil
+	}
+	const q = `SELECT COALESCE(MAX(ledger), 0) FROM sep41_supply_events WHERE ledger <= $1`
+	var watermark uint32
+	if err := s.db.QueryRowContext(ctx, q, int(asOfLedger)).Scan(&watermark); err != nil {
+		return 0, fmt.Errorf("timescale: sep41ObserverWatermark@%d: %w", asOfLedger, err)
+	}
+	c.asOf, c.ledger, c.fetchedAt = asOfLedger, watermark, time.Now()
+	return watermark, nil
 }
 
 func parseSEP41Numeric(raw, label string) (*big.Int, error) {
