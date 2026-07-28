@@ -105,6 +105,39 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~10:35Z — 🔎 **Swept for the CS-102 bug CLASS, and closed the
+  monitoring gap that let it hide** (`22a8ac6d`).
+
+  Having found the same defect three times, I audited every other
+  freshness gate rather than assuming three was all of them. Five of the
+  six `data-freshness.sh` domains are CORRECT — oracle / fx / trades /
+  verdict / sep1 are keyed per PRODUCER, which is the right quantity, and
+  a poller that stops writing genuinely is broken.
+
+  **The sixth was the hole.** The `supply` domain measures
+  `max(time)` across the WHOLE `asset_supply_history` table with no
+  `GROUP BY`, so it only proves SOME asset is publishing. That is exactly
+  why 37 of 48 assets could freeze — some for over two weeks — with this
+  alert green the whole time: the handful of live assets kept the global
+  max current. **An aggregate cannot see a partial freeze.**
+
+  Added `stellarindex_supply_assets_stale` (count of assets with no
+  snapshot in >30 h) + `stellarindex_supply_asset_max_age_seconds`, as two
+  low-cardinality series rather than one per asset so the watched set can
+  grow. Alert in BOTH rule trees + runbook.
+
+  The runbook leads with the CS-102 triage shape — compare PRODUCER
+  watermarks against per-entity last activity before concluding a writer
+  is dead — and explicitly warns against "fixing" it by loosening the
+  dormancy horizon, since that hides the defect and republishes unverified
+  figures. It also carries this session's two measurement traps: read
+  counter DELTAS not since-boot totals, and scope per-entity probes with
+  an indexed predicate.
+
+  **The doc-lint chain earned its keep**: it failed the push on a missing
+  alerts-catalog entry AND an orphan runbook, both of which I had missed.
+  verify.sh green after fixing (exit 0 + marker).
+
 - 2026-07-28 ~10:05Z — ✅ **CS-102 SWEEP COMPLETE — all THREE supply
   algorithms fixed** (`aa0d08c2` closes the third leg).
 
