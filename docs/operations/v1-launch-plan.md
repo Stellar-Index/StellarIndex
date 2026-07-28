@@ -105,7 +105,29 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
-- 2026-07-28 ~19:35Z — 🔁 **Session restart recovery (PC reboot killed the
+- 2026-07-28 ~21:05Z — 📁 **Evidence pack STARTED (`evidence/`) + two
+  alert dispositions + D3 un-stalled verdict.**
+
+  1. **`docs/operations/evidence/` created** — index (gates → artifacts →
+     honest gap list) + 4 filed artifacts: route-sweep pre-deploy
+     baseline (full output this time, exit=21), soak-gate record,
+     CS-102 red/green proof, supply-vs-Horizon baseline with the 3 FAILs
+     dispositioned. Three plan generations called for these files; they
+     now exist.
+  2. **D3 is NOT stalled** — the hour-silent log alarmed me, but a live
+     132s INSERT into `ledger_entries_current_v2` was in flight; the
+     56M+ range is just much denser/slower per window. ETA slips past
+     01:30Z, likely well into the morning. Monitor remains armed.
+  3. **Two firing alerts are ONE known-pending item, not incidents:**
+     `config_assertion_failed` = `FAIL compression_policies_applied`,
+     and `timescale_compression_lag` is its downstream symptom — both
+     exist because `add-missing-compression-policies.sql` is sequenced
+     POST-D4 (§2.3.6). Considered pulling it forward (the backlog
+     grows), but PG compression IO shares the ZFS pool with D3's writes
+     and the sequencing decision was deliberate + recent — below my 70%
+     bar to override. Both alerts will stand until the §2.3 batch.
+  4. Root disk 80% (9.7G free) — watch-level; heavy-job guard trips at
+     <2G; durable fix remains operator item #64. — 🔁 **Session restart recovery (PC reboot killed the
   ~13:40Z session) + three items closed.**
 
   Recovery was lossless via this file, as designed: cron guard re-armed
@@ -1799,6 +1821,9 @@ cold tier; rehydrate needs 2.2's archivewriter fix first.
 </details>
 
 ### 2.6 Prove correctness (Phase E — the go-live evidence pack)
+**Artifacts now FILE under [`evidence/`](evidence/README.md)** (index
+started 2026-07-28 with 4 artifacts + the honest gap list — first time
+in three plan generations the files actually exist).
 Run the confidence-campaign E-gate end to end and FILE the artifacts:
 reconcile-balances (+ N random accounts/trustlines), verify-lake /
 contiguity / hash-chain to genesis, compute-completeness all-green,
