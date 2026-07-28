@@ -103,6 +103,16 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~07:45Z — **ordinal re-derive verified across ALL chunks,
+  not just the first.** Sampling `ledger_entry_changes FINAL` at five
+  points spanning the band: 63.05M **99.9%**, 63.15M **99.9%**, 63.25M
+  **99.9%**, 63.40M **100%**, 63.52M **100%** non-zero
+  `intra_ledger_seq` (~0.5M rows per probe). Coverage is uniform, so the
+  chunking did not leave a seam and no chunk silently no-opped —
+  the earlier single-chunk check could not have told us that.
+  Final chunk ~15 min from done; D3's safe phases (setup → reproject →
+  verify) queue next, cutover stays ATTENDED.
+
 - 2026-07-28 ~06:30Z — **ordinal re-derive VERIFIED WORKING on the first
   completed chunk**, checked early rather than after the full 2.6 h.
   Reading `ledger_entry_changes FINAL` over [63,050,000, 63,050,200]:
