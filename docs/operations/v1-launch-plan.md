@@ -35,7 +35,7 @@ severity: P1
 | 2 | **Deploy v0.21.2 when cut** — carries the CS-102 supply-freshness fix | **37 of 48 watched assets currently serve FROZEN supply.** No decision needed any more; the fix is written, verified and committed (`e21fa3d0`) | deploy only |
 | 3 | **Wire paging** — [runbooks/wire-paging.md](runbooks/wire-paging.md) | Alerts currently route to NOBODY; the first-24h watch would be blind | ~20 min |
 | 4 | **Book the external security review** | Longest lead time of anything remaining — start it now even if other work continues | one email |
-| 5 | **Decide PHO / Soroban eviction** (§2.4): interim TTL filter vs real eviction ingest | PHO serves +157%; the class also affects every current-state reader | decision only |
+| 5 | **Approve removing archived rows written by the SAC seed** | ROOT-CAUSED 2026-07-28 and much narrower than first scoped. Our live SAC observer is CORRECT (0.009% vs Horizon); the whole PHO +157% is seeded rows for entries that are no longer live. Fix = filter the seed against the 1.15B `ttl` entries ALREADY in the lake, then re-seed. I have not touched the existing rows because that is a DELETE | decision only |
 
 Lower priority / no rush: CoinGecko Pro key, off-site backup decision,
 accepted-risk sign-off, IP-rotation + SSH CIDR, announcement copy,
