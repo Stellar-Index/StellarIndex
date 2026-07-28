@@ -105,6 +105,48 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~11:55Z — 📊 **D3 baseline: PARTIAL (8/50) but encouraging —
+  and it points at the ordinal re-derive, not D3, as the fix.**
+
+  The run was killed by its own 900 s cap after only **8 of 50** accounts:
+
+  ```
+  MATCHED 5   MISMATCH 0   NO_DATA 0   MERGED_OR_ABSENT 2   ERROR 1
+  ```
+
+  (The single ERROR is `context canceled` — an artifact of the timeout, not
+  a real failure.)
+
+  **0 mismatches where the pre-ordinal rate was 19/50 (38%).** At that rate
+  8 clean accounts in a row is a ~2% outcome, so this is a real signal —
+  but n=8, so it is a SIGNAL, NOT THE ACCEPTANCE TEST. Do not record the
+  gate as passed on it.
+
+  **Why this may already be fixed without D3:** `reconcile-balances` reads
+  `stellar.ledger_entry_changes` directly (see its `-ch-addr` help), NOT
+  the served `ledger_entries_current`. The ordinal re-derive populated
+  `intra_ledger_seq` in exactly that table, so it could have resolved the
+  C2-4c tie for this verifier already — while D3 is about the SERVED
+  current-state table, a different consumer. If that holds, the two fixes
+  address two different readers and both are still needed.
+
+  **Why it was so slow (112 s/account):** almost certainly contention with
+  the D3 reproject writing ClickHouse. **DECIDED (auto, revertible): defer
+  the full 50-account baseline until D3 finishes** rather than fight it for
+  the slot — the number is only meaningful if the run completes, and a
+  contended run also risks slowing D3.
+
+- 2026-07-28 ~11:58Z — ✅ **Corrected my own earlier call: the SAC seed's
+  CURRENT-STATE path is now filtered too** (`7d9614c1`). I had left it,
+  reasoning that filtering a streaming reader needed a server-side join of
+  ~586M contract_data against ~586M ttl rows. **That reasoning was wrong.**
+  The reader already narrows to WATCHED `Balance(Address)` keys in Go, so
+  only that tiny fraction ever needs resolving — buffer the matched seeds
+  in bounded batches and the existing bounded lookup handles it. No join,
+  memory bounded, same fail-open contract. Both seed paths now agree, so
+  which one an operator picks no longer decides whether archived balances
+  get written.
+
 - 2026-07-28 ~11:40Z — §2.6 evidence-pack progress + a gate re-verified.
 
   **Completeness gate re-checked live** (`/v1/coverage`): 17 sources, **3
