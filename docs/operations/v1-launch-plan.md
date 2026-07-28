@@ -377,7 +377,7 @@ the spec, so the wire-freeze prerequisite is met).
 | **Eviction** | 🔴 Not ingested at all; archived contract_data reads as live (PHO +157%) [DECIDE] |
 | Deployed | **v0.21.1** (cut + deployed 2026-07-27, all 6 binaries, edge smoke 13/13, `-ch` copy done). Main is ahead with **v0.21.2 material NOT yet deployed**: sep41 projector wiring `ae7a082d`, redstone registry `9bfcf5da`, SAC seed windowing `7bede7e7`, claimable seed `120bf7c3` |
 | Lake | Dedup complete; post-dedup completeness re-audit PASSED; CH ingest at tip (lag seconds) |
-| Galexie trim | Done + verified; cold reads OK. **Soak 7× PASS / 0 FAIL** (needs ≥8 AND after 2026-07-28 17:00); snapshot `data/minio@pre-trim-2026-07-26` held (3.2 T) |
+| Galexie trim | Done + verified; cold reads OK. **Soak 8× PASS / 0 FAIL — evidence half MET**; now waiting only on the clock (treat as 17:00 **UTC**, see §2.5); snapshot `data/minio@pre-trim-2026-07-26` held (3.2 T) |
 | D-series | D1 ✅, D2 ✅ (all partitions, 2026-07-23), CAGG re-mat ✅ ("ALL CAGG REMAT DONE" 2026-07-26). **D3: no run evidence on r1** — confirm need. **D4 NOT run** |
 | Supply | REFRAMED — see the four blockers above; the 39 alerts decompose into the sep41 wiring bug (fixed, pending deploy) + a too-tight dormancy horizon [DECIDE], NOT a stall. Historical note: `account_observations` **frozen at 63,632,946** (lake tip 63,669,421); guard correctly refusing stale snapshots → **39 `supply_refresh_error_dominant` alerts**. Fix = D4 (§2.3). `seed-sep41-genesis` WAS run 2026-07-26 (overriding the 2026-07-07 "do not run" verdict — verify AQUA in §2.6) |
 | Completeness | All 3 ROOT-CAUSED + fixed in code 2026-07-27, pending the v0.21.2 deploy. sep41 ×2 = a 14-day ZERO-WRITER wiring hole (rebuilds cut mismatches 249,436→891 and 652, residual = post-rebuild tail only). redstone = upstream relayer added 11 feed_ids on 2026-07-24, NOT a regression; needs replay from 63,624,934 |
@@ -911,7 +911,21 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
   hardening = distinct "registry stale" signal (post-v1).
 - sep41 completeness 40-min count perf (non-blocking follow-up).
 
-### 2.5 Soak close-out (timed gate: after 2026-07-28 ~17:00)
+### 2.5 Soak close-out (timed gate — READ THE TIMEZONE NOTE)
+
+> ⚠️ **Interpret the deadline as 2026-07-28 17:00 UTC (= 19:00 CEST on
+> r1), i.e. the LATER reading.** The original wording said "17:00" with
+> no timezone while r1 runs Europe/Berlin, and the action it authorizes —
+> `zfs destroy data/minio@pre-trim-2026-07-26` — is IRREVERSIBLE and
+> discards the 3.23 T pre-trim safety copy. Waiting the extra two hours
+> costs nothing; destroying two hours early costs the only rollback we
+> have if a cold-read problem surfaces. Ambiguity on an irreversible act
+> resolves toward the safer side.
+>
+> Evidence half is ALREADY MET as of 2026-07-28 05:56Z: **8 PASS / 0
+> FAIL** (needed ≥8 and 0). So this gate is now purely waiting on the
+> clock — any session that fires after 17:00 UTC should re-confirm the
+> counts are still ≥8/0 at that moment and then execute.
 _Status 2026-07-27 16:45Z: 5 PASS / 0 FAIL, timer active, snapshot
 3.23 T held. Needs ≥8 PASS — on the current cadence that lands before
 the deadline; the loop executes this gate automatically (time+evidence,
