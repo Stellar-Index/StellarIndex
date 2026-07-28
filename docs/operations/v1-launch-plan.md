@@ -105,6 +105,45 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~10:05Z — ✅ **CS-102 SWEEP COMPLETE — all THREE supply
+  algorithms fixed** (`aa0d08c2` closes the third leg).
+
+  | # | algorithm | anchor was | assets | status |
+  |---|---|---|---|---|
+  | 1 | XLM | `MIN(last obs)` over SDF reserve accounts | XLM | ✅ `aa0d08c2` |
+  | 2 | classic | per-ASSET last activity | 8 | ✅ `e21fa3d0` |
+  | 3 | SEP-41 | per-CONTRACT last activity | 40 | ✅ `3f26b8db` |
+
+  Same defect three times, found by following the population rather than
+  stopping at the first fix: 5 assets → all 48 → "40 uninstrumented" →
+  the SEP-41 path → and XLM, which is neither, was frozen too (last row
+  04:46Z, 1 row in 6 h). SDF reserve accounts move every few days-to-weeks
+  BY DESIGN, so `MIN(last observation)` across them is guaranteed to go
+  stale — the anchor could not have worked.
+
+  **The per-account probe is retained**, because it encodes a real
+  precondition: every configured reserve account must actually be
+  observed, or the reserve exclusion cannot be computed and the gate must
+  stay permissive rather than bless a partial sum behind a healthy
+  watermark. Only the freshness VALUE changed.
+
+  **`MaxAccountObservationLedger` is a REQUIRED interface method, not an
+  optional type-asserted one.** A missing delegate behind an optional
+  interface degrades silently to the old anchor and looks exactly like
+  healthy operation — the same silent-delegate class that produced the
+  "entries = 0" bug. The compiler enumerated both production adapters
+  instead of me guessing.
+
+  Two existing tests asserted the per-account MINIMUM — they WERE the old
+  specification, so they now assert the watermark, and the happy-path test
+  fails loudly if the anchor ever regresses. Also deleted a stale doc
+  comment still claiming "returns MIN(row.Ledger)": leaving it would have
+  been the third doc-vs-implementation gap of the day, self-inflicted.
+
+  verify.sh green (exit 0 AND the marker string). **Still pending the
+  v0.21.2 deploy — until then 37 of 48 assets keep serving frozen
+  supply.**
+
 - 2026-07-28 ~09:10Z — ✅ **SEP-41 sibling FIXED** (`3f26b8db`).
   `MinSEP41ComponentLedger` now anchors on the producer watermark with the
   same shape as the classic fix: per-contract EXISTS decides
