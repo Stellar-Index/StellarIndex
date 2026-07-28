@@ -105,6 +105,33 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~12:30Z — ⚡ **`reconcile-balances -sample N` unblocked**
+  (`28405f0a`) — the §2.6 evidence pack needs samples larger than 8.
+
+  **Diagnosed by measurement, not assumption.** The obvious suspects were
+  both innocent: the per-account ClickHouse query answers in **1.7 s** and
+  Horizon in **0.42 s** (and it already uses
+  `argMax(balance, (ledger_seq, intra_ledger_seq))` — the composite
+  tie-break, which is why the ordinal re-derive fixes THIS reader directly,
+  independent of D3).
+
+  The cost was the one-off **sampling** query: `GROUP BY account_id` across
+  billions of raw change-log rows, then sorting every distinct id. It ate
+  nearly the entire 900 s budget, which is why only 8 of 50 accounts were
+  checked.
+
+  Now sampled from the deduped current-state projection (~53.8M account
+  rows, one per account): **~2.4 s**. The populations are **provably
+  identical** — an account with ANY change above `minLedger` necessarily
+  has its LAST change at or above it — so this is a pure speedup, not a
+  narrower sample. Only account IDENTITIES come from current-state; each
+  BALANCE is still read from the change log, so the C2-4c tie ambiguity in
+  current-state values cannot leak into the verdict.
+
+  **Deferred deliberately:** re-running the full 50-account baseline while
+  D3 still holds ClickHouse. The fix removes the sampling cost, but the
+  number is only worth filing once it can run uncontended.
+
 - 2026-07-28 ~12:20Z — 🔎 **Swept every current-state reader of
   `contract_data` for the archived-entry class; found and fixed one more**
   (`3bbb5085`). The SAC seed was not the only exposure, and I checked
