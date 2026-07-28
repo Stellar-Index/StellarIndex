@@ -122,13 +122,17 @@ severity: P1
     NOT sufficient. §1 "Supply trustworthy" now needs the refresh
     unblocked as well, and the dormancy-horizon [DECIDE] in the
     OPERATOR INBOX is promoted from calibration-nicety to BLOCKER.
-  - The `no ledger` arm is a separate, probably-cheap race: the
-    refresher targets a ledger the ClickHouse `stellar.ledgers` write
-    has not landed yet (measured: target 63,681,736 while the lake tip
-    was already 63,681,759 moments later). It self-describes as
-    retrying, but with the dormancy arm also failing, nothing gets
-    through. Worth a small look at target-ledger selection (pick
-    `min(tip, lake_tip)` rather than a forward guess).
+  - ✏️ **CORRECTION (verified 2026-07-28): the `no ledger` arm is NOT a
+    bug and needs no code change.** I first flagged it as a probably-cheap
+    target-ledger race worth fixing. Checked directly: ledger 63,681,736
+    IS present in `stellar.ledgers`, and [63,681,700, 63,681,800] is
+    perfectly contiguous (101 present / span 101). So the write simply
+    had not landed at the instant the refresher looked, and it
+    self-heals on the next tick exactly as its message claims. **The
+    dominant blocker is the dormancy guard alone** (966 rejections vs
+    271 transient races in 6h) — which is the OPERATOR INBOX [DECIDE],
+    now the single thing standing between a corrected supply value and
+    the API.
 
 - 2026-07-28 ~04:35Z — **claimable seed WRITE PHASE underway**: rows
   1,031 → 1,786,622 → 2,344,508 against the dry-run's expected
