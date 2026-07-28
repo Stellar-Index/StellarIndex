@@ -32,7 +32,7 @@ severity: P1
 | # | Item | Why it is first | Effort |
 |---|---|---|---|
 | 1 | **Flip `stellarindex_clickhouse_serving_enabled: true`** (§2.4) | The explorer is DOWN — 21/94 routes 503, user-visible on stellarindex.io. One-line change, dry-run verified, but it restarts all 3 services so it wants a human watching | ~10 min, ATTENDED |
-| 2 | **Decide the supply-guard dormancy horizon** (below) | SOLE cause of a **0% supply-refresh success rate** — every served supply value is frozen, so the 3.69M-row claimable fix cannot reach the API | decision only |
+| 2 | **Deploy v0.21.2 when cut** — carries the CS-102 supply-freshness fix | **37 of 48 watched assets currently serve FROZEN supply.** No decision needed any more; the fix is written, verified and committed (`e21fa3d0`) | deploy only |
 | 3 | **Wire paging** — [runbooks/wire-paging.md](runbooks/wire-paging.md) | Alerts currently route to NOBODY; the first-24h watch would be blind | ~20 min |
 | 4 | **Book the external security review** | Longest lead time of anything remaining — start it now even if other work continues | one email |
 | 5 | **Decide PHO / Soroban eviction** (§2.4): interim TTL filter vs real eviction ingest | PHO serves +157%; the class also affects every current-state reader | decision only |
@@ -64,25 +64,27 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
   require corroboration to engage at all, and should the writer be
   wired? — wants your call. Ties into §4's C4-012/13 thin-pool row.
   Meanwhile: no change made; prices verified correct; documented here.
-- **[DECIDE-new] 🔴 PROMOTED TO BLOCKER 2026-07-28 — supply-guard
-  dormancy calibration is now the SOLE thing preventing ANY supply value
-  from updating.** When parked this looked like alert noise. Measured
-  since: the refresh worker persisted **0 snapshots in 6 hours** — 966
-  dormancy rejections, 271 transient lake races (verified self-healing,
-  not a bug), 2 stale-component rejections. Every served supply figure
-  is frozen, so the 3.69M-row claimable seed that fixed AQUA in the
-  DATABASE cannot reach the API until this is decided. That makes it
-  launch-blocking rather than cosmetic. Original detail:
-  the `supply-refresh` stalled-observer guard's dormancy horizon
-  (17,280 ledgers ≈ 1 day) false-positives on structurally-dormant
-  components — SDF reserve accounts (change every days-weeks) and
-  slow classic assets (BLND at gap 17,922). My recommendation: raise
-  `WithMaxDormantComponentLedgers` for the account-observation component
-  (Algorithm 1 XLM) to ~2 weeks, and to ~3 days for classic trustline
-  components, keeping the tight default for SEP-41 (where a frozen
-  component DID mean a dead writer for 14 days — the guard was RIGHT
-  there). Loosening a data-trust guard needs your sign-off; parked. No
-  interim action — the alerts are honest until calibrated.
+- **[RESOLVED 2026-07-28 — NO DECISION NEEDED. Superseded by CS-102.]**
+  ~~supply-guard dormancy calibration~~. **Do not spend time on this; the
+  question was wrong.** I had escalated it as "the sole thing preventing
+  any supply value from updating" and asked you to sign off on loosening
+  a data-trust guard. Root-causing it (see the CS-102 loop entry) showed
+  the horizon was never the problem: the freshness anchor was measuring
+  the wrong quantity — per-asset last activity instead of the observer's
+  watermark — so quiet assets read as stalled. Fixed in code
+  (`e21fa3d0`), verified against live r1, regression-tested.
+
+  Two corrections to what I told you earlier, both mine:
+  - "**0 snapshots in 6 hours**" was wrong — it read cumulative
+    since-boot counters as a rate. The live delta was 3 of 4 ticks
+    persisting.
+  - "**966 dormancy rejections**" was wrong — `dormant` is an ACCEPTED
+    outcome that inserts a snapshot. The real rejections were
+    `stale_component` (7,025).
+
+  Nothing to loosen: with the anchor fixed, a quiet asset reads fresh and
+  publishes normally, and the guard still catches a genuinely dead
+  observer. **The only action left is deploying it.**
 - **[DECIDE-new] SolvBTC unsuffixed-feed quote mislabel (latent, pre-existing):**
   `SolvBTC_FUNDAMENTAL` / `SolvBTC.BBN_FUNDAMENTAL` are registered quote
   `fiat:USD` but demonstrably publish a NAV **ratio vs BTC** (~1.003 live +
