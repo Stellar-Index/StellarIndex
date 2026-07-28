@@ -105,7 +105,16 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
-- 2026-07-28 ~21:05Z — 📁 **Evidence pack STARTED (`evidence/`) + two
+- 2026-07-28 ~20:55Z — 🔧 **Loop-reliability root cause found + fixed:
+  the workstation was SLEEPING between turns.** Post-restart, no sleep
+  assertion was held, so persistent Monitors died 4× (SSH tails killed
+  by sleep) and one ScheduleWakeup was silently lost; the hourly cron
+  guard was the only thing keeping the loop alive — exactly its designed
+  role. Fix: `caffeinate -dims` now running
+  (`PreventUserIdleSystemSleep 1` verified). **If resuming in a fresh
+  session: start caffeinate FIRST or the loop's timers will silently
+  die.** D3 progressing well: 58.0M/63.68M at 20:47Z (~3.2 min/window
+  again), ETA ~00:00–01:00Z. No INBOX answers yet. — 📁 **Evidence pack STARTED (`evidence/`) + two
   alert dispositions + D3 un-stalled verdict.**
 
   1. **`docs/operations/evidence/` created** — index (gates → artifacts →
