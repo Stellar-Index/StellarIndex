@@ -105,6 +105,35 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~09:10Z — ✅ **SEP-41 sibling FIXED** (`3f26b8db`).
+  `MinSEP41ComponentLedger` now anchors on the producer watermark with the
+  same shape as the classic fix: per-contract EXISTS decides
+  *instrumented*, the watermark supplies the *value*, memoized on its own
+  cache (separate from the classic one — the two producers advance
+  independently, and one stalling must not hide behind the other).
+
+  Empirically confirmed on r1 first, index-bounded (96 ms): watermark
+  63,671,020; frozen contracts at 63,521,591 / 63,502,354 / 63,624,865
+  (46k–169k behind); the one still-publishing contract's last event
+  landing exactly ON the watermark. Perfect separation.
+
+  **Together the two fixes now cover all 48 watched assets** — 8 classic +
+  40 SEP-41. Before this, the fix I had shipped covered 8.
+
+  Note the SEP-41 watermark (63,671,020) itself trails tip (63,684,077) by
+  13,057 ledgers, because the sep41 projector was the 14-day zero-writer
+  hole and its tail rebuild is still pending the v0.21.2 deploy. That is
+  the gate working CORRECTLY — the producer really is behind, so it
+  reports stale. It resolves when the tail rebuild runs, not by loosening
+  anything.
+
+  **Process note: I loaded r1's postgres with an unbounded join** (11 min,
+  no output) before switching to index-bounded per-contract lookups that
+  answered in 96 ms. Cancelled it via `pg_cancel_backend` rather than
+  leaving it to compete with D3. Same class as the standing
+  "no unbounded trade-scan queries" rule — it applies to
+  `sep41_supply_events` too.
+
 - 2026-07-28 ~08:55Z — ⚠️ **CS-102 HAS A SIBLING IN THE SEP-41 PATH, and my
   fix covers only 8 of 48 watched assets.** Found by widening my own
   verification from 5 assets to all 48 — the same narrow-slice trap I
