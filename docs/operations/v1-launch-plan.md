@@ -105,6 +105,28 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~11:40Z — §2.6 evidence-pack progress + a gate re-verified.
+
+  **Completeness gate re-checked live** (`/v1/coverage`): 17 sources, **3
+  incomplete — redstone, sep41_supply, sep41_transfers**, all at watermark
+  63,682,900. Exactly the three the plan already names, so §0 is CURRENT,
+  not stale — and all three clear via the same v0.21.2 deploy + their
+  replays. No new completeness problem exists.
+
+  **D3 acceptance baseline capture started**: `reconcile-balances
+  -sample 50`, the metric that must go 19 mismatches → 0 after cutover.
+  Capturing it BEFORE cutover so the acceptance test has a documented
+  before, rather than a remembered one. Not run under the heavy wrapper —
+  it is a bounded 50-account sample, serial with a 250 ms Horizon delay,
+  not the re-derive/backfill class the wrapper exists for, and D3 is
+  CPU-bound on writes.
+
+  Caveat on my own invocation: I piped it through `tail`, which masks the
+  exit code — and this verifier's exit code is load-bearing (it fails when
+  the ERROR fraction exceeds `-max-error-rate`, the C2-15 fail-open
+  guard). Reading the mismatch count from the printed summary instead;
+  the filed artifact should be produced WITHOUT the pipe.
+
 - 2026-07-28 ~11:05Z — ✅ **Closed a launch-gate item: the explorer export
   no longer fails on our own rate limiter** (`3422b150`). This was the
   §1 "Launch mechanics" fragility — a launch-day rebuild could fail on a
