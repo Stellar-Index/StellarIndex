@@ -105,6 +105,43 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~10:45Z — ⏳ **CORRECTION + a 2.8-hour clock: the CS-102
+  SEP-41 fix is NECESSARY BUT NOT SUFFICIENT, because the sep41 producer
+  is genuinely DEAD.**
+
+  I said earlier that the two fixes "cover all 48 watched assets". That is
+  true of ANCHOR CORRECTNESS and overstated in practice. Measured:
+
+  | | |
+  |---|---|
+  | live tip | 63,686,287 |
+  | sep41 watermark | **63,671,020 — frozen** |
+  | lag | 15,267 ledgers |
+  | until the 17,280 dormancy horizon | **2,013 ledgers ≈ 2.8 h** |
+
+  The watermark was byte-identical across two samples 90 s apart while tip
+  advanced, and `ingestion_cursors` has **NO sep41 row at all** — the
+  projector is not merely quiet, it was never running. That is the 14-day
+  zero-writer hole (`ae7a082d`, undeployed), and 63,671,020 is exactly the
+  documented rebuild start point, so the two agree.
+
+  **What this means.** A correct anchor cannot conjure data a dead
+  producer never wrote. Deploying CS-102 alone would let the 40 SEP-41
+  assets publish as `dormant` only until the lag crosses 17,280 — about
+  **13:30Z today** — after which they freeze again, and this time the gate
+  is RIGHT to refuse: the producer really is stalled.
+
+  So for SEP-41 the load-bearing fix is **restarting the projector
+  (`ae7a082d`) + the tail rebuild from 63,671,020**, not the anchor. The
+  anchor fix still matters — without it they would freeze even once the
+  projector is healthy — but it is the second of two required changes, not
+  the cure. The classic + XLM fixes ARE sufficient on their own, because
+  those producers are alive (their watermarks sit 165 ledgers off tip).
+
+  Recorded rather than acted on: both changes are already committed and
+  ride v0.21.2. No release cut — one tag per session, and v0.21.1 was
+  this session's.
+
 - 2026-07-28 ~10:35Z — 🔎 **Swept for the CS-102 bug CLASS, and closed the
   monitoring gap that let it hide** (`22a8ac6d`).
 
