@@ -16,6 +16,30 @@ against.
 ## [Unreleased]
 
 ### Added
+- **`scripts/ops/route-sweep.sh` — hits EVERY GET route in the OpenAPI
+  spec and reports its status.** Written after 21 of 94 routes were
+  found returning 503 in production while `r1-smoke.sh` (13 hand-picked
+  GETs) and the SLA probe (pricing only) both stayed green — neither
+  touches the explorer tier. Fills path params from real mainnet
+  fixtures so a 404 means "route broken" rather than "made-up id",
+  reports SKIP rather than silently dropping a route it cannot fill,
+  and exits with the 5xx count. Wired into the /deploy-r1 post-deploy
+  battery.
+- **`scripts/ops/reconcile-supply-vs-horizon.sh` — reconciles every
+  tracked classic asset's served supply against Horizon's FULL
+  component sum** (trustlines + claimable + pools + contracts). The
+  confidence campaign had verified Algorithm 2 against the trustline
+  sum alone, which is exact and therefore blind to the other three
+  components — hiding a 13.2% AQUA understatement. Exits with the
+  number of assets outside tolerance; also in the post-deploy battery.
+- **Public SLA / error-budget page at `/sla`** (`web/explorer`), which
+  previously 404'd while the v1 gate required a published SLA
+  definition. Publishes the four targets that existed only in internal
+  ops docs (p95 ≤ 200 ms, p99 ≤ 500 ms, availability ≥ 99.9 %, price
+  freshness ≤ 30 s), how each is measured, the ~43 min/month the
+  availability objective actually permits, and — deliberately — what
+  the SLA does NOT cover (upstream halts, historical backfills, the
+  single-region posture as a documented accepted risk).
 - **`stellarindex-ops supply seed-claimable-balances` — the claimable
   component of Algorithm 2 classic supply was never seeded from history.**
   Verified on r1 2026-07-27: `claimable_observations` held 997 rows with a
@@ -57,6 +81,34 @@ against.
   63,300,828) and is NOT addressed here — it is materially minor.
 
 ### Fixed
+- **Claimable seed's bisection floor was too high for the airdrop era.**
+  The first r1 dry-run bisected 250,000 → 15,625 ledgers and still
+  exceeded the ClickHouse memory ceiling: a mass claimable-balance
+  airdrop mints millions of distinct balances inside a few thousand
+  ledgers, so the floor's "a few thousand keys" premise was false. Floor
+  is now 256, and the window RECOVERS after sustained clean windows —
+  narrowing was monotonic, so one airdrop-era bisection would have
+  pinned the walk at its floor for the remaining ~23M ledgers.
+- **Two config assertions were structurally incapable of passing.**
+  `galexie_writer_creds_valid` ran a `[[ ]]` body under `sh` (dash exits
+  127), so it reported FAIL regardless of the creds — which were
+  verified valid by hand. `zfs_module_on_disk` read `/lib/modules`,
+  which the unit's own `ProtectKernelModules=true` makes inaccessible;
+  the flag is dropped rather than the check weakened, since this script
+  never loads modules and the flag was disabling a real pool-integrity
+  guard.
+- **Ansible idempotency: four tasks reported `changed` on every run.**
+  The disable-thp oneshot lacked `RemainAfterExit=yes`; three dataset
+  mountpoints ping-ponged 0750↔0755 between the ownership and ZFS
+  tasks; and the migrations `synchronize` compared mtimes (a fresh CI
+  clone regenerates them) and preserved the CONTROLLER's uid. With
+  these fixed the drift baseline SHRANK from 3 entries to 1 — the
+  remaining `apt update` entry is time-based and unfixable by
+  construction.
+- **Monthly restore-drill timer enabled** — it shipped deliberately
+  unenabled during the Phase-A capacity crunch, and the galexie trim
+  has since taken the pool from ~94% to 85% with 2,657 GB free against
+  the drill's 200 GB floor.
 - **`supply seed-sac-balances -full-history` no longer OOMs ClickHouse —
   the scan is now walked in ledger windows and reduced in Go.** The
   single all-contracts `argMax(entry_xdr, …) GROUP BY key_xdr` over
