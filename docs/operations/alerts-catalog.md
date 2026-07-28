@@ -256,6 +256,7 @@ coingecko rot 11 days and sep1 metadata never populate, both unnoticed.
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_data_source_stale` | `stellarindex_data_freshness_stale{domain,source}` | == 1 for > 1h | P3 | [data-source-stale](runbooks/data-source-stale.md) |
+| `stellarindex_supply_assets_stale` | `stellarindex_supply_assets_stale` | > 0 for > 2h — per-asset frozen supply the domain-level `supply` check cannot see, because that one measures max(time) across the whole table | P3 | [supply-assets-stale](runbooks/supply-assets-stale.md) |
 | `stellarindex_completeness_incomplete` | `stellarindex_completeness_incomplete{source}` | == 1 for > 1h | P3 | [completeness-incomplete](runbooks/completeness-incomplete.md) |
 | `stellarindex_data_freshness_watchdog_silent` | `absent_over_time(stellarindex_data_freshness_stale[45m])` | for > 15m | P3 | [data-freshness-watchdog-silent](runbooks/data-freshness-watchdog-silent.md) |
 | `stellarindex_serving_insert_frozen` | `time() - max(stellarindex_source_last_insert_unix)` | > 1800 s (no insert from ANY source) for 10 min | P2 | [data-source-stale](runbooks/data-source-stale.md) |
