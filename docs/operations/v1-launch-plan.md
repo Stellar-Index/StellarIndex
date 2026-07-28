@@ -105,6 +105,36 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~12:45Z — 📋 **v0.21.2 release prep: CHANGELOG curated and
+  now complete.** The cut itself stays parked (one tag per session;
+  v0.21.1 was this session's), but step 1 of /cut-release is done so the
+  cut is mechanical when Ash approves.
+
+  Audited `[Unreleased]` against `git log v0.21.1..HEAD`: **114 commits,
+  30 of them code-bearing**, against 20 entries (5 Added / 15 Fixed —
+  grouping is fine, no empty subsections).
+
+  **Found one code commit with NO entry**, and a significant one:
+  `9670ef29` — the galexie artifact-pin fix. During the 2026-07-27 live
+  apply a stale pre-P27 binary was copied over the running v27.0.0 because
+  the sha assert ran POST-install; that left us one galexie restart from
+  re-running the P27 crash-loop SEV. Now documented.
+
+  **How I nearly missed it:** my first pass was a keyword sweep that
+  reported all 20 checks present. Three needles (`ttl`, `baseline`,
+  `galexie`) were common enough to match unrelated text — and `galexie`
+  did exactly that, hitting entries about config assertions and the pool
+  trim. Printing the MATCH CONTEXT rather than trusting the boolean is
+  what surfaced the gap. Same lesson as the rest of this session: a green
+  check is only as good as what it actually covers.
+
+  v0.21.2 contents when cut: CS-102 ×3 (`e21fa3d0`, `3f26b8db`,
+  `aa0d08c2`), the sep41 zero-writer restart `ae7a082d` (**the
+  load-bearing one for 40 assets**), redstone `9bfcf5da`, the TTL/archived
+  work (`5471a05b`, `0fec76a3`, `7d9614c1`, `3bbb5085`), explorer 429
+  `3422b150`, per-asset supply alert `22a8ac6d`, reconcile sampling
+  `28405f0a`, plus the earlier seed/ansible/CI fixes.
+
 - 2026-07-28 ~12:30Z — ⚡ **`reconcile-balances -sample N` unblocked**
   (`28405f0a`) — the §2.6 evidence pack needs samples larger than 8.
 
