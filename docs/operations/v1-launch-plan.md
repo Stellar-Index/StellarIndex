@@ -81,6 +81,22 @@ severity: P1
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~03:50Z — claimable LIVE seed progress + a false alarm worth
+  recording. Go-side CPU fell from 73% to ~15%, which LOOKS like a stall;
+  it is not. The work is server-side: ClickHouse shows **20 queries in 10
+  min, avg 25.4 s, up to 633M rows read each**. Position extracted from
+  `system.query_log`: ledger **~60.86M–60.92M of 63.68M ≈ 96% by ledger
+  count**. Nothing is writing yet by design (`pg_stat_activity` has no
+  insert — the reducer emits only after the final fold).
+  **The AIMD window fix is demonstrably working in production**: observed
+  windows of 62,500 then 125,000 ledgers, i.e. it narrowed under memory
+  pressure and is doubling back up rather than staying pinned at the
+  floor — exactly the failure the `9226f324` re-widen was added to
+  prevent. *Diagnostic note for next time: low process CPU on this job
+  means "waiting on ClickHouse", not "stuck"; the decisive checks are
+  `system.query_log` for rate/position and `pg_stat_activity` for whether
+  the write phase has begun.*
+
 - 2026-07-28 ~03:20Z — **ops finding: the "one heavy job at a time" rule
   has no enforcement against SCHEDULED timers.** A long manual job that
   overruns into a timer window simply gets a second heavy scope beside
