@@ -94,6 +94,18 @@ against.
   63,300,828) and is NOT addressed here — it is materially minor.
 
 ### Fixed
+- **The galexie install now verifies the SOURCE artifact against its pin
+  BEFORE overwriting the live binary.** During the 2026-07-27 live apply a
+  stale pre-P27 `/root/go/bin/stellar-galexie` (a June-10 pseudo-version
+  left over from an old `go install`) was copied over the running v27.0.0
+  binary. The existing sha assert ran POST-install, so it only reported the
+  problem once the on-disk binary was already wrong — one galexie restart
+  away from re-running the P27 crash-loop SEV. Recovered by restoring from
+  the running process inode (sha verified against the pin) and renaming the
+  stale artifact. The install task now asserts the source artifact's
+  sha256 against `galexie_expected_binary_sha256` and refuses a mismatched
+  install; the shared stat task computes sha256 explicitly, since Ansible's
+  `stat` defaults to sha1.
 - **`reconcile-balances -sample N` is usable again** — its account
   sampling ran a `GROUP BY account_id` across billions of raw change-log
   rows and then sorted every distinct id, which consumed nearly the whole
