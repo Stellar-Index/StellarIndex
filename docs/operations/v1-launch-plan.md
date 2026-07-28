@@ -103,6 +103,19 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-28 ~07:05Z — ✅ **ORDINAL RE-DERIVE COMPLETE** (5/5 chunks, **0
+  failures**, ~35 min/chunk at ~52 ledgers/s) and **D3 STARTED**.
+  `setup` created `stellar.ledger_entries_current_v2` as
+  **`ReplacingMergeTree(version)`** — the composite
+  `(ledger_seq << 32) | intra_ledger_seq` — while v1 keeps serving
+  unchanged on `ReplacingMergeTree(ledger_seq)`. MV capturing live from
+  tip 63,683,991. `reproject [38M → 63,683,991)` now running under the
+  heavy wrapper, monitored.
+  Nothing reads v2 until cutover, so this whole stretch is reversible
+  via `rollback-precutover` (drop v2 + its MV). **Cutover remains
+  ATTENDED** — acceptance is `reconcile-balances -sample 50` going
+  19 mismatches → 0.
+
 - 2026-07-28 ~07:45Z — **ordinal re-derive verified across ALL chunks,
   not just the first.** Sampling `ledger_entry_changes FINAL` at five
   points spanning the band: 63.05M **99.9%**, 63.15M **99.9%**, 63.25M
