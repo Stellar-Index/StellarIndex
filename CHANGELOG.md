@@ -94,6 +94,18 @@ against.
   63,300,828) and is NOT addressed here — it is materially minor.
 
 ### Fixed
+- **Archived Soroswap pairs no longer report phantom liquidity.**
+  `SoroswapPairReserves` read `ledger_entries_current` unfiltered, which
+  keeps a Soroban entry's last-known value after its TTL lapses — so a dead
+  pool's final reserves were served as CURRENT depth on every surface that
+  consumes them. Archived pairs are now absent from the result, which is
+  already the reader's honest signal for "reserves unavailable" (callers
+  never read absence as zero). Found by sweeping every current-state reader
+  of `contract_data` after the SAC-seed finding: the classic entry types
+  (trustline/account/offer/liquidity_pool) have no Soroban TTL and cannot
+  be archived, and `TokenDecimals` is unaffected because a token's declared
+  decimals are immutable — so an archived read still returns the right
+  value. This reader was the one that mattered.
 - **The SAC seed's CURRENT-STATE path now drops archived Soroban entries
   too.** Only the full-history path was filtered initially, on the reading
   that filtering a streaming reader would need a server-side join of ~586M
