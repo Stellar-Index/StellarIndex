@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"sort"
 	"strings"
@@ -51,8 +52,23 @@ type SACBalanceSeed struct {
 }
 
 // StreamSACBalanceSeeds scans the current-state projection for every
-// live SAC / SEP-41 `Balance(Address)` contract_data entry belonging to
-// a WATCHED SAC-wrapper contract, invoking fn once per decoded entry.
+// SAC / SEP-41 `Balance(Address)` contract_data entry belonging to a
+// WATCHED SAC-wrapper contract, invoking fn once per decoded entry.
+//
+// NOT LIVENESS-FILTERED — the entries it yields are "present in
+// ledger_entries_current", which is NOT the same as "part of live ledger
+// state". Soroban archives an entry once its TTL lapses, and
+// ledger_entries_current keeps the archived value, so this reader can hand
+// back balances that left the ledger years ago. (This doc comment used to
+// claim "live"; it never was.)
+//
+// [StreamSACBalanceSeedsFullHistory] drops those via
+// [sacSeedReducer.dropArchived]; this path cannot reuse that, because it
+// streams row-by-row rather than reducing to a key set, so filtering it wants
+// a server-side join to the ttl entries instead. That join is over ~586M
+// contract_data against ~586M ttl rows — heavy-job class — and is deliberately
+// NOT added blind. Until then, prefer -full-history for whole-network seeds:
+// the 2026-07-27 seed used it, which is why the fix landed there first.
 //
 // ledger_entries_current carries NO contract_id column — the contract
 // id lives inside key_xdr (the LedgerKey) — so the watched-set filter
@@ -239,6 +255,16 @@ func StreamSACBalanceSeedsFullHistory(ctx context.Context, addr string, watched 
 			break
 		}
 		start = end + 1
+	}
+	// Liveness is judged at the lake's own tip: the seed reconstructs CURRENT
+	// state, so an entry archived before that tip is not part of it.
+	dropped, err := red.dropArchived(ctx, conn, maxLedger)
+	if err != nil {
+		return err
+	}
+	if dropped > 0 {
+		slog.InfoContext(ctx, "sac seed: dropped archived contract_data entries",
+			"dropped", dropped, "kept", len(red.best), "as_of_ledger", maxLedger)
 	}
 	return red.emit(fn)
 }
@@ -536,6 +562,47 @@ func (r *sacSeedReducer) offer(keyXDR, entryXDR, changeType string, closeTime ti
 	}
 	r.best[keyXDR] = sacSeedWinner{order: ord, changeType: changeType, entryXDR: entryXDR, closeTime: closeTime}
 	return nil
+}
+
+// dropArchived removes keys whose Soroban entry has been ARCHIVED (its TTL
+// lapsed at or before asOfLedger) from the reduction, returning how many it
+// dropped. Call it after the window walk and before [sacSeedReducer.emit].
+//
+// Without this the seed reconstructs "the newest contract_data row for this
+// key" and calls it current state — but the lake keeps an archived entry's
+// last-known value forever, so a balance that left live ledger state years ago
+// is written as though it were current. Measured on r1 2026-07-28: PHO served
+// +156.9% against Horizon, entirely from 39 seeded holders archived since
+// 2024-11/2025-03, while the live observer's rows matched Horizon to 0.009%.
+//
+// Only a positively-resolved, lapsed TTL drops a key — see
+// [ClassifyTTLLiveness], which fails open. A key whose liveness cannot be
+// established is KEPT, because the seed's legitimate purpose is recovering
+// dormant-but-live balances the live observer never saw (AQUA's), and
+// over-dropping would silently understate supply.
+func (r *sacSeedReducer) dropArchived(ctx context.Context, conn driver.Conn, asOfLedger uint32) (int, error) {
+	keys := make([]string, 0, len(r.best))
+	for k, w := range r.best {
+		if w.changeType == "removed" {
+			continue // already suppressed at emit; no TTL to resolve
+		}
+		keys = append(keys, k)
+	}
+	if len(keys) == 0 {
+		return 0, nil
+	}
+	liveness, err := ClassifyTTLLiveness(ctx, conn, keys, asOfLedger)
+	if err != nil {
+		return 0, err
+	}
+	dropped := 0
+	for k, verdict := range liveness {
+		if verdict == TTLArchived {
+			delete(r.best, k)
+			dropped++
+		}
+	}
+	return dropped, nil
 }
 
 // emit decodes each key's final winner and hands the survivors to fn, in

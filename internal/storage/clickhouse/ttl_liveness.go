@@ -61,6 +61,9 @@ var ttlLiveUntilExpr = fmt.Sprintf(
 	ttlEntryLen, ttlLiveUntilOffset0+1, // ClickHouse substring is 1-indexed
 )
 
+// ttlLivenessBatchSize caps how many key hashes ride in one IN list.
+const ttlLivenessBatchSize = 5_000
+
 // TTLKeyHash returns the TTL key hash governing the ledger entry whose
 // base64-encoded LedgerKey is keyXDR — i.e. sha256 over the DECODED key
 // bytes, which is exactly how stellar-core derives LedgerKeyTtl.keyHash.
@@ -102,12 +105,25 @@ const (
 // this exists to remove — and a silent over-drop is far harder to notice than
 // a residual over-count. Only a positive, parsed, lapsed liveUntilLedgerSeq
 // justifies exclusion.
+// A whole-network seed resolves tens of thousands of keys (USDC alone carries
+// 48,505 seeded holders), far past what one IN list should carry, so the work
+// is split into [ttlLivenessBatchSize] chunks.
 func ClassifyTTLLiveness(ctx context.Context, conn driver.Conn, keyXDRs []string, asOfLedger uint32) (map[string]TTLLiveness, error) {
 	out := make(map[string]TTLLiveness, len(keyXDRs))
-	if len(keyXDRs) == 0 {
-		return out, nil
+	for start := 0; start < len(keyXDRs); start += ttlLivenessBatchSize {
+		end := start + ttlLivenessBatchSize
+		if end > len(keyXDRs) {
+			end = len(keyXDRs)
+		}
+		if err := classifyTTLLivenessBatch(ctx, conn, keyXDRs[start:end], asOfLedger, out); err != nil {
+			return nil, err
+		}
 	}
+	return out, nil
+}
 
+// classifyTTLLivenessBatch resolves one bounded chunk of keys into out.
+func classifyTTLLivenessBatch(ctx context.Context, conn driver.Conn, keyXDRs []string, asOfLedger uint32, out map[string]TTLLiveness) error {
 	// hash -> the key(s) it governs. Distinct keys cannot collide under
 	// sha256, but the same key may legitimately appear twice in the input.
 	byHash := make(map[string][]string, len(keyXDRs))
@@ -128,7 +144,7 @@ func ClassifyTTLLiveness(ctx context.Context, conn driver.Conn, keyXDRs []string
 		byHash[h] = append(byHash[h], k)
 	}
 	if len(placeholders) == 0 {
-		return out, nil
+		return nil
 	}
 
 	q := fmt.Sprintf(`
@@ -148,7 +164,7 @@ func ClassifyTTLLiveness(ctx context.Context, conn driver.Conn, keyXDRs []string
 
 	rows, err := conn.Query(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: ClassifyTTLLiveness: %w", err)
+		return fmt.Errorf("clickhouse: ClassifyTTLLiveness: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -158,7 +174,7 @@ func ClassifyTTLLiveness(ctx context.Context, conn driver.Conn, keyXDRs []string
 			liveUntil uint32
 		)
 		if err := rows.Scan(&keyHash, &liveUntil); err != nil {
-			return nil, fmt.Errorf("clickhouse: ClassifyTTLLiveness scan: %w", err)
+			return fmt.Errorf("clickhouse: ClassifyTTLLiveness scan: %w", err)
 		}
 		// max() over a guarded expression: 0 means every candidate row had
 		// an unrecognised shape, which stays UNKNOWN.
@@ -174,7 +190,7 @@ func ClassifyTTLLiveness(ctx context.Context, conn driver.Conn, keyXDRs []string
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("clickhouse: ClassifyTTLLiveness stream: %w", err)
+		return fmt.Errorf("clickhouse: ClassifyTTLLiveness stream: %w", err)
 	}
-	return out, nil
+	return nil
 }
