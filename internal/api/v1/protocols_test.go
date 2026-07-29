@@ -3,11 +3,13 @@ package v1_test
 import (
 	"context"
 	"encoding/json"
+	"math/big"
 	"net/http"
 	"testing"
 	"time"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -555,5 +557,80 @@ func TestHandleProtocolDetail_AquariusRewardsBespoke(t *testing.T) {
 	}
 	if bespoke.calls != 1 {
 		t.Errorf("BuildProtocolBespoke called %d times, want 1 (TTL cache should collapse the 2nd request)", bespoke.calls)
+	}
+}
+
+// ─── DEX TVL join ────────────────────────────────────────────────────
+
+type stubTVLAquariusReader struct {
+	pools []timescale.AquariusPoolReserve
+}
+
+func (s stubTVLAquariusReader) LatestAquariusReserves(context.Context, int) ([]timescale.AquariusPoolReserve, error) {
+	return s.pools, nil
+}
+
+type stubTVLPricerT struct{}
+
+func (stubTVLPricerT) USDPriceAt(_ context.Context, asset canonical.Asset, _ time.Time) (string, bool, error) {
+	if asset.String() == "native" {
+		return "0.25", true, nil
+	}
+	return "", false, nil
+}
+
+// TVL: a wired + refreshed snapshot cache joins the additive `tvl`
+// object onto the protocol's directory row and detail view; protocols
+// without a snapshot entry omit the field entirely.
+func TestHandleProtocols_TVLJoin(t *testing.T) {
+	cache := v1.NewDEXTVLCache(v1.DEXTVLSources{
+		AquariusReserves: stubTVLAquariusReader{pools: []timescale.AquariusPoolReserve{{
+			ContractID: "CBQDHNBFBZYE4MECPHNQCLM7F5FRZ4R7HZWQZXAK7NZYYUR3ILWSKDMV",
+			ObservedAt: time.Now(),
+			Legs: []timescale.AquariusReserveLeg{
+				// 40 XLM-SAC raw units at the 1e7 anchor scale × $0.25 = $10.
+				{TokenIndex: 0, Token: canonical.XLMSacContractID, Reserve: canonical.NewAmount(big.NewInt(400_000_000))},
+			},
+		}}},
+		Pricer: stubTVLPricerT{},
+	})
+	if err := cache.Refresh(context.Background()); err != nil {
+		t.Fatalf("cache refresh: %v", err)
+	}
+	srv := v1.New(v1.Options{DEXTVL: cache})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/protocols")
+	var env struct {
+		Data v1.ProtocolsView `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	aq := protocolRow(t, env.Data.Protocols, "aquarius")
+	if aq.TVL == nil {
+		t.Fatal("aquarius row should carry tvl")
+	}
+	if aq.TVL.TVLUSD != "10.00" || aq.TVL.PoolsTotal != 1 || aq.TVL.PoolsPriced != 1 {
+		t.Errorf("aquarius tvl = %+v, want 10.00 over 1/1 pools", aq.TVL)
+	}
+	if aq.TVL.AsOf == "" || aq.TVL.Basis == "" {
+		t.Error("tvl.as_of and tvl.basis must be populated")
+	}
+	// Protocols without an absolute reserve source omit the field —
+	// absence is the honest signal, never a fabricated zero.
+	if row := protocolRow(t, env.Data.Protocols, "phoenix"); row.TVL != nil {
+		t.Errorf("phoenix should have no tvl, got %+v", row.TVL)
+	}
+
+	detail := mustGet(t, ts.URL+"/v1/protocols/aquarius")
+	var denv struct {
+		Data v1.ProtocolDetailView `json:"data"`
+	}
+	if err := json.NewDecoder(detail.Body).Decode(&denv); err != nil {
+		t.Fatalf("decode detail: %v", err)
+	}
+	if denv.Data.TVL == nil || denv.Data.TVL.TVLUSD != "10.00" {
+		t.Errorf("detail tvl = %+v, want 10.00", denv.Data.TVL)
 	}
 }

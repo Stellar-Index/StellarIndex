@@ -18,7 +18,7 @@
 openapi: 3.1.0
 info:
   title: Stellar Index API
-  version: "1.10.0"
+  version: "1.11.0"
   summary: The Stellar network — explorer, history, supply, analytics, and prices.
   description: |
     The Stellar Index API exposes the Stellar network as one
@@ -4179,6 +4179,9 @@ paths:
         event count across the protocol's served tables, and the
         latest ADR-0033 completeness verdict summary (the same
         `completeness_snapshots` row `/coverage` serves in full).
+        DEX/AMM protocols with an absolute reserve source additionally
+        carry a `tvl` snapshot (see the `ProtocolRow.tvl` schema for
+        its provenance + lower-bound semantics).
 
         The static registry always serves; each dynamic join degrades
         independently to zero / absent when its reader isn't wired,
@@ -9334,6 +9337,45 @@ components:
           properties:
             complete: { type: boolean }
             watermark_ledger: { type: integer, format: int64 }
+        tvl:
+          type: object
+          description: |
+            Current pooled-liquidity value (TVL) in USD, from a
+            background-refreshed snapshot (~10-min cadence) of the
+            protocol's absolute pool reserves — Soroswap's current pair
+            reserves read from the certified lake (archived pairs
+            excluded), Aquarius' latest per-pool post-state reserve
+            snapshots — valued through the same USD price tiers that
+            stamp `trades.usd_volume` (declared peg → direct VWAP →
+            XLM bridge). Reserve legs that cannot be priced contribute
+            0 and count their pool in `unpriced_pools`, so `tvl_usd`
+            is an honest LOWER BOUND whenever `unpriced_pools` > 0.
+            Absent for protocols without an absolute reserve source
+            (Phoenix/Comet events carry flow deltas, not post-state
+            reserves; SDEX is an order book), and before the first
+            snapshot refresh after process start.
+          required: [tvl_usd, pools_total, pools_priced, unpriced_pools, as_of, basis]
+          properties:
+            tvl_usd:
+              type: string
+              description: Summed USD value of every priced reserve leg (decimal string — ADR-0003).
+              example: "1234567.89"
+            pools_total:
+              type: integer
+              description: Pools with a current reserve observation in this snapshot.
+            pools_priced:
+              type: integer
+              description: Pools whose every reserve leg resolved to a USD price.
+            unpriced_pools:
+              type: integer
+              description: Pools with at least one unpriceable reserve leg (their priceable legs still contribute).
+            as_of:
+              type: string
+              format: date-time
+              description: When the snapshot was computed.
+            basis:
+              type: string
+              description: One-line provenance of what was measured and how it was valued.
 
     # Health
     HealthResponse:

@@ -206,6 +206,11 @@ type ProtocolView struct {
 	// Completeness is the latest ADR-0033 verdict summary, absent when
 	// no completeness snapshot exists for this source.
 	Completeness *ProtocolCompletenessView `json:"completeness,omitempty"`
+	// TVL is the protocol's current pooled-liquidity value in USD
+	// (background-refreshed snapshot — see [DEXTVLCache]). Absent for
+	// protocols without an absolute reserve source, before the first
+	// snapshot refresh, and when the cache isn't wired.
+	TVL *ProtocolTVLView `json:"tvl,omitempty"`
 }
 
 // ProtocolsView is the envelope data field of GET /v1/protocols.
@@ -382,12 +387,14 @@ func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	events := s.protocolEvents24h(ctx)
 	verdicts := s.protocolVerdicts(ctx)
+	tvls := s.protocolTVLs()
 
 	view := ProtocolsView{Protocols: make([]ProtocolView, 0, len(protocolRegistry))}
 	for _, meta := range protocolRegistry {
 		contracts := s.protocolRoster(ctx, meta)
-		view.Protocols = append(view.Protocols,
-			buildProtocolView(meta, len(contracts), events, verdicts))
+		row := buildProtocolView(meta, len(contracts), events, verdicts)
+		attachProtocolTVL(&row, tvls)
+		view.Protocols = append(view.Protocols, row)
 	}
 	view.TotalProtocols = len(view.Protocols)
 
@@ -427,6 +434,7 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 			EventKinds:       append([]string{}, meta.EventKinds...),
 			VerificationPage: meta.VerificationPage,
 		}
+		attachProtocolTVL(&v.ProtocolView, s.protocolTVLs())
 		s.enrichProtocolAnalytics(c, meta, &v)
 		s.enrichBespoke(c, meta, &v)
 		return v
@@ -701,6 +709,25 @@ func buildProtocolView(meta ProtocolMeta, contractCount int, events map[string]i
 		}
 	}
 	return v
+}
+
+// protocolTVLs reads the per-protocol TVL snapshot, degrading to nil
+// (the tvl field stays absent everywhere) when the cache isn't wired
+// or hasn't completed its first background refresh.
+func (s *Server) protocolTVLs() map[string]ProtocolTVLView {
+	if s.dexTVL == nil {
+		return nil
+	}
+	snap, _ := s.dexTVL.Snapshot()
+	return snap
+}
+
+// attachProtocolTVL joins the snapshot's TVL entry (if any) onto a
+// directory row.
+func attachProtocolTVL(view *ProtocolView, tvls map[string]ProtocolTVLView) {
+	if t, ok := tvls[view.Name]; ok {
+		view.TVL = &t
+	}
 }
 
 // protocolEvents24h reads the per-source trailing-24h event counts,

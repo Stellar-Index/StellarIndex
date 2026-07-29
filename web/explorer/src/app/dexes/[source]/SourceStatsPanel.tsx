@@ -6,6 +6,7 @@ import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { SourceActivityChart } from './SourceActivityChart';
+import { useProtocolTvls } from '../useProtocolTvls';
 
 interface VolumeBucket {
   hour: string;
@@ -57,13 +58,21 @@ export function SourceStatsPanel({
   const volume = data?.volume_24h_usd ? Number(data.volume_24h_usd) : 0;
   const markets = data?.markets_count_24h ?? 0;
 
+  // TVL comes from the /v1/protocols snapshot (background-refreshed
+  // server-side). Absent for sources without an absolute reserve
+  // source — the stat is only shown when a snapshot exists, never a
+  // fabricated zero. A snapshot with unpriced pools is a lower bound
+  // ("≥" prefix; provenance in the hover title).
+  const tvl = useProtocolTvls().data?.[source];
+  const tvlValue = tvl ? Number(tvl.tvl_usd) : 0;
+
   return (
     <Panel
       title="24h activity"
       hint={`Live from /v1/sources?include=stats,sparkline,sparkline7d (source=${source})`}
       source={asExample('/v1/sources', { include: 'stats,sparkline,sparkline7d' })}
     >
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat
           label="24h volume"
           value={volume > 0 ? `$${formatCompact(volume)}` : '—'}
@@ -75,6 +84,15 @@ export function SourceStatsPanel({
         <Stat
           label={`24h ${unitsLabel}`}
           value={markets > 0 ? markets.toLocaleString() : '—'}
+        />
+        <Stat
+          label="TVL"
+          value={
+            tvl && Number.isFinite(tvlValue) && tvlValue > 0
+              ? `${tvl.unpriced_pools > 0 ? '≥ ' : ''}$${formatCompact(tvlValue)}`
+              : '—'
+          }
+          title={tvl?.basis}
         />
       </div>
       {data?.volume_history_24h && data.volume_history_24h.length > 0 && (
@@ -96,9 +114,9 @@ export function SourceStatsPanel({
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
-    <div>
+    <div title={title}>
       <div className="text-[10px] uppercase tracking-wider text-ink-muted">
         {label}
       </div>

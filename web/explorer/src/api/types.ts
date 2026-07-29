@@ -5822,6 +5822,9 @@ export interface paths {
          *     event count across the protocol's served tables, and the
          *     latest ADR-0033 completeness verdict summary (the same
          *     `completeness_snapshots` row `/coverage` serves in full).
+         *     DEX/AMM protocols with an absolute reserve source additionally
+         *     carry a `tvl` snapshot (see the `ProtocolRow.tvl` schema for
+         *     its provenance + lower-bound semantics).
          *
          *     The static registry always serves; each dynamic join degrades
          *     independently to zero / absent when its reader isn't wired,
@@ -12649,6 +12652,42 @@ export interface components {
                 complete: boolean;
                 /** Format: int64 */
                 watermark_ledger: number;
+            };
+            /**
+             * @description Current pooled-liquidity value (TVL) in USD, from a
+             *     background-refreshed snapshot (~10-min cadence) of the
+             *     protocol's absolute pool reserves — Soroswap's current pair
+             *     reserves read from the certified lake (archived pairs
+             *     excluded), Aquarius' latest per-pool post-state reserve
+             *     snapshots — valued through the same USD price tiers that
+             *     stamp `trades.usd_volume` (declared peg → direct VWAP →
+             *     XLM bridge). Reserve legs that cannot be priced contribute
+             *     0 and count their pool in `unpriced_pools`, so `tvl_usd`
+             *     is an honest LOWER BOUND whenever `unpriced_pools` > 0.
+             *     Absent for protocols without an absolute reserve source
+             *     (Phoenix/Comet events carry flow deltas, not post-state
+             *     reserves; SDEX is an order book), and before the first
+             *     snapshot refresh after process start.
+             */
+            tvl?: {
+                /**
+                 * @description Summed USD value of every priced reserve leg (decimal string — ADR-0003).
+                 * @example 1234567.89
+                 */
+                tvl_usd: string;
+                /** @description Pools with a current reserve observation in this snapshot. */
+                pools_total: number;
+                /** @description Pools whose every reserve leg resolved to a USD price. */
+                pools_priced: number;
+                /** @description Pools with at least one unpriceable reserve leg (their priceable legs still contribute). */
+                unpriced_pools: number;
+                /**
+                 * Format: date-time
+                 * @description When the snapshot was computed.
+                 */
+                as_of: string;
+                /** @description One-line provenance of what was measured and how it was valued. */
+                basis: string;
             };
         };
         HealthResponse: {

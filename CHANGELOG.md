@@ -15,6 +15,23 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Per-protocol DEX TVL on `/v1/protocols` (+ `{name}`), spec 1.11.0**
+  (additive `tvl` object on `ProtocolRow`): a background-refreshed
+  (10-min) snapshot values each protocol's ABSOLUTE pool reserves in
+  USD — Soroswap's current pair reserves from the certified lake
+  (archived pairs excluded; their absence is the reader's honest
+  signal, not a zero) and Aquarius' latest post-state
+  `aquarius_reserves` snapshots — through the same USD tier system
+  that stamps `trades.usd_volume` (declared peg → direct raw-ratio
+  VWAP → XLM bridge), so TVL and volume share one methodology.
+  Unpriceable legs contribute 0 and count their pool in
+  `unpriced_pools`, making `tvl_usd` an explicit lower bound;
+  phoenix/comet (flow deltas, no post-state reserves) and sdex (order
+  book) carry no `tvl` at all rather than a fabricated number.
+  Explorer: TVL column on /dexes and a TVL stat on /dexes/{source},
+  both rendering absence as "—" and lower bounds with a "≥" marker.
+
 ### Fixed
 - **Security: `google.golang.org/grpc` bumped v1.82.0 → v1.82.1**
   (GO-2026-6061, reachable via the sorobanevents AsyncSink transport
