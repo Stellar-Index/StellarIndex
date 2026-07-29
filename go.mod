@@ -20,7 +20,7 @@ require (
 	github.com/alicebob/miniredis/v2 v2.38.0 // In-memory Redis for ratelimit/ tests (test-only)
 	github.com/golang-migrate/migrate/v4 v4.19.1 // Schema migrations; cmd/stellarindex-migrate (ADR-0006)
 	github.com/lib/pq v1.12.3 // Postgres driver (ADR-0006)
-	github.com/prometheus/client_golang v1.24.0 // /metrics + counters/gauges in internal/obs
+	github.com/prometheus/client_golang v1.24.1 // /metrics + counters/gauges in internal/obs
 	github.com/redis/go-redis/v9 v9.21.0 // Redis client (ADR-0007) — rate-limit + SEP-1 cache
 	github.com/testcontainers/testcontainers-go v0.43.0 // Integration-test Postgres container
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0 // Timescale-flavoured container helper
@@ -42,7 +42,7 @@ require (
 	github.com/prometheus/client_model v0.6.2
 	golang.org/x/crypto v0.54.0
 	golang.org/x/tools v0.48.0
-	google.golang.org/api v0.289.0
+	google.golang.org/api v0.290.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -114,7 +114,7 @@ require (
 	github.com/googleapis/gax-go/v2 v2.23.0 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	github.com/klauspost/compress v1.19.0 // indirect
+	github.com/klauspost/compress v1.19.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e // indirect
@@ -138,7 +138,7 @@ require (
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
-	github.com/prometheus/common v0.70.0 // indirect
+	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/segmentio/go-loggly v0.5.1-0.20171222203950-eb91657e62b2 // indirect
