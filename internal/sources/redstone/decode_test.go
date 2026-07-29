@@ -831,15 +831,13 @@ func TestDecode_EmptyOnWireBatch_IsRecognizedNoOp(t *testing.T) {
 	// Real event body from the lake (base64 data_xdr, verbatim).
 	const realBody = "AAAADQAAAGwAAAARAAAAAQAAAAIAAAAPAAAADXVwZGF0ZWRfZmVlZHMAAAAAAAAQAAAAAQAAAAAAAAAPAAAAB3VwZGF0ZXIAAAAAEgAAAAAAAAAAI55i1HMFV5Z4R37dzgSnns7qJjbxzw6uCHkzbmb6XRI="
 
-	args := []string{
-		encodeAddressArg(t, relayerG),
-		encodeStringVecArg(t, []string{}), // empty feed_ids matches empty batch
-		encodePayloadArg(t),
-	}
+	// NO OpArgs — the exact production shape: empty-batch pushes often
+	// lack usable args, and the 2026-07-29 replay proved an args-gated
+	// empty check leaves those ledgers "undecodable-but-matched". The
+	// no-op classification must not depend on args at all.
 	ev := &events.Event{
 		Topic:          []string{TopicSymbolRedstone},
 		Value:          realBody,
-		OpArgs:         args,
 		ContractID:     adapterC,
 		Ledger:         63_699_567,
 		TxHash:         "efgh",
