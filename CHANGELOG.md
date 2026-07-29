@@ -16,6 +16,17 @@ against.
 ## [Unreleased]
 
 ### Added
+- **Explorer /dexes wiring completed** (frontend-only glue over
+  existing endpoints — no new API): each /dexes/{source} page now
+  shows TVL (snapshot stat), 24h volume + trades + activity chart
+  (existing), a NEW 90-day daily USD-volume chart reusing the
+  `/v1/protocols/{name}` bespoke `dex_volume_by_pair_1d` series (the
+  existing aggregate — renders nothing when absent), the pools table
+  (existing), a protocol-analytics cross-link, an SDEX order-book
+  pointer on /dexes/sdex, and per-source honesty notes updated to the
+  current truth (Aquarius reserves served; Phoenix/Comet flow-only,
+  hence no TVL). The /company "what we don't have" claims about DEX
+  TVL and order-book depth were updated in the same change.
 - **SDEX order-book depth: `GET /v1/sdex/orderbook?selling=&buying=`,
   spec 1.12.0.** Live classic bid/ask depth aggregated by EXACT price
   level (reduced rationals; bid prices are the exact inverse of the

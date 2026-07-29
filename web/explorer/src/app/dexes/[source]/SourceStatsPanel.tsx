@@ -65,6 +65,11 @@ export function SourceStatsPanel({
   // ("≥" prefix; provenance in the hover title).
   const tvl = useProtocolTvls().data?.[source];
   const tvlValue = tvl ? Number(tvl.tvl_usd) : 0;
+  // Only DEX protocols with an absolute reserve source have a
+  // snapshot — the stat disappears entirely (not a dash) for CEX
+  // venues and reserve-less DEXes, since this panel is reused on
+  // /exchanges/{name} and /sources/{name} too.
+  const showTvl = tvl != null && Number.isFinite(tvlValue) && tvlValue > 0;
 
   return (
     <Panel
@@ -72,7 +77,7 @@ export function SourceStatsPanel({
       hint={`Live from /v1/sources?include=stats,sparkline,sparkline7d (source=${source})`}
       source={asExample('/v1/sources', { include: 'stats,sparkline,sparkline7d' })}
     >
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className={`grid grid-cols-2 gap-3 ${showTvl ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
         <Stat
           label="24h volume"
           value={volume > 0 ? `$${formatCompact(volume)}` : '—'}
@@ -85,15 +90,13 @@ export function SourceStatsPanel({
           label={`24h ${unitsLabel}`}
           value={markets > 0 ? markets.toLocaleString() : '—'}
         />
-        <Stat
-          label="TVL"
-          value={
-            tvl && Number.isFinite(tvlValue) && tvlValue > 0
-              ? `${tvl.unpriced_pools > 0 ? '≥ ' : ''}$${formatCompact(tvlValue)}`
-              : '—'
-          }
-          title={tvl?.basis}
-        />
+        {showTvl && tvl && (
+          <Stat
+            label="TVL"
+            value={`${tvl.unpriced_pools > 0 ? '≥ ' : ''}$${formatCompact(tvlValue)}`}
+            title={tvl.basis}
+          />
+        )}
       </div>
       {data?.volume_history_24h && data.volume_history_24h.length > 0 && (
         <div className="mt-4 border-t border-line pt-3">

@@ -9,6 +9,7 @@ import { PairReservesPanel } from './PairReservesPanel';
 import { PoolsTable } from './PoolsTable';
 import { SourceStatsPanel } from './SourceStatsPanel';
 import { SourceTopChart } from './SourceTopChart';
+import { SourceVolumeHistory } from './SourceVolumeHistory';
 
 // Curated list of DEX sources with friendly names + audit links.
 // Mirrors the 5 cards on /dexes; per-DEX detail pages are
@@ -134,19 +135,53 @@ export default async function SourceDetailPage({
 
       <SourceTopChart source={source} sourceName={info.name} />
 
+      {/* 90d daily USD volume — the protocol-analytics aggregate,
+          reused (renders nothing when the protocol has no series). */}
+      <SourceVolumeHistory source={source} />
+
       <PoolsTable source={source} sourceName={info.name} />
 
+      {source === 'sdex' && (
+        <p className="text-xs text-ink-muted">
+          Live order-book depth for any SDEX pair is on its market page
+          (e.g.{' '}
+          <Link href="/markets" className="text-brand-600 hover:underline">
+            pick a market
+          </Link>{' '}
+          → the SDEX order book panel) or directly via{' '}
+          <code className="font-mono">/v1/sdex/orderbook</code>.
+        </p>
+      )}
       {source === 'soroswap' && <PairReservesPanel />}
-      {(source === 'phoenix' || source === 'aquarius' || source === 'comet') && (
+      {source === 'aquarius' && (
+        <p className="text-xs text-ink-muted">
+          Aquarius per-pool reserve snapshots (latest post-state depth per
+          pool) are on its{' '}
+          <Link href="/protocols/aquarius" className="text-brand-600 hover:underline">
+            protocol analytics page
+          </Link>
+          ; the TVL stat above is derived from the same snapshots.
+        </p>
+      )}
+      {(source === 'phoenix' || source === 'comet') && (
         <p className="text-xs text-ink-muted">
           Per-pool reserve and depth views are currently served for{' '}
           <Link href="/dexes/soroswap" className="text-brand-600 hover:underline">Soroswap</Link>{' '}
-          only — {info.name}&apos;s pool-storage layout hasn&apos;t been verified against the
-          ledger lake yet, and we don&apos;t serve guesses.
+          and{' '}
+          <Link href="/protocols/aquarius" className="text-brand-600 hover:underline">Aquarius</Link>{' '}
+          only — {info.name} emits liquidity flows, not post-state reserves, and its
+          pool-storage layout hasn&apos;t been verified against the ledger lake yet.
+          We don&apos;t serve guesses, so it also carries no TVL figure.
         </p>
       )}
 
       <div className="flex flex-wrap gap-3 text-xs">
+        <Link
+          href={`/protocols/${source}`}
+          className="inline-flex items-center gap-1 text-ink-muted hover:text-brand-600"
+        >
+          Protocol analytics →
+        </Link>
         <Link
           href={`/sources/${source}`}
           className="inline-flex items-center gap-1 text-ink-muted hover:text-brand-600"
