@@ -127,7 +127,28 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
-- 2026-07-29 ~01:50Z — ✅ **D3 VERIFY (bounded) + CUTOVER DONE.** The
+- 2026-07-29 ~02:15Z — ✅ **ANSIBLE APPLY + RULES SYNC DONE (INBOX #1
+  cleared by the loop).**
+  1. **Serving flip applied**: `stellarindex_clickhouse_serving_enabled:
+     true` added to r1.yml (R1_INVENTORY_B64 re-synced); the CH-side
+     profile turned out ALREADY provisioned (the 2026-07-27 13:03 apply
+     — hours after my vault harvest checked, resolving that mystery).
+     Live apply: 5 changed, 0 failed; all 3 services restarted; ingest
+     advancing post-restart (no cursor regression); healthz OK.
+  2. **Route-sweep: 21×5xx → 10×5xx** (`evidence/2026-07-29-route-sweep-
+     post-serving-flip.txt`). The 11 recovered = the serving-auth class.
+     The 10 remaining are the KNOWN slow-read timeout class (8s explorer
+     budget; C-F1/C-F3) — fixes ride v0.21.2 + queued backfills. Not a
+     regression: same routes failed in yesterday's baseline.
+  3. **Prometheus rules were 3 WEEKS stale live** (2026-07-07 files,
+     pre-org URLs, none of the campaign's alerts). Synced all 30
+     `rules.r1/` files → promtool clean → SIGHUP (the lifecycle API is
+     disabled — `systemctl reload`, not POST /-/reload; also
+     `/etc/prometheus/rules.d/` is an INERT leftover dir, the real one
+     is `rules.r1/`). Now 31 groups / 178 rules,
+     `stellarindex_supply_assets_stale` LIVE — CS-102's monitoring hole
+     closed in production.
+  Next: v0.21.2 cut + deploy (session release budget unused). — ✅ **D3 VERIFY (bounded) + CUTOVER DONE.** The
   script's own verify OOM'd (FINAL×FINAL join of 4.5B×3.4B rows vs the
   18.6 GiB cap) — replaced with a bounded uniform key-hash sample
   (1/50,000): **66,539 keys, latest-ledger disagreement 0, change_type
