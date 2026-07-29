@@ -88,8 +88,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 	"github.com/Stellar-Index/StellarIndex/internal/signupreaper"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/forex"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/redisclient"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -1058,10 +1060,13 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// reader through narrower seams, same nil-degrade posture.
 	var lakeWatermarkReader v1.LakeWatermarkReader
 	var tokenDecimalsReader v1.TokenDecimalsReader
-	// soroswapTVLReserves is the SAME concrete lake reader through the
-	// narrow current-pair-reserves seam the DEX TVL snapshot consumes.
-	// Same nil-degrade posture (soroswap TVL absent without the lake).
+	// soroswapTVLReserves / phoenixTVLReserves / cometTVLReserves are
+	// the SAME concrete lake reader through the narrow current-state
+	// seams the DEX TVL snapshot consumes. Same nil-degrade posture
+	// (the protocol's TVL is absent without the lake).
 	var soroswapTVLReserves v1.SoroswapTVLReserveReader
+	var phoenixTVLReserves v1.PhoenixTVLReserveReader
+	var cometTVLReserves v1.CometTVLReserveReader
 	// sdexOfferBook is the SAME concrete lake reader through the live
 	// offer-book seam /v1/sdex/orderbook maintains itself from. Same
 	// nil-degrade posture (the endpoint 503s without the lake).
@@ -1084,6 +1089,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			lakeWatermarkReader = er
 			tokenDecimalsReader = er
 			soroswapTVLReserves = er
+			phoenixTVLReserves = er
+			cometTVLReserves = er
 			sdexOfferBook = er
 			logger.Info("explorer reader wired (ClickHouse lake, ADR-0038)", "addr", addr)
 			// OBS-07 (audit-2026-07-23): ClickHouse was entirely absent
@@ -1102,18 +1109,28 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 
 	// DEX TVL snapshot cache — per-protocol pooled-liquidity USD value
 	// for /v1/protocols (+ the explorer's /dexes page). Reserve reads
-	// are one batched lake lookup (soroswap pair instance storage) +
-	// one served-tier scan (aquarius_reserves); legs are valued through
-	// the SAME VWAP USD tier system that stamps trades.usd_volume
-	// (peg → direct VWAP → XLM bridge), so TVL and volume figures on
-	// one page share a single pricing methodology. Refreshed in the
-	// background — handlers read an O(1) snapshot and omit the field
-	// until the first refresh completes (honest empty, never 503).
+	// are three batched lake lookups (soroswap pair instance storage;
+	// phoenix pool persistent storage; comet per-token balance
+	// records — the latter two scoped to their ADR-0035 curated pool
+	// sets) + one served-tier scan (aquarius_reserves); legs are
+	// valued through the SAME VWAP USD tier system that stamps
+	// trades.usd_volume (peg → direct VWAP → XLM bridge), so TVL and
+	// volume figures on one page share a single pricing methodology.
+	// Refreshed in the background — handlers read an O(1) snapshot and
+	// omit the field until the first refresh completes (honest empty,
+	// never 503).
 	dexTVLSources := v1.DEXTVLSources{
 		SoroswapPairs:    store,
 		SoroswapReserves: soroswapTVLReserves,
 		AquariusReserves: store,
-		Logger:           logger.With("component", "dex-tvl"),
+		// Curated pool sets only (fail-closed, ADR-0035): stake
+		// contracts are excluded from the phoenix list — they hold LP
+		// shares, which would double-count the pools' underlying.
+		PhoenixPools:    append(append([]string{}, phoenix.MainnetPools...), phoenix.MainnetMapPools...),
+		PhoenixReserves: phoenixTVLReserves,
+		CometPools:      comet.MainnetGatedSet(),
+		CometReserves:   cometTVLReserves,
+		Logger:          logger.With("component", "dex-tvl"),
 	}
 	if fx, err := timescale.NewVWAPUSDFXResolver(store, timescale.VWAPUSDFXResolverOptions{
 		USDPegs: cfg.Trades.USDPeggedClassicAssets,

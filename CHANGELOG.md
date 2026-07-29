@@ -82,6 +82,26 @@ against.
   clause on every touched query.
 
 ### Added
+- **Phoenix + Comet TVL on `/v1/protocols`** — the last two flow-only
+  DEXes now serve an absolute `tvl` snapshot. Their events carry flow
+  deltas, not post-state reserves, so the figure is decoded from the
+  pools' PERSISTENT STORAGE entries in the certified lake: Phoenix
+  reads each curated pool's `ReserveA`/`ReserveB` i128s + the
+  `CONFIG` map's `token_a`/`token_b` identities (u32-keyed layout per
+  the public phoenix-contracts source); Comet reads the
+  `AllRecordData` `Map<Address, Record>` per-token balance records
+  (balance by field name, robust across Record generations), scoped
+  to `comet.MainnetGatedSet`. Both readers follow the Soroswap pair
+  reader's conventions — one batched `key_xdr IN` probe on
+  `ledger_entries_current FINAL` with guard-rail SETTINGS,
+  TTL-archived pools absent, full-precision `*big.Int` (ADR-0003) —
+  and STRICT shape discipline: an unrecognised storage shape lands
+  the pool in `unpriced_pools` contributing 0 (honest lower bound,
+  warn-logged), never a partial or fabricated number. Storage layouts
+  are source-derived and flagged VALIDATE-ON-R1 in both readers with
+  the exact operator queries. Legs are valued through the same USD
+  price tiers that stamp `trades.usd_volume`. Spec description
+  updated (no wire-shape change).
 - **Explorer /dexes wiring completed** (frontend-only glue over
   existing endpoints — no new API): each /dexes/{source} page now
   shows TVL (snapshot stat), 24h volume + trades + activity chart
