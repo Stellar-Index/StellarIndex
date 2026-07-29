@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.21.2] — 2026-07-29
+
 ### Added
 - **`stellarindex_supply_assets_stale` — per-asset supply-freeze alert.**
   The existing `data_source_stale{domain="supply"}` check measures
@@ -94,6 +96,16 @@ against.
   63,300,828) and is NOT addressed here — it is materially minor.
 
 ### Fixed
+- **`ansible-drift` produces a complete verdict again** — three
+  check-mode bugs fixed (timer-enable tasks failed the dry-run on units
+  the host never had, ×2 files; the galexie version probe was skipped
+  under `--check`, so its assert compared against empty output and
+  failed "printed NOTHING"), and the CI ansible syntax-check stub no
+  longer overwrites a real `~/.ansible/r1_vault_pass` (it clobbered the
+  operator's only copy on 2026-07-25 — now existence-guarded). First
+  full drift verdict since the July credential rotation; also retired
+  the stale "galexie version-string constant is stale" operator action —
+  probed live, the pinned stamp matches the running v27 build exactly.
 - **The galexie install now verifies the SOURCE artifact against its pin
   BEFORE overwriting the live binary.** During the 2026-07-27 live apply a
   stale pre-P27 `/root/go/bin/stellar-galexie` (a June-10 pseudo-version
