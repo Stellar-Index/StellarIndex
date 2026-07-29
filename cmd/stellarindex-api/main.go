@@ -1412,14 +1412,18 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	//
 	// PrewarmAccountsWealth rides the same loop (site-audit S3). Its cache
 	// has a 15-minute TTL, so a 5-minute cadence keeps it permanently warm
-	// with two cycles of slack. Both calls are cheap no-ops when already
-	// warm — the wealth one returns as soon as it sees a live entry, and
-	// only kicks off its detached refresh on a miss.
+	// with two cycles of slack. PrewarmContractsDirectory joins it
+	// (route-sweep 2026-07-29): the /v1/contracts default rung is a
+	// multi-day GROUP BY that must never run on a request deadline, and its
+	// 5-minute TTL exactly matches this cadence. All calls are cheap
+	// no-ops when already warm — each returns as soon as it sees a live
+	// entry, and only kicks off its detached refresh on a miss.
 	go func() {
 		defer recoverBackgroundWorker(logger, "prewarm-supply-wealth")
 		const cadence = 5 * time.Minute
 		apiSrv.PrewarmClassicSupply(rootCtx)
 		apiSrv.PrewarmAccountsWealth(rootCtx)
+		apiSrv.PrewarmContractsDirectory(rootCtx)
 		t := time.NewTicker(cadence)
 		defer t.Stop()
 		for {
@@ -1429,6 +1433,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			case <-t.C:
 				apiSrv.PrewarmClassicSupply(rootCtx)
 				apiSrv.PrewarmAccountsWealth(rootCtx)
+				apiSrv.PrewarmContractsDirectory(rootCtx)
 			}
 		}
 	}()

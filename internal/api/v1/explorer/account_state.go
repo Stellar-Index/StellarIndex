@@ -381,14 +381,17 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 	// unauthenticated route over two ledger_entries_current FINAL scans on
 	// the shared 8-connection explorer pool, so a single client looping it
 	// could hold every connection and stall every other lake-backed
-	// endpoint. See hot_reads.go.
-	holders, total, err := h.assetHoldersCached(ctx, asset, limit)
+	// endpoint. Snapshot-served since route-sweep 2026-07-29: a stale
+	// board is 200 + flags.stale + its real as_of while the detached
+	// rescan runs; only a never-computed asset can time out here (and its
+	// detached scan keeps running, so a retry lands warm). See hot_reads.go.
+	holders, total, asOf, degraded, err := h.assetHoldersCached(ctx, asset, limit)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
 		}
 		if readTimedOut(ctx, err) {
-			h.Logger.Warn("explorer AssetHolders deadline exceeded", "asset", asset)
+			h.Logger.Warn("explorer AssetHolders deadline exceeded (cold asset; detached refresh continues)", "asset", asset)
 			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/asset-holders-timeout",
 				"Asset holders timed out")
 			return
@@ -404,7 +407,7 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 	for i, hh := range holders {
 		out.Holders[i] = AssetHolderV{AccountID: hh.AccountID, Balance: strconv.FormatInt(hh.Balance, 10)}
 	}
-	h.WriteJSON(w, out, stale)
+	h.writeJSONAt(w, out, stale || degraded, asOf)
 }
 
 // PrewarmAccountsWealth primes the wealth-ranking cache so no user ever

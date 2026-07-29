@@ -335,15 +335,25 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 				t.Fatalf("%s: reader received a context with NO deadline — the read is unbounded "+
 					"(C3-1 pool-exhaustion DoS regression)", tc.name)
 			}
-			// Pin the budget to ~explorerReadTimeout: present, positive, never
-			// larger than the ceiling, and close to it (distinguishes this 8s
-			// read budget from any looser upstream/middleware deadline).
-			if probe.budget <= 0 || probe.budget > explorerReadTimeout {
-				t.Fatalf("%s: deadline budget %v not in (0, %v]", tc.name, probe.budget, explorerReadTimeout)
+			// Pin the budget to the route's expected read ceiling: present,
+			// positive, never larger than the ceiling, and close to it
+			// (distinguishes the route's own budget from any looser
+			// upstream/middleware deadline). Every read is request-scoped at
+			// explorerReadTimeout except AssetHolders, whose cold-path scan
+			// runs DETACHED on its own assetHoldersRefreshTimeout budget
+			// (stale-while-revalidate, route-sweep 2026-07-29) — still
+			// bounded, still cancellation-observing, just not
+			// request-scoped.
+			wantBudget := explorerReadTimeout
+			if tc.name == "AssetHolders" {
+				wantBudget = assetHoldersRefreshTimeout
 			}
-			if probe.budget < explorerReadTimeout-2*time.Second {
+			if probe.budget <= 0 || probe.budget > wantBudget {
+				t.Fatalf("%s: deadline budget %v not in (0, %v]", tc.name, probe.budget, wantBudget)
+			}
+			if probe.budget < wantBudget-2*time.Second {
 				t.Fatalf("%s: deadline budget %v is smaller than the expected ~%v read ceiling",
-					tc.name, probe.budget, explorerReadTimeout)
+					tc.name, probe.budget, wantBudget)
 			}
 		})
 	}

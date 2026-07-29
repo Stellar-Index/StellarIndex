@@ -16,6 +16,24 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **`GET /v1/contracts`, `GET /v1/assets/{id}/holders` and the
+  `/v1/operations` op-type panel moved to stale-while-revalidate
+  snapshots** (route-sweep 2026-07-29: all three fed the 8s-budget 503
+  class because their lake-priced scans ran inline on the request
+  deadline — and a scan that dies with its request leaves the cache
+  cold forever). The scans now run DETACHED on their own bounded
+  budgets behind a single-flight: a fresh entry serves as before; a
+  STALE entry serves immediately as 200 + `flags.stale` + its real
+  `as_of` while one background recompute runs; a never-computed key
+  waits only up to the request deadline (fast keys fill within it; a
+  heavy key 503s that one request while the compute finishes, so the
+  retry lands warm — and the compute's real error, e.g. a deadline,
+  still maps to the route's 503 timeout contract). A failed refresh
+  keeps the previous entry. The op-type panel (already `omitempty`)
+  is omitted on a cold process instead of dragging the directory into
+  its timeout. The contracts directory's default 30d rung joins the
+  API's 5-minute prewarm loop, matching its TTL, so users never meet
+  it cold. Response shapes unchanged.
 - **`GET /v1/accounts` serves a stale wealth snapshot as 200 +
   `flags.stale` + the snapshot's real `as_of`, instead of 503.** The
   ranking cache previously treated an entry past its 15-min TTL as a
