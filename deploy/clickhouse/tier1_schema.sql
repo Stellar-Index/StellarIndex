@@ -315,6 +315,55 @@ TO stellar.ledger_entries_current AS
 SELECT entry_type, key_xdr, account_id, asset, balance, change_type, ledger_seq, close_time, entry_xdr, intra_ledger_seq
 FROM stellar.ledger_entry_changes;
 
+-- Slim TTL-liveness projection: key_hash → liveUntilLedgerSeq (v0.21.4). Backs
+-- internal/storage/clickhouse/ttl_liveness.go's ClassifyTTLLiveness as a
+-- primary-key lookup, replacing the per-batch scan of ledger_entries_current's
+-- 586M ttl rows (which read the wide entry_xdr per row and OOM'd its own 8 GiB
+-- pin — six failed production attempts, 2026-07-29). Three tiny columns, one
+-- row per TTL change: ~20-30 GB vs the 590 GB source; the reader is bounded by
+-- construction. The v0.21.4+ binary hard-errors if this table is absent — no
+-- scan fallback exists.
+--
+-- Extraction (production-validated 2026-07-28; ttl_liveness_test.go pins these
+-- expressions against the Go layout constants, here AND in the operator
+-- migration artifact deploy/clickhouse/ttl_live_until.sql — keep all three in
+-- lockstep): a TTL LedgerKey is 36 bytes (type=00000009 | sha256(LedgerKey)),
+-- a TTLEntry is 48 bytes (lastModified(4) | data.type(4) | keyHash(32) |
+-- liveUntilLedgerSeq(4) | ext(4)); XDR is big-endian, reinterpretAsUInt32 is
+-- little-endian, hence reverse(). version = (ledger_seq << 32) |
+-- intra_ledger_seq — same composite as ledger_entries_current (C2-4c).
+--
+-- Fail-open guard: rows failing the exact 36/48 decoded-length checks are
+-- SKIPPED (→ key absent → TTLUnknown → callers KEEP the entry) — a layout
+-- change can never fabricate an "archived" verdict. tryBase64Decode, not
+-- base64Decode: inside an MV a decode throw would fail the whole source
+-- INSERT and block ingest. removals ('' entry_xdr) are likewise skipped; the
+-- last parseable live_until (already lapsed for a removed TTL) is retained.
+--
+-- Existing deployments (r1): table + MV + windowed backfill are operator-run
+-- via deploy/clickhouse/ttl_live_until.sql — the MV here only covers ingest
+-- from its creation onward, so pre-existing ledger_entry_changes history needs
+-- that artifact's Step-2 backfill.
+CREATE TABLE IF NOT EXISTS stellar.ttl_live_until
+(
+    key_hash   FixedString(32),
+    live_until UInt32,
+    version    UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY key_hash;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.ttl_live_until_mv
+TO stellar.ttl_live_until AS
+SELECT
+    toFixedString(substring(tryBase64Decode(key_xdr), 5, 32), 32) AS key_hash,
+    reinterpretAsUInt32(reverse(substring(tryBase64Decode(entry_xdr), 41, 4))) AS live_until,
+    bitShiftLeft(toUInt64(ledger_seq), 32) + intra_ledger_seq AS version
+FROM stellar.ledger_entry_changes
+WHERE entry_type = 'ttl'
+  AND length(tryBase64Decode(key_xdr)) = 36
+  AND length(tryBase64Decode(entry_xdr)) = 48;
+
 -- Per-token supply events (CAP-67 classic SAC + SEP-41 mint/burn/clawback) with
 -- the i128 amount DECODED at ingest (decode-at-ingest, ADR-0034). Total supply
 -- for a token is a pure SQL sum over this table:
