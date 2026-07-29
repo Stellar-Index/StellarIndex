@@ -138,12 +138,26 @@ type ExplorerReader struct {
 	// (site-audit follow-up); the cache serves repeats and cuts that load.
 	stateCache  *accountStateCache
 	stateFlight *perKeyFlight
+
+	// ttlVerdicts fronts ClassifyTTLLiveness for SoroswapPairReserves'
+	// archived-pair filter. The classification is a scan of the ~586M-row
+	// ttl prefix that cannot run per request (route-sweep 2026-07-29:
+	// GET /v1/pools/reserves 503'd on it); verdicts move on day/week
+	// scales, so they are served stale-while-revalidate. Non-nil for every
+	// reader built by the constructors.
+	ttlVerdicts *ttlLivenessCache
 }
 
 // SetWealthRefreshErrorHandler installs a callback for background
-// wealth-refresh failures. Call once at wiring time.
+// refresh failures — the wealth ranking's AND the TTL-liveness verdict
+// cache's (both share the visibility rationale: a persistently failing
+// detached refresh silently pins its surface stale/warming). Call once at
+// wiring time.
 func (r *ExplorerReader) SetWealthRefreshErrorHandler(fn func(error)) {
 	r.wealthRefreshErr = fn
+	if r.ttlVerdicts != nil {
+		r.ttlVerdicts.onErr = fn
+	}
 }
 
 // NewExplorerReader dials ClickHouse (native protocol) with a request-sized
@@ -190,6 +204,15 @@ func NewExplorerReaderAuth(ctx context.Context, addr, username, password string)
 		wealthCache: newAccountsWealthCache(),
 		stateCache:  newAccountStateCache(),
 		stateFlight: newPerKeyFlight(),
+		ttlVerdicts: newTTLLivenessCache(func(ctx context.Context, keys []string) (map[string]TTLLiveness, error) {
+			// Verdicts are judged at the lake's tip AS OF compute time —
+			// "current" means current relative to what the lake holds now.
+			_, asOf, err := entryChangeLedgerBounds(ctx, conn)
+			if err != nil {
+				return nil, err
+			}
+			return ClassifyTTLLiveness(ctx, conn, keys, asOf)
+		}),
 	}, nil
 }
 

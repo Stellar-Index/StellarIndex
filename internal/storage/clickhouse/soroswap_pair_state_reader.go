@@ -103,18 +103,16 @@ func (r *ExplorerReader) SoroswapPairReserves(ctx context.Context, pairs []strin
 	}
 	defer func() { _ = rows.Close() }()
 
-	// Liveness is judged at the lake's own tip — this reader answers
-	// "current", so an entry archived before that tip is not current.
-	_, asOfLedger, err := entryChangeLedgerBounds(ctx, r.conn)
-	if err != nil {
-		return nil, err
-	}
-
 	out, keyByPair, err := scanSoroswapPairStates(rows, pairByKey, len(pairs))
 	if err != nil {
 		return nil, err
 	}
-	if err := dropArchivedPairs(ctx, r.conn, out, keyByPair, asOfLedger); err != nil {
+	// Liveness is judged at the lake's tip as of the VERDICT SNAPSHOT's
+	// compute time (see ttlLivenessCache) — this reader answers "current",
+	// so an entry archived before that tip is not current. Served
+	// stale-while-revalidate: the classification behind it is a ttl-prefix
+	// scan that cannot run per request (route-sweep 2026-07-29).
+	if err := dropArchivedPairs(ctx, r.ttlVerdicts, out, keyByPair); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -160,13 +158,15 @@ func scanSoroswapPairStates(
 	return out, keyByPair, nil
 }
 
-// dropArchivedPairs removes pairs whose instance entry has been archived.
+// dropArchivedPairs removes pairs whose instance entry has been archived,
+// per the (stale-while-revalidate) verdict cache. Only a positively-
+// resolved TTLArchived drops a pair — unknown keeps it, same fail-open
+// contract as ClassifyTTLLiveness.
 func dropArchivedPairs(
 	ctx context.Context,
-	conn driver.Conn,
+	verdicts *ttlLivenessCache,
 	out map[string]SoroswapPairState,
 	keyByPair map[string]string,
-	asOfLedger uint32,
 ) error {
 	if len(out) == 0 {
 		return nil
@@ -177,7 +177,7 @@ func dropArchivedPairs(
 			keys = append(keys, k)
 		}
 	}
-	liveness, err := ClassifyTTLLiveness(ctx, conn, keys, asOfLedger)
+	liveness, err := verdicts.resolve(ctx, keys)
 	if err != nil {
 		return err
 	}

@@ -16,6 +16,23 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **`GET /v1/pools/reserves` no longer runs the archived-pair TTL
+  classification per request.** The 2026-07-28 phantom-reserve fix
+  (archived Soroswap pairs must not serve their last-known reserves as
+  current) ran `ClassifyTTLLiveness` — a scan of the ~586M-row ttl
+  prefix computing `base64Decode` per row — inline on every request,
+  which is what held the route in the 8s-budget 503 class. Verdicts
+  now come from a stale-while-revalidate snapshot inside the explorer
+  reader (30-min TTL, single-flight detached recompute on a 5-min
+  budget; unknown/new keys fail OPEN as live per the existing
+  ClassifyTTLLiveness contract, archived pairs stay dropped): the
+  DEXTVL background refresher fills it at startup and keeps it warm,
+  so only the first minutes of a cold process can time out — and that
+  path now serves a truthful retryable 503
+  (`errors/pool-reserves-timeout`) instead of a 500, while the
+  detached fill keeps running so the retry lands warm. The durable
+  schema fix (slim `ttl_live_until` projection table) remains the
+  v0.21.4 item; this is the serving-layer fix that works today.
 - **`GET /v1/contracts`, `GET /v1/assets/{id}/holders` and the
   `/v1/operations` op-type panel moved to stale-while-revalidate
   snapshots** (route-sweep 2026-07-29: all three fed the 8s-budget 503
