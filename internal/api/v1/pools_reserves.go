@@ -134,6 +134,19 @@ func (s *Server) handlePoolReserves(w http.ResponseWriter, r *http.Request) {
 		if clientAborted(r, err) {
 			return
 		}
+		if handlerTimedOut(ctx, err) {
+			// Only a COLD archived-pair verdict snapshot can push this read
+			// past the budget (clickhouse.ttlLivenessCache): the DEXTVL
+			// background refresher fills that snapshot at startup and every
+			// 10 minutes on its own 3-minute budget, so this window is the
+			// first minutes of a process at most and a retry lands warm — a
+			// truthful retryable 503, not a 500 (route-sweep 2026-07-29).
+			s.logger.Warn("SoroswapPairReserves deadline exceeded (cold TTL-verdict snapshot; background refresh will fill it)")
+			writeProblem(w, r, "https://api.stellarindex.io/errors/pool-reserves-timeout",
+				"Pool reserves timed out", http.StatusServiceUnavailable,
+				"the reserve read didn't return within its budget; retry shortly")
+			return
+		}
 		s.logger.Error("SoroswapPairReserves failed", "err", err)
 		writeProblem(w, r, "https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
