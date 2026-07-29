@@ -127,7 +127,24 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
-- 2026-07-29 ~02:45Z — 🚀 **v0.21.2 DEPLOYED + the whole post-deploy
+- 2026-07-29 ~02:55Z — 🏆 **E1 GATE MET + the 39 supply alerts CLEARED.**
+  1. **reconcile-balances 50/50: 0 MISMATCHES** (37 matched, 13
+     merged-or-absent = accounts deleted on-chain, 0 errors) vs the
+     19/50 (38%) pre-ordinal baseline — filed as
+     `evidence/2026-07-29-reconcile-balances-50.md`. The C2-4c tie
+     ambiguity is fixed end-to-end.
+  2. **`supply_refresh_error_dominant` (was 39-40 firing) is GONE** —
+     the CS-102 anchor fixes are working on live traffic.
+  3. redstone AT TIP; sep41 ×2 within ~5k of tip at ~200k rows/cycle
+     (`projector_lag_high` ×2 = that catch-up, self-clearing).
+  4. New-alert triage: `ingestion_insert_errors{sep41_transfers}` =
+     counter-window artifact from the catch-up burst (current cycles
+     show 0 errors) — self-clears; `metrics_registry_absent`
+     informational (likely a never-yet-incremented new counter) — noted.
+  5. SAC TTL-gated re-seed running under the heavy wrapper.
+  Remaining acceptance: sep41×2 at tip → FULL compute-completeness ×3
+  → supply reconcile (PHO/AQUA/KALIEN) after the re-seed lands →
+  updated route-sweep. — 🚀 **v0.21.2 DEPLOYED + the whole post-deploy
   chain is executing.**
   1. **Deploy verified**: workflow green, all 6 binaries v0.21.2,
      services active, `ops-ch` refreshed, ingest at tip, external smoke
