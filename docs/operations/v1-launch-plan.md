@@ -127,6 +127,22 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~13:00Z — ✅ **Pipeline steady-state confirmed healthy +
+  a self-correction.** Live watermarks: trustline/lp/sac observations
+  AT TIP; claimable −250 (normal); lake lag 8s; all projectors at tip;
+  supply publishing (137 snapshots/15 min); no backfills running.
+  **Correction (the "quiet is not stale" trap caught the LOOP twice in
+  one day, on the same table):** I read `max(ledger)` on
+  `account_observations` as a lagging/converging backlog and told Ash
+  it would "reach tip in ~1.5h". It is neither lagging nor converging —
+  it is last WATCHED-ACCOUNT activity (SDF reserves move on multi-day
+  cadence by design), the XLM anchor's dormant-accept path covers quiet
+  spans past the horizon, and `supply_assets_stale` (>30h) guards a
+  real stall. The table being ~8.5k behind tip is HEALTHY. Even with
+  the fix deployed, the failure mode survives in the reader's habits —
+  the runbook's triage shape (compare producer watermark, not entity
+  activity) applies to humans and loops alike.
+
 - 2026-07-29 ~12:10Z — 📐 **/accounts snapshot reader: implementation
   brief filed for fresh-context build** (deliberate: a multi-file
   feature at this session's depth risks quality; the brief de-risks
