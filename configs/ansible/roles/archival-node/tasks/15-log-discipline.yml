@@ -404,6 +404,34 @@
   # No automatic restart — same operator-coordinated policy as above.
   tags: [clickhouse, log-discipline]
 
+- name: ClickHouse default-profile max_query_size raise (users.d drop-in)
+  # 2026-07-29: `supply seed-sac-balances -full-history` failed with
+  # "Max query size exceeded" — ClassifyTTLLiveness batches 5,000
+  # unhex('<64-hex>') keys per IN-list (~350 KiB of query TEXT), over
+  # the 256 KiB default parse cap. 4 MiB caps only the query text a
+  # client may send (a parse-stage bound), not memory/rows/execution —
+  # raising it carries no resource-limit risk. users.d hot-reloads; no
+  # restart needed. Applied live on r1 the same day (drift-clean).
+  ansible.builtin.copy:
+    dest: /etc/clickhouse-server/users.d/zz-max-query-size.xml
+    owner: clickhouse
+    group: clickhouse
+    mode: "0640"
+    content: |
+      <clickhouse>
+          <!-- Managed by ansible (archival-node / 15-log-discipline.yml).
+               2026-07-29: ClassifyTTLLiveness batches 5000 unhex() keys per
+               IN-list (~350 KiB of query text) — over the 256 KiB default
+               parse cap. 4 MiB gives headroom without changing execution
+               limits (this caps query TEXT size only, not memory/rows). -->
+          <profiles>
+              <default>
+                  <max_query_size>4194304</max_query_size>
+              </default>
+          </profiles>
+      </clickhouse>
+  tags: [clickhouse, log-discipline]
+
 - name: ClickHouse system-log TTL drop-in
   # The system.*_log tables (query/trace/part/metric/asynchronous_metric)
   # grow UNBOUNDED by default — the highest-volume ones (trace_log,
