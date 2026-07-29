@@ -127,7 +127,20 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
-- 2026-07-29 ~02:55Z — 🏆 **E1 GATE MET + the 39 supply alerts CLEARED.**
+- 2026-07-29 ~03:25Z — 🔧 **SAC re-seed attempt 1 FAILED + fixed +
+  relaunched.** `ClassifyTTLLiveness` batches 5,000 `unhex()` keys per
+  IN-list ≈ 350 KiB of query text — over ClickHouse's 256 KiB
+  `max_query_size` PARSE cap (a wire/text bound the 5,000-key batch
+  sizing never accounted for). With the delete already executed this
+  left seeded balances absent, so fixed immediately: users.d drop-in
+  raising the default profile's max_query_size to 4 MiB (parse-stage
+  text cap only — no memory/row/execution limits touched; hot-reloaded,
+  verified live) + the SAME content codified in ansible
+  (15-log-discipline.yml, tagged check `changed=0` = drift-clean
+  byte-for-byte). Re-seed attempt 2 running. **Post-launch code note:**
+  shrink the ClassifyTTLLiveness batch bound so the tool stays within
+  default server caps (rides the next release — no more tags this
+  session). — 🏆 **E1 GATE MET + the 39 supply alerts CLEARED.**
   1. **reconcile-balances 50/50: 0 MISMATCHES** (37 matched, 13
      merged-or-absent = accounts deleted on-chain, 0 errors) vs the
      19/50 (38%) pre-ordinal baseline — filed as
