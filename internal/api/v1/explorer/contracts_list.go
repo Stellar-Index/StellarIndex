@@ -2,11 +2,13 @@ package explorer
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 // ledgersPerDay is the approximate Stellar ledger cadence (≈5s close time →
@@ -169,9 +171,34 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	since := h.windowFloorLedger(ctx, days)
-
-	edges, err := h.Reader.ContractInteractions(ctx, cid, limit, since)
+	// Served via the shared contract-detail SWR cache (route-sweep
+	// 2026-07-30: the two-phase interactions scan ran inline and timed out
+	// on every request for busy contracts). Computed at the max page size
+	// and sliced; the window floor is captured WITH the edges so the
+	// served since_ledger describes the data actually served.
+	type interactionsPayload struct {
+		edges []clickhouse.ContractEdgeRow
+		since uint32
+	}
+	v, asOf, degraded, err := h.contractDetailCached(ctx, fmt.Sprintf("ix:%s:%d", cid, days), func(rctx context.Context) (any, error) {
+		s := h.windowFloorLedger(rctx, days)
+		full, cerr := h.Reader.ContractInteractions(rctx, cid, 200, s)
+		if cerr != nil {
+			return nil, cerr
+		}
+		return interactionsPayload{edges: full, since: s}, nil
+	})
+	var (
+		edges []clickhouse.ContractEdgeRow
+		since uint32
+	)
+	if err == nil {
+		p, _ := v.(interactionsPayload)
+		edges, since = p.edges, p.since
+		if limit < len(edges) {
+			edges = edges[:limit]
+		}
+	}
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -202,7 +229,7 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 			Protocol:   attribution[e.ContractID],
 		}
 	}
-	h.WriteJSON(w, out, false)
+	h.writeJSONAt(w, out, degraded, asOf)
 }
 
 // ContractCodeVersionV is one entry in a contract's code-upgrade timeline.
@@ -241,7 +268,19 @@ func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	versions, err := h.Reader.ContractCodeHistory(ctx, cid)
+	// Served via the shared contract-detail SWR cache — same route-sweep
+	// 2026-07-30 rationale as ContractInteractions above.
+	v, asOf, degraded, err := h.contractDetailCached(ctx, "ch:"+cid, func(rctx context.Context) (any, error) {
+		full, cerr := h.Reader.ContractCodeHistory(rctx, cid)
+		if cerr != nil {
+			return nil, cerr
+		}
+		return full, nil
+	})
+	var versions []clickhouse.ContractCodeVersion
+	if err == nil {
+		versions, _ = v.([]clickhouse.ContractCodeVersion)
+	}
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -258,10 +297,10 @@ func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := ContractCodeHistoryView{ContractID: cid, Versions: make([]ContractCodeVersionV, len(versions))}
-	for i, v := range versions {
-		out.Versions[i] = ContractCodeVersionV{Ledger: v.Ledger, CloseTime: v.CloseTime.UTC().Format(time.RFC3339), WasmHash: v.WasmHash}
+	for i, ver := range versions {
+		out.Versions[i] = ContractCodeVersionV{Ledger: ver.Ledger, CloseTime: ver.CloseTime.UTC().Format(time.RFC3339), WasmHash: ver.WasmHash}
 	}
-	h.WriteJSON(w, out, false)
+	h.writeJSONAt(w, out, degraded, asOf)
 }
 
 // windowFloorLedger returns the ledger sequence `days` days before the tip,

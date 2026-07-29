@@ -375,7 +375,7 @@ func seedBoundedLabelSeriesTail() {
 		SDEXOrderBookMaintainTotal.WithLabelValues(outcome)
 	}
 	for _, cache := range []string{
-		"accounts_wealth", "asset_holders", "contracts_dir", "op_type_stats", "ttl_liveness",
+		"accounts_wealth", "asset_holders", "contract_detail", "contracts_dir", "op_type_stats", "ttl_liveness",
 	} {
 		for _, outcome := range []string{"ok", "error"} {
 			ExplorerSWRRefreshTotal.WithLabelValues(cache, outcome)
@@ -3181,6 +3181,9 @@ var SDEXOrderBookMaintainDurationSeconds = prometheus.NewHistogramVec(
 //   - `op_type_stats`   — operation-type stats strip.
 //   - `ttl_liveness`    — the /v1/pools/reserves archived-pair
 //     verdict snapshot (clickhouse ttlLivenessCache).
+//   - `contract_detail` — the shared per-contract detail cache
+//     (recent events / interactions / code-history, route-sweep
+//     2026-07-30).
 //
 // The SWR design makes refresh failures INVISIBLE at the API surface
 // by construction (stale-but-real keeps serving) — this counter is
@@ -3190,7 +3193,7 @@ var SDEXOrderBookMaintainDurationSeconds = prometheus.NewHistogramVec(
 var ExplorerSWRRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_explorer_swr_refresh_total",
-		Help: "Explorer stale-while-revalidate detached refresh outcomes per cache (accounts_wealth|asset_holders|contracts_dir|op_type_stats|ttl_liveness × ok|error).",
+		Help: "Explorer stale-while-revalidate detached refresh outcomes per cache (accounts_wealth|asset_holders|contract_detail|contracts_dir|op_type_stats|ttl_liveness × ok|error).",
 	},
 	[]string{"cache", "outcome"},
 )

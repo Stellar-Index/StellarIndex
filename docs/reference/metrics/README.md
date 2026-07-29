@@ -2283,11 +2283,12 @@ it approaches the 30-min cap.
 ### `stellarindex_explorer_swr_refresh_total`
 
 Counter. Labels: `cache` (`accounts_wealth` | `asset_holders` |
-`contracts_dir` | `op_type_stats` | `ttl_liveness`), `outcome`
-(`ok` | `error`).
+`contract_detail` | `contracts_dir` | `op_type_stats` | `ttl_liveness`),
+`outcome` (`ok` | `error`).
 
 Detached stale-while-revalidate refresh outcomes for the explorer's
-five snapshot caches (route-sweep 2026-07-29). The SWR design makes
+snapshot caches (route-sweep 2026-07-29; `contract_detail` — the shared
+per-contract events/interactions/code-history cache — joined 2026-07-30). The SWR design makes
 refresh failures invisible at the API surface by construction —
 stale-but-real keeps serving with `flags.stale` — so this counter is
 the ONLY place a persistently dying refresher is visible before its

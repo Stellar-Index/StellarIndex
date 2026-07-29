@@ -2,6 +2,8 @@ package clickhouse
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -76,44 +78,73 @@ func (c *accountStateCache) put(account string, st AccountState, now time.Time) 
 	c.entries[account] = accountStateEntry{state: st, cachedAt: now}
 }
 
-// AccountStateCached serves account state from the TTL cache, falling
-// through to a live read (and populating the cache) on a miss. This is the
-// method the API detail handlers should call — see accountStateCache's
-// godoc for why (site-audit follow-up: /v1/accounts/{g} and /v1/issuers/{g}
-// were 6-8s under concurrent load).
+// accountStateRefreshTimeout bounds one detached account-state scan. The
+// same 3-minute ceiling as the other detached explorer refreshes; a whale
+// account's UNION arms measured well past the 8s request budget, which is
+// exactly why the scan cannot be request-scoped (see below).
+const accountStateRefreshTimeout = 3 * time.Minute
+
+// errAccountStateRefreshFailed is returned to waiters when the detached
+// scan finished without producing a cacheable state (the underlying error
+// was reported through the wealth-refresh error hook, the reader's only
+// logging seam).
+var errAccountStateRefreshFailed = errors.New(
+	"clickhouse: detached account-state refresh produced no entry")
+
+// AccountStateCached serves account state from the TTL cache; on a miss it
+// kicks ONE DETACHED scan per account and waits bounded by the CALLER's
+// deadline only. This is the method the API detail handlers should call —
+// see accountStateCache's godoc for why (site-audit follow-up:
+// /v1/accounts/{g} and /v1/issuers/{g} were 6-8s under concurrent load).
 //
-// A single-flight collapse per account keeps a burst of concurrent misses
-// for the SAME hot account from each launching its own scan.
+// Detached (route-sweep 2026-07-30): the scan used to run on the request
+// context, so a whale account whose UNION arms exceed the 8s budget died
+// WITH the request, the cache never filled, and every retry paid the
+// timeout again — a permanent 503 for exactly the accounts people look up.
+// Now the scan runs on its own bounded budget and outlives any caller that
+// gives up; the timed-out request 503s honestly and the retry lands warm.
 func (r *ExplorerReader) AccountStateCached(ctx context.Context, account string) (AccountState, error) {
 	if st, ok := r.stateCache.get(account); ok {
 		return st, nil
 	}
 	// Not single-flighted across accounts on purpose — distinct accounts
 	// genuinely need distinct scans. Only the exact-same-account burst is
-	// worth collapsing, which the per-account flight below handles.
+	// worth collapsing, which the per-account flight handles.
+	ch := r.refreshAccountState(account) //nolint:contextcheck // intentional detach — the fill must outlive a caller that times out (see doc above)
+	select {
+	case <-ch:
+		if st, ok := r.stateCache.get(account); ok {
+			return st, nil
+		}
+		return AccountState{}, errAccountStateRefreshFailed
+	case <-ctx.Done():
+		return AccountState{}, ctx.Err()
+	}
+}
+
+// refreshAccountState kicks ONE detached scan for account (returning the
+// existing flight's channel while one is up). Detached from any request
+// context on purpose — the whole point is to outlive the request that
+// noticed the miss (see AccountStateCached).
+func (r *ExplorerReader) refreshAccountState(account string) chan struct{} {
 	ch, owner := r.stateFlight.begin(account)
 	if !owner {
-		// Someone else is scanning this account; wait briefly for their
-		// result rather than launch a duplicate scan.
-		select {
-		case <-ch:
-			if st, ok := r.stateCache.get(account); ok {
-				return st, nil
-			}
-		case <-ctx.Done():
-			return AccountState{}, ctx.Err()
-		}
-		// Fall through to a live read if the waited-for refresh produced
-		// nothing cacheable.
-	} else {
+		return ch
+	}
+	go func() {
 		defer r.stateFlight.end(account, ch)
-	}
-	st, err := r.AccountState(ctx, account)
-	if err != nil {
-		return AccountState{}, err
-	}
-	r.stateCache.put(account, st, time.Now())
-	return st, nil
+		rctx, cancel := context.WithTimeout(context.Background(), accountStateRefreshTimeout)
+		defer cancel()
+		st, err := r.AccountState(rctx, account)
+		if err != nil {
+			if r.wealthRefreshErr != nil {
+				r.wealthRefreshErr(fmt.Errorf("detached account-state refresh (%s): %w", account, err))
+			}
+			return
+		}
+		r.stateCache.put(account, st, time.Now())
+	}()
+	return ch
 }
 
 // perKeyFlight collapses concurrent work for the same key. Used for the

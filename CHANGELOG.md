@@ -16,6 +16,22 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **The five remaining route-sweep 5xx routes fixed** (the class the
+  v0.21.4 acceptance sweep surfaced once the heavy jobs drained):
+  the `/v1/contracts` directory's 30-day `uniqExact` GROUP BY genuinely
+  exceeded its own 8 GiB pin on the post-D3 part layout — the shared
+  explorer scan settings now carry external group-by/sort spill, turning
+  the hard OOM into a measured 55.7 s disk-backed completion (23/23
+  refresh failures before, all caught by the new
+  `explorer_swr_refresh` metric); the three per-contract detail reads
+  (recent events / interactions / code-history) and the account-state
+  detail scan ran INLINE on the request deadline, so a busy contract or
+  whale account timed out on EVERY request and the caches could never
+  fill — all four now follow the established stale-while-revalidate
+  shape (detached bounded compute, single-flight, serve-stale with
+  `flags.stale` + real `as_of`, cold key waits one request deadline and
+  the retry lands warm; contract detail shares one bounded cache under
+  the new `cache="contract_detail"` metric label).
 - **Subset-filtered redstone batches now decode — attribution recovered
   from the signed payload.** When the adapter's freshness verifier drops
   a feed, `updated_feeds` shrinks below the op-args `feed_ids` and the

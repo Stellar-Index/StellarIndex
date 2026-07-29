@@ -35,7 +35,17 @@ import (
 // The clause lives in SQL text, not clickhouse.WithSettings, following the
 // cbLookupCreatesQuery precedent (settings observed to not reach the server
 // in some driver paths) and so reader tests can pin it.
-const explorerScanSettings = ` SETTINGS max_threads = 4, max_memory_usage = 8589934592`
+//
+// The external-spill pair converts what would be a hard OOM at the 8 GiB
+// cap into a slower disk-backed success: aggregation/sort state above 4 GB
+// spills instead of dying. Added 2026-07-30 after the 30-day contracts
+// directory GROUP BY (uniqExact over a 4-tuple, per contract, across
+// ~470k ledgers) failed its detached refresh 23/23 times at the pin —
+// measured on r1: OOM without spill, 55.7 s clean completion with it,
+// comfortably inside the 3-minute detached budget. Spill only activates
+// above its threshold, so the fast majority of scans are unaffected.
+const explorerScanSettings = ` SETTINGS max_threads = 4, max_memory_usage = 8589934592,` +
+	` max_bytes_before_external_group_by = 4000000000, max_bytes_before_external_sort = 4000000000`
 
 // schemaProbeRetryAfter is how long a probe that got NO answer (a
 // transport error, a deadline, or a ClickHouse error that is not a schema

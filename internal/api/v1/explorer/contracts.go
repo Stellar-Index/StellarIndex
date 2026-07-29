@@ -69,13 +69,29 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	rows, err := h.Reader.ContractEventsRecent(ctx, cid, limit, cur)
+	// First page (no cursor): served through the shared contract-detail
+	// SWR cache, computed once at the max page size and sliced — a busy
+	// contract's scan cannot fit the request deadline, and dying with the
+	// request left the cache permanently cold (route-sweep 2026-07-30).
+	// Cursor pages stay inline: they are unique per cursor (caching them
+	// would just churn the bounded cache) and their PK range is narrower.
+	var (
+		rows     []clickhouse.ContractActivityRow
+		asOf     time.Time
+		degraded bool
+		err      error
+	)
+	if !cur.IsSet() {
+		rows, asOf, degraded, err = h.contractEventsFirstPageCached(ctx, cid, limit)
+	} else {
+		rows, err = h.Reader.ContractEventsRecent(ctx, cid, limit, cur)
+	}
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
 		}
 		if readTimedOut(ctx, err) {
-			h.Logger.Warn("explorer ContractEventsRecent deadline exceeded", "contract", cid)
+			h.Logger.Warn("explorer ContractEventsRecent deadline exceeded (detached refresh continues)", "contract", cid)
 			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/contract-detail-timeout",
 				"Contract detail timed out")
 			return
@@ -96,6 +112,10 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 		last := rows[n-1]
 		out.NextCursor = encodeCursor(last.Seq, last.OpIndex, last.EventIndex)
 	}
+	if !cur.IsSet() {
+		h.writeJSONAt(w, out, degraded, asOf)
+		return
+	}
 	h.WriteJSON(w, out, false)
 }
 
@@ -111,4 +131,25 @@ func contractEventView(e clickhouse.ContractActivityRow) ContractEventView {
 		Topics:     e.TopicsDisplay,
 		Data:       e.DataDisplay,
 	}
+}
+
+// contractEventsFirstPageCached serves the contract's first activity page
+// through the shared contract-detail SWR cache, computing at the max page
+// size and slicing to the request's limit (see ContractDetail).
+func (h *Handler) contractEventsFirstPageCached(ctx context.Context, cid string, limit int) ([]clickhouse.ContractActivityRow, time.Time, bool, error) {
+	v, asOf, degraded, err := h.contractDetailCached(ctx, "ev:"+cid, func(rctx context.Context) (any, error) {
+		full, cerr := h.Reader.ContractEventsRecent(rctx, cid, 500, clickhouse.ExplorerCursor{})
+		if cerr != nil {
+			return nil, cerr
+		}
+		return full, nil
+	})
+	if err != nil {
+		return nil, time.Time{}, false, err
+	}
+	rows, _ := v.([]clickhouse.ContractActivityRow)
+	if limit < len(rows) {
+		rows = rows[:limit]
+	}
+	return rows, asOf, degraded, nil
 }

@@ -235,3 +235,76 @@ func TestSWRRefresh_ObservesMetrics(t *testing.T) {
 		t.Errorf("error observations = %d, want %d", got, errBefore+1)
 	}
 }
+
+// ── contract-detail SWR cache (route-sweep 2026-07-30) ────────────────
+
+func TestContractDetailCached_ColdWaitsThenServes(t *testing.T) {
+	h, _ := newSWRHandler()
+	calls := 0
+	compute := func(context.Context) (any, error) { calls++; return "payload-1", nil }
+
+	v, _, degraded, err := h.contractDetailCached(context.Background(), "ev:C1", compute)
+	if err != nil || v != "payload-1" || degraded {
+		t.Fatalf("cold fill: v=%v degraded=%v err=%v", v, degraded, err)
+	}
+	// Warm hit: no recompute.
+	v, _, degraded, err = h.contractDetailCached(context.Background(), "ev:C1", compute)
+	if err != nil || v != "payload-1" || degraded || calls != 1 {
+		t.Fatalf("warm hit: v=%v degraded=%v calls=%d err=%v", v, degraded, calls, err)
+	}
+}
+
+func TestContractDetailCached_StaleServedDegradedAndRefreshed(t *testing.T) {
+	h, _ := newSWRHandler()
+	h.contractDetail.put("ev:C1", "old")
+	// Age the entry past the TTL.
+	h.contractDetail.mu.Lock()
+	e := h.contractDetail.entries["ev:C1"]
+	e.cachedAt = time.Now().Add(-contractDetailTTL - time.Minute)
+	h.contractDetail.entries["ev:C1"] = e
+	h.contractDetail.mu.Unlock()
+
+	v, asOf, degraded, err := h.contractDetailCached(context.Background(), "ev:C1",
+		func(context.Context) (any, error) { return "new", nil })
+	if err != nil || v != "old" || !degraded {
+		t.Fatalf("stale serve: v=%v degraded=%v err=%v", v, degraded, err)
+	}
+	if time.Since(asOf) < contractDetailTTL {
+		t.Fatalf("stale serve must expose the entry's REAL age, got asOf=%v", asOf)
+	}
+	waitFlightIdle(t, &h.contractDetail.flight, "ev:C1")
+	if v, _, degraded, _ := h.contractDetailCached(context.Background(), "ev:C1",
+		func(context.Context) (any, error) { return "unused", nil }); v != "new" || degraded {
+		t.Fatalf("after refresh: v=%v degraded=%v, want new/false", v, degraded)
+	}
+}
+
+func TestContractDetailCached_FailedRefreshKeepsStaleEntry(t *testing.T) {
+	h, _ := newSWRHandler()
+	h.contractDetail.put("ev:C1", "old")
+	h.contractDetail.mu.Lock()
+	e := h.contractDetail.entries["ev:C1"]
+	e.cachedAt = time.Now().Add(-contractDetailTTL - time.Minute)
+	h.contractDetail.entries["ev:C1"] = e
+	h.contractDetail.mu.Unlock()
+
+	v, _, degraded, err := h.contractDetailCached(context.Background(), "ev:C1",
+		func(context.Context) (any, error) { return nil, errors.New("boom") })
+	if err != nil || v != "old" || !degraded {
+		t.Fatalf("stale serve during failing refresh: v=%v degraded=%v err=%v", v, degraded, err)
+	}
+	waitFlightIdle(t, &h.contractDetail.flight, "ev:C1")
+	if v, _, _, _ := h.contractDetailCached(context.Background(), "ev:C1",
+		func(context.Context) (any, error) { return nil, errors.New("boom") }); v != "old" {
+		t.Fatalf("failed refresh must keep the previous entry, got %v", v)
+	}
+}
+
+func TestContractDetailCached_ColdFailurePropagates(t *testing.T) {
+	h, _ := newSWRHandler()
+	_, _, _, err := h.contractDetailCached(context.Background(), "ev:C1",
+		func(context.Context) (any, error) { return nil, errors.New("boom") })
+	if err == nil {
+		t.Fatal("cold-path compute failure must propagate")
+	}
+}

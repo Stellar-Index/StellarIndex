@@ -345,8 +345,14 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 			// bounded, still cancellation-observing, just not
 			// request-scoped.
 			wantBudget := explorerReadTimeout
-			if tc.name == "AssetHolders" {
+			switch tc.name {
+			case "AssetHolders":
 				wantBudget = assetHoldersRefreshTimeout
+			case "ContractDetail":
+				// First page is SWR'd (route-sweep 2026-07-30): the cold
+				// compute runs DETACHED on the shared contract-detail
+				// budget — still bounded, just not request-scoped.
+				wantBudget = contractDetailRefreshTimeout
 			}
 			if probe.budget <= 0 || probe.budget > wantBudget {
 				t.Fatalf("%s: deadline budget %v not in (0, %v]", tc.name, probe.budget, wantBudget)
