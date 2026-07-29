@@ -7,7 +7,9 @@ status: final — E1 gate evidence
 # reconcile-balances, 50-account sample — 2026-07-29 ~02:45Z
 
 **Command:** `stellarindex-ops reconcile-balances -sample 50` on r1
-(defaults: Horizon reference https://horizon.stellar.org, tolerance 0
+(defaults: SDF's public Horizon API as the independent reference —
+ADR-0001 scopes the Horizon ban to production ingest, not one-off
+verifiers, per the tool's own doc comment; tolerance 0
 stroops, serial with 250 ms delay; account identities sampled from the
 deduped current-state projection — provably the same population as the
 change-log sample, per the 28405f0a analysis). Run uncontended, after
