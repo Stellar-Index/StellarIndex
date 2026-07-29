@@ -127,7 +127,19 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
-- 2026-07-29 ~01:25Z — 🎉 **D3 REPROJECT COMPLETE** (01:06:49Z,
+- 2026-07-29 ~01:50Z — ✅ **D3 VERIFY (bounded) + CUTOVER DONE.** The
+  script's own verify OOM'd (FINAL×FINAL join of 4.5B×3.4B rows vs the
+  18.6 GiB cap) — replaced with a bounded uniform key-hash sample
+  (1/50,000): **66,539 keys, latest-ledger disagreement 0, change_type
+  diff 109 (0.16%) = exactly the C2-4c tie-break corrections** (99 real
+  ordinal corrections, 10 arbitrary-on-both-sides in un-ordinaled
+  ranges). Cutover executed 01:44:16Z: `ledger_entries_current` is now
+  the version-keyed table (pre-cutover tip 63,695,886), MV recreated,
+  tip advancing (+6 in 30s), old table retained as `_old` (finalize
+  DEFERRED). Also: the reconcile-balances first attempt misfired
+  (`-config` is not a flag) and BOTH "still running" reads were pgrep
+  self-matches — restarted correctly, running now. Chain next: ansible
+  apply → v0.21.2. — 🎉 **D3 REPROJECT COMPLETE** (01:06:49Z,
   `reproject [38000000,63683991) complete`, ~29.5h wall). v2 table:
   3.448B rows, 96.7% with `intra_ledger_seq > 0`. **Cutover NOT yet
   done** — the script's phases are explicit (reproject → verify →
