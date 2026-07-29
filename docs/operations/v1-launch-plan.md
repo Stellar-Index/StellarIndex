@@ -127,6 +127,18 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~09:15Z — ✅ **Substrate prove-it battery PASSED + usd-volume
+  calibrated.** (1) verify-contiguity + verify-hashchain + verify-lake
+  all exit 0: **0 broken hash links genesis→tip [2, 63,699,907]** on the
+  post-campaign lake — filed. (2) First 30-day `verify-usd-volume`
+  filed: 8,397 violations = ONE coherent class (base_pegged SDEX/USDC:
+  verifier assumes the $1 peg with slack=0, stored values track market
+  rate, deltas <1%) — methodology [DECIDE] for next release, NOT
+  corruption; calibration table filed (estimated tier ≈ $0.4–0.9 M/day
+  vs $3.5–3.9 B exact → recommend ~$10 M/day alert threshold).
+  §2.6 remaining: prices top-50 (B1), re-derive determinism (E3),
+  SEV drill + rollback rehearsal (paging-gated).
+
 - 2026-07-29 ~08:30Z — ✅ **ansible-drift GREEN (exit 0)** after
   post-campaign re-measure: 69 → 2 → 0-beyond-allowance. The last real
   drift was an orphaned-uid owner on the migrations dir (stale deploy

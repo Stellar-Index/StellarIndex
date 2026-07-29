@@ -21,7 +21,7 @@ were ever produced until now).
 | Supply trustworthy: vs external truth | [baseline](2026-07-28-supply-reconcile-horizon.md) → [post-fixes](2026-07-29-supply-reconcile-post-fixes.md) | ✅ **7/8 PASS** (PHO +157%→−0.0002%); USDC FAIL dispositioned (re-seed parked on diagnosed blocker) | 2026-07-29 |
 | reconcile-balances (50-account) | [2026-07-29-reconcile-balances-50.md](2026-07-29-reconcile-balances-50.md) | ✅ **0 mismatches** (was 38% pre-ordinal) — E1 met | 2026-07-29 |
 | Completeness green | tracked in plan loop-log (2026-07-29) | 🔵 sep41×2 `projection_ok=t` (hole closed); `complete=t` pending the timer's substrate pass; **redstone stays incomplete** — 866 undecodable events, code-side fix next release | — |
-| verify-lake / contiguity / hash-chain | — not yet filed | ⏳ next in queue post-completeness | — |
+| verify-lake / contiguity / hash-chain | [2026-07-29-lake-verifiers.md](2026-07-29-lake-verifiers.md) | ✅ ALL PASSED — 0 broken hash links genesis→tip [2, 63,699,907] | 2026-07-29 |
 | Prices vs CoinGecko/Chainlink top-50 | — not yet filed | ⏳ campaign B1 | — |
 | re-derive determinism | — not yet filed | ⏳ campaign E3 | — |
 | SEV-1/2 paging drill + rollback rehearsal | — not yet filed | ⏳ blocked on paging being wired (Ash item #1) | — |
