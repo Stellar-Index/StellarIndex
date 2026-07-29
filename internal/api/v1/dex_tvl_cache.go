@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,10 +16,12 @@ import (
 
 // ProtocolTVLView is the additive per-protocol TVL summary attached to
 // GET /v1/protocols rows and /v1/protocols/{name} when the DEX TVL
-// snapshot cache is wired and has data for the protocol. Absent for
-// protocols without an absolute reserve source (phoenix/comet emit
-// flow deltas, not post-state reserves — a window net-flow is NOT TVL
-// and is deliberately not dressed up as one) and on cold start before
+// snapshot cache is wired and has data for the protocol. Phoenix and
+// Comet events carry flow deltas, not post-state reserves, so their
+// figures come from the pools' STORAGE entries in the lake (absolute
+// current state — a window net-flow is NOT TVL and is deliberately
+// not dressed up as one). Absent for protocols without any absolute
+// reserve source (SDEX is an order book) and on cold start before
 // the first background refresh completes.
 type ProtocolTVLView struct {
 	// TVLUSD is the summed USD value of every PRICED reserve leg across
@@ -27,13 +30,16 @@ type ProtocolTVLView struct {
 	// UnpricedPools > 0.
 	TVLUSD string `json:"tvl_usd"`
 	// PoolsTotal is the number of pools with a current reserve
-	// observation contributing to this snapshot.
+	// observation contributing to this snapshot — including pools
+	// whose captured storage did NOT decode to a recognised shape
+	// (they contribute 0 and count in UnpricedPools, never a guess).
 	PoolsTotal int `json:"pools_total"`
 	// PoolsPriced is the number of pools whose every reserve leg
 	// resolved to a USD price.
 	PoolsPriced int `json:"pools_priced"`
 	// UnpricedPools is the number of pools with at least one reserve
-	// leg that could not be priced in USD; their priceable legs still
+	// leg that could not be priced in USD — or whose current storage
+	// shape was unrecognised; their priceable legs (if any) still
 	// contribute to TVLUSD (honest lower bound, never silent).
 	UnpricedPools int `json:"unpriced_pools"`
 	// AsOf is when the snapshot was computed (RFC3339).
@@ -45,10 +51,11 @@ type ProtocolTVLView struct {
 
 // DEXTVLRefreshInterval is the cadence the background goroutine in
 // cmd/stellarindex-api/main.go calls DEXTVLCache.Refresh at. The
-// underlying reads are one batched lake lookup (soroswap pair
-// instance entries) + one served-tier query (aquarius reserve
-// snapshots) + a handful of prices_1m lookups — cheap enough for 10
-// minutes, slow-moving enough that anything faster adds no signal.
+// underlying reads are three batched lake lookups (soroswap pair
+// instance entries; phoenix pool persistent entries; comet record
+// entries) + one served-tier query (aquarius reserve snapshots) + a
+// handful of prices_1m lookups — cheap enough for 10 minutes,
+// slow-moving enough that anything faster adds no signal.
 const DEXTVLRefreshInterval = 10 * time.Minute
 
 // aquariusTVLWindowDays bounds the aquarius_reserves recency scan —
@@ -68,6 +75,25 @@ type SoroswapTVLReserveReader interface {
 // snapshot per Aquarius pool. Production wiring is timescale.Store.
 type AquariusTVLReserveReader interface {
 	LatestAquariusReserves(ctx context.Context, windowDays int) ([]timescale.AquariusPoolReserve, error)
+}
+
+// PhoenixTVLReserveReader reads current Phoenix pool reserves +
+// token identities from the pools' persistent storage in the
+// certified lake. Production wiring is *clickhouse.ExplorerReader.
+// The second return lists pools whose captured storage did not
+// decode to the recognised shape — counted, never guessed; pools
+// absent from BOTH returns have no current state (archived or
+// uncaptured), which is honest "unavailable", NEVER zero TVL.
+type PhoenixTVLReserveReader interface {
+	PhoenixPoolReserves(ctx context.Context, pools []string) (map[string]clickhouse.PhoenixPoolState, []string, error)
+}
+
+// CometTVLReserveReader reads current Comet per-token pool balance
+// records from the lake. Production wiring is
+// *clickhouse.ExplorerReader; same absence + undecodable contract as
+// PhoenixTVLReserveReader.
+type CometTVLReserveReader interface {
+	CometPoolReserves(ctx context.Context, pools []string) (map[string]clickhouse.CometPoolState, []string, error)
 }
 
 // TVLUSDPricer resolves an on-chain asset's USD price at a point in
@@ -102,6 +128,19 @@ type DEXTVLSources struct {
 	SoroswapReserves SoroswapTVLReserveReader
 	// AquariusReserves is the served-tier latest-reserve-snapshot reader.
 	AquariusReserves AquariusTVLReserveReader
+	// PhoenixPools is the ADR-0035 curated Phoenix pool set the lake
+	// reserve lookup is scoped to (phoenix.MainnetPools +
+	// MainnetMapPools; stake contracts are deliberately excluded —
+	// they hold LP shares, which would double-count the underlying).
+	PhoenixPools []string
+	// PhoenixReserves is the lake current-pool-state reader.
+	PhoenixReserves PhoenixTVLReserveReader
+	// CometPools is the curated Comet pool allowlist
+	// (comet.MainnetGatedSet — today exactly Blend's BLND/USDC
+	// backstop; a new pool must be operator-admitted first).
+	CometPools []string
+	// CometReserves is the lake current-record-state reader.
+	CometReserves CometTVLReserveReader
 	// Pricer resolves reserve legs to USD. Required for any TVL to be
 	// priced; nil means every leg is unpriced (and the snapshot says so).
 	Pricer TVLUSDPricer
@@ -148,22 +187,25 @@ func (c *DEXTVLCache) Snapshot() (map[string]ProtocolTVLView, time.Time) {
 func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 	now := time.Now().UTC()
 	valuer := newTVLValuer(c.src.Pricer, c.src.PegInfo, now)
-	next := make(map[string]ProtocolTVLView, 2)
+	next := make(map[string]ProtocolTVLView, 4)
 	prev, _ := c.Snapshot()
 	var errs []error
 
-	if view, err := c.refreshSoroswap(ctx, valuer, now); err != nil {
-		errs = append(errs, fmt.Errorf("soroswap tvl: %w", err))
-		carryPrev(next, prev, "soroswap")
-	} else if view != nil {
-		next["soroswap"] = *view
-	}
-
-	if view, err := c.refreshAquarius(ctx, valuer, now); err != nil {
-		errs = append(errs, fmt.Errorf("aquarius tvl: %w", err))
-		carryPrev(next, prev, "aquarius")
-	} else if view != nil {
-		next["aquarius"] = *view
+	for _, p := range []struct {
+		name    string
+		refresh func(context.Context, *tvlValuer, time.Time) (*ProtocolTVLView, error)
+	}{
+		{"soroswap", c.refreshSoroswap},
+		{"aquarius", c.refreshAquarius},
+		{"phoenix", c.refreshPhoenix},
+		{"comet", c.refreshComet},
+	} {
+		if view, err := p.refresh(ctx, valuer, now); err != nil {
+			errs = append(errs, fmt.Errorf("%s tvl: %w", p.name, err))
+			carryPrev(next, prev, p.name)
+		} else if view != nil {
+			next[p.name] = *view
+		}
 	}
 
 	c.mu.Lock()
@@ -283,6 +325,116 @@ func (c *DEXTVLCache) refreshAquarius(ctx context.Context, valuer *tvlValuer, no
 	}
 	view.TVLUSD = total.FloatString(2)
 	return &view, nil
+}
+
+// refreshPhoenix computes Phoenix TVL from CURRENT pool reserves in
+// the certified lake (persistent ReserveA/ReserveB entries + the
+// CONFIG entry's token identities), scoped to the curated ADR-0035
+// pool set. Pools absent from the lake read (archived pools,
+// uncaptured entries) are excluded entirely — that absence is the
+// reader's honest signal, not a zero. Pools whose captured storage
+// shape was unrecognised contribute 0 and are counted (see
+// countUndecodablePools). Returns (nil, nil) when the readers aren't
+// wired.
+func (c *DEXTVLCache) refreshPhoenix(ctx context.Context, valuer *tvlValuer, now time.Time) (*ProtocolTVLView, error) {
+	if c.src.PhoenixReserves == nil || len(c.src.PhoenixPools) == 0 {
+		return nil, nil
+	}
+	states, undecodable, err := c.src.PhoenixReserves.PhoenixPoolReserves(ctx, c.src.PhoenixPools)
+	if err != nil {
+		return nil, fmt.Errorf("pool reserves: %w", err)
+	}
+
+	total := new(big.Rat)
+	view := ProtocolTVLView{
+		AsOf: now.Format(time.RFC3339),
+		Basis: "sum of current pool reserves (lake persistent storage; archived pools excluded, " +
+			"unrecognised storage shapes counted unpriced), valued through the served USD price tiers; " +
+			"unpriced legs contribute 0",
+	}
+	for _, st := range states {
+		view.PoolsTotal++
+		priced := true
+		for _, leg := range []struct {
+			token string
+			raw   *big.Int
+		}{{st.TokenA, st.ReserveA}, {st.TokenB, st.ReserveB}} {
+			usd, ok := valuer.legUSD(ctx, leg.token, leg.raw)
+			if !ok {
+				priced = false
+				continue
+			}
+			total.Add(total, usd)
+		}
+		if priced {
+			view.PoolsPriced++
+		} else {
+			view.UnpricedPools++
+		}
+	}
+	c.countUndecodablePools(&view, "phoenix", undecodable)
+	view.TVLUSD = total.FloatString(2)
+	return &view, nil
+}
+
+// refreshComet computes Comet TVL from the CURRENT per-token balance
+// records in the certified lake (the AllRecordData entry), scoped to
+// the curated allowlist. Same absence / undecodable semantics as
+// refreshPhoenix. Returns (nil, nil) when the readers aren't wired.
+func (c *DEXTVLCache) refreshComet(ctx context.Context, valuer *tvlValuer, now time.Time) (*ProtocolTVLView, error) {
+	if c.src.CometReserves == nil || len(c.src.CometPools) == 0 {
+		return nil, nil
+	}
+	states, undecodable, err := c.src.CometReserves.CometPoolReserves(ctx, c.src.CometPools)
+	if err != nil {
+		return nil, fmt.Errorf("pool reserves: %w", err)
+	}
+
+	total := new(big.Rat)
+	view := ProtocolTVLView{
+		AsOf: now.Format(time.RFC3339),
+		Basis: "sum of current per-token pool balance records (lake persistent storage; archived pools " +
+			"excluded, unrecognised storage shapes counted unpriced), valued through the served USD " +
+			"price tiers; unpriced legs contribute 0",
+	}
+	for _, st := range states {
+		view.PoolsTotal++
+		priced := true
+		for _, leg := range st.Legs {
+			usd, ok := valuer.legUSD(ctx, leg.Token, leg.Balance)
+			if !ok {
+				priced = false
+				continue
+			}
+			total.Add(total, usd)
+		}
+		if priced {
+			view.PoolsPriced++
+		} else {
+			view.UnpricedPools++
+		}
+	}
+	c.countUndecodablePools(&view, "comet", undecodable)
+	view.TVLUSD = total.FloatString(2)
+	return &view, nil
+}
+
+// countUndecodablePools folds pools whose captured storage shape the
+// reader refused to decode into the view — contributing 0, counted in
+// both PoolsTotal and UnpricedPools (an honest lower bound, never a
+// fabricated figure) — and emits one metric-friendly warn line so a
+// contract upgrade that changes the storage layout is operator-visible
+// rather than a silent TVL shrink.
+func (c *DEXTVLCache) countUndecodablePools(view *ProtocolTVLView, protocol string, pools []string) {
+	if len(pools) == 0 {
+		return
+	}
+	view.PoolsTotal += len(pools)
+	view.UnpricedPools += len(pools)
+	if c.src.Logger != nil {
+		c.src.Logger.Warn("dex tvl: unrecognised pool storage shape; counted unpriced",
+			"protocol", protocol, "pools", strings.Join(pools, ","), "count", len(pools))
+	}
 }
 
 // tvlValuer prices raw on-chain reserve legs in USD, memoising one

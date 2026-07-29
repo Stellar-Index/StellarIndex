@@ -12796,15 +12796,20 @@ export interface components {
              *     protocol's absolute pool reserves — Soroswap's current pair
              *     reserves read from the certified lake (archived pairs
              *     excluded), Aquarius' latest per-pool post-state reserve
-             *     snapshots — valued through the same USD price tiers that
-             *     stamp `trades.usd_volume` (declared peg → direct VWAP →
-             *     XLM bridge). Reserve legs that cannot be priced contribute
-             *     0 and count their pool in `unpriced_pools`, so `tvl_usd`
-             *     is an honest LOWER BOUND whenever `unpriced_pools` > 0.
-             *     Absent for protocols without an absolute reserve source
-             *     (Phoenix/Comet events carry flow deltas, not post-state
-             *     reserves; SDEX is an order book), and before the first
-             *     snapshot refresh after process start.
+             *     snapshots, and Phoenix/Comet current pool STORAGE entries
+             *     read from the lake (their events carry flow deltas, not
+             *     post-state reserves, so the figure comes from the curated
+             *     pools' persistent storage; archived pools excluded) —
+             *     valued through the same USD price tiers that stamp
+             *     `trades.usd_volume` (declared peg → direct VWAP → XLM
+             *     bridge). Reserve legs that cannot be priced contribute 0
+             *     and count their pool in `unpriced_pools` — as does a pool
+             *     whose captured storage shape is unrecognised (it is never
+             *     partially decoded or guessed) — so `tvl_usd` is an honest
+             *     LOWER BOUND whenever `unpriced_pools` > 0. Absent for
+             *     protocols without an absolute reserve source (SDEX is an
+             *     order book), and before the first snapshot refresh after
+             *     process start.
              */
             tvl?: {
                 /**

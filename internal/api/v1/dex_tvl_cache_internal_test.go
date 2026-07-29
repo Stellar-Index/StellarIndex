@@ -21,6 +21,10 @@ const (
 	tvlTestPairB    = "CDP3XWJ4ZN222LKYBMWIY22MMPYWCFHUUDLGVKPXCHTFPXTJATRWSAJK"
 	tvlTestUnpriced = "CAAV3AE3VKD2P4TY7LWTQMMJHIJ4WOCZ5ANCIJPC3NRSERQVXYHNCCQW"
 	tvlTestAqPool   = "CBQDHNBFBZYE4MECPHNQCLM7F5FRZ4R7HZWQZXAK7NZYYUR3ILWSKDMV"
+	// Real curated pool ids reused as opaque well-formed strkeys.
+	tvlTestPhxPool    = "CBHCRSVX3ZZ7EGTSYMKPEFGZNWRVCSESQR3UABET4MIW52N4EVU6BIZX"
+	tvlTestPhxBadPool = "CBCZGGNOEUZG4CAAE7TGTQQHETZMKUT4OIPFHHPKEUX46U4KXBBZ3GLH"
+	tvlTestCometPool  = "CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM"
 )
 
 type stubTVLPairsReader struct {
@@ -48,6 +52,26 @@ type stubAquariusReserveReader struct {
 
 func (s *stubAquariusReserveReader) LatestAquariusReserves(context.Context, int) ([]timescale.AquariusPoolReserve, error) {
 	return s.pools, s.err
+}
+
+type stubPhoenixReserveReader struct {
+	states      map[string]clickhouse.PhoenixPoolState
+	undecodable []string
+	err         error
+}
+
+func (s stubPhoenixReserveReader) PhoenixPoolReserves(_ context.Context, _ []string) (map[string]clickhouse.PhoenixPoolState, []string, error) {
+	return s.states, s.undecodable, s.err
+}
+
+type stubCometReserveReader struct {
+	states      map[string]clickhouse.CometPoolState
+	undecodable []string
+	err         error
+}
+
+func (s stubCometReserveReader) CometPoolReserves(_ context.Context, _ []string) (map[string]clickhouse.CometPoolState, []string, error) {
+	return s.states, s.undecodable, s.err
 }
 
 // stubTVLPricer prices `native` and any token listed in rates; every
@@ -97,6 +121,34 @@ func tvlTestSources() DEXTVLSources {
 				{TokenIndex: 1, Token: "", Reserve: canonical.NewAmount(big.NewInt(42))},
 			},
 		}}},
+		PhoenixPools: []string{tvlTestPhxPool, tvlTestPhxBadPool},
+		PhoenixReserves: stubPhoenixReserveReader{
+			states: map[string]clickhouse.PhoenixPoolState{
+				// 20 XLM-SAC ($10 at rate 0.5) + 10.5 USDC-SAC peg
+				// ($10.50) → $20.50, fully priced.
+				tvlTestPhxPool: {
+					Pool:   tvlTestPhxPool,
+					TokenA: canonical.XLMSacContractID, ReserveA: big.NewInt(200_000_000),
+					TokenB: tvlTestUSDCSAC, ReserveB: big.NewInt(105_000_000),
+				},
+			},
+			// A pool whose captured storage shape the reader refused
+			// to decode: contributes 0, counted total + unpriced.
+			undecodable: []string{tvlTestPhxBadPool},
+		},
+		CometPools: []string{tvlTestCometPool},
+		CometReserves: stubCometReserveReader{
+			states: map[string]clickhouse.CometPoolState{
+				// 10 XLM-SAC ($5) + 2.1 USDC-SAC peg ($2.10) → $7.10.
+				tvlTestCometPool: {
+					Pool: tvlTestCometPool,
+					Legs: []clickhouse.CometPoolLeg{
+						{Token: canonical.XLMSacContractID, Balance: big.NewInt(100_000_000)},
+						{Token: tvlTestUSDCSAC, Balance: big.NewInt(21_000_000)},
+					},
+				},
+			},
+		},
 		Pricer:  stubTVLPricer{rates: map[string]string{"native": "0.5"}},
 		PegInfo: stubTVLPegInfo{pegged: map[string]int{tvlTestUSDCSAC: 7}},
 	}
@@ -147,6 +199,37 @@ func TestDEXTVLCache_RefreshComputesProtocolTVL(t *testing.T) {
 	if aq.PoolsTotal != 1 || aq.PoolsPriced != 0 || aq.UnpricedPools != 1 {
 		t.Errorf("aquarius pools = total %d priced %d unpriced %d, want 1/0/1",
 			aq.PoolsTotal, aq.PoolsPriced, aq.UnpricedPools)
+	}
+
+	phx, ok := snap["phoenix"]
+	if !ok {
+		t.Fatal("phoenix missing from snapshot")
+	}
+	// $10 (XLM) + $10.50 (USDC peg); the undecodable pool contributes
+	// exactly 0 and is counted total + unpriced (lower bound, never a
+	// guess).
+	if phx.TVLUSD != "20.50" {
+		t.Errorf("phoenix TVLUSD = %q, want 20.50", phx.TVLUSD)
+	}
+	if phx.PoolsTotal != 2 || phx.PoolsPriced != 1 || phx.UnpricedPools != 1 {
+		t.Errorf("phoenix pools = total %d priced %d unpriced %d, want 2/1/1",
+			phx.PoolsTotal, phx.PoolsPriced, phx.UnpricedPools)
+	}
+	if phx.AsOf == "" || phx.Basis == "" {
+		t.Error("phoenix AsOf/Basis must be populated")
+	}
+
+	cm, ok := snap["comet"]
+	if !ok {
+		t.Fatal("comet missing from snapshot")
+	}
+	// $5 (XLM) + $2.10 (USDC peg), fully priced.
+	if cm.TVLUSD != "7.10" {
+		t.Errorf("comet TVLUSD = %q, want 7.10", cm.TVLUSD)
+	}
+	if cm.PoolsTotal != 1 || cm.PoolsPriced != 1 || cm.UnpricedPools != 0 {
+		t.Errorf("comet pools = total %d priced %d unpriced %d, want 1/1/0",
+			cm.PoolsTotal, cm.PoolsPriced, cm.UnpricedPools)
 	}
 }
 
