@@ -15,6 +15,14 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Security: `google.golang.org/grpc` bumped v1.82.0 → v1.82.1**
+  (GO-2026-6061, reachable via the sorobanevents AsyncSink transport
+  path — flagged by the govulncheck CI gate). Also raised the
+  integration-suite go-test deadline 10m → 20m: cumulative runtime
+  crossed the old cap as the July campaign grew the container-backed
+  suite (CI died with the running test 4s in — growth, not a hang).
+
 ## [v0.21.3] — 2026-07-29
 
 ### Fixed
