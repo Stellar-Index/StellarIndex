@@ -63,6 +63,34 @@ against.
   both rendering absence as "—" and lower bounds with a "≥" marker.
 
 ### Fixed
+- **TTL-liveness classification redesigned: scan-per-batch replaced by
+  the slim `stellar.ttl_live_until` projection** (v0.21.4 headline).
+  `ClassifyTTLLiveness` — the archived-entry filter behind the SAC
+  balance seed and soroswap pair-state reads — used to resolve each
+  1,500-key batch by scanning `ledger_entries_current`'s 586M ttl rows
+  and extracting `liveUntilLedgerSeq` from the wide `entry_xdr` column
+  per row. Six production attempts failed across four mechanisms
+  (2026-07-29); the terminal one OOM'd the query's own 8 GiB pin inside
+  AggregatingTransform. The extraction now runs ONCE per TTL change, at
+  ingest, into a three-column ReplacingMergeTree projection
+  (`key_hash FixedString(32)`, `live_until`, composite
+  `(ledger_seq<<32)|intra_ledger_seq` version; ~20–30 GB vs the 590 GB
+  source), and the classifier is a primary-key `argMax(live_until,
+  version)` lookup — bounded by construction. The fail-OPEN contract is
+  unchanged (absent/unparseable → `TTLUnknown`, callers keep those; the
+  MV's exact 36/48 decoded-length guards skip malformed rows via
+  `tryBase64Decode`, so a layout change can never fabricate an
+  "archived" verdict), and the old scan path is DELETED: a deployment
+  without the projection gets a hard error naming the DDL artifact, not
+  a silent fallback. Proven end-to-end on containerized ClickHouse 24.8
+  (MV flow, adversarial insert order, same-ledger intra tie-break,
+  fail-open + fail-loud). **Operator sequence (r1):** (1) apply
+  `deploy/clickhouse/ttl_live_until.sql` Step 1 (table + MV), (2) run
+  its Step-2 windowed backfill under `run-heavy-job.sh` (from ledger
+  50M — Soroban TTLs cannot predate protocol 20), (3) deploy the
+  v0.21.4 binaries, (4) re-run `supply seed-sac-balances` → USDC's
+  48,505 dormant holders restore → supply reconcile 8/8. Fresh
+  deployments get the projection from `tier1_schema.sql`.
 - **Security: `google.golang.org/grpc` bumped v1.82.0 → v1.82.1**
   (GO-2026-6061, reachable via the sorobanevents AsyncSink transport
   path — flagged by the govulncheck CI gate). Also raised the
