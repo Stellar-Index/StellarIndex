@@ -13,6 +13,30 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
+// explorerScanSettings is the per-query resource pin appended to every
+// SCAN-SHAPED explorer read — any query whose cost is set by the size of a
+// lake table (bloom-skip-index probes, window GROUP BYs, FINAL prefix scans)
+// rather than by a primary-key point lookup.
+//
+// Why (measured on r1, 2026-07-29): at DEFAULT max_threads a
+// ledger_entries_current probe fanned out over the post-D3 part layout to a
+// 4.76 GiB peak — 40× the 89 MiB the IDENTICAL probe costs at
+// max_threads = 4. The read amplification is thread scheduling (per-stream
+// read buffers × many concurrent part ranges), not the table; pinning
+// threads is the real lever. The explicit 8 GiB tracked ceiling
+// (8589934592) makes a future part-layout shift fail the ONE query loudly
+// instead of silently starving the shared host — same posture as
+// classifyTTLLivenessBatch / boundedScanSettings / liveOfferScanSettings.
+//
+// Keyed point reads (PK-prefix lookups on (entry_type, key_xdr), per-ledger
+// partition-pruned reads) are measured fast (0.08s) and deliberately do NOT
+// carry this — they never fan out.
+//
+// The clause lives in SQL text, not clickhouse.WithSettings, following the
+// cbLookupCreatesQuery precedent (settings observed to not reach the server
+// in some driver paths) and so reader tests can pin it.
+const explorerScanSettings = ` SETTINGS max_threads = 4, max_memory_usage = 8589934592`
+
 // schemaProbeRetryAfter is how long a probe that got NO answer (a
 // transport error, a deadline, or a ClickHouse error that is not a schema
 // verdict) waits before querying again. Without it, every explorer read
@@ -388,24 +412,11 @@ func (r *ExplorerReader) RecentOperations(ctx context.Context, limit int, cur Ex
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	q := `SELECT ` + opColsLight + ` FROM stellar.operations`
+	q := recentOperationsQuery(cur.IsSet())
 	args := []any{}
 	if cur.IsSet() {
-		q += ` WHERE (ledger_seq, tx_index, op_index) < (?, ?, ?)`
 		args = append(args, cur.Ledger, cur.A, cur.B)
 	}
-	// LIMIT 1 BY the operations primary key (audit DAT-10): stellar.operations
-	// is ReplacingMergeTree(ingested_at); a re-ingested operation leaves an
-	// un-merged duplicate PART that is byte-identical to the original bar
-	// ingested_at (which opColsLight doesn't even select) until a background
-	// merge — without dedup this directory listing served the SAME operation
-	// twice. LIMIT 1 BY, not FINAL: FINAL would force ClickHouse to merge
-	// every overlapping part to answer this bare `ORDER BY … DESC LIMIT n`
-	// tip query with no lower bound — the exact O(table) trap
-	// recentLedgersTailWindow works around for RecentLedgers. LIMIT 1 BY
-	// composes with the SAME ORDER BY the query already has, so it stays a
-	// cheap streamed reverse scan from the tip, not a full-table merge.
-	q += ` ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?`
 	args = append(args, limit)
 	rows, err := r.conn.Query(ctx, q, args...)
 	if err != nil {
@@ -415,11 +426,54 @@ func (r *ExplorerReader) RecentOperations(ctx context.Context, limit int, cur Ex
 	return scanOpsLight(rows)
 }
 
+// recentOperationsQuery builds RecentOperations' SQL.
+//
+// LIMIT 1 BY the operations primary key (audit DAT-10): stellar.operations
+// is ReplacingMergeTree(ingested_at); a re-ingested operation leaves an
+// un-merged duplicate PART that is byte-identical to the original bar
+// ingested_at (which opColsLight doesn't even select) until a background
+// merge — without dedup this directory listing served the SAME operation
+// twice. LIMIT 1 BY, not FINAL: FINAL would force ClickHouse to merge
+// every overlapping part to answer this bare `ORDER BY … DESC LIMIT n`
+// tip query with no lower bound — the exact O(table) trap
+// recentLedgersTailWindow works around for RecentLedgers. LIMIT 1 BY
+// composes with the SAME ORDER BY the query already has, so it stays a
+// cheap streamed reverse scan from the tip, not a full-table merge.
+//
+// explorerScanSettings: a reverse tip read is cheap in TIME but its stream
+// setup still fans out over the part layout at default threads (route-sweep
+// 2026-07-29: /v1/operations was in the 8s-budget 503 class); pinning
+// threads bounds the fan-out with no correctness change.
+func recentOperationsQuery(hasCursor bool) string {
+	q := `SELECT ` + opColsLight + ` FROM stellar.operations`
+	if hasCursor {
+		q += ` WHERE (ledger_seq, tx_index, op_index) < (?, ?, ?)`
+	}
+	q += ` ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?`
+	return q + explorerScanSettings
+}
+
 // OpTypeCount is one op-type's count in the stats window.
 type OpTypeCount struct {
 	OpType string
 	Count  int64
 }
+
+// opTypeStatsQuery is OperationTypeStats' SQL.
+//
+// FINAL: stellar.operations is ReplacingMergeTree(ingested_at); a re-ingested
+// operation leaves an un-merged duplicate part that inflates count() until a
+// merge (audit C2-12). Bounded by the ledger-window predicate.
+//
+// explorerScanSettings: this is a FINAL GROUP BY over a full day of the
+// multi-billion-row operations table — the dominant cost behind the
+// /v1/operations directory's first page and squarely in the thread-fan-out
+// memory class the pin bounds.
+const opTypeStatsQuery = `SELECT op_type, toInt64(count()) AS c
+		FROM stellar.operations FINAL
+		WHERE ledger_seq > (SELECT max(ledger_seq) FROM stellar.operations) - ?
+		GROUP BY op_type
+		ORDER BY c DESC` + explorerScanSettings
 
 // OperationTypeStats returns the per-op-type operation counts over the
 // most-recent `windowLedgers` ledgers (default ~24h at 5 s close
@@ -429,15 +483,7 @@ func (r *ExplorerReader) OperationTypeStats(ctx context.Context, windowLedgers u
 	if windowLedgers == 0 {
 		windowLedgers = 17280 // ~24h at 5s ledger close
 	}
-	// FINAL: stellar.operations is ReplacingMergeTree(ingested_at); a re-ingested
-	// operation leaves an un-merged duplicate part that inflates count() until a
-	// merge (audit C2-12). Bounded by the ledger-window predicate.
-	const q = `SELECT op_type, toInt64(count()) AS c
-		FROM stellar.operations FINAL
-		WHERE ledger_seq > (SELECT max(ledger_seq) FROM stellar.operations) - ?
-		GROUP BY op_type
-		ORDER BY c DESC`
-	rows, err := r.conn.Query(ctx, q, windowLedgers)
+	rows, err := r.conn.Query(ctx, opTypeStatsQuery, windowLedgers)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: operation type stats: %w", err)
 	}
@@ -587,6 +633,62 @@ type ExplorerCursor struct {
 // continuation page, not the first page).
 func (c ExplorerCursor) IsSet() bool { return c.Ledger > 0 }
 
+// accountTransactionsQuery builds AccountTransactions' SQL.
+//
+// Two index-friendly arms UNION'd, NOT `source_account = ? OR … IN (…)`:
+// an OR with a subquery defeats the source_account skip-index and
+// full-scans the 23 B-row table. Arm 1 (sourced) uses the
+// source_account index; arm 2 (participant) matches transactions on its
+// PRIMARY KEY (ledger_seq, tx_index) via op-keys from the account-
+// prefixed operation_participants — both stay index-bounded. DISTINCT
+// dedups the rare tx that is BOTH sourced by the account AND has it as a
+// non-source participant of one of its ops.
+//
+// The cursor tuple comparison is strictly older than the (ledger, tx_index)
+// last served — never re-emits a served row, never skips an unserved one.
+//
+// Each arm carries its OWN `ORDER BY … LIMIT ?` (audit C-F1a) — without
+// it only the outer query was bounded, so an account with a long history
+// materialised EVERY transaction it ever touched before the outer LIMIT
+// 50 threw all but a page away.
+//
+// INVARIANT that makes this exact, not an approximation: the union of two
+// individually-top-N arms provably CONTAINS the union's top N. Any row in
+// the true top N has at most N-1 distinct rows ahead of it across both
+// arms, hence at most N-1 ahead of it WITHIN its own arm, so it survives
+// that arm's top-N cut. The outer merge-sort + LIMIT then picks the same N
+// rows it always did.
+//
+// The per-arm `LIMIT 1 BY ledger_seq, tx_index` is what keeps the cut
+// exact rather than merely correct-order: stellar.transactions is
+// ReplacingMergeTree, so an un-merged duplicate PART could otherwise
+// consume slots in an arm's top-N and hand back a SHORT page while
+// further rows existed (no row is lost — the keyset cursor still advances
+// off the last served row — but a client that stops on a short page would
+// truncate its own history). It also strengthens the outer DISTINCT,
+// which only ever collapsed byte-identical duplicates.
+//
+// explorerScanSettings: arm 1 is a bloom-skip-index probe over the whole
+// transactions table — granule-pruned but still scan-shaped, and the
+// 40× thread-fan-out memory trap applies at default threads (route-sweep
+// 2026-07-29: /v1/accounts/{g}/transactions was in the 8s 503 class).
+func accountTransactionsQuery(hasCursor bool) string {
+	cursorClause := ""
+	if hasCursor {
+		cursorClause = ` AND (ledger_seq, tx_index) < (?, ?)`
+	}
+	return `SELECT DISTINCT ` + txCols + ` FROM (
+		(SELECT ` + txCols + ` FROM stellar.transactions
+		   WHERE source_account = ?` + cursorClause + `
+		   ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?)
+		UNION ALL
+		(SELECT ` + txCols + ` FROM stellar.transactions
+		   WHERE (ledger_seq, tx_index) IN (
+		        SELECT DISTINCT ledger_seq, tx_index FROM stellar.operation_participants WHERE account = ?)` + cursorClause + `
+		   ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?)
+	) ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?` + explorerScanSettings
+}
+
 // AccountTransactions returns transactions INVOLVING an account — both those
 // it sourced (source/fee-payer) and those where it's a non-source participant
 // in any operation (payment destination, trustor, merge target, …) — newest
@@ -602,52 +704,11 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	// Two index-friendly arms UNION'd, NOT `source_account = ? OR … IN (…)`:
-	// an OR with a subquery defeats the source_account skip-index and
-	// full-scans the 23 B-row table. Arm 1 (sourced) uses the
-	// source_account index; arm 2 (participant) matches transactions on its
-	// PRIMARY KEY (ledger_seq, tx_index) via op-keys from the account-
-	// prefixed operation_participants — both stay index-bounded. DISTINCT
-	// dedups the rare tx that is BOTH sourced by the account AND has it as a
-	// non-source participant of one of its ops.
-	cursorClause := ""
 	var cursorArgs []any
 	if cur.IsSet() {
-		// Tuple comparison: strictly older than the (ledger, tx_index) we last
-		// served — never re-emits a served row, never skips an unserved one.
-		cursorClause = ` AND (ledger_seq, tx_index) < (?, ?)`
 		cursorArgs = []any{cur.Ledger, cur.A}
 	}
-	// Each arm carries its OWN `ORDER BY … LIMIT ?` (audit C-F1a) — without
-	// it only the outer query was bounded, so an account with a long history
-	// materialised EVERY transaction it ever touched before the outer LIMIT
-	// 50 threw all but a page away.
-	//
-	// INVARIANT that makes this exact, not an approximation: the union of two
-	// individually-top-N arms provably CONTAINS the union's top N. Any row in
-	// the true top N has at most N-1 distinct rows ahead of it across both
-	// arms, hence at most N-1 ahead of it WITHIN its own arm, so it survives
-	// that arm's top-N cut. The outer merge-sort + LIMIT then picks the same N
-	// rows it always did.
-	//
-	// The per-arm `LIMIT 1 BY ledger_seq, tx_index` is what keeps the cut
-	// exact rather than merely correct-order: stellar.transactions is
-	// ReplacingMergeTree, so an un-merged duplicate PART could otherwise
-	// consume slots in an arm's top-N and hand back a SHORT page while
-	// further rows existed (no row is lost — the keyset cursor still advances
-	// off the last served row — but a client that stops on a short page would
-	// truncate its own history). It also strengthens the outer DISTINCT,
-	// which only ever collapsed byte-identical duplicates.
-	q := `SELECT DISTINCT ` + txCols + ` FROM (
-		(SELECT ` + txCols + ` FROM stellar.transactions
-		   WHERE source_account = ?` + cursorClause + `
-		   ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?)
-		UNION ALL
-		(SELECT ` + txCols + ` FROM stellar.transactions
-		   WHERE (ledger_seq, tx_index) IN (
-		        SELECT DISTINCT ledger_seq, tx_index FROM stellar.operation_participants WHERE account = ?)` + cursorClause + `
-		   ORDER BY ledger_seq DESC, tx_index DESC LIMIT 1 BY ledger_seq, tx_index LIMIT ?)
-	) ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?`
+	q := accountTransactionsQuery(cur.IsSet())
 	args := []any{account}
 	args = append(args, cursorArgs...)
 	args = append(args, limit)
@@ -663,6 +724,64 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 	return scanTxSummaries(rows)
 }
 
+// accountOperationsQuery builds AccountOperations' SQL.
+//
+// UNION of two index-friendly arms (see accountTransactionsQuery for why an
+// `OR … IN (…)` is wrong). Arm 1 (sourced) uses the source_account
+// index; arm 2 (participant) matches operations on its PRIMARY KEY
+// (ledger_seq, tx_index, op_index) via op-keys from the account-prefixed
+// operation_participants. No DISTINCT needed for cross-arm overlap: an op
+// is sourced XOR has the account as a NON-source participant
+// (participants exclude the op's own source), so the arms never overlap.
+//
+// Each arm DOES carry its own `LIMIT 1 BY ledger_seq, tx_index, op_index`
+// (audit DAT-10): stellar.operations is ReplacingMergeTree(ingested_at),
+// so a re-ingested op leaves an un-merged duplicate PART — identical to
+// the original bar ingested_at — until a background merge; unlike
+// AccountTransactions' outer DISTINCT (which AccountTransactions'
+// narrower, blob-free txCols makes cheap), opCols here carries body_xdr
+// (KB-scale), so a DISTINCT comparing full wide rows is the wrong tool —
+// LIMIT 1 BY only tracks the 3-column primary key and dedups per arm
+// before the UNION ALL, cheaply.
+//
+// Each arm carries its OWN `ORDER BY … LIMIT ?` (audit C-F1a). This
+// matters more here than on AccountTransactions: opCols carries body_xdr
+// (KB-scale), and with only the OUTER query bounded a high-activity
+// account materialised every op it ever sourced — blobs and all — before
+// the outer LIMIT 50 discarded ~all of it (live-measured 5–6 s on an idle
+// box). Bounded arms let each side read in reverse primary-key order and
+// stop after N rows.
+//
+// INVARIANT: the union of two individually-top-N arms provably CONTAINS
+// the union's top N — any row in the true top N has at most N-1 rows
+// ahead of it across both arms, hence at most N-1 within its own arm, so
+// it survives that arm's cut. The outer merge-sort + LIMIT then selects
+// exactly the rows it selected before. The pre-existing per-arm
+// `LIMIT 1 BY` (DAT-10) runs BEFORE the per-arm LIMIT, so each arm's N
+// slots hold N DISTINCT primary keys — a duplicate un-merged part can't
+// eat a slot and shorten the page.
+//
+// explorerScanSettings: same rationale as accountTransactionsQuery, with
+// the wide body_xdr column raising the per-stream buffer stakes further.
+func accountOperationsQuery(hasCursor bool) string {
+	cursorClause := ""
+	if hasCursor {
+		cursorClause = ` AND (ledger_seq, tx_index, op_index) < (?, ?, ?)`
+	}
+	return `SELECT ` + opCols + ` FROM (
+		(SELECT ` + opCols + ` FROM stellar.operations
+		   WHERE source_account = ?` + cursorClause + `
+		   ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC
+		   LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?)
+		UNION ALL
+		(SELECT ` + opCols + ` FROM stellar.operations
+		   WHERE (ledger_seq, tx_index, op_index) IN (
+		        SELECT ledger_seq, tx_index, op_index FROM stellar.operation_participants WHERE account = ?)` + cursorClause + `
+		   ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC
+		   LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?)
+	) ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?` + explorerScanSettings
+}
+
 // AccountOperations returns operations INVOLVING an account — both those it
 // sourced (effective op source) and those where it's a non-source participant
 // — newest first, keyset-paged by the composite (ledger_seq, tx_index,
@@ -674,57 +793,11 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	// UNION of two index-friendly arms (see AccountTransactions for why an
-	// `OR … IN (…)` is wrong). Arm 1 (sourced) uses the source_account
-	// index; arm 2 (participant) matches operations on its PRIMARY KEY
-	// (ledger_seq, tx_index, op_index) via op-keys from the account-prefixed
-	// operation_participants. No DISTINCT needed for cross-arm overlap: an op
-	// is sourced XOR has the account as a NON-source participant
-	// (participants exclude the op's own source), so the arms never overlap.
-	//
-	// Each arm DOES carry its own `LIMIT 1 BY ledger_seq, tx_index, op_index`
-	// (audit DAT-10): stellar.operations is ReplacingMergeTree(ingested_at),
-	// so a re-ingested op leaves an un-merged duplicate PART — identical to
-	// the original bar ingested_at — until a background merge; unlike
-	// AccountTransactions' outer DISTINCT (which AccountTransactions'
-	// narrower, blob-free txCols makes cheap), opCols here carries body_xdr
-	// (KB-scale), so a DISTINCT comparing full wide rows is the wrong tool —
-	// LIMIT 1 BY only tracks the 3-column primary key and dedups per arm
-	// before the UNION ALL, cheaply.
-	cursorClause := ""
 	var cursorArgs []any
 	if cur.IsSet() {
-		cursorClause = ` AND (ledger_seq, tx_index, op_index) < (?, ?, ?)`
 		cursorArgs = []any{cur.Ledger, cur.A, cur.B}
 	}
-	// Each arm carries its OWN `ORDER BY … LIMIT ?` (audit C-F1a). This
-	// matters more here than on AccountTransactions: opCols carries body_xdr
-	// (KB-scale), and with only the OUTER query bounded a high-activity
-	// account materialised every op it ever sourced — blobs and all — before
-	// the outer LIMIT 50 discarded ~all of it (live-measured 5–6 s on an idle
-	// box). Bounded arms let each side read in reverse primary-key order and
-	// stop after N rows.
-	//
-	// INVARIANT: the union of two individually-top-N arms provably CONTAINS
-	// the union's top N — any row in the true top N has at most N-1 rows
-	// ahead of it across both arms, hence at most N-1 within its own arm, so
-	// it survives that arm's cut. The outer merge-sort + LIMIT then selects
-	// exactly the rows it selected before. The pre-existing per-arm
-	// `LIMIT 1 BY` (DAT-10) runs BEFORE the per-arm LIMIT, so each arm's N
-	// slots hold N DISTINCT primary keys — a duplicate un-merged part can't
-	// eat a slot and shorten the page.
-	q := `SELECT ` + opCols + ` FROM (
-		(SELECT ` + opCols + ` FROM stellar.operations
-		   WHERE source_account = ?` + cursorClause + `
-		   ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC
-		   LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?)
-		UNION ALL
-		(SELECT ` + opCols + ` FROM stellar.operations
-		   WHERE (ledger_seq, tx_index, op_index) IN (
-		        SELECT ledger_seq, tx_index, op_index FROM stellar.operation_participants WHERE account = ?)` + cursorClause + `
-		   ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC
-		   LIMIT 1 BY ledger_seq, tx_index, op_index LIMIT ?)
-	) ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?`
+	q := accountOperationsQuery(cur.IsSet())
 	args := []any{account}
 	args = append(args, cursorArgs...)
 	args = append(args, limit)
@@ -1018,6 +1091,24 @@ type ContractActivityRow struct {
 	DataDisplay   string
 }
 
+// contractEventsRecentQuery builds ContractEventsRecent's SQL.
+//
+// explorerScanSettings: the contract_id predicate rides a bloom skip-index
+// over the billions-row contract_events table — granule-pruned but
+// scan-shaped, and reading the wide topics_xdr/data_xdr columns per
+// surviving granule is exactly the per-stream-buffer × part-fan-out product
+// the pin bounds (route-sweep 2026-07-29: /v1/contracts/{id} was in the 8s
+// 503 class).
+func contractEventsRecentQuery(hasCursor bool) string {
+	q := `SELECT ledger_seq, close_time, tx_hash, op_index, event_index, event_type, topic_0_sym,
+			topics_xdr, data_xdr
+		FROM stellar.contract_events WHERE contract_id = ?`
+	if hasCursor {
+		q += ` AND (ledger_seq, op_index, event_index) < (?, ?, ?)`
+	}
+	return q + ` ORDER BY ledger_seq DESC, op_index DESC, event_index DESC LIMIT ?` + explorerScanSettings
+}
+
 // ContractEventsRecent returns a contract's most-recent events, descending.
 // Relies on the contract_id bloom skip-index (contract_events is
 // ORDER BY (ledger_seq, tx_hash, ...), so a contract_id predicate would
@@ -1029,15 +1120,11 @@ func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID st
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	q := `SELECT ledger_seq, close_time, tx_hash, op_index, event_index, event_type, topic_0_sym,
-			topics_xdr, data_xdr
-		FROM stellar.contract_events WHERE contract_id = ?`
+	q := contractEventsRecentQuery(cur.IsSet())
 	args := []any{contractID}
 	if cur.IsSet() {
-		q += ` AND (ledger_seq, op_index, event_index) < (?, ?, ?)`
 		args = append(args, cur.Ledger, cur.A, cur.B)
 	}
-	q += ` ORDER BY ledger_seq DESC, op_index DESC, event_index DESC LIMIT ?`
 	args = append(args, limit)
 
 	rows, err := r.conn.Query(ctx, q, args...)
@@ -1079,6 +1166,24 @@ type ContractDirectoryRow struct {
 	LastSeen   time.Time
 }
 
+// recentContractsQuery is RecentContracts' SQL — see that method's doc for
+// the uniqExact-vs-count() and no-FINAL rationale.
+//
+// explorerScanSettings: a multi-day GROUP BY over the billions-row
+// contract_events table — the single heaviest read behind the /v1/contracts
+// directory and squarely in the thread-fan-out memory class the pin bounds.
+// Latency for this one is fixed by the directory's stale-serving cache (the
+// scan runs detached, off the request deadline); the pin is the host-safety
+// half of that fix.
+const recentContractsQuery = `SELECT contract_id,
+		       toInt64(uniqExact((ledger_seq, tx_hash, op_index, event_index))) AS events,
+		       max(ledger_seq) AS last_ledger, max(close_time) AS last_seen
+		FROM stellar.contract_events
+		WHERE ledger_seq >= ?
+		GROUP BY contract_id
+		ORDER BY events DESC
+		LIMIT ?` + explorerScanSettings
+
 // RecentContracts returns the most active contracts by contract-event count
 // within [sinceLedger, tip] — the contracts directory (GET /v1/contracts).
 // Window-scoped so the GROUP BY stays bounded (contract_events is billions of
@@ -1103,15 +1208,7 @@ func (r *ExplorerReader) RecentContracts(ctx context.Context, limit int, sinceLe
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	const q = `SELECT contract_id,
-		       toInt64(uniqExact((ledger_seq, tx_hash, op_index, event_index))) AS events,
-		       max(ledger_seq) AS last_ledger, max(close_time) AS last_seen
-		FROM stellar.contract_events
-		WHERE ledger_seq >= ?
-		GROUP BY contract_id
-		ORDER BY events DESC
-		LIMIT ?`
-	rows, err := r.conn.Query(ctx, q, sinceLedger, limit)
+	rows, err := r.conn.Query(ctx, recentContractsQuery, sinceLedger, limit)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: recent contracts: %w", err)
 	}
@@ -1133,6 +1230,28 @@ type ContractEdgeRow struct {
 	ContractID string
 	SharedTxs  int64
 }
+
+// contractInteractionsQuery is ContractInteractions' SQL — see that method's
+// body for the uniqExact / subjectTxCap rationale.
+//
+// explorerScanSettings: both halves (the subject's bloom-probed tx-set
+// collection and the outer window scan matching those txs) are scan-shaped
+// over contract_events; the pin bounds their combined thread fan-out
+// (route-sweep 2026-07-29: /v1/contracts/{id}/interactions was in the 8s
+// 503 class).
+const contractInteractionsQuery = `SELECT contract_id, toInt64(uniqExact(tx_hash)) AS shared
+		FROM stellar.contract_events
+		WHERE ledger_seq >= ?
+		  AND contract_id != ?
+		  AND (ledger_seq, tx_hash) IN (
+		      SELECT ledger_seq, tx_hash FROM stellar.contract_events
+		      WHERE contract_id = ? AND ledger_seq >= ?
+		      ORDER BY ledger_seq DESC
+		      LIMIT ?
+		  )
+		GROUP BY contract_id
+		ORDER BY shared DESC
+		LIMIT ?` + explorerScanSettings
 
 // ContractInteractions returns the contracts that co-occur with contractID
 // in the same transactions, ranked by shared-tx count — the contract
@@ -1171,20 +1290,7 @@ func (r *ExplorerReader) ContractInteractions(ctx context.Context, contractID st
 	//
 	// Served values will DROP for busy pairs. That is the correction: the old
 	// figure was an event count wearing a transaction count's name.
-	const q = `SELECT contract_id, toInt64(uniqExact(tx_hash)) AS shared
-		FROM stellar.contract_events
-		WHERE ledger_seq >= ?
-		  AND contract_id != ?
-		  AND (ledger_seq, tx_hash) IN (
-		      SELECT ledger_seq, tx_hash FROM stellar.contract_events
-		      WHERE contract_id = ? AND ledger_seq >= ?
-		      ORDER BY ledger_seq DESC
-		      LIMIT ?
-		  )
-		GROUP BY contract_id
-		ORDER BY shared DESC
-		LIMIT ?`
-	rows, err := r.conn.Query(ctx, q, sinceLedger, contractID, contractID, sinceLedger, subjectTxCap, limit)
+	rows, err := r.conn.Query(ctx, contractInteractionsQuery, sinceLedger, contractID, contractID, sinceLedger, subjectTxCap, limit)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: contract %s interactions: %w", contractID, err)
 	}

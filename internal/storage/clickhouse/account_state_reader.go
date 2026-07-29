@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
@@ -144,12 +143,19 @@ func (r *ExplorerReader) AccountState(ctx context.Context, account string) (Acco
 	return st, nil
 }
 
-func (r *ExplorerReader) accountTrustlines(ctx context.Context, account string) ([]TrustlineState, error) {
-	const q = `SELECT asset, entry_xdr AS ex, balance AS bal
+// accountTrustlinesQuery rides the idx_lecur_account_id bloom skip-index —
+// scan-shaped over the current-state table (account_id is not a sort-key
+// column), hence the explorerScanSettings pin: under the post-D3 part layout
+// the default-thread fan-out is the 40× memory trap, and this query runs on
+// the request path behind /v1/accounts/{g} (8s 503 class, route-sweep
+// 2026-07-29).
+const accountTrustlinesQuery = `SELECT asset, entry_xdr AS ex, balance AS bal
 		FROM stellar.ledger_entries_current FINAL
 		WHERE account_id = ? AND entry_type = 'trustline' AND change_type != 'removed'
-		ORDER BY bal DESC`
-	rows, err := r.conn.Query(ctx, q, account)
+		ORDER BY bal DESC` + explorerScanSettings
+
+func (r *ExplorerReader) accountTrustlines(ctx context.Context, account string) ([]TrustlineState, error) {
+	rows, err := r.conn.Query(ctx, accountTrustlinesQuery, account)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: account trustlines: %w", err)
 	}
@@ -174,11 +180,14 @@ func (r *ExplorerReader) accountTrustlines(ctx context.Context, account string) 
 	return out, rows.Err()
 }
 
-func (r *ExplorerReader) accountOffers(ctx context.Context, account string) ([]OfferState, error) {
-	const q = `SELECT entry_xdr AS ex
+// accountOffersQuery — same bloom-index scan shape + pin rationale as
+// accountTrustlinesQuery.
+const accountOffersQuery = `SELECT entry_xdr AS ex
 		FROM stellar.ledger_entries_current FINAL
-		WHERE account_id = ? AND entry_type = 'offer' AND change_type != 'removed'`
-	rows, err := r.conn.Query(ctx, q, account)
+		WHERE account_id = ? AND entry_type = 'offer' AND change_type != 'removed'` + explorerScanSettings
+
+func (r *ExplorerReader) accountOffers(ctx context.Context, account string) ([]OfferState, error) {
+	rows, err := r.conn.Query(ctx, accountOffersQuery, account)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: account offers: %w", err)
 	}
@@ -209,6 +218,23 @@ func (r *ExplorerReader) accountOffers(ctx context.Context, account string) ([]O
 	return out, rows.Err()
 }
 
+// assetHoldersQuery / assetHoldersCountQuery are AssetHolders' two FINAL
+// scans over the trustline prefix (idx_lecur_asset bloom). Scan-shaped —
+// their cost scales with the ASSET's holder count, not the request — hence
+// the explorerScanSettings pin (route-sweep 2026-07-29: one huge asset's
+// /v1/assets/{id}/holders was in the 8s 503 class; latency for repeats is
+// the hot_reads.go cache's job, the pin bounds the scan that DOES run).
+const (
+	assetHoldersQuery = `SELECT account_id, balance
+		FROM stellar.ledger_entries_current FINAL
+		WHERE entry_type = 'trustline' AND asset = ? AND change_type != 'removed' AND balance > 0
+		ORDER BY balance DESC
+		LIMIT ?` + explorerScanSettings
+	assetHoldersCountQuery = `SELECT toInt64(count())
+		FROM stellar.ledger_entries_current FINAL
+		WHERE entry_type = 'trustline' AND asset = ? AND change_type != 'removed' AND balance > 0` + explorerScanSettings
+)
+
 // AssetHolders returns the top holders of an asset by current trustline
 // balance, plus the total count of holders with a positive balance. Pure SQL
 // over the asset skip-index + balance column — no per-holder XDR decode.
@@ -216,12 +242,7 @@ func (r *ExplorerReader) AssetHolders(ctx context.Context, asset string, limit i
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	const holdersQ = `SELECT account_id, balance
-		FROM stellar.ledger_entries_current FINAL
-		WHERE entry_type = 'trustline' AND asset = ? AND change_type != 'removed' AND balance > 0
-		ORDER BY balance DESC
-		LIMIT ?`
-	rows, err := r.conn.Query(ctx, holdersQ, asset, limit)
+	rows, err := r.conn.Query(ctx, assetHoldersQuery, asset, limit)
 	if err != nil {
 		return nil, 0, fmt.Errorf("clickhouse: asset holders: %w", err)
 	}
@@ -238,11 +259,8 @@ func (r *ExplorerReader) AssetHolders(ctx context.Context, asset string, limit i
 		return nil, 0, err
 	}
 
-	const countQ = `SELECT toInt64(count())
-		FROM stellar.ledger_entries_current FINAL
-		WHERE entry_type = 'trustline' AND asset = ? AND change_type != 'removed' AND balance > 0`
 	var total int64
-	if err := r.conn.QueryRow(ctx, countQ, asset).Scan(&total); err != nil {
+	if err := r.conn.QueryRow(ctx, assetHoldersCountQuery, asset).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("clickhouse: asset holder count: %w", err)
 	}
 	return out, total, nil
@@ -261,6 +279,41 @@ type AccountWealth struct {
 	Locked bool
 }
 
+// accountsByWealthQuery is AccountsByWealth's SQL. balance is stroops (1e7);
+// k = "native" for the account entry, else the trustline asset.
+// has(assets, k) keeps only priced rows; indexOf maps the key to its price.
+// Sum per account, rank desc.
+//
+// This is a background-refresh query (never on a request deadline — see
+// accounts_wealth_cache.go). The FINAL scan of 43.6M current-state rows
+// measured ~23s on R1 and is close to the connection's default 30s
+// max_execution_time, which real production price arrays (30+ assets) plus
+// serving contention tip over. The refresh has a 3-minute Go budget; the
+// max_execution_time = 150 gives the CH side matching headroom so the query
+// completes and the cache populates, instead of dying silently at 30s.
+//
+// max_threads/max_memory (route-sweep 2026-07-29): at DEFAULT threads the
+// whole-table FINAL fan-out over the post-D3 part layout is the 40× memory
+// class — the refresh died repeatedly, so the cache never filled and
+// /v1/accounts sat on its 503 warming state forever. Pinning the refresh is
+// what actually un-503s the route; the cache only ever serves what a
+// completed refresh stored. The settings live in SQL text (not
+// clickhouse.WithSettings) so the pin is test-assertable and immune to the
+// driver's observed context-settings drop (see cbLookupCreatesQuery).
+const accountsByWealthQuery = `SELECT account_id,
+		sum(toFloat64(balance) / 1e7 * arrayElement(?, indexOf(?, k))) AS usd
+		FROM (
+			SELECT account_id, balance, if(entry_type = 'account', 'native', asset) AS k
+			FROM stellar.ledger_entries_current FINAL
+			WHERE change_type != 'removed' AND entry_type IN ('account', 'trustline')
+		)
+		WHERE has(?, k)
+		GROUP BY account_id
+		HAVING usd > 0
+		ORDER BY usd DESC
+		LIMIT ?
+		SETTINGS max_threads = 4, max_memory_usage = 8589934592, max_execution_time = 150`
+
 // AccountsByWealth ranks accounts by total USD value of their holdings —
 // native XLM (the account entry) plus every trustline asset for which the
 // caller supplied a USD price. assets/prices are parallel arrays (assets[i]
@@ -275,35 +328,7 @@ func (r *ExplorerReader) AccountsByWealth(ctx context.Context, assets []string, 
 	if len(assets) == 0 || len(assets) != len(prices) {
 		return nil, nil
 	}
-	// balance is stroops (1e7); k = "native" for the account entry, else the
-	// trustline asset. has(assets, k) keeps only priced rows; indexOf maps the
-	// key to its price. Sum per account, rank desc.
-	const q = `SELECT account_id,
-		sum(toFloat64(balance) / 1e7 * arrayElement(?, indexOf(?, k))) AS usd
-		FROM (
-			SELECT account_id, balance, if(entry_type = 'account', 'native', asset) AS k
-			FROM stellar.ledger_entries_current FINAL
-			WHERE change_type != 'removed' AND entry_type IN ('account', 'trustline')
-		)
-		WHERE has(?, k)
-		GROUP BY account_id
-		HAVING usd > 0
-		ORDER BY usd DESC
-		LIMIT ?`
-	// This is a background-refresh query (never on a request deadline —
-	// see accounts_wealth_cache.go). The FINAL scan of 43.6M current-state
-	// rows measured ~23s on R1 and is close to the connection's default
-	// 30s max_execution_time, which real production price arrays (30+
-	// assets) plus serving contention tip over. The refresh has a 3-minute
-	// Go budget; give the CH side matching headroom so the query completes
-	// and the cache populates, instead of dying silently at 30s.
-	//
-	// Per-query override works because the API connects as the CH `default`
-	// user (no serving profile / readonly cap is set on this deployment).
-	qctx := clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{
-		"max_execution_time": 150,
-	}))
-	rows, err := r.conn.Query(qctx, q, prices, assets, assets, limit)
+	rows, err := r.conn.Query(ctx, accountsByWealthQuery, prices, assets, assets, limit)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: accounts by wealth: %w", err)
 	}
@@ -319,6 +344,14 @@ func (r *ExplorerReader) AccountsByWealth(ctx context.Context, assets []string, 
 	return out, rows.Err()
 }
 
+// accountsUnspendableQuery — an account_id-bloom-probed FINAL scan (the IN
+// list keeps the probe count small, so the bloom stays effective, but the
+// scan shape is the same as accountTrustlinesQuery). Runs on the wealth
+// cache's background refresh only; pinned for the same fan-out reason as
+// accountsByWealthQuery.
+const accountsUnspendableQuery = `SELECT account_id, entry_xdr FROM stellar.ledger_entries_current FINAL
+		WHERE entry_type = 'account' AND account_id IN (?) AND change_type != 'removed'` + explorerScanSettings
+
 // AccountsUnspendable reports which of the given accounts are locked
 // burn addresses: master weight 0 AND all operation thresholds 0 — no
 // key can ever sign, so the balance is provably unspendable (Pass-B
@@ -331,9 +364,7 @@ func (r *ExplorerReader) AccountsUnspendable(ctx context.Context, accountIDs []s
 	if len(accountIDs) == 0 {
 		return nil, nil
 	}
-	const q = `SELECT account_id, entry_xdr FROM stellar.ledger_entries_current FINAL
-		WHERE entry_type = 'account' AND account_id IN (?) AND change_type != 'removed'`
-	rows, err := r.conn.Query(ctx, q, accountIDs)
+	rows, err := r.conn.Query(ctx, accountsUnspendableQuery, accountIDs)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: accounts unspendable: %w", err)
 	}
