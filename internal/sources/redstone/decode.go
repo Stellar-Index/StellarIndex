@@ -56,15 +56,15 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 	if !classify(e) {
 		return nil, ErrNotRedstoneEvent
 	}
-	if len(e.OpArgs) == 0 {
-		return nil, ErrMissingOpArgs
-	}
 
-	feedIDs, updater, err := feedIDsFromOpArgs(e.OpArgs)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
-	}
-
+	// Decode the BODY before requiring op args. An empty on-wire batch
+	// (`{updated_feeds: [], updater}`) carries nothing to attribute, so
+	// it must classify as a no-op REGARDLESS of whether the producing
+	// op's args were captured — and in practice those pushes often lack
+	// usable args, which is exactly why the 2026-07-29 replay left
+	// 1,624 ledgers "undecodable-but-matched" even after the first
+	// empty-batch fix landed BELOW the OpArgs gate. Order matters:
+	// body → empty short-circuit → args for the non-empty path only.
 	prices, err := sdkDecodeBody(e.Value)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
@@ -82,6 +82,17 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 		// ledgers, root-caused 2026-07-29). A recognized no-op projects
 		// zero rows and reconciles; it is not an error.
 		return nil, nil
+	}
+
+	// Non-empty batch: feed attribution requires the producing op's
+	// args (the event body carries no feed_ids) — from here on the
+	// original requirements apply unchanged.
+	if len(e.OpArgs) == 0 {
+		return nil, ErrMissingOpArgs
+	}
+	feedIDs, updater, err := feedIDsFromOpArgs(e.OpArgs)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
 	}
 
 	// Strict length check — see ErrFeedIDCountMismatch rationale in

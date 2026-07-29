@@ -16,6 +16,14 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Empty redstone batches classify as no-ops even without op args** —
+  the v0.21.3 empty-batch fix sat BELOW the `OpArgs` requirement, and
+  empty pushes often lack usable args, so the full-history replay still
+  left 1,624 ledgers "undecodable-but-matched" (redstone stayed the one
+  incomplete source). Check order corrected: body → empty short-circuit
+  → args required only for the non-empty path; the real-lake golden test
+  now passes NO args to pin args-independence. Redstone completeness
+  flips at the next full run after this deploys.
 - **`GET /v1/pools/reserves` no longer runs the archived-pair TTL
   classification per request.** The 2026-07-28 phantom-reserve fix
   (archived Soroswap pairs must not serve their last-known reserves as
