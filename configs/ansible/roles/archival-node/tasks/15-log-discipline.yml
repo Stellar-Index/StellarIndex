@@ -423,10 +423,17 @@
                2026-07-29: ClassifyTTLLiveness batches 5000 unhex() keys per
                IN-list (~350 KiB of query text) — over the 256 KiB default
                parse cap. 4 MiB gives headroom without changing execution
-               limits (this caps query TEXT size only, not memory/rows). -->
+               limits (this caps query TEXT size only, not memory/rows).
+               Same day, post-D3: the classifier's aggregation over the
+               version-keyed ledger_entries_current OOMed the 10 GiB query
+               cap — external group-by/sort spill (4 GiB thresholds) bounds
+               it to disk instead of failing, same pattern the D3 rebuild
+               script used. -->
           <profiles>
               <default>
                   <max_query_size>4194304</max_query_size>
+                  <max_bytes_before_external_group_by>4294967296</max_bytes_before_external_group_by>
+                  <max_bytes_before_external_sort>4294967296</max_bytes_before_external_sort>
               </default>
           </profiles>
       </clickhouse>
