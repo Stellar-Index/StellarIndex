@@ -127,6 +127,21 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~19:10Z — ✅ **Phoenix + Comet TVL LANDED on main
+  (b6169612) — WITH on-chain validation the building agent could not
+  do.** The agent derived both storage layouts from protocol Rust
+  sources and flagged them VALIDATE-ON-R1; before landing I ran its
+  actual decode functions against the REAL lake through an SSH tunnel:
+  **phoenix 6/6 keys decoded** (real reserves + CONFIG token pairs on
+  two curated pools), **comet's Vec[Symbol] record decoded** (~748k
+  USDC + ~71.7M BLND — Blend-backstop magnitudes; the dual-probe design
+  hit on the first encoding). Comments upgraded to VALIDATED with the
+  evidence. Every DEX now serves TVL post-v0.21.4 (soroswap + aquarius
+  live math, phoenix + comet validated decode, SDEX = order book).
+  **Tonight's build tally: 3 agents, 13 commits, all landed, all
+  gates green.** /dexes honesty prose update (phoenix/comet flow-only
+  note) rides the same deploy per the API-before-frontend rule.
+
 - 2026-07-29 ~19:00Z — ✅ **Accounts-routes fix LANDED on main** (6
   commits through 360234be; verify green post-pick, shapes unchanged —
   degradation via the existing flags.stale/as_of envelope). Per-route:
