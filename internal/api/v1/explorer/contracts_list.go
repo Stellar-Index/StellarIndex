@@ -74,13 +74,18 @@ func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	rows, since, err := h.recentContractsCached(ctx, window, limit)
+	// Snapshot-served (route-sweep 2026-07-29): a stale rung comes back
+	// degraded=true and is served as 200 + flags.stale + its real as_of
+	// while the detached re-aggregation runs; only a never-computed rung
+	// can still time out here (and its detached compute keeps running, so
+	// a retry lands warm). See hot_reads.go.
+	rows, since, asOf, degraded, err := h.recentContractsCached(ctx, window, limit)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
 		}
 		if readTimedOut(ctx, err) {
-			h.Logger.Warn("explorer RecentContracts deadline exceeded", "window_days", window)
+			h.Logger.Warn("explorer RecentContracts deadline exceeded (cold rung; detached refresh continues)", "window_days", window)
 			h.writeReadTimeout(w, r, "https://api.stellarindex.io/errors/contracts-timeout",
 				"Contracts directory timed out")
 			return
@@ -106,7 +111,7 @@ func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 			Protocol:   attribution[c.ContractID],
 		}
 	}
-	h.WriteJSON(w, out, false)
+	h.writeJSONAt(w, out, degraded, asOf)
 }
 
 // ContractEdge is one edge of a contract's interaction map.

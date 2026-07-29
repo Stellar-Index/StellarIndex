@@ -140,3 +140,14 @@ func (s *Server) PrewarmAccountsWealth(ctx context.Context) {
 	}
 	s.explorerHandler.PrewarmAccountsWealth(ctx)
 }
+
+// PrewarmContractsDirectory primes the /v1/contracts directory's default
+// window rung. Exposed on the Server so cmd/stellarindex-api can drive it
+// from the same 5-minute prewarm loop as the wealth ranking; see
+// [explorer.Handler.PrewarmContractsDirectory].
+func (s *Server) PrewarmContractsDirectory(ctx context.Context) {
+	if s.explorerHandler == nil {
+		return
+	}
+	s.explorerHandler.PrewarmContractsDirectory(ctx)
+}

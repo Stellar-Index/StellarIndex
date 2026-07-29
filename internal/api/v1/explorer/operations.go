@@ -61,6 +61,11 @@ func (c *opsDirCache) put(limit int, view OperationsView) {
 // table. 5 minutes is still ~288x finer than the window it describes.
 const opTypeStatsTTL = 5 * time.Minute
 
+// opTypeStatsRefreshTimeout bounds one detached op-type aggregation — a
+// FINAL GROUP BY over ~24h of the operations table, comfortably inside a
+// minute in the background even under load.
+const opTypeStatsRefreshTimeout = time.Minute
+
 // opTypeStatsCache holds the last computed op-type breakdown. On a refresh
 // failure the caller serves the STALE value rather than blanking the panel —
 // a slow aggregate should degrade to slightly-old numbers, never to nothing.
@@ -68,6 +73,8 @@ type opTypeStatsCache struct {
 	mu    sync.Mutex
 	stats []OpTypeStatV
 	at    time.Time
+	// flight collapses concurrent detached refreshes into one aggregation.
+	flight perKeyFlight
 }
 
 // get returns the cached breakdown and whether it is still fresh. The stats
@@ -154,29 +161,49 @@ func normalizeLakeOpType(s string) string {
 	return strings.ToLower(strings.TrimPrefix(s, "OperationType"))
 }
 
-// resolveOpTypeStats returns the trailing-24h op-type breakdown, preferring the
-// 5-minute cache and falling back to the STALE value on a refresh error — for a
-// 24-hour aggregate, numbers a few minutes old are still truthful, whereas an
-// empty panel is not. Extracted from operationsDirectory to keep that handler's
-// control flow flat (it is otherwise a listing assembler, not a cache manager).
-func (h *Handler) resolveOpTypeStats(ctx context.Context, r *http.Request) []OpTypeStatV {
+// resolveOpTypeStats returns the trailing-24h op-type breakdown from the
+// 5-minute cache, serving the STALE value (or, on a cold process, omitting
+// the panel — `op_type_stats` is omitempty) while a DETACHED single-flight
+// refresh runs. For a 24-hour aggregate, numbers a few minutes old are
+// still truthful, whereas an empty panel is not — and recomputing INLINE on
+// the request context was the failure (route-sweep 2026-07-29): the
+// day-window FINAL GROUP BY shared the directory's 8s budget and dragged
+// the whole /v1/operations page into its 503 class every 5 minutes.
+func (h *Handler) resolveOpTypeStats(_ context.Context, _ *http.Request) []OpTypeStatV {
 	cached, fresh := h.opTypeStats.get()
 	if fresh {
 		return cached
 	}
-	stats, err := h.Reader.OperationTypeStats(ctx, 0)
-	if err != nil {
-		if !h.ClientAborted(r, err) {
-			h.Logger.Warn("explorer OperationTypeStats failed (serving last good)", "err", err)
+	h.refreshOpTypeStats() //nolint:contextcheck // intentional detach — the aggregate must never share a request deadline (see refreshOpTypeStats)
+	return cached          // stale (or nil on a cold process — panel appears next request)
+}
+
+// refreshOpTypeStats kicks ONE detached op-type aggregation (no-op when a
+// flight is already up). Detached: the aggregate must never share a
+// request's deadline (see resolveOpTypeStats).
+func (h *Handler) refreshOpTypeStats() {
+	fl, owner := h.opTypeStats.flight.begin("stats")
+	if !owner {
+		return
+	}
+	go func() {
+		rctx, cancel := context.WithTimeout(context.Background(), opTypeStatsRefreshTimeout)
+		defer cancel()
+		stats, err := h.Reader.OperationTypeStats(rctx, 0)
+		if err != nil {
+			// Keep the previous value — the panel degrades to slightly-old
+			// numbers, never to nothing.
+			h.Logger.Warn("explorer OperationTypeStats detached refresh failed (serving last good)", "err", err)
+			h.opTypeStats.flight.end("stats", fl, err)
+			return
 		}
-		return cached
-	}
-	v := make([]OpTypeStatV, len(stats))
-	for i, st := range stats {
-		v[i] = OpTypeStatV{Type: normalizeLakeOpType(st.OpType), Count: st.Count}
-	}
-	h.opTypeStats.put(v)
-	return v
+		v := make([]OpTypeStatV, len(stats))
+		for i, st := range stats {
+			v[i] = OpTypeStatV{Type: normalizeLakeOpType(st.OpType), Count: st.Count}
+		}
+		h.opTypeStats.put(v)
+		h.opTypeStats.flight.end("stats", fl, nil)
+	}()
 }
 
 // OperationsView is the wire response for GET /v1/operations.
