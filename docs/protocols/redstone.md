@@ -50,12 +50,24 @@ The relayer calls `adapter.write_prices(updater, feed_ids, payload)`;
 the emitted event carries prices + timestamps but **no feed identifiers**.
 The decoder reads `feed_ids` from `events.Event.OpArgs` (populated by
 `internal/dispatcher` from the InvokeContract op envelope) and zips
-one-to-one against `updated_feeds`. **Lengths must match** — when the
+one-to-one against `updated_feeds` when lengths match. When the
 Adapter's freshness verifier rejects a feed, the entry drops from
-`updated_feeds` without dropping from `feed_ids`, breaking the zip. The
-decoder treats a mismatch as `ErrFeedIDCountMismatch` and **skips the
-whole event** rather than attributing prices to the wrong assets (counted
-on `stellarindex_source_decode_errors_total{source="redstone"}`).
+`updated_feeds` without dropping from `feed_ids`, breaking the zip —
+a real, ongoing class (1,626 events across [59258375, tip] on the
+2026-07-29 full completeness verify). For those, the decoder recovers
+the mapping from the **signed payload** in `OpArgs[2]`: the Adapter
+stores each accepted feed's signer-value **median**, so each surviving
+price must equal exactly one candidate feed's payload median at its
+`package_timestamp` (`internal/sources/redstone/payload.go`; verified
+byte-exact against the real ledger-59,258,375 event — the surviving
+price equals BTC's median of three signer values, ETH was the dropped
+feed). Attribution demands uniqueness and a bijection; anything
+ambiguous — e.g. two USD-stables with identical medians — refuses the
+whole event (`ErrAmbiguousSubset`, wrapped in
+`ErrFeedIDCountMismatch`, counted on
+`stellarindex_source_decode_errors_total{source="redstone"}`) so it
+stays in the completeness verifier's honest-blind class rather than
+misattributing.
 
 ### Q2 — Event body is wrapped in `ScVal::Bytes`
 

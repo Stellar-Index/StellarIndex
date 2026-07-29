@@ -353,9 +353,17 @@ linked design doc has the full detail.
   tx's `write_prices(updater, feed_ids, payload)` InvokeContract
   op args — plumbed through `events.Event.OpArgs` (PR 166). The
   adapter's freshness verifier can filter `updated_feeds` to a
-  subset of `feed_ids`; zip only when lengths match, else skip
-  the whole event (`ErrFeedIDCountMismatch`). Any new decoder that
-  needs tx args follows the same `events.Event.OpArgs` pattern.
+  subset of `feed_ids`; zip positionally when lengths match. When
+  they DON'T match (a real, ongoing class — 1,626 events on the
+  2026-07-29 full verify), the signed payload in args[2] recovers
+  the mapping: the adapter stores each accepted feed's signer-value
+  MEDIAN, so each surviving price must equal exactly one candidate
+  feed's payload median at its package_timestamp
+  (`internal/sources/redstone/payload.go`; verified byte-exact on
+  ledger 59,258,375). Non-unique attribution refuses the whole
+  event (`ErrAmbiguousSubset`) — honest-blind beats misattributed.
+  Any new decoder that needs tx args follows the same
+  `events.Event.OpArgs` pattern.
 - **Post-P23 (Whisk, mainnet 2025-09-03) every classic asset
   movement emits a unified transfer/mint/burn event with a 4th
   `sep0011_asset` topic.** Our decoder handles both event SHAPES —

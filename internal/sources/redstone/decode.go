@@ -95,13 +95,19 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 		return nil, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
 	}
 
-	// Strict length check — see ErrFeedIDCountMismatch rationale in
-	// events.go. If the adapter's freshness verifier dropped any
-	// feed, we'd attribute the remaining prices to the wrong assets,
-	// so we refuse the whole event instead.
-	if len(feedIDs) != len(prices) {
-		return nil, fmt.Errorf("%w: %d feed_ids, %d updated_feeds",
-			ErrFeedIDCountMismatch, len(feedIDs), len(prices))
+	// Positional zip requires matching arity. When the adapter's
+	// freshness verifier dropped ≥1 feed (updated_feeds SHORTER than
+	// feed_ids — a real, ongoing class: 1,626 events blind on the
+	// 2026-07-29 full verify, still occurring at tip), the payload in
+	// args[2] recovers the mapping: the adapter stores each accepted
+	// feed's signer-value MEDIAN, so a surviving price must equal
+	// exactly one candidate feed's payload median at its
+	// package_timestamp (verified byte-exact on the ledger-59258375
+	// event). Anything non-unique refuses the whole event — better
+	// honest-blind than misattributed.
+	attributed, err := resolveFeedAttribution(prices, feedIDs, e.OpArgs)
+	if err != nil {
+		return nil, err
 	}
 	if len(prices) > opIndexFanoutStride {
 		return nil, fmt.Errorf("redstone: feed count %d exceeds fanout stride %d",
@@ -116,7 +122,7 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 
 	out := make([]canonical.OracleUpdate, 0, len(prices))
 	for i, pd := range prices {
-		entry, ok := lookupFeed(feedIDs[i])
+		entry, ok := lookupFeed(attributed[i])
 		if !ok {
 			// Partial-event skip: land every feed in the ADR-0028
 			// registry, drop the rest. A miss means RedStone deployed
@@ -332,8 +338,27 @@ func feedIDsFromOpArgs(opArgs []string) (feedIDs []string, updater string, err e
 	if err != nil {
 		return nil, "", fmt.Errorf("args[1] feed_ids: %w", err)
 	}
-	// args[2] is the signed payload bytes — not needed for attribution.
+	// args[2] is the signed payload bytes — needed only on the
+	// subset-filtered path; see payloadFromOpArgs.
 	return feedIDs, updater, nil
+}
+
+// payloadFromOpArgs extracts the raw RedStone signed payload from
+// write_prices' third argument (`payload: Bytes`). Only called on the
+// subset-filtered path, where it is the sole source of per-feed identity.
+func payloadFromOpArgs(opArgs []string) ([]byte, error) {
+	if len(opArgs) < 3 {
+		return nil, fmt.Errorf("op args arity %d, want ≥3 (updater, feed_ids, payload)", len(opArgs))
+	}
+	sv, err := scval.Parse(opArgs[2])
+	if err != nil {
+		return nil, fmt.Errorf("args[2] payload: %w", err)
+	}
+	raw, err := scval.AsBytes(sv)
+	if err != nil {
+		return nil, fmt.Errorf("args[2] payload: %w", err)
+	}
+	return raw, nil
 }
 
 // sdkDecodeFeedIDsFromArg decodes a Vec<String> where each element
@@ -359,4 +384,31 @@ func sdkDecodeFeedIDsFromArg(sv scval.ScVal) ([]string, error) {
 // formatting for all address types.
 func sdkDecodeAddress(sv scval.ScVal) (string, error) {
 	return scval.AsAddressStrkey(sv)
+}
+
+// resolveFeedAttribution maps updated_feeds entries to feed ids. Equal
+// arity zips positionally (the common case). A SHORTER updated_feeds is
+// the freshness-filtered subset class: attribution is recovered from the
+// signed payload's per-feed signer medians (see payload.go); anything
+// non-unique refuses the whole event. A LONGER updated_feeds cannot come
+// from freshness filtering and is refused as genuinely malformed.
+func resolveFeedAttribution(prices []priceDataDecoded, feedIDs []string, opArgs []string) ([]string, error) {
+	if len(feedIDs) == len(prices) {
+		return feedIDs, nil
+	}
+	if len(prices) > len(feedIDs) {
+		return nil, fmt.Errorf("%w: %d feed_ids, %d updated_feeds",
+			ErrFeedIDCountMismatch, len(feedIDs), len(prices))
+	}
+	payload, err := payloadFromOpArgs(opArgs)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %d feed_ids, %d updated_feeds; %w",
+			ErrFeedIDCountMismatch, len(feedIDs), len(prices), err)
+	}
+	attributed, err := attributeSubset(prices, feedIDs, payload)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %d feed_ids, %d updated_feeds; %w",
+			ErrFeedIDCountMismatch, len(feedIDs), len(prices), err)
+	}
+	return attributed, nil
 }

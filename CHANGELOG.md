@@ -15,6 +15,26 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Subset-filtered redstone batches now decode — attribution recovered
+  from the signed payload.** When the adapter's freshness verifier drops
+  a feed, `updated_feeds` shrinks below the op-args `feed_ids` and the
+  positional zip cannot attribute prices; the decoder used to refuse the
+  whole event, which left 1,626 events (across ledgers 59,258,375 → tip,
+  still growing) in the completeness verifier's honest-blind class — the
+  REAL cause of redstone's `projection_ok=false` (the v0.21.4 empty-batch
+  reorder addressed a different, already-cleared class). The RedStone
+  signed payload in `OpArgs[2]` carries every signer's (feed, value,
+  timestamp) triple, and the adapter stores each accepted feed's signer
+  MEDIAN — so each surviving price is matched to the unique candidate
+  feed whose payload median equals it at its `package_timestamp`
+  (verified byte-exact against the real ledger-59,258,375 event: the
+  surviving price equals BTC's median; ETH was the dropped feed).
+  Non-unique attribution (identical-median stables, unknown aggregation)
+  refuses the whole event (`ErrAmbiguousSubset`) — honest-blind beats
+  misattributed. Redstone completeness flips at the first full run +
+  replay after this deploys.
+
 ## [v0.21.4] — 2026-07-29
 
 ### Added
