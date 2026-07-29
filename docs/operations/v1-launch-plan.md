@@ -1387,10 +1387,31 @@ capacity/HA posture, paging wired to a human, and the v1.0 wire shape frozen
 (ADR-0042 — **Accepted and implemented**; the `kind` discriminator is live in
 the spec, so the wire-freeze prerequisite is met).
 
-## 0. Verified current state — 2026-07-28 (all checked live)
+## 0. Verified current state — REFRESHED 2026-07-29 ~07:50Z (overnight autonomous run)
 
-> **⚠️ READ THIS FIRST — four blockers were FOUND on 2026-07-27/28 that
-> no prior plan knew about. If you are resuming, these dominate:**
+> **⭐ The overnight loop (2026-07-28 19:00Z → 2026-07-29 07:50Z) cleared
+> the critical path.** Current verified state:
+>
+> | Gate | State |
+> |---|---|
+> | **D2+D3 (C2-4c)** | ✅ DONE end-to-end: reproject (29.5h) + bounded verify (66,539 keys, 0 ledger-diff) + cutover executed; **50-account reconcile vs Horizon: 0 mismatches** (was 38%). `_old` table retained (finalize deferred — it is the 40× investigation baseline) |
+> | **v0.21.2** | ✅ cut + deployed + verified (smoke 13/13); `ops-ch` refreshed |
+> | **Supply** | ✅ **7/8 vs Horizon** (PHO +157%→−0.0002%); 39 freeze alerts cleared; approved phantom-row DELETE executed (54,863 rows, provenance-verified); USDC +1.12% dispositioned (re-seed parked on the diagnosed CH blocker below) |
+> | **Completeness** | ✅ **16/17 sources `complete=t`** (sep41×2 restored after the 14-day hole: projector at tip + full-substrate runs green). Sole exception: **redstone** — 866 undecodable events, decoder fix rides next release |
+> | **Explorer routes** | 🔵 21×5xx → **10×5xx** (serving flip landed); residual = slow-read timeout class, see 40× investigation |
+> | **⚠️ OPEN INVESTIGATION (top §2.4 item)** | The post-D3 `ledger_entries_current` costs **~40× more memory to read** than `_old` (measured: same probe 122 MiB vs 4.76 GiB; same ORDER BY, both merged). Blocks the SAC re-seed (classifier OOMs the client-pinned 10 GiB openRead cap) and is prime suspect for the 10 route timeouts |
+> | **Alerts** | Residual: anomaly-freeze family (known [DECIDE]), dex informational ×6, cross-check ×3 (partial_wrap, dispositioned — Horizon-verified correct), compression pair (post-D4 item), metrics_registry_absent (informational), completeness (clears at next snapshot for sep41; redstone until decoder fix) |
+> | **Loop infra** | caffeinate held (workstation sleep killed timers 4×); cron guard hourly; unattended-upgrades bounced PG 04:24Z (libc — routine, non-incident) |
+>
+> **Ash's three items stand** (top of OPERATOR INBOX): wire paging,
+> book the security review, — and the SAC delete is now DONE/superseded.
+> **Next-release queue (code, no more tags this session):** redstone
+> decoder fix, TTL-classifier batch+settings fix, 40× table regression
+> root-cause, /accounts snapshot reader.
+
+<details><summary>(superseded 2026-07-28 §0 — kept for history)</summary>
+
+> **⚠️ (historical) four blockers found 2026-07-27/28:**
 >
 > 1. **The explorer is DOWN in production.** 21 of 94 GET routes return
 >    503 (all of `/accounts`, `/contracts`, `/ledgers`, `/tx`,
@@ -1436,6 +1457,8 @@ the spec, so the wire-freeze prerequisite is met).
 | Feeds | `COINGECKO_API_KEY` **not set** (feed dead since 2026-06-19, [OP]). `min_usd_volume=10000` since 2026-07-01 (older docs claiming 0 are stale) |
 | Paging | 🔴 **NOT wired** — now TURNKEY via [runbooks/wire-paging.md](runbooks/wire-paging.md) (~20 min, [OP]); a silent-failure trap in the secrets file was fixed 2026-07-27. Baseline `pre-launch-check.sh` = 4 FAILs, 0 is the acceptance test. Original detail: (corrected 2026-07-27 — the env files exist but every value is EMPTY: 5× `HEALTHCHECKS_URL_*`, `HEALTHCHECKS_DEADMANSSWITCH_URL`, `SLACK_WEBHOOK_URL` all blank; only the node-level `HEALTHCHECK_PING_URL` is populated). Alert pages currently route to nobody — the original [OP] item stands: create Healthchecks.io checks + chat webhooks, paste URLs into `/etc/default/stellarindex-healthchecks` + `/etc/default/alertmanager-secrets` (then codify in the vault), rerun `pre-launch-check.sh` |
 | ADRs | 0040–0048 ALL Accepted (incl. **ADR-0042 v1 wire shape** — the old "biggest unsigned gate" is resolved). hashdb wired but `enabled=false` on r1 |
+
+</details>
 
 ## 1. Go-live gate (all must be true)
 
