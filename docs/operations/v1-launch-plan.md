@@ -34,7 +34,7 @@ severity: P1
 | 1 | **Wire paging** — [runbooks/wire-paging.md](runbooks/wire-paging.md) | Needs Healthchecks.io checks + a Discord/Slack webhook CREATED on external accounts I don't hold (every URL on r1 is blank — nothing exists to wire). I do the rest once URLs exist | ~20 min |
 | 2 | **Book the external security review** | Third-party vendor engagement — money + your identity. Longest lead time of anything left | one email |
 | ~~3~~ | ~~SAC-seed archived-row DELETE~~ — **✅ APPROVED by Ash 2026-07-28 ~22:55Z** ("happy with sac-seed delete per your recommendations"). Moved to the loop's post-deploy execution queue (below) | — | — |
-| 4 | **Say "cut v0.21.4" (or equivalent)** — the payload is code-complete on main as of 2026-07-29 ~22:00Z (TTL `ttl_live_until` redesign + operator DDL, redstone 17/17 fix, accounts-routes fixes, DEX TVL + SDEX order book + Phoenix/Comet, worker metrics). This session already used its express-permission tag twice (v0.21.2 + v0.21.3), so a THIRD tag needs your word — after which the loop runs the whole chain: cut → deploy → DDL apply + windowed backfill → redstone full run (→17/17) → SAC re-seed (→USDC → supply 8/8) → route-sweep acceptance (10×5xx→0) | One-tag-per-session rule; only you can extend it | one word |
+| 4 | ~~v0.21.4~~ **✅ CUT + DEPLOYED 2026-07-29 ("you can cut it"); chain ran.** NEW ASK: **say "cut v0.21.5"** — carries the redstone subset-attribution fix (f51e414d, the REAL 17/17 blocker: the v0.21.4 empty-batch fix addressed a different, already-cleared class). On your word the loop runs: cut → deploy → `projector-replay -source redstone -from 59258375` → full verify → **17/17**. Everything else in v0.21.4's chain is running/done | Fourth tag of the session | one word |
 
 **~~Reclassified as LOOP-EXECUTABLE~~ — ✅ ALL EXECUTED by the loop
 (2026-07-29): ansible apply + serving flip done, v0.21.2 AND v0.21.3
@@ -130,6 +130,25 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
   on main and ships as v0.21.2 in a LATER session.
 
 ## Loop log (newest first)
+
+- 2026-07-30 ~00:20Z — 🔬 **Redstone's REAL root cause found + FIXED on
+  main (f51e414d): subset-filtered batches, not empty batches.** The
+  v0.21.4 full verify still showed 1,626 blind events (growing at tip —
+  ongoing, not historical). Lake forensics on the first blind event
+  (ledger 59,258,375): body decodes FINE; the failure is
+  `2 feed_ids, 1 updated_feeds` — the adapter's freshness verifier
+  dropped ETH and the positional zip refused the event. Fix: recover
+  attribution from the SIGNED PAYLOAD in OpArgs[2] (feed → signer
+  values → the adapter's stored MEDIAN), demanded unique + bijective;
+  **verified byte-exact — the surviving price equals BTC's median of
+  three signer values**. Ambiguity refuses the event (honest-blind).
+  Fixture-driven tests (real lake event + adversarial synthetic
+  payloads), CLAUDE.md + protocol page updated, verify green. **Needs
+  v0.21.5 cut+deploy + projector-replay from 59,258,375 + full verify
+  to flip 17/17 — fourth tag, needs Ash's word (inbox #4 updated).**
+  En route, also proven: the "legacy shape" hypothesis was WRONG — the
+  pre-59.4M event schema is identical plus a bonus payload field; the
+  blind class spans both WASM eras.
 
 - 2026-07-29 ~22:50Z — ✅ **TTL backfill COMPLETE + VERIFIED; completion
   chain phase 2 launched.** All 7 windows landed 21:42→22:38Z (~8
