@@ -154,6 +154,7 @@ var uncoveredOperations = map[string]string{
 	"GET /markets/sources":               "markets-by-source directory — explorer surface",
 	"GET /protocols":                     "protocol analytics — explorer surface",
 	"GET /protocols/{name}":              "protocol analytics — explorer surface",
+	"GET /sdex/orderbook":                "order-book depth — explorer surface; SDK is pricing-first",
 	"GET /lending/pools/{pool}/reserves": "lending drill-down — explorer surface",
 	"GET /pools/reserves":                "AMM reserve/depth drill-down — explorer surface",
 	"GET /liquidity-pools":               "native (CAP-38) pool reserve/depth drill-down — explorer surface",

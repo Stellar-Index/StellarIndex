@@ -6102,6 +6102,143 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sdex/orderbook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * SDEX order-book depth for one classic pair.
+         * @description Live bid/ask depth for a classic (selling, buying) market,
+         *     aggregated by exact price level from the LIVE `offer` ledger
+         *     entries. `selling` is the market's BASE asset (what asks sell),
+         *     `buying` the QUOTE; classic asset forms only (`native`,
+         *     `CODE-G...`) — SDEX offers cannot reference Soroban assets.
+         *
+         *     Source of truth is an IN-PROCESS live offer book maintained off
+         *     the certified lake: loaded once at process start (the offer
+         *     slice carries its assets only inside the entry XDR, so per-pair
+         *     lake reads are not viable within the read budget) and advanced
+         *     with incremental change reads every ~60s — `as_of_ledger` /
+         *     `snapshot_at` state exactly how fresh the served book is. Until
+         *     the initial load completes the endpoint returns a 503 problem
+         *     (`orderbook-loading`), never a fabricated empty book.
+         *
+         *     Prices are exact rationals: `price` renders the reduced
+         *     fraction `price_r` at 7 decimal places (bid prices are the
+         *     exact inverse of the stored offer price — no float math).
+         *     Amounts are decimal strings in whole 7-decimal asset units;
+         *     `ask_offers` / `bid_offers` count each side BEFORE the `depth`
+         *     cap so truncation is visible. Served with `public, max-age=30`.
+         */
+        get: {
+            parameters: {
+                query: {
+                    /** @description Base asset (canonical classic id: `native` or `CODE-G...`). */
+                    selling: string;
+                    /** @description Quote asset (canonical classic id). */
+                    buying: string;
+                    /** @description Maximum aggregated price levels per side. */
+                    depth?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Aggregated depth, asks ascending / bids descending by price. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        /**
+                         * @example {
+                         *       "data": {
+                         *         "selling": "native",
+                         *         "buying": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                         *         "as_of_ledger": 63412345,
+                         *         "snapshot_at": "2026-07-29T12:34:56Z",
+                         *         "asks": [
+                         *           {
+                         *             "price": "0.3921569",
+                         *             "price_r": {
+                         *               "n": 20,
+                         *               "d": 51
+                         *             },
+                         *             "base_amount": "1250.0000000",
+                         *             "quote_amount": "490.1960784",
+                         *             "cum_base_amount": "1250.0000000",
+                         *             "cum_quote_amount": "490.1960784",
+                         *             "offers": 3
+                         *           }
+                         *         ],
+                         *         "bids": [
+                         *           {
+                         *             "price": "0.3910000",
+                         *             "price_r": {
+                         *               "n": 391,
+                         *               "d": 1000
+                         *             },
+                         *             "base_amount": "800.0000000",
+                         *             "quote_amount": "312.8000000",
+                         *             "cum_base_amount": "800.0000000",
+                         *             "cum_quote_amount": "312.8000000",
+                         *             "offers": 1
+                         *           }
+                         *         ],
+                         *         "ask_offers": 3,
+                         *         "bid_offers": 1,
+                         *         "depth": 25
+                         *       },
+                         *       "as_of": "2026-07-29T12:35:02.870546219Z",
+                         *       "flags": {
+                         *         "stale": false,
+                         *         "reduced_redundancy": false,
+                         *         "triangulated": false,
+                         *         "divergence_warning": false,
+                         *         "divergence_checked": false
+                         *       }
+                         *     }
+                         */
+                        "application/json": components["schemas"]["EnvelopeMeta"] & {
+                            data?: components["schemas"]["SDEXOrderBook"];
+                        };
+                    };
+                };
+                /** @description Invalid selling/buying asset or depth. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                429: components["responses"]["RateLimited"];
+                500: components["responses"]["InternalError"];
+                /** @description Order book snapshot still loading (or the lake reader is not wired on this deployment). */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ledger/tip": {
         parameters: {
             query?: never;
@@ -12689,6 +12826,53 @@ export interface components {
                 /** @description One-line provenance of what was measured and how it was valued. */
                 basis: string;
             };
+        };
+        SDEXOrderBook: {
+            /** @description Base asset (what asks sell). */
+            selling: string;
+            /** @description Quote asset. */
+            buying: string;
+            /**
+             * Format: int64
+             * @description Ledger high-water the in-process book has applied.
+             */
+            as_of_ledger: number;
+            /**
+             * Format: date-time
+             * @description When the book last advanced.
+             */
+            snapshot_at: string;
+            /** @description Aggregated ask levels, ascending by price. */
+            asks: components["schemas"]["SDEXOrderBookLevel"][];
+            /** @description Aggregated bid levels, descending by price. */
+            bids: components["schemas"]["SDEXOrderBookLevel"][];
+            /** @description Live ask offers BEFORE the depth cap. */
+            ask_offers: number;
+            /** @description Live bid offers BEFORE the depth cap. */
+            bid_offers: number;
+            /** @description Applied per-side level cap. */
+            depth: number;
+        };
+        SDEXOrderBookLevel: {
+            /** @description Quote-per-base price, the exact rational rendered at 7 decimal places. */
+            price: string;
+            /** @description Exact reduced price fraction (n/d = price). */
+            price_r: {
+                /** Format: int64 */
+                n: number;
+                /** Format: int64 */
+                d: number;
+            };
+            /** @description Level depth in the base asset (decimal string, whole units). */
+            base_amount: string;
+            /** @description Level depth in the quote asset (decimal string, whole units). */
+            quote_amount: string;
+            /** @description Running base-asset total from the top of the book. */
+            cum_base_amount: string;
+            /** @description Running quote-asset total from the top of the book. */
+            cum_quote_amount: string;
+            /** @description Live offers aggregated into this level. */
+            offers: number;
         };
         HealthResponse: {
             /** @enum {string} */

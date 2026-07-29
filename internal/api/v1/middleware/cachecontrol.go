@@ -199,7 +199,12 @@ func policyForPath(path string, cdnEnabled bool) string {
 		path == "/v1/pools/reserves",
 		// Native (CAP-38) liquidity-pool reserves — same CURRENT-lake-
 		// state nature as /v1/pools/reserves (both listing + ?pool=).
-		path == "/v1/liquidity-pools":
+		path == "/v1/liquidity-pools",
+		// SDEX order-book depth — CURRENT offer state from the
+		// in-process book, which itself advances every ~60s; the
+		// short band absorbs widget polling without overstating
+		// freshness the snapshot doesn't have.
+		path == "/v1/sdex/orderbook":
 		if cdnEnabled {
 			return "public, max-age=30, s-maxage=60"
 		}

@@ -123,6 +123,7 @@ type Server struct {
 	protocolBespoke         ProtocolBespokeReader
 	protocolPoolTokens      ProtocolPoolTokensReader
 	dexTVL                  *DEXTVLCache
+	sdexOrderBook           *SDEXOrderBookCache
 	// Per-server TTL + single-flight cache for the expensive
 	// /v1/protocols/{name} detail (lazy-init'd — see cachedProtocolDetail).
 	protoDetailMu     sync.Mutex
@@ -959,6 +960,14 @@ type Options struct {
 	// from a request. Nil leaves that section absent from the wire.
 	BackfillCoverage *CoverageCache
 
+	// SDEXOrderBook, when non-nil, is the in-process live classic
+	// offer book behind GET /v1/sdex/orderbook — loaded once from the
+	// lake at process start, then advanced incrementally every
+	// [SDEXOrderBookAdvanceInterval] by a background goroutine in
+	// cmd/stellarindex-api/main.go. Nil (no lake on this deployment)
+	// or not-yet-loaded serves an honest 503 problem.
+	SDEXOrderBook *SDEXOrderBookCache
+
 	// DEXTVL, when non-nil, is the process-local snapshot of
 	// per-protocol DEX TVL (current pool reserves valued in USD),
 	// refreshed on a background goroutine every
@@ -1129,6 +1138,7 @@ func applyProtocolOptions(s *Server, opts Options) {
 	s.protocolBespoke = opts.ProtocolBespoke
 	s.protocolPoolTokens = opts.ProtocolPoolTokens
 	s.dexTVL = opts.DEXTVL
+	s.sdexOrderBook = opts.SDEXOrderBook
 	s.soroswapPairs = opts.SoroswapPairs
 }
 
@@ -1424,6 +1434,10 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// detail. Static registry always serves; dynamic joins degrade.
 	s.mux.HandleFunc("GET /v1/protocols", s.handleProtocolsList)
 	s.mux.HandleFunc("GET /v1/protocols/{name}", s.handleProtocolDetail)
+
+	// SDEX order-book depth — live classic offers from the in-process
+	// book (503 problem until the initial lake load completes).
+	s.mux.HandleFunc("GET /v1/sdex/orderbook", s.handleSDEXOrderbook)
 
 	// Live-ingest frontier — a lightweight slice of the ingestion
 	// snapshot (latest ingested ledger + lag). /tip is a 2s-cached

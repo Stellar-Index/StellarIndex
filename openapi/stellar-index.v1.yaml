@@ -18,7 +18,7 @@
 openapi: 3.1.0
 info:
   title: Stellar Index API
-  version: "1.11.0"
+  version: "1.12.0"
   summary: The Stellar network — explorer, history, supply, analytics, and prices.
   description: |
     The Stellar Index API exposes the Stellar network as one
@@ -4384,6 +4384,102 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+  /sdex/orderbook:
+    get:
+      tags: [protocols]
+      summary: SDEX order-book depth for one classic pair.
+      description: |
+        Live bid/ask depth for a classic (selling, buying) market,
+        aggregated by exact price level from the LIVE `offer` ledger
+        entries. `selling` is the market's BASE asset (what asks sell),
+        `buying` the QUOTE; classic asset forms only (`native`,
+        `CODE-G...`) — SDEX offers cannot reference Soroban assets.
+
+        Source of truth is an IN-PROCESS live offer book maintained off
+        the certified lake: loaded once at process start (the offer
+        slice carries its assets only inside the entry XDR, so per-pair
+        lake reads are not viable within the read budget) and advanced
+        with incremental change reads every ~60s — `as_of_ledger` /
+        `snapshot_at` state exactly how fresh the served book is. Until
+        the initial load completes the endpoint returns a 503 problem
+        (`orderbook-loading`), never a fabricated empty book.
+
+        Prices are exact rationals: `price` renders the reduced
+        fraction `price_r` at 7 decimal places (bid prices are the
+        exact inverse of the stored offer price — no float math).
+        Amounts are decimal strings in whole 7-decimal asset units;
+        `ask_offers` / `bid_offers` count each side BEFORE the `depth`
+        cap so truncation is visible. Served with `public, max-age=30`.
+      parameters:
+        - name: selling
+          in: query
+          required: true
+          description: "Base asset (canonical classic id: `native` or `CODE-G...`)."
+          schema: { type: string, example: native }
+        - name: buying
+          in: query
+          required: true
+          description: "Quote asset (canonical classic id)."
+          schema: { type: string, example: USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN }
+        - name: depth
+          in: query
+          description: Maximum aggregated price levels per side.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 25 }
+      responses:
+        "200":
+          description: Aggregated depth, asks ascending / bids descending by price.
+          content:
+            application/json:
+              example:
+                data:
+                  selling: native
+                  buying: USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                  as_of_ledger: 63412345
+                  snapshot_at: "2026-07-29T12:34:56Z"
+                  asks:
+                    - price: "0.3921569"
+                      price_r: { n: 20, d: 51 }
+                      base_amount: "1250.0000000"
+                      quote_amount: "490.1960784"
+                      cum_base_amount: "1250.0000000"
+                      cum_quote_amount: "490.1960784"
+                      offers: 3
+                  bids:
+                    - price: "0.3910000"
+                      price_r: { n: 391, d: 1000 }
+                      base_amount: "800.0000000"
+                      quote_amount: "312.8000000"
+                      cum_base_amount: "800.0000000"
+                      cum_quote_amount: "312.8000000"
+                      offers: 1
+                  ask_offers: 3
+                  bid_offers: 1
+                  depth: 25
+                as_of: "2026-07-29T12:35:02.870546219Z"
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/SDEXOrderBook" }
+        "400":
+          description: Invalid selling/buying asset or depth.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "503":
+          description: Order book snapshot still loading (or the lake reader is not wired on this deployment).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /ledger/tip:
     get:
       tags: [meta]
@@ -9376,6 +9472,73 @@ components:
             basis:
               type: string
               description: One-line provenance of what was measured and how it was valued.
+
+    # SDEX order-book depth (/sdex/orderbook).
+    SDEXOrderBook:
+      type: object
+      required:
+        [selling, buying, as_of_ledger, snapshot_at, asks, bids,
+         ask_offers, bid_offers, depth]
+      properties:
+        selling: { type: string, description: "Base asset (what asks sell)." }
+        buying: { type: string, description: "Quote asset." }
+        as_of_ledger:
+          type: integer
+          format: int64
+          description: Ledger high-water the in-process book has applied.
+        snapshot_at:
+          type: string
+          format: date-time
+          description: When the book last advanced.
+        asks:
+          type: array
+          description: Aggregated ask levels, ascending by price.
+          items: { $ref: "#/components/schemas/SDEXOrderBookLevel" }
+        bids:
+          type: array
+          description: Aggregated bid levels, descending by price.
+          items: { $ref: "#/components/schemas/SDEXOrderBookLevel" }
+        ask_offers:
+          type: integer
+          description: Live ask offers BEFORE the depth cap.
+        bid_offers:
+          type: integer
+          description: Live bid offers BEFORE the depth cap.
+        depth:
+          type: integer
+          description: Applied per-side level cap.
+
+    SDEXOrderBookLevel:
+      type: object
+      required:
+        [price, price_r, base_amount, quote_amount, cum_base_amount,
+         cum_quote_amount, offers]
+      properties:
+        price:
+          type: string
+          description: Quote-per-base price, the exact rational rendered at 7 decimal places.
+        price_r:
+          type: object
+          description: Exact reduced price fraction (n/d = price).
+          required: [n, d]
+          properties:
+            n: { type: integer, format: int64 }
+            d: { type: integer, format: int64 }
+        base_amount:
+          type: string
+          description: Level depth in the base asset (decimal string, whole units).
+        quote_amount:
+          type: string
+          description: Level depth in the quote asset (decimal string, whole units).
+        cum_base_amount:
+          type: string
+          description: Running base-asset total from the top of the book.
+        cum_quote_amount:
+          type: string
+          description: Running quote-asset total from the top of the book.
+        offers:
+          type: integer
+          description: Live offers aggregated into this level.
 
     # Health
     HealthResponse:
