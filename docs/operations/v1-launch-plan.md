@@ -127,6 +127,32 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~12:10Z — 📐 **/accounts snapshot reader: implementation
+  brief filed for fresh-context build** (deliberate: a multi-file
+  feature at this session's depth risks quality; the brief de-risks
+  next session instead).
+  - **Problem**: 10 explorer routes 503 on the 8s read budget — all
+    account-state class (`/accounts`, `/accounts/{g}`, its
+    /transactions //operations //movements, `/contracts` list,
+    `/operations` list, one /holders, wasm/interactions/code-history on
+    /contracts/{id}). Root: per-request FINAL scans over the (now
+    version-keyed) `ledger_entries_current` + huge fact tables; NOT the
+    40× memory class (that was thread fan-out, fixed).
+  - **Fix pattern (per the plan's own C-F1 line): CoverageCache** —
+    `internal/api/v1/coverage_cache.go` is the template: a background
+    goroutine refreshes a snapshot on an interval (30 min fine for
+    list-shaped surfaces), handlers serve the snapshot instantly, and
+    degraded-but-honest (200 + `flags.degraded:true` + stale-as-of
+    timestamp) replaces 503s when the snapshot is old.
+  - **Scope order**: (1) `/accounts` list (the 214M-row FINAL scan —
+    snapshot top-N by balance + count), (2) `/contracts` +
+    `/operations` lists same pattern, (3) per-account detail reads use
+    bounded keyed lookups (should already be fast post-D2's ordinal
+    index — MEASURE first; may just need `max_threads` pinning like the
+    TTL classifier), (4) route-sweep target: 10×5xx → 0.
+  - Wire per /add-endpoint if response shapes change (they should NOT —
+    same shape + a degraded flag that already exists in the envelope).
+
 - 2026-07-29 ~11:30Z — ✅ **redstone empty-batch fix LANDED (`78486ae6`,
   verify green)** — decoded the 156-byte shape end-to-end: it is
   `{updated_feeds: [], updater}` (Bytes-wrapped), the adapter's
