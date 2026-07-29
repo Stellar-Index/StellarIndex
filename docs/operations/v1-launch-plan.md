@@ -127,6 +127,23 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~16:45Z — ✅ **DEX TVL + SDEX order book + charts LANDED on
+  main** (b1711519 / 3dbd941b / 4a78058b — agent-built in a worktree,
+  reviewed, cherry-picked; verify + web gates green POST-merge against
+  the dependabot-moved deps). Shipped: per-protocol `tvl` (snapshot-
+  cached, lower-bound-honest, priced through the SAME tier system as
+  usd_volume) on /v1/protocols + /dexes; `GET /v1/sdex/orderbook`
+  (in-process live book: one bounded FINAL load + 60s incremental
+  applies, exact rational prices, spec 1.12.0) + OrderBookPanel on
+  /markets/{pair}; 90d volume chart per DEX; /company stale claims
+  corrected. **Deploy-watch items for v0.21.4:** (1) the book's initial
+  FINAL load wall-time is unmeasured on r1 — endpoint 503s honestly
+  until loaded, avoid first-deploying while the participant backfill
+  hammers CH; (2) API TOML must carry `[trades].usd_pegged_classic_assets`
+  or TVL reports all-unpriced; (3) Phoenix/Comet TVL = follow-up
+  (needs pool-storage decode); (4) discovered dead table:
+  `sdex_offer_events` (migration 0026, nothing writes/reads it).
+
 - 2026-07-29 ~15:30Z — 🏗️ **Decision B9 RESOLVED by Ash + build started:**
   per-token oracle layer = ALREADY SHIPPED (the July tier-valuation —
   blog/methodology copy to be updated); **BUILD: DEX TVL/liquidity
