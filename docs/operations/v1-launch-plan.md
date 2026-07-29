@@ -127,6 +127,19 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~15:30Z — 🏗️ **Decision B9 RESOLVED by Ash + build started:**
+  per-token oracle layer = ALREADY SHIPPED (the July tier-valuation —
+  blog/methodology copy to be updated); **BUILD: DEX TVL/liquidity
+  aggregation + SDEX order-book depth + per-DEX volume/chart wiring**
+  (Ash: "any dex's and sdex I want the order book / depth for, as well
+  as volume and charts and liquidity"); CEX order-book depth stays
+  retracted post-v1. Build delegated to a fresh-context agent in a
+  worktree (this session too deep for clean multi-unit feature work);
+  unit-by-unit with the /add-endpoint chain, reviewed + landed on main
+  after gates. Inputs: reserve tables (aquarius_reserves/_liquidity,
+  soroswap pair state, phoenix_liquidity, comet_liquidity, Blend TVL
+  proxy) + classic `offer` entries in `ledger_entries_current`.
+
 - 2026-07-29 ~14:45Z — 🌙 **Night chain launched**
   (`/var/log/night-chain.log`, self-sequencing): redstone full-history
   replay (~650k ledgers/h, tip ETA ~21:00Z) → full completeness run
