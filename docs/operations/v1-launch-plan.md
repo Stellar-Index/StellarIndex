@@ -127,6 +127,17 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~14:45Z — 🌙 **Night chain launched**
+  (`/var/log/night-chain.log`, self-sequencing): redstone full-history
+  replay (~650k ledgers/h, tip ETA ~21:00Z) → full completeness run
+  (expect **17/17**) → `ch-participant-backfill -from 2 -window 500000`
+  takes the heavy slot (2–4 days, resumable — queued since 2026-07-07;
+  a prerequisite component of the account-route fixes AND the C-F1c
+  incoming-ops coverage gap). Local integration suite confirmed the
+  CI-timeout diagnosis: **passes in 699s** under the new 20m cap.
+  /accounts snapshot reader build: next session (fresh context; the
+  participant backfill changes its measurement baseline anyway).
+
 - 2026-07-29 ~14:30Z — ⚖️ **v0.21.3 chain results — one win, one
   mechanical tail, one honest park.**
   1. **Completeness 16/17 → redstone tail launched**: the fixed
