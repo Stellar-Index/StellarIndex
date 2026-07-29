@@ -127,7 +127,31 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
-- 2026-07-29 ~02:35Z — 🏷️ **v0.21.2 CUT** (promote 2687b3e1, guard-rail
+- 2026-07-29 ~02:45Z — 🚀 **v0.21.2 DEPLOYED + the whole post-deploy
+  chain is executing.**
+  1. **Deploy verified**: workflow green, all 6 binaries v0.21.2,
+     services active, `ops-ch` refreshed, ingest at tip, external smoke
+     **13/13 PASS**.
+  2. **Replays live**: redstone rewound to 63,624,934 → caught up
+     ~1000 ledgers/cycle (2-3 decode_errors/cycle persist in the
+     replayed range — the §2.4 undecodable class; completeness will
+     re-judge). sep41: the projector-replay path hit the documented
+     **new-cursor-inits-near-genesis trap** (cursors at ~73k, walking
+     from genesis); fixed by stop-indexer → SQL fast-forward to the
+     prior session's rebuild endpoints (supply 63,671,020 / transfers
+     63,671,647) → start. Both now tailing their real gap (deadline-
+     shrunk windows, tens of minutes to tip). NOTE: a live projector
+     holds its cursor in memory — SQL fast-forward REQUIRES the
+     stop/update/start sandwich or the row is clobbered.
+  3. **SAC seeded-row DELETE executed (approved)**: sentinel predicate
+     cross-checked exactly against provenance (54,863 rows / 38 assets
+     == 38 provenance rows summing 54,863) → transactional DELETE of
+     both → 0 sentinel rows remain. **TTL-gated re-seed running** under
+     the heavy wrapper (`/var/log/sac-reseed.log`, v0.21.2 binary).
+  4. 50-account reconcile baseline still running (serial).
+  Acceptance batch when jobs land: supply reconcile (PHO toward
+  tolerance, AQUA ~+0.18% preserved), sep41×2 + redstone FULL
+  compute-completeness, route-sweep, alert clearing. — 🏷️ **v0.21.2 CUT** (promote 2687b3e1, guard-rail
   script green incl. verify.sh; one missing CHANGELOG entry added first
   — the ansible-drift restoration family). release.yml building; on
   completion the loop deploys all 6 binaries via deploy.yml (ZERO
