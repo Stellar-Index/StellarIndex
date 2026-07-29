@@ -127,6 +127,17 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~06:15Z — 🔁 **Completeness: my own `-skip-substrate` flag
+  poisoned the INV-5 latch** ("prior verdict's substrate was FAILING —
+  refusing to upgrade without evidence"). projection_ok=t for sep41×2
+  is solid; but `complete=t` needs one full run per source WITHOUT
+  -skip-substrate — launched (log
+  `/var/log/completeness-substrate.log`). Lesson for the runbook: a
+  skip-flag run does not merely "carry" the prior verdict — if the
+  prior verdict was failing it re-writes substrate_ok=f and the latch
+  then demands full evidence. redstone's substrate should also green
+  (its projection stays failed until the decoder fix).
+
 - 2026-07-29 ~06:00Z — 🔁 **Completeness runs 2+3 failed on a
   NON-incident and were relaunched.** sep41_transfers (CH "query
   cancelled" at 44 min) + redstone ("database system is shutting down")
