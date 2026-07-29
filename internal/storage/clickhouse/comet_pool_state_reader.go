@@ -32,7 +32,13 @@ import (
 //	(bound/index/denorm/balance); decode is by field name, so only
 //	the `balance` i128 is required and either generation reads.
 //
-// VALIDATE-ON-R1: layout is source-derived, NOT yet validated against
+// VALIDATED ON R1 2026-07-29: of the two candidate key encodings
+// probed, the Vec[Symbol] form matched the real AllRecordData entry for
+// the sole mainnet pool (CAS3FL6T…); decode yielded 2 legs —
+// ~748k USDC + ~71.7M BLND — plausible Blend-backstop magnitudes. The
+// dual-probe stays (cheap, robust to upgrades).
+//
+// VALIDATE-ON-R1 (original derivation note): layout is source-derived, NOT yet validated against
 // real lake entries (no r1 access from the implementing session), and
 // the single curated pool (Blend's BLND/USDC backstop, WASM
 // 8abc28913035c07411ed5d134e6bfeab4723d97ddd4d1a22a0605d35c94d1a36)

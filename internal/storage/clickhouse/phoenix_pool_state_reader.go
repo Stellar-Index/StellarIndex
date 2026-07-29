@@ -36,7 +36,14 @@ import (
 // throughout storage.rs), i.e. standalone contract_data entries under
 // the pool contract — NOT the contract-instance entry.
 //
-// VALIDATE-ON-R1: this layout is source-derived, NOT yet validated
+// VALIDATED ON R1 2026-07-29: all 6 storage keys for two curated pools
+// (CBHCRSVX…, CBCZGGNO…) matched real ledger_entries_current rows and
+// decoded cleanly — reserves at stroop scale + CONFIG token pairs
+// (PHO/USDC-class addresses) consistent with known pools. The layout
+// below is confirmed against the DEPLOYED WASM, not just source. Re-run
+// the query below after any Phoenix contract upgrade.
+//
+// VALIDATE-ON-R1 (original derivation note): this layout is source-derived, NOT yet validated
 // against real lake entries (no r1 access from the implementing
 // session), and Phoenix pools upgrade in place — two pool-WASM
 // generations are already curated (phoenix.MainnetPools vs
