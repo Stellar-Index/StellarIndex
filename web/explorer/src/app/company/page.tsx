@@ -113,8 +113,12 @@ export default function CompanyPage() {
                 Honest about what we don&apos;t have.
               </strong>{' '}
               Forex is currently a daily-grain shim while we wire a
-              proper feed. Soroban DEX TVL isn&apos;t ingested yet.
-              CEX order-book depth isn&apos;t ingested. The{' '}
+              proper feed. Soroban DEX TVL is served only where real
+              post-state reserves exist (Soroswap, Aquarius) and is an
+              explicit lower bound when a pool leg can&apos;t be priced;
+              Phoenix and Comet emit flow deltas, so we don&apos;t
+              fabricate a TVL for them. CEX order-book depth isn&apos;t
+              ingested (the native SDEX book is). The{' '}
               <Link href="/methodology" className="text-brand-600 hover:underline">
                 /methodology
               </Link>{' '}
@@ -152,9 +156,10 @@ export default function CompanyPage() {
           <Link href="/changelog" className="text-brand-600 hover:underline">
             /changelog
           </Link>
-          . Post-v1 priorities — order-book depth ingest, DEX TVL,
-          and deeper per-protocol coverage across every major Stellar
-          protocol — are public in the same backlog. Stellar Index is
+          . Post-v1 priorities — CEX order-book depth ingest,
+          reserve-derived TVL for the remaining DEXes, and deeper
+          per-protocol coverage across every major Stellar protocol —
+          are public in the same backlog. Stellar Index is
           deliberately a Stellar-only explorer: depth on one network
           over breadth across many.
         </p>
