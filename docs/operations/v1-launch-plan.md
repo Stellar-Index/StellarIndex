@@ -127,6 +127,27 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~10:00Z — 🎯 **40× READ-AMPLIFICATION ROOT-CAUSED — it is
+  thread scheduling, not the table.** Measured: the identical probe at
+  `max_threads=4` costs **89 MiB on the NEW table vs 94 MiB on _old**
+  (parity; slightly better). The 4.76 GiB figure was default-threads
+  parallelism fanning wide over the new part layout — per-stream read
+  buffers × many more concurrent ranges. Consequences:
+  1. **The SAC re-seed unblocks with a one-line class of fix**:
+     `classifyTTLLivenessBatch` gains `SETTINGS max_threads = 4` (+ a
+     bounded max_memory), exactly the pattern its sibling
+     `scanSACSeedWindow` already uses. → v0.21.3 queue, top item; USDC's
+     +1.12% closes when it ships + re-seeds.
+  2. Codecs/granularity identical; compression ~31% worse per row on
+     the new table (window-ordered insert layout) — cosmetic, will
+     improve as background merges continue.
+  3. The 10 route timeouts are latency-class, not this memory class —
+     related part-layout effects possible but unproven; /accounts
+     snapshot reader remains their fix.
+  4. **E3 determinism filed earlier this hour** (byte-identical phoenix
+     window). Evidence pack: 9/11; the 2 remaining rows are
+     operator-gated (paging → SEV drill; CG Pro key → top-50).
+
 - 2026-07-29 ~09:15Z — ✅ **Substrate prove-it battery PASSED + usd-volume
   calibrated.** (1) verify-contiguity + verify-hashchain + verify-lake
   all exit 0: **0 broken hash links genesis→tip [2, 63,699,907]** on the
