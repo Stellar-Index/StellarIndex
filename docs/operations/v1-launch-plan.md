@@ -131,6 +131,20 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~22:50Z — ✅ **TTL backfill COMPLETE + VERIFIED; completion
+  chain phase 2 launched.** All 7 windows landed 21:42→22:38Z (~8
+  min/window, ≤152 MiB observed — the slim-projection design costing
+  what it promised vs the six OOM'd scan attempts). **Step-3 verify:
+  3,182 sampled keys, 0 mismatched** against the old
+  ledger_entries_current extraction; table = 21.35 GiB (predicted
+  20-30). The artifact's final `uniqExact` sanity count OOM'd at the
+  14 GiB users.d cap — diagnostic only, backfill unaffected (use
+  uniqCombined if ever needed). `/root/v0214-chain.sh` now running
+  detached: redstone compute-completeness (→17/17 expected) → SAC
+  re-seed `-full-history` (TTL-gated via the new table) → verdict
+  readback. Then: reconcile 8/8 acceptance + route-sweep target
+  0×5xx.
+
 - 2026-07-29 ~22:00Z — 🚀 **v0.21.4 CUT + DEPLOYED (Ash: "you can cut
   it"); chain running.** Sequence executed: CHANGELOG promoted (dup
   Added headers merged) → tag via guard-rail script → release.yml (11
