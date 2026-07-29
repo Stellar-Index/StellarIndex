@@ -127,6 +127,15 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~02:35Z — 🏷️ **v0.21.2 CUT** (promote 2687b3e1, guard-rail
+  script green incl. verify.sh; one missing CHANGELOG entry added first
+  — the ansible-drift restoration family). release.yml building; on
+  completion the loop deploys all 6 binaries via deploy.yml (ZERO
+  migrations in this tag — no schema risk), then: post-deploy battery →
+  sep41 tail rebuild + redstone replay → SAC delete + re-seed
+  (approved) → supply reconcile acceptance. 50-account
+  reconcile-balances baseline still running (serial Horizon reads).
+
 - 2026-07-29 ~02:15Z — ✅ **ANSIBLE APPLY + RULES SYNC DONE (INBOX #1
   cleared by the loop).**
   1. **Serving flip applied**: `stellarindex_clickhouse_serving_enabled:
