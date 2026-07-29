@@ -23,7 +23,7 @@ func TestWealthCacheServesAnyLimitFromOneEntry(t *testing.T) {
 	}
 	c.put(ranking, time.Now())
 
-	rows, ok := c.get()
+	rows, _, ok := c.get()
 	if !ok {
 		t.Fatal("get after put returned miss")
 	}
@@ -47,13 +47,24 @@ func TestWealthCacheServesAnyLimitFromOneEntry(t *testing.T) {
 	}
 }
 
-// TestWealthCacheTTLExpiry — a stale entry is a miss.
-func TestWealthCacheTTLExpiry(t *testing.T) {
+// TestWealthCacheStaleServing — an EXPIRED entry is still returned, with
+// its real timestamp, so callers can serve degraded-but-honest instead of
+// 503 (route-sweep 2026-07-29). Staleness is the caller's judgment via the
+// returned cachedAt; the cache itself never withholds a filled entry.
+func TestWealthCacheStaleServing(t *testing.T) {
 	t.Parallel()
 	c := newAccountsWealthCache()
-	c.put([]AccountWealth{{AccountID: "a", USD: 1}}, time.Now().Add(-2*AccountsWealthCacheTTL))
-	if _, ok := c.get(); ok {
-		t.Error("expired entry returned as fresh")
+	staleAt := time.Now().Add(-2 * AccountsWealthCacheTTL)
+	c.put([]AccountWealth{{AccountID: "a", USD: 1}}, staleAt)
+	rows, at, ok := c.get()
+	if !ok {
+		t.Fatal("expired entry withheld — stale-serving regressed to a hard miss")
+	}
+	if len(rows) != 1 || !at.Equal(staleAt) {
+		t.Errorf("stale entry mangled: rows=%d at=%v want 1 row at %v", len(rows), at, staleAt)
+	}
+	if time.Since(at) <= AccountsWealthCacheTTL {
+		t.Error("test setup: entry should read as stale to a TTL-comparing caller")
 	}
 }
 
@@ -62,7 +73,7 @@ func TestWealthCacheTTLExpiry(t *testing.T) {
 func TestWealthCacheNilSafe(t *testing.T) {
 	t.Parallel()
 	var c *accountsWealthCache
-	if _, ok := c.get(); ok {
+	if _, _, ok := c.get(); ok {
 		t.Error("nil cache reported a hit")
 	}
 	c.put([]AccountWealth{{AccountID: "a", USD: 1}}, time.Now()) // must not panic

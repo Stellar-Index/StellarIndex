@@ -175,15 +175,15 @@ func (s *stubExplorerReader) AccountsByWealth(_ context.Context, _ []string, _ [
 	return s.wealth, s.err
 }
 
-// AccountsByWealthCached mirrors the uncached stub: warm whenever the stub
-// isn't configured to fail, so existing expectations are unchanged. An
-// error case reports cold, which is how the real cache signals "no usable
-// entry" (site-audit S3).
-func (s *stubExplorerReader) AccountsByWealthCached(_ context.Context, _ []string, _ []float64, _ int) ([]clickhouse.AccountWealth, bool) {
+// AccountsByWealthCached mirrors the uncached stub: warm-and-fresh whenever
+// the stub isn't configured to fail, so existing expectations are
+// unchanged. An error case reports cold, which is how the real cache
+// signals "nothing ever computed" (site-audit S3).
+func (s *stubExplorerReader) AccountsByWealthCached(_ context.Context, _ []string, _ []float64, _ int) ([]clickhouse.AccountWealth, time.Time, bool) {
 	if s.err != nil {
-		return nil, false
+		return nil, time.Time{}, false
 	}
-	return s.wealth, true
+	return s.wealth, time.Now(), true
 }
 
 func (s *stubExplorerReader) AccountTransactions(_ context.Context, _ string, _ int, _ clickhouse.ExplorerCursor) ([]clickhouse.TxSummary, error) {

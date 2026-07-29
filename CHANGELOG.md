@@ -16,6 +16,17 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **`GET /v1/accounts` serves a stale wealth snapshot as 200 +
+  `flags.stale` + the snapshot's real `as_of`, instead of 503.** The
+  ranking cache previously treated an entry past its 15-min TTL as a
+  hard miss, so one window of failed background refreshes blanked the
+  route back to its "warming up" 503 indefinitely while a real ranking
+  sat in memory. Now only a process that has NEVER computed a ranking
+  returns the 503 warming state; an expired snapshot is served
+  degraded-but-honest (envelope `as_of` stamped from the snapshot's
+  computation time via a new optional `WriteJSONAt` handler seam — same
+  wire shape, no new fields) while a detached single-flight refresh
+  runs. Contract tests pin the fresh / stale-degraded / cold paths.
 - **Explorer scan-shaped lake reads carry per-query resource pins**
   (`SETTINGS max_threads = 4, max_memory_usage = 8589934592`, in SQL
   text): every explorer read whose cost is set by a lake table's size

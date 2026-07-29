@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 // AccountsListView is the wire response for GET /v1/accounts — accounts ranked
@@ -62,16 +63,24 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	// handler's deadline. Before this, the scan ran inline and timed out on
 	// EVERY request — 8.1s of waiting followed by a 500, 100% of the time
 	// (site-audit S3/S30).
-	ranked, warm := h.Reader.AccountsByWealthCached(ctx, assets, prices, limit)
+	ranked, rankedAt, warm := h.Reader.AccountsByWealthCached(ctx, assets, prices, limit)
 	if !warm {
 		// Honest degraded state instead of a 500. The previous copy blamed
 		// "the current-state projection is still backfilling, or pricing is
 		// offline" — neither was ever true; the query simply timed out.
+		// Reached ONLY when no ranking has EVER been computed this process
+		// (cold start before the first refresh lands) — an expired snapshot
+		// is served with flags.stale below, never 503'd (route-sweep
+		// 2026-07-29).
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/warming-up",
 			"Ranking not ready", http.StatusServiceUnavailable,
 			"the account wealth ranking is being computed; retry shortly")
 		return
 	}
+	// Degraded when the snapshot has outlived its refresh contract (the
+	// background refresher is failing/behind) — the data is real, the flag +
+	// the envelope's as_of (stamped from rankedAt) say how old.
+	snapshotStale := time.Since(rankedAt) > clickhouse.AccountsWealthCacheTTL
 	// Locked-burn detection (Pass-B ACC-1): the SDF burn address ranked
 	// as the richest account — $11.3B of provably unspendable XLM
 	// presented as wealth. Badge, don't hide: the balance is real, the
@@ -89,7 +98,7 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 			Locked:    a.Locked,
 		}
 	}
-	h.WriteJSON(w, out, stale)
+	h.writeJSONAt(w, out, stale || snapshotStale, rankedAt)
 }
 
 // usdPriceMap builds parallel (asset, price) arrays for wealth ranking: native

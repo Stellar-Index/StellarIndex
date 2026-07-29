@@ -122,11 +122,15 @@ type ExplorerReader interface {
 	AccountsByWealth(ctx context.Context, assets []string, prices []float64, limit int) ([]clickhouse.AccountWealth, error)
 	// AccountsByWealthCached serves the ranking from a background-refreshed
 	// cache and NEVER runs the underlying FINAL scan on the caller's
-	// deadline. ok=false means "not warm yet" — render a warming state, do
+	// deadline. asOf is the ranking's fetch time — an entry past its TTL is
+	// STILL served (with its honest asOf; the handler flags it degraded)
+	// rather than treated as a miss, so a window of failed refreshes
+	// degrades to old-but-real data, not to 503s (route-sweep 2026-07-29).
+	// ok=false means "never computed yet" — render a warming state, do
 	// not fall back to AccountsByWealth on the request path (site-audit S3:
 	// that scan needs 11-20s against an 8s handler deadline, so it 500'd
 	// 100% of the time).
-	AccountsByWealthCached(ctx context.Context, assets []string, prices []float64, limit int) ([]clickhouse.AccountWealth, bool)
+	AccountsByWealthCached(ctx context.Context, assets []string, prices []float64, limit int) ([]clickhouse.AccountWealth, time.Time, bool)
 	SoroswapPairReserves(ctx context.Context, pairs []string) (map[string]clickhouse.SoroswapPairState, error)
 	NativeLiquidityPoolReserves(ctx context.Context, poolIDs []string) (map[string]clickhouse.NativeLiquidityPoolState, error)
 	NativeLiquidityPoolsRanked(ctx context.Context, limit int) ([]clickhouse.NativeLiquidityPoolState, error)
@@ -191,7 +195,13 @@ type Handler struct {
 	ParseLimit      func(w http.ResponseWriter, r *http.Request, def, maxN int) (int, bool)
 	ParseWindowDays func(r *http.Request, def int) int
 
-	WriteJSON     func(w http.ResponseWriter, data any, stale bool)
+	WriteJSON func(w http.ResponseWriter, data any, stale bool)
+	// WriteJSONAt is WriteJSON with an explicit envelope as_of — used by the
+	// snapshot-backed listings so a degraded (stale-snapshot) response
+	// carries the snapshot's REAL computation time instead of now().
+	// Optional: nil falls back to WriteJSON (same wire shape; as_of is
+	// always present on the envelope either way).
+	WriteJSONAt   func(w http.ResponseWriter, data any, stale bool, asOf time.Time)
 	WriteProblem  func(w http.ResponseWriter, r *http.Request, typeURL, title string, status int, detail string)
 	ClientAborted func(r *http.Request, err error) bool
 
@@ -216,6 +226,17 @@ type Handler struct {
 	// C3-009, audit-2026-07-23).
 	assetHolders assetHoldersCache
 	contractsDir contractsDirCache
+}
+
+// writeJSONAt writes data with an explicit envelope as_of when the seam is
+// wired, degrading to the plain WriteJSON (as_of = now) when not — test
+// handlers that only wire WriteJSON keep working unchanged.
+func (h *Handler) writeJSONAt(w http.ResponseWriter, data any, stale bool, asOf time.Time) {
+	if h.WriteJSONAt != nil && !asOf.IsZero() {
+		h.WriteJSONAt(w, data, stale, asOf)
+		return
+	}
+	h.WriteJSON(w, data, stale)
 }
 
 // unavailable writes the standard 503 when no explorer reader is wired
