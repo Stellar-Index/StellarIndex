@@ -15,7 +15,16 @@ against.
 
 ## [Unreleased]
 
+## [v0.21.3] — 2026-07-29
+
 ### Fixed
+- **ClickHouse default-profile limits codified for large ops scans**
+  (`users.d/zz-max-query-size.xml`, ansible-managed drift-clean):
+  `max_query_size` 4 MiB, `max_memory_usage` 14 GiB, external
+  group-by/sort spill at 4 GiB — the operational stopgaps applied live
+  on 2026-07-29 while diagnosing the seed failures below. The
+  self-bounding classifier fix makes the tool independent of these,
+  but the raised profile stays as codified defence-in-depth.
 - **Empty redstone `write_prices` batches are recognized no-ops, not
   decode errors.** The adapter emits `{updated_feeds: [], updater}`
   (Bytes-wrapped, ~156-byte body) when its freshness verifier drops
