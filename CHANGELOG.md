@@ -15,6 +15,20 @@ against.
 
 ## [Unreleased]
 
+### Added
+- **Metrics + alerts for the v0.21.4 background cache workers** —
+  paired outcome counter + duration histogram for the DEX TVL
+  refresher (`stellarindex_dex_tvl_refresh_*`), the SDEX order-book
+  maintainer (`stellarindex_sdex_orderbook_maintain_*`, op-qualified
+  load/advance outcomes), and the explorer's five stale-while-
+  revalidate refreshers (`stellarindex_explorer_swr_refresh_*`,
+  per-cache label). All three workers fail INVISIBLY at the API
+  surface by design (carried-forward snapshots / stale-but-real
+  serving), so these are the only place sustained failure shows
+  before the data is hours old. Two ticket alerts in both rule
+  trees with runbooks + promtool unit tests
+  (`dex-tvl-refresh-failing`, `sdex-orderbook-maintain-failing`).
+
 ### Fixed
 - **Empty redstone batches classify as no-ops even without op args** —
   the v0.21.3 empty-batch fix sat BELOW the `OpArgs` requirement, and

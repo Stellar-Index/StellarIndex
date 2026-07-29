@@ -144,3 +144,94 @@ tests:
       - eval_time: 30m
         alertname: stellarindex_admin_audit_write_failing
         exp_alerts: []
+
+  # ── v0.21.4: DEX TVL refresher failing hard tickets ──────────────
+  # Every refresh errors (one per 10-min tick), zero successes: the
+  # served TVL is a carried-forward snapshot aging silently.
+  - interval: 1m
+    name: a hard-failing dex tvl refresher tickets
+    input_series:
+      - series: 'stellarindex_dex_tvl_refresh_total{job="stellarindex_api",instance="r1:8080",outcome="error"}'
+        values: '0+0.1x120'
+      - series: 'stellarindex_dex_tvl_refresh_total{job="stellarindex_api",instance="r1:8080",outcome="ok"}'
+        values: '0x120'
+
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_dex_tvl_refresh_failing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-tvl-refresh-failing.md
+              summary: "DEX TVL snapshot refresher failing — TVL figures aging silently"
+              description: |
+                Every DEX TVL refresh in the last 15 min errored, sustained
+                30+ min, with zero successes interleaved. The served TVL on
+                /v1/dexes and the per-protocol pages is a carried-forward
+                snapshot growing stale behind an honest-looking page. Usual
+                causes: lake reserve reads failing (ClickHouse down / part
+                churn) or the served-tier prices_1m reads failing.
+
+  # ── v0.21.4: a degraded-but-succeeding TVL refresher is SILENT ───
+  # One protocol errors each tick while the refresh still records ok
+  # outcomes — carried-forward is per-protocol and self-heals; the
+  # alert requires zero successes.
+  - interval: 1m
+    name: a partially-degraded dex tvl refresher stays silent
+    input_series:
+      - series: 'stellarindex_dex_tvl_refresh_total{job="stellarindex_api",instance="r1:8080",outcome="error"}'
+        values: '0+0.1x120'
+      - series: 'stellarindex_dex_tvl_refresh_total{job="stellarindex_api",instance="r1:8080",outcome="ok"}'
+        values: '0+0.1x120'
+
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_dex_tvl_refresh_failing
+        exp_alerts: []
+
+  # ── v0.21.4: sdex order-book advance failures ticket ─────────────
+  # The 60s incremental apply errors every tick for an hour: the book
+  # drifts from tip while the endpoint keeps answering.
+  - interval: 1m
+    name: sustained sdex order-book advance errors ticket
+    input_series:
+      - series: 'stellarindex_sdex_orderbook_maintain_total{job="stellarindex_api",instance="r1:8080",outcome="advance_error"}'
+        values: '0+1x120'
+      - series: 'stellarindex_sdex_orderbook_maintain_total{job="stellarindex_api",instance="r1:8080",outcome="advance_ok"}'
+        values: '0x120'
+
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_sdex_orderbook_maintain_failing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sdex-orderbook-maintain-failing.md
+              summary: "SDEX order-book maintenance failing (load or advance errors 30+ min)"
+              description: |
+                The live order book's lake reads (initial load or the 60s
+                incremental advance) have been failing for 30+ minutes.
+                If load_error: /v1/sdex/orderbook is serving 503 warming
+                problems. If advance_error: the book serves increasingly
+                stale depth with an honest as_of_ledger. Check ClickHouse
+                health and the ledger_entry_changes partition layout first.
+
+  # ── v0.21.4: a healthy order book is SILENT ──────────────────────
+  - interval: 1m
+    name: healthy sdex order-book maintenance stays silent
+    input_series:
+      - series: 'stellarindex_sdex_orderbook_maintain_total{job="stellarindex_api",instance="r1:8080",outcome="advance_ok"}'
+        values: '0+1x120'
+      - series: 'stellarindex_sdex_orderbook_maintain_total{job="stellarindex_api",instance="r1:8080",outcome="load_ok"}'
+        values: '0 1x120'
+
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_sdex_orderbook_maintain_failing
+        exp_alerts: []

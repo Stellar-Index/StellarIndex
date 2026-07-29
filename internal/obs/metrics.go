@@ -2,6 +2,7 @@ package obs
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -199,6 +200,13 @@ func registerAppMetricsTail() {
 		HashdbVerifyRunsTotal,
 		HashdbVerifyRunDurationSeconds,
 		HashdbDriftTotal,
+
+		DEXTVLRefreshTotal,
+		DEXTVLRefreshDurationSeconds,
+		SDEXOrderBookMaintainTotal,
+		SDEXOrderBookMaintainDurationSeconds,
+		ExplorerSWRRefreshTotal,
+		ExplorerSWRRefreshDurationSeconds,
 	)
 
 	seedBoundedLabelSeries()
@@ -347,6 +355,31 @@ func seedBoundedLabelSeries() {
 	// rejected anything" and "the worker never started" identical.
 	for _, reason := range []string{"deviation", "non_positive", "non_finite"} {
 		ExternalFXRateRejectedTotal.WithLabelValues("massive", reason)
+	}
+
+	seedBoundedLabelSeriesTail()
+}
+
+// seedBoundedLabelSeriesTail continues seedBoundedLabelSeries — split
+// for the same gocognit ceiling that split registerAppMetrics.
+func seedBoundedLabelSeriesTail() {
+	// v0.21.4 background cache workers. Seeded so the DEX-TVL /
+	// order-book failure-rate queries read a real zero (not "no data")
+	// from process start; the load_* pair matters most — a process
+	// whose initial book load never even attempted looks identical to
+	// a healthy one without the zero series.
+	for _, outcome := range []string{"ok", "error"} {
+		DEXTVLRefreshTotal.WithLabelValues(outcome)
+	}
+	for _, outcome := range []string{"load_ok", "load_error", "advance_ok", "advance_error"} {
+		SDEXOrderBookMaintainTotal.WithLabelValues(outcome)
+	}
+	for _, cache := range []string{
+		"accounts_wealth", "asset_holders", "contracts_dir", "op_type_stats", "ttl_liveness",
+	} {
+		for _, outcome := range []string{"ok", "error"} {
+			ExplorerSWRRefreshTotal.WithLabelValues(cache, outcome)
+		}
 	}
 }
 
@@ -3052,3 +3085,143 @@ var HashdbDriftTotal = prometheus.NewCounter(
 		Help: "Cumulative count of ledgers hashdb's periodic verify sweep found drifted (recorded hash != freshly-observed hash). Any nonzero value means upstream history was rewritten or our lake object is corrupted — see the hashdb-drift-detected runbook.",
 	},
 )
+
+// DEXTVLRefreshTotal — per-outcome counter for the API binary's DEX
+// TVL snapshot refresher (internal/api/v1.DEXTVLCache), which
+// recomputes per-protocol TVL (soroswap / aquarius / phoenix / comet)
+// every DEXTVLRefreshInterval. Labels:
+//
+//   - `ok`    — every wired protocol computed and swapped in.
+//   - `error` — at least one protocol's read failed. NOT all-or-
+//     nothing: protocols that computed still swapped in, and failed
+//     ones keep their previous entry — so a single `error` tick is a
+//     degraded refresh, not a blank page.
+//
+// Operators alert on a sustained `error` rate with no interleaved
+// `ok`: that means /v1/dexes TVL (and the per-protocol pages) are
+// serving an ever-older carried-forward snapshot while looking
+// healthy. An isolated `error` during a lake merge or served-tier
+// restart is expected and self-heals on the next tick.
+var DEXTVLRefreshTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_dex_tvl_refresh_total",
+		Help: "DEX TVL snapshot-cache refresh outcomes (ok|error). `error` means >=1 protocol carried its previous entry forward.",
+	},
+	[]string{"outcome"},
+)
+
+// DEXTVLRefreshDurationSeconds — latency histogram for one full DEX
+// TVL refresh, labelled by outcome (matches the counter). A refresh
+// is one lake reserve lookup per protocol + a bounded set of
+// prices_1m point reads; buckets span 50 ms → 180 s (the worker's
+// per-refresh timeout is 3 min, so the top bucket is the hard stop,
+// not headroom). Chart `ok` p95 — a creeping ok-latency here is the
+// early signal that a reserve read lost its bound (the 40×
+// read-amplification class) before it becomes an `error`.
+var DEXTVLRefreshDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_dex_tvl_refresh_duration_seconds",
+		Help:    "Per-refresh latency of the DEX TVL snapshot cache, labelled by outcome (ok|error).",
+		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 180},
+	},
+	[]string{"outcome"},
+)
+
+// SDEXOrderBookMaintainTotal — per-outcome counter for the in-process
+// SDEX live order book behind /v1/sdex/orderbook. Two operation
+// classes share the label space because they share a failure surface
+// (the lake) but have wildly different costs:
+//
+//   - `load_ok` / `load_error`       — the initial (or retried)
+//     full-slice FINAL load. Runs once per process start; minutes of
+//     streaming IO.
+//   - `advance_ok` / `advance_error` — the 60s incremental
+//     partition-pruned change apply.
+//
+// Sustained `advance_error` means the served book is drifting from
+// the live ledger while the endpoint keeps answering (it serves the
+// last applied state, honestly timestamped). Repeated `load_error`
+// means the endpoint is stuck on its 503 warming problem — that is
+// the louder, user-visible failure.
+var SDEXOrderBookMaintainTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_sdex_orderbook_maintain_total",
+		Help: "SDEX live order-book maintenance outcomes (load_ok|load_error|advance_ok|advance_error).",
+	},
+	[]string{"outcome"},
+)
+
+// SDEXOrderBookMaintainDurationSeconds — latency histogram for order-
+// book maintenance, labelled like the counter. Buckets span 50 ms →
+// 30 min: `advance_*` lives in the bottom buckets (a pruned
+// incremental read), `load_*` in the top (the worker caps the initial
+// load at 30 min). The interesting charts are advance_ok p95 (drift
+// risk as offer churn grows) and the raw load_ok observation — the
+// wall-time of the one big scan, which the launch plan watches as its
+// own acceptance item.
+var SDEXOrderBookMaintainDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_sdex_orderbook_maintain_duration_seconds",
+		Help:    "SDEX order-book maintenance latency, labelled by outcome (load_ok|load_error|advance_ok|advance_error).",
+		Buckets: []float64{0.05, 0.25, 1, 5, 15, 60, 300, 900, 1800},
+	},
+	[]string{"outcome"},
+)
+
+// ExplorerSWRRefreshTotal — per-cache, per-outcome counter for the
+// explorer's detached stale-while-revalidate refreshers (the 2026-07-29
+// accounts-routes fix: request handlers serve the previous snapshot
+// with flags.stale while a single-flight background goroutine
+// recomputes). `cache` is a bounded, code-enumerated set:
+//
+//   - `accounts_wealth` — /v1/accounts wealth ranking
+//     (clickhouse.ExplorerReader wealth cache).
+//   - `asset_holders`   — /v1/assets/{id}/holders board.
+//   - `contracts_dir`   — /v1/contracts directory.
+//   - `op_type_stats`   — operation-type stats strip.
+//   - `ttl_liveness`    — the /v1/pools/reserves archived-pair
+//     verdict snapshot (clickhouse ttlLivenessCache).
+//
+// The SWR design makes refresh failures INVISIBLE at the API surface
+// by construction (stale-but-real keeps serving) — this counter is
+// the only place a persistently-dying refresher shows up before the
+// data is hours old. A sustained `error` rate on any one cache is a
+// ticket; bursts during lake merges self-heal.
+var ExplorerSWRRefreshTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_explorer_swr_refresh_total",
+		Help: "Explorer stale-while-revalidate detached refresh outcomes per cache (accounts_wealth|asset_holders|contracts_dir|op_type_stats|ttl_liveness × ok|error).",
+	},
+	[]string{"cache", "outcome"},
+)
+
+// ExplorerSWRRefreshDurationSeconds — latency histogram for one
+// detached SWR refresh, labelled like the counter. Buckets span
+// 50 ms → 300 s (the widest per-cache refresh timeout). These
+// refreshes are exactly the reads that used to time out inline at
+// the request deadline — their `ok` p95 per cache is the direct
+// measure of how much headroom the detach bought, and a p95 climbing
+// toward its cache's refresh timeout predicts the stale-age growing
+// user-visible.
+var ExplorerSWRRefreshDurationSeconds = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "stellarindex_explorer_swr_refresh_duration_seconds",
+		Help:    "Explorer stale-while-revalidate detached refresh latency, labelled by cache and outcome.",
+		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300},
+	},
+	[]string{"cache", "outcome"},
+)
+
+// ObserveExplorerSWRRefresh records one detached stale-while-revalidate
+// refresh attempt against the paired [ExplorerSWRRefreshTotal] /
+// [ExplorerSWRRefreshDurationSeconds] metrics. Shared helper because
+// the five refreshers live across three packages (api/v1/explorer,
+// storage/clickhouse) and the outcome-derivation must stay identical.
+func ObserveExplorerSWRRefresh(cache string, start time.Time, err error) {
+	outcome := "ok"
+	if err != nil {
+		outcome = "error"
+	}
+	ExplorerSWRRefreshTotal.WithLabelValues(cache, outcome).Inc()
+	ExplorerSWRRefreshDurationSeconds.WithLabelValues(cache, outcome).Observe(time.Since(start).Seconds())
+}

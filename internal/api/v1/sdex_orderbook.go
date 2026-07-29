@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -67,10 +68,25 @@ func NewSDEXOrderBookCache(reader SDEXOfferBookReader, logger Logger) *SDEXOrder
 	return &SDEXOrderBookCache{reader: reader, logger: logger}
 }
 
+// observeMaintain records one Load/Advance attempt against the paired
+// order-book maintenance metrics. op is "load" or "advance"; the
+// outcome label is op-qualified (load_ok, advance_error, …) so the
+// two cost classes chart apart.
+func observeMaintain(op string, start time.Time, err error) {
+	outcome := op + "_ok"
+	if err != nil {
+		outcome = op + "_error"
+	}
+	obs.SDEXOrderBookMaintainTotal.WithLabelValues(outcome).Inc()
+	obs.SDEXOrderBookMaintainDurationSeconds.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
+}
+
 // Load performs the initial full-book load. Idempotent — a re-Load
 // replaces the book wholesale (used as a self-heal if Advance ever
 // falls persistently behind).
-func (c *SDEXOrderBookCache) Load(ctx context.Context) error {
+func (c *SDEXOrderBookCache) Load(ctx context.Context) (err error) {
+	start := time.Now()
+	defer func() { observeMaintain("load", start, err) }()
 	offers, cursor, err := c.reader.LoadLiveOffers(ctx)
 	if err != nil {
 		if c.logger != nil {
@@ -100,13 +116,18 @@ func (c *SDEXOrderBookCache) Load(ctx context.Context) error {
 // Advance applies offer changes since the cursor. Changes are applied
 // by version (>= wins), so overlapping or duplicated change rows are
 // idempotent. No-op (nil) before Load has succeeded.
-func (c *SDEXOrderBookCache) Advance(ctx context.Context) error {
+func (c *SDEXOrderBookCache) Advance(ctx context.Context) (err error) {
 	c.mu.RLock()
 	ready, cursor := c.loadedOK, c.cursor
 	c.mu.RUnlock()
 	if !ready {
+		// Deliberately unobserved: pre-Load ticks do no work, and
+		// counting them as advance_ok would mask a stuck load behind a
+		// healthy-looking advance rate.
 		return nil
 	}
+	start := time.Now()
+	defer func() { observeMaintain("advance", start, err) }()
 	changes, next, err := c.reader.OfferChangesSince(ctx, cursor)
 	if err != nil {
 		if c.logger != nil {
