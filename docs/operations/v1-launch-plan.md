@@ -127,6 +127,41 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~21:55Z — ✅ **Worker metrics LANDED on main (3f599177) +
+  redstone args-order fix (7ad97523); v0.21.4 payload is now
+  code-complete.** The metrics agent died THREE times on API-529
+  (and its resume lost worktree isolation — it was branching in the
+  main checkout), so I built the instrumentation inline via the full
+  /add-metric chain: paired counter+histogram for the DEX TVL
+  refresher, the SDEX order-book maintainer (op-qualified
+  load/advance; pre-Load ticks deliberately unobserved), and ONE
+  shared per-cache metric for the five explorer SWR refreshers.
+  Rationale: all three workers fail INVISIBLY by design
+  (carried-forward/stale-but-real serving) — these series are the
+  only pre-hours-stale failure signal. 2 ticket alerts in BOTH
+  trees + runbooks + catalog rows + promtool unit tests (fire AND
+  healthy-silent proven) + seeded zero series + obstest regression
+  tests. Verify green (one gocognit split in the seed func). NOT yet
+  exercised on r1 — the workers only run post-v0.21.4 deploy;
+  post-deploy check = `curl :9464/metrics | grep -E
+  "dex_tvl|sdex_orderbook|explorer_swr"`.
+
+- 2026-07-29 ~21:15Z — ✅ **Redstone check-order fix committed
+  (7ad97523): empty batches classify as no-ops even WITHOUT op args.**
+  Night-chain completeness stayed `projection_ok=f` (1,624
+  undecodable across 1,612 ledgers) because the v0.21.3 empty-batch
+  fix sat BELOW the `len(OpArgs)==0 → ErrMissingOpArgs` gate — and
+  empty pushes often lack usable args. Order corrected (body decode →
+  empty short-circuit → args only for the non-empty path); the
+  real-lake golden test now passes NO args to pin args-independence.
+  **Redstone → 17/17 completeness flips at the first full run after
+  the v0.21.4 deploy + replay.** Night-chain also confirmed: redstone
+  replay hit tip, completeness exit=0 (16/17 held), and the
+  participant backfill correctly NO-OP'd — `operation_participants`
+  is ALREADY fully populated ([3, 63.7M], 4.38B rows); the
+  "1-day-only" claim in the accounts brief was stale, which also
+  removes the residual-risk caveat on the account tx/ops UNION arms.
+
 - 2026-07-29 ~19:10Z — ✅ **Phoenix + Comet TVL LANDED on main
   (b6169612) — WITH on-chain validation the building agent could not
   do.** The agent derived both storage layouts from protocol Rust
