@@ -131,6 +131,27 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-30 ~01:40Z — ✅ **SUPPLY GATE CLOSED: 8/8 vs Horizon** (evidence
+  filed: `evidence/2026-07-30-supply-reconcile-8of8.md`). The chain
+  completed 23:27Z: re-seed landed 47,093 rows / 38/38 wrappers (USDC's
+  46,035 dormant holders restored — the class six scan-era attempts
+  couldn't seed). First reconcile read +1.07% FAIL — refresher snapshot
+  lag, not data (direct component SQL already summed to the passing
+  figure); 5 min later: **USDC +0.14% PASS**. Residual decomposed:
+  claimable +35k + SAC +499k = live rows for since-archived holders
+  (the un-ingested eviction class — bounded, documented in the
+  artifact). **Route-sweep after the heavy drain: 8→5×5xx, and all 5
+  root-caused + FIXED on main (65617654)**: contracts-dir 30d GROUP BY
+  genuinely needs >8 GiB (23/23 refresh failures — caught by the new
+  swr metric) → external spill added to the shared explorer scan
+  settings (r1-measured: OOM → 55.7 s clean); contract detail ×3 +
+  account-state ran INLINE on request deadlines (cache could never
+  fill for busy contracts/whale accounts) → all four moved to the
+  established SWR shape (shared contract_detail cache + detached
+  account-state fill). These ride v0.21.5 with the redstone
+  subset-attribution fix — **the sweep's 0×5xx acceptance lands at
+  that deploy**.
+
 - 2026-07-30 ~00:20Z — 🔬 **Redstone's REAL root cause found + FIXED on
   main (f51e414d): subset-filtered batches, not empty batches.** The
   v0.21.4 full verify still showed 1,626 blind events (growing at tip —
