@@ -127,6 +127,30 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~14:30Z — ⚖️ **v0.21.3 chain results — one win, one
+  mechanical tail, one honest park.**
+  1. **Completeness 16/17 → redstone tail launched**: the fixed
+     verifier's FULL run now sees the whole history's small-shape
+     population (1,603 events to 59.2M) + a real Δ=941 unprojected rows
+     from the pre-fix era. Mechanical close: full-history
+     `projector-replay -source redstone -from 58758722` RUNNING (~7h
+     background; the fixed decoder re-derives everything), then one
+     full completeness run → 17/17. No code needed.
+  2. **SAC re-seed: PARKED FOR REDESIGN after failure #6** — the
+     classifier OOM'd its own new 8 GB pin. Root cause is DESIGN, not
+     tuning: `ttlLiveUntilExpr` computes over the wide `entry_xdr`
+     column across all 586M ttl rows per batch (my 89 MiB probe read
+     only key_xdr — unrepresentative). **v0.21.4 item: a slim
+     `ttl_live_until` projection table (key_hash → live_until,
+     MV-maintained, ~20 GB → bounded lookups by design)** replaces
+     scan-per-batch. Supply impact remains USDC −1.1% only
+     (dispositioned; served value UNDERSTATES, the conservative
+     direction).
+  3. Also this hour: **4/6 dependabot PRs merged** (51+50 auto-rebasing
+     post-conflict), **main-red causes fixed** (grpc v1.82.1 for
+     GO-2026-6061 + integration deadline 10m→20m) — issue #53
+     auto-closes on the next green main run.
+
 - 2026-07-29 ~13:40Z — 🚀 **v0.21.3 CUT + DEPLOYED (express operator
   permission for the second same-session tag).** Version confirmed
   live, services active, ops-ch refreshed, ingest 5s behind, external
