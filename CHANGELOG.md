@@ -15,6 +15,8 @@ against.
 
 ## [Unreleased]
 
+## [v0.21.4] — 2026-07-29
+
 ### Added
 - **Metrics + alerts for the v0.21.4 background cache workers** —
   paired outcome counter + duration histogram for the DEX TVL
@@ -28,6 +30,71 @@ against.
   before the data is hours old. Two ticket alerts in both rule
   trees with runbooks + promtool unit tests
   (`dex-tvl-refresh-failing`, `sdex-orderbook-maintain-failing`).
+- **Phoenix + Comet TVL on `/v1/protocols`** — the last two flow-only
+  DEXes now serve an absolute `tvl` snapshot. Their events carry flow
+  deltas, not post-state reserves, so the figure is decoded from the
+  pools' PERSISTENT STORAGE entries in the certified lake: Phoenix
+  reads each curated pool's `ReserveA`/`ReserveB` i128s + the
+  `CONFIG` map's `token_a`/`token_b` identities (u32-keyed layout per
+  the public phoenix-contracts source); Comet reads the
+  `AllRecordData` `Map<Address, Record>` per-token balance records
+  (balance by field name, robust across Record generations), scoped
+  to `comet.MainnetGatedSet`. Both readers follow the Soroswap pair
+  reader's conventions — one batched `key_xdr IN` probe on
+  `ledger_entries_current FINAL` with guard-rail SETTINGS,
+  TTL-archived pools absent, full-precision `*big.Int` (ADR-0003) —
+  and STRICT shape discipline: an unrecognised storage shape lands
+  the pool in `unpriced_pools` contributing 0 (honest lower bound,
+  warn-logged), never a partial or fabricated number. Storage layouts
+  are source-derived and flagged VALIDATE-ON-R1 in both readers with
+  the exact operator queries. Legs are valued through the same USD
+  price tiers that stamp `trades.usd_volume`. Spec description
+  updated (no wire-shape change).
+- **Explorer /dexes wiring completed** (frontend-only glue over
+  existing endpoints — no new API): each /dexes/{source} page now
+  shows TVL (snapshot stat), 24h volume + trades + activity chart
+  (existing), a NEW 90-day daily USD-volume chart reusing the
+  `/v1/protocols/{name}` bespoke `dex_volume_by_pair_1d` series (the
+  existing aggregate — renders nothing when absent), the pools table
+  (existing), a protocol-analytics cross-link, an SDEX order-book
+  pointer on /dexes/sdex, and per-source honesty notes updated to the
+  current truth (Aquarius reserves served; Phoenix/Comet flow-only,
+  hence no TVL). The /company "what we don't have" claims about DEX
+  TVL and order-book depth were updated in the same change.
+- **SDEX order-book depth: `GET /v1/sdex/orderbook?selling=&buying=`,
+  spec 1.12.0.** Live classic bid/ask depth aggregated by EXACT price
+  level (reduced rationals; bid prices are the exact inverse of the
+  stored offer price — no float math; amounts as decimal strings, big
+  math for cumulative sums). Backed by an in-process live offer book:
+  the lake's `ledger_entries_current` offer slice carries assets only
+  inside `entry_xdr` (1.02B rows incl. dead offers — no per-pair
+  predicate possible), so the book loads ONCE at process start via a
+  work-shape-bounded FINAL stream (max_threads=4, 8 GiB cap; FINAL
+  chosen over GROUP BY/argMax because merge memory doesn't scale with
+  the ~100M+ distinct offer keys) and then advances every 60s from
+  partition-pruned `ledger_entry_changes` reads applied by version.
+  Honest states throughout: 503 problem until the initial load lands,
+  `as_of_ledger`/`snapshot_at` on every response, per-side offer
+  counts before the depth cap. Cache policy `public, max-age=30`
+  (pinned in cachecontrol tests); SDK-uncovered (explorer surface).
+  Explorer: an SDEX order-book panel on /markets/{pair} for classic
+  pairs (self-hides for Soroban assets; explicit loading/empty
+  states), with cumulative depth bars.
+- **Per-protocol DEX TVL on `/v1/protocols` (+ `{name}`), spec 1.11.0**
+  (additive `tvl` object on `ProtocolRow`): a background-refreshed
+  (10-min) snapshot values each protocol's ABSOLUTE pool reserves in
+  USD — Soroswap's current pair reserves from the certified lake
+  (archived pairs excluded; their absence is the reader's honest
+  signal, not a zero) and Aquarius' latest post-state
+  `aquarius_reserves` snapshots — through the same USD tier system
+  that stamps `trades.usd_volume` (declared peg → direct raw-ratio
+  VWAP → XLM bridge), so TVL and volume share one methodology.
+  Unpriceable legs contribute 0 and count their pool in
+  `unpriced_pools`, making `tvl_usd` an explicit lower bound;
+  phoenix/comet (flow deltas, no post-state reserves) and sdex (order
+  book) carry no `tvl` at all rather than a fabricated number.
+  Explorer: TVL column on /dexes and a TVL stat on /dexes/{source},
+  both rendering absence as "—" and lower bounds with a "≥" marker.
 
 ### Fixed
 - **Empty redstone batches classify as no-ops even without op args** —
@@ -102,75 +169,6 @@ against.
   503 warming state), and pushed the 8s-budget explorer routes into
   their 503 timeout class. Pinned-SQL regression tests assert the
   clause on every touched query.
-
-### Added
-- **Phoenix + Comet TVL on `/v1/protocols`** — the last two flow-only
-  DEXes now serve an absolute `tvl` snapshot. Their events carry flow
-  deltas, not post-state reserves, so the figure is decoded from the
-  pools' PERSISTENT STORAGE entries in the certified lake: Phoenix
-  reads each curated pool's `ReserveA`/`ReserveB` i128s + the
-  `CONFIG` map's `token_a`/`token_b` identities (u32-keyed layout per
-  the public phoenix-contracts source); Comet reads the
-  `AllRecordData` `Map<Address, Record>` per-token balance records
-  (balance by field name, robust across Record generations), scoped
-  to `comet.MainnetGatedSet`. Both readers follow the Soroswap pair
-  reader's conventions — one batched `key_xdr IN` probe on
-  `ledger_entries_current FINAL` with guard-rail SETTINGS,
-  TTL-archived pools absent, full-precision `*big.Int` (ADR-0003) —
-  and STRICT shape discipline: an unrecognised storage shape lands
-  the pool in `unpriced_pools` contributing 0 (honest lower bound,
-  warn-logged), never a partial or fabricated number. Storage layouts
-  are source-derived and flagged VALIDATE-ON-R1 in both readers with
-  the exact operator queries. Legs are valued through the same USD
-  price tiers that stamp `trades.usd_volume`. Spec description
-  updated (no wire-shape change).
-- **Explorer /dexes wiring completed** (frontend-only glue over
-  existing endpoints — no new API): each /dexes/{source} page now
-  shows TVL (snapshot stat), 24h volume + trades + activity chart
-  (existing), a NEW 90-day daily USD-volume chart reusing the
-  `/v1/protocols/{name}` bespoke `dex_volume_by_pair_1d` series (the
-  existing aggregate — renders nothing when absent), the pools table
-  (existing), a protocol-analytics cross-link, an SDEX order-book
-  pointer on /dexes/sdex, and per-source honesty notes updated to the
-  current truth (Aquarius reserves served; Phoenix/Comet flow-only,
-  hence no TVL). The /company "what we don't have" claims about DEX
-  TVL and order-book depth were updated in the same change.
-- **SDEX order-book depth: `GET /v1/sdex/orderbook?selling=&buying=`,
-  spec 1.12.0.** Live classic bid/ask depth aggregated by EXACT price
-  level (reduced rationals; bid prices are the exact inverse of the
-  stored offer price — no float math; amounts as decimal strings, big
-  math for cumulative sums). Backed by an in-process live offer book:
-  the lake's `ledger_entries_current` offer slice carries assets only
-  inside `entry_xdr` (1.02B rows incl. dead offers — no per-pair
-  predicate possible), so the book loads ONCE at process start via a
-  work-shape-bounded FINAL stream (max_threads=4, 8 GiB cap; FINAL
-  chosen over GROUP BY/argMax because merge memory doesn't scale with
-  the ~100M+ distinct offer keys) and then advances every 60s from
-  partition-pruned `ledger_entry_changes` reads applied by version.
-  Honest states throughout: 503 problem until the initial load lands,
-  `as_of_ledger`/`snapshot_at` on every response, per-side offer
-  counts before the depth cap. Cache policy `public, max-age=30`
-  (pinned in cachecontrol tests); SDK-uncovered (explorer surface).
-  Explorer: an SDEX order-book panel on /markets/{pair} for classic
-  pairs (self-hides for Soroban assets; explicit loading/empty
-  states), with cumulative depth bars.
-- **Per-protocol DEX TVL on `/v1/protocols` (+ `{name}`), spec 1.11.0**
-  (additive `tvl` object on `ProtocolRow`): a background-refreshed
-  (10-min) snapshot values each protocol's ABSOLUTE pool reserves in
-  USD — Soroswap's current pair reserves from the certified lake
-  (archived pairs excluded; their absence is the reader's honest
-  signal, not a zero) and Aquarius' latest post-state
-  `aquarius_reserves` snapshots — through the same USD tier system
-  that stamps `trades.usd_volume` (declared peg → direct raw-ratio
-  VWAP → XLM bridge), so TVL and volume share one methodology.
-  Unpriceable legs contribute 0 and count their pool in
-  `unpriced_pools`, making `tvl_usd` an explicit lower bound;
-  phoenix/comet (flow deltas, no post-state reserves) and sdex (order
-  book) carry no `tvl` at all rather than a fabricated number.
-  Explorer: TVL column on /dexes and a TVL stat on /dexes/{source},
-  both rendering absence as "—" and lower bounds with a "≥" marker.
-
-### Fixed
 - **TTL-liveness classification redesigned: scan-per-batch replaced by
   the slim `stellar.ttl_live_until` projection** (v0.21.4 headline).
   `ClassifyTTLLiveness` — the archived-entry filter behind the SAC
