@@ -688,6 +688,36 @@ func (c AccountMovementCursor) IsSet() bool { return c.Ledger > 0 }
 const accountMovementCols = `ledger, ledger_close_time, tx_hash, op_index, leg_index, direction,
 	movement_kind, provenance, asset, counterparty, amount, attributes`
 
+// accountMovementsQuery builds AccountMovements' SQL for the given filter
+// dimensions + cursor presence (the arg order mirrors the clause order).
+//
+// This is a KEYED read — `address = ?` is an equality on the table's ORDER BY
+// prefix, a single contiguous primary-key range (measured class: 0.08s) —
+// but it still carries explorerScanSettings defensively: while the
+// participant/movements backfill is running, the address range spans MANY
+// small un-merged parts, and the per-part stream setup at default threads is
+// the same fan-out the pin bounds. Pinning threads on a range read costs
+// nothing when the part count is small.
+func accountMovementsQuery(filter AccountMovementFilter, hasCursor bool) string {
+	var sb strings.Builder
+	sb.WriteString("SELECT " + accountMovementCols + " FROM stellar.account_movements WHERE address = ?")
+	if filter.Kind != "" {
+		sb.WriteString(" AND movement_kind = ?")
+	}
+	if filter.Direction != "" {
+		sb.WriteString(" AND direction = ?")
+	}
+	if filter.Asset != "" {
+		sb.WriteString(" AND asset = ?")
+	}
+	if hasCursor {
+		sb.WriteString(" AND (ledger, tx_hash, op_index, leg_index) < (?, ?, ?, ?)")
+	}
+	sb.WriteString(" ORDER BY ledger DESC, tx_hash DESC, op_index DESC, leg_index DESC LIMIT ?")
+	sb.WriteString(explorerScanSettings)
+	return sb.String()
+}
+
 // AccountMovements returns one address's movement feed from
 // stellar.account_movements (ADR-0048 D2/D5), newest first, keyset-
 // paged by the composite (ledger, tx_hash, op_index, leg_index)
@@ -713,29 +743,22 @@ func (r *ExplorerReader) AccountMovements(ctx context.Context, address string, l
 	if limit <= 0 || limit > 200 {
 		limit = 25
 	}
-	var sb strings.Builder
-	sb.WriteString("SELECT " + accountMovementCols + " FROM stellar.account_movements WHERE address = ?")
 	args := []any{address}
 	if filter.Kind != "" {
-		sb.WriteString(" AND movement_kind = ?")
 		args = append(args, filter.Kind)
 	}
 	if filter.Direction != "" {
-		sb.WriteString(" AND direction = ?")
 		args = append(args, string(filter.Direction))
 	}
 	if filter.Asset != "" {
-		sb.WriteString(" AND asset = ?")
 		args = append(args, filter.Asset)
 	}
 	if cur.IsSet() {
-		sb.WriteString(" AND (ledger, tx_hash, op_index, leg_index) < (?, ?, ?, ?)")
 		args = append(args, cur.Ledger, cur.TxHash, cur.OpIndex, cur.LegIndex)
 	}
-	sb.WriteString(" ORDER BY ledger DESC, tx_hash DESC, op_index DESC, leg_index DESC LIMIT ?")
 	args = append(args, limit)
 
-	rows, err := r.conn.Query(ctx, sb.String(), args...)
+	rows, err := r.conn.Query(ctx, accountMovementsQuery(filter, cur.IsSet()), args...)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: account %s movements: %w", address, err)
 	}

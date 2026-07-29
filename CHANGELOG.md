@@ -15,6 +15,26 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **Explorer scan-shaped lake reads carry per-query resource pins**
+  (`SETTINGS max_threads = 4, max_memory_usage = 8589934592`, in SQL
+  text): every explorer read whose cost is set by a lake table's size
+  rather than a primary-key lookup — account txs/ops UNION arms,
+  recent-operations/op-type-stats, contracts directory GROUP BY,
+  contract events/interactions/code-history, account
+  trustlines/offers, asset holders, the wealth ranking +
+  locked-burn resolution (the wealth refresh additionally pins
+  `max_execution_time = 150` in-SQL, replacing the per-context
+  override), and account movements (defensive). Root cause
+  (measured 2026-07-29): at DEFAULT `max_threads` the post-D3
+  `ledger_entries_current` part layout fans a probe out to a
+  4.76 GiB peak — 40× the 89 MiB the identical probe costs at
+  `max_threads = 4` — which starved the shared host, killed the
+  wealth cache's background refresh (pinning `/v1/accounts` on its
+  503 warming state), and pushed the 8s-budget explorer routes into
+  their 503 timeout class. Pinned-SQL regression tests assert the
+  clause on every touched query.
+
 ### Added
 - **Explorer /dexes wiring completed** (frontend-only glue over
   existing endpoints — no new API): each /dexes/{source} page now
