@@ -22,7 +22,7 @@ were ever produced until now).
 | reconcile-balances (50-account) | [2026-07-29-reconcile-balances-50.md](2026-07-29-reconcile-balances-50.md) | ✅ **0 mismatches** (was 38% pre-ordinal) — E1 met | 2026-07-29 |
 | Completeness green | tracked in plan loop-log (2026-07-29) | 🔵 sep41×2 `projection_ok=t` (hole closed); `complete=t` pending the timer's substrate pass; **redstone stays incomplete** — 866 undecodable events, code-side fix next release | — |
 | verify-lake / contiguity / hash-chain | [2026-07-29-lake-verifiers.md](2026-07-29-lake-verifiers.md) | ✅ ALL PASSED — 0 broken hash links genesis→tip [2, 63,699,907] | 2026-07-29 |
-| Prices vs CoinGecko/Chainlink top-50 | — not yet filed | ⏳ campaign B1 | — |
+| Prices vs independent references | [2026-07-29-price-divergence.md](2026-07-29-price-divergence.md) | ✅ 22/22 clear across 5 references (worst −0.55%); top-50 broadening needs the CG Pro key [OP] | 2026-07-29 |
 | re-derive determinism | — not yet filed | ⏳ campaign E3 | — |
 | SEV-1/2 paging drill + rollback rehearsal | — not yet filed | ⏳ blocked on paging being wired (Ash item #1) | — |
 | verify-usd-volume calibration | — not yet filed | ⏳ post-deploy queue | — |
