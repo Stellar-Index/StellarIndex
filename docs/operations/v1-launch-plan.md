@@ -127,6 +127,15 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~08:30Z — ✅ **ansible-drift GREEN (exit 0)** after
+  post-campaign re-measure: 69 → 2 → 0-beyond-allowance. The last real
+  drift was an orphaned-uid owner on the migrations dir (stale deploy
+  sync identity) — chowned root:root to match the role. Watch item: if
+  the NEXT deploy re-orphans it, the deploy workflow's sync step needs
+  an ownership flag (next-release queue). Also running: first
+  `verify-usd-volume -days 30` production report (C4-055/066 alert
+  calibration input).
+
 - 2026-07-29 ~06:15Z — 🔁 **Completeness: my own `-skip-substrate` flag
   poisoned the INV-5 latch** ("prior verdict's substrate was FAILING —
   refusing to upgrade without evidence"). projection_ok=t for sep41×2
