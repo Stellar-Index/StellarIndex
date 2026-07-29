@@ -131,6 +131,30 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~22:00Z — 🚀 **v0.21.4 CUT + DEPLOYED (Ash: "you can cut
+  it"); chain running.** Sequence executed: CHANGELOG promoted (dup
+  Added headers merged) → tag via guard-rail script → release.yml (11
+  assets) → Step-1 DDL applied on r1 (`ttl_live_until` + MV; tip at
+  creation 63,708,653) → windowed backfill launched detached
+  (7×2M-ledger windows from 50M, heavy-wrapped, ~7 min/window) →
+  deploy.yml green (indexer+aggregator+api+sla-probe+ops all
+  v0.21.4). **Post-deploy verified live**: smoke 13/13; order-book
+  initial load **83 s** (vs 30-min cap — acceptance item closed);
+  dex_tvl refresh ok=1 (all 4 protocols); the new ttl_liveness PK
+  lookup served its first verdict snapshot (ok=1, fail-open on
+  not-yet-backfilled keys); advance ticking. **Gotcha for next time:
+  every binary exposes every registered metric series — :9464 showed
+  the API's series at zero because it is NOT the API's port; the API
+  serves /metrics on :3000.** The instrumentation caught its first
+  real event within minutes: contracts_dir refresh OOM'd at its own
+  8 GiB pin while the backfill saturates CH (guard rail working —
+  fail the query, not the host; prewarm retries). Route-sweep
+  baseline DURING backfill: 8×5xx (the lake-scan class competing
+  with the heavy job) — the acceptance re-run happens after the
+  backfill + completeness + re-seed. Remaining chain: backfill done →
+  Step-3 verify → completeness full run (redstone → 17/17) → SAC
+  re-seed (→ 8/8) → route-sweep target 0×5xx.
+
 - 2026-07-29 ~22:10Z — ✅ **Dependabot CLEAN (PR #51 vitest 3→4 merged
   green — 6/6 done) + r1 pre-deploy TOML check PASSED**:
   `/etc/stellarindex.toml` carries `usd_pegged_classic_assets` (line
