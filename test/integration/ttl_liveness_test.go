@@ -82,12 +82,12 @@ func TestClassifyTTLLiveness_SlimProjectionEndToEnd(t *testing.T) {
 	conn := dialClickHouse(t, ctx, "stellar")
 
 	var (
-		archived  = ttlGovernedKeyXDR("archived")  // lapsed long ago
-		boundary  = ttlGovernedKeyXDR("boundary")  // live_until == asOf → LIVE (not yet lapsed)
-		extended  = ttlGovernedKeyXDR("extended")  // lapsed then bumped in a later ledger → LIVE
+		archived  = ttlGovernedKeyXDR("archived")   // lapsed long ago
+		boundary  = ttlGovernedKeyXDR("boundary")   // live_until == asOf → LIVE (not yet lapsed)
+		extended  = ttlGovernedKeyXDR("extended")   // lapsed then bumped in a later ledger → LIVE
 		sameLedgr = ttlGovernedKeyXDR("sameledger") // bumped twice in ONE ledger → intra tie-break
-		malformed = ttlGovernedKeyXDR("malformed") // 47-byte entry → MV skips → UNKNOWN
-		absent    = ttlGovernedKeyXDR("absent")    // no TTL row at all → UNKNOWN
+		malformed = ttlGovernedKeyXDR("malformed")  // 47-byte entry → MV skips → UNKNOWN
+		absent    = ttlGovernedKeyXDR("absent")     // no TTL row at all → UNKNOWN
 	)
 
 	rows := []chstore.LedgerEntryChangeRow{
