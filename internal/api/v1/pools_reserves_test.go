@@ -1,6 +1,7 @@
 package v1_test
 
 import (
+	"context"
 	"math/big"
 	"net/http"
 	"testing"
@@ -192,6 +193,30 @@ func TestPoolReserves_EmptySideOmitsDepth(t *testing.T) {
 	}
 	if row.Token0.Reserve != "0" || row.Token1.Reserve != "2000" {
 		t.Fatalf("reserves = (%q, %q)", row.Token0.Reserve, row.Token1.Reserve)
+	}
+}
+
+// TestPoolReserves_ColdVerdictDeadlineIs503 pins the route-sweep 2026-07-29
+// contract: a reserve read that blows its budget (in production, only the
+// COLD archived-pair TTL-verdict snapshot — see clickhouse.ttlLivenessCache)
+// is a truthful retryable 503 `pool-reserves-timeout`, not a 500.
+func TestPoolReserves_ColdVerdictDeadlineIs503(t *testing.T) {
+	pairA := mkCStrkey(t, 1)
+	reader := &stubExplorerReader{err: context.DeadlineExceeded}
+	base := poolReservesTestServer(t, reader, []timescale.SoroswapPair{
+		{PairStrkey: pairA, Token0Strkey: mkCStrkey(t, 10), Token1Strkey: mkCStrkey(t, 11)},
+	})
+
+	resp := mustGet(t, base+"/v1/pools/reserves")
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (a read deadline is not an internal error)", resp.StatusCode)
+	}
+	var problem struct {
+		Type string `json:"type"`
+	}
+	mustDecode(t, resp, &problem)
+	if problem.Type != "https://api.stellarindex.io/errors/pool-reserves-timeout" {
+		t.Fatalf("problem type = %q, want pool-reserves-timeout", problem.Type)
 	}
 }
 
