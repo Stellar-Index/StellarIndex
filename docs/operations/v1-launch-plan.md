@@ -127,6 +127,20 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~17:55Z — ✅ **TTL lookup-table redesign LANDED on main**
+  (4 commits through 9e97f71e; agent-built, reviewed, verify green
+  post-pick). `stellar.ttl_live_until` (slim RMT projection, ~20-30 GB)
+  + ingest MV (with the correctly-reasoned `tryBase64Decode` — a throw
+  inside an MV would block ingest) + the classifier now a bounded PK
+  lookup; scan path DELETED with a fail-loud missing-table guard; real
+  ClickHouse integration tests incl. adversarial insert order. **The
+  v0.21.4 operator sequence is in the artifact**: apply DDL → windowed
+  backfill (from 50M; ~7 windows/heavy-wrapped) → verify → deploy →
+  re-run the SAC seed → USDC restored → supply 8/8. Also this hour:
+  **AC5 fresh-clone reproducibility captured** (public repo → install →
+  verify green) + the RFP AC1-7 mapping added to the evidence index +
+  blog postscript closing the May gaps list.
+
 - 2026-07-29 ~16:45Z — ✅ **DEX TVL + SDEX order book + charts LANDED on
   main** (b1711519 / 3dbd941b / 4a78058b — agent-built in a worktree,
   reviewed, cherry-picked; verify + web gates green POST-merge against
