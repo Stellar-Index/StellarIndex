@@ -70,7 +70,18 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 		return nil, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
 	}
 	if len(prices) == 0 {
-		return nil, ErrEmptyUpdates
+		// Empty ON-WIRE batch: a write_prices push whose freshness
+		// verifier dropped every candidate feed still emits
+		// `{updated_feeds: [], updater}`. The old assumption that "the
+		// adapter only emits when at least one feed passes" is
+		// disproven by the lake — ~1.5% of ALL REDSTONE events ever
+		// (small ~156-byte bodies, every ledger band since source
+		// genesis) are this shape, and treating them as errors is what
+		// kept redstone `projection_ok=false` under the v0.21.2
+		// honest-blind completeness accounting (866 "undecodable"
+		// ledgers, root-caused 2026-07-29). A recognized no-op projects
+		// zero rows and reconciles; it is not an error.
+		return nil, nil
 	}
 
 	// Strict length check — see ErrFeedIDCountMismatch rationale in

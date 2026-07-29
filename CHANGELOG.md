@@ -16,6 +16,18 @@ against.
 ## [Unreleased]
 
 ### Fixed
+- **Empty redstone `write_prices` batches are recognized no-ops, not
+  decode errors.** The adapter emits `{updated_feeds: [], updater}`
+  (Bytes-wrapped, ~156-byte body) when its freshness verifier drops
+  every candidate feed — ~1.5% of ALL REDSTONE events in the lake,
+  present in every ledger band since source genesis, disproving the
+  decoder's "an empty vec is anomalous" assumption. Treating them as
+  errors is what held `redstone` at `projection_ok=false` under
+  v0.21.2's honest-blind completeness accounting (the "866 undecodable
+  ledgers"). They now decode to zero updates with no error; pinned by a
+  real-lake-bytes golden test (ledger 63,699,567). After deploy, one
+  `projector-replay -source redstone` + a full `compute-completeness`
+  run flips redstone complete — the last incomplete source.
 - **`seed-sac-balances` TTL classifier is self-bounding** — its liveness
   scan now pins `max_threads = 4` + an 8 GB per-query ceiling and batches
   1,500 keys per IN list (was 5,000). The first production full-seed

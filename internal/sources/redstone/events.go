@@ -89,10 +89,17 @@ var (
 	// expected WritePrices map shape.
 	ErrMalformedPayload = errors.New("redstone: malformed event payload")
 
-	// ErrEmptyUpdates — the updated_feeds vector was empty. The
-	// adapter only emits an event when at least one feed passes
-	// the freshness check, so an empty vec is anomalous. Surface
-	// loudly; caller decides whether to skip or alert.
+	// ErrEmptyUpdates — every decoded entry was dropped by the
+	// registry filter (all-unknown-symbol batches), so the caller
+	// gets a loud signal instead of a silently empty result.
+	//
+	// NOTE (2026-07-29): this error NO LONGER covers on-wire-empty
+	// `updated_feeds` vectors. The old doc claimed "the adapter only
+	// emits when at least one feed passes the freshness check";
+	// the lake disproves that — ~1.5% of all REDSTONE events ever
+	// are `{updated_feeds: [], updater}` no-op pushes, in every
+	// ledger band since source genesis. Those now decode to zero
+	// updates with NO error (see decodeWritePrices).
 	ErrEmptyUpdates = errors.New("redstone: empty updated_feeds vector")
 
 	// ErrMissingOpArgs — the event arrived without InvokeContract

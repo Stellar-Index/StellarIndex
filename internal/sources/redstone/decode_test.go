@@ -818,3 +818,41 @@ func TestReciprocalAtScale(t *testing.T) {
 		t.Errorf("invert(invert(4.0)) = %s, want 400000000", back)
 	}
 }
+
+// TestDecode_EmptyOnWireBatch_IsRecognizedNoOp pins the empty-batch
+// no-op semantics against REAL lake bytes (ledger 63,699,567, contract
+// CA526Y2N…, captured 2026-07-29): the adapter emits
+// `{updated_feeds: [], updater}` (Bytes-wrapped) when its freshness
+// verifier drops every candidate feed. ~1.5% of ALL REDSTONE events
+// ever have this shape; treating it as an error kept redstone
+// projection_ok=false under honest-blind completeness accounting.
+// It must decode to ZERO updates with NO error.
+func TestDecode_EmptyOnWireBatch_IsRecognizedNoOp(t *testing.T) {
+	// Real event body from the lake (base64 data_xdr, verbatim).
+	const realBody = "AAAADQAAAGwAAAARAAAAAQAAAAIAAAAPAAAADXVwZGF0ZWRfZmVlZHMAAAAAAAAQAAAAAQAAAAAAAAAPAAAAB3VwZGF0ZXIAAAAAEgAAAAAAAAAAI55i1HMFV5Z4R37dzgSnns7qJjbxzw6uCHkzbmb6XRI="
+
+	args := []string{
+		encodeAddressArg(t, relayerG),
+		encodeStringVecArg(t, []string{}), // empty feed_ids matches empty batch
+		encodePayloadArg(t),
+	}
+	ev := &events.Event{
+		Topic:          []string{TopicSymbolRedstone},
+		Value:          realBody,
+		OpArgs:         args,
+		ContractID:     adapterC,
+		Ledger:         63_699_567,
+		TxHash:         "efgh",
+		OperationIndex: 0,
+		LedgerClosedAt: "2026-07-29T09:30:00Z",
+	}
+	closedAt, _ := time.Parse(time.RFC3339, ev.LedgerClosedAt)
+
+	updates, err := decodeWritePrices(ev, closedAt)
+	if err != nil {
+		t.Fatalf("empty on-wire batch must be a recognized no-op, got error: %v", err)
+	}
+	if len(updates) != 0 {
+		t.Fatalf("expected 0 updates from an empty batch, got %d", len(updates))
+	}
+}
