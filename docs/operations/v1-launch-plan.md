@@ -127,6 +127,20 @@ the SolvBTC quote mislabel, the anomaly-freeze paging calibration.
 
 ## Loop log (newest first)
 
+- 2026-07-29 ~19:00Z — ✅ **Accounts-routes fix LANDED on main** (6
+  commits through 360234be; verify green post-pick, shapes unchanged —
+  degradation via the existing flags.stale/as_of envelope). Per-route:
+  every scan pinned (threads/memory in-SQL); /accounts root cause was
+  the wealth-refresher dying from the SAME 40× fan-out (its snapshot
+  never filled → permanent 503) — now pinned + stale-served;
+  /pools/reserves was running ClassifyTTLLiveness PER REQUEST — now a
+  30-min SWR verdict snapshot (durable fix = the landed ttl_live_until
+  projection at v0.21.4); /contracts + holders + op-stats get
+  stale-while-revalidate snapshots. **Acceptance = route-sweep after
+  the v0.21.4 deploy — target 10×5xx → 0** (residual risk noted on the
+  account tx/ops UNION arms until the participant backfill densifies).
+  Phoenix/Comet TVL agent still building; night chain ~1.5h from tip.
+
 - 2026-07-29 ~17:55Z — ✅ **TTL lookup-table redesign LANDED on main**
   (4 commits through 9e97f71e; agent-built, reviewed, verify green
   post-pick). `stellar.ttl_live_until` (slim RMT projection, ~20-30 GB)
