@@ -15,6 +15,19 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+- **`seed-sac-balances` TTL classifier is self-bounding** — its liveness
+  scan now pins `max_threads = 4` + an 8 GB per-query ceiling and batches
+  1,500 keys per IN list (was 5,000). The first production full-seed
+  (2026-07-29) failed three ways in sequence: the 5,000-key list overran
+  ClickHouse's 256 KiB `max_query_size` parse cap, and after that was
+  raised the scan OOM'd the caller's 10 GiB `openRead` ceiling — measured
+  at default threads the post-D3 `ledger_entries_current` part layout
+  fans the scan to a 4.76 GiB peak (40× the pre-cutover table), while at
+  `max_threads = 4` the identical scan is ~89 MiB. The tool now fits
+  DEFAULT server limits instead of depending on the users.d overrides
+  landed as the operational stopgap.
+
 ## [v0.21.2] — 2026-07-29
 
 ### Added
